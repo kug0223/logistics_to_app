@@ -683,6 +683,24 @@ extension TOFirestore on FirestoreService {
         }
         if (cancelCount > 0) await cancelBatch.commit();
         totalCanceledPending += slotCanceled;
+
+        // [BUG-수정] T-L-1: PENDING→REJECTED 처리된 지원자에게 거절 알림 발송
+        // batchDeleteSlots의 _sendTOCanceledNotification 패턴과 달리, 여기서는
+        // applicationRejected 타입 알림을 사용해 지원 거절 사실을 개별 통지한다.
+        for (final doc in pendingSnap.docs) {
+          final data = doc.data();
+          final applicantUid = data['uid'] as String?;
+          if (applicantUid == null) continue;
+          _sendApplicationRejectedNotification(
+            applicantUid: applicantUid,
+            applicationId: doc.id,
+            businessName: data['businessName'] as String? ?? '',
+            businessId: data['businessId'] as String? ?? '',
+            workType: data['selectedWorkType'] as String? ?? '',
+            workDate: (data['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
+            rejectReason: '공고 슬롯이 마감되었습니다',
+          );
+        }
       } catch (e) {
         debugPrint('❌ [SlotClose] 슬롯 $slotId PENDING 취소 실패 — TO 카운터 미감소: $e');
       }
@@ -854,23 +872,12 @@ extension TOFirestore on FirestoreService {
     String? title,
     DateTime? visibleFrom,
   }) async {
-    await _createSlots(
-      toId: to.id,
-      dates: [date],
-      workDetails: workDetails,
-      deadlineType: to.deadlineType,
-      hoursBeforeStart: hoursBeforeStart ?? to.hoursBeforeStart ?? 2,
-      fixedDeadline: to.applicationDeadline,
-      publishMode: to.publishMode,
-      publishDaysBefore: to.publishDaysBefore,
-      publishTime: to.publishTime,
-      slotTitle: title,
-      overrideVisibleFrom: visibleFrom,
-    );
-
     final slotRequired = workDetails.fold<int>(0, (s, d) => s + d.requiredCount);
     final dateOnly = DateTime(date.year, date.month, date.day);
 
+    // [BUG-수정] T-M-1: toUpdates를 미리 계산해 _createSlots의 마지막 배치에 함께 커밋
+    // — 슬롯 생성 후 별도 update() 호출 시 카운터 업데이트 실패로 totalSlots/totalRequired
+    //   불일치하는 비원자성 문제를 제거한다.
     final Map<String, dynamic> toUpdates = {
       'totalSlots': FieldValue.increment(1),
       'totalRequired': FieldValue.increment(slotRequired),
@@ -895,7 +902,22 @@ extension TOFirestore on FirestoreService {
       toUpdates['rangeStart'] = Timestamp.fromDate(dateOnly);
     }
 
-    await _firestore.collection('tos').doc(to.id).update(toUpdates);
+    await _createSlots(
+      toId: to.id,
+      dates: [date],
+      workDetails: workDetails,
+      deadlineType: to.deadlineType,
+      hoursBeforeStart: hoursBeforeStart ?? to.hoursBeforeStart ?? 2,
+      fixedDeadline: to.applicationDeadline,
+      publishMode: to.publishMode,
+      publishDaysBefore: to.publishDaysBefore,
+      publishTime: to.publishTime,
+      slotTitle: title,
+      overrideVisibleFrom: visibleFrom,
+      toRefForCounter: _firestore.collection('tos').doc(to.id),
+      toCounterUpdates: toUpdates,
+    );
+
     debugPrint('✅ [TO] 슬롯 추가 완료: ${date.toIso8601String().substring(0, 10)}');
   }
 
@@ -1033,6 +1055,10 @@ extension TOFirestore on FirestoreService {
     String? publishTime,
     String? slotTitle,
     DateTime? overrideVisibleFrom,
+    // [BUG-수정] T-M-1: 마지막 배치에 함께 커밋할 TO 카운터 업데이트를 받아
+    // 슬롯 생성과 TO 카운터 변경을 원자적으로 처리한다.
+    DocumentReference? toRefForCounter,
+    Map<String, dynamic>? toCounterUpdates,
   }) async {
     var batch = _firestore.batch();
     int count = 0;
@@ -1102,7 +1128,14 @@ extension TOFirestore on FirestoreService {
       }
     }
 
-    if (count > 0) await batch.commit();
+    // [BUG-수정] T-M-1: TO 카운터 업데이트를 마지막 배치에 포함해 원자적으로 커밋
+    // — 슬롯 생성 성공 후 TO 업데이트 실패로 totalSlots/totalRequired 불일치하는 문제 방지
+    if (toRefForCounter != null && toCounterUpdates != null) {
+      batch.update(toRefForCounter, toCounterUpdates);
+    }
+    if (count > 0 || (toRefForCounter != null && toCounterUpdates != null)) {
+      await batch.commit();
+    }
     debugPrint('✅ [TO] 슬롯 ${dates.length}개 생성 완료');
   }
 
@@ -1126,6 +1159,34 @@ extension TOFirestore on FirestoreService {
       );
     } catch (e) {
       debugPrint('⚠️ TO 취소 알림 전송 실패: $e');
+    }
+  }
+
+  // [BUG-수정] T-L-1: PENDING→REJECTED 처리 시 지원자에게 거절 알림 발송
+  // batchCloseSlots에서 슬롯 마감으로 인한 지원 거절을 개별 통지한다.
+  Future<void> _sendApplicationRejectedNotification({
+    required String applicantUid,
+    required String applicationId,
+    required String businessName,
+    required String businessId,
+    required String workType,
+    required DateTime workDate,
+    String? rejectReason,
+  }) async {
+    try {
+      await createNotification(
+        NotificationModel.createApplicationRejected(
+          userId: applicantUid,
+          businessName: businessName,
+          businessId: businessId,
+          workType: workType,
+          workDate: workDate,
+          applicationId: applicationId,
+          rejectReason: rejectReason,
+        ),
+      );
+    } catch (e) {
+      debugPrint('⚠️ 지원 거절 알림 전송 실패 (applicationId=$applicationId): $e');
     }
   }
 

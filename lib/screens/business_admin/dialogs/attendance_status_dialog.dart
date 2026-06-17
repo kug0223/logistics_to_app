@@ -351,6 +351,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   /// 이유: whereIn은 최대 30개 제한이 있어 N+1 문제를 유발할 수 있고,
   ///       당일 한 사업장의 출근 기록은 수십~수백 건 수준으로 단일 쿼리가 더 효율적이다.
   ///       applicationIds는 결과가 빈 경우 조기 반환을 위한 가드 조건으로만 사용된다.
+  ///
+  /// [BUG-수정] 야간 단기근무자 당일명단 미반영:
+  ///   근무자 앱은 work.workDate(어제) 기준으로 attendance docId를 생성하므로,
+  ///   오늘 자정 이후 퇴근하는 야간 단기근무자는 workDate가 전날로 저장됨.
+  ///   쿼리 범위를 전날(dateStart - 1일)부터 오늘 자정까지로 확장하여 이를 포함함.
   Future<Map<String, AttendanceModel>> _getAttendanceRecords(
     List<String> applicationIds,
   ) async {
@@ -358,11 +363,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
     final dateStart = DateTime(widget.date.year, widget.date.month, widget.date.day);
     final dateEnd = dateStart.add(const Duration(days: 1));
+    // [BUG-수정] 전날 야간 단기근무자 포함: workDate 조회 범위를 전날부터 시작
+    final queryRangeStart = dateStart.subtract(const Duration(days: 1));
 
     final snapshot = await FirebaseFirestore.instance
         .collection('attendance')
         .where('businessId', isEqualTo: _selectedBusinessId)
-        .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
+        .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(queryRangeStart))
         .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
         .get();
 
@@ -370,7 +377,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
     for (var doc in snapshot.docs) {
       final attendance = AttendanceModel.fromFirestore(doc);
-      attendanceMap[attendance.applicationId] = attendance;
+      // applicationIds에 포함된 근무자만 맵에 저장 (전날 기록이 오늘 명단에 섞이지 않도록 필터)
+      if (applicationIds.contains(attendance.applicationId)) {
+        attendanceMap[attendance.applicationId] = attendance;
+      }
     }
 
     return attendanceMap;
@@ -2762,12 +2772,26 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       final att = _attendanceMap[app.id];
       if (att != null) {
         // 기존 레코드 업데이트
+        // [BUG-수정] 노쇼 처리 시 wageStatus 영구 wagePending 문제:
+        //   노쇼는 실제 근무가 없으므로 급여 확정이 불필요. wageStatus를 wageConfirmed로 설정하여
+        //   급여 정산 화면 "미계산" 목록에 계속 표시되는 불편함을 제거함.
+        //   기존 레코드의 wageStatus가 아직 wagePending인 경우에만 wageConfirmed로 전환.
+        final Map<String, dynamic> updateFields = {
+          'status': AttendanceModel.statusNoShow,
+          'updatedAt': now,
+        };
+        if (att.wageStatus == AttendanceModel.wagePending) {
+          updateFields['wageStatus'] = AttendanceModel.wageConfirmed;
+          updateFields['finalWage'] = 0;
+        }
         batch.update(
           FirebaseFirestore.instance.collection('attendance').doc(att.id),
-          {'status': AttendanceModel.statusNoShow, 'updatedAt': now},
+          updateFields,
         );
       } else {
         // 레코드 없는 미출근자 → 신규 노쇼 레코드 생성
+        // [BUG-수정] 노쇼 신규 생성 시 wagePending 대신 wageConfirmed(finalWage:0)로 설정하여
+        //   급여 정산 화면 "미계산" 목록 누적 방지.
         final newRef = FirebaseFirestore.instance.collection('attendance').doc();
         newAttendanceIds[app.id] = newRef.id;
         batch.set(newRef, {
@@ -2778,7 +2802,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           'workDate': Timestamp.fromDate(widget.date),
           'workType': app.selectedWorkType,
           'status': AttendanceModel.statusNoShow,
-          'wageStatus': AttendanceModel.wagePending,
+          'wageStatus': AttendanceModel.wageConfirmed,
+          'finalWage': 0,
           'isModified': false,
           'modifyRequested': false,
           'createdAt': now,
@@ -2801,6 +2826,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
             _attendanceMap[app.id] = att.copyWith(status: AttendanceModel.statusNoShow);
           } else if (newAttendanceIds.containsKey(app.id)) {
             // 새로 생성된 attendance 로컬 반영 — 다음 _loadData() 전까지 상태 표시용
+            // [BUG-수정] 로컬 상태도 wageConfirmed/finalWage:0 으로 일치시킴
             _attendanceMap[app.id] = AttendanceModel(
               id: newAttendanceIds[app.id]!,
               applicationId: app.id,
@@ -2810,7 +2836,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
               workDate: widget.date,
               workType: app.selectedWorkType,
               status: AttendanceModel.statusNoShow,
-              wageStatus: AttendanceModel.wagePending,
+              wageStatus: AttendanceModel.wageConfirmed,
+              finalWage: 0,
               createdAt: DateTime.now(),
             );
           }

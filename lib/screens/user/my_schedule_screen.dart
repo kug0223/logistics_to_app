@@ -13,6 +13,8 @@ import '../../widgets/calendar/schedule_calendar.dart';
 import '../../widgets/calendar/schedule_card.dart';
 import '../../models/core/attendance_model.dart';
 import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/notification_badge.dart';
+import '../../screens/common/notification_screen.dart';
 import 'all_to_list_screen.dart';
 import '../../theme/app_colors.dart';
 import '../../screens/payroll/payslip_period_helper.dart';
@@ -167,6 +169,40 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     return GradientScaffold(
       title: '내 스케줄',
       onRefresh: _loadApplications,
+      // [특이사항] 스케줄 변경 승인/거절 후 캘린더 자동 갱신 — onChanged 콜백으로 _loadMonthlyAttendances 재호출
+      // GradientScaffold 기본 알림 벨 대신 커스텀 벨을 사용해 NotificationScreen pop 시 _loadApplications 재호출
+      showNotificationBell: false,
+      actions: [
+        NotificationBadge(
+          child: Material(
+            color: Colors.white.withValues(alpha: 0.2),
+            borderRadius: BorderRadius.circular(12),
+            child: Semantics(
+              label: '알림',
+              button: true,
+              child: InkWell(
+                onTap: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const NotificationScreen()),
+                  );
+                  // 알림 화면에서 스케줄 변경 승인/거절이 처리됐을 수 있으므로 캘린더 갱신
+                  if (mounted) await _loadApplications();
+                },
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: EdgeInsets.all(
+                      ResponsiveHelper.spacing(context, 8)),
+                  child: Icon(Icons.notifications_outlined,
+                      color: Colors.white,
+                      size: ResponsiveHelper.iconSize(context, 24)),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
       body: _isLoading
           ? const LoadingWidget(message: '일정을 불러오는 중...')
           : _buildContent(),

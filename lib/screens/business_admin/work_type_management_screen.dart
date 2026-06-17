@@ -236,6 +236,8 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
         .where('status', whereIn: [TOStatus.active, TOStatus.full, TOStatus.scheduled])
         .get();
 
+    // [특이사항] workType 이름 기준 매칭 — 이름 변경 이력이 있으면 affectedCount가 실제보다 적게 표시될 수 있음
+    // TO 생성 이후 workType 이름이 변경된 경우 해당 TO는 이 검사에서 누락됨
     final affectedCount = activeTOSnap.docs.where((doc) {
       final details = doc.data()['workDetails'] as List<dynamic>? ?? [];
       return details.any((d) => (d as Map<String, dynamic>)['workType'] == workType.name);

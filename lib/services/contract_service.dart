@@ -367,14 +367,22 @@ class ContractService {
 
   /// 기존 계약서에 템플릿 조항 적용 (articles가 비어있던 구 계약서용)
   ///
-  /// ⚠️ 계약서 상태(completed/voided 포함) 무관하게 articles를 덮어씀 (E-075).
-  /// 의도된 레거시 보정 용도이므로 상태 체크를 넣지 않음.
-  /// 일반 수정 경로로 재사용할 경우 completed 상태 보호 로직 추가 필요.
+  /// [BUG-수정] completed/voided 상태의 계약서는 수정 불가 — StateError 발생.
   Future<void> updateArticles({
     required String contractId,
     required List<ContractArticle> articles,
     String? templateId,
   }) async {
+    // [BUG-수정] 상태 체크: 서명 완료 또는 무효화된 계약서는 수정 금지
+    final snap = await _db.collection('employment_contracts').doc(contractId).get();
+    if (snap.exists) {
+      final contract = EmploymentContractModel.fromFirestore(snap);
+      if (contract.status == ContractStatus.completed ||
+          contract.status == ContractStatus.voided) {
+        throw StateError('서명 완료 또는 무효화된 계약서는 수정할 수 없습니다.');
+      }
+    }
+
     await _db.collection('employment_contracts').doc(contractId).update({
       'articles': articles.map((a) => a.toMap()).toList(),
       if (templateId != null) 'templateId': templateId,

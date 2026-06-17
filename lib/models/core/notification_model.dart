@@ -34,12 +34,16 @@ enum NotificationType {
   contractTerminating,      // 계약 종료 통보됨 (근무자에게)
   terminationRequested,     // 계약해지 요청됨
   terminationApproved,      // 계약해지 승인됨
+  // [특이사항] terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
+  terminationRejected,      // 계약해지 거절됨 (근무자→관리자)
   resignRequested,          // 퇴사 요청됨 (근무자→관리자)
   resignApproved,           // 퇴사 승인됨 (관리자→근무자)
   resignRejected,           // 퇴사 거절됨 (관리자→근무자)
   
   // 급여 관련
   wageConfirmed,              // 급여 정산 완료
+  // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
+  wageTransferred,            // 급여 송금 완료
   wageCancelConfirmed,        // 급여 마감 취소
   retroactiveDeductionAlert,  // 4대보험 소급 공제 안내
   
@@ -50,6 +54,7 @@ enum NotificationType {
   idCardAccessRequested,   // 신분증 열람 요청됨 (지원자에게)
   idCardAccessApproved,    // 신분증 열람 승인됨 (관리자에게)
   idCardAccessRejected,    // 신분증 열람 거절됨 (관리자에게)
+  // [특이사항] 발송 로직 미구현 — CF 스케줄러 추가 필요
   idCardAccessExpiringSoon,// 신분증 열람 권한 만료 임박
   
   // 멤버 관리
@@ -193,6 +198,9 @@ class NotificationModel {
         return 'exit_to_app';
       case NotificationType.terminationApproved:
         return 'logout';
+      // [특이사항] terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
+      case NotificationType.terminationRejected:
+        return 'block';
       // 퇴사 관련
       case NotificationType.resignRequested:
         return 'exit_to_app';
@@ -202,6 +210,9 @@ class NotificationModel {
         return 'do_not_disturb_on';
       // 급여 관련
       case NotificationType.wageConfirmed:
+        return 'payments';
+      // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
+      case NotificationType.wageTransferred:
         return 'payments';
       case NotificationType.wageCancelConfirmed:
         return 'payments';
@@ -279,12 +290,16 @@ class NotificationModel {
       case 'contractTerminating': return NotificationType.contractTerminating;
       case 'terminationRequested': return NotificationType.terminationRequested;
       case 'terminationApproved': return NotificationType.terminationApproved;
+      // [특이사항] terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
+      case 'terminationRejected': return NotificationType.terminationRejected;
       // 퇴사 관련
       case 'resignRequested': return NotificationType.resignRequested;
       case 'resignApproved': return NotificationType.resignApproved;
       case 'resignRejected': return NotificationType.resignRejected;
       // 급여 관련
       case 'wageConfirmed': return NotificationType.wageConfirmed;
+      // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
+      case 'wageTransferred': return NotificationType.wageTransferred;
       case 'wageCancelConfirmed': return NotificationType.wageCancelConfirmed;
       case 'retroactiveDeductionAlert': return NotificationType.retroactiveDeductionAlert;
       // 리뷰
@@ -329,12 +344,16 @@ class NotificationModel {
       case NotificationType.contractTerminating: return 'contractTerminating';
       case NotificationType.terminationRequested: return 'terminationRequested';
       case NotificationType.terminationApproved: return 'terminationApproved';
+      // [특이사항] terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
+      case NotificationType.terminationRejected: return 'terminationRejected';
       // 퇴사 관련
       case NotificationType.resignRequested: return 'resignRequested';
       case NotificationType.resignApproved: return 'resignApproved';
       case NotificationType.resignRejected: return 'resignRejected';
       // 급여 관련
       case NotificationType.wageConfirmed: return 'wageConfirmed';
+      // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
+      case NotificationType.wageTransferred: return 'wageTransferred';
       case NotificationType.wageCancelConfirmed: return 'wageCancelConfirmed';
       case NotificationType.retroactiveDeductionAlert: return 'retroactiveDeductionAlert';
       // 리뷰
@@ -872,6 +891,30 @@ class NotificationModel {
     );
   }
 
+  /// 계약해지 거절 알림 생성 (해지 요청자·관리자에게)
+  /// [특이사항] terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
+  static NotificationModel createTerminationRejected({
+    required String userId,
+    required String businessName,
+    required String businessId,
+    required String applicationId,
+    String? rejectReason,
+  }) {
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.terminationRejected,
+      title: '계약해지 거절',
+      body: '$businessName의 계약해지 요청이 거절되었습니다.${rejectReason != null ? '\n사유: $rejectReason' : ''}',
+      data: {
+        'applicationId': applicationId,
+        'businessId': businessId,
+        'action': 'applicationDetail',
+      },
+      createdAt: DateTime.now(),
+    );
+  }
+
   /// 퇴사 거절 알림 생성 (근무자에게)
   static NotificationModel createResignRejected({
     required String userId,
@@ -1011,6 +1054,32 @@ class NotificationModel {
     );
   }
 
+  /// 급여 송금 완료 알림 생성 (지원자에게) — [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
+  static NotificationModel createWageTransferred({
+    required String userId,
+    required String workerName,
+    required String businessName,
+    required int finalWage,
+    String? applicationId,
+  }) {
+    final formattedWage = finalWage.toString().replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (Match m) => '${m[1]},',
+    );
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.wageTransferred,
+      title: '급여 송금 완료',
+      body: '[$businessName] $workerName님의 급여 $formattedWage원이 송금 처리되었습니다.',
+      createdAt: DateTime.now(),
+      data: {
+        if (applicationId != null) 'applicationId': applicationId,
+        'screen': 'wageTransferred',
+      },
+    );
+  }
+
   /// 급여 정산 완료 알림 생성 (지원자에게)
   static NotificationModel createWageConfirmed({
     required String userId,
@@ -1054,6 +1123,7 @@ class NotificationModel {
       type: NotificationType.contractExpiringReminder,
       title: '계약 만료 임박',
       body: '$workerName님의 계약이 ${expiryDate.month}/${expiryDate.day}에 만료됩니다. 연장 또는 종료를 선택해 주세요.',
+      // [특이사항] businessName 미포함 — 알림 카드에서 사업장명 표시가 필요하다면 추후 data에 추가 필요
       data: {
         'applicationId': applicationId,
         'expiryDate': expiryDate.toIso8601String(),

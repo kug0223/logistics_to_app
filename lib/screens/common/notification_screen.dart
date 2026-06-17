@@ -330,11 +330,13 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       case NotificationType.terminationApproved:
       case NotificationType.resignApproved:
+      // [특이사항] terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
+      case NotificationType.terminationRejected:
       case NotificationType.resignRejected:
         if (isUser) {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
+            MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
           );
         } else {
           Navigator.push(
@@ -407,6 +409,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
       //   모두 근무자(isUser)에게만 발송되므로 isUser 분기 없이 단일 경로로 처리
       // ═══════════════════════════════════════════════════════════
       case NotificationType.wageConfirmed:
+      // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
+      case NotificationType.wageTransferred:
       case NotificationType.wageCancelConfirmed:
       case NotificationType.retroactiveDeductionAlert:
         Navigator.push(

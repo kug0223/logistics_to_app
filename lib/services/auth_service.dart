@@ -5,8 +5,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import '../models/core/user_model.dart';
-import '../utils/encryption_helper.dart';
 import '../utils/toast_helper.dart';
+import 'fcm_service.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -353,6 +353,8 @@ class AuthService {
   }
 
   // ⭐ NEW: 비밀번호 재설정 이메일 발송
+  /// @deprecated 시스템 이메일 체계([username]@ALfit-system.com)와 호환되지 않음.
+  /// [특이사항] 비밀번호 찾기는 Cloud Functions sendPasswordResetCode 방식으로 처리됨
   Future<void> sendPasswordResetEmail(String email) async {
     try {
       await _auth.sendPasswordResetEmail(email: email);
@@ -390,19 +392,24 @@ class AuthService {
       );
       await user.reauthenticateWithCredential(credential);
 
-      // 2. 탈퇴 기록 보존 (재가입 제한용) — Phase 1 최소 구현
+      // [BUG-수정] A-M-1: FCM 토큰을 Firestore users 문서 삭제 전에 제거
+      // 삭제 후 clearToken() 호출 시 users 문서가 없어 update() 오류 발생하던 문제 수정
+      await FCMService().clearToken();
+
+      // [BUG-수정] A-H-1: 탈퇴 기록을 전화번호 해시로 저장 (재가입 30일 제한용)
+      // 기존 주민번호는 마스킹 저장되어 복호화 불가 → 해시 생성 불가 → 재가입 제한 비작동
+      // 전화번호(phone 필드)는 평문 저장되어 있어 해시 생성 가능
       final userDoc = await _firestore.collection('users').doc(user.uid).get();
       if (userDoc.exists) {
         final data = userDoc.data()!;
-        final residentNumber = EncryptionHelper.decrypt(data['residentNumber']);
-        if (residentNumber != null && residentNumber.isNotEmpty) {
-          // 주민번호 해시 생성 (원본 저장 안 함)
-          final bytes = utf8.encode(residentNumber);
-          final hash = sha256.convert(bytes).toString();
+        final phone = data['phone'] as String?;
+        if (phone != null && phone.isNotEmpty) {
+          // 전화번호 해시 생성 (원본 저장 안 함)
+          final phoneHash = sha256.convert(utf8.encode(phone)).toString();
 
           final isBlacklisted = data['isBlacklisted'] == true;
           await _firestore.collection('deleted_accounts').add({
-            'residentNumberHash': hash,
+            'phoneHash': phoneHash,
             'deletedAt': FieldValue.serverTimestamp(),
             // 블랙리스트면 슈퍼관리자가 직접 해제 전까지 차단
             'canReregisterAt': isBlacklisted
@@ -416,7 +423,10 @@ class AuthService {
         }
       }
 
-      // 3. Storage 사용자 파일 삭제 (신분증, 통장 등)
+      // 3. Firestore 사용자 문서 삭제 (Storage URL 참조 제거 먼저 — broken URL 방지)
+      await _firestore.collection('users').doc(user.uid).delete();
+
+      // 4. Storage 사용자 파일 삭제 (신분증, 통장 등)
       try {
         final storageRef = FirebaseStorage.instance.ref('users/${user.uid}');
         final listResult = await storageRef.listAll();
@@ -433,7 +443,7 @@ class AuthService {
         debugPrint('⚠️ Storage 파일 삭제 실패 (계속 진행): $storageErr');
       }
 
-      // 4. 연관 컬렉션 개인정보 정리 (개인정보보호법 — 탈퇴 시 삭제 의무)
+      // 5. 연관 컬렉션 개인정보 정리 (개인정보보호법 — 탈퇴 시 삭제 의무)
       // notifications: 본인 알림 전체 삭제 (페이지네이션)
       try {
         bool hasMoreNotifs = true;
@@ -519,9 +529,6 @@ class AuthService {
           }
         }
       } catch (_) {}
-
-      // 5. Firestore 사용자 문서 삭제
-      await _firestore.collection('users').doc(user.uid).delete();
 
       // 6. Firebase Auth 계정 삭제
       await user.delete();

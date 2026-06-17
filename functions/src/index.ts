@@ -2475,6 +2475,8 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         // 관리자 전원에게 알림
         for (const adminId of adminIds) {
           const notifRef = db.collection("notifications").doc();
+          // [특이사항] businessId 미포함 — notification_screen.dart에서 userProvider.effectiveBusinessId로 폴백 처리 중
+          // data 필드에 businessId 직접 참조 경로 추가 시 누락 이슈 발생 가능
           tx.set(notifRef, {
             userId: adminId,
             type: "contractExpiringReminder",
@@ -2513,10 +2515,16 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       const oldEndDate = (app.workEndDate as Timestamp).toDate();
       const origWorkDate = (app.workDate as Timestamp).toDate();
 
+      // [BUG-FIX] L-4: Use desiredStartDate (if present) as the base for month calculation,
+      // matching Flutter's createRenewedApplication() logic (application_firestore.dart:2236).
+      const startDate = app.desiredStartDate
+        ? (app.desiredStartDate as Timestamp).toDate()
+        : origWorkDate;
+
       // Flutter와 동일한 개월 수 기반 계산
       const contractMonths =
-        (oldEndDate.getFullYear() - origWorkDate.getFullYear()) * 12 +
-        (oldEndDate.getMonth() - origWorkDate.getMonth());
+        (oldEndDate.getFullYear() - startDate.getFullYear()) * 12 +
+        (oldEndDate.getMonth() - startDate.getMonth());
       const renewalMonths = contractMonths > 0 ? contractMonths : 1;
 
       // 새 계약 시작: 다음날
@@ -2557,6 +2565,11 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         terminationRequestedByUid: null,
         terminationRespondedAt: null,
         terminationRejectReason: null,
+        // [BUG-FIX] H-3: Reset leaveDates and extraWorkDates so previous contract's
+        // leave/extra-work days are not inherited into the renewed contract.
+        // Matches Flutter's createRenewedApplication() (application_firestore.dart:2236-2238).
+        leaveDates: [],
+        extraWorkDates: [],
       });
       // 기존 Application 갱신 — 배치 실패 시 둘 다 미커밋 → 중복 연장 방지
       renewBatch.update(doc.ref, {renewalDecision: "EXTEND"});
@@ -2645,6 +2658,9 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           resignStatus: "AUTO_APPROVED",
           resignApprovedAt: now,
           actualResignDate: Timestamp.fromDate(actualResignDate),
+          // [BUG-FIX] L-1: Set status to CANCELED so the worker is removed from
+          // the active worker list after the resignation date passes.
+          status: "CANCELED",
         });
       });
 
@@ -2701,6 +2717,9 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           terminationStatus: "AUTO_APPROVED",
           terminationRespondedAt: now,
           terminationEffectiveDate: Timestamp.fromDate(effectiveDate),
+          // [BUG-FIX] L-1: Set status to CANCELED so the worker is removed from
+          // the active worker list after the termination effective date passes.
+          status: "CANCELED",
         });
       });
 

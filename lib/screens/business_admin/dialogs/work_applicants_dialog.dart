@@ -1082,7 +1082,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                             Flexible(
                               child: Text(
                                 app.desiredStartDate != null
-                                    ? '희망: ${app.desiredStartDate!.month}/${app.desiredStartDate!.day}~ (${app.workEndDate!.month}/${app.workEndDate!.day}까지)'
+                                    ? '희망: ${app.desiredStartDate!.month}/${app.desiredStartDate!.day}~'
+                                        '${app.workEndDate != null ? " (${app.workEndDate!.month}/${app.workEndDate!.day}까지)" : ""}'
                                     : '장기: ${app.workPeriodDisplay}',
                                 style: ResponsiveHelper.smallStyle(
                                   context,
@@ -1961,8 +1962,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           if (affectedTOIds.isNotEmpty) {
             _affectedOtherTOIds.addAll(affectedTOIds);
           }
+          // [BUG-수정 M-1] updateApplicationStatus 완료 후 Firestore에는 computedWorkEndDate가
+          // 저장되지만 로컬 app 객체는 구버전이라 workEndDate가 null일 수 있음.
+          // 서버에서 최신 데이터를 재조회해 contractEnd 공백 발급 버그를 방지.
+          final freshAppDoc = await FirebaseFirestore.instance
+              .collection('applications')
+              .doc(appId)
+              .get(const GetOptions(source: Source.server));
+          final freshApp = ApplicationModel.fromMap(freshAppDoc.data()!, freshAppDoc.id);
           final contract = await ContractService().findOrCreateContract(
-            application: app,
+            application: freshApp,
             business: business,
             worker: user,
             workDetail: widget.work,

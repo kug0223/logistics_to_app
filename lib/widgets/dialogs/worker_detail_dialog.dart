@@ -1,5 +1,6 @@
 ﻿// lib/widgets/dialogs/worker_detail_dialog.dart
 // 공통 근무자/지원자 상세 다이얼로그
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -1662,10 +1663,19 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         return;
       }
 
+      // [BUG-수정 M-1] updateApplicationStatus 완료 후 Firestore에는 computedWorkEndDate가
+      // 저장되지만 로컬 app 객체는 구버전이라 workEndDate가 null일 수 있음.
+      // 서버에서 최신 데이터를 재조회해 contractEnd 공백 발급 버그를 방지.
+      final freshAppDoc = await FirebaseFirestore.instance
+          .collection('applications')
+          .doc(app.id)
+          .get(const GetOptions(source: Source.server));
+      final freshApp = ApplicationModel.fromMap(freshAppDoc.data()!, freshAppDoc.id);
+
       // findOrCreateContract: 기존 번들 계약서가 있으면 슬롯 추가,
       // 없으면 신규 생성. 중복 방지 + 단기 번들링 처리.
       final contract = await ContractService().findOrCreateContract(
-        application: app,
+        application: freshApp,
         business: business,
         worker: widget.user,
         workDetail: workDetail,

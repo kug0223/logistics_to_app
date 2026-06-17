@@ -789,6 +789,44 @@ extension ApplicationFirestore on FirestoreService {
         }
       }
 
+      // [BUG-수정] 확정 취소 시 생성된 계약서 무효화
+      // CONTRACT_PENDING → PENDING 롤백 시 연결된 계약서(pending_employer / pending_worker / draft)를
+      // voided로 전환한다. 그렇지 않으면 지원자 화면에 "서명 필요" 계약서가 유령 상태로 남는다.
+      if (status == AppStatus.pending &&
+          AppStatus.confirmedStatuses.contains(prevStatus)) {
+        const voidTargetStatuses = ['pending_employer', 'pending_worker', 'draft'];
+
+        // 장기 계약서: applicationId 직접 매칭
+        final contractQ1 = await _firestore
+            .collection('employment_contracts')
+            .where('applicationId', isEqualTo: applicationId)
+            .where('status', whereIn: voidTargetStatuses)
+            .get(const GetOptions(source: Source.server));
+        for (final doc in contractQ1.docs) {
+          batch.update(doc.reference, {
+            'status': 'voided',
+            'contractVoidedAt': FieldValue.serverTimestamp(),
+            'voidReason': 'CONFIRMATION_CANCELED',
+          });
+        }
+
+        // 단기 번들 계약서: applicationIds 배열 포함 매칭
+        final contractQ2 = await _firestore
+            .collection('employment_contracts')
+            .where('applicationIds', arrayContains: applicationId)
+            .where('status', whereIn: voidTargetStatuses)
+            .get(const GetOptions(source: Source.server));
+        for (final doc in contractQ2.docs) {
+          // Q1과 중복 처리 방지 (장기 계약서가 applicationIds에도 포함된 경우)
+          if (contractQ1.docs.any((d) => d.id == doc.id)) continue;
+          batch.update(doc.reference, {
+            'status': 'voided',
+            'contractVoidedAt': FieldValue.serverTimestamp(),
+            'voidReason': 'CONFIRMATION_CANCELED',
+          });
+        }
+      }
+
       await batch.commit();
       if (toId != null) clearCache(toId: toId);
 
@@ -1260,6 +1298,8 @@ extension ApplicationFirestore on FirestoreService {
     if (applicationIds.isEmpty) return BatchResult(success: 0, failed: 0);
     int success = 0;
     int failed = 0;
+    // [특이사항] failedIds로 부분 실패 시 재처리 대상 applicationId 특정 가능
+    final List<String> failedIds = [];
     for (final id in applicationIds) {
       try {
         await updateApplicationStatus(
@@ -1271,9 +1311,10 @@ extension ApplicationFirestore on FirestoreService {
       } catch (e) {
         debugPrint('❌ 지원서 일괄 확정 실패 ($id): $e');
         failed++;
+        failedIds.add(id); // 실패한 applicationId 기록
       }
     }
-    return BatchResult(success: success, failed: failed);
+    return BatchResult(success: success, failed: failed, failedIds: failedIds);
   }
 
   // ───────────────────────────────────────────────────────
@@ -1482,23 +1523,52 @@ extension ApplicationFirestore on FirestoreService {
       }
 
       // [CAPACITY-GUARD] 정원 서버 측 검증
+      // [BUG-수정] T-H-1: flex(단기) TO는 슬롯별 workTypeCounts를 관리하므로
+      // slotId가 있을 때는 슬롯 문서를 읽어 confirmedCount를 비교해야 함.
+      // TO 문서의 workTypeConfirmedCounts는 flex TO에서 갱신되지 않아 항상 0으로 읽혀
+      // 병렬 일괄승인 시 정원 초과가 차단되지 않는 버그를 수정.
       final freshData = fresh.data()!;
       final toIdFresh = freshData['toId'] as String?;
+      final slotIdFresh = freshData['slotId'] as String?;
       final selectedWorkType = freshData['selectedWorkType'] as String?;
       if (toIdFresh != null && selectedWorkType != null) {
-        final toRef = _firestore.collection('tos').doc(toIdFresh);
-        final toFresh = await tx.get(toRef);
-        if (toFresh.exists) {
-          final confirmedCounts = toFresh.data()?['workTypeConfirmedCounts'] as Map<String, dynamic>?;
-          final workTypeConfirmed = (confirmedCounts?[selectedWorkType] as num?)?.toInt() ?? 0;
-          final rawWorkDetails = toFresh.data()?['workDetails'] as List<dynamic>? ?? [];
-          for (final wd in rawWorkDetails.cast<Map<String, dynamic>>()) {
-            if (wd['workType'] == selectedWorkType) {
-              final workTypeRequired = (wd['requiredCount'] as num?)?.toInt() ?? 0;
-              if (workTypeRequired > 0 && workTypeConfirmed >= workTypeRequired) {
-                throw Exception('정원이 초과되었습니다. (필요: $workTypeRequired명, 현재: $workTypeConfirmed명 확정)');
+        if (slotIdFresh != null) {
+          // flex TO: 슬롯 문서의 workTypeCounts.$workType.confirmedCount 를 사용
+          final slotRef = _firestore
+              .collection('tos').doc(toIdFresh)
+              .collection('slots').doc(slotIdFresh);
+          final slotFresh = await tx.get(slotRef);
+          if (slotFresh.exists) {
+            final rawWorkDetails = slotFresh.data()?['workDetails'] as List<dynamic>? ?? [];
+            for (final wd in rawWorkDetails.cast<Map<String, dynamic>>()) {
+              if (wd['workType'] == selectedWorkType) {
+                final workTypeRequired = (wd['requiredCount'] as num?)?.toInt() ?? 0;
+                final rawCounts = slotFresh.data()?['workTypeCounts'] as Map<String, dynamic>?;
+                final workTypeConfirmed =
+                    ((rawCounts?[selectedWorkType] as Map<String, dynamic>?)?['confirmedCount'] as num?)?.toInt() ?? 0;
+                if (workTypeRequired > 0 && workTypeConfirmed >= workTypeRequired) {
+                  throw Exception('정원이 초과되었습니다. (필요: $workTypeRequired명, 현재: $workTypeConfirmed명 확정)');
+                }
+                break;
               }
-              break;
+            }
+          }
+        } else {
+          // 정기 TO: TO 문서의 workTypeConfirmedCounts 를 사용
+          final toRef = _firestore.collection('tos').doc(toIdFresh);
+          final toFresh = await tx.get(toRef);
+          if (toFresh.exists) {
+            final confirmedCounts = toFresh.data()?['workTypeConfirmedCounts'] as Map<String, dynamic>?;
+            final workTypeConfirmed = (confirmedCounts?[selectedWorkType] as num?)?.toInt() ?? 0;
+            final rawWorkDetails = toFresh.data()?['workDetails'] as List<dynamic>? ?? [];
+            for (final wd in rawWorkDetails.cast<Map<String, dynamic>>()) {
+              if (wd['workType'] == selectedWorkType) {
+                final workTypeRequired = (wd['requiredCount'] as num?)?.toInt() ?? 0;
+                if (workTypeRequired > 0 && workTypeConfirmed >= workTypeRequired) {
+                  throw Exception('정원이 초과되었습니다. (필요: $workTypeRequired명, 현재: $workTypeConfirmed명 확정)');
+                }
+                break;
+              }
             }
           }
         }
@@ -2248,6 +2318,19 @@ extension ApplicationFirestore on FirestoreService {
     }
     await batch.commit();
     if (original.toId != null) clearCache(toId: original.toId!);
+
+    // [BUG-수정] N-M-4: 계약 연장 확정 후 근무자 알림 미발송 버그 수정
+    // 배치 커밋 완료 후 근무자(original.uid)에게 contractRenewed 알림 발송
+    // 서비스 레이어에서 통합 처리하여 호출 측이 알림 발송을 누락하는 것을 방지
+    if (original.uid.isNotEmpty) {
+      await createNotification(NotificationModel.createContractRenewed(
+        userId: original.uid,
+        businessName: original.businessName,
+        newEndDate: newEndDate,
+        applicationId: newRef.id,
+      ));
+    }
+
     return ApplicationModel.fromMap(data, newRef.id);
   }
 

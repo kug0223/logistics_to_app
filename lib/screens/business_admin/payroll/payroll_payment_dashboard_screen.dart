@@ -448,16 +448,33 @@ class _PayrollPaymentDashboardScreenState
     setState(() => _isTransferring = true);
     try {
       if (recs.length == 1) {
+        final r = recs.first;
+        final wd = r.wageDetail;
+        final net = wd?.effectiveNetWage ?? 0;
+        // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
         await _payService.markTransferred(
-          attendanceId: recs.first.id,
-          processedBy: uid,
-          transferNote: note,
+          attendanceId:  r.id,
+          processedBy:   uid,
+          transferNote:  note,
+          workerUserId:  r.userId,
+          workerName:    workerName,
+          businessName:  r.businessName,
+          finalWage:     net,
+          applicationId: r.applicationId,
         );
       } else {
+        // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
+        final nameByUid = Map.fromEntries(
+          _userBankCache.entries.map((e) => MapEntry(e.key, e.value['name'] ?? e.key)),
+        );
         await _payService.markTransferredBatch(
-          attendanceIds: recs.map((r) => r.id).toList(),
-          processedBy: uid,
-          transferNote: note,
+          attendanceIds:     recs.map((r) => r.id).toList(),
+          processedBy:       uid,
+          transferNote:      note,
+          notificationInfos: buildTransferNotificationInfos(
+            records:         recs,
+            workerNameByUid: nameByUid,
+          ),
         );
       }
       if (mounted) {
@@ -489,12 +506,23 @@ class _PayrollPaymentDashboardScreenState
     }
     final note = await _showTransferNoteDialog();
     if (!mounted) return;
+    // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송 — 선택된 레코드 목록 수집
+    final selectedRecords =
+        _pendingRecords.where((r) => _selectedIds.contains(r.id)).toList();
+    final nameByUid = Map.fromEntries(
+      _userBankCache.entries.map((e) => MapEntry(e.key, e.value['name'] ?? e.key)),
+    );
+
     setState(() => _isTransferring = true);
     try {
       await _payService.markTransferredBatch(
-        attendanceIds: _selectedIds.toList(),
-        processedBy: uid,
-        transferNote: note,
+        attendanceIds:     _selectedIds.toList(),
+        processedBy:       uid,
+        transferNote:      note,
+        notificationInfos: buildTransferNotificationInfos(
+          records:         selectedRecords,
+          workerNameByUid: nameByUid,
+        ),
       );
       if (mounted) {
         ToastHelper.showSuccess('${_selectedIds.length}건 이체 완료 처리되었습니다');

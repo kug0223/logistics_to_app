@@ -464,13 +464,14 @@ extension AttendanceFirestore on FirestoreService {
   }
 
   /// 지원자의 스케줄 변경 요청 조회
+  // [BUG-수정] 캐시 데이터로 중복 요청 방어 로직이 오동작하지 않도록 항상 서버에서 최신 상태 조회
   Future<List<ScheduleChangeRequestModel>> getMyScheduleChangeRequests(String applicantUid) async {
     try {
       final snapshot = await _firestore
           .collection('schedule_change_requests')
           .where('applicantUid', isEqualTo: applicantUid)
           .orderBy('requestedAt', descending: true)
-          .get();
+          .get(const GetOptions(source: Source.server));
 
       return snapshot.docs
           .map((doc) => ScheduleChangeRequestModel.fromMap(doc.data(), doc.id))
@@ -608,6 +609,13 @@ extension AttendanceFirestore on FirestoreService {
 
       debugPrint('✅ 스케줄 변경 요청 승인 완료: $requestId');
 
+      // [BUG-수정 N-H-2] 배치 커밋 후 지원자 TTL 캐시 무효화.
+      // 트랜잭션에서 leaveDates/extraWorkDates가 변경됐지만 캐시가 살아 있으면
+      // 지원자 화면에서 최대 1분간 구 데이터가 표시되는 문제 수정.
+      if (request != null) {
+        invalidateMyApplicationsCache(request!.applicantUid);
+      }
+
       // 🔔 알림 생성 (트랜잭션 외부 — 알림 실패가 승인을 롤백하지 않도록)
       if (request != null) {
         _sendScheduleChangeApprovedNotification(
@@ -656,6 +664,12 @@ extension AttendanceFirestore on FirestoreService {
       });
 
       debugPrint('✅ 스케줄 변경 요청 거절 완료: $requestId');
+
+      // [BUG-수정 N-H-3] 거절 완료 후 지원자 TTL 캐시 무효화.
+      // 캐시가 만료되기 전까지 요청 상태가 여전히 PENDING으로 보이는 문제 수정.
+      if (request != null) {
+        invalidateMyApplicationsCache(request!.applicantUid);
+      }
 
       if (request != null) {
         _sendScheduleChangeRejectedNotification(

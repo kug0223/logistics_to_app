@@ -117,10 +117,12 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       final subBatch = FirebaseFirestore.instance.batch();
       for (final doc in workTypesSnapshot.docs) { subBatch.delete(doc.reference); }
       for (final doc in memberDocs.docs) { subBatch.delete(doc.reference); }
-      if (workTypesSnapshot.docs.isNotEmpty || memberDocs.docs.isNotEmpty) {
-        await subBatch.commit();
-      }
-      await bizRef.delete();
+      // [BUG-수정] T-H-2: bizRef.delete()를 subBatch에 포함시켜 원자적 커밋.
+      // 기존에는 subBatch.commit() 성공 후 별도 await bizRef.delete()를 호출해,
+      // 두 번째 작업 실패 시 서브컬렉션은 삭제됐으나 비즈니스 문서가 남는 불일치 발생.
+      // workTypes + members 최대합이 500 ops를 넘기 어려우므로 단일 배치로 통합.
+      subBatch.delete(bizRef); // 부모 문서도 배치에 포함 — 원자적 삭제 보장
+      await subBatch.commit();
 
       // 3. Firestore 삭제 성공 후 Storage 정리 (실패해도 고아 파일만 남음)
       if (business.mainImageUrl != null) {

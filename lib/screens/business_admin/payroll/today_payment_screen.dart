@@ -331,10 +331,16 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
 
     setState(() => _isProcessing = true);
     try {
+      // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
       await _payService.markTransferred(
-        attendanceId: record.id,
-        processedBy:  uid,
-        transferNote: note,
+        attendanceId:  record.id,
+        processedBy:   uid,
+        transferNote:  note,
+        workerUserId:  record.userId,
+        workerName:    name,
+        businessName:  record.businessName,
+        finalWage:     net,
+        applicationId: record.applicationId,
       );
       if (mounted) {
         ToastHelper.showSuccess('송금 처리되었습니다');
@@ -372,12 +378,19 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
     final note = await _showNoteDialog();
     if (!mounted) return;
 
+    // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송 — 선택된 레코드 목록 수집
+    final selectedRecords = _records.where((r) => _selectedIds.contains(r.id)).toList();
+
     setState(() => _isProcessing = true);
     try {
       await _payService.markTransferredBatch(
-        attendanceIds: _selectedIds.toList(),
-        processedBy:   uid,
-        transferNote:  note,
+        attendanceIds:     _selectedIds.toList(),
+        processedBy:       uid,
+        transferNote:      note,
+        notificationInfos: buildTransferNotificationInfos(
+          records:          selectedRecords,
+          workerNameByUid:  _nameCache,
+        ),
       );
       if (mounted) {
         ToastHelper.showSuccess('${_selectedIds.length}건 송금 처리되었습니다');

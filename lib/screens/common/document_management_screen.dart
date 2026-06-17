@@ -794,11 +794,11 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // ✅ Storage에서 통장사본 이미지 파일 삭제
-      if (user.bankbookImageUrl != null) {
-        await _storageService.deleteImageByUrl(user.bankbookImageUrl!);
-      }
+      // [BUG-수정] CLAUDE.md 규칙: Firestore 먼저 삭제 후 Storage 삭제
+      // 1. Storage URL 미리 수집
+      final oldBankbookUrl = user.bankbookImageUrl;
 
+      // 2. Firestore 먼저 업데이트 (실패 시 Storage는 건드리지 않음)
       await _firestoreService.updateUserDocument(
         user.uid,
         {
@@ -808,6 +808,11 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
           'bankbookImageUrl': null,
         },
       );
+
+      // 3. Firestore 성공 후 Storage 삭제
+      if (oldBankbookUrl != null) {
+        await _storageService.deleteImageByUrl(oldBankbookUrl);
+      }
 
       await userProvider.refreshCurrentUser();
       if (!mounted) return;

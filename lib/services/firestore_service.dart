@@ -38,12 +38,19 @@ part 'firestore/id_card_firestore.dart';
 part 'firestore/worker_location_firestore.dart';
 
 /// 배치 처리 결과
+/// [특이사항] failedIds로 부분 실패 시 재처리 대상 applicationId 특정 가능
 class BatchResult {
   final int success;
   final int failed;
-  
-  BatchResult({required this.success, required this.failed});
-  
+  // 실패한 applicationId 목록 — 부분 실패 시 재처리 대상 특정에 사용
+  final List<String> failedIds;
+
+  BatchResult({
+    required this.success,
+    required this.failed,
+    List<String>? failedIds,
+  }) : failedIds = failedIds ?? [];
+
   int get total => success + failed;
   bool get hasFailures => failed > 0;
 }
@@ -989,12 +996,57 @@ class FirestoreService {
       //   isWorkingOnDate()가 actualResignDate 이후를 자동으로 false 처리 → orphan 없음.
       // · _cleanupApplicationRelatedData 미호출:
       //   approveResignation과 동일 이유 — 예고된 종료이므로 pending 요청 정리는 관리자 위임.
-      await _firestore.collection('applications').doc(applicationId).update({
+
+      // [BUG-수정] M-3: 해지 승인 시 CONTRACT_PENDING 계약서 voided 전환 누락 수정
+      // 배치 커밋 전 계약서를 미리 조회하여 원자적 업데이트 보장
+      DocumentSnapshot<Map<String, dynamic>>? contractDoc;
+      final cq1 = await _firestore
+          .collection('employment_contracts')
+          .where('applicationId', isEqualTo: applicationId)
+          .where('status', whereIn: ['pending_employer', 'pending_worker'])
+          .limit(1)
+          .get(const GetOptions(source: Source.server));
+      if (cq1.docs.isNotEmpty) {
+        contractDoc = cq1.docs.first;
+      } else {
+        final cq2 = await _firestore
+            .collection('employment_contracts')
+            .where('applicationIds', arrayContains: applicationId)
+            .where('status', whereIn: ['pending_employer', 'pending_worker'])
+            .limit(1)
+            .get(const GetOptions(source: Source.server));
+        if (cq2.docs.isNotEmpty) contractDoc = cq2.docs.first;
+      }
+
+      // [BUG-수정] H-2: 계약해지 승인 시 TO totalConfirmed 미감소 버그 수정
+      // cancelConfirmedApplication과 동일하게 batch를 사용하여 원자적으로 카운터 감소
+      final batch = _firestore.batch();
+      batch.update(_firestore.collection('applications').doc(applicationId), {
         'terminationStatus': AppStatus.approved,
         'terminationRespondedAt': FieldValue.serverTimestamp(),
         'actualResignDate': Timestamp.fromDate(effectiveDate),
         'status': AppStatus.canceled,
       });
+
+      // H-2: toId가 있고 이전 상태가 확정(CONFIRMED/CONTRACT_PENDING)인 경우에만 카운터 감소
+      final toId = app.toId;
+      final slotId = app.slotId;
+      if (toId != null &&
+          AppStatus.confirmedStatuses.contains(app.status)) {
+        _decrementTOConfirmed(batch, toId, slotId, workType: app.selectedWorkType);
+      }
+
+      // M-3: 서명 대기 중인 계약서를 voided로 전환
+      if (contractDoc != null) {
+        batch.update(contractDoc.reference, {
+          'status': 'voided',
+          'contractVoidedAt': FieldValue.serverTimestamp(),
+          'voidReason': 'TERMINATION',
+        });
+      }
+
+      await batch.commit();
+      if (toId != null) clearCache(toId: toId);
 
       // [E16] 해지 승인 후 근무자의 캐시를 무효화하여 캘린더/스케줄 화면에서 즉시 반영
       invalidateMyApplicationsCache(app.uid);
@@ -1009,6 +1061,19 @@ class FirestoreService {
           actualResignDate: effectiveDate,
         );
         await createNotification(notification);
+      }
+
+      // [BUG-수정] N-H-1: 계약해지 승인 시 근무자 본인에게 알림 미발송 버그 수정
+      // 관리자(requestedByUid)에게만 발송하고 실제 근무자(app.uid)에게는 발송하지 않던 문제 수정
+      if (app.uid.isNotEmpty) {
+        final workerNotification = NotificationModel.createTerminationApproved(
+          userId: app.uid,
+          businessName: app.businessName,
+          businessId: app.businessId,
+          applicationId: applicationId,
+          actualResignDate: effectiveDate,
+        );
+        await createNotification(workerNotification);
       }
 
       debugPrint('✅ 계약해지 승인: $applicationId');
@@ -1046,11 +1111,10 @@ class FirestoreService {
         invalidateMyApplicationsCache(workerUid);
       }
       // 해지 요청자(관리자)에게 거절 알림 전송
+      // [특이사항] terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
       final requestedByUid = appData['terminationRequestedByUid'] as String?;
       if (requestedByUid != null && requestedByUid.isNotEmpty) {
-        // terminationRejected 알림 타입이 없어 resignRejected를 임시 사용.
-        // 관리자 화면에서 "계약해지 거절됨" 의미로 해석 가능.
-        await createNotification(NotificationModel.createResignRejected(
+        await createNotification(NotificationModel.createTerminationRejected(
           userId: requestedByUid,
           businessName: appData['businessName'] as String? ?? '',
           businessId: appData['businessId'] as String? ?? '',
@@ -1142,13 +1206,58 @@ class FirestoreService {
 
       final actualResignDate = app.resignRequestDate ?? DateTime.now();
 
-      await _firestore.collection('applications').doc(applicationId).update({
+      // [BUG-수정] M-3: 퇴사 승인 시 CONTRACT_PENDING 계약서 voided 전환 누락 수정
+      // 배치 커밋 전 계약서를 미리 조회하여 원자적 업데이트 보장
+      DocumentSnapshot<Map<String, dynamic>>? contractDoc;
+      final cq1 = await _firestore
+          .collection('employment_contracts')
+          .where('applicationId', isEqualTo: applicationId)
+          .where('status', whereIn: ['pending_employer', 'pending_worker'])
+          .limit(1)
+          .get(const GetOptions(source: Source.server));
+      if (cq1.docs.isNotEmpty) {
+        contractDoc = cq1.docs.first;
+      } else {
+        final cq2 = await _firestore
+            .collection('employment_contracts')
+            .where('applicationIds', arrayContains: applicationId)
+            .where('status', whereIn: ['pending_employer', 'pending_worker'])
+            .limit(1)
+            .get(const GetOptions(source: Source.server));
+        if (cq2.docs.isNotEmpty) contractDoc = cq2.docs.first;
+      }
+
+      // [BUG-수정] H-2: 퇴사 승인 시 TO totalConfirmed 미감소 버그 수정
+      // 지원서 상태 업데이트를 batch로 처리하여 TO 카운터와 계약서를 원자적으로 갱신
+      final approveBatch = _firestore.batch();
+      approveBatch.update(_firestore.collection('applications').doc(applicationId), {
         'resignStatus': AppStatus.approved,
         'resignApprovedAt': FieldValue.serverTimestamp(),
         'resignApprovedBy': adminUID,
         'actualResignDate': Timestamp.fromDate(actualResignDate),
         'status': AppStatus.canceled,
       });
+
+      // H-2: toId가 있고 이전 상태가 확정(CONFIRMED/CONTRACT_PENDING)인 경우에만 카운터 감소
+      final resignToId = app.toId;
+      final resignSlotId = app.slotId;
+      if (resignToId != null &&
+          AppStatus.confirmedStatuses.contains(app.status)) {
+        _decrementTOConfirmed(approveBatch, resignToId, resignSlotId,
+            workType: app.selectedWorkType);
+      }
+
+      // M-3: 서명 대기 중인 계약서를 voided로 전환
+      if (contractDoc != null) {
+        approveBatch.update(contractDoc.reference, {
+          'status': 'voided',
+          'contractVoidedAt': FieldValue.serverTimestamp(),
+          'voidReason': 'RESIGNATION',
+        });
+      }
+
+      await approveBatch.commit();
+      if (resignToId != null) clearCache(toId: resignToId);
 
       // 탈퇴일 이후 scheduled 출근기록 → absent 처리 (orphan 방지)
       // [C03 설계 의도]
@@ -1216,10 +1325,12 @@ class FirestoreService {
       if (!appDoc.exists) return false;
       final app = ApplicationModel.fromMap(appDoc.data()!, appDoc.id);
 
+      // [BUG-수정] M-4: 퇴사 거절인데 승인 필드명(resignApprovedAt/By)을 사용하던 버그 수정
+      // 거절 전용 필드(resignRejectedAt/By)로 교체하여 승인·거절 이력을 독립적으로 추적
       await _firestore.collection('applications').doc(applicationId).update({
         'resignStatus': AppStatus.rejected,
-        'resignApprovedAt': FieldValue.serverTimestamp(),
-        'resignApprovedBy': adminUID,
+        'resignRejectedAt': FieldValue.serverTimestamp(),
+        'resignRejectedBy': adminUID,
         'resignRejectReason': rejectReason,
       });
 

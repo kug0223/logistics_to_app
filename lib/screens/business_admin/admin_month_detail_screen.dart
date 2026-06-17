@@ -178,8 +178,12 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
       }
       await file.writeAsBytes(bytes);
 
-      await Share.shareXFiles([XFile(file.path)], subject: fileName);
-      await file.delete();
+      // [BUG-수정] Share 예외 발생 시에도 임시 파일이 반드시 삭제되도록 try-finally 적용 (D-H-1)
+      try {
+        await Share.shareXFiles([XFile(file.path)], subject: fileName);
+      } finally {
+        try { await file.delete(); } catch (_) {}
+      }
     } catch (e) {
       debugPrint('❌ 엑셀 내보내기 실패: $e');
       if (mounted) {

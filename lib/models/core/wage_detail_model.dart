@@ -276,6 +276,7 @@ class WageDetailModel {
   // ── Getter ──
   
   /// 1차 확정 여부
+  // [오탐 확인] calculatedAt은 급여 확정 시 항상 DateTime.now()로 함께 설정되므로 wageStatus == 'calculated'와 항상 동기화됨.
   bool get isCalculated => calculatedAt != null;
   
   /// 최종 확정 여부

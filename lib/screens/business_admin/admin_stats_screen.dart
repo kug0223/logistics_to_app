@@ -941,6 +941,12 @@ void pushAdminStatsScreen(BuildContext context) {
         MaterialPageRoute(builder: (_) => AdminStatsScreen(businessIds: [user!.businessId!])));
     return;
   }
+  // [BUG-수정] SubAdmin은 managedBusinessIds=[], businessId=null 구조 → subAdminOf로 진입
+  if (ids.isEmpty && user?.subAdminOf != null) {
+    Navigator.push(context,
+        MaterialPageRoute(builder: (_) => AdminStatsScreen(businessIds: [user!.subAdminOf!])));
+    return;
+  }
   if (ids.isEmpty) {
     ToastHelper.showWarning('등록된 사업장이 없습니다');
     return;

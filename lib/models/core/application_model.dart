@@ -64,8 +64,11 @@ class ApplicationModel {
   // 🔥 상태 변경 이력
   final List<Map<String, dynamic>>? statusHistory;
   final String? resignStatus;           // 'PENDING', 'APPROVED', 'REJECTED', 'AUTO_APPROVED'
-  final DateTime? resignApprovedAt;     // 승인/거절 시각
-  final String? resignApprovedBy;       // 승인/거절자 UID
+  final DateTime? resignApprovedAt;     // 승인 시각
+  final String? resignApprovedBy;       // 승인자 UID
+  // [BUG-수정] M-4: rejectResignation에서 승인 필드를 잘못 사용하던 문제 해결을 위해 거절 전용 필드 추가
+  final DateTime? resignRejectedAt;     // 거절 시각
+  final String? resignRejectedBy;       // 거절자 UID
   final String? resignRejectReason;     // 거절 사유
   final DateTime? actualResignDate;     // 실제 퇴사일 (승인된 날짜)
   // 🔥 Phase C: 계약해지 관리 (관리자 → 근무자)
@@ -134,6 +137,8 @@ class ApplicationModel {
     this.resignStatus,
     this.resignApprovedAt,
     this.resignApprovedBy,
+    this.resignRejectedAt,
+    this.resignRejectedBy,
     this.resignRejectReason,
     this.actualResignDate,
     // 🔥 Phase C: 계약해지 관리
@@ -224,9 +229,14 @@ class ApplicationModel {
           : null,
       resignStatus: data['resignStatus'],
       resignApprovedAt: data['resignApprovedAt'] != null
-          ? (data['resignApprovedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
+          ? (data['resignApprovedAt'] as Timestamp).toDate().toLocal()
           : null,
       resignApprovedBy: data['resignApprovedBy'],
+      // [BUG-수정] M-4: 퇴사 거절 전용 필드 파싱 추가
+      resignRejectedAt: data['resignRejectedAt'] != null
+          ? (data['resignRejectedAt'] as Timestamp).toDate().toLocal()
+          : null,
+      resignRejectedBy: data['resignRejectedBy'],
       resignRejectReason: data['resignRejectReason'],
       actualResignDate: data['actualResignDate'] != null
           ? (data['actualResignDate'] as Timestamp).toDate().toLocal()
@@ -335,6 +345,9 @@ class ApplicationModel {
       'resignStatus': resignStatus,
       'resignApprovedAt': resignApprovedAt != null ? Timestamp.fromDate(resignApprovedAt!) : null,
       'resignApprovedBy': resignApprovedBy,
+      // [BUG-수정] M-4: 거절 전용 필드 직렬화 추가
+      'resignRejectedAt': resignRejectedAt != null ? Timestamp.fromDate(resignRejectedAt!) : null,
+      'resignRejectedBy': resignRejectedBy,
       'resignRejectReason': resignRejectReason,
       'actualResignDate': actualResignDate != null ? Timestamp.fromDate(actualResignDate!) : null,
       // 🔥 Phase C: 계약해지 관리
@@ -434,6 +447,8 @@ class ApplicationModel {
     String? resignStatus,
     DateTime? resignApprovedAt,
     String? resignApprovedBy,
+    DateTime? resignRejectedAt,
+    String? resignRejectedBy,
     String? resignRejectReason,
     DateTime? actualResignDate,
     // 🔥 Phase C: 계약해지 관리
@@ -502,6 +517,8 @@ class ApplicationModel {
       resignStatus: resignStatus ?? this.resignStatus,
       resignApprovedAt: resignApprovedAt ?? this.resignApprovedAt,
       resignApprovedBy: resignApprovedBy ?? this.resignApprovedBy,
+      resignRejectedAt: resignRejectedAt ?? this.resignRejectedAt,
+      resignRejectedBy: resignRejectedBy ?? this.resignRejectedBy,
       resignRejectReason: resignRejectReason ?? this.resignRejectReason,
       actualResignDate: actualResignDate ?? this.actualResignDate,
       // 🔥 Phase C: 계약해지 관리

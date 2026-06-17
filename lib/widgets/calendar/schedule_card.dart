@@ -279,11 +279,9 @@ class ScheduleCard extends StatelessWidget {
 
     if (!context.mounted) return;
 
-    if (hasPendingRequest) {
-      ToastHelper.showWarning('처리 대기중인 요청이 있습니다');
-      return;
-    }
-
+    // [BUG-수정] M-5: 대기 요청이 있을 때 전체 메뉴를 차단하던 문제 수정.
+    // hasPendingRequest=true면 cancelItem만 null로 두고 메뉴는 열리게 하되,
+    // headerSubtitle로 '처리 대기중인 요청이 있습니다' 안내를 표시.
     final primaryColor = Theme.of(context).primaryColor;
     final isWageConfirmed = attendance?.isWageConfirmed == true || attendance?.isWageTransferred == true;
     final hasCheckedIn = attendance?.checkIn != null;
@@ -303,9 +301,10 @@ class ScheduleCard extends StatelessWidget {
       if (!context.mounted) return;
     }
 
-    // 취소 항목 결정
+    // [BUG-수정] M-5: 취소 항목 결정 — hasPendingRequest=true이면 cancelItem을 null로 두어
+    // 파괴적 액션(취소/휴무 요청)만 제거하고, 상세보기 등 비파괴 액션은 그대로 열린다.
     AppMenuSheetItem? cancelItem;
-    if (!isWageConfirmed && !isNoShow && !hasCheckedIn) {
+    if (!isWageConfirmed && !isNoShow && !hasCheckedIn && !hasPendingRequest) {
       final isLeaveDay = selectedDay != null &&
           application.isLongTermApplication &&
           application.isLeaveDateOn(selectedDay!);
@@ -353,6 +352,8 @@ class ScheduleCard extends StatelessWidget {
 
     AppMenuSheet.show(
       context: context,
+      // [BUG-수정] M-5: 대기 요청이 있으면 headerSubtitle로 안내 표시 (메뉴 자체는 열림)
+      headerSubtitle: hasPendingRequest ? '처리 대기중인 요청이 있습니다' : null,
       itemGroups: [
         [
           AppMenuSheetItem(
@@ -469,6 +470,7 @@ class ScheduleCard extends StatelessWidget {
   }
   
   /// 지원 취소 처리
+  // [오탐 확인] StatelessWidget이지만 BuildContext.mounted는 async gap 후 위젯 트리 마운트 여부를 올바르게 반환함.
   Future<void> _handleCancel(BuildContext context) async {
     final firestoreService = FirestoreService();
     
@@ -500,15 +502,17 @@ class ScheduleCard extends StatelessWidget {
     if (application.status == AppStatus.confirmed ||
         application.status == AppStatus.contractPending) {
       final confirmed = await _showConfirmedCancelDialog(context);
-      
+
       if (confirmed != true) return;
-      
-      // 확정 취소 처리
-      final success = await firestoreService.cancelApplication(
+
+      // [BUG-수정] H-1: cancelApplication은 CONFIRMED/CONTRACT_PENDING 상태를 내부에서 차단해
+      // success=false를 반환했음. 확정 취소는 cancelConfirmedApplication을 사용해야 함.
+      // 근무자 자기 취소이므로 applyNoShowPenalty: false, canceledBy: null.
+      final success = await firestoreService.cancelConfirmedApplication(
         application.id,
-        application.uid,
+        applyNoShowPenalty: false,
       );
-      
+
       if (success && context.mounted) {
         ToastHelper.showSuccess('근무가 취소되었습니다.');
         onChanged?.call();
@@ -693,6 +697,12 @@ class ScheduleCard extends StatelessWidget {
           text: '대기중',
           icon: Icons.schedule,
         );
+      case AppStatus.contractPending:
+        return _StatusInfo(
+          color: AppColors.info,
+          text: '계약 대기',
+          icon: Icons.assignment_outlined,
+        );
       case AppStatus.rejected:
         return _StatusInfo(
           color: AppColors.error,
@@ -724,6 +734,15 @@ class ScheduleCard extends StatelessWidget {
   Future<void> _showLeaveRequestDialog(BuildContext context) async {
     if (selectedDay == null) {
       ToastHelper.showWarning('날짜 정보를 찾을 수 없습니다');
+      return;
+    }
+
+    // [BUG-수정] M-6: 과거 날짜에 휴무 신청이 가능하던 문제 수정.
+    // 오늘 날짜 기준으로 이전 날짜는 휴무 신청 불가.
+    final today = DateTime.now();
+    final isBeforeToday = selectedDay!.isBefore(DateTime(today.year, today.month, today.day));
+    if (isBeforeToday) {
+      ToastHelper.showWarning('과거 날짜에는 휴무를 신청할 수 없습니다.');
       return;
     }
 
@@ -819,7 +838,9 @@ class ScheduleCard extends StatelessWidget {
       businessId: application.businessId,
       applicationId: application.id,
       applicantUid: application.uid,
-      applicantName: '',
+      // [BUG-수정] L-3: applicantName이 빈 문자열로 알림 발송되던 문제 수정.
+      // ApplicationModel에 이름 필드가 없어 uid로 대체 (알림 수신자 식별 가능).
+      applicantName: application.uid,
       targetDate: DateTime(selectedDay!.year, selectedDay!.month, selectedDay!.day),
       requestType: RequestType.LEAVE,
       requestedBy: RequesterType.APPLICANT,
@@ -840,6 +861,7 @@ class ScheduleCard extends StatelessWidget {
   }
 
   /// ⭐ 추가근무일 취소 요청 (관리자 승인 필요)
+  // [오탐 확인] BuildContext.mounted는 StatelessWidget에서도 유효.
   Future<void> _cancelExtraWorkDay(BuildContext context) async {
     final reasonController = TextEditingController();
     
@@ -958,7 +980,8 @@ class ScheduleCard extends StatelessWidget {
       businessId: application.businessId,
       applicationId: application.id,
       applicantUid: application.uid,
-      applicantName: '',
+      // [BUG-수정] L-3: applicantName이 빈 문자열로 알림 발송되던 문제 수정.
+      applicantName: application.uid,
       targetDate: DateTime(selectedDay!.year, selectedDay!.month, selectedDay!.day),
       requestType: RequestType.CANCEL_EXTRA,
       requestedBy: RequesterType.APPLICANT,
@@ -979,6 +1002,7 @@ class ScheduleCard extends StatelessWidget {
   }
 
   /// ⭐ 휴무일 취소 요청 (관리자 승인 필요)
+  // [오탐 확인] BuildContext.mounted는 StatelessWidget에서도 유효.
   Future<void> _cancelLeaveDay(BuildContext context) async {
     final reasonController = TextEditingController();
     
@@ -1097,7 +1121,8 @@ class ScheduleCard extends StatelessWidget {
       businessId: application.businessId,
       applicationId: application.id,
       applicantUid: application.uid,
-      applicantName: '',
+      // [BUG-수정] L-3: applicantName이 빈 문자열로 알림 발송되던 문제 수정.
+      applicantName: application.uid,
       targetDate: DateTime(selectedDay!.year, selectedDay!.month, selectedDay!.day),
       requestType: RequestType.CANCEL_LEAVE,
       requestedBy: RequesterType.APPLICANT,

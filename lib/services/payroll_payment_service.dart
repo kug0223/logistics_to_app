@@ -15,9 +15,11 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/core/attendance_model.dart';
+import '../models/core/notification_model.dart';
 import '../models/core/payment_change_request_model.dart';
 import '../models/core/interim_settlement_request_model.dart';
 import '../utils/format_helper.dart';
+import 'firestore_service.dart';
 
 /// 커서 기반 페이지네이션 결과
 class PayrollPage<T> {
@@ -36,16 +38,24 @@ class PayrollPaymentService {
   PayrollPaymentService._internal();
 
   final _db = FirebaseFirestore.instance;
+  final _firestoreService = FirestoreService();
 
   // ══════════════════════════════════════════════════════════
   // 송금 처리 (이체 완료 처리)
   // ══════════════════════════════════════════════════════════
 
   /// 단건 이체 완료 처리
+  // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
   Future<void> markTransferred({
     required String attendanceId,
     required String processedBy,
     String? transferNote,
+    // 알림 발송용 — null이면 알림 생략
+    String? workerUserId,
+    String? workerName,
+    String? businessName,
+    int? finalWage,
+    String? applicationId,
   }) async {
     final attRef = _db.collection('attendance').doc(attendanceId);
     await _db.runTransaction((tx) async {
@@ -63,6 +73,26 @@ class PayrollPaymentService {
         'updatedAt':     FieldValue.serverTimestamp(),
       });
     });
+
+    // 트랜잭션 커밋 후 지원자에게 알림 발송
+    if (workerUserId != null &&
+        workerName != null &&
+        businessName != null &&
+        finalWage != null) {
+      try {
+        await _firestoreService.createNotification(
+          NotificationModel.createWageTransferred(
+            userId: workerUserId,
+            workerName: workerName,
+            businessName: businessName,
+            finalWage: finalWage,
+            applicationId: applicationId,
+          ),
+        );
+      } catch (e) {
+        debugPrint('⚠️ 이체 완료 알림 발송 실패 (attendanceId: $attendanceId): $e');
+      }
+    }
   }
 
   /// 일괄 이체 완료 처리 (최대 500건, 초과 시 분할)
@@ -71,10 +101,13 @@ class PayrollPaymentService {
   // Firestore는 다중 batch 간 원자성을 보장하지 않으며, 월간 450건 초과 사업장은
   // 극히 드무므로 현재 규모에서는 허용된 트레이드오프다.
   // 재시도 시: 이미 transferred된 건은 동일 상태로 덮어쓰여 멱등하게 처리된다.
+  // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
   Future<void> markTransferredBatch({
     required List<String> attendanceIds,
     required String processedBy,
     String? transferNote,
+    // 알림 발송용 — null이면 알림 생략. 각 항목은 attendanceIds와 동일 순서여야 함
+    List<TransferNotificationInfo>? notificationInfos,
   }) async {
     final now = Timestamp.now();
     for (int i = 0; i < attendanceIds.length; i += 450) {
@@ -91,6 +124,25 @@ class PayrollPaymentService {
         });
       }
       await batch.commit();
+    }
+
+    // 배치 커밋 후 각 항목별로 지원자에게 알림 발송
+    if (notificationInfos != null) {
+      for (final info in notificationInfos) {
+        try {
+          await _firestoreService.createNotification(
+            NotificationModel.createWageTransferred(
+              userId: info.workerUserId,
+              workerName: info.workerName,
+              businessName: info.businessName,
+              finalWage: info.finalWage,
+              applicationId: info.applicationId,
+            ),
+          );
+        } catch (e) {
+          debugPrint('⚠️ 일괄 이체 완료 알림 발송 실패 (userId: ${info.workerUserId}): $e');
+        }
+      }
     }
   }
 
@@ -378,7 +430,10 @@ class PayrollPaymentService {
         .collection('interim_settlement_requests')
         .doc(req.id)
         .get(const GetOptions(source: Source.server));
-    if (reqSnap.data()?['status'] == InterimSettlementRequestModel.statusProcessed) {
+    final currentStatus = reqSnap.data()?['status'] as String?;
+    // [BUG-수정] S-1: APPROVED 상태도 멱등성 체크에 포함 — 재호출 시 1단계 중복 실행 방지
+    if (currentStatus == InterimSettlementRequestModel.statusProcessed ||
+        currentStatus == InterimSettlementRequestModel.statusApproved) {
       // [D-002] silent return 대신 exception throw — 호출자가 성공으로 오인하는 버그 수정
       throw Exception('이미 처리된 중간정산 요청입니다. 중복 처리가 차단되었습니다.');
     }
@@ -387,16 +442,41 @@ class PayrollPaymentService {
       throw Exception('중간정산 요청에 출근기록이 없습니다. 처리할 항목이 없습니다.');
     }
 
+    // [BUG-수정] S-2: 2단계 실패 후 재시도 시 복구 경로
+    // 1단계 성공 + 2단계 실패 → status=PENDING 잔류 상태에서 관리자가 재승인 시
+    // attendanceIds 중 이미 transferred인 건이 있으면 1단계를 건너뛰고 status만 PROCESSED로 갱신
+    bool skipMarkTransferred = false;
+    if (req.attendanceIds.isNotEmpty) {
+      // attendanceIds의 현재 wageStatus를 서버에서 조회
+      final attSnaps = await Future.wait(
+        req.attendanceIds.map(
+          (id) => _db
+              .collection('attendance')
+              .doc(id)
+              .get(const GetOptions(source: Source.server)),
+        ),
+      );
+      final transferredCount = attSnaps
+          .where((s) => s.data()?['wageStatus'] == AttendanceModel.wageTransferred)
+          .length;
+      if (transferredCount == req.attendanceIds.length) {
+        // 모든 항목이 이미 transferred → 1단계 건너뛰고 status만 PROCESSED로 복구
+        skipMarkTransferred = true;
+      }
+    }
+
     // 1단계: 출근기록 이체 처리 먼저 — attendance 성공 후 요청 상태 변경
     // (역순 시 실패 모드: attendance=미이체인데 status=processed → 미지급 상태 숨김)
     // ⚠️ 원자성 없음: 1단계 성공 + 2단계 실패 시 attendance=transferred, status=pending 불일치 발생.
     // 단, markTransferredBatch는 멱등(이미 transferred인 건을 덮어써도 안전)하므로,
     // 재시도 시 1단계가 재실행되어도 중복 이체 없이 2단계까지 정상 완료된다.
-    await markTransferredBatch(
-      attendanceIds: req.attendanceIds,
-      processedBy: processedBy,
-      transferNote: transferNote ?? '중간정산 처리',
-    );
+    if (!skipMarkTransferred) {
+      await markTransferredBatch(
+        attendanceIds: req.attendanceIds,
+        processedBy: processedBy,
+        transferNote: transferNote ?? '중간정산 처리',
+      );
+    }
 
     // 2단계: 요청 상태 변경 (출근기록 이체 완료 후)
     await _db
@@ -428,6 +508,47 @@ class PayrollPaymentService {
       'updatedAt':    FieldValue.serverTimestamp(),
     });
   }
+}
+
+// ─── 이체 완료 알림 정보 ──────────────────────────────────────────
+// [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
+
+/// markTransferredBatch 알림 발송용 개별 근무자 정보
+class TransferNotificationInfo {
+  final String workerUserId;
+  final String workerName;
+  final String businessName;
+  final int finalWage;
+  final String? applicationId;
+
+  const TransferNotificationInfo({
+    required this.workerUserId,
+    required this.workerName,
+    required this.businessName,
+    required this.finalWage,
+    this.applicationId,
+  });
+}
+
+/// [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
+/// markTransferredBatch에 전달할 알림 정보 목록을 생성하는 헬퍼
+/// - attendanceIds 리스트와 동일 순서로 반환
+/// - workerName은 호출 측에서 보유한 캐시(Map[uid, name])를 활용해 채운다
+List<TransferNotificationInfo> buildTransferNotificationInfos({
+  required List<AttendanceModel> records,
+  required Map<String, String> workerNameByUid, // uid → 표시 이름
+}) {
+  return records.map((r) {
+    final wd = r.wageDetail;
+    final net = wd?.effectiveNetWage ?? 0;
+    return TransferNotificationInfo(
+      workerUserId: r.userId,
+      workerName: workerNameByUid[r.userId] ?? r.userId,
+      businessName: r.businessName,
+      finalWage: net,
+      applicationId: r.applicationId,
+    );
+  }).toList();
 }
 
 // ─── CSV 이체 행 ──────────────────────────────────────────────────

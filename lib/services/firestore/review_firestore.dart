@@ -94,20 +94,24 @@
           .get();
       
       if (reviews.docs.isEmpty) return;
-      
-      double totalRating = 0;
-      int ratedCount = 0;
-      for (var doc in reviews.docs) {
-        final r = ((doc.data()['rating'] ?? 0) as num).toInt();
-        if (r > 0) { totalRating += r; ratedCount++; }
-      }
+
+      // [BUG-수정] reviewCount도 rating>0인 리뷰만 집계 — averageRating과 기준 통일
+      final ratedReviews = reviews.docs
+          .where((d) => ((d.data()['rating'] as int?) ?? 0) > 0)
+          .toList();
+      final ratedCount = ratedReviews.length;
+      final totalRating = ratedReviews.fold<int>(
+        0,
+        (acc, d) => acc + (((d.data()['rating'] as int?) ?? 0)),
+      );
+      final avgRating = ratedCount > 0 ? totalRating / ratedCount : null;
 
       await _firestore.collection('users').doc(userId).update({
-        'averageRating': ratedCount > 0 ? totalRating / ratedCount : null,
-        'reviewCount': reviews.docs.length,
+        'averageRating': avgRating,
+        'reviewCount': ratedCount,  // [BUG-수정] rating>0인 것만 카운트
       });
-      
-      debugPrint('✅ 사용자 리뷰 통계 업데이트: avg=${ratedCount > 0 ? totalRating / ratedCount : null}, count=${reviews.docs.length}');
+
+      debugPrint('✅ 사용자 리뷰 통계 업데이트: avg=$avgRating, count=$ratedCount');
     } catch (e) {
       debugPrint('⚠️ 사용자 리뷰 통계 업데이트 실패: $e');
     }

@@ -166,10 +166,16 @@ class NotificationCard extends StatelessWidget {
       case NotificationType.terminationApproved:
       case NotificationType.resignApproved:
         return Icons.logout;
+      // [특이사항] terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
+      case NotificationType.terminationRejected:
+        return Icons.block;
       case NotificationType.resignRejected:
         return Icons.do_not_disturb_on;
       case NotificationType.wageConfirmed:
         return Icons.payments;
+      // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
+      case NotificationType.wageTransferred:
+        return Icons.account_balance_wallet;
       case NotificationType.wageCancelConfirmed:
         return Icons.edit_note;
       case NotificationType.retroactiveDeductionAlert:
@@ -188,6 +194,8 @@ class NotificationCard extends StatelessWidget {
         return Icons.how_to_reg;
       case NotificationType.memberInvitationRejected:
         return Icons.person_remove;
+      case NotificationType.workTypeChanged:
+        return Icons.swap_horiz;
       case NotificationType.systemNotice:
         return Icons.campaign;
       case NotificationType.other:
@@ -206,6 +214,8 @@ class NotificationCard extends StatelessWidget {
       case NotificationType.workCanceled:
       case NotificationType.scheduleChangeRejected:
       case NotificationType.terminationRequested:
+      // [특이사항] terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
+      case NotificationType.terminationRejected:
       case NotificationType.resignRejected:
       case NotificationType.idCardAccessRejected:
         return AppColors.error;
@@ -228,6 +238,9 @@ class NotificationCard extends StatelessWidget {
         return AppColors.warning;
       case NotificationType.wageConfirmed:
         return AppColors.success;
+      // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
+      case NotificationType.wageTransferred:
+        return AppColors.success;
       case NotificationType.wageCancelConfirmed:
         return AppColors.warning;
       case NotificationType.retroactiveDeductionAlert:
@@ -244,6 +257,8 @@ class NotificationCard extends StatelessWidget {
       case NotificationType.memberInvitationRejected:
         return AppColors.grey500;
       case NotificationType.systemNotice:
+        return AppColors.info;
+      case NotificationType.workTypeChanged:
         return AppColors.info;
       case NotificationType.applicationCanceled:
       case NotificationType.other:

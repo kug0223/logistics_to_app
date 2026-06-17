@@ -1632,6 +1632,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   Future<void> _processTermination(ApplicationModel app, UserModel? user) async {
     if (!mounted || isLoading) return;
+    // async gap 이전에 미리 추출 — BuildContext across async gaps 오류 방지
+    final adminUID = context.read<UserProvider>().currentUser?.uid;
     setLoading(true);
     try {
       // 1. renewalDecision = 'TERMINATE'
@@ -1650,6 +1652,25 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           applicationId: app.id,
         ),
       );
+
+      // [BUG-수정 M-2] workEndDate가 오늘이거나 이미 지난 경우 즉시 CANCELED로 전환.
+      // 미래 종료일인 경우 Cloud Functions D-0 처리에 위임(현재 설계 유지).
+      // cancelConfirmedApplication 내부에서 _decrementTOConfirmed도 함께 처리됨.
+      final endDate = app.workEndDate;
+      if (endDate != null) {
+        final today = DateTime.now();
+        final endDateOnly = DateTime(endDate.year, endDate.month, endDate.day);
+        final todayOnly = DateTime(today.year, today.month, today.day);
+        if (!endDateOnly.isAfter(todayOnly)) {
+          // 이미 만료됐거나 오늘이 종료일인 경우 — 즉시 CANCELED 처리
+          await _firestoreService.cancelConfirmedApplication(
+            app.id,
+            canceledBy: adminUID,
+            cancelReason: '계약 종료 (만료일 도달)',
+          );
+        }
+        // 미래 종료일이면 Cloud Functions가 D-0에 자동 처리 — 별도 조치 불필요
+      }
 
       if (mounted) {
         ToastHelper.showSuccess('계약 종료가 통보되었습니다');
