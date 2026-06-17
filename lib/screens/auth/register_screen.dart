@@ -797,8 +797,31 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       if (!success || !mounted) return;
 
-      // Step 2: UID로 올바른 경로에 업로드 (병렬)
+      // Step 2: 동의 일시·버전 Firestore 저장 (법적 근거 확보)
       final uid = userProvider.currentUser?.uid;
+      if (uid != null && _legalTerms != null) {
+        final consentRecord = <String, dynamic>{};
+        for (final item in _legalTerms!.activeItems) {
+          consentRecord[item.id] = {
+            'agreed': _consentMap[item.id] ?? false,
+            'version': item.version,
+            'agreedAt': DateTime.now().toIso8601String(),
+          };
+        }
+        try {
+          await _firestoreService.updateUserDocument(uid, {
+            'termsConsent': consentRecord,
+            'termsConsentAt': DateTime.now().toIso8601String(),
+          });
+        } catch (_) {
+          // 동의 기록 저장 실패는 가입을 막지 않음 (best-effort)
+          debugPrint('⚠️ 동의 기록 저장 실패');
+        }
+      }
+
+      if (!mounted) return;
+
+      // Step 3: UID로 올바른 경로에 업로드 (병렬)
       if (uid != null && !kIsWeb) {
         final uploads = <String, Future<String?>>{};
         if (_idCardImagePath != null) {
@@ -889,6 +912,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _phoneVerifyStatus.value = const _PhoneVerifyStatus(isSending: true);
     try {
       await _phoneSvc.sendCode(phone);
+      if (!mounted) return;
       _lastSentPhone = phone;
       _phoneCodeController.clear();
       _phoneVerifyStatus.value = const _PhoneVerifyStatus(isSent: true);

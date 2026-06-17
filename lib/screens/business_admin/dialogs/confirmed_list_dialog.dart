@@ -987,21 +987,25 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
       ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
       return;
     }
-    final targetIds = Set<String>.from(_selectedCancelAppIds);
+    final targetIds = List<String>.from(_selectedCancelAppIds);
 
     setLoading(true);
     int successCount = 0;
     final Set<String> successIds = {};
     try {
-      for (final appId in targetIds) {
-        final success = await widget.firestoreService.cancelConfirmedApplication(
-          appId,
-          canceledBy: adminUID,
-          cancelReason: cancelReason,
-        );
-        if (success) {
+      final results = await Future.wait(
+        targetIds.map(
+          (appId) => widget.firestoreService.cancelConfirmedApplication(
+            appId,
+            canceledBy: adminUID,
+            cancelReason: cancelReason,
+          ),
+        ),
+      );
+      for (int i = 0; i < targetIds.length; i++) {
+        if (results[i]) {
           successCount++;
-          successIds.add(appId);
+          successIds.add(targetIds[i]);
         }
       }
     } catch (e) {

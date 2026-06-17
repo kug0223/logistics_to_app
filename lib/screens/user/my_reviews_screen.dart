@@ -83,9 +83,10 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
         _avgRating = avg;
         _cursor = page.cursor;
         _hasMore = page.hasMore;
-        _isLoadingMore = false;
       });
     } catch (_) {
+      // 예외는 무시하고 finally에서 상태 초기화
+    } finally {
       if (mounted) setState(() => _isLoadingMore = false);
     }
   }

@@ -606,8 +606,10 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         await _applyTODraftTransition(anyImmediate ? null : earliestVisibleFrom);
       }
 
-      int successCount = 0;
-      final failedSlots = <String>[];
+      final firestore = FirebaseFirestore.instance;
+      final batch = firestore.batch();
+      int totalRequiredDelta = 0;
+
       for (final slot in slots) {
         final updatedWorkDetails = _workDetails.map((work) {
           final parts = work.startTime.split(':');
@@ -629,26 +631,33 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         }
 
         final (visibleFrom, clearVisibleFrom) = _calcSlotVisibleFrom(slot.date);
+        final newTotalRequired = updatedWorkDetails.fold<int>(0, (s, d) => s + d.requiredCount);
 
-        try {
-          await _firestoreService.updateSlotFull(
-            toId: widget.to.id,
-            slotId: slot.id,
-            workDetails: updatedWorkDetails,
-            applicationDeadline: slotDeadline,
-            oldTotalRequired: slot.totalRequired,
-            visibleFrom: visibleFrom,
-            clearVisibleFrom: clearVisibleFrom,
-          );
-          successCount++;
-        } catch (e) {
-          debugPrint('❌ 슬롯 [${slot.id}] 수정 실패: $e');
-          failedSlots.add('${slot.date.month}/${slot.date.day}');
+        final slotRef = firestore
+            .collection('tos').doc(widget.to.id)
+            .collection('slots').doc(slot.id);
+        batch.update(slotRef, {
+          'workDetails': WorkDetailData.listToFirestore(updatedWorkDetails),
+          'applicationDeadline': slotDeadline != null
+              ? Timestamp.fromDate(slotDeadline.toUtc())
+              : FieldValue.delete(),
+          if (clearVisibleFrom) 'visibleFrom': FieldValue.delete()
+          else if (visibleFrom != null) 'visibleFrom': Timestamp.fromDate(visibleFrom.toUtc()),
+        });
+
+        if (slot.totalRequired != newTotalRequired) {
+          totalRequiredDelta += newTotalRequired - slot.totalRequired;
         }
       }
-      if (failedSlots.isNotEmpty) {
-        throw Exception('${failedSlots.join(', ')} 날짜 수정 실패 ($successCount/${slots.length}개 성공)');
+
+      // TO의 totalRequired 동기화
+      if (totalRequiredDelta != 0) {
+        batch.update(firestore.collection('tos').doc(widget.to.id), {
+          'totalRequired': FieldValue.increment(totalRequiredDelta),
+        });
       }
+
+      await batch.commit();
 
       _firestoreService.clearCache(toId: widget.to.id);
       ToastHelper.showSuccess('${slots.length}개 날짜가 수정되었습니다');

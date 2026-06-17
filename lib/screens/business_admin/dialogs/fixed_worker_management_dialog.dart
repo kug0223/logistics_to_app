@@ -2129,6 +2129,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
     final requestId = await _firestoreService.createScheduleChangeRequest(request);
 
+    if (!mounted) return;
     if (requestId != null) {
       ToastHelper.showSuccess('추가 근무 요청이 전송되었습니다');
       widget.onChanged();
@@ -2293,6 +2294,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
     final requestId = await _firestoreService.createScheduleChangeRequest(request);
 
+    if (!mounted) return;
     if (requestId != null) {
       ToastHelper.showSuccess('미출근 요청이 전송되었습니다');
       widget.onChanged();

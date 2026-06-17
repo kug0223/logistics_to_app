@@ -33,6 +33,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
   }
 
   Future<void> _loadBadges() async {
+    setLoading(true);
     try {
       final snapshot = await _firestore
           .collection('badges')

@@ -38,6 +38,7 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
 
   Future<void> _showTourDialog() async {
     await pushTourScreen(context, role: 'USER');
+    if (!mounted) return;
     await TourHelper.markCompleted(TourHelper.userHome);
   }
 

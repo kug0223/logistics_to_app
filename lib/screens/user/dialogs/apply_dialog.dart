@@ -150,9 +150,10 @@ class _ApplyDialogContent extends StatefulWidget {
 
 class _ApplyDialogContentState extends State<_ApplyDialogContent> {
   DateTime? _desiredStartDate;
+  bool _isSubmitting = false;
 
   bool get _canSubmit =>
-      !widget.to.isLongTerm || _desiredStartDate != null;
+      !_isSubmitting && (!widget.to.isLongTerm || _desiredStartDate != null);
 
   Future<void> _pickStartDate() async {
     final today = DateTime.now();
@@ -312,13 +313,20 @@ class _ApplyDialogContentState extends State<_ApplyDialogContent> {
         ),
         ElevatedButton(
           onPressed: _canSubmit
-              ? () => Navigator.pop(
-                    context,
-                    _ApplyResult(
-                      confirmed: true,
-                      desiredStartDate: _desiredStartDate,
-                    ),
-                  )
+              ? () async {
+                  setState(() => _isSubmitting = true);
+                  try {
+                    Navigator.pop(
+                      context,
+                      _ApplyResult(
+                        confirmed: true,
+                        desiredStartDate: _desiredStartDate,
+                      ),
+                    );
+                  } finally {
+                    if (mounted) setState(() => _isSubmitting = false);
+                  }
+                }
               : null,
           child: const Text('지원하기'),
         ),

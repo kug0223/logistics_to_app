@@ -1574,6 +1574,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
     if (confirm != true || !mounted) return;
 
+    setState(() => _isProcessing = true);
     try {
       final adminUID = userProvider.currentUser?.uid;
 
@@ -1582,7 +1583,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         status: AppStatus.confirmed,
         confirmedBy: adminUID,
       );
-      
+
       // 🔥 충돌로 취소된 TO ID 수집
       if (affectedTOIds.isNotEmpty) {
         _affectedOtherTOIds.addAll(affectedTOIds);
@@ -1595,6 +1596,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       _updateLocalStats();
     } catch (e) {
       ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -1613,6 +1616,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
     if (reason == null || !mounted) return;
 
+    setState(() => _isProcessing = true);
     try {
       final adminUID = userProvider.currentUser?.uid;
 
@@ -1629,6 +1633,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       _updateLocalStats();
     } catch (e) {
       ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -1647,6 +1653,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
     if (reason == null || !mounted) return;
 
+    setState(() => _isProcessing = true);
     try {
       final adminUID = userProvider.currentUser?.uid;
 
@@ -1662,6 +1669,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       await _updateLocalStats();
     } catch (e) {
       ToastHelper.showError('확정 취소 중 오류가 발생했습니다');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 

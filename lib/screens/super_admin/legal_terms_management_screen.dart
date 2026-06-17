@@ -41,8 +41,10 @@ class _LegalTermsManagementScreenState
     setState(() => _isLoading = true);
     try {
       final terms = await _service.getTerms();
-      if (mounted) setState(() { _terms = terms; _isLoading = false; });
+      if (mounted) setState(() { _terms = terms; });
     } catch (e) {
+      // 예외는 무시하고 finally에서 상태 초기화
+    } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
