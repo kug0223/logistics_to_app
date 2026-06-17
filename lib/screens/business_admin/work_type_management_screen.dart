@@ -460,9 +460,11 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
         businessId: _selectedBusiness!.id,
         workTypeId: workType.id,
       );
-
-      if (success && mounted) {
+      if (!mounted) return;
+      if (success) {
         _loadWorkTypes();
+      } else {
+        ToastHelper.showError('삭제에 실패했습니다');
       }
     }
   }

@@ -227,16 +227,22 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
           .map((r) => r.workerId)
           .toSet();
       if (missingNameIds.isNotEmpty) {
+        final ids = missingNameIds.take(30).toList(); // whereIn 30개 제한
         final resolvedMap = <String, String>{};
-        await Future.wait(missingNameIds.map((uid) async {
-          try {
-            final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
-            final name = doc.data()?['name'] as String? ?? '';
-            resolvedMap[uid] = name.isNotEmpty ? name : '근무자';
-          } catch (_) {
-            resolvedMap[uid] = '근무자';
+        try {
+          final snap = await FirebaseFirestore.instance
+              .collection('users')
+              .where(FieldPath.documentId, whereIn: ids)
+              .get();
+          for (final doc in snap.docs) {
+            final name = doc.data()['name'] as String? ?? '';
+            resolvedMap[doc.id] = name.isNotEmpty ? name : '근무자';
           }
-        }));
+        } catch (_) {}
+        // 조회에 포함됐으나 문서가 없는 uid는 폴백 처리
+        for (final uid in ids) {
+          resolvedMap.putIfAbsent(uid, () => '근무자');
+        }
         _resolvedWorkerNames = resolvedMap;
       }
 

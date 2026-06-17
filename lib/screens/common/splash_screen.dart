@@ -49,7 +49,7 @@ class _SplashScreenState extends State<SplashScreen>
   /// forceUpdate이면 false(진입 영구 차단), 그 외 true.
   Future<bool> _checkVersion() async {
     final result = await AppVersionService.check();
-    if (!mounted) return true;
+    if (!mounted) return false;
 
     if (result == VersionCheckResult.forceUpdate) {
       _showForceUpdateDialog();

@@ -66,8 +66,9 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
     } catch (e) {
       debugPrint('❌ 월 상세 로드 실패: $e');
       if (mounted) setState(() => _hasError = true);
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
-    if (mounted) setState(() => _isLoading = false);
   }
 
   // ─── Excel 내보내기 ──────────────────────────────────────────

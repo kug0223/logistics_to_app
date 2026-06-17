@@ -133,8 +133,9 @@ class _ContractTemplateEditScreenState
       }
     } catch (e) {
       if (mounted) ToastHelper.showError('저장에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
-    if (mounted) setState(() => _saving = false);
   }
 
   final _scrollCtrl = ScrollController();

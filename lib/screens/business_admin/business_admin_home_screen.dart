@@ -464,6 +464,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                     final uid = userProvider.currentUser?.uid;
                                     if (uid != null) {
                                       final businesses = await _firestoreService.getMyBusiness(uid);
+                                      if (!context.mounted) return;
                                       bizId = businesses.isNotEmpty ? businesses.first.id : null;
                                     }
                                   }
