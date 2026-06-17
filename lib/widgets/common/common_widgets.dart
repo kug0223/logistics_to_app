@@ -337,6 +337,7 @@ class CommonWidgets {
     );
   }
   
+  // [특이사항] RoleTheme.getPrimaryColor()와 동일 로직 — 역할 추가 시 두 곳 모두 업데이트 필요
   static Color getRoleColor(String? role) {
     switch (role) {
       case 'SUPER_ADMIN':
@@ -350,6 +351,7 @@ class CommonWidgets {
   }
   
   /// 📛 역할 이름 반환
+  // [특이사항] RoleTheme.getRoleLabel()과 동일 로직 — 역할 추가 시 두 곳 모두 업데이트 필요
   static String getRoleName(String? role) {
     switch (role) {
       case 'SUPER_ADMIN':

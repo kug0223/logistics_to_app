@@ -570,6 +570,7 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
     setState(() {
       _focusedMonth = DateTime(_focusedMonth.year, _focusedMonth.month - 1);
     });
+    // setState 람다 동기 실행 후 _focusedMonth는 즉시 갱신되어 콜백에 올바른 값 전달됨
     widget.onMonthChanged?.call(_focusedMonth);
   }
 
