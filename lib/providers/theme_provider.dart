@@ -15,6 +15,7 @@ class ThemeProvider extends ChangeNotifier {
   String? get currentRole => _currentRole;
 
   /// 역할 설정 및 테마 변경
+  // [특이사항] _disposed 가드 없음 — 루트 Provider라 앱 생명주기 내내 살아있으므로 실질 위험 낮음
   void setRole(String? role) {
     if (_currentRole == role) return;
 

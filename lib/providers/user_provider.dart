@@ -332,6 +332,7 @@ class UserProvider with ChangeNotifier {
             .get();
 
         final data = doc.data();
+        if (_disposed) return;
         if (doc.exists && data != null) {
           _currentUser = UserModel.fromMap(data, doc.id);
           notifyListeners();

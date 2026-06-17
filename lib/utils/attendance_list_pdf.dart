@@ -293,11 +293,14 @@ class AttendanceListPdf {
         '${data.businessName}_근무명단_${FormatHelper.formatDateStamp(data.date)}.xlsx';
     final file = File('${dir.path}/$fileName');
     await file.writeAsBytes(bytes);
-    await Share.shareXFiles(
-      [XFile(file.path, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')],
-      subject: '${data.businessName} 근무명단',
-    );
-    await file.delete();
+    try {
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')],
+        subject: '${data.businessName} 근무명단',
+      );
+    } finally {
+      await file.delete();
+    }
   }
 
   /// PDF 문서 생성
