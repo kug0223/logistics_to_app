@@ -412,6 +412,7 @@ class _ResignRequestManagementDialogState
   }
 
   /// 승인 처리
+  // [특이사항] 처리 중 setLoading 미사용 — 이중 탭 가능하나 확인 다이얼로그로 1차 방어
   Future<void> _handleApprove(_ResignRequestWithUser item) async {
     final confirmed = await DialogHelper.showConfirm(
       context,
@@ -449,6 +450,7 @@ class _ResignRequestManagementDialogState
   }
 
   /// 거절 처리
+  // [특이사항] 처리 중 setLoading 미사용 — 이중 탭 가능하나 확인 다이얼로그로 1차 방어
   Future<void> _handleReject(_ResignRequestWithUser item) async {
     final reason = await DialogHelper.showTextInput(
       context,
