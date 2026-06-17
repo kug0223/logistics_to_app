@@ -54,6 +54,7 @@ export const sendEmailVerificationCode = onCall(
           throw new HttpsError("resource-exhausted", "1분 후 다시 시도해주세요.");
         }
       }
+      // [특이사항] 인증 코드 평문 저장 — Firestore 보안 규칙으로 클라이언트 직접 접근 차단 필수
       tx.set(emailVerDoc, {
         code,
         expiresAt: Timestamp.fromDate(expiresAt),
@@ -325,6 +326,7 @@ export const resetPasswordWithCode = onCall(
     const uid = userSnapshot.docs[0].id;
 
     // 비밀번호 재사용 금지 — 최근 5개 이력 비교
+    // [특이사항] SHA-256 단순 해시로 비밀번호 이력 저장 — 강화가 필요하다면 PBKDF2 사용 권장
     const newPwHash = crypto.createHash("sha256")
       .update(newPassword + uid)
       .digest("hex");
@@ -671,6 +673,7 @@ export const masterScheduler = onSchedule(
     // ═══════════════════════════════════════════════════════
     // ✅ 자정에만 실행 (00:00 ~ 00:09)
     // ═══════════════════════════════════════════════════════
+    // [특이사항] Cloud Scheduler 재시도 시 minute < 10 윈도우 내 동일 작업 중복 실행 가능 — 각 작업은 idempotency로 자체 방어
     if (hour === 0 && minute < 10) {
       // 24시간 미퇴근 attendance 자동 처리
       console.log("⏰ [미퇴근 처리] 시작...");
@@ -3043,6 +3046,7 @@ export const sendSmsVerificationCode = onCall(
           );
         }
       }
+      // [특이사항] 인증 코드 평문 저장 — Firestore 보안 규칙으로 클라이언트 직접 접근 차단 필수
       tx.set(verDoc, {
         code,
         expiredAt: Timestamp.fromDate(expiredAt),
