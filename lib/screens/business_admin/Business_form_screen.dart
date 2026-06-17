@@ -1910,12 +1910,21 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       };
 
       if (_isEditMode) {
-        await FirebaseFirestore.instance
-            .collection('businesses')
-            .doc(widget.business!.id)
-            .update(businessData);
+        // businesses doc + users doc을 WriteBatch로 원자적 처리
+        // (CLAUDE.md: 두 write 중 하나라도 실패하면 전체 롤백)
+        final editBatch = FirebaseFirestore.instance.batch();
+        editBatch.update(
+          FirebaseFirestore.instance.collection('businesses').doc(widget.business!.id),
+          businessData,
+        );
+        // managedBusinessIds 누락 시 보정
+        editBatch.update(
+          FirebaseFirestore.instance.collection('users').doc(ownerId),
+          {'managedBusinessIds': FieldValue.arrayUnion([widget.business!.id])},
+        );
+        await editBatch.commit();
 
-        // Firestore 업데이트 성공 후에만 구 이미지 Storage 삭제 수행
+        // WriteBatch commit 성공 후에만 구 이미지 Storage 삭제 수행
         // (CLAUDE.md: Firestore 실패 시 Storage 삭제 안 해야 broken URL 방지)
         if (_imagesToDelete.isNotEmpty) {
           try {
@@ -1925,7 +1934,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
             debugPrint('⚠️ Storage 구 이미지 삭제 실패 (orphan): $e');
           }
         }
-        // 교체된 대표 이미지 구 버전도 Firestore 성공 후 삭제
+        // 교체된 대표 이미지 구 버전도 batch commit 성공 후 삭제
         if (_mainImage != null &&
             widget.business?.mainImageUrl != null &&
             !_imagesToDelete.contains(widget.business!.mainImageUrl)) {
@@ -1936,14 +1945,8 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           }
         }
 
-        // managedBusinessIds 누락 시 보정
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(ownerId)
-            .update({
-          'managedBusinessIds': FieldValue.arrayUnion([widget.business!.id]),
-        });
         await userProvider.refreshCurrentUser();
+        if (!mounted) return;
 
         ToastHelper.showSuccess('사업장이 수정되었습니다');
       } else {
@@ -1966,6 +1969,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         );
         await batch.commit();
         await userProvider.refreshCurrentUser();
+        if (!mounted) return;
 
         ToastHelper.showSuccess('사업장이 등록되었습니다\n바로 사용하실 수 있습니다');
       }

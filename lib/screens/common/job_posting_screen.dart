@@ -1903,6 +1903,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
   }
 
   Future<void> _applyTO() async {
+    if (_isLoading) return; // 이중 탭 방어
     if (_to == null) return;
 
     if (_to!.isFlexType) {

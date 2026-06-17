@@ -71,7 +71,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
       }
     } catch (e) {
       debugPrint('❌ 사업장 재조회 실패: $e');
-      ToastHelper.showError('업데이트된 정보를 불러오는데 실패했습니다');
+      if (mounted) ToastHelper.showError('업데이트된 정보를 불러오는데 실패했습니다');
     }
   }
 
@@ -797,7 +797,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri);
     } else {
-      ToastHelper.showError('전화를 걸 수 없습니다');
+      if (mounted) ToastHelper.showError('전화를 걸 수 없습니다');
     }
   }
 }

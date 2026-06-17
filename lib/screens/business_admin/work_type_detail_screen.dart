@@ -850,6 +850,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
   /// CLAUDE.md 삭제 순서 규칙: Storage 삭제 전 Firestore를 먼저 업데이트한다.
   /// Firestore 업데이트 실패 시 Storage는 건드리지 않아 broken URL 잔류를 방지한다.
   Future<void> _saveChanges() async {
+    if (_isLoading) return; // 이중 탭 방어
     setState(() => _isLoading = true);
 
     try {
