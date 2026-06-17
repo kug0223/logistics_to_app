@@ -79,6 +79,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
   }
 
   /// 오늘 확정된 근무 조회
+  // [특이사항] finally 블록 없음 — 정상 경로(149행)와 catch(160행) 양쪽에서 _isLoading=false 처리되어 실질 고착 없음
   Future<void> _loadTodayWorks() async {
     setState(() => _isLoading = true);
 
