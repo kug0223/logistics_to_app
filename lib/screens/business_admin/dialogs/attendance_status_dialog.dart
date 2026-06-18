@@ -791,6 +791,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
               // 선택 인원 확인/취소 고정 바 (선택 + 대상 있을 때만 표시)
               if (!_isLoading && _selectedIds.isNotEmpty)
                 _buildSelectionConfirmBar(theme),
+
+              // 하단 고정 바 (명단 출력 / 급여관리 / 처리현황 — 항상 표시)
+              if (!_isLoading)
+                _buildBottomBar(theme),
             ],
           ),
         ),
@@ -898,31 +902,24 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
   /// 빈 상태
   Widget _buildEmptyState() {
-    final theme = Theme.of(context);
-    return SingleChildScrollView(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 40)),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.people_outline,
-                  size: ResponsiveHelper.iconSize(context, 64),
-                  color: AppColors.grey400,
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                Text(
-                  '확정된 근무자가 없습니다',
-                  style: ResponsiveHelper.subtitleStyle(context, color: AppColors.grey600),
-                ),
-              ],
+    return Center(
+      child: Padding(
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 40)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.people_outline,
+              size: ResponsiveHelper.iconSize(context, 64),
+              color: AppColors.grey400,
             ),
-          ),
-          _buildBottomBar(theme),
-        ],
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            Text(
+              '확정된 근무자가 없습니다',
+              style: ResponsiveHelper.subtitleStyle(context, color: AppColors.grey600),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -999,19 +996,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   /// 탭별 콘텐츠 (빈 상태 또는 업무 그룹 목록)
   Widget _buildTabContent(ThemeData theme, List<ApplicationModel> tabWorkers, EdgeInsets padding) {
     if (tabWorkers.isEmpty) {
-      return SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(32),
-              child: Text(
-                '해당 근무자가 없습니다',
-                style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
-              ),
-            ),
-            _buildBottomBar(theme),
-          ],
+      return Center(
+        child: Text(
+          '해당 근무자가 없습니다',
+          style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
         ),
       );
     }
@@ -1021,7 +1009,6 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         mainAxisSize: MainAxisSize.min,
         children: [
           _buildWorkTypeGroups(theme, workers: tabWorkers),
-          _buildBottomBar(theme),
         ],
       ),
     );
@@ -1779,7 +1766,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                   onTap: () => _toggleSelection(app.id),
                   behavior: HitTestBehavior.opaque,
                   child: Padding(
-                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 2)),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 8),
+                      vertical: ResponsiveHelper.spacing(context, 10),
+                    ),
                     child: AppCheckbox(value: isSelected),
                   ),
                 ),
