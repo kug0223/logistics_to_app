@@ -568,62 +568,81 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
       child: Row(
         children: [
-          AppFilterChip(
-            label: '전체',
-            count: _records.length,
-            isSelected: _quickFilter == _QuickFilter.all,
-            onTap: () => setState(() {
-              _quickFilter = _QuickFilter.all;
-              _selectedIds.clear();
-            }),
+          // 퀵필터 칩 — 좁은 화면에서 넘칠 수 있으므로 Expanded + 수평 스크롤
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  AppFilterChip(
+                    label: '전체',
+                    count: _records.length,
+                    isSelected: _quickFilter == _QuickFilter.all,
+                    onTap: () => setState(() {
+                      _quickFilter = _QuickFilter.all;
+                      _selectedIds.clear();
+                    }),
+                  ),
+                  if (_overdueCount > 0) ...[
+                    const SizedBox(width: 6),
+                    AppFilterChip(
+                      label: '연체',
+                      count: _overdueCount,
+                      isSelected: _quickFilter == _QuickFilter.overdue,
+                      color: AppColors.error,
+                      onTap: () => setState(() {
+                        _quickFilter = _QuickFilter.overdue;
+                        _selectedIds.clear();
+                      }),
+                    ),
+                  ],
+                  if (_todayCount > 0) ...[
+                    const SizedBox(width: 6),
+                    AppFilterChip(
+                      label: '오늘마감',
+                      count: _todayCount,
+                      isSelected: _quickFilter == _QuickFilter.today,
+                      color: AppColors.warning,
+                      onTap: () => setState(() {
+                        _quickFilter = _QuickFilter.today;
+                        _selectedIds.clear();
+                      }),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ),
-          const SizedBox(width: 6),
-          if (_overdueCount > 0)
-            AppFilterChip(
-              label: '연체',
-              count: _overdueCount,
-              isSelected: _quickFilter == _QuickFilter.overdue,
-              color: AppColors.error,
-              onTap: () => setState(() {
-                _quickFilter = _QuickFilter.overdue;
-                _selectedIds.clear();
-              }),
-            ),
-          if (_overdueCount > 0) const SizedBox(width: 6),
-          if (_todayCount > 0)
-            AppFilterChip(
-              label: '오늘마감',
-              count: _todayCount,
-              isSelected: _quickFilter == _QuickFilter.today,
-              color: AppColors.warning,
-              onTap: () => setState(() {
-                _quickFilter = _QuickFilter.today;
-                _selectedIds.clear();
-              }),
-            ),
-          const Spacer(),
-          // 일괄선택 토글
-          TextButton.icon(
-            onPressed: () => setState(() {
+          // 구분선
+          Container(
+            width: 1,
+            height: 20,
+            color: AppColors.grey200,
+            margin: const EdgeInsets.symmetric(horizontal: 8),
+          ),
+          // 일괄선택 토글 — 필터 칩과 시각적으로 분리
+          GestureDetector(
+            onTap: () => setState(() {
               _batchMode = !_batchMode;
               if (!_batchMode) _selectedIds.clear();
             }),
-            icon: Icon(
-              _batchMode ? Icons.close : Icons.checklist,
-              size: 15,
-              color: _batchMode ? AppColors.error : AppColors.grey600,
-            ),
-            label: Text(
-              _batchMode ? '취소' : '일괄선택',
-              style: ResponsiveHelper.smallStyle(context,
-                color: _batchMode ? AppColors.error : AppColors.grey600,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            style: TextButton.styleFrom(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              minimumSize: const Size(0, 30),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _batchMode ? Icons.close : Icons.check_box_outlined,
+                  size: 15,
+                  color: _batchMode ? AppColors.error : AppColors.grey600,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  _batchMode ? '취소' : '일괄선택',
+                  style: ResponsiveHelper.smallStyle(context,
+                    color: _batchMode ? AppColors.error : AppColors.grey600,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -967,8 +986,12 @@ class _PaymentCard extends StatelessWidget {
                           children: [
                             Text(
                               FormatHelper.formatWage(net),
-                              style: ResponsiveHelper.subtitleStyle(context,
-                                  color: AppColors.grey800),
+                              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.grey800,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
                             if (!batchMode) ...[
                               const SizedBox(height: 6),

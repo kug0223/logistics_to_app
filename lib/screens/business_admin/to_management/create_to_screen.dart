@@ -32,6 +32,7 @@ import 'widgets/to_widgets.dart';
 import '../../../widgets/app_select_field.dart';
 import '../../../widgets/common/gradient_scaffold.dart';
 import '../../../widgets/common/loading_widget.dart';
+import '../../common/settings_screen.dart';
 
 class AdminCreateTOScreen extends StatefulWidget {
   const AdminCreateTOScreen({super.key});
@@ -696,6 +697,24 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       return;
     }
 
+    // 사업주 날인 미등록 차단 — 근로계약서 서명에 필요
+    if ((_selectedBusiness!.sealBase64 ?? '').isEmpty) {
+      final goToSettings = await DialogHelper.showConfirm(
+        context,
+        title: '사업주 날인 미등록',
+        message: '근로계약서 서명을 위해 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 이미지 또는 서명을 먼저 등록해주세요.',
+        confirmText: '설정으로 이동',
+        cancelText: '취소',
+      );
+      if (!mounted) return;
+      if (goToSettings) {
+        await NavigationHelper.push<void>(context, destination: const SettingsScreen());
+        if (!mounted) return;
+        await _loadMyBusinesses();
+      }
+      return;
+    }
+
     // flex 당일 슬롯 마감 경과 처리
     if (_selectedJobType == TOType.flex) {
       if (_allSlotsExpired) {
@@ -804,7 +823,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       }
     } catch (e) {
       debugPrint('❌ TO 생성 실패: $e');
-      ToastHelper.showError('공고 등록에 실패했습니다');
+      if (e.toString().contains('MAX_ACTIVE_TO_LIMIT')) {
+        ToastHelper.showError('진행중인 공고가 최대 4개입니다.\n기존 공고를 마감 후 새 공고를 등록해주세요.');
+      } else {
+        ToastHelper.showError('공고 등록에 실패했습니다');
+      }
     } finally {
       if (mounted) setState(() => _isCreating = false);
     }
@@ -843,12 +866,30 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       child: GradientScaffold(
         title: '공고 등록',
         actions: [
-          IconButton(
-            icon: Icon(Icons.file_copy_outlined,
-                color: Colors.white,
-                size: ResponsiveHelper.iconSize(context, 24)),
+          TextButton(
             onPressed: _selectedBusiness != null ? _showLoadFromExistingDialog : null,
-            tooltip: '기존 공고 불러오기',
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              disabledForegroundColor: Colors.white38,
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 8),
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.file_copy_outlined,
+                    size: ResponsiveHelper.iconSize(context, 20)),
+                Text(
+                  '불러오기',
+                  style: ResponsiveHelper.tinyStyle(context,
+                      color: _selectedBusiness != null
+                          ? Colors.white
+                          : Colors.white38,
+                      fontWeight: FontWeight.w500),
+                ),
+              ],
+            ),
           ),
         ],
         body: Form(

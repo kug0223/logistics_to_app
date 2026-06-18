@@ -330,7 +330,10 @@ class _ContractCard extends StatelessWidget {
           onTap: onTap,
           borderRadius: BorderRadius.circular(14),
           child: Padding(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 14)),
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 14),
+              vertical: ResponsiveHelper.spacing(context, 10),
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -338,15 +341,15 @@ class _ContractCard extends StatelessWidget {
                 Row(
                   children: [
                     Container(
-                      width: 38,
-                      height: 38,
+                      width: 32,
+                      height: 32,
                       decoration: BoxDecoration(
                         color: theme.primaryColor.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(8),
                       ),
                       child: Icon(Icons.person_outline,
                           color: theme.primaryColor,
-                          size: ResponsiveHelper.iconSize(context, 20)),
+                          size: ResponsiveHelper.iconSize(context, 17)),
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 10)),
                     Expanded(
@@ -370,6 +373,27 @@ class _ContractCard extends StatelessWidget {
                         ],
                       ),
                     ),
+                    if (onVoid != null &&
+                        contract.status != ContractStatus.voided) ...[
+                      SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                      TextButton.icon(
+                        onPressed: onVoid,
+                        icon: Icon(Icons.block_outlined,
+                            size: ResponsiveHelper.iconSize(context, 13),
+                            color: AppColors.errorMedium),
+                        label: Text('무효',
+                            style: ResponsiveHelper.tinyStyle(context,
+                                color: AppColors.errorMedium)),
+                        style: TextButton.styleFrom(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: ResponsiveHelper.spacing(context, 6),
+                            vertical: ResponsiveHelper.spacing(context, 2),
+                          ),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                    ],
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     // 상태 배지
                     Container(
@@ -393,9 +417,9 @@ class _ContractCard extends StatelessWidget {
                   ],
                 ),
 
-                SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 const Divider(height: 1, color: AppColors.grey100),
-                SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
                 // 계약 정보 행
                 Wrap(
@@ -420,7 +444,7 @@ class _ContractCard extends StatelessWidget {
                   ],
                 ),
 
-                SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
                 // 서명 진행 인디케이터
                 _SignProgressBar(contract: contract),
@@ -473,29 +497,6 @@ class _ContractCard extends StatelessWidget {
                   ),
                 ],
 
-                // 무효화 버튼 (voided 제외 모든 상태)
-                if (onVoid != null &&
-                    contract.status != ContractStatus.voided) ...[
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton.icon(
-                      onPressed: onVoid,
-                      icon: Icon(Icons.block_outlined,
-                          size: ResponsiveHelper.iconSize(context, 14),
-                          color: AppColors.errorMedium),
-                      label: Text('무효 처리',
-                          style: ResponsiveHelper.tinyStyle(context,
-                              color: AppColors.errorMedium)),
-                      style: TextButton.styleFrom(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: ResponsiveHelper.spacing(context, 8),
-                          vertical: ResponsiveHelper.spacing(context, 4),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
               ],
             ),
           ),
@@ -586,7 +587,7 @@ class _SignStep extends StatelessWidget {
         Icon(
           done ? Icons.check_circle : Icons.radio_button_unchecked,
           color: color,
-          size: ResponsiveHelper.iconSize(context, 18),
+          size: ResponsiveHelper.iconSize(context, 16),
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 2)),
         Text(label,

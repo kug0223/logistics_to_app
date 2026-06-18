@@ -168,7 +168,83 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
               ],
             ),
           ),
+          const Spacer(),
+          if (!_isCalendarView)
+            Consumer<WorkforceController>(
+              builder: (ctx, controller, _) => _buildFilterButton(ctx, controller),
+            ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildFilterButton(BuildContext ctx, WorkforceController controller) {
+    final theme = Theme.of(ctx);
+    final hasFilters = controller.hasActiveFilters;
+
+    return Material(
+      color: hasFilters
+          ? theme.primaryColor.withValues(alpha: 0.1)
+          : Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: controller.requestShowFilter,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(ctx, 12),
+            vertical: ResponsiveHelper.spacing(ctx, 6),
+          ),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Icon(
+                Icons.filter_list,
+                color: hasFilters ? theme.primaryColor : AppColors.grey600,
+                size: ResponsiveHelper.iconSize(ctx, 24),
+              ),
+              if (hasFilters)
+                Positioned(
+                  right: -6,
+                  top: -6,
+                  child: Container(
+                    padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 4)),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          theme.primaryColor,
+                          theme.primaryColor.withValues(alpha: 0.8),
+                        ],
+                      ),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                      boxShadow: [
+                        BoxShadow(
+                          color: theme.primaryColor.withValues(alpha: 0.4),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    constraints: BoxConstraints(
+                      minWidth: ResponsiveHelper.spacing(ctx, 18),
+                      minHeight: ResponsiveHelper.spacing(ctx, 18),
+                    ),
+                    child: Center(
+                      child: Text(
+                        '${controller.activeFilterCount}',
+                        style: ResponsiveHelper.tinyStyle(
+                          ctx,
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -180,7 +256,10 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
     required VoidCallback onTap,
   }) {
     final theme = Theme.of(context);
-    return InkWell(
+    return ConstrainedBox(
+      // 두 버튼이 항상 같은 최소 너비 유지 — "캘린더"(더 긴 텍스트) 기준
+      constraints: BoxConstraints(minWidth: ResponsiveHelper.spacing(context, 76)),
+      child: InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(7),
       child: AnimatedContainer(
@@ -204,7 +283,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
               : null,
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
               icon,
@@ -217,11 +296,12 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
               style: ResponsiveHelper.smallStyle(
                 context,
                 color: isSelected ? theme.primaryColor : AppColors.grey500,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                fontWeight: FontWeight.bold,
               ),
             ),
           ],
         ),
+      ),
       ),
     );
   }

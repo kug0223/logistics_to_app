@@ -38,12 +38,7 @@ class WorkforceListView extends StatefulWidget {
 class _WorkforceListViewState extends State<WorkforceListView> {
   final FirestoreService _firestoreService = FirestoreService();
   late TOListDialogs _dialogs;
-
-  // 필터 상태
-  DateTimeRange? _selectedDateRange;
-  String? _selectedBusiness;
-  String? _selectedTOType;        // null / 'flex' / 'contract'
-  String? _selectedPublishStatus; // null / 'published' / 'unpublished' / 'pending'
+  WorkforceController? _workforceController;
 
   // 탭 상태
   String _selectedTab = TOStatus.active;
@@ -73,7 +68,16 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 컨트롤러에 필터 다이얼로그 콜백 등록 (IntegratedWorkforceScreen의 필터 버튼이 호출)
+    _workforceController ??= context.read<WorkforceController>();
+    _workforceController!.registerShowFilterCallback(_showFilterDialog);
+  }
+
+  @override
   void dispose() {
+    _workforceController?.unregisterShowFilterCallback();
     _scrollController.dispose();
     super.dispose();
   }
@@ -103,6 +107,12 @@ class _WorkforceListViewState extends State<WorkforceListView> {
 
   /// controller.items 에서 탭·사업장·날짜 필터 적용
   List<TOGroupItem> _getFilteredItems(List<TOGroupItem> allItems) {
+    final controller = context.read<WorkforceController>();
+    final selectedBusiness = controller.selectedBusiness;
+    final selectedTOType = controller.selectedTOType;
+    final selectedPublishStatus = controller.selectedPublishStatus;
+    final selectedDateRange = controller.selectedDateRange;
+
     final Iterable<TOGroupItem> source;
     if (_selectedTab == TOStatus.active) {
       source = allItems.where((g) => !g.isClosed);
@@ -111,19 +121,19 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     }
 
     final filtered = source.where((groupItem) {
-      if (_selectedBusiness != null &&
-          groupItem.businessName != _selectedBusiness) {
+      if (selectedBusiness != null &&
+          groupItem.businessName != selectedBusiness) {
         return false;
       }
 
-      if (_selectedTOType != null &&
-          groupItem.masterTO.type != _selectedTOType) {
+      if (selectedTOType != null &&
+          groupItem.masterTO.type != selectedTOType) {
         return false;
       }
 
-      if (_selectedPublishStatus != null) {
+      if (selectedPublishStatus != null) {
         final to = groupItem.masterTO;
-        switch (_selectedPublishStatus) {
+        switch (selectedPublishStatus) {
           case 'published':
             if (!to.isPublished) return false;
           case 'unpublished':
@@ -133,16 +143,16 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         }
       }
 
-      if (_selectedDateRange != null) {
+      if (selectedDateRange != null) {
         final filterStart = DateTime(
-          _selectedDateRange!.start.year,
-          _selectedDateRange!.start.month,
-          _selectedDateRange!.start.day,
+          selectedDateRange.start.year,
+          selectedDateRange.start.month,
+          selectedDateRange.start.day,
         );
         final filterEnd = DateTime(
-          _selectedDateRange!.end.year,
-          _selectedDateRange!.end.month,
-          _selectedDateRange!.end.day,
+          selectedDateRange.end.year,
+          selectedDateRange.end.month,
+          selectedDateRange.end.day,
           23, 59, 59,
         );
 
@@ -259,8 +269,6 @@ class _WorkforceListViewState extends State<WorkforceListView> {
               ),
             ),
           ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          _buildFilterButton(),
         ],
       ),
     );
@@ -269,6 +277,13 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   Widget _buildTab(String tab, String label, IconData icon) {
     final theme = Theme.of(context);
     final isSelected = _selectedTab == tab;
+    final controller = context.watch<WorkforceController>();
+    final isActiveTab = tab == TOStatus.active;
+    final activeCount = isActiveTab ? controller.activeToCount : null;
+    final isMaxed = isActiveTab && (activeCount ?? 0) >= WorkforceController.maxActiveTOs;
+    final displayLabel = isActiveTab && activeCount != null
+        ? '$label ($activeCount/${WorkforceController.maxActiveTOs})'
+        : label;
 
     return GestureDetector(
       onTap: () {
@@ -316,16 +331,16 @@ class _WorkforceListViewState extends State<WorkforceListView> {
               size: ResponsiveHelper.iconSize(context, 18),
               color: isSelected
                   ? Colors.white
-                  : theme.primaryColor.withValues(alpha: 0.7),
+                  : (isMaxed ? AppColors.error : theme.primaryColor.withValues(alpha: 0.7)),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 6)),
             Text(
-              label,
+              displayLabel,
               style: ResponsiveHelper.subtitleStyle(context).copyWith(
                 fontWeight: FontWeight.bold,
                 color: isSelected
                     ? Colors.white
-                    : theme.primaryColor.withValues(alpha: 0.7),
+                    : (isMaxed ? AppColors.error : theme.primaryColor.withValues(alpha: 0.7)),
               ),
             ),
           ],
@@ -334,93 +349,9 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     );
   }
 
-  Widget _buildFilterButton() {
-    final theme = Theme.of(context);
-    final hasFilters = _hasActiveFilters();
-
-    return Material(
-      color: hasFilters
-          ? theme.primaryColor.withValues(alpha: 0.1)
-          : Colors.transparent,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: _showFilterDialog,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Icon(
-                Icons.filter_list,
-                color: hasFilters ? theme.primaryColor : AppColors.grey600,
-                size: ResponsiveHelper.iconSize(context, 24),
-              ),
-              if (hasFilters)
-                Positioned(
-                  right: -6,
-                  top: -6,
-                  child: Container(
-                    padding:
-                        EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          theme.primaryColor,
-                          theme.primaryColor.withValues(alpha: 0.8),
-                        ],
-                      ),
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 2),
-                      boxShadow: [
-                        BoxShadow(
-                          color: theme.primaryColor.withValues(alpha: 0.4),
-                          blurRadius: 4,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    constraints: BoxConstraints(
-                      minWidth: ResponsiveHelper.spacing(context, 18),
-                      minHeight: ResponsiveHelper.spacing(context, 18),
-                    ),
-                    child: Center(
-                      child: Text(
-                        '${_getActiveFilterCount()}',
-                        style: ResponsiveHelper.tinyStyle(
-                          context,
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  bool _hasActiveFilters() =>
-      _selectedBusiness != null ||
-      _selectedDateRange != null ||
-      _selectedTOType != null ||
-      _selectedPublishStatus != null;
-
-  int _getActiveFilterCount() {
-    int count = 0;
-    if (_selectedBusiness != null) count++;
-    if (_selectedDateRange != null) count++;
-    if (_selectedTOType != null) count++;
-    if (_selectedPublishStatus != null) count++;
-    return count;
-  }
-
   void _showFilterDialog() {
-    final allItems = context.read<WorkforceController>().items;
-    final businessNames = allItems
+    final controller = context.read<WorkforceController>();
+    final businessNames = controller.items
         .map((g) => g.businessName)
         .where((n) => n.isNotEmpty)
         .toSet()
@@ -433,18 +364,18 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       backgroundColor: Colors.transparent,
       useSafeArea: true,
       builder: (context) => FilterDialog(
-        selectedBusiness: _selectedBusiness,
-        selectedDateRange: _selectedDateRange,
-        selectedTOType: _selectedTOType,
-        selectedPublishStatus: _selectedPublishStatus,
+        selectedBusiness: controller.selectedBusiness,
+        selectedDateRange: controller.selectedDateRange,
+        selectedTOType: controller.selectedTOType,
+        selectedPublishStatus: controller.selectedPublishStatus,
         businessNames: businessNames,
         isUserMode: false,
         showTOTypeFilter: true,
         showPublishStatusFilter: true,
-        onBusinessChanged: (value) => setState(() => _selectedBusiness = value),
-        onDateRangeChanged: (value) => setState(() => _selectedDateRange = value),
-        onTOTypeChanged: (value) => setState(() => _selectedTOType = value),
-        onPublishStatusChanged: (value) => setState(() => _selectedPublishStatus = value),
+        onBusinessChanged: controller.setBusinessFilter,
+        onDateRangeChanged: controller.setDateRangeFilter,
+        onTOTypeChanged: controller.setTOTypeFilter,
+        onPublishStatusChanged: controller.setPublishStatusFilter,
       ),
     );
   }
@@ -453,7 +384,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     final controller = context.watch<WorkforceController>();
 
     if (controller.isLoading) {
-      return const LoadingWidget(message: 'TO 목록을 불러오는 중...');
+      return const LoadingWidget(message: '공고 목록을 불러오는 중...');
     }
 
     final allFilteredItems = _getFilteredItems(controller.items);

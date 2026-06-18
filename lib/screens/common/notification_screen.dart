@@ -27,6 +27,12 @@ import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../business_admin/admin_review_list_screen.dart';
+import '../business_admin/admin_contract_management_screen.dart';
+import '../../services/monthly_review_service.dart';
+import '../../models/core/review_request_model.dart';
+import '../../models/core/user_model.dart';
+import '../../widgets/dialogs/monthly_review_dialog.dart';
+import '../../widgets/dialogs/business_review_dialog.dart';
 
 /// 알림 목록 화면 (전체 / 미읽음 탭)
 class NotificationScreen extends StatefulWidget {
@@ -119,6 +125,59 @@ class _NotificationScreenState extends State<NotificationScreen> {
     );
   }
 
+  /// 날짜 기준으로 섹션 헤더(String) + 알림(NotificationModel) 혼합 리스트 생성
+  List<Object> _buildGroupedItems(List<NotificationModel> notifications) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final weekAgo = today.subtract(const Duration(days: 7));
+
+    final todayItems = <NotificationModel>[];
+    final thisWeekItems = <NotificationModel>[];
+    final olderItems = <NotificationModel>[];
+
+    for (final n in notifications) {
+      final date = DateTime(n.createdAt.year, n.createdAt.month, n.createdAt.day);
+      if (!date.isBefore(today)) {
+        todayItems.add(n);
+      } else if (date.isAfter(weekAgo)) {
+        thisWeekItems.add(n);
+      } else {
+        olderItems.add(n);
+      }
+    }
+
+    final result = <Object>[];
+    if (todayItems.isNotEmpty) {
+      result.add('오늘');
+      result.addAll(todayItems);
+    }
+    if (thisWeekItems.isNotEmpty) {
+      result.add('이번 주');
+      result.addAll(thisWeekItems);
+    }
+    if (olderItems.isNotEmpty) {
+      result.add('이전');
+      result.addAll(olderItems);
+    }
+    return result;
+  }
+
+  Widget _buildSectionHeader(BuildContext context, String label) {
+    return Padding(
+      padding: EdgeInsets.only(
+        left: ResponsiveHelper.spacing(context, 16),
+        right: ResponsiveHelper.spacing(context, 16),
+        top: ResponsiveHelper.spacing(context, 16),
+        bottom: ResponsiveHelper.spacing(context, 6),
+      ),
+      child: Text(
+        label,
+        style: ResponsiveHelper.smallStyle(context,
+            color: AppColors.grey500, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+
   Widget _buildList(
     BuildContext context,
     NotificationProvider provider,
@@ -135,6 +194,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
       );
     }
 
+    final grouped = _buildGroupedItems(notifications);
+
     return RefreshIndicator(
       onRefresh: () async {
         // 에러 상태인 경우 스트림 재연결, 정상 상태에서는 Firestore 스트림이 자동 갱신
@@ -142,10 +203,10 @@ class _NotificationScreenState extends State<NotificationScreen> {
         await Future.delayed(const Duration(milliseconds: 300));
       },
       child: ListView.builder(
-        itemCount: notifications.length + (hasMore ? 1 : 0),
+        itemCount: grouped.length + (hasMore ? 1 : 0),
         padding: ResponsiveHelper.listPadding(context),
         itemBuilder: (context, index) {
-          if (hasMore && index == notifications.length) {
+          if (hasMore && index == grouped.length) {
             return Padding(
               padding: EdgeInsets.symmetric(
                 vertical: ResponsiveHelper.spacing(context, 12),
@@ -161,7 +222,11 @@ class _NotificationScreenState extends State<NotificationScreen> {
               ),
             );
           }
-          final notification = notifications[index];
+          final item = grouped[index];
+          if (item is String) {
+            return _buildSectionHeader(context, item);
+          }
+          final notification = item as NotificationModel;
           return NotificationCard(
             notification: notification,
             onTap: () => _handleNotificationTap(context, notification, provider),
@@ -269,12 +334,24 @@ class _NotificationScreenState extends State<NotificationScreen> {
         await _openContractSignFromNotification(context, notification);
         break;
 
-      // 근무자 서명 완료 — 관리자에게 발송, 지원자 관리 화면으로 이동
+      // 근무자 서명 완료 — 관리자에게 발송, 해당 사업장 계약서 관리 화면으로 이동
       case NotificationType.contractSigned:
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
-        );
+        {
+          final businessId = notification.data?['businessId'] as String?;
+          if (businessId != null && businessId.isNotEmpty) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => AdminContractManagementScreen(businessId: businessId),
+              ),
+            );
+          } else {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+            );
+          }
+        }
         break;
 
       // 계약서 무효화 알림 — 근무자의 계약서 목록 화면으로 이동 (H-34)
@@ -433,14 +510,22 @@ class _NotificationScreenState extends State<NotificationScreen> {
           );
         }
         break;
+
+      // 리뷰 작성 요청 — requestKey로 review_requests 조회 후 다이얼로그 직접 표시
+      case NotificationType.reviewRequest:
+        await _openReviewDialogFromNotification(context, notification, isUser);
+        break;
       case NotificationType.systemNotice:
       case NotificationType.other:
-        if (isUser) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
-          );
-        }
+        // 시스템 공지: 근무자는 내 스케줄, 관리자는 인력관리로 이동
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => isUser
+                ? const MyScheduleScreen()
+                : const IntegratedWorkforceScreen(),
+          ),
+        );
         break;
     }
     } finally {
@@ -503,6 +588,134 @@ class _NotificationScreenState extends State<NotificationScreen> {
       if (!context.mounted) return;
       Navigator.pop(context);
       ToastHelper.showError('계약서를 불러오는데 실패했습니다');
+    }
+  }
+
+  /// 리뷰 작성 요청 알림 탭 — requestKey로 review_requests 조회 후 다이얼로그 직접 표시
+  Future<void> _openReviewDialogFromNotification(
+    BuildContext context,
+    NotificationModel notification,
+    bool isUser,
+  ) async {
+    final requestKey = notification.data?['requestKey'] as String?;
+
+    // requestKey 없으면 목록 화면으로 폴백
+    if (requestKey == null || requestKey.isEmpty) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => isUser ? const MyScheduleScreen() : const AdminReviewListScreen(),
+        ),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const LoadingWidget(),
+    );
+
+    try {
+      final reviewService = MonthlyReviewService();
+      final ReviewRequestModel? req = await reviewService.getReviewRequest(requestKey);
+
+      if (!context.mounted) return;
+      Navigator.pop(context); // 로딩 닫기
+
+      if (req == null) {
+        ToastHelper.showError('리뷰 요청 정보를 찾을 수 없습니다');
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => isUser ? const MyScheduleScreen() : const AdminReviewListScreen(),
+          ),
+        );
+        return;
+      }
+
+      final currentUser = context.read<UserProvider>().currentUser;
+      if (currentUser == null || !context.mounted) return;
+
+      final yearMonthStr =
+          '${req.reviewYear}-${req.reviewMonth.toString().padLeft(2, '0')}';
+
+      // attendance 기반 실제 근무일 수 조회
+      int workDaysInMonth = 0;
+      String? workerGender;
+      int? workerAge;
+
+      try {
+        if (!isUser) {
+          // 관리자: worker 프로필 + attendance 병렬 조회
+          final results = await Future.wait([
+            FirebaseFirestore.instance.collection('users').doc(req.workerId).get(),
+            FirebaseFirestore.instance
+                .collection('attendance')
+                .where('userId', isEqualTo: req.workerId)
+                .where('businessId', isEqualTo: req.businessId)
+                .where('yearMonth', isEqualTo: yearMonthStr)
+                .where('wageStatus', whereIn: ['confirmed', 'transferred'])
+                .get(),
+          ]);
+          final userSnap = results[0] as DocumentSnapshot<Map<String, dynamic>>;
+          if (userSnap.exists && userSnap.data() != null) {
+            final worker = UserModel.fromMap(userSnap.data()!, userSnap.id);
+            workerGender = worker.gender;
+            workerAge = worker.age;
+          }
+          workDaysInMonth = (results[1] as QuerySnapshot<Map<String, dynamic>>).docs.length;
+        } else {
+          // 근무자: 자신의 attendance 조회
+          final attSnap = await FirebaseFirestore.instance
+              .collection('attendance')
+              .where('userId', isEqualTo: currentUser.uid)
+              .where('businessId', isEqualTo: req.businessId)
+              .where('yearMonth', isEqualTo: yearMonthStr)
+              .where('wageStatus', whereIn: ['confirmed', 'transferred'])
+              .get();
+          workDaysInMonth = attSnap.docs.length;
+        }
+      } catch (e) {
+        debugPrint('❌ 리뷰 요청 정보 로드 실패: $e');
+      }
+
+      if (!context.mounted) return;
+
+      if (!isUser) {
+        // 관리자 → 근무자 리뷰 다이얼로그
+        await showMonthlyReviewDialog(
+          context,
+          reviewerId: currentUser.uid,
+          reviewerName: currentUser.name,
+          businessId: req.businessId,
+          businessName: req.businessName,
+          targetUserId: req.workerId,
+          targetUserName: req.workerName,
+          targetUserGender: workerGender,
+          targetUserAge: workerAge,
+          reviewYear: req.reviewYear,
+          reviewMonth: req.reviewMonth,
+          workDaysInMonth: workDaysInMonth,
+          requestId: req.id,
+        );
+      } else {
+        // 근무자 → 사업장 리뷰 다이얼로그
+        await showBusinessReviewDialog(
+          context,
+          reviewerId: currentUser.uid,
+          businessId: req.businessId,
+          businessName: req.businessName,
+          reviewYear: req.reviewYear,
+          reviewMonth: req.reviewMonth,
+          workDaysInMonth: workDaysInMonth,
+          requestId: req.id,
+        );
+      }
+    } catch (e) {
+      if (!context.mounted) return;
+      Navigator.pop(context);
+      ToastHelper.showError('리뷰 정보를 불러오는데 실패했습니다');
     }
   }
 

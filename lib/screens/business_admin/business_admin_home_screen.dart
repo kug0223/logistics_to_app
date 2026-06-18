@@ -361,6 +361,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                       ),
                       child: Padding(
                         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
+                        // UX-03: bottom navigation bar 없음 (사업주 홈도 동일)
+                        // 공고관리 → 급여관리 등 기능 간 이동 시 항상 홈으로 복귀 필요
+                        // 사업주는 공고확인 → 출퇴근현황 → 급여확정 순 반복 패턴이 많아 불편도가 높음
                         child: GridView.count(
                           crossAxisCount: 2,
                           crossAxisSpacing: ResponsiveHelper.spacing(context, 16),
@@ -387,7 +390,6 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                     final canProceed = await checkTOPrerequisites(
                                       context,
                                       hasApprovedBusiness: hasApprovedBusiness,
-                                      isEmailVerified: user.isPassVerified,
                                       hasLicense: user.businessLicenseImageUrl != null,
                                     );
                                     if (!canProceed || !context.mounted) return;

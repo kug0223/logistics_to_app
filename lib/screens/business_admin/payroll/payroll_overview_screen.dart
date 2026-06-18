@@ -217,7 +217,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
         crossAxisCount: 2,
         crossAxisSpacing: ResponsiveHelper.spacing(context, 12),
         mainAxisSpacing: ResponsiveHelper.spacing(context, 12),
-        childAspectRatio: 1.4,
+        childAspectRatio: 1.8,
       ),
       itemCount: 12,
       itemBuilder: (context, i) {
@@ -257,16 +257,16 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                   ),
                 ],
         ),
-        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 14)),
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Row(
               children: [
                 Text(
                   _monthLabels[summary.month - 1],
-                  style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  style: ResponsiveHelper.smallStyle(context).copyWith(
                     fontWeight: FontWeight.bold,
                     color: isEmpty ? AppColors.grey400 : theme.primaryColor,
                   ),
@@ -274,11 +274,12 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                 if (!isEmpty) ...[
                   const Spacer(),
                   Icon(Icons.chevron_right,
-                      size: ResponsiveHelper.iconSize(context, 14),
+                      size: ResponsiveHelper.iconSize(context, 13),
                       color: AppColors.grey400),
                 ],
               ],
             ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 6)),
             if (isEmpty)
               Text(
                 isFuture ? '' : '데이터 없음',
@@ -289,13 +290,14 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
             else ...[
               Text(
                 summary.formattedTotalPayout,
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                style: ResponsiveHelper.smallStyle(context).copyWith(
                   fontWeight: FontWeight.bold,
                   color: AppColors.successDark,
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
+              SizedBox(height: ResponsiveHelper.spacing(context, 2)),
               Text(
                 '${summary.workerCount}명 · ${summary.confirmedCount}건',
                 style: ResponsiveHelper.tinyStyle(context).copyWith(
@@ -304,7 +306,8 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
-              if (summary.pendingCount > 0 || summary.notTransferredCount > 0)
+              if (summary.pendingCount > 0 || summary.notTransferredCount > 0) ...[
+                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                 Text(
                   [
                     if (summary.pendingCount > 0) '미확정 ${summary.pendingCount}',
@@ -319,6 +322,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
+              ],
             ],
           ],
         ),
@@ -387,37 +391,6 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
 
     return GradientScaffold(
       title: '${widget.summary.year}년 ${widget.summary.month}월 급여현황',
-      actions: [
-        Padding(
-          padding: const EdgeInsets.only(right: 8),
-          child: OutlinedButton.icon(
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => PayrollPaymentDashboardScreen(
-                  businessId: widget.summary.businessId,
-                  year: widget.summary.year,
-                  month: widget.summary.month,
-                ),
-              ),
-            ),
-            icon: Icon(Icons.payment_outlined,
-                size: ResponsiveHelper.iconSize(context, 14), color: Colors.white),
-            label: const Text('지급 현황'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.white,
-              side: BorderSide(
-                  color: Colors.white.withValues(alpha: 0.85), width: 1.2),
-              padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 12),
-                  vertical: ResponsiveHelper.spacing(context, 6)),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20)),
-              textStyle: ResponsiveHelper.smallStyle(context, fontWeight: FontWeight.w600),
-            ),
-          ),
-        ),
-      ],
       body: Column(
         children: [
           _buildSummaryHeader(context, theme),
@@ -518,7 +491,7 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── 1행: 총 지급액 히어로
+          // ── 1행: 총 지급액 히어로 + 지급 현황 버튼
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
@@ -536,6 +509,34 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
               Text('총 지급액',
                   style: ResponsiveHelper.tinyStyle(context,
                       color: AppColors.grey700)),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PayrollPaymentDashboardScreen(
+                      businessId: widget.summary.businessId,
+                      year: widget.summary.year,
+                      month: widget.summary.month,
+                    ),
+                  ),
+                ),
+                icon: Icon(Icons.receipt_long_outlined,
+                    size: ResponsiveHelper.iconSize(context, 13),
+                    color: theme.primaryColor),
+                label: Text('지급 현황',
+                    style: ResponsiveHelper.tinyStyle(context,
+                        color: theme.primaryColor,
+                        fontWeight: FontWeight.w600)),
+                style: TextButton.styleFrom(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 8),
+                    vertical: ResponsiveHelper.spacing(context, 4),
+                  ),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
             ],
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),

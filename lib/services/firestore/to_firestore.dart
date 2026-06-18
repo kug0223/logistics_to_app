@@ -188,6 +188,19 @@ extension TOFirestore on FirestoreService {
     String? publishTime,
   }) async {
     NetworkChecker.instance.assertOnline('공고 등록을 하려면 인터넷 연결이 필요합니다.');
+
+    // 진행중 공고 4개 제한 — 미공개(draft) 저장은 제한 없음
+    if (publishMode != 'draft') {
+      final activeSnap = await _firestore
+          .collection('tos')
+          .where('businessId', isEqualTo: businessId)
+          .where('status', isEqualTo: TOStatus.active)
+          .get();
+      if (activeSnap.docs.length >= 4) {
+        throw Exception('MAX_ACTIVE_TO_LIMIT');
+      }
+    }
+
     try {
       // 사업장 주소 조회
       String? businessAddress, businessCity, businessDistrict;

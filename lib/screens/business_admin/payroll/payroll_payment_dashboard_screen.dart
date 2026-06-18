@@ -927,7 +927,7 @@ class _PayrollPaymentDashboardScreenState
           onExportCsv:    _exportCsv,
         ),
 
-        // ── 퀵필터 칩 + 액션 버튼 행
+        // ── 퀵필터 칩 행
         Container(
           color: Colors.white,
           padding: EdgeInsets.fromLTRB(
@@ -938,57 +938,75 @@ class _PayrollPaymentDashboardScreenState
           ),
           child: Row(
             children: [
-              // 퀵필터 칩
-              AppFilterChip(
-                label: '전체',
-                count: allEntries.length,
-                isSelected: _pendingFilter == _PendingFilter.all,
-                color: AppColors.grey600,
-                onTap: () => setState(() => _pendingFilter = _PendingFilter.all),
-              ),
-              const SizedBox(width: 6),
-              AppFilterChip(
-                label: '연체',
-                count: overdueTotal,
-                isSelected: _pendingFilter == _PendingFilter.overdue,
-                color: AppColors.error,
-                onTap: () => setState(() => _pendingFilter = _PendingFilter.overdue),
-              ),
-              const SizedBox(width: 6),
-              AppFilterChip(
-                label: '오늘마감',
-                count: todayTotal,
-                isSelected: _pendingFilter == _PendingFilter.today,
-                color: AppColors.warning,
-                onTap: () => setState(() => _pendingFilter = _PendingFilter.today),
-              ),
-              const SizedBox(width: 6),
-              AppFilterChip(
-                label: '계좌없음',
-                count: noAccountTotal,
-                isSelected: _pendingFilter == _PendingFilter.noAccount,
-                color: AppColors.grey600,
-                onTap: () => setState(() => _pendingFilter = _PendingFilter.noAccount),
-              ),
-              const Spacer(),
-              // 일괄선택 토글 버튼
-              TextButton.icon(
-                onPressed: _toggleBatchMode,
-                icon: Icon(
-                  _batchMode ? Icons.close : Icons.checklist,
-                  size: 16,
-                  color: _batchMode ? AppColors.error : AppColors.grey600,
-                ),
-                label: Text(
-                  _batchMode ? '취소' : '일괄선택',
-                  style: ResponsiveHelper.smallStyle(context,
-                    color: _batchMode ? AppColors.error : AppColors.grey600,
-                    fontWeight: FontWeight.w600,
+              // 퀵필터 칩 — 좁은 화면에서 넘칠 수 있으므로 Expanded + 수평 스크롤
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      AppFilterChip(
+                        label: '전체',
+                        count: allEntries.length,
+                        isSelected: _pendingFilter == _PendingFilter.all,
+                        color: AppColors.grey600,
+                        onTap: () => setState(() => _pendingFilter = _PendingFilter.all),
+                      ),
+                      const SizedBox(width: 6),
+                      AppFilterChip(
+                        label: '연체',
+                        count: overdueTotal,
+                        isSelected: _pendingFilter == _PendingFilter.overdue,
+                        color: AppColors.error,
+                        onTap: () => setState(() => _pendingFilter = _PendingFilter.overdue),
+                      ),
+                      const SizedBox(width: 6),
+                      AppFilterChip(
+                        label: '오늘마감',
+                        count: todayTotal,
+                        isSelected: _pendingFilter == _PendingFilter.today,
+                        color: AppColors.warning,
+                        onTap: () => setState(() => _pendingFilter = _PendingFilter.today),
+                      ),
+                      const SizedBox(width: 6),
+                      AppFilterChip(
+                        label: '계좌없음',
+                        count: noAccountTotal,
+                        isSelected: _pendingFilter == _PendingFilter.noAccount,
+                        color: AppColors.grey600,
+                        onTap: () => setState(() => _pendingFilter = _PendingFilter.noAccount),
+                      ),
+                    ],
                   ),
                 ),
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  minimumSize: const Size(0, 32),
+              ),
+              // 구분선
+              Container(
+                width: 1,
+                height: 20,
+                color: AppColors.grey200,
+                margin: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 8)),
+              ),
+              // 일괄선택 토글 — 필터 칩과 시각적으로 분리
+              GestureDetector(
+                onTap: _toggleBatchMode,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _batchMode ? Icons.close : Icons.check_box_outlined,
+                      size: 15,
+                      color: _batchMode ? AppColors.error : AppColors.grey600,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      _batchMode ? '취소' : '일괄선택',
+                      style: ResponsiveHelper.smallStyle(context,
+                        color: _batchMode ? AppColors.error : AppColors.grey600,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -1395,6 +1413,8 @@ class _WorkerPayCard extends StatelessWidget {
                                     ? AppColors.successDark
                                     : AppColors.grey800,
                               ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
                             const SizedBox(height: 6),
                             if (isTransferred)

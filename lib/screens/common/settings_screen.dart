@@ -50,6 +50,7 @@ import '../../services/fcm_service.dart';
 
 // Utils
 import '../../utils/toast_helper.dart';
+import '../../utils/image_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/common/gradient_scaffold.dart';
@@ -71,6 +72,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String? _businessSealBase64;
   String _sealType = 'stamp';
   String? _resolvedBusinessId;
+  bool _isSealLoading = true;
 
   @override
   void initState() {
@@ -103,7 +105,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     }
 
-    if (businessId == null || !mounted) return;
+    if (!mounted) return;
+
+    if (businessId == null) {
+      setState(() => _isSealLoading = false);
+      return;
+    }
 
     try {
       final doc = await FirebaseFirestore.instance
@@ -117,10 +124,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _resolvedBusinessId = businessId;
           _businessSealBase64 = seal;
           _sealType = sealType;
+          _isSealLoading = false;
         });
       }
     } catch (e) {
       debugPrint('⚠️ 사업장 인감 조회 실패 ($businessId): $e');
+      if (mounted) setState(() => _isSealLoading = false);
     }
   }
 
@@ -254,6 +263,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
+          // UX-04: 설정 화면에 필수/선택 항목 구분 없음
+          // 근로자 기준 공고 지원 필수 항목: PASS 본인인증, 신분증, 통장사본, 계좌 등록
+          // 현재는 '내 서류 관리' 안에 모두 섞여 있어 신규 사용자가 무엇을 먼저 해야 하는지 파악 어려움
+          // 개선 방향: 미완료 필수 항목에 빨간 뱃지 표시, 또는 상단에 "완료 N/4" 진행 바 추가
           // ── 내 정보 ──────────────────────────────────────────
           _buildSectionHeader(context, '내 정보', Icons.person_outline),
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -1470,6 +1483,97 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // ── 사업자 날인 등록 카드 (도장 이미지 / 직접 서명 선택) ────────────────
 
   Widget _buildSealCard(BuildContext context, UserModel? user) {
+    // 사업장 조회 중
+    if (_isSealLoading) {
+      return Container(
+        decoration: CommonWidgets.compactCardDecoration(),
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
+        child: Center(
+          child: SizedBox(
+            width: 20, height: 20,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: Theme.of(context).primaryColor,
+            ),
+          ),
+        ),
+      );
+    }
+
+    // 사업장 미등록 — 먼저 사업장 등록 안내
+    if (_resolvedBusinessId == null) {
+      return Container(
+        decoration: CommonWidgets.compactCardDecoration(),
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 16),
+          vertical: ResponsiveHelper.spacing(context, 14),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: ResponsiveHelper.spacing(context, 34),
+                  height: ResponsiveHelper.spacing(context, 34),
+                  decoration: BoxDecoration(
+                    color: AppColors.grey200,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(Icons.verified_outlined,
+                      color: AppColors.grey400,
+                      size: ResponsiveHelper.iconSize(context, 18)),
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('사업주 날인',
+                          style: ResponsiveHelper.bodyStyle(context)
+                              .copyWith(fontWeight: FontWeight.w600, color: AppColors.grey500)),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                      Text('사업장 등록 후 설정 가능합니다',
+                          style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () async {
+                  await NavigationHelper.push<void>(
+                    context,
+                    destination: const BusinessListScreen(),
+                  );
+                  if (!mounted) return;
+                  // 사업장 등록 후 돌아오면 날인 정보 새로고침
+                  setState(() => _isSealLoading = true);
+                  await _loadBusinessSeal();
+                },
+                icon: Icon(Icons.add_business_outlined,
+                    size: ResponsiveHelper.iconSize(context, 14)),
+                label: Text('사업장 등록하기',
+                    style: ResponsiveHelper.smallStyle(context,
+                        color: Theme.of(context).primaryColor,
+                        fontWeight: FontWeight.w600)),
+                style: OutlinedButton.styleFrom(
+                  padding: EdgeInsets.symmetric(
+                      vertical: ResponsiveHelper.spacing(context, 8)),
+                  side: BorderSide(color: Theme.of(context).primaryColor),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     final hasSeal = _businessSealBase64 != null && _businessSealBase64!.isNotEmpty;
     final isStamp = _sealType == 'stamp';
 
@@ -1615,40 +1719,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  /// 현재 관리자의 모든 사업장 ID를 반환한다.
+  Future<List<String>> _getAllAdminBusinessIds(String uid) async {
+    final snap = await FirebaseFirestore.instance
+        .collection('businesses')
+        .where('adminIds', arrayContains: uid)
+        .get();
+    return snap.docs.map((d) => d.id).toList();
+  }
+
   Future<void> _registerSeal(BuildContext context, UserModel? user) async {
-    final businessId = _resolvedBusinessId ?? user?.businessId;
-    if (businessId == null) {
+    if (user == null) {
       ToastHelper.showWarning('사업장 정보를 찾을 수 없습니다');
       return;
     }
 
     // 갤러리 또는 카메라 선택
-    final source = await showModalBottomSheet<ImageSource>(
-      context: context,
-      useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      // [특이사항] useSafeArea: true 사용 중이므로 내부 SafeArea 제거 (D-L-1)
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('갤러리에서 선택'),
-              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
-            ),
-            ListTile(
-              leading: const Icon(Icons.camera_alt_outlined),
-              title: const Text('카메라로 촬영'),
-              onTap: () => Navigator.pop(ctx, ImageSource.camera),
-            ),
-          ],
-        ),
-      ),
-    );
+    final source = await ImageHelper.showImageSourceBottomSheet(context);
     if (source == null || !mounted) return;
 
     final picked = await ImagePicker().pickImage(
@@ -1661,10 +1748,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final bytes = await picked.readAsBytes();
       final b64 = base64Encode(bytes);
-      await FirebaseFirestore.instance
-          .collection('businesses')
-          .doc(businessId)
-          .update({'sealBase64': b64, 'sealType': 'stamp'});
+      final ids = await _getAllAdminBusinessIds(user.uid);
+      if (!mounted) return;
+      final batch = FirebaseFirestore.instance.batch();
+      for (final id in ids) {
+        batch.update(
+          FirebaseFirestore.instance.collection('businesses').doc(id),
+          {'sealBase64': b64, 'sealType': 'stamp'},
+        );
+      }
+      await batch.commit();
       if (mounted) {
         setState(() {
           _businessSealBase64 = b64;
@@ -1678,8 +1771,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _registerBusinessSignature(BuildContext context, UserModel? user) async {
-    final businessId = _resolvedBusinessId ?? user?.businessId;
-    if (businessId == null) {
+    if (user == null) {
       ToastHelper.showWarning('사업장 정보를 찾을 수 없습니다');
       return;
     }
@@ -1689,10 +1781,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     try {
       final b64 = base64Encode(bytes);
-      await FirebaseFirestore.instance
-          .collection('businesses')
-          .doc(businessId)
-          .update({'sealBase64': b64, 'sealType': 'signature'});
+      final ids = await _getAllAdminBusinessIds(user.uid);
+      if (!mounted) return;
+      final batch = FirebaseFirestore.instance.batch();
+      for (final id in ids) {
+        batch.update(
+          FirebaseFirestore.instance.collection('businesses').doc(id),
+          {'sealBase64': b64, 'sealType': 'signature'},
+        );
+      }
+      await batch.commit();
       if (mounted) {
         setState(() {
           _businessSealBase64 = b64;
@@ -1715,17 +1813,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     if (confirm != true || !mounted) return;
 
-    final businessId = _resolvedBusinessId ?? user?.businessId;
-    if (businessId == null) {
+    if (user == null) {
       ToastHelper.showWarning('사업장 정보를 찾을 수 없습니다');
       return;
     }
 
     try {
-      await FirebaseFirestore.instance
-          .collection('businesses')
-          .doc(businessId)
-          .update({'sealBase64': null, 'sealType': 'stamp'});
+      final ids = await _getAllAdminBusinessIds(user.uid);
+      if (!mounted) return;
+      final batch = FirebaseFirestore.instance.batch();
+      for (final id in ids) {
+        batch.update(
+          FirebaseFirestore.instance.collection('businesses').doc(id),
+          {'sealBase64': null, 'sealType': 'stamp'},
+        );
+      }
+      await batch.commit();
       if (mounted) {
         setState(() {
           _businessSealBase64 = null;

@@ -206,6 +206,11 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
                         if (userProvider.isSubAdmin)
                           _buildAdminModeBanner(context, userProvider),
                         _buildOnboardingBanner(context, userProvider),
+                        // UX-03: bottom navigation bar 없음
+                        // 다른 화면에서 다른 기능으로 이동하려면 항상 홈으로 돌아와야 함 (뒤로가기 필요)
+                        // 업무용 앱 특성상 공고관리 → 급여관리 등 기능 간 빠른 전환 수요가 높음
+                        // 개선 방향: 주요 5개 탭(홈·공고·스케줄·출퇴근·설정)을 bottom nav로 고정
+                        //   단, 전면 리팩토링 비용이 크므로 우선순위 조율 필요
                         Expanded(
                           child: GridView.count(
                             crossAxisCount: 2,
@@ -227,6 +232,10 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
                                   color: theme.primaryColor,
                                   onTap: () => Navigator.push(context,
                                       MaterialPageRoute(builder: (_) => const MyScheduleScreen()))),
+                              // UX-01: 출퇴근 카드에 오늘 근무 상태 미리보기 없음
+                              // 오늘 확정 근무가 없는 날도 동일한 "근무 시간 기록" 표시 → 불필요한 화면 진입 유도
+                              // 개선 방향: 오늘 확정 근무 여부를 UserProvider 또는 별도 쿼리로 조회해
+                              //   "오늘 ○시 근무 예정" / "오늘 근무 없음" 동적 subtitle 표시
                               _buildMenuCard(context,
                                   icon: Icons.access_time_outlined,
                                   title: '출퇴근 체크',

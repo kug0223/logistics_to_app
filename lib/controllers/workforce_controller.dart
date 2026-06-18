@@ -25,6 +25,65 @@ class WorkforceController extends ChangeNotifier {
   bool get isLoading => _isLoading;
   bool isGroupLoading(String groupId) => _loadingGroupIds.contains(groupId);
 
+  // ── 공고 카운트 ───────────────────────────────────────────────
+  static const int maxActiveTOs = 4;
+
+  /// 현재 진행중(active) 공고 수
+  int get activeToCount => _items.where((g) => !g.isClosed).length;
+
+  // ── 필터 상태 ─────────────────────────────────────────────────
+  DateTimeRange? _selectedDateRange;
+  String? _selectedBusiness;
+  String? _selectedTOType;
+  String? _selectedPublishStatus;
+
+  DateTimeRange? get selectedDateRange => _selectedDateRange;
+  String? get selectedBusiness => _selectedBusiness;
+  String? get selectedTOType => _selectedTOType;
+  String? get selectedPublishStatus => _selectedPublishStatus;
+
+  bool get hasActiveFilters =>
+      _selectedBusiness != null ||
+      _selectedDateRange != null ||
+      _selectedTOType != null ||
+      _selectedPublishStatus != null;
+
+  int get activeFilterCount {
+    int count = 0;
+    if (_selectedBusiness != null) count++;
+    if (_selectedDateRange != null) count++;
+    if (_selectedTOType != null) count++;
+    if (_selectedPublishStatus != null) count++;
+    return count;
+  }
+
+  void setBusinessFilter(String? value) {
+    _selectedBusiness = value;
+    notifyListeners();
+  }
+
+  void setDateRangeFilter(DateTimeRange? value) {
+    _selectedDateRange = value;
+    notifyListeners();
+  }
+
+  void setTOTypeFilter(String? value) {
+    _selectedTOType = value;
+    notifyListeners();
+  }
+
+  void setPublishStatusFilter(String? value) {
+    _selectedPublishStatus = value;
+    notifyListeners();
+  }
+
+  // ── 필터 다이얼로그 콜백 (WorkforceListView에서 등록) ──────────
+  VoidCallback? _showFilterCallback;
+
+  void registerShowFilterCallback(VoidCallback cb) => _showFilterCallback = cb;
+  void unregisterShowFilterCallback() => _showFilterCallback = null;
+  void requestShowFilter() => _showFilterCallback?.call();
+
   // ── 초기 로드 / 재로드 ────────────────────────────────────
 
   /// [context]는 첫 번째 await 이전에 uid/role 추출에만 사용됩니다.
