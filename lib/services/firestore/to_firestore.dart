@@ -669,20 +669,37 @@ extension TOFirestore on FirestoreService {
 
     // 슬롯 마감 완료 후 PENDING 지원서 취소 + TO totalPending 카운터 감소
     // [A-001] try-catch per slot: 특정 슬롯 cancelBatch 실패 시 해당 슬롯 카운트 제외 후 계속 진행
-    int totalCanceledPending = 0;
-    for (final slotId in slotIds) {
-      final pendingSnap = await _firestore
+    //
+    // [최적화] 쿼리를 whereIn(30개 청크)으로 묶어 N번→ceil(N/30)번으로 축소.
+    // 업데이트·알림은 슬롯별 try-catch 유지 (A-001 에러 격리 보존).
+    final allPendingDocs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+    for (var i = 0; i < slotIds.length; i += 30) {
+      final chunk = slotIds.sublist(i, (i + 30).clamp(0, slotIds.length));
+      final snap = await _firestore
           .collection('applications')
           .where('toId', isEqualTo: toId)
-          .where('slotId', isEqualTo: slotId)
+          .where('slotId', whereIn: chunk)
           .where('status', isEqualTo: AppStatus.pending)
           .get(const GetOptions(source: Source.server));
-      if (pendingSnap.docs.isEmpty) continue;
+      allPendingDocs.addAll(snap.docs);
+    }
+
+    // slotId별 그룹화 — 슬롯별 try-catch 처리를 위해 분류
+    final pendingBySlot = <String, List<QueryDocumentSnapshot<Map<String, dynamic>>>>{};
+    for (final doc in allPendingDocs) {
+      final slotId = doc.data()['slotId'] as String? ?? '';
+      if (slotId.isNotEmpty) pendingBySlot.putIfAbsent(slotId, () => []).add(doc);
+    }
+
+    int totalCanceledPending = 0;
+    for (final slotId in slotIds) {
+      final docs = pendingBySlot[slotId] ?? [];
+      if (docs.isEmpty) continue;
       int slotCanceled = 0;
       try {
         var cancelBatch = _firestore.batch();
         int cancelCount = 0;
-        for (final doc in pendingSnap.docs) {
+        for (final doc in docs) {
           cancelBatch.update(doc.reference, {
             'status': AppStatus.rejected,
             'rejectedAt': FieldValue.serverTimestamp(),
@@ -702,7 +719,7 @@ extension TOFirestore on FirestoreService {
         // [BUG-수정] T-L-1: PENDING→REJECTED 처리된 지원자에게 거절 알림 발송
         // batchDeleteSlots의 _sendTOCanceledNotification 패턴과 달리, 여기서는
         // applicationRejected 타입 알림을 사용해 지원 거절 사실을 개별 통지한다.
-        for (final doc in pendingSnap.docs) {
+        for (final doc in docs) {
           final data = doc.data();
           final applicantUid = data['uid'] as String?;
           if (applicantUid == null) continue;
@@ -806,17 +823,26 @@ extension TOFirestore on FirestoreService {
     }
 
     // 삭제 대상 슬롯에 연결된 활성 지원서 전체 취소 처리 (PENDING/CONFIRMED/CONTRACT_PENDING)
-    for (final slotId in slotIds) {
-      final activeSnap = await _firestore
+    // [최적화] whereIn(slotId, 30개 청크)으로 N번→ceil(N/30)번 쿼리 축소.
+    // Firestore whereIn은 1개 필드만 허용 — status는 클라이언트에서 필터링.
+    const activeStatuses = {AppStatus.pending, AppStatus.confirmed, AppStatus.contractPending};
+    final allActiveDocs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+    for (var i = 0; i < slotIds.length; i += 30) {
+      final chunk = slotIds.sublist(i, (i + 30).clamp(0, slotIds.length));
+      final snap = await _firestore
           .collection('applications')
           .where('toId', isEqualTo: toId)
-          .where('slotId', isEqualTo: slotId)
-          .where('status', whereIn: [AppStatus.pending, AppStatus.confirmed, AppStatus.contractPending])
+          .where('slotId', whereIn: chunk)
           .get(const GetOptions(source: Source.server));
-      if (activeSnap.docs.isEmpty) continue;
+      allActiveDocs.addAll(
+        snap.docs.where((d) => activeStatuses.contains(d.data()['status'] as String?)),
+      );
+    }
+
+    if (allActiveDocs.isNotEmpty) {
       var cancelBatch = _firestore.batch();
       int cancelCount = 0;
-      for (final doc in activeSnap.docs) {
+      for (final doc in allActiveDocs) {
         cancelBatch.update(doc.reference, {
           'status': AppStatus.rejected,
           'rejectedAt': FieldValue.serverTimestamp(),
