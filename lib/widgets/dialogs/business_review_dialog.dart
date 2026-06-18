@@ -6,15 +6,15 @@ import '../../theme/app_colors.dart';
 import '../../models/settings/trust_settings_model.dart';
 import '../../services/monthly_review_service.dart';
 import '../../utils/toast_helper.dart';
-import '../common/loading_widget.dart';
 import 'styled_dialog.dart';
+import 'review_dialog_shell.dart';
 
 /// 지원자 → 사업장 리뷰 작성 다이얼로그
 /// 
 /// 정책:
 /// - 월 1회만 작성 가능
 /// - 작성 후 수정 불가
-/// - 3일 후 공개
+/// - 즉시공개(상대방 작성 시) or 14일 후 자동 공개
 /// - 익명 작성
 class BusinessReviewDialog extends StatefulWidget {
   /// 작성자 (지원자) UID
@@ -38,6 +38,9 @@ class BusinessReviewDialog extends StatefulWidget {
   /// review_requests 문서 ID (양방향 공개 연동)
   final String? requestId;
 
+  /// 미리 로드된 태그 목록 (showBusinessReviewDialog에서 주입)
+  final ReviewTagsModel preloadedTags;
+
   const BusinessReviewDialog({
     super.key,
     required this.reviewerId,
@@ -47,6 +50,7 @@ class BusinessReviewDialog extends StatefulWidget {
     required this.reviewMonth,
     required this.workDaysInMonth,
     this.requestId,
+    required this.preloadedTags,
   });
 
   @override
@@ -62,33 +66,21 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
   bool? _wouldWorkAgain;
   List<String> _selectedPositiveTags = [];
   List<String> _selectedImprovementTags = [];
-  bool _isLoading = false;
   bool _isSubmitting = false;
-  
-  // 태그 목록
-  ReviewTagsModel _tags = ReviewTagsModel.defaults();
+
+  // 태그 목록 (showBusinessReviewDialog에서 미리 로드 후 주입)
+  late ReviewTagsModel _tags;
 
   @override
   void initState() {
     super.initState();
-    _loadTags();
+    _tags = widget.preloadedTags;
   }
 
   @override
   void dispose() {
     _commentController.dispose();
     super.dispose();
-  }
-
-  Future<void> _loadTags() async {
-    setState(() => _isLoading = true);
-    try {
-      _tags = await _reviewService.getReviewTags();
-    } catch (e) {
-      debugPrint('❌ 태그 로드 실패: $e');
-    }
-    if (!mounted) return;
-    setState(() => _isLoading = false);
   }
 
   Future<void> _submitReview() async {
@@ -171,96 +163,41 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    
-    // 🆕 첫 리뷰 작성 툴팁은 관리자 리뷰에서만 표시 (지원자 리뷰는 별도)
-    
-    return Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(24),
-      ),
-      insetPadding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 16),
-        vertical: AppDialogSize.insetV,
-      ),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
+
+    return ReviewDialogShell(
+      header: _buildHeader(context, theme),
+      body: [
+        _buildBusinessInfo(context),
+        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+        _buildRatingSection(context),
+        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+        _buildWorkAgainSection(context, theme),
+        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+        _buildTagSection(
+          context,
+          title: '좋았던 점',
+          icon: Icons.thumb_up_outlined,
+          iconColor: AppColors.success,
+          tags: _tags.businessPositiveTags,
+          selectedTags: _selectedPositiveTags,
+          onChanged: (tags) => setState(() => _selectedPositiveTags = tags),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 헤더
-            _buildHeader(context, theme),
-            
-            // 내용
-            Flexible(
-              child: _isLoading
-                  ? Padding(
-                      padding: ResponsiveHelper.cardPadding(context),
-                      child: const LoadingWidget(),
-                    )
-                  : SingleChildScrollView(
-                      padding: ResponsiveHelper.cardPadding(context),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // 사업장 정보
-                          _buildBusinessInfo(context),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                          
-                          // 평점
-                          _buildRatingSection(context),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                          
-                          // 재근무 의사
-                          _buildWorkAgainSection(context, theme),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                          
-                          // 긍정 태그
-                          _buildTagSection(
-                            context,
-                            title: '좋았던 점',
-                            icon: Icons.thumb_up_outlined,
-                            iconColor: AppColors.success,
-                            tags: _tags.businessPositiveTags,
-                            selectedTags: _selectedPositiveTags,
-                            onChanged: (tags) {
-                              setState(() => _selectedPositiveTags = tags);
-                            },
-                          ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                          
-                          // 개선 태그
-                          _buildTagSection(
-                            context,
-                            title: '아쉬운 점',
-                            icon: Icons.lightbulb_outline,
-                            iconColor: AppColors.warning,
-                            tags: _tags.businessImprovementTags,
-                            selectedTags: _selectedImprovementTags,
-                            onChanged: (tags) {
-                              setState(() => _selectedImprovementTags = tags);
-                            },
-                          ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                          
-                          // 상세 코멘트
-                          _buildCommentSection(context, theme),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                          
-                          // 안내 문구
-                          _buildNotice(context),
-                        ],
-                      ),
-                    ),
-            ),
-            
-            // 버튼
-            _buildActions(context, theme),
-          ],
+        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+        _buildTagSection(
+          context,
+          title: '아쉬운 점',
+          icon: Icons.lightbulb_outline,
+          iconColor: AppColors.warning,
+          tags: _tags.businessImprovementTags,
+          selectedTags: _selectedImprovementTags,
+          onChanged: (tags) => setState(() => _selectedImprovementTags = tags),
         ),
-      ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+        _buildCommentSection(context, theme),
+        SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+        _buildNotice(context),
+      ],
+      actions: _buildActions(context, theme),
     );
   }
 
@@ -277,47 +214,51 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(24),
-          topRight: Radius.circular(24),
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(AppDialogSize.borderRadius),
+          topRight: Radius.circular(AppDialogSize.borderRadius),
         ),
       ),
-      child: Column(
+      child: Row(
         children: [
-          Row(
-            children: [
-              Icon(
-                Icons.rate_review,
-                color: Colors.white,
-                size: ResponsiveHelper.iconSize(context, 28),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '사업장 리뷰 작성',
-                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      '${widget.reviewYear}년 ${widget.reviewMonth}월',
-                      style: ResponsiveHelper.smallStyle(context).copyWith(
-                        color: Colors.white.withValues(alpha: 0.9),
-                      ),
-                    ),
-                  ],
+          Container(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              Icons.rate_review,
+              color: Colors.white,
+              size: ResponsiveHelper.iconSize(context, 28),
+            ),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '사업장 리뷰 작성',
+                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              ),
-              IconButton(
-                tooltip: '닫기',
-                onPressed: () => Navigator.pop(context),
-                icon: Icon(Icons.close, color: Colors.white),
-              ),
-            ],
+                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                Text(
+                  '${widget.reviewYear}년 ${widget.reviewMonth}월',
+                  style: ResponsiveHelper.smallStyle(context).copyWith(
+                    color: Colors.white.withValues(alpha: 0.9),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: '닫기',
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.close, color: Colors.white),
           ),
         ],
       ),
@@ -443,10 +384,12 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
               size: ResponsiveHelper.iconSize(context, 20),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            Text(
-              '다시 근무하고 싶으신가요?',
-              style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                fontWeight: FontWeight.bold,
+            Expanded(
+              child: Text(
+                '다시 근무하고 싶으신가요?',
+                style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
             Text(
@@ -549,14 +492,16 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
           children: [
             Icon(icon, color: iconColor, size: ResponsiveHelper.iconSize(context, 20)),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            Text(
-              title,
-              style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                fontWeight: FontWeight.bold,
+            Expanded(
+              child: Text(
+                title,
+                style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
             Text(
-              ' (복수 선택)',
+              '복수 선택',
               style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
             ),
           ],
@@ -617,14 +562,16 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
               size: ResponsiveHelper.iconSize(context, 20),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            Text(
-              '상세 후기',
-              style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                fontWeight: FontWeight.bold,
+            Expanded(
+              child: Text(
+                '상세 후기',
+                style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
             Text(
-              ' (선택)',
+              '선택',
               style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
             ),
           ],
@@ -676,7 +623,7 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Expanded(
             child: Text(
-              '리뷰는 익명으로 작성되며, 3일 후 공개됩니다.\n작성 후에는 수정할 수 없습니다.',
+              '리뷰는 익명으로 작성됩니다. 관리자도 리뷰를 작성하면 즉시 공개되며, 미작성 시 14일 후 자동 공개됩니다.\n작성 후에는 수정할 수 없습니다.',
               style: ResponsiveHelper.smallStyle(context, color: AppColors.info),
             ),
           ),
@@ -689,52 +636,27 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
   Widget _buildActions(BuildContext context, ThemeData theme) {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: AppColors.grey200)),
+      decoration: const BoxDecoration(
+        color: AppColors.grey50,
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(AppDialogSize.borderRadius),
+          bottomRight: Radius.circular(AppDialogSize.borderRadius),
+        ),
       ),
       child: Row(
         children: [
           Expanded(
-            child: OutlinedButton(
+            child: StyledDialogButton.cancel(
               onPressed: () => Navigator.pop(context),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.grey600,
-                side: BorderSide(color: AppColors.grey300),
-                padding: EdgeInsets.symmetric(
-                  vertical: ResponsiveHelper.spacing(context, 14),
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: Text('취소'),
             ),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           Expanded(
             flex: 2,
-            child: ElevatedButton(
+            child: StyledDialogButton.primary(
+              text: '리뷰 작성',
               onPressed: _isSubmitting ? null : _submitReview,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: theme.primaryColor,
-                foregroundColor: Colors.white,
-                padding: EdgeInsets.symmetric(
-                  vertical: ResponsiveHelper.spacing(context, 14),
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: _isSubmitting
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Text('리뷰 작성'),
+              isLoading: _isSubmitting,
             ),
           ),
         ],
@@ -753,7 +675,16 @@ Future<bool?> showBusinessReviewDialog(
   required int reviewMonth,
   required int workDaysInMonth,
   String? requestId,
-}) {
+}) async {
+  // 다이얼로그 열기 전 태그 미리 로드 — 빈 폼 플래시 방지
+  ReviewTagsModel tags;
+  try {
+    tags = await MonthlyReviewService().getReviewTags();
+  } catch (_) {
+    tags = ReviewTagsModel.defaults();
+  }
+  if (!context.mounted) return null;
+
   return showDialog<bool>(
     context: context,
     builder: (context) => BusinessReviewDialog(
@@ -764,6 +695,7 @@ Future<bool?> showBusinessReviewDialog(
       reviewMonth: reviewMonth,
       workDaysInMonth: workDaysInMonth,
       requestId: requestId,
+      preloadedTags: tags,
     ),
   );
 }

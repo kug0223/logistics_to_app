@@ -8,15 +8,15 @@ import '../../models/settings/trust_settings_model.dart';
 import '../../services/monthly_review_service.dart';
 import '../../services/tooltip_service.dart';
 import '../../utils/toast_helper.dart';
-import '../common/loading_widget.dart';
 import 'styled_dialog.dart';
+import 'review_dialog_shell.dart';
 
 /// 월별 리뷰 작성 다이얼로그 (관리자 → 지원자)
 /// 
 /// 정책:
 /// - 월 1회만 작성 가능
 /// - 작성 후 수정 불가
-/// - 3일 후 공개
+/// - 즉시공개(상대방 작성 시) or 14일 후 자동 공개
 class MonthlyReviewDialog extends StatefulWidget {
   /// 작성자 (관리자) UID
   final String reviewerId;
@@ -56,6 +56,9 @@ class MonthlyReviewDialog extends StatefulWidget {
   /// review_requests 문서 ID (양방향 공개 연동)
   final String? requestId;
 
+  /// 미리 로드된 태그 목록 (showMonthlyReviewDialog에서 주입)
+  final ReviewTagsModel preloadedTags;
+
   const MonthlyReviewDialog({
     super.key,
     required this.reviewerId,
@@ -72,6 +75,7 @@ class MonthlyReviewDialog extends StatefulWidget {
     this.normalAttendanceDays = 0,
     this.lateDays = 0,
     this.requestId,
+    required this.preloadedTags,
   });
 
   @override
@@ -92,18 +96,17 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
   late int _normalDays;
   late int _lateDays;
 
-  bool _isLoading = false;
   bool _isSubmitting = false;
 
-  // 태그 목록
-  ReviewTagsModel _tags = ReviewTagsModel.defaults();
+  // 태그 목록 (showMonthlyReviewDialog에서 미리 로드 후 주입)
+  late ReviewTagsModel _tags;
 
   @override
   void initState() {
     super.initState();
     _normalDays = widget.normalAttendanceDays;
     _lateDays = widget.lateDays;
-    _loadTags();
+    _tags = widget.preloadedTags;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) TooltipContents.showFirstReview(context);
     });
@@ -113,17 +116,6 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
   void dispose() {
     _commentController.dispose();
     super.dispose();
-  }
-
-  Future<void> _loadTags() async {
-    setState(() => _isLoading = true);
-    try {
-      _tags = await _reviewService.getReviewTags();
-    } catch (e) {
-      debugPrint('❌ 태그 로드 실패: $e');
-    }
-    if (!mounted) return;
-    setState(() => _isLoading = false);
   }
 
   Future<void> _submitReview() async {
@@ -182,7 +174,7 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
               Text(
-                '리뷰가 작성되었습니다.\n${widget.targetUserName}님도 사업장 리뷰를 작성하면\n즉시 동시에 공개됩니다.\n(미작성 시 7일 후 자동 공개)',
+                '리뷰가 작성되었습니다.\n${widget.targetUserName}님도 사업장 리뷰를 작성하면\n즉시 동시에 공개됩니다.\n(미작성 시 14일 후 자동 공개)',
                 style: ResponsiveHelper.bodyStyle(context),
                 textAlign: TextAlign.center,
               ),
@@ -213,84 +205,41 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(24),
-      ),
-      insetPadding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 16),
-        vertical: AppDialogSize.insetV,
-      ),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
+
+    return ReviewDialogShell(
+      header: _buildHeader(context, theme),
+      body: [
+        _buildAttendanceSummary(context),
+        _buildDivider(context),
+        _buildRatingSection(context),
+        _buildDivider(context),
+        _buildRehireSection(context, theme),
+        _buildDivider(context),
+        _buildTagSection(
+          context,
+          title: '좋았던 점',
+          icon: Icons.thumb_up_outlined,
+          iconColor: AppColors.success,
+          tags: _tags.positiveTags,
+          selectedTags: _selectedPositiveTags,
+          onChanged: (tags) => setState(() => _selectedPositiveTags = tags),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 헤더
-            _buildHeader(context, theme),
-            
-            // 내용
-            Flexible(
-              child: _isLoading
-                  ? Padding(
-                      padding: ResponsiveHelper.cardPadding(context),
-                      child: const LoadingWidget(),
-                    )
-                  : SingleChildScrollView(
-                      padding: EdgeInsets.fromLTRB(
-                        ResponsiveHelper.spacing(context, 16),
-                        ResponsiveHelper.spacing(context, 14),
-                        ResponsiveHelper.spacing(context, 16),
-                        ResponsiveHelper.spacing(context, 8),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildAttendanceSummary(context),
-                          _buildDivider(context),
-                          _buildRatingSection(context),
-                          _buildDivider(context),
-                          _buildRehireSection(context, theme),
-                          _buildDivider(context),
-                          _buildTagSection(
-                            context,
-                            title: '좋았던 점',
-                            icon: Icons.thumb_up_outlined,
-                            iconColor: AppColors.success,
-                            tags: _tags.positiveTags,
-                            selectedTags: _selectedPositiveTags,
-                            onChanged: (tags) =>
-                                setState(() => _selectedPositiveTags = tags),
-                          ),
-                          _buildDivider(context),
-                          _buildTagSection(
-                            context,
-                            title: '아쉬운 점',
-                            icon: Icons.lightbulb_outline,
-                            iconColor: AppColors.warning,
-                            tags: _tags.improvementTags,
-                            selectedTags: _selectedImprovementTags,
-                            onChanged: (tags) =>
-                                setState(() => _selectedImprovementTags = tags),
-                          ),
-                          _buildDivider(context),
-                          _buildCommentSection(context, theme),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                          _buildNotice(context),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                        ],
-                      ),
-                    ),
-            ),
-            
-            // 버튼
-            _buildActions(context, theme),
-          ],
+        _buildDivider(context),
+        _buildTagSection(
+          context,
+          title: '아쉬운 점',
+          icon: Icons.lightbulb_outline,
+          iconColor: AppColors.warning,
+          tags: _tags.improvementTags,
+          selectedTags: _selectedImprovementTags,
+          onChanged: (tags) => setState(() => _selectedImprovementTags = tags),
         ),
-      ),
+        _buildDivider(context),
+        _buildCommentSection(context, theme),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        _buildNotice(context),
+      ],
+      actions: _buildActions(context, theme),
     );
   }
 
@@ -502,16 +451,17 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
         child: const Divider(height: 1, color: AppColors.grey100),
       );
 
-  /// 공통 섹션 라벨
+  /// 공통 섹션 라벨 — Wrap으로 좁은 화면에서 자동 줄바꿈
   Widget _buildSectionLabel(BuildContext context, String label,
       {String? badge, String? hint}) {
-    return Row(
+    return Wrap(
+      spacing: ResponsiveHelper.spacing(context, 6),
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         Text(label,
             style: ResponsiveHelper.bodyStyle(context)
                 .copyWith(fontWeight: FontWeight.w700)),
-        if (badge != null) ...[
-          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+        if (badge != null)
           Container(
             padding: EdgeInsets.symmetric(
               horizontal: ResponsiveHelper.spacing(context, 7),
@@ -525,13 +475,10 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
                 style: ResponsiveHelper.tinyStyle(context,
                     color: AppColors.warningDark)),
           ),
-        ],
-        if (hint != null) ...[
-          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+        if (hint != null)
           Text(hint,
               style: ResponsiveHelper.tinyStyle(context,
                   color: AppColors.grey400)),
-        ],
       ],
     );
   }
@@ -644,10 +591,11 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
                 size: ResponsiveHelper.iconSize(context, 16),
                 color: iconColor),
             SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-            Text(title,
-                style: ResponsiveHelper.bodyStyle(context)
-                    .copyWith(fontWeight: FontWeight.w700, color: iconColor)),
-            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Expanded(
+              child: Text(title,
+                  style: ResponsiveHelper.bodyStyle(context)
+                      .copyWith(fontWeight: FontWeight.w700, color: iconColor)),
+            ),
             Text('복수 선택',
                 style: ResponsiveHelper.tinyStyle(context,
                     color: AppColors.grey400)),
@@ -761,7 +709,7 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                 Text(
-                  '신중하게 작성해주세요. 작성 후 3일 뒤 ${widget.targetUserName}님에게 점수와 태그가 공개됩니다.',
+                  '신중하게 작성해주세요. 상대방도 리뷰를 작성하면 즉시 공개되며, 미작성 시 14일 후 자동 공개됩니다.',
                   style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
                 ),
               ],
@@ -776,63 +724,27 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
   Widget _buildActions(BuildContext context, ThemeData theme) {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(
-          top: BorderSide(color: AppColors.grey200),
+      decoration: const BoxDecoration(
+        color: AppColors.grey50,
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(AppDialogSize.borderRadius),
+          bottomRight: Radius.circular(AppDialogSize.borderRadius),
         ),
       ),
       child: Row(
         children: [
           Expanded(
-            child: OutlinedButton(
+            child: StyledDialogButton.cancel(
               onPressed: _isSubmitting ? null : () => Navigator.pop(context),
-              style: OutlinedButton.styleFrom(
-                padding: EdgeInsets.symmetric(
-                  vertical: ResponsiveHelper.spacing(context, 16),
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                side: BorderSide(color: AppColors.grey300),
-              ),
-              child: Text(
-                '취소',
-                style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
-              ),
             ),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           Expanded(
             flex: 2,
-            child: ElevatedButton(
+            child: StyledDialogButton.primary(
+              text: '리뷰 작성',
               onPressed: _isSubmitting ? null : _submitReview,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: theme.primaryColor,
-                foregroundColor: Colors.white,
-                padding: EdgeInsets.symmetric(
-                  vertical: ResponsiveHelper.spacing(context, 16),
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 0,
-              ),
-              child: _isSubmitting
-                  ? SizedBox(
-                      height: ResponsiveHelper.iconSize(context, 20),
-                      width: ResponsiveHelper.iconSize(context, 20),
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Text(
-                      '리뷰 작성',
-                      style: ResponsiveHelper.bodyStyle(context, color: Colors.white).copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+              isLoading: _isSubmitting,
             ),
           ),
         ],
@@ -1122,27 +1034,16 @@ class _MonthlyReviewViewDialog extends StatelessWidget {
   Widget _buildActions(BuildContext context, ThemeData theme) {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: AppColors.grey200)),
-      ),
-      child: SizedBox(
-        width: double.infinity,
-        child: ElevatedButton(
-          onPressed: () => Navigator.pop(context),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: theme.primaryColor,
-            foregroundColor: Colors.white,
-            padding: EdgeInsets.symmetric(
-                vertical: ResponsiveHelper.spacing(context, 16)),
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12)),
-            elevation: 0,
-          ),
-          child: Text('닫기',
-              style: ResponsiveHelper.bodyStyle(context, color: Colors.white)
-                  .copyWith(fontWeight: FontWeight.bold)),
+      decoration: const BoxDecoration(
+        color: AppColors.grey50,
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(AppDialogSize.borderRadius),
+          bottomRight: Radius.circular(AppDialogSize.borderRadius),
         ),
+      ),
+      child: StyledDialogButton.primary(
+        text: '닫기',
+        onPressed: () => Navigator.pop(context),
       ),
     );
   }
@@ -1165,7 +1066,16 @@ Future<bool?> showMonthlyReviewDialog(
   int normalAttendanceDays = 0,
   int lateDays = 0,
   String? requestId,
-}) {
+}) async {
+  // 다이얼로그 열기 전 태그 미리 로드 — 빈 폼 플래시 방지
+  ReviewTagsModel tags;
+  try {
+    tags = await MonthlyReviewService().getReviewTags();
+  } catch (_) {
+    tags = ReviewTagsModel.defaults();
+  }
+  if (!context.mounted) return null;
+
   return showDialog<bool>(
     context: context,
     barrierDismissible: false,
@@ -1184,6 +1094,7 @@ Future<bool?> showMonthlyReviewDialog(
       normalAttendanceDays: normalAttendanceDays,
       lateDays: lateDays,
       requestId: requestId,
+      preloadedTags: tags,
     ),
   );
 }

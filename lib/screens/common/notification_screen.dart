@@ -268,10 +268,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
     // try/finally로 예외 발생 시에도 플래그를 반드시 해제한다.
     // 예외 없이 정상 완료해도 마지막에 해제되므로 중복 탭 방어가 유지된다.
     try {
-      // 1. 읽음 처리 (실패해도 네비게이션은 계속)
-      try {
-        await provider.markAsRead(notification.id);
-      } catch (_) {}
+      // 1. 읽음 처리 — 완료를 기다리지 않고 fire-and-forget (UI 반응성 우선)
+      provider.markAsRead(notification.id).catchError((_) {});
 
       if (!context.mounted) return;
 
@@ -621,9 +619,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
       final ReviewRequestModel? req = await reviewService.getReviewRequest(requestKey);
 
       if (!context.mounted) return;
-      Navigator.pop(context); // 로딩 닫기
 
       if (req == null) {
+        Navigator.pop(context); // 로딩 닫기
         ToastHelper.showError('리뷰 요청 정보를 찾을 수 없습니다');
         Navigator.push(
           context,
@@ -640,7 +638,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       final yearMonthStr =
           '${req.reviewYear}-${req.reviewMonth.toString().padLeft(2, '0')}';
 
-      // attendance 기반 실제 근무일 수 조회
+      // attendance 기반 실제 근무일 수 조회 (로딩 유지)
       int workDaysInMonth = 0;
       String? workerGender;
       int? workerAge;
@@ -681,6 +679,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       }
 
       if (!context.mounted) return;
+      Navigator.pop(context); // 로딩 닫기 — 모든 데이터 준비 후
 
       if (!isUser) {
         // 관리자 → 근무자 리뷰 다이얼로그
