@@ -93,7 +93,7 @@ class WorkerDetailDialog extends StatefulWidget {
 
 class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   final FirestoreService _firestoreService = FirestoreService();
-  bool _isLoading = false;
+  bool _isLoading = true;
   bool _hasChanges = false;  // ⭐ 변경사항 추적 플래그 추가
   
   // 추가 데이터
@@ -108,11 +108,15 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   @override
   void initState() {
     super.initState();
-    _loadAdditionalData();
+    // [특이사항] addPostFrameCallback으로 첫 프레임 이후 로드
+    // Firestore 캐시 히트 시 _loadAdditionalData()가 첫 프레임 전에 완료되어
+    // _isLoading=false 상태로 빈 프로필이 1~2프레임 노출되는 플래시 방지
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _loadAdditionalData();
+    });
   }
 
   Future<void> _loadAdditionalData() async {
-    setState(() => _isLoading = true);
 
     try {
       final userProvider = context.read<UserProvider>();
