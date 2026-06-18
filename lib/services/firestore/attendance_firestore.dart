@@ -284,35 +284,37 @@ extension AttendanceFirestore on FirestoreService {
       final todayStart = DateTime(today.year, today.month, today.day);
       
       debugPrint('🔍 [getTodayConfirmedWorkers] 조회 시작...');
-      
-      // 1. 오늘 확정된 단기 근무 (CONTRACT_PENDING 포함)
-      final shortTermSnapshot = await _firestore
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('status', whereIn: AppStatus.confirmedStatuses)
-          .where('workDate', isEqualTo: Timestamp.fromDate(todayStart))
-          .get(const GetOptions(source: Source.server));
 
-      final shortTerm = shortTermSnapshot.docs
+      // 단기·장기 쿼리 병렬 실행 (독립적이므로 Future.wait 가능)
+      final snapshots = await Future.wait([
+        // 1. 오늘 확정된 단기 근무 (CONTRACT_PENDING 포함)
+        _firestore
+            .collection('applications')
+            .where('businessId', isEqualTo: businessId)
+            .where('status', whereIn: AppStatus.confirmedStatuses)
+            .where('workDate', isEqualTo: Timestamp.fromDate(todayStart))
+            .get(const GetOptions(source: Source.server)),
+        // 2. 장기 근무자 전체 조회 → isWorkingOnDate 클라이언트 필터
+        _firestore
+            .collection('applications')
+            .where('businessId', isEqualTo: businessId)
+            .where('status', whereIn: AppStatus.confirmedStatuses)
+            .where('type', isEqualTo: AppType.longTerm)
+            .get(const GetOptions(source: Source.server)),
+      ]);
+
+      final shortTerm = snapshots[0].docs
           .map((doc) => ApplicationModel.fromFirestore(doc))
           .toList();
 
       debugPrint('   단기 근무자: ${shortTerm.length}명');
 
-      // 2. 오늘 근무하는 장기 근무자 (CONTRACT_PENDING 포함)
-      final longTermSnapshot = await _firestore
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('status', whereIn: AppStatus.confirmedStatuses)
-          .where('type', isEqualTo: AppType.longTerm)
-          .get(const GetOptions(source: Source.server));
-      
-      final longTerm = longTermSnapshot.docs
+      final longTerm = snapshots[1].docs
           .map((doc) => ApplicationModel.fromFirestore(doc))
           // isWorkingOnDate: actualResignDate·leaveDates·extraWorkDates·workDays 모두 반영
           .where((app) => app.isWorkingOnDate(todayStart))
           .toList();
-      
+
       debugPrint('   장기 근무자: ${longTerm.length}명');
       
       final allWorkers = [...shortTerm, ...longTerm];
