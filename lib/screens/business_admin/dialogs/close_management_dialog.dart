@@ -766,17 +766,13 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
               ),
               child: Row(
                 children: [
-                  // 날짜
                   Text(
                     dateStr,
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
                       fontWeight: FontWeight.w500,
                     ),
                   ),
-
                   SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-
-                  // 마감 진행률
                   Text(
                     '${status.closedCount}/${status.totalConfirmed}명',
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
@@ -784,10 +780,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
                       color: isClosed ? AppColors.success : AppColors.grey600,
                     ),
                   ),
-
                   const Spacer(),
-
-                  // 상태 배지
                   _buildStatusBadge(status),
                 ],
               ),
@@ -809,20 +802,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
     final textColor = isClosed ? AppColors.success : AppColors.error;
     final icon = isClosed ? Icons.lock : Icons.lock_open;
 
-    // 미마감 이유 분류 문자열 구성
-    String text;
-    if (isClosed) {
-      text = '마감완료';
-    } else {
-      final reasons = <String>[];
-      if (status.wagePendingCount > 0) reasons.add('급여${status.wagePendingCount}');
-      if (status.noAttendanceCount > 0) reasons.add('미출근${status.noAttendanceCount}');
-      if (reasons.isEmpty) {
-        text = '미마감 $unclosedCount명';
-      } else {
-        text = '미마감 $unclosedCount명 (${reasons.join(' + ')})';
-      }
-    }
+    final text = isClosed ? '마감완료' : '미마감 $unclosedCount명';
 
     return Container(
       padding: EdgeInsets.symmetric(
@@ -835,13 +815,8 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            icon,
-            size: ResponsiveHelper.iconSize(context, 14),
-            color: textColor,
-          ),
+          Icon(icon, size: ResponsiveHelper.iconSize(context, 14), color: textColor),
           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           Text(
             text,
@@ -850,13 +825,8 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
               color: textColor,
             ),
           ),
-          // 상세보기 아이콘 (항상 표시)
           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-          Icon(
-            Icons.chevron_right,
-            size: ResponsiveHelper.iconSize(context, 16),
-            color: textColor,
-          ),
+          Icon(Icons.chevron_right, size: ResponsiveHelper.iconSize(context, 16), color: textColor),
         ],
       ),
     );
