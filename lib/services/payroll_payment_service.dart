@@ -126,23 +126,26 @@ class PayrollPaymentService {
       await batch.commit();
     }
 
-    // 배치 커밋 후 각 항목별로 지원자에게 알림 발송
+    // 배치 커밋 후 각 항목별로 지원자에게 알림 발송 — Future.wait으로 병렬 처리
+    // [특이사항] 각 알림을 개별 try-catch로 감싸 하나 실패해도 나머지 발송이 보장됨
     if (notificationInfos != null) {
-      for (final info in notificationInfos) {
-        try {
-          await _firestoreService.createNotification(
-            NotificationModel.createWageTransferred(
-              userId: info.workerUserId,
-              workerName: info.workerName,
-              businessName: info.businessName,
-              finalWage: info.finalWage,
-              applicationId: info.applicationId,
-            ),
-          );
-        } catch (e) {
-          debugPrint('⚠️ 일괄 이체 완료 알림 발송 실패 (userId: ${info.workerUserId}): $e');
-        }
-      }
+      await Future.wait(
+        notificationInfos.map((info) async {
+          try {
+            await _firestoreService.createNotification(
+              NotificationModel.createWageTransferred(
+                userId: info.workerUserId,
+                workerName: info.workerName,
+                businessName: info.businessName,
+                finalWage: info.finalWage,
+                applicationId: info.applicationId,
+              ),
+            );
+          } catch (e) {
+            debugPrint('⚠️ 일괄 이체 완료 알림 발송 실패 (userId: ${info.workerUserId}): $e');
+          }
+        }),
+      );
     }
   }
 

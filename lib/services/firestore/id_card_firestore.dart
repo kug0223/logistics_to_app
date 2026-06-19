@@ -25,31 +25,34 @@ extension IdCardFirestore on FirestoreService {
     try {
       debugPrint('📄 [createIdCardAccessRequest] 요청 생성');
       
-      // 1. 이미 대기 중인 요청이 있는지 확인
-      final existingPending = await _firestore
-          .collection('idCardAccessRequests')
-          .where('requesterId', isEqualTo: requesterId)
-          .where('targetUserId', isEqualTo: targetUserId)
-          .where('status', isEqualTo: 'pending')
-          .limit(1)
-          .get();
-      
+      // 1 & 2. pending/approved 동시 조회 — 두 쿼리는 독립적이므로 Future.wait 병렬 처리
+      // [특이사항] 첫 요청(pending·approved 모두 없는 케이스)이 대부분이므로 병렬이 유리
+      final now = Timestamp.fromDate(DateTime.now());
+      final results = await Future.wait([
+        _firestore
+            .collection('idCardAccessRequests')
+            .where('requesterId', isEqualTo: requesterId)
+            .where('targetUserId', isEqualTo: targetUserId)
+            .where('status', isEqualTo: 'pending')
+            .limit(1)
+            .get(),
+        _firestore
+            .collection('idCardAccessRequests')
+            .where('requesterId', isEqualTo: requesterId)
+            .where('targetUserId', isEqualTo: targetUserId)
+            .where('status', isEqualTo: 'approved')
+            .where('expiresAt', isGreaterThan: now)
+            .limit(1)
+            .get(),
+      ]);
+      final existingPending = results[0];
+      final existingApproved = results[1];
+
       if (existingPending.docs.isNotEmpty) {
         debugPrint('⚠️ 이미 대기 중인 요청이 있습니다');
         ToastHelper.showWarning('이미 요청 중입니다. 응답을 기다려주세요.');
         return null;
       }
-      
-      // 2. 유효한 승인이 있는지 확인 — expiresAt > now 조건을 서버에서 필터링
-      final now = Timestamp.fromDate(DateTime.now());
-      final existingApproved = await _firestore
-          .collection('idCardAccessRequests')
-          .where('requesterId', isEqualTo: requesterId)
-          .where('targetUserId', isEqualTo: targetUserId)
-          .where('status', isEqualTo: 'approved')
-          .where('expiresAt', isGreaterThan: now)
-          .limit(1)
-          .get();
 
       if (existingApproved.docs.isNotEmpty) {
         debugPrint('⚠️ 이미 유효한 열람 권한이 있습니다');
