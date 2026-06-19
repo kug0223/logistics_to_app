@@ -3,6 +3,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -26,6 +27,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/id_card_helper.dart';
 import '../../screens/business_admin/dialogs/fixed_worker_management_dialog.dart';
 import '../../utils/image_helper.dart';
+import '../../utils/encryption_helper.dart';
 import 'monthly_review_dialog.dart';
 import 'styled_dialog.dart';
 import '../../models/core/monthly_review_model.dart';
@@ -95,6 +97,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   final FirestoreService _firestoreService = FirestoreService();
   bool _isLoading = true;
   bool _hasChanges = false;  // ⭐ 변경사항 추적 플래그 추가
+  bool _showResidentNumber = false;
   
   // 추가 데이터
   Map<String, dynamic>? _businessHistory;
@@ -495,6 +498,14 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       default:
         return AppColors.grey500;
     }
+  }
+
+  String _formatResidentNumber(String raw) {
+    final cleaned = raw.replaceAll('-', '');
+    if (cleaned.length >= 13) {
+      return '${cleaned.substring(0, 6)}-${cleaned.substring(6)}';
+    }
+    return raw;
   }
 
   String _getStatusLabel(String status) {
@@ -1157,6 +1168,66 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                 ],
               ),
             ),
+          // 주민번호 텍스트 표시 — 이미지만으로 확인이 어려운 경우 보조
+          if (widget.user.residentNumber != null) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.grey50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.grey200),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.badge_outlined, color: AppColors.grey500, size: ResponsiveHelper.iconSize(context, 18)),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '주민등록번호',
+                          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                        ),
+                        Text(
+                          _showResidentNumber
+                              ? _formatResidentNumber(widget.user.residentNumber!)
+                              : EncryptionHelper.maskResidentNumber(widget.user.residentNumber),
+                          style: ResponsiveHelper.bodyStyle(context).copyWith(
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 1.0,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: Icon(
+                      _showResidentNumber ? Icons.visibility_off : Icons.visibility,
+                      color: AppColors.grey500,
+                      size: ResponsiveHelper.iconSize(context, 20),
+                    ),
+                    tooltip: _showResidentNumber ? '번호 숨기기' : '전체 보기',
+                    onPressed: () => setState(() => _showResidentNumber = !_showResidentNumber),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  IconButton(
+                    icon: Icon(Icons.copy, color: AppColors.info, size: ResponsiveHelper.iconSize(context, 20)),
+                    tooltip: '번호 복사',
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: widget.user.residentNumber!.replaceAll('-', '')));
+                      ToastHelper.showSuccess('주민번호가 복사되었습니다.');
+                    },
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       );
     }
