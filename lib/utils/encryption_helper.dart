@@ -57,6 +57,11 @@ class EncryptionHelper {
   }
 
   /// 복호화 — Base64 암호문 → 평문
+  ///
+  /// [특이사항] 암호화 키 없이 저장된 평문 데이터(기존 레거시 or 디버그 빌드 누락)는
+  /// base64 디코딩 실패 → catch에서 원문 그대로 반환(폴백).
+  /// 앞으로 저장되는 데이터는 encrypt()를 통해 정상 암호화되므로 이 폴백에 걸리지 않음.
+  /// $e 메시지에 입력값이 포함될 수 있어 runtimeType만 로깅.
   static String? decrypt(String? encryptedText) {
     if (encryptedText == null || encryptedText.isEmpty) return null;
     try {
@@ -64,8 +69,7 @@ class EncryptionHelper {
       if (_encrypter == null) return encryptedText;
       return _encrypter!.decrypt64(encryptedText, iv: _iv!);
     } catch (e) {
-      // 기존 평문 데이터 호환 (암호화 적용 전 데이터)
-      // $e에 입력값이 포함될 수 있으므로 타입만 로깅
+      // 레거시 평문 데이터 폴백 — $e에 민감 데이터 포함 가능하므로 타입만 로깅
       debugPrint('⚠️ [EncryptionHelper] 복호화 실패 - 평문으로 처리 (${e.runtimeType})');
       return encryptedText;
     }
