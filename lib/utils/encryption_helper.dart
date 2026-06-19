@@ -65,7 +65,8 @@ class EncryptionHelper {
       return _encrypter!.decrypt64(encryptedText, iv: _iv!);
     } catch (e) {
       // 기존 평문 데이터 호환 (암호화 적용 전 데이터)
-      debugPrint('⚠️ [EncryptionHelper] 복호화 실패 - 평문으로 처리: $e');
+      // $e에 입력값이 포함될 수 있으므로 타입만 로깅
+      debugPrint('⚠️ [EncryptionHelper] 복호화 실패 - 평문으로 처리 (${e.runtimeType})');
       return encryptedText;
     }
   }
