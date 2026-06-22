@@ -268,7 +268,16 @@ class ContractService {
       final contractRef = _db.collection('employment_contracts').doc(contract.id);
       final workerHash = sha256.convert(signatureBytes).toString();
       await _db.runTransaction((tx) async {
+        // [Firestore 트랜잭션 규칙] 모든 읽기를 쓰기보다 먼저 수행해야 함
         final snap = await tx.get(contractRef);
+        final appRefs = contract.applicationIds
+            .map((id) => _db.collection('applications').doc(id))
+            .toList();
+        final appSnaps = [
+          for (final ref in appRefs) await tx.get(ref),
+        ];
+
+        // 계약서 상태 검증
         if (snap.exists) {
           final currentStatus = snap.data()?['status'] as String?;
           if (currentStatus == ContractStatus.voided.value) {
@@ -281,6 +290,8 @@ class ContractService {
             throw Exception('이미 근무자 서명이 완료된 계약서입니다');
           }
         }
+
+        // 쓰기: 계약서 완료 처리
         tx.update(contractRef, {
           'status': updated.status.value,
           'workerSignatureUrl': sigUrl,
@@ -289,13 +300,10 @@ class ContractService {
           'pdfUrl': pdfUrl,
           'updatedAt': nowTs,
         });
-        // 계약서 + application 상태를 하나의 트랜잭션으로 원자적 처리
-        // CONTRACT_PENDING 상태인 경우에만 업데이트 — 이미 CONFIRMED이면 rules 위반 방지
-        for (final appId in contract.applicationIds) {
-          final appRef = _db.collection('applications').doc(appId);
-          final appSnap = await tx.get(appRef);
-          if (appSnap.data()?['status'] == 'CONTRACT_PENDING') {
-            tx.update(appRef, {
+        // 쓰기: application CONTRACT_PENDING → CONFIRMED (이미 CONFIRMED이면 스킵)
+        for (var i = 0; i < appRefs.length; i++) {
+          if (appSnaps[i].data()?['status'] == 'CONTRACT_PENDING') {
+            tx.update(appRefs[i], {
               'status': 'CONFIRMED',
               'statusHistory': FieldValue.arrayUnion([{
                 'status': 'CONFIRMED',
@@ -565,6 +573,11 @@ class ContractService {
     // 이미 voided 상태면 조기 반환 — 재호출 시 이미 취소된 지원서를 재취소 시도해
     // failedIds가 발생하고 오해의 소지 있는 에러 토스트가 뜨는 버그 방지 (BUG-E-01)
     if (contract.status == ContractStatus.voided) return;
+    // [특이사항] 쌍방 서명 완료된 계약서는 무효화 불가 — voided 이후 근무자 서명 시 completed로
+    // 전이되므로 이 체크가 없으면 이미 근무 중인 계약서도 관리자가 일방 무효화 가능
+    if (contract.status == ContractStatus.completed) {
+      throw Exception('쌍방 서명이 완료된 계약서는 무효화할 수 없습니다');
+    }
 
     // 1단계: 계약서 voided 먼저 업데이트 (실패 시 아무것도 변경 안 됨 → 깨끗한 재시도 가능)
     await _db.collection('employment_contracts').doc(contractId).update({
@@ -612,13 +625,22 @@ class ContractService {
     }
 
     // 4단계: 실패한 appId 기록 — 관리자 화면 경고 배너로 노출, 재처리 버튼 제공
+    // [특이사항] M-5: voidFailedAppIds 저장 실패 시 재시도(retryVoidFailedApps) 메커니즘이
+    // 동작하지 않아 미취소 application이 CONFIRMED 상태로 잔존할 수 있음.
+    // 완전한 해결책은 Cloud Functions의 트랜잭션 기반 처리이나, 현 규모에서는
+    // exception 메시지에 failedIds를 포함해 관리자가 수동 처리할 수 있도록 한다.
     if (failedIds.isNotEmpty) {
       try {
         await _db.collection('employment_contracts').doc(contractId).update({
           'voidFailedAppIds': failedIds,
         });
       } catch (e) {
-        debugPrint('⚠️ voidFailedAppIds 기록 실패: $e');
+        // voidFailedAppIds 저장 실패 — retryVoidFailedApps 경로 불가.
+        // failedIds를 exception 메시지에 포함해 관리자가 직접 확인할 수 있게 한다.
+        debugPrint('⚠️ voidFailedAppIds 기록 실패: $e\n  미취소 IDs: $failedIds');
+        throw Exception(
+          '계약서가 무효화되었으나 ${failedIds.length}개 지원서 취소에 실패했습니다.\n'
+          '직접 확인이 필요한 지원서 IDs: ${failedIds.join(', ')}');
       }
       throw Exception(
         '계약서가 무효화되었으나 ${failedIds.length}개 지원서 취소에 실패했습니다.\n'

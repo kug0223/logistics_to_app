@@ -34,9 +34,13 @@ class OcrVerificationHelper {
       String? extractedResidentNumber;
       
       if (expectedResidentNumber != null && expectedResidentNumber.isNotEmpty) {
+        // [특이사항] 정규식이 뒷자리 1개만 캡처하는 것은 의도된 설계 —
+        // expectedResidentNumber는 '앞6자리-성별코드' 형식(7자)으로 저장되어 비교 대상과 일치
         final residentPattern = RegExp(r'(\d{6})[-\s]?(\d)');
         final matches = residentPattern.allMatches(rawText);
-        
+        // [특이사항] matches.first 사용 — 텍스트 내 첫 번째 '6자리+1자리' 패턴을 주민번호로 간주
+        // 계좌번호·전화번호 등 유사 패턴이 앞에 있으면 오인식하여 isResidentNumberValid=false 처리됨
+        // PASS 본인인증 도입 후 OCR 의존도 감소 시 "주민" 키워드 컨텍스트 강화 방식으로 개선 예정
         if (matches.isNotEmpty) {
           final match = matches.first;
           final front = match.group(1);

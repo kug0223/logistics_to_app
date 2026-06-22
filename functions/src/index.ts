@@ -19,140 +19,6 @@ const db = getFirestore();
 const CONFIRMED_STATUSES = ["CONFIRMED", "CONTRACT_PENDING"];
 
 // ═══════════════════════════════════════════════════════════
-// 📧 이메일 인증 코드 발송
-// ═══════════════════════════════════════════════════════════
-
-export const sendEmailVerificationCode = onCall(
-  {
-    region: "asia-northeast3",
-  },
-  async (request) => {
-    const email = request.data.email as string | undefined;
-
-    if (!email || !email.includes("@")) {
-      throw new HttpsError("invalid-argument", "올바른 이메일을 입력해주세요.");
-    }
-
-    const gmailUser = process.env.GMAIL_USER;
-    const gmailPassword = process.env.GMAIL_APP_PASSWORD;
-
-    if (!gmailUser || !gmailPassword) {
-      throw new HttpsError("internal", "이메일 서비스 설정이 누락되었습니다.");
-    }
-
-    // 6자리 인증 코드 생성 (트랜잭션 전에 미리 생성)
-    const code = String(crypto.randomInt(100000, 999999));
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5분 후 만료
-
-    // 1분 재발송 방지 + set을 트랜잭션으로 묶어 동시 요청 차단
-    const emailVerDoc = db.collection("emailVerificationCodes").doc(email);
-    await db.runTransaction(async (tx) => {
-      const existing = await tx.get(emailVerDoc);
-      if (existing.exists) {
-        const createdAt = (existing.data()?.createdAt as Timestamp)?.toDate();
-        if (createdAt && Date.now() - createdAt.getTime() < 60_000) {
-          throw new HttpsError("resource-exhausted", "1분 후 다시 시도해주세요.");
-        }
-      }
-      // [특이사항] 인증 코드 평문 저장 — Firestore 보안 규칙으로 클라이언트 직접 접근 차단 필수
-      tx.set(emailVerDoc, {
-        code,
-        expiresAt: Timestamp.fromDate(expiresAt),
-        createdAt: Timestamp.now(),
-        attempts: 0,
-      });
-    });
-
-    // 이메일 발송
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: gmailUser,
-        pass: gmailPassword,
-      },
-    });
-
-    await transporter.sendMail({
-      from: `"AlFit" <${gmailUser}>`,
-      to: email,
-      subject: "[AlFit] 이메일 인증 코드",
-      html: `
-        <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
-          <h2 style="color: #1976D2;">AlFit 이메일 인증</h2>
-          <p>아래 인증 코드를 입력해주세요.</p>
-          <div style="background: #f5f5f5; padding: 24px; text-align: center;
-                      border-radius: 8px; margin: 24px 0;">
-            <span style="font-size:36px;font-weight:bold;
-                         letter-spacing:8px;color:#1976D2;">${code}</span>
-          </div>
-          <p style="color: #888; font-size: 13px;">
-            인증 코드는 발송 후 5분 동안 유효합니다.<br>
-            본인이 요청하지 않은 경우 이 메일을 무시하세요.
-          </p>
-        </div>
-      `,
-    });
-
-    console.log(`✅ [이메일 인증] 코드 발송 완료: ${email}`);
-    return {success: true};
-  }
-);
-
-// ═══════════════════════════════════════════════════════════
-// 📧 이메일 인증 코드 검증
-// ═══════════════════════════════════════════════════════════
-
-export const verifyEmailCode = onCall(
-  {
-    region: "asia-northeast3",
-  },
-  async (request) => {
-    const email = request.data.email as string | undefined;
-    const code = request.data.code as string | undefined;
-
-    if (!email || !code) {
-      throw new HttpsError("invalid-argument", "이메일과 코드를 입력해주세요.");
-    }
-
-    const docRef = db.collection("emailVerificationCodes").doc(email);
-
-    // 읽기+업데이트를 트랜잭션으로 묶어 병렬 요청에 의한 브루트포스 제한 우회 차단
-    let result: {valid: boolean; reason?: string} = {valid: false, reason: "not_found"};
-    await db.runTransaction(async (tx) => {
-      const doc = await tx.get(docRef);
-      if (!doc.exists) {
-        result = {valid: false, reason: "not_found"};
-        return;
-      }
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const data = doc.data()!;
-      const expiresAt = (data.expiresAt as Timestamp).toDate();
-      const attempts = (data.attempts as number) ?? 0;
-
-      if (attempts >= 5) {
-        result = {valid: false, reason: "too_many_attempts"};
-        return;
-      }
-      if (new Date() > expiresAt) {
-        tx.delete(docRef);
-        result = {valid: false, reason: "expired"};
-        return;
-      }
-      if (data.code !== code) {
-        tx.update(docRef, {attempts: admin.firestore.FieldValue.increment(1)});
-        result = {valid: false, reason: "wrong_code"};
-        return;
-      }
-      // 검증 성공 → 코드 삭제
-      tx.delete(docRef);
-      result = {valid: true};
-    });
-    console.log(`✅ [이메일 인증] 검증 결과: ${email} → ${result.reason ?? "success"}`);
-    return result;
-  }
-);
-
-// ═══════════════════════════════════════════════════════════
 // 🔑 비밀번호 재설정 코드 발송
 // ═══════════════════════════════════════════════════════════
 
@@ -179,7 +45,7 @@ export const sendPasswordResetCode = onCall(
     }
 
     const userData = snapshot.docs[0].data();
-    const storedEmail = userData.userEmail as string | undefined;
+    const storedEmail = userData.email as string | undefined;
 
     if (!storedEmail || storedEmail.toLowerCase() !== email.toLowerCase()) {
       throw new HttpsError("invalid-argument", "아이디 또는 이메일이 일치하지 않습니다.");
@@ -1033,6 +899,14 @@ async function processExpiredReviewRequests(now: Timestamp): Promise<void> {
       if (req.adminReviewId) reviewIds.push(req.adminReviewId as string);
       if (req.workerReviewId) reviewIds.push(req.workerReviewId as string);
 
+      // [특이사항] reqDoc 1건당 최대 3연산(리뷰2 + 요청1). 루프 진입 전에 헤드룸 확인하여
+      // 500 초과 방지. 기존 코드는 추가 후에 체크해 최대 501까지 도달 가능했음.
+      if (batchCount + reviewIds.length + 1 > 499) {
+        await batch.commit();
+        batch = db.batch();
+        batchCount = 0;
+      }
+
       if (reviewIds.length === 0) {
         // 양쪽 다 작성 안 함 → 요청만 만료 처리
         batch.update(reqDoc.ref, {isPublished: true, publishedAt: now});
@@ -1048,12 +922,6 @@ async function processExpiredReviewRequests(now: Timestamp): Promise<void> {
         }
         batch.update(reqDoc.ref, {isPublished: true, publishedAt: now});
         batchCount++;
-      }
-
-      if (batchCount >= 499) {
-        await batch.commit();
-        batch = db.batch();
-        batchCount = 0;
       }
 
       // 통계 업데이트 대상 수집
@@ -1799,7 +1667,15 @@ async function processSlotWorkDetailExpiry(now: Timestamp): Promise<void> {
       totalClosedSlots++;
     }
 
-    await slotDoc.ref.update(slotUpdate);
+    // [특이사항] 개별 슬롯 업데이트 실패 시 try/catch 없으면 나머지 슬롯 처리가 중단됨.
+    // 1건 실패를 로그로 남기고 계속 진행한다.
+    try {
+      await slotDoc.ref.update(slotUpdate);
+    } catch (e) {
+      console.error(`⚠️ [슬롯 WorkDetail 마감] 슬롯 ${slotDoc.id} 업데이트 실패:`, e);
+      if (allDetailsClosed) totalClosedSlots--; // 실패했으므로 카운트 롤백
+      continue;
+    }
     totalClosedDetails += expiredItems.length;
 
     const toId =
@@ -2487,29 +2363,51 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       .where("workEndDate", "<", d15End)
       .get();
 
-    for (const doc of d15Snap.docs) {
+    // [특이사항] 루프 안에서 users/businesses를 개별 순차 조회하면 N×2 I/O → 타임아웃 위험.
+    // 처리 대상을 먼저 필터링한 뒤 고유 uid/businessId를 병렬 pre-fetch로 해결한다.
+    const d15Candidates = d15Snap.docs.filter((doc) => {
       const app = doc.data();
-      // 장기(workDays 있음) + 이미 결정/발송 안 된 경우만
-      if (!app.workDays || app.workDays.length === 0) continue;
-      if (app.renewalDecision) continue;   // 이미 연장/종료 결정됨 → 알림 불필요
-      if (app.renewalNotifiedAt) continue; // 이미 알림 발송됨
+      return app.workDays?.length > 0 && !app.renewalDecision && !app.renewalNotifiedAt;
+    });
 
+    const uidsNeedingLookup = [...new Set(
+      d15Candidates
+        .filter((doc) => !doc.data().applicantName && doc.data().uid)
+        .map((doc) => doc.data().uid as string),
+    )];
+    const d15BizIds = [...new Set(
+      d15Candidates
+        .filter((doc) => doc.data().businessId)
+        .map((doc) => doc.data().businessId as string),
+    )];
+
+    const [prefetchedUsers, prefetchedBiz] = await Promise.all([
+      uidsNeedingLookup.length > 0
+        ? Promise.all(uidsNeedingLookup.map((uid) => db.collection("users").doc(uid).get()))
+        : Promise.resolve([]),
+      d15BizIds.length > 0
+        ? Promise.all(d15BizIds.map((id) => db.collection("businesses").doc(id).get()))
+        : Promise.resolve([]),
+    ]);
+
+    const d15UserMap = new Map(prefetchedUsers.map((doc) => [doc.id, doc.data()]));
+    const d15BizMap = new Map(prefetchedBiz.map((doc) => [doc.id, doc.data()]));
+
+    for (const doc of d15Candidates) {
+      const app = doc.data();
       const expiryDateKST = new Date((app.workEndDate as Timestamp).toDate().getTime() + KST_OFFSET_MS);
 
-      // 사용자 이름 조회 (applicantName 없을 경우 users 컬렉션 폴백)
+      // 사용자 이름 (pre-fetched map 사용)
       let workerName: string = app.applicantName ?? "";
       if (!workerName && app.uid) {
-        const userDoc = await db.collection("users").doc(app.uid).get();
-        workerName = userDoc.exists ? (userDoc.data()?.name ?? "근무자") : "근무자";
+        const userData = d15UserMap.get(app.uid as string);
+        workerName = userData?.name ?? "근무자";
       }
       if (!workerName) workerName = "근무자";
 
-      // 사업장 관리자 목록 조회
-      const bizDoc = await db
-        .collection("businesses").doc(app.businessId).get();
-      const adminIds: string[] = bizDoc.exists ?
-        (bizDoc.data()?.adminIds as string[] ?? []) :
-        [];
+      // 사업장 관리자 목록 (pre-fetched map 사용)
+      const bizData = d15BizMap.get(app.businessId as string);
+      const adminIds: string[] = (bizData?.adminIds as string[]) ?? [];
 
       // notifRef를 트랜잭션 외부에서 미리 생성 — 재시도 시 동일 ID 재사용으로 중복 알림 방지
       const notifRefs = adminIds.map(() => db.collection("notifications").doc());
@@ -2523,8 +2421,6 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         for (let i = 0; i < adminIds.length; i++) {
           const adminId = adminIds[i];
           const notifRef = notifRefs[i];
-          // [특이사항] businessId 미포함 — notification_screen.dart에서 userProvider.effectiveBusinessId로 폴백 처리 중
-          // data 필드에 businessId 직접 참조 경로 추가 시 누락 이슈 발생 가능
           tx.set(notifRef, {
             userId: adminId,
             type: "contractExpiringReminder",
@@ -2534,6 +2430,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
               "만료됩니다. 연장 또는 종료를 선택해 주세요.",
             data: {
               applicationId: doc.id,
+              businessId: app.businessId,
               expiryDate: new Date(expiryDateKST.getTime() - KST_OFFSET_MS).toISOString(),
               screen: "contractRenewal",
             },
@@ -2646,6 +2543,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
 
     // ── D-0 종료 결정 완료 알림 ──────────────────────────────
     // renewalDecision='TERMINATE' + 어제 만료된 계약 → 근무자에게 종료 완료 알림
+    // [특이사항] (status, renewalDecision, workEndDate) 복합 인덱스 필요 — firestore.indexes.json에 추가 완료.
     let terminateD0Count = 0;
     const d0TerminateSnap = await db.collection("applications")
       .where("status", "in", CONFIRMED_STATUSES)
@@ -2658,6 +2556,8 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       const app = doc.data();
       if (!app.workDays || app.workDays.length === 0) continue;
       // 이미 종료 알림 보낸 경우 스킵 (terminationNotifiedAt 필드로 중복 방지)
+      // [특이사항] 중복 방지 체크가 트랜잭션 없이 read-then-write — 스케줄 함수 동시 실행 시
+      // 이론적으로 중복 발송 가능. 그러나 Cloud Scheduler는 동일 잡을 겹쳐 실행하지 않으므로 저위험.
       if (app.terminationCompletionNotifiedAt) continue;
 
       await db.collection("notifications").add({
@@ -2680,6 +2580,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       new Date(threeDaysAgo.getTime() - KST_OFFSET_MS)
     );
 
+    // [특이사항] (resignStatus, resignRequestedAt) 복합 인덱스 필요 — firestore.indexes.json에 추가 완료.
     let autoResignCount = 0;
     const pendingResignSnap = await db.collection("applications")
       .where("resignStatus", "==", "PENDING")
@@ -2727,23 +2628,22 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       const bizDoc = await db.collection("businesses").doc(app.businessId).get();
       const adminIds: string[] = bizDoc.exists ?
         (bizDoc.data()?.adminIds as string[] ?? []) : [];
-      for (const adminId of adminIds) {
-        await db.collection("notifications").add({
-          userId: adminId,
-          type: "resignApproved",
-          title: "퇴사 요청 자동 승인됨",
-          body: `${app.applicantName ?? "근무자"}님의 퇴사 요청이 자동 승인되었습니다.`,
-          data: {applicationId: doc.id, screen: "fixedWorker"},
-          isRead: false,
-          createdAt: now,
-        });
-      }
+      await Promise.all(adminIds.map((adminId) => db.collection("notifications").add({
+        userId: adminId,
+        type: "resignApproved",
+        title: "퇴사 요청 자동 승인됨",
+        body: `${app.applicantName ?? "근무자"}님의 퇴사 요청이 자동 승인되었습니다.`,
+        data: {applicationId: doc.id, screen: "fixedWorker"},
+        isRead: false,
+        createdAt: now,
+      })));
 
       autoResignCount++;
     }
     console.log(`  ✅ [D+3 퇴사 자동승인] ${autoResignCount}건 처리`);
 
     // ── D+3 계약해지 요청 자동 승인 ──────────────────────────
+    // [특이사항] (terminationStatus, terminationRequestedAt) 복합 인덱스 필요 — firestore.indexes.json에 추가 완료.
     let autoTerminationCount = 0;
     const pendingTerminationSnap = await db.collection("applications")
       .where("terminationStatus", "==", "PENDING")
@@ -3215,15 +3115,20 @@ export const onBusinessDeleted = onDocumentDeleted(
           .get();
 
         if (!appsSnap.empty) {
-          const appBatch = db.batch();
-          for (const doc of appsSnap.docs) {
-            appBatch.update(doc.ref, {
-              status: "CANCELED",
-              cancelReason: "BUSINESS_DELETED",
-              canceledAt: Timestamp.now(),
-            });
+          // [특이사항] 30개 TO × 다수 지원서 = 500건 초과 가능 → 500건 단위로 분할 커밋
+          const batchSize = 499;
+          for (let k = 0; k < appsSnap.docs.length; k += batchSize) {
+            const appBatch = db.batch();
+            const slice = appsSnap.docs.slice(k, k + batchSize);
+            for (const doc of slice) {
+              appBatch.update(doc.ref, {
+                status: "CANCELED",
+                cancelReason: "BUSINESS_DELETED",
+                canceledAt: Timestamp.now(),
+              });
+            }
+            await appBatch.commit();
           }
-          await appBatch.commit();
 
           // scheduled attendance → absent
           const appIds = appsSnap.docs.map((d) => d.id);
@@ -3235,11 +3140,14 @@ export const onBusinessDeleted = onDocumentDeleted(
               .where("status", "==", "scheduled")
               .get();
             if (!attSnap.empty) {
-              const attBatch = db.batch();
-              for (const doc of attSnap.docs) {
-                attBatch.update(doc.ref, {status: "absent", updatedAt: Timestamp.now()});
+              // attSnap도 500건 초과 가능하면 같은 방식으로 분할
+              for (let m = 0; m < attSnap.docs.length; m += batchSize) {
+                const attBatch = db.batch();
+                for (const doc of attSnap.docs.slice(m, m + batchSize)) {
+                  attBatch.update(doc.ref, {status: "absent", updatedAt: Timestamp.now()});
+                }
+                await attBatch.commit();
               }
-              await attBatch.commit();
             }
           }
         }
@@ -3260,5 +3168,342 @@ export const onBusinessDeleted = onDocumentDeleted(
     }
 
     console.log(`사업장 삭제 cascade 완료: ${businessId}`);
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+// 🔐 PASS 본인인증 (다날)
+// ═══════════════════════════════════════════════════════════
+//
+// DANAL_MOCK_MODE=true 환경변수 설정 시 mock 데이터 반환 (다날 계약 전 테스트용).
+// 배포 후 Firebase Functions 환경변수: firebase functions:secrets:set DANAL_MOCK_MODE
+
+// ── initiatePassAuth ─────────────────────────────────────
+// 다날 txSeq + 인증 URL 발급
+// Input:  { purpose: 'register'|'resetPassword', role?: string }
+// Output: { txSeq, authUrl, isMock? }
+export const initiatePassAuth = onCall(
+  {region: "asia-northeast3"},
+  async (request) => {
+    const purpose = request.data.purpose as string | undefined;
+    if (!purpose || !["register", "resetPassword"].includes(purpose)) {
+      throw new HttpsError("invalid-argument", "purpose는 'register' 또는 'resetPassword'여야 합니다.");
+    }
+
+    const isMock = process.env.DANAL_MOCK_MODE === "true";
+    if (isMock) {
+      return {
+        txSeq: `MOCK-${Date.now()}`,
+        authUrl: "https://mock.danal.example.com/auth",
+        isMock: true,
+      };
+    }
+
+    // [TODO-DANAL] 실제 다날 API 호출 — txSeq + authUrl 발급
+    // 계약 완료 후 다날 SDK / REST API 연동 필요
+    throw new HttpsError("unimplemented", "다날 계약 완료 후 구현 예정입니다.");
+  }
+);
+
+// ── verifyPassAuth ───────────────────────────────────────
+// 다날 encData 복호화 → 연령/CI 중복/재가입 검증 → passToken(15분) 발급
+// Input:  { encData, txSeq, purpose, role? }
+// Output: { passToken, name, gender, birthDate, phone }
+export const verifyPassAuth = onCall(
+  {region: "asia-northeast3"},
+  async (request) => {
+    const {purpose, role = "USER"} = request.data as {
+      encData?: string;
+      txSeq?: string;
+      purpose?: string;
+      role?: string;
+    };
+
+    if (!purpose || !["register", "resetPassword"].includes(purpose)) {
+      throw new HttpsError("invalid-argument", "purpose가 올바르지 않습니다.");
+    }
+
+    const isMock = process.env.DANAL_MOCK_MODE === "true";
+
+    let ci: string;
+    let name: string;
+    let gender: string;
+    let birthDateStr: string; // YYYYMMDD
+    let phone: string;
+
+    if (isMock) {
+      ci = "MOCK-CI-ABCDEF123456";
+      name = "홍길동";
+      gender = "남성";
+      birthDateStr = "19900115";
+      phone = "01012345678";
+    } else {
+      const {encData, txSeq} = request.data as {encData?: string; txSeq?: string};
+      if (!encData || !txSeq) {
+        throw new HttpsError("invalid-argument", "encData, txSeq 필수입니다.");
+      }
+      // [TODO-DANAL] 다날 복호화 로직 — AES 키는 Functions Secret으로 관리
+      throw new HttpsError("unimplemented", "다날 계약 완료 후 구현 예정입니다.");
+    }
+
+    // 만 19세 미만 차단
+    const today = new Date();
+    const by = parseInt(birthDateStr.substring(0, 4));
+    const bm = parseInt(birthDateStr.substring(4, 6));
+    const bd = parseInt(birthDateStr.substring(6, 8));
+    const age =
+      today.getFullYear() -
+      by -
+      (today.getMonth() + 1 < bm ||
+      (today.getMonth() + 1 === bm && today.getDate() < bd)
+        ? 1
+        : 0);
+    if (age < 19) {
+      throw new HttpsError("permission-denied", "만 19세 이상만 가입 가능합니다.");
+    }
+
+    const ciHash = crypto.createHash("sha256").update(ci).digest("hex");
+
+    if (purpose === "register") {
+      // CI + role 중복 체크
+      const dupSnap = await db
+        .collection("users")
+        .where("ciHash", "==", ciHash)
+        .where("role", "==", role)
+        .limit(1)
+        .get();
+      if (!dupSnap.empty) {
+        throw new HttpsError(
+          "already-exists",
+          "이미 동일 역할로 가입된 계정이 있습니다."
+        );
+      }
+
+      // 탈퇴 후 1개월 이내 재가입 차단
+      const deletedSnap = await db
+        .collection("deletedUsers")
+        .where("ciHash", "==", ciHash)
+        .limit(1)
+        .get();
+      if (!deletedSnap.empty) {
+        const deletedAt = (
+          deletedSnap.docs[0].data().deletedAt as Timestamp
+        ).toDate();
+        const oneMonthAgo = new Date();
+        oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+        if (deletedAt > oneMonthAgo) {
+          throw new HttpsError(
+            "permission-denied",
+            "탈퇴 후 1개월이 지난 후 재가입 가능합니다."
+          );
+        }
+      }
+    }
+
+    // passToken 발급 (15분 유효)
+    // [주의] 가입(register) 경로에서 발급된 토큰은 현재 소비되지 않음.
+    //   → resetPasswordWithPass에서만 토큰 소비(삭제)가 이루어짐.
+    //   → 가입 완료 후 passTokens 문서가 15분간 잔류 → 배포 전 TTL 정책 또는
+    //      Cloud Scheduler 정리 Job 추가 필요.
+    // [TODO-DANAL] 가입 완료 시 해당 passToken의 ciHash를 users/{uid}에 복사하는
+    //   별도 CF(예: finalizeRegistration) 추가 필요.
+    const passToken = crypto.randomBytes(32).toString("hex");
+    await db
+      .collection("passTokens")
+      .doc(passToken)
+      .set({
+        ciHash,
+        name,
+        gender,
+        birthDate: birthDateStr,
+        phone,
+        purpose,
+        role,
+        expiresAt: Timestamp.fromDate(new Date(Date.now() + 15 * 60 * 1000)),
+        createdAt: Timestamp.now(),
+      });
+
+    return {passToken, name, gender, birthDate: birthDateStr, phone};
+  }
+);
+
+// ── resetPasswordWithPass ────────────────────────────────
+// passToken + username → CI 매칭 → Firebase Custom Token 발급
+// Input:  { passToken, username }
+// Output: { customToken }
+//
+// [설계 제약] 내국인(ciHash 보유) 전용. 외국인은 ciHash 없으므로 CI 매칭 실패.
+//   외국인 비밀번호 재설정 경로는 별도 지원 필요 (예: 이메일 또는 관리자 직접 처리).
+// [보안] passToken은 소비 즉시 삭제(일회용) — 재사용 불가.
+export const resetPasswordWithPass = onCall(
+  {region: "asia-northeast3"},
+  async (request) => {
+    const {passToken, username} = request.data as {
+      passToken?: string;
+      username?: string;
+    };
+    if (!passToken || !username) {
+      throw new HttpsError("invalid-argument", "passToken, username 필수입니다.");
+    }
+
+    // passToken 검증
+    const tokenDoc = await db.collection("passTokens").doc(passToken).get();
+    if (!tokenDoc.exists) {
+      throw new HttpsError("not-found", "유효하지 않은 인증 토큰입니다.");
+    }
+    const tokenData = tokenDoc.data()!;
+    if (tokenData.purpose !== "resetPassword") {
+      throw new HttpsError("invalid-argument", "비밀번호 찾기용 토큰이 아닙니다.");
+    }
+    if ((tokenData.expiresAt as Timestamp).toDate() < new Date()) {
+      throw new HttpsError(
+        "deadline-exceeded",
+        "인증 토큰이 만료되었습니다. 다시 본인인증을 진행해주세요."
+      );
+    }
+
+    // username으로 내국인 사용자 찾기
+    const userSnap = await db
+      .collection("users")
+      .where("username", "==", username)
+      .limit(1)
+      .get();
+    if (userSnap.empty) {
+      throw new HttpsError("not-found", "존재하지 않는 아이디입니다.");
+    }
+    const userDoc = userSnap.docs[0];
+    const userData = userDoc.data();
+
+    // CI 해시 매칭
+    if (userData.ciHash !== tokenData.ciHash) {
+      throw new HttpsError(
+        "permission-denied",
+        "본인인증 정보가 계정 정보와 일치하지 않습니다."
+      );
+    }
+
+    // 사용한 토큰 삭제 (재사용 방지)
+    await tokenDoc.ref.delete();
+
+    // Firebase Custom Token 발급 → 앱에서 signInWithCustomToken 사용
+    const customToken = await admin.auth().createCustomToken(userDoc.id);
+    return {customToken};
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+// 👤 외국인 근로자 계정 승인/거절 (슈퍼관리자 전용)
+// ═══════════════════════════════════════════════════════════
+
+// ── approveForeignWorker ─────────────────────────────────
+// Input:  { userId }
+// Output: { success: true }
+//
+// [설계 제약] pending 상태에서만 처리 가능. 이미 active/rejected 계정은 재처리 불가.
+//   재검토가 필요하면 Firestore를 직접 수정하거나 별도 CF(resetAccountStatus) 추가 필요.
+export const approveForeignWorker = onCall(
+  {region: "asia-northeast3"},
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    }
+    const callerDoc = await db.collection("users").doc(request.auth.uid).get();
+    if (callerDoc.data()?.role !== "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "슈퍼관리자만 승인할 수 있습니다.");
+    }
+
+    const {userId} = request.data as {userId?: string};
+    if (!userId) throw new HttpsError("invalid-argument", "userId 필수입니다.");
+
+    const userRef = db.collection("users").doc(userId);
+    const userDoc = await userRef.get();
+    if (!userDoc.exists) {
+      throw new HttpsError("not-found", "사용자를 찾을 수 없습니다.");
+    }
+    if (userDoc.data()?.accountStatus !== "pending") {
+      throw new HttpsError("failed-precondition", "승인 대기 중인 계정이 아닙니다.");
+    }
+
+    await userRef.update({
+      accountStatus: "active",
+      approvedAt: Timestamp.now(),
+      approvedBy: request.auth.uid,
+    });
+
+    // FCM 알림 전송
+    const fcmToken = userDoc.data()?.fcmToken as string | undefined;
+    if (fcmToken) {
+      try {
+        await admin.messaging().send({
+          token: fcmToken,
+          notification: {
+            title: "AlFit",
+            body: "계정이 승인되었습니다. 이제 AlFit을 이용하실 수 있습니다.",
+          },
+          data: {type: "foreignAccountApproved"},
+        });
+      } catch (e) {
+        // FCM 실패는 승인 자체를 롤백하지 않음 (fire-and-forget)
+        console.error("FCM 전송 실패 (approveForeignWorker):", e);
+      }
+    }
+
+    return {success: true};
+  }
+);
+
+// ── rejectForeignWorker ──────────────────────────────────
+// Input:  { userId, reason }
+// Output: { success: true }
+export const rejectForeignWorker = onCall(
+  {region: "asia-northeast3"},
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    }
+    const callerDoc = await db.collection("users").doc(request.auth.uid).get();
+    if (callerDoc.data()?.role !== "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "슈퍼관리자만 거절할 수 있습니다.");
+    }
+
+    const {userId, reason} = request.data as {userId?: string; reason?: string};
+    if (!userId || !reason) {
+      throw new HttpsError("invalid-argument", "userId, reason 필수입니다.");
+    }
+
+    const userRef = db.collection("users").doc(userId);
+    const userDoc = await userRef.get();
+    if (!userDoc.exists) {
+      throw new HttpsError("not-found", "사용자를 찾을 수 없습니다.");
+    }
+    if (userDoc.data()?.accountStatus !== "pending") {
+      throw new HttpsError("failed-precondition", "승인 대기 중인 계정이 아닙니다.");
+    }
+
+    await userRef.update({
+      accountStatus: "rejected",
+      rejectedAt: Timestamp.now(),
+      rejectedBy: request.auth.uid,
+      rejectionReason: reason,
+    });
+
+    // FCM 알림 전송
+    const fcmToken = userDoc.data()?.fcmToken as string | undefined;
+    if (fcmToken) {
+      try {
+        await admin.messaging().send({
+          token: fcmToken,
+          notification: {
+            title: "AlFit",
+            body: `계정 승인이 거절되었습니다. 사유: ${reason}`,
+          },
+          data: {type: "foreignAccountRejected", reason},
+        });
+      } catch (e) {
+        console.error("FCM 전송 실패 (rejectForeignWorker):", e);
+      }
+    }
+
+    return {success: true};
   }
 );

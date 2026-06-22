@@ -114,10 +114,14 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
 
   Future<void> _loadTodayCount() async {
     if (_businessId == null) return;
-    final count = await PayrollPaymentService().getTodayPaymentCount(
-      businessId: _businessId!,
-    );
-    if (mounted) setState(() => _todayPaymentCount = count);
+    try {
+      final count = await PayrollPaymentService().getTodayPaymentCount(
+        businessId: _businessId!,
+      );
+      if (mounted) setState(() => _todayPaymentCount = count);
+    } catch (e) {
+      debugPrint('⚠️ 오늘 급여 건수 조회 실패: $e');
+    }
   }
 
   void _onYearChanged(int delta) {

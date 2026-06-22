@@ -1,5 +1,7 @@
 ﻿// lib/widgets/dialogs/apply/apply_work_dialog.dart
 
+import 'dart:math' show max;
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -414,6 +416,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     if (_currentUserId == null) return;
     
     // 🔥 성능 최적화: 이미 지원한 상태면 충돌 체크 스킵
+    // [특이사항] _hasActiveApplication은 Provider 캐시 기반 스냅샷 — 다중 기기 동시 지원 시
+    // 미세한 레이스 컨디션으로 최신 상태를 반영 못할 수 있음. 실제 중복 지원은 Firestore
+    // 트랜잭션으로 차단되므로 여기서는 UI 중복 조회 방지 목적으로만 사용 (안전 설계)
     if (_hasActiveApplication) {
       debugPrint('🔍 [장기충돌] 이미 지원 완료 - 충돌 체크 스킵');
       return;
@@ -976,6 +981,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           
           // 충돌 날짜 목록 (최대 3개)
           ...sortedDates.take(3).map((date) {
+            // [특이사항] sortedDates = _conflictInfoByDate.keys — 모든 date가 맵에 존재 보장, ! 안전
             final app = _conflictInfoByDate[date]!;
             final dayOfWeek = FormatHelper.weekday(date);
             return Padding(
@@ -1874,7 +1880,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   Widget _buildMyScheduleWarning(BuildContext context, ThemeData theme) {
     final dateFormat = DateFormat('M/d (E)', 'ko_KR');
     final targetDate = _isGroupTO ? _selectedDate : widget.mainTO.date;
-    
+    // [특이사항] 그룹TO에서 날짜 미선택(_selectedDate=null) 상태이면 경고 표시 대상이 없음
+    if (targetDate == null) return const SizedBox.shrink();
+
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
@@ -1897,7 +1905,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Text(
-                '${dateFormat.format(targetDate!)} 확정된 근무가 있습니다',
+                '${dateFormat.format(targetDate)} 확정된 근무가 있습니다',
                 style: ResponsiveHelper.bodyStyle(context, color: AppColors.warningDark).copyWith(
                   fontWeight: FontWeight.bold,
                 ),
@@ -2166,7 +2174,17 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
   Widget _buildBottomButton(BuildContext context, ThemeData theme) {
     return Container(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+      padding: EdgeInsets.fromLTRB(
+        ResponsiveHelper.spacing(context, 16),
+        ResponsiveHelper.spacing(context, 16),
+        ResponsiveHelper.spacing(context, 16),
+        // edge-to-edge 대응: viewPaddingOf는 SafeArea 소비 무관 물리적 인셋.
+        // max로 SafeArea 정상 동작 시 이중 합산 방지.
+        max(
+          ResponsiveHelper.spacing(context, 16),
+          MediaQuery.viewPaddingOf(context).bottom,
+        ),
+      ),
       decoration: BoxDecoration(
         color: Colors.white,
         boxShadow: [
@@ -2177,11 +2195,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           ),
         ],
       ),
-      child: SafeArea(
-        child: SizedBox(
-          width: double.infinity,
-          height: ResponsiveHelper.spacing(context, 50),
-          child: ElevatedButton(
+      child: SizedBox(
+        width: double.infinity,
+        height: ResponsiveHelper.spacing(context, 50),
+        child: ElevatedButton(
             onPressed: () => Navigator.pop(
               context,
               ApplyDialogResult(hasChanges: _hasChanges),
@@ -2204,7 +2221,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             ),
           ),
         ),
-      ),
     );
   }
 

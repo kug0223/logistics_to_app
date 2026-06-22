@@ -903,7 +903,7 @@ class _PayrollPaymentDashboardScreenState
         case _PendingFilter.today:     return _groupIsDueToday(e.value);
         case _PendingFilter.noAccount:
           final uid = _uidFromKey(e.key);
-          return _userBankCache[uid]?['bankName'] == null;
+          return (_userBankCache[uid]?['bankName'] ?? '').isEmpty;
         case _PendingFilter.all:       return true;
       }
     }).toList();
@@ -912,7 +912,7 @@ class _PayrollPaymentDashboardScreenState
     final todayTotal      = allEntries.where((e) => _groupIsDueToday(e.value)).length;
     final noAccountTotal  = allEntries.where((e) {
       final uid = _uidFromKey(e.key);
-      return _userBankCache[uid]?['bankName'] == null;
+      return (_userBankCache[uid]?['bankName'] ?? '').isEmpty;
     }).length;
     final allIds          = allEntries.expand((e) => e.value.map((r) => r.id)).toSet();
 

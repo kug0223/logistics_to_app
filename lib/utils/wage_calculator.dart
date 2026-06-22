@@ -159,6 +159,8 @@ class WageCalculator {
     // 1. 시간 계산
     final scheduledMinutes = _calculateMinutesBetween(scheduledStart, scheduledEnd);
     final actualMinutes = _calculateMinutesBetween(actualStart, actualEnd);
+    // [특이사항] breakMinutes > actualMinutes인 경우(입력 오류 등) clamp(0,…)로 workMinutes=0
+    // 의도된 안전장치 — 급여 0으로 처리해 음수 임금 방지. 관리자가 실수 입력 시 확인 필요
     final workMinutes = (actualMinutes - breakMinutes).clamp(0, 9999);
 
     // 2. 연장근무 계산
@@ -241,6 +243,10 @@ class WageCalculator {
       earlyArrivalAmt = result['earlyArrivalAmount'] ?? 0;
     }
     
+    // [특이사항] deductionAmount(수동 공제)와 weeklyHolidayAmount(주휴수당)는 여기서 계산하지 않음.
+    // - deductionAmount: 관리자가 wage 수정 다이얼로그에서 직접 입력 후 copyWith(totalAmount)로 반영
+    // - weeklyHolidayAmount: 주휴수당 자동계산 없음 정책(CLAUDE.md) — 관리자 수동 입력
+    // 두 필드는 이 calculate() 이후 UI 레이어에서 설정되므로 초기 totalAmount에는 미포함.
     // additionalAmount는 추가 공제에 음수 입력이 가능하지만 UI에서 검증하지 않으므로,
     // 극단적인 음수 입력 시 totalAmount가 음수가 될 수 있다. 호출 측에서 범위를 보장해야 한다.
     final totalAmount = baseAmount + overtimeAmount + nightAmount + additionalAmount;
@@ -286,9 +292,11 @@ class WageCalculator {
   }) {
     // 기본급: 정규 근무(8시간 이하) × 실제 시급
     final regularMinutes = workMinutes - overtimeMinutes;
+    // [특이사항] int × int / int → Dart `/` 연산자는 항상 double 반환 — int overflow 없음
     final baseAmount = (regularMinutes * hourlyWage / 60).round();
 
     // 연장수당: 8시간 초과분 × 실제 시급 × 1.5
+    // [특이사항] overtimeRate = 1.5 (double) → int × int × double은 double 계산 — int overflow 없음
     final overtimeAmount = overtimeMinutes > 0
         ? (overtimeMinutes * hourlyWage * overtimeRate / 60).round()
         : 0;

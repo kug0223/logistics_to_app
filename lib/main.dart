@@ -32,6 +32,7 @@ import 'services/insurance_rate_service.dart';
 import 'services/analytics_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'widgets/common/network_banner.dart';
+import 'utils/tour_helper.dart';
 
 /// 앱이 완전히 종료된 상태에서 FCM 메시지 수신 시 호출되는 최상위 핸들러
 /// (반드시 main() 바깥 최상위 함수여야 함 — Flutter 요구사항)
@@ -202,9 +203,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
     _checkingOnboarding = true;
     try {
       final user = context.read<UserProvider>().currentUser;
-      final roleKey = user?.roleString ?? 'unknown';
+      // [특이사항] UID 기반 키 사용 — 역할 기반이면 같은 기기의 다른 계정이 플래그를 공유해
+      // 신규 가입자가 이전 사용자의 "완료" 상태를 물려받아 온보딩을 건너뛰게 됨
+      final uid = user?.uid ?? 'unknown';
       final prefs = await SharedPreferences.getInstance();
-      final completed = prefs.getBool('onboarding_completed_$roleKey') ?? false;
+      final completed = prefs.getBool('onboarding_completed_$uid') ?? false;
       if (mounted) setState(() => _isOnboardingCompleted = completed);
     } finally {
       _checkingOnboarding = false;
@@ -215,9 +218,12 @@ class _AuthWrapperState extends State<AuthWrapper> {
     // await 전 즉시 설정 — notifyListeners() rebuild 시 OnboardingScreen 재표시 방지
     if (mounted) setState(() => _isOnboardingCompleted = true);
     final user = context.read<UserProvider>().currentUser;
-    final roleKey = user?.roleString ?? 'unknown';
+    final uid = user?.uid ?? 'unknown';
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('onboarding_completed_$roleKey', true);
+    await prefs.setBool('onboarding_completed_$uid', true);
+    // 온보딩 완료 시 TourScreen도 함께 완료 처리 — 내용이 동일해 중복 표시 방지
+    final tourKey = (user?.isUser == true) ? TourHelper.userHome : TourHelper.adminHome;
+    await TourHelper.markCompleted(tourKey);
   }
 
   @override
@@ -230,8 +236,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
           debugPrint('isLoggedIn: ${userProvider.isLoggedIn}');
         }
         
-        // 🔄 로딩 중
-        if (userProvider.isLoading) {
+        // 🔄 초기 로딩 중 (_isOnboardingCompleted이 결정된 이후엔 로딩 스피너를 표시하지 않음)
+        // isLoading이 다시 true가 되어도 OnboardingScreen/홈 화면을 유지해야 한다.
+        // 그렇지 않으면 OnboardingScreen이 로딩 스피너로 교체됐다가 재생성될 때 페이지가 초기화된다.
+        if (userProvider.isLoading && _isOnboardingCompleted == null) {
           if (kDebugMode) debugPrint('⏳ 로딩 중...');
           return const Scaffold(
             body: Center(
@@ -247,16 +255,17 @@ class _AuthWrapperState extends State<AuthWrapper> {
           );
         }
 
-        // 🚫 로그인 안됨
-        if (!userProvider.isLoggedIn) {
+        // 🚫 로그인 안됨 (로딩 중이 아닌 경우에만 — 일시적 isLoading=true로 인한 오탐 방지)
+        if (!userProvider.isLoggedIn && !userProvider.isLoading) {
           if (kDebugMode) debugPrint('🚫 로그인되지 않음 → LoginScreen');
-          // 로그아웃 시 온보딩 상태·가드 리셋 (다음 로그인 때 다시 체크)
-          if (_isOnboardingCompleted != null) {
+          // 로그아웃 시 온보딩 상태·가드·배너 리셋 (다음 로그인 때 다시 체크)
+          if (_isOnboardingCompleted != null || _emailBannerShown) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (mounted) {
                 setState(() {
                   _isOnboardingCompleted = null;
                   _checkingOnboarding = false;
+                  _emailBannerShown = false;
                 });
               }
             });
@@ -318,54 +327,42 @@ class _AuthWrapperState extends State<AuthWrapper> {
           );
         }
 
-        // PASS 인증 배너 (로그인 후 최초 1회)
-        if (!user.isPassVerified && !_emailBannerShown) {
+        // PASS 인증 안내 SnackBar (로그인 후 최초 1회) — 관리자 역할만
+        // USER(지원자)는 UserHomeScreen._buildOnboardingBanner에서 통합 처리
+        if (!user.isPassVerified && !_emailBannerShown && !user.isUser) {
           _emailBannerShown = true;
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            scaffoldMessengerKey.currentState?.showMaterialBanner(
-              MaterialBanner(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 8),
-                leading: const Icon(Icons.verified_user_outlined,
-                    color: AppColors.warning),
-                backgroundColor: AppColors.warningBg,
-                content: const Text(
-                  'PASS 인증을 완료하면 더 많은 기능을 이용할 수 있어요',
-                  style: TextStyle(fontSize: 13),
+            scaffoldMessengerKey.currentState?.showSnackBar(
+              SnackBar(
+                content: const Row(
+                  children: [
+                    Icon(Icons.verified_user_outlined,
+                        color: Colors.white, size: 18),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'PASS 인증을 완료하면 더 많은 기능을 이용할 수 있어요',
+                        style: TextStyle(fontSize: 13),
+                      ),
+                    ),
+                  ],
                 ),
-                actions: [
-                  TextButton(
-                    onPressed: () {
-                      scaffoldMessengerKey.currentState
-                          ?.hideCurrentMaterialBanner();
-                    },
-                    child: const Text('나중에',
-                        style: TextStyle(color: AppColors.grey500)),
-                  ),
-                  TextButton(
-                    onPressed: () {
-                      scaffoldMessengerKey.currentState
-                          ?.hideCurrentMaterialBanner();
-                      navigatorKey.currentState?.push(
-                        MaterialPageRoute(
-                          builder: (_) => const SettingsScreen(),
-                        ),
-                      );
-                    },
-                    child: const Text('인증하기',
-                        style: TextStyle(
-                            color: AppColors.warning,
-                            fontWeight: FontWeight.w600)),
-                  ),
-                ],
+                backgroundColor: AppColors.warning,
+                duration: const Duration(seconds: 6),
+                behavior: SnackBarBehavior.floating,
+                action: SnackBarAction(
+                  label: '인증하기',
+                  textColor: Colors.white,
+                  onPressed: () {
+                    navigatorKey.currentState?.push(
+                      MaterialPageRoute(
+                        builder: (_) => const SettingsScreen(),
+                      ),
+                    );
+                  },
+                ),
               ),
             );
-          });
-        }
-        if (user.isPassVerified && _emailBannerShown) {
-          _emailBannerShown = false;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            scaffoldMessengerKey.currentState?.hideCurrentMaterialBanner();
           });
         }
 

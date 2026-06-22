@@ -619,7 +619,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// 대기 요청 인라인 승인/거절 버튼
   Widget _buildPendingActions(BuildContext context, ApplicationModel app) {
     final userProvider = Provider.of<UserProvider>(context, listen: false);
-    final approverUid = userProvider.currentUser?.uid ?? '';
+    final approverUid = userProvider.currentUser?.uid ?? 'UNKNOWN';
 
     final pending = _pendingRequestsForDate
         .where((r) => r.applicationId == app.id)
@@ -966,7 +966,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                             if (user?.gender != null) ...[
                               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                               Text(
-                                '${user!.gender}${user.age != null ? ' · ${user.age}세' : ''}',
+                                '${user?.gender ?? ''}${user?.age != null ? ' · ${user?.age}세' : ''}',
                                 style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
                               ),
                             ],
@@ -1594,6 +1594,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         return;
       }
 
+      // [특이사항] 1592행 isEmpty 조기 반환으로 여기 도달 시 workDetails는 비어있지 않음 — .first 안전
       final workDetail = workDetails.firstWhere(
         (w) => w.workType == newApp.selectedWorkType,
         orElse: () => workDetails.first,
@@ -1948,6 +1949,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       return;
     }
 
+    // [특이사항] 위 null 가드로 item.user! 안전
     WorkerDetailDialog.show(
       context: context,
       user: item.user!,
@@ -2110,6 +2112,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     }
 
     final worker = await _firestoreService.getUser(app.uid);
+    if (!mounted) return;
     final workerName = worker?.name ?? '이름 없음';
 
     final request = ScheduleChangeRequestModel(
@@ -2275,6 +2278,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     }
 
     final worker = await _firestoreService.getUser(app.uid);
+    if (!mounted) return;
     final workerName = worker?.name ?? '이름 없음';
 
     final request = ScheduleChangeRequestModel(

@@ -131,6 +131,9 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       if (_filter.showFavoritesOnly) {
         // 즐겨찾기 경로: 사용자의 favoriteToIds로 batch fetch
         final favoriteIds = userProvider.currentUser?.favoriteToIds ?? const [];
+        // [특이사항] favoriteToIds는 UserProvider 인메모리 캐시 기반 — 다른 기기에서
+        // 즐겨찾기를 변경해도 이 세션이 refreshCurrentUser() 호출 전까지 구 목록을 사용
+        // 실제 데이터 조회는 Firestore에서 하므로 삭제된 TO는 결과에서 자동 제외됨
         toList = favoriteIds.isEmpty
             ? []
             : await _firestoreService.getTOsByIds(favoriteIds);
@@ -166,7 +169,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       debugPrint('❌ TO 목록 로드 실패: $e');
       if (!mounted) return;
       setState(() => _isLoading = false);
-      ToastHelper.showError('TO 목록을 불러오는데 실패했습니다.');
+      ToastHelper.showError('공고 목록을 불러오는데 실패했습니다.');
     }
   }
 
@@ -175,6 +178,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
     if (_isLoading || _isLoadingMore || !_hasMoreData) return;
     // lastDoc 없으면 cursor를 잃은 상태 — 재로드 방지
     if (_lastDoc == null) return;
+    if (!mounted) return;
 
     setState(() => _isLoadingMore = true);
 
@@ -532,7 +536,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
                       // TO 목록 (스크롤)
                       Expanded(
                         child: _isLoading
-                            ? const LoadingWidget(message: 'TO 목록을 불러오는 중...')
+                            ? const LoadingWidget(message: '공고 목록을 불러오는 중...')
                             : _displayList.isEmpty
                                 ? _buildEmptyState()
                                 : RefreshIndicator(

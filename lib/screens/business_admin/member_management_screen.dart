@@ -40,12 +40,15 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final result = await _service.getMembers(widget.businessId);
-    if (!mounted) return;
-    setState(() {
-      _members = result;
-      _loading = false;
-    });
+    try {
+      final result = await _service.getMembers(widget.businessId);
+      if (!mounted) return;
+      setState(() => _members = result);
+    } catch (e) {
+      if (mounted) ToastHelper.showError('멤버 목록을 불러오지 못했습니다');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   Future<void> _invite() async {

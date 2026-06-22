@@ -5,11 +5,11 @@ import 'package:provider/provider.dart';
 import '../../models/core/monthly_review_model.dart';
 import '../../providers/user_provider.dart';
 import '../../services/monthly_review_service.dart';
-import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../../widgets/common/review_card.dart';
 
 class MyReviewsScreen extends StatefulWidget {
   const MyReviewsScreen({super.key});
@@ -41,15 +41,16 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
     if (uid == null) return;
     setState(() { _isLoading = true; _loadError = null; _cursor = null; _hasMore = false; });
     try {
-      final page = await _reviewService.getPublishedReviewsForUserPaged(
+      final page = await _reviewService.getAllReviewsForUserPaged(
         targetUserId: uid,
       );
-      // [오탐 확인] 평균 점수를 첫 페이지(최대 30건)만으로 계산한다.
-      // hasMore=true이면 전체 평균과 다를 수 있으나, 정확한 값은 users.averageRating에 있다.
-      // 대부분의 근무자는 리뷰 수가 30건 미만이므로 실용적으로 허용된 트레이드오프이다.
-      final avg = page.records.isEmpty
+      // 평균 점수는 공개된 리뷰(isPublished=true)만으로 계산 — 미공개는 확정 전 상태
+      // [특이사항] 이 화면의 avgRating은 Firestore user.averageRating(전체 리뷰 기준)과 다를 수 있음
+      // 두 값의 의미가 다른 것은 의도된 설계 — 이 화면은 본인이 볼 수 있는 공개 리뷰만 대상
+      final published = page.records.where((r) => r.isPublished).toList();
+      final avg = published.isEmpty
           ? 0.0
-          : page.records.map((r) => r.rating).reduce((a, b) => a + b) / page.records.length;
+          : published.map((r) => r.rating).reduce((a, b) => a + b) / published.length;
       if (mounted) {
         setState(() {
           _reviews = page.records;
@@ -69,23 +70,24 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
     if (uid == null || !_hasMore || _isLoadingMore) return;
     setState(() => _isLoadingMore = true);
     try {
-      final page = await _reviewService.getPublishedReviewsForUserPaged(
+      final page = await _reviewService.getAllReviewsForUserPaged(
         targetUserId: uid,
         startAfter: _cursor,
       );
       if (!mounted) return;
       final allReviews = [..._reviews, ...page.records];
-      final avg = allReviews.isEmpty
+      final published = allReviews.where((r) => r.isPublished).toList();
+      final avg = published.isEmpty
           ? 0.0
-          : allReviews.map((r) => r.rating).reduce((a, b) => a + b) / allReviews.length;
+          : published.map((r) => r.rating).reduce((a, b) => a + b) / published.length;
       setState(() {
         _reviews = allReviews;
         _avgRating = avg;
         _cursor = page.cursor;
         _hasMore = page.hasMore;
       });
-    } catch (_) {
-      // 예외는 무시하고 finally에서 상태 초기화
+    } catch (e) {
+      debugPrint('⚠️ [MyReviewsScreen] loadMore 실패: $e');
     } finally {
       if (mounted) setState(() => _isLoadingMore = false);
     }
@@ -131,7 +133,10 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
                           ),
                           sliver: SliverList(
                             delegate: SliverChildBuilderDelegate(
-                              (ctx, i) => _ReviewCard(review: _reviews[i]),
+                              (ctx, i) => ReviewCard(
+                                review: _reviews[i],
+                                perspective: ReviewCardPerspective.workerReceived,
+                              ),
                               childCount: _reviews.length,
                             ),
                           ),
@@ -224,185 +229,3 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
       );
 }
 
-class _ReviewCard extends StatelessWidget {
-  final MonthlyReviewModel review;
-
-  const _ReviewCard({required this.review});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Card(
-      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
-      elevation: 2,
-      shadowColor: Colors.black.withValues(alpha: 0.08),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // 헤더: 사업장명 + 기간
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    review.businessName,
-                    style: ResponsiveHelper.subtitleStyle(context)
-                        .copyWith(fontWeight: FontWeight.bold),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                Text(
-                  review.periodText,
-                  style: ResponsiveHelper.smallStyle(context,
-                      color: AppColors.grey500),
-                ),
-              ],
-            ),
-
-            SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-
-            // 별점 + 텍스트
-            Row(
-              children: [
-                ...List.generate(5, (i) => Icon(
-                  i < review.rating ? Icons.star_rounded : Icons.star_outline_rounded,
-                  size: ResponsiveHelper.iconSize(context, 20),
-                  color: i < review.rating ? AppColors.warning : AppColors.grey300,
-                )),
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Text(
-                  review.ratingText,
-                  style: ResponsiveHelper.smallStyle(context).copyWith(
-                    color: _ratingColor(review.rating),
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-
-            // 출근 통계
-            if (review.workDaysInMonth > 0) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-              Row(
-                children: [
-                  _buildStatChip(context,
-                      Icons.work_outline, '근무 ${review.workDaysInMonth}일'),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  _buildStatChip(context,
-                      Icons.check_circle_outline,
-                      '정상 ${review.normalAttendanceDays}일'),
-                  if (review.lateDays > 0) ...[
-                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                    _buildStatChip(context,
-                        Icons.access_time_outlined,
-                        '지각 ${review.lateDays}회',
-                        color: AppColors.warning),
-                  ],
-                ],
-              ),
-            ],
-
-            // 긍정 태그
-            if (review.positiveTags.isNotEmpty) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-              Wrap(
-                spacing: ResponsiveHelper.spacing(context, 6),
-                runSpacing: ResponsiveHelper.spacing(context, 4),
-                children: review.positiveTags
-                    .map((tag) => _buildTag(context, tag, AppColors.successBg,
-                        AppColors.successDark))
-                    .toList(),
-              ),
-            ],
-
-            // 개선 태그
-            if (review.improvementTags.isNotEmpty) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-              Wrap(
-                spacing: ResponsiveHelper.spacing(context, 6),
-                runSpacing: ResponsiveHelper.spacing(context, 4),
-                children: review.improvementTags
-                    .map((tag) => _buildTag(context, tag, AppColors.warningBg,
-                        AppColors.warningDark))
-                    .toList(),
-              ),
-            ],
-
-            // 사업장 답변 (USER_TO_BUSINESS 답변이 있는 경우)
-            if (review.businessResponse != null &&
-                review.businessResponse!.isNotEmpty) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-              Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
-                decoration: BoxDecoration(
-                  color: theme.primaryColor.withValues(alpha: 0.06),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                      color: theme.primaryColor.withValues(alpha: 0.2)),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(Icons.business_center_outlined,
-                        size: ResponsiveHelper.iconSize(context, 14),
-                        color: theme.primaryColor),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                    Expanded(
-                      child: Text(
-                        review.businessResponse!,
-                        style: ResponsiveHelper.smallStyle(context,
-                            color: AppColors.grey700),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatChip(BuildContext context, IconData icon, String label,
-      {Color? color}) {
-    final c = color ?? AppColors.grey500;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: ResponsiveHelper.iconSize(context, 12), color: c),
-        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-        Text(label,
-            style: ResponsiveHelper.tinyStyle(context, color: c)),
-      ],
-    );
-  }
-
-  Widget _buildTag(
-      BuildContext context, String label, Color bg, Color fg) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 8),
-        vertical: ResponsiveHelper.spacing(context, 3),
-      ),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(label,
-          style:
-              ResponsiveHelper.tinyStyle(context, color: fg)),
-    );
-  }
-
-  Color _ratingColor(int rating) {
-    if (rating >= 4) return AppColors.successDark;
-    if (rating == 3) return AppColors.grey600;
-    return AppColors.errorDark;
-  }
-}
