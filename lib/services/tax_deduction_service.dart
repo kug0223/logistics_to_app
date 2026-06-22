@@ -99,6 +99,8 @@ class TaxDeductionService {
     // 되어야 소득세 1원이 공제된다. 즉 150,018원까지 실질 소득세가 0원이 된다.
     // 이는 의도된 설계: 원(₩) 단위로 round()를 사용하면 미소 과세금액은 0이 되고,
     // 납세자에게 유리한 방향으로 처리된다. ceil()로 변경하면 납세자에게 불리하다.
+    // [특이사항] gross가 음수이면 clamp(0, gross) → min > max → Dart 예외 발생.
+    //           TO 임금 구조상 실제 음수 gross는 불가능하지만 사전 검증 코드는 없음.
     final taxableAmount = (gross - rates.dailyWageExemption).clamp(0, gross);
     final incomeTax = taxableAmount > 0
         ? (taxableAmount * rates.dailyWorkerTaxRate / 100).round()
@@ -125,6 +127,8 @@ class TaxDeductionService {
     int gross,
   ) {
     final employment = (gross * rates.employmentInsuranceRate / 100).round();
+    // [특이사항] gross가 음수이면 clamp(0, gross) → min > max → Dart 예외 발생.
+    //           TO 임금 구조상 실제 음수 gross는 불가능하지만 사전 검증 코드는 없음.
     final taxableAmount = (gross - rates.dailyWageExemption).clamp(0, gross);
     final incomeTax = taxableAmount > 0
         ? (taxableAmount * rates.dailyWorkerTaxRate / 100).round()

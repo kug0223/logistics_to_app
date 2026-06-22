@@ -117,6 +117,9 @@ class BadgeService {
       final status = doc.data()['status'] as String?;
       if (status == AttendanceModel.statusPresent ||
           status == AttendanceModel.statusEarlyLeave) {
+        // [특이사항] statusEarlyLeave는 출근 사실로 인정해 streak 포함.
+        //           statusLate는 성실 연속으로 불인정 → else에서 break.
+        //           (정책: 조기퇴근 = 출근 인정, 지각 = 연속 출근 배지 불인정)
         streak++;
         if (streak >= badge.conditionValue) return true;
       } else {

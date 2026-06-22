@@ -726,6 +726,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final errStr = e.toString();
       // [TODO-DANAL] finalizeRegistration CF 호출 추가 후 passToken TTL(15분) 만료 시 이 분기 진입
       // 현재는 mock PASS이므로 실제로 발생하지 않음
+      // [특이사항] 'passToken' 문자열을 포함하는 일반 예외도 이 분기 진입 가능 (오탐).
+      //           현재 mock PASS 환경에서는 실제 발생 없음; 다날 연동 후 에러 메시지 재검토 필요.
       if (_isKorean &&
           (errStr.contains('deadline-exceeded') ||
               errStr.contains('token-expired') ||

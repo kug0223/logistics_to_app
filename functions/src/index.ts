@@ -3440,6 +3440,8 @@ export const approveForeignWorker = onCall(
     });
 
     // FCM 알림 전송
+    // [특이사항] 단일 fcmToken 필드만 사용 — onNotificationCreated의 fcmTokens 배열 방식과 불일치.
+    //           외국인 계정은 단일 기기 로그인만 허용하는 설계이므로 배열 불필요 (의도된 단순화).
     const fcmToken = userDoc.data()?.fcmToken as string | undefined;
     if (fcmToken) {
       try {

@@ -708,6 +708,8 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
         usedMethod = 'gps';
       }
 
+      // [특이사항] endTime < startTime 검증은 _firestoreService.checkOut() 내부에만 있음.
+      //           클라이언트에서는 사전 차단 없이 서비스 계층의 에러 응답에만 의존.
       final success = await _firestoreService.checkOut(
         attendanceId: attendance.id,
         latitude: lat,

@@ -230,7 +230,8 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
           .map((r) => r.workerId)
           .toSet();
       if (missingNameIds.isNotEmpty) {
-        final ids = missingNameIds.take(30).toList(); // whereIn 30개 제한
+        // [특이사항] whereIn 30개 제한으로 take(30) 적용; 초과 uid는 이름 미조회 → '근무자'로 표시됨
+        final ids = missingNameIds.take(30).toList();
         final resolvedMap = <String, String>{};
         try {
           final snap = await FirebaseFirestore.instance

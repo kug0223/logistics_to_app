@@ -34,6 +34,7 @@ extension ApplicationFirestore on FirestoreService {
       if (statuses != null && statuses.isNotEmpty) {
         query = query.where('status', whereIn: statuses);
       }
+      // [특이사항] limit(500) 하드코딩 — 인기 TO에서 지원자가 500명 초과 시 이후 지원서 누락
       final snap = await query.limit(500).get(const GetOptions(source: Source.server));
       return snap.docs
           .map((d) => ApplicationModel.fromFirestore(d))
@@ -63,6 +64,7 @@ extension ApplicationFirestore on FirestoreService {
       if (statuses != null && statuses.isNotEmpty) {
         query = query.where('status', whereIn: statuses);
       }
+      // [특이사항] limit(500) 하드코딩 — 인기 TO에서 지원자가 500명 초과 시 이후 지원서 누락
       final snap = await query.limit(500).get(const GetOptions(source: Source.server));
       return snap.docs
           .map((d) => ApplicationModel.fromFirestore(d))
