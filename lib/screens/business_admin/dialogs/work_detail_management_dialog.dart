@@ -473,7 +473,6 @@ class WorkDetailManagementDialog {
       }
       final now = DateTime.now();
       try {
-        // [특이사항] 루프 중간 mounted 체크 없음 — 대상 수 적어 실용상 문제 낮음
         for (var work in works) {
           await firestoreService.closeWorkDetail(
             toId: toItem.to.id,
@@ -481,6 +480,7 @@ class WorkDetailManagementDialog {
             adminUID: adminUID,
             slotId: toItem.slot?.id,
           );
+          if (!context.mounted) return;
 
           // ⭐ 로컬 데이터 업데이트
           final index = toItem.workDetails.indexWhere((w) => w.id == work.id);
@@ -528,6 +528,7 @@ class WorkDetailManagementDialog {
             adminUID: adminUID,
             slotId: toItem.slot?.id,
           );
+          if (!context.mounted) return;
 
           // ⭐ 로컬 데이터 업데이트 (clearClosedAt 사용)
           final index = toItem.workDetails.indexWhere((w) => w.id == work.id);
@@ -571,6 +572,7 @@ class WorkDetailManagementDialog {
             adminUID: adminUID,
             slotId: toItem.slot?.id,
           );
+          if (!context.mounted) return;
 
           // ⭐ 로컬 데이터 업데이트 (clearEmergency 사용)
           final index = toItem.workDetails.indexWhere((w) => w.id == work.id);

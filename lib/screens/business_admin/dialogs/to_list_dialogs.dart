@@ -142,7 +142,7 @@ class TOListDialogs {
     } catch (e) {
       if (context.mounted) Navigator.pop(context);
       debugPrint('❌ TO 마감 실패: $e');
-      ToastHelper.showError('공고 마감 중 오류가 발생했습니다.');
+      if (context.mounted) ToastHelper.showError('공고 마감 중 오류가 발생했습니다.');
     }
   }
 
@@ -215,7 +215,7 @@ class TOListDialogs {
     } catch (e) {
       if (context.mounted) Navigator.pop(context);
       debugPrint('❌ TO 재오픈 실패: $e');
-      ToastHelper.showError('공고 재오픈 중 오류가 발생했습니다.');
+      if (context.mounted) ToastHelper.showError('공고 재오픈 중 오류가 발생했습니다.');
     }
   }
 

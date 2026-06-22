@@ -419,7 +419,7 @@ class _ResignRequestManagementDialogState
       title: '퇴사 승인',
       message:
           '${item.userName}님의 퇴사를 승인하시겠습니까?\n\n'
-          '퇴사일: ${DateFormat('yyyy년 M월 d일').format(item.application.resignRequestDate!)}\n\n'
+          '퇴사일: ${item.application.resignRequestDate != null ? DateFormat('yyyy년 M월 d일').format(item.application.resignRequestDate!) : '미지정'}\n\n'
           '승인 후에는 취소할 수 없습니다.',
       confirmText: '승인',
       confirmColor: AppColors.success,

@@ -18,8 +18,12 @@ class DeviceIntegrityService {
       final result = await _fn
           .httpsCallable('getServerTime', options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
           .call({});
-      // [특이사항] null 또는 잘못된 타입 응답 시 예외 → catch에서 true 반환 (네트워크 오류와 동일 처리)
-      final serverMs = (result.data['serverTimeMs'] as num).toInt();
+      final rawMs = result.data['serverTimeMs'];
+      if (rawMs == null || rawMs is! num) {
+        debugPrint('⚠️ 서버 응답 형식 오류: serverTimeMs=$rawMs');
+        return false;
+      }
+      final serverMs = rawMs.toInt();
       final deviceMs = DateTime.now().millisecondsSinceEpoch;
       final diffMs = (serverMs - deviceMs).abs();
 
