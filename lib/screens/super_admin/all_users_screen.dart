@@ -226,7 +226,8 @@ class _AllUsersScreenState extends State<AllUsersScreen>
       });
       // [특이사항] 신뢰도 수동 조정 직후 배지 재계산 — minScore 조건 충족 시 즉시 배지 부여.
       // fire-and-forget: 배지 계산 실패가 UI 플로우를 막지 않도록 await 없이 실행.
-      BadgeService().evaluateAndUpdateBadgesForUser(user.uid);
+      BadgeService().evaluateAndUpdateBadgesForUser(user.uid)
+          .catchError((e) { debugPrint('⚠️ 배지 재계산 실패 (무시): $e'); return <String>[]; });
       if (!mounted) return;
       ToastHelper.showSuccess('신뢰도가 $result점으로 조정되었습니다');
       await _loadAllUsers();

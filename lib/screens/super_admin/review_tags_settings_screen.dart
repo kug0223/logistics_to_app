@@ -123,6 +123,7 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
               break;
           }
         });
+        if (!mounted) return;
         await _saveTags();
       }
     } finally {
@@ -137,7 +138,7 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
       message: '"$tag" 태그를 삭제하시겠습니까?',
       confirmText: '삭제',
     );
-    
+
     if (!confirmed || !mounted) return;
 
     setState(() {
@@ -156,6 +157,7 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
           break;
       }
     });
+    if (!mounted) return;
     await _saveTags();
   }
 

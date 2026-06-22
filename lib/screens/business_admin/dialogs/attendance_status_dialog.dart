@@ -1102,7 +1102,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     int resetCount = 0;
 
     for (final id in _selectedIds) {
-      final app = _workerIdMap[id]!;
+      final app = _workerIdMap[id];
+      if (app == null) continue;
       final s = _getAttendanceStatus(app)['status'] as String;
       final att = _attendanceMap[app.id];
       if (s == 'pending') {

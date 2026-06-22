@@ -1545,7 +1545,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       ToastHelper.showSuccess('${user?.name ?? '지원자'}님의 파트가 ${selectedWork.workType}(으)로 변경되었습니다$resetMsg');
       await _loadApplicants();
       if (!mounted) return;
-      _updateLocalStats();
+      await _updateLocalStats();
     } catch (e) {
       ToastHelper.showError('파트 변경에 실패했습니다');
     }
@@ -1597,7 +1597,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       ToastHelper.showSuccess('${user?.name ?? '지원자'}님이 승인되었습니다');
       await _loadApplicants();
       if (!mounted) return;
-      _updateLocalStats();
+      await _updateLocalStats();
     } catch (e) {
       ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
     } finally {
@@ -1634,7 +1634,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       ToastHelper.showSuccess('${user?.name ?? '지원자'}님이 거절되었습니다');
       await _loadApplicants();
       if (!mounted) return;
-      _updateLocalStats();
+      await _updateLocalStats();
     } catch (e) {
       ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
     } finally {

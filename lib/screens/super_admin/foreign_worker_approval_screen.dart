@@ -25,6 +25,7 @@ class _ForeignWorkerApprovalScreenState
 
   List<UserModel> _pending = [];
   String _statusFilter = 'pending'; // 'pending' | 'active' | 'rejected'
+  bool _isProcessing = false;
 
   static const _tabs = [
     ('pending', '대기 중'),
@@ -71,14 +72,16 @@ class _ForeignWorkerApprovalScreenState
       _pending.where((u) => u.accountStatus == _statusFilter).toList();
 
   Future<void> _approve(UserModel user) async {
+    if (_isProcessing) return;
     final confirmed = await _showConfirmDialog(
       title: '승인 확인',
       message: '${user.name}님의 가입을 승인하시겠습니까?\n승인 후 앱 사용이 가능해집니다.',
       confirmLabel: '승인',
       confirmColor: AppColors.success,
     );
-    if (!confirmed) return;
+    if (!confirmed || !mounted) return;
 
+    setState(() => _isProcessing = true);
     try {
       await _fn.httpsCallable('approveForeignWorker').call({'userId': user.uid});
       if (!mounted) return;
@@ -90,13 +93,17 @@ class _ForeignWorkerApprovalScreenState
     } catch (e) {
       if (!mounted) return;
       ToastHelper.showError('오류가 발생했습니다. 다시 시도해주세요');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
   Future<void> _reject(UserModel user) async {
+    if (_isProcessing) return;
     final reason = await _showRejectDialog(user.name);
-    if (reason == null) return;
+    if (reason == null || !mounted) return;
 
+    setState(() => _isProcessing = true);
     try {
       await _fn.httpsCallable('rejectForeignWorker').call({
         'userId': user.uid,
@@ -111,6 +118,8 @@ class _ForeignWorkerApprovalScreenState
     } catch (e) {
       if (!mounted) return;
       ToastHelper.showError('오류가 발생했습니다. 다시 시도해주세요');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 

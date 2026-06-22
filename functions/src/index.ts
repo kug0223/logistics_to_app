@@ -2098,6 +2098,9 @@ function _getNotifCategory(type: string): string | null {
     wageConfirmed:             "wageAlert",
     wageCancelConfirmed:       "wageAlert",            // 추가
     attendanceWageChanged:     "wageAlert",
+    wageTransferred:           "wageAlert",            // 추가: 임금 지급 완료
+    retroactiveDeductionAlert: "wageAlert",            // 추가: 소급 공제 알림
+    terminationRejected:       "contractAlert",        // 추가: 계약 종료 거절
   };
   return map[type] ?? null;
 }
@@ -3285,7 +3288,7 @@ export const verifyPassAuth = onCall(
 
       // 탈퇴 후 1개월 이내 재가입 차단
       const deletedSnap = await db
-        .collection("deletedUsers")
+        .collection("deleted_accounts")
         .where("ciHash", "==", ciHash)
         .limit(1)
         .get();

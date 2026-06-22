@@ -62,6 +62,7 @@ class _LegalTermsManagementScreenState
     setState(() => _isLoading = true);
     try {
       await _service.updateItem(result, updatedBy: uid);
+      if (!mounted) return;
       ToastHelper.showSuccess('약관이 저장되었습니다');
       await _loadTerms();
     } catch (e) {

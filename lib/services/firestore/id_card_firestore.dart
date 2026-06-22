@@ -224,10 +224,15 @@ extension IdCardFirestore on FirestoreService {
 
       // approved 상태인데 만료됐으면 Firestore 업데이트 + expired로 반환
       if (request.status == IdCardAccessStatus.approved && request.isExpired) {
-        await _firestore
-            .collection('idCardAccessRequests')
-            .doc(request.id)
-            .update({'status': 'expired'});
+        // [특이사항] update 실패해도 UI는 expired 상태로 반환 — 다음 checkIdCardAccess 호출 시 재시도
+        try {
+          await _firestore
+              .collection('idCardAccessRequests')
+              .doc(request.id)
+              .update({'status': 'expired'});
+        } catch (updateErr) {
+          debugPrint('⚠️ 신분증 만료 상태 업데이트 실패 (계속 진행): $updateErr');
+        }
         request = IdCardAccessRequestModel(
           id: request.id,
           requesterId: request.requesterId,

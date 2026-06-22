@@ -152,6 +152,7 @@ class UserProvider with ChangeNotifier {
           e.toString().contains('user-not-found')) {
         debugPrint('🔄 유효하지 않은 토큰 - 자동 로그아웃');
         await signOut();
+        return; // signOut()이 이미 notifyListeners() 처리함
       }
 
       notifyListeners();

@@ -165,8 +165,8 @@ class NotificationProvider with ChangeNotifier {
   Future<void> markAllAsRead() async {
     if (_userId == null) return;
     await _firestoreService.markAllNotificationsAsRead(_userId!);
+    if (_disposed) return;
     // 스트림 이벤트가 오기 전에 _additionalNotifications도 즉시 반영
-    // (스트림은 _streamNotifications만 갱신하므로 _additionalNotifications는 별도 처리 필요)
     if (_additionalNotifications.isNotEmpty) {
       _additionalNotifications =
           _additionalNotifications.map((n) => n.copyWith(isRead: true)).toList();
@@ -177,6 +177,7 @@ class NotificationProvider with ChangeNotifier {
   /// 개별 알림 삭제
   Future<bool> deleteNotification(String notificationId) async {
     final result = await _firestoreService.deleteNotification(notificationId);
+    if (_disposed) return result;
     if (result && _additionalNotifications.isNotEmpty) {
       _additionalNotifications.removeWhere((n) => n.id == notificationId);
       notifyListeners();
@@ -191,6 +192,11 @@ class NotificationProvider with ChangeNotifier {
   }
 
   // ── 리소스 정리 ───────────────────────────────────────────
+
+  @override
+  void notifyListeners() {
+    if (!_disposed) super.notifyListeners();
+  }
 
   @override
   void dispose() {

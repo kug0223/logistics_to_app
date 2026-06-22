@@ -55,7 +55,7 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
         };
       }
     } catch (e) {
-      ToastHelper.showError('데이터 로드 실패: $e');
+      if (mounted) ToastHelper.showError('데이터 로드 실패: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
