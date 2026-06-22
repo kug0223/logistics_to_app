@@ -114,6 +114,76 @@ class _ForeignWorkerApprovalScreenState
     }
   }
 
+  Future<void> _resetPassword(UserModel user) async {
+    final confirmed = await _showConfirmDialog(
+      title: '비밀번호 초기화',
+      message: '${user.name}님의 비밀번호를 임시 비밀번호로 초기화합니다.\n초기화 후 임시 비밀번호를 해당 근무자에게 전달해주세요.',
+      confirmLabel: '초기화',
+      confirmColor: AppColors.warning,
+    );
+    if (!confirmed) return;
+
+    try {
+      final result = await _fn.httpsCallable('adminResetForeignPassword').call({'userId': user.uid});
+      if (!mounted) return;
+      final tempPassword = result.data['tempPassword'] as String?;
+      if (tempPassword != null) await _showTempPasswordDialog(user.name, tempPassword);
+    } on FirebaseFunctionsException catch (e) {
+      if (!mounted) return;
+      ToastHelper.showError(e.message ?? '비밀번호 초기화에 실패했습니다');
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showError('오류가 발생했습니다. 다시 시도해주세요');
+    }
+  }
+
+  Future<void> _showTempPasswordDialog(String name, String tempPassword) async {
+    await showDialog<void>(
+      context: context,
+      useSafeArea: true,
+      builder: (ctx) => AlertDialog(
+        title: const Text('임시 비밀번호 발급'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('$name님의 임시 비밀번호:'),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: AppColors.grey100,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.grey300),
+              ),
+              child: SelectableText(
+                tempPassword,
+                style: const TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 4,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              '이 비밀번호를 해당 근무자에게 전달해주세요.\n로그인 후 반드시 비밀번호를 변경하도록 안내해주세요.',
+              style: ResponsiveHelper.smallStyle(ctx).copyWith(color: AppColors.grey600),
+            ),
+          ],
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('확인'),
+          ),
+        ],
+      ),
+    );
+  }
+
   // 승인 확인 다이얼로그 — true: 확인, false: 취소
   Future<bool> _showConfirmDialog({
     required String title,
@@ -383,6 +453,26 @@ class _ForeignWorkerApprovalScreenState
                       ),
                     ),
                   ],
+                ),
+              ),
+            ],
+
+            // 비밀번호 초기화 버튼 (active 상태 외국인 전용 — ISSUE-03)
+            if (user.accountStatus == 'active') ...[
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () => _resetPassword(user),
+                  icon: const Icon(Icons.lock_reset, size: 18),
+                  label: const Text('비밀번호 초기화'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.warning,
+                    side: const BorderSide(color: AppColors.warning),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                  ),
                 ),
               ),
             ],

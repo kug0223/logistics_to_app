@@ -3507,3 +3507,75 @@ export const rejectForeignWorker = onCall(
     return {success: true};
   }
 );
+
+// ── cleanExpiredPassTokens ───────────────────────────────────
+// 30분마다 만료된 passTokens 문서 정리 (ISSUE-02)
+// [특이사항] Firestore 콘솔 TTL 정책 대안 — passTokens는 소량이므로 배치 1회로 충분
+export const cleanExpiredPassTokens = onSchedule(
+  {
+    schedule: "every 30 minutes",
+    timeZone: "Asia/Seoul",
+    region: "asia-northeast3",
+    maxInstances: 1,
+  },
+  async () => {
+    const now = Timestamp.now();
+    const expiredSnap = await db
+      .collection("passTokens")
+      .where("expiresAt", "<=", now)
+      .limit(499)
+      .get();
+
+    if (expiredSnap.empty) {
+      console.log("✅ [passTokens 정리] 만료 문서 없음");
+      return;
+    }
+
+    const batch = db.batch();
+    expiredSnap.docs.forEach((doc) => batch.delete(doc.ref));
+    await batch.commit();
+
+    console.log(`✅ [passTokens 정리] ${expiredSnap.size}건 삭제`);
+  }
+);
+
+// ── adminResetForeignPassword ────────────────────────────────
+// 슈퍼어드민 전용 — 외국인 근로자 비밀번호 임시 초기화 (ISSUE-03)
+// Input:  { userId: string }
+// Output: { tempPassword: string }
+export const adminResetForeignPassword = onCall(
+  {region: "asia-northeast3"},
+  async (request) => {
+    const callerUid = request.auth?.uid;
+    if (!callerUid) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+
+    const callerDoc = await db.collection("users").doc(callerUid).get();
+    if (callerDoc.data()?.role !== "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "슈퍼어드민 권한이 필요합니다.");
+    }
+
+    const {userId} = request.data as {userId?: string};
+    if (!userId) throw new HttpsError("invalid-argument", "userId가 필요합니다.");
+
+    const targetDoc = await db.collection("users").doc(userId).get();
+    if (!targetDoc.exists) throw new HttpsError("not-found", "사용자를 찾을 수 없습니다.");
+
+    const userData = targetDoc.data()!;
+    // [특이사항] 내국인은 PASS CI 기반 비밀번호 찾기 사용 — 이 CF는 외국인 전용
+    if (!userData.foreignIdNumber) {
+      throw new HttpsError("failed-precondition", "내국인 사용자는 이 기능을 사용할 수 없습니다.");
+    }
+
+    // 혼동 없는 문자만 사용 (O/0, I/l/1 제외)
+    const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+    let tempPassword = "";
+    for (let i = 0; i < 8; i++) {
+      tempPassword += chars[Math.floor(Math.random() * chars.length)];
+    }
+
+    await admin.auth().updateUser(userId, {password: tempPassword});
+
+    console.log(`[adminResetForeignPassword] 슈퍼어드민 ${callerUid}가 ${userId}(${userData.name})의 비밀번호 초기화`);
+    return {tempPassword};
+  }
+);

@@ -6,10 +6,9 @@ import '../../utils/responsive_helper.dart';
 ///
 /// accountStatus가 'pending' 또는 'rejected'인 외국인 사용자 홈/설정 화면 상단에 표시.
 ///
-/// [현재 상태] 위젯은 완성되었으나 아직 어떤 화면에도 연결되지 않음.
-///   현재는 auth_service.dart signIn()에서 pending/rejected를 로그인 단계에서 차단하므로
-///   앱 진입 후 상태가 바뀌는 시나리오(FCM 수신 → 상태 반영)에서 이 배너가 필요함.
-///   연결 시점: 사용자 홈 화면(또는 최상위 Scaffold)에 `Consumer<UserProvider>`로 삽입.
+/// [연결 완료] user_home_screen.dart Scaffold 상단에 삽입됨.
+///   auth_service.dart signIn()에서 pending/rejected를 로그인 단계에서 차단하지만,
+///   앱 실행 중 FCM 승인/거절 알림 수신 시 UserProvider 갱신 → 배너 즉시 반영.
 class AccountStatusBanner extends StatelessWidget {
   final String accountStatus;
   final String? rejectedReason;
