@@ -1638,7 +1638,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
 
   /// 상태 업데이트
   Future<void> _updateStatus(String newStatus) async {
-    if (widget.application == null) return;
+    if (widget.application == null || _isLoading) return;
 
     final actionText = newStatus == AppStatus.confirmed ? '승인' : '거절';
     final adminUID = context.read<UserProvider>().currentUser?.uid;
@@ -1655,7 +1655,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         icon: Icons.check_circle,
         iconColor: AppColors.success,
       );
-      
+
       if (confirm != true || !mounted) return;
     } else {
       // 거절 - 사유 선택
@@ -1664,10 +1664,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         title: '지원자 거절',
         targetName: widget.user.name,
       );
-      
+
       if (rejectReason == null) return;
     }
 
+    if (!mounted || _isLoading) return;
+    setState(() => _isLoading = true);
     try {
       await _firestoreService.updateApplicationStatus(
         applicationId: widget.application!.id,
@@ -1689,6 +1691,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     } catch (e) {
       debugPrint('❌ 상태 업데이트 실패: $e');
       if (mounted) {
+        setState(() => _isLoading = false);
         ToastHelper.showError('$actionText 처리 중 오류가 발생했습니다');
       }
     }

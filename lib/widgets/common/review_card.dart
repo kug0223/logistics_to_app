@@ -253,7 +253,7 @@ class ReviewCard extends StatelessWidget {
   }
 
   Widget _buildRehireBadge(BuildContext context) {
-    final rehire = review.wouldRehire!;
+    final rehire = review.wouldRehire ?? false;
     final color = rehire ? AppColors.success : AppColors.error;
     final label = perspective == ReviewCardPerspective.adminReceived
         ? (rehire ? '재근무' : '비희망')

@@ -152,10 +152,11 @@ class FormatHelper {
   /// - formatNumber(10000) → '10,000'
   /// - formatNumber(1500000) → '1,500,000'
   static String formatNumber(int number) {
-    return number.toString().replaceAllMapped(
+    final abs = number.abs().toString().replaceAllMapped(
       RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
       (Match m) => '${m[1]},',
     );
+    return '${number < 0 ? '-' : ''}$abs';
   }
 
   // ============================================================

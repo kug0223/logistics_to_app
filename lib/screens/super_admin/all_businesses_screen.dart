@@ -62,7 +62,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
             final data = ownerDoc.data()!;
             return (
               name: data['name'] as String? ?? '알 수 없음',
-              email: data['userEmail'] as String? ?? '',
+              email: data['email'] as String? ?? '',
             );
           }
         // [특이사항] 소유자 조회 실패 시 폴백 반환 — 한 명의 조회 실패가 전체 목록을 막지 않음

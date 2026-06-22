@@ -169,6 +169,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
     final trustBadges = _badges.where((b) => b.type == BadgeType.trustScore).toList();
     final attendanceBadges = _badges.where((b) => b.type == BadgeType.attendance).toList();
     final specialtyBadges = _badges.where((b) => b.type == BadgeType.specialty).toList();
+    final experienceBadges = _badges.where((b) => b.type == BadgeType.experience).toList();
     
     return GradientScaffold(
       title: '배지 관리',
@@ -246,7 +247,19 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
                     color: AppColors.info,
                     badges: specialtyBadges,
                   ),
-                
+
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+                // 경력 배지
+                if (experienceBadges.isNotEmpty)
+                  _buildBadgeSection(
+                    context,
+                    title: '경력 배지',
+                    icon: Icons.military_tech,
+                    color: AppColors.amber,
+                    badges: experienceBadges,
+                  ),
+
                 SizedBox(height: ResponsiveHelper.spacing(context, 80)), // FAB 공간
               ],
             ),
@@ -603,6 +616,11 @@ class _BadgeEditDialogState extends State<_BadgeEditDialog> {
               ToastHelper.showError('배지 이름을 입력하세요');
               return;
             }
+            final parsedValue = int.tryParse(_valueController.text) ?? 0;
+            if (parsedValue <= 0) {
+              ToastHelper.showError('조건 값은 1 이상의 숫자여야 합니다');
+              return;
+            }
 
             final result = BadgeModel(
               id: widget.badge?.id ?? '',
@@ -610,7 +628,7 @@ class _BadgeEditDialogState extends State<_BadgeEditDialog> {
               icon: _iconController.text.trim(),
               type: _selectedType,
               conditionType: _selectedCondition,
-              conditionValue: int.tryParse(_valueController.text) ?? 0,
+              conditionValue: parsedValue,
               workType: _workTypeController.text.isEmpty
                   ? null
                   : _workTypeController.text.trim(),

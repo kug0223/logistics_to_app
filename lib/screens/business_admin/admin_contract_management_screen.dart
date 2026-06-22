@@ -258,7 +258,8 @@ class _AdminContractManagementScreenState
                               return _ContractCard(
                                 contract: item,
                                 onTap: () => _openContract(item),
-                                onVoid: item.status != ContractStatus.voided
+                                onVoid: (item.status != ContractStatus.voided &&
+                                        item.status != ContractStatus.completed)
                                     ? () => _voidContract(item)
                                     : null,
                                 onRetry: item.hasVoidFailedApps

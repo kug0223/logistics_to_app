@@ -2588,57 +2588,59 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       .get();
 
     for (const doc of pendingResignSnap.docs) {
-      const app = doc.data();
+      try {
+        const app = doc.data();
 
-      // actualResignDate: 근무자가 희망한 날짜 or 요청일+1일
-      let actualResignDate: Date;
-      if (app.resignRequestDate) {
-        actualResignDate = (app.resignRequestDate as Timestamp).toDate();
-      } else {
-        actualResignDate = new Date(
-          (app.resignRequestedAt as Timestamp).toDate().getTime() + 24 * 60 * 60 * 1000
-        );
-      }
+        // actualResignDate: 근무자가 희망한 날짜 or 요청일+1일
+        let actualResignDate: Date;
+        if (app.resignRequestDate) {
+          actualResignDate = (app.resignRequestDate as Timestamp).toDate();
+        } else {
+          actualResignDate = new Date(
+            (app.resignRequestedAt as Timestamp).toDate().getTime() + 24 * 60 * 60 * 1000
+          );
+        }
 
-      await db.runTransaction(async (tx) => {
-        const snap = await tx.get(doc.ref);
-        if (snap.data()?.resignStatus !== "PENDING") return; // 이미 처리됨
-        tx.update(doc.ref, {
-          resignStatus: "AUTO_APPROVED",
-          resignApprovedAt: now,
-          actualResignDate: Timestamp.fromDate(actualResignDate),
-          // [BUG-FIX] L-1: Set status to CANCELED so the worker is removed from
-          // the active worker list after the resignation date passes.
-          status: "CANCELED",
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(doc.ref);
+          if (snap.data()?.resignStatus !== "PENDING") return; // 이미 처리됨
+          tx.update(doc.ref, {
+            resignStatus: "AUTO_APPROVED",
+            resignApprovedAt: now,
+            actualResignDate: Timestamp.fromDate(actualResignDate),
+            status: "CANCELED",
+          });
         });
-      });
 
-      // 근무자에게 자동 승인 알림
-      await db.collection("notifications").add({
-        userId: app.uid,
-        type: "resignApproved",
-        title: "퇴사 요청 자동 승인",
-        body: `${app.businessName} 퇴사 요청이 자동 승인되었습니다.`,
-        data: {applicationId: doc.id, screen: "mySchedule"},
-        isRead: false,
-        createdAt: now,
-      });
+        // 근무자에게 자동 승인 알림
+        await db.collection("notifications").add({
+          userId: app.uid,
+          type: "resignApproved",
+          title: "퇴사 요청 자동 승인",
+          body: `${app.businessName} 퇴사 요청이 자동 승인되었습니다.`,
+          data: {applicationId: doc.id, screen: "mySchedule"},
+          isRead: false,
+          createdAt: now,
+        });
 
-      // 관리자에게도 알림
-      const bizDoc = await db.collection("businesses").doc(app.businessId).get();
-      const adminIds: string[] = bizDoc.exists ?
-        (bizDoc.data()?.adminIds as string[] ?? []) : [];
-      await Promise.all(adminIds.map((adminId) => db.collection("notifications").add({
-        userId: adminId,
-        type: "resignApproved",
-        title: "퇴사 요청 자동 승인됨",
-        body: `${app.applicantName ?? "근무자"}님의 퇴사 요청이 자동 승인되었습니다.`,
-        data: {applicationId: doc.id, screen: "fixedWorker"},
-        isRead: false,
-        createdAt: now,
-      })));
+        // 관리자에게도 알림
+        const bizDoc = await db.collection("businesses").doc(app.businessId).get();
+        const adminIds: string[] = bizDoc.exists ?
+          (bizDoc.data()?.adminIds as string[] ?? []) : [];
+        await Promise.all(adminIds.map((adminId) => db.collection("notifications").add({
+          userId: adminId,
+          type: "resignApproved",
+          title: "퇴사 요청 자동 승인됨",
+          body: `${app.applicantName ?? "근무자"}님의 퇴사 요청이 자동 승인되었습니다.`,
+          data: {applicationId: doc.id, screen: "fixedWorker"},
+          isRead: false,
+          createdAt: now,
+        })));
 
-      autoResignCount++;
+        autoResignCount++;
+      } catch (err) {
+        console.error(`[D+3 퇴사 자동승인] 문서 ${doc.id} 처리 실패 — 나머지 계속 진행:`, err);
+      }
     }
     console.log(`  ✅ [D+3 퇴사 자동승인] ${autoResignCount}건 처리`);
 
@@ -2651,38 +2653,40 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       .get();
 
     for (const doc of pendingTerminationSnap.docs) {
-      const app = doc.data();
+      try {
+        const app = doc.data();
 
-      // effectiveDate: 요청일+1일 (근무자 응답 없으면 바로 다음날 효력)
-      const effectiveDate = new Date(
-        (app.terminationRequestedAt as Timestamp).toDate().getTime() + 24 * 60 * 60 * 1000
-      );
+        // effectiveDate: 요청일+1일 (근무자 응답 없으면 바로 다음날 효력)
+        const effectiveDate = new Date(
+          (app.terminationRequestedAt as Timestamp).toDate().getTime() + 24 * 60 * 60 * 1000
+        );
 
-      await db.runTransaction(async (tx) => {
-        const snap = await tx.get(doc.ref);
-        if (snap.data()?.terminationStatus !== "PENDING") return;
-        tx.update(doc.ref, {
-          terminationStatus: "AUTO_APPROVED",
-          terminationRespondedAt: now,
-          terminationEffectiveDate: Timestamp.fromDate(effectiveDate),
-          // [BUG-FIX] L-1: Set status to CANCELED so the worker is removed from
-          // the active worker list after the termination effective date passes.
-          status: "CANCELED",
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(doc.ref);
+          if (snap.data()?.terminationStatus !== "PENDING") return;
+          tx.update(doc.ref, {
+            terminationStatus: "AUTO_APPROVED",
+            terminationRespondedAt: now,
+            terminationEffectiveDate: Timestamp.fromDate(effectiveDate),
+            status: "CANCELED",
+          });
         });
-      });
 
-      // 근무자에게 자동 승인 알림
-      await db.collection("notifications").add({
-        userId: app.uid,
-        type: "terminationApproved",
-        title: "계약해지 자동 승인",
-        body: `${app.businessName} 계약해지 요청이 자동 승인되었습니다.`,
-        data: {applicationId: doc.id, screen: "mySchedule"},
-        isRead: false,
-        createdAt: now,
-      });
+        // 근무자에게 자동 승인 알림
+        await db.collection("notifications").add({
+          userId: app.uid,
+          type: "terminationApproved",
+          title: "계약해지 자동 승인",
+          body: `${app.businessName} 계약해지 요청이 자동 승인되었습니다.`,
+          data: {applicationId: doc.id, screen: "mySchedule"},
+          isRead: false,
+          createdAt: now,
+        });
 
-      autoTerminationCount++;
+        autoTerminationCount++;
+      } catch (err) {
+        console.error(`[D+3 계약해지 자동승인] 문서 ${doc.id} 처리 실패 — 나머지 계속 진행:`, err);
+      }
     }
     console.log(`  ✅ [D+3 계약해지 자동승인] ${autoTerminationCount}건 처리`);
 
@@ -3346,21 +3350,29 @@ export const resetPasswordWithPass = onCall(
       throw new HttpsError("invalid-argument", "passToken, username 필수입니다.");
     }
 
-    // passToken 검증
-    const tokenDoc = await db.collection("passTokens").doc(passToken).get();
-    if (!tokenDoc.exists) {
-      throw new HttpsError("not-found", "유효하지 않은 인증 토큰입니다.");
-    }
-    const tokenData = tokenDoc.data()!;
-    if (tokenData.purpose !== "resetPassword") {
-      throw new HttpsError("invalid-argument", "비밀번호 찾기용 토큰이 아닙니다.");
-    }
-    if ((tokenData.expiresAt as Timestamp).toDate() < new Date()) {
-      throw new HttpsError(
-        "deadline-exceeded",
-        "인증 토큰이 만료되었습니다. 다시 본인인증을 진행해주세요."
-      );
-    }
+    // passToken 원자적 소비 — 트랜잭션으로 동시 요청 레이스 컨디션 방어
+    // [특이사항] 트랜잭션 내에서 collection query 불가 → 검증 후 토큰 삭제 + ciHash 반환,
+    //           username 쿼리·CI 매칭·customToken 발급은 트랜잭션 외부에서 순서대로 수행.
+    const tokenRef = db.collection("passTokens").doc(passToken);
+    const {ciHash} = await db.runTransaction(async (tx) => {
+      const tokenDoc = await tx.get(tokenRef);
+      if (!tokenDoc.exists) {
+        throw new HttpsError("not-found", "유효하지 않은 인증 토큰입니다.");
+      }
+      const data = tokenDoc.data()!;
+      if (data.purpose !== "resetPassword") {
+        throw new HttpsError("invalid-argument", "비밀번호 찾기용 토큰이 아닙니다.");
+      }
+      if ((data.expiresAt as Timestamp).toDate() < new Date()) {
+        throw new HttpsError(
+          "deadline-exceeded",
+          "인증 토큰이 만료되었습니다. 다시 본인인증을 진행해주세요."
+        );
+      }
+      // 토큰을 트랜잭션 내에서 즉시 삭제 → 동시 요청 시 두 번째 요청은 not-found
+      tx.delete(tokenRef);
+      return {ciHash: data.ciHash as string};
+    });
 
     // username으로 내국인 사용자 찾기
     const userSnap = await db
@@ -3375,15 +3387,12 @@ export const resetPasswordWithPass = onCall(
     const userData = userDoc.data();
 
     // CI 해시 매칭
-    if (userData.ciHash !== tokenData.ciHash) {
+    if (userData.ciHash !== ciHash) {
       throw new HttpsError(
         "permission-denied",
         "본인인증 정보가 계정 정보와 일치하지 않습니다."
       );
     }
-
-    // 사용한 토큰 삭제 (재사용 방지)
-    await tokenDoc.ref.delete();
 
     // Firebase Custom Token 발급 → 앱에서 signInWithCustomToken 사용
     const customToken = await admin.auth().createCustomToken(userDoc.id);
@@ -3566,11 +3575,11 @@ export const adminResetForeignPassword = onCall(
       throw new HttpsError("failed-precondition", "내국인 사용자는 이 기능을 사용할 수 없습니다.");
     }
 
-    // 혼동 없는 문자만 사용 (O/0, I/l/1 제외)
+    // 혼동 없는 문자만 사용 (O/0, I/l/1 제외), crypto.randomInt으로 암호학적 안전성 보장
     const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
     let tempPassword = "";
     for (let i = 0; i < 8; i++) {
-      tempPassword += chars[Math.floor(Math.random() * chars.length)];
+      tempPassword += chars[crypto.randomInt(0, chars.length)];
     }
 
     await admin.auth().updateUser(userId, {password: tempPassword});

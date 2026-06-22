@@ -634,7 +634,15 @@ class MonthlyReviewService {
           .where('isPublished', isEqualTo: true) // 공개된 리뷰만
           .get();
 
-      if (snap.docs.isEmpty) return;
+      if (snap.docs.isEmpty) {
+        // 공개된 리뷰가 없으면 통계 초기화 (마지막 리뷰 비공개 전환 시 stale 방지)
+        await _db.collection('users').doc(userId).update({
+          'averageRating': null,
+          'reviewCount': 0,
+          'rehireRate': 0.0,
+        });
+        return;
+      }
 
       double totalRating = 0;
       int ratedCount = 0;
@@ -665,7 +673,13 @@ class MonthlyReviewService {
           .where('isPublished', isEqualTo: true)
           .get();
 
-      if (snap.docs.isEmpty) return;
+      if (snap.docs.isEmpty) {
+        await _db.collection('businesses').doc(businessId).update({
+          'rating': null,
+          'reviewCount': 0,
+        });
+        return;
+      }
 
       double totalRating = 0;
       int ratedCount = 0;

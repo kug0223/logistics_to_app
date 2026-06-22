@@ -323,7 +323,12 @@ class _LoginScreenState extends State<LoginScreen> {
                 return;
               }
 
-              final result = await _fn.httpsCallable('resetPasswordWithPass').call({
+              final result = await _fn
+                  .httpsCallable(
+                    'resetPasswordWithPass',
+                    options: HttpsCallableOptions(timeout: const Duration(seconds: 15)),
+                  )
+                  .call({
                 'passToken': passResult.passToken,
                 'username': usernameController.text.trim(),
               });
