@@ -77,6 +77,7 @@ class ApplyDialog {
           .limit(1)
           .get();
 
+      if (!context.mounted) return false;
       if (snapshot.docs.isNotEmpty) {
         final docData = snapshot.docs.first.data();
         final status = docData['status'];
@@ -113,6 +114,7 @@ class ApplyDialog {
         desiredStartDate: desiredStartDate,
       );
 
+      if (!context.mounted) return false;
       if (success) {
         ToastHelper.showSuccess('지원이 완료되었습니다!');
         debugPrint('🎉 지원 성공! onSuccess() 호출');

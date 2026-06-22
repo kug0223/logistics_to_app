@@ -994,7 +994,8 @@ extension ApplicationFirestore on FirestoreService {
         return false;
       }
       final appData = appDoc.data()!;
-      final uid = appData['uid'] as String;
+      final uid = appData['uid'] as String? ?? '';
+      if (uid.isEmpty) return false;
       if (!AppStatus.confirmedStatuses.contains(appData['status'])) {
         ToastHelper.showError('확정된 지원만 취소할 수 있습니다');
         return false;

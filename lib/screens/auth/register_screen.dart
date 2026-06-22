@@ -657,6 +657,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         }
       }
 
+      if (!mounted) return;
+
       // Step 3: UID 확보 후 올바른 경로에 파일 업로드 (병렬)
       if (uid == null) {
         debugPrint('⚠️ uid null — 업로드 스킵');

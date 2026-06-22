@@ -17,9 +17,9 @@ class TrustRule {
   factory TrustRule.fromMap(Map<String, dynamic> map) {
     return TrustRule(
       type: map['type'] ?? '',
-      points: map['points'] ?? 0,
+      points: (map['points'] as num?)?.toInt() ?? 0,
       description: map['description'] ?? '',
-      condition: map['condition']?.toDouble(),
+      condition: (map['condition'] as num?)?.toDouble(),
     );
   }
 
@@ -327,8 +327,8 @@ class BadgeModel {
       order: (map['order'] as num?)?.toInt() ?? 0,
       createdAt: (map['createdAt'] as Timestamp?)?.toDate().toLocal() ??
           (throw ArgumentError('BadgeModel: createdAt is required')),
-      minWorkDaysRequired: map['minWorkDaysRequired'],
-      maxNoShowAllowed: map['maxNoShowAllowed'],
+      minWorkDaysRequired: (map['minWorkDaysRequired'] as num?)?.toInt(),
+      maxNoShowAllowed: (map['maxNoShowAllowed'] as num?)?.toInt(),
       minRatingRequired: (map['minRatingRequired'] as num?)?.toDouble(),
       benefit: map['benefit'],
     );
