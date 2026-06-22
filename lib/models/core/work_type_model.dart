@@ -81,7 +81,7 @@ class WorkTypeModel {
       images: List<String>.from(map['images'] ?? []),
       thumbnailUrl: map['thumbnailUrl'],
       videoUrl: map['videoUrl'],
-      baseHourlyRate: map['baseHourlyRate']?.toDouble(),
+      baseHourlyRate: (map['baseHourlyRate'] as num?)?.toDouble(),
       isActive: map['isActive'] ?? true,
       displayOrder: (map['displayOrder'] as num?)?.toInt() ?? 0,
       createdAt: (map['createdAt'] as Timestamp?)?.toDate().toLocal() ??

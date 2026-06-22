@@ -111,9 +111,9 @@ class MonthlyReviewModel {
     final raw = doc.data();
     if (raw == null) throw ArgumentError('Document ${doc.id} has no data');
     final data = raw as Map<String, dynamic>;
-    final reviewYear = data['reviewYear'] as int?;
+    final reviewYear = (data['reviewYear'] as num?)?.toInt();
     if (reviewYear == null) throw ArgumentError('Document ${doc.id} missing required field: reviewYear');
-    final reviewMonth = data['reviewMonth'] as int?;
+    final reviewMonth = (data['reviewMonth'] as num?)?.toInt();
     if (reviewMonth == null) throw ArgumentError('Document ${doc.id} missing required field: reviewMonth');
     final createdAtTs = data['createdAt'] as Timestamp?;
     if (createdAtTs == null) throw ArgumentError('Document ${doc.id} missing required field: createdAt');

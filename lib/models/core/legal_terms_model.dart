@@ -48,7 +48,7 @@ class LegalTermsItem {
       isActive: map['isActive'] as bool? ?? true,
       version: map['version'] as String? ?? '1.0',
       updatedAt: (map['updatedAt'] as Timestamp?)?.toDate().toLocal(),
-      order: map['order'] as int? ?? 0,
+      order: (map['order'] as num?)?.toInt() ?? 0,
     );
   }
 

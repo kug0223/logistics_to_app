@@ -156,7 +156,7 @@ class ScheduleChangeRequestModel {
       respondedAt: (map['respondedAt'] as Timestamp?)?.toDate().toLocal(),
       rejectReason: map['rejectReason'],
       affectsSalary: map['affectsSalary'] ?? true,
-      wageAmount: map['wageAmount'],
+      wageAmount: (map['wageAmount'] as num?)?.toInt(),
     );
   }
 
