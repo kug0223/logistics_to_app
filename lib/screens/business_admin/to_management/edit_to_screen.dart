@@ -312,6 +312,19 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         }
       }
 
+      // draft → 즉시공개 전환 시 active 4개 제한 체크
+      if (shouldPublishImmediately && !widget.to.isPublished) {
+        try {
+          await _firestoreService.assertActiveTOLimit(widget.to.businessId);
+        } on Exception catch (e) {
+          if (e.toString().contains('MAX_ACTIVE_TO_LIMIT')) {
+            if (mounted) ToastHelper.showError('진행 중인 공고가 4개를 초과할 수 없습니다');
+          }
+          return;
+        }
+        if (!mounted) return;
+      }
+
       // flex TO는 슬롯 수 × 슬롯당 요구인원; contract TO는 슬롯 1개 구조이므로 합산만
       final perSlotRequired =
           _workDetails.fold<int>(0, (s, d) => s + d.requiredCount);

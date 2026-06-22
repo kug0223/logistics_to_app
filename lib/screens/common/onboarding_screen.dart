@@ -384,12 +384,14 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                       child: Icon(f.icon, size: 17, color: f.color),
                     ),
                     const SizedBox(width: 12),
-                    Text(
-                      f.label,
-                      style: ResponsiveHelper.bodyStyle(
-                        context,
-                        color: AppColors.grey800,
-                        fontWeight: FontWeight.w500,
+                    Expanded(
+                      child: Text(
+                        f.label,
+                        style: ResponsiveHelper.bodyStyle(
+                          context,
+                          color: AppColors.grey800,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ),
                   ],

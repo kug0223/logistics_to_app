@@ -256,7 +256,26 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
       ],
       body: _isLoading
           ? const LoadingWidget()
-          : SingleChildScrollView(
+          : _settings == null
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.error_outline, size: 48, color: AppColors.error),
+                      const SizedBox(height: 12),
+                      Text('설정을 불러오지 못했습니다', style: ResponsiveHelper.bodyStyle(context)),
+                      const SizedBox(height: 16),
+                      ElevatedButton(
+                        onPressed: () {
+                          setState(() => _isLoading = true);
+                          _loadSettings();
+                        },
+                        child: const Text('다시 시도'),
+                      ),
+                    ],
+                  ),
+                )
+              : SingleChildScrollView(
               padding: ResponsiveHelper.cardPadding(context),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

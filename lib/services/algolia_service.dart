@@ -60,7 +60,7 @@ class AlgoliaService {
           'Content-Type': 'application/json',
         },
         body: jsonEncode(body),
-      );
+      ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode != 200) {
         debugPrint('❌ Algolia 검색 실패 (${response.statusCode}): ${response.body}');
@@ -69,7 +69,10 @@ class AlgoliaService {
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       final hits = data['hits'] as List<dynamic>? ?? [];
-      return hits.map((h) => h['objectID'] as String).toList();
+      return hits
+          .map((h) => h['objectID']?.toString())
+          .whereType<String>()
+          .toList();
     } catch (e) {
       debugPrint('❌ Algolia 검색 오류: $e');
       return [];

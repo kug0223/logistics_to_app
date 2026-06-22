@@ -254,6 +254,7 @@ class BusinessModel {
       'wagePaymentDay': wagePaymentDay,
       'sealBase64': sealBase64,
       'sealType': sealType,
+      'deactivatedAt': deactivatedAt != null ? Timestamp.fromDate(deactivatedAt!) : null,
     };
   }
   String get formattedBusinessNumber {

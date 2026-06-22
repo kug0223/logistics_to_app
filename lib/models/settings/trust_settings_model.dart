@@ -110,8 +110,8 @@ class TrustSettingsModel {
 
   factory TrustSettingsModel.fromMap(Map<String, dynamic> map) {
     return TrustSettingsModel(
-      startScore: map['startScore'] ?? 50,
-      maxScore: map['maxScore'] ?? 100,
+      startScore: (map['startScore'] as num?)?.toInt() ?? 60,
+      maxScore: (map['maxScore'] as num?)?.toInt() ?? 100,
       increaseRules: (map['increaseRules'] as List<dynamic>?)
           ?.map((e) => TrustRule.fromMap(e as Map<String, dynamic>))
           .toList() ?? [],
@@ -321,10 +321,10 @@ class BadgeModel {
         (e) => e.name == map['conditionType'],
         orElse: () => BadgeConditionType.minScore,
       ),
-      conditionValue: map['conditionValue'] ?? 0,
+      conditionValue: (map['conditionValue'] as num?)?.toInt() ?? 0,
       workType: map['workType'],
       isActive: map['isActive'] ?? true,
-      order: map['order'] ?? 0,
+      order: (map['order'] as num?)?.toInt() ?? 0,
       createdAt: (map['createdAt'] as Timestamp?)?.toDate().toLocal() ??
           (throw ArgumentError('BadgeModel: createdAt is required')),
       minWorkDaysRequired: map['minWorkDaysRequired'],

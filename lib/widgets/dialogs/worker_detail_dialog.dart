@@ -1872,7 +1872,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     final adminUID = context.read<UserProvider>().currentUser?.uid;
 
     final cancelReason = await _showCancelReasonPicker();
-    if (cancelReason == null) return;
+    if (cancelReason == null || !mounted) return;
 
     try {
       final success = await _firestoreService.cancelConfirmedApplication(

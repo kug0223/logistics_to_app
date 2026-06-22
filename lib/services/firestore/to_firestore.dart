@@ -359,6 +359,19 @@ extension TOFirestore on FirestoreService {
     }
   }
 
+  /// 사업장의 진행중(active) 공고 수가 4개 이상이면 예외를 던진다.
+  /// draft TO를 즉시공개로 전환하기 직전에 호출한다.
+  Future<void> assertActiveTOLimit(String businessId) async {
+    final snap = await _firestore
+        .collection('tos')
+        .where('businessId', isEqualTo: businessId)
+        .where('status', isEqualTo: TOStatus.active)
+        .get();
+    if (snap.docs.length >= 4) {
+      throw Exception('MAX_ACTIVE_TO_LIMIT');
+    }
+  }
+
   // ───────────────────────────────────────────────────────
   // 수정
   // ───────────────────────────────────────────────────────

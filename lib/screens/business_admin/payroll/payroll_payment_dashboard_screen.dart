@@ -65,7 +65,7 @@ class _PayrollPaymentDashboardScreenState
   late final TabController _tabCtrl;
 
   // 탭 0: 미이체 / 탭 1: 이체완료 / 탭 2: 변경요청 / 탭 3: 중간정산
-  bool _isLoading = true;
+  bool _isLoading = false;
   List<AttendanceModel> _pendingRecords    = [];  // 미이체
   List<AttendanceModel> _transferredRecords = []; // 이체완료
   List<PaymentChangeRequestModel>     _changeRequests    = [];
@@ -131,7 +131,7 @@ class _PayrollPaymentDashboardScreenState
 
   // ── 데이터 로드 ────────────────────────────────────────────
   Future<void> _load() async {
-    if (!mounted) return;
+    if (!mounted || _isLoading) return;
     setState(() {
       _isLoading = true;
       _lastDocPending = null;
@@ -419,34 +419,34 @@ class _PayrollPaymentDashboardScreenState
   /// 근무자 1인의 모든 레코드를 송금 처리 (단건/복수 자동 분기)
   Future<void> _markWorker(List<AttendanceModel> recs) async {
     if (_isTransferring || recs.isEmpty) return;
+    setState(() => _isTransferring = true); // 다이얼로그 대기 중 연타 방지
 
-    final uid = context.read<UserProvider>().currentUser?.uid ?? '';
-    if (uid.isEmpty) {
-      ToastHelper.showError('로그인 정보를 확인해주세요');
-      return;
-    }
-
-    // ① 확인 다이얼로그
-    final workerName =
-        _userBankCache[recs.first.userId]?['name'] ?? recs.first.userId;
-    final net = _sumNet(recs);
-    final confirmed = await DialogHelper.showConfirm(
-      context,
-      title: '송금 처리',
-      message: '$workerName님께\n${FormatHelper.formatWage(net)} (${recs.length}건)을\n송금 처리하시겠습니까?',
-      confirmText: '송금 처리',
-      cancelText: '취소',
-      icon: Icons.payment_outlined,
-    );
-    if (confirmed != true || !mounted) return;
-
-    // ② 메모 입력 (선택)
-    final note = await _showTransferNoteDialog();
-    if (!mounted) return;
-
-    // ③ 이체 실행
-    setState(() => _isTransferring = true);
     try {
+      final uid = context.read<UserProvider>().currentUser?.uid ?? '';
+      if (uid.isEmpty) {
+        ToastHelper.showError('로그인 정보를 확인해주세요');
+        return;
+      }
+
+      // ① 확인 다이얼로그
+      final workerName =
+          _userBankCache[recs.first.userId]?['name'] ?? recs.first.userId;
+      final net = _sumNet(recs);
+      final confirmed = await DialogHelper.showConfirm(
+        context,
+        title: '송금 처리',
+        message: '$workerName님께\n${FormatHelper.formatWage(net)} (${recs.length}건)을\n송금 처리하시겠습니까?',
+        confirmText: '송금 처리',
+        cancelText: '취소',
+        icon: Icons.payment_outlined,
+      );
+      if (confirmed != true || !mounted) return;
+
+      // ② 메모 입력 (선택)
+      final note = await _showTransferNoteDialog();
+      if (!mounted) return;
+
+      // ③ 이체 실행
       if (recs.length == 1) {
         final r = recs.first;
         final wd = r.wageDetail;
@@ -491,30 +491,31 @@ class _PayrollPaymentDashboardScreenState
 
   Future<void> _markBatch() async {
     if (_isTransferring || _selectedIds.isEmpty) return;
-    final ok = await DialogHelper.showConfirm(
-      context,
-      title: '일괄 이체 완료',
-      message: '선택된 ${_selectedIds.length}건 (${FormatHelper.formatWage(_selectedNet)})을\n이체 완료 처리하시겠습니까?',
-      confirmText: '이체 완료',
-      cancelText: '취소',
-    );
-    if (ok != true || !mounted) return;
-    final uid = context.read<UserProvider>().currentUser?.uid ?? '';
-    if (uid.isEmpty) {
-      ToastHelper.showError('로그인 정보를 확인해주세요');
-      return;
-    }
-    final note = await _showTransferNoteDialog();
-    if (!mounted) return;
-    // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송 — 선택된 레코드 목록 수집
-    final selectedRecords =
-        _pendingRecords.where((r) => _selectedIds.contains(r.id)).toList();
-    final nameByUid = Map.fromEntries(
-      _userBankCache.entries.map((e) => MapEntry(e.key, e.value['name'] ?? e.key)),
-    );
+    setState(() => _isTransferring = true); // 다이얼로그 대기 중 연타 방지
 
-    setState(() => _isTransferring = true);
     try {
+      final ok = await DialogHelper.showConfirm(
+        context,
+        title: '일괄 이체 완료',
+        message: '선택된 ${_selectedIds.length}건 (${FormatHelper.formatWage(_selectedNet)})을\n이체 완료 처리하시겠습니까?',
+        confirmText: '이체 완료',
+        cancelText: '취소',
+      );
+      if (ok != true || !mounted) return;
+      final uid = context.read<UserProvider>().currentUser?.uid ?? '';
+      if (uid.isEmpty) {
+        ToastHelper.showError('로그인 정보를 확인해주세요');
+        return;
+      }
+      final note = await _showTransferNoteDialog();
+      if (!mounted) return;
+      // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송 — 선택된 레코드 목록 수집
+      final selectedRecords =
+          _pendingRecords.where((r) => _selectedIds.contains(r.id)).toList();
+      final nameByUid = Map.fromEntries(
+        _userBankCache.entries.map((e) => MapEntry(e.key, e.value['name'] ?? e.key)),
+      );
+
       await _payService.markTransferredBatch(
         attendanceIds:     _selectedIds.toList(),
         processedBy:       uid,

@@ -336,6 +336,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
   // ═══════════════════════════════════════════════════════════
 
   void _previousMonth() {
+    if (isLoading) return;
     setState(() {
       _currentMonth = DateTime(_currentMonth.year, _currentMonth.month - 1, 1);
     });
@@ -343,6 +344,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
   }
 
   void _nextMonth() {
+    if (isLoading) return;
     setState(() {
       _currentMonth = DateTime(_currentMonth.year, _currentMonth.month + 1, 1);
     });

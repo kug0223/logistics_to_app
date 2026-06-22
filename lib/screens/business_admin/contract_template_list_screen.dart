@@ -30,6 +30,7 @@ class _ContractTemplateListScreenState
   List<ContractTemplateModel> _templates = [];
   bool _loading = true;
   bool _isDuplicating = false;
+  bool _isDeleting = false;
 
   @override
   void initState() {
@@ -111,17 +112,21 @@ class _ContractTemplateListScreenState
   }
 
   Future<void> _delete(ContractTemplateModel t) async {
-    final ok = await DialogHelper.showDeleteConfirm(
-      context,
-      itemName: '"${t.name}" 템플릿',
-    );
-    if (ok != true || !mounted) return;
+    if (_isDeleting) return;
+    setState(() => _isDeleting = true);
     try {
+      final ok = await DialogHelper.showDeleteConfirm(
+        context,
+        itemName: '"${t.name}" 템플릿',
+      );
+      if (ok != true || !mounted) return;
       await _service.deleteTemplate(
           businessId: widget.businessId, templateId: t.id);
       if (mounted) { ToastHelper.showSuccess('템플릿이 삭제되었습니다'); _load(); }
     } catch (e) {
       if (mounted) ToastHelper.showError('삭제에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isDeleting = false);
     }
   }
 
