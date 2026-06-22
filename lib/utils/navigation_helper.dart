@@ -31,12 +31,13 @@ class NavigationHelper {
       MaterialPageRoute(builder: (context) => destination),
     );
     
-    // 콜백 처리
+    // async gap 이후 context가 무효화될 수 있으므로 mounted 체크 후 콜백 호출
+    if (!context.mounted) return result;
+
     if (onReturn != null) {
       onReturn(result);
     }
-    
-    // result == true일 때만 onChanged 호출
+
     if (onChanged != null && result == true) {
       onChanged();
     }

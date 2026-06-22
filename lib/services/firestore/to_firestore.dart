@@ -451,13 +451,16 @@ extension TOFirestore on FirestoreService {
             'canceledAt': FieldValue.serverTimestamp(),
             'cancelReason': 'TO_DELETED',
           }));
-          _sendTOCanceledNotification(
-            applicantUid: data['uid'] as String,
-            businessName: to.businessName,
-            businessId: to.businessId,
-            toTitle: to.title,
-            status: status!,
-          );
+          final applicantUid = data['uid'] as String?;
+          if (applicantUid != null) {
+            _sendTOCanceledNotification(
+              applicantUid: applicantUid,
+              businessName: to.businessName,
+              businessId: to.businessId,
+              toTitle: to.title,
+              status: status!,
+            );
+          }
         } else {
           final ref = doc.reference;
           ops.add((b) async => b.delete(ref));

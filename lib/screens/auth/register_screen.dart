@@ -412,6 +412,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // 역할 선택 후 처리
   Future<void> _handleRoleSelection() async {
     if (_selectedRole == null) return;
+    if (_isSubmitting) return; // _isStepTransitioning 해제(300ms) 후 연타 방지
 
     // Step 3 사업장 관리자: 입력한 경우에만 유효성 검사 (선택사항)
     if (_selectedRole == UserRole.BUSINESS_ADMIN) {

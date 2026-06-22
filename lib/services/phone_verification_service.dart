@@ -118,7 +118,12 @@ class PhoneVerificationService {
         debugPrint('✅ [PhoneAuth] 인증 성공: ${result.user?.phoneNumber}');
 
         // 검증용 임시 계정 삭제 (Firebase Auth 세션 정리)
-        await result.user?.delete();
+        // [특이사항] delete 실패 시 고아 계정이 잔존할 수 있음. 인증 결과는 유효하므로 로그만 남김.
+        try {
+          await result.user?.delete();
+        } catch (deleteErr) {
+          debugPrint('⚠️ [PhoneAuth] 임시 계정 삭제 실패 — 고아 계정 잔존 가능: $deleteErr');
+        }
 
         return (valid: true, reason: null);
       }
