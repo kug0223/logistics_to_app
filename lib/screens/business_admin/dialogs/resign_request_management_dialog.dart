@@ -191,7 +191,7 @@ class _ResignRequestManagementDialogState
                 CircleAvatar(
                   backgroundColor: Theme.of(context).primaryColor.withValues(alpha: 0.2),
                   child: Text(
-                    item.userName[0],
+                    item.userName.isNotEmpty ? item.userName[0] : '?',
                     style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
                       color: Theme.of(context).primaryColor,
                       fontWeight: FontWeight.bold,
@@ -303,7 +303,7 @@ class _ResignRequestManagementDialogState
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
                       Text(
-                        '퇴사 희망일: ${DateFormat('yyyy년 M월 d일').format(app.resignRequestDate!)}',
+                        '퇴사 희망일: ${app.resignRequestDate != null ? DateFormat('yyyy년 M월 d일').format(app.resignRequestDate!) : '날짜 미지정'}',
                         style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
                           context,
                           color: AppColors.warning,

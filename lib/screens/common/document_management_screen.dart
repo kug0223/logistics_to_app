@@ -497,14 +497,15 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     if (imagePath != null && mounted) {
       setState(() => _isLoading = true);
 
+      String? newUrl; // catch에서 orphan 정리를 위해 try 밖에서 선언
       try {
         final oldUrl = user.businessLicenseImageUrl;
 
         // 1. 새 이미지 먼저 업로드 (실패해도 기존 이미지 보존)
         final storagePath = 'users/${user.uid}/businessLicense_${DateTime.now().millisecondsSinceEpoch}.jpg';
-        final downloadUrl = await _storageService.uploadImage(imagePath, storagePath);
+        newUrl = await _storageService.uploadImage(imagePath, storagePath);
 
-        if (downloadUrl == null) {
+        if (newUrl == null) {
           ToastHelper.showError('이미지 업로드에 실패했습니다');
           if (mounted) setState(() => _isLoading = false);
           return;
@@ -514,9 +515,10 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         await _firestoreService.updateUserDocument(
           user.uid,
           {
-            'businessLicenseImageUrl': downloadUrl,
+            'businessLicenseImageUrl': newUrl,
           },
         );
+        newUrl = null; // Firestore 저장 성공 → 정리 불필요
 
         // 3. 업로드·저장 성공 후 기존 이미지 삭제 (best-effort)
         if (oldUrl != null) {
@@ -534,7 +536,13 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         ToastHelper.showSuccess('사업자등록증이 등록되었습니다');
         _hasChanges = true;
       } catch (e) {
-        ToastHelper.showError('사업자등록증 등록에 실패했습니다');
+        // Firestore 저장 실패 시 이미 업로드된 파일 정리 (고아 파일 방지)
+        if (newUrl != null) {
+          try {
+            await _storageService.deleteImageByUrl(newUrl);
+          } catch (_) {}
+        }
+        if (mounted) ToastHelper.showError('사업자등록증 등록에 실패했습니다');
       } finally {
         if (mounted) setState(() => _isLoading = false);
       }
@@ -1295,14 +1303,15 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     if (imagePath != null && mounted) {
       setState(() => _isLoading = true);
 
+      String? newUrl; // catch에서 orphan 정리를 위해 try 밖에서 선언
       try {
         final oldUrl = user.bankbookImageUrl;
 
         // 1. 새 이미지 먼저 업로드 (실패해도 기존 이미지 보존)
         final storagePath = 'users/${user.uid}/bankbook_${DateTime.now().millisecondsSinceEpoch}.jpg';
-        final downloadUrl = await _storageService.uploadImage(imagePath, storagePath);
+        newUrl = await _storageService.uploadImage(imagePath, storagePath);
 
-        if (downloadUrl == null) {
+        if (newUrl == null) {
           ToastHelper.showError('이미지 업로드에 실패했습니다');
           if (mounted) setState(() => _isLoading = false);
           return;
@@ -1311,9 +1320,10 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         await _firestoreService.updateUserDocument(
           user.uid,
           {
-            'bankbookImageUrl': downloadUrl,
+            'bankbookImageUrl': newUrl,
           },
         );
+        newUrl = null; // Firestore 저장 성공 → 정리 불필요
 
         // 2. 업로드·저장 성공 후 기존 이미지 삭제 (best-effort)
         if (oldUrl != null) {
@@ -1330,7 +1340,13 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         _hasChanges = true;
         ToastHelper.showSuccess('통장사본이 등록되었습니다');
       } catch (e) {
-        ToastHelper.showError('통장사본 등록에 실패했습니다');
+        // Firestore 저장 실패 시 이미 업로드된 파일 정리 (고아 파일 방지)
+        if (newUrl != null) {
+          try {
+            await _storageService.deleteImageByUrl(newUrl);
+          } catch (_) {}
+        }
+        if (mounted) ToastHelper.showError('통장사본 등록에 실패했습니다');
       } finally {
         if (mounted) setState(() => _isLoading = false);
       }

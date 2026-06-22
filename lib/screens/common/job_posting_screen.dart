@@ -1639,6 +1639,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         ],
       ),
       child: SafeArea(
+        top: false, // bottomNavigationBar 위치 — 상단 SafeArea 불필요
         child: widget.mode == TODetailMode.applicant
             ? CommonWidgets.primaryButton(
                 context: context,

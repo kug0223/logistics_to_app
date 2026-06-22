@@ -1765,6 +1765,8 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     if (_isLoading) return;
     setState(() => _isLoading = true);
 
+    // catch 블록에서 orphan Storage 정리를 위해 try 밖에서 선언
+    final newlyUploadedUrls = <String>[];
     try {
       // 사업자등록증 체크 (Firestore에서 최신 데이터 기준)
       final userProvider = context.read<UserProvider>();
@@ -1809,7 +1811,6 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       // 이 시점에서는 새 이미지 업로드만 먼저 진행한다.
 
       // 이미지 업로드
-      final newlyUploadedUrls = <String>[];
       String? mainImageUrl = _mainImageUrl;
       if (_mainImage != null) {
         mainImageUrl = await _uploadImage(_mainImage!, 'main');
@@ -1954,7 +1955,15 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       }
     } catch (e) {
       debugPrint('❌ 사업장 저장 실패: $e');
-      ToastHelper.showError('저장에 실패했습니다: $e');
+      // Firestore 저장 실패 시 이미 업로드된 Storage 이미지 정리 (고아 파일 방지)
+      if (newlyUploadedUrls.isNotEmpty) {
+        try {
+          await _storageService.deleteMultipleByUrls(newlyUploadedUrls);
+        } catch (cleanupErr) {
+          debugPrint('⚠️ 저장 실패 후 Storage 정리 실패 (orphan 가능): $cleanupErr');
+        }
+      }
+      if (mounted) ToastHelper.showError('저장에 실패했습니다: $e');
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);

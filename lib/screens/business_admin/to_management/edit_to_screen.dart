@@ -201,6 +201,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   // ============================================================
 
   Future<void> _saveChanges() async {
+    if (_isSaving) return; // WAGE-GUARD 다이얼로그 대기 중 중복 저장 방지
     if (!_formKey.currentState!.validate()) return;
 
     // 공통 업무상세 검증 (슬롯/TO 모두)
@@ -404,12 +405,13 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
       _firestoreService.clearCache(toId: widget.to.id);
 
+      if (!mounted) return;
       if (slotSyncFailed) {
         ToastHelper.showWarning('TO가 수정되었으나 슬롯 동기화에 실패했습니다. 다시 저장해 주세요.');
       } else {
         ToastHelper.showSuccess('TO가 수정되었습니다');
       }
-      if (mounted) NavigationHelper.popWithChange(context);
+      NavigationHelper.popWithChange(context);
     } catch (e) {
       debugPrint('❌ TO 수정 실패: $e');
       ToastHelper.showError('수정에 실패했습니다');

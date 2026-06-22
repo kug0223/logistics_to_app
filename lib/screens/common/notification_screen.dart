@@ -549,8 +549,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
         break;
     }
     } finally {
-      // 예외·정상 완료 모두 플래그 해제 — 이후 탭이 다시 동작하도록 보장
-      if (mounted) _isHandlingTap = false;
+      // 예외·정상 완료 모두 플래그 해제 — mounted 여부와 무관하게 해제해야
+      // 동일 인스턴스가 재마운트됐을 때 첫 탭이 영구 차단되는 문제를 막는다.
+      _isHandlingTap = false;
     }
   }
 

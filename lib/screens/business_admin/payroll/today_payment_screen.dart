@@ -309,6 +309,7 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
   }
 
   Future<void> _markTransferred(AttendanceModel record) async {
+    if (_isProcessing) return; // 다이얼로그 대기 중 연타 방지
     final uid = _uid();
     if (uid == null || uid.isEmpty) {
       ToastHelper.showError('로그인 정보를 확인해주세요');

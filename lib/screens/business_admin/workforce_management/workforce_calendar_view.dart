@@ -241,7 +241,12 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
             });
             _loadGroupDetailsForDay(selectedDay);
           },
-          onPageChanged: (focusedDay) => setState(() => _focusedDay = focusedDay),
+          onPageChanged: (focusedDay) => setState(() {
+            _focusedDay = focusedDay;
+            // [BUG-수정] 월 이동 시 _selectedDay를 초기화하지 않으면 이전 달 날짜가 남아
+            // 하단 카드 목록이 새 달이 아닌 이전 달 데이터를 표시하는 문제 발생
+            _selectedDay = null;
+          }),
           eventLoader: _getEventsForDay,
           markerBuilder: (context, date, events) {
             if (events.isEmpty) return null;

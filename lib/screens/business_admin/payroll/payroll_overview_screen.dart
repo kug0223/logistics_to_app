@@ -125,6 +125,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
   }
 
   void _onYearChanged(int delta) {
+    if (_isLoading) return; // 로드 중 연타 방지 — race condition 예방
     final newYear = _selectedYear + delta;
     if (newYear < 2015 || newYear > DateTime.now().year + 1) return;
     setState(() => _selectedYear = newYear);
