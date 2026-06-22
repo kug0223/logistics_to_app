@@ -483,11 +483,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       );
 
       _firestoreService.clearCache(toId: widget.to.id);
+      if (!mounted) return;
       ToastHelper.showSuccess('수정되었습니다');
-      if (mounted) NavigationHelper.popWithChange(context);
+      NavigationHelper.popWithChange(context);
     } catch (e) {
       debugPrint('❌ 슬롯 수정 실패: $e');
-      ToastHelper.showError('수정에 실패했습니다');
+      if (mounted) ToastHelper.showError('수정에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -599,12 +600,13 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       );
 
       _firestoreService.clearCache(toId: widget.to.id);
+      if (!mounted) return;
       ToastHelper.showSuccess(
           '${widget.newSlotDate!.month}/${widget.newSlotDate!.day} 날짜가 추가되었습니다');
-      if (mounted) NavigationHelper.popWithChange(context);
+      NavigationHelper.popWithChange(context);
     } catch (e) {
       debugPrint('❌ 날짜 추가 실패: $e');
-      ToastHelper.showError('날짜 추가에 실패했습니다');
+      if (mounted) ToastHelper.showError('날짜 추가에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -678,11 +680,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       await batch.commit();
 
       _firestoreService.clearCache(toId: widget.to.id);
+      if (!mounted) return;
       ToastHelper.showSuccess('${slots.length}개 날짜가 수정되었습니다');
-      if (mounted) NavigationHelper.popWithChange(context);
+      NavigationHelper.popWithChange(context);
     } catch (e) {
       debugPrint('❌ 일괄 슬롯 수정 실패: $e');
-      ToastHelper.showError('수정에 실패했습니다');
+      if (mounted) ToastHelper.showError('수정에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }

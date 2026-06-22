@@ -201,7 +201,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     } catch (e) {
       debugPrint('❌ TO 목록 로드 실패: $e');
       if (mounted) Navigator.pop(context);
-      ToastHelper.showError('공고 목록을 불러올 수 없습니다');
+      if (mounted) ToastHelper.showError('공고 목록을 불러올 수 없습니다');
       return;
     }
 

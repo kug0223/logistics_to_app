@@ -880,7 +880,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     );
     
     // 변경사항이 있으면 목록 새로고침
-    if (result == true) {
+    if (result == true && mounted) {
       _loadWorkTypes();
     }
   }

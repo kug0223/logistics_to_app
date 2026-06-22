@@ -274,6 +274,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     );
 
     if (!confirmed) return;
+    if (!mounted) return;
 
     // cancelApplication 내부에서 이미 상태에 맞는 토스트(showSuccess/showInfo/showError)를
     // 표시하므로, 여기서는 추가 메시지 없이 화면 갱신만 수행한다.

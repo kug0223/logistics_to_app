@@ -591,9 +591,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       
       if (successCount > 0) {
         _hasChanges = true;
-        ToastHelper.showSuccess('$successCount명 급여 확정 완료');
         widget.onConfirmed?.call();
         if (!mounted) return;
+        ToastHelper.showSuccess('$successCount명 급여 확정 완료');
 
         setState(() {
           // 확정된 근무자를 calculated 탭으로 이동

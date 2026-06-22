@@ -2893,6 +2893,7 @@ async function sendSensSms(to: string, content: string): Promise<void> {
         hostname: "sens.apigw.ntruss.com",
         path: urlPath,
         method: "POST",
+        timeout: 10000,
         headers: {
           "Content-Type": "application/json; charset=utf-8",
           "x-ncp-apigw-timestamp": timestamp,
@@ -2913,6 +2914,7 @@ async function sendSensSms(to: string, content: string): Promise<void> {
       }
     );
     req.on("error", reject);
+    req.on("timeout", () => { req.destroy(); reject(new Error("SENS API timeout")); });
     req.write(body);
     req.end();
   });

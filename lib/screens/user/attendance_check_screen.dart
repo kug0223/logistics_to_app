@@ -456,6 +456,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
         if (_locationTrackingActive) await _firestoreService.stopWorkerTracking(work.id);
         if (!mounted) return;
         await _loadTodayWorks();
+        if (!mounted) return;
         _checkAndStartTracking();
       }
     } catch (e) {
