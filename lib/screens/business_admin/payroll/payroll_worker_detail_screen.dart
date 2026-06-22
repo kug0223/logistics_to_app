@@ -459,8 +459,9 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
           .collection('users')
           .doc(record.userId)
           .get();
-      if (userDoc.exists) {
-        user = UserModel.fromMap(userDoc.data() as Map<String, dynamic>, userDoc.id);
+      final userData = userDoc.data();
+      if (userDoc.exists && userData != null) {
+        user = UserModel.fromMap(userData, userDoc.id);
       }
     } catch (e) {
       debugPrint('❌ 지원서/사용자 정보 로드 실패: $e');

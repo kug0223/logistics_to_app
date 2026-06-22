@@ -236,7 +236,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                onPressed: _saveBusinessInfo,
+                onPressed: _isLoading ? null : _saveBusinessInfo,
                 icon: Icon(hasSaved ? Icons.edit_outlined : Icons.save_outlined,
                     size: 16),
                 label: Text(hasSaved ? '사업자 정보 수정' : '사업자 정보 저장',
@@ -359,7 +359,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () {
+                      onPressed: _isLoading ? null : () {
                         if (hasBusinessInfo) {
                           _uploadBusinessLicense();
                         } else {
@@ -382,7 +382,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                   SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: _deleteBusinessLicense,
+                      onPressed: _isLoading ? null : _deleteBusinessLicense,
                       icon: const Icon(Icons.delete, size: 14),
                       label: Text('삭제',
                           style: ResponsiveHelper.smallStyle(context)),
@@ -449,7 +449,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               CommonWidgets.primaryButton(
                 context: context,
                 text: '사업자등록증 업로드',
-                onPressed: () {
+                onPressed: _isLoading ? null : () {
                   if (hasBusinessInfo) {
                     _uploadBusinessLicense();
                   } else {

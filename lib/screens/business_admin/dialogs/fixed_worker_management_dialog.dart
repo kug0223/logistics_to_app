@@ -649,7 +649,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             context,
             label: '거절',
             color: AppColors.error,
-            onTap: () => _rejectPendingRequest(pending, approverUid),
+            onTap: isLoading ? null : () => _rejectPendingRequest(pending, approverUid),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
           _buildMiniButton(
@@ -657,7 +657,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             label: '승인',
             color: AppColors.teal,
             filled: true,
-            onTap: () => _approvePendingRequest(pending, approverUid),
+            onTap: isLoading ? null : () => _approvePendingRequest(pending, approverUid),
           ),
         ],
       ),
@@ -669,7 +669,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     required String label,
     required Color color,
     bool filled = false,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
   }) {
     return GestureDetector(
       onTap: onTap,

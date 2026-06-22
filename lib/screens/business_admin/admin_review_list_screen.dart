@@ -3,6 +3,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../utils/toast_helper.dart';
 
 // Utils
 import '../../utils/responsive_helper.dart';
@@ -178,10 +179,13 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     if (!mounted) return;
     if (ok) {
       await _loadReviews();
+    } else {
+      ToastHelper.showError('답변 등록에 실패했습니다');
     }
   }
 
   Future<void> _loadReviews() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
     _cursorWritten = null;
     _cursorReceived = null;

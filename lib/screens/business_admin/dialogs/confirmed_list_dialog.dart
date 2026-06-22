@@ -390,7 +390,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
             Material(
               color: Colors.transparent,
               child: InkWell(
-                onTap: () => _batchRequestIdCard(),
+                onTap: isLoading ? null : () => _batchRequestIdCard(),
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
                   padding: EdgeInsets.symmetric(
@@ -911,7 +911,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
             Material(
               color: Colors.transparent,
               child: InkWell(
-                onTap: _batchCancelConfirmation,
+                onTap: isLoading ? null : _batchCancelConfirmation,
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
                   padding: EdgeInsets.symmetric(

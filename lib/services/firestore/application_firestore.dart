@@ -852,9 +852,9 @@ extension ApplicationFirestore on FirestoreService {
       } else if (prevStatus == AppStatus.pending && status == AppStatus.rejected) {
         await createNotification(NotificationModel.createApplicationRejected(
           userId: applicantUid,
-          businessName: appData['businessName'] as String,
+          businessName: appData['businessName'] as String? ?? '',
           businessId: appData['businessId'] as String? ?? '',
-          workType: appData['selectedWorkType'] as String,
+          workType: appData['selectedWorkType'] as String? ?? '',
           workDate: (appData['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
           applicationId: applicationId,
           rejectReason: message,
@@ -1063,9 +1063,9 @@ extension ApplicationFirestore on FirestoreService {
       if (isAdminCancel) {
         await createNotification(NotificationModel.createConfirmationCanceled(
           userId: uid,
-          businessName: appData['businessName'] as String,
+          businessName: appData['businessName'] as String? ?? '',
           businessId: appData['businessId'] as String? ?? '',
-          workType: appData['selectedWorkType'] as String,
+          workType: appData['selectedWorkType'] as String? ?? '',
           workDate: (appData['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
           applicationId: applicationId,
           cancelReason: cancelReason,
