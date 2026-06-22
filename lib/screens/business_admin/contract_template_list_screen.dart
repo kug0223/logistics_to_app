@@ -41,8 +41,14 @@ class _ContractTemplateListScreenState
   Future<void> _load() async {
     if (!mounted) return;
     setState(() => _loading = true);
-    _templates = await _service.getTemplates(widget.businessId);
-    if (mounted) setState(() => _loading = false);
+    try {
+      _templates = await _service.getTemplates(widget.businessId);
+    } catch (e) {
+      debugPrint('❌ 템플릿 로드 실패: $e');
+      if (mounted) ToastHelper.showError('템플릿 목록을 불러오지 못했습니다');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   // ── 새 템플릿: 유형 선택 바텀시트 먼저 표시 ──

@@ -112,8 +112,9 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                 color: Theme.of(context).primaryColor),
             title: const Text('전체 사업장'),
             onTap: () {
-              setState(() => _filterBusinessId = null);
               Navigator.pop(ctx);
+              if (!mounted) return;
+              setState(() => _filterBusinessId = null);
               _loadStats();
             },
           ),
@@ -126,8 +127,9 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                     color: Theme.of(context).primaryColor),
                 title: Text(b.name),
                 onTap: () {
-                  setState(() => _filterBusinessId = b.id);
                   Navigator.pop(ctx);
+                  if (!mounted) return;
+                  setState(() => _filterBusinessId = b.id);
                   _loadStats();
                 },
               )),

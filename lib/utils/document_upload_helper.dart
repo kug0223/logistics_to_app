@@ -143,7 +143,7 @@ class DocumentUploadHelper {
           context: context,
           documentType: '신분증',
           expectedInfo: expectedName + (expectedResidentNumber != null ? '\n$expectedResidentNumber' : ''),
-          extractedInfo: result['extractedName'] + (result['extractedResidentNumber'].isNotEmpty ? '\n${result['extractedResidentNumber']}' : ''),
+          extractedInfo: (result['extractedName'] as String? ?? '') + ((result['extractedResidentNumber'] as String? ?? '').isNotEmpty ? '\n${result['extractedResidentNumber']}' : ''),
           reason: reason,
         );
 
@@ -273,7 +273,7 @@ class DocumentUploadHelper {
           context: context,
           documentType: '통장사본',
           expectedInfo: '$expectedName${expectedAccountNumber != null ? '\n$expectedAccountNumber' : ''}${expectedBankName != null ? '\n$expectedBankName' : ''}',
-          extractedInfo: '${result['extractedName']}${result['extractedAccountNumber'].isNotEmpty ? '\n${result['extractedAccountNumber']}' : ''}${result['extractedBankName'].isNotEmpty ? '\n${result['extractedBankName']}' : ''}',
+          extractedInfo: '${result['extractedName'] as String? ?? ''}${ (result['extractedAccountNumber'] as String? ?? '').isNotEmpty ? '\n${result['extractedAccountNumber']}' : ''}${ (result['extractedBankName'] as String? ?? '').isNotEmpty ? '\n${result['extractedBankName']}' : ''}',
           reason: reason,
         );
 

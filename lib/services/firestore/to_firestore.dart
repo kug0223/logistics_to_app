@@ -229,15 +229,20 @@ extension TOFirestore on FirestoreService {
             : (rangeStart ?? DateTime.now());
 
         final parts = publishTime.split(':');
-        final candidate = DateTime(
-          baseDate.year, baseDate.month, baseDate.day,
-          int.parse(parts[0]), int.parse(parts[1]),
-        ).subtract(Duration(days: publishDaysBefore));
-
-        if (candidate.isBefore(DateTime.now())) {
-          isPublished = true; // 과거 시간이면 즉시 공개
+        if (parts.length < 2) {
+          isPublished = true; // 형식 오류 시 즉시 공개 폴백
+          debugPrint('⚠️ [TO] publishTime 형식 오류: $publishTime');
         } else {
-          publishAt = candidate;
+          final candidate = DateTime(
+            baseDate.year, baseDate.month, baseDate.day,
+            int.parse(parts[0]), int.parse(parts[1]),
+          ).subtract(Duration(days: publishDaysBefore));
+
+          if (candidate.isBefore(DateTime.now())) {
+            isPublished = true; // 과거 시간이면 즉시 공개
+          } else {
+            publishAt = candidate;
+          }
         }
       }
 
@@ -551,10 +556,12 @@ extension TOFirestore on FirestoreService {
           DateTime? deadline;
           if (deadlineType == 'HOURS_BEFORE') {
             final parts = newDef.startTime.split(':');
-            deadline = DateTime(
-              slot.date.year, slot.date.month, slot.date.day,
-              int.parse(parts[0]), int.parse(parts[1]),
-            ).subtract(Duration(hours: hoursBeforeStart)).toUtc();
+            if (parts.length >= 2) {
+              deadline = DateTime(
+                slot.date.year, slot.date.month, slot.date.day,
+                int.parse(parts[0]), int.parse(parts[1]),
+              ).subtract(Duration(hours: hoursBeforeStart)).toUtc();
+            }
           } else if (deadlineType == 'FIXED_TIME' && fixedDeadline != null) {
             deadline = fixedDeadline.toUtc();
           }
@@ -1040,14 +1047,15 @@ extension TOFirestore on FirestoreService {
             publishDaysBefore != null &&
             publishTime != null) {
           final parts = publishTime.split(':');
-          final visibleFrom = DateTime(
-            slot.date.year, slot.date.month, slot.date.day,
-            int.parse(parts[0]), int.parse(parts[1]),
-          ).subtract(Duration(days: publishDaysBefore));
-
-          batch.update(slotRef, {
-            'visibleFrom': Timestamp.fromDate(visibleFrom.toUtc()),
-          });
+          if (parts.length >= 2) {
+            final visibleFrom = DateTime(
+              slot.date.year, slot.date.month, slot.date.day,
+              int.parse(parts[0]), int.parse(parts[1]),
+            ).subtract(Duration(days: publishDaysBefore));
+            batch.update(slotRef, {
+              'visibleFrom': Timestamp.fromDate(visibleFrom.toUtc()),
+            });
+          }
         } else {
           // immediate 모드 → visibleFrom 제거
           batch.update(slotRef, {'visibleFrom': FieldValue.delete()});
@@ -1179,10 +1187,12 @@ extension TOFirestore on FirestoreService {
           publishDaysBefore != null &&
           publishTime != null) {
         final parts = publishTime.split(':');
-        visibleFrom = DateTime(
-          date.year, date.month, date.day,
-          int.parse(parts[0]), int.parse(parts[1]),
-        ).subtract(Duration(days: publishDaysBefore)).toUtc();
+        if (parts.length >= 2) {
+          visibleFrom = DateTime(
+            date.year, date.month, date.day,
+            int.parse(parts[0]), int.parse(parts[1]),
+          ).subtract(Duration(days: publishDaysBefore)).toUtc();
+        }
       }
 
       final workTypeCounts = {

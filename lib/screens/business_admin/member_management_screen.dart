@@ -31,6 +31,7 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
   final _service = MemberService();
   List<BusinessMemberModel> _members = [];
   bool _loading = true;
+  bool _isProcessing = false;
 
   @override
   void initState() {
@@ -63,15 +64,17 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
   }
 
   Future<void> _editPermissions(BusinessMemberModel member) async {
-    final result = await showDialog<MemberPermissions>(
-      context: context,
-      builder: (_) => _PermissionDialog(
-        memberName: member.name,
-        current: member.permissions,
-      ),
-    );
-    if (result == null || !mounted) return;
+    if (_isProcessing) return;
+    setState(() => _isProcessing = true);
     try {
+      final result = await showDialog<MemberPermissions>(
+        context: context,
+        builder: (_) => _PermissionDialog(
+          memberName: member.name,
+          current: member.permissions,
+        ),
+      );
+      if (result == null || !mounted) return;
       await _service.updatePermissions(
         businessId: widget.businessId,
         uid: member.uid,
@@ -82,16 +85,20 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
       _load();
     } catch (e) {
       if (mounted) ToastHelper.showError('권한 업데이트에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
   Future<void> _remove(BusinessMemberModel member) async {
-    final ok = await DialogHelper.showDeleteConfirm(
-      context,
-      itemName: '"${member.name}" 멤버',
-    );
-    if (ok != true || !mounted) return;
+    if (_isProcessing) return;
+    setState(() => _isProcessing = true);
     try {
+      final ok = await DialogHelper.showDeleteConfirm(
+        context,
+        itemName: '"${member.name}" 멤버',
+      );
+      if (ok != true || !mounted) return;
       await _service.removeMember(
         businessId: widget.businessId,
         uid: member.uid,
@@ -101,6 +108,8 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
       _load();
     } catch (e) {
       if (mounted) ToastHelper.showError('멤버 제거에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -572,8 +581,8 @@ class _InviteDialogState extends State<_InviteDialog> {
                           radius: 20,
                           backgroundColor: AppColors.success.withValues(alpha: 0.2),
                           child: Text(
-                            (_found!['name'] as String).isNotEmpty
-                                ? (_found!['name'] as String)[0]
+                            ((_found!['name'] as String?) ?? '').isNotEmpty
+                                ? ((_found!['name'] as String?) ?? '')[0]
                                 : '?',
                             style: ResponsiveHelper.bodyStyle(context).copyWith(
                                 color: AppColors.successDark,

@@ -499,6 +499,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   }
 
   Future<void> _handleScheduleReject(ScheduleChangeRequestModel request) async {
+    if (_isProcessing) return;
     final userProvider = context.read<UserProvider>();
     final uid = userProvider.currentUser?.uid;
     if (uid == null) return;
@@ -619,6 +620,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   }
 
   Future<void> _handleIdCardReject(IdCardAccessRequestModel request) async {
+    if (_isProcessing) return;
     final reasonController = TextEditingController();
 
     final confirmed = await showDialog<bool>(
@@ -687,6 +689,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   // ═══════════════════════════════════════════════════════════
 
   Future<void> _handleTerminationApprove(ApplicationModel app) async {
+    if (_isProcessing) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -743,6 +746,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   }
 
   Future<void> _handleTerminationReject(ApplicationModel app) async {
+    if (_isProcessing) return;
     final reasonController = TextEditingController();
 
     final confirmed = await showDialog<bool>(

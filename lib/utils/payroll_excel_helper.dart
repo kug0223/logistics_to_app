@@ -115,6 +115,7 @@ class PayrollExcelHelper {
       return;
     }
 
+    if (!context.mounted) return;
     final dir  = await getTemporaryDirectory();
     final file = File('${dir.path}/$filename');
     try {
