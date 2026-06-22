@@ -85,7 +85,18 @@ class PhoneVerificationService {
         // (signInWithCredential 사용 시 기존 세션이 파괴되므로 금지)
         try {
           final linked = await _auth.currentUser!.linkWithCredential(credential);
-          await _auth.currentUser!.unlink(PhoneAuthProvider.PROVIDER_ID);
+          // unlink 실패 시 재시도 — 실패해도 인증 결과는 유지하되 계정 오염 방지를 최우선
+          try {
+            await _auth.currentUser!.unlink(PhoneAuthProvider.PROVIDER_ID);
+          } catch (unlinkErr) {
+            debugPrint('⚠️ [PhoneAuth] unlink 1차 실패, 재시도: $unlinkErr');
+            try {
+              await _auth.currentUser!.unlink(PhoneAuthProvider.PROVIDER_ID);
+            } catch (retryErr) {
+              // [특이사항] unlink 2회 실패 → 계정에 전화번호 잔존. Firebase Console에서 수동 해제 필요.
+              debugPrint('❌ [PhoneAuth] unlink 재시도 실패 — 계정 오염 가능성: $retryErr');
+            }
+          }
           debugPrint('✅ [PhoneAuth] 인증 성공 (link/unlink): ${linked.user?.phoneNumber}');
           return (valid: true, reason: null);
         } on FirebaseAuthException catch (e) {
