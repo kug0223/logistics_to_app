@@ -114,9 +114,10 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
     );
     
     if (!confirmed || !mounted) return;
+    if (_settings == null) return;
 
     setState(() => _isSaving = true);
-    
+
     try {
       // 증가 규칙 업데이트
       final updatedIncreaseRules = _settings!.increaseRules.map((rule) {

@@ -82,13 +82,17 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
             isActive: !badge.isActive,
             order: badge.order,
             createdAt: badge.createdAt,
+            minWorkDaysRequired: badge.minWorkDaysRequired,
+            maxNoShowAllowed: badge.maxNoShowAllowed,
+            minRatingRequired: badge.minRatingRequired,
+            benefit: badge.benefit,
           );
         }
       });
       
-      ToastHelper.showSuccess(badge.isActive ? '배지가 비활성화되었습니다' : '배지가 활성화되었습니다');
+      if (mounted) ToastHelper.showSuccess(badge.isActive ? '배지가 비활성화되었습니다' : '배지가 활성화되었습니다');
     } catch (e) {
-      ToastHelper.showError('변경에 실패했습니다');
+      if (mounted) ToastHelper.showError('변경에 실패했습니다');
     }
   }
 
