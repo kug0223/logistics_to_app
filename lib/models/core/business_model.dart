@@ -184,7 +184,7 @@ class BusinessModel {
       busInfo: map['busInfo'],
       // 기타
       precautions: map['precautions'],
-      rating: map['rating']?.toDouble(),
+      rating: (map['rating'] as num?)?.toDouble(),
       reviewCount: (map['reviewCount'] as num?)?.toInt(),
       companyName: map['companyName'],
       ownerName: map['ownerName'],

@@ -300,7 +300,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       _hasChanges = true;
       ToastHelper.showSuccess('사업자 정보가 저장되었습니다');
     } catch (e) {
-      ToastHelper.showError('저장에 실패했습니다');
+      if (mounted) ToastHelper.showError('저장에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -589,7 +589,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       _hasChanges = true;  // ✅ 추가
     } catch (e) {
       debugPrint('❌ 사업자등록증 삭제 실패: $e');
-      ToastHelper.showError('사업자등록증 삭제에 실패했습니다');
+      if (mounted) ToastHelper.showError('사업자등록증 삭제에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -777,7 +777,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       _hasChanges = true;  // ✅ 추가
     } catch (e) {
       debugPrint('❌ 신분증 삭제 실패: $e');
-      ToastHelper.showError('신분증 삭제에 실패했습니다');
+      if (mounted) ToastHelper.showError('신분증 삭제에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -834,7 +834,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       _hasChanges = true;  // ✅ 추가
     } catch (e) {
       debugPrint('❌ 통장 정보 삭제 실패: $e');
-      ToastHelper.showError('통장 정보 삭제에 실패했습니다');
+      if (mounted) ToastHelper.showError('통장 정보 삭제에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

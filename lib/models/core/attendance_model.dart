@@ -160,15 +160,15 @@ class AttendanceModel {
       workType: map['workType'] ?? '',
       checkIn: map['checkIn'],
       originalCheckIn: map['originalCheckIn'] as String?,
-      checkInLat: map['checkInLat']?.toDouble(),
-      checkInLng: map['checkInLng']?.toDouble(),
+      checkInLat: (map['checkInLat'] as num?)?.toDouble(),
+      checkInLng: (map['checkInLng'] as num?)?.toDouble(),
       checkInMethod: map['checkInMethod'],
       checkInTime: map['checkInTime'] != null 
           ? (map['checkInTime'] as Timestamp).toDate().toLocal()          : null,
       checkOut: map['checkOut'],
       originalCheckOut: map['originalCheckOut'] as String?,
-      checkOutLat: map['checkOutLat']?.toDouble(),
-      checkOutLng: map['checkOutLng']?.toDouble(),
+      checkOutLat: (map['checkOutLat'] as num?)?.toDouble(),
+      checkOutLng: (map['checkOutLng'] as num?)?.toDouble(),
       checkOutMethod: map['checkOutMethod'],
       checkOutTime: map['checkOutTime'] != null
           ? (map['checkOutTime'] as Timestamp).toDate().toLocal()          : null,
@@ -179,7 +179,7 @@ class AttendanceModel {
       modifiedBy: map['modifiedBy'],
       modifiedAt: map['modifiedAt'] != null
           ? (map['modifiedAt'] as Timestamp).toDate().toLocal()          : null,
-      workHours: map['workHours']?.toDouble(),
+      workHours: (map['workHours'] as num?)?.toDouble(),
       calculatedWage: (map['calculatedWage'] as num?)?.toInt(),
       confirmedBy: map['confirmedBy'],
       confirmedAt: map['confirmedAt'] != null

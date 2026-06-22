@@ -79,10 +79,11 @@ class _RestartProgramDialogState extends State<RestartProgramDialog> {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('applyRestartProgram');
       await callable.call();
+      if (!mounted) return;
 
       ToastHelper.showSuccess('재시작 프로그램이 적용되었습니다!');
       widget.onSuccess?.call();
-      if (mounted) Navigator.pop(context, true);
+      Navigator.pop(context, true);
     } on FirebaseFunctionsException catch (e) {
       debugPrint('❌ 재시작 프로그램 적용 실패: ${e.code} — ${e.message}');
       if (mounted) ToastHelper.showError(e.message ?? '재시작 프로그램 적용에 실패했습니다.');

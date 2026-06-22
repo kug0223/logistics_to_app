@@ -172,7 +172,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       ]);
 
       _businessHistory = results[0] as Map<String, dynamic>?;
-      _recentReviews = results[1] as List<ReviewModel>;
+      _recentReviews = (results[1] as List).cast<ReviewModel>();
       _idCardAccess = results[2] as IdCardAccessRequestModel?;
       _hasAttendance = (results[3] as bool?) ?? false;
       _workTime = results[4] as String?;

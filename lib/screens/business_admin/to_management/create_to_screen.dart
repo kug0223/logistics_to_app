@@ -177,7 +177,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       setState(() => _businessWorkTypes = workTypes);
     } catch (e) {
       debugPrint('❌ 업무 유형 로드 실패: $e');
-      ToastHelper.showError('업무 유형을 불러올 수 없습니다');
+      if (mounted) ToastHelper.showError('업무 유형을 불러올 수 없습니다');
     }
   }
 
@@ -611,7 +611,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   bool get _someSlotExpired => !_allSlotsExpired && _selectedDates.any(_isSlotExpired);
 
   Future<void> _createTO() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (!(_formKey.currentState?.validate() ?? false)) return;
 
     if (_selectedBusiness == null) {
       ToastHelper.showError('사업장을 선택해주세요');

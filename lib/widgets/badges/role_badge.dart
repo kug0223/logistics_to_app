@@ -23,7 +23,7 @@ class RoleBadge extends StatelessWidget {
     final backgroundColor = RoleTheme.getBackgroundColor(role);
     final icon = RoleTheme.getRoleIcon(role);
     final label = RoleTheme.getRoleLabel(role);
-    final resolvedFontSize = fontSize ?? ResponsiveHelper.smallStyle(context).fontSize!;
+    final resolvedFontSize = fontSize ?? ResponsiveHelper.smallStyle(context).fontSize ?? 12.0;
 
     return Container(
       padding: EdgeInsets.symmetric(

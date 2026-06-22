@@ -577,7 +577,7 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           Text(
-            _to!.description!,
+            _to?.description ?? '',
             style: ResponsiveHelper.smallStyle(context,
                 color: AppColors.grey700),
           ),
@@ -614,7 +614,7 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           Text(
-            _business!.precautions!,
+            _business?.precautions ?? '',
             style: ResponsiveHelper.smallStyle(context,
                 color: AppColors.grey700),
           ),

@@ -196,8 +196,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           .update({'notifPrefs': _notifPrefs});
     } catch (e) {
       // 실패 시 롤백
-      setState(() => _notifPrefs = {..._notifPrefs, key: !value});
-      ToastHelper.showError('설정 저장에 실패했습니다');
+      if (mounted) {
+        setState(() => _notifPrefs = {..._notifPrefs, key: !value});
+        ToastHelper.showError('설정 저장에 실패했습니다');
+      }
     } finally {
       if (mounted) setState(() => _isNotifPrefsLoading = false);
     }
@@ -1324,7 +1326,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (e) {
       // 로딩 닫기
       if (context.mounted) Navigator.pop(context);
-      ToastHelper.showError('마이그레이션 오류: $e');
+      if (context.mounted) ToastHelper.showError('마이그레이션 오류: $e');
     }
   }
 

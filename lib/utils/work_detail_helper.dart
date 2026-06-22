@@ -46,10 +46,10 @@ class WorkDetailHelper {
   static String?  shiftType(Map<String, dynamic>? d)             => d?['shiftType'] as String?;
   static bool     nightIncluded(Map<String, dynamic>? d)          => d?['nightIncluded'] as bool? ?? false;
   static bool     nightAllowanceApplied(Map<String, dynamic>? d)  => d?['nightAllowanceApplied'] as bool? ?? true;
-  static int      breakMinutes(Map<String, dynamic>? d)           => d?['breakMinutes'] as int? ?? 0;
+  static int      breakMinutes(Map<String, dynamic>? d)           => (d?['breakMinutes'] as num?)?.toInt() ?? 0;
   static String   wageType(Map<String, dynamic>? d)               => d?['wageType'] as String? ?? 'hourly';
-  static int?     baseHourlyWage(Map<String, dynamic>? d)         => d?['baseHourlyWage'] as int?;
-  static int      wage(Map<String, dynamic>? d)                   => d?['wage'] as int? ?? 0;
+  static int?     baseHourlyWage(Map<String, dynamic>? d)         => (d?['baseHourlyWage'] as num?)?.toInt();
+  static int      wage(Map<String, dynamic>? d)                   => (d?['wage'] as num?)?.toInt() ?? 0;
   static String   taxDeductionType(Map<String, dynamic>? d)       => d?['taxDeductionType'] as String? ?? InsuranceRateModel.typeNone;
 
   /// timeMap에서 실제 출근 예정 시각 반환 (캐시 우선 → app.startTime → '09:00')

@@ -155,7 +155,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                       'ALfit',
                                       style: ResponsiveHelper.titleStyle(context).copyWith(
                                         color: Colors.white,
-                                        fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.3,
+                                        fontSize: (ResponsiveHelper.titleStyle(context).fontSize ?? 18) * 1.3,
                                         fontWeight: FontWeight.w800,
                                         letterSpacing: 1.5,
                                       ),
@@ -338,7 +338,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                             '${userProvider.currentUser?.name ?? '관리자'}님',
                             style: ResponsiveHelper.titleStyle(context).copyWith(
                               color: Colors.white,
-                              fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.5,
+                              fontSize: (ResponsiveHelper.titleStyle(context).fontSize ?? 18) * 1.5,
                               fontWeight: FontWeight.bold,
                             ),
                             maxLines: 1,

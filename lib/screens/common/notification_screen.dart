@@ -352,7 +352,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
               MaterialPageRoute(builder: (_) => const UserContractsScreen()),
             );
           } else {
-            final businessId = notification.data?['businessId'] as String?;
+            final businessId = notification.data?['businessId']?.toString();
             if (businessId != null && businessId.isNotEmpty) {
               Navigator.push(
                 context,
@@ -381,7 +381,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       case NotificationType.contractExpiringReminder:
         {
           // [특이사항] 알림 data의 businessId 우선 — 다중 사업장 관리자가 다른 사업장 선택 중일 때 정확한 대화상자 표시
-          final notifBusinessId = notification.data?['businessId'] as String?;
+          final notifBusinessId = notification.data?['businessId']?.toString();
           final businessId = (notifBusinessId != null && notifBusinessId.isNotEmpty)
               ? notifBusinessId
               : userProvider.effectiveBusinessId;
@@ -561,7 +561,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     NotificationModel notification,
   ) async {
     // applicationId로 null 체크 — 실제 Firestore 조회 키와 동일하게 맞춤
-    final applicationId = notification.data?['applicationId'] as String?;
+    final applicationId = notification.data?['applicationId']?.toString();
     if (applicationId == null || applicationId.isEmpty) {
       Navigator.push(
         context,
@@ -618,7 +618,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     NotificationModel notification,
     bool isUser,
   ) async {
-    final requestKey = notification.data?['requestKey'] as String?;
+    final requestKey = notification.data?['requestKey']?.toString();
 
     // requestKey 없으면 목록 화면으로 폴백
     if (requestKey == null || requestKey.isEmpty) {
@@ -762,7 +762,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     BuildContext context,
     NotificationModel notification,
   ) async {
-    final invitationId = notification.data?['invitationId'] as String?;
+    final invitationId = notification.data?['invitationId']?.toString();
     if (invitationId == null || invitationId.isEmpty) {
       ToastHelper.showError('초대 정보를 찾을 수 없습니다');
       return;
@@ -877,8 +877,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
       return;
     }
 
-    final toId = data['toId'] as String?;
-    final workDetailId = data['workDetailId'] as String?;
+    final toId = data['toId']?.toString();
+    final workDetailId = data['workDetailId']?.toString();
 
     if (toId == null || toId.isEmpty || workDetailId == null || workDetailId.isEmpty) {
       Navigator.push(

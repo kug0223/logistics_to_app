@@ -266,8 +266,8 @@ class UserModel {
       managedBusinessIds: map['managedBusinessIds'] != null
           ? List<String>.from(map['managedBusinessIds'])
           : null,
-      createdAt: map['createdAt']?.toDate().toLocal(),
-      lastLoginAt: map['lastLoginAt']?.toDate().toLocal(),
+      createdAt: _parseDateTime(map['createdAt']),
+      lastLoginAt: _parseDateTime(map['lastLoginAt']),
       // PASS 본인인증 필드
       ci: EncryptionHelper.decrypt(map['ci']),
       passVerifiedAt: _parseDateTime(map['passVerifiedAt']),
@@ -276,7 +276,7 @@ class UserModel {
       rejectionReason: map['rejectionReason'] as String?,
       // 신규 필드
       gender: map['gender'],
-      birthDate: map['birthDate']?.toDate().toLocal(),
+      birthDate: _parseDateTime(map['birthDate']),
       residentNumber: EncryptionHelper.decrypt(map['residentNumber']),
       address: map['address'],
       detailAddress: map['detailAddress'],
@@ -301,7 +301,7 @@ class UserModel {
       lateCount: (map['lateCount'] as num?)?.toInt() ?? 0,
       isAvailable: map['isAvailable'] ?? true,
       unavailableReason: map['unavailableReason'],
-      availableFrom: map['availableFrom']?.toDate().toLocal(),
+      availableFrom: _parseDateTime(map['availableFrom']),
       isBlacklisted: map['isBlacklisted'] ?? false,
       blacklistReason: map['blacklistReason'],
       businessNumber: map['businessNumber'],
@@ -310,9 +310,9 @@ class UserModel {
       ceoName: map['ceoName'],
       // ── 신뢰도 시스템 ──
       storedTrustScore: (map['trustScore'] as num?)?.toInt(),
-      rehireRate: (map['rehireRate'] ?? 0.0).toDouble(),
+      rehireRate: (map['rehireRate'] as num?)?.toDouble() ?? 0.0,
       badges: map['badges'] != null ? List<String>.from(map['badges']) : [],
-      lastRestartAt: map['lastRestartAt']?.toDate().toLocal(),
+      lastRestartAt: _parseDateTime(map['lastRestartAt']),
       signatureBase64: map['signatureBase64'],
       subAdminOf: map['subAdminOf'],
       restrictedUntil: _parseDateTime(map['restrictedUntil']),

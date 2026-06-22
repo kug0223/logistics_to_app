@@ -1627,7 +1627,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
 
   bool _validateStep2() {
     setState(() => _autoValidate = true);
-    if (!_formKey.currentState!.validate()) {
+    if (!(_formKey.currentState?.validate() ?? false)) {
       return false;
     }
     return true;

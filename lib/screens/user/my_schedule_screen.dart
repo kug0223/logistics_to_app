@@ -143,6 +143,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       }
     } catch (e) {
       debugPrint('❌ 월별 출근 기록 로드 실패: $e');
+      if (mounted) ToastHelper.showError('출근 기록을 불러오지 못했습니다');
     }
   }
 

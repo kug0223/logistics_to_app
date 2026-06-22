@@ -352,7 +352,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         });
       }
     } catch (e) {
-      ToastHelper.showError('프로필 수정에 실패했습니다');
+      if (mounted) ToastHelper.showError('프로필 수정에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

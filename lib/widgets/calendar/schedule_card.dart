@@ -855,7 +855,7 @@ class ScheduleCard extends StatelessWidget {
     if (requestId != null && context.mounted) {
       ToastHelper.showSuccess('휴무 요청이 전송되었습니다');
       onChanged?.call();
-    } else {
+    } else if (context.mounted) {
       ToastHelper.showError('휴무 요청 실패');
     }
   }
@@ -996,7 +996,7 @@ class ScheduleCard extends StatelessWidget {
     if (requestId != null && context.mounted) {
       ToastHelper.showSuccess('추가근무 취소 요청이 전송되었습니다');
       onChanged?.call();
-    } else {
+    } else if (context.mounted) {
       ToastHelper.showError('요청 실패');
     }
   }
@@ -1137,7 +1137,7 @@ class ScheduleCard extends StatelessWidget {
     if (requestId != null && context.mounted) {
       ToastHelper.showSuccess('휴무 취소 요청이 전송되었습니다');
       onChanged?.call();
-    } else {
+    } else if (context.mounted) {
       ToastHelper.showError('요청 실패');
     }
   }

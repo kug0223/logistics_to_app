@@ -6,6 +6,7 @@ import '../../models/core/monthly_review_model.dart';
 import '../../providers/user_provider.dart';
 import '../../services/monthly_review_service.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/toast_helper.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
@@ -88,6 +89,7 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
       });
     } catch (e) {
       debugPrint('⚠️ [MyReviewsScreen] loadMore 실패: $e');
+      if (mounted) ToastHelper.showError('리뷰를 더 불러오지 못했습니다');
     } finally {
       if (mounted) setState(() => _isLoadingMore = false);
     }

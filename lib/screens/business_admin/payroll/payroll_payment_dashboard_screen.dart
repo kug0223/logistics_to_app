@@ -203,6 +203,7 @@ class _PayrollPaymentDashboardScreenState
       }
     } catch (e) {
       debugPrint('❌ 급여 대시보드 로드 실패: $e');
+      if (mounted) ToastHelper.showError('데이터를 불러오지 못했습니다');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

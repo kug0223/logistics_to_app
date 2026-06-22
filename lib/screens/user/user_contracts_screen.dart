@@ -15,6 +15,7 @@ import '../../services/contract_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/toast_helper.dart';
 import '../../screens/contract/contract_sign_screen.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/gradient_scaffold.dart';
@@ -101,6 +102,7 @@ class _UserContractsScreenState extends State<UserContractsScreen>
       });
     } catch (e) {
       debugPrint('❌ 계약 목록 로드 실패: $e');
+      if (mounted) ToastHelper.showError('계약서 목록을 불러오지 못했습니다');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -127,6 +129,7 @@ class _UserContractsScreenState extends State<UserContractsScreen>
       });
     } catch (e) {
       debugPrint('❌ 계약 목록 추가 로드 실패: $e');
+      if (mounted) ToastHelper.showError('계약서를 더 불러오지 못했습니다');
     } finally {
       if (mounted) setState(() => _isLoadingMore = false);
     }

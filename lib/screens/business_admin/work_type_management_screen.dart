@@ -462,7 +462,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 
     if (confirmed == true) {
       final success = await _firestoreService.deleteBusinessWorkType(
-        businessId: _selectedBusiness!.id,
+        businessId: business.id,
         workTypeId: workType.id,
       );
       if (!mounted) return;
@@ -476,7 +476,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 
   Future<void> _swapWorkTypeOrder(
       BusinessWorkTypeModel a, BusinessWorkTypeModel b) async {
-    if (_isReordering) return;
+    if (_isReordering || _selectedBusiness == null) return;
     final bizId = _selectedBusiness!.id;
     final db = FirebaseFirestore.instance;
     final batch = db.batch();

@@ -202,7 +202,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
   Future<void> _saveChanges() async {
     if (_isSaving) return; // WAGE-GUARD 다이얼로그 대기 중 중복 저장 방지
-    if (!_formKey.currentState!.validate()) return;
+    if (!(_formKey.currentState?.validate() ?? false)) return;
 
     // 공통 업무상세 검증 (슬롯/TO 모두)
     if (_workDetails.isEmpty) {
@@ -319,7 +319,10 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         } on Exception catch (e) {
           if (e.toString().contains('MAX_ACTIVE_TO_LIMIT')) {
             if (mounted) ToastHelper.showError('진행 중인 공고가 4개를 초과할 수 없습니다');
+          } else {
+            if (mounted) ToastHelper.showError('공고를 공개할 수 없습니다');
           }
+          if (mounted) setState(() => _isSaving = false);
           return;
         }
         if (!mounted) return;
@@ -427,7 +430,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       NavigationHelper.popWithChange(context);
     } catch (e) {
       debugPrint('❌ TO 수정 실패: $e');
-      ToastHelper.showError('수정에 실패했습니다');
+      if (mounted) ToastHelper.showError('수정에 실패했습니다');
       if (mounted) setState(() => _hasChanges = true);
     } finally {
       if (mounted) setState(() => _isSaving = false);
@@ -1072,7 +1075,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         'status': TOStatus.active,
         'statusUpdatedAt': FieldValue.serverTimestamp(),
       });
-      ToastHelper.showInfo('미공개 공고가 즉시 공개로 전환되었습니다');
+      if (mounted) ToastHelper.showInfo('미공개 공고가 즉시 공개로 전환되었습니다');
     } else {
       final m = visibleFrom.month;
       final d = visibleFrom.day;
@@ -1085,7 +1088,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         'status': TOStatus.scheduled,
         'statusUpdatedAt': FieldValue.serverTimestamp(),
       });
-      ToastHelper.showInfo('미공개 → 예약공개 전환 ($m/$d $h:$min 공개 예정)');
+      if (mounted) ToastHelper.showInfo('미공개 → 예약공개 전환 ($m/$d $h:$min 공개 예정)');
     }
   }
 

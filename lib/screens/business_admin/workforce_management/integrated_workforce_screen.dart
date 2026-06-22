@@ -97,7 +97,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
       debugPrint('✅ 관리 사업장: ${_allBusinessIds.length}개');
     } catch (e) {
       debugPrint('❌ 사업장 조회 실패: $e');
-      ToastHelper.showError('사업장 정보를 불러올 수 없습니다.');
+      if (mounted) ToastHelper.showError('사업장 정보를 불러올 수 없습니다.');
     }
   }
 

@@ -151,7 +151,11 @@ export const resetPasswordWithCode = onCall(
       if (!data) {
         throw new HttpsError("not-found", "인증 코드를 찾을 수 없습니다.");
       }
-      const expiresAt = (data.expiresAt as Timestamp).toDate();
+      const expiresAtRaw = data.expiresAt;
+      if (!expiresAtRaw || !(expiresAtRaw instanceof Timestamp)) {
+        throw new HttpsError("internal", "만료 시간 데이터 오류");
+      }
+      const expiresAt = expiresAtRaw.toDate();
       const attempts = (data.attempts as number) ?? 0;
 
       // 이미 사용된 코드 거부
@@ -3006,7 +3010,12 @@ export const verifySmsCode = onCall(
         return;
       }
 
-      const expiredAt = (data.expiredAt as Timestamp).toDate();
+      const expiredAtRaw = data.expiredAt;
+      if (!expiredAtRaw || !(expiredAtRaw instanceof Timestamp)) {
+        result = {valid: false, reason: "expired"};
+        return;
+      }
+      const expiredAt = expiredAtRaw.toDate();
       if (new Date() > expiredAt) {
         result = {valid: false, reason: "expired"};
         return;
@@ -3368,7 +3377,8 @@ export const resetPasswordWithPass = onCall(
       if (data.purpose !== "resetPassword") {
         throw new HttpsError("invalid-argument", "비밀번호 찾기용 토큰이 아닙니다.");
       }
-      if ((data.expiresAt as Timestamp).toDate() < new Date()) {
+      const tokenExpiresAt = data.expiresAt;
+      if (!tokenExpiresAt || !(tokenExpiresAt instanceof Timestamp) || tokenExpiresAt.toDate() < new Date()) {
         throw new HttpsError(
           "deadline-exceeded",
           "인증 토큰이 만료되었습니다. 다시 본인인증을 진행해주세요."

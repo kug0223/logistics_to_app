@@ -77,14 +77,15 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
   }
 
   Future<void> _loadYear(int year) async {
-    if (_businessId == null) return;
+    final bizId = _businessId;
+    if (bizId == null) return;
     if (!mounted) return;
     setState(() { _isLoading = true; _loadError = null; });
 
     try {
       final futures = List.generate(12, (i) {
         final mm = (i + 1).toString().padLeft(2, '0');
-        final docId = '${_businessId}_$year-$mm';
+        final docId = '${bizId}_$year-$mm';
         return FirebaseFirestore.instance
             .collection('payroll_summaries')
             .doc(docId)
@@ -98,7 +99,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
           return PayrollSummaryModel.fromFirestore(doc);
         }
         return PayrollSummaryModel.empty(
-          businessId: _businessId!,
+          businessId: bizId,
           year: year,
           month: i + 1,
         );
@@ -113,10 +114,11 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
   }
 
   Future<void> _loadTodayCount() async {
-    if (_businessId == null) return;
+    final bizId = _businessId;
+    if (bizId == null) return;
     try {
       final count = await PayrollPaymentService().getTodayPaymentCount(
-        businessId: _businessId!,
+        businessId: bizId,
       );
       if (mounted) setState(() => _todayPaymentCount = count);
     } catch (e) {
@@ -156,7 +158,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
               ),
             )
           else ...[
-            if (_todayPaymentCount > 0)
+            if (_todayPaymentCount > 0 && _businessId != null)
               _TodayPaymentBanner(
                 count: _todayPaymentCount,
                 onTap: () async {
