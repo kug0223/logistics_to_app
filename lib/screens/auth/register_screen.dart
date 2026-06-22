@@ -735,7 +735,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           (errStr.contains('deadline-exceeded') ||
               errStr.contains('token-expired') ||
               errStr.contains('passToken'))) {
-        setState(() => _passAuthResult = null);
+        if (mounted) setState(() => _passAuthResult = null);
         ToastHelper.showError('PASS 인증 세션이 만료되었습니다.\n화면 상단의 PASS 인증을 다시 진행해주세요.');
       } else {
         ToastHelper.showError('회원가입에 실패했습니다');

@@ -97,12 +97,12 @@
 
       // [BUG-수정] reviewCount도 rating>0인 리뷰만 집계 — averageRating과 기준 통일
       final ratedReviews = reviews.docs
-          .where((d) => ((d.data()['rating'] as int?) ?? 0) > 0)
+          .where((d) => ((d.data()['rating'] as num?)?.toInt() ?? 0) > 0)
           .toList();
       final ratedCount = ratedReviews.length;
       final totalRating = ratedReviews.fold<int>(
         0,
-        (acc, d) => acc + (((d.data()['rating'] as int?) ?? 0)),
+        (acc, d) => acc + ((d.data()['rating'] as num?)?.toInt() ?? 0),
       );
       final avgRating = ratedCount > 0 ? totalRating / ratedCount : null;
 
