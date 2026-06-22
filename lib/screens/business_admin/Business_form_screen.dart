@@ -1640,9 +1640,8 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       useBottomSheet: true,
     );
 
-    if (image != null) {
-      setState(() => _mainImage = image);
-    }
+    if (!mounted || image == null) return;
+    setState(() => _mainImage = image);
   }
 
   Future<void> _pickAdditionalImages() async {
@@ -1660,9 +1659,8 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       type: ImageType.general,
     );
 
-    if (images.isNotEmpty) {
-      setState(() => _additionalImages.addAll(images));
-    }
+    if (!mounted || images.isEmpty) return;
+    setState(() => _additionalImages.addAll(images));
   }
 
   Future<void> _searchAddress() async {
@@ -1747,7 +1745,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       ),
     );
 
-    if (result == true && addressController.text.isNotEmpty) {
+    if (mounted && result == true && addressController.text.isNotEmpty) {
       setState(() {
         _addressController.text = addressController.text;
         _latitude = double.tryParse(latController.text);

@@ -385,7 +385,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       // 동기 전환은 즉시 해제, 비동기(_handleRoleSelection)는 자체 _isSubmitting이 처리
       if (_currentStep != 2) _isStepTransitioning = false;
       Future.delayed(const Duration(milliseconds: 300),
-          () => _isStepTransitioning = false);
+          () { if (mounted) _isStepTransitioning = false; });
     }
   }
 

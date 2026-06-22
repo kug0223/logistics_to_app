@@ -54,6 +54,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   
   List<_NotificationItem> _allNotifications = [];
   bool _isLoading = true;
+  bool _isProcessing = false;
 
   @override
   void initState() {
@@ -473,22 +474,27 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   // ═══════════════════════════════════════════════════════════
 
   Future<void> _handleScheduleApprove(ScheduleChangeRequestModel request) async {
+    if (_isProcessing) return;
     final userProvider = context.read<UserProvider>();
     final uid = userProvider.currentUser?.uid;
     if (uid == null) return;
 
-    final success = await _firestoreService.approveScheduleChangeRequest(
-      requestId: request.id,
-      approverUid: uid,
-    );
-
-    if (!mounted) return;
-    if (success) {
-      ToastHelper.showSuccess('수락되었습니다');
-      await _loadAllNotifications();
-      widget.onChanged();
-    } else {
-      ToastHelper.showError('수락 실패');
+    setState(() => _isProcessing = true);
+    try {
+      final success = await _firestoreService.approveScheduleChangeRequest(
+        requestId: request.id,
+        approverUid: uid,
+      );
+      if (!mounted) return;
+      if (success) {
+        ToastHelper.showSuccess('수락되었습니다');
+        await _loadAllNotifications();
+        widget.onChanged();
+      } else {
+        ToastHelper.showError('수락 실패');
+      }
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -533,19 +539,23 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
     if (confirmed != true) return;
     if (!mounted) return;
 
-    final success = await _firestoreService.rejectScheduleChangeRequest(
-      requestId: request.id,
-      rejectorUid: uid,
-      rejectReason: scheduleRejectReason,
-    );
-
-    if (!mounted) return;
-    if (success) {
-      ToastHelper.showSuccess('거절되었습니다');
-      await _loadAllNotifications();
-      widget.onChanged();
-    } else {
-      ToastHelper.showError('거절 실패');
+    setState(() => _isProcessing = true);
+    try {
+      final success = await _firestoreService.rejectScheduleChangeRequest(
+        requestId: request.id,
+        rejectorUid: uid,
+        rejectReason: scheduleRejectReason,
+      );
+      if (!mounted) return;
+      if (success) {
+        ToastHelper.showSuccess('거절되었습니다');
+        await _loadAllNotifications();
+        widget.onChanged();
+      } else {
+        ToastHelper.showError('거절 실패');
+      }
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -592,15 +602,19 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
     if (confirmed != true) return;
     if (!mounted) return;
 
-    final success = await _firestoreService.approveIdCardAccessRequest(request.id);
-
-    if (!mounted) return;
-    if (success) {
-      ToastHelper.showSuccess('승인되었습니다');
-      await _loadAllNotifications();
-      widget.onChanged();
-    } else {
-      ToastHelper.showError('승인 실패');
+    setState(() => _isProcessing = true);
+    try {
+      final success = await _firestoreService.approveIdCardAccessRequest(request.id);
+      if (!mounted) return;
+      if (success) {
+        ToastHelper.showSuccess('승인되었습니다');
+        await _loadAllNotifications();
+        widget.onChanged();
+      } else {
+        ToastHelper.showError('승인 실패');
+      }
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -649,18 +663,22 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
     if (confirmed != true) return;
     if (!mounted) return;
 
-    final success = await _firestoreService.rejectIdCardAccessRequest(
-      request.id,
-      reason: idCardRejectReason,
-    );
-
-    if (!mounted) return;
-    if (success) {
-      ToastHelper.showSuccess('거절되었습니다');
-      await _loadAllNotifications();
-      widget.onChanged();
-    } else {
-      ToastHelper.showError('거절 실패');
+    setState(() => _isProcessing = true);
+    try {
+      final success = await _firestoreService.rejectIdCardAccessRequest(
+        request.id,
+        reason: idCardRejectReason,
+      );
+      if (!mounted) return;
+      if (success) {
+        ToastHelper.showSuccess('거절되었습니다');
+        await _loadAllNotifications();
+        widget.onChanged();
+      } else {
+        ToastHelper.showError('거절 실패');
+      }
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -708,15 +726,19 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
     if (confirmed != true) return;
     if (!mounted) return;
 
-    final success = await _firestoreService.approveTermination(app.id);
-
-    if (!mounted) return;
-    if (success) {
-      ToastHelper.showSuccess('계약이 해지되었습니다');
-      await _loadAllNotifications();
-      widget.onChanged();
-    } else {
-      ToastHelper.showError('처리 실패');
+    setState(() => _isProcessing = true);
+    try {
+      final success = await _firestoreService.approveTermination(app.id);
+      if (!mounted) return;
+      if (success) {
+        ToastHelper.showSuccess('계약이 해지되었습니다');
+        await _loadAllNotifications();
+        widget.onChanged();
+      } else {
+        ToastHelper.showError('처리 실패');
+      }
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -765,18 +787,22 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
     if (confirmed != true) return;
     if (!mounted) return;
 
-    final success = await _firestoreService.rejectTermination(
-      applicationId: app.id,
-      rejectReason: terminationRejectReason,
-    );
-
-    if (!mounted) return;
-    if (success) {
-      ToastHelper.showSuccess('거절되었습니다');
-      await _loadAllNotifications();
-      widget.onChanged();
-    } else {
-      ToastHelper.showError('거절 실패');
+    setState(() => _isProcessing = true);
+    try {
+      final success = await _firestoreService.rejectTermination(
+        applicationId: app.id,
+        rejectReason: terminationRejectReason,
+      );
+      if (!mounted) return;
+      if (success) {
+        ToastHelper.showSuccess('거절되었습니다');
+        await _loadAllNotifications();
+        widget.onChanged();
+      } else {
+        ToastHelper.showError('거절 실패');
+      }
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 }

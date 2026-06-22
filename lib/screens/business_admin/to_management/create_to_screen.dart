@@ -213,7 +213,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       builder: (context) => _buildLoadFromExistingDialog(),
     );
 
-    if (selectedTO != null) {
+    if (selectedTO != null && mounted) {
       _loadDataFromTO(selectedTO);
     }
   }

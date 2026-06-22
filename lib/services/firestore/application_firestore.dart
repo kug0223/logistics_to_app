@@ -837,13 +837,14 @@ extension ApplicationFirestore on FirestoreService {
       if (toId != null) clearCache(toId: toId);
 
       // 알림
-      final applicantUid = appData['uid'] as String;
+      final applicantUid = appData['uid'] as String? ?? '';
+      if (applicantUid.isEmpty) return [];
       if (AppStatus.confirmedStatuses.contains(prevStatus)) {
         await createNotification(NotificationModel.createConfirmationCanceled(
           userId: applicantUid,
-          businessName: appData['businessName'] as String,
+          businessName: appData['businessName'] as String? ?? '',
           businessId: appData['businessId'] as String? ?? '',
-          workType: appData['selectedWorkType'] as String,
+          workType: appData['selectedWorkType'] as String? ?? '',
           workDate: (appData['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
           applicationId: applicationId,
           cancelReason: message,
@@ -957,7 +958,7 @@ extension ApplicationFirestore on FirestoreService {
       );
       if (toId != null) {
         _sendApplicationCanceledNotification(
-          businessId: appData['businessId'] as String,
+          businessId: appData['businessId'] as String? ?? '',
           applicantUid: uid,
           workType: appData['selectedWorkType'] as String? ?? '',
           workDate: (appData['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
@@ -1103,12 +1104,12 @@ extension ApplicationFirestore on FirestoreService {
         return false;
       }
       final appData = appDoc.data()!;
-      final currentWorkType = appData['selectedWorkType'] as String;
+      final currentWorkType = appData['selectedWorkType'] as String? ?? '';
       final currentWage = (appData['wage'] as num?)?.toInt() ?? 0;
-      final uid = appData['uid'] as String;
+      final uid = appData['uid'] as String? ?? '';
       final businessName = appData['businessName'] as String? ?? '';
       final businessId = appData['businessId'] as String? ?? '';
-      final workDate = (appData['workDate'] as Timestamp).toDate().toLocal();
+      final workDate = (appData['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now();
       final toId = appData['toId'] as String?;
       final slotId = appData['slotId'] as String?;
       final currentStatus = appData['status'] as String? ?? '';

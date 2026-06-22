@@ -38,6 +38,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
   List<BusinessWorkTypeModel> _workTypes = [];
   bool _isLoading = true;
   bool _isLoadingBusinesses = true;
+  bool _isReordering = false;
 
   @override
   void initState() {
@@ -475,6 +476,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 
   Future<void> _swapWorkTypeOrder(
       BusinessWorkTypeModel a, BusinessWorkTypeModel b) async {
+    if (_isReordering) return;
     final bizId = _selectedBusiness!.id;
     final db = FirebaseFirestore.instance;
     final batch = db.batch();
@@ -484,6 +486,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     batch.update(
         db.collection('businesses').doc(bizId).collection('workTypes').doc(b.id),
         {'displayOrder': a.displayOrder});
+    setState(() => _isReordering = true);
     try {
       await batch.commit();
       if (!mounted) return;
@@ -491,6 +494,8 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       _loadWorkTypes();
     } catch (e) {
       if (mounted) ToastHelper.showError('순서 변경에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isReordering = false);
     }
   }
 

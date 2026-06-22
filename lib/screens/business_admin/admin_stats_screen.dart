@@ -241,7 +241,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
               children: [
                 _ArrowBtn(
                   icon: Icons.chevron_left,
-                  onTap: () {
+                  onTap: _isFetching ? null : () {
                     setState(() => _selectedYear--);
                     _loadStats();
                   },
@@ -257,7 +257,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                 ),
                 _ArrowBtn(
                   icon: Icons.chevron_right,
-                  onTap: _selectedYear >= now.year
+                  onTap: (_isFetching || _selectedYear >= now.year)
                       ? null
                       : () {
                           setState(() => _selectedYear++);
