@@ -412,7 +412,7 @@ class _ResignRequestManagementDialogState
   }
 
   /// 승인 처리
-  // [특이사항] 처리 중 setLoading 미사용 — 이중 탭 가능하나 확인 다이얼로그로 1차 방어
+  // [특이사항] LoadingButton이 onPressed Future를 await해 _internalLoading=true 유지 — 이중 탭 자동 방지됨
   Future<void> _handleApprove(_ResignRequestWithUser item) async {
     final confirmed = await DialogHelper.showConfirm(
       context,
@@ -428,7 +428,7 @@ class _ResignRequestManagementDialogState
     if (!confirmed || !mounted) return;
 
     try {
-      final adminUID = context.read<UserProvider>().currentUser?.uid ?? '';
+      final adminUID = context.read<UserProvider>().currentUser?.uid ?? 'UNKNOWN';
 
       final success = await _firestoreService.approveResignation(
         applicationId: item.application.id,
@@ -450,7 +450,7 @@ class _ResignRequestManagementDialogState
   }
 
   /// 거절 처리
-  // [특이사항] 처리 중 setLoading 미사용 — 이중 탭 가능하나 확인 다이얼로그로 1차 방어
+  // [특이사항] LoadingButton이 onPressed Future를 await해 _internalLoading=true 유지 — 이중 탭 자동 방지됨
   Future<void> _handleReject(_ResignRequestWithUser item) async {
     final reason = await DialogHelper.showTextInput(
       context,
@@ -475,7 +475,7 @@ class _ResignRequestManagementDialogState
     if (reason == null || reason.isEmpty || !mounted) return;
 
     try {
-      final adminUID = context.read<UserProvider>().currentUser?.uid ?? '';
+      final adminUID = context.read<UserProvider>().currentUser?.uid ?? 'UNKNOWN';
 
       final success = await _firestoreService.rejectResignation(
         applicationId: item.application.id,

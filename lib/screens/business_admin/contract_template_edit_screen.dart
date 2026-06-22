@@ -202,7 +202,7 @@ class _ContractTemplateEditScreenState
                 _FixedRow('제1조 (근로계약 당사자)',
                     '사업장 정보 + 근로자 정보 자동 입력'),
                 _FixedRow('제2조 (근무 조건)',
-                    'TO/공고 데이터 자동 입력'),
+                    '공고 데이터 자동 입력'),
                 _FixedRow('제3조 (임금)',
                     '업무상세 임금 정보 자동 입력'),
               ],

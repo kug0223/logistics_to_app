@@ -93,7 +93,7 @@ class NotificationProvider with ChangeNotifier {
         .listen(
           (received) {
             if (_disposed) return;
-            // limit(31) 패턴: 31건이면 hasMore=true, 30건만 표시
+            // [특이사항] limit(31) 패턴: 31건 조회해 31건이면 hasMore=true, 30건만 표시 — length>30 보장 후 sublist 안전
             if (received.length > 30) {
               _streamNotifications = received.sublist(0, 30);
               _hasMore = true;
@@ -165,11 +165,23 @@ class NotificationProvider with ChangeNotifier {
   Future<void> markAllAsRead() async {
     if (_userId == null) return;
     await _firestoreService.markAllNotificationsAsRead(_userId!);
+    // 스트림 이벤트가 오기 전에 _additionalNotifications도 즉시 반영
+    // (스트림은 _streamNotifications만 갱신하므로 _additionalNotifications는 별도 처리 필요)
+    if (_additionalNotifications.isNotEmpty) {
+      _additionalNotifications =
+          _additionalNotifications.map((n) => n.copyWith(isRead: true)).toList();
+      notifyListeners();
+    }
   }
 
   /// 개별 알림 삭제
   Future<bool> deleteNotification(String notificationId) async {
-    return _firestoreService.deleteNotification(notificationId);
+    final result = await _firestoreService.deleteNotification(notificationId);
+    if (result && _additionalNotifications.isNotEmpty) {
+      _additionalNotifications.removeWhere((n) => n.id == notificationId);
+      notifyListeners();
+    }
+    return result;
   }
 
   /// 오래된 알림 삭제 (30일 이상)

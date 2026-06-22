@@ -594,7 +594,7 @@ class _ScheduleRequestManagementDialogState
   }
 
   /// 승인 처리
-  // [특이사항] 처리 중 setLoading 미사용 — 이중 탭 가능하나 확인 다이얼로그로 1차 방어
+  // [특이사항] LoadingButton이 onPressed Future를 await해 _internalLoading=true 유지 — 이중 탭 자동 방지됨
   Future<void> _handleApprove(_RequestWithUser item) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -673,7 +673,7 @@ class _ScheduleRequestManagementDialogState
   }
 
   /// 거절 처리
-  // [특이사항] 처리 중 setLoading 미사용 — 이중 탭 가능하나 확인 다이얼로그로 1차 방어
+  // [특이사항] LoadingButton이 onPressed Future를 await해 _internalLoading=true 유지 — 이중 탭 자동 방지됨
   Future<void> _handleReject(_RequestWithUser item) async {
     final reasonController = TextEditingController();
 

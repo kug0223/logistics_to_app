@@ -508,7 +508,7 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
     if (ok != true || !mounted) return;
 
     // async gap 전에 uid 획득
-    final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid ?? '';
+    final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid ?? 'UNKNOWN';
 
     setState(() => _isSettling = true);
     try {
@@ -531,7 +531,8 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
         createdAt: DateTime.now(),
       );
 
-      // 생성 후 ID 포함 새 모델로 즉시 처리
+      // [특이사항] 생성 직후 즉시 승인: 관리자가 직접 요청하는 중간정산이므로
+      // 근무자 별도 동의 단계 없이 바로 이체완료 처리. 근무자가 요청하는 경우와 설계 다름.
       final reqId = await svc.createInterimSettlementRequest(req);
       final reqWithId = InterimSettlementRequestModel(
         id: reqId,

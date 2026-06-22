@@ -14,6 +14,7 @@ import 'user_contracts_screen.dart';
 import '../common/settings_screen.dart';
 import '../common/notification_screen.dart';
 import '../../widgets/common/notification_badge.dart';
+import '../../widgets/auth/account_status_banner.dart';
 import '../../models/core/user_model.dart';
 import '../../theme/app_colors.dart';
 
@@ -47,20 +48,32 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     final userProvider = context.watch<UserProvider>();
     final theme = Theme.of(context);
 
+    final user = userProvider.currentUser;
+
     return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [theme.primaryColor, theme.colorScheme.secondary],
-          ),
-        ),
-        child: SafeArea(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // 상단 헤더
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // 외국인 계정 승인 대기·거절 배너 (active이면 SizedBox.shrink() 반환)
+          if (user != null)
+            AccountStatusBanner(
+              accountStatus: user.accountStatus,
+              rejectedReason: user.rejectionReason,
+            ),
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [theme.primaryColor, theme.colorScheme.secondary],
+                ),
+              ),
+              child: SafeArea(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // 상단 헤더
               Padding(
                 padding: EdgeInsets.symmetric(
                   horizontal: ResponsiveHelper.spacing(context, 24),
@@ -276,7 +289,10 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
           ),
         ),
       ),
-    );
+        ),    // Expanded close
+      ],      // outer Column children close
+    ),        // outer Column close
+  );
   }
 
   Widget _buildMenuCard(BuildContext context, {

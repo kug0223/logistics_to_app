@@ -225,9 +225,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       }
     }
 
-    // [WAGE-GUARD] 새 슬롯 추가·draft 저장 제외 모든 수정 경로에서 확정 근무자 경고
-    // isNewSlot만 제외 — 기존 슬롯 수정(단건/배치)도 workDetails 변경이므로 경고 대상
-    if (!widget.isNewSlot && _publishMode != 'draft') {
+    // [WAGE-GUARD] 확정 근무자가 있을 수 있는 수정 경로에서 경고 표시
+    // [M-6 수정] 기존 슬롯 개별 수정(widget.slot != null)은 draft 모드여도 WAGE-GUARD 적용.
+    // draft 제외 의도: TO 최초 공개 전 draft 수정에는 확정 근무자가 없으므로 경고 불필요.
+    // 단, slot != null이면 이미 공개된 슬롯을 수정하는 것이므로 확정 근무자가 존재할 수 있음.
+    final isExistingSlotEdit = widget.slot != null || widget.isBatchMode;
+    if (!widget.isNewSlot && (_publishMode != 'draft' || isExistingSlotEdit)) {
       final proceed = await _showWageGuardWarning();
       if (!mounted) return;
       if (!proceed) return;
@@ -772,7 +775,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             ? '${widget.batchSlots!.length}개 날짜 일괄수정'
             : widget.slot != null
                 ? '${widget.slot!.formattedDate} 수정'
-                : 'TO 수정';
+                : '공고 수정';
 
     if (_isLoading) {
       return GradientScaffold(

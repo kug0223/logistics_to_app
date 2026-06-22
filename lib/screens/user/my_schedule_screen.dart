@@ -91,6 +91,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         return;
       }
 
+      // [특이사항] Future.wait — 한 쪽 실패 시 outer catch(108행)가 처리, mounted 체크(103행)로 setState 안전
       final results = await Future.wait([
         _firestoreService.getMyApplications(uid),
         _firestoreService.getMyMonthlyAttendances(

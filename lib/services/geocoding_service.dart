@@ -10,6 +10,11 @@ class GeocodingService {
   
   /// 주소로 GPS 좌표 조회 (Kakao Local API)
   static Future<Map<String, double>?> getCoordinatesFromAddress(String address) async {
+    // ── 디버그 추적 ──────────────────────────────────────────────
+    debugPrint('🔍 [Geocoding] ▶ 호출됨');
+    debugPrint('   키 상태: ${_kakaoRestApiKey.isEmpty ? "❌ 비어있음 (dart-define 미적용)" : "✅ 설정됨 (${_kakaoRestApiKey.substring(0, _kakaoRestApiKey.length.clamp(0, 6))}...)"}');
+    debugPrint('   주소: $address');
+    // ────────────────────────────────────────────────────────────
     if (_kakaoRestApiKey.isEmpty) {
       debugPrint('⚠️ [Geocoding] KAKAO_REST_API_KEY 미설정 — --dart-define=KAKAO_REST_API_KEY=xxx 필요');
       return null;
@@ -30,9 +35,13 @@ class GeocodingService {
         },
       );
       
+      debugPrint('📡 [Geocoding] HTTP 응답 코드: ${response.statusCode}');
+      if (response.statusCode != 200) {
+        debugPrint('   응답 바디: ${response.body}');
+      }
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        
+        debugPrint('   documents 개수: ${(data['documents'] as List?)?.length ?? 0}');
         if (data['documents'] != null && data['documents'].isNotEmpty) {
           final doc = data['documents'][0];
           

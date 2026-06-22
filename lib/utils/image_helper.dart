@@ -1,6 +1,7 @@
 // lib/utils/image_helper.dart
 
 import 'dart:io';
+import 'dart:math' show max;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -125,51 +126,100 @@ class ImageHelper {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: ResponsiveHelper.cardPadding(context),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 핸들바
-              Container(
-                width: 40,
-                height: 4,
-                margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 16)),
+      builder: (ctx) {
+        // edge-to-edge 대응: viewPaddingOf는 SafeArea 소비 무관 물리적 인셋.
+        // max로 SafeArea 정상 동작 시 이중 합산 방지.
+        final bottomInset = max(16.0, MediaQuery.viewPaddingOf(ctx).bottom);
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 핸들바
+            Container(
+              width: 40,
+              height: 4,
+              margin: EdgeInsets.symmetric(
+                vertical: ResponsiveHelper.spacing(ctx, 12),
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.grey300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // 제목
+            Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(ctx, 20),
+                vertical: ResponsiveHelper.spacing(ctx, 4),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.add_photo_alternate,
+                    color: Theme.of(ctx).primaryColor,
+                    size: ResponsiveHelper.iconSize(ctx, 20),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(ctx, 10)),
+                  Text(
+                    '이미지 선택',
+                    style: ResponsiveHelper.subtitleStyle(ctx)
+                        .copyWith(fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: AppColors.grey200),
+            // 카메라
+            ListTile(
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(ctx, 20),
+                vertical: ResponsiveHelper.spacing(ctx, 4),
+              ),
+              leading: Container(
+                padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: AppColors.grey300,
-                  borderRadius: BorderRadius.circular(2),
+                  color: AppColors.info.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.camera_alt,
+                  color: AppColors.info,
+                  size: ResponsiveHelper.iconSize(ctx, 22),
                 ),
               ),
-              ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: AppColors.info.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(Icons.camera_alt, color: AppColors.info),
-                ),
-                title: const Text('카메라로 촬영'),
-                onTap: () => Navigator.pop(context, ImageSource.camera),
+              title: Text(
+                '카메라로 촬영',
+                style: ResponsiveHelper.bodyStyle(ctx),
               ),
-              ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: AppColors.success.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(Icons.photo_library, color: AppColors.success),
-                ),
-                title: const Text('갤러리에서 선택'),
-                onTap: () => Navigator.pop(context, ImageSource.gallery),
+              onTap: () => Navigator.pop(ctx, ImageSource.camera),
+            ),
+            // 갤러리
+            ListTile(
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(ctx, 20),
+                vertical: ResponsiveHelper.spacing(ctx, 4),
               ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            ],
-          ),
-        ),
-      ),
+              leading: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppColors.success.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.photo_library,
+                  color: AppColors.success,
+                  size: ResponsiveHelper.iconSize(ctx, 22),
+                ),
+              ),
+              title: Text(
+                '갤러리에서 선택',
+                style: ResponsiveHelper.bodyStyle(ctx),
+              ),
+              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+            ),
+            SizedBox(height: bottomInset),
+          ],
+        );
+      },
     );
   }
 

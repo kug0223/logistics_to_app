@@ -1,3 +1,5 @@
+import 'dart:math' show max;
+
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -129,7 +131,9 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                   _loadStats();
                 },
               )),
-          const SizedBox(height: 8),
+          // edge-to-edge 대응: viewPaddingOf는 SafeArea 소비 무관 물리적 인셋.
+          // max로 SafeArea 정상 동작 시 이중 합산 방지.
+          SizedBox(height: max(8.0, MediaQuery.viewPaddingOf(ctx).bottom)),
         ],
       ),
     );
@@ -205,6 +209,8 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                           size: ResponsiveHelper.iconSize(context, 16)),
                       SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                       Text(
+                        // [특이사항] _businesses.isEmpty 체크가 단락 평가되므로
+                        // orElse의 _businesses.first는 리스트가 비어있을 때 도달 불가 — 안전
                         _filterBusinessId == null || _businesses.isEmpty
                             ? '전체 사업장'
                             : _businesses
@@ -935,16 +941,23 @@ class _LegendDot extends StatelessWidget {
 
 void pushAdminStatsScreen(BuildContext context) {
   final user = context.read<UserProvider>().currentUser;
-  final ids = user?.managedBusinessIds ?? [];
-  if (ids.isEmpty && user?.businessId != null) {
+  // [특이사항] user가 null이면 진입 불가 — 로그아웃 직후 탭 전환 시 발생 가능
+  if (user == null) {
+    ToastHelper.showWarning('로그인 정보를 불러올 수 없습니다');
+    return;
+  }
+  final ids = user.managedBusinessIds;
+  final businessId = user.businessId;
+  if (ids.isEmpty && businessId != null) {
     Navigator.push(context,
-        MaterialPageRoute(builder: (_) => AdminStatsScreen(businessIds: [user!.businessId!])));
+        MaterialPageRoute(builder: (_) => AdminStatsScreen(businessIds: [businessId])));
     return;
   }
   // [BUG-수정] SubAdmin은 managedBusinessIds=[], businessId=null 구조 → subAdminOf로 진입
-  if (ids.isEmpty && user?.subAdminOf != null) {
+  final subAdminOf = user.subAdminOf;
+  if (ids.isEmpty && subAdminOf != null) {
     Navigator.push(context,
-        MaterialPageRoute(builder: (_) => AdminStatsScreen(businessIds: [user!.subAdminOf!])));
+        MaterialPageRoute(builder: (_) => AdminStatsScreen(businessIds: [subAdminOf])));
     return;
   }
   if (ids.isEmpty) {

@@ -1,4 +1,6 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'dart:math' show max;
+
+import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/core/application_model.dart';
@@ -58,6 +60,7 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
             (w) => w.name == widget.application.selectedWorkType,
             orElse: () => wts.isEmpty ? throw StateError('empty') : wts.first,
           );
+        // [특이사항] 업무유형 조회 실패 시 wt=null 유지 — UI가 null을 폴백으로 처리함
         } catch (_) {}
       }
 
@@ -147,7 +150,13 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
                       ResponsiveHelper.spacing(context, 16),
                       0,
                       ResponsiveHelper.spacing(context, 16),
-                      ResponsiveHelper.spacing(context, 24),
+                      // useSafeArea가 edge-to-edge에서 동작 안 할 수 있음.
+                      // viewPaddingOf는 SafeArea 소비 여부와 무관하게 물리적 인셋을 반환.
+                      // max 사용: SafeArea가 동작했을 때 이중 합산 방지.
+                      max(
+                        ResponsiveHelper.spacing(context, 24),
+                        MediaQuery.viewPaddingOf(context).bottom,
+                      ),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -693,7 +702,17 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
               Expanded(
                 child: ListView(
                   controller: scroll,
-                  padding: ResponsiveHelper.cardPadding(ctx),
+                  padding: () {
+                    final cp = ResponsiveHelper.cardPadding(ctx);
+                    return EdgeInsets.fromLTRB(
+                      cp.left,
+                      cp.top,
+                      cp.right,
+                      // edge-to-edge 대응: viewPaddingOf는 SafeArea 소비 무관 물리적 인셋.
+                      // max로 SafeArea 정상 동작 시 이중 합산 방지.
+                      max(cp.bottom, MediaQuery.viewPaddingOf(ctx).bottom),
+                    );
+                  }(),
                   children: [
                     // 헤더
                     Row(

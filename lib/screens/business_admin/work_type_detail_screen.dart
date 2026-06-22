@@ -78,6 +78,11 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
 
   @override
   void dispose() {
+    // [특이사항] TMP-01: 저장/업로드되지 않고 남은 임시 압축 파일(compressed_xxx.jpg)
+    // dispose 시점에 fire-and-forget으로 정리 — await 없이 catchError로 silently 처리.
+    for (final file in [_newThumbnail, ..._newImages].whereType<File>()) {
+      file.delete().ignore();
+    }
     _oneLineIntroController.dispose();
     _descriptionController.dispose();
     _requirementsController.dispose();
@@ -811,9 +816,11 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
   /// 이미지 삭제
   void _deleteImage(int index, List<dynamic> allImages) {
     final image = allImages[index];
-    
+
     setState(() {
       if (image is File) {
+        // [특이사항] TMP-01: 선택 취소된 임시 압축 파일 즉시 정리 (fire-and-forget)
+        image.delete().ignore();
         if (_newThumbnail == image) {
           _newThumbnail = null;
         } else {
@@ -836,6 +843,10 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
 
   /// 수정 취소
   void _cancelEditing() {
+    // [특이사항] TMP-01: 수정 취소 시 미업로드 임시 압축 파일 정리 (fire-and-forget)
+    for (final file in [_newThumbnail, ..._newImages].whereType<File>()) {
+      file.delete().ignore();
+    }
     setState(() {
       _isEditing = false;
       _initControllers();

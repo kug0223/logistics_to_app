@@ -1470,6 +1470,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     }
     
     // 최종 폴백: Application에서 시간 정보 가져오기
+    // [특이사항] isNotEmpty 가드 내부 — workers.first 안전
     if (timeStr.isEmpty && workers.isNotEmpty) {
       final firstApp = workers.first;
       if (firstApp.startTime.isNotEmpty && firstApp.endTime.isNotEmpty) {
@@ -2913,9 +2914,16 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       // AttendanceModel.fromMap()에서 status가 없으면 'absent'로 폴백하는데,
       // 이는 의도된 동작: 노쇼 취소 후 지원자가 실제로 출근했는지 여부는
       // checkIn/checkOut 필드로 별도 판단하며, status 필드는 NO_SHOW 표시 용도로만 사용.
+      // [특이사항] 노쇼 취소 시 wageStatus·finalWage도 함께 초기화: noshow 판정 시
+      // 설정됐을 수 있는 확정값을 지워 임금 재계산 흐름이 정상 작동하도록 함
       batch.update(
         FirebaseFirestore.instance.collection('attendance').doc(att.id),
-        {'status': FieldValue.delete(), 'updatedAt': now},
+        {
+          'status': FieldValue.delete(),
+          'wageStatus': AttendanceModel.wagePending,
+          'finalWage': FieldValue.delete(),
+          'updatedAt': now,
+        },
       );
     }
     try {
@@ -3645,6 +3653,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                           ...groups.entries.map((entry) {
                             final groupKey = entry.key;
                             final workers = entry.value;
+                            // [특이사항] groups는 putIfAbsent(...).add() 로 생성 — 각 value 최소 1개 보장, .first 안전
                             final firstApp = workers.first;
                             final workTypeInfo = _workTypeMap[firstApp.selectedWorkType];
                             final dotColor = workTypeInfo?.color != null
@@ -3859,7 +3868,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       int failCount = 0;
 
       for (var appId in _selectedIds) {
-        final app = _confirmedWorkers.firstWhere((a) => a.id == appId);
+        // 실시간 리스너가 목록을 갱신한 경우 해당 항목이 사라질 수 있음 — 스킵
+        final idx = _confirmedWorkers.indexWhere((a) => a.id == appId);
+        if (idx == -1) continue;
+        final app = _confirmedWorkers[idx];
         final status = _getAttendanceStatus(app);
 
         // 이미 출근했거나 노쇼면 스킵
@@ -3912,7 +3924,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       int failCount = 0;
 
       for (var appId in targetIds) {
-        final app = _confirmedWorkers.firstWhere((a) => a.id == appId);
+        // 실시간 리스너가 목록을 갱신한 경우 해당 항목이 사라질 수 있음 — 스킵
+        final idx = _confirmedWorkers.indexWhere((a) => a.id == appId);
+        if (idx == -1) continue;
+        final app = _confirmedWorkers[idx];
         final attendance = _attendanceMap[app.id];
         if (attendance == null) continue;
 
@@ -3975,7 +3990,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       int failCount = 0;
 
       for (final appId in _selectedIds) {
-        final app = _confirmedWorkers.firstWhere((a) => a.id == appId);
+        // 실시간 리스너가 목록을 갱신한 경우 해당 항목이 사라질 수 있음 — 스킵
+        final idx = _confirmedWorkers.indexWhere((a) => a.id == appId);
+        if (idx == -1) continue;
+        final app = _confirmedWorkers[idx];
         final groupKey = '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
         final time = groupTimes[groupKey];
         if (time == null) continue;
@@ -4018,7 +4036,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       final List<String> failMessages = [];
 
       for (final appId in targetIds) {
-        final app = _confirmedWorkers.firstWhere((a) => a.id == appId);
+        // 실시간 리스너가 목록을 갱신한 경우 해당 항목이 사라질 수 있음 — 스킵
+        final idx = _confirmedWorkers.indexWhere((a) => a.id == appId);
+        if (idx == -1) continue;
+        final app = _confirmedWorkers[idx];
         final groupKey = '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
         final time = groupTimes[groupKey];
         if (time == null) continue;

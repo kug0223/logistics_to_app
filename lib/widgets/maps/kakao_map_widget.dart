@@ -83,7 +83,7 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
 </head>
 <body>
     <div id="map"></div>
-    <script type="text/javascript" src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=b11bc20a0e0981b6214e611198f4d237"></script>
+    <script type="text/javascript" src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=e635c28704a468da61d38e893139fe10"></script>
     <script>
         // ✅ SDK 로드 완료 대기!
         window.onload = function() {

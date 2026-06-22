@@ -23,6 +23,7 @@ import '../../../utils/dialog_helper.dart';
 import '../../../widgets/work_type_icon.dart';
 import '../../../widgets/dialogs/worker_detail_dialog.dart';
 import '../../../widgets/dialogs/contract_template_selector_dialog.dart';
+import '../../common/settings_screen.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/app_checkbox.dart';
@@ -949,7 +950,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                         SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                                         Flexible(
                                           child: Text(
-                                            '(${user?.gender ?? ''}${user?.age != null ? ' · ${user!.age}세' : ''})',
+                                            '(${user?.gender ?? ''}${user?.age != null ? ' · ${user?.age}세' : ''})',
                                             style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
                                             overflow: TextOverflow.ellipsis,
                                           ),
@@ -1004,7 +1005,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                           Icon(Icons.phone, size: ResponsiveHelper.iconSize(context, 12), color: AppColors.grey400),
                           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                           Text(
-                            user?.phone != null ? FormatHelper.formatPhone(user!.phone!) : '-',
+                            user?.phone != null ? FormatHelper.formatPhone(user?.phone ?? '') : '-',
                             style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
                           ),
                           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -1521,8 +1522,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     // 파트 변경 처리
     try {
       final userProvider = context.read<UserProvider>();
-      final adminUID = userProvider.currentUser?.uid ?? '';
-      final selectedWork = otherWorkDetails.firstWhere((w) => w.id == selectedWorkId);
+      final adminUID = userProvider.currentUser?.uid ?? 'UNKNOWN';
+      final selectedWork = otherWorkDetails.firstWhere(
+        (w) => w.id == selectedWorkId,
+        orElse: () => throw StateError('선택한 파트를 찾을 수 없습니다'),
+      );
 
       await _firestoreService.changeApplicationWorkType(
         applicationId: app.id,
@@ -1886,7 +1890,20 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           .get();
       final seal = businessDoc.data()?['sealBase64'] as String?;
       if (seal == null || seal.isEmpty) {
-        ToastHelper.showError('일괄 계약 발송에는 사업장 날인이 필요합니다.\n설정 > 사업장 설정에서 도장 또는 서명을 먼저 등록해주세요.');
+        if (!mounted) return;
+        final goToSettings = await DialogHelper.showConfirm(
+          context,
+          title: '사업주 날인 미등록',
+          message: '일괄 계약 발송에는 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 또는 서명을 먼저 등록해주세요.',
+          confirmText: '설정으로 이동',
+          cancelText: '취소',
+        );
+        if (!mounted) return;
+        if (goToSettings) {
+          Navigator.of(context, rootNavigator: true).push(
+            MaterialPageRoute(builder: (_) => const SettingsScreen()),
+          );
+        }
         return;
       }
       sealBase64 = seal;
@@ -1978,6 +1995,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
               .collection('applications')
               .doc(appId)
               .get(const GetOptions(source: Source.server));
+          // 승인 처리 직후 문서가 삭제된 경쟁 상태 방어 (catch(itemErr)로 롤백됨)
+          if (!freshAppDoc.exists) throw Exception('지원서를 찾을 수 없습니다');
           final freshApp = ApplicationModel.fromMap(freshAppDoc.data()!, freshAppDoc.id);
           final contract = await ContractService().findOrCreateContract(
             application: freshApp,

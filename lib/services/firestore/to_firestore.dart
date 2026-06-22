@@ -703,7 +703,7 @@ extension TOFirestore on FirestoreService {
           cancelBatch.update(doc.reference, {
             'status': AppStatus.rejected,
             'rejectedAt': FieldValue.serverTimestamp(),
-            'rejectReason': '공고 슬롯이 마감되었습니다',
+            'rejectMessage': '공고 슬롯이 마감되었습니다',
           });
           cancelCount++;
           slotCanceled++;
@@ -715,6 +715,30 @@ extension TOFirestore on FirestoreService {
         }
         if (cancelCount > 0) await cancelBatch.commit();
         totalCanceledPending += slotCanceled;
+
+        // [M-3 수정] 슬롯 pendingCount 감소 — TO totalPending과 별개로 슬롯 통계 정리 필요.
+        // 이전 코드: TO 문서의 totalPending만 감소, 슬롯의 pendingCount/workTypeCounts 미갱신.
+        // 결과: 슬롯이 closed 됐어도 pendingCount가 양수로 남아 통계 불일치 발생.
+        if (slotCanceled > 0) {
+          final wtDeltas = <String, int>{};
+          for (final doc in docs) {
+            final wt = doc.data()['selectedWorkType'] as String?;
+            if (wt != null && wt.isNotEmpty) {
+              wtDeltas[wt] = (wtDeltas[wt] ?? 0) + 1;
+            }
+          }
+          final slotUpdate = <String, dynamic>{
+            'pendingCount': FieldValue.increment(-slotCanceled),
+          };
+          for (final entry in wtDeltas.entries) {
+            slotUpdate['workTypeCounts.${entry.key}.pendingCount'] =
+                FieldValue.increment(-entry.value);
+          }
+          await _firestore
+              .collection('tos').doc(toId)
+              .collection('slots').doc(slotId)
+              .update(slotUpdate);
+        }
 
         // [BUG-수정] T-L-1: PENDING→REJECTED 처리된 지원자에게 거절 알림 발송
         // batchDeleteSlots의 _sendTOCanceledNotification 패턴과 달리, 여기서는
@@ -1255,9 +1279,13 @@ extension TOFirestore on FirestoreService {
         });
         debugPrint('✅ [TO] 모든 슬롯 마감(open/full 없음) → 자동 CLOSED ($toId)');
       } else if (hasOpenSlot && currentStatus == TOStatus.closed) {
+        // [특이사항] isManualClosed도 함께 초기화 — TOModel.effectiveStatus 게터가
+        // isManualClosed=true이면 status 값과 무관하게 CLOSED를 반환하므로,
+        // cascade 재오픈 시 남겨두면 TO가 ACTIVE로 세팅됐어도 사용자에게 여전히 CLOSED로 보임.
         await _firestore.collection('tos').doc(toId).update({
           'status': TOStatus.active,
           'closedAt': FieldValue.delete(),
+          'isManualClosed': false,
         });
         debugPrint('✅ [TO] 슬롯 재오픈 → ACTIVE 복구 ($toId)');
       }

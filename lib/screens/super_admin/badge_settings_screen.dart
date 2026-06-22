@@ -442,7 +442,8 @@ class _BadgeEditDialogState extends State<_BadgeEditDialog> {
   final _iconController = TextEditingController();
   final _valueController = TextEditingController();
   final _workTypeController = TextEditingController();
-  
+  final _benefitController = TextEditingController();
+
   BadgeType _selectedType = BadgeType.trustScore;
   BadgeConditionType _selectedCondition = BadgeConditionType.minScore;
 
@@ -454,6 +455,7 @@ class _BadgeEditDialogState extends State<_BadgeEditDialog> {
       _iconController.text = widget.badge!.icon;
       _valueController.text = widget.badge!.conditionValue.toString();
       _workTypeController.text = widget.badge!.workType ?? '';
+      _benefitController.text = widget.badge!.benefit ?? '';
       _selectedType = widget.badge!.type;
       _selectedCondition = widget.badge!.conditionType;
     } else {
@@ -468,6 +470,7 @@ class _BadgeEditDialogState extends State<_BadgeEditDialog> {
     _iconController.dispose();
     _valueController.dispose();
     _workTypeController.dispose();
+    _benefitController.dispose();
     super.dispose();
   }
 
@@ -577,6 +580,15 @@ class _BadgeEditDialogState extends State<_BadgeEditDialog> {
                 prefixIcon: Icons.work,
               ),
             ],
+
+            // 혜택 설명
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            StyledDialogTextField(
+              controller: _benefitController,
+              labelText: '혜택 설명',
+              hintText: '예: 골드 강조 표시 · 자동확정 공고 지원 가능',
+              prefixIcon: Icons.card_giftcard,
+            ),
           ],
         ),
       ),
@@ -591,7 +603,7 @@ class _BadgeEditDialogState extends State<_BadgeEditDialog> {
               ToastHelper.showError('배지 이름을 입력하세요');
               return;
             }
-            
+
             final result = BadgeModel(
               id: widget.badge?.id ?? '',
               name: _nameController.text.trim(),
@@ -599,12 +611,15 @@ class _BadgeEditDialogState extends State<_BadgeEditDialog> {
               type: _selectedType,
               conditionType: _selectedCondition,
               conditionValue: int.tryParse(_valueController.text) ?? 0,
-              workType: _workTypeController.text.isEmpty 
-                  ? null 
+              workType: _workTypeController.text.isEmpty
+                  ? null
                   : _workTypeController.text.trim(),
               isActive: widget.badge?.isActive ?? true,
               order: widget.badge?.order ?? 0,
               createdAt: widget.badge?.createdAt ?? DateTime.now(),
+              benefit: _benefitController.text.trim().isEmpty
+                  ? null
+                  : _benefitController.text.trim(),
             );
             
             Navigator.pop(context, result);

@@ -106,6 +106,7 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
       if (mounted) {
         setState(() {
           _records      = records;
+          // [특이사항] sortedKeys = map.keys.toList() — 모든 k가 map에 존재 보장, map[k]! 안전
           _groupedCache = {for (final k in sortedKeys) k: map[k]!};
           _selectedIds.clear();
           _batchMode = false;
@@ -140,6 +141,7 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
     final sortedKeys = map.keys.toList()
       ..sort((a, b) => PaymentDueDateCalculator.sortOrder(a)
           .compareTo(PaymentDueDateCalculator.sortOrder(b)));
+    // [특이사항] sortedKeys = map.keys.toList() — 모든 k가 map에 존재 보장, map[k]! 안전
     return {for (final k in sortedKeys) k: map[k]!};
   }
 

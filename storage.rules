@@ -21,24 +21,28 @@ service firebase.storage {
     // ═══════════════════════════════════════════════════════════
     match /businesses/{allPaths=**} {
       allow read: if isLoggedIn();
-      allow write: if isLoggedIn() && isUnder5MB();
+      allow create, update: if isLoggedIn() && isUnder5MB();
+      allow delete: if isLoggedIn();
     }
 
     // ── users/ — 신분증·통장·사업자등록증 (민감 파일) ───────────
     // 읽기: 본인 또는 SUPER_ADMIN만 허용 (관리자 열람은 Firestore id_card_access_requests로 제어)
     match /users/{uid}/{allPaths=**} {
       allow read: if request.auth != null && request.auth.uid == uid;
-      allow write: if isLoggedIn() && isUnder5MB() && (
+      allow create, update: if isLoggedIn() && isUnder5MB() && (
         request.auth.uid == uid ||
         uid.matches('temp_.*')   // 회원가입 임시 경로
       );
+      allow delete: if isLoggedIn() && request.auth.uid == uid;
     }
 
     // ── contracts/ — 근로계약서 서명 이미지·완성 PDF ───────────
     // 읽기: 로그인 사용자만 (계약서는 Firestore workerId/businessId로 앱 레벨 접근 제어)
+    // DELETE 시 request.resource == null → isUnder10MB() 실패 → write 분리 필요
     match /contracts/{allPaths=**} {
       allow read: if isLoggedIn();
-      allow write: if isLoggedIn() && isUnder10MB();
+      allow create, update: if isLoggedIn() && isUnder10MB();
+      allow delete: if isLoggedIn();
     }
 
     // ═══════════════════════════════════════════════════════════

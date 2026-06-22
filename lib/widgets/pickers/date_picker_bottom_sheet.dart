@@ -1,4 +1,6 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'dart:math' show max;
+
+import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
@@ -146,7 +148,14 @@ class _DatePickerBottomSheetState extends State<DatePickerBottomSheet> {
           // 버튼
           _buildButtons(context, theme),
 
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          // edge-to-edge 대응: viewPaddingOf는 SafeArea 소비 무관 물리적 인셋.
+          // max로 SafeArea 정상 동작 시 이중 합산 방지.
+          SizedBox(
+            height: max(
+              ResponsiveHelper.spacing(context, 16),
+              MediaQuery.viewPaddingOf(context).bottom,
+            ),
+          ),
         ],
       ),
     );
@@ -453,7 +462,14 @@ class _DateRangePickerBottomSheetState extends State<DateRangePickerBottomSheet>
           // 버튼
           _buildButtons(context, theme),
 
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          // edge-to-edge 대응: viewPaddingOf는 SafeArea 소비 무관 물리적 인셋.
+          // max로 SafeArea 정상 동작 시 이중 합산 방지.
+          SizedBox(
+            height: max(
+              ResponsiveHelper.spacing(context, 16),
+              MediaQuery.viewPaddingOf(context).bottom,
+            ),
+          ),
         ],
       ),
     );

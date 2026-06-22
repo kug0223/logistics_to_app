@@ -186,8 +186,24 @@ class FirestoreService {
   // ═══════════════════════════════════════════════════════════
 
   /// TO 수동 마감
+  // [특이사항] 수동 마감 시 활성 지원서(PENDING/CONTRACT_PENDING/CONFIRMED)를
+  // AUTO_CANCELED로 전환하고 각 지원자에게 TO 취소 알림을 발송한다.
+  // TO 상태 업데이트가 먼저 성공해야 지원서 처리를 진행 — 실패 시 지원서는 건드리지 않음.
+  // 지원서 처리 중 부분 실패는 로그만 남기고 전체 흐름은 계속 진행한다.
   Future<bool> closeTOManually(String toId, String adminUID) async {
     try {
+      // 1단계: TO 데이터 조회 (알림에 필요한 businessName, businessId, title)
+      final toDoc = await _firestore.collection('tos').doc(toId).get();
+      if (!toDoc.exists) {
+        debugPrint('❌ TO 수동 마감 실패: 문서 없음 ($toId)');
+        return false;
+      }
+      final toData = toDoc.data()!;
+      final businessName = toData['businessName'] as String? ?? '';
+      final businessId = toData['businessId'] as String? ?? '';
+      final toTitle = toData['title'] as String? ?? '';
+
+      // 2단계: TO 상태 업데이트 (실패 시 아래 처리 전부 건너뜀)
       await _firestore.collection('tos').doc(toId).update({
         'isManualClosed': true,
         'closedAt': FieldValue.serverTimestamp(),
@@ -196,6 +212,48 @@ class FirestoreService {
         'statusUpdatedAt': FieldValue.serverTimestamp(),
       });
       clearCache(toId: toId);
+
+      // 3단계: 활성 지원서 AUTO_CANCELED 처리 + 지원자 알림
+      try {
+        final appsSnap = await _firestore
+            .collection('applications')
+            .where('toId', isEqualTo: toId)
+            .where('status', whereIn: AppStatus.activeStates)
+            .get();
+
+        if (appsSnap.docs.isNotEmpty) {
+          // [특이사항] 인기 TO의 경우 활성 지원서가 500건 초과 가능 — 499건 단위 분할 커밋
+          for (var offset = 0; offset < appsSnap.docs.length; offset += 499) {
+            final batch = _firestore.batch();
+            final slice = appsSnap.docs.skip(offset).take(499);
+            for (final doc in slice) {
+              batch.update(doc.reference, {
+                'status': AppStatus.autoCanceled,
+                'canceledAt': FieldValue.serverTimestamp(),
+                'cancelReason': 'TO_MANUALLY_CLOSED',
+              });
+            }
+            await batch.commit();
+          }
+
+          // 알림은 배치 커밋 후 개별 발송 (실패해도 TO 상태 변경은 유지)
+          for (final doc in appsSnap.docs) {
+            final data = doc.data();
+            _sendTOCanceledNotification(
+              applicantUid: data['uid'] as String? ?? '',
+              businessName: businessName,
+              businessId: businessId,
+              toTitle: toTitle,
+              status: data['status'] as String? ?? '',
+            );
+          }
+        }
+      } catch (e) {
+        // [특이사항] 지원서 배치 실패는 TO 마감과 분리된 의도적 설계 — TO는 이미 마감됐으므로 롤백 없음
+        // 배치 중간 실패 시 일부 지원서가 AUTO_CANCELED 미처리될 수 있으나, 마감 TO의 신규 지원은 차단됨
+        debugPrint('⚠️ TO 마감 후 지원서 처리 실패 (TO는 마감됨): $e');
+      }
+
       debugPrint('✅ TO 수동 마감 완료: $toId');
       return true;
     } catch (e) {
@@ -322,6 +380,7 @@ class FirestoreService {
           final sid = data['slotId'] as String?;
           if (sid == null || !AppStatus.activeStates.contains(status)) continue;
           slotStats[sid] ??= {'pending': 0, 'confirmed': 0};
+          // [특이사항] ??= 직후 접근 — slotStats[sid]와 내부 키 'pending'/'confirmed' 모두 보장, ! 안전
           if (status == AppStatus.pending) slotStats[sid]!['pending'] = slotStats[sid]!['pending']! + 1;
           if (AppStatus.confirmedStatuses.contains(status)) slotStats[sid]!['confirmed'] = slotStats[sid]!['confirmed']! + 1;
         }

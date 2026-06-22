@@ -123,7 +123,7 @@ class UserProvider with ChangeNotifier {
         _notificationProvider?.setUser(_currentUser!.uid);
 
         // FCM 푸시 알림 초기화
-        await FCMService().initialize(_currentUser!.uid);
+        await FCMService().initialize(_currentUser!.uid, isAdmin: _currentUser!.isAdmin);
         if (_disposed) return;
 
         // 하위 관리자이면 권한 로드

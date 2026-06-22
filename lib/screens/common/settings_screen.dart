@@ -230,7 +230,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           if (mounted) setState(() => _isLoading = false);
           return;
         }
-        await FCMService().initialize(userId);
+        await FCMService().initialize(userId, isAdmin: userProvider.isAdmin);
         if (!mounted) return;
         ToastHelper.showSuccess('푸시 알림이 활성화되었습니다');
       } else {
@@ -1050,12 +1050,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
             // BUSINESS_ADMIN: 활성 TO/계약 사전 확인
             final currentUser = userProvider.currentUser;
+            final currentBusinessId = currentUser?.businessId;
             if (currentUser?.isBusinessAdmin == true &&
-                currentUser?.businessId != null) {
+                currentBusinessId != null) {
               setModal(() { isLoading = true; errorMsg = null; });
               final activeToSnap = await FirebaseFirestore.instance
                   .collection('tos')
-                  .where('businessId', isEqualTo: currentUser!.businessId)
+                  .where('businessId', isEqualTo: currentBusinessId)
                   .where('status', whereIn: [
                     TOStatus.active, TOStatus.full, TOStatus.scheduled
                   ])

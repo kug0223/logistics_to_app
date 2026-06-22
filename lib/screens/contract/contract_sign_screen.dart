@@ -19,6 +19,7 @@ import '../../utils/toast_helper.dart';
 import '../../widgets/contract/signature_pad_widget.dart';
 import 'contract_pdf_builder.dart';
 import '../../widgets/common/gradient_scaffold.dart';
+import '../common/settings_screen.dart';
 
 /// 계약서 확인 + 서명 화면 (사업주 / 근무자 공용)
 ///
@@ -202,24 +203,35 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
 
   Future<void> _signAsEmployer() async {
     if (!_hasSeal) {
-      // 인감 미등록 안내
       if (!mounted) return;
-      await showDialog(
+      final goToSettings = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text('인감 미등록'),
-          content: const Text('사업장 인감이 등록되어 있지 않습니다.\n설정 > 사업장 설정에서 인감을 먼저 등록해주세요.'),
+          title: const Text('사업주 날인 미등록'),
+          content: const Text('계약서 발송을 위해 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 또는 서명을 먼저 등록해주세요.'),
           actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('취소'),
+            ),
             ElevatedButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('확인'),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('설정으로 이동'),
             ),
           ],
         ),
       );
       // [BUG-수정] CS-M-1: 인감 미등록으로 조기 반환 시 락 해제
       if (mounted) setState(() => _isSigning = false);
+      if (goToSettings == true && mounted) {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const SettingsScreen()),
+        );
+        // 설정에서 날인 등록 후 돌아오면 사업장 정보 새로고침
+        if (mounted) _loadBusinessSeal();
+      }
       return;
     }
     // 인감 등록됨 → 바로 날인

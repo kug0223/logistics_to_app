@@ -244,6 +244,7 @@ class CalendarHelper {
       int toMin(String t) {
         final p = t.split(':');
         if (p.length < 2) return 0;
+        // [특이사항] app.startTime/endTime은 DB에 "HH:mm"으로만 저장 — parse 예외 없음
         return int.parse(p[0]) * 60 + int.parse(p[1]);
       }
       final startMin = toMin(app.startTime);

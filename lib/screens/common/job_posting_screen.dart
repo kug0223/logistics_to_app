@@ -1,3 +1,5 @@
+import 'dart:math' show max;
+
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/services.dart';
@@ -1137,7 +1139,17 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
               Expanded(
                 child: ListView(
                   controller: scrollController,
-                  padding: ResponsiveHelper.cardPadding(context),
+                  padding: () {
+                    final cp = ResponsiveHelper.cardPadding(context);
+                    return EdgeInsets.fromLTRB(
+                      cp.left,
+                      cp.top,
+                      cp.right,
+                      // edge-to-edge 대응: viewPaddingOf는 SafeArea 소비 무관 물리적 인셋.
+                      // max로 SafeArea 정상 동작 시 이중 합산 방지.
+                      max(cp.bottom, MediaQuery.viewPaddingOf(context).bottom),
+                    );
+                  }(),
                   children: [
                     // 헤더: 아이콘 + 업무명
                     Row(

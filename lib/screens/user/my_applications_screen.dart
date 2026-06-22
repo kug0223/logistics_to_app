@@ -7,12 +7,16 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../models/core/application_model.dart';
 import '../../models/core/employment_contract_model.dart';
+import '../../models/core/monthly_review_model.dart';
+import '../../models/core/review_request_model.dart';
 import '../../models/core/to_model.dart';
 import '../../screens/contract/contract_sign_screen.dart';
 import '../../screens/user/user_contracts_screen.dart';
 import '../../screens/common/job_posting_screen.dart';
 import '../../services/contract_service.dart';
 import '../../services/firestore_service.dart';
+import '../../services/monthly_review_service.dart';
+import '../../widgets/dialogs/business_review_dialog.dart';
 import '../../providers/user_provider.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/work_type_icon.dart';
@@ -40,6 +44,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
   List<_ApplicationWithTO> _applications = [];
   Map<String, EmploymentContractModel> _contractMap = {};
+  Map<String, MonthlyReviewModel?> _reviewMap = {};
 
   bool _isLoading = true;
   bool _isLoadingMore = false;
@@ -66,6 +71,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   void _onScroll() {
     if (_scrollController.position.pixels >=
             _scrollController.position.maxScrollExtent - 200 &&
+        !_isLoading &&
         !_isLoadingMore &&
         _hasMore) {
       _loadMore();
@@ -97,13 +103,19 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       final items = page['items'] as List<ApplicationModel>;
       final appWithTOs = await _attachTOInfo(items);
 
-      // 계약서 로드
-      final contractMap = await _loadContracts(uid, appWithTOs);
+      // 계약서 · 리뷰 병렬 로드
+      final results = await Future.wait([
+        _loadContracts(uid, appWithTOs),
+        _loadWrittenReviews(uid, appWithTOs),
+      ]);
+      final contractMap = results[0] as Map<String, EmploymentContractModel>;
+      final reviewMap = results[1] as Map<String, MonthlyReviewModel?>;
 
       if (mounted) {
         setState(() {
           _applications = appWithTOs;
           _contractMap = contractMap;
+          _reviewMap = reviewMap;
           _lastDoc = page['lastDoc'] as DocumentSnapshot?;
           _hasMore = page['hasMore'] as bool;
           _isLoading = false;
@@ -132,12 +144,19 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       final items = page['items'] as List<ApplicationModel>;
       final appWithTOs = await _attachTOInfo(items);
       // 신규 확정 지원서에 대한 계약서만 추가 로드
-      final newContracts = await _loadContracts(uid, appWithTOs);
+      // [특이사항] Future.wait — 한 쪽 실패 시 다른 쪽 결과 유실; outer catch가 에러 처리하므로 허용
+      final moreResults = await Future.wait([
+        _loadContracts(uid, appWithTOs),
+        _loadWrittenReviews(uid, appWithTOs),
+      ]);
+      final newContracts = moreResults[0] as Map<String, EmploymentContractModel>;
+      final newReviews = moreResults[1] as Map<String, MonthlyReviewModel?>;
 
       if (mounted) {
         setState(() {
           _applications = [..._applications, ...appWithTOs];
           _contractMap = {..._contractMap, ...newContracts};
+          _reviewMap = {..._reviewMap, ...newReviews};
           _lastDoc = page['lastDoc'] as DocumentSnapshot?;
           _hasMore = page['hasMore'] as bool;
           _isLoadingMore = false;
@@ -185,6 +204,44 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     if (!hasConfirmed) return {};
     final contracts = await _contractService.getByWorker(uid);
     return {for (final c in contracts) c.applicationId: c};
+  }
+
+  /// 과거 확정 지원서의 내가 쓴 사업장 리뷰 병렬 조회
+  Future<Map<String, MonthlyReviewModel?>> _loadWrittenReviews(
+    String uid,
+    List<_ApplicationWithTO> items,
+  ) async {
+    final relevant = items.where((item) {
+      final app = item.application;
+      if (app.status != AppStatus.confirmed) return false;
+      final rd = _reviewDate(app);
+      return rd.isBefore(DateTime.now());
+    }).toList();
+
+    if (relevant.isEmpty) return {};
+
+    final entries = await Future.wait(relevant.map((item) async {
+      final app = item.application;
+      final rd = _reviewDate(app);
+      final key = MonthlyReviewModel.generateKeyForBusiness(
+        businessId: app.businessId,
+        reviewerId: uid,
+        year: rd.year,
+        month: rd.month,
+      );
+      final review = await MonthlyReviewService().getReviewById(key);
+      return MapEntry(app.id, review);
+    }));
+
+    return Map.fromEntries(entries);
+  }
+
+  /// 리뷰 기준일: 단기=근무일, 장기=종료일
+  DateTime _reviewDate(ApplicationModel app) {
+    if (app.isLongTermApplication) {
+      return app.actualResignDate ?? app.workEndDate ?? app.workDate;
+    }
+    return app.workDate;
   }
 
   List<_ApplicationWithTO> get _filteredApplications {
@@ -464,6 +521,9 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                 if (app.status == AppStatus.confirmed ||
                     app.status == AppStatus.contractPending)
                   _buildContractSection(app),
+
+                // 과거 확정 근무 → 리뷰 섹션
+                _buildReviewSection(app),
               ],
             ),
           ),
@@ -875,6 +935,144 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     );
     // 서명 완료 후 화면 갱신
     if (mounted) _loadApplications();
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 리뷰 섹션
+  // ═══════════════════════════════════════════════════════════
+
+  Widget _buildReviewSection(ApplicationModel app) {
+    if (app.status != AppStatus.confirmed) return const SizedBox.shrink();
+    final rd = _reviewDate(app);
+    if (rd.isAfter(DateTime.now())) return const SizedBox.shrink();
+
+    final review = _reviewMap[app.id];
+    if (review != null) return _buildWrittenReviewBadge(review);
+
+    final withinWindow = DateTime.now().isBefore(rd.add(const Duration(days: 14)));
+    if (withinWindow) return _buildWriteReviewButton(app, rd);
+
+    return const SizedBox.shrink();
+  }
+
+  Widget _buildWrittenReviewBadge(MonthlyReviewModel review) {
+    return Container(
+      margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 10)),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 8),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.grey50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.grey200),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.rate_review,
+              size: ResponsiveHelper.iconSize(context, 14),
+              color: AppColors.grey500),
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+          Text(
+            '내 리뷰 작성 완료',
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600)
+                .copyWith(fontWeight: FontWeight.w600),
+          ),
+          const Spacer(),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: List.generate(
+              5,
+              (i) => Icon(
+                i < review.rating ? Icons.star_rounded : Icons.star_border_rounded,
+                size: ResponsiveHelper.iconSize(context, 12),
+                color: AppColors.amber,
+              ),
+            ),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+          Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 6),
+              vertical: ResponsiveHelper.spacing(context, 2),
+            ),
+            decoration: BoxDecoration(
+              color: review.isPublished ? AppColors.successBg : AppColors.grey100,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              review.isPublished ? '공개됨' : '검토 중',
+              style: ResponsiveHelper.tinyStyle(
+                context,
+                color: review.isPublished ? AppColors.successDark : AppColors.grey500,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWriteReviewButton(ApplicationModel app, DateTime reviewDate) {
+    return Container(
+      margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 10)),
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: () => _openReviewDialog(app, reviewDate),
+        icon: Icon(Icons.rate_review_outlined,
+            size: ResponsiveHelper.iconSize(context, 16)),
+        label: Text('사업장 리뷰 작성',
+            style: ResponsiveHelper.smallStyle(context)),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: Theme.of(context).primaryColor,
+          side: BorderSide(
+              color: Theme.of(context).primaryColor.withValues(alpha: 0.5)),
+          padding:
+              EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 8)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openReviewDialog(ApplicationModel app, DateTime reviewDate) async {
+    final uid =
+        Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
+    if (uid == null) return;
+
+    final requestKey = ReviewRequestModel.generateKey(
+      businessId: app.businessId,
+      workerId: uid,
+      year: reviewDate.year,
+      month: reviewDate.month,
+    );
+    final reviewRequest =
+        await MonthlyReviewService().getReviewRequest(requestKey);
+    if (!mounted) return;
+
+    final result = await showBusinessReviewDialog(
+      context,
+      reviewerId: uid,
+      businessId: app.businessId,
+      businessName: app.businessName,
+      reviewYear: reviewDate.year,
+      reviewMonth: reviewDate.month,
+      workDaysInMonth: 1,
+      requestId: reviewRequest?.id,
+    );
+
+    if (result == true && mounted) {
+      final key = MonthlyReviewModel.generateKeyForBusiness(
+        businessId: app.businessId,
+        reviewerId: uid,
+        year: reviewDate.year,
+        month: reviewDate.month,
+      );
+      final review = await MonthlyReviewService().getReviewById(key);
+      if (!mounted) return;
+      setState(() => _reviewMap[app.id] = review);
+    }
   }
 
   // ═══════════════════════════════════════════════════════════

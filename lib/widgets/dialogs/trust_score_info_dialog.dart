@@ -223,13 +223,17 @@ class TrustScoreInfoDialog extends StatelessWidget {
           theme.primaryColor.withValues(alpha: 0.05),
           theme.primaryColor.withValues(alpha: 0.2),
           [
-            _buildBadgeRow(context, '🥉', '브론즈', '신뢰도 60점 + 근무 5일 이상'),
+            _buildBadgeRow(context, '🥉', '브론즈', '신뢰도 60점 + 근무 5일 이상',
+              benefit: '신뢰도 인증 근무자로 관리자 목록에 배지 표시'),
             Divider(height: ResponsiveHelper.spacing(context, 14)),
-            _buildBadgeRow(context, '🥈', '실버', '70점 + 20일 · 노쇼 1회 이하'),
+            _buildBadgeRow(context, '🥈', '실버', '70점 + 20일 · 노쇼 1회 이하',
+              benefit: '관리자 목록 강조 표시 · 신뢰도 검증 근무자로 우선 노출'),
             Divider(height: ResponsiveHelper.spacing(context, 14)),
-            _buildBadgeRow(context, '🥇', '골드', '85점 + 50일 · 노쇼 없음'),
+            _buildBadgeRow(context, '🥇', '골드', '85점 + 50일 · 노쇼 없음',
+              benefit: '자동확정 공고 지원 가능 · 재고용 시 우선 채팅 알림'),
             Divider(height: ResponsiveHelper.spacing(context, 14)),
-            _buildBadgeRow(context, '💎', '다이아', '95점 + 100일 · 평점 4.5+ · 노쇼 없음'),
+            _buildBadgeRow(context, '💎', '다이아', '95점 + 100일 · 평점 4.5+ · 노쇼 없음',
+              benefit: '자동확정 공고 우선 배정 · 단골 사업장 빠른 매칭 · 최고 등급 인증'),
           ],
         ),
 
@@ -240,9 +244,11 @@ class TrustScoreInfoDialog extends StatelessWidget {
           AppColors.purple.withValues(alpha: 0.05),
           AppColors.purple.withValues(alpha: 0.2),
           [
-            _buildBadgeRow(context, '⭐', '베테랑', '총 근무 100일 이상'),
+            _buildBadgeRow(context, '⭐', '베테랑', '총 근무 100일 이상',
+              benefit: '100일 근무 경력 공식 인증 · 이력서에 경험 배지 표시'),
             Divider(height: ResponsiveHelper.spacing(context, 14)),
-            _buildBadgeRow(context, '👑', '마스터', '총 근무 200일 이상'),
+            _buildBadgeRow(context, '👑', '마스터', '총 근무 200일 이상',
+              benefit: '200일 장기 근무 최고 경험 배지 · 플랫폼 최우수 경력자 인증'),
           ],
         ),
 
@@ -253,11 +259,14 @@ class TrustScoreInfoDialog extends StatelessWidget {
           AppColors.success.withValues(alpha: 0.05),
           AppColors.success.withValues(alpha: 0.2),
           [
-            _buildBadgeRow(context, '🎯', '근태 우수', '지각 없이 15회 연속 근무'),
+            _buildBadgeRow(context, '🔥', '연속 출근', '지각 없이 15회 연속 근무',
+              benefit: '꾸준한 근무 습관 보유자 표시 · 성실 근태 인증'),
             Divider(height: ResponsiveHelper.spacing(context, 14)),
-            _buildBadgeRow(context, '⏱️', '시간 마스터', '지각 없이 30회 연속 근무'),
+            _buildBadgeRow(context, '⏰', '시간의 달인', '지각 없이 30회 연속 근무',
+              benefit: '정시 출근 전문가 공식 인증 · 지각 이력 무결 증명'),
             Divider(height: ResponsiveHelper.spacing(context, 14)),
-            _buildBadgeRow(context, '📅', '만근 달성', '한 달 신청 TO 100% 출근'),
+            _buildBadgeRow(context, '🎯', '퍼펙트 출근', '한 달 신청 공고 100% 출근',
+              benefit: '월간 만근 인증 · 성실 근무자 상징 배지'),
           ],
         ),
 
@@ -269,9 +278,16 @@ class TrustScoreInfoDialog extends StatelessWidget {
           AppColors.info.withValues(alpha: 0.2),
           [
             _buildBadgeRow(
-              context, '📦', '업종 전문',
-              '특정 업무(피킹·상하차·검수·패킹)\n동일 업무 30일 이상 근무 시 획득',
-            ),
+              context, '📦', '피킹 전문가', '피킹 업무 30일 이상 근무',
+              benefit: '피킹 업무 실력 공식 인증 · 동종 공고 우선 표시'),
+            Divider(height: ResponsiveHelper.spacing(context, 14)),
+            _buildBadgeRow(
+              context, '🏋️', '상하차 전문가', '상하차 업무 30일 이상 근무',
+              benefit: '상하차 업무 실력 공식 인증 · 동종 공고 우선 표시'),
+            Divider(height: ResponsiveHelper.spacing(context, 14)),
+            _buildBadgeRow(
+              context, '🔍', '검수 전문가', '검수 업무 30일 이상 근무',
+              benefit: '검수 업무 실력 공식 인증 · 꼼꼼한 품질 관리 역량 증명'),
           ],
         ),
       ],
@@ -444,13 +460,14 @@ class TrustScoreInfoDialog extends StatelessWidget {
     );
   }
 
-  /// 배지 행 (이름 + 달성 조건)
+  /// 배지 행 (이름 + 달성 조건 + 혜택)
   Widget _buildBadgeRow(
     BuildContext context,
     String emoji,
     String name,
-    String condition,
-  ) {
+    String condition, {
+    String? benefit,
+  }) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -475,6 +492,25 @@ class TrustScoreInfoDialog extends StatelessWidget {
                 condition,
                 style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
               ),
+              if (benefit != null) ...[
+                SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '✓ ',
+                      style: ResponsiveHelper.tinyStyle(context, color: AppColors.amber)
+                          .copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    Expanded(
+                      child: Text(
+                        benefit,
+                        style: ResponsiveHelper.tinyStyle(context, color: AppColors.amber),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),

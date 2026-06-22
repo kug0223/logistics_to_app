@@ -35,6 +35,8 @@ class UserModel {
   final String? foreignIdNumber;        // 외국인등록번호 (암호화 저장, 외국인 전용)
   // 'active' | 'pending' | 'rejected' — 외국인은 가입 후 pending, 슈퍼관리자 승인 시 active
   final String accountStatus;
+  // CF rejectForeignWorker가 저장하는 필드명('rejectionReason')과 반드시 일치해야 함
+  final String? rejectionReason;
 
   // ── 신분증 정보 ──
   final String? idCardImageUrl;         // 신분증 앞면 이미지 URL
@@ -112,6 +114,7 @@ class UserModel {
     this.passVerifiedAt,
     this.foreignIdNumber,
     this.accountStatus = 'active',
+    this.rejectionReason,
     // 신규 필드
     this.gender,
     this.birthDate,
@@ -178,7 +181,8 @@ class UserModel {
   bool get isForeign => foreignIdNumber != null;
 
   /// PASS 인증 완료 여부 (내국인)
-  bool get isPassVerified => ci != null && passVerifiedAt != null;
+  /// SUPER_ADMIN은 시스템 계정이므로 항상 true
+  bool get isPassVerified => isSuperAdmin || (ci != null && passVerifiedAt != null);
 
   /// 가입 승인 대기 중 (외국인)
   bool get isPending => accountStatus == 'pending';
@@ -269,6 +273,7 @@ class UserModel {
       passVerifiedAt: _parseDateTime(map['passVerifiedAt']),
       foreignIdNumber: EncryptionHelper.decrypt(map['foreignIdNumber']),
       accountStatus: map['accountStatus'] ?? 'active',
+      rejectionReason: map['rejectionReason'] as String?,
       // 신규 필드
       gender: map['gender'],
       birthDate: map['birthDate']?.toDate().toLocal(),
@@ -343,6 +348,7 @@ class UserModel {
       'passVerifiedAt': passVerifiedAt != null ? Timestamp.fromDate(passVerifiedAt!) : null,
       'foreignIdNumber': EncryptionHelper.encrypt(foreignIdNumber),
       'accountStatus': accountStatus,
+      'rejectionReason': rejectionReason,
       'idCardImageUrl': idCardImageUrl,
       'idCardVerifiedAt': idCardVerifiedAt != null
           ? Timestamp.fromDate(idCardVerifiedAt!)
@@ -430,6 +436,7 @@ class UserModel {
     DateTime? passVerifiedAt,
     String? foreignIdNumber,
     String? accountStatus,
+    String? rejectionReason,
     String? businessId,
     List<String>? managedBusinessIds,
     DateTime? createdAt,
@@ -490,6 +497,7 @@ class UserModel {
       passVerifiedAt: passVerifiedAt ?? this.passVerifiedAt,
       foreignIdNumber: foreignIdNumber ?? this.foreignIdNumber,
       accountStatus: accountStatus ?? this.accountStatus,
+      rejectionReason: rejectionReason ?? this.rejectionReason,
       businessId: businessId ?? this.businessId,
       managedBusinessIds: managedBusinessIds ?? this.managedBusinessIds,
       createdAt: createdAt ?? this.createdAt,

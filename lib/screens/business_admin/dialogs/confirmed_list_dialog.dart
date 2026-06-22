@@ -294,7 +294,11 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
         ..._confirmedByWork.entries.map((entry) {
           final groupKey = entry.key;
           final workers = entry.value;
-          
+
+          // [특이사항] TO의 workDetails가 비어있으면 .first 호출 시 StateError 크래시.
+          // TO 생성 직후 workDetails 저장 전 or 전체 삭제된 경우 발생 가능.
+          if (widget.toItem.workDetails.isEmpty) return const SizedBox.shrink();
+
           // compositeId(신규) → legacyId(구) → workType → 첫 번째 순으로 폴백
           final workDetail = widget.toItem.workDetails.firstWhere(
             (w) => w.id == groupKey,
@@ -819,6 +823,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
         final statsKey = (wdId != null && wdId.isNotEmpty && wdId != application.selectedWorkType)
             ? wdId  // 신규 compositeId
             : '${application.selectedWorkType}_${application.startTime}_${application.endTime}';
+        // [특이사항] 위 ??= {} 로 workDetailStats가 non-null 보장됨 — ! 안전
         final stats = widget.toItem.workDetailStats![statsKey];
         if (stats != null) {
           stats['confirmed'] = ((stats['confirmed'] ?? 0) - 1).clamp(0, 9999);

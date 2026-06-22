@@ -477,6 +477,7 @@ class MonthlyReviewService {
               'normalDays': 0,
               'lateDays': 0,
             });
+        // [특이사항] putIfAbsent 직후 접근 — workerMap[uid]와 'workDays' 키 모두 보장, ! 안전
         workerMap[uid]!['workDays'] =
             (workerMap[uid]!['workDays'] as int) + 1;
       }
@@ -810,6 +811,35 @@ class MonthlyReviewService {
       );
     } catch (e) {
       debugPrint('❌ 근무자 리뷰 페이지 조회 실패: $e');
+      return const ReviewPage(records: [], cursor: null, hasMore: false);
+    }
+  }
+
+  /// 지원자 본인이 받은 모든 리뷰 (공개 여부 무관) — 페이지네이션
+  /// 인덱스: (targetUserId, reviewType, createdAt DESC) — firestore.indexes.json에 존재
+  Future<ReviewPage<MonthlyReviewModel>> getAllReviewsForUserPaged({
+    required String targetUserId,
+    DocumentSnapshot? startAfter,
+    int pageSize = 30,
+  }) async {
+    try {
+      Query<Map<String, dynamic>> q = _db
+          .collection('monthly_reviews')
+          .where('targetUserId', isEqualTo: targetUserId)
+          .where('reviewType', isEqualTo: ReviewType.ADMIN_TO_USER.name)
+          .orderBy('createdAt', descending: true)
+          .limit(pageSize + 1);
+      if (startAfter != null) q = q.startAfterDocument(startAfter);
+      final snap = await q.get();
+      final hasMore = snap.docs.length > pageSize;
+      final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
+      return ReviewPage(
+        records: docs.map(MonthlyReviewModel.fromFirestore).toList(),
+        cursor: docs.isNotEmpty ? docs.last : null,
+        hasMore: hasMore,
+      );
+    } catch (e) {
+      debugPrint('❌ 근무자 전체 리뷰 조회 실패: $e');
       return const ReviewPage(records: [], cursor: null, hasMore: false);
     }
   }

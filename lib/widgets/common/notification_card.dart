@@ -141,6 +141,7 @@ class NotificationCard extends StatelessWidget {
       case NotificationType.workCanceled:
         return Icons.event_busy;
       case NotificationType.reviewReceived:
+      case NotificationType.reviewRequest:
         return Icons.star;
       case NotificationType.scheduleChangeRequested:
         return Icons.edit_calendar;
@@ -246,6 +247,7 @@ class NotificationCard extends StatelessWidget {
       case NotificationType.retroactiveDeductionAlert:
         return AppColors.warning;
       case NotificationType.reviewReceived:
+      case NotificationType.reviewRequest:
         return AppColors.amber;
       case NotificationType.workReminder:
       case NotificationType.idCardAccessExpiringSoon:

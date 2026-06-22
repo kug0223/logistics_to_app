@@ -1,3 +1,5 @@
+import 'dart:math' show max;
+
 import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 import '../utils/responsive_helper.dart';
@@ -337,7 +339,9 @@ class _AppSelectSheetState<T> extends State<_AppSelectSheet<T>> {
                   ),
           ),
 
-          const SizedBox(height: 8),
+          // edge-to-edge 대응: viewPaddingOf는 SafeArea 소비 무관 물리적 인셋.
+          // max로 SafeArea 정상 동작 시 이중 합산 방지.
+          SizedBox(height: max(8.0, MediaQuery.viewPaddingOf(context).bottom)),
         ],
       ),
     );

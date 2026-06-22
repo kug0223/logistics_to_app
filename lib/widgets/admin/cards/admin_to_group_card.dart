@@ -1203,7 +1203,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
 
       case 'batchClose':
         // uid는 await 이전에 캡처 (async gap 후 context 접근 방지)
-        final closeUid = context.read<UserProvider>().currentUser?.uid ?? '';
+        final closeUid = context.read<UserProvider>().currentUser?.uid ?? 'UNKNOWN';
         final closeSlots = await SlotBatchSelectDialog.show(
           context: context,
           to: masterTO,
@@ -1248,7 +1248,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
         break;
 
       case 'batchReopen':
-        final reopenUid = context.read<UserProvider>().currentUser?.uid ?? '';
+        final reopenUid = context.read<UserProvider>().currentUser?.uid ?? 'UNKNOWN';
         final reopenSlots = await SlotBatchSelectDialog.show(
           context: context,
           to: masterTO,

@@ -1,3 +1,7 @@
+# API 키 파일 (절대 커밋 금지)
+dart_defines.json
+scripts/*.json
+
 # Miscellaneous
 *.class
 *.log

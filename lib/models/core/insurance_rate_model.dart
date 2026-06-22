@@ -51,6 +51,10 @@ class InsuranceRateModel {
   /// - 건강보험: 7.19% × 1/2 = 3.595%
   /// - 장기요양: 장기요양료율(0.9448%) ÷ 건강보험료율(7.19%) × 100 = 13.14%
   /// - 고용보험: 1.8% × 1/2 = 0.9% (2025년과 동일)
+  ///
+  /// [특이사항] 매년 1월 보건복지부·고용노동부 고시 개정 시 이 값을 갱신해야 함.
+  /// Firestore settings/wage_config.insuranceRates에 연도별 값을 설정하면 자동 반영되고
+  /// 이 factory는 네트워크 오류 시 폴백으로만 사용됨.
   factory InsuranceRateModel.defaults2026() => const InsuranceRateModel(
         year: 2026,
         nationalPensionRate: 4.75,

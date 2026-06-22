@@ -1,5 +1,6 @@
 ﻿// lib/widgets/dialogs/worker_detail_dialog.dart
 // 공통 근무자/지원자 상세 다이얼로그
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -104,6 +105,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   String? _workTime;  // 🔥 근무 시간 (장기용)
   List<ReviewModel> _recentReviews = [];
   IdCardAccessRequestModel? _idCardAccess;
+  // [특이사항] 다이얼로그가 열린 상태에서 신분증 열람 권한이 만료/철회되어도 UI에 반영되지 않는 문제.
+  // 60초마다 Firestore 재조회로 만료(시간 경과)·철회(상태 변경) 모두 감지한다.
+  Timer? _accessRefreshTimer;
   bool _hasAttendance = false;  // ✅ 출퇴근 기록 여부 (장기 확정자용)
   bool? _hasWrittenReview;     // 리뷰 작성 여부 (null=미확인)
   EmploymentContractModel? _contract;
@@ -175,11 +179,34 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       _hasWrittenReview = results[5] as bool?;
       _contract = results[6] as EmploymentContractModel?;
 
+      if (_idCardAccess?.isValidAccess == true) _startAccessRefreshTimer();
+
       if (mounted) setState(() => _isLoading = false);
     } catch (e) {
       debugPrint('❌ 추가 데이터 로드 실패: $e');
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  void _startAccessRefreshTimer() {
+    _accessRefreshTimer?.cancel();
+    _accessRefreshTimer = Timer.periodic(const Duration(seconds: 60), (_) async {
+      if (!mounted) return;
+      final currentUserId = context.read<UserProvider>().currentUser?.uid ?? '';
+      final updated = await _firestoreService.checkIdCardAccess(
+        requesterId: currentUserId,
+        targetUserId: widget.user.uid,
+      );
+      if (!mounted) return;
+      setState(() => _idCardAccess = updated);
+      if (updated?.isValidAccess != true) _accessRefreshTimer?.cancel();
+    });
+  }
+
+  @override
+  void dispose() {
+    _accessRefreshTimer?.cancel();
+    super.dispose();
   }
 
   Future<String?> _fetchWorkTime(ApplicationModel app) async {
@@ -1110,7 +1137,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                         ),
                       ),
                       Text(
-                        '${_idCardAccess!.remainingDays}일 후 만료',
+                        '${_idCardAccess!.remainingDays ?? 0}일 후 만료',
                         style: ResponsiveHelper.smallStyle(context, color: AppColors.success),
                       ),
                     ],
@@ -1745,6 +1772,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           .collection('applications')
           .doc(app.id)
           .get(const GetOptions(source: Source.server));
+      // 승인 처리 직후 문서가 삭제된 경쟁 상태 방어 (catch(e)로 에러 토스트 처리됨)
+      if (!freshAppDoc.exists) throw Exception('지원서를 찾을 수 없습니다');
       final freshApp = ApplicationModel.fromMap(freshAppDoc.data()!, freshAppDoc.id);
 
       // findOrCreateContract: 기존 번들 계약서가 있으면 슬롯 추가,
@@ -2155,7 +2184,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       requestId: reviewRequest?.id,
     );
 
-    if (result == true) {
+    if (result == true && mounted) {
       setState(() {
         _hasChanges = true;
         _hasWrittenReview = true;

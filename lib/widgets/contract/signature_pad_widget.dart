@@ -1,4 +1,5 @@
-﻿import 'dart:typed_data';
+﻿import 'dart:math' show max;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:signature/signature.dart';
@@ -182,7 +183,14 @@ class _SignaturePadWidgetState extends State<SignaturePadWidget> {
             ],
           ),
         ),
-        SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+        // edge-to-edge 대응: viewPaddingOf는 SafeArea 소비 무관 물리적 인셋.
+        // max로 SafeArea 정상 동작 시 이중 합산 방지.
+        SizedBox(
+          height: max(
+            ResponsiveHelper.spacing(context, 20),
+            MediaQuery.viewPaddingOf(context).bottom,
+          ),
+        ),
       ],
     );
   }

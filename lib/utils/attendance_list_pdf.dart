@@ -116,7 +116,7 @@ class AttendanceListPdf {
     
     // 중복 로딩 방지
     if (_isLoading) {
-      // 로딩 중이면 완료될 때까지 대기
+      // [특이사항] 다른 호출이 이미 로딩 중 — finally에서 반드시 _isLoading=false 처리, 루프 종료 보장
       while (_isLoading) {
         await Future.delayed(const Duration(milliseconds: 50));
       }

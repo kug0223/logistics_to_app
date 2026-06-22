@@ -103,31 +103,39 @@ extension IdCardFirestore on FirestoreService {
   Future<bool> approveIdCardAccessRequest(String requestId) async {
     try {
       debugPrint('✅ [approveIdCardAccessRequest] 승인: $requestId');
-      
+
       final docRef = _firestore.collection('idCardAccessRequests').doc(requestId);
-      final doc = await docRef.get();
-      
-      if (!doc.exists) {
-        debugPrint('❌ 요청을 찾을 수 없습니다');
+      Map<String, dynamic>? requestData;
+
+      // [특이사항] 관리자 2명이 동시에 승인 버튼을 탭하면 get→update 사이에 두 번째 get이
+      // 끼어들어 알림 2건 발송 + expiresAt 충돌이 발생할 수 있음.
+      // 트랜잭션으로 처리: pending 상태일 때만 approved로 전환 (이미 처리된 경우 false 반환).
+      final wasApproved = await _firestore.runTransaction<bool>((tx) async {
+        final doc = await tx.get(docRef);
+        if (!doc.exists) return false;
+        if (doc.data()?['status'] != 'pending') return false;
+
+        final expiresAt = DateTime.now().add(const Duration(days: 7));
+        tx.update(docRef, {
+          'status': 'approved',
+          'respondedAt': FieldValue.serverTimestamp(),
+          'expiresAt': Timestamp.fromDate(expiresAt),
+        });
+        requestData = Map.from(doc.data()!);
+        return true;
+      });
+
+      if (!wasApproved || requestData == null) {
+        debugPrint('⚠️ [approveIdCardAccessRequest] 이미 처리된 요청이거나 찾을 수 없습니다');
         return false;
       }
-      
-      final data = doc.data()!;
-      final expiresAt = DateTime.now().add(const Duration(days: 7));
-      
-      // 1. 요청 상태 업데이트
-      await docRef.update({
-        'status': 'approved',
-        'respondedAt': FieldValue.serverTimestamp(),
-        'expiresAt': Timestamp.fromDate(expiresAt),
-      });
-      
-      // 2. 알림 생성 — 실패해도 승인 결과에 영향 없음
+
+      // 트랜잭션 성공 후 알림 — 실패해도 승인 결과에 영향 없음
       try {
         await createNotification(
           NotificationModel.createIdCardAccessApproved(
-            userId: data['requesterId'],
-            targetUserName: data['targetUserName'],
+            userId: requestData!['requesterId'],
+            targetUserName: requestData!['targetUserName'],
             requestId: requestId,
           ),
         );
@@ -147,30 +155,37 @@ extension IdCardFirestore on FirestoreService {
   Future<bool> rejectIdCardAccessRequest(String requestId, {String? reason}) async {
     try {
       debugPrint('❌ [rejectIdCardAccessRequest] 거절: $requestId');
-      
+
       final docRef = _firestore.collection('idCardAccessRequests').doc(requestId);
-      final doc = await docRef.get();
-      
-      if (!doc.exists) {
-        debugPrint('❌ 요청을 찾을 수 없습니다');
+      Map<String, dynamic>? requestData;
+
+      // [특이사항] approveIdCardAccessRequest와 동일하게 트랜잭션 적용 — 관리자 2명이
+      // 동시에 거절 버튼을 탭하면 중복 알림이 발송될 수 있으므로 pending 상태일 때만 처리.
+      final wasRejected = await _firestore.runTransaction<bool>((tx) async {
+        final doc = await tx.get(docRef);
+        if (!doc.exists) return false;
+        if (doc.data()?['status'] != 'pending') return false;
+
+        tx.update(docRef, {
+          'status': 'rejected',
+          'respondedAt': FieldValue.serverTimestamp(),
+          'rejectionReason': reason,
+        });
+        requestData = Map.from(doc.data()!);
+        return true;
+      });
+
+      if (!wasRejected || requestData == null) {
+        debugPrint('⚠️ [rejectIdCardAccessRequest] 이미 처리된 요청이거나 찾을 수 없습니다');
         return false;
       }
-      
-      final data = doc.data()!;
-      
-      // 1. 요청 상태 업데이트
-      await docRef.update({
-        'status': 'rejected',
-        'respondedAt': FieldValue.serverTimestamp(),
-        'rejectionReason': reason,
-      });
-      
-      // 2. 알림 생성 — 실패해도 거절 결과에 영향 없음
+
+      // 트랜잭션 성공 후 알림 — 실패해도 거절 결과에 영향 없음
       try {
         await createNotification(
           NotificationModel.createIdCardAccessRejected(
-            userId: data['requesterId'],
-            targetUserName: data['targetUserName'],
+            userId: requestData!['requesterId'],
+            targetUserName: requestData!['targetUserName'],
             requestId: requestId,
             rejectionReason: reason,
           ),
@@ -272,25 +287,6 @@ extension IdCardFirestore on FirestoreService {
           .toList();
     } catch (e) {
       debugPrint('❌ 계약해지 요청 조회 실패: $e');
-      return [];
-    }
-  }
-
-  /// 대기 중인 신분증 열람 요청 조회 (지원자용)
-  Future<List<IdCardAccessRequestModel>> getPendingIdCardRequests(String userId) async {
-    try {
-      final snapshot = await _firestore
-          .collection('idCardAccessRequests')
-          .where('targetUserId', isEqualTo: userId)
-          .where('status', isEqualTo: 'pending')
-          .orderBy('requestedAt', descending: true)
-          .get();
-      
-      return snapshot.docs
-          .map((doc) => IdCardAccessRequestModel.fromFirestore(doc))
-          .toList();
-    } catch (e) {
-      debugPrint('❌ 대기 요청 조회 실패: $e');
       return [];
     }
   }

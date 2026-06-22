@@ -112,9 +112,9 @@ class HelpScreen extends StatelessWidget {
   ];
 
   static final _adminFaqs = [
-    _FaqItem.header('📢 TO 등록 & 관리'),
+    _FaqItem.header('📢 공고 등록 & 관리'),
     _FaqItem(
-      question: 'TO는 어떻게 등록하나요?',
+      question: '공고는 어떻게 등록하나요?',
       answer: '홈 → "공고 등록"을 누르고 업종·날짜·시간·필요 인원을 입력한 뒤 '
           '"공개"를 누르면 즉시 지원자를 받을 수 있습니다. '
           '미리 저장 후 나중에 공개하는 것도 가능합니다.',
@@ -126,7 +126,7 @@ class HelpScreen extends StatelessWidget {
     ),
     _FaqItem(
       question: '지원자를 어떻게 확정하나요?',
-      answer: '"공고 관리" → 해당 TO → 지원자 목록에서 원하는 지원자의 '
+      answer: '"공고 관리" → 해당 공고 → 지원자 목록에서 원하는 지원자의 '
           '"확정" 버튼을 누르세요. 확정 후 자동으로 근로계약서 서명 요청이 발송됩니다.',
     ),
     _FaqItem.header('📋 계약서'),
@@ -144,7 +144,7 @@ class HelpScreen extends StatelessWidget {
     _FaqItem.header('📅 당일 출퇴근 관리'),
     _FaqItem(
       question: '당일명단은 어디서 보나요?',
-      answer: '"공고 관리" → 해당 날짜 TO → "당일명단" 버튼을 누르세요. '
+      answer: '"공고 관리" → 해당 날짜 공고 → "당일명단" 버튼을 누르세요. '
           '실시간 출퇴근 현황, 지각·조퇴·노쇼 현황을 한눈에 볼 수 있습니다.',
     ),
     _FaqItem(

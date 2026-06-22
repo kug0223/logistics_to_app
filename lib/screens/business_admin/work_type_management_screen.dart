@@ -154,7 +154,9 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
         (wt) => wt.id == newId,
         orElse: () => BusinessWorkTypeModel(
           id: newId,
-          businessId: _selectedBusiness!.id,
+          // [특이사항] orElse 람다는 _loadWorkTypes await 이후 실행되므로
+          // 드물게 _selectedBusiness가 null일 수 있음 → ?.id ?? '' 방어
+          businessId: _selectedBusiness?.id ?? '',
           name: result['name'] as String,
           icon: (result['icon'] as String?) ?? '',
           color: result['iconColor'] as String? ?? '#FFFFFF',
@@ -224,7 +226,9 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 
   /// ✨ 세련된 삭제 확인 다이얼로그
   Future<void> _confirmDelete(BusinessWorkTypeModel workType) async {
-    if (_selectedBusiness == null) return;
+    // [특이사항] _selectedBusiness를 로컬 변수로 캡처 — async gap 사이 상태 변경 방어
+    final business = _selectedBusiness;
+    if (business == null) return;
 
     // [P-01] whereIn 30개 제한 분석:
     // whereIn 대상이 status 값 3개(active/full/scheduled)로 고정 — 제한 미해당.
@@ -232,7 +236,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     // 향후 업무유형 수가 늘어도 이 쿼리 구조상 whereIn 제한 이슈 발생하지 않음.
     final activeTOSnap = await FirebaseFirestore.instance
         .collection('tos')
-        .where('businessId', isEqualTo: _selectedBusiness!.id)
+        .where('businessId', isEqualTo: business.id)
         .where('status', whereIn: [TOStatus.active, TOStatus.full, TOStatus.scheduled])
         .get();
 

@@ -1,4 +1,5 @@
 ﻿import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -15,7 +16,12 @@ import '../../utils/toast_helper.dart';
 import '../../widgets/common/loading_widget.dart';
 
 // Services
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../services/auth_service.dart';
+import '../../services/pass_verification_service.dart';
+
+// Widgets
+import '../../widgets/auth/pass_auth_button.dart';
 
 // Screens
 import 'register_screen.dart';
@@ -36,6 +42,7 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _obscurePassword = true;
 
   final _authService = AuthService();
+  final _auth = FirebaseAuth.instance;
   final _fn = FirebaseFunctions.instanceFor(region: 'asia-northeast3');
 
   final _usernameFocus = FocusNode();
@@ -266,22 +273,19 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _showFindPasswordDialog() async {
     final usernameController = TextEditingController();
-    final emailController = TextEditingController();
-    final codeController = TextEditingController();
     final newPasswordController = TextEditingController();
     final confirmPasswordController = TextEditingController();
     final usernameFocus = FocusNode();
-    final emailFocus = FocusNode();
-    final codeFocus = FocusNode();
     final newPasswordFocus = FocusNode();
     final confirmPasswordFocus = FocusNode();
 
-    // 0: 아이디+이메일 입력, 1: 인증코드+새비밀번호 입력, 2: 완료
+    // 0: 아이디 + PASS 인증, 1: 새 비밀번호 입력, 2: 완료
     int step = 0;
-    bool isSending = false;
+    bool isAuthenticating = false;
     bool isChanging = false;
     bool obscureNew = true;
     bool obscureConfirm = true;
+    String? customToken;
 
     await showModalBottomSheet(
       context: context,
@@ -290,46 +294,56 @@ class _LoginScreenState extends State<LoginScreen> {
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => StatefulBuilder(
         builder: (ctx, setSheetState) {
-          Future<void> sendCode() async {
-            if (usernameController.text.isEmpty) {
+          // PASS 인증 → CF resetPasswordWithPass → customToken 확보 → step 1
+          //
+          // [운영 전제] 내국인 가입 시 ciHash가 Firestore에 저장되어 있어야 CI 매칭 성공.
+          // [TODO-DANAL] 다날 계약 후 가입 흐름에서 passToken → ciHash 저장 경로 구현 필요.
+          Future<void> doPassAuth() async {
+            if (usernameController.text.trim().isEmpty) {
               ToastHelper.showWarning('아이디를 입력해주세요');
               usernameFocus.requestFocus();
               return;
             }
-            if (emailController.text.isEmpty || !emailController.text.contains('@')) {
-              ToastHelper.showWarning('올바른 이메일을 입력해주세요');
-              emailFocus.requestFocus();
-              return;
-            }
-            setSheetState(() => isSending = true);
+            setSheetState(() => isAuthenticating = true);
             try {
-              await _fn.httpsCallable('sendPasswordResetCode').call({
+              final passResult = await PassVerificationService.authenticate(
+                purpose: 'resetPassword',
+              );
+              if (!ctx.mounted) return;
+              if (passResult == null) {
+                setSheetState(() => isAuthenticating = false);
+                return; // 사용자가 인증 취소
+              }
+
+              // debug 모드: mock passToken은 Firestore passTokens에 없으므로 CF 호출 시 not-found.
+              // UX 흐름만 테스트하기 위해 건너뜀. 실제 비밀번호는 변경되지 않음.
+              if (kDebugMode) {
+                setSheetState(() { isAuthenticating = false; step = 1; });
+                Future.delayed(const Duration(milliseconds: 300), () => newPasswordFocus.requestFocus());
+                return;
+              }
+
+              final result = await _fn.httpsCallable('resetPasswordWithPass').call({
+                'passToken': passResult.passToken,
                 'username': usernameController.text.trim(),
-                'email': emailController.text.trim(),
               });
               if (!ctx.mounted) return;
-              setSheetState(() { isSending = false; step = 1; });
-              ToastHelper.showSuccess('인증번호가 이메일로 발송되었습니다 (5분 유효)');
-              Future.delayed(const Duration(milliseconds: 300), () => codeFocus.requestFocus());
+              customToken = result.data['customToken'] as String?;
+              setSheetState(() { isAuthenticating = false; step = 1; });
+              Future.delayed(const Duration(milliseconds: 300), () => newPasswordFocus.requestFocus());
             } on FirebaseFunctionsException catch (e) {
               if (!ctx.mounted) return;
-              setSheetState(() => isSending = false);
-              ToastHelper.showError(e.message ?? '인증번호 발송에 실패했습니다');
+              setSheetState(() => isAuthenticating = false);
+              ToastHelper.showError(e.message ?? '본인인증에 실패했습니다');
             } catch (e) {
-              debugPrint('❌ 비밀번호 찾기 인증번호 발송 실패: $e');
               if (!ctx.mounted) return;
-              setSheetState(() => isSending = false);
+              setSheetState(() => isAuthenticating = false);
               ToastHelper.showError('오류가 발생했습니다. 다시 시도해주세요');
             }
           }
 
+          // Custom Token으로 재로그인 → 비밀번호 변경
           Future<void> resetPassword() async {
-            if (codeController.text.length != 6) {
-              ToastHelper.showWarning('6자리 인증번호를 입력해주세요');
-              codeFocus.requestFocus();
-              return;
-            }
-            // 비밀번호 정책: 8자 이상 + 영문 + 숫자 + 특수문자 (회원가입 기준과 동일)
             final pw = newPasswordController.text;
             final pwRegex = RegExp(r'^(?=.*[a-zA-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>]).{8,}$');
             if (!pwRegex.hasMatch(pw)) {
@@ -337,29 +351,35 @@ class _LoginScreenState extends State<LoginScreen> {
               newPasswordFocus.requestFocus();
               return;
             }
-            if (newPasswordController.text != confirmPasswordController.text) {
+            if (pw != confirmPasswordController.text) {
               ToastHelper.showWarning('비밀번호가 일치하지 않습니다');
               confirmPasswordFocus.requestFocus();
               return;
             }
+            // debug 모드: signInWithCustomToken 인자로 실제 토큰이 없으므로 Firebase Auth 호출 불가.
+            // 비밀번호 정책 검증까지만 수행하고 완료 화면으로 이동 (실제 변경 없음).
+            if (kDebugMode) {
+              setSheetState(() => step = 2);
+              return;
+            }
+
+            if (customToken == null) {
+              ToastHelper.showError('인증 세션이 만료되었습니다. 다시 본인인증을 진행해주세요');
+              setSheetState(() => step = 0);
+              return;
+            }
             setSheetState(() => isChanging = true);
             try {
-              await _fn.httpsCallable('resetPasswordWithCode').call({
-                'username': usernameController.text.trim(),
-                'code': codeController.text.trim(),
-                'newPassword': newPasswordController.text,
-              });
+              // Custom Token으로 Firebase 재로그인 → 비밀번호 변경
+              final cred = await _auth.signInWithCustomToken(customToken!);
+              await cred.user?.updatePassword(pw);
+              await _auth.signOut(); // 변경 완료 후 로그아웃 → 새 비밀번호로 재로그인 유도
               if (!ctx.mounted) return;
               setSheetState(() { isChanging = false; step = 2; });
-            } on FirebaseFunctionsException catch (e) {
-              if (!ctx.mounted) return;
-              setSheetState(() => isChanging = false);
-              ToastHelper.showError(e.message ?? '비밀번호 변경에 실패했습니다');
             } catch (e) {
-              debugPrint('❌ 비밀번호 변경 실패: $e');
               if (!ctx.mounted) return;
               setSheetState(() => isChanging = false);
-              ToastHelper.showError('오류가 발생했습니다. 다시 시도해주세요');
+              ToastHelper.showError('비밀번호 변경에 실패했습니다. 다시 시도해주세요');
             }
           }
 
@@ -415,26 +435,14 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 8),
 
-                  // ── 인증코드 + 새 비밀번호 입력 ──
+                  // ── 새 비밀번호 입력 ──
                   ] else if (step == 1) ...[
                     Text('비밀번호 재설정',
                         style: ResponsiveHelper.titleStyle(ctx).copyWith(fontWeight: FontWeight.w700, color: AppColors.grey900)),
                     const SizedBox(height: 6),
-                    Text('이메일로 발송된 인증번호와 새 비밀번호를 입력해주세요',
+                    Text('새로 사용할 비밀번호를 입력해주세요',
                         style: ResponsiveHelper.bodyStyle(ctx).copyWith(color: AppColors.grey500)),
                     const SizedBox(height: 24),
-                    _buildSheetTextField(
-                      context: ctx,
-                      controller: codeController,
-                      focusNode: codeFocus,
-                      label: '인증번호',
-                      hint: '6자리 숫자',
-                      icon: Icons.mail_outline,
-                      keyboardType: TextInputType.number,
-                      maxLength: 6,
-                      onSubmitted: (_) => newPasswordFocus.requestFocus(),
-                    ),
-                    const SizedBox(height: 12),
                     _buildSheetTextField(
                       context: ctx,
                       controller: newPasswordController,
@@ -490,12 +498,12 @@ class _LoginScreenState extends State<LoginScreen> {
                           : Text('비밀번호 변경', style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w600)),
                     ),
 
-                  // ── 아이디 + 이메일 입력 ──
+                  // ── 아이디 입력 + PASS 인증 ──
                   ] else ...[
                     Text('비밀번호 찾기',
                         style: ResponsiveHelper.titleStyle(ctx).copyWith(fontWeight: FontWeight.w700, color: AppColors.grey900)),
                     const SizedBox(height: 6),
-                    Text('가입 시 등록한 아이디와 이메일을 입력해주세요',
+                    Text('아이디 입력 후 PASS 본인인증으로 신원을 확인합니다',
                         style: ResponsiveHelper.bodyStyle(ctx).copyWith(color: AppColors.grey500)),
                     const SizedBox(height: 24),
                     _buildSheetTextField(
@@ -505,33 +513,12 @@ class _LoginScreenState extends State<LoginScreen> {
                       label: '아이디',
                       hint: 'your_username',
                       icon: Icons.account_circle_outlined,
-                      onSubmitted: (_) => emailFocus.requestFocus(),
+                      onSubmitted: (_) => doPassAuth(),
                     ),
-                    const SizedBox(height: 12),
-                    _buildSheetTextField(
-                      context: ctx,
-                      controller: emailController,
-                      focusNode: emailFocus,
-                      label: '이메일',
-                      hint: 'your@email.com',
-                      icon: Icons.email_outlined,
-                      keyboardType: TextInputType.emailAddress,
-                      onSubmitted: (_) => sendCode(),
-                    ),
-                    const SizedBox(height: 24),
-                    ElevatedButton(
-                      onPressed: isSending ? null : sendCode,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Theme.of(ctx).primaryColor,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                        elevation: 0,
-                      ),
-                      child: isSending
-                          ? const SizedBox(width: 20, height: 20,
-                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                          : Text('인증번호 발송', style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 16),
+                    PassAuthButton(
+                      onPressed: doPassAuth,
+                      isLoading: isAuthenticating,
                     ),
                   ],
                 ],
@@ -544,13 +531,9 @@ class _LoginScreenState extends State<LoginScreen> {
     );
 
     usernameController.dispose();
-    emailController.dispose();
-    codeController.dispose();
     newPasswordController.dispose();
     confirmPasswordController.dispose();
     usernameFocus.dispose();
-    emailFocus.dispose();
-    codeFocus.dispose();
     newPasswordFocus.dispose();
     confirmPasswordFocus.dispose();
   }

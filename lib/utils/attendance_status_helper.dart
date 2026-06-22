@@ -11,9 +11,15 @@ class AttendanceStatusHelper {
   // ── 시간 변환 ──────────────────────────────────────────────
 
   /// "HH:mm" 또는 "HH:mm:ss" → 분 단위 정수
+  /// [특이사항] 구버전 데이터나 수동 입력으로 형식이 깨진 시간 문자열이 올 수 있음.
+  /// 파싱 실패 시 0 반환 → 지각 판단에서 항상 정각 처리됨 (관대한 방향).
   static int timeToMinutes(String timeStr) {
-    final parts = timeStr.split(':');
-    return int.parse(parts[0]) * 60 + int.parse(parts[1]);
+    try {
+      final parts = timeStr.split(':');
+      return int.parse(parts[0]) * 60 + int.parse(parts[1]);
+    } catch (_) {
+      return 0;
+    }
   }
 
   /// 두 시간 사이 분 수 계산 (자정 넘김 자동 처리)

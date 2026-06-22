@@ -9,6 +9,9 @@ import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../theme/app_colors.dart';
 
+// Widgets
+import '../../widgets/common/review_card.dart';
+
 // Providers
 import '../../providers/user_provider.dart';
 
@@ -238,6 +241,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
             final name = doc.data()['name'] as String? ?? '';
             resolvedMap[doc.id] = name.isNotEmpty ? name : '근무자';
           }
+        // [특이사항] 이름 일괄 조회 실패 시 무시 — 아래 putIfAbsent로 '근무자' 폴백 처리됨
         } catch (_) {}
         // 조회에 포함됐으나 문서가 없는 uid는 폴백 처리
         for (final uid in ids) {
@@ -566,440 +570,16 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
               ),
             );
           }
-          return _buildReviewCard(context, filtered[index], isWritten: isWritten);
+          final r = filtered[index];
+          return ReviewCard(
+            review: r,
+            perspective: isWritten
+                ? ReviewCardPerspective.adminWritten
+                : ReviewCardPerspective.adminReceived,
+            onReply: isWritten ? null : () => _showReplyDialog(r),
+            deadlineSubtext: _deadlineSubtext(r.requestId),
+          );
         },
-      ),
-    );
-  }
-
-  Widget _buildReviewCard(BuildContext context, MonthlyReviewModel review,
-      {required bool isWritten}) {
-    return Container(
-      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: () => _showReviewDetail(review, isWritten: isWritten),
-            child: Padding(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 14)),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 헤더: 이름·사업장 + 상태 배지
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    isWritten
-                                        ? (review.targetUserName ?? '지원자')
-                                        : review.reviewerName,
-                                    style: ResponsiveHelper.bodyStyle(context)
-                                        .copyWith(fontWeight: FontWeight.bold),
-                                    overflow: TextOverflow.ellipsis,
-                                    maxLines: 1,
-                                  ),
-                                ),
-                                if (isWritten &&
-                                    (review.targetUserAge != null ||
-                                        review.targetUserGender != null)) ...[
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                  Text(
-                                    '(${[
-                                      if (review.targetUserAge != null)
-                                        '${review.targetUserAge}세',
-                                      if (review.targetUserGender != null)
-                                        review.targetUserGender!,
-                                    ].join(', ')})',
-                                    style: ResponsiveHelper.smallStyle(
-                                        context, color: AppColors.grey500),
-                                  ),
-                                ],
-                              ],
-                            ),
-                            SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                            Text(
-                              '${review.businessName} · ${review.periodText}',
-                              style: ResponsiveHelper.smallStyle(
-                                  context, color: AppColors.grey500),
-                            ),
-                          ],
-                        ),
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                      _buildStatusBadgeCompact(context, review),
-                    ],
-                  ),
-
-                  SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-
-                  // 평점 + 재고용의사
-                  Row(
-                    children: [
-                      ...List.generate(
-                        5,
-                        (i) => Icon(
-                          i < review.rating
-                              ? Icons.star_rounded
-                              : Icons.star_border_rounded,
-                          size: ResponsiveHelper.iconSize(context, 18),
-                          color: AppColors.amber,
-                        ),
-                      ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-                      Text(
-                        review.ratingText,
-                        style: ResponsiveHelper.smallStyle(context).copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.grey700),
-                      ),
-                      if (review.wouldRehire != null) ...[
-                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                        _buildRehireBadge(context, review.wouldRehire!, isWritten),
-                      ],
-                    ],
-                  ),
-
-                  // 태그
-                  if (review.positiveTags.isNotEmpty ||
-                      review.improvementTags.isNotEmpty) ...[
-                    SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                    Wrap(
-                      spacing: ResponsiveHelper.spacing(context, 5),
-                      runSpacing: ResponsiveHelper.spacing(context, 5),
-                      children: [
-                        ...review.positiveTags
-                            .map((tag) => _buildTag(context, tag, isPositive: true)),
-                        ...review.improvementTags
-                            .map((tag) => _buildTag(context, tag, isPositive: false)),
-                      ],
-                    ),
-                  ],
-
-                  // 코멘트
-                  if (review.comment != null && review.comment!.isNotEmpty) ...[
-                    SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                    Text(
-                      '"${review.comment!}"',
-                      style: ResponsiveHelper.smallStyle(
-                          context, color: AppColors.grey600),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-
-                  // 사업장 답변 (받은 리뷰)
-                  if (!isWritten) ...[
-                    if (review.businessResponse != null &&
-                        review.businessResponse!.isNotEmpty) ...[
-                      SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-                      Container(
-                        width: double.infinity,
-                        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                        decoration: BoxDecoration(
-                          color: AppColors.info.withValues(alpha: 0.05),
-                          borderRadius: BorderRadius.circular(6),
-                          border:
-                              Border.all(color: AppColors.info.withValues(alpha: 0.2)),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Icon(Icons.store,
-                                    size: ResponsiveHelper.iconSize(context, 11),
-                                    color: AppColors.info),
-                                SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-                                Text(
-                                  '사업장 답변',
-                                  style: ResponsiveHelper.tinyStyle(context).copyWith(
-                                      color: AppColors.info,
-                                      fontWeight: FontWeight.bold),
-                                ),
-                              ],
-                            ),
-                            SizedBox(height: ResponsiveHelper.spacing(context, 3)),
-                            Text(
-                              review.businessResponse!,
-                              style: ResponsiveHelper.smallStyle(
-                                  context, color: AppColors.grey700),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ] else ...[
-                      SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton.icon(
-                          onPressed: () => _showReplyDialog(review),
-                          icon: Icon(Icons.reply,
-                              size: ResponsiveHelper.iconSize(context, 14)),
-                          label: Text('답변하기',
-                              style: ResponsiveHelper.smallStyle(context)),
-                          style: TextButton.styleFrom(
-                            foregroundColor: AppColors.info,
-                            padding: EdgeInsets.symmetric(
-                              horizontal: ResponsiveHelper.spacing(context, 8),
-                              vertical: ResponsiveHelper.spacing(context, 4),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-
-                  // 하단: 근무 통계(의미있는 경우만) + 작성일
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                  Row(
-                    children: [
-                      if (review.workDaysInMonth > 1 || review.lateDays > 0) ...[
-                        Icon(Icons.work_outline,
-                            size: ResponsiveHelper.iconSize(context, 12),
-                            color: AppColors.grey400),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-                        if (review.workDaysInMonth > 1)
-                          Text(
-                            '근무 ${review.workDaysInMonth}일',
-                            style: ResponsiveHelper.tinyStyle(
-                                context, color: AppColors.grey500),
-                          ),
-                        if (review.lateDays > 0)
-                          Text(
-                            '${review.workDaysInMonth > 1 ? ' · ' : ''}지각 ${review.lateDays}회',
-                            style: ResponsiveHelper.tinyStyle(
-                                context, color: AppColors.warning),
-                          ),
-                      ],
-                      const Spacer(),
-                      Text(
-                        _formatDate(review.createdAt),
-                        style: ResponsiveHelper.tinyStyle(
-                            context, color: AppColors.grey400),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// 상태 배지 — 컴팩트 (툴팁으로 공개 예정일 표시)
-  Widget _buildStatusBadgeCompact(BuildContext context, MonthlyReviewModel review) {
-    final color = review.isPublished ? AppColors.success : AppColors.warning;
-    final badge = Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 9),
-        vertical: ResponsiveHelper.spacing(context, 4),
-      ),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        review.publishStatusText,
-        style: ResponsiveHelper.tinyStyle(context).copyWith(
-          color: color,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-    );
-    if (review.isPublished) return badge;
-    return Tooltip(
-      message: _deadlineSubtext(review.requestId),
-      child: badge,
-    );
-  }
-
-  Widget _buildRehireBadge(BuildContext context, bool wouldRehire, bool isWritten) {
-    final color = wouldRehire ? AppColors.success : AppColors.error;
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 7),
-        vertical: ResponsiveHelper.spacing(context, 2),
-      ),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            wouldRehire ? Icons.thumb_up_rounded : Icons.thumb_down_rounded,
-            size: ResponsiveHelper.iconSize(context, 11),
-            color: color,
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-          Text(
-            isWritten
-                ? (wouldRehire ? '재고용' : '비고용')
-                : (wouldRehire ? '재근무' : '비희망'),
-            style: ResponsiveHelper.tinyStyle(context).copyWith(
-              color: color,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTag(BuildContext context, String tag, {required bool isPositive}) {
-    final color = isPositive ? AppColors.success : AppColors.warning;
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 8),
-        vertical: ResponsiveHelper.spacing(context, 4),
-      ),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(
-        tag,
-        style: ResponsiveHelper.tinyStyle(context).copyWith(color: color),
-      ),
-    );
-  }
-
-  void _showReviewDetail(MonthlyReviewModel review, {required bool isWritten}) {
-    showModalBottomSheet(
-      context: context,
-      useSafeArea: true,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: 0.6,
-        maxChildSize: 0.9,
-        builder: (_, controller) => ListView(
-          controller: controller,
-          padding: ResponsiveHelper.listPadding(context),
-          children: [
-            Center(
-              child: Container(
-                width: 40, height: 4,
-                margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 16)),
-                decoration: BoxDecoration(
-                  color: AppColors.grey300,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            // 이름 + 메타
-            Text(
-              isWritten ? (review.targetUserName ?? '지원자') : review.reviewerName,
-              style: ResponsiveHelper.titleStyle(context).copyWith(fontWeight: FontWeight.bold),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-            Text(
-              '${review.businessName} · ${review.periodText}',
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            // 평점 + 재고용
-            Row(
-              children: [
-                ...List.generate(5, (i) => Icon(
-                  i < review.rating ? Icons.star_rounded : Icons.star_border_rounded,
-                  size: ResponsiveHelper.iconSize(context, 20),
-                  color: AppColors.amber,
-                )),
-                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                Text(review.ratingText,
-                    style: ResponsiveHelper.bodyStyle(context)
-                        .copyWith(fontWeight: FontWeight.w600)),
-                if (review.wouldRehire != null) ...[
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  _buildRehireBadge(context, review.wouldRehire!, isWritten),
-                ],
-              ],
-            ),
-            // 태그
-            if (review.positiveTags.isNotEmpty || review.improvementTags.isNotEmpty) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-              Wrap(
-                spacing: ResponsiveHelper.spacing(context, 6),
-                runSpacing: ResponsiveHelper.spacing(context, 6),
-                children: [
-                  ...review.positiveTags.map((t) => _buildTag(context, t, isPositive: true)),
-                  ...review.improvementTags.map((t) => _buildTag(context, t, isPositive: false)),
-                ],
-              ),
-            ],
-            // 코멘트 전체
-            if (review.comment != null && review.comment!.isNotEmpty) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-              Text('코멘트',
-                  style: ResponsiveHelper.smallStyle(context)
-                      .copyWith(fontWeight: FontWeight.bold, color: AppColors.grey600)),
-              SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-              Container(
-                width: double.infinity,
-                padding: ResponsiveHelper.listPadding(context),
-                decoration: BoxDecoration(
-                  color: AppColors.grey100,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  review.comment!,
-                  style: ResponsiveHelper.bodyStyle(context),
-                ),
-              ),
-            ],
-            // 사업장 답변
-            if (!isWritten &&
-                review.businessResponse != null &&
-                review.businessResponse!.isNotEmpty) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-              Text('사업장 답변',
-                  style: ResponsiveHelper.smallStyle(context)
-                      .copyWith(fontWeight: FontWeight.bold, color: AppColors.info)),
-              SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-              Container(
-                width: double.infinity,
-                padding: ResponsiveHelper.listPadding(context),
-                decoration: BoxDecoration(
-                  color: AppColors.info.withValues(alpha: 0.06),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.info.withValues(alpha: 0.2)),
-                ),
-                child: Text(
-                  review.businessResponse!,
-                  style: ResponsiveHelper.bodyStyle(context),
-                ),
-              ),
-            ],
-            SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-          ],
-        ),
       ),
     );
   }
@@ -1106,7 +686,11 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                 ],
         ),
         child: Padding(
-          padding: ResponsiveHelper.listPadding(context),
+          padding: ResponsiveHelper.symmetricPadding(
+            context,
+            horizontal: 16,
+            vertical: 12,
+          ),
           child: Row(
             children: [
               CircleAvatar(
@@ -1140,15 +724,17 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                         color: isExpired ? AppColors.grey500 : null,
                       ),
                     ),
-                    SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                    Text(
-                      req.periodText,
-                      style: ResponsiveHelper.smallStyle(
-                          context, color: AppColors.grey500),
-                    ),
-                    SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+                    // 기간 + 마감일을 한 줄로 합쳐 카드 높이 절감
                     Row(
                       children: [
+                        Expanded(
+                          child: Text(
+                            req.periodText,
+                            style: ResponsiveHelper.smallStyle(
+                                context, color: AppColors.grey500),
+                          ),
+                        ),
                         Icon(
                           isExpired
                               ? Icons.event_busy
@@ -1162,19 +748,22 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                                   ? AppColors.error
                                   : AppColors.grey500,
                         ),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                        Text(
-                          isExpired
-                              ? '기한 만료 (${_formatDate(req.deadline)})'
-                              : '마감 ${_formatDate(req.deadline)}'
-                                  '${isDeadlineSoon ? ' · 임박!' : ''}',
-                          style: ResponsiveHelper.tinyStyle(
-                            context,
-                            color: isExpired
-                                ? AppColors.grey400
-                                : isDeadlineSoon
-                                    ? AppColors.error
-                                    : AppColors.grey500,
+                        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                        Flexible(
+                          child: Text(
+                            isExpired
+                                ? '기한 만료'
+                                : '마감 ${_formatDate(req.deadline)}'
+                                    '${isDeadlineSoon ? ' · 임박!' : ''}',
+                            style: ResponsiveHelper.tinyStyle(
+                              context,
+                              color: isExpired
+                                  ? AppColors.grey400
+                                  : isDeadlineSoon
+                                      ? AppColors.error
+                                      : AppColors.grey500,
+                            ),
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                       ],
@@ -1190,9 +779,11 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                         isDeadlineSoon ? AppColors.error : theme.primaryColor,
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10)),
+                        borderRadius: BorderRadius.circular(8)),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     padding: EdgeInsets.symmetric(
-                      horizontal: ResponsiveHelper.spacing(context, 16),
+                      horizontal: ResponsiveHelper.spacing(context, 14),
                       vertical: ResponsiveHelper.spacing(context, 8),
                     ),
                   ),

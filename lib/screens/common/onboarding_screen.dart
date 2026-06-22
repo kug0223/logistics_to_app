@@ -90,9 +90,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       bgColor: AppColors.infoBg,
       tag: '알핏 관리자',
       title: '채용부터 급여까지\n원스톱 관리',
-      description: 'TO 등록 → 지원자 확정 → 계약서 → 출퇴근 → 급여까지\n모든 인력 관리를 하나의 앱에서.',
+      description: '공고 등록 → 지원자 확정 → 계약서 → 출퇴근 → 급여까지\n모든 인력 관리를 하나의 앱에서.',
       features: [
-        _Feature(Icons.flash_on_rounded, '빠른 TO 등록 & 공고 관리', AppColors.infoDark),
+        _Feature(Icons.flash_on_rounded, '빠른 공고 등록 & 공고 관리', AppColors.infoDark),
         _Feature(Icons.description_outlined, '전자 계약서 자동 발송', AppColors.infoDark),
         _Feature(Icons.account_balance_wallet_outlined, '급여 확정 & 송금 관리', AppColors.infoDark),
       ],
@@ -101,7 +101,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       icon: Icons.post_add_rounded,
       color: AppColors.purple,
       bgColor: AppColors.purpleBg,
-      tag: 'TO 등록',
+      tag: '공고 등록',
       title: '공고 등록 3단계,\n지원자가 모여요',
       description: '업종·날짜·시간·인원만 입력하고 공개하면\n지원자가 자동으로 모입니다.',
       features: [

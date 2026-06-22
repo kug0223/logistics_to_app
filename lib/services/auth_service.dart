@@ -79,7 +79,11 @@ class AuthService {
           }
           if (status == 'rejected') {
             await _auth.signOut();
-            ToastHelper.showError('가입이 거절되었습니다.\n고객센터에 문의해주세요.');
+            final reason = data['rejectionReason'] as String?;
+            final msg = reason != null
+                ? '가입이 거절되었습니다.\n사유: $reason'
+                : '가입이 거절되었습니다.\n고객센터에 문의해주세요.';
+            ToastHelper.showError(msg);
             throw Exception('가입 거절');
           }
 
@@ -398,6 +402,36 @@ class AuthService {
   // ⭐ NEW: 계정 삭제
   /// 비밀번호 재인증 후 계정 삭제
   /// returns null on success, error message string on failure
+  // ══════════════════════════════════════════════════════════════════
+  // 탈퇴 시 개인정보 처리 법령 근거 (2024년 기준)
+  //
+  // [즉시 파기 의무 — 개인정보보호법 제21조]
+  //   보유 목적이 달성되거나 회원이 동의를 철회(탈퇴)한 경우 지체 없이 파기.
+  //   단, 아래 법령에서 별도 보존 의무를 정한 경우는 해당 기간까지 예외.
+  //   대상: users 문서, Storage 파일(신분증·통장), notifications,
+  //         worker_locations, idCardAccessRequests
+  //
+  // [3년 보존 의무 — 근로기준법 제42조 + 시행령 제22조]
+  //   근로계약서, 임금대장, 임금 계산 기초 서류, 출퇴근 기록 → 3년 보존.
+  //   대상: attendance(완료·결근 기록), applications(급여 데이터 포함),
+  //         employment_contracts
+  //
+  // [5년 보존 의무 — 국세기본법 제85조의3 / 소득세법 제143조]
+  //   원천징수 관련 지급명세서 → 5년 보존.
+  //   대상: applications의 wageDetail(세금 공제 내역)
+  //
+  // [익명화 처리 — 개인정보보호법 제21조 + 업계 관행]
+  //   법령 보존 의무는 없으나 서비스 연속성(리뷰 통계, 사업주 이력)을 위해
+  //   삭제 대신 개인 식별자만 "탈퇴한 회원"으로 대체.
+  //   카카오·당근마켓·크몽 등 동일 방식 채택.
+  //   대상: monthly_reviews(targetUserName), review_requests(workerName)
+  //
+  // [점검 TODO]
+  //   - 보존 기간(3년/5년) 경과 후 자동 파기 Cloud Scheduler 미구현.
+  //     → Cloud Functions에서 createdAt 기준 만료 레코드 정기 삭제 필요.
+  //   - attendance/applications 내 applicantName, phone 등 식별자는
+  //     법령 보존 기간 중 마스킹 없이 유지. 기간 종료 시 파기 필요.
+  // ══════════════════════════════════════════════════════════════════
   Future<String?> deleteAccountWithPassword(String password) async {
     try {
       final user = _auth.currentUser;
@@ -414,9 +448,9 @@ class AuthService {
       // 삭제 후 clearToken() 호출 시 users 문서가 없어 update() 오류 발생하던 문제 수정
       await FCMService().clearToken();
 
-      // [BUG-수정] A-H-1: 탈퇴 기록을 CI 해시로 저장 (재가입 30일 제한용)
+      // 2. 탈퇴 기록 저장 (재가입 30일 제한용)
+      // [BUG-수정] A-H-1: CI 해시로 저장 — CI 없으면 전화번호 해시 폴백
       // CI는 암호화 저장되므로 EncryptionHelper.decrypt 후 해시 생성
-      // CI가 없는 경우(외국인 등)는 전화번호 해시로 폴백
       final userDoc = await _firestore.collection('users').doc(user.uid).get();
       if (userDoc.exists) {
         final data = userDoc.data()!;
@@ -425,13 +459,11 @@ class AuthService {
 
         String? identityHash;
         if (ciEncrypted != null && ciEncrypted.isNotEmpty) {
-          // CI 복호화 후 해시
           final ciPlain = EncryptionHelper.decrypt(ciEncrypted);
           if (ciPlain != null && ciPlain.isNotEmpty) {
             identityHash = sha256.convert(utf8.encode(ciPlain)).toString();
           }
         }
-        // CI 없으면 전화번호 해시로 폴백
         if (identityHash == null && phone != null && phone.isNotEmpty) {
           identityHash = sha256.convert(utf8.encode(phone)).toString();
         }
@@ -441,11 +473,9 @@ class AuthService {
           await _firestore.collection('deleted_accounts').add({
             'phoneHash': identityHash,
             'deletedAt': FieldValue.serverTimestamp(),
-            // 블랙리스트면 슈퍼관리자가 직접 해제 전까지 차단
             'canReregisterAt': isBlacklisted
                 ? null
-                : Timestamp.fromDate(
-                    DateTime.now().add(const Duration(days: 30))),
+                : Timestamp.fromDate(DateTime.now().add(const Duration(days: 30))),
             'isBlacklisted': isBlacklisted,
             'noShowCount': data['noShowCount'] ?? 0,
             'role': data['role'] ?? 'USER',
@@ -453,58 +483,54 @@ class AuthService {
         }
       }
 
-      // 3. Firestore 사용자 문서 삭제 (Storage URL 참조 제거 먼저 — broken URL 방지)
+      // 3. Firestore 사용자 문서 삭제 — 개인정보보호법 제21조
+      // Storage URL 참조를 먼저 제거해야 broken URL 방지 (CLAUDE.md 삭제 순서 규칙)
       await _firestore.collection('users').doc(user.uid).delete();
 
-      // 4. Storage 사용자 파일 삭제 (신분증, 통장 등)
+      // 4. Storage 사용자 파일 삭제 — 개인정보보호법 제21조 (민감정보: 신분증·통장사본)
       try {
         final storageRef = FirebaseStorage.instance.ref('users/${user.uid}');
         final listResult = await storageRef.listAll();
-        for (final item in listResult.items) {
-          await item.delete();
-        }
+        for (final item in listResult.items) { await item.delete(); }
         for (final prefix in listResult.prefixes) {
           final sub = await prefix.listAll();
-          for (final item in sub.items) {
-            await item.delete();
-          }
+          for (final item in sub.items) { await item.delete(); }
         }
       } catch (storageErr) {
         debugPrint('⚠️ Storage 파일 삭제 실패 (계속 진행): $storageErr');
       }
 
-      // 5. 연관 컬렉션 개인정보 정리 (개인정보보호법 — 탈퇴 시 삭제 의무)
-      // notifications: 본인 알림 전체 삭제 (페이지네이션)
+      // 5. notifications 전체 삭제 — 개인정보보호법 제21조
+      // [J-003] 실패 시 계정 삭제는 계속 진행
       try {
-        bool hasMoreNotifs = true;
-        while (hasMoreNotifs) {
+        bool hasMore = true;
+        while (hasMore) {
           final snap = await _firestore
               .collection('notifications')
               .where('userId', isEqualTo: user.uid)
               .limit(200)
               .get();
           if (snap.docs.isEmpty) break;
-          hasMoreNotifs = snap.docs.length == 200;
+          hasMore = snap.docs.length == 200;
           final batch = _firestore.batch();
           for (final doc in snap.docs) { batch.delete(doc.reference); }
           await batch.commit();
         }
       } catch (e) {
-        // [J-003] notifications 삭제 실패 — 계정 삭제는 계속 진행
         debugPrint('⚠️ 계정 삭제: notifications 삭제 실패 (계속 진행): $e');
       }
 
-      // worker_locations: 실시간 위치 전체 삭제 (페이지네이션)
+      // 6. worker_locations 전체 삭제 — 개인정보보호법 제21조 (위치정보: 법령 보존 근거 없음)
       try {
-        bool hasMoreLocs = true;
-        while (hasMoreLocs) {
+        bool hasMore = true;
+        while (hasMore) {
           final snap = await _firestore
               .collection('worker_locations')
               .where('userId', isEqualTo: user.uid)
               .limit(100)
               .get();
           if (snap.docs.isEmpty) break;
-          hasMoreLocs = snap.docs.length == 100;
+          hasMore = snap.docs.length == 100;
           final batch = _firestore.batch();
           for (final doc in snap.docs) { batch.delete(doc.reference); }
           await batch.commit();
@@ -513,11 +539,120 @@ class AuthService {
         debugPrint('⚠️ 계정 삭제: worker_locations 삭제 실패 (계속 진행): $e');
       }
 
-      // applications: 활성 지원서 AUTO_CANCELED 처리 전체 (페이지네이션, 이력은 보존 — 급여 처리용)
-      // CONFIRMED 포함: 탈퇴 시 orphan 방지 (BUG-ADMIN-72)
+      // 7. idCardAccessRequests 전체 삭제 — 개인정보보호법 제21조
+      // 신분증 열람 요청에는 requesterId·targetUserId·reason이 포함되며,
+      // 법령상 보존 의무가 없으므로 탈퇴 즉시 파기한다.
+      // (targetUserId == uid: 본인에게 온 요청 / requesterId == uid: 본인이 보낸 요청)
       try {
-        bool hasMoreApps = true;
-        while (hasMoreApps) {
+        for (final field in ['targetUserId', 'requesterId']) {
+          bool hasMore = true;
+          while (hasMore) {
+            final snap = await _firestore
+                .collection('idCardAccessRequests')
+                .where(field, isEqualTo: user.uid)
+                .limit(100)
+                .get();
+            if (snap.docs.isEmpty) break;
+            hasMore = snap.docs.length == 100;
+            final batch = _firestore.batch();
+            for (final doc in snap.docs) { batch.delete(doc.reference); }
+            await batch.commit();
+          }
+        }
+      } catch (e) {
+        debugPrint('⚠️ 계정 삭제: idCardAccessRequests 삭제 실패 (계속 진행): $e');
+      }
+
+      // 8. review_requests 익명화 — 개인정보보호법 제21조 (식별자만 대체)
+      // review_requests는 사업주의 월별 리뷰 이력 구조(workerId 키 참조)를 유지하기 위해
+      // 삭제 대신 workerName만 "탈퇴한 회원"으로 대체한다.
+      // 카카오·당근마켓·크몽 등 플랫폼과 동일한 익명화 방식.
+      // [점검] workerId(uid) 자체는 users 문서가 삭제되므로 실질적으로 역추적 불가.
+      try {
+        bool hasMore = true;
+        while (hasMore) {
+          final snap = await _firestore
+              .collection('review_requests')
+              .where('workerId', isEqualTo: user.uid)
+              .limit(100)
+              .get();
+          if (snap.docs.isEmpty) break;
+          hasMore = snap.docs.length == 100;
+          final batch = _firestore.batch();
+          for (final doc in snap.docs) {
+            batch.update(doc.reference, {'workerName': '탈퇴한 회원'});
+          }
+          await batch.commit();
+        }
+      } catch (e) {
+        debugPrint('⚠️ 계정 삭제: review_requests 익명화 실패 (계속 진행): $e');
+      }
+
+      // 9. monthly_reviews 익명화 — 개인정보보호법 제21조
+      // ─ 9-A. 대상자(지원자) 탈퇴: ADMIN_TO_USER 리뷰에서 개인 식별자 제거
+      //   targetUserName·targetUserId: 직접 식별자 → 익명화
+      //   comment: 자유 입력이므로 이름 직접 언급 가능 → 파기
+      //   rating·tags: 통계 목적, 개인 식별 불가 → 보존
+      // ─ 9-B. 작성자(관리자) 탈퇴: ADMIN_TO_USER 리뷰에서 reviewerId·reviewerName 제거
+      //   USER_TO_BUSINESS는 설계상 reviewerId 미저장(익명) → 처리 불필요
+      try {
+        // 9-A: 내가 대상인 리뷰 (근무자 탈퇴 또는 사업주가 근무자로도 평가받은 경우)
+        bool hasMore = true;
+        while (hasMore) {
+          final snap = await _firestore
+              .collection('monthly_reviews')
+              .where('targetUserId', isEqualTo: user.uid)
+              .limit(100)
+              .get();
+          if (snap.docs.isEmpty) break;
+          hasMore = snap.docs.length == 100;
+          final batch = _firestore.batch();
+          for (final doc in snap.docs) {
+            batch.update(doc.reference, {
+              'targetUserName': '탈퇴한 회원',
+              'targetUserId': FieldValue.delete(),
+              'comment': FieldValue.delete(),
+            });
+          }
+          await batch.commit();
+        }
+      } catch (e) {
+        debugPrint('⚠️ 계정 삭제: monthly_reviews(대상자) 익명화 실패 (계속 진행): $e');
+      }
+
+      try {
+        // 9-B: 내가 작성한 리뷰 (BUSINESS_ADMIN 탈퇴 시 reviewerId·reviewerName 제거)
+        // comment는 관리자가 작성한 평가이므로 보존 (대상자 정보 포함 안 함)
+        bool hasMore = true;
+        while (hasMore) {
+          final snap = await _firestore
+              .collection('monthly_reviews')
+              .where('reviewerId', isEqualTo: user.uid)
+              .limit(100)
+              .get();
+          if (snap.docs.isEmpty) break;
+          hasMore = snap.docs.length == 100;
+          final batch = _firestore.batch();
+          for (final doc in snap.docs) {
+            batch.update(doc.reference, {
+              'reviewerName': '탈퇴한 회원',
+              'reviewerId': FieldValue.delete(),
+            });
+          }
+          await batch.commit();
+        }
+      } catch (e) {
+        debugPrint('⚠️ 계정 삭제: monthly_reviews(작성자) 익명화 실패 (계속 진행): $e');
+      }
+
+      // 10. applications 활성 상태 → CANCELED 처리 (orphan 방지)
+      // [보존 근거 — 근로기준법 제42조 + 국세기본법]
+      //   완료된 applications(CANCELED/REJECTED 포함)는 급여·출퇴근 데이터를 담고 있으므로
+      //   3~5년 보존 의무. uid/applicantName 등 개인 식별자는 법령 기간 중 그대로 유지하며,
+      //   기간 경과 후 Cloud Scheduler로 파기 예정 (미구현 — 점검 TODO 참조).
+      try {
+        bool hasMore = true;
+        while (hasMore) {
           final snap = await _firestore
               .collection('applications')
               .where('uid', isEqualTo: user.uid)
@@ -525,7 +660,7 @@ class AuthService {
               .limit(100)
               .get();
           if (snap.docs.isEmpty) break;
-          hasMoreApps = snap.docs.length == 100;
+          hasMore = snap.docs.length == 100;
           final batch = _firestore.batch();
           final List<String> confirmedAppIds = [];
           for (final doc in snap.docs) {
@@ -537,7 +672,8 @@ class AuthService {
             });
           }
           await batch.commit();
-          // CONFIRMED 지원서의 scheduled 출근기록 → absent 처리
+          // CONFIRMED 지원서의 scheduled 출근기록 → absent 처리 (orphan 방지)
+          // 완료된 attendance는 근로기준법 제42조에 따라 그대로 보존
           for (final appId in confirmedAppIds) {
             try {
               final attSnap = await _firestore
@@ -555,12 +691,203 @@ class AuthService {
                 });
               }
               await attBatch.commit();
+            // [특이사항] 출석 배치 실패 시 무시 — 계정 삭제는 계속 진행 (best-effort 정리)
             } catch (_) {}
           }
         }
+      // [특이사항] 스텝 10 전체 실패 무시 — 계정 삭제는 계속 진행 (출석 정리 실패가 탈퇴를 막지 않음)
       } catch (_) {}
 
-      // 6. Firebase Auth 계정 삭제
+      // 11. BUSINESS_ADMIN 전용 사업장 데이터 정리
+      // ──────────────────────────────────────────────────────────────
+      // 사업주 탈퇴 시 처리 원칙:
+      //
+      //   [공동 관리자 있음] adminIds에서 본인 uid만 제거. 사업장은 계속 운영.
+      //
+      //   [단독 관리자] businesses 문서에 deactivatedAt 기록 후:
+      //     - 활성 TO(ACTIVE/FULL/SCHEDULED) → CLOSED (orphan 방지)
+      //     - 활성 TO 하위 PENDING 지원서 → REJECTED(BUSINESS_DEACTIVATED)
+      //       (근로기준법 보존 의무 없는 미확정 지원서이므로 즉시 처리)
+      //     - CONFIRMED/CONTRACT_PENDING 지원서는 이미 급여 데이터 포함 가능 →
+      //       cancelReason: 'BUSINESS_DEACTIVATED'로 CANCELED 처리
+      //       (근로기준법 제42조: 해당 기록은 3년 보존 — 삭제 금지)
+      //   [점검] businesses Storage(로고·사진)는 개인정보가 아니므로 보존.
+      //          슈퍼관리자가 비활성 사업장 일괄 정리 시 삭제 예정.
+      // ──────────────────────────────────────────────────────────────
+      if (userDoc.exists) {
+        final roleStr = userDoc.data()?['role'] as String?;
+        final businessId = userDoc.data()?['businessId'] as String?;
+
+        if (roleStr == 'BUSINESS_ADMIN' && businessId != null) {
+          try {
+            final bizRef = _firestore.collection('businesses').doc(businessId);
+            final bizDoc = await bizRef.get();
+
+            if (bizDoc.exists) {
+              final adminIds = List<String>.from(bizDoc.data()?['adminIds'] ?? []);
+              // [특이사항] adminIds가 비어있는 비정상 상태(Firestore 데이터 불일치)에서는
+              // 단독 관리자로 처리하지 않음 — 자신의 uid가 목록에 포함된 경우에만 단독 판단.
+              // 이전 코드: length <= 1 → 빈 배열([])도 단독 관리자로 오인하는 버그 존재.
+              final isSoleAdmin = adminIds.length == 1 && adminIds.contains(user.uid);
+
+              if (isSoleAdmin) {
+                // ── 단독 관리자 → 사업장 비활성화 ────────────────────────
+                // Firestore 문서에 deactivatedAt 기록 + 개인정보성 필드(인감) 제거
+                // sealBase64는 Firestore 직접 저장 필드이며 대표자 인감 이미지임 — 파기
+                await bizRef.update({
+                  'deactivatedAt': FieldValue.serverTimestamp(),
+                  'sealBase64': FieldValue.delete(),
+                });
+
+                // ── Storage 이미지 삭제 ────────────────────────────────────
+                // businesses 문서에 저장된 URL 기반으로 삭제.
+                // mainImageUrl: 대표 이미지 1장
+                // imageUrls: 사업장 사진 최대 5장
+                // 비활성 사업장 이미지는 앱에서 더 이상 표시되지 않으므로
+                // Storage 비용 방지를 위해 탈퇴 시 즉시 삭제.
+                // employment_contracts 내 서명 이미지는 근로기준법 3년 보존 대상 — 삭제 금지.
+                //
+                // [특이사항] 삭제 순서: Firestore URL 필드 먼저 → Storage 나중 (CLAUDE.md 규칙)
+                // Firestore 업데이트 실패 시 Storage는 건드리지 않아 broken URL 잔존 방지.
+                // Storage 삭제 실패는 개별 try/catch로 포획 — Firestore가 이미 정리됐으므로
+                // 앱 동작에는 영향 없음 (Storage orphan은 주기적 정리로 처리 예정).
+                try {
+                  final bizData = bizDoc.data()!;
+                  final mainImageUrl = bizData['mainImageUrl'] as String?;
+                  final imageUrlsRaw = bizData['imageUrls'] as List<dynamic>?;
+                  final imageUrls = imageUrlsRaw?.cast<String>() ?? [];
+
+                  final allUrls = [
+                    if (mainImageUrl != null && mainImageUrl.isNotEmpty) mainImageUrl,
+                    ...imageUrls.where((u) => u.isNotEmpty),
+                  ];
+
+                  if (allUrls.isNotEmpty) {
+                    // 1단계: Firestore URL 필드 먼저 제거 (실패 시 Storage 건드리지 않음)
+                    await bizRef.update({
+                      'mainImageUrl': FieldValue.delete(),
+                      'imageUrls': FieldValue.delete(),
+                    });
+
+                    // 2단계: Storage 이미지 삭제 (개별 실패는 로그만 — Firestore는 이미 정리됨)
+                    for (final url in allUrls) {
+                      try {
+                        final ref = FirebaseStorage.instance.refFromURL(url);
+                        await ref.delete();
+                      } catch (e) {
+                        debugPrint('⚠️ 사업장 이미지 Storage 삭제 실패 ($url): $e');
+                      }
+                    }
+                  }
+                } catch (e) {
+                  debugPrint('⚠️ 사업장 Storage 정리 실패 (계속 진행): $e');
+                }
+
+                // ── 활성 TO 종료 + 하위 PENDING 지원서 REJECTED ─────────
+                final activeToSnap = await _firestore
+                    .collection('tos')
+                    .where('businessId', isEqualTo: businessId)
+                    .where('status', whereIn: ['ACTIVE', 'FULL', 'SCHEDULED'])
+                    .get();
+
+                for (final toDoc in activeToSnap.docs) {
+                  try {
+                    await toDoc.reference.update({
+                      'status': 'CLOSED',
+                      'closedAt': FieldValue.serverTimestamp(),
+                      'closedReason': 'BUSINESS_DEACTIVATED',
+                    });
+
+                    // 해당 TO의 PENDING 지원서 → REJECTED
+                    final pendingSnap = await _firestore
+                        .collection('applications')
+                        .where('toId', isEqualTo: toDoc.id)
+                        .where('status', isEqualTo: 'PENDING')
+                        .get();
+                    if (pendingSnap.docs.isNotEmpty) {
+                      final batch = _firestore.batch();
+                      for (final appDoc in pendingSnap.docs) {
+                        batch.update(appDoc.reference, {
+                          'status': 'REJECTED',
+                          'rejectedAt': FieldValue.serverTimestamp(),
+                          'rejectionReason': 'BUSINESS_DEACTIVATED',
+                        });
+                      }
+                      await batch.commit();
+                    }
+                  } catch (e) {
+                    debugPrint('⚠️ TO ${toDoc.id} 정리 실패 (계속 진행): $e');
+                  }
+                }
+
+                // ── CONFIRMED/CONTRACT_PENDING 지원서 → CANCELED ────────
+                // 급여·출퇴근 데이터 포함 — 근로기준법 제42조 3년 보존 (삭제 금지)
+                bool hasMoreConfirmed = true;
+                while (hasMoreConfirmed) {
+                  final snap = await _firestore
+                      .collection('applications')
+                      .where('businessId', isEqualTo: businessId)
+                      .where('status', whereIn: ['CONFIRMED', 'CONTRACT_PENDING'])
+                      .limit(100)
+                      .get();
+                  if (snap.docs.isEmpty) break;
+                  hasMoreConfirmed = snap.docs.length == 100;
+                  final batch = _firestore.batch();
+                  for (final doc in snap.docs) {
+                    batch.update(doc.reference, {
+                      'status': 'CANCELED',
+                      'canceledAt': FieldValue.serverTimestamp(),
+                      'cancelReason': 'BUSINESS_DEACTIVATED',
+                    });
+                  }
+                  await batch.commit();
+                }
+
+                // ── employment_contracts → BUSINESS_DEACTIVATED ──────────
+                // [특이사항] 계약서는 근로기준법 제42조 3년 보존 의무 — 삭제 금지.
+                // 삭제 대신 status를 'BUSINESS_DEACTIVATED'로 표시해 비활성 사업장임을 명시.
+                // 실수령액·서명 이미지 등 급여 데이터는 그대로 유지됨.
+                try {
+                  bool hasMoreContracts = true;
+                  while (hasMoreContracts) {
+                    // [특이사항] 이전 코드는 'active', 'pending_business'를 사용했으나
+                    // ContractStatus 실제 값은 'pending_employer', 'pending_worker', 'completed', 'voided'.
+                    // 'active'/'pending_business'는 존재하지 않는 값 → pending_employer 계약서가
+                    // 비활성화 처리 대상에서 누락되는 버그 수정.
+                    final contractSnap = await _firestore
+                        .collection('employment_contracts')
+                        .where('businessId', isEqualTo: businessId)
+                        .where('status', whereIn: ['pending_employer', 'pending_worker'])
+                        .limit(100)
+                        .get();
+                    if (contractSnap.docs.isEmpty) break;
+                    hasMoreContracts = contractSnap.docs.length == 100;
+                    final batch = _firestore.batch();
+                    for (final doc in contractSnap.docs) {
+                      batch.update(doc.reference, {
+                        'status': 'BUSINESS_DEACTIVATED',
+                        'deactivatedAt': FieldValue.serverTimestamp(),
+                      });
+                    }
+                    await batch.commit();
+                  }
+                } catch (e) {
+                  debugPrint('⚠️ employment_contracts 상태 업데이트 실패 (계속 진행): $e');
+                }
+              } else {
+                // 공동 관리자 있음 → adminIds에서 본인 uid만 제거
+                await bizRef.update({
+                  'adminIds': FieldValue.arrayRemove([user.uid]),
+                });
+              }
+            }
+          } catch (e) {
+            debugPrint('⚠️ 계정 삭제: 사업장 정리 실패 (계속 진행): $e');
+          }
+        }
+      }
+
+      // 12. Firebase Auth 계정 삭제 — 개인정보보호법 제21조 (이메일·로그인 정보)
       await user.delete();
 
       return null; // 성공
@@ -684,10 +1011,33 @@ class AuthService {
           .where('username', isEqualTo: username)
           .limit(1)
           .get();
-      
+
       return snapshot.docs.isNotEmpty;
     } catch (e) {
       debugPrint('❌ 아이디 중복 체크 실패: $e');
+      return true; // 에러 시 중복으로 간주
+    }
+  }
+
+  // 외국인등록번호 중복 체크 (암호화된 값으로 쿼리)
+  // 동일 IV + AES 고정 암호화이므로 같은 입력 → 같은 암호문 → Firestore 쿼리 가능
+  /// 외국인등록번호 중복 체크 — 동일 역할로 이미 가입된 경우 true
+  ///
+  /// ciHash 기반의 내국인 CF 중복 체크와 동일하게 role 단위로 체크:
+  /// 같은 사람이 지원자(USER) 1개 + 관리자(BUSINESS_ADMIN) 1개는 허용.
+  Future<bool> checkForeignIdExists(String foreignIdNumber, UserRole role) async {
+    try {
+      final encrypted = EncryptionHelper.encrypt(foreignIdNumber);
+      if (encrypted == null) return false;
+      final snapshot = await _firestore
+          .collection('users')
+          .where('foreignIdNumber', isEqualTo: encrypted)
+          .where('role', isEqualTo: _roleToString(role))
+          .limit(1)
+          .get();
+      return snapshot.docs.isNotEmpty;
+    } catch (e) {
+      debugPrint('❌ 외국인등록번호 중복 체크 실패: $e');
       return true; // 에러 시 중복으로 간주
     }
   }

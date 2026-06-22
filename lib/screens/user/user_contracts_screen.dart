@@ -111,6 +111,7 @@ class _UserContractsScreenState extends State<UserContractsScreen>
   Future<void> _loadMore() async {
     final uid = _uid;
     if (_isLoadingMore || !_hasMore || _lastDoc == null || uid == null) return;
+    if (!mounted) return;
     setState(() => _isLoadingMore = true);
     try {
       final result = await _contractService.getByWorkerPaged(
@@ -379,6 +380,7 @@ class _UserContractCard extends StatelessWidget {
   String _dateLabel(EmploymentContractModel c) {
     if (c.isLongTerm) return FormatHelper.formatDateDot(c.createdAt);
     if (c.slots.isNotEmpty) {
+      // [특이사항] isNotEmpty 가드 내부 — .first/.last 안전
       final first = c.slots.first.workDate;
       final last  = c.slots.last.workDate;
       return first == last ? first : '$first ~ $last';

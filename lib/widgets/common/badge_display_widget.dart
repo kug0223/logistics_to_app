@@ -220,6 +220,7 @@ class BadgeDetailDialog extends StatelessWidget {
               borderRadius: BorderRadius.circular(12),
             ),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
@@ -241,11 +242,77 @@ class BadgeDetailDialog extends StatelessWidget {
                 Text(
                   _getConditionText(badge),
                   style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
-                  textAlign: TextAlign.center,
                 ),
               ],
             ),
           ),
+
+          // 혜택 (benefit 있을 때만)
+          if (badge.benefit != null && badge.benefit!.isNotEmpty) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            Container(
+              padding: ResponsiveHelper.cardPadding(context),
+              decoration: BoxDecoration(
+                color: AppColors.amber.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: AppColors.amber.withValues(alpha: 0.3),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.card_giftcard,
+                        size: ResponsiveHelper.iconSize(context, 18),
+                        color: AppColors.amber,
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      Text(
+                        '배지 혜택',
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.amber,
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                  // · 구분자로 나뉜 항목을 줄바꿈으로 표시
+                  ...badge.benefit!.split(' · ').map(
+                    (item) => Padding(
+                      padding: EdgeInsets.only(
+                        bottom: ResponsiveHelper.spacing(context, 4),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '✓ ',
+                            style: ResponsiveHelper.bodyStyle(
+                              context,
+                              color: AppColors.amber,
+                            ).copyWith(fontWeight: FontWeight.bold),
+                          ),
+                          Expanded(
+                            child: Text(
+                              item,
+                              style: ResponsiveHelper.bodyStyle(
+                                context,
+                                color: AppColors.grey700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
       actions: [

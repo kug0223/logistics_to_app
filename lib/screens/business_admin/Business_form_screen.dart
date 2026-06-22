@@ -108,7 +108,6 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
 
   // 근로계약서 설정
   final _ownerNameController = TextEditingController();
-  int? _wagePaymentDay; // 1~31
 
   // 선택 옵션
   final List<String> _mealOptions = ['조식', '중식', '석식', '야식', '간식'];
@@ -137,21 +136,25 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
 
   /// 회원가입 시 입력한 사업자번호/상호명 자동 완성
   void _loadUserBusinessNumber() {
-    final userProvider = context.read<UserProvider>();
-    final user = userProvider.currentUser;
+    final user = context.read<UserProvider>().currentUser;
+    // [특이사항] user가 null이면 자동완성 없이 종료 — 로그인 직후 provider 미초기화 시 발생 가능
+    if (user == null) return;
 
-    if (user?.businessNumber != null && user!.businessNumber!.isNotEmpty) {
-      _businessNumberController.text = FormatHelper.formatBusinessNumber(user.businessNumber!);
+    final bizNum = user.businessNumber;
+    if (bizNum != null && bizNum.isNotEmpty) {
+      _businessNumberController.text = FormatHelper.formatBusinessNumber(bizNum);
     }
-    
+
     // 상호명 자동 완성
-    if (user?.businessName != null && user!.businessName!.isNotEmpty) {
-      _companyNameController.text = user.businessName!;
+    final bizName = user.businessName;
+    if (bizName != null && bizName.isNotEmpty) {
+      _companyNameController.text = bizName;
     }
 
     // 대표자 성명: ceoName 우선 자동 완성
-    if (user?.ceoName != null && user!.ceoName!.isNotEmpty) {
-      _ownerNameController.text = user.ceoName!;
+    final ceoName = user.ceoName;
+    if (ceoName != null && ceoName.isNotEmpty) {
+      _ownerNameController.text = ceoName;
     }
   }
 
@@ -186,7 +189,6 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     _additionalImageUrls = business.imageUrls ?? [];
 
     if (business.ownerName != null) _ownerNameController.text = business.ownerName!;
-    _wagePaymentDay = business.wagePaymentDay;
 
     _parkingAvailable = business.parkingAvailable;
     _selectedMeals = business.mealsProvided ?? [];
@@ -205,6 +207,11 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
 
   @override
   void dispose() {
+    // [특이사항] TMP-01: 저장되지 않고 남은 임시 압축 파일 정리 (fire-and-forget)
+    _mainImage?.delete().ignore();
+    for (final file in _additionalImages) {
+      file.delete().ignore();
+    }
     _nameController.dispose();
     _businessNumberController.dispose();
     _companyNameController.dispose();
@@ -264,84 +271,125 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         title: _isEditMode ? '사업장 수정' : '사업장 등록',
         body: _isLoading
           ? const LoadingWidget()
-          : Theme(
-              data: theme.copyWith(
-                colorScheme: theme.colorScheme.copyWith(
-                  primary: theme.primaryColor,
+          : Column(
+              children: [
+                _buildStepIndicator(context, theme),
+                const Divider(height: 1, color: AppColors.grey100),
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 16),
+                      vertical: ResponsiveHelper.spacing(context, 8),
+                    ),
+                    child: Column(
+                      children: [
+                        [
+                          _buildCategoryStep(context, theme),
+                          _buildBasicInfoStep(context, theme),
+                          _buildDetailStep(context, theme),
+                        ][_currentStep],
+                        _buildNavigationButtons(context),
+                      ],
+                    ),
+                  ),
                 ),
-              ),
-              child: Stepper(
-                currentStep: _currentStep,
-                onStepContinue: _onStepContinue,
-                onStepCancel: _currentStep > 0 ? _onStepCancel : null,
-                controlsBuilder: _buildStepperControls,
-                steps: [
-                  // Step 1: 업종 선택
-                  Step(
-                    title: Text(
-                      '업종 선택',
-                      style: ResponsiveHelper.subtitleStyle(context),
-                    ),
-                    content: _buildCategoryStep(context, theme),
-                    isActive: _currentStep >= 0,
-                    state: _currentStep > 0 ? StepState.complete : StepState.indexed,
-                  ),
-
-                  // Step 2: 기본 정보
-                  Step(
-                    title: Text(
-                      '기본 정보',
-                      style: ResponsiveHelper.subtitleStyle(context),
-                    ),
-                    content: _buildBasicInfoStep(context, theme),
-                    isActive: _currentStep >= 1,
-                    state: _currentStep > 1 ? StepState.complete : StepState.indexed,
-                  ),
-
-                  // Step 3: 상세 정보
-                  Step(
-                    title: Text(
-                      '상세 정보',
-                      style: ResponsiveHelper.subtitleStyle(context),
-                    ),
-                    content: _buildDetailStep(context, theme),
-                    isActive: _currentStep >= 2,
-                    state: _currentStep > 2 ? StepState.complete : StepState.indexed,
-                  ),
-                ],
-              ),
+              ],
             ),
       ),
     );
   }
 
-  /// Stepper 컨트롤 버튼
-  Widget _buildStepperControls(BuildContext context, ControlsDetails details) {
-    final isLastStep = _currentStep == 2;
-
+  Widget _buildStepIndicator(BuildContext context, ThemeData theme) {
+    const stepLabels = ['업종 선택', '기본 정보', '상세 정보'];
     return Padding(
-      padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 24)),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 20),
+        vertical: ResponsiveHelper.spacing(context, 14),
+      ),
+      child: Row(
+        children: List.generate(stepLabels.length * 2 - 1, (i) {
+          if (i.isOdd) {
+            final isCompleted = i ~/ 2 < _currentStep;
+            return Expanded(
+              child: Container(
+                height: 2,
+                color: isCompleted ? theme.primaryColor : AppColors.grey200,
+              ),
+            );
+          }
+          final stepIndex = i ~/ 2;
+          final isCompleted = stepIndex < _currentStep;
+          final isCurrent = stepIndex == _currentStep;
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: isCompleted || isCurrent
+                      ? theme.primaryColor
+                      : AppColors.grey200,
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: isCompleted
+                      ? const Icon(Icons.check, size: 14, color: Colors.white)
+                      : Text(
+                          '${stepIndex + 1}',
+                          style: TextStyle(
+                            color: isCurrent ? Colors.white : AppColors.grey500,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
+                        ),
+                ),
+              ),
+              SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+              Text(
+                stepLabels[stepIndex],
+                style: ResponsiveHelper.tinyStyle(context).copyWith(
+                  color: isCurrent ? theme.primaryColor : AppColors.grey500,
+                  fontWeight:
+                      isCurrent ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            ],
+          );
+        }),
+      ),
+    );
+  }
+
+  Widget _buildNavigationButtons(BuildContext context) {
+    final isLastStep = _currentStep == 2;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        0,
+        ResponsiveHelper.spacing(context, 16),
+        0,
+        ResponsiveHelper.spacing(context, 8),
+      ),
       child: Row(
         children: [
-          // 이전 버튼
           if (_currentStep > 0) ...[
-            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
             Expanded(
               child: CommonWidgets.outlineButton(
                 context: context,
                 text: '이전',
                 icon: Icons.arrow_back,
-                onPressed: details.onStepCancel!,
+                onPressed: _onStepCancel,
               ),
             ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           ],
-          // 다음/완료 버튼
           Expanded(
             child: CommonWidgets.primaryButton(
               context: context,
               text: isLastStep ? '저장하기' : '다음',
               icon: isLastStep ? Icons.check : Icons.arrow_forward,
-              onPressed: details.onStepContinue!,
+              onPressed: _onStepContinue,
               isLoading: _isLoading,
             ),
           ),
@@ -562,6 +610,16 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
             },
           ),
 
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+          // 대표자 성명
+          CommonWidgets.textField(
+            context: context,
+            controller: _ownerNameController,
+            label: '대표자 성명',
+            hint: '예: 홍길동',
+            icon: Icons.person_outline,
+          ),
 
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
@@ -579,6 +637,39 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               return null;
             },
           ),
+
+          // GPS 상태 칩
+          if (_addressController.text.isNotEmpty)
+            Padding(
+              padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 6)),
+              child: GestureDetector(
+                onTap: _latitude == null ? _searchAddress : null,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _latitude != null ? Icons.gps_fixed : Icons.gps_not_fixed,
+                      size: 14,
+                      color: _latitude != null ? AppColors.success : AppColors.warning,
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                    Text(
+                      _latitude != null
+                          ? 'GPS 위치 확인됨'
+                          : 'GPS 위치 미확인 — 탭하여 주소 재검색',
+                      style: ResponsiveHelper.tinyStyle(
+                        context,
+                        color: _latitude != null ? AppColors.success : AppColors.warning,
+                      ),
+                    ),
+                    if (_latitude == null) ...[
+                      SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                      Icon(Icons.refresh, size: 12, color: AppColors.warning),
+                    ],
+                  ],
+                ),
+              ),
+            ),
 
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
@@ -610,111 +701,9 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
             },
           ),
 
-          SizedBox(height: ResponsiveHelper.spacing(context, 32)),
-
-          // ── 근로계약서 설정 ─────────────────────────────────────
-          CommonWidgets.sectionHeader(
-            context: context,
-            title: '근로계약서 설정',
-            icon: Icons.description_outlined,
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-          Text(
-            '지원 확정 시 근로계약서에 자동으로 입력되는 정보입니다.',
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-
-          // 대표자 성명
-          CommonWidgets.textField(
-            context: context,
-            controller: _ownerNameController,
-            label: '대표자 성명',
-            hint: '예: 홍길동',
-            icon: Icons.person_outline,
-          ),
-
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-          // 급여 지급일
-          _buildWagePaymentDayPicker(theme),
-
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
         ],
       ),
-    );
-  }
-
-  Widget _buildWagePaymentDayPicker(ThemeData theme) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.calendar_today_outlined,
-                color: theme.primaryColor,
-                size: ResponsiveHelper.iconSize(context, 18)),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            Text('급여 지급일',
-                style: ResponsiveHelper.bodyStyle(context)
-                    .copyWith(fontWeight: FontWeight.w500)),
-            const Spacer(),
-            if (_wagePaymentDay != null)
-              Text(
-                '매월 $_wagePaymentDay일',
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                    color: theme.primaryColor, fontWeight: FontWeight.bold),
-              ),
-          ],
-        ),
-        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-        SizedBox(
-          height: 48,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: 31,
-            separatorBuilder: (_, __) =>
-                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-            itemBuilder: (_, i) {
-              final day = i + 1;
-              final selected = _wagePaymentDay == day;
-              return GestureDetector(
-                onTap: () => setState(() => _wagePaymentDay = day),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 150),
-                  width: 40,
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? theme.primaryColor
-                        : AppColors.grey100,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: selected
-                          ? theme.primaryColor
-                          : AppColors.grey300,
-                    ),
-                  ),
-                  alignment: Alignment.center,
-                  child: Text(
-                    '$day',
-                    style: ResponsiveHelper.smallStyle(context).copyWith(
-                      color: selected ? Colors.white : AppColors.grey700,
-                      fontWeight: selected
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-        Text(
-          '* 29~31일 선택 시 해당 월 말일이 없으면 말일에 지급됩니다',
-          style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
-        ),
-      ],
     );
   }
 
@@ -775,6 +764,8 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
             right: ResponsiveHelper.spacing(context, 8),
             child: GestureDetector(
               onTap: () {
+                // [특이사항] TMP-01: 선택 취소된 임시 압축 파일 즉시 정리 (fire-and-forget)
+                _mainImage?.delete().ignore();
                 setState(() {
                   _mainImage = null;
                   // 기존 URL 삭제 목록에 추가
@@ -1465,6 +1456,8 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               context,
               file: _additionalImages[fileIndex],
               onRemove: () {
+                // [특이사항] TMP-01: 선택 취소된 임시 압축 파일 즉시 정리 (fire-and-forget)
+                _additionalImages[fileIndex].delete().ignore();
                 setState(() => _additionalImages.removeAt(fileIndex));
               },
             );
@@ -1643,7 +1636,8 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   Future<void> _pickMainImage() async {
     final image = await ImageHelper.pickAndCompressImage(
       context,
-      type: ImageType.general,  // 1920x1080, 80% 압축
+      type: ImageType.general,
+      useBottomSheet: true,
     );
 
     if (image != null) {
@@ -1687,6 +1681,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               ? result.bname
               : FormatHelper.parseAddressDistrict(result.fullAddress);
         });
+        debugPrint('📍 [주소검색] 위도: ${result.latitude} / 경도: ${result.longitude}');
       }
     } catch (e) {
       debugPrint('⚠️ 주소 검색 실패, 수기 입력 모드: $e');
@@ -1807,36 +1802,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
 
       final ownerId = user.uid;
 
-      // 위도/경도 미설정 경고 (GPS 출퇴근 방식 사용 시 필수)
-      if (_latitude == null || _longitude == null) {
-        if ((_attendanceType == 'gps' || _attendanceType == 'both') && mounted) {
-          final proceed = await showDialog<bool>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
-              title: const Text('GPS 좌표 미설정'),
-              content: const Text(
-                'GPS 출퇴근 방식을 사용하려면 사업장 위치(GPS 좌표)가 필요합니다.\n'
-                '주소 검색 후 좌표가 자동 설정됩니다.\n\n'
-                '지금 저장하면 근로자가 출퇴근 체크를 할 수 없습니다.',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  child: const Text('취소'),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, true),
-                  child: const Text('그래도 저장'),
-                ),
-              ],
-            ),
-          );
-          if (proceed != true) return;
-        }
-      }
+      debugPrint('📍 [저장] 위도: $_latitude / 경도: $_longitude');
 
       // CLAUDE.md 삭제 순서 규칙:
       // Storage 삭제는 Firestore 업데이트 성공 후에만 수행한다.
@@ -1883,6 +1849,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         'longitude': _longitude,
         'phone': _phoneController.text.trim().isEmpty ? null : _phoneController.text.trim(),
         'ownerId': ownerId,
+        // [특이사항] _isEditMode = (widget.business != null) — 이 블록 내 widget.business! 는 항상 안전
         'isApproved': _isEditMode ? widget.business!.isApproved : true,
         'mainImageUrl': mainImageUrl,
         'imageUrls': additionalUrls,
@@ -1897,7 +1864,6 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         'busInfo': _busInfoController.text.trim().isEmpty ? null : _busInfoController.text.trim(),
         'precautions': _precautionsController.text.trim().isEmpty ? null : _precautionsController.text.trim(),
         'ownerName': _ownerNameController.text.trim().isEmpty ? null : _ownerNameController.text.trim(),
-        'wagePaymentDay': _wagePaymentDay,
         'updatedAt': FieldValue.serverTimestamp(),
         // 출퇴근 설정
         'attendanceType': _attendanceType,

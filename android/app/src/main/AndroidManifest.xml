@@ -60,7 +60,7 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_color"
             android:resource="@color/notification_color" />
-            
+
     </application>
     
     <!-- ⭐ URL 열기를 위한 queries 설정 추가 -->

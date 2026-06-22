@@ -49,6 +49,7 @@ enum NotificationType {
   
   // 리뷰 관련
   reviewReceived,          // 리뷰 받음
+  reviewRequest,           // 리뷰 작성 요청 (CF: "REVIEW_REQUEST")
   
   // 신분증 열람 관련
   idCardAccessRequested,   // 신분증 열람 요청됨 (지원자에게)
@@ -220,6 +221,7 @@ class NotificationModel {
         return 'warning_amber';
       // 리뷰
       case NotificationType.reviewReceived:
+      case NotificationType.reviewRequest:
         return 'star';
       // 신분증
       case NotificationType.idCardAccessRequested:
@@ -304,6 +306,8 @@ class NotificationModel {
       case 'retroactiveDeductionAlert': return NotificationType.retroactiveDeductionAlert;
       // 리뷰
       case 'reviewReceived': return NotificationType.reviewReceived;
+      case 'REVIEW_REQUEST': return NotificationType.reviewRequest;
+      case 'reviewRequest': return NotificationType.reviewRequest; // 구버전 레코드 역직렬화 호환
       // 신분증
       case 'idCardAccessRequested': return NotificationType.idCardAccessRequested;
       case 'idCardAccessApproved': return NotificationType.idCardAccessApproved;
@@ -358,6 +362,7 @@ class NotificationModel {
       case NotificationType.retroactiveDeductionAlert: return 'retroactiveDeductionAlert';
       // 리뷰
       case NotificationType.reviewReceived: return 'reviewReceived';
+      case NotificationType.reviewRequest: return 'REVIEW_REQUEST';
       // 신분증
       case NotificationType.idCardAccessRequested: return 'idCardAccessRequested';
       case NotificationType.idCardAccessApproved: return 'idCardAccessApproved';

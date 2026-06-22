@@ -2,7 +2,7 @@
 // ignore_for_file: type=lint
 import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
 import 'package:flutter/foundation.dart'
-    show defaultTargetPlatform, kIsWeb, TargetPlatform;
+    show defaultTargetPlatform, TargetPlatform;
 
 /// Default [FirebaseOptions] for use with your Firebase apps.
 ///
@@ -16,9 +16,6 @@ import 'package:flutter/foundation.dart'
 /// ```
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
-    if (kIsWeb) {
-      return web;  // ✅ 수정됨!
-    }
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
         return android;
@@ -46,29 +43,21 @@ class DefaultFirebaseOptions {
     }
   }
 
-  // ✅ Web 설정 추가!
-  static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyATfYwUbF0dJfygiiV-9m_ws9JzK9_n-W4',
-    appId: '1:635507076709:web:d7d6f7f32958f2d5924773',
-    messagingSenderId: '635507076709',
-    projectId: 'logistics-to-system',
-    storageBucket: 'logistics-to-system.firebasestorage.app',
-  );
-
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyDpZ_65xL68NYh7jFlYXFGHj5UgtNDvAh0',
-    appId: '1:635507076709:android:bc2dafc49476cf11a2e08c',
-    messagingSenderId: '635507076709',
-    projectId: 'logistics-to-system',
-    storageBucket: 'logistics-to-system.firebasestorage.app',
+    apiKey: 'AIzaSyAGdrmqh6V-4TCTHS2gFFeH8_rhjfYX2Io',
+    appId: '1:1052916181801:android:e70691047d64f4300ae538',
+    messagingSenderId: '1052916181801',
+    projectId: 'alfit-89567',
+    storageBucket: 'alfit-89567.firebasestorage.app',
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyDJiMm9MRSMYbtDui8dcJOjIRW8QNvKXFE',
-    appId: '1:635507076709:ios:7e9c4d71ef689c49a2e08c',
-    messagingSenderId: '635507076709',
-    projectId: 'logistics-to-system',
-    storageBucket: 'logistics-to-system.firebasestorage.app',
+    apiKey: 'AIzaSyB8RgKcR9fW_XSGC1MCwUkPjyIjqJRxhxU',
+    appId: '1:1052916181801:ios:09edd7f220537afe0ae538',
+    messagingSenderId: '1052916181801',
+    projectId: 'alfit-89567',
+    storageBucket: 'alfit-89567.firebasestorage.app',
     iosBundleId: 'com.alfit.app',
   );
+
 }

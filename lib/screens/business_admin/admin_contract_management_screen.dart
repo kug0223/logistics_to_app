@@ -85,6 +85,7 @@ class _AdminContractManagementScreenState
 
   @override
   void dispose() {
+    // [특이사항] controller.dispose()가 내부적으로 모든 addListener 리스너를 제거함 — removeListener 별도 불필요
     _tabCtrl.dispose();
     _scrollCtrl.dispose();
     _searchCtrl.dispose();
@@ -511,6 +512,7 @@ class _ContractCard extends StatelessWidget {
       return FormatHelper.formatDateDot(c.createdAt);
     }
     if (c.slots.isNotEmpty) {
+      // [특이사항] isNotEmpty 가드 내부 — .first/.last 안전
       final first = c.slots.first.workDate;
       final last = c.slots.last.workDate;
       return first == last ? first : '$first ~ $last';

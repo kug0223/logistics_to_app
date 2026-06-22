@@ -46,7 +46,7 @@ class TOListDialogs {
     if (!context.mounted) return;
     final confirmed = await DialogHelper.showDeleteConfirm(
       context,
-      itemName: 'TO',
+      itemName: '공고',
       additionalMessage: content,
     );
 
@@ -59,24 +59,30 @@ class TOListDialogs {
         }
       } catch (e) {
         debugPrint('❌ TO 삭제 실패: $e');
-        if (context.mounted) ToastHelper.showError('TO 삭제 중 오류가 발생했습니다.');
+        if (context.mounted) ToastHelper.showError('공고 삭제 중 오류가 발생했습니다.');
       }
     }
   }
 
   /// TO 마감 다이얼로그
   Future<void> showCloseTODialog(TOModel to) async {
+    // [특이사항] uid null → '' 폴백 시 closedBy가 빈 문자열로 기록돼 감사 로그 훼손.
+    // 세션 만료 시 작업 불가로 처리하여 미인증 상태의 마감 기록을 방지한다.
     final adminUID =
-        Provider.of<UserProvider>(context, listen: false).currentUser?.uid ?? '';
+        Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
+    if (adminUID == null) {
+      ToastHelper.showError('로그인 세션이 만료되었습니다. 다시 로그인해 주세요.');
+      return;
+    }
 
     final confirmed = await DialogHelper.showCustom<bool>(
       context,
-      title: 'TO 마감',
+      title: '공고 마감',
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('이 TO를 마감 처리하시겠습니까?'),
+          const Text('이 공고를 마감 처리하시겠습니까?'),
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
           Container(
             padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
@@ -128,22 +134,26 @@ class TOListDialogs {
       Navigator.pop(context); // 로딩 닫기
 
       if (success) {
-        ToastHelper.showSuccess('TO가 마감되었습니다.');
+        ToastHelper.showSuccess('공고가 마감되었습니다.');
         onChanged();
       } else {
-        ToastHelper.showError('TO 마감에 실패했습니다.');
+        ToastHelper.showError('공고 마감에 실패했습니다.');
       }
     } catch (e) {
       if (context.mounted) Navigator.pop(context);
       debugPrint('❌ TO 마감 실패: $e');
-      ToastHelper.showError('TO 마감 중 오류가 발생했습니다.');
+      ToastHelper.showError('공고 마감 중 오류가 발생했습니다.');
     }
   }
 
   /// TO 재오픈 다이얼로그
   Future<void> showReopenTODialog(TOModel to) async {
     final adminUID =
-        Provider.of<UserProvider>(context, listen: false).currentUser?.uid ?? '';
+        Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
+    if (adminUID == null) {
+      ToastHelper.showError('로그인 세션이 만료되었습니다. 다시 로그인해 주세요.');
+      return;
+    }
 
     if (to.isTimeExpired) {
       _showTimeExpiredDialog(to);
@@ -155,18 +165,18 @@ class TOListDialogs {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => StyledDialog(
-        title: 'TO 재오픈',
+        title: '공고 재오픈',
         icon: Icons.lock_open,
         headerColor: AppColors.success,
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('이 TO를 다시 오픈하시겠습니까?'),
+            const Text('이 공고를 다시 오픈하시겠습니까?'),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
 
             if (isFull) ...[
-              StyledDialogInfoCard.warning('이미 인원이 충족된 TO입니다.\n추가 지원자를 받으시겠습니까?'),
+              StyledDialogInfoCard.warning('이미 인원이 충족된 공고입니다.\n추가 지원자를 받으시겠습니까?'),
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
             ],
 
@@ -197,15 +207,15 @@ class TOListDialogs {
       Navigator.pop(context);
 
       if (success) {
-        ToastHelper.showSuccess('TO가 재오픈되었습니다.');
+        ToastHelper.showSuccess('공고가 재오픈되었습니다.');
         onChanged();
       } else {
-        ToastHelper.showError('TO 재오픈에 실패했습니다.');
+        ToastHelper.showError('공고 재오픈에 실패했습니다.');
       }
     } catch (e) {
       if (context.mounted) Navigator.pop(context);
       debugPrint('❌ TO 재오픈 실패: $e');
-      ToastHelper.showError('TO 재오픈 중 오류가 발생했습니다.');
+      ToastHelper.showError('공고 재오픈 중 오류가 발생했습니다.');
     }
   }
 

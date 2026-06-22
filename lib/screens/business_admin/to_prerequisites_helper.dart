@@ -5,7 +5,7 @@ import '../../widgets/dialogs/styled_dialog.dart';
 import '../common/settings_screen.dart';
 import 'business_list_screen.dart';
 
-/// TO 등록 전 요구사항(사업장/이메일/사업자등록증) 체크 후 안내 다이얼로그 표시.
+/// TO 등록 전 요구사항(사업장/사업자등록증) 체크 후 안내 다이얼로그 표시.
 ///
 /// 모든 조건 충족 시 true 반환.
 /// 미충족 항목이 있으면 다이얼로그를 띄우고 false 반환.
@@ -13,12 +13,10 @@ import 'business_list_screen.dart';
 Future<bool> checkTOPrerequisites(
   BuildContext context, {
   required bool hasApprovedBusiness,
-  required bool isEmailVerified,
   required bool hasLicense,
 }) async {
   final missing = <String>[];
   if (!hasApprovedBusiness) missing.add('사업장 등록');
-  if (!isEmailVerified) missing.add('이메일 인증');
   if (!hasLicense) missing.add('사업자등록증 등록');
   if (missing.isEmpty) return true;
 

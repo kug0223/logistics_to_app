@@ -243,15 +243,17 @@ extension ApplicationFirestore on FirestoreService {
         return false;
       }
 
-      // ── 1.2. 이메일 인증 체크 ──
-      if (userData['isEmailVerified'] != true) {
-        ToastHelper.showError('이메일 인증이 필요합니다.\n설정 > 이메일 인증에서 완료해주세요.');
+      // ── 1.2. 본인인증 체크 (이메일 인증 또는 PASS 인증) ──
+      final emailVerified = userData['isEmailVerified'] == true;
+      final passVerified = userData['ci'] != null && userData['passVerifiedAt'] != null;
+      if (!emailVerified && !passVerified) {
+        ToastHelper.showError('본인인증이 필요합니다.\n설정 > 본인인증에서 완료해주세요.');
         return false;
       }
 
       // ── 1.3. 신분증 인증 체크 (단기 공고 지원 시 필수) ──
-      // 장기공고(contract type)는 계약서 서명 시 신분증 확인하므로 여기서는 단기만 체크
-      if (userData['isIdVerified'] != true) {
+      // 장기공고(contract type, slotId==null)는 계약서 서명 시 신분증 확인하므로 단기만 체크
+      if (slotId != null && userData['isIdVerified'] != true) {
         ToastHelper.showError('신분증 인증 후 지원할 수 있습니다.\n설정 > 서류 관리에서 신분증을 등록해주세요.');
         return false;
       }
@@ -577,6 +579,7 @@ extension ApplicationFirestore on FirestoreService {
             workDate: workDate,
             applicationId: reactivatableApp.id,
             toId: toId,
+            workDetailId: workDetailId ?? '',
           );
         } catch (notifErr) {
           debugPrint('⚠️ 재지원 알림 전송 실패 (지원은 완료됨): $notifErr');
@@ -690,6 +693,7 @@ extension ApplicationFirestore on FirestoreService {
           workDate: workDate,
           applicationId: appRef.id,
           toId: toId,
+          workDetailId: workDetailId ?? '',
         );
       } catch (notifErr) {
         debugPrint('⚠️ 지원 알림 전송 실패 (지원은 완료됨): $notifErr');
@@ -957,6 +961,7 @@ extension ApplicationFirestore on FirestoreService {
           workDate: (appData['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
           applicationId: applicationId,
           toId: toId,
+          workDetailId: appData['workDetailId'] as String? ?? '',
         );
       }
       ToastHelper.showSuccess('지원이 취소되었습니다.');
@@ -1634,6 +1639,7 @@ extension ApplicationFirestore on FirestoreService {
               'confirmedAt': FieldValue.delete(),
               if (confirmedBy != null) 'confirmedBy': FieldValue.delete(),
             });
+          // [특이사항] 롤백 실패 무시 — 어차피 아래 Exception을 던지므로 호출자가 에러 처리함
           } catch (_) {}
           throw Exception('이미 마감된 슬롯입니다. 슬롯을 재오픈 후 확정해주세요.');
         }
@@ -2132,7 +2138,11 @@ extension ApplicationFirestore on FirestoreService {
       }
       if (!useBatch) await localBatch.commit();
     } catch (e) {
+      // [M-4 수정] useBatch=true이면 호출자의 배치에 연산이 부분적으로 추가된 상태.
+      // 에러를 삼키면 호출자가 불완전한 배치를 커밋할 수 있으므로 rethrow.
+      // useBatch=false(독립 배치)일 때만 에러 격리 — 호출자 흐름에 영향 없음.
       debugPrint('❌ 연관 데이터 정리 실패: $e');
+      if (useBatch) rethrow;
     }
   }
 
@@ -2147,6 +2157,7 @@ extension ApplicationFirestore on FirestoreService {
     required DateTime workDate,
     required String applicationId,
     required String toId,
+    required String workDetailId,
   }) async {
     try {
       final businessDoc =
@@ -2165,7 +2176,7 @@ extension ApplicationFirestore on FirestoreService {
         applicationId: applicationId,
         toId: toId,
         businessId: businessId,
-        workDetailId: '',
+        workDetailId: workDetailId,
       ));
     } catch (e) {
       debugPrint('⚠️ 신규 지원 알림 전송 실패: $e');
@@ -2179,6 +2190,7 @@ extension ApplicationFirestore on FirestoreService {
     required DateTime workDate,
     required String applicationId,
     required String toId,
+    required String workDetailId,
   }) async {
     try {
       final businessDoc =
@@ -2197,7 +2209,7 @@ extension ApplicationFirestore on FirestoreService {
         applicationId: applicationId,
         businessId: businessId,
         toId: toId,
-        workDetailId: '',
+        workDetailId: workDetailId,
       ));
     } catch (e) {
       debugPrint('⚠️ 지원 취소 알림 전송 실패: $e');

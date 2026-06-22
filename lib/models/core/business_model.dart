@@ -69,6 +69,11 @@ class BusinessModel {
   /// 날인 방식: 'stamp'(도장 이미지 업로드) | 'signature'(직접 서명)
   final String sealType;
 
+  /// 슈퍼관리자 또는 단독 관리자 탈퇴로 비활성화된 시각
+  final DateTime? deactivatedAt;
+
+  bool get isDeactivated => deactivatedAt != null;
+
   BusinessModel({
     required this.id,
     required this.businessNumber,
@@ -118,6 +123,7 @@ class BusinessModel {
     this.wagePaymentDay,
     this.sealBase64,
     this.sealType = 'stamp',
+    this.deactivatedAt,
   }) : adminIds = (adminIds != null && adminIds.isNotEmpty)
            ? adminIds
            : [ownerId];
@@ -185,6 +191,9 @@ class BusinessModel {
       wagePaymentDay: (map['wagePaymentDay'] as num?)?.toInt(),
       sealBase64: map['sealBase64'],
       sealType: map['sealType'] as String? ?? 'stamp',
+      deactivatedAt: map['deactivatedAt'] != null
+          ? (map['deactivatedAt'] as Timestamp).toDate().toLocal()
+          : null,
     );
   }
   factory BusinessModel.fromFirestore(DocumentSnapshot doc) {
@@ -302,6 +311,8 @@ class BusinessModel {
     int? beaconMajor,
     int? beaconMinor,
     int? beaconRssiThreshold,
+    DateTime? deactivatedAt,
+    bool clearDeactivatedAt = false,
   }) {
     return BusinessModel(
       id: id ?? this.id,
@@ -347,6 +358,7 @@ class BusinessModel {
       beaconMajor: beaconMajor ?? this.beaconMajor,
       beaconMinor: beaconMinor ?? this.beaconMinor,
       beaconRssiThreshold: beaconRssiThreshold ?? this.beaconRssiThreshold,
+      deactivatedAt: clearDeactivatedAt ? null : (deactivatedAt ?? this.deactivatedAt),
     );
   }
 

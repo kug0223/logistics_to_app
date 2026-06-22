@@ -22,6 +22,7 @@ class FCMService {
       FlutterLocalNotificationsPlugin();
 
   String? _currentUserId;
+  bool _currentUserIsAdmin = false;  // 역할 가드 판단용 (contractSigned 등)
   bool _isInitialized = false;
   bool _isInitializing = false;        // 중복 초기화 방지 플래그
   String? _pendingUserId;              // [118] 초기화 진행 중 계정 전환 요청 대기
@@ -56,7 +57,9 @@ class FCMService {
   }
 
   /// FCM 초기화 (로그인 후 호출)
-  Future<void> initialize(String userId) async {
+  /// [isAdmin] 관리자 여부 — contractSigned 등 역할 가드에 사용 (기본 false = USER로 간주)
+  Future<void> initialize(String userId, {bool isAdmin = false}) async {
+    _currentUserIsAdmin = isAdmin;
     if (_isInitialized && _currentUserId == userId) {
       debugPrint('ℹ️ FCM 이미 초기화됨: $userId');
       return;
@@ -277,6 +280,7 @@ class FCMService {
         final data = Map<String, dynamic>.from(jsonDecode(payload) as Map);
         _navigateByPayload(data);
         return;
+      // [특이사항] payload 파싱/네비게이션 실패 시 알림 목록으로 폴백 — 사용자 경험 보호
       } catch (_) {}
     }
     _navigateToNotificationScreen();
@@ -298,13 +302,18 @@ class FCMService {
         _navigateToContractSign(data); // fire-and-forget: 내부에서 await 처리
         break;
       // 근무자 서명 완료 알림 — 관리자 전용, 인력 관리 화면으로 직접 이동
-      // [특이사항] SP-M-2: 역할 가드 없음 — FCMService는 _currentUserId만 보유하며 role 정보 미포함.
-      // USER가 이 payload를 수신하면 관리자 전용 IntegratedWorkforceScreen에 접근 가능.
-      // IntegratedWorkforceScreen 내부에서 비관리자 접근 시 처리 필요.
+      // [특이사항] SP-M-2 수정: initialize() 시 저장된 _currentUserIsAdmin으로 역할 가드.
+      // USER(isAdmin=false)이면 관리자 전용 화면 대신 UserContractsScreen으로 폴백.
       case 'contractSigned':
-        _navigatorKey!.currentState!.push(
-          MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
-        );
+        if (_currentUserIsAdmin) {
+          _navigatorKey!.currentState!.push(
+            MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+          );
+        } else {
+          _navigatorKey!.currentState!.push(
+            MaterialPageRoute(builder: (_) => const UserContractsScreen()),
+          );
+        }
         break;
       case 'userContracts': // contractVoided 알림 딥링크 (H-34)
         _navigatorKey!.currentState!.push(

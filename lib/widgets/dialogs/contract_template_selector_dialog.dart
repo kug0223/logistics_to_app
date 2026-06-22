@@ -1,6 +1,9 @@
+import 'dart:math' show max;
+
 import 'package:flutter/material.dart';
 
 import '../../models/core/contract_template_model.dart';
+import '../../screens/business_admin/contract_template_list_screen.dart';
 import '../../services/contract_template_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
@@ -249,7 +252,12 @@ class _SelectorSheetState extends State<_SelectorSheet> {
                 ResponsiveHelper.spacing(context, 16),
                 ResponsiveHelper.spacing(context, 8),
                 ResponsiveHelper.spacing(context, 16),
-                ResponsiveHelper.spacing(context, 16),
+                // edge-to-edge 대응: viewPaddingOf는 SafeArea 소비 무관 물리적 인셋.
+                // max로 SafeArea 정상 동작 시 이중 합산 방지.
+                max(
+                  ResponsiveHelper.spacing(context, 16),
+                  MediaQuery.viewPaddingOf(context).bottom,
+                ),
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -317,12 +325,16 @@ class _SelectorSheetState extends State<_SelectorSheet> {
 
   Widget _buildEmpty(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 32)),
+      padding: EdgeInsets.fromLTRB(
+        ResponsiveHelper.spacing(context, 24),
+        ResponsiveHelper.spacing(context, 32),
+        ResponsiveHelper.spacing(context, 24),
+        ResponsiveHelper.spacing(context, 16),
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.description_outlined,
-              size: 48, color: AppColors.grey300),
+          Icon(Icons.description_outlined, size: 48, color: AppColors.grey300),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           Text(
             '등록된 템플릿이 없습니다',
@@ -331,10 +343,36 @@ class _SelectorSheetState extends State<_SelectorSheet> {
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 6)),
           Text(
-            '설정 > 근로계약서 관리에서 템플릿을 먼저 만드세요',
+            '계약서 조항 템플릿을 미리 등록해두면\n빠르게 계약서를 작성할 수 있습니다',
             textAlign: TextAlign.center,
-            style: ResponsiveHelper.smallStyle(context,
-                color: AppColors.grey400),
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey400),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () async {
+                // 템플릿 관리 화면으로 이동 후 돌아오면 목록 새로고침
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ContractTemplateListScreen(
+                        businessId: widget.businessId),
+                  ),
+                );
+                if (mounted) _load();
+              },
+              icon: const Icon(Icons.add, size: 16),
+              label: Text('템플릿 등록하기',
+                  style: ResponsiveHelper.smallStyle(context,
+                      fontWeight: FontWeight.w600)),
+              style: OutlinedButton.styleFrom(
+                padding: EdgeInsets.symmetric(
+                    vertical: ResponsiveHelper.spacing(context, 10)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
           ),
         ],
       ),

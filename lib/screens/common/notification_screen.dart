@@ -298,9 +298,18 @@ class _NotificationScreenState extends State<NotificationScreen> {
         );
         break;
 
+      // [특이사항] newApplication/applicationCanceled는 관리자에게만 발송되는 알림.
+      // USER가 이 타입의 알림을 수신한 경우(데이터 불일치 등) 관리자 다이얼로그 접근 차단.
       case NotificationType.newApplication:
       case NotificationType.applicationCanceled:
-        await _openWorkApplicantsFromNotification(context, notification);
+        if (isUser) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
+          );
+        } else {
+          await _openWorkApplicantsFromNotification(context, notification);
+        }
         break;
 
       // ═══════════════════════════════════════════════════════════
@@ -332,22 +341,31 @@ class _NotificationScreenState extends State<NotificationScreen> {
         await _openContractSignFromNotification(context, notification);
         break;
 
-      // 근무자 서명 완료 — 관리자에게 발송, 해당 사업장 계약서 관리 화면으로 이동
+      // 근무자 서명 완료 — 관리자에게만 발송, 해당 사업장 계약서 관리 화면으로 이동
+      // [특이사항] USER가 이 알림을 수신한 경우(데이터 불일치 등) 관리자 화면 접근 차단.
+      // USER는 UserContractsScreen으로 폴백한다.
       case NotificationType.contractSigned:
         {
-          final businessId = notification.data?['businessId'] as String?;
-          if (businessId != null && businessId.isNotEmpty) {
+          if (isUser) {
             Navigator.push(
               context,
-              MaterialPageRoute(
-                builder: (_) => AdminContractManagementScreen(businessId: businessId),
-              ),
+              MaterialPageRoute(builder: (_) => const UserContractsScreen()),
             );
           } else {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
-            );
+            final businessId = notification.data?['businessId'] as String?;
+            if (businessId != null && businessId.isNotEmpty) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => AdminContractManagementScreen(businessId: businessId),
+                ),
+              );
+            } else {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+              );
+            }
           }
         }
         break;
@@ -362,7 +380,11 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       case NotificationType.contractExpiringReminder:
         {
-          final businessId = userProvider.effectiveBusinessId;
+          // [특이사항] 알림 data의 businessId 우선 — 다중 사업장 관리자가 다른 사업장 선택 중일 때 정확한 대화상자 표시
+          final notifBusinessId = notification.data?['businessId'] as String?;
+          final businessId = (notifBusinessId != null && notifBusinessId.isNotEmpty)
+              ? notifBusinessId
+              : userProvider.effectiveBusinessId;
           if (businessId != null) {
             showDialog(
               context: context,
@@ -818,7 +840,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
       if (result) {
         await MemberService().acceptInvitation(invitation);
         if (!context.mounted) return;
-        Navigator.pop(context);
+        Navigator.pop(context); // 로딩 다이얼로그 닫기
+        // [특이사항] context.read<>()는 await 전 동기 호출이므로 안전 — await 후 context.mounted 체크로 보호
         await context.read<UserProvider>().refreshUserData();
         if (!context.mounted) return;
         ToastHelper.showSuccess('초대를 수락했습니다. 잠시 후 관리자 모드를 사용할 수 있어요!');
@@ -894,14 +917,14 @@ class _NotificationScreenState extends State<NotificationScreen> {
       }
       final to = TOModel.fromMap(toData, toId);
 
-      final workDetailDoc = await FirebaseFirestore.instance
-          .collection('tos')
-          .doc(toId)
-          .collection('workDetails')
-          .doc(workDetailId)
-          .get();
+      // [특이사항] workDetails는 tos/{toId}의 배열 필드 — 서브컬렉션이 아님.
+      // 알림의 workDetailId는 id(workType_start_end 합성키) 또는 legacyId(workType)일 수 있음.
+      final workDetail = to.workDetails.cast<WorkDetailModel?>().firstWhere(
+        (wd) => wd?.id == workDetailId || wd?.legacyId == workDetailId,
+        orElse: () => null,
+      );
 
-      if (!workDetailDoc.exists) {
+      if (workDetail == null) {
         if (!context.mounted) return;
         Navigator.pop(context);
         ToastHelper.showError('업무 정보를 찾을 수 없습니다');
@@ -911,16 +934,6 @@ class _NotificationScreenState extends State<NotificationScreen> {
         );
         return;
       }
-
-      final workDetailData = workDetailDoc.data();
-      if (workDetailData == null) {
-        if (!context.mounted) return;
-        Navigator.pop(context);
-        ToastHelper.showError('업무 정보를 불러올 수 없습니다');
-        Navigator.push(context, MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()));
-        return;
-      }
-      final workDetail = WorkDetailModel.fromMap(workDetailData, workDetailId);
 
       final toItem = TOItem(
         to: to,

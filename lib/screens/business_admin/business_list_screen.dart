@@ -200,7 +200,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
     return AppEmptyState(
       icon: Icons.business_outlined,
       title: '등록된 사업장이 없습니다',
-      subtitle: '사업장을 등록하고 TO를 관리해보세요',
+      subtitle: '사업장을 등록하고 공고를 관리해보세요',
       action: CommonWidgets.primaryButton(
         context: context,
         text: '사업장 등록하기',
@@ -486,7 +486,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
           [
             AppMenuSheetItem(
               icon: Icons.add_circle_outline,
-              label: 'TO 등록',
+              label: '공고 등록',
               color: theme.primaryColor,
               onTap: () => _handleCreateTO(context, business),
             ),
@@ -539,7 +539,6 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       final canProceed = await checkTOPrerequisites(
         context,
         hasApprovedBusiness: true,
-        isEmailVerified: user.isPassVerified,
         hasLicense: user.businessLicenseImageUrl != null,
       );
       if (!canProceed) return;

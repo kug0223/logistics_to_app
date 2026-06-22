@@ -46,8 +46,12 @@ class TooltipService {
     await prefs.remove('$_prefix$key');
   }
 
+  // [특이사항] Dart는 단일 스레드이므로 이 Set 접근은 동기 구간에서 원자적.
+  // wasShown→markAsShown 사이 async gap의 중복 호출을 이 Set으로 차단.
+  static final Set<String> _pendingKeys = {};
+
   /// 툴팁 표시 (1회만)
-  /// 
+  ///
   /// 사용법:
   /// ```dart
   /// await TooltipService.showOnce(
@@ -67,28 +71,30 @@ class TooltipService {
     IconData icon = Icons.lightbulb_outline,
     Color? iconColor,
   }) async {
-    // 이미 표시된 경우 스킵
-    // [특이사항] wasShown→markAsShown 사이 async gap — 동시 호출 시 중복 표시 가능 (발생 빈도 극히 낮음)
+    // 동시 호출 guard — 이미 표시 진행 중인 키는 즉시 스킵 (동기 체크이므로 race 없음)
+    if (_pendingKeys.contains(key)) return;
     if (await wasShown(key)) return;
 
-    // 표시됨으로 저장
-    await markAsShown(key);
+    _pendingKeys.add(key);
+    try {
+      await markAsShown(key);
 
-    // 컨텍스트 유효성 체크
-    if (!context.mounted) return;
+      if (!context.mounted) return;
 
-    // 툴팁 다이얼로그 표시
-    await showDialog(
-      context: context,
-      barrierDismissible: true,
-      builder: (context) => _TooltipDialog(
-        title: title,
-        message: message,
-        tips: tips,
-        icon: icon,
-        iconColor: iconColor,
-      ),
-    );
+      await showDialog(
+        context: context,
+        barrierDismissible: true,
+        builder: (context) => _TooltipDialog(
+          title: title,
+          message: message,
+          tips: tips,
+          icon: icon,
+          iconColor: iconColor,
+        ),
+      );
+    } finally {
+      _pendingKeys.remove(key);
+    }
   }
 }
 
@@ -313,8 +319,8 @@ class TooltipContents {
     TooltipService.showOnce(
       context,
       key: TooltipService.firstToCreate,
-      title: '📋 첫 TO 등록이시네요!',
-      message: 'TO를 등록하면 지원자들이\n자동으로 모여요!',
+      title: '📋 첫 공고 등록이시네요!',
+      message: '공고를 등록하면 지원자들이\n자동으로 모여요!',
       tips: [
         '공개 일시를 설정하면 예약 공개가 가능해요.',
         '마감일 전까지 지원을 받을 수 있습니다.',

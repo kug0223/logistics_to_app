@@ -1,5 +1,7 @@
+import 'dart:math';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
+import '../utils/toast_helper.dart';
 
 /// PASS 본인인증 결과 데이터
 class PassAuthResult {
@@ -48,10 +50,15 @@ class PassVerificationService {
     // 2. PassAuthWebViewPage 열기 (WebView)
     // 3. 인증 완료 콜백에서 encData 수신
     // 4. CF verifyPassAuth 호출 → PassAuthResult 반환
-    throw UnimplementedError('다날 계약 완료 후 구현 예정 [TODO-DANAL]');
+    // [특이사항] 릴리즈 빌드에서 throw가 아닌 graceful fallback — UnimplementedError 던지면 앱 크래시
+    ToastHelper.showInfo('PASS 인증은 현재 준비 중입니다. 잠시 후 이용해주세요.');
+    return null;
   }
 
   /// 비밀번호 찾기용 PASS 인증 후 Custom Token 발급
+  ///
+  /// [주의] 현재 LoginScreen은 이 메서드를 사용하지 않고 CF를 직접 호출함.
+  /// 이 메서드는 향후 다른 진입점(예: 딥링크)에서 재사용을 위해 남겨둠.
   ///
   /// [passToken]: authenticate()에서 받은 토큰
   /// [username]: 비밀번호를 찾을 계정 아이디
@@ -62,6 +69,8 @@ class PassVerificationService {
     required String username,
   }) async {
     if (kDebugMode) {
+      // debug 모드: CF 호출 없이 mock 토큰 반환
+      // 실제 Firebase signInWithCustomToken에는 사용 불가 — UX 흐름 테스트용
       return 'mock-custom-token-for-debug';
     }
 
@@ -70,6 +79,7 @@ class PassVerificationService {
       final result = await _fn
           .httpsCallable('resetPasswordWithPass')
           .call({'passToken': passToken, 'username': username});
+      // [특이사항] result.data가 null이거나 키 없으면 예외 → 아래 catch에서 null 반환 처리
       return result.data['customToken'] as String?;
     } catch (e) {
       debugPrint('❌ [PassVerificationService] resetPasswordWithPass 실패: $e');
@@ -79,19 +89,33 @@ class PassVerificationService {
 
   // ── Mock (개발/테스트용) ─────────────────────────────────────────────────
 
-  /// 다날 계약 전 개발 테스트용 mock 데이터
-  /// kDebugMode에서만 사용됩니다.
+  static final _rng = Random();
+
+  static const _mockNames = [
+    '김민준', '이서연', '박지호', '최수아', '정우진',
+    '강하은', '조민서', '윤도현', '임채원', '한소율',
+  ];
+
+  /// 다날 계약 전 개발 테스트용 mock 데이터 — 매 호출마다 랜덤 값 반환
   static Future<PassAuthResult?> _mockAuthenticate({
     required String purpose,
   }) async {
-    // 실제 네트워크 딜레이 시뮬레이션
     await Future.delayed(const Duration(milliseconds: 800));
 
+    final name = _mockNames[_rng.nextInt(_mockNames.length)];
+    final gender = _rng.nextBool() ? '남성' : '여성';
+    final year = 1975 + _rng.nextInt(25); // 1975~1999
+    final month = 1 + _rng.nextInt(12);
+    final day = 1 + _rng.nextInt(28);
+    final mid = (1000 + _rng.nextInt(9000)).toString();
+    final end = (1000 + _rng.nextInt(9000)).toString();
+    final phone = '010$mid$end';
+
     return PassAuthResult(
-      name: '홍길동',
-      gender: '남성',
-      birthDate: DateTime(1990, 1, 15),
-      phone: '01012345678',
+      name: name,
+      gender: gender,
+      birthDate: DateTime(year, month, day),
+      phone: phone,
       passToken: 'mock-pass-token-${DateTime.now().millisecondsSinceEpoch}',
     );
   }

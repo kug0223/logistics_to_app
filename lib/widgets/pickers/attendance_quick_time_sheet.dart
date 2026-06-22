@@ -1,3 +1,5 @@
+import 'dart:math' show max;
+
 import 'package:flutter/material.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
@@ -77,6 +79,7 @@ class _AttendanceQuickTimeSheetState extends State<AttendanceQuickTimeSheet> {
       try {
         final parts = t.split(':');
         result.add((hour: int.parse(parts[0]), minute: int.parse(parts[1])));
+      // [특이사항] 잘못된 형식의 시간 문자열은 조용히 건너뜀 — 파싱 불가 항목 제외
       } catch (_) {}
     }
     result.sort((a, b) => a.hour != b.hour ? a.hour.compareTo(b.hour) : a.minute.compareTo(b.minute));
@@ -132,7 +135,12 @@ class _AttendanceQuickTimeSheetState extends State<AttendanceQuickTimeSheet> {
           ResponsiveHelper.spacing(context, 16),
           0,
           ResponsiveHelper.spacing(context, 16),
-          ResponsiveHelper.spacing(context, 20),
+          // edge-to-edge 대응: viewPaddingOf는 SafeArea 소비 무관 물리적 인셋.
+          // max로 SafeArea 정상 동작 시 이중 합산 방지.
+          max(
+            ResponsiveHelper.spacing(context, 20),
+            MediaQuery.viewPaddingOf(context).bottom,
+          ),
         ),
         child: Column(
             mainAxisSize: MainAxisSize.min,

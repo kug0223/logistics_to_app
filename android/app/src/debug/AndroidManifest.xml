@@ -4,4 +4,11 @@
          to allow setting breakpoints, to provide hot reload, etc.
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
+
+    <application>
+        <!-- App Check 디버그 토큰 — debug 빌드 전용, 릴리즈에는 포함되지 않음 -->
+        <meta-data
+            android:name="com.google.firebase.appcheck.debug.token"
+            android:value="4BBF463E-6B82-4C51-AFF1-195459994807" />
+    </application>
 </manifest>

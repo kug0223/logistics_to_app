@@ -1,4 +1,6 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'dart:math' show max;
+
+import 'package:flutter/material.dart';
 import '../../models/core/business_work_type_model.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/format_helper.dart';
@@ -66,6 +68,7 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
       if (edit.backgroundColor != null) {
         try {
           _bgColor = FormatHelper.parseColor(edit.backgroundColor!);
+        // [특이사항] 색상 파싱 실패 시 기본 색상 유지 — 잘못된 색상 문자열 무시
         } catch (_) {}
       }
 
@@ -141,7 +144,12 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final bottom = MediaQuery.of(context).viewInsets.bottom;
+    // edge-to-edge 대응: keyboard 높이 vs 홈 인디케이터 높이 중 큰 값 사용.
+    // viewPaddingOf는 SafeArea 소비 무관 물리적 인셋을 반환.
+    final bottom = max(
+      MediaQuery.viewInsetsOf(context).bottom,
+      MediaQuery.viewPaddingOf(context).bottom,
+    );
 
     return Container(
       decoration: const BoxDecoration(

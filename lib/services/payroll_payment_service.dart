@@ -150,6 +150,10 @@ class PayrollPaymentService {
   }
 
   /// 이체 완료 취소 (confirmed 상태로 되돌림)
+  ///
+  /// [특이사항] 트랜잭션 미사용: 호출부(payroll_payment_dashboard_screen)에서
+  /// UI 레벨로 wageTransferred 상태 항목에만 취소 버튼을 노출하므로
+  /// 서비스 레이어에서 상태 재확인 생략. 트랜잭션 추가 시 읽기 비용이 생기므로 현재 생략.
   Future<void> cancelTransfer({
     required String attendanceId,
     required String processedBy,
@@ -340,6 +344,10 @@ class PayrollPaymentService {
   }
 
   /// 변경 요청 승인
+  ///
+  /// [특이사항] 상태 체크(PENDING 확인) 트랜잭션 없음: 동시 처리 가능성이 낮고
+  /// 이미 승인된 건을 재승인해도 status 덮어쓰기에 그쳐 데이터 손상 없음.
+  /// 엄격한 멱등성이 필요하면 runTransaction으로 PENDING 체크 후 update 패턴으로 전환.
   Future<void> approveChangeRequest({
     required String requestId,
     required String processedBy,
@@ -448,7 +456,13 @@ class PayrollPaymentService {
     // [BUG-수정] S-2: 2단계 실패 후 재시도 시 복구 경로
     // 1단계 성공 + 2단계 실패 → status=PENDING 잔류 상태에서 관리자가 재승인 시
     // attendanceIds 중 이미 transferred인 건이 있으면 1단계를 건너뛰고 status만 PROCESSED로 갱신
+    //
+    // [특이사항] 요청 생성 후 승인 전에 관리자가 일부 항목을 취소(wagePending 복원)하면
+    // 원래 req.attendanceIds를 그대로 쓸 경우 취소된 항목도 wageTransferred로 덮어쓰는 버그.
+    // 현재 wageStatus를 서버 조회 후 wageConfirmed 항목만 필터링해서 이체.
     bool skipMarkTransferred = false;
+    List<String> idsToTransfer = List.from(req.attendanceIds);
+
     if (req.attendanceIds.isNotEmpty) {
       // attendanceIds의 현재 wageStatus를 서버에서 조회
       final attSnaps = await Future.wait(
@@ -459,12 +473,18 @@ class PayrollPaymentService {
               .get(const GetOptions(source: Source.server)),
         ),
       );
-      final transferredCount = attSnaps
-          .where((s) => s.data()?['wageStatus'] == AttendanceModel.wageTransferred)
-          .length;
-      if (transferredCount == req.attendanceIds.length) {
+      final allTransferred = attSnaps
+          .every((s) => s.data()?['wageStatus'] == AttendanceModel.wageTransferred);
+      if (allTransferred) {
         // 모든 항목이 이미 transferred → 1단계 건너뛰고 status만 PROCESSED로 복구
         skipMarkTransferred = true;
+      } else {
+        // wageConfirmed 항목만 이체 처리 — 취소된(wagePending 등) 항목 제외
+        idsToTransfer = attSnaps
+            .where((s) => s.data()?['wageStatus'] == AttendanceModel.wageConfirmed)
+            .map((s) => s.id)
+            .toList();
+        if (idsToTransfer.isEmpty) skipMarkTransferred = true;
       }
     }
 
@@ -475,7 +495,7 @@ class PayrollPaymentService {
     // 재시도 시 1단계가 재실행되어도 중복 이체 없이 2단계까지 정상 완료된다.
     if (!skipMarkTransferred) {
       await markTransferredBatch(
-        attendanceIds: req.attendanceIds,
+        attendanceIds: idsToTransfer,
         processedBy: processedBy,
         transferNote: transferNote ?? '중간정산 처리',
       );

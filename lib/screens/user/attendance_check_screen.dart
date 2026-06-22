@@ -81,6 +81,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
   /// 오늘 확정된 근무 조회
   // [특이사항] finally 블록 없음 — 정상 경로(149행)와 catch(160행) 양쪽에서 _isLoading=false 처리되어 실질 고착 없음
   Future<void> _loadTodayWorks() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
 
     try {
@@ -237,34 +238,40 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
     final uid = userProvider.currentUser?.uid;
     if (uid == null) { _isGrantingConsent = false; return; }
 
-    // 사업장 좌표 + 반경 캐싱
-    for (final work in _todayWorks) {
-      if (_businessLat.containsKey(work.businessId)) continue;
-      final biz = await _firestoreService.getBusinessById(work.businessId);
-      _businessLat[work.businessId] = biz?.latitude;
-      _businessLng[work.businessId] = biz?.longitude;
-      _businessRadius[work.businessId] = biz?.gpsRadius.toDouble() ?? 100.0;
-    }
+    // [특이사항] try/finally로 예외 발생 시에도 _isGrantingConsent 잠금이 반드시 해제되도록 함
+    try {
+      // 사업장 좌표 + 반경 캐싱
+      for (final work in _todayWorks) {
+        if (_businessLat.containsKey(work.businessId)) continue;
+        final biz = await _firestoreService.getBusinessById(work.businessId);
+        _businessLat[work.businessId] = biz?.latitude;
+        _businessLng[work.businessId] = biz?.longitude;
+        _businessRadius[work.businessId] = biz?.gpsRadius.toDouble() ?? 100.0;
+      }
 
-    // Firestore에 동의 + 문서 생성
-    final now = DateTime.now();
-    for (final work in _todayWorks) {
-      final attendance = _attendanceMap[work.id];
-      if (attendance?.hasCheckedIn ?? false) continue;
-      if (!_isInTrackingWindow(work)) continue;
-      await _firestoreService.grantLocationConsent(
-        applicationId: work.id,
-        userId: uid,
-        businessId: work.businessId,
-        workDate: now,
-        scheduledStart: work.startTime,
-      );
-    }
+      // Firestore에 동의 + 문서 생성
+      final now = DateTime.now();
+      for (final work in _todayWorks) {
+        final attendance = _attendanceMap[work.id];
+        if (attendance?.hasCheckedIn ?? false) continue;
+        if (!_isInTrackingWindow(work)) continue;
+        await _firestoreService.grantLocationConsent(
+          applicationId: work.id,
+          userId: uid,
+          businessId: work.businessId,
+          workDate: now,
+          scheduledStart: work.startTime,
+        );
+      }
 
-    if (!mounted) { _isGrantingConsent = false; return; }
-    setState(() => _locationTrackingActive = true);
-    _isGrantingConsent = false;
-    _startLocationTimer();
+      if (!mounted) return;
+      setState(() => _locationTrackingActive = true);
+      _startLocationTimer();
+    } catch (e) {
+      debugPrint('⚠️ [AttendanceCheckScreen] 위치 공유 동의 실패: $e');
+    } finally {
+      _isGrantingConsent = false;
+    }
   }
 
   void _startLocationTimer() {
