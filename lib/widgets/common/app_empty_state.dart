@@ -58,10 +58,10 @@ class AppEmptyState extends StatelessWidget {
                 .copyWith(color: AppColors.grey500),
             textAlign: TextAlign.center,
           ),
-          if (subtitle != null && subtitle!.isNotEmpty) ...[
+          if (subtitle case final subtitle? when subtitle.isNotEmpty) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             Text(
-              subtitle!,
+              subtitle,
               style: ResponsiveHelper.smallStyle(context,
                   color: AppColors.grey400),
               textAlign: TextAlign.center,

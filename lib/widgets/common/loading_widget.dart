@@ -29,10 +29,10 @@ class LoadingWidget extends StatelessWidget {
                 size: 50,
               ),
             ),
-            if (message != null) ...[
+            if (message case final message?) ...[
               const SizedBox(height: 16),
               Text(
-                message!,
+                message,
                 style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
               ),
             ],

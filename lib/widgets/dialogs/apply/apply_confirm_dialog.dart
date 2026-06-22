@@ -110,9 +110,9 @@ class ApplyConfirmDialog extends StatelessWidget {
             _getDateDisplay(),
             valueColor: isLongTerm ? AppColors.longTerm : null,
           ),
-          if (isLongTerm && workDays != null && workDays!.isNotEmpty) ...[
+          if (workDays case final workDays? when isLongTerm && workDays.isNotEmpty) ...[
             _buildDivider(),
-            _buildInfoRow(context, Icons.repeat, '근무 요일', '매주 ${workDays!.join(", ")}'),
+            _buildInfoRow(context, Icons.repeat, '근무 요일', '매주 ${workDays.join(", ")}'),
           ],
           _buildDivider(),
           _buildInfoRow(context, Icons.access_time, '근무 시간', '${work.startTime} ~ ${work.endTime}'),

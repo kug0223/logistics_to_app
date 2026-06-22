@@ -88,9 +88,9 @@ class WorkSelectionCard extends StatelessWidget {
     final deadline = workDetail.applicationDeadline;
     if (deadline == null) return null;
     final timeStr = FormatHelper.formatTime(deadline);
-    if (slotDate != null) {
+    if (slotDate case final slotDate?) {
       final deadlineDay = DateTime(deadline.year, deadline.month, deadline.day);
-      final workDay = DateTime(slotDate!.year, slotDate!.month, slotDate!.day);
+      final workDay = DateTime(slotDate.year, slotDate.month, slotDate.day);
       if (deadlineDay.isBefore(workDay)) return '전날 $timeStr까지';
     }
     return '마감 $timeStr';

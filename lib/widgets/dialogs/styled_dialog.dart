@@ -129,7 +129,7 @@ class StyledDialog extends StatelessWidget {
                       child: content,
                     ),
             ),
-            if (actions != null && actions!.isNotEmpty)
+            if (actions case final actions? when actions.isNotEmpty)
               _buildActions(context),
           ],
         ),
@@ -222,7 +222,7 @@ class StyledDialog extends StatelessWidget {
         ),
       ),
       child: Row(
-        children: actions!
+        children: (actions ?? [])
             .map((action) => Expanded(child: action))
             .toList()
             .fold<List<Widget>>(

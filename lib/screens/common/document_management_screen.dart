@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
@@ -62,10 +64,6 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
   Future<void> _loadUserDocuments() async {
     final userProvider = context.read<UserProvider>();
     final user = userProvider.currentUser;
-    // ✅ 디버깅 로그 추가
-    debugPrint('📄 [내서류관리] user: $user');
-    debugPrint('📄 [내서류관리] businessNumber: ${user?.businessNumber}');
-    debugPrint('📄 [내서류관리] businessName: ${user?.businessName}');
     if (user != null) {
       setState(() {
         _selectedBank = user.bankName;
@@ -504,6 +502,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         // 1. 새 이미지 먼저 업로드 (실패해도 기존 이미지 보존)
         final storagePath = 'users/${user.uid}/businessLicense_${DateTime.now().millisecondsSinceEpoch}.jpg';
         newUrl = await _storageService.uploadImage(imagePath, storagePath);
+        try { await File(imagePath).delete(); } catch (_) {}
 
         if (newUrl == null) {
           ToastHelper.showError('이미지 업로드에 실패했습니다');
@@ -660,6 +659,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         // 1. 새 이미지 먼저 업로드
         final storagePath = 'users/${user.uid}/idCard_${DateTime.now().millisecondsSinceEpoch}.jpg';
         final downloadUrl = await _storageService.uploadImage(imagePath, storagePath);
+        try { await File(imagePath).delete(); } catch (_) {}
 
         if (downloadUrl == null) {
           ToastHelper.showError('이미지 업로드에 실패했습니다');
@@ -1310,6 +1310,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         // 1. 새 이미지 먼저 업로드 (실패해도 기존 이미지 보존)
         final storagePath = 'users/${user.uid}/bankbook_${DateTime.now().millisecondsSinceEpoch}.jpg';
         newUrl = await _storageService.uploadImage(imagePath, storagePath);
+        try { await File(imagePath).delete(); } catch (_) {}
 
         if (newUrl == null) {
           ToastHelper.showError('이미지 업로드에 실패했습니다');
