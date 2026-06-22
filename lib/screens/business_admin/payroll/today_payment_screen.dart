@@ -82,14 +82,14 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
         businessId: widget.businessId,
       );
 
-      final uids = records.map((r) => r.userId).toSet()
-          .difference(_nameCache.keys.toSet());
-      if (uids.isNotEmpty) {
+      final uidList = records.map((r) => r.userId).toSet()
+          .difference(_nameCache.keys.toSet()).toList();
+      if (uidList.isNotEmpty) {
         final users =
-            await Future.wait(uids.map((uid) => _fsService.getUser(uid)));
-        for (int i = 0; i < uids.length; i++) {
+            await Future.wait(uidList.map((uid) => _fsService.getUser(uid)));
+        for (int i = 0; i < uidList.length; i++) {
           final user = users[i];
-          if (user != null) _nameCache[uids.elementAt(i)] = user.name;
+          if (user != null) _nameCache[uidList[i]] = user.name;
         }
       }
 
@@ -309,31 +309,31 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
   }
 
   Future<void> _markTransferred(AttendanceModel record) async {
-    if (_isProcessing) return; // 다이얼로그 대기 중 연타 방지
-    final uid = _uid();
-    if (uid == null || uid.isEmpty) {
-      ToastHelper.showError('로그인 정보를 확인해주세요');
-      return;
-    }
-    final name = _nameCache[record.userId] ?? record.userId;
-    final wd   = record.wageDetail;
-    final net  = wd?.effectiveNetWage ?? 0;
-
-    final ok = await DialogHelper.showConfirm(
-      context,
-      title: '송금 처리',
-      message: '$name님께\n${FormatHelper.formatWage(net)}을\n송금 처리하시겠습니까?',
-      confirmText: '송금 처리',
-      cancelText: '취소',
-      icon: Icons.payment_outlined,
-    );
-    if (!ok || !mounted) return;
-
-    final note = await _showNoteDialog();
-    if (!mounted) return;
-
+    if (_isProcessing) return;
     setState(() => _isProcessing = true);
     try {
+      final uid = _uid();
+      if (uid == null || uid.isEmpty) {
+        ToastHelper.showError('로그인 정보를 확인해주세요');
+        return;
+      }
+      final name = _nameCache[record.userId] ?? record.userId;
+      final wd   = record.wageDetail;
+      final net  = wd?.effectiveNetWage ?? 0;
+
+      final ok = await DialogHelper.showConfirm(
+        context,
+        title: '송금 처리',
+        message: '$name님께\n${FormatHelper.formatWage(net)}을\n송금 처리하시겠습니까?',
+        confirmText: '송금 처리',
+        cancelText: '취소',
+        icon: Icons.payment_outlined,
+      );
+      if (!ok || !mounted) return;
+
+      final note = await _showNoteDialog();
+      if (!mounted) return;
+
       // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
       await _payService.markTransferred(
         attendanceId:  record.id,
@@ -362,30 +362,31 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
       ToastHelper.showWarning('처리할 항목을 선택해주세요');
       return;
     }
-    final uid = _uid();
-    if (uid == null || uid.isEmpty) {
-      ToastHelper.showError('로그인 정보를 확인해주세요');
-      return;
-    }
-
-    final ok = await DialogHelper.showConfirm(
-      context,
-      title: '일괄 송금 처리',
-      message: '선택한 ${_selectedIds.length}건\n(${FormatHelper.formatWage(_selectedAmount)})을\n송금 처리하시겠습니까?',
-      confirmText: '송금 처리',
-      cancelText: '취소',
-      icon: Icons.payment_outlined,
-    );
-    if (!ok || !mounted) return;
-
-    final note = await _showNoteDialog();
-    if (!mounted) return;
-
-    // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송 — 선택된 레코드 목록 수집
-    final selectedRecords = _records.where((r) => _selectedIds.contains(r.id)).toList();
-
+    if (_isProcessing) return;
     setState(() => _isProcessing = true);
     try {
+      final uid = _uid();
+      if (uid == null || uid.isEmpty) {
+        ToastHelper.showError('로그인 정보를 확인해주세요');
+        return;
+      }
+
+      final ok = await DialogHelper.showConfirm(
+        context,
+        title: '일괄 송금 처리',
+        message: '선택한 ${_selectedIds.length}건\n(${FormatHelper.formatWage(_selectedAmount)})을\n송금 처리하시겠습니까?',
+        confirmText: '송금 처리',
+        cancelText: '취소',
+        icon: Icons.payment_outlined,
+      );
+      if (!ok || !mounted) return;
+
+      final note = await _showNoteDialog();
+      if (!mounted) return;
+
+      // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송 — 선택된 레코드 목록 수집
+      final selectedRecords = _records.where((r) => _selectedIds.contains(r.id)).toList();
+
       await _payService.markTransferredBatch(
         attendanceIds:     _selectedIds.toList(),
         processedBy:       uid,

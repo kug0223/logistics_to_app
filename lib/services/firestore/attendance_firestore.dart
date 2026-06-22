@@ -568,7 +568,7 @@ extension AttendanceFirestore on FirestoreService {
               d.day == request!.targetDate.day;
 
           List<DateTime> parseDates(String field) =>
-              appData[field] != null
+              appData[field] is List
                   ? (appData[field] as List)
                       .map((e) => (e as Timestamp).toDate().toLocal())
                       .toList()
@@ -834,7 +834,7 @@ extension AttendanceFirestore on FirestoreService {
           if (request.isLeaveRequest || request.isNoWorkRequest) {
             // leaveDates에서 제거 (.toLocal()로 approve 경로와 일관성 유지)
             List<DateTime> leaveDates = [];
-            if (appData['leaveDates'] != null) {
+            if (appData['leaveDates'] is List) {
               leaveDates = (appData['leaveDates'] as List)
                   .map((e) => (e as Timestamp).toDate().toLocal())
                   .toList();
@@ -851,7 +851,7 @@ extension AttendanceFirestore on FirestoreService {
           } else if (request.isExtraWorkRequest) {
             // extraWorkDates에서 제거 (.toLocal()로 approve 경로와 일관성 유지)
             List<DateTime> extraWorkDates = [];
-            if (appData['extraWorkDates'] != null) {
+            if (appData['extraWorkDates'] is List) {
               extraWorkDates = (appData['extraWorkDates'] as List)
                   .map((e) => (e as Timestamp).toDate().toLocal())
                   .toList();
