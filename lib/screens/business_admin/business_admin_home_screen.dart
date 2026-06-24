@@ -32,6 +32,7 @@ import 'to_prerequisites_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/test_data_helper.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
+import '../../models/core/to_model.dart';
 
 /// 공고 등록 전 필수 요건 체크 — 미충족 시 안내 다이얼로그 후 설정 화면으로 이동
 /// 모든 요건을 충족하면 true 반환
@@ -393,8 +394,18 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                       hasLicense: user.businessLicenseImageUrl != null,
                                     );
                                     if (!canProceed || !context.mounted) return;
+
+                                    // 진행중 공고 수 사전 체크 — 폼 진입 자체를 차단
+                                    final limit = await _firestoreService.getMaxActiveTOLimit();
+                                    final activeCount = await _firestoreService.countAllActiveTO(user.uid);
+                                    if (activeCount >= limit) {
+                                      if (!context.mounted) return;
+                                      ToastHelper.showError('진행 중인 공고가 $limit개를 초과할 수 없습니다.\n기존 공고를 마감한 후 등록해주세요.');
+                                      return;
+                                    }
                                   }
 
+                                  if (!context.mounted) return;
                                   await NavigationHelper.push<bool>(
                                     context,
                                     destination: const AdminCreateTOScreen(),
@@ -604,12 +615,32 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.group_add),
-              title: const Text('TO에 지원자 추가'),
-              subtitle: const Text('공고 선택 → 확정/대기 인원 생성'),
+              leading: const Icon(Icons.group_add, color: AppColors.info),
+              title: const Text('지원자 생성'),
+              subtitle: const Text('공고 선택 → 인원 수 조정 → 생성'),
               onTap: () async {
                 Navigator.pop(ctx);
                 await _createDummyApplicationsFlow(businessId);
+              },
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.access_time, color: AppColors.success),
+              title: const Text('출근 데이터 생성'),
+              subtitle: const Text('날짜 선택 → 확정자 70% 출근 처리'),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await _createDummyAttendanceFlow(businessId);
+              },
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.star_outline, color: AppColors.warning),
+              title: const Text('리뷰 데이터 생성'),
+              subtitle: const Text('모든 더미 근무자에게 평점 생성'),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await _createDummyReviewsFlow(businessId);
               },
             ),
             const Divider(height: 1),
@@ -622,7 +653,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                 final ok = await DialogHelper.showDangerConfirm(
                   context,
                   title: '더미 데이터 삭제',
-                  message: '모든 더미 데이터를 삭제합니다.',
+                  message: '모든 더미 데이터(지원자·지원서·출근·리뷰)를 삭제합니다.',
                   confirmText: '삭제',
                 );
                 if (ok && mounted) {
@@ -643,48 +674,310 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
     );
   }
 
+  /// 더미 지원서 생성 흐름 — 공고 선택 → (단기) 슬롯 선택 → 생성
   Future<void> _createDummyApplicationsFlow(String businessId) async {
+    try {
+    // 1단계: 공고 목록 로드
     final snap = await FirebaseFirestore.instance
         .collection('tos')
         .where('businessId', isEqualTo: businessId)
-        .where('status', whereIn: ['active', 'full'])
+        .where('status', whereIn: [TOStatus.active, TOStatus.full])
         .limit(50)
         .get();
 
     if (snap.docs.isEmpty) {
-      ToastHelper.showWarning('등록된 공고가 없습니다. 먼저 공고를 생성하세요.');
+      if (mounted) ToastHelper.showWarning('등록된 공고가 없습니다. 먼저 공고를 생성하세요.');
       return;
     }
 
-    final options = snap.docs
-        .map((d) => MapEntry(d.id, d.data()['title'] as String? ?? d.id))
-        .toList();
+    // 단기/장기 구분 표시용 데이터
+    final toDocs = snap.docs.map((d) {
+      final data = d.data();
+      final title = data['title'] as String? ?? d.id;
+      final type = data['type'] as String? ?? TOType.flex;
+      final typeLabel = type == TOType.contract ? '[장기]' : '[단기]';
+      return (id: d.id, label: '$typeLabel $title', type: type);
+    }).toList();
 
     if (!mounted) return;
 
-    final selectedId = await showModalBottomSheet<String>(
+    // 2단계: 공고 선택 바텀시트
+    final selectedTo = await showModalBottomSheet<({String id, String type})>(
       context: context,
       useSafeArea: true,
-      builder: (_) => ListView(
-        shrinkWrap: true,
-        children: options
-            .map((e) => ListTile(
-                  title: Text(e.value),
-                  onTap: () => Navigator.pop(context, e.key),
-                ))
-            .toList(),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+            child: Text('공고 선택',
+                style: Theme.of(context).textTheme.titleMedium
+                    ?.copyWith(fontWeight: FontWeight.bold)),
+          ),
+          const Divider(height: 1),
+          ListView(
+            shrinkWrap: true,
+            children: toDocs
+                .map((to) => ListTile(
+                      title: Text(to.label),
+                      trailing: const Icon(Icons.chevron_right, size: 18),
+                      onTap: () =>
+                          Navigator.pop(sheetCtx, (id: to.id, type: to.type)),
+                    ))
+                .toList(),
+          ),
+        ],
       ),
     );
 
-    if (selectedId == null || !mounted) return;
+    if (selectedTo == null || !mounted) return;
 
-    await TestDataHelper.createDummyApplications(
-      toId: selectedId,
-      pendingCount: 2,
-      confirmedCount: 3,
+    String? selectedSlotId;
+    DateTime? selectedSlotDate;
+
+    // 3단계: 단기 TO인 경우 슬롯(날짜) 선택
+    if (selectedTo.type == TOType.flex) {
+      // orderBy 없이 쿼리 (복합 인덱스 불필요) → 클라이언트 정렬
+      final slotsSnap = await FirebaseFirestore.instance
+          .collection('tos')
+          .doc(selectedTo.id)
+          .collection('slots')
+          .where('status', whereIn: ['open', 'full'])
+          .limit(30)
+          .get();
+
+      if (!mounted) return;
+
+      if (slotsSnap.docs.isEmpty) {
+        ToastHelper.showWarning('이 공고에 등록된 날짜(슬롯)가 없습니다.');
+        return;
+      }
+
+      // 날짜 오름차순 정렬 (클라이언트)
+      final sortedDocs = slotsSnap.docs.toList()
+        ..sort((a, b) {
+          final aTs = a.data()['date'] as Timestamp?;
+          final bTs = b.data()['date'] as Timestamp?;
+          if (aTs == null) return 1;
+          if (bTs == null) return -1;
+          return aTs.compareTo(bTs);
+        });
+
+      // 슬롯 목록 구성 — 날짜 + 현재 확정/대기 인원 표시
+      final slotOptions = sortedDocs.map((d) {
+        final data = d.data();
+        final date = (data['date'] as Timestamp).toDate().toLocal();
+        final confirmed = (data['confirmedCount'] as num?)?.toInt() ?? 0;
+        final pending = (data['pendingCount'] as num?)?.toInt() ?? 0;
+        final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+        final wd = weekdays[date.weekday - 1];
+        final label =
+            '${date.month}/${date.day}($wd)  확정 $confirmed명 · 대기 $pending명';
+        return (id: d.id, label: label, date: date);
+      }).toList();
+
+      final selected =
+          await showModalBottomSheet<({String id, DateTime date})>(
+        context: context,
+        useSafeArea: true,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        builder: (sheetCtx) => Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+              child: Text('날짜(슬롯) 선택',
+                  style: Theme.of(context).textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.bold)),
+            ),
+            const Divider(height: 1),
+            ListView(
+              shrinkWrap: true,
+              children: slotOptions
+                  .map((s) => ListTile(
+                        leading: const Icon(Icons.calendar_today, size: 18),
+                        title: Text(s.label),
+                        trailing: const Icon(Icons.chevron_right, size: 18),
+                        onTap: () => Navigator.pop(
+                            sheetCtx, (id: s.id, date: s.date)),
+                      ))
+                  .toList(),
+            ),
+          ],
+        ),
+      );
+
+      if (selected == null || !mounted) return;
+      selectedSlotId = selected.id;
+      selectedSlotDate = selected.date;
+    }
+
+    // 4단계: 인원 수 조정 바텀시트
+    if (!mounted) return;
+    final counts = await showModalBottomSheet<({int pending, int confirmed})>(
+      context: context,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) {
+        int pending = 2;
+        int confirmed = 3;
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            Widget counter(String label, int value, VoidCallback onMinus, VoidCallback onPlus) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(label,
+                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.remove_circle_outline),
+                      onPressed: value > 0 ? onMinus : null,
+                      color: AppColors.error,
+                    ),
+                    SizedBox(
+                      width: 36,
+                      child: Text('$value',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.add_circle_outline),
+                      onPressed: value < 20 ? onPlus : null,
+                      color: AppColors.success,
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('인원 수 설정',
+                      style: Theme.of(context).textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  Text('최대 20명 / 총 ${pending + confirmed}명',
+                      style: TextStyle(fontSize: 12, color: AppColors.grey500)),
+                  const Divider(height: 24),
+                  counter(
+                    '대기 (PENDING)',
+                    pending,
+                    () => setSheetState(() => pending--),
+                    () => setSheetState(() => pending++),
+                  ),
+                  counter(
+                    '확정 (CONFIRMED)',
+                    confirmed,
+                    () => setSheetState(() => confirmed--),
+                    () => setSheetState(() => confirmed++),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: (pending + confirmed) > 0
+                          ? () => Navigator.pop(sheetCtx, (pending: pending, confirmed: confirmed))
+                          : null,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.info,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: Text('대기 $pending명 + 확정 $confirmed명 생성',
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
 
-    if (mounted) ToastHelper.showSuccess('더미 지원자 생성 완료');
+    if (counts == null || !mounted) return;
+
+    // 5단계: 더미 지원서 생성
+    await TestDataHelper.createDummyApplications(
+      toId: selectedTo.id,
+      pendingCount: counts.pending,
+      confirmedCount: counts.confirmed,
+      slotId: selectedSlotId,
+      slotDate: selectedSlotDate,
+    );
+
+    if (mounted) {
+      ToastHelper.showSuccess(
+        '더미 지원자 ${counts.pending + counts.confirmed}명 생성 완료 (대기 ${counts.pending} + 확정 ${counts.confirmed})',
+      );
+    }
+    } catch (e) {
+      if (mounted) ToastHelper.showError('더미 지원자 생성 실패: $e');
+    }
+  }
+
+  /// 더미 출근 데이터 생성 흐름 — 날짜 선택 후 생성
+  Future<void> _createDummyAttendanceFlow(String businessId) async {
+    final now = DateTime.now();
+    final date = await showDatePicker(
+      context: context,
+      initialDate: now,
+      firstDate: now.subtract(const Duration(days: 30)),
+      lastDate: now,
+      helpText: '출근 데이터 생성 날짜',
+      confirmText: '생성',
+      cancelText: '취소',
+    );
+    if (date == null || !mounted) return;
+
+    try {
+      await TestDataHelper.createDummyAttendance(
+          businessId: businessId, date: date);
+      if (mounted) ToastHelper.showSuccess('더미 출근 데이터 생성 완료');
+    } catch (e) {
+      if (mounted) ToastHelper.showError('출근 데이터 생성 실패: 확정된 더미 지원자가 없을 수 있습니다.');
+    }
+  }
+
+  /// 더미 리뷰 데이터 생성 흐름
+  Future<void> _createDummyReviewsFlow(String businessId) async {
+    final userProvider = context.read<UserProvider>();
+    final user = userProvider.currentUser;
+    if (user == null || !mounted) return;
+
+    try {
+      // 사업장 이름 조회
+      String bizName = businessId;
+      final businesses = await _firestoreService.getMyBusiness(user.uid);
+      if (!mounted) return;
+      final matched = businesses.where((b) => b.id == businessId).toList();
+      if (matched.isNotEmpty) bizName = matched.first.name;
+
+      await TestDataHelper.createDummyReviews(
+        businessId: businessId,
+        businessName: bizName,
+        reviewerId: user.uid,
+        reviewerName: user.name,
+      );
+      if (mounted) ToastHelper.showSuccess('더미 리뷰 생성 완료');
+    } catch (e) {
+      if (mounted) ToastHelper.showError('리뷰 생성 실패: 더미 지원자를 먼저 생성해주세요.');
+    }
   }
 }
 

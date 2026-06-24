@@ -447,7 +447,9 @@ class WorkDetailManagementDialog {
     // isEffectivelyClosed = isManualClosed || status=='closed' || isDatePast
     final slot = toItem.slot;
     if (slot != null && slot.isEffectivelyClosed && !work.isEmergencyOpen) {
-      return slot.isManualClosed ? _WDS.closed : _WDS.timeExpired;
+      if (slot.isManualClosed) return _WDS.closed;
+      if (slot.isFull) return _WDS.full;   // 인원충족 마감 — timeExpired와 구분
+      return _WDS.timeExpired;
     }
 
     if (work.isEmergencyOpen) return _WDS.emergency;

@@ -7,6 +7,39 @@ part of '../firestore_service.dart';
 extension TOFirestore on FirestoreService {
 
   // ───────────────────────────────────────────────────────
+  // 사업장 공고 등록 개수 제한 (슈퍼관리자 설정)
+  // ───────────────────────────────────────────────────────
+
+  /// 관리자 uid 기준 전체 사업장의 active TO 합산 개수 반환
+  Future<int> countAllActiveTO(String uid) async {
+    if (uid.isEmpty) return 0;
+    final myBusinesses = await getMyBusiness(uid);
+    if (myBusinesses.isEmpty) return 0;
+    int total = 0;
+    await Future.wait(myBusinesses.map((biz) async {
+      final snap = await _firestore
+          .collection('tos')
+          .where('businessId', isEqualTo: biz.id)
+          .where('status', isEqualTo: TOStatus.active)
+          .get();
+      total += snap.docs.length;
+    }));
+    return total;
+  }
+
+  /// settings/app_config.maxActiveTOPerBusiness 읽기, 미설정 시 기본값 4
+  Future<int> getMaxActiveTOLimit() async {
+    try {
+      final doc = await _firestore.collection('settings').doc('app_config').get();
+      if (doc.exists) {
+        final v = (doc.data()?['maxActiveTOPerBusiness'] as num?)?.toInt();
+        if (v != null && v > 0) return v;
+      }
+    } catch (_) {}
+    return 4;
+  }
+
+  // ───────────────────────────────────────────────────────
   // 단일 조회
   // ───────────────────────────────────────────────────────
 
@@ -94,7 +127,10 @@ extension TOFirestore on FirestoreService {
     }
 
     // [특이사항] sortBy='date'(마감임박순)는 서버 정렬 미지원 — 클라이언트 후처리로만 동작
-    // 데이터량 많을 시 2페이지 이후 마감임박 공고가 첫 화면에 미표시될 수 있음
+    // Firestore는 복합 정렬(isPublished+closingAt)을 위한 복합 인덱스가 필요하나 미구성.
+    // 현재: createdAt desc 서버 정렬 후 1페이지 내에서만 마감임박순 재정렬.
+    // 2페이지 이후 마감임박 공고는 createdAt 기준 뒤에 밀려 노출 안 될 수 있음.
+    // 해결 시: Firestore에 (isPublished ASC, closingAt ASC) 복합 인덱스 추가 + 쿼리 변경 필요.
     query = query.orderBy('createdAt', descending: true).limit(pageSize);
 
     if (startAfter != null) {
@@ -189,15 +225,13 @@ extension TOFirestore on FirestoreService {
   }) async {
     NetworkChecker.instance.assertOnline('공고 등록을 하려면 인터넷 연결이 필요합니다.');
 
-    // 진행중 공고 4개 제한 — 미공개(draft) 저장은 제한 없음
+    // 진행중 공고 개수 제한 — 미공개(draft) 저장은 제한 없음
+    // 사업장별이 아니라 관리자 전체 사업장 합산 총 개수로 제한
     if (publishMode != 'draft') {
-      final activeSnap = await _firestore
-          .collection('tos')
-          .where('businessId', isEqualTo: businessId)
-          .where('status', isEqualTo: TOStatus.active)
-          .get();
-      if (activeSnap.docs.length >= 4) {
-        throw Exception('MAX_ACTIVE_TO_LIMIT');
+      final limit = await getMaxActiveTOLimit();
+      final totalActive = await countAllActiveTO(creatorUID);
+      if (totalActive >= limit) {
+        throw Exception('MAX_ACTIVE_TO_LIMIT:$limit');
       }
     }
 
@@ -364,16 +398,13 @@ extension TOFirestore on FirestoreService {
     }
   }
 
-  /// 사업장의 진행중(active) 공고 수가 4개 이상이면 예외를 던진다.
+  /// 관리자의 전체 사업장 합산 active TO 수가 제한 이상이면 예외를 던진다.
   /// draft TO를 즉시공개로 전환하기 직전에 호출한다.
-  Future<void> assertActiveTOLimit(String businessId) async {
-    final snap = await _firestore
-        .collection('tos')
-        .where('businessId', isEqualTo: businessId)
-        .where('status', isEqualTo: TOStatus.active)
-        .get();
-    if (snap.docs.length >= 4) {
-      throw Exception('MAX_ACTIVE_TO_LIMIT');
+  Future<void> assertActiveTOLimit(String uid) async {
+    final limit = await getMaxActiveTOLimit();
+    final totalActive = await countAllActiveTO(uid);
+    if (totalActive >= limit) {
+      throw Exception('MAX_ACTIVE_TO_LIMIT:$limit');
     }
   }
 
@@ -400,11 +431,9 @@ extension TOFirestore on FirestoreService {
     required String businessId,
   }) async {
     try {
-      final apps = await getApplicationsByTOId(
-        toId,
-        businessId: businessId,
-        statuses: AppStatus.activeStates,
-      );
+      // [BUGFIX] statuses whereIn 제거 → 전체 조회 후 클라이언트 필터링
+      final allApps = await getApplicationsByTOId(toId, businessId: businessId);
+      final apps = allApps.where((a) => AppStatus.activeStates.contains(a.status)).toList();
       final confirmed = apps.where((a) =>
           AppStatus.confirmedStatuses.contains(a.status)).length;
       return {
@@ -464,6 +493,7 @@ extension TOFirestore on FirestoreService {
               businessId: to.businessId,
               toTitle: to.title,
               status: status!,
+              workDate: (data['workDate'] as Timestamp?)?.toDate().toLocal(),
             );
           }
         } else {
@@ -487,8 +517,62 @@ extension TOFirestore on FirestoreService {
 
       // 모든 서브 데이터 삭제 완료 후 TO 문서 삭제
       await _firestore.collection('tos').doc(toId).delete();
+
       clearCache(toId: toId);
       ToastHelper.showSuccess('공고가 삭제되었습니다.');
+
+      // M-4: attendance · schedule_change_requests 고아 데이터 정리
+      // TO 삭제가 이미 성공했으므로 cleanup 실패는 로그만 남기고 무시
+      final allAppIds = appsSnap.docs.map((d) => d.id).toList();
+      if (allAppIds.isNotEmpty) {
+        try {
+          for (var i = 0; i < allAppIds.length; i += 30) {
+            final chunk = allAppIds.sublist(i, (i + 30).clamp(0, allAppIds.length));
+            // attendance 정리 (wageTransferred/wageConfirmed 보존)
+            final attSnap = await _firestore.collection('attendance')
+                .where('applicationId', whereIn: chunk)
+                .get(const GetOptions(source: Source.server));
+            if (attSnap.docs.isNotEmpty) {
+              var attBatch = _firestore.batch();
+              int attCount = 0;
+              for (final att in attSnap.docs) {
+                final wStatus = att.data()['wageStatus'] as String?;
+                if (wStatus == AttendanceModel.wageTransferred ||
+                    wStatus == AttendanceModel.wageConfirmed) { continue; }
+                attBatch.delete(att.reference);
+                attCount++;
+                if (attCount >= 499) {
+                  await attBatch.commit();
+                  attBatch = _firestore.batch();
+                  attCount = 0;
+                }
+              }
+              if (attCount > 0) await attBatch.commit();
+            }
+            // schedule_change_requests 정리
+            final reqSnap = await _firestore.collection('schedule_change_requests')
+                .where('applicationId', whereIn: chunk)
+                .get(const GetOptions(source: Source.server));
+            if (reqSnap.docs.isNotEmpty) {
+              var reqBatch = _firestore.batch();
+              int reqCount = 0;
+              for (final req in reqSnap.docs) {
+                reqBatch.delete(req.reference);
+                reqCount++;
+                if (reqCount >= 499) {
+                  await reqBatch.commit();
+                  reqBatch = _firestore.batch();
+                  reqCount = 0;
+                }
+              }
+              if (reqCount > 0) await reqBatch.commit();
+            }
+          }
+        } catch (cleanupErr) {
+          debugPrint('⚠️ [TO] 고아 데이터 정리 실패 (TO 삭제는 완료됨): $cleanupErr');
+        }
+      }
+
       return true;
     } catch (e) {
       debugPrint('❌ [TO] 공고 삭제 실패: $e');
@@ -500,6 +584,24 @@ extension TOFirestore on FirestoreService {
   // ───────────────────────────────────────────────────────
   // 슬롯 (flex 전용)
   // ───────────────────────────────────────────────────────
+
+  /// 특정 슬롯의 총 필요 인원 (workDetails.requiredCount 합계, 지원명단 정원 표시용)
+  Future<int> getSlotTotalRequired(String toId, String slotId) async {
+    try {
+      final doc = await _firestore
+          .collection('tos').doc(toId)
+          .collection('slots').doc(slotId)
+          .get(const GetOptions(source: Source.server));
+      if (!doc.exists) return 0;
+      final workDetails = doc.data()?['workDetails'] as List? ?? [];
+      return workDetails.fold<int>(
+        0,
+        (acc, wd) => acc + (((wd as Map<String, dynamic>)['requiredCount'] as num?)?.toInt() ?? 0),
+      );
+    } catch (_) {
+      return 0;
+    }
+  }
 
   /// 슬롯 목록 조회
   /// [visibleOnly] true 면 visibleFrom <= 현재시각인 슬롯만 반환 (유저용)
@@ -853,6 +955,13 @@ extension TOFirestore on FirestoreService {
   }) async {
     if (slotIds.isEmpty) return;
 
+    // M-2: 알림 발송을 위해 TO 정보 미리 조회
+    final toDoc = await _firestore.collection('tos').doc(toId)
+        .get(const GetOptions(source: Source.server));
+    final toBusinessName = toDoc.data()?['businessName'] as String? ?? '';
+    final toBusinessId = toDoc.data()?['businessId'] as String? ?? '';
+    final toTitle = toDoc.data()?['title'] as String? ?? '';
+
     // [007] 슬롯 카운터를 직접 읽어서 계산 — 호출자 제공 값 대신 서버 데이터 사용
     final slotSnaps = await Future.wait(slotIds.map((id) => _firestore
         .collection('tos').doc(toId)
@@ -903,6 +1012,27 @@ extension TOFirestore on FirestoreService {
         }
       }
       if (cancelCount > 0) await cancelBatch.commit();
+
+      // M-2: 확정·계약대기 근무자에게 TO 취소 알림 발송 (PENDING은 단순 거절이므로 제외)
+      // [특이사항] 알림은 배치 커밋(지원서 REJECTED) 직후 fire-and-forget으로 발송됨.
+      // 슬롯 배치 삭제는 알림 발송 후에 커밋되므로 이론상 근무자가 알림 수신 직후 슬롯이 잠깐 잔존 가능.
+      // 타이밍 차이가 매우 짧고 기능 정확성에 영향 없어 의도적 허용.
+      for (final doc in allActiveDocs) {
+        final status = doc.data()['status'] as String?;
+        if (status == AppStatus.confirmed || status == AppStatus.contractPending) {
+          final applicantUid = doc.data()['uid'] as String?;
+          if (applicantUid != null) {
+            _sendTOCanceledNotification(
+              applicantUid: applicantUid,
+              businessName: toBusinessName,
+              businessId: toBusinessId,
+              toTitle: toTitle,
+              status: status!,
+              workDate: (doc.data()['workDate'] as Timestamp?)?.toDate().toLocal(),
+            );
+          }
+        }
+      }
     }
 
     var batch = _firestore.batch();
@@ -1236,6 +1366,7 @@ extension TOFirestore on FirestoreService {
     required String businessId,
     required String toTitle,
     required String status,
+    DateTime? workDate,  // L-1: 실제 근무일 전달 — null이면 현재 시각 사용
   }) async {
     try {
       await createNotification(
@@ -1244,7 +1375,7 @@ extension TOFirestore on FirestoreService {
           businessName: businessName,
           businessId: businessId,
           toTitle: toTitle,
-          workDate: DateTime.now(),
+          workDate: workDate ?? DateTime.now(),
           status: status,
         ),
       );

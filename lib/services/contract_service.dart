@@ -218,6 +218,10 @@ class ContractService {
     if (contract.status == ContractStatus.completed) {
       throw Exception('이미 완료된 계약서입니다');
     }
+    // H-5: 사업주가 아직 서명하지 않은 상태에서는 근무자가 서명할 수 없음
+    if (contract.status == ContractStatus.pendingEmployer) {
+      throw Exception('사업주 서명이 완료되기 전에는 근무자가 서명할 수 없습니다.');
+    }
     if (contract.workerSignatureUrl != null && contract.workerSignatureUrl!.isNotEmpty) {
       throw Exception('이미 근무자 서명이 완료된 계약서입니다');
     }
@@ -277,7 +281,7 @@ class ContractService {
           for (final ref in appRefs) await tx.get(ref),
         ];
 
-        // 계약서 상태 검증
+        // 계약서 상태 검증 (트랜잭션 내 재확인 — race condition 방어)
         if (snap.exists) {
           final currentStatus = snap.data()?['status'] as String?;
           if (currentStatus == ContractStatus.voided.value) {
@@ -285,6 +289,10 @@ class ContractService {
           }
           if (currentStatus == ContractStatus.completed.value) {
             throw Exception('이미 완료된 계약서입니다');
+          }
+          // WARN-2: pendingEmployer 상태 재확인 (사전 체크 통과 후 상태 역전 방어)
+          if (currentStatus == ContractStatus.pendingEmployer.value) {
+            throw Exception('사업주 서명이 완료되기 전에는 근무자가 서명할 수 없습니다.');
           }
           if (snap.data()?['workerSignatureUrl'] != null) {
             throw Exception('이미 근무자 서명이 완료된 계약서입니다');
@@ -381,10 +389,14 @@ class ContractService {
     required List<ContractArticle> articles,
     String? templateId,
   }) async {
-    // [BUG-수정] 상태 체크: 서명 완료 또는 무효화된 계약서는 수정 금지
+    // [BUG-수정] 상태 체크: 서명 완료·무효화·근무자 서명 대기 중인 계약서는 수정 금지
     final snap = await _db.collection('employment_contracts').doc(contractId).get();
     if (snap.exists) {
       final contract = EmploymentContractModel.fromFirestore(snap);
+      // H-6: pendingWorker 상태에서 조항 수정 시 근무자 서명이 무효화될 수 있음
+      if (contract.status == ContractStatus.pendingWorker) {
+        throw StateError('근무자 서명 대기 중인 계약서는 조항을 수정할 수 없습니다. 수정이 필요하면 계약서를 재발송하세요.');
+      }
       if (contract.status == ContractStatus.completed ||
           contract.status == ContractStatus.voided) {
         throw StateError('서명 완료 또는 무효화된 계약서는 수정할 수 없습니다.');
@@ -399,6 +411,24 @@ class ContractService {
   }
 
   // ── 조회 ─────────────────────────────────────────────────────
+
+  /// contractId로 계약서 단건 조회 (get — list 보안 규칙 우회 불필요)
+  ///
+  /// 알림 등 contractId를 직접 갖고 있는 경우 사용.
+  /// allow get 규칙: workerId/businessId 확인은 문서 fetch 후 판단하므로 복합 쿼리 문제 없음.
+  Future<EmploymentContractModel?> getById(String contractId) async {
+    try {
+      final snap = await _db.collection('employment_contracts').doc(contractId).get();
+      if (!snap.exists) return null;
+      return EmploymentContractModel.fromFirestore(snap);
+    } on FirebaseException catch (e) {
+      debugPrint('❌ [contract] getById 실패 (Firebase): ${e.code} $e');
+      return null;
+    } catch (e) {
+      debugPrint('❌ [contract] getById 실패: $e');
+      return null;
+    }
+  }
 
   /// applicationId로 계약서 조회 (하위 호환 + 슬롯 포함 검색)
   ///
@@ -454,6 +484,62 @@ class ContractService {
       debugPrint('❌ 계약서 조회 실패: $e');
       return null;
     }
+  }
+
+  /// applicationId 목록으로 계약서 상태 일괄 조회 (지원명단 배지용)
+  /// 반환: applicationId → contractStatus 문자열 (계약서 없으면 null)
+  ///
+  /// [최적화] whereIn 배치로 N+1 제거:
+  ///   Phase 1: applicationId whereIn [10개 단위] → ⌈N/10⌉ 쿼리
+  ///   Phase 2: 미매칭만 applicationIds array-contains 폴백 (번들계약)
+  Future<Map<String, String?>> getContractStatusBatch(
+    List<String> applicationIds, {
+    required String businessId,
+  }) async {
+    if (applicationIds.isEmpty) return {};
+    final result = <String, String?>{};
+
+    // Phase 1: applicationId 배치 조회
+    for (var i = 0; i < applicationIds.length; i += 10) {
+      final end = (i + 10).clamp(0, applicationIds.length);
+      final chunk = applicationIds.sublist(i, end);
+      try {
+        final snap = await _db
+            .collection('employment_contracts')
+            .where('applicationId', whereIn: chunk)
+            .get();
+        for (final doc in snap.docs) {
+          final data = doc.data();
+          if (data['businessId'] != businessId) continue;
+          final appId = data['applicationId'] as String?;
+          if (appId != null && !result.containsKey(appId)) {
+            result[appId] = data['status'] as String?;
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Phase 2: 미매칭 앱 → applicationIds 배열 포함 폴백 (번들계약)
+    final missing = applicationIds.where((id) => !result.containsKey(id)).toList();
+    if (missing.isNotEmpty) {
+      await Future.wait(missing.map((id) async {
+        try {
+          final snap = await _db
+              .collection('employment_contracts')
+              .where('applicationIds', arrayContains: id)
+              .where('businessId', isEqualTo: businessId)
+              .limit(1)
+              .get();
+          result[id] = snap.docs.isNotEmpty
+              ? snap.docs.first.data()['status'] as String?
+              : null;
+        } catch (_) {
+          result[id] = null;
+        }
+      }));
+    }
+
+    return result;
   }
 
   /// 근무자 uid로 계약서 목록 조회 (페이지네이션 + 상태 필터)
@@ -944,7 +1030,9 @@ class ContractService {
 
   // ── PDF 로컬 저장 (공유용) ────────────────────────────────────
 
-  // 반환된 File은 호출자가 사용 후 delete() 책임
+  // [특이사항] 반환된 File은 호출자가 Share 후 delete() 책임.
+  // 현재 외부 호출자 없음 — Printing.sharePdf(bytes:) 방식으로 대체되어 있어
+  // 메모리에서 직접 공유하므로 이 함수는 미사용 상태.
   Future<File> savePdfLocally({
     required String contractId,
     required Uint8List bytes,

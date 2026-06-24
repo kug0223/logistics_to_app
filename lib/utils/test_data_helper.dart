@@ -162,15 +162,17 @@ class TestDataHelper {
       // ━━━ 근무 이력 ━━━
       final totalWorkDays = _random.nextInt(100);
       final totalWorkHours = totalWorkDays * (_random.nextInt(4) + 6); // 6~9시간
-      final averageRating = totalWorkDays > 0 
-          ? (_random.nextDouble() * 2 + 3).clamp(3.0, 5.0) 
+      final averageRating = totalWorkDays > 0
+          ? (_random.nextDouble() * 2 + 3).clamp(3.0, 5.0)
           : 0.0;
-      final reviewCount = totalWorkDays > 0 
-          ? (totalWorkDays * 0.3).round() 
+      final reviewCount = totalWorkDays > 0
+          ? (totalWorkDays * 0.3).round()
           : 0;
       final noShowCount = _random.nextInt(3);
       final lateCount = _random.nextInt(5);
-      
+      // 신뢰도 점수 — Firestore에 저장해야 배지에 표시됨
+      final trustScore = _calculateTrustScore(totalWorkDays, averageRating, noShowCount, lateCount);
+
       // ━━━ Firestore에 저장 ━━━
       final username = 'dummy_${baseTs}_$i'; // 아이디 (로그인·검색 기준)
       await _firestore.collection('users').doc(uid).set({
@@ -218,25 +220,22 @@ class TestDataHelper {
         'reviewCount': reviewCount,
         'noShowCount': noShowCount,
         'lateCount': lateCount,
-        
+        'trustScore': trustScore, // 신뢰도 배지 표시용 (UserModel.storedTrustScore)
+
         // 상태
         'isAvailable': true,
         'unavailableReason': null,
         'availableFrom': null,
         'isBlacklisted': false,
         'blacklistReason': null,
-        
-        'isDummy': true,  // ⭐ 더미 데이터 표시
+
+        'isDummy': true, // ⭐ 더미 데이터 표시
       });
 
       uids.add(uid);
-      
+
       // ━━━ 로그 출력 ━━━
       final calculatedAge = _calculateAge(birthDate);
-      final trustScore = _calculateTrustScore(
-        totalWorkDays, averageRating, noShowCount, lateCount
-      );
-      
       // [특이사항] 릴리즈 빌드에서도 debugPrint는 출력됨 — 주민번호·계좌번호는 kDebugMode 가드 안에서만 로그.
       debugPrint('  ✅ $name ($gender, $calculatedAge세) | 평점: ${averageRating.toStringAsFixed(1)} | 신뢰도: $trustScore점');
       if (kDebugMode) {
@@ -496,11 +495,12 @@ class TestDataHelper {
     try {
       final dateStart = DateTime(date.year, date.month, date.day);
       
-      // 해당 사업장의 확정 지원서 조회
+      // 해당 사업장의 더미 확정 지원서 조회 (isDummy 필터 — 실 데이터 오염 방지)
       final confirmedSnapshot = await _firestore
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
           .where('status', isEqualTo: 'CONFIRMED')
+          .where('isDummy', isEqualTo: true)
           .get();
 
       debugPrint('📋 확정 지원서: ${confirmedSnapshot.docs.length}개');
@@ -566,8 +566,8 @@ class TestDataHelper {
           continue;
         }
 
-        // 70% 확률로 출근
-        if (_random.nextDouble() > 0.7) continue;
+        // 70% 확률로 출근 (30% 스킵)
+        if (_random.nextDouble() < 0.3) continue;
 
         // 출근 시간 생성 (±10분 오프셋, 0~59분 범위 클램프)
         final startParts = startTime.split(':');
@@ -674,13 +674,16 @@ class TestDataHelper {
     try {
       int totalDeleted = 0;
       Set<String> affectedTOIds = {};
+      final Map<String, Set<String>> affectedSlots = {}; // toId → Set<slotId>
 
       // 1. 더미 지원자 삭제
       debugPrint('📋 1단계: 더미 지원자(users) 삭제 중...');
 
+      // users list 규칙: BUSINESS_ADMIN은 limit <= 30 필수
       final dummyUsersSnapshot = await _firestore
           .collection('users')
           .where('isDummy', isEqualTo: true)
+          .limit(30)
           .get();
       final dummyUsers = dummyUsersSnapshot.docs;
 
@@ -724,7 +727,13 @@ class TestDataHelper {
           for (var doc in chunk) {
             final data = doc.data();
             final toId = data['toId'] as String?;
-            if (toId != null) affectedTOIds.add(toId);
+            final slotId = data['slotId'] as String?;
+            if (toId != null) {
+              affectedTOIds.add(toId);
+              if (slotId != null) {
+                affectedSlots.putIfAbsent(toId, () => {}).add(slotId);
+              }
+            }
             batch.delete(doc.reference);
           }
           
@@ -792,6 +801,20 @@ class TestDataHelper {
         affectedGroupIds.map((groupId) => _firestoreService.syncGroupStats(groupId)),
       );
       debugPrint('✅ ${affectedGroupIds.length}개 그룹 통계 재계산 완료');
+
+      // 7. 슬롯 통계 재계산 (확정 인원 초과로 status='full'인 슬롯 복구)
+      if (affectedSlots.isNotEmpty) {
+        debugPrint('');
+        debugPrint('📊 7단계: 슬롯 통계 재계산 중...');
+        int slotCount = 0;
+        for (final entry in affectedSlots.entries) {
+          for (final slotId in entry.value) {
+            await _recalculateSlotStats(entry.key, slotId);
+            slotCount++;
+          }
+        }
+        debugPrint('✅ $slotCount개 슬롯 통계 재계산 완료');
+      }
 
       debugPrint('');
       debugPrint('🎉 ═══════════════════════════════════════');
@@ -883,15 +906,13 @@ class TestDataHelper {
     debugPrint('');
 
     try {
-      // 1. 더미 사용자 조회 (dummy_user_로 시작하는 모든 사용자)
+      // 1. 더미 사용자 조회 — isDummy 필터로 직접 쿼리 (orderBy 인덱스 불필요)
       final usersSnapshot = await _firestore
           .collection('users')
-          .orderBy(FieldPath.documentId)
+          .where('isDummy', isEqualTo: true)
           .get();
-      
-      final dummyUsers = usersSnapshot.docs.where((doc) {
-        return doc.id.startsWith('dummy_user_');
-      }).toList();  // ✅ .take(count) 제거 - 모든 더미 사용자 대상
+
+      final dummyUsers = usersSnapshot.docs.toList();
 
       if (dummyUsers.isEmpty) {
         debugPrint('⚠️ 더미 사용자가 없습니다. 먼저 더미 지원자를 생성해주세요.');
@@ -1043,6 +1064,74 @@ class TestDataHelper {
       debugPrint('✅ 더미 리뷰 ${toDelete.length}개 삭제 완료');
     } catch (e) {
       debugPrint('⚠️ 더미 리뷰 삭제 실패: $e');
+    }
+  }
+
+  /// 슬롯 통계 재계산 — 남은 실제 applications 기반으로 pendingCount/confirmedCount/status 초기화
+  static Future<void> _recalculateSlotStats(String toId, String slotId) async {
+    try {
+      // 남은 applications 집계 (더미 삭제 후 실 데이터만 남음)
+      final appsSnap = await _firestore
+          .collection('applications')
+          .where('toId', isEqualTo: toId)
+          .where('slotId', isEqualTo: slotId)
+          .get(const GetOptions(source: Source.server));
+
+      int pendingCount = 0;
+      int confirmedCount = 0;
+      final Map<String, int> wtPending = {};
+      final Map<String, int> wtConfirmed = {};
+
+      for (final doc in appsSnap.docs) {
+        final d = doc.data();
+        final status = d['status'] as String? ?? '';
+        final wt = d['selectedWorkType'] as String? ?? '';
+        if (status == 'PENDING') {
+          pendingCount++;
+          wtPending[wt] = (wtPending[wt] ?? 0) + 1;
+        } else if (status == 'CONFIRMED' || status == 'CONTRACT_PENDING') {
+          confirmedCount++;
+          wtConfirmed[wt] = (wtConfirmed[wt] ?? 0) + 1;
+        }
+      }
+
+      // 슬롯 현재 데이터 (requiredCount, isManualClosed)
+      final slotDoc = await _firestore
+          .collection('tos').doc(toId)
+          .collection('slots').doc(slotId)
+          .get();
+      if (!slotDoc.exists) return;
+
+      final slotData = slotDoc.data()!;
+      final isManualClosed = slotData['isManualClosed'] as bool? ?? false;
+      final workDetails = slotData['workDetails'] as List? ?? [];
+      final slotRequired = workDetails.fold<int>(
+        0,
+        (acc, wd) => acc + (((wd as Map<String, dynamic>)['requiredCount'] as num?)?.toInt() ?? 0),
+      );
+
+      final update = <String, dynamic>{
+        'pendingCount': pendingCount,
+        'confirmedCount': confirmedCount,
+      };
+      if (!isManualClosed) {
+        update['status'] = (slotRequired > 0 && confirmedCount >= slotRequired) ? 'full' : 'open';
+      }
+      // workTypeCounts 재계산
+      final allWts = {...wtPending.keys, ...wtConfirmed.keys};
+      for (final wt in allWts) {
+        update['workTypeCounts.$wt.pendingCount'] = wtPending[wt] ?? 0;
+        update['workTypeCounts.$wt.confirmedCount'] = wtConfirmed[wt] ?? 0;
+      }
+
+      await _firestore
+          .collection('tos').doc(toId)
+          .collection('slots').doc(slotId)
+          .update(update);
+
+      debugPrint('   ✅ 슬롯 재계산: $slotId → 대기$pendingCount 확정$confirmedCount ${update['status']}');
+    } catch (e) {
+      debugPrint('   ⚠️ 슬롯 재계산 실패 ($slotId): $e');
     }
   }
 }
