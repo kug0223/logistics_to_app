@@ -2,11 +2,13 @@
 // 공고(TO) → 업무상세별로 묶어서 표시, work_applicants_dialog 카드 스타일 준용
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../../../models/core/application_model.dart';
 import '../../../models/core/business_model.dart';
 import '../../../models/core/monthly_review_model.dart';
 import '../../../models/core/user_model.dart';
+import '../../../providers/user_provider.dart';
 import '../../../services/contract_service.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/monthly_review_service.dart';
@@ -82,6 +84,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   Map<String, String> _idCardStatusMap = {};
   final Map<String, bool> _reviewWrittenMap = {};
   bool _isBatchMode = false;
+  bool _isIdCardSelectMode = false;
+  final Set<String> _selectedIdCardUserIds = {};
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -658,31 +662,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                       ],
                     ),
                   ),
-                  // 인원 칩
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      _buildCapacityChip(context, g),
-                      const SizedBox(height: 4),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (g.pendingApps.isNotEmpty)
-                            _countChip(context, '대기 ${g.pendingApps.length}명',
-                                AppColors.warningDark, AppColors.warningBg),
-                          if (g.pendingApps.isNotEmpty &&
-                              g.confirmedApps.isNotEmpty)
-                            const SizedBox(width: 4),
-                          if (g.confirmedApps.isNotEmpty)
-                            _countChip(
-                                context,
-                                '확정 ${g.confirmedApps.length}명',
-                                AppColors.successDark,
-                                AppColors.successBg),
-                        ],
-                      ),
-                    ],
-                  ),
+                  // 인원 아이콘 표시
+                  _buildGroupStats(context, g),
                 ],
               ),
             ),
@@ -708,6 +689,16 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           if (g.confirmedApps.isNotEmpty) ...[
             _sectionDivider(context, '확정 (${g.confirmedApps.length}명)',
                 AppColors.success),
+            Builder(builder: (context) {
+              final requestableCount = g.confirmedApps.where((app) {
+                final user = _userMap[app.uid];
+                if (user == null) return false;
+                return IdCardHelper.isRequestable(
+                    _idCardStatusMap[user.uid] ?? 'none');
+              }).length;
+              if (requestableCount == 0) return const SizedBox.shrink();
+              return _buildIdCardRequestSection(context, g, requestableCount);
+            }),
             Padding(
               padding: EdgeInsets.symmetric(
                   horizontal: ResponsiveHelper.spacing(context, 8)),
@@ -788,6 +779,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               _selectedIds.add(app.id);
             }
           });
+        } else if (!isPending && _isIdCardSelectMode &&
+            IdCardHelper.isRequestable(idCardStatus)) {
+          _toggleIdCardSelection(user?.uid ?? '');
         } else {
           _showWorkerDetail(app, user, isPending: isPending);
         }
@@ -830,6 +824,21 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                             ),
                           )
                         : const SizedBox.shrink(),
+                  )
+                else if (_isIdCardSelectMode)
+                  Padding(
+                    padding: EdgeInsets.only(
+                        right: ResponsiveHelper.spacing(context, 6)),
+                    child: IdCardHelper.isRequestable(idCardStatus)
+                        ? AppCheckbox(
+                            value: _selectedIdCardUserIds
+                                .contains(user?.uid ?? ''),
+                            onTap: () =>
+                                _toggleIdCardSelection(user?.uid ?? ''),
+                            activeColor: AppColors.info,
+                          )
+                        : SizedBox(
+                            width: ResponsiveHelper.spacing(context, 22)),
                   )
                 else
                   Container(
@@ -1114,36 +1123,200 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     );
   }
 
-  Widget _buildCapacityChip(BuildContext context, _GroupData g) {
+  Widget _buildGroupStats(BuildContext context, _GroupData g) {
+    final confirmed = g.confirmedApps.length;
+    final pending = g.pendingApps.length;
     final required = g.toId != null ? (_toCapacityMap[g.toId] ?? 0) : 0;
-    final total = g.pendingApps.length + g.confirmedApps.length;
-    if (required == 0) {
-      return _countChip(context, '지원 $total명', AppColors.grey600, AppColors.grey100);
-    }
-    final isFull = total >= required;
-    return _countChip(
-      context,
-      '지원 $total / 정원 $required명',
-      isFull ? AppColors.error : AppColors.info,
-      isFull ? AppColors.errorBg : AppColors.infoBg,
+    final isFull = required > 0 && confirmed >= required;
+    final statusColor = isFull ? AppColors.successDark : AppColors.infoDark;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          isFull ? Icons.check_circle : Icons.people_outline,
+          size: ResponsiveHelper.iconSize(context, 14),
+          color: statusColor,
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+        Text(
+          required > 0 ? '$confirmed/$required명' : '$confirmed명',
+          style: ResponsiveHelper.smallStyle(context, color: statusColor)
+              .copyWith(fontWeight: FontWeight.bold),
+        ),
+        if (pending > 0) ...[
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+          Icon(
+            Icons.schedule,
+            size: ResponsiveHelper.iconSize(context, 12),
+            color: AppColors.warningDark,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 2)),
+          Text(
+            '+$pending',
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark)
+                .copyWith(fontWeight: FontWeight.bold),
+          ),
+        ],
+      ],
     );
   }
 
-  Widget _countChip(BuildContext context, String label, Color color,
-      Color bgColor) {
+  // ── ID Card Request ────────────────────────────────────────────────────────
+
+  Widget _buildIdCardRequestSection(
+      BuildContext context, _GroupData g, int requestableCount) {
     return Container(
+      margin: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 4),
+      ),
       padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 7),
-        vertical: 3,
+        horizontal: ResponsiveHelper.spacing(context, 14),
+        vertical: ResponsiveHelper.spacing(context, 10),
       ),
       decoration: BoxDecoration(
-        color: bgColor,
+        color: _isIdCardSelectMode ? AppColors.infoBg : Colors.white,
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+            color: _isIdCardSelectMode ? AppColors.info : AppColors.border),
       ),
-      child: Text(label,
-          style: ResponsiveHelper.tinyStyle(context, color: color)
-              .copyWith(fontWeight: FontWeight.bold)),
+      child: Row(
+        children: [
+          Icon(Icons.badge,
+              size: ResponsiveHelper.iconSize(context, 18),
+              color: AppColors.info),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Expanded(
+            child: Text(
+              _isIdCardSelectMode
+                  ? '${_selectedIdCardUserIds.length}명 선택됨'
+                  : '미요청 $requestableCount명',
+              style:
+                  ResponsiveHelper.bodyStyle(context, color: AppColors.infoDark),
+            ),
+          ),
+          if (_isIdCardSelectMode && _selectedIdCardUserIds.isNotEmpty) ...[
+            InkWell(
+              onTap: _batchRequestIdCard,
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 12),
+                  vertical: ResponsiveHelper.spacing(context, 6),
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.success,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text('요청하기',
+                    style: ResponsiveHelper.smallStyle(context,
+                            color: Colors.white)
+                        .copyWith(fontWeight: FontWeight.w600)),
+              ),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          ],
+          InkWell(
+            onTap: () {
+              setState(() {
+                _isIdCardSelectMode = !_isIdCardSelectMode;
+                if (!_isIdCardSelectMode) {
+                  _selectedIdCardUserIds.clear();
+                } else {
+                  _selectAllRequestableUsers(g);
+                }
+              });
+            },
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 12),
+                vertical: ResponsiveHelper.spacing(context, 6),
+              ),
+              decoration: BoxDecoration(
+                color: _isIdCardSelectMode ? AppColors.grey100 : AppColors.info,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                _isIdCardSelectMode ? '취소' : '신분증 요청',
+                style: ResponsiveHelper.smallStyle(
+                  context,
+                  color:
+                      _isIdCardSelectMode ? AppColors.grey700 : Colors.white,
+                ).copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
+  }
+
+  void _selectAllRequestableUsers(_GroupData g) {
+    _selectedIdCardUserIds.clear();
+    for (final app in g.confirmedApps) {
+      final user = _userMap[app.uid];
+      if (user == null) continue;
+      if (IdCardHelper.isRequestable(_idCardStatusMap[user.uid] ?? 'none')) {
+        _selectedIdCardUserIds.add(user.uid);
+      }
+    }
+  }
+
+  void _toggleIdCardSelection(String uid) {
+    setState(() {
+      if (_selectedIdCardUserIds.contains(uid)) {
+        _selectedIdCardUserIds.remove(uid);
+      } else {
+        _selectedIdCardUserIds.add(uid);
+      }
+    });
+  }
+
+  Future<void> _batchRequestIdCard() async {
+    if (_selectedIdCardUserIds.isEmpty) return;
+    final currentUser = context.read<UserProvider>().currentUser;
+    if (currentUser == null) {
+      ToastHelper.showError('로그인이 필요합니다');
+      return;
+    }
+    final bizId = _selectedBusinessId ?? '';
+    final business =
+        widget.businesses.firstWhere((b) => b.id == bizId, orElse: () => widget.businesses.first);
+
+    // 선택된 사용자 정보 수집 (전체 앱에서)
+    final targets = <Map<String, String>>[];
+    for (final app in [..._pendingApps, ..._confirmedApps]) {
+      final user = _userMap[app.uid];
+      if (user == null || !_selectedIdCardUserIds.contains(user.uid)) continue;
+      targets.add({
+        'uid': user.uid,
+        'name': user.name,
+        'applicationId': app.id,
+      });
+    }
+
+    if (!mounted) return;
+    final successCount = await IdCardHelper.showBatchRequestDialog(
+      context: context,
+      firestoreService: _svc,
+      requester: {'uid': currentUser.uid, 'name': currentUser.name},
+      business: {'id': bizId, 'name': business.name},
+      targets: targets,
+    );
+
+    if (!mounted) return;
+    if (successCount > 0) {
+      _hasChanges = true;
+      setState(() {
+        for (final uid in _selectedIdCardUserIds) {
+          _idCardStatusMap[uid] = 'pending';
+        }
+        _isIdCardSelectMode = false;
+        _selectedIdCardUserIds.clear();
+      });
+    }
   }
 
   // ── Batch Action Bar ───────────────────────────────────────────────────────
