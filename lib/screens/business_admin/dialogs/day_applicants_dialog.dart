@@ -1,14 +1,21 @@
 // 지원명단 다이얼로그 — 선택 날짜의 지원자(PENDING) + 확정자(CONFIRMED)
 // 공고(TO) → 업무상세별로 묶어서 표시, work_applicants_dialog 카드 스타일 준용
+import 'dart:convert';
+import 'dart:math' show min;
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../models/core/application_model.dart';
 import '../../../models/core/business_model.dart';
+import '../../../models/core/employment_contract_model.dart';
 import '../../../models/core/monthly_review_model.dart';
 import '../../../models/core/user_model.dart';
+import '../../../models/core/work_detail_data.dart';
 import '../../../providers/user_provider.dart';
+import '../../../screens/common/settings_screen.dart';
+import '../../../screens/contract/contract_sign_screen.dart' show ContractTemplateWidget;
 import '../../../services/contract_service.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/monthly_review_service.dart';
@@ -22,6 +29,7 @@ import '../../../widgets/app_select_field.dart';
 import '../../../widgets/common/app_checkbox.dart';
 import '../../../widgets/common/app_empty_state.dart';
 import '../../../widgets/common/loading_widget.dart';
+import '../../../widgets/dialogs/contract_template_selector_dialog.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../widgets/dialogs/worker_detail_dialog.dart';
 
@@ -86,6 +94,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   bool _isBatchMode = false;
   bool _isIdCardSelectMode = false;
   final Set<String> _selectedIdCardUserIds = {};
+  bool _isContractBatchProcessing = false;
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -698,6 +707,14 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               }).length;
               if (requestableCount == 0) return const SizedBox.shrink();
               return _buildIdCardRequestSection(context, g, requestableCount);
+            }),
+            Builder(builder: (context) {
+              final noContractCount = g.confirmedApps.where((app) {
+                final status = _contractStatusMap[app.id];
+                return status == null || status.isEmpty;
+              }).length;
+              if (noContractCount == 0) return const SizedBox.shrink();
+              return _buildContractBatchSection(context, g, noContractCount);
             }),
             Padding(
               padding: EdgeInsets.symmetric(
@@ -1326,6 +1343,338 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         _selectedIdCardUserIds.clear();
       });
     }
+  }
+
+  // ── Contract Batch Section ─────────────────────────────────────────────────
+
+  Widget _buildContractBatchSection(
+      BuildContext context, _GroupData g, int noContractCount) {
+    return Container(
+      margin: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 4),
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 14),
+        vertical: ResponsiveHelper.spacing(context, 10),
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.description_outlined,
+              size: ResponsiveHelper.iconSize(context, 18),
+              color: AppColors.success),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Expanded(
+            child: Text(
+              '계약서 미작성 $noContractCount명',
+              style: ResponsiveHelper.bodyStyle(context,
+                  color: AppColors.successDark),
+            ),
+          ),
+          if (_isContractBatchProcessing)
+            const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else
+            InkWell(
+              onTap: () => _batchCreateContracts(g),
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 12),
+                  vertical: ResponsiveHelper.spacing(context, 6),
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.success,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '계약서 일괄작성',
+                  style: ResponsiveHelper.smallStyle(context, color: Colors.white)
+                      .copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _batchCreateContracts(_GroupData g) async {
+    if (_isContractBatchProcessing) return;
+    final bizId = _selectedBusinessId ?? '';
+    if (bizId.isEmpty || widget.businesses.isEmpty) return;
+    final business = widget.businesses.firstWhere(
+      (b) => b.id == bizId,
+      orElse: () => widget.businesses.first,
+    );
+
+    // 계약서 미작성 확정자 수집
+    final toProcess = g.confirmedApps.where((app) {
+      final status = _contractStatusMap[app.id];
+      return status == null || status.isEmpty;
+    }).toList();
+    if (toProcess.isEmpty) return;
+
+    // 1. 템플릿 선택
+    final articles =
+        await ContractTemplateSelectorDialog.show(context, businessId: bizId);
+    if (articles == null || !mounted) return;
+
+    // 2. 인감 확인
+    final currentUser = context.read<UserProvider>().currentUser;
+    final sealBase64 = currentUser?.sealBase64 ?? '';
+    final sealType = currentUser?.sealType ?? 'stamp';
+    if (sealBase64.isEmpty) {
+      if (!mounted) return;
+      final goSettings = await DialogHelper.showConfirm(
+        context,
+        title: '사업주 날인 미등록',
+        message:
+            '일괄 계약 발송에는 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 또는 서명을 먼저 등록해주세요.',
+        confirmText: '설정으로 이동',
+        cancelText: '취소',
+      );
+      if (!mounted) return;
+      if (goSettings) {
+        Navigator.of(context, rootNavigator: true)
+            .push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
+      }
+      return;
+    }
+
+    // 3. TO에서 WorkDetailData 조회
+    setState(() => _isContractBatchProcessing = true);
+    WorkDetailData? workDetail;
+    try {
+      if (g.toId != null) {
+        final to = await _svc.getTO(g.toId!);
+        if (to != null && to.workDetails.isNotEmpty) {
+          try {
+            workDetail = to.workDetails.firstWhere(
+              (w) =>
+                  w.workType == g.workType &&
+                  w.startTime == g.startTime &&
+                  w.endTime == g.endTime,
+            );
+          } catch (_) {
+            workDetail = to.workDetails.first;
+          }
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _isContractBatchProcessing = false);
+    }
+    if (!mounted) return;
+
+    if (workDetail == null) {
+      ToastHelper.showError('근무 정보를 찾을 수 없습니다');
+      return;
+    }
+
+    // 4. 첫 번째 대상으로 미리보기 생성
+    final firstApp = toProcess.first;
+    final firstUser = _userMap[firstApp.uid];
+    if (firstUser == null) {
+      ToastHelper.showError('지원자 정보를 불러올 수 없습니다');
+      return;
+    }
+
+    setState(() => _isContractBatchProcessing = true);
+    late EmploymentContractModel previewContract;
+    try {
+      previewContract = await ContractService().buildPreviewContract(
+        application: firstApp,
+        business: business,
+        worker: firstUser,
+        workDetail: workDetail,
+        articles: articles,
+      );
+    } catch (e) {
+      ToastHelper.showError('계약서 미리보기 생성에 실패했습니다');
+      return;
+    } finally {
+      if (mounted) setState(() => _isContractBatchProcessing = false);
+    }
+    if (!mounted) return;
+
+    // 5. 미리보기 다이얼로그
+    final confirmed = await _showBatchContractPreview(
+      contract: previewContract,
+      sealBase64: sealBase64,
+      sealType: sealType,
+      count: toProcess.length,
+    );
+    if (confirmed != true || !mounted) return;
+
+    // 6. 일괄 계약서 생성 + 날인
+    setState(() => _isContractBatchProcessing = true);
+    final sealBytes = base64Decode(sealBase64);
+    final finalWorkDetail = workDetail;
+    try {
+      Future<bool> processOne(ApplicationModel app) async {
+        final user = _userMap[app.uid];
+        if (user == null) return false;
+        try {
+          final contract = await ContractService().findOrCreateContract(
+            application: app,
+            business: business,
+            worker: user,
+            workDetail: finalWorkDetail,
+            articles: articles,
+          );
+          await ContractService().saveEmployerSignature(
+            contract: contract,
+            signatureBytes: sealBytes,
+          );
+          return true;
+        } catch (e) {
+          debugPrint('❌ [${app.id}] 계약서 발송 실패: $e');
+          return false;
+        }
+      }
+
+      const batchSize = 5;
+      int successCount = 0;
+      for (var i = 0; i < toProcess.length; i += batchSize) {
+        final batch =
+            toProcess.sublist(i, min(i + batchSize, toProcess.length));
+        final results = await Future.wait(batch.map(processOne));
+        successCount += results.where((r) => r).length;
+      }
+
+      if (!mounted) return;
+      if (successCount < toProcess.length) {
+        ToastHelper.showWarning(
+            '$successCount/${toProcess.length}명 계약서 발송 완료. 실패한 항목은 다시 시도해주세요.');
+      } else {
+        ToastHelper.showSuccess('${toProcess.length}명에게 계약서가 발송되었습니다');
+      }
+      _hasChanges = true;
+      setState(() {
+        for (final app in toProcess) {
+          _contractStatusMap[app.id] = 'pending';
+        }
+      });
+    } catch (e) {
+      ToastHelper.showError('처리 중 오류가 발생했습니다');
+      debugPrint('❌ 계약서 일괄 발송 실패: $e');
+    } finally {
+      if (mounted) setState(() => _isContractBatchProcessing = false);
+    }
+  }
+
+  Future<bool?> _showBatchContractPreview({
+    required EmploymentContractModel contract,
+    required String sealBase64,
+    String sealType = 'stamp',
+    required int count,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => Dialog(
+        insetPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 32),
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 16, 12, 16),
+              decoration: BoxDecoration(
+                color: Theme.of(ctx).primaryColor,
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(16)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.description_outlined,
+                      color: Colors.white, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '근로계약서 미리보기',
+                      style: ResponsiveHelper.subtitleStyle(ctx).copyWith(
+                          color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    icon: const Icon(Icons.close,
+                        color: Colors.white, size: 20),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              width: double.infinity,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              color: AppColors.info.withValues(alpha: 0.08),
+              child: Text(
+                '아래 조건으로 선택된 $count명에게 계약서가 발송됩니다.\n이름·생년월일 등 개인정보는 각 근무자별로 적용됩니다.',
+                style: ResponsiveHelper.smallStyle(ctx, color: AppColors.info),
+                textAlign: TextAlign.center,
+              ),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: ContractTemplateWidget(
+                  snapshot: contract.snapshot,
+                  contractDate: contract.createdAt,
+                  slots: contract.slots,
+                  articles: contract.articles,
+                  employerSignatureUrl: contract.employerSignatureUrl,
+                  employerSealBase64: sealBase64,
+                  employerSealType: sealType,
+                  workerSignatureUrl: contract.workerSignatureUrl,
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.06),
+                    blurRadius: 8,
+                    offset: const Offset(0, -2),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: const Text('취소'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: Text('$count명에게 발송'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   // ── Batch Action Bar ───────────────────────────────────────────────────────
