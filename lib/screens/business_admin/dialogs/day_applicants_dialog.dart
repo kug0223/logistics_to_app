@@ -804,17 +804,20 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         }
       },
       child: Container(
-        margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 6)),
-        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+        margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 4)),
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 10),
+          vertical: ResponsiveHelper.spacing(context, 8),
+        ),
         decoration: BoxDecoration(
           color: cardBg,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(10),
           border: Border.all(color: cardBorder, width: borderWidth),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Row 1: 체크박스(배치모드)/점 + 이름 + 나이성별 + 시간 + 별/리뷰 ──
+            // ── Row 1: 체크박스/점 + 이름 + 나이성별 + 시간 + 별/리뷰 ──
             Row(
               children: [
                 if (isPending)
@@ -859,11 +862,13 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                   )
                 else
                   Container(
-                    width: 8,
-                    height: 8,
-                    margin: const EdgeInsets.only(right: 8),
-                    decoration: const BoxDecoration(
-                        color: AppColors.success, shape: BoxShape.circle),
+                    width: 6,
+                    height: 6,
+                    margin: const EdgeInsets.only(right: 7),
+                    decoration: BoxDecoration(
+                      color: isPending ? AppColors.warning : AppColors.success,
+                      shape: BoxShape.circle,
+                    ),
                   ),
                 Expanded(
                   child: Row(
@@ -877,7 +882,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                         ),
                       ),
                       if (_genderAge(user).isNotEmpty) ...[
-                        const SizedBox(width: 4),
+                        const SizedBox(width: 3),
                         Text(_genderAge(user),
                             style: ResponsiveHelper.tinyStyle(context,
                                 color: AppColors.grey500)),
@@ -890,7 +895,6 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                   style: ResponsiveHelper.tinyStyle(context,
                       color: AppColors.grey400),
                 ),
-                // 관심표시 (대기) / 리뷰 배지 (확정)
                 if (isPending)
                   GestureDetector(
                     onTap: () {
@@ -908,16 +912,16 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                     behavior: HitTestBehavior.opaque,
                     child: Padding(
                       padding: EdgeInsets.fromLTRB(
-                        ResponsiveHelper.spacing(context, 6),
-                        ResponsiveHelper.spacing(context, 4),
+                        ResponsiveHelper.spacing(context, 5),
+                        2,
                         0,
-                        ResponsiveHelper.spacing(context, 10),
+                        2,
                       ),
                       child: Icon(
                         isStarred
                             ? Icons.star_rounded
                             : Icons.star_border_rounded,
-                        size: ResponsiveHelper.iconSize(context, 18),
+                        size: ResponsiveHelper.iconSize(context, 16),
                         color: isStarred ? AppColors.amber : AppColors.grey300,
                       ),
                     ),
@@ -927,28 +931,27 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               ],
             ),
 
-            // ── Row 2: 전화번호 + 신뢰도 + 주간근무 + 별점 ──
-            const SizedBox(height: 5),
+            // ── Row 2: 정보 + 배지 통합 ──
+            const SizedBox(height: 4),
             Wrap(
-              spacing: 8,
+              spacing: 5,
               runSpacing: 3,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 if (user?.phone != null && user!.phone!.isNotEmpty)
                   Row(mainAxisSize: MainAxisSize.min, children: [
                     Icon(Icons.phone_outlined,
-                        size: 11, color: AppColors.grey500),
+                        size: 10, color: AppColors.grey400),
                     const SizedBox(width: 2),
                     Text(user.phone!,
                         style: ResponsiveHelper.tinyStyle(context,
                             color: AppColors.grey600)),
                   ]),
-                if (user != null) _trustBadge(context, user),
                 _weeklyCountBadge(context, app.uid),
                 if (user != null && user.averageRating > 0)
                   Row(mainAxisSize: MainAxisSize.min, children: [
                     const Icon(Icons.star_rounded,
-                        size: 12, color: Color(0xFFF59E0B)),
+                        size: 11, color: Color(0xFFF59E0B)),
                     const SizedBox(width: 2),
                     Text(
                       user.averageRating.toStringAsFixed(1),
@@ -956,24 +959,15 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                           color: AppColors.grey700),
                     ),
                   ]),
-              ],
-            ),
-
-            // ── Row 3: 배지 (유형, 계약 상태, 신분증, 신분증요청 상태) ──
-            const SizedBox(height: 5),
-            Wrap(
-              spacing: 4,
-              runSpacing: 3,
-              children: [
                 _contractBadge(context, app.id, isPending: isPending),
                 if (!isPending)
                   IdCardHelper.buildStatusBadge(context, idCardStatus),
               ],
             ),
 
-            // ── Row 4: 액션 버튼 (대기자 + 일괄선택 아닐 때만) ──
+            // ── Row 3: 액션 버튼 (대기자 + 일괄선택 아닐 때만) ──
             if (isPending && !_isBatchMode) ...[
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
@@ -1028,19 +1022,6 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   }
 
   // ── Badges ─────────────────────────────────────────────────────────────────
-
-  Widget _trustBadge(BuildContext context, UserModel user) {
-    final score = user.storedTrustScore ?? user.trustScore;
-    final color = score >= 70
-        ? AppColors.successDark
-        : score >= 40
-            ? AppColors.warningDark
-            : AppColors.error;
-    return _chip(context,
-        label: '신뢰 $score',
-        color: color,
-        bgColor: color.withValues(alpha: 0.1));
-  }
 
   Widget _weeklyCountBadge(BuildContext context, String uid) {
     final count = _weeklyWorkCountMap[uid] ?? 0;
