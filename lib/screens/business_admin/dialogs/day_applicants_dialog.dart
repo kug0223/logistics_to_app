@@ -948,7 +948,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               spacing: 4,
               runSpacing: 3,
               children: [
-                _contractBadge(context, app.id),
+                _contractBadge(context, app.id, isPending: isPending),
                 if (!isPending)
                   IdCardHelper.buildStatusBadge(context, idCardStatus),
               ],
@@ -1040,9 +1040,18 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     );
   }
 
-  Widget _contractBadge(BuildContext context, String appId) {
+  Widget _contractBadge(BuildContext context, String appId,
+      {bool isPending = false}) {
     final status = _contractStatusMap[appId];
-    if (status == null) return const SizedBox.shrink();
+    if (status == null) {
+      if (!isPending) {
+        return _chip(context,
+            label: '계약미작성',
+            color: AppColors.error,
+            bgColor: AppColors.errorBg);
+      }
+      return const SizedBox.shrink();
+    }
     final String label;
     final Color color;
     switch (status) {
