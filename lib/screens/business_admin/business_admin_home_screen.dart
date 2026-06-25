@@ -681,7 +681,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
     final snap = await FirebaseFirestore.instance
         .collection('tos')
         .where('businessId', isEqualTo: businessId)
-        .where('status', whereIn: [TOStatus.active, TOStatus.full])
+        // [특이사항] SCHEDULED(시작 전) 공고도 포함 — 더미 생성은 관리자 전용이므로 openStates 전체 허용
+        .where('status', whereIn: TOStatus.openStates)
         .limit(50)
         .get();
 
