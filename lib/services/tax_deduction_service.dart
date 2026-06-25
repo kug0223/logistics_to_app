@@ -258,21 +258,23 @@ class TaxDeductionService {
     String? excludeAttendanceId,
   }) async {
     try {
-      var query = FirebaseFirestore.instance
-          .collection('attendance')
-          .where('userId', isEqualTo: userId)
-          .where('businessId', isEqualTo: businessId)
-          .where('yearMonth', isEqualTo: yearMonth)
-          .where('wageStatus', whereIn: ['calculated', 'confirmed', 'transferred']);
-
-      final snapshot = await query.get();
-      var count = snapshot.docs.length;
+      // whereIn 복합 쿼리 → PERMISSION_DENIED 방지를 위해 status별 병렬 쿼리로 대체
+      final snaps = await Future.wait(
+        ['calculated', 'confirmed', 'transferred'].map((ws) =>
+            FirebaseFirestore.instance
+                .collection('attendance')
+                .where('userId', isEqualTo: userId)
+                .where('businessId', isEqualTo: businessId)
+                .where('yearMonth', isEqualTo: yearMonth)
+                .where('wageStatus', isEqualTo: ws)
+                .get()),
+      );
+      final allDocs = snaps.expand((snap) => snap.docs).toList();
+      var count = allDocs.length;
 
       // 현재 처리 중인 attendance는 카운트에서 제외 (중복 방지)
       if (excludeAttendanceId != null) {
-        count = snapshot.docs
-            .where((d) => d.id != excludeAttendanceId)
-            .length;
+        count = allDocs.where((d) => d.id != excludeAttendanceId).length;
       }
       return count;
     } catch (e) {

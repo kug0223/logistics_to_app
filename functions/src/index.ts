@@ -339,7 +339,7 @@ export const onMemberInvitationAccepted = onDocumentUpdated(
 
 export const onNotificationCreated = onDocumentCreated(
   {
-    document: "notifications/{notificationId}",
+    document: "users/{userId}/notifications/{notificationId}",
     region: "asia-northeast3",
   },
   async (event) => {
@@ -351,16 +351,13 @@ export const onNotificationCreated = onDocumentCreated(
 
     const notificationData = snapshot.data();
     const notificationId = event.params.notificationId;
-
-    console.log(`🔔 [알림 트리거] 새 알림 감지: ${notificationId}`);
-
-    // 필수 필드 확인 (트랜잭션 전에 빠른 검증)
-    const userId = notificationData.userId as string | undefined;
+    // userId는 경로 변수에서 직접 추출 — 문서 내 필드보다 신뢰성 높음
+    const userId = event.params.userId as string;
     const title = notificationData.title as string | undefined;
     const body = notificationData.body as string | undefined;
     const type = notificationData.type as string | undefined;
 
-    if (!userId || !title) {
+    if (!title) {
       console.log("⚠️ [알림 트리거] 필수 필드 누락");
       return;
     }
@@ -373,7 +370,7 @@ export const onNotificationCreated = onDocumentCreated(
 
     // 멱등성: 트랜잭션으로 fcmSent 플래그 선점 → FCM 중복 발송 방지
     // (FCM 발송 후 플래그 저장 시 함수 재시도 → 중복 발송 위험 제거)
-    const notifRef = db.collection("notifications").doc(notificationId);
+    const notifRef = db.collection("users").doc(userId).collection("notifications").doc(notificationId);
     const alreadySent = await db.runTransaction(async (tx) => {
       const doc = await tx.get(notifRef);
       if (doc.data()?.fcmSent === true) return true;
@@ -1309,7 +1306,7 @@ async function _sendReviewRequestNotification(
       userId = ownerId;
     }
 
-    await db.collection("notifications").add({
+    await db.collection("users").doc(userId).collection("notifications").add({
       userId,
       type: "REVIEW_REQUEST",
       title,
@@ -1894,7 +1891,7 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
     todayKSTStart.setHours(0, 0, 0, 0);
     const todayUTC = new Date(todayKSTStart.getTime() - KST_OFFSET_MS);
     const alreadySentSnap = await db
-      .collection("notifications")
+      .collectionGroup("notifications")
       .where("type", "==", "workReminder")
       .where("createdAt", ">=", Timestamp.fromDate(todayUTC))
       .get();
@@ -1953,7 +1950,7 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
         }
 
         // 앱 내 알림 저장
-        await db.collection("notifications").add({
+        await db.collection("users").doc(userId).collection("notifications").add({
           userId,
           type: "workReminder",
           title: "내일 근무 알림",
@@ -2417,7 +2414,9 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       const adminIds: string[] = (bizData?.adminIds as string[]) ?? [];
 
       // notifRef를 트랜잭션 외부에서 미리 생성 — 재시도 시 동일 ID 재사용으로 중복 알림 방지
-      const notifRefs = adminIds.map(() => db.collection("notifications").doc());
+      const notifRefs = adminIds.map((adminId) =>
+        db.collection("users").doc(adminId).collection("notifications").doc()
+      );
 
       // 트랜잭션으로 중복 발송 방지
       await db.runTransaction(async (tx) => {
@@ -2528,7 +2527,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       await renewBatch.commit();
 
       // 근무자에게 연장 알림
-      await db.collection("notifications").add({
+      await db.collection("users").doc(app.uid as string).collection("notifications").add({
         userId: app.uid,
         type: "contractRenewed",
         title: "계약 자동 연장",
@@ -2567,7 +2566,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       // 이론적으로 중복 발송 가능. 그러나 Cloud Scheduler는 동일 잡을 겹쳐 실행하지 않으므로 저위험.
       if (app.terminationCompletionNotifiedAt) continue;
 
-      await db.collection("notifications").add({
+      await db.collection("users").doc(app.uid as string).collection("notifications").add({
         userId: app.uid,
         type: "contractTerminating",
         title: "계약 종료 완료",
@@ -2620,7 +2619,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         });
 
         // 근무자에게 자동 승인 알림
-        await db.collection("notifications").add({
+        await db.collection("users").doc(app.uid as string).collection("notifications").add({
           userId: app.uid,
           type: "resignApproved",
           title: "퇴사 요청 자동 승인",
@@ -2634,7 +2633,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         const bizDoc = await db.collection("businesses").doc(app.businessId).get();
         const adminIds: string[] = bizDoc.exists ?
           (bizDoc.data()?.adminIds as string[] ?? []) : [];
-        await Promise.all(adminIds.map((adminId) => db.collection("notifications").add({
+        await Promise.all(adminIds.map((adminId) => db.collection("users").doc(adminId).collection("notifications").add({
           userId: adminId,
           type: "resignApproved",
           title: "퇴사 요청 자동 승인됨",
@@ -2680,7 +2679,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         });
 
         // 근무자에게 자동 승인 알림
-        await db.collection("notifications").add({
+        await db.collection("users").doc(app.uid as string).collection("notifications").add({
           userId: app.uid,
           type: "terminationApproved",
           title: "계약해지 자동 승인",

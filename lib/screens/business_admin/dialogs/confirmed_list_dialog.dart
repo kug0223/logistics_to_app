@@ -101,18 +101,21 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
     if (mounted) setState(() => _error = null);
     final userProvider = context.read<UserProvider>();
     try {
-      final confirmed = widget.slotId != null
+      // [BUGFIX] whereIn + equality 복합쿼리 시 Firestore 보안 규칙
+      //   request.query.filters.businessId가 null 반환 → PERMISSION_DENIED.
+      //   statuses 파라미터 제거 후 클라이언트 필터링으로 전환.
+      final allApps = widget.slotId != null
           ? await widget.firestoreService.getApplicationsBySlotId(
               widget.toItem.to.id,
               widget.slotId!,
               businessId: widget.toItem.to.businessId,
-              statuses: const ['CONFIRMED', 'CONTRACT_PENDING'],
             )
           : await widget.firestoreService.getApplicationsByTOId(
               widget.toItem.to.id,
               businessId: widget.toItem.to.businessId,
-              statuses: const ['CONFIRMED', 'CONTRACT_PENDING'],
             );
+      const confirmedStatuses = {'CONFIRMED', 'CONTRACT_PENDING'};
+      final confirmed = allApps.where((a) => confirmedStatuses.contains(a.status)).toList();
 
       // ✅ 1. 중복 제거된 UID 목록
       final uniqueUids = confirmed.map((app) => app.uid).toSet().toList();

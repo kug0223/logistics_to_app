@@ -818,7 +818,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             width: 70,
             child: Text(label, style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)),
           ),
-          Text(value, style: ResponsiveHelper.tinyStyle(context, color: valueColor).copyWith(fontWeight: FontWeight.w600)),
+          Expanded(child: Text(value, style: ResponsiveHelper.tinyStyle(context, color: valueColor).copyWith(fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis)),
         ],
       ),
     );
@@ -883,6 +883,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
   /// 개별 급여 확정
   Future<void> _processIndividualConfirm(ApplicationModel app, AttendanceModel attendance, WageDetailModel wage) async {
+    if (_isProcessing) return;
+    setState(() => _isProcessing = true);
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final adminUid = userProvider.currentUser?.uid;
@@ -998,6 +1000,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     } catch (e) {
       debugPrint('❌ 개별 급여 확정 실패: $e');
       ToastHelper.showError('급여 확정에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -1058,17 +1062,25 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     try {
       final user = widget.userMap[app.uid];
 
-      await FirebaseFirestore.instance
-          .collection('attendance')
-          .doc(attendance.id)
-          .update({
-        'wageStatus': AttendanceModel.wagePending,
-        'finalWage': FieldValue.delete(),
-        'wageDetail': FieldValue.delete(),
-        // yearMonth도 함께 삭제 — pending 복귀 시 _getPrevGrossTotal 집계에서 제외되지만,
-        // 재확정 전까지 stale 필드가 남아있으면 DB 정합성이 어긋나므로 명시적으로 삭제
-        'yearMonth': FieldValue.delete(),
-        'updatedAt': FieldValue.serverTimestamp(),
+      // M-5: 트랜잭션으로 wageConfirmed 상태 재확인 — 동시 마감과의 race condition 방어
+      await FirebaseFirestore.instance.runTransaction((tx) async {
+        final ref = FirebaseFirestore.instance.collection('attendance').doc(attendance.id);
+        final snap = await tx.get(ref);
+        if (!snap.exists) throw Exception('근무 기록을 찾을 수 없습니다.');
+        final currentStatus = snap.data()?['wageStatus'] as String?;
+        if (currentStatus == AttendanceModel.wageConfirmed ||
+            currentStatus == AttendanceModel.wageTransferred) {
+          throw StateError('이미 마감된 급여입니다. 급여 마감 취소 버튼을 사용하세요.');
+        }
+        tx.update(ref, {
+          'wageStatus': AttendanceModel.wagePending,
+          'finalWage': FieldValue.delete(),
+          'wageDetail': FieldValue.delete(),
+          // yearMonth도 함께 삭제 — pending 복귀 시 _getPrevGrossTotal 집계에서 제외되지만,
+          // 재확정 전까지 stale 필드가 남아있으면 DB 정합성이 어긋나므로 명시적으로 삭제
+          'yearMonth': FieldValue.delete(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
       });
       
       _hasChanges = true;
@@ -1103,7 +1115,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       if (showToast) ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 확정 취소');
     } catch (e) {
       debugPrint('❌ 급여 취소 실패: $e');
-      ToastHelper.showError('급여 취소에 실패했습니다');
+      // StateError: 이미 마감된 급여 — 안내 메시지 그대로 표시
+      ToastHelper.showError(e is StateError ? e.message : '급여 취소에 실패했습니다');
     }
   }
 
@@ -2783,7 +2796,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       if (flags.isEarlyArrival) _buildFlagBadge('조출', AppColors.success),
       if (flags.isLate) _buildFlagBadge('지각', AppColors.error),
       if (flags.isEarlyLeave) _buildFlagBadge('조퇴', AppColors.warning),
-      if (flags.isOvertime) _buildFlagBadge('연장', Colors.blue),
+      if (flags.isOvertime) _buildFlagBadge('연장', AppColors.info),
       if (flags.isNight) _buildFlagBadge('심야', AppColors.purpleDark),
     ];
   }

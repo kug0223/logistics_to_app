@@ -1196,7 +1196,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                       // 확정자 액션 버튼 (파트변경 / 계약서 작성 / 확정취소 or 고정근무 관리)
                       if (!isPending && !_isBatchMode) ...[
                         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                        Wrap(
+                        SizedBox(
+                          width: double.infinity,
+                          child: Wrap(
                           alignment: WrapAlignment.end,
                           spacing: ResponsiveHelper.spacing(context, 8),
                           runSpacing: ResponsiveHelper.spacing(context, 6),
@@ -1243,6 +1245,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                 onTap: () => _cancelConfirmation(item),
                               ),
                           ],
+                          ),
                         ),
                       ],
 

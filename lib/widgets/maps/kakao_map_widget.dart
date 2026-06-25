@@ -59,6 +59,10 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
             if (mounted) setState(() => _isLoading = false);
           },
           onWebResourceError: (WebResourceError error) {
+            // [특이사항] baseUrl 'https://localhost' 설정 시 WebView가 favicon.ico 등
+            // 서브리소스를 localhost에 요청 → ERR_CONNECTION_REFUSED 발생 (무해)
+            // isForMainFrame이 false인 경우는 서브리소스 오류이므로 무시
+            if (!(error.isForMainFrame ?? true)) return;
             debugPrint('❌ 지도 로딩 에러: ${error.description}');
             if (mounted) setState(() => _isLoading = false);
           },

@@ -85,8 +85,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         TextEditingController(text: widget.to.description ?? '');
     _slotTitleController = TextEditingController();
     _hoursBeforeStart = widget.to.hoursBeforeStart ?? 2;
-    _fixedDeadline =
-        widget.to.isContractType ? widget.to.applicationDeadline : null;
+    _fixedDeadline = widget.to.isContractType ? null : widget.to.applicationDeadline;
     _publishMode = widget.to.publishMode;
     _publishDaysBefore = widget.to.publishDaysBefore ?? 1;
     _publishTime = widget.to.publishTime ?? '14:00';
@@ -213,18 +212,14 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       ToastHelper.showError('급여는 0원보다 커야 합니다');
       return;
     }
+    // [특이사항] 최저임금(2026: 10,320원) 미달 여부를 앱에서 하드 차단하지 않는다.
+    // 임금 결정은 사업주 권한이며, 수습·단순가산 등 예외 케이스가 다양하다.
+    // 최저임금법 준수 책임은 사업주에게 있고, 앱은 경영 도구로서 개입하지 않는다.
     if (_workDetails.any((w) => w.requiredCount <= 0)) {
       ToastHelper.showError('필요 인원은 1명 이상이어야 합니다');
       return;
     }
 
-    // contract 타입 지원 마감일 과거 날짜 경고 (create_to_screen과 동일)
-    if (widget.to.isContractType && _fixedDeadline != null) {
-      final todayStart = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
-      if (_fixedDeadline!.isBefore(todayStart)) {
-        ToastHelper.showWarning('지원 마감일이 과거 날짜입니다. 저장 시 즉시 마감 상태가 됩니다');
-      }
-    }
 
     // [WAGE-GUARD] 확정 근무자가 있을 수 있는 수정 경로에서 경고 표시
     // [M-6 수정] 기존 슬롯 개별 수정(widget.slot != null)은 draft 모드여도 WAGE-GUARD 적용.
@@ -274,6 +269,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           'description': _descriptionController.text.trim(),
           'workDetails': WorkDetailData.listToFirestore(_workDetails),
           'postingDurationDays': _postingDurationDays,
+          'hoursBeforeStart': _hoursBeforeStart,
         };
         await _firestoreService.updateTO(widget.to.id, draftUpdates);
         if (mounted) {
@@ -312,13 +308,16 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         }
       }
 
-      // draft → 즉시공개 전환 시 active 4개 제한 체크
+      // draft → 즉시공개 전환 시 active 4개 제한 체크 (전체 사업장 합산)
       if (shouldPublishImmediately && !widget.to.isPublished) {
+        final adminUid = context.read<UserProvider>().currentUser?.uid ?? '';
         try {
-          await _firestoreService.assertActiveTOLimit(widget.to.businessId);
+          await _firestoreService.assertActiveTOLimit(adminUid);
         } on Exception catch (e) {
           if (e.toString().contains('MAX_ACTIVE_TO_LIMIT')) {
-            if (mounted) ToastHelper.showError('진행 중인 공고가 4개를 초과할 수 없습니다');
+            final parts = e.toString().split(':');
+            final limitStr = parts.length >= 2 ? parts.last : '4';
+            if (mounted) ToastHelper.showError('진행 중인 공고가 $limitStr개를 초과할 수 없습니다');
           } else {
             if (mounted) ToastHelper.showError('공고를 공개할 수 없습니다');
           }
@@ -371,9 +370,9 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         },
       };
 
-      if (widget.to.isContractType && _fixedDeadline != null) {
-        updates['applicationDeadline'] =
-            Timestamp.fromDate(_fixedDeadline!.toUtc());
+      if (widget.to.isContractType) {
+        // 고정근무는 지원마감 없음 — 기존 값이 있었다면 제거
+        updates['applicationDeadline'] = FieldValue.delete();
       }
 
       if (wasClosed) {

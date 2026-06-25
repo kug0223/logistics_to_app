@@ -52,6 +52,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   DocumentSnapshot? _lastDoc;
 
   String _selectedFilter = 'ALL';
+  int _autoLoadCount = 0;
+  static const int _maxAutoLoad = 5;
 
   static const int _pageSize = 20;
 
@@ -161,7 +163,9 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           _hasMore = page['hasMore'] as bool;
           _isLoadingMore = false;
         });
-        if (_filteredApplications.isEmpty && _hasMore && !_isLoadingMore) {
+        if (_filteredApplications.isEmpty && _hasMore && !_isLoadingMore &&
+            _autoLoadCount < _maxAutoLoad) {
+          _autoLoadCount++;
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && _filteredApplications.isEmpty && _hasMore && !_isLoadingMore) {
               _loadMore();
@@ -371,7 +375,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       label: label,
       isSelected: _selectedFilter == value,
       onTap: () {
-        setState(() => _selectedFilter = value);
+        setState(() { _selectedFilter = value; _autoLoadCount = 0; });
         // [특이사항] 탭 필터는 클라이언트 필터 — 탭 변경 시 서버 재조회 없이 로드된 데이터 내에서만 필터링
         // _loadMore 내 _lastDoc 가드로 커서 소실 방지 처리됨
         WidgetsBinding.instance.addPostFrameCallback((_) {

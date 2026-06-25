@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -44,6 +45,8 @@ import 'tour_screen.dart';
 // Services
 import '../../services/auth_service.dart';
 import '../../services/firestore_service.dart';
+import '../../services/pass_verification_service.dart';
+import '../../utils/encryption_helper.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../services/fcm_service.dart';
@@ -52,6 +55,7 @@ import '../../services/fcm_service.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/image_helper.dart';
 import '../../utils/dialog_helper.dart';
+import '../../utils/business_picker_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 
@@ -84,52 +88,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadBusinessSeal() async {
     final user = context.read<UserProvider>().currentUser;
-    if (user?.role != UserRole.BUSINESS_ADMIN) return;
 
-    // 1순위: UserModel.businessId
-    String? businessId = user?.businessId;
+    // BUSINESS_ADMIN이 아니면 즉시 로딩 해제
+    if (user == null || user.role != UserRole.BUSINESS_ADMIN) {
+      if (mounted) setState(() => _isSealLoading = false);
+      return;
+    }
 
-    // 2순위: businesses 컬렉션에서 adminIds로 찾기
-    if (businessId == null) {
+    // 날인 + 사업장 ID 즉시 표시 (비동기 쿼리 전, 블로킹 없음)
+    if (!mounted) return;
+    setState(() {
+      _businessSealBase64 = user.sealBase64;
+      _sealType = user.sealType;
+      _resolvedBusinessId = user.businessId; // 모델에서 즉시 세팅
+      _isSealLoading = false;
+    });
+
+    // user.businessId가 없을 때만 Firestore 조회 (내비게이션용, UI 블로킹 없음)
+    if (_resolvedBusinessId == null) {
       try {
         final snap = await FirebaseFirestore.instance
             .collection('businesses')
-            .where('adminIds', arrayContains: user!.uid)
+            .where('adminIds', arrayContains: user.uid)
             .limit(1)
             .get();
-        if (snap.docs.isNotEmpty) {
-          businessId = snap.docs.first.id;
+        if (snap.docs.isNotEmpty && mounted) {
+          setState(() => _resolvedBusinessId = snap.docs.first.id);
         }
       } catch (e) {
         debugPrint('⚠️ adminIds로 사업장 조회 실패: $e');
       }
-    }
-
-    if (!mounted) return;
-
-    if (businessId == null) {
-      setState(() => _isSealLoading = false);
-      return;
-    }
-
-    try {
-      final doc = await FirebaseFirestore.instance
-          .collection('businesses')
-          .doc(businessId)
-          .get();
-      final seal = doc.data()?['sealBase64'] as String?;
-      final sealType = doc.data()?['sealType'] as String? ?? 'stamp';
-      if (mounted) {
-        setState(() {
-          _resolvedBusinessId = businessId;
-          _businessSealBase64 = seal;
-          _sealType = sealType;
-          _isSealLoading = false;
-        });
-      }
-    } catch (e) {
-      debugPrint('⚠️ 사업장 인감 조회 실패 ($businessId): $e');
-      if (mounted) setState(() => _isSealLoading = false);
     }
   }
 
@@ -285,6 +273,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             _buildMenuGroup(context, [
               _SettingsItem(
+                icon: Icons.verified_user_outlined,
+                iconColor: AppColors.infoDark,
+                title: '본인인증 (PASS)',
+                subtitle: (user?.isPassVerified ?? false) ? '완료' : '미완료',
+                onTap: () => _handlePassAuth(user!),
+              ),
+              _SettingsItem(
                 icon: Icons.folder_special_outlined,
                 iconColor: AppColors.successDark,
                 title: '내 서류 관리',
@@ -333,8 +328,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 icon: Icons.work_outline,
                 iconColor: AppColors.warningDark,
                 title: '업무 유형 관리',
-                onTap: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const WorkTypeManagementScreen())),
+                onTap: () async {
+                  final nav = Navigator.of(context);
+                  final biz = await BusinessPickerHelper.pick(context);
+                  if (biz == null || !mounted) return;
+                  nav.push(MaterialPageRoute(
+                      builder: (_) => WorkTypeManagementScreen(
+                          businessId: biz.id, businessName: biz.name)));
+                },
               ),
               _SettingsItem(
                 icon: Icons.article_outlined,
@@ -346,6 +347,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ToastHelper.showWarning('사업장 정보를 먼저 등록해주세요');
                     return;
                   }
+                  debugPrint('📋 [settings/contractTemplate] businessId=$businessId');
                   Navigator.push(context, MaterialPageRoute(
                       builder: (_) => ContractTemplateListScreen(businessId: businessId)));
                 },
@@ -356,16 +358,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   iconColor: theme.primaryColor,
                   title: '멤버 관리',
                   onTap: () async {
-                    final uid = userProvider.currentUser?.uid;
-                    if (uid == null) return;
                     final nav = Navigator.of(context);
-                    final businesses = await FirestoreService().getMyBusiness(uid);
-                    if (!mounted) return;
-                    if (businesses.isEmpty) {
-                      ToastHelper.showWarning('사업장을 먼저 등록해주세요');
-                      return;
-                    }
-                    final biz = businesses.first;
+                    final biz = await BusinessPickerHelper.pick(context);
+                    if (biz == null || !mounted) return;
                     nav.push(MaterialPageRoute(
                         builder: (_) => MemberManagementScreen(
                             businessId: biz.id, businessName: biz.name)));
@@ -375,14 +370,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 icon: Icons.rate_review_outlined,
                 iconColor: AppColors.warningDark,
                 title: '리뷰 관리',
-                onTap: () {
-                  final businessId = user?.businessId ?? _resolvedBusinessId;
-                  if (businessId == null) {
-                    ToastHelper.showWarning('사업장 정보를 먼저 등록해주세요');
-                    return;
-                  }
-                  Navigator.push(context, MaterialPageRoute(
-                      builder: (_) => AdminReviewListScreen(businessId: businessId)));
+                onTap: () async {
+                  final nav = Navigator.of(context);
+                  final biz = await BusinessPickerHelper.pick(context);
+                  if (biz == null || !mounted) return;
+                  nav.push(MaterialPageRoute(
+                      builder: (_) => AdminReviewListScreen(businessId: biz.id)));
                 },
               ),
             ]),
@@ -722,6 +715,96 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
 
+  // ── PASS 본인인증 ─────────────────────────────────────────────────
+
+  // [TODO-DANAL] kDebugMode 블록은 다날 연동 후 제거
+  Future<void> _handlePassAuth(UserModel user) async {
+    PassAuthResult? result;
+
+    if (kDebugMode) {
+      result = await _showPassMockDialog();
+    } else {
+      result = await PassVerificationService.authenticate(purpose: 'reauth');
+    }
+
+    if (!mounted || result == null) return;
+
+    try {
+      await FirestoreService().updateUserDocument(user.uid, {
+        'ci': EncryptionHelper.encrypt(result.passToken),
+        'passVerifiedAt': Timestamp.fromDate(DateTime.now()),
+      });
+      if (!mounted) return;
+      await context.read<UserProvider>().refreshCurrentUser();
+      if (!mounted) return;
+      ToastHelper.showSuccess('본인인증이 완료되었습니다.');
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showError('본인인증 처리에 실패했습니다. 다시 시도해주세요.');
+    }
+  }
+
+  // [TODO-DANAL] 다날 연동 후 이 메서드 전체 삭제
+  Future<PassAuthResult?> _showPassMockDialog() async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: AppColors.infoBg,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.developer_mode, color: AppColors.info, size: 18),
+            ),
+            const SizedBox(width: 10),
+            Text('[개발] PASS 인증', style: ResponsiveHelper.subtitleStyle(ctx)),
+          ],
+        ),
+        content: Text(
+          '테스트 방식을 선택하세요.',
+          style: ResponsiveHelper.bodyStyle(ctx, color: AppColors.grey600),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        actions: [
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.grey600,
+                    side: const BorderSide(color: AppColors.grey300),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: const Text('취소'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx, 'random'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.info,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: const Text('랜덤 생성'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+    if (!mounted || choice == null) return null;
+    return PassVerificationService.authenticate(purpose: 'reauth');
+  }
+
   Widget _buildSectionHeader(BuildContext context, String title, IconData icon) {
     return Padding(
       padding: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 4)),
@@ -786,9 +869,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
             Expanded(
-              child: Text(item.title,
-                  style: ResponsiveHelper.bodyStyle(context)
-                      .copyWith(fontWeight: FontWeight.w600)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(item.title,
+                      style: ResponsiveHelper.bodyStyle(context)
+                          .copyWith(fontWeight: FontWeight.w600)),
+                  if (item.subtitle != null)
+                    Text(item.subtitle!,
+                        style: ResponsiveHelper.smallStyle(context,
+                            color: AppColors.grey500)),
+                ],
+              ),
             ),
             Icon(Icons.chevron_right,
                 size: ResponsiveHelper.iconSize(context, 18),
@@ -1082,7 +1174,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       TextButton(
                         onPressed: () => Navigator.pop(dCtx, true),
-                        style: TextButton.styleFrom(foregroundColor: Colors.red),
+                        style: TextButton.styleFrom(foregroundColor: AppColors.error),
                         child: const Text('탈퇴 진행'),
                       ),
                     ],
@@ -1722,22 +1814,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  /// 현재 관리자의 모든 사업장 ID를 반환한다.
-  Future<List<String>> _getAllAdminBusinessIds(String uid) async {
-    final snap = await FirebaseFirestore.instance
-        .collection('businesses')
-        .where('adminIds', arrayContains: uid)
-        .get();
-    return snap.docs.map((d) => d.id).toList();
-  }
-
   Future<void> _registerSeal(BuildContext context, UserModel? user) async {
-    if (user == null) {
-      ToastHelper.showWarning('사업장 정보를 찾을 수 없습니다');
-      return;
-    }
+    if (user == null) return;
 
-    // 갤러리 또는 카메라 선택
+    final userProvider = context.read<UserProvider>();
     final source = await ImageHelper.showImageSourceBottomSheet(context);
     if (source == null || !mounted) return;
 
@@ -1751,16 +1831,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final bytes = await picked.readAsBytes();
       final b64 = base64Encode(bytes);
-      final ids = await _getAllAdminBusinessIds(user.uid);
-      if (!mounted) return;
-      final batch = FirebaseFirestore.instance.batch();
-      for (final id in ids) {
-        batch.update(
-          FirebaseFirestore.instance.collection('businesses').doc(id),
-          {'sealBase64': b64, 'sealType': 'stamp'},
-        );
-      }
-      await batch.commit();
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .update({'sealBase64': b64, 'sealType': 'stamp'});
+      await userProvider.refreshUserData();
       if (mounted) {
         setState(() {
           _businessSealBase64 = b64;
@@ -1774,26 +1849,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _registerBusinessSignature(BuildContext context, UserModel? user) async {
-    if (user == null) {
-      ToastHelper.showWarning('사업장 정보를 찾을 수 없습니다');
-      return;
-    }
+    if (user == null) return;
 
+    final userProvider = context.read<UserProvider>();
     final bytes = await showSignaturePad(context, title: '사업주 서명');
     if (bytes == null || !mounted) return;
 
     try {
       final b64 = base64Encode(bytes);
-      final ids = await _getAllAdminBusinessIds(user.uid);
-      if (!mounted) return;
-      final batch = FirebaseFirestore.instance.batch();
-      for (final id in ids) {
-        batch.update(
-          FirebaseFirestore.instance.collection('businesses').doc(id),
-          {'sealBase64': b64, 'sealType': 'signature'},
-        );
-      }
-      await batch.commit();
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .update({'sealBase64': b64, 'sealType': 'signature'});
+      await userProvider.refreshUserData();
       if (mounted) {
         setState(() {
           _businessSealBase64 = b64;
@@ -1807,6 +1875,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _deleteSeal(BuildContext context, UserModel? user) async {
+    if (user == null) return;
+
+    final userProvider = context.read<UserProvider>();
     final confirm = await DialogHelper.showConfirm(
       context,
       title: '날인 삭제',
@@ -1816,22 +1887,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     if (confirm != true || !mounted) return;
 
-    if (user == null) {
-      ToastHelper.showWarning('사업장 정보를 찾을 수 없습니다');
-      return;
-    }
-
     try {
-      final ids = await _getAllAdminBusinessIds(user.uid);
-      if (!mounted) return;
-      final batch = FirebaseFirestore.instance.batch();
-      for (final id in ids) {
-        batch.update(
-          FirebaseFirestore.instance.collection('businesses').doc(id),
-          {'sealBase64': null, 'sealType': 'stamp'},
-        );
-      }
-      await batch.commit();
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .update({'sealBase64': null, 'sealType': 'stamp'});
+      await userProvider.refreshUserData();
       if (mounted) {
         setState(() {
           _businessSealBase64 = null;
@@ -1850,12 +1911,14 @@ class _SettingsItem {
   final IconData icon;
   final Color iconColor;
   final String title;
+  final String? subtitle;
   final VoidCallback onTap;
 
   const _SettingsItem({
     required this.icon,
     required this.iconColor,
     required this.title,
+    this.subtitle,
     required this.onTap,
   });
 }

@@ -115,17 +115,9 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return GradientScaffold(
       title: '멤버 관리',
       onRefresh: _load,
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _invite,
-        backgroundColor: theme.primaryColor,
-        icon: const Icon(Icons.person_add, color: Colors.white),
-        label: Text('멤버 초대',
-            style: ResponsiveHelper.smallStyle(context, color: Colors.white)),
-      ),
       body: _loading
           ? const LoadingWidget()
           : _members.isEmpty
@@ -133,12 +125,7 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView.builder(
-                    padding: EdgeInsets.fromLTRB(
-                      ResponsiveHelper.spacing(context, 16),
-                      ResponsiveHelper.spacing(context, 16),
-                      ResponsiveHelper.spacing(context, 16),
-                      ResponsiveHelper.spacing(context, 100),
-                    ),
+                    padding: ResponsiveHelper.listPadding(context),
                     itemCount: _members.length,
                     itemBuilder: (_, i) => _MemberCard(
                       member: _members[i],
@@ -151,10 +138,54 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
   }
 
   Widget _buildEmpty(BuildContext context) {
-    return const AppEmptyState(
+    final theme = Theme.of(context);
+    return AppEmptyState(
       icon: Icons.group_outlined,
       title: '등록된 멤버가 없습니다',
-      subtitle: '멤버 초대 버튼으로 근무자를 관리자로 초대하세요.',
+      subtitle: '멤버를 초대하고 사업장을 함께 관리해보세요',
+      action: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 16),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: _invite,
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              padding: EdgeInsets.symmetric(
+                vertical: ResponsiveHelper.spacing(context, 20),
+              ),
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: theme.primaryColor.withValues(alpha: 0.3),
+                  width: 2,
+                  style: BorderStyle.solid,
+                ),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.person_add_outlined,
+                    color: theme.primaryColor,
+                    size: ResponsiveHelper.iconSize(context, 24),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                  Text(
+                    '멤버 초대',
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      color: theme.primaryColor,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

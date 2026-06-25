@@ -36,6 +36,7 @@ import '../../widgets/maps/kakao_map_widget.dart';
 import '../../widgets/maps/full_map_dialog.dart';
 import '../../widgets/dialogs/apply/apply_work_dialog.dart';
 import '../../theme/app_colors.dart';
+import '../user/apply_prerequisites_helper.dart';
 
 /// 📋 TO 공고 상세보기 화면
 /// - 지원자 모드: 공고 확인 + 지원하기
@@ -142,12 +143,14 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     if (_to == null) return false;
     if (_to!.isClosed) return true;
 
-    // flex TO 전체 뷰(slotDate 없음)에서는 날짜 체크 생략
-    // rangeStart가 이미 지난 첫 슬롯 날짜일 수 있어 잘못된 마감 판정 방지
-    final checkDate = widget.slotDate ?? (_to!.isFlexType ? null : _to!.date);
-    if (checkDate != null) {
+    // slotDate가 명시된 경우(특정 날짜 뷰)에만 날짜 경과 체크.
+    // flex 전체 뷰: slotDate 없음 → rangeStart가 과거일 수 있어 생략.
+    // contract 전체 뷰: slotDate 없음 → TO 시작일이 과거여도 게시 기간 내 지원 가능하므로 생략.
+    //   마감 여부는 아래 isDeadlinePassed / isPostingExpired 로만 판단.
+    if (widget.slotDate != null) {
       final today = DateTime.now();
-      if (DateTime(checkDate.year, checkDate.month, checkDate.day)
+      final d = widget.slotDate!;
+      if (DateTime(d.year, d.month, d.day)
           .isBefore(DateTime(today.year, today.month, today.day))) {
         return true;
       }
@@ -666,16 +669,23 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
 
                   SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
-                  // 마감 규칙
-                  _buildTOInfoRow(
-                    context,
-                    Icons.timer_outlined,
-                    '지원 마감',
-                    _to!.deadlineType == 'HOURS_BEFORE'
-                        ? '업무시작 ${_to!.hoursBeforeStart ?? 2}시간 전'
-                        : _to!.formattedDeadline,
-                    _to!.isDeadlineSoon ? AppColors.error : AppColors.grey600,
-                  ),
+                  // 마감 규칙 — 고정근무는 게시기간이 곧 지원기간
+                  if (_to!.isLongTerm)
+                    _buildTOInfoRow(
+                      context,
+                      Icons.timer_outlined,
+                      '지원 마감',
+                      '게시 기간 내 지원 가능',
+                      AppColors.grey600,
+                    )
+                  else
+                    _buildTOInfoRow(
+                      context,
+                      Icons.timer_outlined,
+                      '지원 마감',
+                      '업무시작 ${_to!.hoursBeforeStart ?? 2}시간 전',
+                      _to!.isDeadlineSoon ? AppColors.error : AppColors.grey600,
+                    ),
                 ],
               ),
             ),
@@ -1528,28 +1538,71 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                     ],
                   ),
                 ],
-                // 지하철
-                if (_business!.nearestStation != null) ...[
+                // 교통편 사진 — 신규 필드
+                if (_business!.transportImageUrls != null &&
+                    _business!.transportImageUrls!.isNotEmpty) ...[
                   SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                  _buildTransportRow(
-                    context,
-                    Icons.subway,
-                    _business!.nearestStation!,
-                    _business!.walkingMinutes != null
-                        ? '도보 ${_business!.walkingMinutes}분'
-                        : null,
+                  SizedBox(
+                    height: 100,
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _business!.transportImageUrls!.length,
+                      itemBuilder: (ctx, i) => GestureDetector(
+                        onTap: () => CommonWidgets.showImagePreview(
+                          context,
+                          _business!.transportImageUrls!,
+                          initialIndex: i,
+                        ),
+                        child: Container(
+                          width: 100,
+                          height: 100,
+                          margin: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 8)),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: ImageHelper.buildCachedImage(
+                              _business!.transportImageUrls![i],
+                              width: 100,
+                              height: 100,
+                              fit: BoxFit.cover,
+                              memCacheWidth: 200,
+                              fadeInDuration: const Duration(milliseconds: 150),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ],
-                
-                // 버스
-                if (_business!.busInfo != null) ...[
+
+                // 교통편 상세설명 — 신규 필드 우선, 레거시 폴백
+                if (_business!.transportDescription != null) ...[
                   SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                   _buildTransportRow(
                     context,
-                    Icons.directions_bus,
-                    '버스',
-                    _business!.busInfo,
+                    Icons.directions,
+                    _business!.transportDescription!,
+                    null,
                   ),
+                ] else ...[
+                  // 레거시 필드 폴백
+                  if (_business!.nearestStation != null) ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                    _buildTransportRow(
+                      context,
+                      Icons.subway,
+                      _business!.nearestStation!,
+                      _business!.walkingMinutes != null ? '도보 ${_business!.walkingMinutes}분' : null,
+                    ),
+                  ],
+                  if (_business!.busInfo != null) ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                    _buildTransportRow(
+                      context,
+                      Icons.directions_bus,
+                      '버스',
+                      _business!.busInfo,
+                    ),
+                  ],
                 ],
                 
                 // 지도
@@ -1918,6 +1971,16 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
   Future<void> _applyTO() async {
     if (_isLoading) return; // 이중 탭 방어
     if (_to == null) return;
+
+    // 지원 전 필수 서류·인증 체크 — 미완료 항목 있으면 다이얼로그 표시 후 중단
+    final user = context.read<UserProvider>().currentUser;
+    if (user == null) return;
+    final canApply = await checkApplyPrerequisites(
+      context,
+      user: user,
+      isFlexType: _to!.isFlexType,
+    );
+    if (!canApply || !mounted) return;
 
     if (_to!.isFlexType) {
       // flex TO — 단일 슬롯(slotDate 있음) 또는 다중 슬롯

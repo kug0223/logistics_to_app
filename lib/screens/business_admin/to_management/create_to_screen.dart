@@ -1,17 +1,20 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 // Models
 import '../../../models/core/business_model.dart';
 import '../../../models/core/to_model.dart';
 import '../../../models/core/business_work_type_model.dart';
+import '../../../models/core/contract_template_model.dart';
 import '../../../models/core/work_detail_data.dart';
 import '../../../models/work_detail_input.dart';
 
 // Services & Providers
 import '../../../services/firestore_service.dart';
 import '../../../services/analytics_service.dart';
+import '../../../services/contract_template_service.dart';
 import '../../../providers/user_provider.dart';
 
 // Utils
@@ -33,6 +36,19 @@ import '../../../widgets/app_select_field.dart';
 import '../../../widgets/common/gradient_scaffold.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../common/settings_screen.dart';
+import '../admin_contract_management_screen.dart';
+import '../work_type_management_screen.dart';
+import '../Business_form_screen.dart';
+
+/// 사업장별 사전조건 충족 여부
+class _BizReadiness {
+  final BusinessModel business;
+  final bool workTypesReady;
+  const _BizReadiness({
+    required this.business,
+    required this.workTypesReady,
+  });
+}
 
 class AdminCreateTOScreen extends StatefulWidget {
   const AdminCreateTOScreen({super.key});
@@ -57,6 +73,17 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   List<BusinessModel> _myBusinesses = [];
   BusinessModel? _selectedBusiness;
   List<BusinessWorkTypeModel> _businessWorkTypes = [];
+  final _contractTemplateService = ContractTemplateService();
+
+  // 사전조건 상태 — 3가지 모두 충족돼야 공고 등록 가능
+  bool _hasAnyBusiness = false;
+  bool _businessApproved = false;
+  bool _workTypesReady = false;
+  bool _contractTemplatesReady = false;
+  bool _formUnlocked = false;        // 한번 true가 되면 항상 폼 표시 (일방향 래치)
+  List<_BizReadiness> _businessReadinessList = []; // 멀티 사업장 결핍 정보
+  bool get _allPrerequisitesMet =>
+      _businessApproved && _workTypesReady && _contractTemplatesReady;
 
   // TO 설정 — 'flex' 단기 / 'contract' 장기
   String _selectedJobType = TOType.flex;
@@ -73,7 +100,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   // 지원 마감
   int _hoursBeforeStart = 2;
-  DateTime? _fixedDeadline;
 
   // 예약 공개
   String _publishMode = 'immediate';
@@ -118,18 +144,15 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   Future<void> _loadMyBusinesses() async {
     setState(() => _isLoading = true);
-
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final uid = userProvider.currentUser?.uid;
-
       if (uid == null) {
         ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
         if (mounted) setState(() => _isLoading = false);
         return;
       }
 
-      // SubAdmin은 adminIds에 없으므로 effectiveBusinessId로 직접 조회
       final effectiveBizId = userProvider.effectiveBusinessId;
       final List<BusinessModel> allBusinesses;
       if (userProvider.isSubAdmin && effectiveBizId != null) {
@@ -141,26 +164,76 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       final approvedBusinesses = allBusinesses.where((b) => b.isApproved).toList();
 
       if (!mounted) return;
-      setState(() {
-        _myBusinesses = approvedBusinesses;
-        if (_myBusinesses.isNotEmpty) {
-          _selectedBusiness = _myBusinesses.first;
-          _loadWorkTypes();
-        }
-        _isLoading = false;
-      });
 
       if (approvedBusinesses.isEmpty) {
-        final msg = allBusinesses.isNotEmpty
-            ? '승인된 사업장이 없습니다.\n관리자 승인 후 공고를 등록할 수 있습니다.'
-            : '사업장을 먼저 등록해야 합니다.';
-        ToastHelper.showWarning(msg);
-        // 사전 조건 미충족 시 화면에서 자동 복귀
-        if (mounted) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) Navigator.of(context).pop();
-          });
-        }
+        setState(() {
+          _hasAnyBusiness = allBusinesses.isNotEmpty;
+          _businessApproved = false;
+          _workTypesReady = false;
+          _contractTemplatesReady = false;
+          _businessReadinessList = [];
+          _isLoading = false;
+        });
+        return;
+      }
+
+      // 모든 승인 사업장의 업무목록 + 계약서 병렬 로드
+      final checks = await Future.wait(
+        approvedBusinesses.map((biz) async {
+          final res = await Future.wait([
+            _firestoreService.getBusinessWorkTypes(biz.id),
+            _contractTemplateService.getTemplates(biz.id),
+          ]);
+          return (
+            business: biz,
+            workTypes: res[0] as List<BusinessWorkTypeModel>,
+            templates: res[1] as List<ContractTemplateModel>,
+          );
+        }),
+      );
+
+      if (!mounted) return;
+
+      // 계약서 템플릿은 사업장 무관 전역 체크 — 모든 사업장 합산
+      final allTemplates =
+          checks.expand((c) => c.templates).toList();
+
+      // 업무유형만 충족한 첫 번째 사업장 자동선택 (계약서는 전역)
+      final ready = checks.where((c) => c.workTypes.isNotEmpty);
+
+      if (ready.isNotEmpty) {
+        final sel = ready.first;
+        setState(() {
+          _myBusinesses = approvedBusinesses;
+          _selectedBusiness = sel.business;
+          _businessWorkTypes = sel.workTypes;
+          _hasAnyBusiness = true;
+          _businessApproved = true;
+          _workTypesReady = true;
+          _contractTemplatesReady = allTemplates.isNotEmpty;
+          _businessReadinessList = [];
+          if (_allPrerequisitesMet) _formUnlocked = true;
+          _isLoading = false;
+        });
+      } else {
+        // 어느 사업장도 업무유형 미충족 — 결핍 정보 보존
+        final first = checks.first;
+        setState(() {
+          _myBusinesses = approvedBusinesses;
+          _selectedBusiness = first.business;
+          _businessWorkTypes = first.workTypes;
+          _hasAnyBusiness = true;
+          _businessApproved = true;
+          _workTypesReady = first.workTypes.isNotEmpty;
+          _contractTemplatesReady = allTemplates.isNotEmpty;
+          _businessReadinessList = checks
+              .map((c) => _BizReadiness(
+                    business: c.business,
+                    workTypesReady: c.workTypes.isNotEmpty,
+                  ))
+              .toList();
+          _isLoading = false;
+        });
       }
     } catch (e) {
       debugPrint('❌ 사업장 로드 실패: $e');
@@ -169,15 +242,64 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     }
   }
 
+  /// 사전조건 화면에서 "다시 확인" 또는 준비 화면 복귀 시 재체크
+  Future<void> _reCheckPrerequisites() async {
+    if (_selectedBusiness == null) {
+      await _loadMyBusinesses();
+      return;
+    }
+    setState(() => _isLoading = true);
+    try {
+      // 업무유형: 선택된 사업장 기준 / 계약서: 전역 (모든 사업장 합산)
+      final bizList =
+          _myBusinesses.isNotEmpty ? _myBusinesses : [_selectedBusiness!];
+      final allResults = await Future.wait([
+        _firestoreService.getBusinessWorkTypes(_selectedBusiness!.id),
+        ...bizList
+            .map((b) => _contractTemplateService.getTemplates(b.id)),
+      ]);
+      if (!mounted) return;
+      final workTypes = allResults[0] as List<BusinessWorkTypeModel>;
+      final allTemplates = allResults
+          .skip(1)
+          .expand((r) => r as List<ContractTemplateModel>)
+          .toList();
+      setState(() {
+        _businessWorkTypes = workTypes;
+        _workTypesReady = workTypes.isNotEmpty;
+        _contractTemplatesReady = allTemplates.isNotEmpty;
+        if (_allPrerequisitesMet) {
+          _formUnlocked = true;
+          _businessReadinessList = [];
+        }
+        _isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('❌ 사전조건 재체크 실패: $e');
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // 드롭다운으로 사업장 변경 시 업무목록 + 계약서 템플릿 재로드
+  // 사업장 전환 시 업무목록만 재로드 (계약서 템플릿은 전역 — _reCheckPrerequisites에서 관리)
   Future<void> _loadWorkTypes() async {
     if (_selectedBusiness == null) return;
     try {
-      final workTypes = await _firestoreService.getBusinessWorkTypes(_selectedBusiness!.id);
+      final workTypes = await _firestoreService
+          .getBusinessWorkTypes(_selectedBusiness!.id);
       if (!mounted) return;
-      setState(() => _businessWorkTypes = workTypes);
+      setState(() {
+        _businessWorkTypes = workTypes;
+        _workTypesReady = workTypes.isNotEmpty;
+        if (!workTypes.isNotEmpty) _workDetails.clear();
+      });
+      if (workTypes.isEmpty) {
+        ToastHelper.showWarning(
+            '이 사업장에 등록된 업무목록이 없습니다.\n업무목록을 먼저 추가해주세요.');
+      }
     } catch (e) {
-      debugPrint('❌ 업무 유형 로드 실패: $e');
-      if (mounted) ToastHelper.showError('업무 유형을 불러올 수 없습니다');
+      debugPrint('❌ 사업장 정보 로드 실패: $e');
+      if (mounted) ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
     }
   }
 
@@ -207,6 +329,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
     if (!mounted) return;
     Navigator.pop(context);
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
 
     final selectedTO = await showDialog<TOModel>(
       context: context,
@@ -221,8 +345,23 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   void _loadDataFromTO(TOModel to) {
     setState(() {
       _titleController.text = to.title;
+      _groupTitleController.text = to.groupTitle ?? '';
       _descriptionController.text = to.description ?? '';
       _hoursBeforeStart = to.hoursBeforeStart ?? 2;
+      // 단기/장기 타입 동기화
+      _selectedJobType = to.type;
+      // 장기(contract) 계약 필드 복원 (날짜는 과거이므로 제외, 구조만 복원)
+      if (to.type == 'contract') {
+        _contractPeriodType = to.contractPeriodType;
+        _selectedWeekdays
+          ..clear()
+          ..addAll(to.workDays);
+        // rangeStart/rangeEnd는 과거값이므로 복사하지 않음 (새 공고에 맞게 직접 입력)
+      } else {
+        _contractPeriodType = null;
+        _selectedWeekdays.clear();
+        _selectedDates.clear();
+      }
       _workDetails.clear();
       for (final work in to.workDetails) {
         _workDetails.add(WorkDetailInput(
@@ -244,6 +383,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           payScheduleDay: work.payScheduleDay,
           payScheduleTime: work.payScheduleTime,
           taxDeductionType: work.taxDeductionType,
+          description: work.description,
         ));
       }
     });
@@ -480,6 +620,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       payScheduleType: detail.payScheduleType,
       payScheduleDay: detail.payScheduleDay,
       payScheduleTime: detail.payScheduleTime,
+      taxDeductionType: detail.taxDeductionType,
       description: detail.description,
     );
 
@@ -566,7 +707,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       _rangeEnd = null;
       _contractPeriodType = null;
       _postingDurationDays = 7;
-      _fixedDeadline = null;
       _publishMode = 'immediate';
       _publishDaysBefore = 1;
       _publishTime = '14:00';
@@ -611,10 +751,16 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   bool get _someSlotExpired => !_allSlotsExpired && _selectedDates.any(_isSlotExpired);
 
   Future<void> _createTO() async {
+    if (_isCreating) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
     if (_selectedBusiness == null) {
       ToastHelper.showError('사업장을 선택해주세요');
+      return;
+    }
+
+    if (_businessWorkTypes.isEmpty) {
+      ToastHelper.showError('업무목록을 먼저 등록해주세요.\n사업장 설정에서 업무목록을 추가할 수 있습니다.');
       return;
     }
 
@@ -656,15 +802,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         ToastHelper.showError('근무 요일을 선택해주세요');
         return;
       }
-      // contract 타입은 지원 마감일 필수
-      if (_fixedDeadline == null) {
-        ToastHelper.showError('지원 마감일을 설정해주세요');
-        return;
-      }
-      final todayStart = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
-      if (_fixedDeadline!.isBefore(todayStart)) {
-        ToastHelper.showWarning('지원 마감일이 과거 날짜입니다. 등록 즉시 마감 상태가 됩니다');
-      }
     }
 
     if (_workDetails.isEmpty) {
@@ -681,6 +818,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       ToastHelper.showError('급여는 0원보다 커야 합니다');
       return;
     }
+    // [특이사항] 최저임금(2026: 10,320원) 미달 여부를 앱에서 하드 차단하지 않는다.
+    // 임금 결정은 사업주 권한이며, 수습·단순가산 등 예외 케이스가 다양하다.
+    // 최저임금법 준수 책임은 사업주에게 있고, 앱은 경영 도구로서 개입하지 않는다.
 
     if (_workDetails.any((w) => (w.wage ?? 0) > 50000000)) {
       ToastHelper.showError('급여는 5,000만원 이하여야 합니다');
@@ -697,22 +837,55 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       return;
     }
 
-    // 사업주 날인 미등록 차단 — 근로계약서 서명에 필요
-    if ((_selectedBusiness!.sealBase64 ?? '').isEmpty) {
-      final goToSettings = await DialogHelper.showConfirm(
-        context,
-        title: '사업주 날인 미등록',
-        message: '근로계약서 서명을 위해 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 이미지 또는 서명을 먼저 등록해주세요.',
-        confirmText: '설정으로 이동',
-        cancelText: '취소',
-      );
+    // 사업주 날인 미등록 차단 — 근로계약서 서명에 필요 (전역 체크)
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+    final uid = userProvider.currentUser?.uid;
+    if (uid != null) {
+      // Firestore에서 직접 읽어 캐시 의존 제거
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users').doc(uid).get();
       if (!mounted) return;
-      if (goToSettings) {
-        await NavigationHelper.push<void>(context, destination: const SettingsScreen());
+      String? sealBase64 = userDoc.data()?['sealBase64'] as String?;
+
+      // 구버전: users/{uid}에 없으면 관리 사업장 전체에서 폴백 후 이전
+      if (sealBase64 == null || sealBase64.isEmpty) {
+        try {
+          final bizSnap = await FirebaseFirestore.instance
+              .collection('businesses')
+              .where('adminIds', arrayContains: uid)
+              .get();
+          if (!mounted) return;
+          for (final biz in bizSnap.docs) {
+            final oldSeal = biz.data()['sealBase64'] as String?;
+            if (oldSeal != null && oldSeal.isNotEmpty) {
+              final oldType = biz.data()['sealType'] as String? ?? 'stamp';
+              await FirebaseFirestore.instance
+                  .collection('users').doc(uid)
+                  .update({'sealBase64': oldSeal, 'sealType': oldType});
+              sealBase64 = oldSeal;
+              break;
+            }
+          }
+        } catch (e) {
+          debugPrint('⚠️ 날인 자동 이전 실패: $e');
+        }
         if (!mounted) return;
-        await _loadMyBusinesses();
       }
-      return;
+
+      if (sealBase64 == null || sealBase64.isEmpty) {
+        final goToSettings = await DialogHelper.showConfirm(
+          context,
+          title: '사업주 날인 미등록',
+          message: '근로계약서 서명을 위해 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 이미지 또는 서명을 먼저 등록해주세요.',
+          confirmText: '설정으로 이동',
+          cancelText: '취소',
+        );
+        if (!mounted) return;
+        if (goToSettings) {
+          await NavigationHelper.push<void>(context, destination: const SettingsScreen());
+        }
+        return;
+      }
     }
 
     // flex 당일 슬롯 마감 경과 처리
@@ -786,7 +959,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         creatorUID: uid,
         // flex 전용
         dates: _selectedJobType == TOType.flex ? _selectedDates : null,
-        deadlineType: _selectedJobType == TOType.flex ? 'HOURS_BEFORE' : 'FIXED_TIME',
+        deadlineType: 'HOURS_BEFORE',
         hoursBeforeStart: _hoursBeforeStart,
         // contract 전용
         // 비-custom 계약기간은 rangeStart가 null일 수 있음 → 오늘로 기본값 (시간 제거)
@@ -798,8 +971,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             : null,
         rangeEnd: _selectedJobType == TOType.contract && _contractPeriodType == 'custom' ? _rangeEnd : null,
         workDays: _selectedJobType == TOType.contract ? _selectedWeekdays : null,
-        contractDeadline:
-            _selectedJobType == TOType.contract ? _fixedDeadline?.toUtc() : null,
+        contractDeadline: null,
         contractPeriodType: _selectedJobType == TOType.contract ? _contractPeriodType : null,
         postingDurationDays: _postingDurationDays, // flex·contract 모두 저장
         // 공개 설정 (draft = 미공개 저장, scheduled = 예약공개, immediate = 즉시공개)
@@ -824,7 +996,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     } catch (e) {
       debugPrint('❌ TO 생성 실패: $e');
       if (e.toString().contains('MAX_ACTIVE_TO_LIMIT')) {
-        ToastHelper.showError('진행중인 공고가 최대 4개입니다.\n기존 공고를 마감 후 새 공고를 등록해주세요.');
+        final parts = e.toString().split(':');
+        final limitStr = parts.length >= 2 ? parts.last : '4';
+        ToastHelper.showError('진행중인 공고가 최대 $limitStr개입니다.\n기존 공고를 마감 후 새 공고를 등록해주세요.');
       } else {
         ToastHelper.showError('공고 등록에 실패했습니다');
       }
@@ -846,8 +1020,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       );
     }
 
-    if (_myBusinesses.isEmpty) {
-      return _buildEmptyBusinessState();
+    if (!_formUnlocked) {
+      return _buildPrerequisiteScreen();
     }
 
     return PopScope(
@@ -921,16 +1095,15 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
-              // 마감 설정: flex = 시간기준(HOURS_BEFORE), contract = 날짜지정(FIXED_TIME)
-              TODeadlineSection(
-                isLongTerm: _selectedJobType == TOType.contract,
-                hoursBeforeStart: _hoursBeforeStart,
-                onHoursChanged: (h) => setState(() => _hoursBeforeStart = h),
-                fixedDeadline: _fixedDeadline,
-                onFixedDeadlineChanged: (dt) => setState(() => _fixedDeadline = dt),
-                rangeStartDate: _selectedJobType == TOType.contract ? _rangeStart : null,
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              // 단기(flex)만 지원마감 설정 — 고정근무(contract)는 게시기간이 곧 지원기간
+              if (_selectedJobType != TOType.contract) ...[
+                TODeadlineSection(
+                  isLongTerm: false,
+                  hoursBeforeStart: _hoursBeforeStart,
+                  onHoursChanged: (h) => setState(() => _hoursBeforeStart = h),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              ],
 
               TOPublishSection(
                 publishMode: _publishMode,
@@ -963,32 +1136,356 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     );     // PopScope
   }
 
-  Widget _buildEmptyBusinessState() {
+  /// 공고 등록 사전조건 체크 화면 — 3가지를 한 번에 보여줌
+  Widget _buildPrerequisiteScreen() {
+    final theme = Theme.of(context);
     return GradientScaffold(
       title: '공고 등록',
-      body: Center(
+      body: SingleChildScrollView(
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // 안내 헤더
             Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
+              width: double.infinity,
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
               decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
+                color: theme.primaryColor.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: theme.primaryColor.withValues(alpha: 0.2)),
               ),
-              child: Icon(Icons.business_outlined,
-                  size: ResponsiveHelper.iconSize(context, 64),
-                  color: Theme.of(context).primaryColor.withValues(alpha: 0.5)),
+              child: Row(
+                children: [
+                  Icon(Icons.checklist_rounded,
+                      color: theme.primaryColor,
+                      size: ResponsiveHelper.iconSize(context, 28)),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('공고 등록 전 준비사항',
+                            style: ResponsiveHelper.subtitleStyle(context)
+                                .copyWith(fontWeight: FontWeight.bold)),
+                        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                        Text('아래 3가지를 모두 완료해야 공고를 등록할 수 있습니다.',
+                            style: ResponsiveHelper.smallStyle(context,
+                                color: AppColors.grey600)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-            Text('등록된 사업장이 없습니다',
-                style: ResponsiveHelper.titleStyle(context)
-                    .copyWith(fontWeight: FontWeight.bold)),
+
+            SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+
+            // 멀티 사업장 결핍 현황 (어느 사업장도 미충족인 경우)
+            if (_businessReadinessList.length > 1) ...[
+              _buildBusinessDeficitCard(),
+              SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+            ],
+
+            // ① 사업장 등록 & 승인
+            _buildPrerequisiteCard(
+              index: 1,
+              title: '사업장 등록 & 승인',
+              isReady: _businessApproved,
+              readyDescription: '승인된 사업장이 있습니다',
+              notReadyDescription: _hasAnyBusiness
+                  ? '사업장이 아직 승인되지 않았습니다.\n관리자 승인을 기다려주세요.'
+                  : '사업장이 등록되어 있지 않습니다.',
+              actionLabel: _hasAnyBusiness ? null : '사업장 등록하기',
+              onAction: _hasAnyBusiness
+                  ? null
+                  : () async {
+                      await NavigationHelper.push<void>(context,
+                          destination: const BusinessFormScreen());
+                      if (!mounted) return;
+                      await _loadMyBusinesses();
+                    },
+            ),
+
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            Text('사업장을 먼저 등록해주세요',
-                style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600)),
+
+            // ② 업무목록
+            _buildPrerequisiteCard(
+              index: 2,
+              title: '업무목록 등록',
+              isReady: _workTypesReady,
+              readyDescription: '업무목록이 등록되어 있습니다',
+              notReadyDescription: _businessApproved
+                  ? '등록된 업무목록이 없습니다.'
+                  : '사업장 승인 후 확인 가능합니다.',
+              actionLabel: _businessApproved ? '업무목록 관리' : null,
+              onAction: _businessApproved
+                  ? () async {
+                      await NavigationHelper.push<void>(context,
+                          destination: WorkTypeManagementScreen(
+                            businessId: _selectedBusiness!.id,
+                            businessName: _selectedBusiness!.name,
+                          ));
+                      if (!mounted) return;
+                      await _reCheckPrerequisites();
+                    }
+                  : null,
+            ),
+
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+
+            // ③ 계약서 템플릿
+            _buildPrerequisiteCard(
+              index: 3,
+              title: '근로계약서 템플릿',
+              isReady: _contractTemplatesReady,
+              readyDescription: '계약서 템플릿이 등록되어 있습니다',
+              notReadyDescription: _businessApproved
+                  ? '등록된 계약서 템플릿이 없습니다.'
+                  : '사업장 승인 후 확인 가능합니다.',
+              actionLabel: _businessApproved ? '계약서 관리' : null,
+              onAction: _businessApproved && _selectedBusiness != null
+                  ? () async {
+                      await NavigationHelper.push<void>(
+                        context,
+                        destination: AdminContractManagementScreen(
+                            businessId: _selectedBusiness!.id),
+                      );
+                      if (!mounted) return;
+                      await _reCheckPrerequisites();
+                    }
+                  : null,
+            ),
+
+            SizedBox(height: ResponsiveHelper.spacing(context, 32)),
+
+            // 다시 확인 + 공고 등록하기 버튼
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _reCheckPrerequisites,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('다시 확인'),
+                    style: OutlinedButton.styleFrom(
+                      padding: EdgeInsets.symmetric(
+                          vertical: ResponsiveHelper.spacing(context, 14)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                Expanded(
+                  flex: 2,
+                  child: ElevatedButton.icon(
+                    onPressed: _allPrerequisitesMet
+                        ? () => setState(() => _formUnlocked = true)
+                        : null,
+                    icon: const Icon(Icons.edit_note),
+                    label: const Text('공고 등록하기'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: theme.primaryColor,
+                      foregroundColor: Colors.white,
+                      disabledBackgroundColor: AppColors.grey300,
+                      padding: EdgeInsets.symmetric(
+                          vertical: ResponsiveHelper.spacing(context, 14)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildBusinessDeficitCard() {
+    return Container(
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.store_outlined,
+                  color: AppColors.warning,
+                  size: ResponsiveHelper.iconSize(context, 20)),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              Text('사업장별 준비 현황',
+                  style: ResponsiveHelper.subtitleStyle(context)
+                      .copyWith(fontWeight: FontWeight.bold)),
+            ],
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          ..._businessReadinessList.map((r) => Padding(
+                padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(r.business.name,
+                          style: ResponsiveHelper.bodyStyle(context)
+                              .copyWith(fontWeight: FontWeight.w600),
+                          overflow: TextOverflow.ellipsis),
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    _readinessChip(r.workTypesReady, '업무유형'),
+                  ],
+                ),
+              )),
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          Text('준비된 사업장이 없습니다. 아래 항목을 완료 후 "다시 확인"을 눌러주세요.',
+              style: ResponsiveHelper.smallStyle(context,
+                  color: AppColors.grey600)),
+        ],
+      ),
+    );
+  }
+
+  Widget _readinessChip(bool ready, String label) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 6),
+        vertical: ResponsiveHelper.spacing(context, 2),
+      ),
+      decoration: BoxDecoration(
+        color: ready
+            ? AppColors.success.withValues(alpha: 0.12)
+            : AppColors.error.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            ready ? Icons.check : Icons.close,
+            size: ResponsiveHelper.iconSize(context, 12),
+            color: ready ? AppColors.success : AppColors.error,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 2)),
+          Text(label,
+              style: ResponsiveHelper.smallStyle(context,
+                  color: ready ? AppColors.successDark : AppColors.errorDark)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPrerequisiteCard({
+    required int index,
+    required String title,
+    required bool isReady,
+    required String readyDescription,
+    required String notReadyDescription,
+    String? actionLabel,
+    VoidCallback? onAction,
+  }) {
+    final theme = Theme.of(context);
+    final color = isReady ? AppColors.success : AppColors.error;
+
+    return Container(
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isReady
+              ? AppColors.success.withValues(alpha: 0.3)
+              : AppColors.grey300,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.grey500.withValues(alpha: 0.08),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          // 상태 아이콘
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: Icon(
+                isReady ? Icons.check_circle : Icons.radio_button_unchecked,
+                color: color,
+                size: ResponsiveHelper.iconSize(context, 22),
+              ),
+            ),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+
+          // 텍스트
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text('$index.',
+                        style: ResponsiveHelper.smallStyle(context,
+                            color: AppColors.grey500)),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                    Flexible(
+                      child: Text(title,
+                          style: ResponsiveHelper.bodyStyle(context)
+                              .copyWith(fontWeight: FontWeight.bold)),
+                    ),
+                  ],
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                Text(
+                  isReady ? readyDescription : notReadyDescription,
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: isReady ? AppColors.successDark : AppColors.grey600),
+                ),
+              ],
+            ),
+          ),
+
+          // 이동 버튼 (미완료 항목만)
+          if (!isReady && actionLabel != null && onAction != null) ...[
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            TextButton(
+              onPressed: onAction,
+              style: TextButton.styleFrom(
+                foregroundColor: theme.primaryColor,
+                padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 10),
+                    vertical: ResponsiveHelper.spacing(context, 6)),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(actionLabel,
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: theme.primaryColor,
+                          fontWeight: FontWeight.bold)),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 2)),
+                  Icon(Icons.arrow_forward_ios,
+                      size: ResponsiveHelper.iconSize(context, 12),
+                      color: theme.primaryColor),
+                ],
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

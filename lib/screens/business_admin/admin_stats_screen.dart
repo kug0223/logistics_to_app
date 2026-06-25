@@ -34,6 +34,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
 
   AnnualStatsData? _data;
   List<BusinessOption> _businesses = [];
+  bool _hasError = false;
 
   @override
   void initState() {
@@ -70,9 +71,10 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
         filterBusinessId: _filterBusinessId,
         year: _selectedYear,
       );
-      if (mounted) setState(() => _data = data);
+      if (mounted) setState(() { _data = data; _hasError = false; });
     } catch (e) {
       debugPrint('❌ 연간 통계 로드 실패: $e');
+      if (mounted) setState(() => _hasError = true);
     } finally {
       if (mounted) setState(() { _isLoading = false; _isFetching = false; });
     }
@@ -751,6 +753,13 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
   }
 
   Widget _buildEmpty() {
+    if (_hasError) {
+      return AppEmptyState(
+        icon: Icons.cloud_off_outlined,
+        title: '통계를 불러오지 못했습니다',
+        subtitle: '네트워크 상태를 확인 후 당겨서 새로고침하세요',
+      );
+    }
     return AppEmptyState(
       icon: Icons.bar_chart_outlined,
       title: '$_selectedYear년 데이터가 없습니다',

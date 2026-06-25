@@ -527,6 +527,22 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     }
   }
 
+  // H-8: 주민번호 복사 시 감사 로그 기록 (개인정보보호법 접근 기록)
+  Future<void> _logResidentNumberCopy() async {
+    try {
+      final viewerId = context.read<UserProvider>().currentUser?.uid;
+      if (viewerId == null) return;
+      await FirebaseFirestore.instance.collection('id_card_copy_logs').add({
+        'viewerId': viewerId,
+        'targetUserId': widget.user.uid,
+        'copiedAt': FieldValue.serverTimestamp(),
+        'action': 'resident_number_copy',
+      });
+    } catch (e) {
+      debugPrint('⚠️ [H-8] 주민번호 복사 감사 로그 기록 실패: $e');
+    }
+  }
+
   String _formatResidentNumber(String raw) {
     final cleaned = raw.replaceAll('-', '');
     if (cleaned.length >= 13) {
@@ -1247,6 +1263,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                     onPressed: () {
                       Clipboard.setData(ClipboardData(text: widget.user.residentNumber!.replaceAll('-', '')));
                       ToastHelper.showSuccess('주민번호가 복사되었습니다.');
+                      _logResidentNumberCopy();
                     },
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
@@ -1468,21 +1485,24 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: Padding(
-          padding: EdgeInsets.symmetric(vertical: verticalPadding),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 15, color: textColor),
-              const SizedBox(width: 5),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: textColor,
+          padding: EdgeInsets.symmetric(vertical: verticalPadding, horizontal: 4),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 15, color: textColor),
+                const SizedBox(width: 5),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: textColor,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -2207,17 +2227,18 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
 
     // 현재 다이얼로그 닫기
     Navigator.pop(context);
-
-    // 고정근무 관리 다이얼로그 열기
-    showDialog(
-      context: context,
-      builder: (context) => FixedWorkerManagementDialog(
-        businessIds: [businessId],
-        initialBusinessId: businessId,
-        onChanged: () {
-          widget.onStatusChanged?.call();
-        },
-      ),
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!context.mounted) return;
+      showDialog(
+        context: context,
+        builder: (context) => FixedWorkerManagementDialog(
+          businessIds: [businessId],
+          initialBusinessId: businessId,
+          onChanged: () {
+            widget.onStatusChanged?.call();
+          },
+        ),
+      );
+    });
   }
 }

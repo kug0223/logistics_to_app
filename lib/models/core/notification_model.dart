@@ -570,6 +570,35 @@ class NotificationModel {
     );
   }
 
+  /// 근무자 자기 확정 취소 알림 생성 (관리자에게)
+  static NotificationModel createConfirmationCanceledByWorker({
+    required String userId,       // 관리자 uid
+    required String workerName,
+    required String workType,
+    required DateTime workDate,
+    required String applicationId,
+    required String businessId,
+    required String toId,
+    required String workDetailId,
+  }) {
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.applicationCanceled,
+      title: '확정 취소',
+      body: '$workerName님이 $workType 확정 근무를 취소했습니다.\n근무일: ${workDate.month}/${workDate.day}',
+      data: {
+        'applicationId': applicationId,
+        'businessId': businessId,
+        'toId': toId,
+        'workDetailId': workDetailId,
+        'workType': workType,
+        'action': 'applicantDetail',
+      },
+      createdAt: DateTime.now(),
+    );
+  }
+
   /// 확정 취소 알림 생성 (지원자에게)
   static NotificationModel createConfirmationCanceled({
     required String userId,

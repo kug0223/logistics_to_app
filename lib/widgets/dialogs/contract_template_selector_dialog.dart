@@ -1,10 +1,12 @@
 import 'dart:math' show max;
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../../models/core/contract_template_model.dart';
 import '../../screens/business_admin/contract_template_list_screen.dart';
 import '../../services/contract_template_service.dart';
+import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
 import '../common/loading_widget.dart';
@@ -43,6 +45,7 @@ class _SelectorSheetState extends State<_SelectorSheet> {
   final _service = ContractTemplateService();
   List<ContractTemplateModel>? _templates;
   int? _selectedIndex;
+  String? _loadError;
 
   @override
   void initState() {
@@ -52,11 +55,29 @@ class _SelectorSheetState extends State<_SelectorSheet> {
 
   Future<void> _load() async {
     try {
-      final list = await _service.getTemplates(widget.businessId);
-      if (mounted) setState(() => _templates = list);
+      // 통합운영: 관리자의 모든 사업장 템플릿을 합쳐서 표시
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      List<ContractTemplateModel> list = [];
+
+      if (uid != null) {
+        final businesses = await FirestoreService().getMyBusiness(uid);
+        if (businesses.isNotEmpty) {
+          final allLists = await Future.wait(
+            businesses.map((b) => _service.getTemplates(b.id)),
+          );
+          list = allLists.expand((l) => l).toList();
+        }
+      }
+
+      // fallback: uid 취득 실패 or 사업장 없으면 TO의 businessId로 시도
+      if (list.isEmpty) {
+        list = await _service.getTemplates(widget.businessId);
+      }
+
+      if (mounted) setState(() { _templates = list; _loadError = null; });
     } catch (e) {
       debugPrint('❌ 계약 템플릿 로드 실패: $e');
-      if (mounted) setState(() => _templates = []);
+      if (mounted) setState(() { _templates = []; _loadError = e.toString(); });
     }
   }
 
@@ -138,7 +159,7 @@ class _SelectorSheetState extends State<_SelectorSheet> {
                     child: LoadingWidget(),
                   )
                 : _templates!.isEmpty
-                    ? _buildEmpty(context)
+                    ? _buildEmpty(context, error: _loadError)
                     : ListView.separated(
                         shrinkWrap: true,
                         padding: EdgeInsets.symmetric(
@@ -323,7 +344,7 @@ class _SelectorSheetState extends State<_SelectorSheet> {
     );
   }
 
-  Widget _buildEmpty(BuildContext context) {
+  Widget _buildEmpty(BuildContext context, {String? error}) {
     return Padding(
       padding: EdgeInsets.fromLTRB(
         ResponsiveHelper.spacing(context, 24),
@@ -337,13 +358,15 @@ class _SelectorSheetState extends State<_SelectorSheet> {
           Icon(Icons.description_outlined, size: 48, color: AppColors.grey300),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           Text(
-            '등록된 템플릿이 없습니다',
+            error != null ? '템플릿 불러오기 실패' : '등록된 템플릿이 없습니다',
             style: ResponsiveHelper.bodyStyle(context)
-                .copyWith(color: AppColors.grey500),
+                .copyWith(color: error != null ? AppColors.error : AppColors.grey500),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 6)),
           Text(
-            '계약서 조항 템플릿을 미리 등록해두면\n빠르게 계약서를 작성할 수 있습니다',
+            error != null
+                ? '오류가 발생했습니다. 아래 버튼으로 다시 시도하거나\n빈 계약서로 진행하세요.'
+                : '계약서 조항 템플릿을 미리 등록해두면\n빠르게 계약서를 작성할 수 있습니다',
             textAlign: TextAlign.center,
             style: ResponsiveHelper.smallStyle(context, color: AppColors.grey400),
           ),
@@ -352,6 +375,12 @@ class _SelectorSheetState extends State<_SelectorSheet> {
             width: double.infinity,
             child: OutlinedButton.icon(
               onPressed: () async {
+                if (error != null) {
+                  // 에러 시: 다시 시도
+                  if (mounted) setState(() { _templates = null; _loadError = null; });
+                  _load();
+                  return;
+                }
                 // 템플릿 관리 화면으로 이동 후 돌아오면 목록 새로고침
                 await Navigator.push(
                   context,
@@ -362,8 +391,8 @@ class _SelectorSheetState extends State<_SelectorSheet> {
                 );
                 if (mounted) _load();
               },
-              icon: const Icon(Icons.add, size: 16),
-              label: Text('템플릿 등록하기',
+              icon: Icon(error != null ? Icons.refresh : Icons.add, size: 16),
+              label: Text(error != null ? '다시 시도' : '템플릿 등록하기',
                   style: ResponsiveHelper.smallStyle(context,
                       fontWeight: FontWeight.w600)),
               style: OutlinedButton.styleFrom(

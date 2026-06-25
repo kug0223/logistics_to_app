@@ -649,7 +649,11 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
     if (widget.initialIcon != null && widget.initialIcon!.startsWith('material:')) {
       final codePoint = int.tryParse(widget.initialIcon!.substring(9));
       if (codePoint != null) {
-        _selectedIcon = IconData(codePoint, fontFamily: 'MaterialIcons');
+        try {
+          _selectedIcon = _allIcons.firstWhere((item) => item.icon.codePoint == codePoint).icon;
+        } catch (_) {
+          // codePoint가 목록에 없으면 미선택 상태 유지 (runtime IconData 금지)
+        }
       }
     }
 

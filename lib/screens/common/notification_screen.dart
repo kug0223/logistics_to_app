@@ -20,6 +20,7 @@ import '../../models/core/work_detail_model.dart';
 import '../../models/ui/admin_to_list_ui_models.dart';
 import '../business_admin/dialogs/work_applicants_dialog.dart';
 import '../business_admin/dialogs/fixed_worker_management_dialog.dart';
+import '../../models/core/employment_contract_model.dart';
 import '../../services/contract_service.dart';
 import '../../services/member_service.dart';
 import '../../theme/app_colors.dart';
@@ -247,7 +248,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
   Widget _buildErrorState(BuildContext context, NotificationProvider provider) {
     return AppEmptyState(
       icon: Icons.cloud_off_outlined,
-      iconColor: Colors.orange,
+      iconColor: AppColors.warning,
       title: '알림을 불러오지 못했습니다',
       subtitle: '네트워크 상태를 확인하고 다시 시도해주세요',
       action: TextButton.icon(
@@ -560,15 +561,21 @@ class _NotificationScreenState extends State<NotificationScreen> {
     BuildContext context,
     NotificationModel notification,
   ) async {
-    // applicationId로 null 체크 — 실제 Firestore 조회 키와 동일하게 맞춤
+    final contractId = notification.data?['contractId']?.toString();
     final applicationId = notification.data?['applicationId']?.toString();
-    if (applicationId == null || applicationId.isEmpty) {
+
+    // contractId / applicationId 둘 다 없으면 내 지원 목록으로 이동
+    if ((contractId == null || contractId.isEmpty) &&
+        (applicationId == null || applicationId.isEmpty)) {
       Navigator.push(
         context,
         MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
       );
       return;
     }
+
+    // async gap 이전에 context 의존 값 추출
+    final currentUser = context.read<UserProvider>().currentUser;
 
     showDialog(
       context: context,
@@ -577,12 +584,20 @@ class _NotificationScreenState extends State<NotificationScreen> {
     );
 
     try {
-      final currentUser = context.read<UserProvider>().currentUser;
-      // USER 컨텍스트 — 보안 규칙 workerId == auth.uid 필터 사용 (businessId 불필요)
-      final contract = await ContractService().getByApplication(
-        applicationId,
-        workerId: currentUser?.uid,
-      );
+      EmploymentContractModel? contract;
+
+      // contractId 우선 — get 단건 조회, list 복합 쿼리 권한 문제 없음
+      if (contractId != null && contractId.isNotEmpty) {
+        contract = await ContractService().getById(contractId);
+      }
+
+      // fallback: contractId 없거나 get 실패 → applicationId 기반 조회
+      if (contract == null && applicationId != null && applicationId.isNotEmpty) {
+        contract = await ContractService().getByApplication(
+          applicationId,
+          workerId: currentUser?.uid,
+        );
+      }
 
       if (!context.mounted) return;
       Navigator.pop(context);
@@ -597,10 +612,11 @@ class _NotificationScreenState extends State<NotificationScreen> {
       }
 
       // [B-5] 서명 완료 후 알림 목록 갱신 — pop 반환값 수신
+      final nonNullContract = contract; // null 체크 통과 후 — 람다 내 타입 승격 불가 우회
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => ContractSignScreen(contract: contract, role: 'worker'),
+          builder: (_) => ContractSignScreen(contract: nonNullContract, role: 'worker'),
         ),
       ).then((result) {
         if (mounted && result != null) setState(() {});
@@ -947,15 +963,17 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       if (!context.mounted) return;
       Navigator.pop(context);
-
-      showDialog(
-        context: context,
-        builder: (_) => WorkApplicantsDialog(
-          work: workDetail,
-          toItem: toItem,
-          onChanged: () {},
-        ),
-      );
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted) return;
+        showDialog(
+          context: context,
+          builder: (_) => WorkApplicantsDialog(
+            work: workDetail,
+            toItem: toItem,
+            onChanged: () {},
+          ),
+        );
+      });
     } catch (e) {
       if (!context.mounted) return;
       Navigator.pop(context);

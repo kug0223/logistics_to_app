@@ -218,6 +218,29 @@ class _TOItemCardState extends State<TOItemCard> {
                             ],
                           ),
                           
+                          // 사업장명 (캘린더 독립 카드에서만 표시)
+                          if (!widget.showConnector && widget.groupItem.businessName.isNotEmpty) ...[
+                            SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.store_outlined,
+                                  size: ResponsiveHelper.iconSize(context, 11),
+                                  color: AppColors.grey500,
+                                ),
+                                SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                                Flexible(
+                                  child: Text(
+                                    widget.groupItem.businessName,
+                                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+
                           // 계약기간 + 근무요일 (캘린더 고정 카드에서만 표시)
                           if (!widget.showConnector && widget.groupItem.isLongTerm) ...[
                             SizedBox(height: ResponsiveHelper.spacing(context, 4)),

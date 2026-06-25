@@ -31,6 +31,7 @@ import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/app_search_bar.dart';
 import '../../widgets/common/app_tab_label.dart';
 import '../../widgets/common/app_filter_chip.dart';
+import '../../widgets/common/app_empty_state.dart';
 
 /// 관리자용 리뷰 목록 화면
 class AdminReviewListScreen extends StatefulWidget {
@@ -51,6 +52,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
   final _reviewService = MonthlyReviewService();
 
   bool _isLoading = true;
+  bool _hasError = false;
 
   // 전량 원본 데이터 (DB 재쿼리 없이 메모리 필터 사용)
   List<MonthlyReviewModel> _rawWritten = [];
@@ -263,10 +265,13 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
       }
     } catch (e) {
       debugPrint('❌ 리뷰 로드 실패: $e');
+      if (!mounted) return;
+      setState(() { _isLoading = false; _hasError = true; });
+      return;
     }
 
     if (!mounted) return;
-    setState(() => _isLoading = false);
+    setState(() { _isLoading = false; _hasError = false; });
   }
 
   Future<void> _loadMoreWritten() async {
@@ -285,8 +290,12 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
         _hasMoreWritten = page.hasMore;
         _isLoadingMoreWritten = false;
       });
-    } catch (_) {
-      if (mounted) setState(() => _isLoadingMoreWritten = false);
+    } catch (e) {
+      debugPrint('❌ 리뷰 추가 로드 실패: $e');
+      if (mounted) {
+        setState(() => _isLoadingMoreWritten = false);
+        ToastHelper.showError('리뷰를 더 불러오지 못했습니다');
+      }
     }
   }
 
@@ -306,8 +315,12 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
         _hasMoreReceived = page.hasMore;
         _isLoadingMoreReceived = false;
       });
-    } catch (_) {
-      if (mounted) setState(() => _isLoadingMoreReceived = false);
+    } catch (e) {
+      debugPrint('❌ 수신 리뷰 추가 로드 실패: $e');
+      if (mounted) {
+        setState(() => _isLoadingMoreReceived = false);
+        ToastHelper.showError('리뷰를 더 불러오지 못했습니다');
+      }
     }
   }
 
@@ -323,7 +336,13 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
       onRefresh: _loadReviews,
       body: _isLoading
           ? const LoadingWidget()
-          : Column(
+          : _hasError
+              ? AppEmptyState(
+                  icon: Icons.cloud_off_outlined,
+                  title: '리뷰를 불러오지 못했습니다',
+                  subtitle: '네트워크 상태를 확인 후 당겨서 새로고침하세요',
+                )
+              : Column(
               children: [
                 // 탭 (흰 영역) — 균등 폭, 텍스트만
                 Container(

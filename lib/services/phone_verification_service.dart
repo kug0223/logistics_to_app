@@ -84,7 +84,7 @@ class PhoneVerificationService {
         // 이미 로그인된 상태 — linkWithCredential로 유효성만 검증 후 즉시 unlink
         // (signInWithCredential 사용 시 기존 세션이 파괴되므로 금지)
         try {
-          final linked = await _auth.currentUser!.linkWithCredential(credential);
+          await _auth.currentUser!.linkWithCredential(credential);
           // unlink 실패 시 재시도 — 실패해도 인증 결과는 유지하되 계정 오염 방지를 최우선
           try {
             await _auth.currentUser!.unlink(PhoneAuthProvider.PROVIDER_ID);
@@ -97,7 +97,7 @@ class PhoneVerificationService {
               debugPrint('❌ [PhoneAuth] unlink 재시도 실패 — 계정 오염 가능성: $retryErr');
             }
           }
-          debugPrint('✅ [PhoneAuth] 인증 성공 (link/unlink): ${linked.user?.phoneNumber}');
+          debugPrint('✅ [PhoneAuth] 인증 성공 (link/unlink)');
           return (valid: true, reason: null);
         } on FirebaseAuthException catch (e) {
           debugPrint('❌ [PhoneAuth] 코드 오류 (link): ${e.code}');
@@ -115,7 +115,7 @@ class PhoneVerificationService {
       } else {
         // 로그인 전 — 임시 로그인으로 코드 유효성 검증 후 삭제
         final result = await _auth.signInWithCredential(credential);
-        debugPrint('✅ [PhoneAuth] 인증 성공: ${result.user?.phoneNumber}');
+        debugPrint('✅ [PhoneAuth] 인증 성공');
 
         // 검증용 임시 계정 삭제 (Firebase Auth 세션 정리)
         // [특이사항] delete 실패 시 고아 계정이 잔존할 수 있음. 인증 결과는 유효하므로 로그만 남김.

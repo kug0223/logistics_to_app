@@ -208,8 +208,31 @@ class FullMapDialog extends StatelessWidget {
                 ],
               ),
               
-              // 교통 정보
-              if (business.nearestStation != null) ...[
+              // 교통 정보 — 신규: transportDescription 우선, 레거시 nearestStation 폴백
+              if (business.transportDescription != null) ...[
+                SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.directions,
+                      size: ResponsiveHelper.iconSize(context, 18),
+                      color: AppColors.info,
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                    Expanded(
+                      child: Text(
+                        business.transportDescription!,
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(
+                          color: theme.textTheme.bodySmall?.color,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ] else if (business.nearestStation != null) ...[
                 SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                 Row(
                   children: [
@@ -219,10 +242,12 @@ class FullMapDialog extends StatelessWidget {
                       color: AppColors.info,
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                    Text(
-                      '${business.nearestStation}${business.walkingMinutes != null ? " 도보 ${business.walkingMinutes}분" : ""}',
-                      style: ResponsiveHelper.bodyStyle(context).copyWith(
-                        color: theme.textTheme.bodySmall?.color,
+                    Expanded(
+                      child: Text(
+                        '${business.nearestStation}${business.walkingMinutes != null ? " 도보 ${business.walkingMinutes}분" : ""}',
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(
+                          color: theme.textTheme.bodySmall?.color,
+                        ),
                       ),
                     ),
                   ],

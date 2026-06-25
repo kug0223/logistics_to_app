@@ -531,17 +531,14 @@ class WorkSelectionCard extends StatelessWidget {
 
   /// 날짜·마감·인원 기준 마감 여부
   ///
-  /// 장기공고는 applicationDeadline(isTimeExpired) 체크를 제외.
+  /// 장기공고는 slotDate(TO 시작일) 과거 여부 체크를 제외한다.
+  ///   사용자가 캘린더에서 희망 시작일을 직접 선택하므로 TO 시작일이
+  ///   과거여도 지원 가능한 날짜가 남아 있을 수 있다.
   /// 단기공고는 slotDate가 과거이면 마감 처리.
   bool get _isClosed {
     if (workDetail.isFull || workDetail.isClosed) return true;
     if (!isLongTerm && workDetail.isTimeExpired) return true;
     if (!isLongTerm && slotDate != null) {
-      final now = DateTime.now();
-      return DateTime(slotDate!.year, slotDate!.month, slotDate!.day)
-          .isBefore(DateTime(now.year, now.month, now.day));
-    }
-    if (isLongTerm && slotDate != null) {
       final now = DateTime.now();
       return DateTime(slotDate!.year, slotDate!.month, slotDate!.day)
           .isBefore(DateTime(now.year, now.month, now.day));

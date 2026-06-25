@@ -199,7 +199,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
 
     return Stack(
       children: [
-        // 이미지
+        // 이미지 (탭 → 전체화면 미리보기)
         ConstrainedBox(
           constraints: const BoxConstraints(maxHeight: 250),
           child: SizedBox(
@@ -209,10 +209,17 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                 setState(() => _currentImageIndex = index);
               },
               itemBuilder: (context, index) {
-                return ImageHelper.buildCachedImage(
-                  images[index],
-                  fit: BoxFit.cover,
-                  height: 250,
+                return GestureDetector(
+                  onTap: () => CommonWidgets.showImagePreview(
+                    context,
+                    images,
+                    initialIndex: index,
+                  ),
+                  child: ImageHelper.buildCachedImage(
+                    images[index],
+                    fit: BoxFit.cover,
+                    height: 250,
+                  ),
                 );
               },
             ),
@@ -470,19 +477,26 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
             scrollDirection: Axis.horizontal,
             itemCount: _currentBusiness.imageUrls!.length,
             itemBuilder: (context, index) {
-              return Container(
-                width: 120,
-                margin: EdgeInsets.only(
-                  right: ResponsiveHelper.spacing(context, 12),
+              return GestureDetector(
+                onTap: () => CommonWidgets.showImagePreview(
+                  context,
+                  _currentBusiness.imageUrls!,
+                  initialIndex: index,
                 ),
-                child: ImageHelper.buildCachedImage(
-                  _currentBusiness.imageUrls![index],
+                child: Container(
                   width: 120,
-                  height: 120,
-                  fit: BoxFit.cover,
-                  borderRadius: BorderRadius.circular(12),
-                  memCacheWidth: 240,
-                  fadeInDuration: const Duration(milliseconds: 150),
+                  margin: EdgeInsets.only(
+                    right: ResponsiveHelper.spacing(context, 12),
+                  ),
+                  child: ImageHelper.buildCachedImage(
+                    _currentBusiness.imageUrls![index],
+                    width: 120,
+                    height: 120,
+                    fit: BoxFit.cover,
+                    borderRadius: BorderRadius.circular(12),
+                    memCacheWidth: 240,
+                    fadeInDuration: const Duration(milliseconds: 150),
+                  ),
                 ),
               );
             },
@@ -574,46 +588,84 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                 ],
               ),
 
-              // 지하철
-              if (_currentBusiness.nearestStation != null) ...[
+              // 교통편 사진 — 신규 필드
+              if (_currentBusiness.transportImageUrls != null &&
+                  _currentBusiness.transportImageUrls!.isNotEmpty) ...[
                 SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.subway,
-                      size: ResponsiveHelper.iconSize(context, 20),
-                      color: AppColors.infoDark,
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                    Expanded(
-                      child: Text(
-                        '${_currentBusiness.nearestStation}${_currentBusiness.walkingMinutes != null ? " 도보 ${_currentBusiness.walkingMinutes}분" : ""}',
-                        style: ResponsiveHelper.bodyStyle(context),
+                SizedBox(
+                  height: 100,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _currentBusiness.transportImageUrls!.length,
+                    itemBuilder: (ctx, i) => GestureDetector(
+                      onTap: () => CommonWidgets.showImagePreview(
+                        context,
+                        _currentBusiness.transportImageUrls!,
+                        initialIndex: i,
+                      ),
+                      child: Container(
+                        width: 100,
+                        height: 100,
+                        margin: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 8)),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: ImageHelper.buildCachedImage(
+                            _currentBusiness.transportImageUrls![i],
+                            width: 100,
+                            height: 100,
+                            fit: BoxFit.cover,
+                            memCacheWidth: 200,
+                            fadeInDuration: const Duration(milliseconds: 150),
+                          ),
+                        ),
                       ),
                     ),
-                  ],
+                  ),
                 ),
               ],
 
-              // 버스
-              if (_currentBusiness.busInfo != null) ...[
+              // 교통편 상세설명 — 신규 필드 우선, 레거시 폴백
+              if (_currentBusiness.transportDescription != null) ...[
                 SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(
-                      Icons.directions_bus,
-                      size: ResponsiveHelper.iconSize(context, 20),
-                      color: AppColors.successDark,
-                    ),
+                    Icon(Icons.directions, size: ResponsiveHelper.iconSize(context, 20), color: AppColors.infoDark),
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Expanded(
-                      child: Text(
-                        _currentBusiness.busInfo!,
-                        style: ResponsiveHelper.bodyStyle(context),
-                      ),
+                      child: Text(_currentBusiness.transportDescription!, style: ResponsiveHelper.bodyStyle(context)),
                     ),
                   ],
                 ),
+              ] else ...[
+                // 레거시 필드 폴백
+                if (_currentBusiness.nearestStation != null) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                  Row(
+                    children: [
+                      Icon(Icons.subway, size: ResponsiveHelper.iconSize(context, 20), color: AppColors.infoDark),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      Expanded(
+                        child: Text(
+                          '${_currentBusiness.nearestStation}${_currentBusiness.walkingMinutes != null ? " 도보 ${_currentBusiness.walkingMinutes}분" : ""}',
+                          style: ResponsiveHelper.bodyStyle(context),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                if (_currentBusiness.busInfo != null) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                  Row(
+                    children: [
+                      Icon(Icons.directions_bus, size: ResponsiveHelper.iconSize(context, 20), color: AppColors.successDark),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      Expanded(
+                        child: Text(_currentBusiness.busInfo!, style: ResponsiveHelper.bodyStyle(context)),
+                      ),
+                    ],
+                  ),
+                ],
               ],
 
               // 지도 미리보기

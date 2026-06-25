@@ -312,24 +312,30 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
   }
 
   /// flex TO 슬롯 캐시 fetch (없을 때만 서버 호출)
-  Future<void> _fetchSlots(String toId) async {
-    if (_slotsCache.containsKey(toId)) return;
+  /// 반환값: 이번 호출에서 로드/이미 캐시된 슬롯 목록 (카드가 즉시 사용)
+  Future<List<SlotModel>> _fetchSlots(String toId) async {
+    if (_slotsCache.containsKey(toId)) return _slotsCache[toId]!;
     try {
       final slots = await _firestoreService.getSlots(toId, visibleOnly: true);
       if (mounted) setState(() => _slotsCache[toId] = slots);
+      return slots;
     } catch (e) {
       debugPrint('❌ slots 로드 실패 ($toId): $e');
+      return [];
     }
   }
 
   /// workDetails 캐시 fetch (없을 때만 서버 호출)
-  Future<void> _fetchWorkDetails(String toId) async {
-    if (_workDetailsCache.containsKey(toId)) return;
+  /// 반환값: 이번 호출에서 로드/이미 캐시된 workDetails (카드가 즉시 사용)
+  Future<List<WorkDetailModel>> _fetchWorkDetails(String toId) async {
+    if (_workDetailsCache.containsKey(toId)) return _workDetailsCache[toId]!;
     try {
       final details = await _firestoreService.getWorkDetails(toId);
       if (mounted) setState(() => _workDetailsCache[toId] = details);
+      return details;
     } catch (e) {
       debugPrint('❌ workDetails 로드 실패 ($toId): $e');
+      return [];
     }
   }
 

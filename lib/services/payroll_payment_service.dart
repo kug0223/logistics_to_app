@@ -259,15 +259,18 @@ class PayrollPaymentService {
     try {
       final ref = referenceDate ?? DateTime.now();
       final today = DateTime(ref.year, ref.month, ref.day, 23, 59, 59);
+      // paymentDueDate 범위필터 제거 — 등호+범위 복합쿼리에서 request.query.filters 미작동
+      // businessId + wageStatus 등호필터만 사용, 날짜 필터링은 클라이언트에서 처리
       final snap = await _db
           .collection('attendance')
           .where('businessId', isEqualTo: businessId)
           .where('wageStatus', isEqualTo: AttendanceModel.wageConfirmed)
-          .where('paymentDueDate',
-              isLessThanOrEqualTo: Timestamp.fromDate(today))
-          .count()
           .get();
-      return snap.count ?? 0;
+      return snap.docs.where((doc) {
+        final dueDate = doc.data()['paymentDueDate'];
+        if (dueDate == null) return false;
+        return !(dueDate as Timestamp).toDate().isAfter(today);
+      }).length;
     } catch (e) {
       debugPrint('❌ 오늘 지급 건수 조회 실패: $e');
       return 0;

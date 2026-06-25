@@ -1,7 +1,5 @@
 ﻿// lib/widgets/dialogs/apply/apply_work_dialog.dart
 
-import 'dart:math' show max;
-
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -26,6 +24,7 @@ import 'apply_confirm_dialog.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../utils/network_checker.dart';
 import '../../../screens/common/job_posting_screen.dart';
+import '../../../screens/user/apply_prerequisites_helper.dart';
 import '../../../services/tooltip_service.dart';
 import '../../../services/analytics_service.dart';
 import '../../../widgets/common/loading_widget.dart';
@@ -2173,18 +2172,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   }
 
   Widget _buildBottomButton(BuildContext context, ThemeData theme) {
-    return Container(
-      padding: EdgeInsets.fromLTRB(
-        ResponsiveHelper.spacing(context, 16),
-        ResponsiveHelper.spacing(context, 16),
-        ResponsiveHelper.spacing(context, 16),
-        // edge-to-edge 대응: viewPaddingOf는 SafeArea 소비 무관 물리적 인셋.
-        // max로 SafeArea 정상 동작 시 이중 합산 방지.
-        max(
-          ResponsiveHelper.spacing(context, 16),
-          MediaQuery.viewPaddingOf(context).bottom,
-        ),
-      ),
+    return SafeArea(
+      top: false,
+      child: Container(
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
       decoration: BoxDecoration(
         color: Colors.white,
         boxShadow: [
@@ -2197,7 +2188,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       ),
       child: SizedBox(
         width: double.infinity,
-        height: ResponsiveHelper.spacing(context, 50),
+        height: ResponsiveHelper.spacing(context, 52),
         child: ElevatedButton(
             onPressed: () => Navigator.pop(
               context,
@@ -2206,6 +2197,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             style: ElevatedButton.styleFrom(
               backgroundColor: theme.primaryColor,
               foregroundColor: Colors.white,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(
                   ResponsiveHelper.spacing(context, 12),
@@ -2217,10 +2209,12 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               '닫기',
               style: ResponsiveHelper.subtitleStyle(context, color: Colors.white).copyWith(
                 fontWeight: FontWeight.bold,
+                height: 1.2,
               ),
             ),
           ),
         ),
+      ),
     );
   }
 
@@ -2313,6 +2307,16 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
   /// 지원하기
   Future<void> _applyForWork(TOModel to, WorkDetailModel work, {DateTime? date}) async {
+    // 지원 전 필수 서류·인증 사전 체크 — 미완료 시 안내 다이얼로그 표시 후 중단
+    final user = context.read<UserProvider>().currentUser;
+    if (user == null) return;
+    final met = await checkApplyPrerequisites(
+      context,
+      user: user,
+      isFlexType: !_isLongTerm,
+    );
+    if (!met || !mounted) return;
+
     // 🔥 장기공고: 희망 시작일 유효성 검사
     if (_isLongTerm) {
       // 1. 희망 시작일이 선택되지 않은 경우

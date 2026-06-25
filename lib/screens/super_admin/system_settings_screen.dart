@@ -9,6 +9,7 @@ import 'review_tags_settings_screen.dart';
 import 'badge_settings_screen.dart';
 import 'minimum_wage_settings_screen.dart';
 import 'insurance_rate_settings_screen.dart';
+import 'to_limit_settings_screen.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 
 /// 슈퍼관리자 시스템 설정 화면
@@ -121,6 +122,17 @@ class SystemSettingsScreen extends StatelessWidget {
                   context,
                   MaterialPageRoute(
                     builder: (context) => const InsuranceRateSettingsScreen(),
+                  ),
+                ),
+              ),
+              _SettingItem(
+                icon: Icons.business_center_outlined,
+                title: '공고 등록 개수 제한',
+                subtitle: '사업장 당 동시 진행 공고 최대 개수',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const TOLimitSettingsScreen(),
                   ),
                 ),
               ),

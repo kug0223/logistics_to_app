@@ -31,6 +31,7 @@ class _ContractTemplateEditScreenState
   late List<_ArticleEntry> _entries;
   late String _templateType;
   bool _saving = false;
+  bool _hasChanges = false;
 
   bool get _isNew => widget.template == null;
 
@@ -43,6 +44,7 @@ class _ContractTemplateEditScreenState
         ?? ContractTemplateType.daily;
 
     _nameCtrl = TextEditingController(text: widget.template?.name ?? '');
+    _nameCtrl.addListener(_onChanged);
 
     final sourceArticles = widget.template != null
         ? widget.template!.articles
@@ -54,6 +56,14 @@ class _ContractTemplateEditScreenState
               contentCtrl: TextEditingController(text: a.content),
             ))
         .toList();
+    for (final e in _entries) {
+      e.titleCtrl.addListener(_onChanged);
+      e.contentCtrl.addListener(_onChanged);
+    }
+  }
+
+  void _onChanged() {
+    if (!_hasChanges && mounted) setState(() => _hasChanges = true);
   }
 
   @override
@@ -68,11 +78,15 @@ class _ContractTemplateEditScreenState
   }
 
   void _addArticle() {
+    final entry = _ArticleEntry(
+      titleCtrl: TextEditingController(),
+      contentCtrl: TextEditingController(),
+    );
+    entry.titleCtrl.addListener(_onChanged);
+    entry.contentCtrl.addListener(_onChanged);
     setState(() {
-      _entries.add(_ArticleEntry(
-        titleCtrl: TextEditingController(),
-        contentCtrl: TextEditingController(),
-      ));
+      _entries.add(entry);
+      _hasChanges = true;
     });
     // 새 항목으로 스크롤
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -91,6 +105,7 @@ class _ContractTemplateEditScreenState
       _entries[index].titleCtrl.dispose();
       _entries[index].contentCtrl.dispose();
       _entries.removeAt(index);
+      _hasChanges = true;
     });
   }
 
@@ -140,11 +155,38 @@ class _ContractTemplateEditScreenState
 
   final _scrollCtrl = ScrollController();
 
+  Future<bool> _confirmDiscard(BuildContext ctx) async {
+    if (!_hasChanges) return true;
+    final result = await showDialog<bool>(
+      context: ctx,
+      builder: (ctx) => AlertDialog(
+        title: const Text('편집 취소'),
+        content: const Text('저장하지 않은 변경사항이 있습니다.\n나가시겠습니까?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('계속 편집')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('나가기', style: TextStyle(color: Theme.of(ctx).colorScheme.error)),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return GradientScaffold(
-      title: _isNew ? '새 템플릿 만들기' : '템플릿 편집',
+    return PopScope(
+      canPop: !_hasChanges,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        final nav = Navigator.of(context);
+        final discard = await _confirmDiscard(context);
+        if (discard) nav.pop();
+      },
+      child: GradientScaffold(
+        title: _isNew ? '새 템플릿 만들기' : '템플릿 편집',
       actions: [
         TextButton(
           onPressed: _saving ? null : _save,
@@ -268,7 +310,8 @@ class _ContractTemplateEditScreenState
           SizedBox(height: ResponsiveHelper.spacing(context, 32)),
         ],
       ),
-    );
+    ),
+  );
   }
 }
 

@@ -46,7 +46,7 @@ extension UserFirestore on FirestoreService {
       _userCache[uid] = user;
       _userCacheTimestamps[uid] = DateTime.now();
       
-      debugPrint('✅ User 조회 완료: ${user.name}');
+      debugPrint('✅ User 조회 완료: uid=$uid');
       return user;
     } catch (e) {
       debugPrint('❌ 사용자 조회 실패: $e');

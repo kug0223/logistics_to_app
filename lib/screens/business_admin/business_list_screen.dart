@@ -177,16 +177,6 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
     return GradientScaffold(
       title: '내 사업장 관리',
       onRefresh: () => _loadBusinesses(forceServer: true),
-      actions: [
-        if (!isSubAdmin)
-          IconButton(
-            icon: Icon(Icons.add_circle_outline,
-                color: Colors.white,
-                size: ResponsiveHelper.iconSize(context, 28)),
-            tooltip: '사업장 추가',
-            onPressed: _navigateToBusinessForm,
-          ),
-      ],
       body: _isLoading
           ? const LoadingWidget()
           : _businesses.isEmpty
@@ -542,6 +532,15 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         hasLicense: user.businessLicenseImageUrl != null,
       );
       if (!canProceed) return;
+
+      // 진행중 공고 수 사전 체크 — 폼 진입 자체를 차단
+      final limit = await _firestoreService.getMaxActiveTOLimit();
+      final activeCount = await _firestoreService.countAllActiveTO(user.uid);
+      if (activeCount >= limit) {
+        if (!context.mounted) return;
+        ToastHelper.showError('진행 중인 공고가 $limit개를 초과할 수 없습니다.\n기존 공고를 마감한 후 등록해주세요.');
+        return;
+      }
     }
     if (!context.mounted) return;
     await NavigationHelper.push<bool>(

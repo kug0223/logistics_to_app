@@ -449,14 +449,17 @@ class FirestoreService {
     };
     try {
       // slotId 쿼리는 보안 규칙 제한 — toId 전체를 가져와 클라이언트에서 필터
+      // [BUGFIX] whereIn + equality 복합쿼리 시 Firestore 보안 규칙
+      //   request.query.filters.businessId가 null 반환 → PERMISSION_DENIED 발생.
+      //   statuses 파라미터 제거 후 클라이언트 필터링으로 전환.
       final allApps = await getApplicationsByTOId(
         to.id,
         businessId: to.businessId,
-        statuses: const ['PENDING', 'CONFIRMED', 'CONTRACT_PENDING'],
       );
+      const activeStatuses = {'PENDING', 'CONFIRMED', 'CONTRACT_PENDING'};
       final apps = slotId != null
-          ? allApps.where((a) => a.slotId == slotId).toList()
-          : allApps;
+          ? allApps.where((a) => a.slotId == slotId && activeStatuses.contains(a.status)).toList()
+          : allApps.where((a) => activeStatuses.contains(a.status)).toList();
       for (final app in apps) {
         // workDetailId가 compositeId 형식(workType과 다름)이면 그대로 사용,
         // 아니면 시간 정보로 composite key 생성 (레거시 데이터 호환)

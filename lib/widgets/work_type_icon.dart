@@ -2,6 +2,7 @@
 import '../models/core/business_work_type_model.dart';
 import '../utils/format_helper.dart';
 import '../theme/app_colors.dart';
+import 'pickers/icon_picker_dialog.dart';
 
 /// 업무 유형 아이콘/이모지 렌더링 유틸리티
 class WorkTypeIcon {
@@ -100,7 +101,10 @@ class WorkTypeIcon {
     if (iconName.startsWith('material:')) {
       try {
         final codePoint = int.parse(iconName.substring(9));
-        return IconData(codePoint, fontFamily: 'MaterialIcons');
+        // 미리 정의된 목록에서 검색 — runtime IconData 생성 금지 (tree-shake 빌드 오류)
+        return IconPickerDialog.getAllIcons()
+            .firstWhere((item) => item.icon.codePoint == codePoint)
+            .icon;
       } catch (e) {
         debugPrint('❌ Material 아이콘 파싱 실패: $iconName');
         return Icons.work;

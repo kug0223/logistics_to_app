@@ -29,7 +29,7 @@ extension AttendanceFirestore on FirestoreService {
       debugPrint('   applicationId: $applicationId');
       debugPrint('   workDate: $workDate');
 
-      // 0. 사용자 제재 상태 확인
+      // 0. 사용자 상태 확인
       final userDoc = await _firestore.collection('users').doc(userId).get(const GetOptions(source: Source.server));
       if (userDoc.exists) {
         final restrictedUntil = userDoc.data()?['restrictedUntil'];
@@ -40,6 +40,14 @@ extension AttendanceFirestore on FirestoreService {
         if (restrictedDate != null && restrictedDate.isAfter(DateTime.now())) {
           final until = FormatHelper.formatDateTime(restrictedDate);
           throw Exception('현재 근무 제재 중입니다. 제재 해제일: $until');
+        }
+
+        // H-9: 외국인 근로자 미승인(pending/rejected) 시 출근 차단
+        // foreignIdNumber 필드가 존재하면 외국인으로 판단 (암호화 저장이지만 null 여부로 식별 가능)
+        final isForeignUser = (userDoc.data()?['foreignIdNumber'] as String?) != null;
+        final accStatus = userDoc.data()?['accountStatus'] as String? ?? 'active';
+        if (isForeignUser && accStatus != 'active') {
+          throw Exception('외국인 등록 확인이 완료되지 않았습니다. 관리자의 승인을 받은 후 이용 가능합니다.');
         }
       }
 
@@ -193,6 +201,8 @@ extension AttendanceFirestore on FirestoreService {
           'checkOutMethod': method,
           'workHours': workHours,
           'status': updatedStatus,
+          // M-3: 0분 근무(출근 직후 퇴근) 플래그 — 관리자 검토 배지 표시용
+          if (workMins == 0) 'isZeroWork': true,
           'updatedAt': FieldValue.serverTimestamp(),
         });
         debugPrint('   checkOutTime: $checkOutTime, scheduled: $scheduledEndTime, isEarlyLeave: $isEarlyLeave');
@@ -286,31 +296,35 @@ extension AttendanceFirestore on FirestoreService {
       debugPrint('🔍 [getTodayConfirmedWorkers] 조회 시작...');
 
       // 단기·장기 쿼리 병렬 실행 (독립적이므로 Future.wait 가능)
+      // [BUGFIX] whereIn + equality 복합쿼리에서 Firestore 보안 규칙이
+      //   request.query.filters.businessId를 null 반환 → PERMISSION_DENIED.
+      //   status whereIn 제거 후 클라이언트 필터링으로 전환.
+      final confirmedSet = Set<String>.from(AppStatus.confirmedStatuses);
       final snapshots = await Future.wait([
-        // 1. 오늘 확정된 단기 근무 (CONTRACT_PENDING 포함)
+        // 1. 오늘 단기 근무 전체 조회 → status 클라이언트 필터
         _firestore
             .collection('applications')
             .where('businessId', isEqualTo: businessId)
-            .where('status', whereIn: AppStatus.confirmedStatuses)
             .where('workDate', isEqualTo: Timestamp.fromDate(todayStart))
             .get(const GetOptions(source: Source.server)),
-        // 2. 장기 근무자 전체 조회 → isWorkingOnDate 클라이언트 필터
+        // 2. 장기 근무자 전체 조회 → status·isWorkingOnDate 클라이언트 필터
         _firestore
             .collection('applications')
             .where('businessId', isEqualTo: businessId)
-            .where('status', whereIn: AppStatus.confirmedStatuses)
             .where('type', isEqualTo: AppType.longTerm)
             .get(const GetOptions(source: Source.server)),
       ]);
 
       final shortTerm = snapshots[0].docs
           .map((doc) => ApplicationModel.fromFirestore(doc))
+          .where((app) => confirmedSet.contains(app.status))
           .toList();
 
       debugPrint('   단기 근무자: ${shortTerm.length}명');
 
       final longTerm = snapshots[1].docs
           .map((doc) => ApplicationModel.fromFirestore(doc))
+          .where((app) => confirmedSet.contains(app.status))
           // isWorkingOnDate: actualResignDate·leaveDates·extraWorkDates·workDays 모두 반영
           .where((app) => app.isWorkingOnDate(todayStart))
           .toList();
@@ -379,11 +393,6 @@ extension AttendanceFirestore on FirestoreService {
           .toList();
       
       debugPrint('✅ 월별 출근 기록: ${attendances.length}건');
-      
-      // 🔍 디버그: 각 attendance의 wageStatus, finalWage 출력
-      for (var att in attendances) {
-        debugPrint('   📋 ${att.workDate.toString().substring(0, 10)}: checkIn=${att.checkIn}, wageStatus=${att.wageStatus}, finalWage=${att.finalWage}');
-      }
       
       return attendances;
     } catch (e, stackTrace) {

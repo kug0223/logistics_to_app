@@ -45,9 +45,11 @@ class BusinessModel {
   final List<String>? facilities;      // 편의시설 [휴게실, 사물함, 탈의실, 샤워실]
   
   // ── 교통편 ──────────────────────────────────────────────────
-  final String? nearestStation;        // 가까운 역 (예: 강남역 3번 출구)
-  final int? walkingMinutes;           // 역에서 도보 시간 (분)
-  final String? busInfo;               // 버스 정보 (예: 146, 740)
+  final String? nearestStation;        // 가까운 역 (예: 강남역 3번 출구) — 레거시
+  final int? walkingMinutes;           // 역에서 도보 시간 (분) — 레거시
+  final String? busInfo;               // 버스 정보 (예: 146, 740) — 레거시
+  final List<String>? transportImageUrls;  // 교통편 사진 (최대 5장)
+  final String? transportDescription;     // 찾아오는 방법 상세설명
   
   // ── 기타 ──────────────────────────────────────────────────
   final String? precautions;           // 준비사항/주의사항
@@ -114,6 +116,8 @@ class BusinessModel {
     this.nearestStation,
     this.walkingMinutes,
     this.busInfo,
+    this.transportImageUrls,
+    this.transportDescription,
     // 기타
     this.precautions,
     this.rating,
@@ -182,6 +186,10 @@ class BusinessModel {
       nearestStation: map['nearestStation'],
       walkingMinutes: (map['walkingMinutes'] as num?)?.toInt(),
       busInfo: map['busInfo'],
+      transportImageUrls: map['transportImageUrls'] != null
+          ? List<String>.from(map['transportImageUrls'])
+          : null,
+      transportDescription: map['transportDescription'],
       // 기타
       precautions: map['precautions'],
       rating: (map['rating'] as num?)?.toDouble(),
@@ -245,6 +253,8 @@ class BusinessModel {
       'nearestStation': nearestStation,
       'walkingMinutes': walkingMinutes,
       'busInfo': busInfo,
+      'transportImageUrls': transportImageUrls,
+      'transportDescription': transportDescription,
       // 기타
       'precautions': precautions,
       'rating': rating,
@@ -296,6 +306,8 @@ class BusinessModel {
     String? nearestStation,
     int? walkingMinutes,
     String? busInfo,
+    List<String>? transportImageUrls,
+    String? transportDescription,
     String? precautions,
     double? rating,
     int? reviewCount,
@@ -345,6 +357,8 @@ class BusinessModel {
       nearestStation: nearestStation ?? this.nearestStation,
       walkingMinutes: walkingMinutes ?? this.walkingMinutes,
       busInfo: busInfo ?? this.busInfo,
+      transportImageUrls: transportImageUrls ?? this.transportImageUrls,
+      transportDescription: transportDescription ?? this.transportDescription,
       precautions: precautions ?? this.precautions,
       rating: rating ?? this.rating,
       reviewCount: reviewCount ?? this.reviewCount,

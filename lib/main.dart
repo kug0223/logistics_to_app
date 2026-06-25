@@ -215,8 +215,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
   }
 
   Future<void> _completeOnboarding() async {
-    // await 전 즉시 설정 — notifyListeners() rebuild 시 OnboardingScreen 재표시 방지
-    if (mounted) setState(() => _isOnboardingCompleted = true);
+    // prefs 저장 완료 후 setState — 저장 전 리셋 시 _checkOnboarding이 false를 읽어 온보딩 재표시되는 race 방지
     final user = context.read<UserProvider>().currentUser;
     final uid = user?.uid ?? 'unknown';
     final prefs = await SharedPreferences.getInstance();
@@ -224,6 +223,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
     // 온보딩 완료 시 TourScreen도 함께 완료 처리 — 내용이 동일해 중복 표시 방지
     final tourKey = (user?.isUser == true) ? TourHelper.userHome : TourHelper.adminHome;
     await TourHelper.markCompleted(tourKey);
+    if (mounted) setState(() => _isOnboardingCompleted = true);
   }
 
   @override

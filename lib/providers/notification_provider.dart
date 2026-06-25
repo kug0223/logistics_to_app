@@ -158,7 +158,8 @@ class NotificationProvider with ChangeNotifier {
 
   /// 알림 읽음 처리
   Future<void> markAsRead(String notificationId) async {
-    await _firestoreService.markNotificationAsRead(notificationId);
+    if (_userId == null) return;
+    await _firestoreService.markNotificationAsRead(_userId!, notificationId);
   }
 
   /// 모든 알림 읽음 처리
@@ -176,7 +177,8 @@ class NotificationProvider with ChangeNotifier {
 
   /// 개별 알림 삭제
   Future<bool> deleteNotification(String notificationId) async {
-    final result = await _firestoreService.deleteNotification(notificationId);
+    if (_userId == null) return false;
+    final result = await _firestoreService.deleteNotification(_userId!, notificationId);
     if (_disposed) return result;
     if (result && _additionalNotifications.isNotEmpty) {
       _additionalNotifications.removeWhere((n) => n.id == notificationId);

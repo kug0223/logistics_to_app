@@ -121,10 +121,12 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
       final List<DateCloseStatus> dateStatuses = [];
 
       // 1. 단기 확정자: 해당 월의 workDate 범위로 조회 (CONTRACT_PENDING 포함)
+      // [BUGFIX] whereIn + equality 복합쿼리 시 Firestore 보안 규칙
+      //   request.query.filters.businessId가 null 반환 → PERMISSION_DENIED.
+      //   whereIn 제거 후 클라이언트 필터링으로 전환.
       final shortTermSnapshot = await FirebaseFirestore.instance
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
-          .where('status', whereIn: AppStatus.confirmedStatuses)
           .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
           .where('workDate', isLessThan: Timestamp.fromDate(monthEndExclusive))
           .get();
@@ -134,6 +136,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
       final Map<String, List<ApplicationModel>> appsByDate = {};
       for (final doc in shortTermSnapshot.docs) {
         final app = ApplicationModel.fromFirestore(doc);
+        if (!AppStatus.confirmedStatuses.contains(app.status)) continue;
         debugPrint('    단기 app: id=${app.id}, workDate=${app.workDate}, '
             'workDays=${app.workDays}, status=${app.status}');
         if (app.workDays == null || app.workDays!.isEmpty) {
@@ -146,16 +149,17 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
       }
 
       // 2. 장기 확정자: 전체 조회 후 해당 월의 활성 날짜로 확장 (CONTRACT_PENDING 포함)
+      // [BUGFIX] whereIn 제거 후 클라이언트 필터링으로 전환 (단기 쿼리와 동일한 이유)
       final longTermSnapshot = await FirebaseFirestore.instance
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
-          .where('status', whereIn: AppStatus.confirmedStatuses)
           .get();
 
       debugPrint('  [장기 전체] businessId=$businessId → ${longTermSnapshot.docs.length}건');
 
       for (final doc in longTermSnapshot.docs) {
         final app = ApplicationModel.fromFirestore(doc);
+        if (!AppStatus.confirmedStatuses.contains(app.status)) continue;
         if (app.workDays == null || app.workDays!.isEmpty) continue;
         debugPrint('    장기 app: id=${app.id}, workDate=${app.workDate}, workDays=${app.workDays}');
 

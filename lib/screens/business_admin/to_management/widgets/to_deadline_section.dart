@@ -158,6 +158,7 @@ class TODeadlineSection extends StatelessWidget {
           labelOf: (h) => '$h시간 전 마감',
           prefixIcon: Icons.schedule,
           enabled: onHoursChanged != null,
+          showSearch: false,
           onChanged: (value) {
             if (value != null) onHoursChanged!(value);
           },

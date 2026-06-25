@@ -14,16 +14,18 @@ class ContractTemplateService {
   Future<List<ContractTemplateModel>> getTemplates(String businessId,
       {int limit = 100}) async {
     try {
+      debugPrint('🔍 [getTemplates] businessId=$businessId');
       final snap = await _col(businessId)
           .orderBy('createdAt', descending: false)
           .limit(limit)
           .get();
+      debugPrint('✅ [getTemplates] ${snap.docs.length}개 조회됨');
       return snap.docs
           .map((d) => ContractTemplateModel.fromFirestore(d))
           .toList();
     } catch (e) {
-      debugPrint('템플릿 목록 조회 실패: $e');
-      return [];
+      debugPrint('❌ [getTemplates] businessId=$businessId 조회 실패: $e');
+      rethrow;
     }
   }
 
@@ -33,6 +35,7 @@ class ContractTemplateService {
     required String templateType,
     required List<ContractArticle> articles,
   }) async {
+    debugPrint('💾 [createTemplate] businessId=$businessId name=$name');
     final ref = _col(businessId).doc();
     final now = DateTime.now();
     final template = ContractTemplateModel(

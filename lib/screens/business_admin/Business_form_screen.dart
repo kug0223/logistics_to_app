@@ -99,9 +99,9 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   List<String> _additionalImageUrls = [];
 
   // 교통편
-  final _nearestStationController = TextEditingController();
-  final _walkingMinutesController = TextEditingController();
-  final _busInfoController = TextEditingController();
+  final List<File> _transportImages = [];
+  List<String> _transportImageUrls = [];
+  final _transportDescriptionController = TextEditingController();
 
   // 기타
   final _precautionsController = TextEditingController();
@@ -180,9 +180,8 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     if (business.phone != null) _phoneController.text = business.phone!;
     if (business.oneLineIntro != null) _oneLineIntroController.text = business.oneLineIntro!;
     if (business.detailedDescription != null) _detailedDescriptionController.text = business.detailedDescription!;
-    if (business.nearestStation != null) _nearestStationController.text = business.nearestStation!;
-    if (business.walkingMinutes != null) _walkingMinutesController.text = business.walkingMinutes.toString();
-    if (business.busInfo != null) _busInfoController.text = business.busInfo!;
+    _transportImageUrls = business.transportImageUrls ?? [];
+    if (business.transportDescription != null) _transportDescriptionController.text = business.transportDescription!;
     if (business.precautions != null) _precautionsController.text = business.precautions!;
 
     _mainImageUrl = business.mainImageUrl;
@@ -212,6 +211,9 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     for (final file in _additionalImages) {
       file.delete().ignore();
     }
+    for (final file in _transportImages) {
+      file.delete().ignore();
+    }
     _nameController.dispose();
     _businessNumberController.dispose();
     _companyNameController.dispose();
@@ -220,9 +222,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     _phoneController.dispose();
     _oneLineIntroController.dispose();
     _detailedDescriptionController.dispose();
-    _nearestStationController.dispose();
-    _walkingMinutesController.dispose();
-    _busInfoController.dispose();
+    _transportDescriptionController.dispose();
     _precautionsController.dispose();
     _ownerNameController.dispose();
     _beaconUUIDController.dispose();
@@ -236,9 +236,11 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     final theme = Theme.of(context);
 
     return PopScope(
-      canPop: !widget.isFromSignUp,
+      canPop: !widget.isFromSignUp && !_isEditMode,
       onPopInvokedWithResult: (didPop, result) async {
-        if (!didPop && widget.isFromSignUp) {
+        if (didPop) return;
+        if (widget.isFromSignUp) {
+          final nav = Navigator.of(context);
           final confirmed = await showDialog<bool>(
             context: context,
             builder: (context) => StyledDialog(
@@ -258,13 +260,34 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               ],
             ),
           );
-          if (confirmed == true && context.mounted) {
-            Navigator.pushAndRemoveUntil(
-              context,
+          if (confirmed == true && nav.context.mounted) {
+            nav.pushAndRemoveUntil(
               MaterialPageRoute(builder: (context) => const LoginScreen()),
               (route) => false,
             );
           }
+        } else if (_isEditMode) {
+          final nav = Navigator.of(context);
+          final confirmed = await showDialog<bool>(
+            context: context,
+            builder: (context) => StyledDialog(
+              title: '수정 취소',
+              icon: Icons.edit_off,
+              headerColor: AppColors.warning,
+              content: const Text('저장하지 않은 변경사항이 있을 수 있습니다.\n나가시겠습니까?'),
+              actions: [
+                StyledDialogButton.cancel(
+                  text: '계속 수정',
+                  onPressed: () => Navigator.pop(context, false),
+                ),
+                StyledDialogButton.danger(
+                  text: '나가기',
+                  onPressed: () => Navigator.pop(context, true),
+                ),
+              ],
+            ),
+          );
+          if (confirmed == true && nav.context.mounted) nav.pop();
         }
       },
       child: GradientScaffold(
@@ -1548,42 +1571,118 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
 
   /// 교통편 섹션
   Widget _buildTransportSection(BuildContext context, ThemeData theme) {
+    final totalImages = _transportImages.length + _transportImageUrls.length;
+
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: CommonWidgets.cardDecoration(),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          CommonWidgets.textField(
-            context: context,
-            controller: _nearestStationController,
-            label: '가까운 역',
-            hint: '예: 강남역 3번 출구',
-            icon: Icons.subway,
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          TextFormField(
-            controller: _walkingMinutesController,
-            keyboardType: TextInputType.number,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            style: ResponsiveHelper.bodyStyle(context),
-            decoration: InputDecoration(
-              labelText: '도보 시간 (분)',
-              hintText: '5',
-              prefixIcon: Icon(Icons.directions_walk, color: theme.primaryColor),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          // 사진 (최대 5장)
+          SizedBox(
+            height: 100,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: totalImages + (totalImages < 5 ? 1 : 0),
+              itemBuilder: (context, index) {
+                if (index < _transportImageUrls.length) {
+                  return _buildImageThumbnail(
+                    context,
+                    networkUrl: _transportImageUrls[index],
+                    onRemove: () {
+                      setState(() {
+                        _imagesToDelete.add(_transportImageUrls[index]);
+                        _transportImageUrls.removeAt(index);
+                      });
+                    },
+                  );
+                }
+
+                final fileIndex = index - _transportImageUrls.length;
+                if (fileIndex < _transportImages.length) {
+                  return _buildImageThumbnail(
+                    context,
+                    file: _transportImages[fileIndex],
+                    onRemove: () {
+                      _transportImages[fileIndex].delete().ignore();
+                      setState(() => _transportImages.removeAt(fileIndex));
+                    },
+                  );
+                }
+
+                return GestureDetector(
+                  onTap: _pickTransportImages,
+                  child: Container(
+                    width: 100,
+                    decoration: BoxDecoration(
+                      color: AppColors.grey200,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.grey400),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.add_photo_alternate,
+                          size: ResponsiveHelper.iconSize(context, 28),
+                          color: AppColors.grey600,
+                        ),
+                        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                        Text(
+                          '사진 추가',
+                          style: ResponsiveHelper.tinyStyle(context).copyWith(
+                            color: AppColors.grey600,
+                          ),
+                        ),
+                        Text(
+                          '(복수선택)',
+                          style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
             ),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          CommonWidgets.textField(
-            context: context,
-            controller: _busInfoController,
-            label: '버스 정보',
-            hint: '예: 146, 740',
-            icon: Icons.directions_bus,
+          // 상세설명 (선택)
+          TextFormField(
+            controller: _transportDescriptionController,
+            maxLines: 3,
+            maxLength: 300,
+            style: ResponsiveHelper.bodyStyle(context),
+            decoration: InputDecoration(
+              labelText: '상세설명 (선택)',
+              hintText: '예: 1번 출구에서 나와 직진 후 편의점 옆 골목으로 진입',
+              alignLabelWithHint: true,
+              prefixIcon: Icon(Icons.directions, color: theme.primaryColor),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _pickTransportImages() async {
+    final totalImages = _transportImages.length + _transportImageUrls.length;
+
+    if (totalImages >= 5) {
+      ToastHelper.showError('최대 5장까지 추가할 수 있습니다');
+      return;
+    }
+
+    final images = await ImageHelper.pickAndCompressMultipleImages(
+      context,
+      maxImages: 5,
+      currentCount: totalImages,
+      type: ImageType.general,
+    );
+
+    if (!mounted || images.isEmpty) return;
+    setState(() => _transportImages.addAll(images));
   }
 
   // ============================================================
@@ -1766,14 +1865,8 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     // catch 블록에서 orphan Storage 정리를 위해 try 밖에서 선언
     final newlyUploadedUrls = <String>[];
     try {
-      // 사업자등록증 체크 (Firestore에서 최신 데이터 기준)
+      // 사업자등록증 체크 — 캐시 사용 (refreshCurrentUser는 저장 완료 후 1회만 수행)
       final userProvider = context.read<UserProvider>();
-
-      // 최신 사용자 정보 가져오기 (캐시 무시)
-      await userProvider.refreshCurrentUser();
-
-      if (!mounted) return;
-
       final user = userProvider.currentUser;
 
       if (user == null) {
@@ -1808,30 +1901,41 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       // Storage 삭제는 Firestore 업데이트 성공 후에만 수행한다.
       // 이 시점에서는 새 이미지 업로드만 먼저 진행한다.
 
-      // 이미지 업로드
+      // 이미지 병렬 업로드 (대표 + 추가 + 교통편 동시)
       String? mainImageUrl = _mainImageUrl;
-      if (_mainImage != null) {
-        mainImageUrl = await _uploadImage(_mainImage!, 'main');
-        if (mainImageUrl != null) newlyUploadedUrls.add(mainImageUrl);
-        if (!mounted) {
-          if (newlyUploadedUrls.isNotEmpty) await _storageService.deleteMultipleByUrls(newlyUploadedUrls);
-          return;
-        }
-        if (mainImageUrl == null) {
-          debugPrint('⚠️ 대표 이미지 업로드 실패 — 이미지 없이 저장');
-          ToastHelper.showWarning('이미지 업로드에 실패했습니다. 이미지 없이 저장됩니다.');
-        }
-      }
-
       List<String> additionalUrls = List.from(_additionalImageUrls);
-      for (var image in _additionalImages) {
-        final url = await _uploadImage(image, 'additional');
-        if (url != null) newlyUploadedUrls.add(url);
+      List<String> transportUrls = List.from(_transportImageUrls);
+
+      final uploadFutures = <Future<String?>>[];
+      if (_mainImage != null) uploadFutures.add(_uploadImage(_mainImage!, 'main'));
+      uploadFutures.addAll(_additionalImages.map((img) => _uploadImage(img, 'additional')));
+      final transportUploadStart = uploadFutures.length;
+      uploadFutures.addAll(_transportImages.map((img) => _uploadImage(img, 'transport')));
+
+      if (uploadFutures.isNotEmpty) {
+        final results = await Future.wait(uploadFutures);
         if (!mounted) {
-          if (newlyUploadedUrls.isNotEmpty) await _storageService.deleteMultipleByUrls(newlyUploadedUrls);
+          final uploaded = results.whereType<String>().toList();
+          if (uploaded.isNotEmpty) await _storageService.deleteMultipleByUrls(uploaded);
           return;
         }
-        if (url != null) additionalUrls.add(url);
+        int i = 0;
+        if (_mainImage != null) {
+          mainImageUrl = results[i++];
+          if (mainImageUrl != null) newlyUploadedUrls.add(mainImageUrl);
+          if (mainImageUrl == null) {
+            debugPrint('⚠️ 대표 이미지 업로드 실패 — 이미지 없이 저장');
+            ToastHelper.showWarning('이미지 업로드에 실패했습니다. 이미지 없이 저장됩니다.');
+          }
+        }
+        for (; i < transportUploadStart; i++) {
+          final url = results[i];
+          if (url != null) { newlyUploadedUrls.add(url); additionalUrls.add(url); }
+        }
+        for (; i < results.length; i++) {
+          final url = results[i];
+          if (url != null) { newlyUploadedUrls.add(url); transportUrls.add(url); }
+        }
       }
 
       final businessData = {
@@ -1849,7 +1953,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         'phone': _phoneController.text.trim().isEmpty ? null : _phoneController.text.trim(),
         'ownerId': ownerId,
         // [특이사항] _isEditMode = (widget.business != null) — 이 블록 내 widget.business! 는 항상 안전
-        'isApproved': _isEditMode ? widget.business!.isApproved : true,
+        'isApproved': _isEditMode ? widget.business!.isApproved : false,
         'mainImageUrl': mainImageUrl,
         'imageUrls': additionalUrls,
         'oneLineIntro': _oneLineIntroController.text.trim().isEmpty ? null : _oneLineIntroController.text.trim(),
@@ -1858,9 +1962,8 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         'mealsProvided': _selectedMeals.isEmpty ? null : _selectedMeals,
         'uniformProvided': _uniformProvided,
         'facilities': _selectedFacilities,
-        'nearestStation': _nearestStationController.text.trim().isEmpty ? null : _nearestStationController.text.trim(),
-        'walkingMinutes': _walkingMinutesController.text.trim().isEmpty ? null : int.tryParse(_walkingMinutesController.text.trim()),
-        'busInfo': _busInfoController.text.trim().isEmpty ? null : _busInfoController.text.trim(),
+        'transportImageUrls': transportUrls.isEmpty ? null : transportUrls,
+        'transportDescription': _transportDescriptionController.text.trim().isEmpty ? null : _transportDescriptionController.text.trim(),
         'precautions': _precautionsController.text.trim().isEmpty ? null : _precautionsController.text.trim(),
         'ownerName': _ownerNameController.text.trim().isEmpty ? null : _ownerNameController.text.trim(),
         'updatedAt': FieldValue.serverTimestamp(),

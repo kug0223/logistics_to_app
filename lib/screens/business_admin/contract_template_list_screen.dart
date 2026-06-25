@@ -42,6 +42,7 @@ class _ContractTemplateListScreenState
     if (!mounted) return;
     setState(() => _loading = true);
     try {
+      debugPrint('📂 [ContractTemplateListScreen] businessId=${widget.businessId}');
       _templates = await _service.getTemplates(widget.businessId);
     } catch (e) {
       debugPrint('❌ 템플릿 로드 실패: $e');
@@ -138,16 +139,8 @@ class _ContractTemplateListScreenState
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return GradientScaffold(
       title: '근로계약서 관리',
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showTypeSelector,
-        backgroundColor: theme.primaryColor,
-        icon: const Icon(Icons.add, color: Colors.white),
-        label: Text('새 템플릿',
-            style: ResponsiveHelper.smallStyle(context, color: Colors.white)),
-      ),
       body: _loading
           ? const LoadingWidget()
           : _templates.isEmpty
@@ -155,26 +148,120 @@ class _ContractTemplateListScreenState
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView.builder(
-                    padding: ResponsiveHelper.listPadding(context,
-                        extra: 72), // FAB 높이 고려
-                    itemCount: _templates.length,
-                    itemBuilder: (ctx, i) => _TemplateCard(
-                      template: _templates[i],
-                      onEdit: () => _openEditor(template: _templates[i]),
-                      onPreview: () => _openPreview(_templates[i]),
-                      onDuplicate: () => _duplicate(_templates[i]),
-                      onDelete: () => _delete(_templates[i]),
-                    ),
+                    padding: ResponsiveHelper.listPadding(context),
+                    itemCount: _templates.length + 1,
+                    itemBuilder: (ctx, i) {
+                      if (i == _templates.length) {
+                        return _buildAddButton(context);
+                      }
+                      return _TemplateCard(
+                        template: _templates[i],
+                        onEdit: () => _openEditor(template: _templates[i]),
+                        onPreview: () => _openPreview(_templates[i]),
+                        onDuplicate: () => _duplicate(_templates[i]),
+                        onDelete: () => _delete(_templates[i]),
+                      );
+                    },
                   ),
                 ),
     );
   }
 
+  Widget _buildAddButton(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      margin: EdgeInsets.only(
+        top: ResponsiveHelper.spacing(context, 8),
+        bottom: ResponsiveHelper.spacing(context, 16),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: _showTypeSelector,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: EdgeInsets.symmetric(
+              vertical: ResponsiveHelper.spacing(context, 20),
+            ),
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: theme.primaryColor.withValues(alpha: 0.3),
+                width: 2,
+                style: BorderStyle.solid,
+              ),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.add_circle_outline,
+                    color: theme.primaryColor,
+                    size: ResponsiveHelper.iconSize(context, 24)),
+                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                Text(
+                  '새 계약서 템플릿 추가',
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(
+                    color: theme.primaryColor,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildEmpty(BuildContext context) {
-    return const AppEmptyState(
+    final theme = Theme.of(context);
+    return AppEmptyState(
       icon: Icons.description_outlined,
       title: '등록된 템플릿이 없습니다',
-      subtitle: '+ 새 템플릿을 눌러 계약서 유형을 선택하세요.',
+      subtitle: '계약서 템플릿을 추가하고 근로계약을 관리해보세요',
+      action: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 16),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: _showTypeSelector,
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              padding: EdgeInsets.symmetric(
+                vertical: ResponsiveHelper.spacing(context, 20),
+              ),
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: theme.primaryColor.withValues(alpha: 0.3),
+                  width: 2,
+                  style: BorderStyle.solid,
+                ),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.add_circle_outline,
+                    color: theme.primaryColor,
+                    size: ResponsiveHelper.iconSize(context, 24),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                  Text(
+                    '새 계약서 템플릿 추가',
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      color: theme.primaryColor,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

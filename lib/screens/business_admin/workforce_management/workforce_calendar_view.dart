@@ -29,6 +29,7 @@ import '../dialogs/to_list_dialogs.dart';
 import '../dialogs/attendance_status_dialog.dart';
 import '../dialogs/fixed_worker_management_dialog.dart';
 import '../dialogs/close_management_dialog.dart';
+import '../dialogs/day_applicants_dialog.dart';
 
 // Cards
 import '../../../widgets/admin/cards/admin_to_item_card.dart';
@@ -340,42 +341,63 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
             ],
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-          Row(
+          // 2×2 버튼 그리드
+          Column(
             children: [
-              Expanded(
-                child: _buildActionButton(
-                  icon: Icons.how_to_reg,
-                  label: '당일명단',
-                  isEnabled: true,
-                  backgroundColor: theme.primaryColor.withValues(alpha: 0.1),
-                  foregroundColor: theme.primaryColor,
-                  borderColor: theme.primaryColor.withValues(alpha: 0.35),
-                  onTap: _showAttendancePopup,
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildActionButton(
+                      icon: Icons.people_outlined,
+                      label: '지원명단',
+                      isEnabled: true,
+                      backgroundColor: AppColors.infoBg,
+                      foregroundColor: AppColors.infoDark,
+                      borderColor: AppColors.info.withValues(alpha: 0.35),
+                      onTap: _openApplicantsDialog,
+                    ),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  Expanded(
+                    child: _buildActionButton(
+                      icon: Icons.how_to_reg,
+                      label: '당일명단',
+                      isEnabled: true,
+                      backgroundColor: theme.primaryColor.withValues(alpha: 0.1),
+                      foregroundColor: theme.primaryColor,
+                      borderColor: theme.primaryColor.withValues(alpha: 0.35),
+                      onTap: _showAttendancePopup,
+                    ),
+                  ),
+                ],
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              Expanded(
-                child: _buildActionButton(
-                  icon: Icons.settings,
-                  label: '고정관리',
-                  isEnabled: true,
-                  backgroundColor: AppColors.longTermLight,
-                  foregroundColor: AppColors.longTermDark,
-                  borderColor: AppColors.longTerm.withValues(alpha: 0.3),
-                  onTap: _openFixedWorkerManagement,
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              Expanded(
-                child: _buildActionButton(
-                  icon: Icons.lock_outline,
-                  label: '마감관리',
-                  isEnabled: true,
-                  backgroundColor: AppColors.warningBg,
-                  foregroundColor: AppColors.warningDark,
-                  borderColor: AppColors.warning.withValues(alpha: 0.35),
-                  onTap: _openCloseManagement,
-                ),
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildActionButton(
+                      icon: Icons.settings,
+                      label: '고정관리',
+                      isEnabled: true,
+                      backgroundColor: AppColors.longTermLight,
+                      foregroundColor: AppColors.longTermDark,
+                      borderColor: AppColors.longTerm.withValues(alpha: 0.3),
+                      onTap: _openFixedWorkerManagement,
+                    ),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  Expanded(
+                    child: _buildActionButton(
+                      icon: Icons.lock_outline,
+                      label: '마감관리',
+                      isEnabled: true,
+                      backgroundColor: AppColors.warningBg,
+                      foregroundColor: AppColors.warningDark,
+                      borderColor: AppColors.warning.withValues(alpha: 0.35),
+                      onTap: _openCloseManagement,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -719,6 +741,29 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           .map((g) => controller.loadGroupDetails(context, g)),
     );
     if (!mounted) return; // [BUG-수정] W-M-2: Future.wait 후 방어적 mounted guard 추가 (현재 setState 없으나 향후 코드 추가 시 guard 역할)
+  }
+
+  Future<void> _openApplicantsDialog() async {
+    if (_selectedDay == null) return;
+    try {
+      final businesses = await _getAdminBusinesses();
+      if (businesses.isEmpty) {
+        ToastHelper.showWarning('등록된 사업장이 없습니다');
+        return;
+      }
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (context) => DayApplicantsDialog(
+          date: _selectedDay!,
+          businessIds: businesses.map((b) => b.id).toList(),
+          businesses: businesses,
+        ),
+      );
+    } catch (e) {
+      debugPrint('❌ 지원명단 조회 실패: $e');
+      ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+    }
   }
 
   Future<void> _showAttendancePopup() async {

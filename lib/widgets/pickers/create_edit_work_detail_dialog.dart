@@ -193,31 +193,32 @@ class WorkDetailDialog {
                           // 업무 설명 (선택)
                           SizedBox(height: ResponsiveHelper.spacing(context, 24)),
                           _buildDescriptionField(context, theme, descriptionController),
+
+                          // ✨ 액션 버튼들 (스크롤 안)
+                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                          _buildActionButtons(
+                            context,
+                            theme,
+                            selectedWorkType,
+                            startTime,
+                            endTime,
+                            wageController,
+                            countController,
+                            selectedWageType,
+                            shiftType,
+                            nightAllowanceApplied,
+                            nightIncluded,
+                            breakMinutes,
+                            baseHourlyWageController,
+                            payScheduleType,
+                            payScheduleDay,
+                            payScheduleTime,
+                            taxDeductionType,
+                            descriptionController,
+                          ),
                         ],
                       ),
                     ),
-                  ),
-
-                  // ✨ 액션 버튼들
-                  _buildActionButtons(
-                    context,
-                    theme,
-                    selectedWorkType,
-                    startTime,
-                    endTime,
-                    wageController,
-                    countController,
-                    selectedWageType,
-                    shiftType,
-                    nightAllowanceApplied,
-                    nightIncluded,
-                    breakMinutes,
-                    baseHourlyWageController,
-                    payScheduleType,
-                    payScheduleDay,
-                    payScheduleTime,
-                    taxDeductionType,
-                    descriptionController,
                   ),
                 ],
               ),
@@ -424,32 +425,33 @@ class WorkDetailDialog {
                           // 업무 설명 (선택)
                           SizedBox(height: ResponsiveHelper.spacing(context, 24)),
                           _buildDescriptionField(context, theme, descriptionController),
+
+                          // ✨ 액션 버튼들 (스크롤 안)
+                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                          _buildEditActionButtons(
+                            context,
+                            theme,
+                            currentCount,
+                            startTime,
+                            endTime,
+                            wageController,
+                            countController,
+                            selectedWageType,
+                            selectedWorkType,
+                            shiftType,
+                            nightAllowanceApplied,
+                            nightIncluded,
+                            breakMinutes,
+                            baseHourlyWageController,
+                            payScheduleType,
+                            payScheduleDay,
+                            payScheduleTime,
+                            taxDeductionType,
+                            descriptionController,
+                          ),
                         ],
                       ),
                     ),
-                  ),
-
-                  // ✨ 액션 버튼들
-                  _buildEditActionButtons(
-                    context,
-                    theme,
-                    currentCount,
-                    startTime,
-                    endTime,
-                    wageController,
-                    countController,
-                    selectedWageType,
-                    selectedWorkType,
-                    shiftType,
-                    nightAllowanceApplied,
-                    nightIncluded,
-                    breakMinutes,
-                    baseHourlyWageController,
-                    payScheduleType,
-                    payScheduleDay,
-                    payScheduleTime,
-                    taxDeductionType,
-                    descriptionController,
                   ),
                 ],
               ),
@@ -684,19 +686,7 @@ class WorkDetailDialog {
     String taxDeductionType,
     TextEditingController descriptionController,
   ) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(
-          top: BorderSide(color: AppColors.grey200),
-        ),
-        borderRadius: const BorderRadius.only(
-          bottomLeft: Radius.circular(24),
-          bottomRight: Radius.circular(24),
-        ),
-      ),
-      child: Row(
+    return Row(
         children: [
           Expanded(
             child: OutlinedButton(
@@ -886,7 +876,6 @@ class WorkDetailDialog {
             ),
           ),
         ],
-      ),
     );
   }
 
@@ -1784,15 +1773,7 @@ class WorkDetailDialog {
     String taxDeductionType,
     TextEditingController descriptionController,
   ) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(
-          top: BorderSide(color: AppColors.grey200),
-        ),
-      ),
-      child: Row(
+    return Row(
         children: [
           Expanded(
             child: OutlinedButton(
@@ -1971,7 +1952,6 @@ class WorkDetailDialog {
             ),
           ),
         ],
-      ),
     );
   }
 

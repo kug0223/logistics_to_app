@@ -249,7 +249,9 @@ class _MenuItem extends StatelessWidget {
       child: InkWell(
         onTap: () {
           Navigator.pop(context);
-          item.onTap();
+          // pop이 완료된 다음 프레임에서 실행해야 바텀시트 dispose 중
+          // InheritedElement._dependents 정리가 끝나 assertion 에러를 피할 수 있음
+          WidgetsBinding.instance.addPostFrameCallback((_) => item.onTap());
         },
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),

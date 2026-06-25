@@ -79,8 +79,9 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
           try {
             _selectedIcon = all.firstWhere((i) => i.icon.codePoint == cp);
           } catch (_) {
+            // codePoint가 목록에 없으면 기본 아이콘으로 폴백 (runtime IconData 금지)
             _selectedIcon = IconItem(
-              icon: IconData(cp, fontFamily: 'MaterialIcons'),
+              icon: Icons.work,
               label: '',
               keywords: [],
               category: '',

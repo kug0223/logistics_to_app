@@ -544,10 +544,80 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
               ),
             ),
           ],
+
+          // 찾아오는 방법 (교통편 사진 + 상세설명)
+          if (_hasTransportInfo) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            Divider(height: 1, color: AppColors.grey100),
+            SizedBox(height: ResponsiveHelper.spacing(context, 14)),
+            Row(
+              children: [
+                Icon(Icons.directions_transit_outlined,
+                    size: ResponsiveHelper.iconSize(context, 14),
+                    color: AppColors.infoDark),
+                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                Text(
+                  '찾아오는 방법',
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: AppColors.infoDark, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+
+            // 교통편 사진
+            if (_business!.transportImageUrls?.isNotEmpty == true) ...[
+              SizedBox(
+                height: 140,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _business!.transportImageUrls!.length,
+                  itemBuilder: (_, i) => Container(
+                    width: 200,
+                    margin: EdgeInsets.only(
+                        right: ResponsiveHelper.spacing(context, 8)),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: ImageHelper.buildCachedImage(
+                        _business!.transportImageUrls![i],
+                        fit: BoxFit.cover,
+                        memCacheWidth: 600,
+                        memCacheHeight: 420,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            ],
+
+            // 상세설명
+            if (_business!.transportDescription?.isNotEmpty == true)
+              Container(
+                width: double.infinity,
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+                decoration: BoxDecoration(
+                  color: AppColors.infoBg,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.infoLight),
+                ),
+                child: Text(
+                  _business!.transportDescription!,
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: AppColors.grey700)
+                      .copyWith(height: 1.5),
+                ),
+              ),
+          ],
         ],
       ),
     );
   }
+
+  bool get _hasTransportInfo =>
+      _business != null &&
+      (_business!.transportDescription?.isNotEmpty == true ||
+          _business!.transportImageUrls?.isNotEmpty == true);
 
   // ─── 업무 설명 카드 ───────────────────────────────────────
   Widget _buildDescriptionCard(BuildContext context) {

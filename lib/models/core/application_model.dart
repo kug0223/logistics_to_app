@@ -678,7 +678,9 @@ class ApplicationModel {
     }
 
     if (status != AppStatus.confirmed && status != AppStatus.contractPending) {
-      return _isSameDay(workDate, targetDate);
+      // PENDING 장기: buildDateIndex의 start(desiredStartDate ?? workDate)와 기준을 일치시켜
+      // 희망 시작일에 지원 카드가 표시되도록 함
+      return _isSameDay(desiredStartDate ?? workDate, targetDate);
     }
 
     if (isTerminationApproved) {

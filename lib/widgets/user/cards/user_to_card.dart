@@ -46,11 +46,11 @@ class UserTOCard extends StatefulWidget {
 
   // contract TO용
   final List<WorkDetailModel>? workDetails;
-  final Future<void> Function(String toId) onFetchWorkDetails;
+  final Future<List<WorkDetailModel>> Function(String toId) onFetchWorkDetails;
 
   // flex TO용 슬롯
   final List<SlotModel>? slots;
-  final Future<void> Function(String toId)? onFetchSlots;
+  final Future<List<SlotModel>> Function(String toId)? onFetchSlots;
 
   // 다른 카드가 펼쳐진 상태 → 반투명 처리
   final bool isAnyOtherExpanded;
@@ -124,21 +124,22 @@ class _UserTOCardState extends State<UserTOCard> {
     }
   }
 
-  Future<void> _fetch() async {
-    if (_isFetching) return;
+  Future<List<WorkDetailModel>> _fetch() async {
+    if (_isFetching) return widget.workDetails ?? const [];
     setState(() => _isFetching = true);
     try {
-      await widget.onFetchWorkDetails(widget.to.id);
+      return await widget.onFetchWorkDetails(widget.to.id);
     } finally {
       if (mounted) setState(() => _isFetching = false);
     }
   }
 
-  Future<void> _fetchSlots() async {
-    if (_isFetchingSlots || widget.onFetchSlots == null) return;
+  Future<List<SlotModel>> _fetchSlots() async {
+    if (widget.onFetchSlots == null) return [];
+    if (_isFetchingSlots) return widget.slots ?? [];
     setState(() => _isFetchingSlots = true);
     try {
-      await widget.onFetchSlots!(widget.to.id);
+      return await widget.onFetchSlots!(widget.to.id);
     } finally {
       if (mounted) setState(() => _isFetchingSlots = false);
     }
@@ -1068,38 +1069,44 @@ class _UserTOCardState extends State<UserTOCard> {
       return;
     }
     // contract / single-date TO
+    final List<WorkDetailModel> workDetails;
     if (_workDetails.isEmpty) {
       setState(() => _isApplyLoading = true);
-      await _fetch();
+      workDetails = await _fetch();
       if (!mounted) return;
       setState(() => _isApplyLoading = false);
-      if (_workDetails.isEmpty) return;
+      if (workDetails.isEmpty) return;
+    } else {
+      workDetails = _workDetails;
     }
     if (!mounted) return;
 
     final result = await ApplyWorkDialog.show(
       context: context,
       to: widget.to,
-      workDetails: _workDetails,
+      workDetails: workDetails,
       businessName: widget.to.businessName,
       myApplications: widget.myApplications,
     );
-    if (result?.hasChanges == true && mounted) {
+    // result == null: 스와이프 닫기 → 변경 여부 불명이므로 안전하게 갱신
+    // result.hasChanges == false: 닫기 버튼으로 닫고 변경 없음 → 갱신 생략
+    if (result?.hasChanges != false && mounted) {
       widget.onApplySuccess();
     }
   }
 
   /// flex TO: 모든 오픈 슬롯을 GroupTO 형식으로 다이얼로그 오픈
   Future<void> _openApplyDialogAllSlots() async {
-    // 슬롯 미로드 시 먼저 fetch
+    // 슬롯 미로드 시 먼저 fetch — 반환값을 직접 사용(widget rebuild 대기 불필요)
+    final List<SlotModel> slots;
     if (widget.slots == null) {
       setState(() => _isApplyLoading = true);
-      await _fetchSlots();
+      slots = await _fetchSlots();
       if (!mounted) return;
       setState(() => _isApplyLoading = false);
+    } else {
+      slots = widget.slots!;
     }
-
-    final slots = widget.slots ?? [];
     if (slots.isEmpty) return;
 
     final now = DateTime.now();
@@ -1136,7 +1143,7 @@ class _UserTOCardState extends State<UserTOCard> {
       businessName: widget.to.businessName,
       myApplications: widget.myApplications,
     );
-    if (result?.hasChanges == true && mounted) {
+    if (result?.hasChanges != false && mounted) {
       widget.onApplySuccess();
     }
   }

@@ -1,4 +1,4 @@
-﻿part of '../firestore_service.dart';
+part of '../firestore_service.dart';
 
 // ═══════════════════════════════════════════════════════════
 // 알림/리뷰/신분증 관리 (Notification & Review Management)
@@ -14,7 +14,13 @@ class NotificationPage {
 extension NotificationFirestore on FirestoreService {
   // ═══════════════════════════════════════════════════════════
   // 알림 관리 (Notification Management)
+  // 경로: users/{userId}/notifications/{notificationId}
+  // 보안: 경로의 userId == auth.uid (firestore.rules)
   // ═══════════════════════════════════════════════════════════
+
+  /// 사용자별 알림 서브컬렉션 참조
+  CollectionReference _notificationsFor(String userId) =>
+      _firestore.collection('users').doc(userId).collection('notifications');
 
   /// 알림 생성
   ///
@@ -28,7 +34,7 @@ extension NotificationFirestore on FirestoreService {
   /// isRead: true 덮어쓰기는 멱등(idempotent)이므로 동시 요청도 안전하다 — 의도된 설계.
   Future<String?> createNotification(NotificationModel notification) async {
     try {
-      final docRef = await _firestore.collection('notifications').add(
+      final docRef = await _notificationsFor(notification.userId).add(
         notification.toMap(),
       );
       debugPrint('✅ 알림 생성: ${docRef.id}');
@@ -46,19 +52,12 @@ extension NotificationFirestore on FirestoreService {
     bool unreadOnly = false,
   }) async {
     try {
-      Query query = _firestore
-          .collection('notifications')
-          .where('userId', isEqualTo: userId);
-
-      // isRead 필터는 orderBy 전에 적용 (복합 인덱스: userId + isRead + createdAt)
+      Query query = _notificationsFor(userId);
       if (unreadOnly) {
         query = query.where('isRead', isEqualTo: false);
       }
-
       query = query.orderBy('createdAt', descending: true).limit(limit);
-      
       final snapshot = await query.get();
-      
       return snapshot.docs
           .map((doc) => NotificationModel.fromFirestore(doc))
           .toList();
@@ -71,13 +70,10 @@ extension NotificationFirestore on FirestoreService {
   /// 읽지 않은 알림 개수
   Future<int> getUnreadNotificationCount(String userId) async {
     try {
-      final snapshot = await _firestore
-          .collection('notifications')
-          .where('userId', isEqualTo: userId)
+      final snapshot = await _notificationsFor(userId)
           .where('isRead', isEqualTo: false)
           .count()
           .get();
-      
       return snapshot.count ?? 0;
     } catch (e) {
       debugPrint('❌ 읽지 않은 알림 개수 조회 실패: $e');
@@ -86,9 +82,10 @@ extension NotificationFirestore on FirestoreService {
   }
 
   /// 알림 읽음 처리
-  Future<bool> markNotificationAsRead(String notificationId) async {
+  Future<bool> markNotificationAsRead(
+      String userId, String notificationId) async {
     try {
-      await _firestore.collection('notifications').doc(notificationId).update({
+      await _notificationsFor(userId).doc(notificationId).update({
         'isRead': true,
         'readAt': FieldValue.serverTimestamp(),
       });
@@ -100,9 +97,9 @@ extension NotificationFirestore on FirestoreService {
   }
 
   /// 개별 알림 삭제
-  Future<bool> deleteNotification(String notificationId) async {
+  Future<bool> deleteNotification(String userId, String notificationId) async {
     try {
-      await _firestore.collection('notifications').doc(notificationId).delete();
+      await _notificationsFor(userId).doc(notificationId).delete();
       debugPrint('✅ 알림 삭제: $notificationId');
       return true;
     } catch (e) {
@@ -114,9 +111,7 @@ extension NotificationFirestore on FirestoreService {
   /// 모든 알림 읽음 처리 (Firestore batch 500개 제한 대응: 청크 분할)
   Future<bool> markAllNotificationsAsRead(String userId) async {
     try {
-      final snapshot = await _firestore
-          .collection('notifications')
-          .where('userId', isEqualTo: userId)
+      final snapshot = await _notificationsFor(userId)
           .where('isRead', isEqualTo: false)
           .get();
 
@@ -146,13 +141,11 @@ extension NotificationFirestore on FirestoreService {
     try {
       final cutoffDate = DateTime.now().subtract(const Duration(days: 30));
 
-      final snapshot = await _firestore
-          .collection('notifications')
-          .where('userId', isEqualTo: userId)
+      final snapshot = await _notificationsFor(userId)
           .where('createdAt', isLessThan: Timestamp.fromDate(cutoffDate))
-          .limit(500) // 1회 호출당 최대 500건 처리 — 메모리 보호
+          .limit(500)
           .get();
-      
+
       const chunkSize = 500;
       for (int i = 0; i < snapshot.docs.length; i += chunkSize) {
         final batch = _firestore.batch();
@@ -175,11 +168,7 @@ extension NotificationFirestore on FirestoreService {
   /// 31건 수신 시 NotificationProvider가 30건만 표시하고 _hasMore=true 설정.
   /// 31건 미만이면 _hasMore=false — 더 이상 오래된 알림 없음.
   Stream<List<NotificationModel>> watchUserNotifications(String userId) {
-    final cutoff = DateTime.now().subtract(const Duration(days: 30));
-    return _firestore
-        .collection('notifications')
-        .where('userId', isEqualTo: userId)
-        .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(cutoff))
+    return _notificationsFor(userId)
         .orderBy('createdAt', descending: true)
         .limit(31)
         .snapshots()
@@ -195,9 +184,7 @@ extension NotificationFirestore on FirestoreService {
     int pageSize = 30,
   }) async {
     try {
-      final snap = await _firestore
-          .collection('notifications')
-          .where('userId', isEqualTo: userId)
+      final snap = await _notificationsFor(userId)
           .where('createdAt', isLessThan: Timestamp.fromDate(before))
           .orderBy('createdAt', descending: true)
           .limit(pageSize + 1)
@@ -213,8 +200,4 @@ extension NotificationFirestore on FirestoreService {
       return const NotificationPage(records: [], hasMore: false);
     }
   }
-
-  /// 읽지 않은 알림 개수 — NotificationProvider.unreadCount에서 파생 (별도 쿼리 불필요)
-  /// Deprecated: NotificationProvider.unreadCount getter를 사용하세요.
-
 }

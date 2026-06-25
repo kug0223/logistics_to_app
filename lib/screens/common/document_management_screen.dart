@@ -502,6 +502,8 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         // 1. 새 이미지 먼저 업로드 (실패해도 기존 이미지 보존)
         final storagePath = 'users/${user.uid}/businessLicense_${DateTime.now().millisecondsSinceEpoch}.jpg';
         newUrl = await _storageService.uploadImage(imagePath, storagePath);
+        // [특이사항] TMP-01: pickAndVerifyBusinessLicense가 반환한 임시 압축 파일.
+        // 업로드 직후 삭제 — 실패해도 예외를 삼켜 업로드 성공 흐름을 유지.
         try { await File(imagePath).delete(); } catch (_) {}
 
         if (newUrl == null) {
@@ -659,6 +661,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         // 1. 새 이미지 먼저 업로드
         final storagePath = 'users/${user.uid}/idCard_${DateTime.now().millisecondsSinceEpoch}.jpg';
         final downloadUrl = await _storageService.uploadImage(imagePath, storagePath);
+        // [특이사항] TMP-01: pickAndVerifyIdCard가 반환한 임시 압축 파일. 업로드 직후 삭제.
         try { await File(imagePath).delete(); } catch (_) {}
 
         if (downloadUrl == null) {
@@ -1310,6 +1313,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         // 1. 새 이미지 먼저 업로드 (실패해도 기존 이미지 보존)
         final storagePath = 'users/${user.uid}/bankbook_${DateTime.now().millisecondsSinceEpoch}.jpg';
         newUrl = await _storageService.uploadImage(imagePath, storagePath);
+        // [특이사항] TMP-01: pickAndVerifyBankbook이 반환한 임시 압축 파일. 업로드 직후 삭제.
         try { await File(imagePath).delete(); } catch (_) {}
 
         if (newUrl == null) {

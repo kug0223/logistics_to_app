@@ -78,6 +78,8 @@ class UserModel {
   final List<String> badges;             // 배지 ID 목록
   final DateTime? lastRestartAt;         // 마지막 재시작 프로그램 일시
   final String? signatureBase64;         // 사전 등록 서명 이미지 (base64)
+  final String? sealBase64;             // 사업주 날인 이미지 (base64, 전역)
+  final String sealType;               // 날인 방식: 'stamp' | 'signature'
   final String? subAdminOf;              // 하위 관리자로 참여 중인 사업장 ID
   final DateTime? restrictedUntil;       // 제재 만료 시각 (noShow 2회 이상 시 3일 제재)
   final Map<String, bool> notifPrefs;    // 알림 종류별 수신 설정 (기본 모두 true)
@@ -153,6 +155,8 @@ class UserModel {
     this.badges = const [],
     this.lastRestartAt,
     this.signatureBase64,
+    this.sealBase64,
+    this.sealType = 'stamp',
     this.subAdminOf,
     this.restrictedUntil,
     Map<String, bool>? notifPrefs,
@@ -314,6 +318,8 @@ class UserModel {
       badges: map['badges'] != null ? List<String>.from(map['badges']) : [],
       lastRestartAt: _parseDateTime(map['lastRestartAt']),
       signatureBase64: map['signatureBase64'],
+      sealBase64: map['sealBase64'],
+      sealType: map['sealType'] as String? ?? 'stamp',
       subAdminOf: map['subAdminOf'],
       restrictedUntil: _parseDateTime(map['restrictedUntil']),
       notifPrefs: map['notifPrefs'] != null
@@ -387,6 +393,8 @@ class UserModel {
           ? Timestamp.fromDate(lastRestartAt!)
           : null,
       'signatureBase64': signatureBase64,
+      'sealBase64': sealBase64,
+      'sealType': sealType,
       'subAdminOf': subAdminOf,
       'restrictedUntil': restrictedUntil != null
           ? Timestamp.fromDate(restrictedUntil!)
@@ -479,6 +487,9 @@ class UserModel {
     DateTime? lastRestartAt,
     String? signatureBase64,
     bool clearSignature = false,
+    String? sealBase64,
+    bool clearSeal = false,
+    String? sealType,
     String? subAdminOf,
     bool clearSubAdminOf = false,
     DateTime? restrictedUntil,
@@ -539,6 +550,8 @@ class UserModel {
       badges: badges ?? this.badges,
       lastRestartAt: lastRestartAt ?? this.lastRestartAt,
       signatureBase64: clearSignature ? null : (signatureBase64 ?? this.signatureBase64),
+      sealBase64: clearSeal ? null : (sealBase64 ?? this.sealBase64),
+      sealType: sealType ?? this.sealType,
       subAdminOf: clearSubAdminOf ? null : (subAdminOf ?? this.subAdminOf),
       restrictedUntil: clearRestriction ? null : (restrictedUntil ?? this.restrictedUntil),
       notifPrefs: notifPrefs ?? this.notifPrefs,

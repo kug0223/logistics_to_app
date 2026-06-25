@@ -102,32 +102,37 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
           .get();
       final data = doc.data();
       if (!mounted || data == null) return;
-      final sealBase64 = data['sealBase64'] as String?;
-      final sealType = data['sealType'] as String? ?? 'stamp';
+
+      final ownerId = data['ownerId'] as String?;
+      String? sealBase64;
+      String sealType = 'stamp';
       String? ownerName;
-      // snapshot에 ownerName이 없으면 business 문서에서 조회, 그래도 없으면 ownerId로 users 조회
-      if (widget.contract.snapshot.ownerName.isEmpty) {
-        ownerName = data['ownerName'] as String?;
-        if (ownerName == null || ownerName.trim().isEmpty) {
-          final ownerId = data['ownerId'] as String?;
-          if (ownerId != null) {
-            try {
-              final userDoc = await FirebaseFirestore.instance
-                  .collection('users')
-                  .doc(ownerId)
-                  .get();
-              final ud = userDoc.data();
-              // 사업자등록증 대표자명(ceoName) 우선, 없으면 계정 이름
+
+      // 날인은 users/{ownerId}에서 로드 — 근무자는 타인 문서 읽기 불가, 사업주 본인만 조회
+      if (ownerId != null && widget.role == 'employer') {
+        try {
+          final userDoc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(ownerId)
+              .get();
+          final ud = userDoc.data();
+          sealBase64 = ud?['sealBase64'] as String?;
+          sealType = ud?['sealType'] as String? ?? 'stamp';
+          // ownerName: snapshot에 없으면 business→user 순으로 폴백
+          if (widget.contract.snapshot.ownerName.isEmpty) {
+            ownerName = data['ownerName'] as String?;
+            if (ownerName == null || ownerName.trim().isEmpty) {
               final ceo = ud?['ceoName'] as String?;
-              ownerName = (ceo?.trim().isNotEmpty == true)
-                  ? ceo
-                  : ud?['name'] as String?;
-            } catch (e) {
-              debugPrint('⚠️ 사업장 대표자 이름 조회 실패: $e');
+              ownerName = (ceo?.trim().isNotEmpty == true) ? ceo : ud?['name'] as String?;
             }
           }
+        } catch (e) {
+          debugPrint('⚠️ 사업주 정보 조회 실패: $e');
         }
+      } else if (widget.contract.snapshot.ownerName.isEmpty) {
+        ownerName = data['ownerName'] as String?;
       }
+
       if (!mounted) return;
       setState(() {
         if (sealBase64 != null && sealBase64.isNotEmpty) {

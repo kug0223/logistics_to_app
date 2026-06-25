@@ -280,14 +280,17 @@ extension IdCardFirestore on FirestoreService {
   /// 사용자에게 온 계약해지 요청 조회 (근무자용)
   Future<List<ApplicationModel>> getMyTerminationRequests(String uid) async {
     try {
-      final snapshot = await _firestore
-          .collection('applications')
-          .where('uid', isEqualTo: uid)
-          .where('status', whereIn: ['CONFIRMED', 'CONTRACT_PENDING'])
-          .where('terminationStatus', isEqualTo: 'PENDING')
-          .get();
-
-      return snapshot.docs
+      // whereIn 복합 쿼리 → PERMISSION_DENIED 방지를 위해 병렬 isEqualTo 쿼리로 대체
+      final results = await Future.wait(
+        ['CONFIRMED', 'CONTRACT_PENDING'].map((s) => _firestore
+            .collection('applications')
+            .where('uid', isEqualTo: uid)
+            .where('status', isEqualTo: s)
+            .where('terminationStatus', isEqualTo: 'PENDING')
+            .get()),
+      );
+      return results
+          .expand((snap) => snap.docs)
           .map((doc) => ApplicationModel.fromFirestore(doc))
           .toList();
     } catch (e) {

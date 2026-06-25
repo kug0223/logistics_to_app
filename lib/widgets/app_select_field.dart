@@ -31,6 +31,7 @@ class AppSelectField<T> extends StatelessWidget {
     this.leadingOf,
     this.enabled = true,
     this.prefixIcon,
+    this.showSearch,
   });
 
   /// 현재 선택값 (null = 미선택)
@@ -60,6 +61,9 @@ class AppSelectField<T> extends StatelessWidget {
   /// 트리거 타일 왼쪽 아이콘 (선택사항)
   final IconData? prefixIcon;
 
+  /// 검색창 표시 여부 (null = 8개 초과 시 자동, false = 항상 숨김, true = 항상 표시)
+  final bool? showSearch;
+
   Future<void> _openSheet(BuildContext context) async {
     final theme = Theme.of(context);
     final result = await showModalBottomSheet<T>(
@@ -76,6 +80,7 @@ class AppSelectField<T> extends StatelessWidget {
         labelOf: labelOf,
         leadingOf: leadingOf,
         theme: theme,
+        showSearch: showSearch,
       ),
     );
     if (result != null) onChanged(result);
@@ -154,6 +159,7 @@ class _AppSelectSheet<T> extends StatefulWidget {
     required this.labelOf,
     required this.theme,
     this.leadingOf,
+    this.showSearch,
   });
 
   final String title;
@@ -162,6 +168,7 @@ class _AppSelectSheet<T> extends StatefulWidget {
   final String Function(T) labelOf;
   final Widget Function(T)? leadingOf;
   final ThemeData theme;
+  final bool? showSearch;
 
   @override
   State<_AppSelectSheet<T>> createState() => _AppSelectSheetState<T>();
@@ -171,7 +178,7 @@ class _AppSelectSheetState<T> extends State<_AppSelectSheet<T>> {
   late List<T> _filtered;
   final _searchController = TextEditingController();
 
-  bool get _showSearch => widget.items.length > 8;
+  bool get _showSearch => widget.showSearch ?? widget.items.length > 8;
 
   @override
   void initState() {

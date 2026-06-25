@@ -288,10 +288,13 @@ class _ScheduleRequestManagementDialogState
                   color: Theme.of(context).primaryColor,
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Text(
-                  item.userName,
-                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                    fontWeight: FontWeight.bold,
+                Flexible(
+                  child: Text(
+                    item.userName,
+                    style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -315,9 +318,12 @@ class _ScheduleRequestManagementDialogState
                   color: Theme.of(context).textTheme.bodySmall?.color,
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Text(
-                  '대상: ${FormatHelper.formatDateLong(request.targetDate)}',
-                  style: ResponsiveHelper.bodyStyle(context),
+                Flexible(
+                  child: Text(
+                    '대상: ${FormatHelper.formatDateLong(request.targetDate)}',
+                    style: ResponsiveHelper.bodyStyle(context),
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
               ],
             ),

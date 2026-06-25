@@ -134,15 +134,19 @@ extension ApplicationFirestore on FirestoreService {
       return cached;
     }
     try {
+      // [특이사항] orderBy('appliedAt', desc)를 제거하고 클라이언트에서 정렬.
+      // where('uid').orderBy('appliedAt', desc)는 복합 인덱스가 필요하고,
+      // 보안 규칙의 request.query.filters.uid가 복합 인덱스 쿼리에서 null을 반환해
+      // PERMISSION_DENIED를 유발하므로 단순 uid 필터 조회 후 클라이언트 정렬로 대체.
       final snap = await _firestore
           .collection('applications')
           .where('uid', isEqualTo: uid)
-          .orderBy('appliedAt', descending: true)
           .limit(200)
           .get(const GetOptions(source: Source.server));
       final result = snap.docs
           .map((d) => ApplicationModel.fromFirestore(d))
-          .toList();
+          .toList()
+        ..sort((a, b) => b.appliedAt.compareTo(a.appliedAt));
       _myApplicationsCache[uid] = result;
       _myApplicationsCacheTimestamps[uid] = DateTime.now();
       return result;
@@ -245,10 +249,9 @@ extension ApplicationFirestore on FirestoreService {
         return false;
       }
 
-      // ── 1.2. 본인인증 체크 (이메일 인증 또는 PASS 인증) ──
-      final emailVerified = userData['isEmailVerified'] == true;
+      // ── 1.2. 본인인증 체크 (PASS 인증만, 이메일 인증 제거됨) ──
       final passVerified = userData['ci'] != null && userData['passVerifiedAt'] != null;
-      if (!emailVerified && !passVerified) {
+      if (!passVerified) {
         ToastHelper.showError('본인인증이 필요합니다.\n설정 > 본인인증에서 완료해주세요.');
         return false;
       }
@@ -371,6 +374,8 @@ extension ApplicationFirestore on FirestoreService {
       // 현재는 1) UI 버튼 disabled 처리(1차), 2) Source.server 재조회(2차),
       // 3) 정원 초과 시 TOCTOU 방어 트랜잭션(3차)으로 실용적 수준에서 방어한다.
       // 중복 지원서가 생겨도 관리자 확정 시 충돌 체크가 있으므로 실사용 피해는 제한적.
+      // [A02 수정] workDetailId 포함: 같은 슬롯의 다른 업무(workDetailId 다름)는
+      // 동일 workType이어도 별개 지원이므로 중복으로 처리하지 않는다.
       Query<Map<String, dynamic>> dupQ = _firestore
           .collection('applications')
           .where('toId', isEqualTo: toId)
@@ -378,6 +383,9 @@ extension ApplicationFirestore on FirestoreService {
           .where('selectedWorkType', isEqualTo: selectedWorkType);
       if (slotId != null) {
         dupQ = dupQ.where('slotId', isEqualTo: slotId);
+      }
+      if (workDetailId != null && workDetailId.isNotEmpty) {
+        dupQ = dupQ.where('workDetailId', isEqualTo: workDetailId);
       }
       final dupQuery = await dupQ.get(const GetOptions(source: Source.server));
 
@@ -410,12 +418,15 @@ extension ApplicationFirestore on FirestoreService {
       // ── 3. 시간 충돌 체크 ──
       final toType = toData['type'] as String? ?? TOType.flex;
       final isContract = toType == TOType.contract || (workDays != null && workDays.isNotEmpty);
-      final confirmedSnap = await _firestore
-          .collection('applications')
-          .where('uid', isEqualTo: uid)
-          .where('status', whereIn: AppStatus.confirmedStatuses)
-          .get(const GetOptions(source: Source.server));
-      final allConfirmed = confirmedSnap.docs
+      // whereIn 복합 쿼리는 Firestore 보안 규칙에서 필터가 누락될 수 있어 PERMISSION_DENIED 유발.
+      // 각 status를 별도 isEqualTo 쿼리로 병렬 실행 후 병합.
+      final allConfirmed = (await Future.wait(
+        AppStatus.confirmedStatuses.map((s) => _firestore
+            .collection('applications')
+            .where('uid', isEqualTo: uid)
+            .where('status', isEqualTo: s)
+            .get(const GetOptions(source: Source.server))),
+      )).expand((snap) => snap.docs)
           .map((d) => ApplicationModel.fromFirestore(d))
           .toList();
 
@@ -800,15 +811,20 @@ extension ApplicationFirestore on FirestoreService {
       // voided로 전환한다. 그렇지 않으면 지원자 화면에 "서명 필요" 계약서가 유령 상태로 남는다.
       if (status == AppStatus.pending &&
           AppStatus.confirmedStatuses.contains(prevStatus)) {
-        const voidTargetStatuses = ['pending_employer', 'pending_worker', 'draft'];
+        // [BUGFIX] status whereIn + applicationId/applicationIds 복합쿼리에서
+        //   Firestore 보안 규칙이 request.query.filters.businessId를 null 반환 → PERMISSION_DENIED.
+        //   businessId 필터 추가 + status whereIn 제거 후 클라이언트 필터링으로 전환.
+        const voidTargetStatuses = {'pending_employer', 'pending_worker', 'draft'};
+        final contractBusinessId = appData['businessId'] as String? ?? '';
 
-        // 장기 계약서: applicationId 직접 매칭
+        // 장기 계약서: applicationId 직접 매칭 (businessId 필터로 보안 규칙 통과)
         final contractQ1 = await _firestore
             .collection('employment_contracts')
             .where('applicationId', isEqualTo: applicationId)
-            .where('status', whereIn: voidTargetStatuses)
+            .where('businessId', isEqualTo: contractBusinessId)
             .get(const GetOptions(source: Source.server));
         for (final doc in contractQ1.docs) {
+          if (!voidTargetStatuses.contains(doc.data()['status'])) continue;
           batch.update(doc.reference, {
             'status': 'voided',
             'contractVoidedAt': FieldValue.serverTimestamp(),
@@ -816,15 +832,16 @@ extension ApplicationFirestore on FirestoreService {
           });
         }
 
-        // 단기 번들 계약서: applicationIds 배열 포함 매칭
+        // 단기 번들 계약서: applicationIds 배열 포함 매칭 (businessId 필터로 보안 규칙 통과)
         final contractQ2 = await _firestore
             .collection('employment_contracts')
             .where('applicationIds', arrayContains: applicationId)
-            .where('status', whereIn: voidTargetStatuses)
+            .where('businessId', isEqualTo: contractBusinessId)
             .get(const GetOptions(source: Source.server));
         for (final doc in contractQ2.docs) {
           // Q1과 중복 처리 방지 (장기 계약서가 applicationIds에도 포함된 경우)
           if (contractQ1.docs.any((d) => d.id == doc.id)) continue;
+          if (!voidTargetStatuses.contains(doc.data()['status'])) continue;
           batch.update(doc.reference, {
             'status': 'voided',
             'contractVoidedAt': FieldValue.serverTimestamp(),
@@ -1060,8 +1077,8 @@ extension ApplicationFirestore on FirestoreService {
         businessId: cleanupBusinessId,
       );
 
-      // 알림: 관리자 취소 시 확정취소 알림, 아닐 때는 별도 처리하지 않음
       if (isAdminCancel) {
+        // 관리자 취소: 근무자에게 확정취소 알림
         await createNotification(NotificationModel.createConfirmationCanceled(
           userId: uid,
           businessName: appData['businessName'] as String? ?? '',
@@ -1071,7 +1088,38 @@ extension ApplicationFirestore on FirestoreService {
           applicationId: applicationId,
           cancelReason: cancelReason,
         ));
+      } else {
+        // M-1: 근무자 자기 취소 시 관리자에게 확정취소 알림
+        try {
+          final bId = appData['businessId'] as String? ?? '';
+          if (bId.isNotEmpty) {
+            final bizDoc = await _firestore.collection('businesses').doc(bId)
+                .get(const GetOptions(source: Source.server));
+            final adminUid = bizDoc.data()?['ownerId'] as String?;
+            if (adminUid != null && adminUid.isNotEmpty) {
+              final workerDoc = await _firestore.collection('users').doc(uid)
+                  .get(const GetOptions(source: Source.server));
+              final workerName = workerDoc.data()?['name'] as String? ?? '근무자';
+              await createNotification(NotificationModel.createConfirmationCanceledByWorker(
+                userId: adminUid,
+                workerName: workerName,
+                workType: appData['selectedWorkType'] as String? ?? '',
+                workDate: (appData['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
+                applicationId: applicationId,
+                businessId: bId,
+                toId: appData['toId'] as String? ?? '',
+                workDetailId: appData['workDetailId'] as String? ?? '',
+              ));
+            }
+          }
+        } catch (e) {
+          debugPrint('⚠️ [M-1] 근무자 확정 취소 관리자 알림 발송 실패: $e');
+        }
       }
+
+      // [특이사항] 확정 취소 후에도 연결된 employment_contracts completed 상태는 갱신하지 않는다.
+      // Firestore 규칙상 completed 계약서는 서버 수정 불가 (법적 증거 보존 정책).
+      // 고용 종료 여부는 application.status(CANCELED/AUTO_CANCELED/TERMINATED 등)로 UI에서 판단.
 
       debugPrint('✅ 확정 취소 완료 (관리자: $isAdminCancel, 패널티: $applyNoShowPenalty)');
       return true;
@@ -1160,14 +1208,18 @@ extension ApplicationFirestore on FirestoreService {
 
       // [C-1] 확정된 급여 attendance 조회 — 파트변경 시 wagePending으로 초기화
       // wageTransferred(송금완료)는 이미 지급된 건이므로 초기화 제외
-      final calculatedAttSnap = await _firestore
+      // whereIn 복합 쿼리 → 보안 규칙 필터 누락 방지를 위해 병렬 isEqualTo + businessId 추가
+      final calculatedAttDocs = (await Future.wait([
+        AttendanceModel.wageCalculated,
+        AttendanceModel.wageConfirmed,
+      ].map((ws) => _firestore
           .collection('attendance')
           .where('applicationId', isEqualTo: applicationId)
-          .where('wageStatus', whereIn: [
-            AttendanceModel.wageCalculated,
-            AttendanceModel.wageConfirmed,
-          ])
-          .get(const GetOptions(source: Source.server));
+          .where('businessId', isEqualTo: businessId)
+          .where('wageStatus', isEqualTo: ws)
+          .get(const GetOptions(source: Source.server)))))
+          .expand((snap) => snap.docs)
+          .toList();
 
       // [C-2] 계약서 조회 — 배치 커밋 전 미리 조회하여 원자적 업데이트 보장
       // applicationId 직접 매칭(장기) → applicationIds 배열(단기 번들) 순서로 탐색
@@ -1256,7 +1308,7 @@ extension ApplicationFirestore on FirestoreService {
       }
 
       // [C-1] 확정된 급여 → wagePending 초기화 (파트변경으로 wage/wageType 변경되므로 재계산 필요)
-      for (final attDoc in calculatedAttSnap.docs) {
+      for (final attDoc in calculatedAttDocs) {
         batch.update(attDoc.reference, {
           'wageStatus': AttendanceModel.wagePending,
           'finalWage': FieldValue.delete(),
@@ -1340,11 +1392,13 @@ extension ApplicationFirestore on FirestoreService {
     String? businessId,
   }) async {
     try {
-      final statusFilter = statuses ?? [AppStatus.pending, AppStatus.contractPending];
+      // [BUGFIX] whereIn + equality 복합쿼리에서 Firestore 보안 규칙이
+      //   request.query.filters.uid를 null 반환 → PERMISSION_DENIED.
+      //   status whereIn 제거 후 클라이언트 필터링으로 전환.
+      final statusFilter = Set<String>.from(statuses ?? [AppStatus.pending, AppStatus.contractPending]);
       var query = _firestore
           .collection('applications')
-          .where('uid', isEqualTo: uid)
-          .where('status', whereIn: statusFilter);
+          .where('uid', isEqualTo: uid);
       if (businessId != null) {
         query = query.where('businessId', isEqualTo: businessId);
       }
@@ -1353,6 +1407,7 @@ extension ApplicationFirestore on FirestoreService {
       return snap.docs
           .where((d) => d.id != excludeId)
           .map((d) => ApplicationModel.fromFirestore(d))
+          .where((a) => statusFilter.contains(a.status))
           .where((a) => a.isWorkingOnDate(workDate))
           .where((a) => ApplicationModel.hasTimeOverlap(startTime, endTime, a.startTime, a.endTime))
           .toList();
@@ -1360,6 +1415,62 @@ extension ApplicationFirestore on FirestoreService {
       debugPrint('❌ 충돌 지원서 조회 실패: $e');
       return [];
     }
+  }
+
+  /// 특정 날짜 × 사업장의 단기 PENDING 지원자 조회 (지원명단용)
+  Future<List<ApplicationModel>> getPendingApplicationsByDateAndBusiness({
+    required DateTime date,
+    required String businessId,
+  }) async {
+    final dateStart = DateTime(date.year, date.month, date.day);
+    final dateEnd = dateStart.add(const Duration(days: 1));
+    try {
+      final snap = await _firestore
+          .collection('applications')
+          .where('businessId', isEqualTo: businessId)
+          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
+          .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
+          .get(const GetOptions(source: Source.server));
+      return snap.docs
+          .map((d) => ApplicationModel.fromFirestore(d))
+          .where((app) => app.status == AppStatus.pending && !app.isLongTermApplication)
+          .toList();
+    } catch (e) {
+      debugPrint('❌ 지원자 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// 지원자 거절 처리 + 근무자 알림 발송 (지원명단 다이얼로그용)
+  Future<void> rejectApplicationWithNotification({
+    required String applicationId,
+    required String workerUid,
+    required String businessId,
+    required String businessName,
+    required String workType,
+    required DateTime workDate,
+    required String rejectedBy,
+    String? rejectReason,
+  }) async {
+    await updateApplicationStatus(
+      applicationId: applicationId,
+      status: AppStatus.rejected,
+      rejectedBy: rejectedBy,
+    );
+    final notification = NotificationModel.createApplicationRejected(
+      userId: workerUid,
+      businessName: businessName,
+      businessId: businessId,
+      workType: workType,
+      workDate: workDate,
+      applicationId: applicationId,
+      rejectReason: rejectReason,
+    );
+    await _firestore
+        .collection('users')
+        .doc(workerUid)
+        .collection('notifications')
+        .add(notification.toMap());
   }
 
   /// 특정 날짜 × 사업장의 확정 근무자 조회 (단기 + 장기 병합)
@@ -1371,10 +1482,12 @@ extension ApplicationFirestore on FirestoreService {
     final dateEnd = dateStart.add(const Duration(days: 1));
 
     try {
+      // [BUGFIX] whereIn + equality 복합쿼리 시 Firestore 보안 규칙
+      //   request.query.filters.businessId가 null 반환 → PERMISSION_DENIED.
+      //   whereIn 제거 후 클라이언트 필터링으로 전환.
       final shortTermFuture = _firestore
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
-          .where('status', whereIn: [AppStatus.confirmed, AppStatus.contractPending])
           .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
           .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
           .get(const GetOptions(source: Source.server));
@@ -1382,7 +1495,6 @@ extension ApplicationFirestore on FirestoreService {
       final longTermFuture = _firestore
           .collection('applications')
           .where('businessId', isEqualTo: businessId)
-          .where('status', whereIn: [AppStatus.confirmed, AppStatus.contractPending])
           .where('workEndDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
           .get(const GetOptions(source: Source.server));
 
@@ -1391,14 +1503,15 @@ extension ApplicationFirestore on FirestoreService {
       // [B01-FIX] 단기 쿼리 결과에 type 필터가 없어 장기 지원서(type=long_term)가
       // workDate == 오늘인 경우 shortTermApps에도 포함될 수 있는 중복 버그 수정.
       // isLongTermApplication getter로 클라이언트 필터링하여 단기만 남긴다.
+      const confirmedStatuses = {AppStatus.confirmed, AppStatus.contractPending};
       final shortTermApps = results[0].docs
           .map((doc) => ApplicationModel.fromFirestore(doc))
-          .where((app) => !app.isLongTermApplication)
+          .where((app) => confirmedStatuses.contains(app.status) && !app.isLongTermApplication)
           .toList();
 
       final longTermCandidates = results[1].docs
           .map((doc) => ApplicationModel.fromFirestore(doc))
-          .where((app) => app.workDays != null && app.workDays!.isNotEmpty)
+          .where((app) => confirmedStatuses.contains(app.status) && app.workDays != null && app.workDays!.isNotEmpty)
           .toList();
 
       final result = <ApplicationModel>[...shortTermApps];
@@ -1453,42 +1566,36 @@ extension ApplicationFirestore on FirestoreService {
     required DateTime workDate,
   }) async {
     try {
+      // [BUGFIX] 범위 쿼리(workDate >=, workEndDate >=)는 Firestore 복합 인덱스를 사용하게 되며,
+      // 이 경우 보안 규칙에서 request.query.filters.uid가 null 반환 → PERMISSION_DENIED.
+      // 해결: 순수 equality 쿼리(status별 병렬)로 대체 후 날짜 필터링을 클라이언트에서 수행.
+      // 한 사용자의 확정 지원서는 소수이므로 성능 영향 최소.
+      final allConfirmed = (await Future.wait(
+        AppStatus.confirmedStatuses.map((s) => _firestore
+            .collection('applications')
+            .where('uid', isEqualTo: uid)
+            .where('status', isEqualTo: s)
+            .get()),
+      )).expand((snap) => snap.docs)
+          .map((d) => ApplicationModel.fromFirestore(d))
+          .toList();
+
       final dateStart = DateTime(workDate.year, workDate.month, workDate.day);
       final dateEnd = dateStart.add(const Duration(days: 1));
 
-      // 단기: 정확한 날짜 필터로 Firestore 쿼리 최소화
-      final shortTermFuture = _firestore
-          .collection('applications')
-          .where('uid', isEqualTo: uid)
-          .where('status', whereIn: AppStatus.confirmedStatuses)
-          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
-          .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
-          .get();
-
-      // 장기: workEndDate >= 오늘인 것만 조회 (과거 종료된 계약 제외)
-      final longTermFuture = _firestore
-          .collection('applications')
-          .where('uid', isEqualTo: uid)
-          .where('status', whereIn: AppStatus.confirmedStatuses)
-          .where('workEndDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
-          .get();
-
-      final results = await Future.wait([shortTermFuture, longTermFuture]);
-
-      // [B01-FIX 동일 패턴] 단기 쿼리 결과에 장기 지원서(type=long_term)가 섞일 수 있음.
-      // workDate가 동일한 날짜인 장기 지원서가 shortTerm에 포함되면 longTermCandidates와 중복 발생.
-      // getConfirmedWorkersByDateAndBusiness와 동일하게 !isLongTermApplication으로 필터링.
-      final shortTerm = results[0].docs
-          .map((d) => ApplicationModel.fromFirestore(d))
+      final shortTerm = allConfirmed
           .where((a) => !a.isLongTermApplication)
+          .where((a) {
+            final wd = DateTime(a.workDate.year, a.workDate.month, a.workDate.day);
+            return !wd.isBefore(dateStart) && wd.isBefore(dateEnd);
+          })
           .toList();
-      final longTermCandidates = results[1].docs
-          .map((d) => ApplicationModel.fromFirestore(d))
+
+      final longTermCandidates = allConfirmed
           .where((a) => a.isLongTermApplication)
           .where((a) => a.isWorkingOnDate(workDate))
           .toList();
 
-      // 단기는 date가 정확히 맞으므로 isWorkingOnDate 재확인 불필요
       return [...shortTerm, ...longTermCandidates];
     } catch (e) {
       debugPrint('❌ 확정 일정 조회 실패: $e');
@@ -1856,18 +1963,22 @@ extension ApplicationFirestore on FirestoreService {
     try {
       // 타사 포함 전체 PENDING·CONTRACT_PENDING·CONFIRMED 조회 — businessId 필터 없음
       // CONFIRMED도 포함: 단기 확정 근무자와도 충돌 방지
-      final snap = await _firestore
-          .collection('applications')
-          .where('uid', isEqualTo: uid)
-          .where('status', whereIn: [AppStatus.pending, AppStatus.contractPending, AppStatus.confirmed])
-          .get(const GetOptions(source: Source.server));
+      // whereIn 복합 쿼리 → PERMISSION_DENIED 방지를 위해 병렬 isEqualTo 쿼리로 대체
+      final snapDocs = (await Future.wait(
+        [AppStatus.pending, AppStatus.contractPending, AppStatus.confirmed].map((s) =>
+            _firestore
+                .collection('applications')
+                .where('uid', isEqualTo: uid)
+                .where('status', isEqualTo: s)
+                .get(const GetOptions(source: Source.server))),
+      )).expand((snap) => snap.docs).toList();
 
       final startOnly = DateTime(startDate.year, startDate.month, startDate.day);
       final endOnly   = DateTime(endDate.year,   endDate.month,   endDate.day);
 
       final result = <ApplicationModel>[];
 
-      for (final doc in snap.docs) {
+      for (final doc in snapDocs) {
         if (doc.id == excludeId) continue;
         final a = ApplicationModel.fromFirestore(doc);
 

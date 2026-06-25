@@ -1,5 +1,6 @@
 ﻿// lib/widgets/common/common_widgets.dart
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../utils/responsive_helper.dart';
@@ -362,5 +363,161 @@ class CommonWidgets {
       default:
         return '지원자';
     }
+  }
+
+  /// 이미지 전체화면 미리보기 (핀치줌 + 좌우 스와이프)
+  static Future<void> showImagePreview(
+    BuildContext context,
+    List<String> imageUrls, {
+    int initialIndex = 0,
+  }) {
+    return showDialog<void>(
+      context: context,
+      useSafeArea: false,
+      barrierColor: Colors.black87,
+      builder: (ctx) => _ImagePreviewDialog(
+        imageUrls: imageUrls,
+        initialIndex: initialIndex,
+      ),
+    );
+  }
+}
+
+class _ImagePreviewDialog extends StatefulWidget {
+  final List<String> imageUrls;
+  final int initialIndex;
+
+  const _ImagePreviewDialog({
+    required this.imageUrls,
+    required this.initialIndex,
+  });
+
+  @override
+  State<_ImagePreviewDialog> createState() => _ImagePreviewDialogState();
+}
+
+class _ImagePreviewDialogState extends State<_ImagePreviewDialog> {
+  late final PageController _pageController;
+  late int _currentIndex;
+  bool _isZoomed = false;
+
+  // 페이지별 TransformationController (줌 상태 감지용)
+  late final List<TransformationController> _transformControllers;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex;
+    _pageController = PageController(initialPage: widget.initialIndex);
+    _transformControllers = List.generate(
+      widget.imageUrls.length,
+      (_) => TransformationController(),
+    );
+    // 현재 페이지 컨트롤러만 리스닝 (비활성 페이지에 리스너 불필요)
+    _transformControllers[_currentIndex].addListener(_onTransformChanged);
+  }
+
+  void _onTransformChanged() {
+    final scale = _transformControllers[_currentIndex].value.getMaxScaleOnAxis();
+    final zoomed = scale > 1.01;
+    if (zoomed != _isZoomed && mounted) {
+      setState(() => _isZoomed = zoomed);
+    }
+  }
+
+  void _switchListenerTo(int newIndex) {
+    _transformControllers[_currentIndex].removeListener(_onTransformChanged);
+    _transformControllers[newIndex].addListener(_onTransformChanged);
+  }
+
+  @override
+  void dispose() {
+    _transformControllers[_currentIndex].removeListener(_onTransformChanged);
+    _pageController.dispose();
+    for (final ctrl in _transformControllers) {
+      ctrl.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          // 이미지 페이지뷰 — 줌인 시 PageView 스크롤 잠금으로 핀치줌 충돌 방지
+          PageView.builder(
+            controller: _pageController,
+            physics: _isZoomed
+                ? const NeverScrollableScrollPhysics()
+                : const ClampingScrollPhysics(),
+            itemCount: widget.imageUrls.length,
+            onPageChanged: (i) {
+              // 이전 페이지 줌 초기화 + 리스너를 새 페이지로 전환
+              _transformControllers[_currentIndex].value = Matrix4.identity();
+              _switchListenerTo(i);
+              setState(() => _currentIndex = i);
+            },
+            itemBuilder: (ctx, i) => InteractiveViewer(
+              transformationController: _transformControllers[i],
+              minScale: 0.8,
+              maxScale: 4.0,
+              clipBehavior: Clip.none,
+              child: Center(
+                child: CachedNetworkImage(
+                  imageUrl: widget.imageUrls[i],
+                  fit: BoxFit.contain,
+                  placeholder: (ctx, url) => const Center(
+                    child: CircularProgressIndicator(color: Colors.white),
+                  ),
+                  errorWidget: (ctx, url, e) => const Icon(
+                    Icons.broken_image_outlined,
+                    color: Colors.white54,
+                    size: 60,
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // 닫기 버튼
+          SafeArea(
+            child: Align(
+              alignment: Alignment.topRight,
+              child: IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.black45,
+                ),
+              ),
+            ),
+          ),
+
+          // 페이지 인디케이터 (사진 2장 이상, 줌아웃 상태일 때만 표시)
+          if (widget.imageUrls.length > 1 && !_isZoomed)
+            SafeArea(
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 24),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '${_currentIndex + 1} / ${widget.imageUrls.length}',
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }
