@@ -211,11 +211,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       final refDate = widget.toItem.slot?.date ?? DateTime.now();
       final ws = WeekHelper.weekStart(refDate);
       final we = WeekHelper.weekEnd(refDate);
-      final weeklyMap = await _firestoreService.getWeeklyAttendanceByBusiness(
-        businessId: widget.toItem.to.businessId,
-        weekStart: ws,
-        weekEnd: we,
-      );
+      Map<String, List<dynamic>> weeklyMap;
+      try {
+        weeklyMap = await _firestoreService.getWeeklyAttendanceByBusiness(
+          businessId: widget.toItem.to.businessId,
+          weekStart: ws,
+          weekEnd: we,
+        );
+      } catch (e) {
+        debugPrint('⚠️ 주간 근무 횟수 조회 실패 (배지 미표시): $e');
+        weeklyMap = {};
+      }
       // 모든 지원자 uid를 0으로 초기화 → 기록 없는 지원자도 "주0회" 배지 표시
       final weeklyCountMap = <String, int>{
         for (final uid in uniqueUids) uid: 0,
@@ -1712,6 +1718,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       final resetMsg = confirmedWageCount > 0
           ? '\n확정 급여 $confirmedWageCount건이 미확정 처리되었습니다.'
           : '';
+      if (!mounted) return;
       ToastHelper.showSuccess('${user?.name ?? '지원자'}님의 파트가 ${selectedWork.workType}(으)로 변경되었습니다$resetMsg');
       await _loadApplicants();
       if (!mounted) return;
@@ -1766,6 +1773,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         debugPrint('⚠️ 충돌로 ${affectedTOIds.length}개 TO 영향: $affectedTOIds');
       }
 
+      if (!mounted) return;
       ToastHelper.showSuccess('${user?.name ?? '지원자'}님이 승인되었습니다');
       await _loadApplicants();
       if (!mounted) return;
@@ -1803,6 +1811,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         message: reason,
       );
 
+      if (!mounted) return;
       ToastHelper.showSuccess('${user?.name ?? '지원자'}님이 거절되었습니다');
       await _loadApplicants();
       if (!mounted) return;
@@ -1841,6 +1850,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         cancelReason: reason,
       );
 
+      if (!mounted) return;
       ToastHelper.showSuccess('${user?.name ?? '근무자'}님의 확정이 취소되었습니다');
       await _loadApplicants();
       if (!mounted) return;
@@ -2219,6 +2229,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         ToastHelper.showSuccess('${_selectedIds.length}명에게 계약서가 발송되었습니다');
       }
       _selectedIds.clear();
+      if (mounted) setState(() { _isBatchMode = false; _selectAll = false; });
       await _loadApplicants();
       await _updateLocalStats();
 
@@ -2459,6 +2470,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       for (var i = 0; i < toProcess.length; i += batchSize) {
         final batch = toProcess.sublist(i, min(i + batchSize, toProcess.length));
         final results = await Future.wait(batch.map(processOne));
+        if (!mounted) return;
         for (var j = 0; j < batch.length; j++) {
           if (results[j]) {
             successCount++;

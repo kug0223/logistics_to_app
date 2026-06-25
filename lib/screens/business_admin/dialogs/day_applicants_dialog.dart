@@ -249,7 +249,17 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     } catch (e) {
       debugPrint('❌ 지원명단 로드 실패: $e');
       if (!mounted) return;
-      setState(() => _isLoading = false);
+      setState(() {
+        _isLoading = false;
+        _pendingApps = [];
+        _confirmedApps = [];
+        _userMap = {};
+        _contractStatusMap = {};
+        _idCardStatusMap = {};
+        _toCapacityMap = {};
+        _weeklyWorkCountMap = {};
+      });
+      ToastHelper.showError('데이터를 불러오지 못했습니다. 다시 시도해주세요.');
     }
   }
 
@@ -349,7 +359,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     return groups.values.toList()
       ..sort((a, b) {
         final t = a.toTitle.compareTo(b.toTitle);
-        return t != 0 ? t : timeToMinutes(a.startTime).compareTo(timeToMinutes(b.startTime));
+        if (t != 0) return t;
+        final s = timeToMinutes(a.startTime).compareTo(timeToMinutes(b.startTime));
+        if (s != 0) return s;
+        return timeToMinutes(a.endTime).compareTo(timeToMinutes(b.endTime));
       });
   }
 
@@ -719,6 +732,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                           '${g.workType}  ${g.startTime} ~ ${g.endTime}',
                           style: ResponsiveHelper.smallStyle(context,
                               color: AppColors.grey600),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
@@ -1699,6 +1714,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         final batch =
             toProcess.sublist(i, min(i + batchSize, toProcess.length));
         final results = await Future.wait(batch.map(processOne));
+        if (!mounted) return;
         for (var j = 0; j < batch.length; j++) {
           if (results[j]) {
             successCount++;
@@ -2196,21 +2212,37 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
     // 정원 초과 검증 (TO별로 현재 확정 수 + 선택 수 > 정원이면 경고)
     final selectedApps = _pendingApps.where((a) => _selectedIds.contains(a.id)).toList();
+
+    // M3: toId 없는 지원서 사전 차단
+    if (selectedApps.any((a) => a.toId == null)) {
+      ToastHelper.showWarning('TO 정보가 없는 지원서가 포함되어 있습니다. 개별 처리해주세요.');
+      return;
+    }
+
+    // M2: 모든 초과 TO를 수집 후 한 번에 경고
     final selectedByTo = <String, int>{};
     for (final app in selectedApps) {
-      final toId = app.toId ?? 'unknown';
+      final toId = app.toId!;
       selectedByTo[toId] = (selectedByTo[toId] ?? 0) + 1;
     }
+    final overflowToIds = <String>[];
     for (final entry in selectedByTo.entries) {
       final toId = entry.key;
       final capacity = _toCapacityMap[toId];
       if (capacity != null) {
         final alreadyConfirmed = _confirmedApps.where((a) => a.toId == toId).length;
         if (alreadyConfirmed + entry.value > capacity) {
-          ToastHelper.showWarning('선택한 인원이 정원을 초과합니다. 정원을 확인해주세요.');
-          return;
+          overflowToIds.add(toId);
         }
       }
+    }
+    if (overflowToIds.isNotEmpty) {
+      final names = overflowToIds
+          .map((id) => selectedApps.firstWhere((a) => a.toId == id).toTitle)
+          .toSet()
+          .join(', ');
+      ToastHelper.showWarning('정원 초과 공고: $names\n해당 공고의 선택 인원을 줄여주세요.');
+      return;
     }
 
     final count = _selectedIds.length;
@@ -2229,6 +2261,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     try {
       final adminUID = FirebaseAuth.instance.currentUser?.uid;
       for (final appId in ids) {
+        if (!mounted) break;
         try {
           await _svc.updateApplicationStatus(
             applicationId: appId,
@@ -2272,6 +2305,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   String _timeAgo(DateTime dt) {
     final diff = DateTime.now().difference(dt);
+    if (diff.isNegative) return '방금 전';
     if (diff.inDays >= 1) return '${diff.inDays}일 전';
     if (diff.inHours >= 1) return '${diff.inHours}시간 전';
     if (diff.inMinutes >= 1) return '${diff.inMinutes}분 전';

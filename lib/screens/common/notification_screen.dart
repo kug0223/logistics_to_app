@@ -963,9 +963,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       if (!context.mounted) return;
       Navigator.pop(context);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!context.mounted) return;
-        showDialog(
+        await showDialog<WorkApplicantsDialogResult>(
           context: context,
           builder: (_) => WorkApplicantsDialog(
             work: workDetail,
