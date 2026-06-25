@@ -689,20 +689,24 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
       return;
     }
 
-    // [특이사항] 모든 사업장 공고를 표시하므로 사업장명을 라벨에 포함
+    // [특이사항] 모든 사업장 공고를 표시하므로 사업장명·상태를 라벨에 포함
     final toDocs = snap.docs.map((d) {
       final data = d.data();
       final title = data['title'] as String? ?? d.id;
       final type = data['type'] as String? ?? TOType.flex;
+      final status = data['status'] as String? ?? TOStatus.active;
       final typeLabel = type == TOType.contract ? '[장기]' : '[단기]';
       final bizName = data['businessName'] as String? ?? '';
       final bizSuffix = bizName.isNotEmpty ? ' ($bizName)' : '';
-      return (id: d.id, label: '$typeLabel $title$bizSuffix', type: type);
+      final isActive = status == TOStatus.active;
+      final statusSuffix = isActive ? '' : ' [$status]';
+      return (id: d.id, label: '$typeLabel $title$bizSuffix$statusSuffix',
+              type: type, isActive: isActive);
     }).toList();
 
     if (!mounted) return;
 
-    // 2단계: 공고 선택 바텀시트
+    // 2단계: 공고 선택 바텀시트 — 비활성(예약/마감) 공고는 회색+비활성
     final selectedTo = await showModalBottomSheet<({String id, String type})>(
       context: context,
       useSafeArea: true,
@@ -723,10 +727,18 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
             shrinkWrap: true,
             children: toDocs
                 .map((to) => ListTile(
-                      title: Text(to.label),
-                      trailing: const Icon(Icons.chevron_right, size: 18),
-                      onTap: () =>
-                          Navigator.pop(sheetCtx, (id: to.id, type: to.type)),
+                      title: Text(
+                        to.label,
+                        style: TextStyle(
+                          color: to.isActive ? null : AppColors.grey500,
+                        ),
+                      ),
+                      trailing: to.isActive
+                          ? const Icon(Icons.chevron_right, size: 18)
+                          : const Icon(Icons.block, size: 18, color: AppColors.grey400),
+                      onTap: to.isActive
+                          ? () => Navigator.pop(sheetCtx, (id: to.id, type: to.type))
+                          : null,
                     ))
                 .toList(),
           ),
@@ -742,7 +754,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
     // 3단계: 단기 TO인 경우 슬롯(날짜) 선택
     if (selectedTo.type == TOType.flex) {
       // orderBy 없이 쿼리 (복합 인덱스 불필요) → 클라이언트 정렬
-      // [특이사항] 모집중(open)인 슬롯만 — full(만석)/closed(마감)/scheduled(예약) 제외
+      // [특이사항] 모집중(open)인 슬롯만 — full(만석)/closed(마감) 제외
+      // TO 자체가 ACTIVE인 경우에만 여기 도달하므로(공고 선택 시 비활성 제외) 추가 TO 상태 체크 불필요
       final slotsSnap = await FirebaseFirestore.instance
           .collection('tos')
           .doc(selectedTo.id)
