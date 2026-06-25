@@ -937,7 +937,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               ],
             ),
 
-            // ── Row 2: 정보 + 배지 통합 (Wrap — 좁은 화면에서 자동 줄바꿈) ──
+            // ── Row 2: 정보 (전화·주간횟수·별점) ──
             const SizedBox(height: 4),
             Wrap(
               spacing: 5,
@@ -965,7 +965,16 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                           color: AppColors.grey700),
                     ),
                   ]),
-                // 리뷰/계약/신분증 배지는 Wrap으로 통합 — Row에 두면 좁은 화면(360dp↓) 오버플로우
+              ],
+            ),
+
+            // ── Row 3: 배지 (리뷰·계약·신분증) — 정보 라인과 분리, Wrap 자동 줄바꿈 ──
+            const SizedBox(height: 3),
+            Wrap(
+              spacing: 4,
+              runSpacing: 3,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
                 if (!isPending) _buildReviewBadge(context, user?.uid),
                 _contractBadge(context, app.id, isPending: isPending),
                 if (!isPending)
