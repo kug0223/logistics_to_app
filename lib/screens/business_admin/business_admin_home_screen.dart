@@ -742,11 +742,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
     // 3단계: 단기 TO인 경우 슬롯(날짜) 선택
     if (selectedTo.type == TOType.flex) {
       // orderBy 없이 쿼리 (복합 인덱스 불필요) → 클라이언트 정렬
+      // [특이사항] 모집중(open)인 슬롯만 — full(만석)/closed(마감)/scheduled(예약) 제외
       final slotsSnap = await FirebaseFirestore.instance
           .collection('tos')
           .doc(selectedTo.id)
           .collection('slots')
-          .where('status', whereIn: ['open', 'full'])
+          .where('status', isEqualTo: 'open')
           .limit(30)
           .get();
 
