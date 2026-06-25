@@ -678,12 +678,14 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
   Future<void> _createDummyApplicationsFlow(String businessId) async {
     try {
     // 1단계: 공고 목록 로드
+    // [특이사항] Source.server 필수 — 캐시만 보면 최근 등록 공고가 누락됨
     final snap = await FirebaseFirestore.instance
         .collection('tos')
         .where('businessId', isEqualTo: businessId)
         // [특이사항] 더미 생성은 관리자 전용 — status 필터 없이 해당 사업장의 모든 공고 표시 (DRAFT 포함)
+        .orderBy('createdAt', descending: true)
         .limit(50)
-        .get();
+        .get(const GetOptions(source: Source.server));
 
     if (snap.docs.isEmpty) {
       if (mounted) ToastHelper.showWarning('등록된 공고가 없습니다. 먼저 공고를 생성하세요.');
