@@ -677,12 +677,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
   /// 더미 지원서 생성 흐름 — 공고 선택 → (단기) 슬롯 선택 → 생성
   Future<void> _createDummyApplicationsFlow(String businessId) async {
     try {
-    // 1단계: 공고 목록 로드
-    // [특이사항] Source.server 필수 — 캐시만 보면 최근 등록 공고가 누락됨
+    // [특이사항] 모든 사업장의 공고를 표시 — businessId 필터 없음, Source.server로 최신 데이터 보장
     final snap = await FirebaseFirestore.instance
         .collection('tos')
-        .where('businessId', isEqualTo: businessId)
-        // [특이사항] 더미 생성은 관리자 전용 — status 필터 없이 해당 사업장의 모든 공고 표시 (DRAFT 포함)
         .orderBy('createdAt', descending: true)
         .limit(50)
         .get(const GetOptions(source: Source.server));
@@ -692,13 +689,15 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
       return;
     }
 
-    // 단기/장기 구분 표시용 데이터
+    // [특이사항] 모든 사업장 공고를 표시하므로 사업장명을 라벨에 포함
     final toDocs = snap.docs.map((d) {
       final data = d.data();
       final title = data['title'] as String? ?? d.id;
       final type = data['type'] as String? ?? TOType.flex;
       final typeLabel = type == TOType.contract ? '[장기]' : '[단기]';
-      return (id: d.id, label: '$typeLabel $title', type: type);
+      final bizName = data['businessName'] as String? ?? '';
+      final bizSuffix = bizName.isNotEmpty ? ' ($bizName)' : '';
+      return (id: d.id, label: '$typeLabel $title$bizSuffix', type: type);
     }).toList();
 
     if (!mounted) return;
