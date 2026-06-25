@@ -52,6 +52,9 @@ class _GroupData {
     required this.endTime,
     required this.isLongTerm,
   });
+
+  // 그룹 고유 키 — 다중 그룹 선택 모드 스코프에 사용
+  String get groupKey => toId ?? '${toTitle}_$workType';
 }
 
 // ─── 다이얼로그 ────────────────────────────────────────────────────────────────
@@ -92,9 +95,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   Map<String, String> _idCardStatusMap = {};
   final Map<String, bool> _reviewWrittenMap = {};
   bool _isBatchMode = false;
-  bool _isIdCardSelectMode = false;
+  // BUG-1 수정: 전역 bool → 그룹 key로 스코프화.
+  // 전역이면 다중 그룹 시 그룹A 선택 모드가 그룹B UI에도 반영됨.
+  String? _idCardSelectGroupKey;       // null = 선택 모드 없음
   final Set<String> _selectedIdCardUserIds = {};
-  bool _isContractBatchProcessing = false;
+  // BUG-3 수정: 동일 이유로 전역 bool → 그룹 key 스코프화.
+  String? _contractBatchGroupKey;      // null = 처리 중 없음
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -722,7 +728,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               child: Column(
                 children: g.confirmedApps
                     .map((app) => _buildApplicantCard(context, app,
-                        isPending: false))
+                        isPending: false,
+                        isGroupIdCardMode:
+                            _idCardSelectGroupKey == g.groupKey))
                     .toList(),
               ),
             ),
@@ -759,7 +767,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   // ── Applicant Card ─────────────────────────────────────────────────────────
 
   Widget _buildApplicantCard(BuildContext context, ApplicationModel app,
-      {required bool isPending}) {
+      {required bool isPending, bool isGroupIdCardMode = false}) {
     final user = _userMap[app.uid];
     final isSelected = _selectedIds.contains(app.id);
     final isStarred = isPending && _starredIds.contains(app.id);
@@ -796,7 +804,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               _selectedIds.add(app.id);
             }
           });
-        } else if (!isPending && _isIdCardSelectMode &&
+        } else if (!isPending && isGroupIdCardMode &&
             IdCardHelper.isRequestable(idCardStatus)) {
           _toggleIdCardSelection(user?.uid ?? '');
         } else {
@@ -845,7 +853,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                           )
                         : const SizedBox.shrink(),
                   )
-                else if (_isIdCardSelectMode)
+                else if (isGroupIdCardMode)
                   Padding(
                     padding: EdgeInsets.only(
                         right: ResponsiveHelper.spacing(context, 6)),
@@ -1173,6 +1181,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   Widget _buildIdCardRequestSection(
       BuildContext context, _GroupData g, int requestableCount) {
+    final isActive = _idCardSelectGroupKey == g.groupKey;
     return Container(
       margin: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 8),
@@ -1183,10 +1192,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         vertical: ResponsiveHelper.spacing(context, 10),
       ),
       decoration: BoxDecoration(
-        color: _isIdCardSelectMode ? AppColors.infoBg : Colors.white,
+        color: isActive ? AppColors.infoBg : Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-            color: _isIdCardSelectMode ? AppColors.info : AppColors.border),
+        border: Border.all(color: isActive ? AppColors.info : AppColors.border),
       ),
       child: Row(
         children: [
@@ -1196,14 +1204,14 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Expanded(
             child: Text(
-              _isIdCardSelectMode
+              isActive
                   ? '${_selectedIdCardUserIds.length}명 선택됨'
                   : '미요청 $requestableCount명',
               style:
                   ResponsiveHelper.bodyStyle(context, color: AppColors.infoDark),
             ),
           ),
-          if (_isIdCardSelectMode && _selectedIdCardUserIds.isNotEmpty) ...[
+          if (isActive && _selectedIdCardUserIds.isNotEmpty) ...[
             InkWell(
               onTap: _batchRequestIdCard,
               borderRadius: BorderRadius.circular(8),
@@ -1227,10 +1235,11 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           InkWell(
             onTap: () {
               setState(() {
-                _isIdCardSelectMode = !_isIdCardSelectMode;
-                if (!_isIdCardSelectMode) {
+                if (isActive) {
+                  _idCardSelectGroupKey = null;
                   _selectedIdCardUserIds.clear();
                 } else {
+                  _idCardSelectGroupKey = g.groupKey;
                   _selectAllRequestableUsers(g);
                 }
               });
@@ -1242,15 +1251,14 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                 vertical: ResponsiveHelper.spacing(context, 6),
               ),
               decoration: BoxDecoration(
-                color: _isIdCardSelectMode ? AppColors.grey100 : AppColors.info,
+                color: isActive ? AppColors.grey100 : AppColors.info,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
-                _isIdCardSelectMode ? '취소' : '신분증 요청',
+                isActive ? '취소' : '신분증 요청',
                 style: ResponsiveHelper.smallStyle(
                   context,
-                  color:
-                      _isIdCardSelectMode ? AppColors.grey700 : Colors.white,
+                  color: isActive ? AppColors.grey700 : Colors.white,
                 ).copyWith(fontWeight: FontWeight.w600),
               ),
             ),
@@ -1320,7 +1328,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         for (final uid in _selectedIdCardUserIds) {
           _idCardStatusMap[uid] = 'pending';
         }
-        _isIdCardSelectMode = false;
+        _idCardSelectGroupKey = null;
         _selectedIdCardUserIds.clear();
       });
     }
@@ -1330,6 +1338,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   Widget _buildContractBatchSection(
       BuildContext context, _GroupData g, int noContractCount) {
+    final isProcessing = _contractBatchGroupKey == g.groupKey;
     return Container(
       margin: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 8),
@@ -1357,7 +1366,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                   color: AppColors.successDark),
             ),
           ),
-          if (_isContractBatchProcessing)
+          if (isProcessing)
             const SizedBox(
               width: 20,
               height: 20,
@@ -1389,7 +1398,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   }
 
   Future<void> _batchCreateContracts(_GroupData g) async {
-    if (_isContractBatchProcessing) return;
+    if (_contractBatchGroupKey != null) return;
     final bizId = _selectedBusinessId ?? '';
     if (bizId.isEmpty || widget.businesses.isEmpty) return;
     final business = widget.businesses.firstWhere(
@@ -1432,7 +1441,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     }
 
     // 3. TO에서 WorkDetailData 조회
-    setState(() => _isContractBatchProcessing = true);
+    setState(() => _contractBatchGroupKey = g.groupKey);
     WorkDetailData? workDetail;
     try {
       if (g.toId != null) {
@@ -1451,7 +1460,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         }
       }
     } finally {
-      if (mounted) setState(() => _isContractBatchProcessing = false);
+      if (mounted) setState(() => _contractBatchGroupKey = null);
     }
     if (!mounted) return;
 
@@ -1468,7 +1477,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       return;
     }
 
-    setState(() => _isContractBatchProcessing = true);
+    setState(() => _contractBatchGroupKey = g.groupKey);
     late EmploymentContractModel previewContract;
     try {
       previewContract = await ContractService().buildPreviewContract(
@@ -1482,7 +1491,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       ToastHelper.showError('계약서 미리보기 생성에 실패했습니다');
       return;
     } finally {
-      if (mounted) setState(() => _isContractBatchProcessing = false);
+      if (mounted) setState(() => _contractBatchGroupKey = null);
     }
     if (!mounted) return;
 
@@ -1496,7 +1505,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     if (confirmed != true || !mounted) return;
 
     // 6. 일괄 계약서 생성 + 날인
-    setState(() => _isContractBatchProcessing = true);
+    setState(() => _contractBatchGroupKey = g.groupKey);
     final sealBytes = base64Decode(sealBase64);
     final finalWorkDetail = workDetail;
     try {
@@ -1539,16 +1548,18 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         ToastHelper.showSuccess('${toProcess.length}명에게 계약서가 발송되었습니다');
       }
       _hasChanges = true;
+      // BUG-2 수정: saveEmployerSignature 완료 후 실제 Firestore status는
+      // 'pending_worker' — 'pending'으로 쓰면 _contractBadge default('계약중')로 표시됨.
       setState(() {
         for (final app in toProcess) {
-          _contractStatusMap[app.id] = 'pending';
+          _contractStatusMap[app.id] = 'pending_worker';
         }
       });
     } catch (e) {
       ToastHelper.showError('처리 중 오류가 발생했습니다');
       debugPrint('❌ 계약서 일괄 발송 실패: $e');
     } finally {
-      if (mounted) setState(() => _isContractBatchProcessing = false);
+      if (mounted) setState(() => _contractBatchGroupKey = null);
     }
   }
 
