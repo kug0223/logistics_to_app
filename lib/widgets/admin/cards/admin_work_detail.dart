@@ -3,6 +3,7 @@
 // Models
 import '../../../models/core/work_detail_model.dart';
 import '../../../models/core/insurance_rate_model.dart';
+import '../../../models/core/to_model.dart';
 import '../../common/tax_deduction_badge.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 
@@ -441,8 +442,9 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
       );
     }
     
-    // 2. 예약 공개 대기
-    if (to.isPendingPublish) {
+    // 2. 예약 — TO 상태가 SCHEDULED이거나 isPendingPublish인 경우
+    // [특이사항] status='SCHEDULED'는 isPendingPublish와 별개 경로 — 둘 다 체크해야 예약 배지가 표시됨
+    if (to.status == TOStatus.scheduled || to.isPendingPublish) {
       return Container(
         padding: EdgeInsets.symmetric(
           horizontal: ResponsiveHelper.spacing(context, 6),
