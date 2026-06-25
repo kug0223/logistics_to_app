@@ -89,8 +89,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   // 신분증 일괄 요청 모드
   bool _isIdCardSelectMode = false;
   final Set<String> _selectedIdCardUserIds = {};
-  // ✅ 장기공고 출퇴근 기록 맵 (applicationId -> hasAttendance)
-  final Map<String, bool> _hasAttendanceMap = {};
   // 🔥 충돌로 취소된 다른 TO ID 목록
   final Set<String> _affectedOtherTOIds = {};
   // 리뷰 작성 여부 (uid → true=작성완료)
@@ -204,27 +202,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           return MapEntry(uid, exists != null);
         });
         final reviewEntries = await Future.wait(reviewFutures);
-        _reviewWrittenMap.addAll(Map.fromEntries(reviewEntries));
-      }
-
-      // ✅ 장기공고인 경우 확정자들의 출퇴근 기록 병렬 확인
-      if (widget.toItem.to.isLongTerm) {
-        final confirmedApps = applicantsWithUserInfo
-            .where((item) {
-              final s = (item['application'] as ApplicationModel).status;
-              return AppStatus.confirmedStatuses.contains(s);
-            })
-            .map((item) => item['application'] as ApplicationModel)
-            .toList();
-        
-        if (confirmedApps.isNotEmpty) {
-          final attendanceFutures = confirmedApps.map((app) async {
-            final hasRecord = await _firestoreService.hasAttendanceRecord(app.id);
-            return MapEntry(app.id, hasRecord);
-          });
-          final attendanceEntries = await Future.wait(attendanceFutures);
-          _hasAttendanceMap.addAll(Map.fromEntries(attendanceEntries));
-        }
+        _reviewWrittenMap
+          ..clear()
+          ..addAll(Map.fromEntries(reviewEntries));
       }
 
       // 이번 주 근무 횟수 조회 (기준 주: 슬롯 날짜 or 오늘)
@@ -269,9 +249,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         _applicants = applicantsWithUserInfo;
         _idCardStatusMap = idCardStatusMap;
         _allApplications = apps; // 통계 계산용 캐시
-        _starredIds.addAll(starredFromFirestore);
+        _starredIds
+          ..clear()
+          ..addAll(starredFromFirestore);
         _weeklyWorkCountMap
-          ..clear()           // 재로딩 시 stale 데이터 제거
+          ..clear()
           ..addAll(weeklyCountMap);
         _contractStatusMap = contractMap;
       });
@@ -531,6 +513,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                 if (!_isBatchMode) {
                   _selectedIds.clear();
                   _selectAll = false;
+                } else {
+                  // 다른 모드와 상호 배제
+                  _isIdCardSelectMode = false;
+                  _selectedIdCardUserIds.clear();
                 }
               }),
               borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
@@ -640,7 +626,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                 final noContractCount = confirmed.where((item) {
                   final app = item['application'] as ApplicationModel;
                   final status = _contractStatusMap[app.id];
-                  return status == null || status.isEmpty;
+                  return status == null || status.isEmpty || status == 'voided';
                 }).length;
                 if (noContractCount == 0) return const SizedBox.shrink();
                 return _buildContractBatchSection(context, noContractCount);
@@ -716,6 +702,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                     _selectedIdCardUserIds.clear();
                   } else {
                     _selectAllRequestableUsers();
+                    // 다른 모드와 상호 배제
+                    _isBatchMode = false;
+                    _selectedIds.clear();
+                    _selectAll = false;
                   }
                 });
               },
@@ -1214,7 +1204,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                               ),
                             // 계약 미작성 시 개별 작성 버튼
                             if (_contractStatusMap[app.id] == null ||
-                                (_contractStatusMap[app.id]?.isEmpty ?? true))
+                                (_contractStatusMap[app.id]?.isEmpty ?? true) ||
+                                _contractStatusMap[app.id] == 'voided')
                               _buildActionButton(
                                 context,
                                 label: '계약서 작성',
@@ -1548,6 +1539,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   }
   /// 파트변경 다이얼로그
   Future<void> _showChangeWorkPartDialog(Map<String, dynamic> item) async {
+    if (_isProcessing) return;
+    setState(() => _isProcessing = true);
     final app = item['application'] as ApplicationModel;
     final user = item['user'] as UserModel?;
     final workDetails = widget.toItem.workDetails;
@@ -1557,6 +1550,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     
     if (otherWorkDetails.isEmpty) {
       ToastHelper.showWarning('변경 가능한 다른 파트가 없습니다');
+      if (mounted) setState(() => _isProcessing = false);
       return;
     }
 
@@ -1578,7 +1572,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         confirmText: '계속',
         cancelText: '취소',
       );
-      if (proceed != true || !mounted) return;
+      if (proceed != true || !mounted) {
+        if (mounted) setState(() => _isProcessing = false);
+        return;
+      }
     }
 
     final selectedWorkId = await showDialog<String>(
@@ -1687,7 +1684,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       ),
     );
 
-    if (selectedWorkId == null || !mounted) return;
+    if (selectedWorkId == null || !mounted) {
+      if (mounted) setState(() => _isProcessing = false);
+      return;
+    }
 
     // 파트 변경 처리
     try {
@@ -1718,6 +1718,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       await _updateLocalStats();
     } catch (e) {
       ToastHelper.showError('파트 변경에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -1815,6 +1817,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   /// 확정취소 (단기)
   Future<void> _cancelConfirmation(Map<String, dynamic> item) async {
     if (_isProcessing) return;
+    setState(() => _isProcessing = true);  // 사유 선택 다이얼로그 중 재진입 방지
     final app = item['application'] as ApplicationModel;
     final user = item['user'] as UserModel?;
     final userProvider = context.read<UserProvider>();
@@ -1825,9 +1828,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       message: '${user?.name ?? '근무자'}님의 확정을 취소합니다.\n취소 사유를 선택해주세요.',
     );
 
-    if (reason == null || !mounted) return;
-
-    setState(() => _isProcessing = true);
+    if (reason == null || !mounted) {
+      setState(() => _isProcessing = false);
+      return;
+    }
     try {
       final adminUID = userProvider.currentUser?.uid;
 
@@ -1851,12 +1855,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   /// 고정근무 관리 다이얼로그 열기 (장기)
   // [B-3] item 파라미터 추가 → 해당 근무자 uid 전달로 자동 포커스
   void _openFixedWorkerManagement(Map<String, dynamic> item) {
+    if (_isProcessing) return;
+    setState(() => _isProcessing = true);
     final app = item['application'] as ApplicationModel;
     final businessId = widget.toItem.to.businessId;
     final onChanged = widget.onChanged;
     // 루트 Navigator는 이 다이얼로그가 pop된 후에도 유효
     final rootNav = Navigator.of(context, rootNavigator: true);
-    Navigator.of(context).pop();
+    Navigator.of(context).pop(WorkApplicantsDialogResult(
+      hasChanges: _hasChanges,
+      affectedTOIds: _affectedOtherTOIds,
+    ));
     WidgetsBinding.instance.addPostFrameCallback((_) {
       showDialog(
         context: rootNav.context,
@@ -2378,7 +2387,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       final app = item['application'] as ApplicationModel;
       if (!AppStatus.confirmedStatuses.contains(app.status)) return false;
       final status = _contractStatusMap[app.id];
-      return status == null || status.isEmpty;
+      return status == null || status.isEmpty || status == 'voided';
     }).toList();
     if (toProcess.isEmpty) return;
 
@@ -2446,10 +2455,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
       const batchSize = 5;
       int successCount = 0;
+      final List<Map<String, dynamic>> successItems = [];
       for (var i = 0; i < toProcess.length; i += batchSize) {
         final batch = toProcess.sublist(i, min(i + batchSize, toProcess.length));
         final results = await Future.wait(batch.map(processOne));
-        successCount += results.where((r) => r).length;
+        for (var j = 0; j < batch.length; j++) {
+          if (results[j]) {
+            successCount++;
+            successItems.add(batch[j]);
+          }
+        }
       }
 
       if (!mounted) return;
@@ -2459,13 +2474,15 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       } else {
         ToastHelper.showSuccess('${toProcess.length}명에게 계약서가 발송되었습니다');
       }
-      _hasChanges = true;
-      setState(() {
-        for (final item in toProcess) {
-          final app = item['application'] as ApplicationModel;
-          _contractStatusMap[app.id] = 'pending_worker';
-        }
-      });
+      if (successCount > 0) {
+        _hasChanges = true;
+        setState(() {
+          for (final item in successItems) {
+            final app = item['application'] as ApplicationModel;
+            _contractStatusMap[app.id] = 'pending_worker';
+          }
+        });
+      }
     } catch (e) {
       ToastHelper.showError('처리 중 오류가 발생했습니다');
       debugPrint('❌ 계약서 일괄 발송 실패: $e');

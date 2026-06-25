@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 
 import '../../../models/core/application_model.dart';
+import '../../../models/core/attendance_model.dart';
 import '../../../models/core/business_model.dart';
 import '../../../models/core/employment_contract_model.dart';
 import '../../../models/core/monthly_review_model.dart';
@@ -122,6 +123,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         setState(() => _selectedBusinessId = saved);
       }
     }
+    if (!mounted) return;
     _load();
   }
 
@@ -145,6 +147,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       _starredIds.clear();
       _idCardStatusMap = {};
       _reviewWrittenMap.clear();
+      _isBatchMode = false;
+      _idCardSelectGroupKey = null;
+      _selectedIdCardUserIds.clear();
+      _contractBatchGroupKey = null;
     });
 
     try {
@@ -157,6 +163,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       ]);
       final pending = phase1[0] as List<ApplicationModel>;
       final confirmed = phase1[1] as List<ApplicationModel>;
+
+      if (!mounted || _selectedBusinessId != bizId) return;
 
       // Phase 2: 유저 프로필 + 계약서 상태 + 주간 근무횟수 병렬 조회
       final allApps = [...pending, ...confirmed];
@@ -213,7 +221,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         final starredFromFirestore =
             allApps.where((app) => app.isStarred).map((app) => app.id).toSet();
 
-        if (!mounted) return;
+        if (!mounted || _selectedBusinessId != bizId) return;
         setState(() {
           _pendingApps = pending;
           _confirmedApps = confirmed;
@@ -229,7 +237,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         return;
       }
 
-      if (!mounted) return;
+      if (!mounted || _selectedBusinessId != bizId) return;
       setState(() {
         _pendingApps = pending;
         _confirmedApps = confirmed;
@@ -256,7 +264,16 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         weekEnd: weekEnd,
       );
       // Map<String, List<AttendanceModel>> — key = userId
-      return result.map((uid, list) => MapEntry(uid, list.length));
+      // 실제 출근 기록만 카운트 (결근·노쇼 제외)
+      return result.map((uid, list) => MapEntry(
+            uid,
+            list
+                .where((a) =>
+                    a.checkIn != null &&
+                    a.status != AttendanceModel.statusAbsent &&
+                    a.status != AttendanceModel.statusNoShow)
+                .length,
+          ));
     } catch (_) {
       return {};
     }
@@ -323,10 +340,16 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       addApp(app, false);
     }
 
+    int timeToMinutes(String t) {
+      final parts = t.split(':');
+      if (parts.length != 2) return 0;
+      return (int.tryParse(parts[0]) ?? 0) * 60 + (int.tryParse(parts[1]) ?? 0);
+    }
+
     return groups.values.toList()
       ..sort((a, b) {
         final t = a.toTitle.compareTo(b.toTitle);
-        return t != 0 ? t : a.startTime.compareTo(b.startTime);
+        return t != 0 ? t : timeToMinutes(a.startTime).compareTo(timeToMinutes(b.startTime));
       });
   }
 
@@ -494,7 +517,14 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             child: InkWell(
               onTap: () => setState(() {
                 _isBatchMode = !_isBatchMode;
-                if (!_isBatchMode) _selectedIds.clear();
+                if (!_isBatchMode) {
+                  _selectedIds.clear();
+                } else {
+                  // 다른 모드와 상호 배제
+                  _idCardSelectGroupKey = null;
+                  _selectedIdCardUserIds.clear();
+                  _contractBatchGroupKey = null;
+                }
               }),
               borderRadius: BorderRadius.circular(
                   ResponsiveHelper.spacing(context, 8)),
@@ -735,7 +765,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             Builder(builder: (context) {
               final noContractCount = g.confirmedApps.where((app) {
                 final status = _contractStatusMap[app.id];
-                return status == null || status.isEmpty;
+                return status == null || status.isEmpty || status == 'voided';
               }).length;
               if (noContractCount == 0) return const SizedBox.shrink();
               return _buildContractBatchSection(context, g, noContractCount);
@@ -1034,7 +1064,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                 children: [
                   // 계약 미작성 시 개별 계약서 작성 버튼
                   if ((_contractStatusMap[app.id] == null ||
-                      _contractStatusMap[app.id]!.isEmpty)) ...[
+                      _contractStatusMap[app.id]!.isEmpty ||
+                      _contractStatusMap[app.id] == 'voided')) ...[
                     _actionButton(
                       context,
                       label: '계약서 작성',
@@ -1367,6 +1398,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                 } else {
                   _idCardSelectGroupKey = g.groupKey;
                   _selectAllRequestableUsers(g);
+                  // 다른 모드와 상호 배제
+                  _isBatchMode = false;
+                  _selectedIds.clear();
+                  _contractBatchGroupKey = null;
                 }
               });
             },
@@ -1532,10 +1567,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       orElse: () => widget.businesses.first,
     );
 
-    // 계약서 미작성 확정자 수집
+    // 계약서 미작성 또는 무효 확정자 수집
     final toProcess = g.confirmedApps.where((app) {
       final status = _contractStatusMap[app.id];
-      return status == null || status.isEmpty;
+      return status == null || status.isEmpty || status == 'voided';
     }).toList();
     if (toProcess.isEmpty) return;
 
@@ -1659,11 +1694,17 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
       const batchSize = 5;
       int successCount = 0;
+      final List<ApplicationModel> successApps = [];
       for (var i = 0; i < toProcess.length; i += batchSize) {
         final batch =
             toProcess.sublist(i, min(i + batchSize, toProcess.length));
         final results = await Future.wait(batch.map(processOne));
-        successCount += results.where((r) => r).length;
+        for (var j = 0; j < batch.length; j++) {
+          if (results[j]) {
+            successCount++;
+            successApps.add(batch[j]);
+          }
+        }
       }
 
       if (!mounted) return;
@@ -1673,14 +1714,14 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       } else {
         ToastHelper.showSuccess('${toProcess.length}명에게 계약서가 발송되었습니다');
       }
-      _hasChanges = true;
-      // BUG-2 수정: saveEmployerSignature 완료 후 실제 Firestore status는
-      // 'pending_worker' — 'pending'으로 쓰면 _contractBadge default('계약중')로 표시됨.
-      setState(() {
-        for (final app in toProcess) {
-          _contractStatusMap[app.id] = 'pending_worker';
-        }
-      });
+      if (successCount > 0) {
+        _hasChanges = true;
+        setState(() {
+          for (final app in successApps) {
+            _contractStatusMap[app.id] = 'pending_worker';
+          }
+        });
+      }
     } catch (e) {
       ToastHelper.showError('처리 중 오류가 발생했습니다');
       debugPrint('❌ 계약서 일괄 발송 실패: $e');
@@ -2153,6 +2194,25 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   Future<void> _batchApprove() async {
     if (_isProcessing || _selectedIds.isEmpty) return;
 
+    // 정원 초과 검증 (TO별로 현재 확정 수 + 선택 수 > 정원이면 경고)
+    final selectedApps = _pendingApps.where((a) => _selectedIds.contains(a.id)).toList();
+    final selectedByTo = <String, int>{};
+    for (final app in selectedApps) {
+      final toId = app.toId ?? 'unknown';
+      selectedByTo[toId] = (selectedByTo[toId] ?? 0) + 1;
+    }
+    for (final entry in selectedByTo.entries) {
+      final toId = entry.key;
+      final capacity = _toCapacityMap[toId];
+      if (capacity != null) {
+        final alreadyConfirmed = _confirmedApps.where((a) => a.toId == toId).length;
+        if (alreadyConfirmed + entry.value > capacity) {
+          ToastHelper.showWarning('선택한 인원이 정원을 초과합니다. 정원을 확인해주세요.');
+          return;
+        }
+      }
+    }
+
     final count = _selectedIds.length;
     final confirmed = await DialogHelper.showConfirm(
       context,
@@ -2178,7 +2238,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           successCount++;
         } catch (_) {}
       }
-      _hasChanges = true;
+      if (successCount > 0) _hasChanges = true;
       if (!mounted) return;
       ToastHelper.showSuccess('$successCount명이 확정되었습니다');
       await _load();
@@ -2202,7 +2262,11 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       }
       parts.add('$age세');
     }
-    if (user.gender != null) parts.add(user.gender == '남성' ? '남' : '여');
+    if (user.gender == '남성') {
+      parts.add('남');
+    } else if (user.gender == '여성') {
+      parts.add('여');
+    }
     return parts.isNotEmpty ? '(${parts.join(' ')})' : '';
   }
 
