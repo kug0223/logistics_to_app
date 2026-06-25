@@ -1181,6 +1181,7 @@ class NotificationModel {
     required String userId,
     required String workerName,
     required String businessName,
+    required String businessId,
     required DateTime expiryDate,
     required String applicationId,
   }) {
@@ -1190,9 +1191,11 @@ class NotificationModel {
       type: NotificationType.contractExpiringReminder,
       title: '계약 만료 임박',
       body: '$workerName님의 계약이 ${expiryDate.month}/${expiryDate.day}에 만료됩니다. 연장 또는 종료를 선택해 주세요.',
-      // [특이사항] businessName 미포함 — 알림 카드에서 사업장명 표시가 필요하다면 추후 data에 추가 필요
+      // [특이사항] businessId를 data에 포함 — 다중 사업장 관리자가 다른 사업장 선택 중일 때도
+      //           notification.data['businessId']를 우선 사용해 올바른 사업장 컨텍스트로 라우팅.
       data: {
         'applicationId': applicationId,
+        'businessId': businessId,
         'expiryDate': expiryDate.toIso8601String(),
         'screen': 'contractRenewal',
       },

@@ -531,6 +531,9 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         hasApprovedBusiness: true,
         hasLicense: user.businessLicenseImageUrl != null,
       );
+      // [특이사항] checkTOPrerequisites 자체가 내부적으로 다이얼로그를 띄우므로
+      //           완료 후 위젯이 dispose될 수 있음 — await 이후 mounted 체크 필수.
+      if (!context.mounted) return;
       if (!canProceed) return;
 
       // 진행중 공고 수 사전 체크 — 폼 진입 자체를 차단

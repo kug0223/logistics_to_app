@@ -161,6 +161,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         setState(() => _selectedBusinessId = saved);
       }
     }
+    // [특이사항] SharedPreferences await 이후 두 번째 mounted 체크 — initState에서 호출되므로
+    //           다이얼로그가 빠르게 닫힐 경우 dispose 후 _initializeData()가 실행되는 것을 방지.
+    if (!mounted) return;
     _initializeData();
   }
 
@@ -200,6 +203,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   // 의도된 동작: 새로고침 후 서버 데이터가 변경되면 이전 선택이 유효하지 않을 수 있으므로,
   // 잘못된 배치 처리를 방지하기 위해 항상 초기화한다.
   Future<void> _loadData() async {
+    if (!mounted) return;
     setState(() {
       _isLoading = true;
       _selectedIds.clear();
@@ -3067,8 +3071,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         _selectAll = false;
       } else {
         _selectedIds.add(appId);
-        // 전체 선택 상태 체크
-        final selectableCount = _confirmedWorkers.where((app) {
+        // [특이사항] selectableCount는 _confirmedWorkers 전체가 아닌 현재 탭 기준으로 산정.
+        //           _toggleSelectAll()과 동일한 기준을 써야 _selectAll 동기화가 정확함.
+        final tabWorkers = _workersByTab(_currentTabIndex);
+        final selectableCount = tabWorkers.where((app) {
           final status = _getAttendanceStatus(app);
           return status['status'] != 'noshow';
         }).length;

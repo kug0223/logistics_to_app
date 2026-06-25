@@ -261,6 +261,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           final name = matches.first.user?.name ?? '';
           if (name.isNotEmpty) {
             _searchController.text = name;
+            // [특이사항] TextEditingController.text setter는 addListener 콜백을 트리거하지 않음.
+            //           _filteredFixedWorkers가 _searchQuery를 기준으로 필터링하므로 setState로 동기화 필수.
+            setState(() => _searchQuery = name);
           }
         }
       }

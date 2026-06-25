@@ -56,6 +56,8 @@ class NotificationProvider with ChangeNotifier {
   /// 스트림 에러 후 재시도
   void retry() {
     if (_userId == null || _disposed) return;
+    // [특이사항] 정상 상태에서는 Firestore 스트림이 자동 갱신되므로 no-op
+    if (!_hasError && _notificationSubscription != null) return;
     _hasError = false;
     _startListening();
   }
