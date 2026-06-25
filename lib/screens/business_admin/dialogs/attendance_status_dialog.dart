@@ -11,6 +11,7 @@
 // - (추후) 명단 출력
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 // Models
@@ -149,6 +150,17 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     super.initState();
     _selectedBusinessId = widget.initialBusinessId ??
         (widget.businessIds.isNotEmpty ? widget.businessIds.first : null);
+    _applySavedBusinessThenLoad();
+  }
+
+  Future<void> _applySavedBusinessThenLoad() async {
+    if (widget.businessIds.length > 1) {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString('alfit_last_business_id');
+      if (saved != null && widget.businessIds.contains(saved) && mounted) {
+        setState(() => _selectedBusinessId = saved);
+      }
+    }
     _initializeData();
   }
 
@@ -852,7 +864,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                     ),
                     Text(
                       dateStr,
-                      style: ResponsiveHelper.smallStyle(context, color: Colors.white70),
+                      style: ResponsiveHelper.smallStyle(context, color: Colors.white.withValues(alpha: 0.7)),
                     ),
                   ],
                 ),
@@ -891,6 +903,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
               onChanged: (value) {
                 if (value != null && value != _selectedBusinessId) {
                   setState(() => _selectedBusinessId = value);
+                  SharedPreferences.getInstance().then(
+                    (prefs) => prefs.setString('alfit_last_business_id', value),
+                  );
                   _loadData();
                 }
               },
@@ -2609,6 +2624,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
       // 로딩 닫기
       if (mounted) Navigator.pop(context);
+      await Future<void>.delayed(Duration.zero);
 
       // ✅ 미리 생성된 PDF로 바로 미리보기 표시
       if (mounted) {
@@ -2956,37 +2972,68 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   // ─── 배치 리셋 ───────────────────────────────────────────────
 
   // [F-34/A05 설계 검토] 리셋 배치 WriteBatch 500 ops 제한:
-  // 당일 단일 사업장 전체 인원 대상이며, 리셋은 출근 기록이 있는 인원(checkIn != null)만
-  // 처리한다. 일반 아르바이트 사업장 최대 규모 기준 하루 수백 명 수준으로,
-  // 단일 batch(500 ops) 범위 내에서 충분히 처리 가능하다.
+  // 당일 단일 사업장 전체 인원 대상이며, 리셋은 출근 기록이 있는 인원(checkIn != null)
+  // 또는 결근(statusAbsent) 처리된 인원을 대상으로 한다. 일반 아르바이트 사업장
+  // 최대 규모 기준 하루 수백 명 수준으로 단일 batch(500 ops) 내에서 충분히 처리 가능하다.
   Future<void> _showBatchResetDialog() async {
     final targets = _selectedIds
         .map((id) => _workerIdMap[id])
         .whereType<ApplicationModel>()
-        .where((app) => _attendanceMap[app.id]?.checkIn != null)
+        .where((app) {
+          final att = _attendanceMap[app.id];
+          if (att == null) return false;
+          // H-3: statusAbsent(결근)도 리셋 대상에 포함 — checkIn이 없어도 처리
+          return att.checkIn != null ||
+              att.status == AttendanceModel.statusAbsent;
+        })
         .toList();
     if (targets.isEmpty) return;
 
-    final names = targets.map((a) => _getDisplayName(a.uid)).join(', ');
+    // 급여 확정·이체 완료 건은 리셋 제외
+    final wageFinalized = targets.where((app) {
+      final s = _attendanceMap[app.id]?.wageStatus;
+      return s == AttendanceModel.wageConfirmed ||
+          s == AttendanceModel.wageTransferred;
+    }).toList();
+
+    final resetTargets = targets
+        .where((app) => !wageFinalized.contains(app))
+        .toList();
+
+    if (resetTargets.isEmpty) {
+      ToastHelper.showWarning('선택한 인원 모두 급여가 확정/이체 완료 상태라 리셋할 수 없습니다.');
+      return;
+    }
+
+    final skipMsg = wageFinalized.isNotEmpty
+        ? '\n\n⚠️ 급여 확정·이체 완료 ${wageFinalized.length}명은 제외됩니다.'
+        : '';
+    final names = resetTargets.map((a) => _getDisplayName(a.uid)).join(', ');
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
       title: '출퇴근 기록 리셋',
-      message: '${targets.length}명의 출퇴근 기록을 초기화합니다.\n출근·퇴근 시간이 모두 삭제됩니다.\n\n$names',
+      message: '${resetTargets.length}명의 출퇴근 기록을 초기화합니다.\n'
+          '출근·퇴근 시간, 급여 계산 결과가 모두 삭제됩니다.$skipMsg\n\n$names',
       confirmText: '리셋',
     );
     if (!confirmed || !mounted) return;
 
     final batch = FirebaseFirestore.instance.batch();
     final now = FieldValue.serverTimestamp();
-    for (final app in targets) {
+    for (final app in resetTargets) {
       final att = _attendanceMap[app.id];
       if (att == null) continue;
+      // H-4: wageStatus·wageDetail·workHours·yearMonth도 함께 초기화
       batch.update(
         FirebaseFirestore.instance.collection('attendance').doc(att.id),
         {
           'checkIn': FieldValue.delete(),
           'checkOut': FieldValue.delete(),
           'status': FieldValue.delete(),
+          'workHours': FieldValue.delete(),
+          'wageStatus': FieldValue.delete(),
+          'wageDetail': FieldValue.delete(),
+          'yearMonth': FieldValue.delete(),
           'updatedAt': now,
         },
       );
@@ -2995,17 +3042,16 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       await batch.commit();
       if (!mounted) return;
       setState(() {
-        for (final app in targets) {
-          final att = _attendanceMap[app.id];
-          if (att != null) {
-            _attendanceMap[app.id] = att.copyWith(checkIn: null, checkOut: null, status: null);
-          }
+        // copyWith가 null 전달 시 기존 값 유지 구조이므로,
+        // 리셋된 레코드는 맵에서 제거해 "미출근" 상태로 표시
+        for (final app in resetTargets) {
+          _attendanceMap.remove(app.id);
         }
         _selectedIds.clear();
         _hasChanges = true;
         _rebuildStatusCache();
       });
-      ToastHelper.showSuccess('리셋 완료 (${targets.length}명)');
+      ToastHelper.showSuccess('리셋 완료 (${resetTargets.length}명)');
     } catch (e) {
       debugPrint('❌ 리셋 실패: $e');
       if (!mounted) return;
@@ -3098,7 +3144,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         builder: (ctx, setDialogState) => Dialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
           child: Container(
-            width: 340,
+            constraints: const BoxConstraints(maxWidth: 340),
             padding: ResponsiveHelper.cardPadding(context),
             child: Column(
               mainAxisSize: MainAxisSize.min,

@@ -10,6 +10,7 @@
 
 import 'dart:math' show min;
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../../models/core/application_model.dart';
@@ -125,16 +126,24 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       // 여러 사업장 모드 (캘린더에서 호출)
       _businessIds = widget.businessIds!;
       _selectedBusinessId = widget.initialBusinessId ?? _businessIds.first;
-      _showBusinessSelector = true;  // ✅ 드롭다운 표시
+      // 저장된 마지막 선택 사업장 반영 (드롭다운이 있는 경우만)
+      if (_businessIds.length > 1) {
+        final prefs = await SharedPreferences.getInstance();
+        final saved = prefs.getString('alfit_last_business_id');
+        if (saved != null && _businessIds.contains(saved)) {
+          _selectedBusinessId = saved;
+        }
+      }
+      _showBusinessSelector = true;
       await _loadBusinessNames();
     } else if (widget.initialBusinessId != null) {
-      // 단일 사업장 모드 (기존 호출)
+      // 단일 사업장 모드 (기존 호출) — 드롭다운 없음, 저장값 무시
       _businessIds = [widget.initialBusinessId!];
       _selectedBusinessId = widget.initialBusinessId;
-      _showBusinessSelector = false;  // ✅ 드롭다운 숨김
+      _showBusinessSelector = false;
       await _loadBusinessNames();
     }
-    
+
     _loadFixedWorkers();
   }
 
@@ -388,6 +397,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       onChanged: (value) {
         if (value != null && value != _selectedBusinessId) {
           setState(() => _selectedBusinessId = value);
+          SharedPreferences.getInstance().then(
+            (prefs) => prefs.setString('alfit_last_business_id', value),
+          );
           _loadFixedWorkers();
         }
       },
@@ -1785,7 +1797,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                   color: AppColors.info,
                   onTap: () {
                     Navigator.pop(context);
-                    _showWorkerDetail(item);
+                    WidgetsBinding.instance.addPostFrameCallback((_) => _showWorkerDetail(item));
                   },
                 ),
 
@@ -1797,7 +1809,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                   color: AppColors.success,
                   onTap: () {
                     Navigator.pop(context);
-                    _showExtraWorkRequestDialog(app);
+                    WidgetsBinding.instance.addPostFrameCallback((_) => _showExtraWorkRequestDialog(app));
                   },
                 ),
 
@@ -1809,7 +1821,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                   color: AppColors.warning,
                   onTap: () {
                     Navigator.pop(context);
-                    _showNoWorkRequestDialog(app);
+                    WidgetsBinding.instance.addPostFrameCallback((_) => _showNoWorkRequestDialog(app));
                   },
                 ),
 
@@ -1823,7 +1835,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                     color: AppColors.error,
                     onTap: () {
                       Navigator.pop(context);
-                      _showTerminationRequestDialog(item);
+                      WidgetsBinding.instance.addPostFrameCallback((_) => _showTerminationRequestDialog(item));
                     },
                   ),
 
@@ -1837,7 +1849,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                     color: AppColors.grey600,
                     onTap: () {
                       Navigator.pop(context);
-                      _cancelTerminationRequest(app);
+                      WidgetsBinding.instance.addPostFrameCallback((_) => _cancelTerminationRequest(app));
                     },
                   ),
 
@@ -1853,7 +1865,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                     color: AppColors.success,
                     onTap: () {
                       Navigator.pop(context);
-                      _showRenewalDecisionDialog(app, user, extend: true);
+                      WidgetsBinding.instance.addPostFrameCallback((_) => _showRenewalDecisionDialog(app, user, extend: true));
                     },
                   ),
 
@@ -1869,7 +1881,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                     color: AppColors.error,
                     onTap: () {
                       Navigator.pop(context);
-                      _showRenewalDecisionDialog(app, user, extend: false);
+                      WidgetsBinding.instance.addPostFrameCallback((_) => _showRenewalDecisionDialog(app, user, extend: false));
                     },
                   ),
 
@@ -2373,7 +2385,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                               ),
                               Text(
                                 '$name님',
-                                style: ResponsiveHelper.smallStyle(context, color: Colors.white70),
+                                style: ResponsiveHelper.smallStyle(context, color: Colors.white.withValues(alpha: 0.7)),
                               ),
                             ],
                           ),

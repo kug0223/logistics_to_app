@@ -5,6 +5,7 @@ import 'dart:math' show min;
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 
 import '../../../models/core/application_model.dart';
@@ -110,6 +111,17 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     super.initState();
     _selectedBusinessId =
         widget.businessIds.isNotEmpty ? widget.businessIds.first : null;
+    _applySavedBusinessThenLoad();
+  }
+
+  Future<void> _applySavedBusinessThenLoad() async {
+    if (widget.businessIds.length > 1) {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString('alfit_last_business_id');
+      if (saved != null && widget.businessIds.contains(saved) && mounted) {
+        setState(() => _selectedBusinessId = saved);
+      }
+    }
     _load();
   }
 
@@ -437,6 +449,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               onChanged: (value) {
                 if (value != null && value != _selectedBusinessId) {
                   setState(() => _selectedBusinessId = value);
+                  SharedPreferences.getInstance().then(
+                    (prefs) => prefs.setString('alfit_last_business_id', value),
+                  );
                   _load();
                 }
               },
