@@ -696,7 +696,8 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         ToastHelper.showSuccess('신분증이 등록되었습니다');
         _hasChanges = true;
       } catch (e) {
-        ToastHelper.showError('신분증 등록에 실패했습니다');
+        // [특이사항] 업로드·Firestore 실패 시 async gap 후 unmounted 가능 → mounted 체크 필수
+        if (mounted) ToastHelper.showError('신분증 등록에 실패했습니다');
       } finally {
         if (mounted) setState(() => _isLoading = false);
       }
@@ -733,7 +734,8 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       ToastHelper.showSuccess('통장 정보가 저장되었습니다');
       _hasChanges = true;  // ✅ 추가
     } catch (e) {
-      ToastHelper.showError('통장 정보 저장에 실패했습니다');
+      // [특이사항] Firestore 업데이트 중 화면 pop 시 unmounted 가능 → mounted 체크 필수
+      if (mounted) ToastHelper.showError('통장 정보 저장에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

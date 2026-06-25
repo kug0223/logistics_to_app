@@ -87,7 +87,8 @@ class _UserContractsScreenState extends State<UserContractsScreen>
 
   Future<void> _load() async {
     final uid = _uid;
-    if (uid == null || !mounted) return;
+    // [특이사항] uid null 시에도 _isLoading=false 필수 — 미처리 시 LoadingWidget이 영구 표시됨
+    if (uid == null || !mounted) { if (mounted) setState(() => _isLoading = false); return; }
     setState(() { _isLoading = true; _items = []; _lastDoc = null; });
     try {
       final result = await _contractService.getByWorkerPaged(

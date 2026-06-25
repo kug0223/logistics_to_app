@@ -679,7 +679,12 @@ class _NotificationScreenState extends State<NotificationScreen> {
       }
 
       final currentUser = context.read<UserProvider>().currentUser;
-      if (currentUser == null || !context.mounted) return;
+      if (currentUser == null) {
+        Navigator.pop(context); // 로딩 닫기
+        ToastHelper.showError('사용자 정보를 찾을 수 없습니다');
+        return;
+      }
+      if (!context.mounted) return;
 
       final yearMonthStr =
           '${req.reviewYear}-${req.reviewMonth.toString().padLeft(2, '0')}';

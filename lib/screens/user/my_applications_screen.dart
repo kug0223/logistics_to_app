@@ -286,11 +286,19 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
   Future<void> _requestContract(ApplicationModel app) async {
     if (_isRequestingContract[app.id] == true) return;
+    // W05-046: async gap 이전이라도 dispose 직후 호출될 수 있으므로 mounted 체크 필수
+    if (!mounted) return;
     setState(() => _isRequestingContract[app.id] = true);
 
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
-      final workerName = userProvider.currentUser?.name ?? '근무자';
+      // W05-047: currentUser가 null인 비로그인 상태에서는 알림 발송 불가 — 조기 반환
+      final currentUser = userProvider.currentUser;
+      if (currentUser == null) {
+        ToastHelper.showError('로그인이 필요합니다.');
+        return;
+      }
+      final workerName = currentUser.name;
 
       // [특이사항] FirebaseFirestore.instance 직접 사용 — firestoreService에 ownerId 단독 조회 메서드가 없어
       //           businesses 컬렉션을 직접 읽는다. 추후 firestoreService.getBusinessOwnerId() 추가 시 교체.

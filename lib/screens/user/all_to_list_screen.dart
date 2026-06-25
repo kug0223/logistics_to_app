@@ -155,16 +155,19 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       final myApps = await appsFuture;
 
       if (!mounted) return;
+      // [특이사항] 지역 옵션·필터 결과를 사전 계산 후 단일 setState로 반영 — 연속 3회 setState(리빌드 낭비) 방지
+      final regionResult = _computeRegionOptions(toList);
+      final displayList = _computeDisplayList(toList);
       setState(() {
         _allTOList = toList;
         _lastDoc = lastDoc;
         _hasMoreData = hasMore;
         _myApplications = myApps;
+        _availableCities = regionResult.cities;
+        _districtMap = regionResult.districtMap;
+        _displayList = displayList;
         _isLoading = false;
       });
-
-      _updateRegionOptions();
-      _applyExpiredFilter();
     } catch (e) {
       debugPrint('❌ TO 목록 로드 실패: $e');
       if (!mounted) return;
@@ -202,15 +205,19 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
         return;
       }
 
+      // 지역 옵션과 displayList를 미리 계산하여 단일 setState로 일괄 반영 (성능 최적화)
+      final mergedList = [..._allTOList, ...toList];
+      final regionResult = _computeRegionOptions(mergedList);
+      final displayList = _computeDisplayList(mergedList);
       setState(() {
-        _allTOList = [..._allTOList, ...toList];
+        _allTOList = mergedList;
         _lastDoc = tosResult['lastDoc'] as DocumentSnapshot?;
         _hasMoreData = tosResult['hasMore'] as bool;
+        _availableCities = regionResult.cities;
+        _districtMap = regionResult.districtMap;
+        _displayList = displayList;
         _isLoadingMore = false;
       });
-
-      _updateRegionOptions();
-      _applyExpiredFilter();
     } catch (e) {
       debugPrint('❌ TO 추가 로드 실패: $e');
       if (!mounted) {
@@ -222,12 +229,12 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
     }
   }
 
-  /// 불러온 TO에서 지역 목록 추출
-  void _updateRegionOptions() {
+  /// 불러온 TO에서 지역 목록을 계산하여 반환 (setState 없음 — 호출자가 일괄 반영)
+  ({List<String> cities, Map<String, List<String>> districtMap}) _computeRegionOptions(List<TOModel> toList) {
     final cities = <String>{};
     final districtMap = <String, Set<String>>{};
 
-    for (final to in _allTOList) {
+    for (final to in toList) {
       final city = to.businessCity;
       if (city != null && city.isNotEmpty) {
         cities.add(city);
@@ -238,16 +245,16 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       }
     }
 
-    setState(() {
-      _availableCities = cities.toList()..sort();
-      _districtMap = districtMap.map((k, v) => MapEntry(k, v.toList()..sort()));
-    });
+    return (
+      cities: cities.toList()..sort(),
+      districtMap: districtMap.map((k, v) => MapEntry(k, v.toList()..sort())),
+    );
   }
 
-  /// 만료된 날짜 필터 (클라이언트 사이드 유지)
+  /// 만료 체크·날짜 범위 필터를 적용한 정렬된 목록을 계산하여 반환 (setState 없음 — 호출자가 일괄 반영)
   ///
   /// 만료 체크와 날짜 범위 필터를 단일 순회(O(n))로 처리.
-  void _applyExpiredFilter() {
+  List<TOModel> _computeDisplayList(List<TOModel> toList) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
 
@@ -260,7 +267,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
         ? DateTime(dr.end.year, dr.end.month, dr.end.day)
         : null;
 
-    final result = _allTOList.where((to) {
+    final result = toList.where((to) {
       // ── 0. 수동 마감 체크 — CF status 갱신 전(최대 30분) 즉시 반영
       if (to.isManualClosed) return false;
 
@@ -289,13 +296,12 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       return true;
     }).toList();
 
-    setState(() {
-      if (_filter.sortBy == 'date') {
-        _displayList = result..sort((a, b) => a.date.compareTo(b.date));
-      } else {
-        _displayList = result..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-      }
-    });
+    if (_filter.sortBy == 'date') {
+      result.sort((a, b) => a.date.compareTo(b.date));
+    } else {
+      result.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    }
+    return result;
   }
 
   /// 필터 변경 — 서버에서 새로 fetch
