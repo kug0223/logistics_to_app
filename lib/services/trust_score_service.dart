@@ -341,10 +341,9 @@ class TrustScoreService {
     try {
       final doc = await _firestore.collection('settings').doc('trust_rules').get();
       
+      // 문서 미존재 시 클라이언트 set() 금지 — settings 쓰기는 isSuperAdmin() 전용 (PERMISSION_DENIED 방지)
       if (!doc.exists) {
-        final defaults = TrustSettingsModel.defaults();
-        await _firestore.collection('settings').doc('trust_rules').set(defaults.toMap());
-        _cachedSettings = defaults;
+        _cachedSettings = TrustSettingsModel.defaults();
       } else {
         _cachedSettings = TrustSettingsModel.fromFirestore(doc);
       }

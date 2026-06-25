@@ -414,43 +414,47 @@ class MonthlyReviewService {
       // DateTime(year, month+1, 1)는 Dart가 13월을 자동 정규화(1월로 변환)하므로 12월도 안전.
       final monthEndExclusive = DateTime(year, month + 1, 1);
 
-      // 단기: workDate가 해당 월인 확정 지원서 (CONTRACT_PENDING 포함)
-      final shortTermFuture = _db
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('status', whereIn: [AppStatus.confirmed, AppStatus.contractPending])
-          .where('workDate',
-              isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
-          .where('workDate',
-              isLessThan: Timestamp.fromDate(monthEndExclusive))
-          .get();
-
-      // 장기: workEndDate가 해당 월 이후 (계약이 해당 월에 걸침, CONTRACT_PENDING 포함)
-      // ⚠️ G-045: limit(500) — 초대형 사업장에서 월 500명 초과 시 일부 누락. 현실적 위험 낮음.
-      final longTermFuture = _db
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('status', whereIn: [AppStatus.confirmed, AppStatus.contractPending])
-          .where('workEndDate',
-              isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
-          .limit(500)
-          .get();
-
+      // whereIn 복합 쿼리 → PERMISSION_DENIED 방지를 위해 status별 병렬 쿼리로 분리
+      // 단기: workDate가 해당 월인 확정 지원서 (CONFIRMED + CONTRACT_PENDING 각각)
+      // 장기: workEndDate가 해당 월 이후 (CONFIRMED + CONTRACT_PENDING 각각)
       // 해당 월 기존 리뷰 일괄 조회 (N+1 제거)
-      final existingReviewsFuture = _db
-          .collection('monthly_reviews')
-          .where('businessId', isEqualTo: businessId)
-          .where('reviewType', isEqualTo: ReviewType.ADMIN_TO_USER.name)
-          .where('reviewYear', isEqualTo: year)
-          .where('reviewMonth', isEqualTo: month)
-          .get();
+      final allResults = await Future.wait([
+        _db.collection('applications')
+            .where('businessId', isEqualTo: businessId)
+            .where('status', isEqualTo: AppStatus.confirmed)
+            .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
+            .where('workDate', isLessThan: Timestamp.fromDate(monthEndExclusive))
+            .get(),
+        _db.collection('applications')
+            .where('businessId', isEqualTo: businessId)
+            .where('status', isEqualTo: AppStatus.contractPending)
+            .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
+            .where('workDate', isLessThan: Timestamp.fromDate(monthEndExclusive))
+            .get(),
+        // ⚠️ G-045: limit(500) 각각 — 초대형 사업장에서 status당 500명 초과 시 일부 누락. 현실적 위험 낮음.
+        _db.collection('applications')
+            .where('businessId', isEqualTo: businessId)
+            .where('status', isEqualTo: AppStatus.confirmed)
+            .where('workEndDate', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
+            .limit(500)
+            .get(),
+        _db.collection('applications')
+            .where('businessId', isEqualTo: businessId)
+            .where('status', isEqualTo: AppStatus.contractPending)
+            .where('workEndDate', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
+            .limit(500)
+            .get(),
+        _db.collection('monthly_reviews')
+            .where('businessId', isEqualTo: businessId)
+            .where('reviewType', isEqualTo: ReviewType.ADMIN_TO_USER.name)
+            .where('reviewYear', isEqualTo: year)
+            .where('reviewMonth', isEqualTo: month)
+            .get(),
+      ]);
 
-      final results =
-          await Future.wait([shortTermFuture, longTermFuture, existingReviewsFuture]);
-
-      final shortTermDocs = results[0].docs;
-      final longTermDocs = results[1].docs;
-      final existingReviewDocs = results[2].docs;
+      final shortTermDocs = [...allResults[0].docs, ...allResults[1].docs];
+      final longTermDocs = [...allResults[2].docs, ...allResults[3].docs];
+      final existingReviewDocs = allResults[4].docs;
 
       // 이미 리뷰된 targetUserId 집합
       final reviewedUserIds = existingReviewDocs
@@ -705,14 +709,10 @@ class MonthlyReviewService {
     try {
       final doc =
           await _db.collection('settings').doc('review_tags').get();
-      if (!doc.exists) {
-        final defaults = ReviewTagsModel.defaults();
-        await _db
-            .collection('settings')
-            .doc('review_tags')
-            .set(defaults.toMap());
-        return defaults;
-      }
+      // 문서 미존재 시 클라이언트에서 set() 금지 — settings 쓰기는 isSuperAdmin() 전용.
+      // 슈퍼어드민이 아닌 사용자가 set()을 시도하면 PERMISSION_DENIED 발생.
+      // 문서가 없으면 기본값을 반환하고, 초기 생성은 슈퍼어드민 설정 화면에서 수행.
+      if (!doc.exists) return ReviewTagsModel.defaults();
       return ReviewTagsModel.fromFirestore(doc);
     } catch (e) {
       debugPrint('❌ 리뷰 태그 조회 실패: $e');
@@ -724,14 +724,8 @@ class MonthlyReviewService {
     try {
       final doc =
           await _db.collection('settings').doc('trust_rules').get();
-      if (!doc.exists) {
-        final defaults = TrustSettingsModel.defaults();
-        await _db
-            .collection('settings')
-            .doc('trust_rules')
-            .set(defaults.toMap());
-        return defaults;
-      }
+      // 동일 이유: 문서 미존재 시 기본값 반환 (클라이언트 set() 금지)
+      if (!doc.exists) return TrustSettingsModel.defaults();
       return TrustSettingsModel.fromFirestore(doc);
     } catch (e) {
       debugPrint('❌ 신뢰도 규칙 조회 실패: $e');
