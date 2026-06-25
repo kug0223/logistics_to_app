@@ -39,7 +39,10 @@ enum NotificationType {
   resignRequested,          // 퇴사 요청됨 (근무자→관리자)
   resignApproved,           // 퇴사 승인됨 (관리자→근무자)
   resignRejected,           // 퇴사 거절됨 (관리자→근무자)
-  
+  // [특이사항] contractRequested: 역방향 알림 — 다른 계약 관련 알림은 관리자→근무자지만
+  // 이 타입만 근무자→관리자 방향. CONTRACT_PENDING 상태에서 근무자가 계약서 발송을 독촉할 때 발송.
+  contractRequested,        // 계약서 작성 요청됨 (근무자→관리자)
+
   // 급여 관련
   wageConfirmed,              // 급여 정산 완료
   // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
@@ -209,6 +212,8 @@ class NotificationModel {
         return 'logout';
       case NotificationType.resignRejected:
         return 'do_not_disturb_on';
+      case NotificationType.contractRequested:
+        return 'mail';
       // 급여 관련
       case NotificationType.wageConfirmed:
         return 'payments';
@@ -298,6 +303,7 @@ class NotificationModel {
       case 'resignRequested': return NotificationType.resignRequested;
       case 'resignApproved': return NotificationType.resignApproved;
       case 'resignRejected': return NotificationType.resignRejected;
+      case 'contractRequested': return NotificationType.contractRequested;
       // 급여 관련
       case 'wageConfirmed': return NotificationType.wageConfirmed;
       // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
@@ -354,6 +360,7 @@ class NotificationModel {
       case NotificationType.resignRequested: return 'resignRequested';
       case NotificationType.resignApproved: return 'resignApproved';
       case NotificationType.resignRejected: return 'resignRejected';
+      case NotificationType.contractRequested: return 'contractRequested';
       // 급여 관련
       case NotificationType.wageConfirmed: return 'wageConfirmed';
       // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
@@ -442,7 +449,7 @@ class NotificationModel {
     );
   }
 
-  /// 지원 확정 알림 생성
+  /// 지원 승인 알림 생성
   static NotificationModel createApplicationConfirmed({
     required String userId,
     required String businessName,
@@ -455,8 +462,8 @@ class NotificationModel {
       id: '',
       userId: userId,
       type: NotificationType.applicationConfirmed,
-      title: '지원 확정',
-      body: '$businessName의 $workType 근무가 확정되었습니다.\n근무일: ${workDate.month}/${workDate.day}',
+      title: '지원 승인',
+      body: '$businessName의 $workType 지원이 승인되었습니다. 관리자가 곧 계약서를 발송할 예정입니다.\n근무일: ${workDate.month}/${workDate.day}',
       data: {
         'applicationId': applicationId,
         'businessId': businessId,
@@ -774,12 +781,38 @@ class NotificationModel {
       userId: userId,
       type: NotificationType.contractSignRequested,
       title: '근로계약서 서명 요청',
-      body: '$businessName에서 근로계약서 서명을 요청했습니다. 확인 후 서명해 주세요.',
+      body: '계약서가 도착했습니다. 서명 후 최종 확정됩니다.',
       data: {
         'contractId': contractId,
         'applicationId': applicationId,
         'businessId': businessId,
         'screen': 'contractSign',
+      },
+      createdAt: DateTime.now(),
+    );
+  }
+
+  /// 계약서 작성 요청 알림 생성 (근무자→관리자)
+  /// 근무자가 CONTRACT_PENDING 상태에서 "계약서 요청하기" 버튼을 누를 때 사업장 오너에게 발송.
+  // [특이사항] 수신자(userId)가 근무자가 아닌 사업장 ownerId — 발송 전 businesses/{businessId}.ownerId 조회 필요.
+  // [특이사항] 클라이언트에서 24시간 쿨다운(SharedPreferences key: contract_req_{applicationId})을 강제하므로
+  //           서버 중복 발송 방어는 없음. 관리자 UX 과부하 방지 목적의 소프트 제한이다.
+  static NotificationModel createContractRequested({
+    required String userId,
+    required String workerName,
+    required String businessId,
+    required String applicationId,
+  }) {
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.contractRequested,
+      title: '계약서 발송 요청',
+      body: '$workerName님이 계약서 발송을 요청했습니다.',
+      data: {
+        'applicationId': applicationId,
+        'businessId': businessId,
+        'action': 'applicationDetail',
       },
       createdAt: DateTime.now(),
     );

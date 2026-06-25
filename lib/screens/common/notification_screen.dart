@@ -445,6 +445,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
         break;
 
       case NotificationType.resignRequested:
+      // [특이사항] contractRequested: 근무자→관리자 방향 알림 — 수신자는 항상 관리자이므로
+      //           isUser 분기 없이 IntegratedWorkforceScreen 단일 경로로 처리.
+      case NotificationType.contractRequested:
         Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),

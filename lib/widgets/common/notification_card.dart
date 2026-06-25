@@ -163,6 +163,7 @@ class NotificationCard extends StatelessWidget {
         return Icons.event_busy;
       case NotificationType.terminationRequested:
       case NotificationType.resignRequested:
+      case NotificationType.contractRequested:
         return Icons.exit_to_app;
       case NotificationType.terminationApproved:
       case NotificationType.resignApproved:
@@ -226,6 +227,7 @@ class NotificationCard extends StatelessWidget {
       case NotificationType.contractVoided:
         return AppColors.error;
       case NotificationType.resignRequested:
+      case NotificationType.contractRequested:
       case NotificationType.contractSignRequested:
       case NotificationType.contractSigned:
       case NotificationType.contractExpiringReminder:

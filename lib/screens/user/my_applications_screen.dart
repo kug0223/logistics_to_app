@@ -2,11 +2,13 @@
 import 'package:flutter/gestures.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../models/core/application_model.dart';
 import '../../models/core/employment_contract_model.dart';
+import '../../models/core/notification_model.dart';
 import '../../models/core/monthly_review_model.dart';
 import '../../models/core/review_request_model.dart';
 import '../../models/core/to_model.dart';
@@ -54,6 +56,11 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   String _selectedFilter = 'ALL';
   int _autoLoadCount = 0;
   static const int _maxAutoLoad = 5;
+
+  // 계약서 요청 쿨다운 (앱ID → 마지막 요청 시각)
+  final Map<String, DateTime> _lastContractRequestMap = {};
+  final Map<String, bool> _isRequestingContract = {};
+  static const Duration _contractRequestCooldown = Duration(hours: 24);
 
   static const int _pageSize = 20;
 
@@ -122,6 +129,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           _hasMore = page['hasMore'] as bool;
           _isLoading = false;
         });
+        _loadContractRequestTimes(appWithTOs.map((a) => a.application.id).toList());
       }
     } catch (e) {
       debugPrint('❌ 지원 내역 로드 실패: $e');
@@ -260,6 +268,67 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       }
       return status == _selectedFilter;
     }).toList();
+  }
+
+  // ── 계약서 요청 쿨다운 ──
+
+  Future<void> _loadContractRequestTimes(List<String> appIds) async {
+    final prefs = await SharedPreferences.getInstance();
+    final Map<String, DateTime> map = {};
+    for (final id in appIds) {
+      final ts = prefs.getInt('contract_req_$id');
+      if (ts != null) {
+        map[id] = DateTime.fromMillisecondsSinceEpoch(ts);
+      }
+    }
+    if (mounted) setState(() => _lastContractRequestMap.addAll(map));
+  }
+
+  Future<void> _requestContract(ApplicationModel app) async {
+    if (_isRequestingContract[app.id] == true) return;
+    setState(() => _isRequestingContract[app.id] = true);
+
+    try {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final workerName = userProvider.currentUser?.name ?? '근무자';
+
+      // [특이사항] FirebaseFirestore.instance 직접 사용 — firestoreService에 ownerId 단독 조회 메서드가 없어
+      //           businesses 컬렉션을 직접 읽는다. 추후 firestoreService.getBusinessOwnerId() 추가 시 교체.
+      final bizDoc = await FirebaseFirestore.instance
+          .collection('businesses')
+          .doc(app.businessId)
+          .get();
+      if (!mounted) return;
+      final ownerId = bizDoc.data()?['ownerId'] as String?;
+      if (ownerId == null || ownerId.isEmpty) {
+        ToastHelper.showError('사업주 정보를 찾을 수 없습니다.');
+        return;
+      }
+
+      final notification = NotificationModel.createContractRequested(
+        userId: ownerId,
+        workerName: workerName,
+        businessId: app.businessId,
+        applicationId: app.id,
+      );
+      await _firestoreService.createNotification(notification);
+      if (!mounted) return;
+
+      // 쿨다운 저장
+      final now = DateTime.now();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt('contract_req_${app.id}', now.millisecondsSinceEpoch);
+      if (!mounted) return;
+
+      setState(() => _lastContractRequestMap[app.id] = now);
+      ToastHelper.showSuccess('계약서 발송을 요청했습니다.');
+    } catch (e) {
+      debugPrint('❌ 계약서 요청 실패: $e');
+      if (!mounted) return;
+      ToastHelper.showError('요청에 실패했습니다. 다시 시도해 주세요.');
+    } finally {
+      if (mounted) setState(() => _isRequestingContract[app.id] = false);
+    }
   }
 
   Future<void> _cancelApplication(String applicationId) async {
@@ -792,6 +861,53 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   /// 계약서 섹션 (확정된 지원서용)
   Widget _buildContractSection(ApplicationModel app) {
     final contract = _contractMap[app.id];
+
+    // 계약서 미생성 + 계약 대기 → 계약서 요청하기 버튼
+    if (contract == null && app.status == AppStatus.contractPending) {
+      final lastReq = _lastContractRequestMap[app.id];
+      final cooldownActive = lastReq != null &&
+          DateTime.now().difference(lastReq) < _contractRequestCooldown;
+      final isRequesting = _isRequestingContract[app.id] == true;
+
+      return Container(
+        margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 10)),
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: (cooldownActive || isRequesting)
+              ? null
+              : () => _requestContract(app),
+          icon: isRequesting
+              ? SizedBox(
+                  width: ResponsiveHelper.iconSize(context, 14),
+                  height: ResponsiveHelper.iconSize(context, 14),
+                  child: const CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(Icons.mail_outline, size: ResponsiveHelper.iconSize(context, 16)),
+          label: Text(
+            cooldownActive
+                ? '요청 완료 (24시간 내 재요청 불가)'
+                : '계약서 요청하기',
+            style: ResponsiveHelper.smallStyle(context).copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Theme.of(context).primaryColor,
+            side: BorderSide(
+              color: cooldownActive
+                  ? AppColors.grey300
+                  : Theme.of(context).primaryColor,
+            ),
+            padding: EdgeInsets.symmetric(
+              vertical: ResponsiveHelper.spacing(context, 10),
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        ),
+      );
+    }
 
     if (contract == null) return const SizedBox.shrink();
 
