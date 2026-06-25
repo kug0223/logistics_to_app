@@ -97,6 +97,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   final Map<String, bool> _reviewWrittenMap = {};
   // 이번 주 근무 횟수 (uid → 근무 횟수)
   final Map<String, int> _weeklyWorkCountMap = {};
+  // 계약서 상태 (applicationId → status string, null=미작성)
+  Map<String, String?> _contractStatusMap = {};
+  // 계약서 일괄작성 처리 중 플래그
+  bool _isContractBatchProcessing = false;
 
   @override
   void initState() {
@@ -110,23 +114,26 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       final currentUserId = userProvider.currentUser?.uid ?? '';
 
       // 슬롯 기반 TO는 해당 슬롯 지원자만, 아니면 전체 TO 지원자 조회 (대기+확정만)
+      // [BUGFIX] whereIn + equality 복합쿼리 시 Firestore 보안 규칙
+      //   request.query.filters.businessId가 null 반환 → PERMISSION_DENIED.
+      //   statuses 파라미터 제거 후 클라이언트 필터링으로 전환.
       final List<ApplicationModel> apps;
       if (widget.toItem.slot != null) {
         apps = await _firestoreService.getApplicationsBySlotId(
           widget.toItem.to.id,
           widget.toItem.slot!.id,
           businessId: widget.toItem.to.businessId,
-          statuses: const ['PENDING', 'CONTRACT_PENDING', 'CONFIRMED'],
         );
       } else {
         apps = await _firestoreService.getApplicationsByTOId(
           widget.toItem.to.id,
           businessId: widget.toItem.to.businessId,
-          statuses: const ['PENDING', 'CONTRACT_PENDING', 'CONFIRMED'],
         );
       }
 
+      const activeStatuses = {'PENDING', 'CONTRACT_PENDING', 'CONFIRMED'};
       final filtered = apps.where((app) {
+        if (!activeStatuses.contains(app.status)) return false;
         final wdId = app.workDetailId;
         if (wdId != null && wdId.isNotEmpty) {
           // 신규 compositeId 매칭
@@ -250,6 +257,13 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           .map((app) => app.id)
           .toSet();
 
+      // 계약서 상태 일괄 조회
+      final allAppIds = filtered.map((app) => app.id).toList();
+      final contractMap = await ContractService().getContractStatusBatch(
+        allAppIds,
+        businessId: widget.toItem.to.businessId,
+      );
+
       if (!mounted) return;
       setState(() {
         _applicants = applicantsWithUserInfo;
@@ -259,6 +273,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         _weeklyWorkCountMap
           ..clear()           // 재로딩 시 stale 데이터 제거
           ..addAll(weeklyCountMap);
+        _contractStatusMap = contractMap;
       });
   }, errorTag: '지원자 목록 로드');
 
@@ -394,7 +409,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                 SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                 Text(
                   '${FormatHelper.formatDate(widget.toItem.slot?.date ?? widget.toItem.to.date)} · ${widget.work.startTime}~${widget.work.endTime} | ${widget.work.formattedWage}',
-                  style: ResponsiveHelper.smallStyle(context, color: Colors.white70),
+                  style: ResponsiveHelper.smallStyle(context, color: Colors.white.withValues(alpha: 0.7)),
                 ),
               ],
             ),
@@ -621,6 +636,15 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                 if (requestableCount == 0) return const SizedBox.shrink();
                 return _buildIdCardRequestSection(context, requestableCount);
               }),
+              Builder(builder: (context) {
+                final noContractCount = confirmed.where((item) {
+                  final app = item['application'] as ApplicationModel;
+                  final status = _contractStatusMap[app.id];
+                  return status == null || status.isEmpty;
+                }).length;
+                if (noContractCount == 0) return const SizedBox.shrink();
+                return _buildContractBatchSection(context, noContractCount);
+              }),
               SizedBox(height: ResponsiveHelper.spacing(context, 8)),
               ...confirmed.asMap().entries.map((entry) {
                 final index = entry.key;
@@ -720,6 +744,67 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     );
   }
 
+  /// 계약서 일괄작성 섹션 (확정자 중 계약 미작성자)
+  Widget _buildContractBatchSection(BuildContext context, int noContractCount) {
+    return Container(
+      margin: EdgeInsets.only(
+        top: ResponsiveHelper.spacing(context, 4),
+        bottom: ResponsiveHelper.spacing(context, 4),
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 16),
+        vertical: ResponsiveHelper.spacing(context, 10),
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.description_outlined,
+            size: ResponsiveHelper.iconSize(context, 18),
+            color: AppColors.success,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Expanded(
+            child: Text(
+              '계약서 미작성 $noContractCount명',
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.successDark),
+            ),
+          ),
+          if (_isContractBatchProcessing)
+            const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else
+            InkWell(
+              onTap: _batchCreateContractsForConfirmed,
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 12),
+                  vertical: ResponsiveHelper.spacing(context, 6),
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.success,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '계약서 일괄작성',
+                  style: ResponsiveHelper.smallStyle(context, color: Colors.white)
+                      .copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   /// 미요청자 전체 선택
   void _selectAllRequestableUsers() {
     _selectedIdCardUserIds.clear();
@@ -789,9 +874,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       targets: targets,
     );
 
+    if (!mounted) return;
     if (successCount > 0) {
       _hasChanges = true;
-      
+
       // 상태 맵 업데이트 (요청 성공한 사용자들)
       setState(() {
         for (final uid in _selectedIdCardUserIds) {
@@ -846,13 +932,15 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     } else if (isStarred) {
       cardBg = AppColors.amber.withValues(alpha: 0.1); // amber[50] equivalent
       cardBorder = AppColors.amberLight;
+    } else if (!isPending) {
+      cardBg = AppColors.successBg.withValues(alpha: 0.35);
     }
 
     return Container(
-      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 4)),
       decoration: BoxDecoration(
         color: cardBg,
-        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
+        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 10)),
         border: Border.all(color: cardBorder),
       ),
       child: Material(
@@ -863,11 +951,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                   ? () => _toggleSelection(app.id)
                   : () => _showApplicantDetail(item))
               : () => _showApplicantDetail(item),
-          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
+          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 10)),
           child: Padding(
             padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 12),
-              vertical: ResponsiveHelper.spacing(context, 10),
+              horizontal: ResponsiveHelper.spacing(context, 10),
+              vertical: ResponsiveHelper.spacing(context, 8),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -963,7 +1051,12 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                             ),
                           ),
                           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                          if (isPending)
+                          Text(
+                            _formatAppliedTime(app.appliedAt),
+                            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+                          ),
+                          if (isPending) ...[
+                            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                             GestureDetector(
                               onTap: () {
                                 final nowStarred = !_starredIds.contains(app.id);
@@ -982,7 +1075,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                               behavior: HitTestBehavior.opaque,
                               child: Padding(
                                 padding: EdgeInsets.only(
-                                  left: ResponsiveHelper.spacing(context, 14),
+                                  left: ResponsiveHelper.spacing(context, 6),
                                   top: ResponsiveHelper.spacing(context, 10),
                                   bottom: ResponsiveHelper.spacing(context, 10),
                                 ),
@@ -992,42 +1085,30 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                   color: isStarred ? AppColors.amber : AppColors.grey300,
                                 ),
                               ),
-                            )
-                          else
-                            _buildReviewBadge(context, user?.uid),
+                            ),
+                          ],
                         ],
                       ),
                       SizedBox(height: ResponsiveHelper.spacing(context, 5)),
 
-                      // 2줄: 전화번호 · 지원시간
-                      Row(
-                        children: [
-                          Icon(Icons.phone, size: ResponsiveHelper.iconSize(context, 12), color: AppColors.grey400),
-                          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                          Text(
-                            user?.phone != null ? FormatHelper.formatPhone(user?.phone ?? '') : '-',
-                            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                          ),
-                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                          Text('·', style: ResponsiveHelper.smallStyle(context, color: AppColors.grey300)),
-                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                          Icon(Icons.access_time, size: ResponsiveHelper.iconSize(context, 12), color: AppColors.grey400),
-                          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                          Text(
-                            _formatAppliedTime(app.appliedAt),
-                            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-
-                      // 3줄: 신뢰도 + 이번 주 근무 + 평점 + 신분증(확정자)
-                      // Wrap 사용: 좁은 화면에서 배지가 다음 줄로 자동 이동
+                      // 2줄: 신뢰도 · 전화 · 주간횟수 · 평점
                       Wrap(
-                        spacing: ResponsiveHelper.spacing(context, 6),
-                        runSpacing: ResponsiveHelper.spacing(context, 4),
+                        spacing: ResponsiveHelper.spacing(context, 5),
+                        runSpacing: ResponsiveHelper.spacing(context, 3),
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
+                          if (user?.phone != null && (user?.phone ?? '').isNotEmpty)
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.phone, size: ResponsiveHelper.iconSize(context, 11), color: AppColors.grey400),
+                                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                Text(
+                                  FormatHelper.formatPhone(user?.phone ?? ''),
+                                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                                ),
+                              ],
+                            ),
                           _buildTrustBadge(context, trustScore),
                           if (weeklyCount != null)
                             _buildWeeklyCountBadge(context, weeklyCount),
@@ -1043,10 +1124,23 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                 ),
                               ],
                             ),
-                          if (!isPending)
-                            IdCardHelper.buildStatusBadge(context, idCardStatus),
                         ],
                       ),
+
+                      // 3줄: 배지 (리뷰·계약·신분증) — 확정자 전용
+                      if (!isPending) ...[
+                        SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+                        Wrap(
+                          spacing: ResponsiveHelper.spacing(context, 4),
+                          runSpacing: ResponsiveHelper.spacing(context, 3),
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            _buildReviewBadge(context, user?.uid),
+                            _buildContractBadge(context, app.id),
+                            IdCardHelper.buildStatusBadge(context, idCardStatus),
+                          ],
+                        ),
+                      ],
 
                       // 자기소개
                       if (app.applicationMessage?.isNotEmpty == true) ...[
@@ -1099,13 +1193,15 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                         ),
                       ],
 
-                      // 확정자 액션 버튼 (파트변경 / 확정취소 or 고정근무 관리) — 일괄선택 모드에서는 숨김
+                      // 확정자 액션 버튼 (파트변경 / 계약서 작성 / 확정취소 or 고정근무 관리)
                       if (!isPending && !_isBatchMode) ...[
                         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
+                        Wrap(
+                          alignment: WrapAlignment.end,
+                          spacing: ResponsiveHelper.spacing(context, 8),
+                          runSpacing: ResponsiveHelper.spacing(context, 6),
                           children: [
-                            if (widget.toItem.workDetails.length > 1) ...[
+                            if (widget.toItem.workDetails.length > 1)
                               _buildActionButton(
                                 context,
                                 label: '파트변경',
@@ -1114,10 +1210,19 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                 textColor: AppColors.info,
                                 onTap: () => _showChangeWorkPartDialog(item),
                               ),
-                              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                            ],
+                            // 계약 미작성 시 개별 작성 버튼
+                            if (_contractStatusMap[app.id] == null ||
+                                (_contractStatusMap[app.id]?.isEmpty ?? true))
+                              _buildActionButton(
+                                context,
+                                label: '계약서 작성',
+                                icon: Icons.description_outlined,
+                                bgColor: AppColors.success,
+                                textColor: Colors.white,
+                                filled: true,
+                                onTap: () => _createContractForConfirmedUser(item),
+                              ),
                             // [B-2] 장기근무자는 첫 출근 전에도 고정근무 관리 가능
-                            // 이전: hasAttendanceRecord가 true일 때만 표시 → 첫 출근 전 스케줄 조정 불가
                             if (widget.toItem.to.isLongTerm)
                               _buildActionButton(
                                 context,
@@ -1171,8 +1276,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                               context,
                               label: '승인',
                               icon: Icons.check,
-                              bgColor: AppColors.successBg,
-                              textColor: AppColors.successDark,
+                              bgColor: AppColors.success,
+                              textColor: Colors.white,
+                              filled: true,
                               onTap: () => _approveApplication(item),
                             ),
                           ],
@@ -1196,26 +1302,35 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     required Color bgColor,
     required Color textColor,
     required VoidCallback onTap,
+    bool filled = false,
   }) {
+    final effectiveBg = filled ? bgColor : Colors.transparent;
+    final effectiveText = filled ? Colors.white : textColor;
     return Material(
-      color: bgColor,
+      color: effectiveBg,
       borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
-        child: Padding(
+        child: Container(
           padding: EdgeInsets.symmetric(
             horizontal: ResponsiveHelper.spacing(context, 14),
             vertical: ResponsiveHelper.spacing(context, 6),
           ),
+          decoration: filled
+              ? null
+              : BoxDecoration(
+                  border: Border.all(color: textColor.withValues(alpha: 0.6)),
+                  borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
+                ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: ResponsiveHelper.iconSize(context, 13), color: textColor),
+              Icon(icon, size: ResponsiveHelper.iconSize(context, 13), color: effectiveText),
               SizedBox(width: ResponsiveHelper.spacing(context, 4)),
               Text(
                 label,
-                style: ResponsiveHelper.smallStyle(context, color: textColor)
+                style: ResponsiveHelper.smallStyle(context, color: effectiveText)
                     .copyWith(fontWeight: FontWeight.w600),
               ),
             ],
@@ -1257,6 +1372,58 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
             ),
           ),
         ],
+      ),
+    );
+  }
+
+/// 계약서 상태 배지 (확정자 전용)
+  Widget _buildContractBadge(BuildContext context, String appId) {
+    final status = _contractStatusMap[appId];
+    final String label;
+    final Color color;
+    final Color bgColor;
+    if (status == null || status.isEmpty) {
+      label = '계약미작성';
+      color = AppColors.error;
+      bgColor = AppColors.errorBg;
+    } else {
+      switch (status) {
+        case 'pending_employer':
+          label = '관리자서명';
+          color = AppColors.warningDark;
+          bgColor = AppColors.warningBg;
+        case 'pending_worker':
+          label = '서명대기';
+          color = AppColors.warningDark;
+          bgColor = AppColors.warningBg;
+        case 'completed':
+          label = '계약완료';
+          color = AppColors.successDark;
+          bgColor = AppColors.successBg;
+        case 'voided':
+          label = '무효';
+          color = AppColors.error;
+          bgColor = AppColors.errorBg;
+        default:
+          label = '계약중';
+          color = AppColors.grey600;
+          bgColor = AppColors.grey100;
+      }
+    }
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 5),
+        vertical: 1,
+      ),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Text(
+        label,
+        style: ResponsiveHelper.tinyStyle(context, color: color)
+            .copyWith(fontWeight: FontWeight.bold),
       ),
     );
   }
@@ -1872,6 +2039,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     if (articles == null || !mounted) return;
 
     // 2. 사업장 정보 + 인감 로드
+    final currentUserSeal = context.read<UserProvider>().currentUser?.sealBase64;
+    final currentUserSealType = context.read<UserProvider>().currentUser?.sealType ?? 'stamp';
+
     setState(() => _isProcessing = true);
     late BusinessModel business;
     late String sealBase64;
@@ -1884,12 +2054,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         return;
       }
       business = b;
-      final businessDoc = await FirebaseFirestore.instance
-          .collection('businesses')
-          .doc(businessId)
-          .get();
-      final seal = businessDoc.data()?['sealBase64'] as String?;
-      if (seal == null || seal.isEmpty) {
+      // 날인은 users/{uid}에서 전역 로드 (설정에서 등록한 날인 사용)
+      if (currentUserSeal == null || currentUserSeal.isEmpty) {
         if (!mounted) return;
         final goToSettings = await DialogHelper.showConfirm(
           context,
@@ -1906,8 +2072,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         }
         return;
       }
-      sealBase64 = seal;
-      sealType = businessDoc.data()?['sealType'] as String? ?? 'stamp';
+      sealBase64 = currentUserSeal;
+      sealType = currentUserSealType;
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -2157,6 +2323,249 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         ),
       ),
     );
+  }
+
+  /// 확정자 계약서 일괄작성 (이미 확정된 상태 → 상태 변경 없이 계약서만 생성)
+  Future<void> _batchCreateContractsForConfirmed() async {
+    if (_isContractBatchProcessing) return;
+    final businessId = widget.toItem.to.businessId;
+
+    // 1. 템플릿 선택
+    final articles = await ContractTemplateSelectorDialog.show(context, businessId: businessId);
+    if (articles == null || !mounted) return;
+
+    // 2. 인감 확인
+    final currentUser = context.read<UserProvider>().currentUser;
+    final sealBase64 = currentUser?.sealBase64 ?? '';
+    final sealType = currentUser?.sealType ?? 'stamp';
+    if (sealBase64.isEmpty) {
+      if (!mounted) return;
+      final goSettings = await DialogHelper.showConfirm(
+        context,
+        title: '사업주 날인 미등록',
+        message: '일괄 계약 발송에는 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 또는 서명을 먼저 등록해주세요.',
+        confirmText: '설정으로 이동',
+        cancelText: '취소',
+      );
+      if (!mounted) return;
+      if (goSettings) {
+        Navigator.of(context, rootNavigator: true)
+            .push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
+      }
+      return;
+    }
+
+    // 3. 사업장 정보 로드
+    setState(() => _isContractBatchProcessing = true);
+    late BusinessModel business;
+    try {
+      final b = await _firestoreService.getBusinessById(businessId);
+      if (b == null) {
+        ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+        return;
+      }
+      business = b;
+    } finally {
+      if (mounted) setState(() => _isContractBatchProcessing = false);
+    }
+    if (!mounted) return;
+
+    // 4. 계약 미작성 확정자 수집
+    final toProcess = _applicants.where((item) {
+      final app = item['application'] as ApplicationModel;
+      if (!AppStatus.confirmedStatuses.contains(app.status)) return false;
+      final status = _contractStatusMap[app.id];
+      return status == null || status.isEmpty;
+    }).toList();
+    if (toProcess.isEmpty) return;
+
+    // 5. 첫 번째 대상으로 미리보기 생성
+    final firstApp = toProcess.first['application'] as ApplicationModel;
+    final firstUser = toProcess.first['user'] as UserModel?;
+    if (firstUser == null) {
+      ToastHelper.showError('지원자 정보를 불러올 수 없습니다');
+      return;
+    }
+
+    setState(() => _isContractBatchProcessing = true);
+    late EmploymentContractModel previewContract;
+    try {
+      previewContract = await ContractService().buildPreviewContract(
+        application: firstApp,
+        business: business,
+        worker: firstUser,
+        workDetail: widget.work,
+        articles: articles,
+      );
+    } catch (e) {
+      ToastHelper.showError('계약서 미리보기 생성에 실패했습니다');
+      return;
+    } finally {
+      if (mounted) setState(() => _isContractBatchProcessing = false);
+    }
+    if (!mounted) return;
+
+    // 6. 미리보기 다이얼로그
+    final confirmed = await _showBatchContractPreview(
+      contract: previewContract,
+      sealBase64: sealBase64,
+      sealType: sealType,
+      count: toProcess.length,
+    );
+    if (confirmed != true || !mounted) return;
+
+    // 7. 일괄 계약서 생성 + 날인
+    setState(() => _isContractBatchProcessing = true);
+    final sealBytes = base64Decode(sealBase64);
+    try {
+      Future<bool> processOne(Map<String, dynamic> item) async {
+        final app = item['application'] as ApplicationModel;
+        final user = item['user'] as UserModel?;
+        if (user == null) return false;
+        try {
+          final contract = await ContractService().findOrCreateContract(
+            application: app,
+            business: business,
+            worker: user,
+            workDetail: widget.work,
+            articles: articles,
+          );
+          await ContractService().saveEmployerSignature(
+            contract: contract,
+            signatureBytes: sealBytes,
+          );
+          return true;
+        } catch (e) {
+          debugPrint('❌ [${app.id}] 계약서 발송 실패: $e');
+          return false;
+        }
+      }
+
+      const batchSize = 5;
+      int successCount = 0;
+      for (var i = 0; i < toProcess.length; i += batchSize) {
+        final batch = toProcess.sublist(i, min(i + batchSize, toProcess.length));
+        final results = await Future.wait(batch.map(processOne));
+        successCount += results.where((r) => r).length;
+      }
+
+      if (!mounted) return;
+      if (successCount < toProcess.length) {
+        ToastHelper.showWarning(
+            '$successCount/${toProcess.length}명 계약서 발송 완료. 실패한 항목은 다시 시도해주세요.');
+      } else {
+        ToastHelper.showSuccess('${toProcess.length}명에게 계약서가 발송되었습니다');
+      }
+      _hasChanges = true;
+      setState(() {
+        for (final item in toProcess) {
+          final app = item['application'] as ApplicationModel;
+          _contractStatusMap[app.id] = 'pending_worker';
+        }
+      });
+    } catch (e) {
+      ToastHelper.showError('처리 중 오류가 발생했습니다');
+      debugPrint('❌ 계약서 일괄 발송 실패: $e');
+    } finally {
+      if (mounted) setState(() => _isContractBatchProcessing = false);
+    }
+  }
+
+  /// 개별 계약서 작성 (확정자 단건)
+  Future<void> _createContractForConfirmedUser(Map<String, dynamic> item) async {
+    if (_isProcessing) return;
+    final app = item['application'] as ApplicationModel;
+    final user = item['user'] as UserModel?;
+    if (user == null) return;
+    final businessId = widget.toItem.to.businessId;
+
+    // 1. 템플릿 선택
+    final articles = await ContractTemplateSelectorDialog.show(context, businessId: businessId);
+    if (articles == null || !mounted) return;
+
+    // 2. 인감 확인
+    final currentUser = context.read<UserProvider>().currentUser;
+    final sealBase64 = currentUser?.sealBase64 ?? '';
+    final sealType = currentUser?.sealType ?? 'stamp';
+    if (sealBase64.isEmpty) {
+      if (!mounted) return;
+      final goSettings = await DialogHelper.showConfirm(
+        context,
+        title: '사업주 날인 미등록',
+        message: '계약 발송에는 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 또는 서명을 먼저 등록해주세요.',
+        confirmText: '설정으로 이동',
+        cancelText: '취소',
+      );
+      if (!mounted) return;
+      if (goSettings) {
+        Navigator.of(context, rootNavigator: true)
+            .push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
+      }
+      return;
+    }
+
+    // 3. 사업장 정보 로드 + 미리보기 생성
+    setState(() => _isProcessing = true);
+    late EmploymentContractModel previewContract;
+    try {
+      final b = await _firestoreService.getBusinessById(businessId);
+      if (b == null) {
+        ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+        return;
+      }
+      previewContract = await ContractService().buildPreviewContract(
+        application: app,
+        business: b,
+        worker: user,
+        workDetail: widget.work,
+        articles: articles,
+      );
+    } catch (e) {
+      ToastHelper.showError('계약서 미리보기 생성에 실패했습니다');
+      return;
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
+    if (!mounted) return;
+
+    // 4. 미리보기
+    final ok = await _showBatchContractPreview(
+      contract: previewContract,
+      sealBase64: sealBase64,
+      sealType: sealType,
+      count: 1,
+    );
+    if (ok != true || !mounted) return;
+
+    // 5. 계약서 생성 + 날인
+    setState(() => _isProcessing = true);
+    try {
+      final b = await _firestoreService.getBusinessById(businessId);
+      if (b == null) {
+        ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+        return;
+      }
+      final sealBytes = base64Decode(sealBase64);
+      final contract = await ContractService().findOrCreateContract(
+        application: app,
+        business: b,
+        worker: user,
+        workDetail: widget.work,
+        articles: articles,
+      );
+      await ContractService().saveEmployerSignature(
+        contract: contract,
+        signatureBytes: sealBytes,
+      );
+      if (!mounted) return;
+      ToastHelper.showSuccess('계약서가 발송되었습니다');
+      _hasChanges = true;
+      setState(() => _contractStatusMap[app.id] = 'pending_worker');
+    } catch (e) {
+      if (mounted) ToastHelper.showError('계약서 발송 실패: $e');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
   }
 
   /// 일괄 거절
