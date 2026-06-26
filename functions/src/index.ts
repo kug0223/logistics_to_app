@@ -78,6 +78,7 @@ export const sendPasswordResetCode = onCall(
       }
       tx.set(pwResetDoc, {
         code,
+        uid: snapshot.docs[0].id,
         expiresAt: Timestamp.fromDate(expiresAt),
         createdAt: Timestamp.now(),
         attempts: 0,
@@ -148,6 +149,7 @@ export const resetPasswordWithCode = onCall(
 
     // 읽기+업데이트를 트랜잭션으로 묶어 병렬 요청에 의한 브루트포스 제한 우회 차단
     const now = admin.firestore.Timestamp.now();
+    let resolvedUid: string | undefined;
     await db.runTransaction(async (tx) => {
       const doc = await tx.get(docRef);
       if (!doc.exists) {
@@ -183,23 +185,25 @@ export const resetPasswordWithCode = onCall(
         tx.update(docRef, {attempts: admin.firestore.FieldValue.increment(1)});
         throw new HttpsError("invalid-argument", "인증번호가 일치하지 않습니다.");
       }
-      // 검증 성공 → 즉시 삭제 대신 used 마킹 (원자성 보장)
-      // 비밀번호 변경 성공 후 최종 삭제
+      // 검증 성공 → sendPasswordResetCode가 저장한 uid 추출 (users 재조회 불필요)
+      resolvedUid = data.uid as string | undefined;
       tx.update(docRef, {used: true, usedAt: now});
     });
 
-    // 코드 검증 성공 → 사용자 UID 조회
-    const userSnapshot = await db
-      .collection("users")
-      .where("username", "==", username)
-      .limit(1)
-      .get();
-
-    if (userSnapshot.empty) {
-      throw new HttpsError("not-found", "사용자를 찾을 수 없습니다.");
+    if (!resolvedUid) {
+      // [특이사항] 이전에 발급된 코드(uid 필드 없는 레거시 문서)에 대한 폴백 처리
+      // sendPasswordResetCode 배포 후 5분(코드 만료) 이내에만 발생 가능
+      const userSnapshot = await db
+        .collection("users")
+        .where("username", "==", username)
+        .limit(1)
+        .get();
+      if (userSnapshot.empty) {
+        throw new HttpsError("not-found", "사용자를 찾을 수 없습니다.");
+      }
+      resolvedUid = userSnapshot.docs[0].id;
     }
-
-    const uid = userSnapshot.docs[0].id;
+    const uid = resolvedUid;
 
     // 비밀번호 재사용 금지 — 최근 5개 이력 비교
     // [특이사항] SHA-256 단순 해시로 비밀번호 이력 저장 — 강화가 필요하다면 PBKDF2 사용 권장
@@ -1575,10 +1579,8 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
     }
   }
 
-  // 그룹 마스터 상태 동기화
-  for (const groupId of affectedGroupIds) {
-    await syncGroupMasterStatus(db, groupId);
-  }
+  // 그룹 마스터 상태 동기화 — 병렬 처리로 N번 순차 쿼리 단축
+  await Promise.all([...affectedGroupIds].map((gid) => syncGroupMasterStatus(db, gid)));
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1663,10 +1665,8 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
     await syncTOStatusFromWorkDetails(db, toId);
   }
 
-  // 영향받은 그룹 마스터 동기화
-  for (const groupId of affectedGroupIds) {
-    await syncGroupMasterStatus(db, groupId);
-  }
+  // 영향받은 그룹 마스터 동기화 — 병렬 처리
+  await Promise.all([...affectedGroupIds].map((gid) => syncGroupMasterStatus(db, gid)));
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1704,16 +1704,24 @@ async function processSlotWorkDetailExpiry(now: Timestamp): Promise<void> {
   let totalClosedSlots = 0;
   const affectedTOIds = new Set<string>();
 
+  // 1단계: 각 슬롯의 업데이트 내용 계산 (동기)
+  type SlotPending = {
+    slotDoc: FirebaseFirestore.QueryDocumentSnapshot;
+    slotData: FirebaseFirestore.DocumentData;
+    slotUpdate: Record<string, any>;
+    expiredItems: any[];
+    allDetailsClosed: boolean;
+    toId: string | undefined;
+  };
+  const pending: SlotPending[] = [];
+
   for (const slotDoc of slotsSnap.docs) {
     const slotData = slotDoc.data();
-
-    // 관리자 직접마감 슬롯은 건너뜀 (closedBy 있음 = 직접마감)
     if (slotData.closedBy != null) continue;
 
     const workDetails: any[] = slotData.workDetails ?? [];
     if (workDetails.length === 0) continue;
 
-    // 마감 시간이 지난 workDetail 탐색
     const expiredItems = workDetails.filter((wd: any) => {
       if (wd.isEmergencyOpen === true) return false;
       if (wd.closedAt != null) return false;
@@ -1727,44 +1735,43 @@ async function processSlotWorkDetailExpiry(now: Timestamp): Promise<void> {
 
     if (expiredItems.length === 0) continue;
 
-    // 만료된 workDetail에 closedAt 기록
-    const expiredTypes = new Set(
-      expiredItems.map((wd: any) => wd.workType as string)
-    );
+    const expiredTypes = new Set(expiredItems.map((wd: any) => wd.workType as string));
     const updatedWorkDetails = workDetails.map((wd: any) =>
-      expiredTypes.has(wd.workType) ?
-        {...wd, closedAt: now, closedReason: "TIME_EXPIRED"} :
-        wd
+      expiredTypes.has(wd.workType) ? {...wd, closedAt: now, closedReason: "TIME_EXPIRED"} : wd
     );
 
-    // 슬롯 내 모든 workDetail이 마감됐는지 확인 (긴급공개 제외)
     const allDetailsClosed = updatedWorkDetails.every(
       (wd: any) => wd.isEmergencyOpen === true || wd.closedAt != null
     );
 
     const slotUpdate: Record<string, any> = {workDetails: updatedWorkDetails};
     if (allDetailsClosed) {
-      // isManualClosed는 false 유지 — 자동 만료 슬롯은 재오픈 목록에 나타나지 않아야 함
       slotUpdate.status = "closed";
       slotUpdate.closedAt = now;
       slotUpdate.closedReason = "TIME_EXPIRED";
-      totalClosedSlots++;
     }
 
-    // [특이사항] 개별 슬롯 업데이트 실패 시 try/catch 없으면 나머지 슬롯 처리가 중단됨.
-    // 1건 실패를 로그로 남기고 계속 진행한다.
-    try {
-      await slotDoc.ref.update(slotUpdate);
-    } catch (e) {
-      console.error(`⚠️ [슬롯 WorkDetail 마감] 슬롯 ${slotDoc.id} 업데이트 실패:`, e);
-      if (allDetailsClosed) totalClosedSlots--; // 실패했으므로 카운트 롤백
+    const toId =
+      (slotData.toId as string | undefined) ?? slotDoc.ref.parent.parent?.id;
+
+    pending.push({slotDoc, slotData, slotUpdate, expiredItems, allDetailsClosed, toId});
+  }
+
+  // 2단계: 병렬 업데이트 (Promise.allSettled → 개별 실패에도 나머지 계속 진행)
+  const results = await Promise.allSettled(
+    pending.map(({slotDoc, slotUpdate}) => slotDoc.ref.update(slotUpdate))
+  );
+
+  // 3단계: 결과 집계
+  for (let i = 0; i < pending.length; i++) {
+    const {slotDoc, expiredItems, allDetailsClosed, toId} = pending[i];
+    const result = results[i];
+    if (result.status === "rejected") {
+      console.error(`⚠️ [슬롯 WorkDetail 마감] 슬롯 ${slotDoc.id} 업데이트 실패:`, result.reason);
       continue;
     }
     totalClosedDetails += expiredItems.length;
-
-    const toId =
-      (slotData.toId as string | undefined) ??
-      slotDoc.ref.parent.parent?.id;
+    if (allDetailsClosed) totalClosedSlots++;
     if (toId) {
       affectedTOIds.add(toId);
       expiredItems.forEach((wd: any) =>
@@ -1923,10 +1930,8 @@ async function processTOExpiry(now: Timestamp): Promise<void> {
   if (batchCount > 0) await batch.commit();
   console.log(`  ✅ [TO 마감] ${tosToClose.length}개 완료!`);
 
-  // 그룹 마스터 동기화
-  for (const groupId of affectedGroupIds) {
-    await syncGroupMasterStatus(db, groupId);
-  }
+  // 그룹 마스터 동기화 — 병렬 처리
+  await Promise.all([...affectedGroupIds].map((gid) => syncGroupMasterStatus(db, gid)));
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2136,11 +2141,10 @@ async function runIntegrityCheck(now: Timestamp): Promise<void> {
 
     for (const masterDoc of masterTOs.docs) {
       const groupId = masterDoc.data().groupId as string | undefined;
-      if (groupId && !processedGroupIds.has(groupId)) {
-        await syncGroupMasterStatus(db, groupId);
-        processedGroupIds.add(groupId);
-      }
+      if (groupId) processedGroupIds.add(groupId);
     }
+    // 병렬 동기화 — 중복 groupId는 Set이 제거
+    await Promise.all([...processedGroupIds].map((gid) => syncGroupMasterStatus(db, gid)));
 
     console.log(
       `  ✅ [정합성 검사] 완료: ${fixedCount}개 수정, ` +
