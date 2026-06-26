@@ -239,10 +239,10 @@ class TestDataHelper {
       // 릴리즈 빌드에서도 debugPrint는 출력됨 — 주민번호·계좌번호는 kDebugMode 가드 안에서만 로그.
       debugPrint('  ✅ $name ($gender, $calculatedAge세) | 평점: ${averageRating.toStringAsFixed(1)} | 신뢰도: $trustScore점');
       if (kDebugMode) {
-        debugPrint('     🆔 $residentNumber');
+        debugPrint('     🆔 ${EncryptionHelper.maskResidentNumber(residentNumber)}');
         debugPrint('     📞 $phone');
         debugPrint('     🏠 $address $detailAddress');
-        debugPrint('     💳 $bankName $accountNumber ($accountHolder)');
+        debugPrint('     💳 $bankName ${EncryptionHelper.maskAccountNumber(accountNumber)} ($accountHolder)');
       }
       debugPrint('     💼 선호: ${preferredWorkTypes.join(", ")}');
       debugPrint('     📊 근무: $totalWorkDays일 ($totalWorkHours시간)');
