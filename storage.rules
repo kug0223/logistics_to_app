@@ -49,9 +49,11 @@ service firebase.storage {
     // delete: ownerId 또는 subAdminOf 허용 (isBusinessAdmin)
     // - 사업장 삭제 버튼은 UI에서 ownerId만 노출
     // - 업무유형 이미지 교체 시 SUB_ADMIN도 delete 필요 (해당 화면 접근 제한 없음)
+    // [특이사항] isBusinessAdmin: ownerId 또는 subAdminOf 체크 — SUB_ADMIN도 업무유형 이미지 교체 허용.
+    // 이전에 isLoggedIn()만 체크해 누구든 타 사업장 파일 덮어쓰기 가능했던 취약점 수정.
     match /businesses/{businessId}/{allPaths=**} {
       allow read: if isLoggedIn();
-      allow create, update: if isLoggedIn() && isUnder5MB();
+      allow create, update: if isBusinessAdmin(businessId) && isUnder5MB();
       allow delete: if isBusinessAdmin(businessId);
     }
 
@@ -70,9 +72,12 @@ service firebase.storage {
     // delete: 계약서 당사자(근무자 또는 사업주)만 허용
     //   → 서명 업로드 실패 시 롤백 코드에서 사용 (saveEmployerSignature / saveWorkerSignature)
     // read: 로그인 사용자 — URL 자체가 비공개이므로 앱 레벨 접근 제어로 충분
+    // [특이사항] 계약서 파일(서명 이미지·PDF)은 당사자(근무자·사업주)만 업로드 허용.
+    // employment_contracts Firestore 문서가 먼저 생성된 후 업로드 — isContractParty Firestore get 선행 의존.
+    // 이전에 isLoggedIn()만 체크해 타인의 계약서 경로에 파일 업로드 가능했던 취약점 수정.
     match /contracts/{contractId}/{allPaths=**} {
       allow read: if isLoggedIn();
-      allow create, update: if isLoggedIn() && isUnder10MB();
+      allow create, update: if isContractParty(contractId) && isUnder10MB();
       allow delete: if isContractParty(contractId);
     }
 
