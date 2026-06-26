@@ -488,7 +488,9 @@ class DialogHelper {
     ];
     
     String? selectedReason;
-    final customController = TextEditingController();
+    final customController = TextEditingController(
+      text: '지원해 주셔서 감사합니다. 이번에는 인연이 닿지 않았지만, 다음에 또 지원 부탁드립니다.',
+    );
     
     final result = await showDialog<String>(
       context: context,
