@@ -943,6 +943,15 @@ service cloud.firestore {
                           resource.data.get('workerSignedAt', null) == null))
                       );
 
+      // [특이사항] voidContract() 실행 흐름: 계약서를 voided 전환 후 application 취소 루프 실행.
+      // 일부 application 취소 실패 시 failedIds를 voidFailedAppIds에 기록해 재처리(retryVoidFailedApps)에 사용.
+      // 이 시점엔 이미 status='voided'이므로 위 update 규칙(status != voided 조건)에서 막힘 → 별도 규칙 필요.
+      allow update: if isLoggedIn() &&
+                      isAdminOf(resource.data.businessId) &&
+                      resource.data.status == 'voided' &&
+                      request.resource.data.diff(resource.data).affectedKeys()
+                        .hasOnly(['voidFailedAppIds']);
+
       allow delete: if isSuperAdmin();
     }
 

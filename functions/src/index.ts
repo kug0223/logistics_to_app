@@ -325,10 +325,15 @@ export const createNotification = onCall(
       throw new HttpsError("invalid-argument", "userId가 필요합니다.");
     }
 
-    // 호출자(request.auth.uid)가 본인 또는 로그인된 사용자인지만 확인
-    // (알림은 항상 타인에게도 보낼 수 있어야 함 — 지원자→관리자, 관리자→지원자 등)
+    // [특이사항] 알림은 항상 타인에게도 보낼 수 있어야 함 (지원자→관리자, 관리자→지원자).
+    // Admin SDK 우회이므로 필드 화이트리스트로 임의 데이터 저장을 차단한다.
     const payload: Record<string, unknown> = {
-      ...data,
+      userId,
+      title: data.title as string | undefined,
+      body: data.body as string | undefined,
+      type: (data.type as string | undefined) ?? "general",
+      data: (data.data as Record<string, unknown> | undefined) ?? {},
+      isRead: false,
       createdAt: Timestamp.now(),
     };
 

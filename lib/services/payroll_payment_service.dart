@@ -383,6 +383,10 @@ class PayrollPaymentService {
   // ══════════════════════════════════════════════════════════
 
   /// 중간정산 요청 생성
+  // [특이사항] 동일 attendanceIds로 중복 요청이 생성될 수 있음.
+  // approveInterimSettlement()에서 이미 transferred인 건은 skip하므로
+  // 이중 지급은 방어되지만, 불필요한 중복 요청이 pending 상태로 남을 수 있음.
+  // UI 레이어에서 동일 기간의 미완료 요청이 있으면 생성을 차단한다.
   Future<String> createInterimSettlementRequest(
       InterimSettlementRequestModel req) async {
     final ref = _db.collection('interim_settlement_requests').doc();
