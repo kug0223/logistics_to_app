@@ -8,6 +8,7 @@ import '../services/member_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'notification_provider.dart';
 import '../services/fcm_service.dart';
+import '../services/firestore_service.dart';
 
 class UserProvider with ChangeNotifier {
   final AuthService _authService = AuthService();
@@ -300,15 +301,22 @@ class UserProvider with ChangeNotifier {
     try {
       // 알림 Provider 정리
       _notificationProvider?.clearUser();
-      
+
       // FCM 토큰 삭제
       await FCMService().clearToken();
-      
+
       await _authService.signOut();
       _currentUser = null;
       _memberPermissions = null;
       _isAdminMode = false;
       _error = null;
+
+      // [특이사항] 로그아웃 시 FirestoreService 메모리 캐시 정리.
+      // Firestore 오프라인 영속성 캐시(clearPersistence)는 활성 리스너와 충돌 위험이 있어
+      // 호출 시점이 제한적이다 — 메모리 캐시(_userCache 등)만 정리한다.
+      // 같은 기기에서 다른 계정으로 로그인 시 이전 사용자의 캐시된 사용자 정보 노출 방지.
+      FirestoreService().clearCache();
+
       debugPrint('✅ 로그아웃 성공');
       notifyListeners();
     } catch (e) {
@@ -319,6 +327,7 @@ class UserProvider with ChangeNotifier {
       _memberPermissions = null;
       _isAdminMode = false;
       _error = null;
+      FirestoreService().clearCache();
       notifyListeners();
     }
   }
