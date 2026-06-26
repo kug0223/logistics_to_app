@@ -603,6 +603,30 @@ extension TOFirestore on FirestoreService {
     }
   }
 
+  /// 슬롯 문서의 workDetails별 requiredCount 맵 반환
+  /// key: workDetail.id (없으면 '${workType}_${startTime}_${endTime}')
+  Future<Map<String, int>> getSlotWorkDetailCapacities(String toId, String slotId) async {
+    try {
+      final doc = await _firestore
+          .collection('tos').doc(toId)
+          .collection('slots').doc(slotId)
+          .get(const GetOptions(source: Source.server));
+      if (!doc.exists) return {};
+      final workDetails = doc.data()?['workDetails'] as List? ?? [];
+      final result = <String, int>{};
+      for (final wd in workDetails) {
+        final map = wd as Map<String, dynamic>;
+        final id = (map['id'] as String?)?.isNotEmpty == true
+            ? map['id'] as String
+            : '${map['workType']}_${map['startTime']}_${map['endTime']}';
+        result[id] = (map['requiredCount'] as num?)?.toInt() ?? 0;
+      }
+      return result;
+    } catch (_) {
+      return {};
+    }
+  }
+
   /// 슬롯 목록 조회
   /// [visibleOnly] true 면 visibleFrom <= 현재시각인 슬롯만 반환 (유저용)
   Future<List<SlotModel>> getSlots(String toId, {bool visibleOnly = false}) async {

@@ -36,7 +36,7 @@ import '../../../widgets/dialogs/contract_template_selector_dialog.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../widgets/dialogs/worker_detail_dialog.dart';
 
-// ─── 그룹 데이터 (공고(TO) 단위) ────────────────────────────────────────────
+// ─── 그룹 데이터 (업무 단위) ────────────────────────────────────────────────
 class _GroupData {
   final String? toId;
   final String toTitle;
@@ -44,6 +44,8 @@ class _GroupData {
   final String startTime;
   final String endTime;
   final bool isLongTerm;
+  final String? workDetailId;   // WorkDetail 고유 ID
+  int requiredCount;             // 나중에 채움
   final List<ApplicationModel> pendingApps = [];
   final List<ApplicationModel> confirmedApps = [];
 
@@ -54,10 +56,25 @@ class _GroupData {
     required this.startTime,
     required this.endTime,
     required this.isLongTerm,
+    this.workDetailId,
+    this.requiredCount = 0,
   });
 
-  // 그룹 고유 키 — 다중 그룹 선택 모드 스코프에 사용
-  String get groupKey => toId ?? '${toTitle}_$workType';
+  // 공고 고유 키 (공고 헤더 그룹핑용)
+  String get toKey => toId ?? 'noid_$toTitle';
+
+  // 업무 고유 키 (그룹 스코프 — 신분증/계약서 일괄처리)
+  String get groupKey {
+    final wKey = workDetailId?.isNotEmpty == true
+        ? workDetailId!
+        : '${workType}_${startTime}_$endTime';
+    return '${toId ?? toTitle}_$wKey';
+  }
+
+  // capacity 맵에서 찾을 때 사용할 키
+  String get capacityKey => workDetailId?.isNotEmpty == true
+      ? workDetailId!
+      : '${workType}_${startTime}_$endTime';
 }
 
 // ─── 다이얼로그 ────────────────────────────────────────────────────────────────
@@ -91,7 +108,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   Map<String, UserModel> _userMap = {};
   Map<String, String?> _contractStatusMap = {};
   Map<String, int> _weeklyWorkCountMap = {};
-  Map<String, int> _toCapacityMap = {};
+  Map<String, int> _workDetailCapacityMap = {};
 
   final Set<String> _selectedIds = {};
   final Set<String> _starredIds = {};
@@ -176,17 +193,17 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         final allUids = allApps.map((a) => a.uid).toSet().toList();
         final allAppIds = allApps.map((a) => a.id).toList();
 
-        Map<String, int> toCapacityMap = {};
+        Map<String, int> workDetailCapacityMap = {};
         final results = await Future.wait([
           _svc.getUsersBatch(allUids),
           _contractSvc.getContractStatusBatch(allAppIds, businessId: bizId),
           _loadWeeklyCount(bizId),
-          _loadSlotCapacity(allApps),
+          _loadWorkDetailCapacities(allApps),
         ]);
         userMap = results[0] as Map<String, UserModel>;
         contractMap = results[1] as Map<String, String?>;
         weeklyMap = results[2] as Map<String, int>;
-        toCapacityMap = results[3] as Map<String, int>;
+        workDetailCapacityMap = results[3] as Map<String, int>;
 
         // Phase 3: 신분증 상태 + 리뷰 작성 여부 (확정자만) + 관심표시 복원
         final confirmedUserIds = confirmed.map((a) => a.uid).toSet().toList();
@@ -228,7 +245,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           _userMap = userMap;
           _contractStatusMap = contractMap;
           _weeklyWorkCountMap = weeklyMap;
-          _toCapacityMap = toCapacityMap;
+          _workDetailCapacityMap = workDetailCapacityMap;
           _idCardStatusMap = idCardMap;
           _reviewWrittenMap.addAll(reviewMap);
           _starredIds.addAll(starredFromFirestore);
@@ -256,7 +273,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         _userMap = {};
         _contractStatusMap = {};
         _idCardStatusMap = {};
-        _toCapacityMap = {};
+        _workDetailCapacityMap = {};
         _weeklyWorkCountMap = {};
       });
       ToastHelper.showError('데이터를 불러오지 못했습니다. 다시 시도해주세요.');
@@ -289,31 +306,36 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     }
   }
 
-  /// 해당 날짜의 슬롯 기준 정원 조회 (TO 전체 정원이 아닌 슬롯별 정원)
-  Future<Map<String, int>> _loadSlotCapacity(List<ApplicationModel> allApps) async {
-    // toId → slotId (같은 날짜/TO의 앱은 같은 슬롯)
+  /// 슬롯 문서의 workDetails별 requiredCount 맵 반환 (업무 단위 정원 표시용)
+  Future<Map<String, int>> _loadWorkDetailCapacities(List<ApplicationModel> allApps) async {
     final toSlotMap = <String, String>{};
     for (final app in allApps) {
       if (app.toId != null && app.slotId != null && !toSlotMap.containsKey(app.toId!)) {
         toSlotMap[app.toId!] = app.slotId!;
       }
     }
+
     if (toSlotMap.isEmpty) {
-      // 슬롯 없는 장기TO 폴백: TO의 totalRequired 사용
+      // 장기TO 폴백: TO 문서의 workDetails에서 개별 requiredCount
       final toIds = allApps.where((a) => a.toId != null).map((a) => a.toId!).toSet().toList();
       if (toIds.isEmpty) return {};
       final tos = await Future.wait(toIds.map((id) => _svc.getTO(id)));
       final res = <String, int>{};
       for (var i = 0; i < toIds.length; i++) {
-        if (tos[i] != null) res[toIds[i]] = tos[i]!.totalRequired;
+        final to = tos[i];
+        if (to == null) continue;
+        for (final wd in to.workDetails) {
+          final key = wd.id.isNotEmpty ? wd.id : '${wd.workType}_${wd.startTime}_${wd.endTime}';
+          res[key] = wd.requiredCount;
+        }
       }
       return res;
     }
-    // 슬롯 문서에서 workDetails.requiredCount 합산
+
     final result = <String, int>{};
     await Future.wait(toSlotMap.entries.map((e) async {
-      final capacity = await _svc.getSlotTotalRequired(e.key, e.value);
-      if (capacity > 0) result[e.key] = capacity;
+      final caps = await _svc.getSlotWorkDetailCapacities(e.key, e.value);
+      result.addAll(caps);
     }));
     return result;
   }
@@ -324,7 +346,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     final Map<String, _GroupData> groups = {};
 
     void addApp(ApplicationModel app, bool isPending) {
-      final key = app.toId ?? 'noid_${app.toTitle}_${app.selectedWorkType}';
+      final wKey = app.workDetailId?.isNotEmpty == true
+          ? app.workDetailId!
+          : '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
+      final key = '${app.toId ?? app.toTitle}_$wKey';
       groups.putIfAbsent(
         key,
         () => _GroupData(
@@ -334,6 +359,11 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           startTime: app.startTime,
           endTime: app.endTime,
           isLongTerm: app.isLongTermApplication,
+          workDetailId: app.workDetailId,
+          requiredCount: _workDetailCapacityMap[
+              app.workDetailId?.isNotEmpty == true
+                  ? app.workDetailId!
+                  : '${app.selectedWorkType}_${app.startTime}_${app.endTime}'] ?? 0,
         ),
       );
       if (isPending) {
@@ -616,24 +646,40 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         ),
       );
     }
+    return _buildListBody(context);
+  }
 
+  Widget _buildListBody(BuildContext context) {
     final groups = _buildGroups();
+    if (groups.isEmpty) {
+      return const AppEmptyState(
+        icon: Icons.people_outline,
+        title: '지원자가 없습니다',
+      );
+    }
+
+    // 공고별로 묶기 (순서 유지)
+    final byTO = <String, List<_GroupData>>{};
+    for (final g in groups) {
+      byTO.putIfAbsent(g.toKey, () => []).add(g);
+    }
+
+    final toKeys = byTO.keys.toList();
     return ListView.separated(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-      itemCount: groups.length,
+      itemCount: toKeys.length,
       separatorBuilder: (_, __) =>
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-      itemBuilder: (_, i) => _buildGroupSection(context, groups[i]),
+      itemBuilder: (_, i) => _buildTOSection(context, byTO[toKeys[i]]!),
     );
   }
 
-  // ── Group Section ──────────────────────────────────────────────────────────
+  // ── TO Section (공고 헤더 + 업무 서브섹션들) ──────────────────────────────
 
-  Widget _buildGroupSection(BuildContext context, _GroupData g) {
-    final pendingIds = g.pendingApps.map((a) => a.id).toList();
-    final allSelected = pendingIds.isNotEmpty &&
-        pendingIds.every((id) => _selectedIds.contains(id));
-    final someSelected = pendingIds.any((id) => _selectedIds.contains(id));
+  Widget _buildTOSection(BuildContext context, List<_GroupData> groups) {
+    final first = groups.first;
+    final totalPending = groups.fold(0, (s, g) => s + g.pendingApps.length);
+    final totalConfirmed = groups.fold(0, (s, g) => s + g.confirmedApps.length);
 
     return Container(
       decoration: BoxDecoration(
@@ -644,167 +690,242 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── 그룹 헤더 (업무유형 + 시간대) ──
-          GestureDetector(
-            onTap: (!_isBatchMode || pendingIds.isEmpty)
-                ? null
-                : () => setState(() {
-                      if (allSelected) {
-                        _selectedIds.removeAll(pendingIds);
-                      } else {
-                        _selectedIds.addAll(pendingIds);
-                      }
-                    }),
-            child: Container(
-              padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 12),
-                vertical: ResponsiveHelper.spacing(context, 10),
+          // ── 공고 헤더 ──
+          Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 12),
+              vertical: ResponsiveHelper.spacing(context, 10),
+            ),
+            decoration: BoxDecoration(
+              color: AppColors.info.withValues(alpha: 0.08),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(16),
+                topRight: Radius.circular(16),
               ),
-              decoration: BoxDecoration(
-                color: AppColors.info.withValues(alpha: 0.06),
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(16),
-                  topRight: Radius.circular(16),
-                ),
-              ),
-              child: Row(
-                children: [
-                  // 전체 체크박스 (일괄선택 모드 + 대기자 있을 때)
-                  if (_isBatchMode && pendingIds.isNotEmpty) ...[
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: AppCheckbox(
-                        value: allSelected || someSelected,
-                        activeColor: someSelected && !allSelected
-                            ? AppColors.grey400
-                            : null,
-                      ),
-                    ),
-                  ],
-                  // 공고명 + 업무상세
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            // 단기/장기 배지
-                            Container(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: ResponsiveHelper.spacing(context, 5),
-                                vertical: 1,
-                              ),
-                              decoration: BoxDecoration(
-                                color: g.isLongTerm
-                                    ? AppColors.longTermBg
-                                    : AppColors.shortTermBg,
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(
-                                  color: g.isLongTerm
-                                      ? AppColors.longTermDark
-                                          .withValues(alpha: 0.3)
-                                      : AppColors.shortTermDark
-                                          .withValues(alpha: 0.3),
-                                ),
-                              ),
-                              child: Text(
-                                g.isLongTerm ? '장기' : '단기',
-                                style: ResponsiveHelper.tinyStyle(
-                                  context,
-                                  color: g.isLongTerm
-                                      ? AppColors.longTermDark
-                                      : AppColors.shortTermDark,
-                                ).copyWith(fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Flexible(
-                              child: Text(
-                                g.toTitle.isNotEmpty ? g.toTitle : g.workType,
-                                style: ResponsiveHelper.subtitleStyle(context)
-                                    .copyWith(fontWeight: FontWeight.bold),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                        Text(
-                          '${g.workType}  ${g.startTime} ~ ${g.endTime}',
-                          style: ResponsiveHelper.smallStyle(context,
-                              color: AppColors.grey600),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 5),
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color: first.isLongTerm
+                        ? AppColors.longTermBg
+                        : AppColors.shortTermBg,
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                      color: first.isLongTerm
+                          ? AppColors.longTermDark.withValues(alpha: 0.3)
+                          : AppColors.shortTermDark.withValues(alpha: 0.3),
                     ),
                   ),
-                  // 인원 아이콘 표시
-                  _buildGroupStats(context, g),
-                ],
-              ),
+                  child: Text(
+                    first.isLongTerm ? '장기' : '단기',
+                    style: ResponsiveHelper.tinyStyle(
+                      context,
+                      color: first.isLongTerm
+                          ? AppColors.longTermDark
+                          : AppColors.shortTermDark,
+                    ).copyWith(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    first.toTitle.isNotEmpty ? first.toTitle : first.workType,
+                    style: ResponsiveHelper.subtitleStyle(context)
+                        .copyWith(fontWeight: FontWeight.bold),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                // 전체 통계 요약
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (totalPending > 0)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        margin: const EdgeInsets.only(left: 4),
+                        decoration: BoxDecoration(
+                          color: AppColors.warning.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          '대기 $totalPending',
+                          style: ResponsiveHelper.tinyStyle(context,
+                                  color: AppColors.warning)
+                              .copyWith(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    if (totalConfirmed > 0)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        margin: const EdgeInsets.only(left: 4),
+                        decoration: BoxDecoration(
+                          color: AppColors.success.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          '확정 $totalConfirmed',
+                          style: ResponsiveHelper.tinyStyle(context,
+                                  color: AppColors.success)
+                              .copyWith(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
             ),
           ),
-
-          // ── 대기 중 섹션 ──
-          if (g.pendingApps.isNotEmpty) ...[
-            _sectionDivider(context, '대기 중 (${g.pendingApps.length}명)',
-                AppColors.warning),
-            Padding(
-              padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 8)),
-              child: Column(
-                children: g.pendingApps
-                    .asMap()
-                    .entries
-                    .map((e) => _buildApplicantCard(context, e.value,
-                        isPending: true, index: e.key + 1))
-                    .toList(),
-              ),
-            ),
-          ],
-
-          // ── 확정 섹션 ──
-          if (g.confirmedApps.isNotEmpty) ...[
-            _sectionDivider(context, '확정 (${g.confirmedApps.length}명)',
-                AppColors.success),
-            Builder(builder: (context) {
-              final requestableCount = g.confirmedApps.where((app) {
-                final user = _userMap[app.uid];
-                if (user == null) return false;
-                return IdCardHelper.isRequestable(
-                    _idCardStatusMap[user.uid] ?? 'none');
-              }).length;
-              if (requestableCount == 0) return const SizedBox.shrink();
-              return _buildIdCardRequestSection(context, g, requestableCount);
-            }),
-            Builder(builder: (context) {
-              final noContractCount = g.confirmedApps.where((app) {
-                final status = _contractStatusMap[app.id];
-                return status == null || status.isEmpty || status == 'voided';
-              }).length;
-              if (noContractCount == 0) return const SizedBox.shrink();
-              return _buildContractBatchSection(context, g, noContractCount);
-            }),
-            Padding(
-              padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 8)),
-              child: Column(
-                children: g.confirmedApps
-                    .asMap()
-                    .entries
-                    .map((e) => _buildApplicantCard(context, e.value,
-                        isPending: false,
-                        isGroupIdCardMode:
-                            _idCardSelectGroupKey == g.groupKey,
-                        index: e.key + 1))
-                    .toList(),
-              ),
-            ),
-          ],
-
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          // ── 업무별 서브섹션 ──
+          ...groups.asMap().entries.map((e) {
+            final isLast = e.key == groups.length - 1;
+            return _buildWorkSubSection(context, e.value, isLast: isLast);
+          }),
         ],
       ),
+    );
+  }
+
+  // ── Work SubSection (업무별 서브섹션) ──────────────────────────────────────
+
+  Widget _buildWorkSubSection(BuildContext context, _GroupData g,
+      {required bool isLast}) {
+    final pendingIds = g.pendingApps.map((a) => a.id).toList();
+    final allSelected = pendingIds.isNotEmpty &&
+        pendingIds.every((id) => _selectedIds.contains(id));
+    final someSelected = pendingIds.any((id) => _selectedIds.contains(id));
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ── 업무 서브헤더 ──
+        GestureDetector(
+          onTap: (!_isBatchMode || pendingIds.isEmpty)
+              ? null
+              : () => setState(() {
+                    if (allSelected) {
+                      _selectedIds.removeAll(pendingIds);
+                    } else {
+                      _selectedIds.addAll(pendingIds);
+                    }
+                  }),
+          child: Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 12),
+              vertical: ResponsiveHelper.spacing(context, 8),
+            ),
+            color: Colors.transparent,
+            child: Row(
+              children: [
+                if (_isBatchMode && pendingIds.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: AppCheckbox(
+                      value: allSelected || someSelected,
+                      activeColor: someSelected && !allSelected
+                          ? AppColors.grey400
+                          : null,
+                    ),
+                  ),
+                // 업무명 + 시간
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        g.workType,
+                        style: ResponsiveHelper.bodyStyle(context)
+                            .copyWith(fontWeight: FontWeight.w600),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        '${g.startTime} ~ ${g.endTime}',
+                        style: ResponsiveHelper.smallStyle(context,
+                            color: AppColors.grey500),
+                      ),
+                    ],
+                  ),
+                ),
+                // 업무별 통계 배지
+                _buildGroupStats(context, g),
+              ],
+            ),
+          ),
+        ),
+
+        // ── 대기 중 섹션 ──
+        if (g.pendingApps.isNotEmpty) ...[
+          _sectionDivider(
+              context, '대기 중 (${g.pendingApps.length}명)', AppColors.warning),
+          Padding(
+            padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 8)),
+            child: Column(
+              children: g.pendingApps
+                  .asMap()
+                  .entries
+                  .map((e) => _buildApplicantCard(context, e.value,
+                      isPending: true, index: e.key + 1))
+                  .toList(),
+            ),
+          ),
+        ],
+
+        // ── 확정 섹션 ──
+        if (g.confirmedApps.isNotEmpty) ...[
+          _sectionDivider(
+              context, '확정 (${g.confirmedApps.length}명)', AppColors.success),
+          Builder(builder: (ctx) {
+            final requestableCount = g.confirmedApps.where((app) {
+              final user = _userMap[app.uid];
+              if (user == null) return false;
+              return IdCardHelper.isRequestable(
+                  _idCardStatusMap[user.uid] ?? 'none');
+            }).length;
+            if (requestableCount == 0) return const SizedBox.shrink();
+            return _buildIdCardRequestSection(ctx, g, requestableCount);
+          }),
+          Builder(builder: (ctx) {
+            final noContractCount = g.confirmedApps.where((app) {
+              final status = _contractStatusMap[app.id];
+              return status == null || status.isEmpty || status == 'voided';
+            }).length;
+            if (noContractCount == 0) return const SizedBox.shrink();
+            return _buildContractBatchSection(ctx, g, noContractCount);
+          }),
+          Padding(
+            padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 8)),
+            child: Column(
+              children: g.confirmedApps
+                  .asMap()
+                  .entries
+                  .map((e) => _buildApplicantCard(context, e.value,
+                      isPending: false,
+                      isGroupIdCardMode: _idCardSelectGroupKey == g.groupKey,
+                      index: e.key + 1))
+                  .toList(),
+            ),
+          ),
+        ],
+
+        // ── 구분선 (마지막 업무 섹션 제외) ──
+        if (!isLast)
+          Divider(
+            height: 1,
+            thickness: 1,
+            color: AppColors.border,
+            indent: ResponsiveHelper.spacing(context, 12),
+            endIndent: ResponsiveHelper.spacing(context, 12),
+          )
+        else
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+      ],
     );
   }
 
@@ -1313,7 +1434,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   Widget _buildGroupStats(BuildContext context, _GroupData g) {
     final confirmed = g.confirmedApps.length;
     final pending = g.pendingApps.length;
-    final required = g.toId != null ? (_toCapacityMap[g.toId] ?? 0) : 0;
+    final required = g.requiredCount;
     final isFull = required > 0 && confirmed >= required;
     final statusColor = isFull ? AppColors.successDark : AppColors.infoDark;
 
@@ -2219,7 +2340,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       return;
     }
 
-    // M2: 모든 초과 TO를 수집 후 한 번에 경고
+    // M2: 모든 초과 TO를 수집 후 한 번에 경고 (업무 단위 정원 기준)
     final selectedByTo = <String, int>{};
     for (final app in selectedApps) {
       final toId = app.toId!;
@@ -2228,10 +2349,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     final overflowToIds = <String>[];
     for (final entry in selectedByTo.entries) {
       final toId = entry.key;
-      final capacity = _toCapacityMap[toId];
-      if (capacity != null) {
+      // TO 전체 정원 = 해당 TO의 workDetail별 capacity 합산
+      final toGroups = _buildGroups().where((g) => g.toId == toId);
+      final totalCapacity = toGroups.fold(0, (s, g) => s + g.requiredCount);
+      if (totalCapacity > 0) {
         final alreadyConfirmed = _confirmedApps.where((a) => a.toId == toId).length;
-        if (alreadyConfirmed + entry.value > capacity) {
+        if (alreadyConfirmed + entry.value > totalCapacity) {
           overflowToIds.add(toId);
         }
       }
