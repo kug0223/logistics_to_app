@@ -29,6 +29,13 @@ service firebase.storage {
       );
     }
 
+    // 슈퍼어드민 여부 확인 (Storage 규칙 내 Firestore 1회 읽기)
+    function isSuperAdminUser() {
+      return isLoggedIn() &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid))
+          .data.get('role', '') == 'SUPER_ADMIN';
+    }
+
     // 계약서 당사자 여부 확인
     // - workerId: 근무자 본인
     // - businesses/{businessId}.ownerId: 해당 사업장 사업주
@@ -69,14 +76,12 @@ service firebase.storage {
     }
 
     // ── contracts/ — 근로계약서 서명 이미지·완성 PDF ───────────
-    // delete: 계약서 당사자(근무자 또는 사업주)만 허용
-    //   → 서명 업로드 실패 시 롤백 코드에서 사용 (saveEmployerSignature / saveWorkerSignature)
-    // read: 로그인 사용자 — URL 자체가 비공개이므로 앱 레벨 접근 제어로 충분
-    // [특이사항] 계약서 파일(서명 이미지·PDF)은 당사자(근무자·사업주)만 업로드 허용.
+    // [특이사항] 계약서 파일(서명 이미지·PDF)은 당사자(근무자·사업주)만 접근 허용.
     // employment_contracts Firestore 문서가 먼저 생성된 후 업로드 — isContractParty Firestore get 선행 의존.
-    // 이전에 isLoggedIn()만 체크해 타인의 계약서 경로에 파일 업로드 가능했던 취약점 수정.
     match /contracts/{contractId}/{allPaths=**} {
-      allow read: if isLoggedIn();
+      // [특이사항] 슈퍼어드민은 계약 당사자가 아니어도 감사/분쟁 처리 목적으로 열람 허용
+      // isSuperAdminUser()는 Firestore get() 1회 추가 → 빈번한 열람 시 읽기 비용 발생 감안
+      allow read: if isSuperAdminUser() || isContractParty(contractId);
       allow create, update: if isContractParty(contractId) && isUnder10MB();
       allow delete: if isContractParty(contractId);
     }
