@@ -847,6 +847,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
     final isContract = widget.groupItem.masterTO.isContractType;
     final isClosed = widget.groupItem.isClosed;
     final isManualClosed = widget.groupItem.isManualClosed;
+    final user = context.read<UserProvider>().currentUser;
+    final canDelete = user?.isBusinessAdmin == true || user?.isSuperAdmin == true;
     AppMenuSheet.show(
       context: context,
       itemGroups: [
@@ -927,16 +929,17 @@ class _TOGroupCardState extends State<TOGroupCard> {
             onTap: () => _handleSingleTOMenuAction(context, 'renameCard'),
           ),
         ],
-        // 삭제
-        [
-          AppMenuSheetItem(
-            icon: Icons.delete,
-            label: isContract ? '삭제' : '일괄삭제',
-            color: AppColors.error,
-            isDanger: true,
-            onTap: () => _handleSingleTOMenuAction(context, isContract ? 'delete' : 'batchDelete'),
-          ),
-        ],
+        // 삭제 (BUSINESS_ADMIN 이상만)
+        if (canDelete)
+          [
+            AppMenuSheetItem(
+              icon: Icons.delete,
+              label: isContract ? '삭제' : '일괄삭제',
+              color: AppColors.error,
+              isDanger: true,
+              onTap: () => _handleSingleTOMenuAction(context, isContract ? 'delete' : 'batchDelete'),
+            ),
+          ],
       ],
     );
   }
@@ -947,6 +950,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
     final isContract = widget.groupItem.masterTO.isContractType;
     final isClosed = widget.groupItem.isClosed;
     final isManualClosed = widget.groupItem.isManualClosed;
+    final user = context.read<UserProvider>().currentUser;
+    final canDelete = user?.isBusinessAdmin == true || user?.isSuperAdmin == true;
 
     if (isContract) {
       AppMenuSheet.show(
@@ -992,15 +997,16 @@ class _TOGroupCardState extends State<TOGroupCard> {
               onTap: () => _handleSingleTOMenuAction(context, 'confirmedList'),
             ),
           ],
-          [
-            AppMenuSheetItem(
-              icon: Icons.delete,
-              label: '삭제',
-              color: AppColors.error,
-              isDanger: true,
-              onTap: () => _handleSingleTOMenuAction(context, 'delete'),
-            ),
-          ],
+          if (canDelete)
+            [
+              AppMenuSheetItem(
+                icon: Icons.delete,
+                label: '삭제',
+                color: AppColors.error,
+                isDanger: true,
+                onTap: () => _handleSingleTOMenuAction(context, 'delete'),
+              ),
+            ],
         ],
       );
     } else {
@@ -1023,13 +1029,14 @@ class _TOGroupCardState extends State<TOGroupCard> {
               color: AppColors.warning,
               onTap: () => _handleSingleTOMenuAction(context, 'edit'),
             ),
-            AppMenuSheetItem(
-              icon: Icons.delete,
-              label: '삭제',
-              color: AppColors.error,
-              isDanger: true,
-              onTap: () => _handleSingleTOMenuAction(context, 'delete'),
-            ),
+            if (canDelete)
+              AppMenuSheetItem(
+                icon: Icons.delete,
+                label: '삭제',
+                color: AppColors.error,
+                isDanger: true,
+                onTap: () => _handleSingleTOMenuAction(context, 'delete'),
+              ),
           ],
           [
             AppMenuSheetItem(

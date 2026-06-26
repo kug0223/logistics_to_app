@@ -55,17 +55,6 @@ service cloud.firestore {
         );
     }
 
-    // 특정 사업장의 하위 관리자인지 확인 (user.subAdminOf 필드로 판별)
-    // 특정 uid가 businessId의 관리자(adminIds 또는 ownerId)인지 확인
-    // isAdminOf()가 호출자 기준이라면, 이 함수는 대상 userId 기준
-    function isAdminUserIdOf(businessId, userId) {
-      let biz = get(/databases/$(database)/documents/businesses/$(businessId));
-      return biz != null && biz.data != null && (
-        biz.data.get('ownerId', '') == userId ||
-        ('adminIds' in biz.data && userId in biz.data.adminIds)
-      );
-    }
-
     function isSubAdminOf(businessId) {
       let u = get(/databases/$(database)/documents/users/$(request.auth.uid));
       return businessId is string && businessId.size() > 0 &&
@@ -191,7 +180,7 @@ service cloud.firestore {
 
       match /workTypes/{workTypeId} {
         allow read: if isLoggedIn();
-        allow write: if isAdminOf(businessId) || isSuperAdmin();
+        allow write: if isAdminOf(businessId) || isSubAdminOf(businessId) || isSuperAdmin();
       }
 
       match /contract_templates/{templateId} {

@@ -1,7 +1,9 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 // Models
 import '../../../models/ui/admin_to_list_ui_models.dart';
+import '../../../providers/user_provider.dart';
 import '../../../models/core/work_detail_data.dart';
 // Widgets
 import '../../common/app_menu_sheet.dart';
@@ -511,6 +513,8 @@ class _TOItemCardState extends State<TOItemCard> {
 
   void _showMenuSheet(BuildContext context) {
     final primaryColor = Theme.of(context).primaryColor;
+    final user = context.read<UserProvider>().currentUser;
+    final canDelete = user?.isBusinessAdmin == true || user?.isSuperAdmin == true;
     AppMenuSheet.show(
       context: context,
       itemGroups: [
@@ -529,13 +533,14 @@ class _TOItemCardState extends State<TOItemCard> {
             color: AppColors.warning,
             onTap: () => _handleMenuAction(context, 'edit'),
           ),
-          AppMenuSheetItem(
-            icon: Icons.delete,
-            label: '삭제',
-            color: AppColors.error,
-            isDanger: true,
-            onTap: () => _handleMenuAction(context, 'delete'),
-          ),
+          if (canDelete)
+            AppMenuSheetItem(
+              icon: Icons.delete,
+              label: '삭제',
+              color: AppColors.error,
+              isDanger: true,
+              onTap: () => _handleMenuAction(context, 'delete'),
+            ),
         ],
         [
           AppMenuSheetItem(
