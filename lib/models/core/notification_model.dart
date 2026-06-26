@@ -591,7 +591,7 @@ class NotificationModel {
     return NotificationModel(
       id: '',
       userId: userId,
-      type: NotificationType.applicationCanceled,
+      type: NotificationType.confirmationCanceled,
       title: '확정 취소',
       body: '$workerName님이 $workType 확정 근무를 취소했습니다.\n근무일: ${workDate.month}/${workDate.day}',
       data: {

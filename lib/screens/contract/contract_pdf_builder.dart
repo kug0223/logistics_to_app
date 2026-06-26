@@ -19,6 +19,7 @@ class ContractPdfBuilder {
     Uint8List? workerSignatureBytes,
     String? ownerNameOverride,
     bool? isLongTermOverride,
+    String employerSealType = 'stamp',
   }) async {
     final effectiveOwnerName = snapshot.ownerName.isNotEmpty
         ? snapshot.ownerName
@@ -118,6 +119,7 @@ class ContractPdfBuilder {
             workerSig: workerSig,
             fontRegular: fontRegular,
             fontBold: fontBold,
+            employerSealType: employerSealType,
           ),
         ],
       ),
@@ -264,6 +266,7 @@ class ContractPdfBuilder {
     pw.MemoryImage? workerSig,
     required pw.Font fontRegular,
     required pw.Font fontBold,
+    String employerSealType = 'stamp',
   }) {
     return pw.Row(
       children: [
@@ -274,6 +277,7 @@ class ContractPdfBuilder {
             sigImage: employerSig,
             fontRegular: fontRegular,
             fontBold: fontBold,
+            signLabel: employerSealType == 'stamp' ? '(인감)' : '(서명)',
           ),
         ),
         pw.SizedBox(width: 16),
@@ -296,6 +300,7 @@ class ContractPdfBuilder {
     pw.MemoryImage? sigImage,
     required pw.Font fontRegular,
     required pw.Font fontBold,
+    String signLabel = '(서명)',
   }) {
     return pw.Container(
       padding: const pw.EdgeInsets.all(12),
@@ -324,7 +329,7 @@ class ContractPdfBuilder {
                   font: fontBold,
                   fontSize: 10,
                   fontWeight: pw.FontWeight.bold)),
-          pw.Text('(서명)',
+          pw.Text(signLabel,
               style: pw.TextStyle(
                   font: fontRegular,
                   fontSize: 8,

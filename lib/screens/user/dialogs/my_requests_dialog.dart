@@ -565,6 +565,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   // ═══════════════════════════════════════════════════════════
 
   Future<void> _handleIdCardApprove(IdCardAccessRequestModel request) async {
+    if (_isProcessing) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(

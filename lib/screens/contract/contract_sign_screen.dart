@@ -425,6 +425,7 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
           workerSignatureBytes: bytes,
           ownerNameOverride: _resolvedOwnerName,
           isLongTermOverride: _effectiveIsLongTerm,
+          employerSealType: _businessSealType,
         );
         final updated = await _service.saveWorkerSignature(
           contract: widget.contract,
