@@ -1614,6 +1614,11 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       });
     }
 
+    if (targets.isEmpty) {
+      ToastHelper.showWarning('요청 가능한 대상이 없습니다');
+      return;
+    }
+
     if (!mounted) return;
     final successCount = await IdCardHelper.showBatchRequestDialog(
       context: context,

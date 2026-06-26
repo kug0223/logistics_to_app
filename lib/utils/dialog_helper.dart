@@ -551,7 +551,7 @@ class DialogHelper {
                         ),
                         counterText: '',
                       ),
-                      autofocus: true,
+                      autofocus: false,
                     ),
                   ],
                 ],

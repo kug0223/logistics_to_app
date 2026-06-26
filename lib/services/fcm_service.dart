@@ -228,8 +228,8 @@ class FCMService {
       );
     }
 
-    // 지원/취소 알림 수신 시 관리자 화면 자동 갱신
-    const adminRefreshTypes = {'newApplication', 'applicationCanceled'};
+    // 지원/취소/계약서 서명 완료 알림 수신 시 관리자 화면 자동 갱신
+    const adminRefreshTypes = {'newApplication', 'applicationCanceled', 'contractSigned'};
     final type = message.data['type'] as String? ?? '';
     if (adminRefreshTypes.contains(type)) {
       _notifyAdminRefresh();
