@@ -52,13 +52,13 @@ class WorkApplicantsDialogResult {
 
 /// 업무별 지원자 관리 다이얼로그 - 개선된 버전
 class WorkApplicantsDialog extends StatefulWidget {
-  final WorkDetailModel work;
+  final WorkDetailModel? work;  // null = 전체 업무 그룹 모드
   final TOItem toItem;
   final VoidCallback onChanged;
 
   const WorkApplicantsDialog({
     super.key,
-    required this.work,
+    this.work,
     required this.toItem,
     required this.onChanged,
   });
@@ -132,21 +132,24 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       const activeStatuses = {'PENDING', 'CONTRACT_PENDING', 'CONFIRMED'};
       final filtered = apps.where((app) {
         if (!activeStatuses.contains(app.status)) return false;
-        final wdId = app.workDetailId;
-        if (wdId != null && wdId.isNotEmpty) {
-          // 신규 compositeId 매칭
-          if (wdId == widget.work.id) return true;
-          // 레거시: workDetailId = workType만 저장된 경우 → 시간으로 추가 확인
-          if (wdId == widget.work.workType) {
-            return app.startTime == widget.work.startTime &&
-                   app.endTime == widget.work.endTime;
+        if (widget.work != null) {
+          final wdId = app.workDetailId;
+          if (wdId != null && wdId.isNotEmpty) {
+            // 신규 compositeId 매칭
+            if (wdId == widget.work!.id) return true;
+            // 레거시: workDetailId = workType만 저장된 경우 → 시간으로 추가 확인
+            if (wdId == widget.work!.workType) {
+              return app.startTime == widget.work!.startTime &&
+                     app.endTime == widget.work!.endTime;
+            }
+            return false;
           }
-          return false;
+          // workDetailId 없는 구 데이터 호환
+          return app.selectedWorkType == widget.work!.workType &&
+                 app.startTime == widget.work!.startTime &&
+                 app.endTime == widget.work!.endTime;
         }
-        // workDetailId 없는 구 데이터 호환
-        return app.selectedWorkType == widget.work.workType &&
-               app.startTime == widget.work.startTime &&
-               app.endTime == widget.work.endTime;
+        return true; // 그룹 모드: 업무 필터 없음 (activeStatuses만 체크)
       }).toList();
 
       // ✅ 1. 중복 제거된 UID 목록 추출
@@ -339,14 +342,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
             children: [
               _buildHeader(context, theme),
               _buildStatsBar(context, pending.length, confirmed.length),
-              if (pending.isNotEmpty)
+              if (pending.isNotEmpty && widget.work != null)
                 _buildSelectAllRow(context, pending.length),
               Expanded(
                 child: isLoading
                     ? const LoadingWidget()
                     : (pending.isEmpty && confirmed.isEmpty)
                         ? _buildEmptyState(context)
-                        : _buildApplicantList(context, pending, confirmed),
+                        : widget.work == null
+                            ? _buildGroupedApplicantList(context)
+                            : _buildApplicantList(context, pending, confirmed),
               ),
               _buildBottomBar(context),
             ],
@@ -373,22 +378,35 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       ),
       child: Row(
         children: [
-          // 업무 아이콘
-          WorkTypeIcon.buildWithBackground(
-            iconString: widget.work.workTypeIcon,
-            backgroundColor: widget.work.workTypeBackgroundColor,
-            size: ResponsiveHelper.iconSize(context, 24),
-            containerSize: ResponsiveHelper.spacing(context, 44),
-          ),
+          // 업무 아이콘 (그룹 모드: 공통 아이콘, 단일 모드: 업무 아이콘)
+          if (widget.work != null)
+            WorkTypeIcon.buildWithBackground(
+              iconString: widget.work!.workTypeIcon,
+              backgroundColor: widget.work!.workTypeBackgroundColor,
+              size: ResponsiveHelper.iconSize(context, 24),
+              containerSize: ResponsiveHelper.spacing(context, 44),
+            )
+          else
+            Container(
+              width: ResponsiveHelper.spacing(context, 44),
+              height: ResponsiveHelper.spacing(context, 44),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
+              ),
+              child: Icon(Icons.people, color: Colors.white, size: ResponsiveHelper.iconSize(context, 24)),
+            ),
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          
+
           // 제목
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${widget.work.workType} - 지원자 관리',
+                  widget.work != null
+                      ? '${widget.work!.workType} - 지원자 관리'
+                      : '${widget.toItem.to.title} - 지원자 관리',
                   style: ResponsiveHelper.subtitleStyle(context).copyWith(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -396,13 +414,15 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                 Text(
-                  '${FormatHelper.formatDate(widget.toItem.slot?.date ?? widget.toItem.to.date)} · ${widget.work.startTime}~${widget.work.endTime} | ${widget.work.formattedWage}',
+                  widget.work != null
+                      ? '${FormatHelper.formatDate(widget.toItem.slot?.date ?? widget.toItem.to.date)} · ${widget.work!.startTime}~${widget.work!.endTime} | ${widget.work!.formattedWage}'
+                      : '${FormatHelper.formatDate(widget.toItem.slot?.date ?? widget.toItem.to.date)} · 업무 ${widget.toItem.workDetails.length}종',
                   style: ResponsiveHelper.smallStyle(context, color: Colors.white.withValues(alpha: 0.7)),
                 ),
               ],
             ),
           ),
-          
+
           // 닫기 버튼
           IconButton(
             onPressed: () => Navigator.pop(context, WorkApplicantsDialogResult(
@@ -433,10 +453,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           SizedBox(width: ResponsiveHelper.spacing(context, 24)),
           _buildStatItem(context, '확정', confirmedCount, AppColors.success),
           const Spacer(),
-          Text(
-            '필요: ${widget.work.requiredCount}명',
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-          ),
+          if (widget.work != null)
+            Text(
+              '필요: ${widget.work!.requiredCount}명',
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+            ),
         ],
       ),
     );
@@ -648,6 +669,148 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         ),
       );
   }
+
+  /// 그룹 모드: 업무별 섹션으로 나눈 지원자 목록
+  Widget _buildGroupedApplicantList(BuildContext context) {
+    final works = widget.toItem.workDetails;
+    if (works.isEmpty) return _buildEmptyState(context);
+
+    return SingleChildScrollView(
+      padding: ResponsiveHelper.cardPadding(context),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final work in works) ..._buildWorkSection(context, work),
+        ],
+      ),
+    );
+  }
+
+  /// 업무 섹션 (헤더 + 대기 카드 + 확정 카드)
+  List<Widget> _buildWorkSection(BuildContext context, WorkDetailModel work) {
+    final workApplicants = _applicants.where((item) {
+      final app = item['application'] as ApplicationModel;
+      return _appMatchesWork(app, work);
+    }).toList();
+
+    if (workApplicants.isEmpty) return [];
+
+    final pending = workApplicants.where((item) =>
+        (item['application'] as ApplicationModel).status == AppStatus.pending).toList();
+    final confirmed = workApplicants.where((item) {
+      final s = (item['application'] as ApplicationModel).status;
+      return AppStatus.confirmedStatuses.contains(s);
+    }).toList();
+
+    return [
+      // 업무 섹션 헤더
+      Container(
+        margin: EdgeInsets.only(
+          bottom: ResponsiveHelper.spacing(context, 8),
+          top: ResponsiveHelper.spacing(context, 12),
+        ),
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 12),
+          vertical: ResponsiveHelper.spacing(context, 8),
+        ),
+        decoration: BoxDecoration(
+          color: AppColors.grey50,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Row(
+          children: [
+            WorkTypeIcon.buildWithBackground(
+              iconString: work.workTypeIcon,
+              backgroundColor: work.workTypeBackgroundColor,
+              size: ResponsiveHelper.iconSize(context, 16),
+              containerSize: ResponsiveHelper.spacing(context, 32),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    work.workType,
+                    style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey800)
+                        .copyWith(fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    '${work.startTime}~${work.endTime}  ${work.formattedWage}',
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                  ),
+                ],
+              ),
+            ),
+            if (pending.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppColors.warningBg,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  '대기 ${pending.length}',
+                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.warningDark),
+                ),
+              ),
+            if (pending.isNotEmpty && confirmed.isNotEmpty)
+              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+            if (confirmed.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppColors.successBg,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  '확정 ${confirmed.length}',
+                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.successDark),
+                ),
+              ),
+          ],
+        ),
+      ),
+      // 대기 섹션
+      if (pending.isNotEmpty) ...[
+        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+        ..._sortedPending(pending).asMap().entries.map((entry) =>
+            _buildApplicantCard(context, entry.value, entry.key + 1, isPending: true, workOverride: work)),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+      ],
+      // 확정 섹션
+      if (confirmed.isNotEmpty) ...[
+        ...confirmed.asMap().entries.map((entry) =>
+            _buildApplicantCard(context, entry.value, entry.key + 1, isPending: false, workOverride: work)),
+        SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+      ],
+    ];
+  }
+
+  /// 매칭 헬퍼: app이 특정 work에 속하는지 확인
+  bool _appMatchesWork(ApplicationModel app, WorkDetailModel work) {
+    final wdId = app.workDetailId;
+    if (wdId != null && wdId.isNotEmpty) {
+      if (wdId == work.id) return true;
+      if (wdId == work.workType) {
+        return app.startTime == work.startTime && app.endTime == work.endTime;
+      }
+      return false;
+    }
+    return app.selectedWorkType == work.workType &&
+        app.startTime == work.startTime &&
+        app.endTime == work.endTime;
+  }
+
+  /// app에 대응하는 WorkDetailModel 반환 (그룹 모드용)
+  WorkDetailModel? _getWorkForApp(ApplicationModel app) {
+    for (final w in widget.toItem.workDetails) {
+      if (_appMatchesWork(app, w)) return w;
+    }
+    return widget.work;
+  }
+
   /// 신분증 일괄 요청 섹션 (confirmed_list_dialog와 동일한 패턴)
   Widget _buildIdCardRequestSection(BuildContext context, int requestableCount) {
     return Container(
@@ -910,8 +1073,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   }
 
   /// 지원자 카드
-  Widget _buildApplicantCard(BuildContext context, Map<String, dynamic> item, int index, {required bool isPending}) {
+  Widget _buildApplicantCard(BuildContext context, Map<String, dynamic> item, int index, {required bool isPending, WorkDetailModel? workOverride}) {
     final app = item['application'] as ApplicationModel;
+    // ignore: unused_local_variable — 향후 확장용 (계약서 로직은 별도 메서드에서 _getWorkForApp 사용)
+    final effectiveWork = workOverride ?? widget.work ?? _getWorkForApp(app);
     final user = item['user'] as UserModel?;
     final idCardStatus = _idCardStatusMap[user?.uid ?? ''] ?? 'none';
     // null = 로딩 전 / int = 로딩 완료 (0포함) → Wrap 조건부 포함으로 간격 오염 방지
@@ -1552,7 +1717,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     final workDetails = widget.toItem.workDetails;
     
     // 현재 파트 제외한 다른 파트 목록 (id 기반 비교 — workType 이름 중복 방지)
-    final otherWorkDetails = workDetails.where((w) => w.id != widget.work.id).toList();
+    final currentWork = _getWorkForApp(app) ?? widget.work;
+    final otherWorkDetails = workDetails.where((w) => w.id != (currentWork?.id ?? '')).toList();
     
     if (otherWorkDetails.isEmpty) {
       ToastHelper.showWarning('변경 가능한 다른 파트가 없습니다');
@@ -1611,7 +1777,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                 children: [
                   Text('현재: ', style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600)),
                   Text(
-                    widget.work.workType,
+                    currentWork?.workType ?? '',
                     style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.bold),
                   ),
                 ],
@@ -1632,7 +1798,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                     final confirmed = await DialogHelper.showConfirm(
                       context,
                       title: '파트 변경',
-                      message: '${user?.name ?? '지원자'}님을\n${widget.work.workType} → ${work.workType}(으)로\n변경하시겠습니까?',
+                      message: '${user?.name ?? '지원자'}님을\n${currentWork?.workType ?? ''} → ${work.workType}(으)로\n변경하시겠습니까?',
                       confirmText: '변경',
                     );
                     if (confirmed == true && context.mounted) {
@@ -1738,12 +1904,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     final userProvider = context.read<UserProvider>();
 
     // 인원 체크 (일괄 승인과 동일 기준)
-    final stats = widget.toItem.workDetailStats?[widget.work.id];
-    final confirmedCount = stats?['confirmed'] ?? 0;
-    final remaining = widget.work.requiredCount - confirmedCount;
-    if (remaining <= 0) {
+    final effectiveWork = _getWorkForApp(app) ?? widget.work;
+    final stats = (effectiveWork != null)
+        ? (widget.toItem.workDetailStats?[effectiveWork.id])
+        : null;
+    final confirmedCount = (stats?['confirmed'] as int?) ?? 0;
+    final remaining = (effectiveWork != null)
+        ? effectiveWork.requiredCount - confirmedCount
+        : 0;
+    if (effectiveWork != null && remaining <= 0) {
       ToastHelper.showWarning(
-        '필요 인원(${widget.work.requiredCount}명)이 이미 충족되었습니다.',
+        '필요 인원(${effectiveWork.requiredCount}명)이 이미 충족되었습니다.',
       );
       return;
     }
@@ -2045,14 +2216,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   Future<void> _batchApprove() async {
     if (_selectedIds.isEmpty || _isProcessing) return;
 
-    // 인원 체크
-    final stats = widget.toItem.workDetailStats?[widget.work.id];
-    final confirmedCount = stats?['confirmed'] ?? 0;
-    final remaining = widget.work.requiredCount - confirmedCount;
+    // 인원 체크 (일괄 승인은 단일 업무 모드에서만 실행됨)
+    if (widget.work != null) {
+      final stats = widget.toItem.workDetailStats?[widget.work!.id];
+      final confirmedCount = stats?['confirmed'] ?? 0;
+      final remaining = widget.work!.requiredCount - confirmedCount;
 
-    if (_selectedIds.length > remaining) {
-      ToastHelper.showWarning('필요 인원(${widget.work.requiredCount}명)을 초과합니다. 현재 $confirmedCount명 확정, $remaining명 추가 가능');
-      return;
+      if (_selectedIds.length > remaining) {
+        ToastHelper.showWarning('필요 인원(${widget.work!.requiredCount}명)을 초과합니다. 현재 $confirmedCount명 확정, $remaining명 추가 가능');
+        return;
+      }
     }
 
     // 1. 계약서 템플릿 선택
@@ -2115,6 +2288,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       ToastHelper.showError('지원자 정보를 불러올 수 없습니다');
       return;
     }
+    final firstWorkDetail = widget.work ?? _getWorkForApp(firstApp);
+    if (firstWorkDetail == null) {
+      ToastHelper.showError('업무 정보를 찾을 수 없습니다');
+      return;
+    }
 
     setState(() => _isProcessing = true);
     late EmploymentContractModel previewContract;
@@ -2124,7 +2302,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         application: firstApp,
         business: business,
         worker: firstUser,
-        workDetail: widget.work,
+        workDetail: firstWorkDetail,
         articles: articles,
       );
     } catch (e) {
@@ -2167,6 +2345,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         final app = item['application'] as ApplicationModel;
         final user = item['user'] as UserModel;
         final appId = app.id;
+        final appWorkDetail = widget.work ?? _getWorkForApp(app);
+        if (appWorkDetail == null) return false;
         try {
           final affectedTOIds = await _firestoreService.updateApplicationStatus(
             applicationId: appId,
@@ -2190,7 +2370,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
             application: freshApp,
             business: business,
             worker: user,
-            workDetail: widget.work,
+            workDetail: appWorkDetail,
             articles: articles,
           );
           await ContractService().saveEmployerSignature(
@@ -2409,6 +2589,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       ToastHelper.showError('지원자 정보를 불러올 수 없습니다');
       return;
     }
+    final firstWorkDetail = widget.work ?? _getWorkForApp(firstApp);
+    if (firstWorkDetail == null) {
+      ToastHelper.showError('업무 정보를 찾을 수 없습니다');
+      return;
+    }
 
     setState(() => _isContractBatchProcessing = true);
     late EmploymentContractModel previewContract;
@@ -2417,7 +2602,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         application: firstApp,
         business: business,
         worker: firstUser,
-        workDetail: widget.work,
+        workDetail: firstWorkDetail,
         articles: articles,
       );
     } catch (e) {
@@ -2445,12 +2630,14 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         final app = item['application'] as ApplicationModel;
         final user = item['user'] as UserModel?;
         if (user == null) return false;
+        final appWorkDetail = widget.work ?? _getWorkForApp(app);
+        if (appWorkDetail == null) return false;
         try {
           final contract = await ContractService().findOrCreateContract(
             application: app,
             business: business,
             worker: user,
-            workDetail: widget.work,
+            workDetail: appWorkDetail,
             articles: articles,
           );
           await ContractService().saveEmployerSignature(
@@ -2537,6 +2724,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     }
 
     // 3. 사업장 정보 로드 + 미리보기 생성
+    final resolvedWork = widget.work ?? _getWorkForApp(app);
+    if (resolvedWork == null) {
+      ToastHelper.showError('업무 정보를 찾을 수 없습니다');
+      return;
+    }
     setState(() => _isProcessing = true);
     late EmploymentContractModel previewContract;
     try {
@@ -2549,7 +2741,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         application: app,
         business: b,
         worker: user,
-        workDetail: widget.work,
+        workDetail: resolvedWork,
         articles: articles,
       );
     } catch (e) {
@@ -2582,7 +2774,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         application: app,
         business: b,
         worker: user,
-        workDetail: widget.work,
+        workDetail: resolvedWork,
         articles: articles,
       );
       await ContractService().saveEmployerSignature(
@@ -2701,10 +2893,12 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       }
 
       widget.toItem.workDetailStats ??= {};
-      widget.toItem.workDetailStats![widget.work.id] = {
-        'pending': pending,
-        'confirmed': confirmed,
-      };
+      if (widget.work != null) {
+        widget.toItem.workDetailStats![widget.work!.id] = {
+          'pending': pending,
+          'confirmed': confirmed,
+        };
+      }
     }
   }
 }

@@ -409,7 +409,8 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
   /// ✨ 업무 상태 배지 (마감/예약/모집중)
   Widget _buildWorkStatusBadge(BuildContext context, {required bool isClosed}) {
     final to = widget.toItem.to;
-    
+    final slot = widget.toItem.slot;
+
     // 1. 마감됨
     if (isClosed) {
       return Container(
@@ -442,9 +443,11 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
       );
     }
     
-    // 2. 예약 — TO 상태가 SCHEDULED이거나 isPendingPublish인 경우
+    // 2. 예약 — slot.visibleFrom(슬롯 레벨) 또는 TO 레벨 스케줄
+    // [특이사항] slot.visibleFrom은 슬롯 레벨 예약공개 — SlotStatusUtil과 동일 우선순위로 체크 필수
     // [특이사항] status='SCHEDULED'는 isPendingPublish와 별개 경로 — 둘 다 체크해야 예약 배지가 표시됨
-    if (to.status == TOStatus.scheduled || to.isPendingPublish) {
+    final slotScheduled = slot?.visibleFrom != null && slot!.visibleFrom!.isAfter(DateTime.now());
+    if (slotScheduled || to.status == TOStatus.scheduled || to.isPendingPublish) {
       return Container(
         padding: EdgeInsets.symmetric(
           horizontal: ResponsiveHelper.spacing(context, 6),
@@ -490,7 +493,6 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
       context: context,
       builder: (context) => WorkApplicantsDialog(
         toItem: widget.toItem,
-        work: widget.work,
         onChanged: widget.onChanged,
       ),
     );

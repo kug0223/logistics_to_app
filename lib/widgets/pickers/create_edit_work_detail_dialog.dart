@@ -1325,56 +1325,45 @@ class WorkDetailDialog {
     return showModalBottomSheet<String>(
       context: context,
       useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      backgroundColor: Colors.transparent,
       builder: (ctx) {
-        // [특이사항] useSafeArea: true와 내부 SafeArea 이중 — Flutter가 자동으로 중복 패딩 방지
-        return SafeArea(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 220),
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          constraints: const BoxConstraints(maxHeight: 280),
+          child: SafeArea(
+            top: false,
             child: Column(
               children: [
-                // 핸들바
                 Container(
                   margin: const EdgeInsets.only(top: 12, bottom: 4),
-                  width: 40,
-                  height: 4,
+                  width: 40, height: 4,
                   decoration: BoxDecoration(
                     color: AppColors.grey300,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
-                // 타이틀 + 확인
                 Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 20, vertical: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        title,
-                        style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+                      Text(title,
+                        style: ResponsiveHelper.subtitleStyle(context)
+                            .copyWith(fontWeight: FontWeight.bold)),
                       TextButton(
-                        onPressed: () =>
-                            Navigator.pop(ctx, selectedTime),
-                        child: Text(
-                          '확인',
-                          style: TextStyle(
-                            color: theme.primaryColor,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
+                        onPressed: () => Navigator.pop(ctx, selectedTime),
+                        child: Text('확인',
+                          style: ResponsiveHelper.bodyStyle(context,
+                                  color: theme.primaryColor)
+                              .copyWith(fontWeight: FontWeight.bold)),
                       ),
                     ],
                   ),
                 ),
                 Divider(height: 1, color: AppColors.grey200),
-                // 스크롤 피커
                 Expanded(
                   child: CupertinoPicker(
                     scrollController: FixedExtentScrollController(
@@ -1392,10 +1381,8 @@ class WorkDetailDialog {
                           (t) => Center(
                             child: Text(
                               t,
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w500,
-                              ),
+                              style: ResponsiveHelper.subtitleStyle(context)
+                                  .copyWith(fontWeight: FontWeight.w500),
                             ),
                           ),
                         )
@@ -2556,12 +2543,15 @@ class WorkDetailDialog {
     return showModalBottomSheet<int>(
       context: context,
       useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      // [특이사항] useSafeArea: true와 내부 SafeArea 이중 — Flutter가 자동으로 중복 패딩 방지
-      builder: (ctx) => SafeArea(
-        child: SizedBox(
-          height: 320,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        constraints: const BoxConstraints(maxHeight: 340),
+        child: SafeArea(
+          top: false,
           child: Column(
             children: [
               Container(
@@ -2577,14 +2567,14 @@ class WorkDetailDialog {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text('지급일 선택',
-                        style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold)),
+                        style: ResponsiveHelper.subtitleStyle(context)
+                            .copyWith(fontWeight: FontWeight.bold)),
                     TextButton(
                       onPressed: () => Navigator.pop(ctx, selected),
                       child: Text('확인',
-                          style: TextStyle(
-                              color: theme.primaryColor,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16)),
+                          style: ResponsiveHelper.bodyStyle(context,
+                                  color: theme.primaryColor)
+                              .copyWith(fontWeight: FontWeight.bold)),
                     ),
                   ],
                 ),
@@ -2601,8 +2591,8 @@ class WorkDetailDialog {
                   children: labels
                       .map((l) => Center(
                             child: Text(l,
-                                style: const TextStyle(
-                                    fontSize: 18, fontWeight: FontWeight.w500)),
+                                style: ResponsiveHelper.subtitleStyle(context)
+                                    .copyWith(fontWeight: FontWeight.w500)),
                           ))
                       .toList(),
                 ),

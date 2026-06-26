@@ -710,39 +710,96 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
     final selectedTo = await showModalBottomSheet<({String id, String type})>(
       context: context,
       useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (sheetCtx) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
-            child: Text('공고 선택',
-                style: Theme.of(context).textTheme.titleMedium
-                    ?.copyWith(fontWeight: FontWeight.bold)),
-          ),
-          const Divider(height: 1),
-          ListView(
-            shrinkWrap: true,
-            children: toDocs
-                .map((to) => ListTile(
-                      title: Text(
-                        to.label,
-                        style: TextStyle(
-                          color: to.isActive ? null : AppColors.grey500,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetCtx) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.7,
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 12),
+              Container(
+                width: 40, height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.grey300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('공고 선택',
+                    style: ResponsiveHelper.subtitleStyle(context)
+                        .copyWith(fontWeight: FontWeight.bold)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Divider(height: 1, color: AppColors.grey100),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  children: toDocs.map((to) {
+                    final color = to.isActive
+                        ? Theme.of(context).primaryColor
+                        : AppColors.grey400;
+                    return Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: to.isActive
+                            ? () => Navigator.pop(sheetCtx, (id: to.id, type: to.type))
+                            : null,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 40, height: 40,
+                                decoration: BoxDecoration(
+                                  color: color.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Icon(Icons.assignment_outlined,
+                                    size: 20, color: color),
+                              ),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Text(to.label,
+                                  style: ResponsiveHelper.bodyStyle(context,
+                                      color: to.isActive
+                                          ? AppColors.grey800
+                                          : AppColors.grey400),
+                                ),
+                              ),
+                              Icon(
+                                to.isActive
+                                    ? Icons.chevron_right
+                                    : Icons.lock_outline,
+                                color: AppColors.grey300,
+                                size: 20,
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                      trailing: to.isActive
-                          ? const Icon(Icons.chevron_right, size: 18)
-                          : const Icon(Icons.block, size: 18, color: AppColors.grey400),
-                      onTap: to.isActive
-                          ? () => Navigator.pop(sheetCtx, (id: to.id, type: to.type))
-                          : null,
-                    ))
-                .toList(),
+                    );
+                  }).toList(),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
           ),
-        ],
+        ),
       ),
     );
 
@@ -781,8 +838,20 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
           return aTs.compareTo(bTs);
         });
 
+      // [특이사항] visibleFrom 미래인 슬롯 제외 — status='open'이어도 예약공개 슬롯은 선택 불가
+      final now = DateTime.now();
+      final activeDocs = sortedDocs.where((d) {
+        final vf = (d.data()['visibleFrom'] as Timestamp?)?.toDate().toLocal();
+        return vf == null || !vf.isAfter(now);
+      }).toList();
+
+      if (activeDocs.isEmpty) {
+        ToastHelper.showWarning('모집중인 날짜(슬롯)가 없습니다.');
+        return;
+      }
+
       // 슬롯 목록 구성 — 날짜 + 현재 확정/대기 인원 표시
-      final slotOptions = sortedDocs.map((d) {
+      final slotOptions = activeDocs.map((d) {
         final data = d.data();
         final date = (data['date'] as Timestamp).toDate().toLocal();
         final confirmed = (data['confirmedCount'] as num?)?.toInt() ?? 0;
@@ -798,32 +867,85 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
           await showModalBottomSheet<({String id, DateTime date})>(
         context: context,
         useSafeArea: true,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        builder: (sheetCtx) => Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
-              child: Text('날짜(슬롯) 선택',
-                  style: Theme.of(context).textTheme.titleMedium
-                      ?.copyWith(fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.transparent,
+        isScrollControlled: true,
+        builder: (sheetCtx) => Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.65,
+          ),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 12),
+                Container(
+                  width: 40, height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.grey300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('날짜 선택',
+                      style: ResponsiveHelper.subtitleStyle(context)
+                          .copyWith(fontWeight: FontWeight.bold)),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Divider(height: 1, color: AppColors.grey100),
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    padding: EdgeInsets.zero,
+                    children: slotOptions.map((s) {
+                      return Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: () => Navigator.pop(
+                              sheetCtx, (id: s.id, date: s.date)),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 20, vertical: 10),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 40, height: 40,
+                                  decoration: BoxDecoration(
+                                    color: AppColors.info.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: const Icon(Icons.calendar_today,
+                                      size: 18, color: AppColors.info),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Text(s.label,
+                                    style: ResponsiveHelper.bodyStyle(context,
+                                        color: AppColors.grey800)),
+                                ),
+                                Icon(Icons.chevron_right,
+                                    color: AppColors.grey300, size: 20),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
             ),
-            const Divider(height: 1),
-            ListView(
-              shrinkWrap: true,
-              children: slotOptions
-                  .map((s) => ListTile(
-                        leading: const Icon(Icons.calendar_today, size: 18),
-                        title: Text(s.label),
-                        trailing: const Icon(Icons.chevron_right, size: 18),
-                        onTap: () => Navigator.pop(
-                            sheetCtx, (id: s.id, date: s.date)),
-                      ))
-                  .toList(),
-            ),
-          ],
+          ),
         ),
       );
 
@@ -837,87 +959,139 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
     final counts = await showModalBottomSheet<({int pending, int confirmed})>(
       context: context,
       useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      backgroundColor: Colors.transparent,
       builder: (sheetCtx) {
         int pending = 2;
         int confirmed = 3;
         return StatefulBuilder(
           builder: (ctx, setSheetState) {
-            Widget counter(String label, int value, VoidCallback onMinus, VoidCallback onPlus) {
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(label,
-                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+            Widget counter(
+              String label,
+              String sub,
+              Color color,
+              int value,
+              VoidCallback onMinus,
+              VoidCallback onPlus,
+            ) {
+              return Row(
+                children: [
+                  Container(
+                    width: 40, height: 40,
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.remove_circle_outline),
-                      onPressed: value > 0 ? onMinus : null,
-                      color: AppColors.error,
+                    child: Icon(Icons.person_outline, size: 20, color: color),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(label,
+                          style: ResponsiveHelper.bodyStyle(ctx,
+                              color: AppColors.grey800)
+                              .copyWith(fontWeight: FontWeight.w600)),
+                        Text(sub,
+                          style: ResponsiveHelper.smallStyle(ctx,
+                              color: AppColors.grey500)),
+                      ],
                     ),
-                    SizedBox(
-                      width: 36,
-                      child: Text('$value',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.add_circle_outline),
-                      onPressed: value < 20 ? onPlus : null,
-                      color: AppColors.success,
-                    ),
-                  ],
-                ),
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.remove_circle_outline, color: value > 0 ? color : AppColors.grey300),
+                    onPressed: value > 0 ? onMinus : null,
+                  ),
+                  SizedBox(
+                    width: 32,
+                    child: Text('$value',
+                      textAlign: TextAlign.center,
+                      style: ResponsiveHelper.subtitleStyle(ctx)
+                          .copyWith(fontWeight: FontWeight.bold, color: color)),
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.add_circle_outline, color: value < 20 ? color : AppColors.grey300),
+                    onPressed: value < 20 ? onPlus : null,
+                  ),
+                ],
               );
             }
 
-            return Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('인원 수 설정',
-                      style: Theme.of(context).textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 4),
-                  Text('최대 20명 / 총 ${pending + confirmed}명',
-                      style: TextStyle(fontSize: 12, color: AppColors.grey500)),
-                  const Divider(height: 24),
-                  counter(
-                    '대기 (PENDING)',
-                    pending,
-                    () => setSheetState(() => pending--),
-                    () => setSheetState(() => pending++),
-                  ),
-                  counter(
-                    '확정 (CONFIRMED)',
-                    confirmed,
-                    () => setSheetState(() => confirmed--),
-                    () => setSheetState(() => confirmed++),
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: (pending + confirmed) > 0
-                          ? () => Navigator.pop(sheetCtx, (pending: pending, confirmed: confirmed))
-                          : null,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.info,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            return Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              child: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 12),
+                      Center(
+                        child: Container(
+                          width: 40, height: 4,
+                          decoration: BoxDecoration(
+                            color: AppColors.grey300,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
                       ),
-                      child: Text('대기 $pending명 + 확정 $confirmed명 생성',
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                    ),
+                      const SizedBox(height: 20),
+                      Text('인원 수 설정',
+                        style: ResponsiveHelper.subtitleStyle(ctx)
+                            .copyWith(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 4),
+                      Text('최대 20명 · 현재 총 ${pending + confirmed}명',
+                        style: ResponsiveHelper.smallStyle(ctx,
+                            color: AppColors.grey500)),
+                      const SizedBox(height: 20),
+                      Divider(height: 1, color: AppColors.grey100),
+                      const SizedBox(height: 16),
+                      counter(
+                        '대기', 'PENDING',
+                        AppColors.warning,
+                        pending,
+                        () => setSheetState(() => pending--),
+                        () => setSheetState(() => pending++),
+                      ),
+                      const SizedBox(height: 12),
+                      counter(
+                        '확정', 'CONFIRMED',
+                        AppColors.success,
+                        confirmed,
+                        () => setSheetState(() => confirmed--),
+                        () => setSheetState(() => confirmed++),
+                      ),
+                      const SizedBox(height: 20),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: (pending + confirmed) > 0
+                              ? () => Navigator.pop(sheetCtx,
+                                  (pending: pending, confirmed: confirmed))
+                              : null,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.info,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: Text(
+                            '대기 $pending명 + 확정 $confirmed명 생성',
+                            style: ResponsiveHelper.bodyStyle(ctx,
+                                    color: Colors.white)
+                                .copyWith(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
             );
           },

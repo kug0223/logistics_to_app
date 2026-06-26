@@ -1749,18 +1749,36 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       context: context,
       useSafeArea: true,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      backgroundColor: Colors.transparent,
       builder: (context) {
-        // [오탐 주의] useSafeArea: true(1696줄)가 이미 하단 홈버튼 영역을 처리함
-        // 내부 SafeArea는 이중 처리이나 Flutter이 중복 패딩을 자동 방지하므로 기능적 문제 없음
-        // 제거 시 스크롤 콘텐츠가 SafeArea 없이 렌더링될 수 있어 의도적으로 유지
-        return SafeArea(
-          child: SingleChildScrollView(
-            child: Padding(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: SafeArea(
+            top: false,
             child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 12),
+                Container(
+                  width: 40, height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.grey300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      ResponsiveHelper.spacing(context, 16),
+                      ResponsiveHelper.spacing(context, 12),
+                      ResponsiveHelper.spacing(context, 16),
+                      ResponsiveHelper.spacing(context, 16),
+                    ),
+                    child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1890,10 +1908,14 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
               ],
-            ),
-          ),
-          ),
-        );
+            ),         // 내부 Column 끝
+            ),         // Padding 끝
+          ),           // SingleChildScrollView 끝
+          ),           // Flexible 끝
+          ],           // 외부 Column children 끝
+        ),             // 외부 Column 끝
+      ),               // SafeArea 끝
+      );               // Container 끝
       },
     );
   }
