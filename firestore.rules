@@ -79,6 +79,16 @@ service cloud.firestore {
     }
 
     // ═══════════════════════════════════════════════════════════
+
+    // tos 서브컬렉션 write 권한 — get(/tos/$(toId)) 1회만 호출해 get() 비용 절감
+    // 이전: isAdminOf(get(tos)) || isSubAdminOf(get(tos)) → get() 2회 → 1회로 줄임
+    function isToAdmin(toId) {
+      let to = get(/databases/$(database)/documents/tos/$(toId));
+      return to != null && to.data != null && (
+        isAdminOf(to.data.get('businessId', '')) ||
+        isSubAdminOf(to.data.get('businessId', ''))
+      );
+    }
     // users 컬렉션
     // ═══════════════════════════════════════════════════════════
     match /users/{userId} {
@@ -240,22 +250,22 @@ service cloud.firestore {
 
       match /workDetails/{workDetailId} {
         allow read: if isLoggedIn();
-        allow write: if isLoggedIn() &&
-                        (isAdminOf(
-                          get(/databases/$(database)/documents/tos/$(toId)).data.businessId
-                        ) || isSubAdminOf(
-                          get(/databases/$(database)/documents/tos/$(toId)).data.businessId
-                        ) || isSuperAdmin());
+        allow write: if isLoggedIn() && (isToAdmin(toId) || isSuperAdmin());
+
+
+
+
+
       }
 
       match /slots/{slotId} {
         allow read: if isLoggedIn();
-        allow write: if isLoggedIn() &&
-                        (isAdminOf(
-                          get(/databases/$(database)/documents/tos/$(toId)).data.businessId
-                        ) || isSubAdminOf(
-                          get(/databases/$(database)/documents/tos/$(toId)).data.businessId
-                        ) || isSuperAdmin());
+        allow write: if isLoggedIn() && (isToAdmin(toId) || isSuperAdmin());
+
+
+
+
+
         // 지원자: 지원/취소 시 pendingCount·workTypeCounts 카운터만 수정 허용
         // [LOW-001] pendingCount 음수 방지 — tos.totalPending과 동일한 보호 적용
         allow update: if isLoggedIn() && isUser() &&
@@ -284,20 +294,20 @@ service cloud.firestore {
                    isSuperAdmin()
                  );
 
-      // list: request.query.filters를 사용하지 않고 isLoggedIn()으로 허용.
-      //
-      // [설계 결정] request.query.filters는 Firestore 복합쿼리에서 신뢰할 수 없음:
-      //   · whereIn/not-in/array-contains-any → filters에 해당 필드 노출 불가
-      //   · where('uid').orderBy('appliedAt', desc) 등 복합 인덱스 쿼리 → filters.uid = null
-      //   · where('toId').where('uid') 등 다중 equality 복합 쿼리 → 일부 필드 누락
-      //   위 경우 filters 기반 규칙이 정당한 쿼리를 PERMISSION_DENIED로 차단.
-      //
-      // [보안 보완]
-      //   · 앱 코드는 항상 uid 또는 businessId 필터를 쿼리에 포함 (코드 수준 보장)
-      //   · get 규칙이 개별 문서 접근을 제어 (본인·관리자·슈퍼어드민만 허용)
-      //   · 악의적 사용자가 필터 없이 조회하더라도 각 컬렉션의 get 규칙이 문서 단위로 차단
-      allow list: if isLoggedIn();
 
+      // list: request.query.filters 복합쿼리 신뢰 불가 → 역할 체크로 최소 보호
+      //   filters 기반 uid/businessId 체크는 whereIn·복합 인덱스 쿼리에서 null 반환 → PERMISSION_DENIED 위험
+      //   대신 역할(isSuperAdmin/isBusinessAdmin/isSubAdmin/isUser)로 최소 보호
+      //   · 어떤 역할도 없는 사용자(신규 가입 전 등)는 차단
+      //   · 앱 코드에서 항상 uid 또는 businessId 필터를 포함해야 함
+      //   · get 규칙(본인·관리자·슈퍼어드민)이 개별 문서 단위로 2차 보호
+
+      allow list: if isLoggedIn() && (
+                   isSuperAdmin() ||
+                   isBusinessAdmin() ||
+                   isSubAdmin() ||
+                   isUser()  // 앱 코드에서 uid/businessId 필터 필수
+                 );
       // 생성: 본인 uid, 관리자 더미 데이터, 또는 해당 사업장 관리자(계약 연장 등)
       allow create: if isLoggedIn() && (
                       request.resource.data.uid == request.auth.uid ||

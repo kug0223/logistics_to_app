@@ -3762,7 +3762,14 @@ export const getMyContracts = onCall(
 
     if (lastDocId) {
       const lastSnap = await db.collection("employment_contracts").doc(lastDocId).get();
-      if (lastSnap.exists) q = q.startAfter(lastSnap);
+      if (!lastSnap.exists) {
+        throw new HttpsError("invalid-argument", "유효하지 않은 커서입니다.");
+      }
+      // 타 사용자의 문서를 커서로 사용해 열람 범위를 우회하는 것 차단
+      if (lastSnap.data()?.workerId !== uid) {
+        throw new HttpsError("permission-denied", "접근 권한이 없는 커서입니다.");
+      }
+      q = q.startAfter(lastSnap);
     }
 
     const snap = await q.get();
