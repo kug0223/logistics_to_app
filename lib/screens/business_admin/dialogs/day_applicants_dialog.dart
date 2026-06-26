@@ -2257,7 +2257,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   Future<void> _rejectApp(ApplicationModel app) async {
     if (!mounted) return;
-    final reason = await _showRejectReasonDialog();
+    final userName = _userMap[app.uid]?.name ?? '지원자';
+    final reason = await DialogHelper.showRejectReasonPicker(
+      context,
+      title: '지원 거절',
+      message: '$userName님을 거절합니다.\n거절 사유를 선택해주세요.',
+    );
     if (reason == null || !mounted) return;
     setState(() => _isProcessing = true);
     try {
@@ -2279,35 +2284,6 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     }
   }
 
-  Future<String?> _showRejectReasonDialog() async {
-    String reason = '';
-    return showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('거절 사유'),
-        content: TextField(
-          autofocus: true,
-          decoration: const InputDecoration(
-            hintText: '사유 입력 (선택사항)',
-            border: OutlineInputBorder(),
-          ),
-          maxLines: 2,
-          onChanged: (v) => reason = v,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, reason),
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.error),
-            child: const Text('거절', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-  }
 
   Future<void> _showWorkerDetail(
     ApplicationModel app,
