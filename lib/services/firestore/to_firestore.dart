@@ -28,12 +28,26 @@ extension TOFirestore on FirestoreService {
   }
 
   /// settings/app_config.maxActiveTOPerBusiness 읽기, 미설정 시 기본값 4
+  /// 1시간 인메모리 캐시 — TO 등록마다 settings 읽기 비용 절감
+  static int? _cachedMaxActiveTO;
+  static DateTime? _cachedMaxActiveTOAt;
+
   Future<int> getMaxActiveTOLimit() async {
+    final now = DateTime.now();
+    if (_cachedMaxActiveTO != null &&
+        _cachedMaxActiveTOAt != null &&
+        now.difference(_cachedMaxActiveTOAt!).inHours < 1) {
+      return _cachedMaxActiveTO!;
+    }
     try {
       final doc = await _firestore.collection('settings').doc('app_config').get();
       if (doc.exists) {
         final v = (doc.data()?['maxActiveTOPerBusiness'] as num?)?.toInt();
-        if (v != null && v > 0) return v;
+        if (v != null && v > 0) {
+          _cachedMaxActiveTO = v;
+          _cachedMaxActiveTOAt = now;
+          return v;
+        }
       }
     } catch (_) {}
     return 4;

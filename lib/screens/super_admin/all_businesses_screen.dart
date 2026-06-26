@@ -52,25 +52,30 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
           .map((doc) => BusinessModel.fromMap(doc.data(), doc.id))
           .toList();
 
-      // 소유자 조회 N+1 — 최대 300회 read.
-      // 개선: ownerName을 businesses 문서에 denormalize하거나 whereIn 30개 청크 배치 조회 필요.
-      final ownerFutures = businesses.map((b) async {
+      // 소유자 일괄 조회: whereIn 30개 청크 배치 → 최대 10회 read (기존 300회 → 97% 절감)
+      final ownerIds = businesses.map((b) => b.ownerId).toSet().toList();
+      final ownerMap = <String, ({String name, String email})>{};
+
+      for (var i = 0; i < ownerIds.length; i += 30) {
+        final chunk = ownerIds.sublist(i, i + 30 < ownerIds.length ? i + 30 : ownerIds.length);
         try {
-          final ownerDoc =
-              await _firestore.collection('users').doc(b.ownerId).get();
-          if (ownerDoc.exists) {
-            final data = ownerDoc.data()!;
-            return (
+          final snap = await _firestore
+              .collection('users')
+              .where(FieldPath.documentId, whereIn: chunk)
+              .get();
+          for (final doc in snap.docs) {
+            final data = doc.data();
+            ownerMap[doc.id] = (
               name: data['name'] as String? ?? '알 수 없음',
               email: data['email'] as String? ?? '',
             );
           }
-        // 소유자 조회 실패 시 폴백 반환 — 한 명의 조회 실패가 전체 목록을 막지 않음
         } catch (_) {}
-        return (name: '알 수 없음', email: '');
-      }).toList();
+      }
 
-      final ownerInfos = await Future.wait(ownerFutures);
+      final ownerInfos = businesses
+          .map((b) => ownerMap[b.ownerId] ?? (name: '알 수 없음', email: ''))
+          .toList();
 
       final result = List.generate(businesses.length, (i) {
         return _BusinessWithOwner(
