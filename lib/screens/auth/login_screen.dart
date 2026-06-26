@@ -88,6 +88,7 @@ class _LoginScreenState extends State<LoginScreen> {
     String? foundUsername;
     bool isSearching = false;
 
+    try {
     await showModalBottomSheet(
       context: context,
       useSafeArea: true,
@@ -264,11 +265,12 @@ class _LoginScreenState extends State<LoginScreen> {
         },
       ),
     );
-
-    nameController.dispose();
-    phoneController.dispose();
-    nameFocus.dispose();
-    phoneFocus.dispose();
+    } finally {
+      nameController.dispose();
+      phoneController.dispose();
+      nameFocus.dispose();
+      phoneFocus.dispose();
+    }
   }
 
   Future<void> _showFindPasswordDialog() async {

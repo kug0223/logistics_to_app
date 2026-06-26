@@ -23,7 +23,7 @@ const CONFIRMED_STATUSES = ["CONFIRMED", "CONTRACT_PENDING"];
 // ═══════════════════════════════════════════════════════════
 
 export const sendPasswordResetCode = onCall(
-  {region: "asia-northeast3"},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     const username = request.data.username as string | undefined;
     const email = request.data.email as string | undefined;
@@ -121,7 +121,7 @@ export const sendPasswordResetCode = onCall(
 // ═══════════════════════════════════════════════════════════
 
 export const resetPasswordWithCode = onCall(
-  {region: "asia-northeast3"},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     const username = request.data.username as string | undefined;
     const code = request.data.code as string | undefined;
@@ -245,7 +245,7 @@ export const resetPasswordWithCode = onCall(
 // ═══════════════════════════════════════════════════════════
 
 export const applyRestartProgram = onCall(
-  {region: "asia-northeast3"},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     const userId = request.auth?.uid;
     if (!userId) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
@@ -312,7 +312,7 @@ export const applyRestartProgram = onCall(
 // ═══════════════════════════════════════════════════════════
 
 export const getServerTime = onCall(
-  {region: "asia-northeast3"},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async () => {
     return {serverTimeMs: Date.now()};
   }
@@ -324,7 +324,7 @@ export const getServerTime = onCall(
 // ═══════════════════════════════════════════════════════════
 
 export const createNotification = onCall(
-  {region: "asia-northeast3"},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
@@ -1340,7 +1340,7 @@ export const onAttendanceWageChanged = onDocumentUpdated(
  * - 이미 작성된 리뷰가 있으면 adminStatus='submitted'로 자동 연동
  */
 export const backfillReviewRequests = onCall(
-  {region: "asia-northeast3"},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     // SUPER_ADMIN만 호출 가능 — 권한 없으면 즉시 차단
     if (!request.auth) {
@@ -2837,7 +2837,7 @@ function parseAddressDistrict(address: string | undefined): string | null {
 }
 
 export const migrateAddressFields = onCall(
-  {region: "asia-northeast3"},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     // SUPER_ADMIN만 호출 가능
     if (!request.auth) {
@@ -3023,7 +3023,7 @@ async function sendSensSms(to: string, content: string): Promise<void> {
  * - NCP SENS로 문자 발송 (SENS_ENABLED=false이면 콘솔 출력만)
  */
 export const sendSmsVerificationCode = onCall(
-  {region: "asia-northeast3"},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     const phone = (request.data.phone as string | undefined)?.replace(/-/g, "");
 
@@ -3074,7 +3074,7 @@ export const sendSmsVerificationCode = onCall(
  * - 성공 시 verified: true 업데이트
  */
 export const verifySmsCode = onCall(
-  {region: "asia-northeast3"},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     const phone = (request.data.phone as string | undefined)?.replace(/-/g, "");
     const code = request.data.code as string | undefined;
@@ -3293,7 +3293,7 @@ export const onBusinessDeleted = onDocumentDeleted(
 // Input:  { purpose: 'register'|'resetPassword', role?: string }
 // Output: { txSeq, authUrl, isMock? }
 export const initiatePassAuth = onCall(
-  {region: "asia-northeast3"},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     const purpose = request.data.purpose as string | undefined;
     if (!purpose || !["register", "resetPassword"].includes(purpose)) {
@@ -3320,7 +3320,7 @@ export const initiatePassAuth = onCall(
 // Input:  { encData, txSeq, purpose, role? }
 // Output: { passToken, name, gender, birthDate, phone }
 export const verifyPassAuth = onCall(
-  {region: "asia-northeast3"},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     const {purpose, role = "USER"} = request.data as {
       encData?: string;
@@ -3446,7 +3446,7 @@ export const verifyPassAuth = onCall(
 //   외국인 비밀번호 재설정 경로는 별도 지원 필요 (예: 이메일 또는 관리자 직접 처리).
 // [보안] passToken은 소비 즉시 삭제(일회용) — 재사용 불가.
 export const resetPasswordWithPass = onCall(
-  {region: "asia-northeast3"},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     const {passToken, username} = request.data as {
       passToken?: string;
@@ -3518,7 +3518,7 @@ export const resetPasswordWithPass = onCall(
 // [설계 제약] pending 상태에서만 처리 가능. 이미 active/rejected 계정은 재처리 불가.
 //   재검토가 필요하면 Firestore를 직접 수정하거나 별도 CF(resetAccountStatus) 추가 필요.
 export const approveForeignWorker = onCall(
-  {region: "asia-northeast3"},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
@@ -3574,7 +3574,7 @@ export const approveForeignWorker = onCall(
 // Input:  { userId, reason }
 // Output: { success: true }
 export const rejectForeignWorker = onCall(
-  {region: "asia-northeast3"},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
@@ -3662,7 +3662,7 @@ export const cleanExpiredPassTokens = onSchedule(
 // Input:  { userId: string }
 // Output: { tempPassword: string }
 export const adminResetForeignPassword = onCall(
-  {region: "asia-northeast3"},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     const callerUid = request.auth?.uid;
     if (!callerUid) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
@@ -3728,7 +3728,7 @@ function serializeFirestoreData(
 // ─── getMyMonthlyAttendances ─────────────────────────────────────────────────
 // USER 본인의 월별 출근 기록 조회 — Firestore list 규칙에서 isUser() 제거 후 이 CF 사용
 export const getMyMonthlyAttendances = onCall(
-  {region: "asia-northeast3"},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const uid = request.auth.uid;
@@ -3758,7 +3758,7 @@ export const getMyMonthlyAttendances = onCall(
 // USER 본인의 계약서 목록 조회 (커서 페이지네이션)
 // lastDocId: 이전 페이지 마지막 문서 ID, pageSize: 페이지 크기 (기본 20)
 export const getMyContracts = onCall(
-  {region: "asia-northeast3"},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const uid = request.auth.uid;

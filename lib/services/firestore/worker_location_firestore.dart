@@ -154,12 +154,4 @@ extension WorkerLocationFirestore on FirestoreService {
     }
   }
 
-  /// 실시간 위치 스트림 (관리자 당일 명단 화면)
-  Stream<WorkerLocationModel?> watchWorkerLocation(String applicationId) {
-    return _firestore
-        .collection(_workerLocationCol)
-        .doc(applicationId)
-        .snapshots()
-        .map((snap) => snap.exists ? WorkerLocationModel.fromFirestore(snap) : null);
-  }
 }
