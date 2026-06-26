@@ -2,6 +2,8 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:printing/printing.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
@@ -45,6 +47,7 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
   bool _hasReadAll = false;
   bool _agreed = false;
   bool _isSigning = false;
+  bool _isSharingPdf = false;
 
   // 근무자 사전 등록 서명 (base64)
   String? _savedSignatureBase64;
@@ -178,6 +181,28 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
     final pos = _scrollController.position;
     if (pos.pixels >= pos.maxScrollExtent - 60) {
       setState(() => _hasReadAll = true);
+    }
+  }
+
+  // ── PDF 공유 ─────────────────────────────────────────────────
+
+  Future<void> _sharePdf() async {
+    final url = widget.contract.pdfUrl;
+    if (url == null) return;
+    setState(() => _isSharingPdf = true);
+    try {
+      final resp = await http.get(Uri.parse(url));
+      if (!mounted) return;
+      if (resp.statusCode != 200) {
+        ToastHelper.showError('PDF를 불러오지 못했습니다.');
+        return;
+      }
+      await Printing.sharePdf(bytes: resp.bodyBytes, filename: '근로계약서.pdf');
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showError('PDF 공유 중 오류가 발생했습니다.');
+    } finally {
+      if (mounted) setState(() => _isSharingPdf = false);
     }
   }
 
@@ -626,34 +651,68 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
               ),
             )
           else
-            Container(
-              width: double.infinity,
-              padding: EdgeInsets.symmetric(
-                  vertical: ResponsiveHelper.spacing(context, 14)),
-              decoration: BoxDecoration(
-                color: AppColors.successBg,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.check_circle_rounded,
-                      color: AppColors.successDark,
-                      size: ResponsiveHelper.iconSize(context, 20)),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  Text(
-                    widget.contract.isCompleted
-                        ? '쌍방 서명이 완료된 계약서입니다'
-                        : isEmployer
-                            ? '서명 완료 — 근무자 서명 대기 중'
-                            : '서명 완료 — 계약이 확정됩니다',
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      color: AppColors.successDark,
-                      fontWeight: FontWeight.w600,
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.symmetric(
+                      vertical: ResponsiveHelper.spacing(context, 14)),
+                  decoration: BoxDecoration(
+                    color: AppColors.successBg,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.check_circle_rounded,
+                          color: AppColors.successDark,
+                          size: ResponsiveHelper.iconSize(context, 20)),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      Text(
+                        widget.contract.isCompleted
+                            ? '쌍방 서명이 완료된 계약서입니다'
+                            : isEmployer
+                                ? '서명 완료 — 근무자 서명 대기 중'
+                                : '서명 완료 — 계약이 확정됩니다',
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(
+                          color: AppColors.successDark,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (widget.contract.isCompleted && widget.contract.pdfUrl != null) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _isSharingPdf ? null : _sharePdf,
+                      icon: _isSharingPdf
+                          ? SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: theme.primaryColor),
+                            )
+                          : const Icon(Icons.share_outlined),
+                      label: Text(_isSharingPdf ? 'PDF 불러오는 중...' : 'PDF 공유'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: theme.primaryColor,
+                        side: BorderSide(color: theme.primaryColor),
+                        padding: EdgeInsets.symmetric(
+                            vertical: ResponsiveHelper.spacing(context, 12)),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                        textStyle: ResponsiveHelper.bodyStyle(context)
+                            .copyWith(fontWeight: FontWeight.w600),
+                      ),
                     ),
                   ),
                 ],
-              ),
+              ],
             ),
         ],
       ),

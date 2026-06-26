@@ -22,23 +22,26 @@ extension NotificationFirestore on FirestoreService {
   CollectionReference _notificationsFor(String userId) =>
       _firestore.collection('users').doc(userId).collection('notifications');
 
-  /// 알림 생성
+  /// 알림 생성 — CF `createNotification` Callable 경유
   ///
-  /// [D01 동시성 설계] 알림 중복 발송 가능성:
-  /// `add()`는 매번 새 document를 생성하므로, 호출 측이 실수로 두 번 호출하면
-  /// 동일 내용의 알림 2개가 저장된다. 현재 각 이벤트 핸들러(확정, 취소 등)에서
-  /// 단 1회만 호출하도록 설계되어 있으므로 실질적 중복 위험은 없다.
-  /// 완전한 방어가 필요하다면 (userId + type + referenceId) 복합 키로 upsert 전환 필요.
+  /// 클라이언트가 타인의 알림 서브컬렉션에 직접 쓰는 보안 취약점을 해소하기 위해
+  /// Cloud Functions Admin SDK 경유로 전환. Firestore 보안 규칙에서
+  /// `allow create: if false`로 클라이언트 직접 write 차단.
   ///
-  /// [D02 읽음 처리 동시성] markNotificationAsRead는 트랜잭션 없이 update.
-  /// isRead: true 덮어쓰기는 멱등(idempotent)이므로 동시 요청도 안전하다 — 의도된 설계.
+  /// [D01 동시성 설계] 동일 내용 알림 중복 발송: 각 이벤트 핸들러에서 단 1회만 호출하도록
+  /// 설계되어 있으므로 실질적 중복 위험 없음.
+  /// [D02 읽음 처리 동시성] markNotificationAsRead는 멱등이므로 동시 요청 안전.
   Future<String?> createNotification(NotificationModel notification) async {
     try {
-      final docRef = await _notificationsFor(notification.userId).add(
-        notification.toMap(),
-      );
-      debugPrint('✅ 알림 생성: ${docRef.id}');
-      return docRef.id;
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('createNotification');
+      final result = await callable.call(notification.toMap());
+      final id = (result.data as Map<dynamic, dynamic>?)?['id'] as String?;
+      debugPrint('✅ 알림 생성 (CF): $id');
+      return id;
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('❌ 알림 생성 실패 (CF): ${e.code} ${e.message}');
+      return null;
     } catch (e) {
       debugPrint('❌ 알림 생성 실패: $e');
       return null;

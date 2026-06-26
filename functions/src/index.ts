@@ -309,6 +309,41 @@ export const getServerTime = onCall(
 );
 
 // ═══════════════════════════════════════════════════════════
+// 🔔 알림 생성 Callable — 클라이언트 직접 write 차단 후 이 함수로 단일화
+// Admin SDK로 쓰므로 Firestore 보안 규칙(allow create: if false)을 우회
+// ═══════════════════════════════════════════════════════════
+
+export const createNotification = onCall(
+  {region: "asia-northeast3"},
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    }
+    const data = request.data as Record<string, unknown>;
+    const userId = data.userId as string | undefined;
+    if (!userId || typeof userId !== "string") {
+      throw new HttpsError("invalid-argument", "userId가 필요합니다.");
+    }
+
+    // 호출자(request.auth.uid)가 본인 또는 로그인된 사용자인지만 확인
+    // (알림은 항상 타인에게도 보낼 수 있어야 함 — 지원자→관리자, 관리자→지원자 등)
+    const payload: Record<string, unknown> = {
+      ...data,
+      createdAt: Timestamp.now(),
+    };
+
+    const docRef = await db
+      .collection("users")
+      .doc(userId)
+      .collection("notifications")
+      .add(payload);
+
+    console.log(`✅ [알림 생성] userId=${userId}, id=${docRef.id}`);
+    return {id: docRef.id};
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
 // 👥 초대 수락 시 user.subAdminOf 설정 (Admin SDK, 클라이언트 규칙 우회)
 // ═══════════════════════════════════════════════════════════
 

@@ -150,13 +150,12 @@ service cloud.firestore {
                      (isAdmin() && resource.data.isDummy == true);
 
       // ─── users/{userId}/notifications 서브컬렉션 ─────────────
-      // create: 로그인한 사용자라면 누구든 타인의 알림 서브컬렉션에 쓸 수 있어야 한다.
-      //   → 지원자가 관리자 알림 생성, 관리자가 지원자 알림 생성 등 클라이언트 측에서 처리.
-      //   CF(Admin SDK) 전환 전까지 isLoggedIn()으로 허용한다.
+      // create: CF createNotification Callable(Admin SDK)로 단일화 — 클라이언트 직접 write 차단
+      //   → 악의적 사용자가 타인에게 임의 알림을 발송하는 취약점 해소
       // read/update/delete: 본인 경로만 허용 (소유권 유지)
       match /notifications/{notificationId} {
         allow read: if isLoggedIn() && isOwner(userId);
-        allow create: if isLoggedIn();
+        allow create: if false;
         allow update, delete: if isLoggedIn() && isOwner(userId);
       }
     }
