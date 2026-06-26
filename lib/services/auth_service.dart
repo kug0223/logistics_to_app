@@ -471,6 +471,7 @@ class AuthService {
         if (identityHash != null) {
           final isBlacklisted = data['isBlacklisted'] == true;
           await _firestore.collection('deleted_accounts').add({
+            'uid': user.uid,
             'phoneHash': identityHash,
             'deletedAt': FieldValue.serverTimestamp(),
             'canReregisterAt': isBlacklisted

@@ -159,8 +159,8 @@ extension IdCardFirestore on FirestoreService {
       final docRef = _firestore.collection('idCardAccessRequests').doc(requestId);
       Map<String, dynamic>? requestData;
 
-      // [특이사항] approveIdCardAccessRequest와 동일하게 트랜잭션 적용 — 관리자 2명이
-      // 동시에 거절 버튼을 탭하면 중복 알림이 발송될 수 있으므로 pending 상태일 때만 처리.
+      // [특이사항] approveIdCardAccessRequest와 동일하게 트랜잭션 적용 — 근무자가
+      // 실수로 두 번 탭하면 중복 알림이 발송될 수 있으므로 pending 상태일 때만 처리.
       final wasRejected = await _firestore.runTransaction<bool>((tx) async {
         final doc = await tx.get(docRef);
         if (!doc.exists) return false;
