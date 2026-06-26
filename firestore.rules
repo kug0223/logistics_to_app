@@ -47,14 +47,16 @@ service cloud.firestore {
     function isAdminOf(businessId) {
       let valid = businessId is string && businessId.size() > 0;
       let biz = valid ? get(/databases/$(database)/documents/businesses/$(businessId)) : null;
-      return valid && isLoggedIn() &&
+      // [특이사항] Firebase Rules는 단일 return만 허용 — if 문 사용 불가.
+      // isLoggedIn()을 biz null 체크 뒤로 이동해 biz가 없을 때 불필요한 auth 평가 회피.
+      return valid &&
         biz != null &&
-        biz.data != null && (
+        biz.data != null &&
+        isLoggedIn() && (
           biz.data.get('ownerId', '') == request.auth.uid ||
           ('adminIds' in biz.data && request.auth.uid in biz.data.adminIds)
         );
     }
-
     function isSubAdminOf(businessId) {
       let u = get(/databases/$(database)/documents/users/$(request.auth.uid));
       return businessId is string && businessId.size() > 0 &&
