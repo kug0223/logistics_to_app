@@ -1413,11 +1413,14 @@ async function _sendReviewRequestNotification(
    */
 async function updateUserReviewStats(userId: string): Promise<void> {
   try {
+    // [특이사항] limit(1000): 리뷰가 1000개 초과 시 통계가 부분적으로만 집계됨.
+    // 현실적 최대치(앱 규모상 초과 가능성 낮음)이며, 초과 시 서버사이드 aggregation으로 개선 필요
     const snapshot = await db
       .collection("monthly_reviews")
       .where("targetUserId", "==", userId)
       .where("reviewType", "==", "ADMIN_TO_USER")
       .where("isPublished", "==", true)
+      .limit(1000)
       .get();
 
     if (snapshot.empty) return;
@@ -1454,11 +1457,13 @@ async function updateUserReviewStats(userId: string): Promise<void> {
    */
 async function updateBusinessReviewStats(businessId: string): Promise<void> {
   try {
+    // [특이사항] limit(1000): 리뷰 1000개 초과 시 통계가 부분적으로만 집계됨 (updateUserReviewStats와 동일 제약)
     const snapshot = await db
       .collection("monthly_reviews")
       .where("businessId", "==", businessId)
       .where("reviewType", "==", "USER_TO_BUSINESS")
       .where("isPublished", "==", true)
+      .limit(1000)
       .get();
 
     if (snapshot.empty) return;
@@ -2062,7 +2067,8 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
             body: fcmBody,
             data: { type: "workReminder", applicationId: jobs[0].id },
           };
-          await Promise.all(tokens.map((token) => sendFCMToUser(userId, fcmPayload, token)));
+          // allSettled: 토큰 1개 실패 시 나머지 토큰 발송도 중단되지 않도록 개선
+          await Promise.allSettled(tokens.map((token) => sendFCMToUser(userId, fcmPayload, token)));
           if (tokens.length === 0) {
             console.log(`    ⚠️ FCM 토큰 없음 (리마인더 스킵): ${userId}`);
           }

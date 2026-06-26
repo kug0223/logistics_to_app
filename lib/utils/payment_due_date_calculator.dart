@@ -46,7 +46,8 @@ class PaymentDueDateCalculator {
   /// 오늘이 paymentDueDate인지 확인 (지급일 도래 여부)
   static bool isDueToday(DateTime? paymentDueDate) {
     if (paymentDueDate == null) return false;
-    final today = DateTime.now();
+    // toLocal(): KST 환경에서 UTC 기준 자정 전후 오판 방지
+    final today = DateTime.now().toLocal();
     return paymentDueDate.year  == today.year &&
            paymentDueDate.month == today.month &&
            paymentDueDate.day   == today.day;
@@ -55,7 +56,7 @@ class PaymentDueDateCalculator {
   /// 오늘 기준 지급 예정일이 오늘 이하인지 (지나쳤거나 당일)
   static bool isDueOnOrBefore(DateTime? paymentDueDate, {DateTime? reference}) {
     if (paymentDueDate == null) return false;
-    final ref = reference ?? DateTime.now();
+    final ref = (reference ?? DateTime.now()).toLocal();
     final refDate = DateTime(ref.year, ref.month, ref.day);
     final dueDate = DateTime(
         paymentDueDate.year, paymentDueDate.month, paymentDueDate.day);

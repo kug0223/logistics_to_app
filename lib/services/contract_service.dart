@@ -407,7 +407,7 @@ class ContractService {
     await _db.collection('employment_contracts').doc(contractId).update({
       'articles': articles.map((a) => a.toMap()).toList(),
       if (templateId != null) 'templateId': templateId,
-      'updatedAt': Timestamp.fromDate(DateTime.now()),
+      'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
@@ -673,7 +673,7 @@ class ContractService {
     // 1단계: 계약서 voided 먼저 업데이트 (실패 시 아무것도 변경 안 됨 → 깨끗한 재시도 가능)
     await _db.collection('employment_contracts').doc(contractId).update({
       'status': ContractStatus.voided.value,
-      'updatedAt': Timestamp.fromDate(DateTime.now()),
+      'updatedAt': FieldValue.serverTimestamp(),
     });
 
     // 2단계: 근무자에게 무효화 알림 즉시 발송 (계약서 voided 직후 — 앱 취소 전)

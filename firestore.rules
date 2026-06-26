@@ -446,9 +446,10 @@ service cloud.firestore {
 
       // 관리자: 소속 사업장 출근 기록 삭제 허용 (TO 삭제 시 고아 데이터 정리)
       // wageTransferred/wageConfirmed 기록은 코드 레벨에서 보존 처리
+      // isDummy 삭제 시 자신의 사업장만 허용 — isAdmin() 역할만으로는 타 사업장 더미 삭제 가능했던 취약점 수정
       allow delete: if isSuperAdmin() ||
                      isAdminOf(resource.data.businessId) ||
-                     (isAdmin() && resource.data.isDummy == true);
+                     (isAdmin() && resource.data.isDummy == true && isAdminOf(resource.data.businessId));
     }
 
     // ═══════════════════════════════════════════════════════════

@@ -581,6 +581,26 @@ extension TOFirestore on FirestoreService {
               }
               if (reqCount > 0) await reqBatch.commit();
             }
+            // employment_contracts 정리 — 서명 완료(completed) 계약서는 법적 기록이므로 보존
+            final contractSnap = await _firestore.collection('employment_contracts')
+                .where('applicationId', whereIn: chunk)
+                .get(const GetOptions(source: Source.server));
+            if (contractSnap.docs.isNotEmpty) {
+              var contractBatch = _firestore.batch();
+              int contractCount = 0;
+              for (final c in contractSnap.docs) {
+                final status = c.data()['status'] as String?;
+                if (status == 'completed') continue; // 서명 완료 계약서 보존
+                contractBatch.delete(c.reference);
+                contractCount++;
+                if (contractCount >= 499) {
+                  await contractBatch.commit();
+                  contractBatch = _firestore.batch();
+                  contractCount = 0;
+                }
+              }
+              if (contractCount > 0) await contractBatch.commit();
+            }
           }
         } catch (cleanupErr) {
           debugPrint('⚠️ [TO] 고아 데이터 정리 실패 (TO 삭제는 완료됨): $cleanupErr');
