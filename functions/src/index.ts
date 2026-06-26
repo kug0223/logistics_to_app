@@ -326,13 +326,25 @@ export const createNotification = onCall(
     }
 
     // [특이사항] 알림은 항상 타인에게도 보낼 수 있어야 함 (지원자→관리자, 관리자→지원자).
-    // Admin SDK 우회이므로 필드 화이트리스트로 임의 데이터 저장을 차단한다.
+    // Admin SDK 우회이므로 최상위 필드와 data 서브필드 모두 화이트리스트로 임의 저장을 차단한다.
+    // data 서브필드 허용 키: FCM 딥링크 라우팅에서 실제 사용되는 키만 포함.
+    // 허용 외 키는 자동 제거 — XSS·딥링크 조작 방지.
+    const rawData = (data.data as Record<string, unknown> | undefined) ?? {};
+    const allowedDataKeys = new Set([
+      "screen", "action", "applicationId", "businessId", "toId",
+      "requestId", "reviewId", "contractId", "attendanceId", "invitationId",
+    ]);
+    const filteredData: Record<string, unknown> = {};
+    for (const key of Object.keys(rawData)) {
+      if (allowedDataKeys.has(key)) filteredData[key] = String(rawData[key]);
+    }
+
     const payload: Record<string, unknown> = {
       userId,
       title: data.title as string | undefined,
       body: data.body as string | undefined,
       type: (data.type as string | undefined) ?? "general",
-      data: (data.data as Record<string, unknown> | undefined) ?? {},
+      data: filteredData,
       isRead: false,
       createdAt: Timestamp.now(),
     };
