@@ -3681,3 +3681,98 @@ export const adminResetForeignPassword = onCall(
     return {tempPassword};
   }
 );
+
+// ─── Firestore 직렬화 헬퍼 ───────────────────────────────────────────────────
+// CF onCall 응답 시 Firestore Timestamp는 자동으로 {_seconds, _nanoseconds} Map으로
+// JSON 직렬화됨. 중첩 Map/Array 내부도 재귀 처리한다.
+function serializeFirestoreData(
+  data: Record<string, unknown>
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value instanceof Timestamp) {
+      result[key] = {_seconds: value.seconds, _nanoseconds: value.nanoseconds};
+    } else if (Array.isArray(value)) {
+      result[key] = value.map((item) =>
+        item instanceof Timestamp
+          ? {_seconds: item.seconds, _nanoseconds: item.nanoseconds}
+          : typeof item === "object" && item !== null
+          ? serializeFirestoreData(item as Record<string, unknown>)
+          : item
+      );
+    } else if (typeof value === "object" && value !== null) {
+      result[key] = serializeFirestoreData(value as Record<string, unknown>);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+// ─── getMyMonthlyAttendances ─────────────────────────────────────────────────
+// USER 본인의 월별 출근 기록 조회 — Firestore list 규칙에서 isUser() 제거 후 이 CF 사용
+export const getMyMonthlyAttendances = onCall(
+  {region: "asia-northeast3"},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    const {year, month} = request.data as {year: number; month: number};
+    if (!year || !month) {
+      throw new HttpsError("invalid-argument", "year, month 파라미터가 필요합니다.");
+    }
+
+    const monthStart = new Date(year, month - 1, 1);
+    const monthEnd = new Date(year, month, 1);
+
+    const snap = await db
+      .collection("attendance")
+      .where("userId", "==", uid)
+      .where("workDate", ">=", Timestamp.fromDate(monthStart))
+      .where("workDate", "<", Timestamp.fromDate(monthEnd))
+      .orderBy("workDate", "asc")
+      .get();
+
+    return {
+      items: snap.docs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
+    };
+  }
+);
+
+// ─── getMyContracts ──────────────────────────────────────────────────────────
+// USER 본인의 계약서 목록 조회 (커서 페이지네이션)
+// lastDocId: 이전 페이지 마지막 문서 ID, pageSize: 페이지 크기 (기본 20)
+export const getMyContracts = onCall(
+  {region: "asia-northeast3"},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    const {statusFilter, lastDocId, pageSize = 20} = (request.data ?? {}) as {
+      statusFilter?: string;
+      lastDocId?: string;
+      pageSize?: number;
+    };
+
+    let q: FirebaseFirestore.Query = db
+      .collection("employment_contracts")
+      .where("workerId", "==", uid);
+    if (statusFilter) {
+      q = q.where("status", "==", statusFilter);
+    }
+    q = q.orderBy("createdAt", "desc").limit(pageSize + 1);
+
+    if (lastDocId) {
+      const lastSnap = await db.collection("employment_contracts").doc(lastDocId).get();
+      if (lastSnap.exists) q = q.startAfter(lastSnap);
+    }
+
+    const snap = await q.get();
+    const hasMore = snap.docs.length > pageSize;
+    const docs = hasMore ? snap.docs.slice(0, pageSize) : snap.docs;
+
+    return {
+      items: docs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
+      lastDocId: docs.length > 0 ? docs[docs.length - 1].id : null,
+      hasMore,
+    };
+  }
+);

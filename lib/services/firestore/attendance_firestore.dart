@@ -371,45 +371,27 @@ extension AttendanceFirestore on FirestoreService {
       return [];
     }
   }
-  /// 사용자별 월별 출근 기록 조회
+  /// 사용자별 월별 출근 기록 조회 (CF 프록시)
+  /// attendance list 규칙에서 isUser() 제거 → CF로 auth.uid 기반 서버 검증
   Future<List<AttendanceModel>> getMyMonthlyAttendances({
     required String userId,
     required int year,
     required int month,
   }) async {
     try {
-      final monthStart = DateTime(year, month, 1);
-      final monthEnd = DateTime(year, month + 1, 1);
-      
-      debugPrint('🔍 [getMyMonthlyAttendances] $year년 $month월 출근 기록 조회');
-      debugPrint('   userId: $userId');
-      debugPrint('   monthStart: $monthStart');
-      debugPrint('   monthEnd: $monthEnd');
-      
-      final snapshot = await _firestore
-          .collection('attendance')
-          .where('userId', isEqualTo: userId)
-          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
-          .where('workDate', isLessThan: Timestamp.fromDate(monthEnd))
-          .orderBy('workDate', descending: false)
-          .get();
-      
-      final attendances = snapshot.docs
-          .map((doc) => AttendanceModel.fromFirestore(doc))
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('getMyMonthlyAttendances');
+      final result = await callable.call({'year': year, 'month': month});
+      final items = (result.data['items'] as List<dynamic>? ?? []);
+      return items
+          .map((e) {
+            final m = Map<String, dynamic>.from(e as Map);
+            final id = m.remove('id') as String? ?? '';
+            return AttendanceModel.fromMap(m, id);
+          })
           .toList();
-      
-      debugPrint('✅ 월별 출근 기록: ${attendances.length}건');
-      
-      return attendances;
-    } catch (e, stackTrace) {
+    } catch (e) {
       debugPrint('❌ 월별 출근 기록 조회 실패: $e');
-      debugPrint('📋 스택트레이스: $stackTrace');
-      
-      // 🔗 인덱스 생성 링크가 에러에 포함되어 있으면 출력
-      if (e.toString().contains('index')) {
-        debugPrint('⚠️ Firestore 복합 인덱스가 필요합니다!');
-        debugPrint('   위 에러 메시지의 링크를 클릭하여 인덱스를 생성하세요.');
-      }
       return [];
     }
   }

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:crypto/crypto.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
@@ -542,50 +543,54 @@ class ContractService {
     return result;
   }
 
-  /// 근무자 uid로 계약서 목록 조회 (페이지네이션 + 상태 필터)
-  Future<({List<EmploymentContractModel> items, DocumentSnapshot? lastDoc, bool hasMore})>
+  static final _fn = FirebaseFunctions.instanceFor(region: 'asia-northeast3');
+
+  /// 근무자 uid로 계약서 목록 조회 (페이지네이션 + 상태 필터) — CF 프록시
+  /// employment_contracts list 규칙에서 isUser() 제거 → CF로 auth.uid 기반 서버 검증
+  Future<({List<EmploymentContractModel> items, String? lastDocId, bool hasMore})>
       getByWorkerPaged(
     String workerId, {
     ContractStatus? statusFilter,
-    DocumentSnapshot? startAfter,
+    String? startAfter,
     int pageSize = 20,
   }) async {
     try {
-      Query<Map<String, dynamic>> q = _db
-          .collection('employment_contracts')
-          .where('workerId', isEqualTo: workerId);
-      if (statusFilter != null) {
-        q = q.where('status', isEqualTo: statusFilter.value);
-      }
-      // pageSize+1로 쿼리해 hasMore 정확도 보장 — 마지막 페이지에서 빈 호출 없앰 (E-047)
-      q = q.orderBy('createdAt', descending: true).limit(pageSize + 1);
-      if (startAfter != null) q = q.startAfterDocument(startAfter);
-      final snap = await q.get();
-      final hasMore = snap.docs.length > pageSize;
-      final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
+      final callable = _fn.httpsCallable('getMyContracts');
+      final result = await callable.call({
+        if (statusFilter != null) 'statusFilter': statusFilter.value,
+        if (startAfter != null) 'lastDocId': startAfter,
+        'pageSize': pageSize,
+      });
+      final data = result.data as Map<dynamic, dynamic>;
+      final rawItems = (data['items'] as List<dynamic>? ?? []);
+      final items = rawItems.map((e) {
+        final m = Map<String, dynamic>.from(e as Map);
+        final id = m.remove('id') as String? ?? '';
+        return EmploymentContractModel.fromMap(m, id);
+      }).toList();
       return (
-        items: docs.map(EmploymentContractModel.fromFirestore).toList(),
-        lastDoc: docs.isNotEmpty ? docs.last : null,
-        hasMore: hasMore,
+        items: items,
+        lastDocId: data['lastDocId'] as String?,
+        hasMore: data['hasMore'] as bool? ?? false,
       );
     } catch (e) {
       debugPrint('❌ 근무자 계약서 조회 실패: $e');
-      return (items: <EmploymentContractModel>[], lastDoc: null, hasMore: false);
+      return (items: <EmploymentContractModel>[], lastDocId: null, hasMore: false);
     }
   }
 
-  /// 근무자 uid로 계약서 목록 조회 (하위 호환 - 내부 캐시용)
-  ///
-  /// 신규 사용 시 getByWorkerPaged() 를 사용할 것.
+  /// 근무자 uid로 계약서 목록 조회 (하위 호환 - 내부 캐시용) — CF 프록시
   Future<List<EmploymentContractModel>> getByWorker(String workerId) async {
     try {
-      final snap = await _db
-          .collection('employment_contracts')
-          .where('workerId', isEqualTo: workerId)
-          .orderBy('createdAt', descending: true)
-          .limit(200) // 근무자당 계약서 상한 — 초과 시 getByWorkerPaged() 사용
-          .get();
-      return snap.docs.map(EmploymentContractModel.fromFirestore).toList();
+      final callable = _fn.httpsCallable('getMyContracts');
+      final result = await callable.call({'pageSize': 200});
+      final data = result.data as Map<dynamic, dynamic>;
+      final rawItems = (data['items'] as List<dynamic>? ?? []);
+      return rawItems.map((e) {
+        final m = Map<String, dynamic>.from(e as Map);
+        final id = m.remove('id') as String? ?? '';
+        return EmploymentContractModel.fromMap(m, id);
+      }).toList();
     } catch (e) {
       debugPrint('❌ 근무자 계약서 조회 실패: $e');
       return [];

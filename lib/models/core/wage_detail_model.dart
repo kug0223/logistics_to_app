@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'insurance_rate_model.dart';
+import '../../utils/firestore_helper.dart';
 
 /// 급여 상세 모델
 /// AttendanceModel에 임베디드되어 급여 계산 정보를 저장
@@ -131,13 +132,9 @@ class WageDetailModel {
       appliedMinimumWage: (map['appliedMinimumWage'] as num?)?.toInt() ?? 10320,
       appliedSupplementWage: (map['appliedSupplementWage'] as num?)?.toInt() ?? 0,
       calculatedBy: map['calculatedBy'],
-      calculatedAt: map['calculatedAt'] != null
-          ? (map['calculatedAt'] as Timestamp).toDate().toLocal()
-          : null,
+      calculatedAt: parseTimestampNullable(map['calculatedAt']),
       confirmedBy: map['confirmedBy'],
-      confirmedAt: map['confirmedAt'] != null
-          ? (map['confirmedAt'] as Timestamp).toDate().toLocal()
-          : null,
+      confirmedAt: parseTimestampNullable(map['confirmedAt']),
       taxDeductionType: map['taxDeductionType'] as String? ?? InsuranceRateModel.typeNone,
       employmentInsuranceDeduction: (map['employmentInsuranceDeduction'] as num?)?.toInt() ?? 0,
       nationalPensionDeduction: (map['nationalPensionDeduction'] as num?)?.toInt() ?? 0,

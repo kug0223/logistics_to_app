@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'contract_template_model.dart';
 import 'insurance_rate_model.dart';
+import '../../utils/firestore_helper.dart';
 
 // ─── 상태 ─────────────────────────────────────────────────────
 
@@ -455,9 +456,9 @@ class EmploymentContractModel {
           : [],
       status: ContractStatusX.fromString(d['status'] ?? 'pending_employer'),
       employerSignatureUrl: d['employerSignatureUrl'],
-      employerSignedAt: (d['employerSignedAt'] as Timestamp?)?.toDate().toLocal(),
+      employerSignedAt: parseTimestampNullable(d['employerSignedAt']),
       workerSignatureUrl: d['workerSignatureUrl'],
-      workerSignedAt: (d['workerSignedAt'] as Timestamp?)?.toDate().toLocal(),
+      workerSignedAt: parseTimestampNullable(d['workerSignedAt']),
       pdfUrl: d['pdfUrl'],
       snapshot: d['snapshot'] != null
           ? ContractSnapshot.fromMap(
@@ -471,9 +472,9 @@ class EmploymentContractModel {
           : [],
       templateId: d['templateId'] as String?,
       createdAt: d['createdAt'] != null
-          ? (d['createdAt'] as Timestamp).toDate().toLocal()
+          ? parseTimestamp(d['createdAt'])
           : (throw ArgumentError('EmploymentContractModel: createdAt 필드 누락 (id: $id)')),
-      updatedAt: (d['updatedAt'] as Timestamp?)?.toDate().toLocal(),
+      updatedAt: parseTimestampNullable(d['updatedAt']),
       voidFailedAppIds: d['voidFailedAppIds'] != null
           ? List<String>.from(d['voidFailedAppIds'] as List)
           : [],

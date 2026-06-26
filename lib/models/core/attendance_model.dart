@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'wage_detail_model.dart';
+import '../../utils/firestore_helper.dart';
 
 /// 출근 기록 모델
 class AttendanceModel {
@@ -155,7 +156,7 @@ class AttendanceModel {
       businessId: map['businessId'] ?? '',
       businessName: map['businessName'] ?? '',
       workDate: map['workDate'] != null
-          ? (map['workDate'] as Timestamp).toDate().toLocal()
+          ? parseTimestamp(map['workDate'])
           : (throw ArgumentError('AttendanceModel: workDate 필드 누락 (id: $id)')),
       workType: map['workType'] ?? '',
       checkIn: map['checkIn'],
@@ -163,45 +164,38 @@ class AttendanceModel {
       checkInLat: (map['checkInLat'] as num?)?.toDouble(),
       checkInLng: (map['checkInLng'] as num?)?.toDouble(),
       checkInMethod: map['checkInMethod'],
-      checkInTime: map['checkInTime'] != null 
-          ? (map['checkInTime'] as Timestamp).toDate().toLocal()          : null,
+      checkInTime: parseTimestampNullable(map['checkInTime']),
       checkOut: map['checkOut'],
       originalCheckOut: map['originalCheckOut'] as String?,
       checkOutLat: (map['checkOutLat'] as num?)?.toDouble(),
       checkOutLng: (map['checkOutLng'] as num?)?.toDouble(),
       checkOutMethod: map['checkOutMethod'],
-      checkOutTime: map['checkOutTime'] != null
-          ? (map['checkOutTime'] as Timestamp).toDate().toLocal()          : null,
+      checkOutTime: parseTimestampNullable(map['checkOutTime']),
       status: map['status'] ?? 'absent',
       isModified: map['isModified'] ?? false,
       modifyRequested: map['modifyRequested'] ?? false,
       modifyReason: map['modifyReason'],
       modifiedBy: map['modifiedBy'],
-      modifiedAt: map['modifiedAt'] != null
-          ? (map['modifiedAt'] as Timestamp).toDate().toLocal()          : null,
+      modifiedAt: parseTimestampNullable(map['modifiedAt']),
       workHours: (map['workHours'] as num?)?.toDouble(),
       calculatedWage: (map['calculatedWage'] as num?)?.toInt(),
       confirmedBy: map['confirmedBy'],
-      confirmedAt: map['confirmedAt'] != null
-          ? (map['confirmedAt'] as Timestamp).toDate().toLocal()
-          : null,
+      confirmedAt: parseTimestampNullable(map['confirmedAt']),
       createdAt: map['createdAt'] != null
-          ? (map['createdAt'] as Timestamp).toDate().toLocal()
+          ? parseTimestamp(map['createdAt'])
           : (throw ArgumentError('AttendanceModel: createdAt 필드 누락 (id: $id)')),
-      updatedAt: map['updatedAt'] != null
-          ? (map['updatedAt'] as Timestamp).toDate().toLocal()
-          : null,
+      updatedAt: parseTimestampNullable(map['updatedAt']),
       // 급여 관련 (신규)
       wageStatus: map['wageStatus'] ?? 'pending',
       finalWage: (map['finalWage'] as num?)?.toInt(),
       wageDetail: map['wageDetail'] != null
-          ? WageDetailModel.fromMap(map['wageDetail'] as Map<String, dynamic>)
+          ? WageDetailModel.fromMap(Map<String, dynamic>.from(map['wageDetail'] as Map))
           : null,
       yearMonth: map['yearMonth'] as String?,
       adminConfirmed: map['adminConfirmed'] ?? false,
-      paymentDueDate: (map['paymentDueDate'] as Timestamp?)?.toDate().toLocal(),
+      paymentDueDate: parseTimestampNullable(map['paymentDueDate']),
       // 송금 관련
-      transferDate: (map['transferDate'] as Timestamp?)?.toDate().toLocal(),
+      transferDate: parseTimestampNullable(map['transferDate']),
       transferNote: map['transferNote'] as String?,
       transferredBy: map['transferredBy'] as String?,
     );

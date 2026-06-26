@@ -6,7 +6,6 @@
 // - ContractSignScreen 진입
 
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/core/employment_contract_model.dart';
@@ -51,7 +50,7 @@ class _UserContractsScreenState extends State<UserContractsScreen>
   bool _isLoading = true;
   bool _isLoadingMore = false;
   bool _hasMore = false;
-  DocumentSnapshot? _lastDoc;
+  String? _lastDocId;
 
   ContractStatus? get _currentFilter => _tabs[_tabCtrl.index];
 
@@ -89,7 +88,7 @@ class _UserContractsScreenState extends State<UserContractsScreen>
     final uid = _uid;
     // uid null 시에도 _isLoading=false 필수 — 미처리 시 LoadingWidget이 영구 표시됨
     if (uid == null || !mounted) { if (mounted) setState(() => _isLoading = false); return; }
-    setState(() { _isLoading = true; _items = []; _lastDoc = null; });
+    setState(() { _isLoading = true; _items = []; _lastDocId = null; });
     try {
       final result = await _contractService.getByWorkerPaged(
         uid,
@@ -97,9 +96,9 @@ class _UserContractsScreenState extends State<UserContractsScreen>
       );
       if (!mounted) return;
       setState(() {
-        _items   = result.items;
-        _lastDoc = result.lastDoc;
-        _hasMore = result.hasMore;
+        _items     = result.items;
+        _lastDocId = result.lastDocId;
+        _hasMore   = result.hasMore;
       });
     } catch (e) {
       debugPrint('❌ 계약 목록 로드 실패: $e');
@@ -113,20 +112,20 @@ class _UserContractsScreenState extends State<UserContractsScreen>
 
   Future<void> _loadMore() async {
     final uid = _uid;
-    if (_isLoadingMore || !_hasMore || _lastDoc == null || uid == null) return;
+    if (_isLoadingMore || !_hasMore || _lastDocId == null || uid == null) return;
     if (!mounted) return;
     setState(() => _isLoadingMore = true);
     try {
       final result = await _contractService.getByWorkerPaged(
         uid,
         statusFilter: _currentFilter,
-        startAfter: _lastDoc,
+        startAfter: _lastDocId,
       );
       if (!mounted) return;
       setState(() {
         _items.addAll(result.items);
-        _lastDoc = result.lastDoc;
-        _hasMore = result.hasMore;
+        _lastDocId = result.lastDocId;
+        _hasMore   = result.hasMore;
       });
     } catch (e) {
       debugPrint('❌ 계약 목록 추가 로드 실패: $e');

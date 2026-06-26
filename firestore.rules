@@ -381,17 +381,14 @@ service cloud.firestore {
                    isSuperAdmin()
                  );
 
+
       // list: [크로스-사업장 방지]
-      //   · USER: 앱 코드에서 항상 userId == auth.uid 필터 포함 (코드 수준 보장)
-      //     단, userId 등호 + workDate 범위 + orderBy 복합 쿼리에서
-      //     request.query.filters.userId가 null을 반환해 PERMISSION_DENIED가 발생하므로
-      //     isUser() 역할 체크만으로 허용 (applications 컬렉션과 동일한 설계 결정)
+      //   · USER: CF getMyMonthlyAttendances 프록시로 이전 — 직접 list 불허
       //   · BUSINESS_ADMIN: 쿼리 필터 businessId 우선, 없으면 user.businessId 폴백
       //     whereIn 복합쿼리에서 request.query.filters.businessId가 null 반환될 수 있으므로
       //     코드 레벨에서도 whereIn 제거 후 클라이언트 필터링 병행
       allow list: if isLoggedIn() && (
                     isSuperAdmin() ||
-                    isUser() ||
                     (isBusinessAdmin() && (
                       isAdminOf(request.query.filters.businessId) ||
                       isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
@@ -401,6 +398,9 @@ service cloud.firestore {
                       isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
                     ))
                   );
+
+
+
 
       // 생성: 본인 또는 해당 사업장 관리자(수동 출근 처리) 또는 더미 데이터
       // 슈퍼어드민은 isAdminOf() 없이도 모든 사업장 출근 기록 수동 생성 가능
@@ -908,9 +908,9 @@ service cloud.firestore {
       //     - _findBundle(businessId: businessId) — 번들 계약서 탐색 시 사업장 검증
       //   · USER가 businessId 필터를 쓰면 → workerId 필터 없이 타인 계약서 열람 가능 → 차단
       // [BUGFIX] 복합 equality 쿼리에서 request.query.filters 미노출 대비 user.businessId 폴백
+      // USER: CF getMyContracts 프록시로 이전 — 직접 list 불허
       allow list: if isLoggedIn() && (
                    isSuperAdmin() ||
-                   isUser() ||  // 복합 쿼리에서 filters.workerId null 반환 대비, 앱 코드에서 workerId==auth.uid 보장
                    (isBusinessAdmin() && (
                      isAdminOf(request.query.filters.businessId) ||
                      isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
