@@ -865,8 +865,9 @@ service cloud.firestore {
                    (isSubAdmin() && (
                      isSubAdminOf(request.query.filters.businessId) ||
                      isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
-                   )) ||
-                   isUser()  // 복합 쿼리에서 filters.userId null 반환 대비, 앱 코드에서 userId==auth.uid 보장
+                   ))
+                   // isUser() 제거: getScoreHistory는 B03 미완성(UI 진입점 없음)
+                   // USER 직접 조회 필요 시 CF 프록시로 구현할 것
                  );
       // 생성: 해당 사업장 관리자·하위관리자 또는 슈퍼어드민
       // SUB_ADMIN도 출근 마감 처리 시 TrustScoreService를 통해 생성한다

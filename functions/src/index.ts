@@ -110,7 +110,7 @@ export const sendPasswordResetCode = onCall(
       `,
     });
 
-    console.log(`✅ [비밀번호 재설정] 코드 발송 완료: ${username}`);
+    console.log(`✅ [비밀번호 재설정] 코드 발송 완료: ${username.slice(0, 2)}***`);
     return {success: true};
   }
 );
@@ -128,6 +128,12 @@ export const resetPasswordWithCode = onCall(
 
     if (!username || !code || !newPassword) {
       throw new HttpsError("invalid-argument", "필수 항목이 누락되었습니다.");
+    }
+    if (username.length > 50) {
+      throw new HttpsError("invalid-argument", "아이디 형식이 올바르지 않습니다.");
+    }
+    if (!/^\d{6}$/.test(code)) {
+      throw new HttpsError("invalid-argument", "인증코드는 6자리 숫자여야 합니다.");
     }
 
     const pwRegex = /^(?=.*[a-zA-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>]).{8,}$/;
