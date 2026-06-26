@@ -6,6 +6,7 @@ import 'package:signature/signature.dart';
 
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/toast_helper.dart';
 
 /// 손글씨 서명 패드
 /// 사용법:
@@ -53,6 +54,11 @@ class _SignaturePadWidgetState extends State<SignaturePadWidget> {
 
   Future<void> _confirm() async {
     if (!_hasSignature) return;
+    // 점 하나만 찍은 경우(포인트 수 5 미만) 서명 거부
+    if (_controller.points.length < 5) {
+      ToastHelper.showWarning('서명이 너무 짧습니다. 다시 서명해 주세요.');
+      return;
+    }
     final bytes = await _controller.toPngBytes();
     if (bytes == null) return;
     if (!mounted) return;

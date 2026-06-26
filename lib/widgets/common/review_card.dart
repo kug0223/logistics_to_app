@@ -393,6 +393,9 @@ class ReviewCard extends StatelessWidget {
   // ─── 코멘트 ────────────────────────────────────────────────────────
 
   Widget _buildComment(BuildContext context) {
+    if (perspective == ReviewCardPerspective.workerReceived) {
+      return const SizedBox.shrink();
+    }
     if (review.comment == null || review.comment!.isEmpty) {
       return const SizedBox.shrink();
     }

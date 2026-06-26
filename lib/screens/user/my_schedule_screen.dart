@@ -276,9 +276,9 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                   _focusedDay  = focusedDay;
                 });
               },
-              onPageChanged: (focusedDay) async {
-                _focusedDay = focusedDay;
-                await _loadMonthlyAttendances(focusedDay);
+              onPageChanged: (focusedDay) {
+                setState(() => _focusedDay = focusedDay);
+                _loadMonthlyAttendances(focusedDay);
               },
             ),
           ),

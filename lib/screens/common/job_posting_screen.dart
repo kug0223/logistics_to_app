@@ -1328,7 +1328,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                           text: isClosed ? '마감된 공고입니다' : '지원하기',
                           icon: isClosed ? Icons.block : Icons.send,
                           onPressed: isClosed
-                              ? () {}
+                              ? null
                               : () {
                                   Navigator.pop(sheetCtx);
                                   _applyTO();
@@ -1702,7 +1702,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                         // [특이사항] _isApplyable == (_applyBlockReason == null) 이므로 논리상 non-null이나, 향후 불일치 방지용 null-coalescing
                         ? _applyBlockReason ?? ''
                         : '지원하기',
-                onPressed: (_isEffectivelyClosed || !_isApplyable) ? () {} : () => _applyTO(),
+                onPressed: (_isEffectivelyClosed || !_isApplyable) ? null : () => _applyTO(),
                 icon: (_isEffectivelyClosed || !_isApplyable) ? Icons.block : Icons.send,
               )
             : CommonWidgets.outlineButton(

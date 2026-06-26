@@ -185,11 +185,13 @@ class _UserContractsScreenState extends State<UserContractsScreen>
   }
 
   Widget _buildEmpty(BuildContext context) {
-    final subtitle = _currentFilter == ContractStatus.pendingWorker
-        ? '서명이 필요한 계약서가 없습니다'
-        : _currentFilter == ContractStatus.completed
-            ? '완료된 계약서가 없습니다'
-            : '확정된 공고에서 계약서를 받으세요.';
+    final subtitle = switch (_currentFilter) {
+      null                           => '확정된 공고에서 계약서를 받으세요.',
+      ContractStatus.pendingWorker   => '서명이 필요한 계약서가 없습니다.',
+      ContractStatus.pendingEmployer => '사업주 서명을 기다리는 계약서가 없습니다.',
+      ContractStatus.completed       => '완료된 계약서가 없습니다.',
+      ContractStatus.voided          => '무효 처리된 계약서가 없습니다.',
+    };
     return AppEmptyState(
       icon: Icons.description_outlined,
       title: '계약서가 없습니다',

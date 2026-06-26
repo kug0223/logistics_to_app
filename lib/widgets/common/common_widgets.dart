@@ -66,6 +66,7 @@ class CommonWidgets {
   }
   
   /// 🔘 기본 버튼
+  /// onPressed == null 이면 disabled 스타일(회색 배경, 회색 텍스트)로 표시
   static Widget primaryButton({
     required BuildContext context,
     required String text,
@@ -74,29 +75,35 @@ class CommonWidgets {
     IconData? icon,
   }) {
     final theme = Theme.of(context);
-    
+    final isDisabled = !isLoading && onPressed == null;
+
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            theme.primaryColor,
-            theme.primaryColor.withValues(alpha: 0.8),
-          ],
-        ),
+        gradient: isDisabled
+            ? null
+            : LinearGradient(
+                colors: [
+                  theme.primaryColor,
+                  theme.primaryColor.withValues(alpha: 0.8),
+                ],
+              ),
+        color: isDisabled ? AppColors.grey200 : null,
         borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: theme.primaryColor.withValues(alpha: 0.4),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        boxShadow: isDisabled
+            ? null
+            : [
+                BoxShadow(
+                  color: theme.primaryColor.withValues(alpha: 0.4),
+                  blurRadius: 8,
+                  offset: const Offset(0, 4),
+                ),
+              ],
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: isLoading ? null : onPressed,
+          onTap: isLoading || isDisabled ? null : onPressed,
           borderRadius: BorderRadius.circular(12),
           child: Padding(
             padding: EdgeInsets.symmetric(
@@ -118,7 +125,7 @@ class CommonWidgets {
                   if (icon != null) ...[
                     Icon(
                       icon,
-                      color: Colors.white,
+                      color: isDisabled ? AppColors.grey500 : Colors.white,
                       size: ResponsiveHelper.iconSize(context, 20),
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -126,7 +133,7 @@ class CommonWidgets {
                   Text(
                     text,
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      color: Colors.white,
+                      color: isDisabled ? AppColors.grey500 : Colors.white,
                       fontWeight: FontWeight.bold,
                     ),
                   ),

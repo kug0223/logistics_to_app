@@ -108,22 +108,25 @@ service cloud.firestore {
 
       // 본인 문서 수정 (role·isBlacklisted·subAdminOf·신뢰도 관련 필드 변경 차단)
       // subAdminOf는 CF trigger 전용, trustScore/noShowCount/lateCount/totalWorkDays는 관리자 또는 CF 전용
+      // restrictedUntil: 제재 만료 시각 — 본인이 삭제하여 제재 우회 방지
       allow update: if isLoggedIn() &&
                        isOwner(userId) &&
                        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
                          'role', 'isBlacklisted', 'subAdminOf',
-                         'trustScore', 'noShowCount', 'lateCount', 'totalWorkDays', 'lastRestartAt'
+                         'trustScore', 'noShowCount', 'lateCount', 'totalWorkDays', 'lastRestartAt',
+                         'restrictedUntil'
                        ]);
 
       // 슈퍼관리자: 민감 필드 포함 수정 가능
       allow update: if isSuperAdmin();
 
-      // 관리자: 신뢰도·노쇼·근무일수 관련 필드만 업데이트 허용
+      // 관리자: 신뢰도·노쇼·근무일수 관련 필드만 업데이트 허용 (restrictedUntil 포함 — 노쇼 제재)
       allow update: if isLoggedIn() &&
                        isAdmin() &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['noShowCount', 'lateCount', 'trustScore',
-                                   'totalWorkDays', 'lastRestartAt', 'updatedAt']);
+                                   'totalWorkDays', 'lastRestartAt', 'updatedAt',
+                                   'restrictedUntil']);
 
       // 슈퍼관리자: subAdminOf 지정 가능 / CF Admin SDK도 이 경로 불필요 (우회)
       allow update: if isSuperAdmin() &&
