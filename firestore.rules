@@ -479,7 +479,11 @@ service cloud.firestore {
 
       // ADMIN_TO_USER: 해당 사업장 관리자만 작성
       // USER_TO_BUSINESS: 블랙리스트 미포함 일반 유저, 본인 명의(reviewerId == auth.uid)만 허용
-      // (실제 근무 이력 검증은 Cloud Function onReviewCreated 트리거에서 수행)
+      // requestId 필수 — review_requests와 연결되지 않은 가짜 리뷰 차단.
+      // 소유자 검증(workerId == reviewerId)은 onReviewCreated CF 트리거에서 수행.
+      // [특이사항] Firestore 규칙에서 review_requests.get()으로 workerId 검증 시
+      // 규칙 평가 비용 급증 및 get() 호출 실패 시 PERMISSION_DENIED 오류 발생 위험이 있어
+      // CF 레벨 검증으로 위임. 가짜 리뷰는 생성 직후 CF가 삭제하므로 노출 시간 최소화.
       allow create: if isLoggedIn() && (
                       isSuperAdmin() ||
                       (request.resource.data.reviewType == 'ADMIN_TO_USER' &&
@@ -488,7 +492,8 @@ service cloud.firestore {
                        isUser() && isNotBlacklisted() &&
                        request.resource.data.reviewerId == request.auth.uid &&
                        'businessId' in request.resource.data &&
-                       request.resource.data.businessId.size() > 0)
+                       request.resource.data.businessId.size() > 0 &&
+                       'requestId' in request.resource.data)
                     );
 
       // 사업장 답변 추가(USER_TO_BUSINESS): 사업장 관리자는 답변 필드만 수정 가능

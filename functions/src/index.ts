@@ -1024,9 +1024,34 @@ export const onReviewCreated = onDocumentCreated(
     if (!data) return;
 
     const requestId = data.requestId as string | undefined;
-    if (!requestId) return;
-
     const reviewType = data.reviewType as string | undefined;
+    const reviewerId = data.reviewerId as string | undefined;
+
+    // [특이사항] requestId 없는 리뷰는 Firestore 규칙이 근무 이력을 검증하지 못해
+    // 가짜 리뷰가 Firestore에 잔류할 수 있음. 공개는 안 되지만 데이터 오염 방지 위해 삭제.
+    if (!requestId) {
+      try { await event.data?.ref.delete(); } catch (_) {}
+      console.log(`❌ [가짜 리뷰 차단] requestId 없음 → 삭제: ${reviewId}`);
+      return;
+    }
+
+    // [특이사항] 타인의 requestId로 리뷰를 주입해 review_request를 오염시키는 공격 차단.
+    // USER_TO_BUSINESS: review_requests.workerId == reviewerId 검증 (소유자 확인).
+    // ADMIN_TO_USER는 adminUid 필드가 없으므로 Firestore 규칙의 isAdminOf(businessId)에 위임.
+    const reqPreRef = db.collection("review_requests").doc(requestId);
+    const reqPreSnap = await reqPreRef.get();
+    if (!reqPreSnap.exists) {
+      try { await event.data?.ref.delete(); } catch (_) {}
+      console.log(`❌ [가짜 리뷰 차단] review_request 미존재 → 삭제: ${reviewId}`);
+      return;
+    }
+    const reqPre = reqPreSnap.data()!;
+    if (reviewType === "USER_TO_BUSINESS" && reqPre.workerId !== reviewerId) {
+      try { await event.data?.ref.delete(); } catch (_) {}
+      console.log(`❌ [가짜 리뷰 차단] workerId 불일치(${reqPre.workerId} ≠ ${reviewerId}) → 삭제: ${reviewId}`);
+      return;
+    }
+
     const isAdminReview = reviewType === "ADMIN_TO_USER";
     const statusField = isAdminReview ? "adminStatus" : "workerStatus";
     const reviewIdField = isAdminReview ? "adminReviewId" : "workerReviewId";
