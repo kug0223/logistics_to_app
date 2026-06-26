@@ -15,16 +15,16 @@ extension TOFirestore on FirestoreService {
     if (uid.isEmpty) return 0;
     final myBusinesses = await getMyBusiness(uid);
     if (myBusinesses.isEmpty) return 0;
-    int total = 0;
-    await Future.wait(myBusinesses.map((biz) async {
+    // Future.wait의 클로저에서 total += 직접 수정하면 race condition 발생 — fold로 안전하게 합산
+    final counts = await Future.wait<int>(myBusinesses.map((biz) async {
       final snap = await _firestore
           .collection('tos')
           .where('businessId', isEqualTo: biz.id)
           .where('status', isEqualTo: TOStatus.active)
           .get();
-      total += snap.docs.length;
+      return snap.docs.length;
     }));
-    return total;
+    return counts.fold<int>(0, (acc, c) => acc + c);
   }
 
   /// settings/app_config.maxActiveTOPerBusiness 읽기, 미설정 시 기본값 4
@@ -281,15 +281,23 @@ extension TOFirestore on FirestoreService {
           isPublished = true; // 형식 오류 시 즉시 공개 폴백
           debugPrint('⚠️ [TO] publishTime 형식 오류: $publishTime');
         } else {
-          final candidate = DateTime(
-            baseDate.year, baseDate.month, baseDate.day,
-            int.parse(parts[0]), int.parse(parts[1]),
-          ).subtract(Duration(days: publishDaysBefore));
-
-          if (candidate.isBefore(DateTime.now())) {
-            isPublished = true; // 과거 시간이면 즉시 공개
+          // int.parse 대신 tryParse — 잘못된 시간값(예: "25:00", "AB:CD")으로 인한 크래시 방지
+          final hour = int.tryParse(parts[0]);
+          final minute = int.tryParse(parts[1]);
+          if (hour == null || minute == null || hour > 23 || minute > 59) {
+            isPublished = true;
+            debugPrint('⚠️ [TO] publishTime 파싱 실패 (즉시 공개 폴백): $publishTime');
           } else {
-            publishAt = candidate;
+            final candidate = DateTime(
+              baseDate.year, baseDate.month, baseDate.day,
+              hour, minute,
+            ).subtract(Duration(days: publishDaysBefore));
+
+            if (candidate.isBefore(DateTime.now())) {
+              isPublished = true; // 과거 시간이면 즉시 공개
+            } else {
+              publishAt = candidate;
+            }
           }
         }
       }
@@ -582,13 +590,27 @@ extension TOFirestore on FirestoreService {
               if (reqCount > 0) await reqBatch.commit();
             }
             // employment_contracts 정리 — 서명 완료(completed) 계약서는 법적 기록이므로 보존
+            // Phase 1: applicationId 필드로 단일 계약서 검색
             final contractSnap = await _firestore.collection('employment_contracts')
                 .where('applicationId', whereIn: chunk)
                 .get(const GetOptions(source: Source.server));
-            if (contractSnap.docs.isNotEmpty) {
+            // Phase 2: applicationIds 배열로 번들 계약서 검색
+            // arrayContainsAny 최대 10개 제한으로 서브청크 처리
+            final foundDocIds = contractSnap.docs.map((d) => d.id).toSet();
+            final allContractDocs = [...contractSnap.docs];
+            for (int j = 0; j < chunk.length; j += 10) {
+              final subChunk = chunk.sublist(j, (j + 10) < chunk.length ? j + 10 : chunk.length);
+              final bundleSnap = await _firestore.collection('employment_contracts')
+                  .where('applicationIds', arrayContainsAny: subChunk)
+                  .get(const GetOptions(source: Source.server));
+              for (final doc in bundleSnap.docs) {
+                if (foundDocIds.add(doc.id)) allContractDocs.add(doc);
+              }
+            }
+            if (allContractDocs.isNotEmpty) {
               var contractBatch = _firestore.batch();
               int contractCount = 0;
-              for (final c in contractSnap.docs) {
+              for (final c in allContractDocs) {
                 final status = c.data()['status'] as String?;
                 if (status == 'completed') continue; // 서명 완료 계약서 보존
                 contractBatch.delete(c.reference);

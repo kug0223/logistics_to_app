@@ -81,13 +81,13 @@ class FCMService {
       _currentUserId = userId;
 
       // 1. 알림 권한 요청
-      await _requestPermission();
+      final authorized = await _requestPermission();
 
       // 2. 로컬 알림 초기화 (포그라운드용)
       await _initializeLocalNotifications();
 
-      // 3. FCM 토큰 저장
-      await _saveToken();
+      // 3. FCM 토큰 저장 — 권한 거부 시 저장하지 않음 (불필요한 FCM 발송 비용 방지)
+      if (authorized) await _saveToken();
 
       // 4. 토큰 갱신 리스너
       _tokenRefreshSub?.cancel();
@@ -129,16 +129,17 @@ class FCMService {
     }
   }
 
-  /// 알림 권한 요청
-  Future<void> _requestPermission() async {
+  /// 알림 권한 요청 — authorized/provisional이면 true 반환
+  Future<bool> _requestPermission() async {
     final settings = await _messaging.requestPermission(
       alert: true,
       badge: true,
       sound: true,
       provisional: false,
     );
-
     debugPrint('📱 알림 권한 상태: ${settings.authorizationStatus}');
+    return settings.authorizationStatus == AuthorizationStatus.authorized ||
+        settings.authorizationStatus == AuthorizationStatus.provisional;
   }
 
   /// 로컬 알림 초기화

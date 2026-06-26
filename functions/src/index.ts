@@ -1693,9 +1693,11 @@ async function processSlotWorkDetailExpiry(now: Timestamp): Promise<void> {
   console.log("  🔒 [슬롯 WorkDetail 마감] 처리 중...");
 
   // 열린 슬롯 전체 조회 (collection group)
+  // limit(5000): 무제한 조회 시 비용 폭탄 방지 — 5000개 초과 슬롯은 다음 실행에서 처리됨
   const slotsSnap = await db
     .collectionGroup("slots")
     .where("status", "==", "open")
+    .limit(5000)
     .get();
 
   if (slotsSnap.empty) {
@@ -2478,7 +2480,8 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         .map((doc) => doc.data().businessId as string),
     )];
 
-    const [prefetchedUsers, prefetchedBiz] = await Promise.all([
+    // allSettled: users 또는 businesses 조회 일부 실패 시 나머지가 중단되지 않도록 개선
+    const [usersResult, bizResult] = await Promise.allSettled([
       uidsNeedingLookup.length > 0
         ? Promise.all(uidsNeedingLookup.map((uid) => db.collection("users").doc(uid).get()))
         : Promise.resolve([]),
@@ -2486,6 +2489,8 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         ? Promise.all(d15BizIds.map((id) => db.collection("businesses").doc(id).get()))
         : Promise.resolve([]),
     ]);
+    const prefetchedUsers = usersResult.status === "fulfilled" ? usersResult.value : [];
+    const prefetchedBiz = bizResult.status === "fulfilled" ? bizResult.value : [];
 
     const d15UserMap = new Map(prefetchedUsers.map((doc) => [doc.id, doc.data()]));
     const d15BizMap = new Map(prefetchedBiz.map((doc) => [doc.id, doc.data()]));
