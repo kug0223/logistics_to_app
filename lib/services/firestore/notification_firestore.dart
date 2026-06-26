@@ -34,7 +34,8 @@ extension NotificationFirestore on FirestoreService {
   Future<String?> createNotification(NotificationModel notification) async {
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('createNotification');
+          .httpsCallable('createNotification',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 10)));
       final result = await callable.call(notification.toMap());
       final id = (result.data as Map<dynamic, dynamic>?)?['id'] as String?;
       debugPrint('✅ 알림 생성 (CF): $id');
