@@ -176,7 +176,13 @@ service cloud.firestore {
                        request.auth.uid in request.resource.data.adminIds)
                     );
 
-      allow update: if isAdminOf(businessId) || isSuperAdmin();
+      // [특이사항] ownerId/adminIds 변경은 슈퍼어드민만 허용.
+      // BUSINESS_ADMIN이 ownerId를 자신으로 변경하거나 다른 관리자를 adminIds에서 제거해
+      // 사업장 소유권을 탈취하는 권한 모독 공격 방지.
+      allow update: if (isAdminOf(businessId) || isSuperAdmin()) &&
+                    (isSuperAdmin() ||
+                     !request.resource.data.diff(resource.data).affectedKeys()
+                       .hasAny(['ownerId', 'adminIds']));
       allow delete: if isAdminOf(businessId) || isSuperAdmin();
 
       match /workTypes/{workTypeId} {

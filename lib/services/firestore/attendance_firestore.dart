@@ -420,6 +420,24 @@ extension AttendanceFirestore on FirestoreService {
   /// 스케줄 변경 요청 생성
   Future<String?> createScheduleChangeRequest(ScheduleChangeRequestModel request) async {
     try {
+      // [특이사항] LEAVE 요청 시 해당 날짜에 이미 출근한 경우 차단.
+      // 출근 후 LEAVE 승인 시 application.leaveDates에는 날짜가 추가되지만
+      // attendance.status는 'present'로 남아 데이터 불일치가 발생한다.
+      if (request.requestType == RequestType.LEAVE &&
+          request.requestedBy == RequesterType.APPLICANT) {
+        final t = request.targetDate;
+        final dateStr =
+            '${t.year}${t.month.toString().padLeft(2, '0')}${t.day.toString().padLeft(2, '0')}';
+        final attendanceDoc = await _firestore
+            .collection('attendance')
+            .doc('${request.applicationId}_$dateStr')
+            .get();
+        if (attendanceDoc.exists &&
+            (attendanceDoc.data()?['checkIn'] as String?) != null) {
+          throw Exception('이미 출근한 날짜는 휴무 요청을 할 수 없습니다.');
+        }
+      }
+
       final docRef = await _firestore.collection('schedule_change_requests').add(request.toMap());
       debugPrint('✅ 스케줄 변경 요청 생성 완료: ${docRef.id}');
       
