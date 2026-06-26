@@ -819,7 +819,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               horizontal: ResponsiveHelper.spacing(context, 12),
               vertical: ResponsiveHelper.spacing(context, 8),
             ),
-            color: Colors.transparent,
+            decoration: BoxDecoration(
+              color: AppColors.grey100,
+              border: Border(
+                left: BorderSide(color: AppColors.info, width: 3),
+              ),
+            ),
             child: Row(
               children: [
                 if (_isBatchMode && pendingIds.isNotEmpty)

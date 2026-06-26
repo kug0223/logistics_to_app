@@ -752,7 +752,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         return;
       }
       if (!mounted) return;
-      showDialog(
+      final hasChanges = await showDialog<bool>(
         context: context,
         builder: (context) => DayApplicantsDialog(
           date: _selectedDay!,
@@ -760,6 +760,9 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           businesses: businesses,
         ),
       );
+      if (hasChanges == true && mounted) {
+        _reload();
+      }
     } catch (e) {
       debugPrint('❌ 지원명단 조회 실패: $e');
       ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
