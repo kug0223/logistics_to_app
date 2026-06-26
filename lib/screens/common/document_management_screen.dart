@@ -18,6 +18,7 @@ import '../../utils/navigation_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/app_select_field.dart';
 import '../../widgets/common/gradient_scaffold.dart';
+import '../../utils/encryption_helper.dart';
 
 /// 📄 내 서류 관리 화면 (역할별 분기)
 /// - 지원자(USER): 신분증 + 통장 정보
@@ -1016,7 +1017,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               _buildInfoRow(
                 icon: Icons.credit_card,
                 label: '계좌번호',
-                value: user.accountNumber!,
+                value: EncryptionHelper.maskAccountNumber(user.accountNumber),
               ),
               const Divider(height: 20, thickness: 0.5),
               _buildInfoRow(
