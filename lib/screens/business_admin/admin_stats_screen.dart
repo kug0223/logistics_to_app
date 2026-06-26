@@ -213,7 +213,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                           size: ResponsiveHelper.iconSize(context, 16)),
                       SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                       Text(
-                        // [특이사항] _businesses.isEmpty 체크가 단락 평가되므로
+                        // _businesses.isEmpty 체크가 단락 평가되므로
                         // orElse의 _businesses.first는 리스트가 비어있을 때 도달 불가 — 안전
                         _filterBusinessId == null || _businesses.isEmpty
                             ? '전체 사업장'
@@ -952,7 +952,7 @@ class _LegendDot extends StatelessWidget {
 
 void pushAdminStatsScreen(BuildContext context) {
   final user = context.read<UserProvider>().currentUser;
-  // [특이사항] user가 null이면 진입 불가 — 로그아웃 직후 탭 전환 시 발생 가능
+  // user가 null이면 진입 불가 — 로그아웃 직후 탭 전환 시 발생 가능
   if (user == null) {
     ToastHelper.showWarning('로그인 정보를 불러올 수 없습니다');
     return;

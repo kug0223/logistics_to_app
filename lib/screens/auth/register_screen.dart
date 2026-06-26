@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -696,7 +696,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               try {
                 final f = File(path);
                 if (await f.exists()) await f.delete();
-              // [특이사항] 임시파일 삭제 실패 무시 — OS가 앱 종료 시 정리함, 기능에 영향 없음
+              // 임시파일 삭제 실패 무시 — OS가 앱 종료 시 정리함, 기능에 영향 없음
               } catch (_) {}
             }
           }
@@ -729,7 +729,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final errStr = e.toString();
       // [TODO-DANAL] finalizeRegistration CF 호출 추가 후 passToken TTL(15분) 만료 시 이 분기 진입
       // 현재는 mock PASS이므로 실제로 발생하지 않음
-      // [특이사항] 'passToken' 문자열을 포함하는 일반 예외도 이 분기 진입 가능 (오탐).
+      // 'passToken' 문자열을 포함하는 일반 예외도 이 분기 진입 가능 (오탐).
       //           현재 mock PASS 환경에서는 실제 발생 없음; 다날 연동 후 에러 메시지 재검토 필요.
       if (_isKorean &&
           (errStr.contains('deadline-exceeded') ||
@@ -879,7 +879,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               try {
                 final f = File(path);
                 if (await f.exists()) await f.delete();
-              // [특이사항] 임시파일 삭제 실패 무시 — OS가 앱 종료 시 정리함, 기능에 영향 없음
+              // 임시파일 삭제 실패 무시 — OS가 앱 종료 시 정리함, 기능에 영향 없음
               } catch (_) {}
             }
           }

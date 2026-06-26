@@ -1699,7 +1699,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                 text: _isEffectivelyClosed
                     ? '마감된 공고입니다'
                     : !_isApplyable
-                        // [특이사항] _isApplyable == (_applyBlockReason == null) 이므로 논리상 non-null이나, 향후 불일치 방지용 null-coalescing
+                        // _isApplyable == (_applyBlockReason == null) 이므로 논리상 non-null이나, 향후 불일치 방지용 null-coalescing
                         ? _applyBlockReason ?? ''
                         : '지원하기',
                 onPressed: (_isEffectivelyClosed || !_isApplyable) ? null : () => _applyTO(),
@@ -2066,7 +2066,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       businessName: _to!.businessName,
       myApplications: _myApplications,
     );
-    // [특이사항] contract TO도 flex TO(line 1997/2035)와 동일하게 true 반환 — AllTOListScreen._refreshMyApplications 트리거에 필요
+    // contract TO도 flex TO(line 1997/2035)와 동일하게 true 반환 — AllTOListScreen._refreshMyApplications 트리거에 필요
     if (result?.hasChanges == true && mounted) Navigator.pop(context, true);
   }
 

@@ -65,7 +65,7 @@ class InsuranceRateModel {
   /// 2026년: 전체 7.19% → 근로자 3.595% ← 이 파일의 기준 연도 (3년 만에 인상)
   /// 따라서 3.595%는 2025년 요율이 아닌 2026년 요율이다.
   ///
-  /// [특이사항] 매년 1월 보건복지부·고용노동부 고시 개정 시 이 값을 갱신해야 함.
+  /// 매년 1월 보건복지부·고용노동부 고시 개정 시 이 값을 갱신해야 함.
   /// Firestore settings/wage_config.insuranceRates에 연도별 값을 설정하면 자동 반영되고
   /// 이 factory는 네트워크 오류 시 폴백으로만 사용됨.
   factory InsuranceRateModel.defaults2026() => const InsuranceRateModel(

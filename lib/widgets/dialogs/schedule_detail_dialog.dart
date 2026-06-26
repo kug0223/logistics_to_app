@@ -1,4 +1,4 @@
-﻿import 'dart:math' show max;
+import 'dart:math' show max;
 
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -60,7 +60,7 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
             (w) => w.name == widget.application.selectedWorkType,
             orElse: () => wts.isEmpty ? throw StateError('empty') : wts.first,
           );
-        // [특이사항] 업무유형 조회 실패 시 wt=null 유지 — UI가 null을 폴백으로 처리함
+        // 업무유형 조회 실패 시 wt=null 유지 — UI가 null을 폴백으로 처리함
         } catch (_) {}
       }
 

@@ -87,7 +87,7 @@ class _UserContractsScreenState extends State<UserContractsScreen>
 
   Future<void> _load() async {
     final uid = _uid;
-    // [특이사항] uid null 시에도 _isLoading=false 필수 — 미처리 시 LoadingWidget이 영구 표시됨
+    // uid null 시에도 _isLoading=false 필수 — 미처리 시 LoadingWidget이 영구 표시됨
     if (uid == null || !mounted) { if (mounted) setState(() => _isLoading = false); return; }
     setState(() { _isLoading = true; _items = []; _lastDoc = null; });
     try {
@@ -386,7 +386,7 @@ class _UserContractCard extends StatelessWidget {
   String _dateLabel(EmploymentContractModel c) {
     if (c.isLongTerm) return FormatHelper.formatDateDot(c.createdAt);
     if (c.slots.isNotEmpty) {
-      // [특이사항] isNotEmpty 가드 내부 — .first/.last 안전
+      // isNotEmpty 가드 내부 — .first/.last 안전
       final first = c.slots.first.workDate;
       final last  = c.slots.last.workDate;
       return first == last ? first : '$first ~ $last';

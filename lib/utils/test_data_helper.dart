@@ -1,4 +1,4 @@
-﻿// lib/utils/test_data_helper.dart (UserModel 개선 버전)
+// lib/utils/test_data_helper.dart (UserModel 개선 버전)
 
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -236,7 +236,7 @@ class TestDataHelper {
 
       // ━━━ 로그 출력 ━━━
       final calculatedAge = _calculateAge(birthDate);
-      // [특이사항] 릴리즈 빌드에서도 debugPrint는 출력됨 — 주민번호·계좌번호는 kDebugMode 가드 안에서만 로그.
+      // 릴리즈 빌드에서도 debugPrint는 출력됨 — 주민번호·계좌번호는 kDebugMode 가드 안에서만 로그.
       debugPrint('  ✅ $name ($gender, $calculatedAge세) | 평점: ${averageRating.toStringAsFixed(1)} | 신뢰도: $trustScore점');
       if (kDebugMode) {
         debugPrint('     🆔 $residentNumber');

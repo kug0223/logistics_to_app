@@ -1,4 +1,4 @@
-﻿part of '../firestore_service.dart';
+part of '../firestore_service.dart';
 
 // ═══════════════════════════════════════════════════════════
 // 신분증 열람 요청 (ID Card Access Request)
@@ -26,7 +26,7 @@ extension IdCardFirestore on FirestoreService {
       debugPrint('📄 [createIdCardAccessRequest] 요청 생성');
       
       // 1 & 2. pending/approved 동시 조회 — 두 쿼리는 독립적이므로 Future.wait 병렬 처리
-      // [특이사항] 첫 요청(pending·approved 모두 없는 케이스)이 대부분이므로 병렬이 유리
+      // 첫 요청(pending·approved 모두 없는 케이스)이 대부분이므로 병렬이 유리
       final now = Timestamp.fromDate(DateTime.now());
       final results = await Future.wait([
         _firestore
@@ -107,7 +107,7 @@ extension IdCardFirestore on FirestoreService {
       final docRef = _firestore.collection('idCardAccessRequests').doc(requestId);
       Map<String, dynamic>? requestData;
 
-      // [특이사항] 관리자 2명이 동시에 승인 버튼을 탭하면 get→update 사이에 두 번째 get이
+      // 관리자 2명이 동시에 승인 버튼을 탭하면 get→update 사이에 두 번째 get이
       // 끼어들어 알림 2건 발송 + expiresAt 충돌이 발생할 수 있음.
       // 트랜잭션으로 처리: pending 상태일 때만 approved로 전환 (이미 처리된 경우 false 반환).
       final wasApproved = await _firestore.runTransaction<bool>((tx) async {
@@ -159,7 +159,7 @@ extension IdCardFirestore on FirestoreService {
       final docRef = _firestore.collection('idCardAccessRequests').doc(requestId);
       Map<String, dynamic>? requestData;
 
-      // [특이사항] approveIdCardAccessRequest와 동일하게 트랜잭션 적용 — 근무자가
+      // approveIdCardAccessRequest와 동일하게 트랜잭션 적용 — 근무자가
       // 실수로 두 번 탭하면 중복 알림이 발송될 수 있으므로 pending 상태일 때만 처리.
       final wasRejected = await _firestore.runTransaction<bool>((tx) async {
         final doc = await tx.get(docRef);
@@ -224,7 +224,7 @@ extension IdCardFirestore on FirestoreService {
 
       // approved 상태인데 만료됐으면 Firestore 업데이트 + expired로 반환
       if (request.status == IdCardAccessStatus.approved && request.isExpired) {
-        // [특이사항] update 실패해도 UI는 expired 상태로 반환 — 다음 checkIdCardAccess 호출 시 재시도
+        // update 실패해도 UI는 expired 상태로 반환 — 다음 checkIdCardAccess 호출 시 재시도
         try {
           await _firestore
               .collection('idCardAccessRequests')

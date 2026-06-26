@@ -1,4 +1,4 @@
-﻿// lib/screens/business_admin/dialogs/fixed_worker_management_dialog.dart
+// lib/screens/business_admin/dialogs/fixed_worker_management_dialog.dart
 // 고정근무자 관리 다이얼로그 - 리뉴얼 버전
 // 
 // 기능:
@@ -261,7 +261,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           final name = matches.first.user?.name ?? '';
           if (name.isNotEmpty) {
             _searchController.text = name;
-            // [특이사항] TextEditingController.text setter는 addListener 콜백을 트리거하지 않음.
+            // TextEditingController.text setter는 addListener 콜백을 트리거하지 않음.
             //           _filteredFixedWorkers가 _searchQuery를 기준으로 필터링하므로 setState로 동기화 필수.
             setState(() => _searchQuery = name);
           }
@@ -1609,7 +1609,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         return;
       }
 
-      // [특이사항] 1592행 isEmpty 조기 반환으로 여기 도달 시 workDetails는 비어있지 않음 — .first 안전
+      // 1592행 isEmpty 조기 반환으로 여기 도달 시 workDetails는 비어있지 않음 — .first 안전
       final workDetail = workDetails.firstWhere(
         (w) => w.workType == newApp.selectedWorkType,
         orElse: () => workDetails.first,
@@ -1986,7 +1986,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       return;
     }
 
-    // [특이사항] 위 null 가드로 item.user! 안전
+    // 위 null 가드로 item.user! 안전
     WorkerDetailDialog.show(
       context: context,
       user: item.user!,

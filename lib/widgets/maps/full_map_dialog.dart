@@ -312,7 +312,7 @@ class FullMapDialog extends StatelessWidget {
   }
 
   /// 길찾기
-  // [특이사항] StatelessWidget이라 mounted 체크 불가 — canLaunchUrl 실패 시 토스트가 위젯 해제 후 호출될 수 있으나 크래시 위험 없음
+  // StatelessWidget이라 mounted 체크 불가 — canLaunchUrl 실패 시 토스트가 위젯 해제 후 호출될 수 있으나 크래시 위험 없음
   Future<void> _openDirections(BuildContext context) async {
     final lat = business.latitude;
     final lng = business.longitude;

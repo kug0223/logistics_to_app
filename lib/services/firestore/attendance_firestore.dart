@@ -178,6 +178,12 @@ extension AttendanceFirestore on FirestoreService {
         final data = snap.data()!;
         if (data['checkOut'] != null) throw Exception('이미 퇴근하셨습니다.');
 
+        // 급여 확정·이체 완료 후 퇴근 수정 시도 → Firestore 규칙이 차단하기 전에 명확한 메시지 제공
+        final wageStatus = data['wageStatus'] as String?;
+        if (wageStatus == 'transferred' || wageStatus == 'confirmed' || wageStatus == 'calculated') {
+          throw Exception('급여 처리가 완료된 근무 기록은 수정할 수 없습니다.');
+        }
+
         final checkInTime = data['checkIn'] as String?;
         if (checkInTime == null) throw Exception('출근 기록에 시간 정보가 없습니다.');
         final workMins = AttendanceStatusHelper.workMinutes(checkInTime, checkOutTime);

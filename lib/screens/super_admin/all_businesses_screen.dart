@@ -52,7 +52,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
           .map((doc) => BusinessModel.fromMap(doc.data(), doc.id))
           .toList();
 
-      // [특이사항] 소유자 조회 N+1 — 최대 300회 read.
+      // 소유자 조회 N+1 — 최대 300회 read.
       // 개선: ownerName을 businesses 문서에 denormalize하거나 whereIn 30개 청크 배치 조회 필요.
       final ownerFutures = businesses.map((b) async {
         try {
@@ -65,7 +65,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
               email: data['email'] as String? ?? '',
             );
           }
-        // [특이사항] 소유자 조회 실패 시 폴백 반환 — 한 명의 조회 실패가 전체 목록을 막지 않음
+        // 소유자 조회 실패 시 폴백 반환 — 한 명의 조회 실패가 전체 목록을 막지 않음
         } catch (_) {}
         return (name: '알 수 없음', email: '');
       }).toList();

@@ -79,7 +79,7 @@ class _AttendanceQuickTimeSheetState extends State<AttendanceQuickTimeSheet> {
       try {
         final parts = t.split(':');
         result.add((hour: int.parse(parts[0]), minute: int.parse(parts[1])));
-      // [특이사항] 잘못된 형식의 시간 문자열은 조용히 건너뜀 — 파싱 불가 항목 제외
+      // 잘못된 형식의 시간 문자열은 조용히 건너뜀 — 파싱 불가 항목 제외
       } catch (_) {}
     }
     result.sort((a, b) => a.hour != b.hour ? a.hour.compareTo(b.hour) : a.minute.compareTo(b.minute));

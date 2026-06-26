@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -376,7 +376,7 @@ class AuthService {
 
   // ⭐ NEW: 비밀번호 재설정 이메일 발송
   /// @deprecated 시스템 이메일 체계([username]@ALfit-system.com)와 호환되지 않음.
-  /// [특이사항] 비밀번호 찾기는 Cloud Functions sendPasswordResetCode 방식으로 처리됨
+  /// 비밀번호 찾기는 Cloud Functions sendPasswordResetCode 방식으로 처리됨
   Future<void> sendPasswordResetEmail(String email) async {
     try {
       await _auth.sendPasswordResetEmail(email: email);
@@ -695,11 +695,11 @@ class AuthService {
                 });
               }
               await attBatch.commit();
-            // [특이사항] 출석 배치 실패 시 무시 — 계정 삭제는 계속 진행 (best-effort 정리)
+            // 출석 배치 실패 시 무시 — 계정 삭제는 계속 진행 (best-effort 정리)
             } catch (_) {}
           }
         }
-      // [특이사항] 스텝 10 전체 실패 무시 — 계정 삭제는 계속 진행 (출석 정리 실패가 탈퇴를 막지 않음)
+      // 스텝 10 전체 실패 무시 — 계정 삭제는 계속 진행 (출석 정리 실패가 탈퇴를 막지 않음)
       } catch (_) {}
 
       // 11. BUSINESS_ADMIN 전용 사업장 데이터 정리
@@ -729,7 +729,7 @@ class AuthService {
 
             if (bizDoc.exists) {
               final adminIds = List<String>.from(bizDoc.data()?['adminIds'] ?? []);
-              // [특이사항] adminIds가 비어있는 비정상 상태(Firestore 데이터 불일치)에서는
+              // adminIds가 비어있는 비정상 상태(Firestore 데이터 불일치)에서는
               // 단독 관리자로 처리하지 않음 — 자신의 uid가 목록에 포함된 경우에만 단독 판단.
               // 이전 코드: length <= 1 → 빈 배열([])도 단독 관리자로 오인하는 버그 존재.
               final isSoleAdmin = adminIds.length == 1 && adminIds.contains(user.uid);
@@ -751,7 +751,7 @@ class AuthService {
                 // Storage 비용 방지를 위해 탈퇴 시 즉시 삭제.
                 // employment_contracts 내 서명 이미지는 근로기준법 3년 보존 대상 — 삭제 금지.
                 //
-                // [특이사항] 삭제 순서: Firestore URL 필드 먼저 → Storage 나중 (CLAUDE.md 규칙)
+                // 삭제 순서: Firestore URL 필드 먼저 → Storage 나중 (CLAUDE.md 규칙)
                 // Firestore 업데이트 실패 시 Storage는 건드리지 않아 broken URL 잔존 방지.
                 // Storage 삭제 실패는 개별 try/catch로 포획 — Firestore가 이미 정리됐으므로
                 // 앱 동작에는 영향 없음 (Storage orphan은 주기적 정리로 처리 예정).
@@ -851,10 +851,10 @@ class AuthService {
                 }
 
                 // ── employment_contracts → BUSINESS_DEACTIVATED ──────────
-                // [특이사항] 계약서는 근로기준법 제42조 3년 보존 의무 — 삭제 금지.
+                // 계약서는 근로기준법 제42조 3년 보존 의무 — 삭제 금지.
                 // 삭제 대신 status를 'BUSINESS_DEACTIVATED'로 표시해 비활성 사업장임을 명시.
                 // 실수령액·서명 이미지 등 급여 데이터는 그대로 유지됨.
-                // [특이사항] 이전 코드는 'active', 'pending_business'를 사용했으나
+                // 이전 코드는 'active', 'pending_business'를 사용했으나
                 // ContractStatus 실제 값은 'pending_employer', 'pending_worker', 'completed', 'voided'.
                 // 'active'/'pending_business'는 존재하지 않는 값 → pending_employer 계약서가
                 // 비활성화 처리 대상에서 누락되는 버그 수정.

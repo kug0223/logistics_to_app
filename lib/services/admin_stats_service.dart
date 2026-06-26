@@ -266,7 +266,7 @@ class AdminStatsService {
     // 월별 집계
     final trendMap = <int, List<AttendanceModel>>{};
     for (int m = 1; m <= 12; m++) { trendMap[m] = []; }
-    // [특이사항] Dart DateTime.month는 항상 1~12 — 위 루프에서 전 키 초기화했으므로 !안전
+    // Dart DateTime.month는 항상 1~12 — 위 루프에서 전 키 초기화했으므로 !안전
     for (final a in thisYearAtt) { trendMap[a.workDate.month]!.add(a); }
 
     final monthlyTrends = List.generate(12, (i) {
@@ -548,7 +548,7 @@ class AdminStatsService {
   Future<Map<String, String>> _fetchUserNames(List<String> ids) async {
     if (ids.isEmpty) return {};
     final map = <String, String>{};
-    // [특이사항] 30개 청크를 순차 await — whereIn 30개 제한(QUERY-01) 준수 설계
+    // 30개 청크를 순차 await — whereIn 30개 제한(QUERY-01) 준수 설계
     // Future.wait로 병렬화 가능하나, 다수 청크 동시 요청 시 Firestore 부하 우려로 순차 유지
     for (int i = 0; i < ids.length; i += 30) {
       final chunk = ids.sublist(i, (i + 30).clamp(0, ids.length));

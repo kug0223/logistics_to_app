@@ -1,4 +1,4 @@
-﻿// lib/utils/attendance_list_pdf.dart
+// lib/utils/attendance_list_pdf.dart
 // 인원현황 명단 PDF/Excel 생성 유틸리티
 
 import 'dart:io';
@@ -116,7 +116,7 @@ class AttendanceListPdf {
     
     // 중복 로딩 방지
     if (_isLoading) {
-      // [특이사항] 다른 호출이 이미 로딩 중 — finally에서 반드시 _isLoading=false 처리, 루프 종료 보장
+      // 다른 호출이 이미 로딩 중 — finally에서 반드시 _isLoading=false 처리, 루프 종료 보장
       while (_isLoading) {
         await Future.delayed(const Duration(milliseconds: 50));
       }

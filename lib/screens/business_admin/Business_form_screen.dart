@@ -137,7 +137,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   /// 회원가입 시 입력한 사업자번호/상호명 자동 완성
   void _loadUserBusinessNumber() {
     final user = context.read<UserProvider>().currentUser;
-    // [특이사항] user가 null이면 자동완성 없이 종료 — 로그인 직후 provider 미초기화 시 발생 가능
+    // user가 null이면 자동완성 없이 종료 — 로그인 직후 provider 미초기화 시 발생 가능
     if (user == null) return;
 
     final bizNum = user.businessNumber;
@@ -206,7 +206,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
 
   @override
   void dispose() {
-    // [특이사항] TMP-01: 저장되지 않고 남은 임시 압축 파일 정리 (fire-and-forget)
+    // TMP-01: 저장되지 않고 남은 임시 압축 파일 정리 (fire-and-forget)
     _mainImage?.delete().ignore();
     for (final file in _additionalImages) {
       file.delete().ignore();
@@ -787,7 +787,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
             right: ResponsiveHelper.spacing(context, 8),
             child: GestureDetector(
               onTap: () {
-                // [특이사항] TMP-01: 선택 취소된 임시 압축 파일 즉시 정리 (fire-and-forget)
+                // TMP-01: 선택 취소된 임시 압축 파일 즉시 정리 (fire-and-forget)
                 _mainImage?.delete().ignore();
                 setState(() {
                   _mainImage = null;
@@ -1479,7 +1479,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               context,
               file: _additionalImages[fileIndex],
               onRemove: () {
-                // [특이사항] TMP-01: 선택 취소된 임시 압축 파일 즉시 정리 (fire-and-forget)
+                // TMP-01: 선택 취소된 임시 압축 파일 즉시 정리 (fire-and-forget)
                 _additionalImages[fileIndex].delete().ignore();
                 setState(() => _additionalImages.removeAt(fileIndex));
               },
@@ -1952,7 +1952,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         'longitude': _longitude,
         'phone': _phoneController.text.trim().isEmpty ? null : _phoneController.text.trim(),
         'ownerId': ownerId,
-        // [특이사항] _isEditMode = (widget.business != null) — 이 블록 내 widget.business! 는 항상 안전
+        // _isEditMode = (widget.business != null) — 이 블록 내 widget.business! 는 항상 안전
         'isApproved': _isEditMode ? widget.business!.isApproved : false,
         'mainImageUrl': mainImageUrl,
         'imageUrls': additionalUrls,

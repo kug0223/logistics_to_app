@@ -1,4 +1,4 @@
-﻿// lib/services/schedule_conflict_service.dart
+// lib/services/schedule_conflict_service.dart
 
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -197,7 +197,7 @@ class ScheduleConflictService {
       final snapshot = await _firestore
           .collection('applications')
           .where('uid', isEqualTo: uid)
-          // [특이사항] confirmedStatuses = [confirmed, contractPending] 2개 — whereIn 30개 제한 무관
+          // confirmedStatuses = [confirmed, contractPending] 2개 — whereIn 30개 제한 무관
           .where('status', whereIn: AppStatus.confirmedStatuses)
           .where('workEndDate', isGreaterThanOrEqualTo: queryDate)
           .get();

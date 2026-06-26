@@ -93,7 +93,7 @@ class PhoneVerificationService {
             try {
               await _auth.currentUser!.unlink(PhoneAuthProvider.PROVIDER_ID);
             } catch (retryErr) {
-              // [특이사항] unlink 2회 실패 → 계정에 전화번호 잔존. Firebase Console에서 수동 해제 필요.
+              // unlink 2회 실패 → 계정에 전화번호 잔존. Firebase Console에서 수동 해제 필요.
               debugPrint('❌ [PhoneAuth] unlink 재시도 실패 — 계정 오염 가능성: $retryErr');
             }
           }
@@ -118,7 +118,7 @@ class PhoneVerificationService {
         debugPrint('✅ [PhoneAuth] 인증 성공');
 
         // 검증용 임시 계정 삭제 (Firebase Auth 세션 정리)
-        // [특이사항] delete 실패 시 고아 계정이 잔존할 수 있음. 인증 결과는 유효하므로 로그만 남김.
+        // delete 실패 시 고아 계정이 잔존할 수 있음. 인증 결과는 유효하므로 로그만 남김.
         try {
           await result.user?.delete();
         } catch (deleteErr) {

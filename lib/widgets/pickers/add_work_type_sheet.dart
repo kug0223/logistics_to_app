@@ -1,4 +1,4 @@
-﻿import 'dart:math' show max;
+import 'dart:math' show max;
 
 import 'package:flutter/material.dart';
 import '../../models/core/business_work_type_model.dart';
@@ -68,7 +68,7 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
       if (edit.backgroundColor != null) {
         try {
           _bgColor = FormatHelper.parseColor(edit.backgroundColor!);
-        // [특이사항] 색상 파싱 실패 시 기본 색상 유지 — 잘못된 색상 문자열 무시
+        // 색상 파싱 실패 시 기본 색상 유지 — 잘못된 색상 문자열 무시
         } catch (_) {}
       }
 

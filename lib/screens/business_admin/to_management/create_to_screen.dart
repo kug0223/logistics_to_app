@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -818,7 +818,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       ToastHelper.showError('급여는 0원보다 커야 합니다');
       return;
     }
-    // [특이사항] 최저임금(2026: 10,320원) 미달 여부를 앱에서 하드 차단하지 않는다.
+    // 최저임금(2026: 10,320원) 미달 여부를 앱에서 하드 차단하지 않는다.
     // 임금 결정은 사업주 권한이며, 수습·단순가산 등 예외 케이스가 다양하다.
     // 최저임금법 준수 책임은 사업주에게 있고, 앱은 경영 도구로서 개입하지 않는다.
 

@@ -126,7 +126,7 @@ extension TOFirestore on FirestoreService {
       }
     }
 
-    // [특이사항] sortBy='date'(마감임박순)는 서버 정렬 미지원 — 클라이언트 후처리로만 동작
+    // sortBy='date'(마감임박순)는 서버 정렬 미지원 — 클라이언트 후처리로만 동작
     // Firestore는 복합 정렬(isPublished+closingAt)을 위한 복합 인덱스가 필요하나 미구성.
     // 현재: createdAt desc 서버 정렬 후 1페이지 내에서만 마감임박순 재정렬.
     // 2페이지 이후 마감임박 공고는 createdAt 기준 뒤에 밀려 노출 안 될 수 있음.
@@ -1038,7 +1038,7 @@ extension TOFirestore on FirestoreService {
       if (cancelCount > 0) await cancelBatch.commit();
 
       // M-2: 확정·계약대기 근무자에게 TO 취소 알림 발송 (PENDING은 단순 거절이므로 제외)
-      // [특이사항] 알림은 배치 커밋(지원서 REJECTED) 직후 fire-and-forget으로 발송됨.
+      // 알림은 배치 커밋(지원서 REJECTED) 직후 fire-and-forget으로 발송됨.
       // 슬롯 배치 삭제는 알림 발송 후에 커밋되므로 이론상 근무자가 알림 수신 직후 슬롯이 잠깐 잔존 가능.
       // 타이밍 차이가 매우 짧고 기능 정확성에 영향 없어 의도적 허용.
       for (final doc in allActiveDocs) {
@@ -1460,7 +1460,7 @@ extension TOFirestore on FirestoreService {
         });
         debugPrint('✅ [TO] 모든 슬롯 마감(open/full 없음) → 자동 CLOSED ($toId)');
       } else if (hasOpenSlot && currentStatus == TOStatus.closed) {
-        // [특이사항] isManualClosed도 함께 초기화 — TOModel.effectiveStatus 게터가
+        // isManualClosed도 함께 초기화 — TOModel.effectiveStatus 게터가
         // isManualClosed=true이면 status 값과 무관하게 CLOSED를 반환하므로,
         // cascade 재오픈 시 남겨두면 TO가 ACTIVE로 세팅됐어도 사용자에게 여전히 CLOSED로 보임.
         await _firestore.collection('tos').doc(toId).update({

@@ -34,7 +34,7 @@ extension ApplicationFirestore on FirestoreService {
       if (statuses != null && statuses.isNotEmpty) {
         query = query.where('status', whereIn: statuses);
       }
-      // [특이사항] limit(500) 하드코딩 — 인기 TO에서 지원자가 500명 초과 시 이후 지원서 누락
+      // limit(500) 하드코딩 — 인기 TO에서 지원자가 500명 초과 시 이후 지원서 누락
       final snap = await query.limit(500).get(const GetOptions(source: Source.server));
       return snap.docs
           .map((d) => ApplicationModel.fromFirestore(d))
@@ -64,7 +64,7 @@ extension ApplicationFirestore on FirestoreService {
       if (statuses != null && statuses.isNotEmpty) {
         query = query.where('status', whereIn: statuses);
       }
-      // [특이사항] limit(500) 하드코딩 — 인기 TO에서 지원자가 500명 초과 시 이후 지원서 누락
+      // limit(500) 하드코딩 — 인기 TO에서 지원자가 500명 초과 시 이후 지원서 누락
       final snap = await query.limit(500).get(const GetOptions(source: Source.server));
       return snap.docs
           .map((d) => ApplicationModel.fromFirestore(d))
@@ -134,7 +134,7 @@ extension ApplicationFirestore on FirestoreService {
       return cached;
     }
     try {
-      // [특이사항] orderBy('appliedAt', desc)를 제거하고 클라이언트에서 정렬.
+      // orderBy('appliedAt', desc)를 제거하고 클라이언트에서 정렬.
       // where('uid').orderBy('appliedAt', desc)는 복합 인덱스가 필요하고,
       // 보안 규칙의 request.query.filters.uid가 복합 인덱스 쿼리에서 null을 반환해
       // PERMISSION_DENIED를 유발하므로 단순 uid 필터 조회 후 클라이언트 정렬로 대체.
@@ -1117,7 +1117,7 @@ extension ApplicationFirestore on FirestoreService {
         }
       }
 
-      // [특이사항] 확정 취소 후에도 연결된 employment_contracts completed 상태는 갱신하지 않는다.
+      // 확정 취소 후에도 연결된 employment_contracts completed 상태는 갱신하지 않는다.
       // Firestore 규칙상 completed 계약서는 서버 수정 불가 (법적 증거 보존 정책).
       // 고용 종료 여부는 application.status(CANCELED/AUTO_CANCELED/TERMINATED 등)로 UI에서 판단.
 
@@ -1359,7 +1359,7 @@ extension ApplicationFirestore on FirestoreService {
     if (applicationIds.isEmpty) return BatchResult(success: 0, failed: 0);
     int success = 0;
     int failed = 0;
-    // [특이사항] failedIds로 부분 실패 시 재처리 대상 applicationId 특정 가능
+    // failedIds로 부분 실패 시 재처리 대상 applicationId 특정 가능
     final List<String> failedIds = [];
     for (final id in applicationIds) {
       try {
@@ -1750,7 +1750,7 @@ extension ApplicationFirestore on FirestoreService {
               'confirmedAt': FieldValue.delete(),
               if (confirmedBy != null) 'confirmedBy': FieldValue.delete(),
             });
-          // [특이사항] 롤백 실패 무시 — 어차피 아래 Exception을 던지므로 호출자가 에러 처리함
+          // 롤백 실패 무시 — 어차피 아래 Exception을 던지므로 호출자가 에러 처리함
           } catch (_) {}
           throw Exception('이미 마감된 슬롯입니다. 슬롯을 재오픈 후 확정해주세요.');
         }

@@ -91,7 +91,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         return;
       }
 
-      // [특이사항] Future.wait — 한 쪽 실패 시 outer catch(108행)가 처리, mounted 체크(103행)로 setState 안전
+      // Future.wait — 한 쪽 실패 시 outer catch(108행)가 처리, mounted 체크(103행)로 setState 안전
       final results = await Future.wait([
         _firestoreService.getMyApplications(uid),
         _firestoreService.getMyMonthlyAttendances(
@@ -171,7 +171,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     return GradientScaffold(
       title: '내 스케줄',
       onRefresh: _loadApplications,
-      // [특이사항] 스케줄 변경 승인/거절 후 캘린더 자동 갱신 — onChanged 콜백으로 _loadMonthlyAttendances 재호출
+      // 스케줄 변경 승인/거절 후 캘린더 자동 갱신 — onChanged 콜백으로 _loadMonthlyAttendances 재호출
       // GradientScaffold 기본 알림 벨 대신 커스텀 벨을 사용해 NotificationScreen pop 시 _loadApplications 재호출
       showNotificationBell: false,
       actions: [

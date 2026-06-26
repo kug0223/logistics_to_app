@@ -171,7 +171,7 @@ class ApplicationModel {
       businessId: data['businessId'] ?? '',
       businessName: data['businessName'] ?? '',
       toTitle: data['toTitle'] ?? '',
-      // [특이사항] workDate는 DB 스키마 필수 필드 — 누락 시 의도적으로 ArgumentError throw (fast-fail)
+      // workDate는 DB 스키마 필수 필드 — 누락 시 의도적으로 ArgumentError throw (fast-fail)
       workDate: data['workDate'] != null
           ? (data['workDate'] as Timestamp).toDate().toLocal()
           : (throw ArgumentError('ApplicationModel: workDate 필드 누락 (id: $documentId)')),

@@ -1,4 +1,4 @@
-﻿// lib/screens/user/dialogs/my_requests_dialog.dart
+// lib/screens/user/dialogs/my_requests_dialog.dart
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -82,7 +82,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       final notifications = <_NotificationItem>[];
 
       // 1. 스케줄 변경 요청 (PENDING 기준 필터)
-      // [특이사항] EXTRA_WORK는 requesterType과 무관하게 지원자에게 항상 표시 (관리자→지원자 방향이지만 혼용 기록 방어)
+      // EXTRA_WORK는 requesterType과 무관하게 지원자에게 항상 표시 (관리자→지원자 방향이지만 혼용 기록 방어)
       // 그 외 타입은 관리자가 보낸(isAdminRequest) 경우만 표시
       for (final req in scheduleRequests) {
         if (req.isPending &&

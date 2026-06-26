@@ -1,4 +1,4 @@
-﻿import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -59,7 +59,7 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
             if (mounted) setState(() => _isLoading = false);
           },
           onWebResourceError: (WebResourceError error) {
-            // [특이사항] baseUrl 'https://localhost' 설정 시 WebView가 favicon.ico 등
+            // baseUrl 'https://localhost' 설정 시 WebView가 favicon.ico 등
             // 서브리소스를 localhost에 요청 → ERR_CONNECTION_REFUSED 발생 (무해)
             // isForMainFrame이 false인 경우는 서브리소스 오류이므로 무시
             if (!(error.isForMainFrame ?? true)) return;

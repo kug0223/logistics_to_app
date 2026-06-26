@@ -659,7 +659,7 @@ class ContractService {
     // 이미 voided 상태면 조기 반환 — 재호출 시 이미 취소된 지원서를 재취소 시도해
     // failedIds가 발생하고 오해의 소지 있는 에러 토스트가 뜨는 버그 방지 (BUG-E-01)
     if (contract.status == ContractStatus.voided) return;
-    // [특이사항] 쌍방 서명 완료된 계약서는 무효화 불가 — voided 이후 근무자 서명 시 completed로
+    // 쌍방 서명 완료된 계약서는 무효화 불가 — voided 이후 근무자 서명 시 completed로
     // 전이되므로 이 체크가 없으면 이미 근무 중인 계약서도 관리자가 일방 무효화 가능
     if (contract.status == ContractStatus.completed) {
       throw Exception('쌍방 서명이 완료된 계약서는 무효화할 수 없습니다');
@@ -711,7 +711,7 @@ class ContractService {
     }
 
     // 4단계: 실패한 appId 기록 — 관리자 화면 경고 배너로 노출, 재처리 버튼 제공
-    // [특이사항] M-5: voidFailedAppIds 저장 실패 시 재시도(retryVoidFailedApps) 메커니즘이
+    // M-5: voidFailedAppIds 저장 실패 시 재시도(retryVoidFailedApps) 메커니즘이
     // 동작하지 않아 미취소 application이 CONFIRMED 상태로 잔존할 수 있음.
     // 완전한 해결책은 Cloud Functions의 트랜잭션 기반 처리이나, 현 규모에서는
     // exception 메시지에 failedIds를 포함해 관리자가 수동 처리할 수 있도록 한다.
@@ -1030,7 +1030,7 @@ class ContractService {
 
   // ── PDF 로컬 저장 (공유용) ────────────────────────────────────
 
-  // [특이사항] 반환된 File은 호출자가 Share 후 delete() 책임.
+  // 반환된 File은 호출자가 Share 후 delete() 책임.
   // 현재 외부 호출자 없음 — Printing.sharePdf(bytes:) 방식으로 대체되어 있어
   // 메모리에서 직접 공유하므로 이 함수는 미사용 상태.
   Future<File> savePdfLocally({

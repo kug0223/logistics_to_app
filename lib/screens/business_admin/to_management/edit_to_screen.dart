@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -212,7 +212,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       ToastHelper.showError('급여는 0원보다 커야 합니다');
       return;
     }
-    // [특이사항] 최저임금(2026: 10,320원) 미달 여부를 앱에서 하드 차단하지 않는다.
+    // 최저임금(2026: 10,320원) 미달 여부를 앱에서 하드 차단하지 않는다.
     // 임금 결정은 사업주 권한이며, 수습·단순가산 등 예외 케이스가 다양하다.
     // 최저임금법 준수 책임은 사업주에게 있고, 앱은 경영 도구로서 개입하지 않는다.
     if (_workDetails.any((w) => w.requiredCount <= 0)) {
@@ -337,7 +337,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       // isManualClosed가 아닌 isClosed 기준 — CF 자동마감(isManualClosed=false) 포함
       final wasClosed = widget.to.isClosed;
 
-      // [특이사항] workDetails(임금 포함)를 통째로 덮어씀 → 이미 확정된 지원자가 있어도
+      // workDetails(임금 포함)를 통째로 덮어씀 → 이미 확정된 지원자가 있어도
       // 슬롯의 wage 수정이 가능하다. CLAUDE.md "시급/일급 TO 레벨에서 고정" 원칙은
       // application 스냅샷(지원 시점 복사)으로 보호되나, 슬롯 기준 wage 재조회가 일어날 경우
       // 불일치 발생 가능. 확정 지원자가 있을 때 wage 변경 시 경고 UI 추가 권장(미구현).

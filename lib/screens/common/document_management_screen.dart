@@ -503,7 +503,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         // 1. 새 이미지 먼저 업로드 (실패해도 기존 이미지 보존)
         final storagePath = 'users/${user.uid}/businessLicense_${DateTime.now().millisecondsSinceEpoch}.jpg';
         newUrl = await _storageService.uploadImage(imagePath, storagePath);
-        // [특이사항] TMP-01: pickAndVerifyBusinessLicense가 반환한 임시 압축 파일.
+        // TMP-01: pickAndVerifyBusinessLicense가 반환한 임시 압축 파일.
         // 업로드 직후 삭제 — 실패해도 예외를 삼켜 업로드 성공 흐름을 유지.
         try { await File(imagePath).delete(); } catch (_) {}
 
@@ -662,7 +662,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         // 1. 새 이미지 먼저 업로드
         final storagePath = 'users/${user.uid}/idCard_${DateTime.now().millisecondsSinceEpoch}.jpg';
         final downloadUrl = await _storageService.uploadImage(imagePath, storagePath);
-        // [특이사항] TMP-01: pickAndVerifyIdCard가 반환한 임시 압축 파일. 업로드 직후 삭제.
+        // TMP-01: pickAndVerifyIdCard가 반환한 임시 압축 파일. 업로드 직후 삭제.
         try { await File(imagePath).delete(); } catch (_) {}
 
         if (downloadUrl == null) {
@@ -697,7 +697,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         ToastHelper.showSuccess('신분증이 등록되었습니다');
         _hasChanges = true;
       } catch (e) {
-        // [특이사항] 업로드·Firestore 실패 시 async gap 후 unmounted 가능 → mounted 체크 필수
+        // 업로드·Firestore 실패 시 async gap 후 unmounted 가능 → mounted 체크 필수
         if (mounted) ToastHelper.showError('신분증 등록에 실패했습니다');
       } finally {
         if (mounted) setState(() => _isLoading = false);
@@ -735,7 +735,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       ToastHelper.showSuccess('통장 정보가 저장되었습니다');
       _hasChanges = true;  // ✅ 추가
     } catch (e) {
-      // [특이사항] Firestore 업데이트 중 화면 pop 시 unmounted 가능 → mounted 체크 필수
+      // Firestore 업데이트 중 화면 pop 시 unmounted 가능 → mounted 체크 필수
       if (mounted) ToastHelper.showError('통장 정보 저장에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -1316,7 +1316,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         // 1. 새 이미지 먼저 업로드 (실패해도 기존 이미지 보존)
         final storagePath = 'users/${user.uid}/bankbook_${DateTime.now().millisecondsSinceEpoch}.jpg';
         newUrl = await _storageService.uploadImage(imagePath, storagePath);
-        // [특이사항] TMP-01: pickAndVerifyBankbook이 반환한 임시 압축 파일. 업로드 직후 삭제.
+        // TMP-01: pickAndVerifyBankbook이 반환한 임시 압축 파일. 업로드 직후 삭제.
         try { await File(imagePath).delete(); } catch (_) {}
 
         if (newUrl == null) {

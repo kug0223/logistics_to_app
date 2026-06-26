@@ -1,4 +1,4 @@
-﻿// lib/services/tooltip_service.dart
+// lib/services/tooltip_service.dart
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -46,7 +46,7 @@ class TooltipService {
     await prefs.remove('$_prefix$key');
   }
 
-  // [특이사항] Dart는 단일 스레드이므로 이 Set 접근은 동기 구간에서 원자적.
+  // Dart는 단일 스레드이므로 이 Set 접근은 동기 구간에서 원자적.
   // wasShown→markAsShown 사이 async gap의 중복 호출을 이 Set으로 차단.
   static final Set<String> _pendingKeys = {};
 

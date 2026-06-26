@@ -56,7 +56,7 @@ class NotificationProvider with ChangeNotifier {
   /// 스트림 에러 후 재시도
   void retry() {
     if (_userId == null || _disposed) return;
-    // [특이사항] 정상 상태에서는 Firestore 스트림이 자동 갱신되므로 no-op
+    // 정상 상태에서는 Firestore 스트림이 자동 갱신되므로 no-op
     if (!_hasError && _notificationSubscription != null) return;
     _hasError = false;
     _startListening();
@@ -95,7 +95,7 @@ class NotificationProvider with ChangeNotifier {
         .listen(
           (received) {
             if (_disposed) return;
-            // [특이사항] limit(31) 패턴: 31건 조회해 31건이면 hasMore=true, 30건만 표시 — length>30 보장 후 sublist 안전
+            // limit(31) 패턴: 31건 조회해 31건이면 hasMore=true, 30건만 표시 — length>30 보장 후 sublist 안전
             if (received.length > 30) {
               _streamNotifications = received.sublist(0, 30);
               _hasMore = true;

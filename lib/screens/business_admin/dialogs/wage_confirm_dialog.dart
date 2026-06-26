@@ -1,4 +1,4 @@
-﻿// lib/screens/business_admin/dialogs/wage_confirm_dialog.dart
+// lib/screens/business_admin/dialogs/wage_confirm_dialog.dart
 // 급여 확정 다이얼로그 - 탭 구조
 //
 // 탭 1: 미확정 (pending) → 급여 계산·확정 → calculated
@@ -204,7 +204,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
   /// 그룹 추가 공제 시간 변경 → 선택된 근무자만 급여 재계산
   Future<void> _setGroupBreak(List<ApplicationModel> groupWorkers, int extraMinutes) async {
-    // [특이사항] groupWorkers는 putIfAbsent().add() 로 생성 — 최소 1개 보장, .first 안전
+    // groupWorkers는 putIfAbsent().add() 로 생성 — 최소 1개 보장, .first 안전
     final key = _getGroupKey(groupWorkers.first);
     final selectedInGroup = groupWorkers.where((a) => _pendingSelectedIds.contains(a.id)).toList();
 
@@ -539,7 +539,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           );
 
           // 동시 확정 방지 — 현재 wageStatus가 pending인지 트랜잭션으로 검증
-          // [특이사항] 3가지 상태를 모두 차단하는 이유:
+          // 3가지 상태를 모두 차단하는 이유:
           //   wageCalculated: 이미 1차 확정된 케이스 (중복 확정 방지)
           //   wageConfirmed: 이미 마감 처리된 케이스
           //   wageTransferred: 이미 이체 완료된 케이스
@@ -2645,7 +2645,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     List<ApplicationModel> groupWorkers,
     Set<String> selectedIds,
   ) {
-    // [특이사항] groupWorkers는 putIfAbsent().add() 로 생성 — 최소 1개 보장, .first 안전
+    // groupWorkers는 putIfAbsent().add() 로 생성 — 최소 1개 보장, .first 안전
     final first = groupWorkers.first;
     final groupKey = _getGroupKey(first);
     final workType = first.selectedWorkType;

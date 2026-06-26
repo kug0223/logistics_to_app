@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../../theme/app_colors.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -66,7 +66,7 @@ class TOListDialogs {
 
   /// TO 마감 다이얼로그
   Future<void> showCloseTODialog(TOModel to) async {
-    // [특이사항] uid null → '' 폴백 시 closedBy가 빈 문자열로 기록돼 감사 로그 훼손.
+    // uid null → '' 폴백 시 closedBy가 빈 문자열로 기록돼 감사 로그 훼손.
     // 세션 만료 시 작업 불가로 처리하여 미인증 상태의 마감 기록을 방지한다.
     final adminUID =
         Provider.of<UserProvider>(context, listen: false).currentUser?.uid;

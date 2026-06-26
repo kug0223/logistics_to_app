@@ -50,7 +50,7 @@ class PassVerificationService {
     // 2. PassAuthWebViewPage 열기 (WebView)
     // 3. 인증 완료 콜백에서 encData 수신
     // 4. CF verifyPassAuth 호출 → PassAuthResult 반환
-    // [특이사항] 릴리즈 빌드에서 throw가 아닌 graceful fallback — UnimplementedError 던지면 앱 크래시
+    // 릴리즈 빌드에서 throw가 아닌 graceful fallback — UnimplementedError 던지면 앱 크래시
     ToastHelper.showInfo('PASS 인증은 현재 준비 중입니다. 잠시 후 이용해주세요.');
     return null;
   }
@@ -79,7 +79,7 @@ class PassVerificationService {
       final result = await _fn
           .httpsCallable('resetPasswordWithPass')
           .call({'passToken': passToken, 'username': username});
-      // [특이사항] result.data가 null이거나 키 없으면 예외 → 아래 catch에서 null 반환 처리
+      // result.data가 null이거나 키 없으면 예외 → 아래 catch에서 null 반환 처리
       return result.data['customToken'] as String?;
     } catch (e) {
       debugPrint('❌ [PassVerificationService] resetPasswordWithPass 실패: $e');

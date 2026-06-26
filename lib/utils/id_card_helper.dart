@@ -1,4 +1,4 @@
-﻿// lib/utils/id_card_helper.dart
+// lib/utils/id_card_helper.dart
 // 신분증 관련 공통 헬퍼
 
 import 'package:flutter/material.dart';
@@ -138,7 +138,7 @@ class IdCardHelper {
 
     int successCount = 0;
 
-    // [특이사항] 루프 중 mounted 체크 없음 — 루프 완료 후 호출부(showBatchRequestDialog)에서 context.mounted 체크로 보호
+    // 루프 중 mounted 체크 없음 — 루프 완료 후 호출부(showBatchRequestDialog)에서 context.mounted 체크로 보호
     for (final target in targets) {
       try {
         final result = await firestoreService.createIdCardAccessRequest(

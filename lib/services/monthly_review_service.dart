@@ -481,7 +481,7 @@ class MonthlyReviewService {
               'normalDays': 0,
               'lateDays': 0,
             });
-        // [특이사항] putIfAbsent 직후 접근 — workerMap[uid]와 'workDays' 키 모두 보장, ! 안전
+        // putIfAbsent 직후 접근 — workerMap[uid]와 'workDays' 키 모두 보장, ! 안전
         workerMap[uid]!['workDays'] =
             (workerMap[uid]!['workDays'] as int) + 1;
       }

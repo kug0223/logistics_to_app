@@ -8,7 +8,7 @@ import '../models/core/attendance_model.dart';
 
 /// 배지 자동 획득·재계산 서비스
 ///
-/// [특이사항] 배지는 상향 누적 원칙 — 한번 획득한 배지는 조건이 낮아져도 박탈하지 않는다.
+/// 배지는 상향 누적 원칙 — 한번 획득한 배지는 조건이 낮아져도 박탈하지 않는다.
 /// 신규 획득 배지만 arrayUnion으로 추가하고, 기존 badges 배열은 건드리지 않는다.
 /// 슈퍼관리자가 직접 badges 배열을 편집하는 케이스는 UI 단에서 별도 처리.
 ///
@@ -84,7 +84,7 @@ class BadgeService {
   Future<bool> _checkWorkDays(String uid, UserModel user, BadgeModel badge) async {
     if (badge.workType != null) {
       // specialty 배지: 특정 업무유형 완료 근무일수를 attendance 컬렉션에서 집계
-      // [특이사항] (userId, workType, status) 복합 인덱스 필요 — firestore.indexes.json에 추가 완료.
+      // (userId, workType, status) 복합 인덱스 필요 — firestore.indexes.json에 추가 완료.
       final countSnap = await _firestore
           .collection(_attendanceCol)
           .where('userId', isEqualTo: uid)
@@ -104,7 +104,7 @@ class BadgeService {
 
   Future<bool> _checkConsecutive(String uid, BadgeModel badge) async {
     // 최근 출근 기록을 역순으로 조회해 연속 무지각 횟수 계산
-    // [특이사항] attendance 컬렉션에 (userId, workDate) 복합 인덱스 필요.
+    // attendance 컬렉션에 (userId, workDate) 복합 인덱스 필요.
     final snap = await _firestore
         .collection(_attendanceCol)
         .where('userId', isEqualTo: uid)
@@ -117,7 +117,7 @@ class BadgeService {
       final status = doc.data()['status'] as String?;
       if (status == AttendanceModel.statusPresent ||
           status == AttendanceModel.statusEarlyLeave) {
-        // [특이사항] statusEarlyLeave는 출근 사실로 인정해 streak 포함.
+        // statusEarlyLeave는 출근 사실로 인정해 streak 포함.
         //           statusLate는 성실 연속으로 불인정 → else에서 break.
         //           (정책: 조기퇴근 = 출근 인정, 지각 = 연속 출근 배지 불인정)
         streak++;

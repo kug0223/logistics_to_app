@@ -93,7 +93,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
       useSafeArea: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      // [특이사항] useSafeArea: true 사용 중이므로 내부 SafeArea 제거 (D-L-1)
+      // useSafeArea: true 사용 중이므로 내부 SafeArea 제거 (D-L-1)
       builder: (ctx) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Column(

@@ -337,7 +337,7 @@ class ContractSnapshot {
     final sp = s.split(':');
     final ep = e.split(':');
     if (sp.length < 2 || ep.length < 2) return 0; // 잘못된 형식 방어
-    // [특이사항] startTime/endTime은 TO 등록 시 "HH:mm" 형식으로만 저장 — parse 예외 없음
+    // startTime/endTime은 TO 등록 시 "HH:mm" 형식으로만 저장 — parse 예외 없음
     final sm = int.parse(sp[0]) * 60 + int.parse(sp[1]);
     var em = int.parse(ep[0]) * 60 + int.parse(ep[1]);
     if (em < sm) em += 24 * 60;

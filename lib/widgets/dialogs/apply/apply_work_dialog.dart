@@ -1,4 +1,4 @@
-﻿// lib/widgets/dialogs/apply/apply_work_dialog.dart
+// lib/widgets/dialogs/apply/apply_work_dialog.dart
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -415,7 +415,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     if (_currentUserId == null) return;
     
     // 🔥 성능 최적화: 이미 지원한 상태면 충돌 체크 스킵
-    // [특이사항] _hasActiveApplication은 Provider 캐시 기반 스냅샷 — 다중 기기 동시 지원 시
+    // _hasActiveApplication은 Provider 캐시 기반 스냅샷 — 다중 기기 동시 지원 시
     // 미세한 레이스 컨디션으로 최신 상태를 반영 못할 수 있음. 실제 중복 지원은 Firestore
     // 트랜잭션으로 차단되므로 여기서는 UI 중복 조회 방지 목적으로만 사용 (안전 설계)
     if (_hasActiveApplication) {
@@ -980,7 +980,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           
           // 충돌 날짜 목록 (최대 3개)
           ...sortedDates.take(3).map((date) {
-            // [특이사항] sortedDates = _conflictInfoByDate.keys — 모든 date가 맵에 존재 보장, ! 안전
+            // sortedDates = _conflictInfoByDate.keys — 모든 date가 맵에 존재 보장, ! 안전
             final app = _conflictInfoByDate[date]!;
             final dayOfWeek = FormatHelper.weekday(date);
             return Padding(
@@ -1879,7 +1879,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   Widget _buildMyScheduleWarning(BuildContext context, ThemeData theme) {
     final dateFormat = DateFormat('M/d (E)', 'ko_KR');
     final targetDate = _isGroupTO ? _selectedDate : widget.mainTO.date;
-    // [특이사항] 그룹TO에서 날짜 미선택(_selectedDate=null) 상태이면 경고 표시 대상이 없음
+    // 그룹TO에서 날짜 미선택(_selectedDate=null) 상태이면 경고 표시 대상이 없음
     if (targetDate == null) return const SizedBox.shrink();
 
     return Container(

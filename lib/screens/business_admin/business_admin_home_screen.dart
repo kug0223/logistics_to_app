@@ -1,4 +1,4 @@
-﻿import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -677,7 +677,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
   /// 더미 지원서 생성 흐름 — 공고 선택 → (단기) 슬롯 선택 → 생성
   Future<void> _createDummyApplicationsFlow(String businessId) async {
     try {
-    // [특이사항] 모든 사업장의 공고를 표시 — businessId 필터 없음, Source.server로 최신 데이터 보장
+    // 모든 사업장의 공고를 표시 — businessId 필터 없음, Source.server로 최신 데이터 보장
     final snap = await FirebaseFirestore.instance
         .collection('tos')
         .orderBy('createdAt', descending: true)
@@ -689,7 +689,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
       return;
     }
 
-    // [특이사항] 모든 사업장 공고를 표시하므로 사업장명·상태를 라벨에 포함
+    // 모든 사업장 공고를 표시하므로 사업장명·상태를 라벨에 포함
     final toDocs = snap.docs.map((d) {
       final data = d.data();
       final title = data['title'] as String? ?? d.id;
@@ -811,7 +811,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
     // 3단계: 단기 TO인 경우 슬롯(날짜) 선택
     if (selectedTo.type == TOType.flex) {
       // orderBy 없이 쿼리 (복합 인덱스 불필요) → 클라이언트 정렬
-      // [특이사항] 모집중(open)인 슬롯만 — full(만석)/closed(마감) 제외
+      // 모집중(open)인 슬롯만 — full(만석)/closed(마감) 제외
       // TO 자체가 ACTIVE인 경우에만 여기 도달하므로(공고 선택 시 비활성 제외) 추가 TO 상태 체크 불필요
       final slotsSnap = await FirebaseFirestore.instance
           .collection('tos')
@@ -838,7 +838,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
           return aTs.compareTo(bTs);
         });
 
-      // [특이사항] visibleFrom 미래인 슬롯 제외 — status='open'이어도 예약공개 슬롯은 선택 불가
+      // visibleFrom 미래인 슬롯 제외 — status='open'이어도 예약공개 슬롯은 선택 불가
       final now = DateTime.now();
       final activeDocs = sortedDocs.where((d) {
         final vf = (d.data()['visibleFrom'] as Timestamp?)?.toDate().toLocal();

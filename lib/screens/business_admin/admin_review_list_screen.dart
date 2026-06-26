@@ -1,4 +1,4 @@
-﻿// lib/screens/business_admin/admin_review_list_screen.dart
+// lib/screens/business_admin/admin_review_list_screen.dart
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -236,7 +236,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
           .map((r) => r.workerId)
           .toSet();
       if (missingNameIds.isNotEmpty) {
-        // [특이사항] whereIn 30개 제한으로 take(30) 적용; 초과 uid는 이름 미조회 → '근무자'로 표시됨
+        // whereIn 30개 제한으로 take(30) 적용; 초과 uid는 이름 미조회 → '근무자'로 표시됨
         final ids = missingNameIds.take(30).toList();
         final resolvedMap = <String, String>{};
         try {
@@ -248,7 +248,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
             final name = doc.data()['name'] as String? ?? '';
             resolvedMap[doc.id] = name.isNotEmpty ? name : '근무자';
           }
-        // [특이사항] 이름 일괄 조회 실패 시 무시 — 아래 putIfAbsent로 '근무자' 폴백 처리됨
+        // 이름 일괄 조회 실패 시 무시 — 아래 putIfAbsent로 '근무자' 폴백 처리됨
         } catch (_) {}
         // 조회에 포함됐으나 문서가 없는 uid는 폴백 처리
         for (final uid in ids) {

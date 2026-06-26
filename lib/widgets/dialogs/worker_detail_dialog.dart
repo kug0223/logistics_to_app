@@ -1,4 +1,4 @@
-﻿// lib/widgets/dialogs/worker_detail_dialog.dart
+// lib/widgets/dialogs/worker_detail_dialog.dart
 // 공통 근무자/지원자 상세 다이얼로그
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -105,7 +105,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   String? _workTime;  // 🔥 근무 시간 (장기용)
   List<ReviewModel> _recentReviews = [];
   IdCardAccessRequestModel? _idCardAccess;
-  // [특이사항] 다이얼로그가 열린 상태에서 신분증 열람 권한이 만료/철회되어도 UI에 반영되지 않는 문제.
+  // 다이얼로그가 열린 상태에서 신분증 열람 권한이 만료/철회되어도 UI에 반영되지 않는 문제.
   // 60초마다 Firestore 재조회로 만료(시간 경과)·철회(상태 변경) 모두 감지한다.
   Timer? _accessRefreshTimer;
   bool _hasAttendance = false;  // ✅ 출퇴근 기록 여부 (장기 확정자용)
@@ -115,7 +115,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   @override
   void initState() {
     super.initState();
-    // [특이사항] addPostFrameCallback으로 첫 프레임 이후 로드
+    // addPostFrameCallback으로 첫 프레임 이후 로드
     // Firestore 캐시 히트 시 _loadAdditionalData()가 첫 프레임 전에 완료되어
     // _isLoading=false 상태로 빈 프로필이 1~2프레임 노출되는 플래시 방지
     WidgetsBinding.instance.addPostFrameCallback((_) {

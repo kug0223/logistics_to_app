@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -280,7 +280,7 @@ class FCMService {
         final data = Map<String, dynamic>.from(jsonDecode(payload) as Map);
         _navigateByPayload(data);
         return;
-      // [특이사항] payload 파싱/네비게이션 실패 시 알림 목록으로 폴백 — 사용자 경험 보호
+      // payload 파싱/네비게이션 실패 시 알림 목록으로 폴백 — 사용자 경험 보호
       } catch (_) {}
     }
     _navigateToNotificationScreen();
@@ -302,7 +302,7 @@ class FCMService {
         _navigateToContractSign(data); // fire-and-forget: 내부에서 await 처리
         break;
       // 근무자 서명 완료 알림 — 관리자 전용, 인력 관리 화면으로 직접 이동
-      // [특이사항] SP-M-2 수정: initialize() 시 저장된 _currentUserIsAdmin으로 역할 가드.
+      // SP-M-2 수정: initialize() 시 저장된 _currentUserIsAdmin으로 역할 가드.
       // USER(isAdmin=false)이면 관리자 전용 화면 대신 UserContractsScreen으로 폴백.
       case 'contractSigned':
         if (_currentUserIsAdmin) {

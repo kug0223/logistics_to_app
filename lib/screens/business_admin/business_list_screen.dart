@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -531,7 +531,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         hasApprovedBusiness: true,
         hasLicense: user.businessLicenseImageUrl != null,
       );
-      // [특이사항] checkTOPrerequisites 자체가 내부적으로 다이얼로그를 띄우므로
+      // checkTOPrerequisites 자체가 내부적으로 다이얼로그를 띄우므로
       //           완료 후 위젯이 dispose될 수 있음 — await 이후 mounted 체크 필수.
       if (!context.mounted) return;
       if (!canProceed) return;

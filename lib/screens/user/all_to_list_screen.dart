@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
 import 'package:provider/provider.dart';
@@ -131,7 +131,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       if (_filter.showFavoritesOnly) {
         // 즐겨찾기 경로: 사용자의 favoriteToIds로 batch fetch
         final favoriteIds = userProvider.currentUser?.favoriteToIds ?? const [];
-        // [특이사항] favoriteToIds는 UserProvider 인메모리 캐시 기반 — 다른 기기에서
+        // favoriteToIds는 UserProvider 인메모리 캐시 기반 — 다른 기기에서
         // 즐겨찾기를 변경해도 이 세션이 refreshCurrentUser() 호출 전까지 구 목록을 사용
         // 실제 데이터 조회는 Firestore에서 하므로 삭제된 TO는 결과에서 자동 제외됨
         toList = favoriteIds.isEmpty
@@ -155,7 +155,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       final myApps = await appsFuture;
 
       if (!mounted) return;
-      // [특이사항] 지역 옵션·필터 결과를 사전 계산 후 단일 setState로 반영 — 연속 3회 setState(리빌드 낭비) 방지
+      // 지역 옵션·필터 결과를 사전 계산 후 단일 setState로 반영 — 연속 3회 setState(리빌드 낭비) 방지
       final regionResult = _computeRegionOptions(toList);
       final displayList = _computeDisplayList(toList);
       setState(() {

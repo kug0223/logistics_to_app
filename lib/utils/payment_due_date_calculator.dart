@@ -93,7 +93,7 @@ class PaymentDueDateCalculator {
     return DateTime(nextMonth.year, nextMonth.month, nextDay);
   }
 
-  // [특이사항] DateTime(y, month+1, 0) — Dart가 월 오버플로우(13월→1월)를 자동 처리; day=0은 전달 마지막 날
+  // DateTime(y, month+1, 0) — Dart가 월 오버플로우(13월→1월)를 자동 처리; day=0은 전달 마지막 날
   static int _lastDayOf(int year, int month) =>
       DateTime(year, month + 1, 0).day;
 

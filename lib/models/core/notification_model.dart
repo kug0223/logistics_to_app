@@ -34,12 +34,12 @@ enum NotificationType {
   contractTerminating,      // 계약 종료 통보됨 (근무자에게)
   terminationRequested,     // 계약해지 요청됨
   terminationApproved,      // 계약해지 승인됨
-  // [특이사항] terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
+  // terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
   terminationRejected,      // 계약해지 거절됨 (근무자→관리자)
   resignRequested,          // 퇴사 요청됨 (근무자→관리자)
   resignApproved,           // 퇴사 승인됨 (관리자→근무자)
   resignRejected,           // 퇴사 거절됨 (관리자→근무자)
-  // [특이사항] contractRequested: 역방향 알림 — 다른 계약 관련 알림은 관리자→근무자지만
+  // contractRequested: 역방향 알림 — 다른 계약 관련 알림은 관리자→근무자지만
   // 이 타입만 근무자→관리자 방향. CONTRACT_PENDING 상태에서 근무자가 계약서 발송을 독촉할 때 발송.
   contractRequested,        // 계약서 작성 요청됨 (근무자→관리자)
 
@@ -58,7 +58,7 @@ enum NotificationType {
   idCardAccessRequested,   // 신분증 열람 요청됨 (지원자에게)
   idCardAccessApproved,    // 신분증 열람 승인됨 (관리자에게)
   idCardAccessRejected,    // 신분증 열람 거절됨 (관리자에게)
-  // [특이사항] 발송 로직 미구현 — CF 스케줄러 추가 필요
+  // 발송 로직 미구현 — CF 스케줄러 추가 필요
   idCardAccessExpiringSoon,// 신분증 열람 권한 만료 임박
   
   // 멤버 관리
@@ -202,7 +202,7 @@ class NotificationModel {
         return 'exit_to_app';
       case NotificationType.terminationApproved:
         return 'logout';
-      // [특이사항] terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
+      // terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
       case NotificationType.terminationRejected:
         return 'block';
       // 퇴사 관련
@@ -297,7 +297,7 @@ class NotificationModel {
       case 'contractTerminating': return NotificationType.contractTerminating;
       case 'terminationRequested': return NotificationType.terminationRequested;
       case 'terminationApproved': return NotificationType.terminationApproved;
-      // [특이사항] terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
+      // terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
       case 'terminationRejected': return NotificationType.terminationRejected;
       // 퇴사 관련
       case 'resignRequested': return NotificationType.resignRequested;
@@ -354,7 +354,7 @@ class NotificationModel {
       case NotificationType.contractTerminating: return 'contractTerminating';
       case NotificationType.terminationRequested: return 'terminationRequested';
       case NotificationType.terminationApproved: return 'terminationApproved';
-      // [특이사항] terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
+      // terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
       case NotificationType.terminationRejected: return 'terminationRejected';
       // 퇴사 관련
       case NotificationType.resignRequested: return 'resignRequested';
@@ -794,8 +794,8 @@ class NotificationModel {
 
   /// 계약서 작성 요청 알림 생성 (근무자→관리자)
   /// 근무자가 CONTRACT_PENDING 상태에서 "계약서 요청하기" 버튼을 누를 때 사업장 오너에게 발송.
-  // [특이사항] 수신자(userId)가 근무자가 아닌 사업장 ownerId — 발송 전 businesses/{businessId}.ownerId 조회 필요.
-  // [특이사항] 클라이언트에서 24시간 쿨다운(SharedPreferences key: contract_req_{applicationId})을 강제하므로
+  // 수신자(userId)가 근무자가 아닌 사업장 ownerId — 발송 전 businesses/{businessId}.ownerId 조회 필요.
+  // 클라이언트에서 24시간 쿨다운(SharedPreferences key: contract_req_{applicationId})을 강제하므로
   //           서버 중복 발송 방어는 없음. 관리자 UX 과부하 방지 목적의 소프트 제한이다.
   static NotificationModel createContractRequested({
     required String userId,
@@ -959,7 +959,7 @@ class NotificationModel {
   }
 
   /// 계약해지 거절 알림 생성 (해지 요청자·관리자에게)
-  /// [특이사항] terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
+  /// terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
   static NotificationModel createTerminationRejected({
     required String userId,
     required String businessName,
@@ -1191,7 +1191,7 @@ class NotificationModel {
       type: NotificationType.contractExpiringReminder,
       title: '계약 만료 임박',
       body: '$workerName님의 계약이 ${expiryDate.month}/${expiryDate.day}에 만료됩니다. 연장 또는 종료를 선택해 주세요.',
-      // [특이사항] businessId를 data에 포함 — 다중 사업장 관리자가 다른 사업장 선택 중일 때도
+      // businessId를 data에 포함 — 다중 사업장 관리자가 다른 사업장 선택 중일 때도
       //           notification.data['businessId']를 우선 사용해 올바른 사업장 컨텍스트로 라우팅.
       data: {
         'applicationId': applicationId,

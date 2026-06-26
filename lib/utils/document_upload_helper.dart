@@ -57,7 +57,7 @@ class DocumentUploadHelper {
     String expectedName, {
     String? expectedResidentNumber,
   }) async {
-    // [특이사항] image를 try 바깥에 선언해야 catch에서도 delete() 가능.
+    // image를 try 바깥에 선언해야 catch에서도 delete() 가능.
     // try 안에서 선언하면 예외 발생 시 임시 압축 파일이 /tmp에 영구 누적된다.
     File? image;
     try {
@@ -172,7 +172,7 @@ class DocumentUploadHelper {
     String? expectedAccountNumber,
     String? expectedBankName,
   }) async {
-    // [특이사항] image를 try 바깥에 선언 — catch에서 임시 파일 삭제 가능하도록
+    // image를 try 바깥에 선언 — catch에서 임시 파일 삭제 가능하도록
     File? image;
     try {
       image = await ImageHelper.pickAndCompressImage(
@@ -302,7 +302,7 @@ class DocumentUploadHelper {
     String? ceoName,
     void Function(String)? onCeoNameExtracted,
   }) async {
-    // [특이사항] image를 try 바깥에 선언 — catch에서 임시 파일 삭제 가능하도록
+    // image를 try 바깥에 선언 — catch에서 임시 파일 삭제 가능하도록
     File? image;
     try {
       image = await ImageHelper.pickAndCompressImage(

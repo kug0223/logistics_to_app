@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../models/core/notification_model.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
@@ -168,7 +168,7 @@ class NotificationCard extends StatelessWidget {
       case NotificationType.terminationApproved:
       case NotificationType.resignApproved:
         return Icons.logout;
-      // [특이사항] terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
+      // terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
       case NotificationType.terminationRejected:
         return Icons.block;
       case NotificationType.resignRejected:
@@ -216,7 +216,7 @@ class NotificationCard extends StatelessWidget {
       case NotificationType.workCanceled:
       case NotificationType.scheduleChangeRejected:
       case NotificationType.terminationRequested:
-      // [특이사항] terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
+      // terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
       case NotificationType.terminationRejected:
       case NotificationType.resignRejected:
       case NotificationType.idCardAccessRejected:

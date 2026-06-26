@@ -79,7 +79,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
   }
 
   /// 오늘 확정된 근무 조회
-  // [특이사항] finally 블록 없음 — 정상 경로(149행)와 catch(160행) 양쪽에서 _isLoading=false 처리되어 실질 고착 없음
+  // finally 블록 없음 — 정상 경로(149행)와 catch(160행) 양쪽에서 _isLoading=false 처리되어 실질 고착 없음
   Future<void> _loadTodayWorks() async {
     if (!mounted) return;
     setState(() => _isLoading = true);
@@ -238,7 +238,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
     final uid = userProvider.currentUser?.uid;
     if (uid == null) { _isGrantingConsent = false; return; }
 
-    // [특이사항] try/finally로 예외 발생 시에도 _isGrantingConsent 잠금이 반드시 해제되도록 함
+    // try/finally로 예외 발생 시에도 _isGrantingConsent 잠금이 반드시 해제되도록 함
     try {
       // 사업장 좌표 + 반경 캐싱
       for (final work in _todayWorks) {
@@ -709,7 +709,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
         usedMethod = 'gps';
       }
 
-      // [특이사항] endTime < startTime 검증은 _firestoreService.checkOut() 내부에만 있음.
+      // endTime < startTime 검증은 _firestoreService.checkOut() 내부에만 있음.
       //           클라이언트에서는 사전 차단 없이 서비스 계층의 에러 응답에만 의존.
       final success = await _firestoreService.checkOut(
         attendanceId: attendance.id,

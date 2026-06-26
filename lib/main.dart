@@ -1,4 +1,4 @@
-﻿import 'dart:ui';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'theme/app_colors.dart';
@@ -203,7 +203,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
     _checkingOnboarding = true;
     try {
       final user = context.read<UserProvider>().currentUser;
-      // [특이사항] UID 기반 키 사용 — 역할 기반이면 같은 기기의 다른 계정이 플래그를 공유해
+      // UID 기반 키 사용 — 역할 기반이면 같은 기기의 다른 계정이 플래그를 공유해
       // 신규 가입자가 이전 사용자의 "완료" 상태를 물려받아 온보딩을 건너뛰게 됨
       final uid = user?.uid ?? 'unknown';
       final prefs = await SharedPreferences.getInstance();

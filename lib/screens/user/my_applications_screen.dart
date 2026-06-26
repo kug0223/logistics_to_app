@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -154,7 +154,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       final items = page['items'] as List<ApplicationModel>;
       final appWithTOs = await _attachTOInfo(items);
       // 신규 확정 지원서에 대한 계약서만 추가 로드
-      // [특이사항] Future.wait — 한 쪽 실패 시 다른 쪽 결과 유실; outer catch가 에러 처리하므로 허용
+      // Future.wait — 한 쪽 실패 시 다른 쪽 결과 유실; outer catch가 에러 처리하므로 허용
       final moreResults = await Future.wait([
         _loadContracts(uid, appWithTOs),
         _loadWrittenReviews(uid, appWithTOs),
@@ -300,7 +300,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       }
       final workerName = currentUser.name;
 
-      // [특이사항] FirebaseFirestore.instance 직접 사용 — firestoreService에 ownerId 단독 조회 메서드가 없어
+      // FirebaseFirestore.instance 직접 사용 — firestoreService에 ownerId 단독 조회 메서드가 없어
       //           businesses 컬렉션을 직접 읽는다. 추후 firestoreService.getBusinessOwnerId() 추가 시 교체.
       final bizDoc = await FirebaseFirestore.instance
           .collection('businesses')
@@ -453,7 +453,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       isSelected: _selectedFilter == value,
       onTap: () {
         setState(() { _selectedFilter = value; _autoLoadCount = 0; });
-        // [특이사항] 탭 필터는 클라이언트 필터 — 탭 변경 시 서버 재조회 없이 로드된 데이터 내에서만 필터링
+        // 탭 필터는 클라이언트 필터 — 탭 변경 시 서버 재조회 없이 로드된 데이터 내에서만 필터링
         // _loadMore 내 _lastDoc 가드로 커서 소실 방지 처리됨
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted && _filteredApplications.isEmpty && _hasMore && !_isLoadingMore) {

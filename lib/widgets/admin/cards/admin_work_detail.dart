@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 
 // Models
 import '../../../models/core/work_detail_model.dart';
@@ -444,8 +444,8 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
     }
     
     // 2. 예약 — slot.visibleFrom(슬롯 레벨) 또는 TO 레벨 스케줄
-    // [특이사항] slot.visibleFrom은 슬롯 레벨 예약공개 — SlotStatusUtil과 동일 우선순위로 체크 필수
-    // [특이사항] status='SCHEDULED'는 isPendingPublish와 별개 경로 — 둘 다 체크해야 예약 배지가 표시됨
+    // slot.visibleFrom은 슬롯 레벨 예약공개 — SlotStatusUtil과 동일 우선순위로 체크 필수
+    // status='SCHEDULED'는 isPendingPublish와 별개 경로 — 둘 다 체크해야 예약 배지가 표시됨
     final slotScheduled = slot?.visibleFrom != null && slot!.visibleFrom!.isAfter(DateTime.now());
     if (slotScheduled || to.status == TOStatus.scheduled || to.isPendingPublish) {
       return Container(

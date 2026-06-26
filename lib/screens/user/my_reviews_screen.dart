@@ -46,7 +46,7 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
         targetUserId: uid,
       );
       // 평균 점수는 공개된 리뷰(isPublished=true)만으로 계산 — 미공개는 확정 전 상태
-      // [특이사항] 이 화면의 avgRating은 Firestore user.averageRating(전체 리뷰 기준)과 다를 수 있음
+      // 이 화면의 avgRating은 Firestore user.averageRating(전체 리뷰 기준)과 다를 수 있음
       // 두 값의 의미가 다른 것은 의도된 설계 — 이 화면은 본인이 볼 수 있는 공개 리뷰만 대상
       final published = page.records.where((r) => r.isPublished).toList();
       final avg = published.isEmpty

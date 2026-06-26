@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 import 'package:flutter/services.dart';
 
@@ -138,7 +138,7 @@ class FormatHelper {
   /// - formatWage(10000) → '10,000원'
   /// - formatWage(1500000) → '1,500,000원'
   static String formatWage(int wage) {
-    // [특이사항] 음수 입력 시 부호를 분리해 처리 — 정규식이 '-' 기호를 건너뛰어 콤마 포맷이 미적용되는 버그 방지
+    // 음수 입력 시 부호를 분리해 처리 — 정규식이 '-' 기호를 건너뛰어 콤마 포맷이 미적용되는 버그 방지
     final abs = wage.abs().toString().replaceAllMapped(
       RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
       (Match m) => '${m[1]},',
@@ -532,7 +532,7 @@ class FormatHelper {
     
     // 주6일 (휴무일 표시)
     if (count == 6) {
-      // [특이사항] allDays=7개, sorted=6개 → 반드시 1개 미포함 존재, orElse 불필요
+      // allDays=7개, sorted=6개 → 반드시 1개 미포함 존재, orElse 불필요
       final offDay = allDays.firstWhere((d) => !sorted.contains(d));
       return '주6일($offDay 휴무)';
     }

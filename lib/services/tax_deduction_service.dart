@@ -230,7 +230,7 @@ class TaxDeductionService {
       employmentInsuranceDeduction: employment8,
       incomeTaxDeduction: totalTax8,
       retroactiveDeduction: retroactive,
-      // [특이사항] 8일차 소급 공제 총액이 당일 세전 급여(gross8)를 초과하면 netWage가 음수.
+      // 8일차 소급 공제 총액이 당일 세전 급여(gross8)를 초과하면 netWage가 음수.
       // 이는 1~7일치 4대보험 소급분이 클 때 발생할 수 있는 설계상 한계.
       // 실수령액 표시는 effectiveNetWage(clamp 0)를 사용하므로 UI는 0원으로 보임.
       // 초과분은 실무상 다음 급여에서 추가 공제하며, 앱에서는 별도 추적하지 않는다.
@@ -278,7 +278,7 @@ class TaxDeductionService {
       }
       return count;
     } catch (e) {
-      // [특이사항] 0 반환(silent fail): 조회 실패 시 8일차 소급이 누락되는 방향으로 처리.
+      // 0 반환(silent fail): 조회 실패 시 8일차 소급이 누락되는 방향으로 처리.
       // _getPrevGrossTotal()은 소급 금액 계산에 필수이므로 rethrow(확정 전체 차단)하는 반면,
       // 여기서는 소급 미적용(근무자에게 유리한 방향)으로 처리해 확정 자체는 완료되도록 허용.
       debugPrint('⚠️ 월별 근무일수 조회 실패: $e');

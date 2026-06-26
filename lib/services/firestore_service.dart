@@ -1,4 +1,4 @@
-﻿import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -39,7 +39,7 @@ part 'firestore/id_card_firestore.dart';
 part 'firestore/worker_location_firestore.dart';
 
 /// 배치 처리 결과
-/// [특이사항] failedIds로 부분 실패 시 재처리 대상 applicationId 특정 가능
+/// failedIds로 부분 실패 시 재처리 대상 applicationId 특정 가능
 class BatchResult {
   final int success;
   final int failed;
@@ -187,7 +187,7 @@ class FirestoreService {
   // ═══════════════════════════════════════════════════════════
 
   /// TO 수동 마감
-  // [특이사항] 수동 마감 시 활성 지원서(PENDING/CONTRACT_PENDING/CONFIRMED)를
+  // 수동 마감 시 활성 지원서(PENDING/CONTRACT_PENDING/CONFIRMED)를
   // AUTO_CANCELED로 전환하고 각 지원자에게 TO 취소 알림을 발송한다.
   // TO 상태 업데이트가 먼저 성공해야 지원서 처리를 진행 — 실패 시 지원서는 건드리지 않음.
   // 지원서 처리 중 부분 실패는 로그만 남기고 전체 흐름은 계속 진행한다.
@@ -223,7 +223,7 @@ class FirestoreService {
             .get();
 
         if (appsSnap.docs.isNotEmpty) {
-          // [특이사항] 인기 TO의 경우 활성 지원서가 500건 초과 가능 — 499건 단위 분할 커밋
+          // 인기 TO의 경우 활성 지원서가 500건 초과 가능 — 499건 단위 분할 커밋
           for (var offset = 0; offset < appsSnap.docs.length; offset += 499) {
             final batch = _firestore.batch();
             final slice = appsSnap.docs.skip(offset).take(499);
@@ -250,7 +250,7 @@ class FirestoreService {
           }
         }
       } catch (e) {
-        // [특이사항] 지원서 배치 실패는 TO 마감과 분리된 의도적 설계 — TO는 이미 마감됐으므로 롤백 없음
+        // 지원서 배치 실패는 TO 마감과 분리된 의도적 설계 — TO는 이미 마감됐으므로 롤백 없음
         // 배치 중간 실패 시 일부 지원서가 AUTO_CANCELED 미처리될 수 있으나, 마감 TO의 신규 지원은 차단됨
         debugPrint('⚠️ TO 마감 후 지원서 처리 실패 (TO는 마감됨): $e');
       }
@@ -381,7 +381,7 @@ class FirestoreService {
           final sid = data['slotId'] as String?;
           if (sid == null || !AppStatus.activeStates.contains(status)) continue;
           slotStats[sid] ??= {'pending': 0, 'confirmed': 0};
-          // [특이사항] ??= 직후 접근 — slotStats[sid]와 내부 키 'pending'/'confirmed' 모두 보장, ! 안전
+          // ??= 직후 접근 — slotStats[sid]와 내부 키 'pending'/'confirmed' 모두 보장, ! 안전
           if (status == AppStatus.pending) slotStats[sid]!['pending'] = slotStats[sid]!['pending']! + 1;
           if (AppStatus.confirmedStatuses.contains(status)) slotStats[sid]!['confirmed'] = slotStats[sid]!['confirmed']! + 1;
         }
@@ -1175,7 +1175,7 @@ class FirestoreService {
         invalidateMyApplicationsCache(workerUid);
       }
       // 해지 요청자(관리자)에게 거절 알림 전송
-      // [특이사항] terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
+      // terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
       final requestedByUid = appData['terminationRequestedByUid'] as String?;
       if (requestedByUid != null && requestedByUid.isNotEmpty) {
         await createNotification(NotificationModel.createTerminationRejected(

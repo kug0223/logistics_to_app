@@ -1,4 +1,4 @@
-﻿// lib/screens/business_admin/dialogs/attendance_status_dialog.dart
+// lib/screens/business_admin/dialogs/attendance_status_dialog.dart
 // 당일명단 다이얼로그 - 출퇴근 관리 기능 포함
 // 
 // 주요 기능:
@@ -161,7 +161,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         setState(() => _selectedBusinessId = saved);
       }
     }
-    // [특이사항] SharedPreferences await 이후 두 번째 mounted 체크 — initState에서 호출되므로
+    // SharedPreferences await 이후 두 번째 mounted 체크 — initState에서 호출되므로
     //           다이얼로그가 빠르게 닫힐 경우 dispose 후 _initializeData()가 실행되는 것을 방지.
     if (!mounted) return;
     _initializeData();
@@ -1490,7 +1490,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     }
     
     // 최종 폴백: Application에서 시간 정보 가져오기
-    // [특이사항] isNotEmpty 가드 내부 — workers.first 안전
+    // isNotEmpty 가드 내부 — workers.first 안전
     if (timeStr.isEmpty && workers.isNotEmpty) {
       final firstApp = workers.first;
       if (firstApp.startTime.isNotEmpty && firstApp.endTime.isNotEmpty) {
@@ -2935,7 +2935,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       // AttendanceModel.fromMap()에서 status가 없으면 'absent'로 폴백하는데,
       // 이는 의도된 동작: 노쇼 취소 후 지원자가 실제로 출근했는지 여부는
       // checkIn/checkOut 필드로 별도 판단하며, status 필드는 NO_SHOW 표시 용도로만 사용.
-      // [특이사항] 노쇼 취소 시 wageStatus·finalWage도 함께 초기화: noshow 판정 시
+      // 노쇼 취소 시 wageStatus·finalWage도 함께 초기화: noshow 판정 시
       // 설정됐을 수 있는 확정값을 지워 임금 재계산 흐름이 정상 작동하도록 함
       batch.update(
         FirebaseFirestore.instance.collection('attendance').doc(att.id),
@@ -3071,7 +3071,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         _selectAll = false;
       } else {
         _selectedIds.add(appId);
-        // [특이사항] selectableCount는 _confirmedWorkers 전체가 아닌 현재 탭 기준으로 산정.
+        // selectableCount는 _confirmedWorkers 전체가 아닌 현재 탭 기준으로 산정.
         //           _toggleSelectAll()과 동일한 기준을 써야 _selectAll 동기화가 정확함.
         final tabWorkers = _workersByTab(_currentTabIndex);
         final selectableCount = tabWorkers.where((app) {
@@ -3713,7 +3713,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                           ...groups.entries.map((entry) {
                             final groupKey = entry.key;
                             final workers = entry.value;
-                            // [특이사항] groups는 putIfAbsent(...).add() 로 생성 — 각 value 최소 1개 보장, .first 안전
+                            // groups는 putIfAbsent(...).add() 로 생성 — 각 value 최소 1개 보장, .first 안전
                             final firstApp = workers.first;
                             final workTypeInfo = _workTypeMap[firstApp.selectedWorkType];
                             final dotColor = workTypeInfo?.color != null

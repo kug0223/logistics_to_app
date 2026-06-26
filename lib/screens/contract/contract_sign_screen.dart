@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -426,7 +426,7 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
   // 실제 서명 저장 + 화면 완료 처리
   Future<void> _performSign(Uint8List bytes) async {
     if (!mounted) return;
-    // [특이사항] _sign()에서 이미 _isSigning=true를 설정하지만 _performSign 진입 전
+    // _sign()에서 이미 _isSigning=true를 설정하지만 _performSign 진입 전
     //           바텀시트/서명패드 다이얼로그 dismiss 과정에서 mounted 상태 변경 가능성이 있어
     //           방어적으로 재설정. _performSign finally에서 false로 복원됨.
     setState(() => _isSigning = true);

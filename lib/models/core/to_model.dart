@@ -140,7 +140,7 @@ class TOModel {
       groupTitle: data['groupTitle'] as String?,
       description: data['description'] as String?,
       workDetails: WorkDetailData.listFromFirestore(data['workDetails']),
-      // [특이사항] totalSlots=0 폴백 — 서버 FieldValue.increment 완료 전 순간 0으로 읽힐 수 있음
+      // totalSlots=0 폴백 — 서버 FieldValue.increment 완료 전 순간 0으로 읽힐 수 있음
       // 크래시 없음, isFull 계산은 totalRequired 기준으로 별도 처리되므로 영향 없음
       totalSlots: (data['totalSlots'] as num?)?.toInt() ?? 0,
       rangeStart: (data['rangeStart'] as Timestamp?)?.toDate().toLocal(),
@@ -170,7 +170,7 @@ class TOModel {
       publishDaysBefore: (data['publishDaysBefore'] as num?)?.toInt(),
       publishTime: data['publishTime'] as String?,
       creatorUID: data['creatorUID'] as String? ?? '',
-      // [특이사항] createdAt 누락 시 DateTime.now() 폴백 — 서버 미저장 임시 객체나 마이그레이션 전 문서에서 발생 가능
+      // createdAt 누락 시 DateTime.now() 폴백 — 서버 미저장 임시 객체나 마이그레이션 전 문서에서 발생 가능
       createdAt: (data['createdAt'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
     );
   }
@@ -330,13 +330,13 @@ class TOModel {
     if (workDetails.isEmpty) return '--:-- ~ --:--';
     final starts = workDetails.map((d) => d.startTime).toList()..sort();
     final ends = workDetails.map((d) => d.endTime).toList()..sort();
-    // [특이사항] isEmpty 가드 직후 — starts/ends 모두 ≥1개 보장, .first/.last 안전
+    // isEmpty 가드 직후 — starts/ends 모두 ≥1개 보장, .first/.last 안전
     return '${starts.first} ~ ${ends.last}';
   }
 
   // ── 상태 헬퍼 ─────────────────────────────────────
 
-  // [특이사항] totalRequired=0 이면 isFull=false (항상 모집 중) — "인원 제한 없음" 의도한 설계
+  // totalRequired=0 이면 isFull=false (항상 모집 중) — "인원 제한 없음" 의도한 설계
   // TO 생성 시 totalRequired=0으로 저장하면 슬롯 수 무제한으로 운영 가능
   bool get isFull => totalRequired > 0 && totalConfirmed >= totalRequired;
   bool get isActive => status == TOStatus.active;
