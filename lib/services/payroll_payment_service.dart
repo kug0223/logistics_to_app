@@ -54,7 +54,7 @@ class PayrollPaymentService {
     String? workerUserId,
     String? workerName,
     String? businessName,
-    String? businessId,
+    String? businessId,   // nullable 유지 — 알림 생략 경로에서 null 허용
     int? finalWage,
     String? applicationId,
   }) async {

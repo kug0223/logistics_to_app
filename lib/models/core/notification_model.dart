@@ -1220,6 +1220,7 @@ class NotificationModel {
   static NotificationModel createContractRenewed({
     required String userId,
     required String businessName,
+    required String businessId,
     required DateTime newEndDate,
     required String applicationId,
   }) {
@@ -1231,6 +1232,7 @@ class NotificationModel {
       body: '$businessName과의 계약이 ${newEndDate.month}/${newEndDate.day}까지 연장되었습니다.',
       data: {
         'applicationId': applicationId,
+        'businessId': businessId,
         'screen': 'mySchedule',
       },
       createdAt: DateTime.now(),

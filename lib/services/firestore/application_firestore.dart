@@ -2466,6 +2466,7 @@ extension ApplicationFirestore on FirestoreService {
       await createNotification(NotificationModel.createContractRenewed(
         userId: original.uid,
         businessName: original.businessName,
+        businessId: original.businessId,
         newEndDate: newEndDate,
         applicationId: newRef.id,
       ));

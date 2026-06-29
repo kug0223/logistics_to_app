@@ -1235,6 +1235,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         NotificationModel.createContractRenewed(
           userId: app.uid,
           businessName: app.businessName,
+          businessId: app.businessId,
           newEndDate: newEnd,
           applicationId: newApp.id,
         ),
@@ -1578,6 +1579,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         NotificationModel.createContractRenewed(
           userId: app.uid,
           businessName: app.businessName,
+          businessId: app.businessId,
           newEndDate: newEndDate,
           applicationId: newApp.id,
         ),
