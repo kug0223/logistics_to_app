@@ -580,8 +580,19 @@ service cloud.firestore {
         resource.data.targetUserId == request.auth.uid ||
         isAdminOf(resource.data.businessId)
       );
-      // list: [LOW-003] 레거시 컬렉션 — 관리자 이상으로 제한 (USER 전체 열람 차단)
-      allow list: if isAdmin() || isSuperAdmin();
+      // list: 레거시 컬렉션이지만 잔존 데이터의 크로스-사업장 덤프 차단
+      // [크로스-사업장 방지] isAdmin()만으로는 타 사업장 리뷰 목록 덤프 가능 → businessId 필터 필수
+      allow list: if isLoggedIn() && (
+        isSuperAdmin() ||
+        (isBusinessAdmin() && (
+          isAdminOf(request.query.filters.businessId) ||
+          isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
+        )) ||
+        (isSubAdmin() && (
+          isSubAdminOf(request.query.filters.businessId) ||
+          isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
+        ))
+      );
 
       allow create: if isLoggedIn() && (
                       isSuperAdmin() ||
@@ -604,8 +615,24 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════
     match /groups/{groupId} {
 
-      // [LOW-002] 레거시 컬렉션이나 관리자 이상으로 read 제한 (USER 전체 열람 차단)
-      allow read: if isAdmin() || isSuperAdmin();
+      // Deprecated 컬렉션이지만 잔존 데이터의 크로스-사업장 노출 차단
+      // [크로스-사업장 방지] isAdmin()만으로는 사업장 구분 없이 전체 그룹 조회 가능
+      allow get: if isLoggedIn() && (
+        isSuperAdmin() ||
+        isAdminOf(resource.data.businessId) ||
+        isSubAdminOf(resource.data.businessId)
+      );
+      allow list: if isLoggedIn() && (
+        isSuperAdmin() ||
+        (isBusinessAdmin() && (
+          isAdminOf(request.query.filters.businessId) ||
+          isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
+        )) ||
+        (isSubAdmin() && (
+          isSubAdminOf(request.query.filters.businessId) ||
+          isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
+        ))
+      );
 
       allow create: if isLoggedIn() && (
                       (isBusinessAdmin() && isAdminOf(request.resource.data.businessId)) ||
@@ -1074,7 +1101,9 @@ service cloud.firestore {
                      isSubAdminOf(request.query.filters.businessId) ||
                      isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
                    )) ||
-                   isUser()  // 복합 쿼리에서 filters.targetUid null 반환 대비, 앱 코드에서 targetUid==auth.uid 보장
+                   (isUser() && request.query.filters.targetUid == request.auth.uid)
+                   // [특이사항] isEqualTo 단독 쿼리 → filters.targetUid 정상 반환.
+                   // whereIn 혼합 시 null 반환하므로 혼합 쿼리 사용 금지. CRIT-02 수정 패턴과 동일.
                  );
 
       // 생성: 해당 사업장 관리자만 (초대 발송)
@@ -1085,8 +1114,11 @@ service cloud.firestore {
 
       // 수정: 초대받은 사람(수락/거절) · 해당 사업장 관리자(취소) · 슈퍼어드민
       // [SEC-001] 수신자는 status/respondedAt 필드만 변경 가능 (businessId 조작 차단)
+      // [SEC-FIX] 상태 전이 검증: pending 상태에서만 수락/거절 가능
+      //   → accepted 상태에서 rejected로 재변경하는 것을 차단
       allow update: if isLoggedIn() && (
                       (request.auth.uid == resource.data.targetUid &&
+                       resource.data.status == 'pending' &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status', 'respondedAt'])) ||
                       isAdminOf(resource.data.businessId) ||
@@ -1232,8 +1264,12 @@ service cloud.firestore {
                   );
       // 생성: 본인 workerId이거나 해당 사업장 관리자/하위관리자 (타인 명의 위조 방지)
       // [HIGH-FIX] SubAdmin 누락: SubAdmin도 지급방식 변경 처리 가능 → isSubAdminOf 추가
+      // [SEC-FIX] workerId == auth.uid 경로: businessId가 본인 소속 사업장인지 검증
+      //   → 근무자가 타 사업장 ID를 businessId에 입력해 위조 요청 생성하는 것을 차단
       allow create: if isLoggedIn() && (
-                    request.resource.data.workerId == request.auth.uid ||
+                    (request.resource.data.workerId == request.auth.uid &&
+                     get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', '') ==
+                     request.resource.data.businessId) ||
                     isAdminOf(request.resource.data.businessId) ||
                     isSubAdminOf(request.resource.data.businessId) ||
                     isSuperAdmin()
@@ -1280,8 +1316,12 @@ service cloud.firestore {
                   );
       // 생성: 본인 workerId이거나 해당 사업장 관리자/하위관리자
       // [CRITICAL-FIX] SubAdmin 누락: createInterimSettlementRequest → PERMISSION_DENIED
+      // [SEC-FIX] workerId == auth.uid 경로: businessId가 본인 소속 사업장인지 검증
+      //   → 근무자가 타 사업장 ID를 businessId에 입력해 급여 관련 위조 요청 생성하는 것을 차단
       allow create: if isLoggedIn() && (
-                    request.resource.data.workerId == request.auth.uid ||
+                    (request.resource.data.workerId == request.auth.uid &&
+                     get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', '') ==
+                     request.resource.data.businessId) ||
                     isAdminOf(request.resource.data.businessId) ||
                     isSubAdminOf(request.resource.data.businessId) ||
                     isSuperAdmin()
@@ -1325,9 +1365,12 @@ service cloud.firestore {
     //   · update/delete: 전면 차단 (감사 로그 불변 보장)
     // ═══════════════════════════════════════════════════════════
     match /id_card_copy_logs/{logId} {
+      // [SEC-FIX] businessId 검증 추가: 관리자가 소속 사업장 외 열람 기록을 위조하는 것을 차단
+      // 개인정보보호법상 주민번호 열람 감사 로그는 실제 소속 사업장 기록이어야 함
       allow create: if isLoggedIn() &&
-                      (isBusinessAdmin() || isSubAdmin()) &&
-                      request.resource.data.viewerId == request.auth.uid;
+                      request.resource.data.viewerId == request.auth.uid &&
+                      (isAdminOf(request.resource.data.businessId) ||
+                       isSubAdminOf(request.resource.data.businessId));
       allow read: if isSuperAdmin();
       allow update, delete: if false;
     }

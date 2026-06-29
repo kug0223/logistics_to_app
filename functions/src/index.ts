@@ -3242,7 +3242,7 @@ export const initiatePassAuth = onCall(
 
     // [TODO-DANAL] 실제 다날 API 호출 — txSeq + authUrl 발급
     // 계약 완료 후 다날 SDK / REST API 연동 필요
-    throw new HttpsError("unimplemented", "다날 계약 완료 후 구현 예정입니다.");
+    throw new HttpsError("unimplemented", "서비스 준비 중입니다.");
   }
 );
 
@@ -3284,7 +3284,7 @@ export const verifyPassAuth = onCall(
         throw new HttpsError("invalid-argument", "encData, txSeq 필수입니다.");
       }
       // [TODO-DANAL] 다날 복호화 로직 — AES 키는 Functions Secret으로 관리
-      throw new HttpsError("unimplemented", "다날 계약 완료 후 구현 예정입니다.");
+      throw new HttpsError("unimplemented", "서비스 준비 중입니다.");
     }
 
     // 만 19세 미만 차단
