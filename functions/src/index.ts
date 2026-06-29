@@ -3710,3 +3710,108 @@ export const getMyContracts = onCall(
     };
   }
 );
+
+// ═══════════════════════════════════════════════════════════
+// 🏢 사업장 비활성화 시 TO·지원서 자동 정리
+//
+// 트리거: businesses/{businessId} 문서에 deactivatedAt 필드가 새로 추가될 때
+// 처리 대상:
+//   - 활성 TO (ACTIVE / FULL / SCHEDULED) → CLOSED (closedReason: BUSINESS_DEACTIVATED)
+//   - 각 TO의 PENDING 지원서 → REJECTED (cancelReason: BUSINESS_DEACTIVATED)
+//   - CONFIRMED / CONTRACT_PENDING 지원서는 급여 데이터 포함 가능 →
+//     근로기준법 제42조 3년 보존 의무로 현재 미처리 (TODO: 별도 관리자 정리 워크플로 필요)
+//
+// 실시간 처리 특성:
+//   - Firestore onDocumentUpdated 트리거는 문서 변경 후 통상 1~5초 이내 실행
+//   - CF 실행 전 짧은 창(수 초) 동안 CLOSED 전 TO에 새 지원이 접수될 수 있음
+//     → 대응: 탈퇴 직후 deactivatedAt 기반으로 UI에서 비활성 사업장 TO 숨김 처리 권장
+//   - retry: true → 실패 시 최대 7회 지수 백오프 재시도 (멱등성 보장 필수)
+//   - 멱등성 보장: where('status', '==', 'ACTIVE') 조건으로 이미 처리된 TO는 재조회 안 됨
+//
+// 처리 제한:
+//   - Firestore batch: 500건 제한 → BATCH_LIMIT=400으로 여유 확보
+//   - 타임아웃: timeoutSeconds=300 (기본 60초 → 5분으로 상향)
+//   - whereIn 사용 불가(보안 규칙 충돌) → ACTIVE/FULL/SCHEDULED 각각 별도 쿼리
+// ═══════════════════════════════════════════════════════════
+export const onBusinessDeactivated = onDocumentUpdated(
+  {
+    document: "businesses/{businessId}",
+    region: "asia-northeast3",
+    timeoutSeconds: 300,
+    retry: true,
+  },
+  async (event) => {
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
+    const businessId = event.params.businessId;
+
+    // deactivatedAt이 이번 업데이트에서 새로 추가됐을 때만 처리 (멱등성 보장)
+    if (!before || !after) return;
+    if (before.deactivatedAt !== undefined || after.deactivatedAt === undefined) return;
+
+    console.log(`🏢 [사업장 비활성화] 처리 시작: ${businessId}`);
+
+    // 1) 활성 TO 조회 — whereIn 미사용(보안 규칙 충돌), 상태별 3개 병렬 쿼리
+    const [activeSnap, fullSnap, scheduledSnap] = await Promise.all([
+      db.collection("tos").where("businessId", "==", businessId).where("status", "==", "ACTIVE").get(),
+      db.collection("tos").where("businessId", "==", businessId).where("status", "==", "FULL").get(),
+      db.collection("tos").where("businessId", "==", businessId).where("status", "==", "SCHEDULED").get(),
+    ]);
+
+    const activeTos = [...activeSnap.docs, ...fullSnap.docs, ...scheduledSnap.docs];
+    console.log(`📋 [사업장 비활성화] 활성 TO ${activeTos.length}건 발견: ${businessId}`);
+
+    if (activeTos.length === 0) return;
+
+    // 2) TO별 처리: TO → CLOSED, 소속 PENDING 지원서 → REJECTED
+    const BATCH_LIMIT = 400; // Firestore batch 500건 제한 안전 마진
+    let totalRejected = 0;
+
+    for (const toDoc of activeTos) {
+      const toId = toDoc.id;
+
+      // PENDING 지원서 조회
+      const pendingAppsSnap = await db
+        .collection("applications")
+        .where("toId", "==", toId)
+        .where("status", "==", "PENDING")
+        .get();
+
+      // batch에 TO 업데이트 + PENDING 지원서 REJECTED 처리를 함께 묶음
+      // 500건 초과 시 청크 분할
+      const allUpdates: Array<{ref: FirebaseFirestore.DocumentReference; data: Record<string, unknown>}> = [
+        {
+          ref: toDoc.ref,
+          data: {
+            status: "CLOSED",
+            closedReason: "BUSINESS_DEACTIVATED",
+            closedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+        },
+        ...pendingAppsSnap.docs.map((appDoc) => ({
+          ref: appDoc.ref,
+          data: {
+            status: "REJECTED",
+            cancelReason: "BUSINESS_DEACTIVATED",
+            rejectedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+        })),
+      ];
+
+      // 청크 단위 batch 커밋
+      for (let i = 0; i < allUpdates.length; i += BATCH_LIMIT) {
+        const chunk = allUpdates.slice(i, i + BATCH_LIMIT);
+        const batch = db.batch();
+        chunk.forEach(({ref, data}) => batch.update(ref, data));
+        await batch.commit();
+      }
+
+      totalRejected += pendingAppsSnap.size;
+      console.log(`✅ [사업장 비활성화] TO ${toId} → CLOSED, PENDING 지원서 ${pendingAppsSnap.size}건 → REJECTED`);
+    }
+
+    // TODO: CONFIRMED / CONTRACT_PENDING 지원서는 근로기준법 제42조 보존 의무로 미처리.
+    // 향후 관리자 수동 정리 워크플로(슈퍼어드민 화면에서 일괄 확인 후 처리) 구현 필요.
+    console.log(`✅ [사업장 비활성화] 완료: ${businessId} — TO ${activeTos.length}건, 지원서 ${totalRejected}건 처리`);
+  }
+);

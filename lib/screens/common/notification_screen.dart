@@ -908,13 +908,14 @@ class _NotificationScreenState extends State<NotificationScreen> {
   }
 
   /// 알림에서 지원자 관리 다이얼로그 열기
-  /// [특이사항] 이 함수는 반드시 isUser 가드 이후에만 호출되어야 한다.
-  /// 호출부(NotificationType.newApplication case)에서 !isUser일 때만 진입하지만,
-  /// 내부에서 tos 직접 GET을 수행하므로 USER가 도달하면 데이터 노출 위험이 있다.
   Future<void> _openWorkApplicantsFromNotification(
     BuildContext context,
     NotificationModel notification,
   ) async {
+    // 심층 방어: 호출부 isUser 가드 외 함수 진입부에서도 재차 확인
+    // tos 직접 GET을 수행하므로 USER 역할이 도달하면 데이터 노출 위험이 있다.
+    if (context.read<UserProvider>().isUser) return;
+
     final data = notification.data;
     if (data == null) {
       Navigator.push(

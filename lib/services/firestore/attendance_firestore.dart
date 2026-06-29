@@ -172,13 +172,17 @@ extension AttendanceFirestore on FirestoreService {
       final checkOutTime = FormatHelper.formatTimeWithSeconds(now);
 
       // 트랜잭션으로 원자적 체크 + 업데이트 (동시 요청 시 중복 퇴근 방지)
-      // [특이사항] checkOut은 앱 레벨에서 userId 소유권 재검증을 하지 않는다.
-      // Firestore 규칙(attendance update: isOwner(resource.data.userId))이 유일한 방어선이다.
-      // 규칙 변경 시 타인의 attendanceId로 퇴근 처리가 가능해지므로 규칙 무결성 유지가 중요하다.
       await _firestore.runTransaction((tx) async {
         final snap = await tx.get(attendanceRef);
         if (!snap.exists) throw Exception('출근 기록을 찾을 수 없습니다.');
         final data = snap.data()!;
+
+        // 앱 레벨 소유권 재검증 — Firestore 규칙 변경 시에도 타인 attendanceId로 퇴근 처리 불가
+        final currentUid = FirebaseAuth.instance.currentUser?.uid;
+        if (data['userId'] != currentUid) {
+          throw Exception('본인의 출근 기록만 퇴근 처리할 수 있습니다.');
+        }
+
         if (data['checkOut'] != null) throw Exception('이미 퇴근하셨습니다.');
 
         // 급여 확정·이체 완료 후 퇴근 수정 시도 → Firestore 규칙이 차단하기 전에 명확한 메시지 제공

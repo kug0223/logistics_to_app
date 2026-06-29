@@ -743,12 +743,10 @@ class AuthService {
                   'sealBase64': FieldValue.delete(),
                 });
 
-                // TODO [특이사항]: 사업장 비활성화 시 활성 TO(ACTIVE/FULL/SCHEDULED) 자동 CLOSED 처리 미구현.
-                // 위 주석(line ~712)에 설계 원칙이 있으나 실제 TO 상태 변경 코드가 없다.
-                // 현재는 비활성 사업장의 TO가 앱 UI에 계속 표시될 수 있으며, 지원도 가능하다.
-                // 구현 예시: tos.where('businessId', ==, businessId).where('status', in, ['ACTIVE','FULL','SCHEDULED'])
-                //           → batch update status = 'CLOSED', closedReason = 'BUSINESS_DEACTIVATED'
-                // 함께: PENDING 지원서 → REJECTED(BUSINESS_DEACTIVATED) 일괄 처리 필요.
+                // [CF 위임] 활성 TO 자동 CLOSED + PENDING 지원서 REJECTED 처리는
+                // onBusinessDeactivated Cloud Function(index.ts)이 담당한다.
+                // deactivatedAt 필드 추가 → Firestore 트리거 → 1~5초 내 자동 실행.
+                // Admin SDK 사용으로 Firestore 보안 규칙 우회 가능.
 
                 // ── Storage 이미지 삭제 ────────────────────────────────────
                 // businesses 문서에 저장된 URL 기반으로 삭제.
