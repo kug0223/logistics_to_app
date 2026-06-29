@@ -2226,8 +2226,10 @@ extension ApplicationFirestore on FirestoreService {
       for (final doc in idCardRequests.docs) {
         localBatch.update(doc.reference, {'status': 'canceled'});
       }
-      // 관리자 경로: businessId 필터 (보안 규칙 isAdminOf(businessId) 충족)
-      // 사용자 경로: applicantUid 필터 (보안 규칙 isUser() + applicantUid==auth.uid 충족)
+      // 관리자 경로: businessId 필터 → 보안 규칙 isAdminOf(filters.businessId) 충족
+      // 사용자 경로: applicantUid 필터 포함 → 보안 규칙 isUser() && filters.applicantUid==auth.uid (CRIT-02) 충족.
+      //   [특이사항] applicationId+applicantUid+status 3중 복합 쿼리지만 모두 isEqualTo(whereIn 없음).
+      //   isEqualTo 복합 쿼리에서는 filters.applicantUid가 정상 반환됨. whereIn 혼합 시는 null 반환 주의.
       final scheduleQuery = businessId != null
           ? _firestore
               .collection('schedule_change_requests')

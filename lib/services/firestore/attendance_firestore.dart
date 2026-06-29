@@ -483,6 +483,8 @@ extension AttendanceFirestore on FirestoreService {
 
   /// 지원자의 스케줄 변경 요청 조회
   // [BUG-수정] 캐시 데이터로 중복 요청 방어 로직이 오동작하지 않도록 항상 서버에서 최신 상태 조회
+  // [보안 규칙] where('applicantUid') 단독 → filters.applicantUid == auth.uid (CRIT-02) 충족.
+  //   whereIn 없이 isEqualTo 단독이므로 filters 정상 반환. 혼합(where+whereIn) 시 null 반환됨.
   Future<List<ScheduleChangeRequestModel>> getMyScheduleChangeRequests(String applicantUid) async {
     try {
       final snapshot = await _firestore

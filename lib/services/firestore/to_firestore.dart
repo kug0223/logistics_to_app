@@ -572,6 +572,9 @@ extension TOFirestore on FirestoreService {
               if (attCount > 0) await attBatch.commit();
             }
             // schedule_change_requests 정리
+            // [특이사항] whereIn 쿼리 — 보안 규칙의 filters.businessId를 채우지 못하지만
+            // isAdminOf(users/{uid}.businessId) 폴백 조건으로 통과 (관리자 본인 businessId 검증).
+            // whereIn + filters 문제: see memory/feedback_firestore_wherein_security_rule.md
             final reqSnap = await _firestore.collection('schedule_change_requests')
                 .where('applicationId', whereIn: chunk)
                 .get(const GetOptions(source: Source.server));
