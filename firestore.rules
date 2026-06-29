@@ -632,10 +632,14 @@ service cloud.firestore {
                    isSuperAdmin()
                  );
 
-      // list: [HIGH-001] USER는 본인 applicantUid 필터 필수, 관리자는 소속 사업장 필터
+      // list: [CRIT-02] USER는 반드시 applicantUid == auth.uid 필터 필수
       // [크로스-사업장 방지] isAdminOf(businessId)로 타 사업장 스케줄 변경 요청 덤프 차단
       // [BUGFIX] TO 삭제 시 applicationId whereIn 쿼리 지원 — businessId 필터 없이도
       //   관리자 본인의 user 문서 businessId로 검증하는 폴백 추가
+      // [NOTE] filters.applicantUid는 isEqualTo 기반 복합 쿼리(whereIn 없음)에서 정상 반환됨
+      //   앱 코드 USER 경로 쿼리 전수 확인:
+      //   · getMyScheduleChangeRequests: where('applicantUid', ...) 단독 → OK
+      //   · _cleanupApplicationRelatedData 사용자 경로: applicationId+applicantUid+status → OK
       allow list: if isLoggedIn() && (
                     isSuperAdmin() ||
                     (isBusinessAdmin() && (
@@ -646,7 +650,7 @@ service cloud.firestore {
                       isSubAdminOf(request.query.filters.businessId) ||
                       isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
                     )) ||
-                    isUser()  // 복합 쿼리에서 filters.applicantUid null 반환 대비, 앱 코드에서 applicantUid==auth.uid 보장
+                    (isUser() && request.query.filters.applicantUid == request.auth.uid)
                   );
 
       // 생성: 지원자 본인 또는 해당 사업장 관리자(추가근무/미출근 요청)
