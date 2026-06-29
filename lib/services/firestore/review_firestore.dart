@@ -123,6 +123,7 @@
       final snapshot = await _firestore
           .collection('reviews')
           .where('targetUserId', isEqualTo: userId)
+          .where('isPublished', isEqualTo: true)
           .orderBy('createdAt', descending: true)
           .limit(limit)
           .get();

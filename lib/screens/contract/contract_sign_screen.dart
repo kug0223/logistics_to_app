@@ -98,6 +98,15 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
   }
 
   Future<void> _loadBusinessSeal() async {
+    // 근무자 경로: businesses 문서 조회 없이 ownerId 노출 방지
+    // ownerName은 계약서 스냅샷에서만 참조
+    if (widget.role != 'employer') {
+      if (widget.contract.snapshot.ownerName.isNotEmpty && mounted) {
+        setState(() => _resolvedOwnerName = widget.contract.snapshot.ownerName.trim());
+      }
+      await _checkTOType();
+      return;
+    }
     try {
       final doc = await FirebaseFirestore.instance
           .collection('businesses')
@@ -111,8 +120,8 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
       String sealType = 'stamp';
       String? ownerName;
 
-      // 날인은 users/{ownerId}에서 로드 — 근무자는 타인 문서 읽기 불가, 사업주 본인만 조회
-      if (ownerId != null && widget.role == 'employer') {
+      // 날인은 users/{ownerId}에서 로드 — 사업주 경로에서만 실행
+      if (ownerId != null) {
         try {
           final userDoc = await FirebaseFirestore.instance
               .collection('users')
@@ -132,8 +141,6 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
         } catch (e) {
           debugPrint('⚠️ 사업주 정보 조회 실패: $e');
         }
-      } else if (widget.contract.snapshot.ownerName.isEmpty) {
-        ownerName = data['ownerName'] as String?;
       }
 
       if (!mounted) return;

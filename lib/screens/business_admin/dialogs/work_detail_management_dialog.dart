@@ -27,6 +27,8 @@ class WorkDetailManagementDialog {
   final VoidCallback onComplete;
   final VoidCallback? onLocalStatsChanged;
 
+  bool _isProcessing = false;
+
   WorkDetailManagementDialog({
     required this.context,
     required this.toItem,
@@ -459,16 +461,19 @@ class WorkDetailManagementDialog {
 
   // 일괄 마감
   Future<void> _handleBulkClose(List<WorkDetailModel> works) async {
-    final confirm = await DialogHelper.showConfirm(
-      context,
-      title: '업무 마감',
-      message: '${works.length}개 업무를 마감하시겠습니까?',
-      confirmText: '마감',
-      confirmColor: AppColors.warning,
-    );
+    if (_isProcessing) return;
+    _isProcessing = true;
+    try {
+      final confirm = await DialogHelper.showConfirm(
+        context,
+        title: '업무 마감',
+        message: '${works.length}개 업무를 마감하시겠습니까?',
+        confirmText: '마감',
+        confirmColor: AppColors.warning,
+      );
 
-    if (!context.mounted || !confirm) return;
-    {
+      if (!context.mounted || !confirm) return;
+
       final adminUID = FirebaseAuth.instance.currentUser?.uid;
       if (adminUID == null) {
         ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
@@ -504,21 +509,26 @@ class WorkDetailManagementDialog {
       } catch (e) {
         if (context.mounted) ToastHelper.showError('일부 업무 마감에 실패했습니다');
       }
+    } finally {
+      _isProcessing = false;
     }
   }
 
   // 일괄 재오픈
   Future<void> _handleBulkReopen(List<WorkDetailModel> works) async {
-    final confirm = await DialogHelper.showConfirm(
-      context,
-      title: '업무 재오픈',
-      message: '${works.length}개 업무를 다시 오픈하시겠습니까?',
-      confirmText: '재오픈',
-      confirmColor: AppColors.success,
-    );
+    if (_isProcessing) return;
+    _isProcessing = true;
+    try {
+      final confirm = await DialogHelper.showConfirm(
+        context,
+        title: '업무 재오픈',
+        message: '${works.length}개 업무를 다시 오픈하시겠습니까?',
+        confirmText: '재오픈',
+        confirmColor: AppColors.success,
+      );
 
-    if (!context.mounted || !confirm) return;
-    {
+      if (!context.mounted || !confirm) return;
+
       final adminUID = FirebaseAuth.instance.currentUser?.uid;
       if (adminUID == null) {
         ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
@@ -549,6 +559,8 @@ class WorkDetailManagementDialog {
       } catch (e) {
         if (context.mounted) ToastHelper.showError('일부 업무 재오픈에 실패했습니다');
       }
+    } finally {
+      _isProcessing = false;
     }
   }
 

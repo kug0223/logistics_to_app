@@ -214,7 +214,7 @@ service cloud.firestore {
 
       match /contract_templates/{templateId} {
         allow read: if isLoggedIn();
-        allow write: if isAdminOf(businessId) || isSuperAdmin();
+        allow write: if isAdminOf(businessId) || isSubAdminOf(businessId) || isSuperAdmin();
       }
     }
 
@@ -996,9 +996,10 @@ service cloud.firestore {
       allow update: if isSuperAdmin();
 
       // 근무자: 계약해지 수락 시 계약서 voided 전환 허용
-      // pending_employer/pending_worker 상태의 계약서를 voided로 전환 (completed/voided는 불변)
+      // terminationStatus == PENDING인 경우에만 허용 (일방 무효화 차단)
       allow update: if isLoggedIn() &&
                       isOwner(resource.data.workerId) &&
+                      resource.data.get('terminationStatus', '') == 'PENDING' &&
                       resource.data.status != 'completed' &&
                       resource.data.status != 'voided' &&
                       request.resource.data.get('status', '') == 'voided' &&

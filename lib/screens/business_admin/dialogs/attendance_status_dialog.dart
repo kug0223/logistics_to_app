@@ -270,17 +270,19 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     final seenIds = <String>{};  // 단기/장기 중복 entry 방어
 
     // ✅ 1. 단기 공고: 서버에서 workDate 필터링 (빠름!)
+    // status whereIn 복합쿼리 제거 — Firestore 보안 규칙 filters null 반환 버그 방지
     final shortTermSnapshot = await FirebaseFirestore.instance
         .collection('applications')
         .where('businessId', isEqualTo: _selectedBusinessId)
-        .where('status', whereIn: [AppStatus.confirmed, AppStatus.contractPending])
         .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
         .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
         .get();
 
-    // 단기만 필터 (workDays가 없는 것)
+    // 단기만 필터 (workDays가 없는 것) + 확정 상태 클라이언트 필터
+    const confirmedStatuses = {AppStatus.confirmed, AppStatus.contractPending};
     for (var doc in shortTermSnapshot.docs) {
       final app = ApplicationModel.fromFirestore(doc);
+      if (!confirmedStatuses.contains(app.status)) continue;
       if (app.workDays == null || app.workDays!.isEmpty) {
         if (seenIds.add(app.id)) result.add(app);
       }
@@ -289,16 +291,17 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     debugPrint('📋 [당일명단] 단기 확정자: ${result.length}명');
 
     // ✅ 2. 장기 공고: type='long_term' 필터로 서버 범위 축소 후 클라이언트 필터링
+    // status whereIn 복합쿼리 제거 — Firestore 보안 규칙 filters null 반환 버그 방지
     final longTermSnapshot = await FirebaseFirestore.instance
         .collection('applications')
         .where('businessId', isEqualTo: _selectedBusinessId)
-        .where('status', whereIn: [AppStatus.confirmed, AppStatus.contractPending])
         .where('type', isEqualTo: AppType.longTerm)
         .get();
 
     int longTermCount = 0;
     for (var doc in longTermSnapshot.docs) {
       final app = ApplicationModel.fromFirestore(doc);
+      if (!confirmedStatuses.contains(app.status)) continue;
       
       // 🔥 퇴사일이 있으면 그 날짜까지만
       final endDate = app.actualResignDate ?? app.workEndDate;

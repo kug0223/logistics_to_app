@@ -596,14 +596,25 @@ class _NotificationScreenState extends State<NotificationScreen> {
       // contractId 우선 — get 단건 조회, list 복합 쿼리 권한 문제 없음
       if (contractId != null && contractId.isNotEmpty) {
         contract = await ContractService().getById(contractId);
+        // 본인 계약서인지 검증 (타인 contractId 주입 방어)
+        if (contract != null && contract.workerId != currentUser?.uid) {
+          if (context.mounted) {
+            Navigator.pop(context);
+            ToastHelper.showError('본인의 계약서가 아닙니다');
+          }
+          return;
+        }
       }
 
-      // fallback: contractId 없거나 get 실패 → applicationId 기반 조회
+      // fallback: contractId 없으면 계약서 조회 불가 (USER list 권한 없음)
+      // contractId는 계약서 서명 요청 알림 생성 시 항상 포함되어야 함
       if (contract == null && applicationId != null && applicationId.isNotEmpty) {
-        contract = await ContractService().getByApplication(
-          applicationId,
-          workerId: currentUser?.uid,
-        );
+        // getByApplication은 USER 역할에서 PERMISSION_DENIED 발생 — 단건 get 불가, 안내만 제공
+        if (context.mounted) {
+          Navigator.pop(context);
+          ToastHelper.showError('계약서 정보를 불러올 수 없습니다. 관리자에게 문의하세요.');
+        }
+        return;
       }
 
       if (!context.mounted) return;

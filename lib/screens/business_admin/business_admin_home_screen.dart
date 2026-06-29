@@ -62,7 +62,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
       if (!await TourHelper.isCompleted(TourHelper.adminHome)) {
         if (mounted) {
           await pushTourScreen(context, role: 'BUSINESS_ADMIN');
-          await TourHelper.markCompleted(TourHelper.adminHome);
+          if (mounted) await TourHelper.markCompleted(TourHelper.adminHome);
         }
       }
     });
@@ -397,6 +397,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
 
                                     // 진행중 공고 수 사전 체크 — 폼 진입 자체를 차단
                                     final limit = await _firestoreService.getMaxActiveTOLimit();
+                                    if (!context.mounted) return;
                                     final activeCount = await _firestoreService.countAllActiveTO(user.uid);
                                     if (activeCount >= limit) {
                                       if (!context.mounted) return;
