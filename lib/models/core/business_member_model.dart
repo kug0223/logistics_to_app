@@ -72,6 +72,9 @@ class BusinessMemberModel {
   final MemberPermissions permissions;
   final DateTime addedAt;
   final String addedBy;
+  // 초대 수락 시 검증용 — Firestore 규칙에서 pending 초대 존재 여부 확인에 사용
+  // null: 관리자가 직접 추가한 경우 (isAdminOf 경로로 생성)
+  final String? invitationId;
 
   const BusinessMemberModel({
     required this.uid,
@@ -80,6 +83,7 @@ class BusinessMemberModel {
     required this.permissions,
     required this.addedAt,
     required this.addedBy,
+    this.invitationId,
   });
 
   factory BusinessMemberModel.fromFirestore(DocumentSnapshot doc) {
@@ -98,16 +102,21 @@ class BusinessMemberModel {
           ? (d['addedAt'] as Timestamp).toDate().toLocal()
           : (throw ArgumentError('BusinessMemberModel: addedAt 필드 누락 (id: ${doc.id})')),
       addedBy: d['addedBy'] ?? '',
+      invitationId: d['invitationId'],
     );
   }
 
-  Map<String, dynamic> toMap() => {
-        'name': name,
-        'phone': phone,
-        'permissions': permissions.toMap(),
-        'addedAt': Timestamp.fromDate(addedAt),
-        'addedBy': addedBy,
-      };
+  Map<String, dynamic> toMap() {
+    final m = <String, dynamic>{
+      'name': name,
+      'phone': phone,
+      'permissions': permissions.toMap(),
+      'addedAt': Timestamp.fromDate(addedAt),
+      'addedBy': addedBy,
+    };
+    if (invitationId != null) m['invitationId'] = invitationId;
+    return m;
+  }
 
   BusinessMemberModel copyWith({
     String? name,
@@ -115,6 +124,7 @@ class BusinessMemberModel {
     MemberPermissions? permissions,
     DateTime? addedAt,
     String? addedBy,
+    String? invitationId,
   }) =>
       BusinessMemberModel(
         uid: uid,
@@ -123,5 +133,6 @@ class BusinessMemberModel {
         permissions: permissions ?? this.permissions,
         addedAt: addedAt ?? this.addedAt,
         addedBy: addedBy ?? this.addedBy,
+        invitationId: invitationId ?? this.invitationId,
       );
 }

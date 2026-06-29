@@ -146,7 +146,7 @@ class MemberService {
       'respondedAt': Timestamp.fromDate(now),
     });
 
-    // 2. members 서브컬렉션에 추가
+    // 2. members 서브컬렉션에 추가 (invitationId 포함 — 규칙에서 pending 초대 검증에 사용)
     final member = BusinessMemberModel(
       uid: invitation.targetUid,
       name: invitation.targetName,
@@ -154,6 +154,7 @@ class MemberService {
       permissions: invitation.permissions,
       addedAt: now,
       addedBy: invitation.invitedBy,
+      invitationId: invitation.id,
     );
     batch.set(
       _members(invitation.businessId).doc(invitation.targetUid),
