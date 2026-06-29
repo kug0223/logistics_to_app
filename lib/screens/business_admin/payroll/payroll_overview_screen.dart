@@ -63,11 +63,15 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
       }
       if (!mounted) return;
       if (businesses.isEmpty) {
+        setState(() => _isLoading = false);
+        if (!mounted) return;
         ToastHelper.showWarning('사업장을 먼저 등록해주세요');
-        if (mounted) Navigator.pop(context);
+        Navigator.pop(context);
         return;
       }
-      _businessId = businesses.first.id;
+      // effectiveBusinessId 우선: 홈화면 배지와 동일한 businessId 사용
+      // getMyBusiness().first.id는 adminIds 정렬 기준이라 effectiveBusinessId와 다를 수 있음
+      _businessId = userProvider.effectiveBusinessId ?? businesses.first.id;
       await Future.wait([
         _loadYear(_selectedYear),
         _loadTodayCount(),
@@ -94,7 +98,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
           .where('workDate',
               isGreaterThanOrEqualTo: Timestamp.fromDate(yearStart))
           .where('workDate', isLessThan: Timestamp.fromDate(yearEnd))
-          .limit(2000)
+          .limit(5000)
           .get();
 
       // 파싱 오류가 있는 문서는 무시
@@ -119,9 +123,11 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
         final end = (i + 30) < userIds.length ? i + 30 : userIds.length;
         final chunk = userIds.sublist(i, end);
         try {
+          // limit(chunk.length) 필수 — 보안 규칙 request.query.limit <= 30 충족
           final userSnap = await FirebaseFirestore.instance
               .collection('users')
               .where(FieldPath.documentId, whereIn: chunk)
+              .limit(chunk.length)
               .get();
           for (final d in userSnap.docs) {
             nameMap[d.id] = (d.data()['name'] as String?) ?? '';
@@ -163,8 +169,26 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
         final recs  = monthlyRecs[month] ?? [];
         final mm    = month.toString().padLeft(2, '0');
         if (recs.isEmpty) {
-          return PayrollSummaryModel.empty(
-              businessId: bizId, year: year, month: month);
+          // 미확정 레코드라도 있으면 pendingCount를 담아 반환 (grey 카드에 "미확정 N건" 표시)
+          final pCount = monthlyPending[month] ?? 0;
+          if (pCount == 0) {
+            return PayrollSummaryModel.empty(
+                businessId: bizId, year: year, month: month);
+          }
+          return PayrollSummaryModel(
+            id: '${bizId}_$year-$mm',
+            businessId: bizId,
+            yearMonth: '$year-$mm',
+            year: year,
+            month: month,
+            totalPayout: 0,
+            confirmedCount: 0,
+            workerCount: 0,
+            pendingCount: pCount,
+            notTransferredCount: 0,
+            workers: {},
+            updatedAt: DateTime.now(),
+          );
         }
         int totalPayout = 0;
         int notTransferredCount = 0;

@@ -37,6 +37,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
   List<BusinessWorkTypeModel> _workTypes = [];
   bool _isLoading = true;
   bool _isReordering = false;
+  bool _isDeleting = false;
 
   @override
   void initState() {
@@ -151,238 +152,244 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 
   /// 삭제 확인 다이얼로그
   Future<void> _confirmDelete(BusinessWorkTypeModel workType) async {
-    final activeTOSnap = await FirebaseFirestore.instance
-        .collection('tos')
-        .where('businessId', isEqualTo: widget.businessId)
-        .where('status',
-            whereIn: [TOStatus.active, TOStatus.full, TOStatus.scheduled])
-        .get();
+    if (_isDeleting) return;
+    setState(() => _isDeleting = true);
+    try {
+      final activeTOSnap = await FirebaseFirestore.instance
+          .collection('tos')
+          .where('businessId', isEqualTo: widget.businessId)
+          .where('status',
+              whereIn: [TOStatus.active, TOStatus.full, TOStatus.scheduled])
+          .get();
 
-    final affectedCount = activeTOSnap.docs.where((doc) {
-      final details = doc.data()['workDetails'] as List<dynamic>? ?? [];
-      return details.any(
-          (d) => (d as Map<String, dynamic>)['workType'] == workType.name);
-    }).length;
+      final affectedCount = activeTOSnap.docs.where((doc) {
+        final details = doc.data()['workDetails'] as List<dynamic>? ?? [];
+        return details.any(
+            (d) => (d as Map<String, dynamic>)['workType'] == workType.name);
+      }).length;
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    if (affectedCount > 0) {
-      final proceed = await showDialog<bool>(
+      if (affectedCount > 0) {
+        final proceed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('활성 공고 있음'),
+            content: Text(
+              '이 업무 유형을 사용하는 활성 공고가 $affectedCount개 있습니다.\n'
+              '삭제하면 해당 공고의 업무 유형 표시에 영향을 줄 수 있습니다.\n계속하시겠습니까?',
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('취소')),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: TextButton.styleFrom(foregroundColor: AppColors.error),
+                child: const Text('계속'),
+              ),
+            ],
+          ),
+        );
+        if (proceed != true || !mounted) return;
+      }
+
+      final confirmed = await showDialog<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('활성 공고 있음'),
-          content: Text(
-            '이 업무 유형을 사용하는 활성 공고가 $affectedCount개 있습니다.\n'
-            '삭제하면 해당 공고의 업무 유형 표시에 영향을 줄 수 있습니다.\n계속하시겠습니까?',
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('취소')),
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              style: TextButton.styleFrom(foregroundColor: AppColors.error),
-              child: const Text('계속'),
+        builder: (context) {
+          return Dialog(
+            backgroundColor: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
             ),
-          ],
-        ),
-      );
-      if (proceed != true || !mounted) return;
-    }
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        return Dialog(
-          backgroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-          ),
-          insetPadding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 16),
-            vertical: AppDialogSize.insetV,
-          ),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight:
-                  MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
+            insetPadding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 16),
+              vertical: AppDialogSize.insetV,
             ),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // 헤더
-                  Container(
-                    padding: ResponsiveHelper.cardPadding(context),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          AppColors.error,
-                          AppColors.error.withValues(alpha: 0.8),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight:
+                    MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // 헤더
+                    Container(
+                      padding: ResponsiveHelper.cardPadding(context),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            AppColors.error,
+                            AppColors.error.withValues(alpha: 0.8),
+                          ],
+                        ),
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(24),
+                          topRight: Radius.circular(24),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: ResponsiveHelper.spacing(context, 48),
+                            height: ResponsiveHelper.spacing(context, 48),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(Icons.business,
+                                color: Colors.white70,
+                                size: ResponsiveHelper.iconSize(context, 24)),
+                          ),
+                          SizedBox(width: ResponsiveHelper.spacing(context, 16)),
+                          Expanded(
+                            child: Text(
+                              '업무 유형 삭제',
+                              style: ResponsiveHelper.titleStyle(context).copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
                         ],
                       ),
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(24),
-                        topRight: Radius.circular(24),
-                      ),
                     ),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: ResponsiveHelper.spacing(context, 48),
-                          height: ResponsiveHelper.spacing(context, 48),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(12),
+                    // 컨텐츠
+                    Padding(
+                      padding: ResponsiveHelper.cardPadding(context),
+                      child: Column(
+                        children: [
+                          Icon(
+                            Icons.delete_forever,
+                            size: ResponsiveHelper.iconSize(context, 64),
+                            color: AppColors.error.withValues(alpha: 0.5),
                           ),
-                          child: Icon(Icons.business,
-                              color: Colors.white70,
-                              size: ResponsiveHelper.iconSize(context, 24)),
-                        ),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 16)),
-                        Expanded(
-                          child: Text(
-                            '업무 유형 삭제',
-                            style: ResponsiveHelper.titleStyle(context).copyWith(
-                              color: Colors.white,
+                          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                          Text(
+                            '정말로 삭제하시겠습니까?',
+                            style: ResponsiveHelper.subtitleStyle(context).copyWith(
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  // 컨텐츠
-                  Padding(
-                    padding: ResponsiveHelper.cardPadding(context),
-                    child: Column(
-                      children: [
-                        Icon(
-                          Icons.delete_forever,
-                          size: ResponsiveHelper.iconSize(context, 64),
-                          color: AppColors.error.withValues(alpha: 0.5),
-                        ),
-                        SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                        Text(
-                          '정말로 삭제하시겠습니까?',
-                          style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                        Text(
-                          workType.name,
-                          style: ResponsiveHelper.bodyStyle(context).copyWith(
-                            color: Theme.of(context).primaryColor,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                        Text(
-                          '삭제된 데이터는 복구할 수 없습니다',
-                          style: ResponsiveHelper.smallStyle(
-                            context,
-                            color: AppColors.error,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  // 버튼
-                  Padding(
-                    padding: ResponsiveHelper.cardPadding(context),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          flex: 2,
-                          child: OutlinedButton(
-                            onPressed: () => Navigator.pop(context, false),
-                            style: OutlinedButton.styleFrom(
-                              padding: EdgeInsets.symmetric(
-                                vertical: ResponsiveHelper.spacing(context, 16),
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                          Text(
+                            workType.name,
+                            style: ResponsiveHelper.bodyStyle(context).copyWith(
+                              color: Theme.of(context).primaryColor,
+                              fontWeight: FontWeight.bold,
                             ),
-                            child: const Text('취소'),
                           ),
-                        ),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                        Expanded(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  AppColors.error,
-                                  AppColors.error.withValues(alpha: 0.8),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                          Text(
+                            '삭제된 데이터는 복구할 수 없습니다',
+                            style: ResponsiveHelper.smallStyle(
+                              context,
+                              color: AppColors.error,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // 버튼
+                    Padding(
+                      padding: ResponsiveHelper.cardPadding(context),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            flex: 2,
+                            child: OutlinedButton(
+                              onPressed: () => Navigator.pop(context, false),
+                              style: OutlinedButton.styleFrom(
+                                padding: EdgeInsets.symmetric(
+                                  vertical: ResponsiveHelper.spacing(context, 16),
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              child: const Text('취소'),
+                            ),
+                          ),
+                          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                          Expanded(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    AppColors.error,
+                                    AppColors.error.withValues(alpha: 0.8),
+                                  ],
+                                ),
+                                borderRadius: BorderRadius.circular(12),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: AppColors.error.withValues(alpha: 0.4),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 4),
+                                  ),
                                 ],
                               ),
-                              borderRadius: BorderRadius.circular(12),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: AppColors.error.withValues(alpha: 0.4),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
-                            ),
-                            child: Material(
-                              color: Colors.transparent,
-                              child: InkWell(
-                                onTap: () => Navigator.pop(context, true),
-                                borderRadius: BorderRadius.circular(12),
-                                child: Padding(
-                                  padding: EdgeInsets.symmetric(
-                                    vertical: ResponsiveHelper.spacing(context, 16),
-                                  ),
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        Icons.delete,
-                                        color: Colors.white,
-                                        size: ResponsiveHelper.iconSize(context, 20),
-                                      ),
-                                      SizedBox(
-                                          width: ResponsiveHelper.spacing(context, 8)),
-                                      Text(
-                                        '삭제',
-                                        style:
-                                            ResponsiveHelper.bodyStyle(context).copyWith(
+                              child: Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  onTap: () => Navigator.pop(context, true),
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      vertical: ResponsiveHelper.spacing(context, 16),
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.delete,
                                           color: Colors.white,
-                                          fontWeight: FontWeight.bold,
+                                          size: ResponsiveHelper.iconSize(context, 20),
                                         ),
-                                      ),
-                                    ],
+                                        SizedBox(
+                                            width: ResponsiveHelper.spacing(context, 8)),
+                                        Text(
+                                          '삭제',
+                                          style:
+                                              ResponsiveHelper.bodyStyle(context).copyWith(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-        );
-      },
-    );
-
-    if (confirmed == true) {
-      final success = await _firestoreService.deleteBusinessWorkType(
-        businessId: widget.businessId,
-        workTypeId: workType.id,
+          );
+        },
       );
-      if (!mounted) return;
-      if (success) {
-        _loadWorkTypes();
-      } else {
-        ToastHelper.showError('삭제에 실패했습니다');
+
+      if (confirmed == true) {
+        final success = await _firestoreService.deleteBusinessWorkType(
+          businessId: widget.businessId,
+          workTypeId: workType.id,
+        );
+        if (!mounted) return;
+        if (success) {
+          _loadWorkTypes();
+        } else {
+          ToastHelper.showError('삭제에 실패했습니다');
+        }
       }
+    } finally {
+      if (mounted) setState(() => _isDeleting = false);
     }
   }
 

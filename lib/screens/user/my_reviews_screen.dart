@@ -39,7 +39,10 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
 
   Future<void> _loadReviews() async {
     final uid = context.read<UserProvider>().currentUser?.uid;
-    if (uid == null) return;
+    if (uid == null) {
+      setState(() => _isLoading = false);
+      return;
+    }
     setState(() { _isLoading = true; _loadError = null; _cursor = null; _hasMore = false; });
     try {
       final page = await _reviewService.getAllReviewsForUserPaged(

@@ -145,6 +145,7 @@ class WorkforceController extends ChangeNotifier {
       } // else 블록 닫힘
     } catch (e) {
       debugPrint('❌ WorkforceController.load 실패: $e');
+      _items = [];
     } finally {
       _isLoading = false;
       if (!_disposed) notifyListeners();

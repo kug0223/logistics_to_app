@@ -450,11 +450,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         // _isProcessing을 false로 내리지 않음 — 다이얼로그 중 버튼 재진입 방지
         final day8Confirmed = await _showDay8RetroactiveWarning(
           day8Previews.entries.map((e) {
-            final app = widget.workers.firstWhere(
-              (w) => w.id == e.key,
-              orElse: () => throw StateError('worker not found: ${e.key}'),
-            );
-            final user = widget.userMap[app.uid];
+            final app = widget.workers.where((w) => w.id == e.key).firstOrNull;
+            final user = app != null ? widget.userMap[app.uid] : null;
             return (
               name: user?.name ?? '근무자',
               retroactive: e.value.retroactiveDeduction,
@@ -1082,7 +1079,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           'updatedAt': FieldValue.serverTimestamp(),
         });
       });
-      
+
+      if (!mounted) return;
       _hasChanges = true;
       widget.onConfirmed?.call();
 

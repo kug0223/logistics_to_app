@@ -467,7 +467,8 @@ class WorkDetailManagementDialog {
       confirmColor: AppColors.warning,
     );
 
-    if (confirm) {
+    if (!context.mounted || !confirm) return;
+    {
       final adminUID = FirebaseAuth.instance.currentUser?.uid;
       if (adminUID == null) {
         ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
@@ -516,7 +517,8 @@ class WorkDetailManagementDialog {
       confirmColor: AppColors.success,
     );
 
-    if (confirm) {
+    if (!context.mounted || !confirm) return;
+    {
       final adminUID = FirebaseAuth.instance.currentUser?.uid;
       if (adminUID == null) {
         ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
@@ -560,7 +562,8 @@ class WorkDetailManagementDialog {
       confirmColor: AppColors.warning,
     );
 
-    if (confirm) {
+    if (!context.mounted || !confirm) return;
+    {
       final adminUID = FirebaseAuth.instance.currentUser?.uid;
       if (adminUID == null) {
         ToastHelper.showError('로그인 정보를 찾을 수 없습니다');

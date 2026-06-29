@@ -1007,7 +1007,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
             appId,
             canceledBy: adminUID,
             cancelReason: cancelReason,
-          ),
+          ).catchError((_) => false),
         ),
       );
       for (int i = 0; i < targetIds.length; i++) {

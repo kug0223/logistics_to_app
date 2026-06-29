@@ -2544,8 +2544,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     final attendanceFuture = _getAttendanceRecords(appIds);
     final workDetailFuture = _getWorkDetailTimes();
     _attendanceMap = await attendanceFuture;
+    if (!mounted) return;
     _workDetailTimeMap = await workDetailFuture;
     if (!mounted) return;
+    _rebuildStatusCache();
 
     final hasChanges = await showDialog<bool>(
       context: context,

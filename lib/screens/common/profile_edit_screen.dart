@@ -305,7 +305,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                       ],
                     ),
                   );
-                } else {
+                } else if (ctx.mounted) {
                   setDs(() => isChanging = false);
                 }
               },

@@ -1859,7 +1859,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   }
 
   Future<void> _saveBusiness() async {
-    if (_isLoading) return;
+    if (_isLoading || !mounted) return;
     setState(() => _isLoading = true);
 
     // catch 블록에서 orphan Storage 정리를 위해 try 밖에서 선언
@@ -1972,8 +1972,10 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         'gpsRadius': _gpsRadius.toInt(),
         if (_beaconUUIDController.text.trim().isNotEmpty)
           'beaconUUID': _beaconUUIDController.text.trim().toUpperCase(),
-        'beaconMajor': int.tryParse(_beaconMajorController.text.trim()),
-        'beaconMinor': int.tryParse(_beaconMinorController.text.trim()),
+        if (int.tryParse(_beaconMajorController.text.trim()) != null)
+          'beaconMajor': int.tryParse(_beaconMajorController.text.trim()),
+        if (int.tryParse(_beaconMinorController.text.trim()) != null)
+          'beaconMinor': int.tryParse(_beaconMinorController.text.trim()),
         'beaconRssiThreshold': _beaconRssiThreshold,
       };
 

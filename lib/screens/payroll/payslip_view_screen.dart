@@ -44,6 +44,8 @@ class _PayslipViewScreenState extends State<PayslipViewScreen> {
   Future<PayslipData>? _dataFuture;
   // PDF bytes Future — build()마다 재생성 방지
   Future<Uint8List>? _pdfBytesFuture;
+  // 중복 탭 방지 — 공유/인쇄 작업 진행 중 여부
+  bool _isSharing = false;
 
   /// worker?.name 우선, 없으면 workerNameOverride 사용
   String get _workerName =>
@@ -92,12 +94,26 @@ class _PayslipViewScreenState extends State<PayslipViewScreen> {
         IconButton(
           icon: const Icon(Icons.print_outlined, color: Colors.white),
           tooltip: '인쇄',
-          onPressed: () => _print(),
+          onPressed: _isSharing ? null : () async {
+            setState(() => _isSharing = true);
+            try {
+              await _print();
+            } finally {
+              if (mounted) setState(() => _isSharing = false);
+            }
+          },
         ),
         IconButton(
           icon: const Icon(Icons.share_outlined, color: Colors.white),
           tooltip: '공유',
-          onPressed: () => _share(context),
+          onPressed: _isSharing ? null : () async {
+            setState(() => _isSharing = true);
+            try {
+              await _share(context);
+            } finally {
+              if (mounted) setState(() => _isSharing = false);
+            }
+          },
         ),
       ],
       body: FutureBuilder<PayslipData>(

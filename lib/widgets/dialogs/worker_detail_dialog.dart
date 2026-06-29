@@ -1722,9 +1722,10 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     final businessId = widget.businessId ?? widget.toItem?.to.businessId;
 
     if (businessId == null) {
+      final callback = widget.onStatusChanged; // pop 전에 캡처
       Navigator.pop(context);
       ToastHelper.showSuccess('승인 처리되었습니다');
-      widget.onStatusChanged?.call();
+      callback?.call();
       return;
     }
 
@@ -1782,9 +1783,10 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       if (!mounted) return;
 
       if (business == null) {
+        final callback = widget.onStatusChanged; // pop 전에 캡처
         Navigator.pop(context);
         ToastHelper.showSuccess('승인 처리되었습니다');
-        widget.onStatusChanged?.call();
+        callback?.call();
         return;
       }
 
@@ -1813,17 +1815,19 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
 
       // 항상 서명 화면으로 이동 — 사업주가 계약서 내용 확인 후 직접 날인
       final nav = Navigator.of(context, rootNavigator: true);
+      final callback = widget.onStatusChanged; // pop 전에 캡처
       Navigator.pop(context);
-      widget.onStatusChanged?.call();
+      callback?.call();
       await nav.push(MaterialPageRoute(
         builder: (_) => ContractSignScreen(contract: contract, role: 'employer'),
       ));
     } catch (e) {
       debugPrint('❌ 계약서 생성 실패: $e');
       if (mounted) {
+        final callback = widget.onStatusChanged; // pop 전에 캡처
         Navigator.pop(context);
         ToastHelper.showSuccess('승인 처리되었습니다');
-        widget.onStatusChanged?.call();
+        callback?.call();
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -2225,17 +2229,18 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       return;
     }
 
-    // 현재 다이얼로그 닫기
+    // 루트 Navigator context를 팝 이전에 캡처 (pop 이후 context는 unmount됨)
+    final rootNav = Navigator.of(context, rootNavigator: true);
+    final onStatusChanged = widget.onStatusChanged;
     Navigator.pop(context);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!context.mounted) return;
       showDialog(
-        context: context,
+        context: rootNav.context,
         builder: (context) => FixedWorkerManagementDialog(
           businessIds: [businessId],
           initialBusinessId: businessId,
           onChanged: () {
-            widget.onStatusChanged?.call();
+            onStatusChanged?.call();
           },
         ),
       );

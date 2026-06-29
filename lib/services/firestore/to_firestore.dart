@@ -1373,10 +1373,12 @@ extension TOFirestore on FirestoreService {
         DateTime? deadline;
         if (deadlineType == 'HOURS_BEFORE') {
           final parts = d.startTime.split(':');
-          deadline = DateTime(
-            date.year, date.month, date.day,
-            int.parse(parts[0]), int.parse(parts[1]),
-          ).subtract(Duration(hours: hoursBeforeStart)).toUtc();
+          if (parts.length >= 2) {
+            deadline = DateTime(
+              date.year, date.month, date.day,
+              int.parse(parts[0]), int.parse(parts[1]),
+            ).subtract(Duration(hours: hoursBeforeStart)).toUtc();
+          }
         } else if (deadlineType == 'FIXED_TIME' && fixedDeadline != null) {
           deadline = fixedDeadline.toUtc();
         }

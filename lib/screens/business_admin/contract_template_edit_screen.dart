@@ -183,6 +183,7 @@ class _ContractTemplateEditScreenState
         if (didPop) return;
         final nav = Navigator.of(context);
         final discard = await _confirmDiscard(context);
+        if (!context.mounted) return;
         if (discard) nav.pop();
       },
       child: GradientScaffold(

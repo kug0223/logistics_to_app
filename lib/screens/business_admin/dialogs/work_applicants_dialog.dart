@@ -2084,6 +2084,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       showApprovalButtons: isPending,
       onStatusChanged: () async {
         await _loadApplicants();
+        if (!mounted) return;
         _updateLocalStats();
       },
     );
@@ -2241,6 +2242,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     late BusinessModel business;
     late String sealBase64;
     String sealType = 'stamp';
+    bool continueToProcess = false;
 
     try {
       final b = await _firestoreService.getBusinessById(businessId);
@@ -2269,8 +2271,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       }
       sealBase64 = currentUserSeal;
       sealType = currentUserSealType;
+      continueToProcess = true;
     } finally {
-      if (mounted) setState(() => _isProcessing = false);
+      // 실제 일괄 처리로 이어지는 경우 _isProcessing을 유지, 아니면 복원
+      if (!continueToProcess && mounted) setState(() => _isProcessing = false);
     }
 
     if (!mounted) return;
@@ -2412,6 +2416,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       if (mounted) setState(() { _isBatchMode = false; _selectAll = false; });
       await _loadApplicants();
       await _updateLocalStats();
+      if (!mounted) return;
 
       for (var toId in _affectedOtherTOIds) {
         _firestoreService.clearCache(toId: toId);

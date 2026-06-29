@@ -618,15 +618,18 @@ class _NotificationScreenState extends State<NotificationScreen> {
         return;
       }
 
-      // [B-5] 서명 완료 후 알림 목록 갱신 — pop 반환값 수신
+      // [B-5] 서명 완료 후 알림 읽음 처리 — pop 반환값으로 서명 완료 여부 확인
       final nonNullContract = contract; // null 체크 통과 후 — 람다 내 타입 승격 불가 우회
+      final notifProvider = context.read<NotificationProvider>(); // async gap 전 참조 고정
       Navigator.push(
         context,
         MaterialPageRoute(
           builder: (_) => ContractSignScreen(contract: nonNullContract, role: 'worker'),
         ),
       ).then((result) {
-        if (mounted && result != null) setState(() {});
+        if (mounted && result != null) {
+          notifProvider.markAsRead(notification.id);
+        }
       });
     } catch (e) {
       if (!context.mounted) return;

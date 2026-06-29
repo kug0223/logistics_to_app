@@ -167,10 +167,10 @@ extension ApplicationFirestore on FirestoreService {
     String? statusFilter, // null = 전체, 'active', 'inactive'
   }) async {
     try {
+      // where() 필터를 orderBy() 보다 먼저 — Firestore SDK PlatformException 방지
       Query query = _firestore
           .collection('applications')
-          .where('uid', isEqualTo: uid)
-          .orderBy('appliedAt', descending: true);
+          .where('uid', isEqualTo: uid);
 
       if (statusFilter == 'active') {
         query = query.where('status', whereIn: AppStatus.activeStates);
@@ -178,7 +178,7 @@ extension ApplicationFirestore on FirestoreService {
         query = query.where('status', whereIn: AppStatus.inactiveStates);
       }
 
-      query = query.limit(pageSize);
+      query = query.orderBy('appliedAt', descending: true).limit(pageSize);
       if (startAfter != null) query = query.startAfterDocument(startAfter);
 
       final snap = await query.get();
@@ -1424,12 +1424,6 @@ extension ApplicationFirestore on FirestoreService {
   }) async {
     final dateStart = DateTime(date.year, date.month, date.day);
     final dateEnd = dateStart.add(const Duration(days: 1));
-    // [DATE-DEBUG] 날짜 불일치 원인 추적
-    debugPrint('🗓️ [DATE-DEBUG] getPending:'
-        ' 전달된date=${date.toIso8601String()}(isUtc=${date.isUtc})'
-        ' → dateStart=${dateStart.toIso8601String()}'
-        ' dateEnd=${dateEnd.toIso8601String()}'
-        ' (UTC: ${dateStart.toUtc()} ~ ${dateEnd.toUtc()})');
     try {
       final snap = await _firestore
           .collection('applications')
@@ -1441,12 +1435,6 @@ extension ApplicationFirestore on FirestoreService {
           .map((d) => ApplicationModel.fromFirestore(d))
           .where((app) => app.status == AppStatus.pending && !app.isLongTermApplication)
           .toList();
-      // [DATE-DEBUG] 결과 workDate 확인
-      for (final app in apps) {
-        debugPrint('  📋 [DATE-DEBUG] pending app=${app.id}'
-            ' workDate(local)=${app.workDate.toLocal().toIso8601String()}'
-            ' workDate(utc)=${app.workDate.toUtc().toIso8601String()}');
-      }
       return apps;
     } catch (e) {
       debugPrint('❌ 지원자 조회 실패: $e');
@@ -1455,6 +1443,12 @@ extension ApplicationFirestore on FirestoreService {
   }
 
   /// 지원자 거절 처리 + 근무자 알림 발송 (지원명단 다이얼로그용)
+  ///
+  /// [D-04 수정] 알림 중복 발송 제거:
+  /// updateApplicationStatus() 내부에서 PENDING→REJECTED 전이 시
+  /// createNotification(createApplicationRejected(...))를 이미 호출하므로,
+  /// 이전에 존재하던 직접 Firestore 쓰기(중복 경로)를 제거했다.
+  /// rejectReason은 message 파라미터로 updateApplicationStatus()에 전달한다.
   Future<void> rejectApplicationWithNotification({
     required String applicationId,
     required String workerUid,
@@ -1469,21 +1463,8 @@ extension ApplicationFirestore on FirestoreService {
       applicationId: applicationId,
       status: AppStatus.rejected,
       rejectedBy: rejectedBy,
+      message: rejectReason,
     );
-    final notification = NotificationModel.createApplicationRejected(
-      userId: workerUid,
-      businessName: businessName,
-      businessId: businessId,
-      workType: workType,
-      workDate: workDate,
-      applicationId: applicationId,
-      rejectReason: rejectReason,
-    );
-    await _firestore
-        .collection('users')
-        .doc(workerUid)
-        .collection('notifications')
-        .add(notification.toMap());
   }
 
   /// 특정 날짜 × 사업장의 확정 근무자 조회 (단기 + 장기 병합)
@@ -1493,13 +1474,6 @@ extension ApplicationFirestore on FirestoreService {
   }) async {
     final dateStart = DateTime(date.year, date.month, date.day);
     final dateEnd = dateStart.add(const Duration(days: 1));
-
-    // [DATE-DEBUG] 날짜 불일치 원인 추적
-    debugPrint('🗓️ [DATE-DEBUG] getConfirmed:'
-        ' 전달된date=${date.toIso8601String()}(isUtc=${date.isUtc})'
-        ' → dateStart=${dateStart.toIso8601String()}'
-        ' dateEnd=${dateEnd.toIso8601String()}'
-        ' (UTC: ${dateStart.toUtc()} ~ ${dateEnd.toUtc()})');
 
     try {
       // [BUGFIX] whereIn + equality 복합쿼리 시 Firestore 보안 규칙
@@ -2251,10 +2225,20 @@ extension ApplicationFirestore on FirestoreService {
       for (final doc in idCardRequests.docs) {
         localBatch.update(doc.reference, {'status': 'canceled'});
       }
-      final scheduleRequests = await _firestore
-          .collection('schedule_change_requests')
-          .where('applicationId', isEqualTo: applicationId)
-          .where('status', isEqualTo: 'PENDING')
+      // 관리자 경로: businessId 필터 (보안 규칙 isAdminOf(businessId) 충족)
+      // 사용자 경로: applicantUid 필터 (보안 규칙 isUser() + applicantUid==auth.uid 충족)
+      final scheduleQuery = businessId != null
+          ? _firestore
+              .collection('schedule_change_requests')
+              .where('applicationId', isEqualTo: applicationId)
+              .where('businessId', isEqualTo: businessId)
+              .where('status', isEqualTo: 'PENDING')
+          : _firestore
+              .collection('schedule_change_requests')
+              .where('applicationId', isEqualTo: applicationId)
+              .where('applicantUid', isEqualTo: uid)
+              .where('status', isEqualTo: 'PENDING');
+      final scheduleRequests = await scheduleQuery
           .get(const GetOptions(source: Source.server));
       for (final doc in scheduleRequests.docs) {
         localBatch.update(doc.reference, {'status': 'CANCELED'});

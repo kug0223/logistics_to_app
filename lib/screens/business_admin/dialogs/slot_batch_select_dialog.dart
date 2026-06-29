@@ -125,7 +125,7 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
         StyledDialogButton.primary(
           text: '${widget.confirmLabel} (${_selectedIds.length}개)',
           onPressed: _selectedIds.isEmpty
-              ? () {}
+              ? null
               : () {
                   final selected = _slots
                       .where((s) => _selectedIds.contains(s.id))

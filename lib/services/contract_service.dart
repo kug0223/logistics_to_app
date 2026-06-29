@@ -523,21 +523,26 @@ class ContractService {
     // Phase 2: 미매칭 앱 → applicationIds 배열 포함 폴백 (번들계약)
     final missing = applicationIds.where((id) => !result.containsKey(id)).toList();
     if (missing.isNotEmpty) {
-      await Future.wait(missing.map((id) async {
-        try {
-          final snap = await _db
-              .collection('employment_contracts')
-              .where('applicationIds', arrayContains: id)
-              .where('businessId', isEqualTo: businessId)
-              .limit(1)
-              .get();
-          result[id] = snap.docs.isNotEmpty
-              ? snap.docs.first.data()['status'] as String?
-              : null;
-        } catch (_) {
-          result[id] = null;
-        }
-      }));
+      const chunkSize = 10;
+      for (var i = 0; i < missing.length; i += chunkSize) {
+        final chunk = missing.skip(i).take(chunkSize).toList();
+        final futures = chunk.map((id) async {
+          try {
+            final snap = await _db
+                .collection('employment_contracts')
+                .where('applicationIds', arrayContains: id)
+                .where('businessId', isEqualTo: businessId)
+                .limit(1)
+                .get();
+            result[id] = snap.docs.isNotEmpty
+                ? snap.docs.first.data()['status'] as String?
+                : null;
+          } catch (_) {
+            result[id] = null;
+          }
+        });
+        await Future.wait(futures);
+      }
     }
 
     return result;

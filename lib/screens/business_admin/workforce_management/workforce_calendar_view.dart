@@ -58,20 +58,18 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
 
   String _slotKey(TOGroupItem g, TOItem t) => '${g.id}_${t.slot?.id ?? t.to.id}';
 
-  /// SubAdmin 포함 관리 가능한 사업장 목록 (getMyBusiness가 빈 배열이면 subAdminOf로 fallback)
+  /// SubAdmin 포함 관리 가능한 사업장 목록
   Future<List<BusinessModel>> _getAdminBusinesses() async {
     final userProvider = Provider.of<UserProvider>(context, listen: false);
     final uid = userProvider.currentUser?.uid;
     if (uid == null) return [];
-    var businesses = await _firestoreService.getMyBusiness(uid);
-    if (businesses.isEmpty) {
-      final bizId = userProvider.currentUser?.businessId;
-      if (bizId != null) {
-        final biz = await _firestoreService.getBusinessById(bizId);
-        if (biz != null) businesses = [biz];
-      }
+    // SubAdmin은 adminIds에 없으므로 effectiveBusinessId(=subAdminOf)로 직접 조회
+    final effectiveBizId = userProvider.effectiveBusinessId;
+    if (userProvider.isSubAdmin && effectiveBizId != null) {
+      final biz = await _firestoreService.getBusinessById(effectiveBizId);
+      return biz != null ? [biz] : [];
     }
-    return businesses;
+    return _firestoreService.getMyBusiness(uid);
   }
 
   // 인원현황 관련 (당일명단 버튼은 항상 활성화)
@@ -100,6 +98,8 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       if (_selectedDay != null && mounted) {
         _loadGroupDetailsForDay(_selectedDay!);
       }
+    }).catchError((e) {
+      debugPrint('⚠️ 캘린더 리로드 실패: $e');
     });
   }
 
@@ -745,11 +745,6 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
 
   Future<void> _openApplicantsDialog() async {
     if (_selectedDay == null) return;
-    // [DATE-DEBUG] 캘린더 선택 날짜 확인
-    debugPrint('🗓️ [DATE-DEBUG] _openApplicantsDialog:'
-        ' _selectedDay=${_selectedDay!.toIso8601String()}'
-        ' isUtc=${_selectedDay!.isUtc}'
-        ' local=${_selectedDay!.toLocal().toIso8601String()}');
     try {
       final businesses = await _getAdminBusinesses();
       if (businesses.isEmpty) {
@@ -787,7 +782,8 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       }
 
       final businessIds = businesses.map((b) => b.id).toList();
-      final currentBusinessId = userProvider.currentUser?.businessId;
+      // SubAdmin은 currentUser?.businessId가 null이므로 effectiveBusinessId 사용
+      final currentBusinessId = userProvider.effectiveBusinessId;
 
       if (!mounted) return;
       final hasChanges = await showDialog<bool>(

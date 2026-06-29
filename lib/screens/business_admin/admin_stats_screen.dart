@@ -951,30 +951,25 @@ class _LegendDot extends StatelessWidget {
 // ─── 진입점 ──────────────────────────────────────────────────
 
 void pushAdminStatsScreen(BuildContext context) {
-  final user = context.read<UserProvider>().currentUser;
-  // user가 null이면 진입 불가 — 로그아웃 직후 탭 전환 시 발생 가능
+  final userProvider = context.read<UserProvider>();
+  final user = userProvider.currentUser;
   if (user == null) {
     ToastHelper.showWarning('로그인 정보를 불러올 수 없습니다');
     return;
   }
   final ids = user.managedBusinessIds;
-  final businessId = user.businessId;
-  if (ids.isEmpty && businessId != null) {
+  // 다중 사업장 관리자
+  if (ids.isNotEmpty) {
     Navigator.push(context,
-        MaterialPageRoute(builder: (_) => AdminStatsScreen(businessIds: [businessId])));
+        MaterialPageRoute(builder: (_) => AdminStatsScreen(businessIds: ids)));
     return;
   }
-  // [BUG-수정] SubAdmin은 managedBusinessIds=[], businessId=null 구조 → subAdminOf로 진입
-  final subAdminOf = user.subAdminOf;
-  if (ids.isEmpty && subAdminOf != null) {
+  // 단일 사업장: BUSINESS_ADMIN은 businessId, SubAdmin은 subAdminOf → effectiveBusinessId로 통합
+  final effectiveBizId = userProvider.effectiveBusinessId;
+  if (effectiveBizId != null) {
     Navigator.push(context,
-        MaterialPageRoute(builder: (_) => AdminStatsScreen(businessIds: [subAdminOf])));
+        MaterialPageRoute(builder: (_) => AdminStatsScreen(businessIds: [effectiveBizId])));
     return;
   }
-  if (ids.isEmpty) {
-    ToastHelper.showWarning('등록된 사업장이 없습니다');
-    return;
-  }
-  Navigator.push(context,
-      MaterialPageRoute(builder: (_) => AdminStatsScreen(businessIds: ids)));
+  ToastHelper.showWarning('등록된 사업장이 없습니다');
 }

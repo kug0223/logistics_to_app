@@ -87,6 +87,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   List<ScheduleChangeRequestModel> _pendingRequestsForDate = [];
   bool get _isDateMode => widget.focusDate != null;
 
+  // 승인/거절 중복 클릭 방지
+  bool _isProcessing = false;
+
   // 검색
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -634,7 +637,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// 대기 요청 인라인 승인/거절 버튼
   Widget _buildPendingActions(BuildContext context, ApplicationModel app) {
     final userProvider = Provider.of<UserProvider>(context, listen: false);
-    final approverUid = userProvider.currentUser?.uid ?? 'UNKNOWN';
+    final uid = userProvider.currentUser?.uid;
+    if (uid == null) return const SizedBox.shrink();
+    final approverUid = uid;
 
     final pending = _pendingRequestsForDate
         .where((r) => r.applicationId == app.id)
@@ -664,7 +669,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             context,
             label: '거절',
             color: AppColors.error,
-            onTap: isLoading ? null : () => _rejectPendingRequest(pending, approverUid),
+            onTap: isLoading || _isProcessing ? null : () => _rejectPendingRequest(pending, approverUid),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
           _buildMiniButton(
@@ -672,7 +677,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             label: '승인',
             color: AppColors.teal,
             filled: true,
-            onTap: isLoading ? null : () => _approvePendingRequest(pending, approverUid),
+            onTap: isLoading || _isProcessing ? null : () => _approvePendingRequest(pending, approverUid),
           ),
         ],
       ),
@@ -712,32 +717,44 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// 대기 요청 승인 처리
   Future<void> _approvePendingRequest(
       ScheduleChangeRequestModel request, String approverUid) async {
-    final ok = await _firestoreService.approveScheduleChangeRequest(
-      requestId: request.id,
-      approverUid: approverUid,
-    );
-    if (ok && mounted) {
-      ToastHelper.showSuccess('요청을 승인했습니다');
-      widget.onChanged();
-      _loadFixedWorkers();
-    } else if (mounted) {
-      ToastHelper.showError('승인 처리에 실패했습니다');
+    if (_isProcessing) return;
+    setState(() => _isProcessing = true);
+    try {
+      final ok = await _firestoreService.approveScheduleChangeRequest(
+        requestId: request.id,
+        approverUid: approverUid,
+      );
+      if (ok && mounted) {
+        ToastHelper.showSuccess('요청을 승인했습니다');
+        widget.onChanged();
+        _loadFixedWorkers();
+      } else if (mounted) {
+        ToastHelper.showError('승인 처리에 실패했습니다');
+      }
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
   /// 대기 요청 거절 처리
   Future<void> _rejectPendingRequest(
       ScheduleChangeRequestModel request, String approverUid) async {
-    final ok = await _firestoreService.rejectScheduleChangeRequest(
-      requestId: request.id,
-      rejectorUid: approverUid,
-    );
-    if (ok && mounted) {
-      ToastHelper.showSuccess('요청을 거절했습니다');
-      widget.onChanged();
-      _loadFixedWorkers();
-    } else if (mounted) {
-      ToastHelper.showError('거절 처리에 실패했습니다');
+    if (_isProcessing) return;
+    setState(() => _isProcessing = true);
+    try {
+      final ok = await _firestoreService.rejectScheduleChangeRequest(
+        requestId: request.id,
+        rejectorUid: approverUid,
+      );
+      if (ok && mounted) {
+        ToastHelper.showSuccess('요청을 거절했습니다');
+        widget.onChanged();
+        _loadFixedWorkers();
+      } else if (mounted) {
+        ToastHelper.showError('거절 처리에 실패했습니다');
+      }
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 

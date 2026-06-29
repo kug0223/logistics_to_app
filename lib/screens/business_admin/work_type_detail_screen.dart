@@ -793,7 +793,8 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
     return CommonWidgets.primaryButton(
       context: context,
       text: '저장',
-      onPressed: _saveChanges,
+      onPressed: _isLoading ? null : _saveChanges,
+      isLoading: _isLoading,
       icon: Icons.save,
     );
   }

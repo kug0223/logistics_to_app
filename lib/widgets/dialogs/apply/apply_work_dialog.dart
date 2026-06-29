@@ -149,6 +149,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   // 로딩 중인 업무 ID 목록
   final Set<String> _loadingWorkIds = {};
 
+  // 지원 요청이 처리 중인지 여부 (중복 동시 지원 방지)
+  bool _isSubmitting = false;
+
   // 내 확정 스케줄 (해당 날짜)
   List<ApplicationModel> _myConfirmedSchedules = [];
 
@@ -668,7 +671,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                 Flexible(
                   child: Text(
                     _isGroupTO
-                        ? '${dateFormat.format(widget.groupTOsByDate!.keys.first)} ~ ${dateFormat.format(widget.groupTOsByDate!.keys.last)} (${widget.groupTOsByDate!.length}일)'
+                        ? () { final sortedDates = widget.groupTOsByDate!.keys.toList()..sort(); return '${dateFormat.format(sortedDates.first)} ~ ${dateFormat.format(sortedDates.last)} (${widget.groupTOsByDate!.length}일)'; }()
                         : widget.mainTO.hasPresetPeriod
                             ? widget.mainTO.contractPeriodLabel
                             : '${dateFormat.format(widget.mainTO.date)} ~ ${dateFormat.format(widget.mainTO.endDate ?? widget.mainTO.date)}',
@@ -816,7 +819,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               isLoading: _loadingWorkIds.contains(work.id),
               slotDate: widget.mainTO.date,
               isLongTerm: _isLongTerm,
-              onApply: hasConflictAndNoDate ? null : () => _applyForWork(widget.mainTO, work),
+              onApply: (hasConflictAndNoDate || _isSubmitting) ? null : () => _applyForWork(widget.mainTO, work),
               onCancelApplication: application != null
                   ? () => _cancelApplication(application)
                   : null,
@@ -2082,7 +2085,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                     : conflictInfo,
                 isLoading: _loadingWorkIds.contains('${date.millisecondsSinceEpoch}_${work.id}'),
                 slotDate: date,
-                onApply: isPending ? null : () => _applyForWork(to, work, date: date),
+                onApply: (isPending || _isSubmitting) ? null : () => _applyForWork(to, work, date: date),
                 onCancelApplication: application != null
                     ? () => _cancelApplication(application)
                     : null,
@@ -2307,6 +2310,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
   /// 지원하기
   Future<void> _applyForWork(TOModel to, WorkDetailModel work, {DateTime? date}) async {
+    // 중복 동시 지원 방지 — 다른 카드의 지원이 처리 중이면 즉시 차단
+    if (_isSubmitting) return;
+
     // 지원 전 필수 서류·인증 사전 체크 — 미완료 시 안내 다이얼로그 표시 후 중단
     final user = context.read<UserProvider>().currentUser;
     if (user == null) return;
@@ -2382,7 +2388,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         ? '${date.millisecondsSinceEpoch}_${work.id}'
         : work.id;
 
-    setState(() => _loadingWorkIds.add(loadingKey));
+    setState(() {
+      _isSubmitting = true;
+      _loadingWorkIds.add(loadingKey);
+    });
 
     // slotId: 단일 슬롯이면 widget.slotId, 다중 슬롯이면 날짜 맵에서 조회
     final resolvedSlotId = widget.slotId ?? (date == null
@@ -2438,7 +2447,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       );
     } finally {
       if (mounted) {
-        setState(() => _loadingWorkIds.remove(loadingKey));
+        setState(() {
+          _isSubmitting = false;
+          _loadingWorkIds.remove(loadingKey);
+        });
       }
     }
   }

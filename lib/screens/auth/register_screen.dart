@@ -354,9 +354,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   bool _isStepTransitioning = false; // 더블탭 Step 건너뜀 방지
 
-  void _onStepContinue() {
+  Future<void> _onStepContinue() async {
     if (_isStepTransitioning) return;
-    _isStepTransitioning = true;
+    setState(() => _isStepTransitioning = true);
 
     try {
       // 단계 내부 번호(_currentStep)와 UI 표시 레이블이 다름:
@@ -379,13 +379,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
           });
         }
       } else if (_currentStep == 2) {
-        _handleRoleSelection();
+        // await로 호출해 _handleRoleSelection이 완료될 때까지 _isStepTransitioning을 유지.
+        // 이로써 300ms 지연 없이도 처리 완료 전 재진입이 차단된다.
+        await _handleRoleSelection();
       }
     } finally {
-      // 동기 전환은 즉시 해제, 비동기(_handleRoleSelection)는 자체 _isSubmitting이 처리
-      if (_currentStep != 2) _isStepTransitioning = false;
-      Future.delayed(const Duration(milliseconds: 300),
-          () { if (mounted) _isStepTransitioning = false; });
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (mounted) setState(() => _isStepTransitioning = false);
     }
   }
 

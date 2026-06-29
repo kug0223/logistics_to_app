@@ -395,6 +395,7 @@ class FCMService {
         return;
       }
       await Future.delayed(const Duration(milliseconds: 100));
+      if (_currentUserId == null) return;  // 로그아웃 후 루프 계속 방지
     }
     debugPrint('⚠️ Navigator 준비 타임아웃 — 알림 화면 이동 생략');
   }

@@ -240,29 +240,36 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
 
     // try/finally로 예외 발생 시에도 _isGrantingConsent 잠금이 반드시 해제되도록 함
     try {
-      // 사업장 좌표 + 반경 캐싱
-      for (final work in _todayWorks) {
-        if (_businessLat.containsKey(work.businessId)) continue;
-        final biz = await _firestoreService.getBusinessById(work.businessId);
-        _businessLat[work.businessId] = biz?.latitude;
-        _businessLng[work.businessId] = biz?.longitude;
-        _businessRadius[work.businessId] = biz?.gpsRadius.toDouble() ?? 100.0;
+      // 사업장 좌표 + 반경 캐싱 (병렬)
+      final uncachedWorks = _todayWorks
+          .where((w) => !_businessLat.containsKey(w.businessId))
+          .toList();
+      final bizResults = await Future.wait(
+        uncachedWorks.map((w) => _firestoreService.getBusinessById(w.businessId)),
+      );
+      for (var i = 0; i < uncachedWorks.length; i++) {
+        final biz = bizResults[i];
+        final bid = uncachedWorks[i].businessId;
+        _businessLat[bid] = biz?.latitude;
+        _businessLng[bid] = biz?.longitude;
+        _businessRadius[bid] = biz?.gpsRadius.toDouble() ?? 100.0;
       }
 
-      // Firestore에 동의 + 문서 생성
+      // Firestore에 동의 + 문서 생성 (병렬)
       final now = DateTime.now();
-      for (final work in _todayWorks) {
+      final consentTargets = _todayWorks.where((work) {
         final attendance = _attendanceMap[work.id];
-        if (attendance?.hasCheckedIn ?? false) continue;
-        if (!_isInTrackingWindow(work)) continue;
-        await _firestoreService.grantLocationConsent(
+        return !(attendance?.hasCheckedIn ?? false) && _isInTrackingWindow(work);
+      }).toList();
+      await Future.wait(
+        consentTargets.map((work) => _firestoreService.grantLocationConsent(
           applicationId: work.id,
           userId: uid,
           businessId: work.businessId,
           workDate: now,
           scheduledStart: work.startTime,
-        );
-      }
+        )),
+      );
 
       if (!mounted) return;
       setState(() => _locationTrackingActive = true);

@@ -195,10 +195,8 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     _hasMoreReceived = false;
 
     final userProvider = context.read<UserProvider>();
-    final user = userProvider.currentUser;
     final businessId = widget.businessId
-        ?? user?.businessId
-        ?? user?.managedBusinessIds.firstOrNull;
+        ?? userProvider.effectiveBusinessId;
 
     if (businessId == null) {
       setState(() => _isLoading = false);
@@ -243,6 +241,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
           final snap = await FirebaseFirestore.instance
               .collection('users')
               .where(FieldPath.documentId, whereIn: ids)
+              .limit(ids.length) // 보안 규칙 request.query.limit <= 30 충족
               .get();
           for (final doc in snap.docs) {
             final name = doc.data()['name'] as String? ?? '';

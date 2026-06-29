@@ -56,6 +56,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
 
   /// 사업장 목록 로드
   Future<void> _loadBusinesses({bool forceServer = false}) async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
 
     try {

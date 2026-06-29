@@ -285,12 +285,12 @@ class _PayrollPaymentDashboardScreenState
     final uncached = uids.where((u) => !_userBankCache.containsKey(u)).toList();
     if (uncached.isEmpty) return;
     try {
-      final users = await Future.wait(
-          uncached.map((uid) => _fsService.getUser(uid)));
-      for (int i = 0; i < uncached.length; i++) {
-        final user = users[i];
+      // getUsersBatch: 30개 청크 + limit(chunk.length) 처리, 보안 규칙 준수
+      final userMap = await _fsService.getUsersBatch(uncached);
+      for (final uid in uncached) {
+        final user = userMap[uid];
         if (user == null) continue;
-        _userBankCache[uncached[i]] = {
+        _userBankCache[uid] = {
           'name':          user.name,
           'bankName':      user.bankName     ?? '',
           'accountNumber': user.accountNumber != null
@@ -300,7 +300,7 @@ class _PayrollPaymentDashboardScreenState
         };
       }
     } catch (e) {
-      debugPrint('❌ 계좌 정보 병렬 로드 실패: $e');
+      debugPrint('❌ 계좌 정보 배치 로드 실패: $e');
     }
   }
 

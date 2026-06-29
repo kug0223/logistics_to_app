@@ -148,7 +148,7 @@ class AttendanceStatusHelper {
       if (checkIn != null) {
         final inMins = timeToMinutes(checkIn);
         if (actual < inMins) actual += 1440;
-        if (scheduled <= inMins) scheduled += 1440;
+        if (scheduled < inMins) scheduled += 1440;
       }
       return actual > scheduled + graceMinutes;
     } catch (_) {

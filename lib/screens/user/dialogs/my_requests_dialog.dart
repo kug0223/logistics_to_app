@@ -489,6 +489,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       if (success) {
         ToastHelper.showSuccess('수락되었습니다');
         await _loadAllNotifications();
+        if (!mounted) return;
         widget.onChanged();
       } else {
         ToastHelper.showError('수락 실패');
@@ -551,6 +552,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       if (success) {
         ToastHelper.showSuccess('거절되었습니다');
         await _loadAllNotifications();
+        if (!mounted) return;
         widget.onChanged();
       } else {
         ToastHelper.showError('거절 실패');
@@ -611,6 +613,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       if (success) {
         ToastHelper.showSuccess('승인되었습니다');
         await _loadAllNotifications();
+        if (!mounted) return;
         widget.onChanged();
       } else {
         ToastHelper.showError('승인 실패');
@@ -676,6 +679,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       if (success) {
         ToastHelper.showSuccess('거절되었습니다');
         await _loadAllNotifications();
+        if (!mounted) return;
         widget.onChanged();
       } else {
         ToastHelper.showError('거절 실패');
@@ -737,6 +741,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       if (success) {
         ToastHelper.showSuccess('계약이 해지되었습니다');
         await _loadAllNotifications();
+        if (!mounted) return;
         widget.onChanged();
       } else {
         ToastHelper.showError('처리 실패');
@@ -802,6 +807,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       if (success) {
         ToastHelper.showSuccess('거절되었습니다');
         await _loadAllNotifications();
+        if (!mounted) return;
         widget.onChanged();
       } else {
         ToastHelper.showError('거절 실패');

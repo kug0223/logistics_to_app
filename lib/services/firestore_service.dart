@@ -706,7 +706,10 @@ class FirestoreService {
           .map((e) => WorkDetailData.fromMap(Map<String, dynamic>.from(e as Map)))
           .toList();
 
-      final idx = details.indexWhere((d) => d.workType == workDetailId);
+      final idx = details.indexWhere((d) {
+        final compositeId = '${d.workType}_${d.startTime}_${d.endTime}';
+        return compositeId == workDetailId || d.workType == workDetailId;
+      });
       if (idx == -1) return null;
 
       details[idx] = updater(details[idx]);

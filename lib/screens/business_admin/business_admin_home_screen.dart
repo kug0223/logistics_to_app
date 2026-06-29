@@ -462,15 +462,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                 subtitle: '계약서 현황·서명',
                                 color: theme.primaryColor,
                                 onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
-                                  var bizId = userProvider.effectiveBusinessId;
-                                  if (bizId == null) {
-                                    final uid = userProvider.currentUser?.uid;
-                                    if (uid != null) {
-                                      final businesses = await _firestoreService.getMyBusiness(uid);
-                                      if (!context.mounted) return;
-                                      bizId = businesses.isNotEmpty ? businesses.first.id : null;
-                                    }
-                                  }
+                                  final bizId = userProvider.effectiveBusinessId;
                                   if (bizId == null) {
                                     ToastHelper.showWarning('사업장 정보를 먼저 등록해주세요');
                                     return;
@@ -480,7 +472,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                     context,
                                     MaterialPageRoute(
                                       builder: (_) => AdminContractManagementScreen(
-                                        businessId: bizId!,
+                                        businessId: bizId,
                                       ),
                                     ),
                                   );

@@ -88,19 +88,18 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   }
 
   Future<void> _loadApplications() async {
+    final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
+    if (uid == null) {
+      ToastHelper.showError('로그인이 필요합니다.');
+      return;
+    }
+
     setState(() {
       _isLoading = true;
       _applications = [];
       _lastDoc = null;
       _hasMore = true;
     });
-
-    final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
-    if (uid == null) {
-      ToastHelper.showError('로그인이 필요합니다.');
-      setState(() => _isLoading = false);
-      return;
-    }
 
     try {
       // 만료된 PENDING 자동 처리
@@ -112,13 +111,11 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       final items = page['items'] as List<ApplicationModel>;
       final appWithTOs = await _attachTOInfo(items);
 
-      // 계약서 · 리뷰 병렬 로드
-      final results = await Future.wait([
-        _loadContracts(uid, appWithTOs),
-        _loadWrittenReviews(uid, appWithTOs),
-      ]);
-      final contractMap = results[0] as Map<String, EmploymentContractModel>;
-      final reviewMap = results[1] as Map<String, MonthlyReviewModel?>;
+      // 계약서 · 리뷰 병렬 로드 — 개별 실패가 전체 로드를 막지 않도록 독립 처리
+      final contractMap = await _loadContracts(uid, appWithTOs)
+          .catchError((_) => <String, EmploymentContractModel>{});
+      final reviewMap = await _loadWrittenReviews(uid, appWithTOs)
+          .catchError((_) => <String, MonthlyReviewModel?>{});
 
       if (mounted) {
         setState(() {

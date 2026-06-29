@@ -123,6 +123,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   /// isScheduledOnDate 판단이 달라지므로 _applications도 함께 갱신해야
   /// 통계·캘린더 인덱스가 올바르게 갱신된다.
   Future<void> _loadMonthlyAttendances(DateTime focusedDay) async {
+    if (!mounted) return;
     final uid = context.read<UserProvider>().currentUser?.uid;
     if (uid == null) return;
     try {

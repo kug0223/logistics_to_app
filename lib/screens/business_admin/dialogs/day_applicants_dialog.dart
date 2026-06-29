@@ -158,11 +158,6 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       if (mounted) setState(() => _isLoading = false);
       return;
     }
-    // [DATE-DEBUG] 다이얼로그 수신 날짜 확인
-    debugPrint('🗓️ [DATE-DEBUG] DayApplicantsDialog._load:'
-        ' widget.date=${widget.date.toIso8601String()}'
-        ' isUtc=${widget.date.isUtc}'
-        ' local=${widget.date.toLocal().toIso8601String()}');
     setState(() {
       _isLoading = true;
       _selectedIds.clear();
@@ -1604,6 +1599,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       return;
     }
     final bizId = _selectedBusinessId ?? '';
+    if (bizId.isEmpty || widget.businesses.isEmpty) return;
     final business =
         widget.businesses.firstWhere((b) => b.id == bizId, orElse: () => widget.businesses.first);
 

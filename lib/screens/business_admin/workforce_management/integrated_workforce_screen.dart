@@ -90,7 +90,8 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
 
       setState(() {
         _allBusinessIds = businesses.map((b) => b.id).toList();
-        _selectedBusinessId = _allBusinessIds.first;
+        // effectiveBusinessId 우선: createdAt DESC 정렬 first와 실제 businessId가 다를 수 있음
+        _selectedBusinessId = userProvider.effectiveBusinessId ?? _allBusinessIds.first;
       });
 
       if (mounted) _controller.load(context);

@@ -222,7 +222,7 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
       await _signAsEmployer();
     } else {
       if (_hasSavedSignature) {
-        _showSignatureOptions();
+        await _showSignatureOptions();
       } else {
         await _signWithPad(askToSave: true);
       }
@@ -270,11 +270,13 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
   }
 
   // 저장 서명 있을 때 선택 바텀시트 (근무자 전용)
-  void _showSignatureOptions() {
-    // [BUG-수정] CS-M-1: 바텀시트 선택 결과를 bool?로 반환받아 취소 시에만 락 해제.
+  Future<void> _showSignatureOptions() async {
+    // [BUG-수정] F-05: void + .then() → Future<void> + async/await 변환.
+    // .then()은 await 없이 fire-and-forget으로 실행되어 _isSigning이 영구적으로
+    // true 상태에 고착되는 버그 수정. await로 바텀시트 결과를 받고,
+    // finally 블록에서 취소 시 락 해제, 서명 진행 시 _performSign finally에서 해제됨.
     // true = 저장 서명, false = 새 서명, null = 취소(드래그 다운 등)
-    // 선택 후 _signWithSaved / _signWithPad → _performSign finally에서 락 해제됨.
-    showModalBottomSheet<bool>(
+    final choice = await showModalBottomSheet<bool>(
       context: context,
       useSafeArea: true,
       isScrollControlled: true, // 가로 모드에서 콘텐츠 잘림 방지
@@ -344,17 +346,16 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
           ),
         ),
       ),
-    ).then((choice) {
-      if (!mounted) return;
-      if (choice == null) {
-        // 취소(드래그 다운 등) — 락 해제
-        setState(() => _isSigning = false);
-      } else if (choice) {
-        _signWithSaved();
-      } else {
-        _signWithPad(askToSave: true);
-      }
-    });
+    );
+    if (!mounted) return;
+    if (choice == null) {
+      // 취소(드래그 다운 등) — 락 해제
+      setState(() => _isSigning = false);
+    } else if (choice) {
+      await _signWithSaved();
+    } else {
+      await _signWithPad(askToSave: true);
+    }
   }
 
   // 저장된 서명으로 서명 처리

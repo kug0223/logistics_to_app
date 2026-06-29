@@ -202,7 +202,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final userId = userProvider.currentUser?.uid;
 
       if (userId == null) {
-        if (mounted) setState(() => _isLoading = false);
         return;
       }
 
@@ -217,7 +216,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         if (!granted) {
           ToastHelper.showWarning('기기 설정에서 알림 권한을 허용해주세요');
           await openAppSettings();
-          if (mounted) setState(() => _isLoading = false);
           return;
         }
         await FCMService().initialize(userId, isAdmin: userProvider.isAdmin);

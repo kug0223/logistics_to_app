@@ -493,15 +493,16 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       try {
         final result =
             await _firestoreService.loadTOWorkDetails(groupItem.masterTO);
-        groupItem.setWorkDetailStats(
-          result['workStats'] as Map<String, Map<String, int>>,
-        );
+        final workStats = result['workStats'] as Map<String, Map<String, int>>?;
+        if (workStats != null) {
+          groupItem.setWorkDetailStats(workStats);
+        }
       } catch (e) {
         debugPrint('❌ 그룹 상세 로드 실패: $e');
         ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+      } finally {
+        if (mounted) setState(() => _loadingTOs.remove(key));
       }
-      if (!mounted) return;
-      setState(() => _loadingTOs.remove(key));
     }
   }
 

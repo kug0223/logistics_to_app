@@ -496,6 +496,7 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
     // 전체 금액 합산
     int totalNet = settleableRecords.fold(0, (acc, r) => acc + _netOf(r));
 
+    setState(() => _isSettling = true);
     final ok = await DialogHelper.showConfirm(
       ctx,
       title: '중간정산 처리',
@@ -506,12 +507,13 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
       confirmText: '이체완료 처리',
       cancelText: '취소',
     );
-    if (ok != true || !mounted) return;
+    if (ok != true || !mounted) {
+      setState(() => _isSettling = false);
+      return;
+    }
 
     // async gap 전에 uid 획득
     final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid ?? 'UNKNOWN';
-
-    setState(() => _isSettling = true);
     try {
       final svc = PayrollPaymentService();
       final req = InterimSettlementRequestModel(

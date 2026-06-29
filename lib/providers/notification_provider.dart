@@ -161,7 +161,14 @@ class NotificationProvider with ChangeNotifier {
   /// 알림 읽음 처리 (로컬 상태 즉시 반영 — 스트림 이벤트 지연 보완)
   Future<void> markAsRead(String notificationId) async {
     if (_userId == null) return;
-    await _firestoreService.markNotificationAsRead(_userId!, notificationId);
+    try {
+      await _firestoreService.markNotificationAsRead(_userId!, notificationId);
+    } catch (e) {
+      // Firestore 쓰기 실패 시 로컬 상태를 변경하지 않고 조용히 종료
+      // (서버·로컬 불일치 방지)
+      debugPrint('markAsRead Firestore 실패 [$notificationId]: $e');
+      return;
+    }
     if (_disposed) return;
     bool changed = false;
     _streamNotifications = _streamNotifications.map((n) {

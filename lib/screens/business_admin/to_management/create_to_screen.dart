@@ -862,6 +862,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               await FirebaseFirestore.instance
                   .collection('users').doc(uid)
                   .update({'sealBase64': oldSeal, 'sealType': oldType});
+              if (!mounted) return;
               sealBase64 = oldSeal;
               break;
             }

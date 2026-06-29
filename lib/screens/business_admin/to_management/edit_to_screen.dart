@@ -294,6 +294,10 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         final targetDate =
             refDate.subtract(Duration(days: _publishDaysBefore));
         final timeParts = _publishTime.split(':');
+        if (timeParts.length < 2) {
+          ToastHelper.showError('공개 시간 형식이 올바르지 않습니다 (HH:mm)');
+          return;
+        }
         publishAt = DateTime(
           targetDate.year,
           targetDate.month,
@@ -423,10 +427,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       if (!mounted) return;
       if (slotSyncFailed) {
         ToastHelper.showWarning('TO가 수정되었으나 슬롯 동기화에 실패했습니다. 다시 저장해 주세요.');
+        // 슬롯 동기화 실패 시 화면에 남아 재저장 가능하도록 팝하지 않음
+        setState(() => _hasChanges = true);
       } else {
         ToastHelper.showSuccess('TO가 수정되었습니다');
+        NavigationHelper.popWithChange(context);
       }
-      NavigationHelper.popWithChange(context);
     } catch (e) {
       debugPrint('❌ TO 수정 실패: $e');
       if (mounted) ToastHelper.showError('수정에 실패했습니다');
@@ -1054,6 +1060,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   (DateTime?, bool) _calcSlotVisibleFrom(DateTime slotDate) {
     if (_publishMode != 'scheduled') return (null, true);
     final parts = _publishTime.split(':');
+    if (parts.length < 2) return (null, true);
     var vf = DateTime(
       slotDate.year, slotDate.month, slotDate.day,
       int.parse(parts[0]), int.parse(parts[1]),

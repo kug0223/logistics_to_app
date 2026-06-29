@@ -86,11 +86,11 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
       final uidList = records.map((r) => r.userId).toSet()
           .difference(_nameCache.keys.toSet()).toList();
       if (uidList.isNotEmpty) {
-        final users =
-            await Future.wait(uidList.map((uid) => _fsService.getUser(uid)));
-        for (int i = 0; i < uidList.length; i++) {
-          final user = users[i];
-          if (user != null) _nameCache[uidList[i]] = user.name;
+        // getUsersBatch: 30개 청크 + limit 처리, 보안 규칙 준수
+        final userMap = await _fsService.getUsersBatch(uidList);
+        for (final uid in uidList) {
+          final user = userMap[uid];
+          if (user != null) _nameCache[uid] = user.name;
         }
       }
 

@@ -651,7 +651,7 @@ class _ScheduleRequestManagementDialogState
       if (success && mounted) {
         ToastHelper.showSuccess('요청이 승인되었습니다');
         await _loadRequests();
-        widget.onChanged();
+        if (mounted) widget.onChanged();
       } else if (mounted) {
         ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
       }
@@ -749,7 +749,7 @@ class _ScheduleRequestManagementDialogState
       if (success && mounted) {
         ToastHelper.showSuccess('요청이 거절되었습니다');
         await _loadRequests();
-        widget.onChanged();
+        if (mounted) widget.onChanged();
       } else if (mounted) {
         ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
       }
