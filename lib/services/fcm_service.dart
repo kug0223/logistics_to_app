@@ -372,13 +372,8 @@ class FCMService {
         contract = await ContractService().getById(contractId);
       }
 
-      // 폴백: contractId 없거나 get 실패 → applicationId 기반 list 쿼리 (USER 컨텍스트 PERMISSION_DENIED 위험)
-      if (contract == null && applicationId != null && applicationId.isNotEmpty) {
-        contract = await ContractService().getByApplication(
-          applicationId,
-          workerId: _currentUserId,
-        );
-      }
+      // [FCM-FIX] 폴백(applicationId 기반 list 쿼리) 제거 — USER는 employment_contracts list 불가
+      // → notification_screen.dart 동일 정책: getByApplication 경로 차단, 목록 화면으로 안내
       if (_navigatorKey?.currentState == null) return;
       if (contract == null) {
         _navigatorKey!.currentState!.push(
