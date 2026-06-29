@@ -54,6 +54,7 @@ class PayrollPaymentService {
     String? workerUserId,
     String? workerName,
     String? businessName,
+    String? businessId,
     int? finalWage,
     String? applicationId,
   }) async {
@@ -85,6 +86,7 @@ class PayrollPaymentService {
             userId: workerUserId,
             workerName: workerName,
             businessName: businessName,
+            businessId: businessId ?? '',
             finalWage: finalWage,
             applicationId: applicationId,
           ),
@@ -140,6 +142,7 @@ class PayrollPaymentService {
                 userId: info.workerUserId,
                 workerName: info.workerName,
                 businessName: info.businessName,
+                businessId: info.businessId,
                 finalWage: info.finalWage,
                 applicationId: info.applicationId,
               ),
@@ -574,6 +577,7 @@ class TransferNotificationInfo {
   final String workerUserId;
   final String workerName;
   final String businessName;
+  final String businessId;
   final int finalWage;
   final String? applicationId;
 
@@ -581,6 +585,7 @@ class TransferNotificationInfo {
     required this.workerUserId,
     required this.workerName,
     required this.businessName,
+    required this.businessId,
     required this.finalWage,
     this.applicationId,
   });
@@ -601,6 +606,7 @@ List<TransferNotificationInfo> buildTransferNotificationInfos({
       workerUserId: r.userId,
       workerName: workerNameByUid[r.userId] ?? r.userId,
       businessName: r.businessName,
+      businessId: r.businessId,
       finalWage: net,
       applicationId: r.applicationId,
     );

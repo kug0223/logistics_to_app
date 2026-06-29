@@ -349,6 +349,7 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
         workerUserId:  record.userId,
         workerName:    name,
         businessName:  record.businessName,
+        businessId:    record.businessId,
         finalWage:     net,
         applicationId: record.applicationId,
       );

@@ -341,13 +341,6 @@ export const createNotification = onCall(
     // data 서브필드 허용 키: FCM 딥링크 라우팅에서 실제 사용되는 키만 포함.
     // 허용 외 키는 자동 제거 — XSS·딥링크 조작 방지.
     //
-    // [TODO-SEC] 로그인한 사용자가 임의 userId로 타인에게 알림 주입 가능.
-    // App Check 필수 적용으로 실제 앱에서만 호출 가능하고 화이트리스트 필터링으로 피해를 제한 중.
-    // 완전한 수정: 발신자 role을 Firestore에서 조회하여
-    //   · SUPER_ADMIN: 모든 userId 허용
-    //   · BUSINESS_ADMIN: data.businessId 소속 근무자만 허용
-    //   · USER/SubAdmin: userId == request.auth.uid만 허용 (본인 알림)
-    // 단, 현재 여러 흐름(근무자→관리자, 관리자→근무자)을 모두 지원해야 하므로 설계 검토 필요.
     const rawData = (data.data as Record<string, unknown> | undefined) ?? {};
     const allowedDataKeys = new Set([
       "screen", "action", "applicationId", "businessId", "toId",
@@ -357,6 +350,50 @@ export const createNotification = onCall(
     for (const key of Object.keys(rawData)) {
       if (allowedDataKeys.has(key)) filteredData[key] = String(rawData[key]);
     }
+
+    // ── 발신자-수신자 관계 검증 ─────────────────────────────────
+    // 타인에게 알림을 보낼 때: 발신자 또는 수신자가 해당 사업장의 관리자여야 한다.
+    // · 관리자→근무자: 발신자(callerUid)가 adminIds에 있음 → 허용
+    // · 근무자→관리자: 수신자(userId)가 adminIds에 있음 → 허용
+    // · 근무자→근무자: 둘 다 adminIds에 없음 → 차단
+    // SUPER_ADMIN은 모든 수신자 허용. 본인 알림(userId == callerUid)은 검증 생략.
+    const callerUid = request.auth.uid;
+    if (userId !== callerUid) {
+      const callerSnap = await db.collection("users").doc(callerUid).get();
+      const callerRole = callerSnap.data()?.role as string | undefined;
+
+      if (callerRole !== "SUPER_ADMIN") {
+        const targetBusinessId = filteredData.businessId as string | undefined;
+        if (!targetBusinessId) {
+          throw new HttpsError("permission-denied", "타인에게 알림 발송 시 businessId가 필요합니다.");
+        }
+
+        const bizSnap = await db.collection("businesses").doc(targetBusinessId).get();
+        if (!bizSnap.exists) {
+          throw new HttpsError("not-found", "사업장을 찾을 수 없습니다.");
+        }
+        const adminIds = (bizSnap.data()?.adminIds as string[] | undefined) ?? [];
+        const ownerId = bizSnap.data()?.ownerId as string | undefined;
+        const callerSubAdminOf = callerSnap.data()?.subAdminOf as string | undefined;
+
+        const callerIsAdmin = adminIds.includes(callerUid) ||
+                              ownerId === callerUid ||
+                              callerSubAdminOf === targetBusinessId;
+        const recipientIsAdmin = adminIds.includes(userId) || ownerId === userId;
+
+        // 관리자 ↔ 근무자 방향 알림만 허용 — 근무자↔근무자 스팸 차단
+        if (!callerIsAdmin && !recipientIsAdmin) {
+          throw new HttpsError("permission-denied", "해당 사업장 관리자와 근무자 간 알림만 허용됩니다.");
+        }
+
+        // 수신자 존재 확인 (존재하지 않는 uid로 알림 문서 생성 방지)
+        const recipientSnap = await db.collection("users").doc(userId).get();
+        if (!recipientSnap.exists) {
+          throw new HttpsError("not-found", "수신자를 찾을 수 없습니다.");
+        }
+      }
+    }
+    // ────────────────────────────────────────────────────────────
 
     const payload: Record<string, unknown> = {
       userId,
@@ -3012,7 +3049,7 @@ export const sendSmsVerificationCode = onCall(
 /**
  * 휴대폰 SMS 인증번호 확인
  * - 코드 일치/만료/시도횟수 초과 검사
- * - 성공 시 verified: true 업데이트
+ * - 성공 시 문서 즉시 삭제 (코드 재사용 차단)
  */
 export const verifySmsCode = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
@@ -3060,8 +3097,10 @@ export const verifySmsCode = onCall(
         return;
       }
 
-      // 인증 성공 — 코드 무효화 (성공 시 attempts 증가 불필요 — 재시도 제한은 실패 시에만 적용)
-      tx.update(docRef, {verified: true});
+      // 인증 성공 — 문서 즉시 삭제로 코드 재사용 원천 차단.
+      // verified: true 업데이트 대신 삭제: TTL 만료 전 동일 코드로 재시도 가능했던 취약점 수정.
+      // 삭제 후 가입/비밀번호재설정 CF는 별도 상태(passToken, passwordResetCodes)로 완료 여부를 관리한다.
+      tx.delete(docRef);
       result = {valid: true};
     });
     return result;

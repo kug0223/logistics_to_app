@@ -1239,6 +1239,7 @@ class FirestoreService {
           userId: ownerId,
           workerName: workerName,
           businessName: app.businessName,
+          businessId: app.businessId,
           resignDate: effectiveResignDate,
           applicationId: applicationId,
         );

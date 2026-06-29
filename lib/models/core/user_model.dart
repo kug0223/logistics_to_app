@@ -204,9 +204,6 @@ class UserModel {
   // 순수 BUSINESS_ADMIN 여부가 필요하면 isBusinessAdmin을 사용하라.
   bool get isAdmin => role == UserRole.SUPER_ADMIN || role == UserRole.BUSINESS_ADMIN || isSubAdmin;
 
-  /// 사업장 관리자 전용 (SubAdmin 제외) — Firestore isAdmin() 함수와 동일한 기준
-  bool get isBusinessAdmin => role == UserRole.SUPER_ADMIN || role == UserRole.BUSINESS_ADMIN;
-
   /// 역할 문자열
   String get roleString => _roleToString(role);
 

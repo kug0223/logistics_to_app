@@ -461,6 +461,7 @@ class _PayrollPaymentDashboardScreenState
           workerUserId:  r.userId,
           workerName:    workerName,
           businessName:  r.businessName,
+          businessId:    r.businessId,
           finalWage:     net,
           applicationId: r.applicationId,
         );

@@ -392,6 +392,7 @@ class NotificationModel {
   static NotificationModel createIdCardAccessRequest({
     required String userId,
     required String businessName,
+    required String businessId,
     required String reason,
     required String requestId,
   }) {
@@ -403,6 +404,7 @@ class NotificationModel {
       body: '$businessName에서 신분증 열람을 요청했습니다.\n사유: $reason',
       data: {
         'requestId': requestId,
+        'businessId': businessId,
         'action': 'idCardAccessRequest',
       },
       createdAt: DateTime.now(),
@@ -413,6 +415,7 @@ class NotificationModel {
   static NotificationModel createIdCardAccessApproved({
     required String userId,
     required String targetUserName,
+    required String businessId,
     required String requestId,
   }) {
     return NotificationModel(
@@ -423,6 +426,7 @@ class NotificationModel {
       body: '$targetUserName님이 신분증 열람을 승인했습니다.\n7일간 열람 가능합니다.',
       data: {
         'requestId': requestId,
+        'businessId': businessId,
         'action': 'idCardAccessApproved',
       },
       createdAt: DateTime.now(),
@@ -433,6 +437,7 @@ class NotificationModel {
   static NotificationModel createIdCardAccessRejected({
     required String userId,
     required String targetUserName,
+    required String businessId,
     required String requestId,
     String? rejectionReason,
   }) {
@@ -444,6 +449,7 @@ class NotificationModel {
       body: '$targetUserName님이 신분증 열람을 거절했습니다.${rejectionReason != null ? '\n사유: $rejectionReason' : ''}',
       data: {
         'requestId': requestId,
+        'businessId': businessId,
         'action': 'idCardAccessRejected',
       },
       createdAt: DateTime.now(),
@@ -478,6 +484,7 @@ class NotificationModel {
   static NotificationModel createReviewReceived({
     required String userId,
     required String businessName,
+    required String businessId,
     required int rating,
     required String reviewId,
   }) {
@@ -489,6 +496,7 @@ class NotificationModel {
       body: '$businessName에서 ${'⭐' * rating} 평가를 받았습니다.',
       data: {
         'reviewId': reviewId,
+        'businessId': businessId,
         'action': 'reviewDetail',
       },
       createdAt: DateTime.now(),
@@ -918,6 +926,7 @@ class NotificationModel {
     required String userId,
     required String workerName,
     required String businessName,
+    required String businessId,
     required DateTime resignDate,
     required String applicationId,
   }) {
@@ -929,6 +938,7 @@ class NotificationModel {
       body: '$workerName님이 ${resignDate.month}/${resignDate.day}자 퇴사를 요청했습니다.',
       data: {
         'applicationId': applicationId,
+        'businessId': businessId,
         'action': 'resignRequest',
         'businessName': businessName,
       },
@@ -1127,6 +1137,7 @@ class NotificationModel {
     required String userId,
     required String workerName,
     required String businessName,
+    required String businessId,
     required int finalWage,
     String? applicationId,
   }) {
@@ -1143,6 +1154,7 @@ class NotificationModel {
       createdAt: DateTime.now(),
       data: {
         if (applicationId != null) 'applicationId': applicationId,
+        'businessId': businessId,
         'screen': 'wageTransferred',
       },
     );

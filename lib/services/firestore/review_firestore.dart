@@ -65,6 +65,7 @@
           NotificationModel.createReviewReceived(
             userId: targetUserId,
             businessName: businessName,
+            businessId: businessId,
             rating: rating,
             reviewId: reviewRef.id,
           ),

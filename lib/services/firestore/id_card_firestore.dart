@@ -84,6 +84,7 @@ extension IdCardFirestore on FirestoreService {
         NotificationModel.createIdCardAccessRequest(
           userId: targetUserId,
           businessName: requesterBusinessName,
+          businessId: requesterBusinessId,
           reason: reasonText,
           requestId: docRef.id,
         ),
@@ -136,6 +137,7 @@ extension IdCardFirestore on FirestoreService {
           NotificationModel.createIdCardAccessApproved(
             userId: requestData!['requesterId'],
             targetUserName: requestData!['targetUserName'],
+            businessId: requestData!['requesterBusinessId'] as String? ?? '',
             requestId: requestId,
           ),
         );
@@ -186,6 +188,7 @@ extension IdCardFirestore on FirestoreService {
           NotificationModel.createIdCardAccessRejected(
             userId: requestData!['requesterId'],
             targetUserName: requestData!['targetUserName'],
+            businessId: requestData!['requesterBusinessId'] as String? ?? '',
             requestId: requestId,
             rejectionReason: reason,
           ),
