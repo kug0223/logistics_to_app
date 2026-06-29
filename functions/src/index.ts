@@ -3050,8 +3050,8 @@ export const verifySmsCode = onCall(
         return;
       }
 
-      // 인증 성공 — 코드 무효화
-      tx.update(docRef, {verified: true, attempts: admin.firestore.FieldValue.increment(1)});
+      // 인증 성공 — 코드 무효화 (성공 시 attempts 증가 불필요 — 재시도 제한은 실패 시에만 적용)
+      tx.update(docRef, {verified: true});
       result = {valid: true};
     });
     return result;

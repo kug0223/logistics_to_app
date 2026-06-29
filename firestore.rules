@@ -832,7 +832,9 @@ service cloud.firestore {
                       isSubAdminOf(request.query.filters.businessId) ||
                       isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
                     )) ||
-                    isUser()  // 복합 쿼리에서 filters.workerId null 반환 대비, 앱 코드에서 workerId==auth.uid 보장
+                    // USER: workerId == auth.uid 단일 isEqualTo 쿼리만 사용 → filters.workerId 정상 반환
+                    // getPendingRequestsForWorker(workerId)에서 .where('workerId', isEqualTo: uid) 확인됨
+                    (isUser() && request.query.filters.workerId == request.auth.uid)
                   );
 
       // 생성: 해당 사업장 관리자/하위관리자 또는 슈퍼어드민
