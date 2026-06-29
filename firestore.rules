@@ -417,11 +417,14 @@ service cloud.firestore {
 
 
 
-      // 생성: 본인 또는 해당 사업장 관리자(수동 출근 처리) 또는 더미 데이터
+      // 생성: 본인 또는 해당 사업장 관리자/하위관리자(수동 출근·노쇼 처리) 또는 더미 데이터
       // 슈퍼어드민은 isAdminOf() 없이도 모든 사업장 출근 기록 수동 생성 가능
+      // [HIGH-FIX] SubAdmin 누락: 노쇼 처리(attendance_status_dialog)에서 기록 없는 근무자에 대해
+      //            batch.set()으로 신규 생성 시 PERMISSION_DENIED 발생 → isSubAdminOf 추가
       allow create: if isLoggedIn() && (
                       request.resource.data.userId == request.auth.uid ||
                       isAdminOf(request.resource.data.businessId) ||
+                      isSubAdminOf(request.resource.data.businessId) ||
                       isSuperAdmin() ||
                       (isAdmin() && request.resource.data.isDummy == true)
                     );
@@ -726,10 +729,17 @@ service cloud.firestore {
       //   · 변경 가능 필드: status, respondedAt, rejectionReason, expiresAt
       //   · status = approved 시 expiresAt은 앱 코드에서 +7일로 기록
       //   · 관리자가 직접 승인/거절 불가 — 근무자 동의 기반 설계
+      // [MEDIUM-FIX] 관리자 취소 경로 누락: _cleanupApplicationRelatedData에서 지원 취소 시
+      //              status='canceled' 업데이트 → PERMISSION_DENIED. 발신자 사업장 관리자/SubAdmin의
+      //              status only 업데이트 허용 추가 (근무자 승인/거절과 구별)
       allow update: if isLoggedIn() && (
                       (isOwner(resource.data.targetUserId) &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status', 'respondedAt', 'rejectionReason', 'expiresAt'])) ||
+                      ((isAdminOf(resource.data.requesterBusinessId) ||
+                        isSubAdminOf(resource.data.requesterBusinessId)) &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['status'])) ||
                       isSuperAdmin()
                     );
 
@@ -944,9 +954,13 @@ service cloud.firestore {
                    ))
                  );
 
-      // 생성: 해당 사업장 관리자 또는 슈퍼어드민 (확정 시 자동 생성)
+      // 생성: 해당 사업장 관리자/하위관리자 또는 슈퍼어드민 (확정 시 자동 생성)
+      // [HIGH-FIX] SubAdmin 누락: work_applicants_dialog에서 _batchApprove 실행 시
+      //            findOrCreateContract() → employment_contracts CREATE → PERMISSION_DENIED
+      //            → SubAdmin의 지원자 일괄 승인 기능 전체 불가 → isSubAdminOf 추가
       allow create: if isLoggedIn() && (
                       isAdminOf(request.resource.data.businessId) ||
+                      isSubAdminOf(request.resource.data.businessId) ||
                       isSuperAdmin()
                     );
 
@@ -973,9 +987,12 @@ service cloud.firestore {
                            'status', 'workerSignatureUrl', 'workerSignatureHash',
                            'workerSignedAt', 'pdfUrl', 'updatedAt'
                          ])) ||
-                        // 관리자: 사업주 서명 + 계약 관리 필드만
+                        // 관리자/하위관리자: 사업주 서명 + 계약 관리 필드만
                         // [H-003] articles/templateId는 근무자 서명 전에만 수정 가능
-                        (isAdminOf(resource.data.businessId) &&
+                        // [HIGH-FIX] SubAdmin 누락: day_applicants_dialog 계약서 서명·수정 시
+                        //            PERMISSION_DENIED 발생 → isSubAdminOf 추가
+                        ((isAdminOf(resource.data.businessId) ||
+                          isSubAdminOf(resource.data.businessId)) &&
                          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                            'status', 'employerSignatureUrl', 'employerSignatureHash',
                            'employerSignedAt', 'updatedAt',
@@ -989,7 +1006,7 @@ service cloud.firestore {
       // 일부 application 취소 실패 시 failedIds를 voidFailedAppIds에 기록해 재처리(retryVoidFailedApps)에 사용.
       // 이 시점엔 이미 status='voided'이므로 위 update 규칙(status != voided 조건)에서 막힘 → 별도 규칙 필요.
       allow update: if isLoggedIn() &&
-                      isAdminOf(resource.data.businessId) &&
+                      (isAdminOf(resource.data.businessId) || isSubAdminOf(resource.data.businessId)) &&
                       resource.data.status == 'voided' &&
                       request.resource.data.diff(resource.data).affectedKeys()
                         .hasOnly(['voidFailedAppIds']);
@@ -1093,12 +1110,27 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════
     match /payroll_summaries/{summaryId} {
 
-      // 읽기: 해당 사업장 관리자·하위 관리자·슈퍼어드민
-      allow read: if isLoggedIn() && (
+      // get: 해당 사업장 관리자·하위 관리자·슈퍼어드민 (resource==null: 문서 미존재 허용)
+      allow get: if isLoggedIn() && (
                    resource == null ||
                    isAdminOf(resource.data.businessId) ||
                    isSubAdminOf(resource.data.businessId) ||
                    isSuperAdmin()
+                 );
+      // list: resource==null 이스케이프 없이 역할 검증 필수
+      // [CRITICAL-FIX] allow read 단일 규칙에 resource==null이 있으면 모든 로그인 유저가
+      //                payroll_summaries 전체를 list 할 수 있는 데이터 유출 취약점이 발생함.
+      //                get/list 분리 후 list는 역할 기반 필터만 허용.
+      allow list: if isLoggedIn() && (
+                   isSuperAdmin() ||
+                   (isBusinessAdmin() && (
+                     isAdminOf(request.query.filters.businessId) ||
+                     isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
+                   )) ||
+                   (isSubAdmin() && (
+                     isSubAdminOf(request.query.filters.businessId) ||
+                     isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
+                   ))
                  );
 
       // 쓰기: Cloud Functions Admin SDK만 허용 (클라이언트 직접 쓰기 차단)

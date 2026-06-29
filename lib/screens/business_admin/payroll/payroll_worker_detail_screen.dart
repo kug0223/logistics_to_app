@@ -496,7 +496,6 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
     // 전체 금액 합산
     int totalNet = settleableRecords.fold(0, (acc, r) => acc + _netOf(r));
 
-    setState(() => _isSettling = true);
     final ok = await DialogHelper.showConfirm(
       ctx,
       title: '중간정산 처리',
@@ -507,10 +506,9 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
       confirmText: '이체완료 처리',
       cancelText: '취소',
     );
-    if (ok != true || !mounted) {
-      setState(() => _isSettling = false);
-      return;
-    }
+    if (ok != true || !mounted) return;
+    // 확인 후에만 처리 잠금 — 다이얼로그 표시 중에는 버튼 잠금 불필요
+    setState(() => _isSettling = true);
 
     // async gap 전에 uid 획득
     final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid ?? 'UNKNOWN';
@@ -562,7 +560,7 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
       // [D-003] async gap 후 mounted 체크
       if (!mounted) return;
       ToastHelper.showSuccess('중간정산이 처리되었습니다');
-      _loadRecords();
+      await _loadRecords();
     } catch (e) {
       if (mounted) ToastHelper.showError('처리에 실패했습니다: $e');
     } finally {
