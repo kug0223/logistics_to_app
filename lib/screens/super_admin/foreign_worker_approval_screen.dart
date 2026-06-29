@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../models/core/user_model.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
@@ -585,6 +586,17 @@ class _ForeignWorkerApprovalScreenState
   }
 
   void _showIdCardImage(UserModel user) {
+    // [특이사항] SUPER_ADMIN 신분증 열람 감사 로그 — 개인정보보호법 접근 기록.
+    // businessId == '' (빈 문자열): 슈퍼어드민은 특정 사업장에 귀속되지 않음.
+    // Firestore 규칙(id_card_copy_logs create)에 isSuperAdmin() 조건이 추가되어야 기록 가능.
+    final viewerId = FirebaseAuth.instance.currentUser?.uid ?? '';
+    FirebaseFirestore.instance.collection('id_card_copy_logs').add({
+      'viewerId': viewerId,
+      'targetUserId': user.uid,
+      'businessId': '',
+      'action': 'view_id_card_image',
+      'timestamp': FieldValue.serverTimestamp(),
+    });
     showDialog(
       context: context,
       builder: (ctx) => Dialog(

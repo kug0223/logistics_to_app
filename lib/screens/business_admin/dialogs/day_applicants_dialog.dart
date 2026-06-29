@@ -127,6 +127,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   @override
   void initState() {
     super.initState();
+    // [특이사항] businessIds는 반드시 _getAdminBusinesses()가 반환한 서버 검증 목록만 전달해야 한다.
+    // 다이얼로그 내부에서 businessId 소속 재검증을 하지 않으므로,
+    // 호출부가 신뢰할 수 없는 출처의 ID를 전달하면 크로스-사업장 쿼리가 실행된다.
     _selectedBusinessId =
         widget.businessIds.isNotEmpty ? widget.businessIds.first : null;
     _applySavedBusinessThenLoad();
@@ -1600,8 +1603,11 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     }
     final bizId = _selectedBusinessId ?? '';
     if (bizId.isEmpty || widget.businesses.isEmpty) return;
-    final business =
-        widget.businesses.firstWhere((b) => b.id == bizId, orElse: () => widget.businesses.first);
+    // [특이사항] orElse 폴백 제거 — bizId가 widget.businesses에 없으면 중단.
+    // 폴백으로 첫 번째 사업장을 사용하면 잘못된 사업장 명의로 신분증 요청이 생성된다.
+    final bizIdx = widget.businesses.indexWhere((b) => b.id == bizId);
+    if (bizIdx < 0) return;
+    final business = widget.businesses[bizIdx];
 
     // 선택된 사용자 정보 수집 (전체 앱에서)
     final targets = <Map<String, String>>[];
@@ -1709,10 +1715,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     if (_contractBatchGroupKey != null) return;
     final bizId = _selectedBusinessId ?? '';
     if (bizId.isEmpty || widget.businesses.isEmpty) return;
-    final business = widget.businesses.firstWhere(
-      (b) => b.id == bizId,
-      orElse: () => widget.businesses.first,
-    );
+    // [특이사항] orElse 폴백 제거 — 잘못된 bizId 시 첫 번째 사업장 명의로 계약서가 생성되는 것을 방지.
+    final bizIdx = widget.businesses.indexWhere((b) => b.id == bizId);
+    if (bizIdx < 0) return;
+    final business = widget.businesses[bizIdx];
 
     // 계약서 미작성 또는 무효 확정자 수집
     final toProcess = g.confirmedApps.where((app) {
@@ -2018,10 +2024,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   Future<void> _createContractForOne(ApplicationModel app) async {
     final bizId = _selectedBusinessId ?? '';
     if (bizId.isEmpty || widget.businesses.isEmpty) return;
-    final business = widget.businesses.firstWhere(
-      (b) => b.id == bizId,
-      orElse: () => widget.businesses.first,
-    );
+    // [특이사항] orElse 폴백 제거 — 잘못된 bizId 시 첫 번째 사업장 명의로 계약서가 생성되는 것을 방지.
+    final bizIdx = widget.businesses.indexWhere((b) => b.id == bizId);
+    if (bizIdx < 0) return;
+    final business = widget.businesses[bizIdx];
     final user = _userMap[app.uid];
     if (user == null) {
       ToastHelper.showError('지원자 정보를 불러올 수 없습니다');
@@ -2379,7 +2385,11 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             confirmedBy: adminUID,
           );
           successCount++;
-        } catch (_) {}
+        } catch (e) {
+          // [특이사항] PERMISSION_DENIED 포함 실패 사유를 로깅 — 크로스-사업장 접근 시도 감지용.
+          // UI에는 최종 성공 카운트만 표시하되, 보안 이벤트는 디버그 로그에 남긴다.
+          debugPrint('❌ [_batchApprove] 확정 실패 [$appId]: $e');
+        }
       }
       if (successCount > 0) _hasChanges = true;
       if (!mounted) return;

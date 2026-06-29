@@ -180,11 +180,15 @@ service cloud.firestore {
 
       // 읽기: 해당 사업장 관리자·슈퍼어드민·지원자(신청한 TO의 사업장 정보 확인용)
       // 공개 정보(이름·주소·평점)는 로그인 사용자 전체 허용
-      // 민감 정보(인감·관리자 목록)는 소유자만 허용
+      // [특이사항] USER도 TO 지원 시 사업장명·주소를 확인하기 위해 단건 GET이 허용된다.
+      // 사업장 문서에 sealBase64(인감 이미지) 등 민감 필드가 포함될 경우 USER에게 노출될 수 있다.
+      // 대안: 민감 필드를 businesses/{id}/private 서브컬렉션으로 분리 — 향후 개선 권장.
       allow get: if isLoggedIn();
-      // list: request.query.filters는 arrayContains 쿼리에서 동작하지 않음
-      // getMyBusiness()는 adminIds array-contains uid 쿼리를 사용하므로
-      // isBusinessAdmin() 전체 허용 (get 규칙이 이미 isLoggedIn()으로 공개이므로 추가 노출 없음)
+      // [특이사항] list: Firestore rules는 arrayContains 쿼리의 필터를 request.query.filters로
+      // 읽을 수 없으므로 isBusinessAdmin() 전체 허용이 불가피하다. 이 설계로 인해 BUSINESS_ADMIN이
+      // 다른 사업장 목록을 임의 쿼리로 조회하는 것이 규칙 레벨에서 차단되지 않는다.
+      // 실제 앱 코드(getMyBusiness: adminIds array-contains uid)가 유일한 방어선이다.
+      // 사업장 문서가 경쟁사 민감 정보를 담지 않는다면 위험은 낮으나 설계 한계로 기록.
       allow list: if isLoggedIn() && (
                     isSuperAdmin() ||
                     isBusinessAdmin()
@@ -571,11 +575,14 @@ service cloud.firestore {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // work_types 컬렉션 (업무 유형 — 읽기 전체, 쓰기 관리자)
+    // work_types 컬렉션 (업무 유형 — 읽기 전체, 쓰기 슈퍼어드민 전용)
+    // [특이사항] 이 컬렉션은 플랫폼 전체 공용 업무 유형 목록이다.
+    // BUSINESS_ADMIN이 수정하면 모든 사업장에 영향을 주므로 isSuperAdmin()만 허용.
+    // 사업장별 업무 유형은 businesses/{businessId}/workTypes 서브컬렉션을 사용한다.
     // ═══════════════════════════════════════════════════════════
     match /work_types/{workTypeId} {
       allow read: if isLoggedIn();
-      allow write: if isAdmin() || isSuperAdmin();
+      allow write: if isSuperAdmin();
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -1384,10 +1391,14 @@ service cloud.firestore {
     match /id_card_copy_logs/{logId} {
       // [SEC-FIX] businessId 검증 추가: 관리자가 소속 사업장 외 열람 기록을 위조하는 것을 차단
       // 개인정보보호법상 주민번호 열람 감사 로그는 실제 소속 사업장 기록이어야 함
+      // [특이사항] isSuperAdmin() 추가: SUPER_ADMIN이 foreign_worker_approval_screen에서
+      // 신분증 이미지를 열람할 때 감사 로그 기록이 가능하도록 허용.
+      // businessId == '' (빈 문자열)로 기록하여 사업장 귀속 없음을 명시한다.
       allow create: if isLoggedIn() &&
                       request.resource.data.viewerId == request.auth.uid &&
                       (isAdminOf(request.resource.data.businessId) ||
-                       isSubAdminOf(request.resource.data.businessId));
+                       isSubAdminOf(request.resource.data.businessId) ||
+                       isSuperAdmin());
       allow read: if isSuperAdmin();
       allow update, delete: if false;
     }
