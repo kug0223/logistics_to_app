@@ -53,6 +53,8 @@ service firebase.storage {
     // ═══════════════════════════════════════════════════════════
     // businesses/ — 사업장 이미지 (대표, 추가, 업무유형)
     // ═══════════════════════════════════════════════════════════
+    // read: 로그인한 모든 사용자 허용 — 공고(TO) 상세 화면에서 모든 근무자가 사업장 이미지를 열람할 수 있어야 함.
+    //       사업자등록증·계약서 등 민감 파일은 이 경로에 저장하지 않으며, users/ 및 contracts/ 경로로 분리됨.
     // delete: ownerId 또는 subAdminOf 허용 (isBusinessAdmin)
     // - 사업장 삭제 버튼은 UI에서 ownerId만 노출
     // - 업무유형 이미지 교체 시 SUB_ADMIN도 delete 필요 (해당 화면 접근 제한 없음)
@@ -65,7 +67,11 @@ service firebase.storage {
     }
 
     // ── users/ — 신분증·통장·사업자등록증 (민감 파일) ───────────
-    // 읽기: 본인 또는 SUPER_ADMIN만 허용
+    // 읽기: 본인만 허용 (규칙 레벨)
+    // SUPER_ADMIN의 신분증 열람: Firestore에 저장된 다운로드 URL 토큰으로 우회 (설계 의도).
+    //   Storage 규칙에 isSuperAdminUser()를 추가하지 않은 이유 — Firestore 1회 읽기 비용 추가,
+    //   실제 접근은 토큰 기반이므로 규칙 추가가 보안상 이점을 주지 않음.
+    //   SUPER_ADMIN 열람 감사 로그는 id_card_copy_logs 컬렉션에 별도 기록됨.
     match /users/{uid}/{allPaths=**} {
       allow read: if request.auth != null && request.auth.uid == uid;
       allow create, update: if isLoggedIn() && isUnder5MB() && (

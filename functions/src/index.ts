@@ -234,7 +234,8 @@ export const resetPasswordWithCode = onCall(
     const updatedHistory = [newPwHash, ...pwHistory].slice(0, 5);
     await db.collection("users").doc(uid).update({passwordHistory: updatedHistory});
 
-    console.log(`✅ [비밀번호 재설정] 완료: ${username}`);
+    // [마스킹] username 전체 노출 방지 (sendPasswordResetCode와 동일 기준 적용)
+    console.log(`✅ [비밀번호 재설정] 완료: ${username.slice(0, 2)}***`);
     return {success: true};
   }
 );
@@ -3002,7 +3003,8 @@ export const sendSmsVerificationCode = onCall(
 
     await sendSensSms(phone, `[ALFit] 인증번호: ${code} (5분 유효)`);
 
-    console.log(`✅ SMS 발송 완료: ${phone} (SENS_ENABLED=${SENS_ENABLED})`);
+    // [마스킹] 전화번호 전체 Cloud Logging 노출 방지 (개인정보처리방침)
+    console.log(`✅ SMS 발송 완료: ${phone.slice(0, 3)}****${phone.slice(-4)} (SENS_ENABLED=${SENS_ENABLED})`);
     return {success: true};
   }
 );
@@ -3074,6 +3076,9 @@ export const onBusinessDeleted = onDocumentDeleted(
   {
     document: "businesses/{businessId}",
     region: "asia-northeast3",
+    // retry: true 필수 — cascade 중 실패 시 서브컬렉션이 부분 정리된 채로 남을 수 있음.
+    // 재시도 시 이미 삭제된 문서는 delete()가 no-op이므로 멱등하게 처리됨.
+    retry: true,
   },
   async (event) => {
     const businessId = event.params.businessId;

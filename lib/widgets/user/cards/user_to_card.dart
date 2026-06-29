@@ -1073,9 +1073,13 @@ class _UserTOCardState extends State<UserTOCard> {
     final List<WorkDetailModel> workDetails;
     if (_workDetails.isEmpty) {
       setState(() => _isApplyLoading = true);
-      workDetails = await _fetch();
+      try {
+        workDetails = await _fetch();
+      } finally {
+        // mounted 체크 없이 조기 리턴하면 _isApplyLoading이 true로 고착됨 — finally로 항상 리셋
+        if (mounted) setState(() => _isApplyLoading = false);
+      }
       if (!mounted) return;
-      setState(() => _isApplyLoading = false);
       if (workDetails.isEmpty) return;
     } else {
       workDetails = _workDetails;
@@ -1102,9 +1106,12 @@ class _UserTOCardState extends State<UserTOCard> {
     final List<SlotModel> slots;
     if (widget.slots == null) {
       setState(() => _isApplyLoading = true);
-      slots = await _fetchSlots();
+      try {
+        slots = await _fetchSlots();
+      } finally {
+        if (mounted) setState(() => _isApplyLoading = false);
+      }
       if (!mounted) return;
-      setState(() => _isApplyLoading = false);
     } else {
       slots = widget.slots!;
     }

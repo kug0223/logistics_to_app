@@ -101,6 +101,10 @@ class PayrollPaymentService {
   // Firestore는 다중 batch 간 원자성을 보장하지 않으며, 월간 450건 초과 사업장은
   // 극히 드무므로 현재 규모에서는 허용된 트레이드오프다.
   // 재시도 시: 이미 transferred된 건은 동일 상태로 덮어쓰여 멱등하게 처리된다.
+  // [설계 한계] markTransferredBatch는 트랜잭션 없이 batch.update를 수행하므로
+  //   개별 항목의 wageStatus를 사전 재검증하지 않는다.
+  //   호출부(payroll_payment_dashboard_screen)에서 wageConfirmed 상태만 필터링하여 전달하는 것이
+  //   상태 기계 무결성 보장의 1차 방어선이다. Firestore attendance.update 규칙이 2차 방어선.
   // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
   Future<void> markTransferredBatch({
     required List<String> attendanceIds,
