@@ -180,9 +180,10 @@ service cloud.firestore {
 
       // 읽기: 해당 사업장 관리자·슈퍼어드민·지원자(신청한 TO의 사업장 정보 확인용)
       // 공개 정보(이름·주소·평점)는 로그인 사용자 전체 허용
-      // [특이사항] USER도 TO 지원 시 사업장명·주소를 확인하기 위해 단건 GET이 허용된다.
-      // 사업장 문서에 sealBase64(인감 이미지) 등 민감 필드가 포함될 경우 USER에게 노출될 수 있다.
-      // 대안: 민감 필드를 businesses/{id}/private 서브컬렉션으로 분리 — 향후 개선 권장.
+      // [분리 완료] sealBase64(인감)는 businesses 문서에서 제거 → users/{uid}에만 저장.
+      // 현재 businesses 문서에 남은 민감 필드: adminIds(관리자 UID 목록), ownerId(소유자 UID).
+      // adminIds는 getMyBusiness() arrayContains 쿼리에 필수이므로 서브컬렉션 분리 불가.
+      // UID 자체는 개인 식별 불가 — 현재 위험 수준은 낮다고 판단.
       allow get: if isLoggedIn();
       // [특이사항] list: Firestore rules는 arrayContains 쿼리의 필터를 request.query.filters로
       // 읽을 수 없으므로 isBusinessAdmin() 전체 허용이 불가피하다. 이 설계로 인해 BUSINESS_ADMIN이

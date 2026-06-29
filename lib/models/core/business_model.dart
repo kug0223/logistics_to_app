@@ -65,8 +65,9 @@ class BusinessModel {
   /// 급여 지급일 (1~31, 예: 10 → 매월 10일 지급)
   final int? wagePaymentDay;
 
-  /// 사업자 인감/도장 이미지 (base64, 계약서 자동 날인용)
-  final String? sealBase64;
+  // [분리 완료] sealBase64는 users/{uid} 문서에만 저장한다.
+  // businesses 문서에는 더 이상 sealBase64를 저장하지 않는다.
+  // 계약서 날인은 UserModel.sealBase64 (currentUser?.sealBase64)를 사용한다.
 
   /// 날인 방식: 'stamp'(도장 이미지 업로드) | 'signature'(직접 서명)
   final String sealType;
@@ -125,7 +126,6 @@ class BusinessModel {
     this.companyName,
     this.ownerName,
     this.wagePaymentDay,
-    this.sealBase64,
     this.sealType = 'stamp',
     this.deactivatedAt,
   }) : adminIds = (adminIds != null && adminIds.isNotEmpty)
@@ -197,7 +197,6 @@ class BusinessModel {
       companyName: map['companyName'],
       ownerName: map['ownerName'],
       wagePaymentDay: (map['wagePaymentDay'] as num?)?.toInt(),
-      sealBase64: map['sealBase64'],
       sealType: map['sealType'] as String? ?? 'stamp',
       deactivatedAt: map['deactivatedAt'] != null
           ? (map['deactivatedAt'] as Timestamp).toDate().toLocal()
@@ -262,7 +261,6 @@ class BusinessModel {
       'companyName': companyName,
       'ownerName': ownerName,
       'wagePaymentDay': wagePaymentDay,
-      'sealBase64': sealBase64,
       'sealType': sealType,
       'deactivatedAt': deactivatedAt != null ? Timestamp.fromDate(deactivatedAt!) : null,
     };
@@ -314,8 +312,6 @@ class BusinessModel {
     String? companyName,
     String? ownerName,
     int? wagePaymentDay,
-    String? sealBase64,
-    bool clearSeal = false,
     String? sealType,
     String? attendanceType,
     int? gpsRadius,
@@ -365,7 +361,6 @@ class BusinessModel {
       companyName: companyName ?? this.companyName,
       ownerName: ownerName ?? this.ownerName,
       wagePaymentDay: wagePaymentDay ?? this.wagePaymentDay,
-      sealBase64: clearSeal ? null : (sealBase64 ?? this.sealBase64),
       sealType: sealType ?? this.sealType,
       attendanceType: attendanceType ?? this.attendanceType,
       gpsRadius: gpsRadius ?? this.gpsRadius,

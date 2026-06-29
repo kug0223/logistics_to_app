@@ -841,37 +841,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     final userProvider = Provider.of<UserProvider>(context, listen: false);
     final uid = userProvider.currentUser?.uid;
     if (uid != null) {
-      // Firestore에서 직접 읽어 캐시 의존 제거
+      // sealBase64는 users/{uid} 문서에만 저장 — businesses 문서 폴백 불필요
       final userDoc = await FirebaseFirestore.instance
           .collection('users').doc(uid).get();
       if (!mounted) return;
-      String? sealBase64 = userDoc.data()?['sealBase64'] as String?;
-
-      // 구버전: users/{uid}에 없으면 관리 사업장 전체에서 폴백 후 이전
-      if (sealBase64 == null || sealBase64.isEmpty) {
-        try {
-          final bizSnap = await FirebaseFirestore.instance
-              .collection('businesses')
-              .where('adminIds', arrayContains: uid)
-              .get();
-          if (!mounted) return;
-          for (final biz in bizSnap.docs) {
-            final oldSeal = biz.data()['sealBase64'] as String?;
-            if (oldSeal != null && oldSeal.isNotEmpty) {
-              final oldType = biz.data()['sealType'] as String? ?? 'stamp';
-              await FirebaseFirestore.instance
-                  .collection('users').doc(uid)
-                  .update({'sealBase64': oldSeal, 'sealType': oldType});
-              if (!mounted) return;
-              sealBase64 = oldSeal;
-              break;
-            }
-          }
-        } catch (e) {
-          debugPrint('⚠️ 날인 자동 이전 실패: $e');
-        }
-        if (!mounted) return;
-      }
+      final String? sealBase64 = userDoc.data()?['sealBase64'] as String?;
 
       if (sealBase64 == null || sealBase64.isEmpty) {
         final goToSettings = await DialogHelper.showConfirm(

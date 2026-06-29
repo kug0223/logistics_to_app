@@ -736,11 +736,11 @@ class AuthService {
 
               if (isSoleAdmin) {
                 // ── 단독 관리자 → 사업장 비활성화 ────────────────────────
-                // Firestore 문서에 deactivatedAt 기록 + 개인정보성 필드(인감) 제거
-                // sealBase64는 Firestore 직접 저장 필드이며 대표자 인감 이미지임 — 파기
+                // Firestore 문서에 deactivatedAt 기록.
+                // sealBase64는 businesses 문서에서 제거됨 — users/{uid} 문서에만 저장.
+                // users 문서의 sealBase64는 하단 계정 삭제 단계에서 파기된다.
                 await bizRef.update({
                   'deactivatedAt': FieldValue.serverTimestamp(),
-                  'sealBase64': FieldValue.delete(),
                 });
 
                 // [CF 위임] 활성 TO 자동 CLOSED + PENDING 지원서 REJECTED 처리는
