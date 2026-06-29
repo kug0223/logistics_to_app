@@ -154,7 +154,7 @@ class _NotificationCardState extends State<NotificationCard>
                 decoration: BoxDecoration(
                   color: isUnread
                       ? theme.primaryColor.withValues(alpha: 0.05)
-                      : Colors.transparent,
+                      : theme.scaffoldBackgroundColor,
                   border: Border(
                     bottom: BorderSide(color: AppColors.grey200, width: 1),
                   ),
