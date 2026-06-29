@@ -2854,7 +2854,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         // 레코드 없는 미출근자 → 신규 노쇼 레코드 생성
         // [BUG-수정] 노쇼 신규 생성 시 wagePending 대신 wageConfirmed(finalWage:0)로 설정하여
         //   급여 정산 화면 "미계산" 목록 누적 방지.
-        final newRef = FirebaseFirestore.instance.collection('attendance').doc();
+        // 결정적 docId(applicationId_yyyyMMdd)로 중복 생성 방지 — checkIn()과 동일 패턴.
+        final noShowDateStr = DateFormat('yyyyMMdd').format(widget.date);
+        final noShowDocId = '${app.id}_$noShowDateStr';
+        final newRef = FirebaseFirestore.instance.collection('attendance').doc(noShowDocId);
         newAttendanceIds[app.id] = newRef.id;
         batch.set(newRef, {
           'applicationId': app.id,

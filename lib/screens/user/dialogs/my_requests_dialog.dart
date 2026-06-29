@@ -1,12 +1,10 @@
 // lib/screens/user/dialogs/my_requests_dialog.dart
 
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import '../../../models/core/schedule_change_request_model.dart';
 import '../../../models/core/id_card_access_request_model.dart';
 import '../../../models/core/application_model.dart';
 import '../../../services/firestore_service.dart';
-import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/format_helper.dart';
@@ -293,21 +291,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
             _buildStatusChip('대기중', AppColors.warning),
           ],
         ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.close, color: AppColors.error),
-              onPressed: () => _handleScheduleReject(request),
-              tooltip: '거절',
-            ),
-            IconButton(
-              icon: const Icon(Icons.check, color: AppColors.success),
-              onPressed: () => _handleScheduleApprove(request),
-              tooltip: '수락',
-            ),
-          ],
-        ),
+        trailing: null,
       ),
     );
   }
@@ -470,97 +454,8 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // 스케줄 변경 액션
+  // 신분증 요청 액션 (이전 스케줄 승인/거절 함수는 USER 화면에서 제거됨)
   // ═══════════════════════════════════════════════════════════
-
-  Future<void> _handleScheduleApprove(ScheduleChangeRequestModel request) async {
-    if (_isProcessing) return;
-    final userProvider = context.read<UserProvider>();
-    final uid = userProvider.currentUser?.uid;
-    if (uid == null) return;
-
-    setState(() => _isProcessing = true);
-    try {
-      final success = await _firestoreService.approveScheduleChangeRequest(
-        requestId: request.id,
-        approverUid: uid,
-      );
-      if (!mounted) return;
-      if (success) {
-        ToastHelper.showSuccess('수락되었습니다');
-        await _loadAllNotifications();
-        if (!mounted) return;
-        widget.onChanged();
-      } else {
-        ToastHelper.showError('수락 실패');
-      }
-    } finally {
-      if (mounted) setState(() => _isProcessing = false);
-    }
-  }
-
-  Future<void> _handleScheduleReject(ScheduleChangeRequestModel request) async {
-    if (_isProcessing) return;
-    final userProvider = context.read<UserProvider>();
-    final uid = userProvider.currentUser?.uid;
-    if (uid == null) return;
-
-    final reasonController = TextEditingController();
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-        title: const Text('거절 사유'),
-        content: SingleChildScrollView(
-          child: TextField(
-          controller: reasonController,
-          decoration: const InputDecoration(
-            hintText: '거절 사유를 입력하세요 (선택)',
-            border: OutlineInputBorder(),
-          ),
-          maxLines: 3,
-        ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('거절'),
-          ),
-        ],
-      ),
-    );
-
-    final scheduleRejectReason = reasonController.text.trim().isEmpty ? null : reasonController.text.trim();
-    reasonController.dispose();
-
-    if (confirmed != true) return;
-    if (!mounted) return;
-
-    setState(() => _isProcessing = true);
-    try {
-      final success = await _firestoreService.rejectScheduleChangeRequest(
-        requestId: request.id,
-        rejectorUid: uid,
-        rejectReason: scheduleRejectReason,
-      );
-      if (!mounted) return;
-      if (success) {
-        ToastHelper.showSuccess('거절되었습니다');
-        await _loadAllNotifications();
-        if (!mounted) return;
-        widget.onChanged();
-      } else {
-        ToastHelper.showError('거절 실패');
-      }
-    } finally {
-      if (mounted) setState(() => _isProcessing = false);
-    }
-  }
 
   // ═══════════════════════════════════════════════════════════
   // 신분증 요청 액션

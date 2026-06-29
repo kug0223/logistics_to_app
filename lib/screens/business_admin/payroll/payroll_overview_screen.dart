@@ -194,7 +194,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
         int notTransferredCount = 0;
         final workers = <String, PayrollWorkerSummary>{};
         for (final r in recs) {
-          final wage = r.finalWage ?? 0;
+          final wage = r.wageDetail?.effectiveNetWage ?? r.finalWage ?? 0;
           totalPayout += wage;
           if (r.wageStatus == AttendanceModel.wageConfirmed) {
             notTransferredCount++;

@@ -299,7 +299,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
           // ── 사업장 설정 (관리자) ─────────────────────────────
-          if (user?.role == UserRole.BUSINESS_ADMIN) ...[
+          if (user?.role == UserRole.BUSINESS_ADMIN || (user?.isSubAdmin ?? false)) ...[
             _buildSectionHeader(context, '사업장 설정', Icons.business_outlined),
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             _buildMenuGroup(context, [

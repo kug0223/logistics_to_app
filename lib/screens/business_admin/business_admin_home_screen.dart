@@ -669,9 +669,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
   /// 더미 지원서 생성 흐름 — 공고 선택 → (단기) 슬롯 선택 → 생성
   Future<void> _createDummyApplicationsFlow(String businessId) async {
     try {
-    // 모든 사업장의 공고를 표시 — businessId 필터 없음, Source.server로 최신 데이터 보장
     final snap = await FirebaseFirestore.instance
         .collection('tos')
+        .where('businessId', isEqualTo: businessId)
         .orderBy('createdAt', descending: true)
         .limit(50)
         .get(const GetOptions(source: Source.server));

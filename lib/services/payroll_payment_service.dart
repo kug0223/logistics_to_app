@@ -109,18 +109,17 @@ class PayrollPaymentService {
     // 알림 발송용 — null이면 알림 생략. 각 항목은 attendanceIds와 동일 순서여야 함
     List<TransferNotificationInfo>? notificationInfos,
   }) async {
-    final now = Timestamp.now();
     for (int i = 0; i < attendanceIds.length; i += 450) {
       final chunk = attendanceIds.skip(i).take(450);
       final batch = _db.batch();
       for (final id in chunk) {
         batch.update(_db.collection('attendance').doc(id), {
           'wageStatus':    AttendanceModel.wageTransferred,
-          'transferDate':  now,
+          'transferDate':  FieldValue.serverTimestamp(),
           if (transferNote != null && transferNote.isNotEmpty)
             'transferNote': transferNote,
           'transferredBy': processedBy,
-          'updatedAt':     now,
+          'updatedAt':     FieldValue.serverTimestamp(),
         });
       }
       await batch.commit();
@@ -151,19 +150,29 @@ class PayrollPaymentService {
 
   /// 이체 완료 취소 (confirmed 상태로 되돌림)
   ///
-  /// 트랜잭션 미사용: 호출부(payroll_payment_dashboard_screen)에서
-  /// UI 레벨로 wageTransferred 상태 항목에만 취소 버튼을 노출하므로
-  /// 서비스 레이어에서 상태 재확인 생략. 트랜잭션 추가 시 읽기 비용이 생기므로 현재 생략.
+  /// 트랜잭션 내에서 wageTransferred 상태를 재확인하여 이미 취소되거나
+  /// 잘못된 상태의 레코드를 역전환하지 않도록 보호한다.
   Future<void> cancelTransfer({
     required String attendanceId,
     required String processedBy,
   }) async {
-    await _db.collection('attendance').doc(attendanceId).update({
-      'wageStatus':    AttendanceModel.wageConfirmed,
-      'transferDate':  FieldValue.delete(),
-      'transferNote':  FieldValue.delete(),
-      'transferredBy': FieldValue.delete(),
-      'updatedAt':     FieldValue.serverTimestamp(),
+    await _db.runTransaction((tx) async {
+      final ref = _db.collection('attendance').doc(attendanceId);
+      final snap = await tx.get(ref);
+      if (!snap.exists) throw Exception('출근기록을 찾을 수 없습니다');
+      final currentStatus = snap.data()?['wageStatus'];
+      if (currentStatus != AttendanceModel.wageTransferred) {
+        throw Exception('이체 완료 상태가 아닙니다 (현재: $currentStatus)');
+      }
+      tx.update(ref, {
+        'wageStatus':         AttendanceModel.wageConfirmed,
+        'transferDate':       FieldValue.delete(),
+        'transferNote':       FieldValue.delete(),
+        'transferredBy':      FieldValue.delete(),
+        'transferCanceledAt': FieldValue.serverTimestamp(),
+        'transferCanceledBy': processedBy,
+        'updatedAt':          FieldValue.serverTimestamp(),
+      });
     });
     debugPrint('✅ 이체 취소 완료: $attendanceId by $processedBy');
   }

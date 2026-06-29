@@ -1235,6 +1235,7 @@ extension ApplicationFirestore on FirestoreService {
         final contractQ2 = await _firestore
             .collection('employment_contracts')
             .where('applicationIds', arrayContains: applicationId)
+            .where('businessId', isEqualTo: businessId)
             .limit(1)
             .get(const GetOptions(source: Source.server));
         if (contractQ2.docs.isNotEmpty) contractDoc = contractQ2.docs.first;
@@ -2247,10 +2248,13 @@ extension ApplicationFirestore on FirestoreService {
       // calculated/confirmed/transferred 상태 attendance는 건드리지 않는다:
       // 이미 급여 계산이 시작된 기록을 삭제하면 정산 불일치가 발생하므로,
       // 관리자가 수동으로 wage_confirm_dialog에서 처리하도록 위임한다.
-      final attendanceRecords = await _firestore
+      final attendanceBaseQuery = _firestore
           .collection('attendance')
           .where('applicationId', isEqualTo: applicationId)
-          .where('wageStatus', isEqualTo: 'pending')
+          .where('wageStatus', isEqualTo: 'pending');
+      final attendanceRecords = await (businessId != null
+              ? attendanceBaseQuery.where('businessId', isEqualTo: businessId)
+              : attendanceBaseQuery)
           .get(const GetOptions(source: Source.server));
       for (final doc in attendanceRecords.docs) {
         localBatch.update(doc.reference, {'canceledWithApplication': true});

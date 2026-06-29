@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:provider/provider.dart';
 import '../../models/core/business_work_type_model.dart';
+import '../../providers/user_provider.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/pickers/add_work_type_sheet.dart';
@@ -437,18 +439,21 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final userProvider = context.watch<UserProvider>();
+    final canEdit = userProvider.can((p) => p.canManageTo);
+
     return GradientScaffold(
       title: '업무 유형 관리',
       onRefresh: _loadWorkTypes,
       body: _isLoading
           ? const LoadingWidget(message: '업무 유형을 불러오는 중...')
           : _workTypes.isEmpty
-              ? _buildEmptyState()
-              : _buildWorkTypeList(),
+              ? _buildEmptyState(canEdit: canEdit)
+              : _buildWorkTypeList(canEdit: canEdit),
     );
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildEmptyState({bool canEdit = true}) {
     final theme = Theme.of(context);
     return AppEmptyState(
       icon: Icons.work_outline,
@@ -500,7 +505,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     );
   }
 
-  Widget _buildWorkTypeList() {
+  Widget _buildWorkTypeList({bool canEdit = true}) {
     final theme = Theme.of(context);
 
     return ListView(
@@ -567,7 +572,8 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
                                   color: AppColors.grey400,
                                   size: ResponsiveHelper.iconSize(context, 20)),
                               onPressed: () => _showWorkTypeMenuSheet(
-                                  context, theme, workType, index, isFirst, isLast),
+                                  context, theme, workType, index, isFirst, isLast,
+                                  canEdit: canEdit),
                               tooltip: '더보기',
                             ),
                           ],
@@ -640,29 +646,31 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     BusinessWorkTypeModel workType,
     int index,
     bool isFirst,
-    bool isLast,
-  ) {
+    bool isLast, {
+    bool canEdit = true,
+  }) {
     AppMenuSheet.show(
       context: context,
       itemGroups: [
-        [
-          if (!isFirst)
-            AppMenuSheetItem(
-              icon: Icons.arrow_upward,
-              label: '위로 이동',
-              color: theme.primaryColor,
-              onTap: () =>
-                  _handleMenuAction('moveUp', workType, index, isFirst, isLast),
-            ),
-          if (!isLast)
-            AppMenuSheetItem(
-              icon: Icons.arrow_downward,
-              label: '아래로 이동',
-              color: theme.primaryColor,
-              onTap: () =>
-                  _handleMenuAction('moveDown', workType, index, isFirst, isLast),
-            ),
-        ],
+        if (canEdit && (!isFirst || !isLast))
+          [
+            if (!isFirst)
+              AppMenuSheetItem(
+                icon: Icons.arrow_upward,
+                label: '위로 이동',
+                color: theme.primaryColor,
+                onTap: () =>
+                    _handleMenuAction('moveUp', workType, index, isFirst, isLast),
+              ),
+            if (!isLast)
+              AppMenuSheetItem(
+                icon: Icons.arrow_downward,
+                label: '아래로 이동',
+                color: theme.primaryColor,
+                onTap: () =>
+                    _handleMenuAction('moveDown', workType, index, isFirst, isLast),
+              ),
+          ],
         [
           AppMenuSheetItem(
             icon: Icons.info_outline,
@@ -671,24 +679,26 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
             onTap: () =>
                 _handleMenuAction('detail', workType, index, isFirst, isLast),
           ),
-          AppMenuSheetItem(
-            icon: Icons.edit,
-            label: '아이콘수정',
-            color: AppColors.warning,
-            onTap: () =>
-                _handleMenuAction('edit', workType, index, isFirst, isLast),
-          ),
+          if (canEdit)
+            AppMenuSheetItem(
+              icon: Icons.edit,
+              label: '아이콘수정',
+              color: AppColors.warning,
+              onTap: () =>
+                  _handleMenuAction('edit', workType, index, isFirst, isLast),
+            ),
         ],
-        [
-          AppMenuSheetItem(
-            icon: Icons.delete,
-            label: '삭제',
-            color: AppColors.error,
-            isDanger: true,
-            onTap: () =>
-                _handleMenuAction('delete', workType, index, isFirst, isLast),
-          ),
-        ],
+        if (canEdit)
+          [
+            AppMenuSheetItem(
+              icon: Icons.delete,
+              label: '삭제',
+              color: AppColors.error,
+              isDanger: true,
+              onTap: () =>
+                  _handleMenuAction('delete', workType, index, isFirst, isLast),
+            ),
+          ],
       ],
     );
   }

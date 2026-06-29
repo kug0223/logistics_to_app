@@ -1004,41 +1004,53 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
   /// 급여 수정
   Future<void> _processWageUpdate(ApplicationModel app, AttendanceModel attendance, WageDetailModel wage) async {
+    if (_isProcessing) return;
+    if (!mounted) return;
+    setState(() => _isProcessing = true);
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final adminUid = userProvider.currentUser?.uid;
       final user = widget.userMap[app.uid];
-      
+
       final updatedWage = wage.copyWith(
         calculatedBy: adminUid,
         calculatedAt: DateTime.now(),
       );
-      
-      // 급여 수정은 이미 calculated 상태인 기록만 대상이며, 단일 관리자가 수정하는 흐름이
-      // 일반적이므로 트랜잭션을 사용하지 않는다. 동시 수정 시 last-write-wins이지만
-      // 실용적으로 충돌 빈도가 매우 낮아 의도적으로 허용한다.
-      await FirebaseFirestore.instance
-          .collection('attendance')
-          .doc(attendance.id)
-          .update({
-        'finalWage': updatedWage.effectiveNetWage,
-        'wageDetail': updatedWage.toMap(),
-        'updatedAt': FieldValue.serverTimestamp(),
+
+      // 트랜잭션으로 서버 상태 재확인 — wageConfirmed/wageTransferred 덮어쓰기 방지
+      await FirebaseFirestore.instance.runTransaction((tx) async {
+        final ref = FirebaseFirestore.instance.collection('attendance').doc(attendance.id);
+        final snap = await tx.get(ref);
+        final status = snap.data()?['wageStatus'];
+        if (status == AttendanceModel.wageConfirmed || status == AttendanceModel.wageTransferred) {
+          throw Exception('이미 확정된 급여는 수정할 수 없습니다');
+        }
+        tx.update(ref, {
+          'finalWage':  updatedWage.effectiveNetWage,
+          'wageDetail': updatedWage.toMap(),
+          'updatedAt':  FieldValue.serverTimestamp(),
+        });
       });
 
       _hasChanges = true;
       widget.onConfirmed?.call();
-      
+
       if (mounted) {
         setState(() {
           _calculatedWages[app.id] = updatedWage;
         });
       }
-      
+
       ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 수정 완료');
     } catch (e) {
       debugPrint('❌ 급여 수정 실패: $e');
-      ToastHelper.showError('급여 수정에 실패했습니다');
+      if (mounted) ToastHelper.showError(e.toString().replaceAll('Exception: ', ''));
+    } finally {
+      if (mounted) {
+        setState(() => _isProcessing = false);
+      } else {
+        _isProcessing = false;
+      }
     }
   }
 

@@ -804,9 +804,10 @@ service cloud.firestore {
                     isUser()  // 복합 쿼리에서 filters.workerId null 반환 대비, 앱 코드에서 workerId==auth.uid 보장
                   );
 
-      // 생성: 해당 사업장 관리자 또는 슈퍼어드민
+      // 생성: 해당 사업장 관리자/하위관리자 또는 슈퍼어드민
       allow create: if isLoggedIn() && (
                       isAdminOf(request.resource.data.businessId) ||
+                      isSubAdminOf(request.resource.data.businessId) ||
                       isSuperAdmin()
                     );
 
