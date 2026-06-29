@@ -84,19 +84,21 @@ class BadgeService {
   Future<bool> _checkWorkDays(String uid, UserModel user, BadgeModel badge) async {
     if (badge.workType != null) {
       // specialty 배지: 특정 업무유형 완료 근무일수를 attendance 컬렉션에서 집계
-      // (userId, workType, status) 복합 인덱스 필요 — firestore.indexes.json에 추가 완료.
-      final countSnap = await _firestore
+      // whereIn 제거: USER 컨텍스트에서 attendance list에 USER 브랜치가 없어 PERMISSION_DENIED
+      // → 3개 status를 병렬 isEqualTo count 쿼리로 분리 후 합산
+      final counts = await Future.wait([
+        AttendanceModel.statusPresent,
+        AttendanceModel.statusLate,
+        AttendanceModel.statusEarlyLeave,
+      ].map((s) => _firestore
           .collection(_attendanceCol)
           .where('userId', isEqualTo: uid)
           .where('workType', isEqualTo: badge.workType)
-          .where('status', whereIn: [
-            AttendanceModel.statusPresent,
-            AttendanceModel.statusLate,
-            AttendanceModel.statusEarlyLeave,
-          ])
+          .where('status', isEqualTo: s)
           .count()
-          .get();
-      return (countSnap.count ?? 0) >= badge.conditionValue;
+          .get()));
+      final total = counts.fold<int>(0, (acc, r) => acc + (r.count ?? 0));
+      return total >= badge.conditionValue;
     }
     // experience 배지: user.totalWorkDays로 직접 평가
     return user.totalWorkDays >= badge.conditionValue;

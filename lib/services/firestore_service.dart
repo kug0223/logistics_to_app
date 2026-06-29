@@ -1066,23 +1066,30 @@ class FirestoreService {
 
       // [BUG-수정] M-3: 해지 승인 시 CONTRACT_PENDING 계약서 voided 전환 누락 수정
       // 배치 커밋 전 계약서를 미리 조회하여 원자적 업데이트 보장
+      // whereIn 제거: applicationId + businessId 필터 + status 클라이언트 필터링
+      // (whereIn 복합쿼리에서 filters.businessId null → 크로스-사업장 계약서 조회 위험)
+      const pendingContractStatuses = {'pending_employer', 'pending_worker'};
       DocumentSnapshot<Map<String, dynamic>>? contractDoc;
       final cq1 = await _firestore
           .collection('employment_contracts')
           .where('applicationId', isEqualTo: applicationId)
-          .where('status', whereIn: ['pending_employer', 'pending_worker'])
-          .limit(1)
+          .where('businessId', isEqualTo: app.businessId)
+          .limit(5)
           .get(const GetOptions(source: Source.server));
-      if (cq1.docs.isNotEmpty) {
-        contractDoc = cq1.docs.first;
+      final cq1Match = cq1.docs.where(
+          (d) => pendingContractStatuses.contains(d.data()['status']));
+      if (cq1Match.isNotEmpty) {
+        contractDoc = cq1Match.first;
       } else {
         final cq2 = await _firestore
             .collection('employment_contracts')
             .where('applicationIds', arrayContains: applicationId)
-            .where('status', whereIn: ['pending_employer', 'pending_worker'])
-            .limit(1)
+            .where('businessId', isEqualTo: app.businessId)
+            .limit(5)
             .get(const GetOptions(source: Source.server));
-        if (cq2.docs.isNotEmpty) contractDoc = cq2.docs.first;
+        final cq2Match = cq2.docs.where(
+            (d) => pendingContractStatuses.contains(d.data()['status']));
+        if (cq2Match.isNotEmpty) contractDoc = cq2Match.first;
       }
 
       // [BUG-수정] H-2: 계약해지 승인 시 TO totalConfirmed 미감소 버그 수정
@@ -1275,23 +1282,29 @@ class FirestoreService {
 
       // [BUG-수정] M-3: 퇴사 승인 시 CONTRACT_PENDING 계약서 voided 전환 누락 수정
       // 배치 커밋 전 계약서를 미리 조회하여 원자적 업데이트 보장
+      // whereIn 제거: applicationId + businessId 필터 + status 클라이언트 필터링
+      const pendingContractStatuses = {'pending_employer', 'pending_worker'};
       DocumentSnapshot<Map<String, dynamic>>? contractDoc;
       final cq1 = await _firestore
           .collection('employment_contracts')
           .where('applicationId', isEqualTo: applicationId)
-          .where('status', whereIn: ['pending_employer', 'pending_worker'])
-          .limit(1)
+          .where('businessId', isEqualTo: app.businessId)
+          .limit(5)
           .get(const GetOptions(source: Source.server));
-      if (cq1.docs.isNotEmpty) {
-        contractDoc = cq1.docs.first;
+      final cq1Match = cq1.docs.where(
+          (d) => pendingContractStatuses.contains(d.data()['status']));
+      if (cq1Match.isNotEmpty) {
+        contractDoc = cq1Match.first;
       } else {
         final cq2 = await _firestore
             .collection('employment_contracts')
             .where('applicationIds', arrayContains: applicationId)
-            .where('status', whereIn: ['pending_employer', 'pending_worker'])
-            .limit(1)
+            .where('businessId', isEqualTo: app.businessId)
+            .limit(5)
             .get(const GetOptions(source: Source.server));
-        if (cq2.docs.isNotEmpty) contractDoc = cq2.docs.first;
+        final cq2Match = cq2.docs.where(
+            (d) => pendingContractStatuses.contains(d.data()['status']));
+        if (cq2Match.isNotEmpty) contractDoc = cq2Match.first;
       }
 
       // [BUG-수정] H-2: 퇴사 승인 시 TO totalConfirmed 미감소 버그 수정

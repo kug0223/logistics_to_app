@@ -339,6 +339,14 @@ export const createNotification = onCall(
     // Admin SDK 우회이므로 최상위 필드와 data 서브필드 모두 화이트리스트로 임의 저장을 차단한다.
     // data 서브필드 허용 키: FCM 딥링크 라우팅에서 실제 사용되는 키만 포함.
     // 허용 외 키는 자동 제거 — XSS·딥링크 조작 방지.
+    //
+    // [TODO-SEC] 로그인한 사용자가 임의 userId로 타인에게 알림 주입 가능.
+    // App Check 필수 적용으로 실제 앱에서만 호출 가능하고 화이트리스트 필터링으로 피해를 제한 중.
+    // 완전한 수정: 발신자 role을 Firestore에서 조회하여
+    //   · SUPER_ADMIN: 모든 userId 허용
+    //   · BUSINESS_ADMIN: data.businessId 소속 근무자만 허용
+    //   · USER/SubAdmin: userId == request.auth.uid만 허용 (본인 알림)
+    // 단, 현재 여러 흐름(근무자→관리자, 관리자→근무자)을 모두 지원해야 하므로 설계 검토 필요.
     const rawData = (data.data as Record<string, unknown> | undefined) ?? {};
     const allowedDataKeys = new Set([
       "screen", "action", "applicationId", "businessId", "toId",

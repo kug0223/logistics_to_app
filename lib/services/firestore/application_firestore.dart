@@ -939,7 +939,9 @@ extension ApplicationFirestore on FirestoreService {
           // [CANCEL-FIX] 취소 주체를 명시해 관리자(ADMIN_CANCELED)/사용자(USER_CANCELED)를 구분.
           // 이전 코드는 cancelReason을 저장하지 않아 분쟁 발생 시 취소 경위 추적이 불가능했다.
           'cancelReason': 'USER_CANCELED',
-          'statusHistory': _appendHistory(appData, {
+          // [RACE-FIX] 트랜잭션 외부 스냅샷(appData)의 statusHistory 사용 → 동시 업데이트 시 유실
+          // fresh.data()!로 교체하여 트랜잭션 내 최신 데이터 기반으로 append
+          'statusHistory': _appendHistory(fresh.data()!, {
             'status': 'CANCELED',
             'at': Timestamp.now(),
             'by': uid,

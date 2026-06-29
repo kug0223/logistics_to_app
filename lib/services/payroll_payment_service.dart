@@ -207,6 +207,9 @@ class PayrollPaymentService {
       if (wageStatus != null) {
         query = query.where('wageStatus', isEqualTo: wageStatus);
       } else {
+        // [TODO-SEC] whereIn + businessId + 범위필터 3중 복합쿼리 → filters.businessId null 가능
+        // BUSINESS_ADMIN 폴백(user.businessId)이 동작하여 실제 오류는 없지만
+        // 추후 두 개의 isEqualTo 병렬 쿼리로 교체 권장
         query = query.where('wageStatus',
             whereIn: [AttendanceModel.wageConfirmed, AttendanceModel.wageTransferred]);
       }

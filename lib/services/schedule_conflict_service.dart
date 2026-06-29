@@ -194,16 +194,18 @@ class ScheduleConflictService {
     try {
       // 만료된 지원서 제외 — workEndDate >= 검사일 (장기공고도 정상 포함)
       final queryDate = Timestamp.fromDate(workDate);
+      // whereIn 제거: uid + status whereIn + 범위필터 복합쿼리 → filters.uid null 반환
+      // → USER 컨텍스트에서 PERMISSION_DENIED로 충돌체크 무력화됨
+      // 해결: status 조건을 클라이언트에서 필터링
       final snapshot = await _firestore
           .collection('applications')
           .where('uid', isEqualTo: uid)
-          // confirmedStatuses = [confirmed, contractPending] 2개 — whereIn 30개 제한 무관
-          .where('status', whereIn: AppStatus.confirmedStatuses)
           .where('workEndDate', isGreaterThanOrEqualTo: queryDate)
           .get();
 
       final allConfirmed = snapshot.docs
           .map((doc) => ApplicationModel.fromFirestore(doc))
+          .where((app) => AppStatus.confirmedStatuses.contains(app.status))
           .toList();
 
       // ✅ 해당 날짜에 근무하는 지원서만 필터링 (장기공고 포함)
