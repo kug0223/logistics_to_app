@@ -4,126 +4,248 @@ import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
 
 /// 알림 목록 아이템 카드
-class NotificationCard extends StatelessWidget {
+///
+/// 왼쪽으로 드래그 시 [취소 | 🗑 삭제] 패널이 드러나며,
+/// 휴지통 버튼을 눌러야만 실제 삭제가 실행된다.
+class NotificationCard extends StatefulWidget {
   final NotificationModel notification;
   final VoidCallback? onTap;
   final VoidCallback? onDismiss;
-  
+
   const NotificationCard({
     super.key,
     required this.notification,
     this.onTap,
     this.onDismiss,
   });
-  
+
+  @override
+  State<NotificationCard> createState() => _NotificationCardState();
+}
+
+class _NotificationCardState extends State<NotificationCard>
+    with SingleTickerProviderStateMixin {
+  static const double _revealWidth = 128.0;
+
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _open() => _ctrl.animateTo(1.0, curve: Curves.easeOut);
+  void _close() => _ctrl.animateTo(0.0, curve: Curves.easeOut);
+
+  void _onDragUpdate(DragUpdateDetails d) {
+    _ctrl.value = (_ctrl.value - d.delta.dx / _revealWidth).clamp(0.0, 1.0);
+  }
+
+  void _onDragEnd(DragEndDetails d) {
+    if (_ctrl.value > 0.45 || d.velocity.pixelsPerSecond.dx < -400) {
+      _open();
+    } else {
+      _close();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isUnread = !notification.isRead;
-    
-    return Dismissible(
-      key: Key(notification.id),
-      direction: DismissDirection.endToStart,
-      onDismissed: (_) => onDismiss?.call(),
-      background: Container(
-        alignment: Alignment.centerRight,
-        padding: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 20)),
-        color: AppColors.error,
-        child: const Icon(Icons.delete, color: Colors.white),
-      ),
-      child: InkWell(
-        onTap: onTap,
-        child: Container(
-          padding: ResponsiveHelper.cardPadding(context),
-          decoration: BoxDecoration(
-            color: isUnread 
-                ? theme.primaryColor.withValues(alpha: 0.05) 
-                : Colors.transparent,
-            border: Border(
-              bottom: BorderSide(
-                color: AppColors.grey200,
-                width: 1,
+    final isUnread = !widget.notification.isRead;
+
+    return Stack(
+      clipBehavior: Clip.hardEdge,
+      children: [
+        // ── 액션 패널 (슬라이드로 드러남) ──────────────────────────
+        Positioned.fill(
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: SizedBox(
+              width: _revealWidth,
+              child: Row(
+                children: [
+                  // 취소
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: _close,
+                      child: Container(
+                        color: AppColors.grey500,
+                        alignment: Alignment.center,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.close, color: Colors.white, size: 22),
+                            const SizedBox(height: 2),
+                            Text(
+                              '취소',
+                              style: ResponsiveHelper.tinyStyle(
+                                context,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  // 삭제
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: widget.onDismiss,
+                      child: Container(
+                        color: AppColors.error,
+                        alignment: Alignment.center,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.delete_outline,
+                                color: Colors.white, size: 22),
+                            const SizedBox(height: 2),
+                            Text(
+                              '삭제',
+                              style: ResponsiveHelper.tinyStyle(
+                                context,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 아이콘
-              Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+        ),
+
+        // ── 카드 본체 (좌로 슬라이드) ──────────────────────────────
+        AnimatedBuilder(
+          animation: _ctrl,
+          builder: (context, child) => Transform.translate(
+            offset: Offset(-_ctrl.value * _revealWidth, 0),
+            child: child,
+          ),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onHorizontalDragUpdate: _onDragUpdate,
+            onHorizontalDragEnd: _onDragEnd,
+            child: InkWell(
+              onTap: () {
+                if (_ctrl.value > 0) {
+                  _close();
+                } else {
+                  widget.onTap?.call();
+                }
+              },
+              child: Container(
+                padding: ResponsiveHelper.cardPadding(context),
                 decoration: BoxDecoration(
-                  color: _getIconColor(notification.type).withValues(alpha: 0.1),
-                  shape: BoxShape.circle,
+                  color: isUnread
+                      ? theme.primaryColor.withValues(alpha: 0.05)
+                      : Colors.transparent,
+                  border: Border(
+                    bottom: BorderSide(color: AppColors.grey200, width: 1),
+                  ),
                 ),
-                child: Icon(
-                  _getIcon(notification.type),
-                  color: _getIconColor(notification.type),
-                  size: ResponsiveHelper.iconSize(context, 20),
-                ),
-              ),
-              
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              
-              // 내용
-              Expanded(
-                child: Column(
+                child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            notification.title,
-                            style: ResponsiveHelper.bodyStyle(
+                    // 알림 타입 아이콘
+                    Container(
+                      padding:
+                          EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+                      decoration: BoxDecoration(
+                        color: _getIconColor(widget.notification.type)
+                            .withValues(alpha: 0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        _getIcon(widget.notification.type),
+                        color: _getIconColor(widget.notification.type),
+                        size: ResponsiveHelper.iconSize(context, 20),
+                      ),
+                    ),
+
+                    SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+
+                    // 제목 + 본문
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  widget.notification.title,
+                                  style: ResponsiveHelper.bodyStyle(
+                                    context,
+                                    fontWeight: isUnread
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              Text(
+                                widget.notification.timeAgo,
+                                style: ResponsiveHelper.tinyStyle(
+                                  context,
+                                  color: AppColors.grey500,
+                                ),
+                              ),
+                            ],
+                          ),
+                          SizedBox(
+                              height: ResponsiveHelper.spacing(context, 4)),
+                          Text(
+                            widget.notification.body,
+                            style: ResponsiveHelper.smallStyle(
                               context,
-                              fontWeight: isUnread ? FontWeight.bold : FontWeight.normal,
+                              color: AppColors.grey600,
                             ),
-                            maxLines: 1,
+                            maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                           ),
-                        ),
-                        Text(
-                          notification.timeAgo,
-                          style: ResponsiveHelper.tinyStyle(
-                            context,
-                            color: AppColors.grey500,
-                          ),
-                        ),
-                      ],
-                    ),
-                    SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                    Text(
-                      notification.body,
-                      style: ResponsiveHelper.smallStyle(
-                        context,
-                        color: AppColors.grey600,
+                        ],
                       ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
                     ),
+
+                    // 미읽음 뱃지
+                    if (isUnread)
+                      Container(
+                        width: 8,
+                        height: 8,
+                        margin: EdgeInsets.only(
+                            left: ResponsiveHelper.spacing(context, 8)),
+                        decoration: BoxDecoration(
+                          color: theme.primaryColor,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
                   ],
                 ),
               ),
-              
-              // 읽지 않음 표시
-              if (isUnread)
-                Container(
-                  width: 8,
-                  height: 8,
-                  margin: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 8)),
-                  decoration: BoxDecoration(
-                    color: theme.primaryColor,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-            ],
+            ),
           ),
         ),
-      ),
+      ],
     );
   }
-  
+
   IconData _getIcon(NotificationType type) {
     switch (type) {
       case NotificationType.applicationConfirmed:
@@ -168,14 +290,12 @@ class NotificationCard extends StatelessWidget {
       case NotificationType.terminationApproved:
       case NotificationType.resignApproved:
         return Icons.logout;
-      // terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
       case NotificationType.terminationRejected:
         return Icons.block;
       case NotificationType.resignRejected:
         return Icons.do_not_disturb_on;
       case NotificationType.wageConfirmed:
         return Icons.payments;
-      // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
       case NotificationType.wageTransferred:
         return Icons.account_balance_wallet;
       case NotificationType.wageCancelConfirmed:
@@ -204,7 +324,7 @@ class NotificationCard extends StatelessWidget {
         return Icons.notifications;
     }
   }
-  
+
   Color _getIconColor(NotificationType type) {
     switch (type) {
       case NotificationType.applicationConfirmed:
@@ -216,7 +336,6 @@ class NotificationCard extends StatelessWidget {
       case NotificationType.workCanceled:
       case NotificationType.scheduleChangeRejected:
       case NotificationType.terminationRequested:
-      // terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
       case NotificationType.terminationRejected:
       case NotificationType.resignRejected:
       case NotificationType.idCardAccessRejected:
@@ -241,7 +360,6 @@ class NotificationCard extends StatelessWidget {
         return AppColors.warning;
       case NotificationType.wageConfirmed:
         return AppColors.success;
-      // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
       case NotificationType.wageTransferred:
         return AppColors.success;
       case NotificationType.wageCancelConfirmed:

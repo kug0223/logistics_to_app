@@ -231,12 +231,11 @@ class _NotificationScreenState extends State<NotificationScreen> {
           }
           final notification = item as NotificationModel;
           return NotificationCard(
+            key: Key(notification.id),
             notification: notification,
             onTap: () => _handleNotificationTap(context, notification, provider),
             onDismiss: () async {
               final success = await provider.deleteNotification(notification.id);
-              // Dismissible 스와이프 완료 시 위젯이 트리에서 제거될 수 있어
-              //           async gap 이후 mounted 체크 필수.
               if (!mounted) return;
               if (success) {
                 ToastHelper.showSuccess('알림이 삭제되었습니다');
