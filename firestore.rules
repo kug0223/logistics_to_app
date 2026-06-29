@@ -680,10 +680,11 @@ service cloud.firestore {
                     (isUser() && request.query.filters.applicantUid == request.auth.uid)
                   );
 
-      // 생성: 지원자 본인 또는 해당 사업장 관리자(추가근무/미출근 요청)
+      // 생성: 지원자 본인 또는 해당 사업장 관리자/하위관리자(추가근무/미출근 요청)
       allow create: if isLoggedIn() && (
                       request.resource.data.applicantUid == request.auth.uid ||
                       isAdminOf(request.resource.data.businessId) ||
+                      isSubAdminOf(request.resource.data.businessId) ||
                       isSuperAdmin()
                     );
 
@@ -878,11 +879,12 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════
     match /worker_locations/{applicationId} {
 
-      // get: 본인 · 해당 사업장 관리자 · 슈퍼어드민
+      // get: 본인 · 해당 사업장 관리자 · 하위관리자 · 슈퍼어드민
       allow get: if isLoggedIn() && (
                    resource == null ||
                    isOwner(resource.data.userId) ||
                    isAdminOf(resource.data.businessId) ||
+                   isSubAdminOf(resource.data.businessId) ||
                    isSuperAdmin()
                  );
 

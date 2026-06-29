@@ -532,9 +532,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     try {
       final viewerId = context.read<UserProvider>().currentUser?.uid;
       if (viewerId == null) return;
+      final bizId = widget.businessId ?? widget.toItem?.to.businessId ?? '';
       await FirebaseFirestore.instance.collection('id_card_copy_logs').add({
         'viewerId': viewerId,
         'targetUserId': widget.user.uid,
+        'businessId': bizId,
         'copiedAt': FieldValue.serverTimestamp(),
         'action': 'resident_number_copy',
       });

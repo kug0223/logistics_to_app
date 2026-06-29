@@ -1227,6 +1227,7 @@ extension ApplicationFirestore on FirestoreService {
       final contractQ1 = await _firestore
           .collection('employment_contracts')
           .where('applicationId', isEqualTo: applicationId)
+          .where('businessId', isEqualTo: businessId)
           .limit(1)
           .get(const GetOptions(source: Source.server));
       if (contractQ1.docs.isNotEmpty) {
