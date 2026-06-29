@@ -1270,6 +1270,7 @@ class _TodayPaymentBadgeCardState extends State<_TodayPaymentBadgeCard> {
 
     return Stack(
       clipBehavior: Clip.none,
+      fit: StackFit.expand,
       children: [
         card,
         Positioned(

@@ -497,50 +497,38 @@ export const onNotificationCreated = onDocumentCreated(
         }
       }
 
-      // 멀티 디바이스: 토큰 배열 순회 발송
-      let successCount = 0;
-      for (const token of fcmTokens) {
-        try {
-          await admin.messaging().send({
-            token: token,
-            notification: {
-              title: title,
-              body: body || "",
-            },
-            data: fcmData,
-            android: {
-              priority: "high",
-              notification: {
-                channelId: "alfit_notifications",
-                sound: "default",
-              },
-            },
-            apns: {
-              payload: {
-                aps: {
-                  sound: "default",
-                  badge: 1,
-                },
-              },
-            },
-          });
-          successCount++;
-        } catch (tokenError: unknown) {
-          const errMsg = tokenError instanceof Error ? tokenError.message : "";
-          if (
-            errMsg.includes("not-registered") ||
-            errMsg.includes("invalid-registration-token")
-          ) {
-            // 만료 토큰: fcmToken 단일 필드 + fcmTokens 배열 양쪽 정리
-            console.log(`⚠️ [알림 트리거] 만료 토큰 정리: ${userId}, token=...${token.slice(-6)}`);
-            await db.collection("users").doc(userId).update({
-              fcmToken: admin.firestore.FieldValue.delete(),
-              fcmTokens: admin.firestore.FieldValue.arrayRemove(token),
-            });
-          } else {
-            console.error(`❌ [알림 트리거] FCM 실패 (${userId}):`, tokenError);
-          }
+      // 멀티 디바이스: sendEachForMulticast로 한 번의 HTTP 요청에 일괄 발송
+      const multicastResponse = await admin.messaging().sendEachForMulticast({
+        tokens: fcmTokens,
+        notification: {title, body: body || ""},
+        data: fcmData,
+        android: {
+          priority: "high",
+          notification: {channelId: "alfit_notifications", sound: "default"},
+        },
+        apns: {payload: {aps: {sound: "default", badge: 1}}},
+      });
+
+      const successCount = multicastResponse.successCount;
+
+      // 실패 토큰 중 만료 토큰만 추려서 정리
+      const expiredTokens = fcmTokens.filter((_, i) => {
+        const errCode = multicastResponse.responses[i].error?.code ?? "";
+        return (
+          errCode === "messaging/invalid-registration-token" ||
+          errCode === "messaging/registration-token-not-registered"
+        );
+      });
+      if (expiredTokens.length > 0) {
+        console.log(`⚠️ [알림 트리거] 만료 토큰 ${expiredTokens.length}개 정리: ${userId}`);
+        const updates: Record<string, unknown> = {
+          fcmTokens: admin.firestore.FieldValue.arrayRemove(...expiredTokens),
+        };
+        // 단일 토큰 필드도 만료된 경우 삭제
+        if (expiredTokens.some((t) => t === fcmTokens[0])) {
+          updates.fcmToken = admin.firestore.FieldValue.delete();
         }
+        await db.collection("users").doc(userId).update(updates);
       }
 
       if (successCount > 0) {
@@ -1048,20 +1036,7 @@ export const onReviewCreated = onDocumentCreated(
     // [특이사항] 타인의 requestId로 리뷰를 주입해 review_request를 오염시키는 공격 차단.
     // USER_TO_BUSINESS: review_requests.workerId == reviewerId 검증 (소유자 확인).
     // ADMIN_TO_USER는 adminUid 필드가 없으므로 Firestore 규칙의 isAdminOf(businessId)에 위임.
-    const reqPreRef = db.collection("review_requests").doc(requestId);
-    const reqPreSnap = await reqPreRef.get();
-    if (!reqPreSnap.exists) {
-      try { await event.data?.ref.delete(); } catch (_) {}
-      console.log(`❌ [가짜 리뷰 차단] review_request 미존재 → 삭제: ${reviewId}`);
-      return;
-    }
-    const reqPre = reqPreSnap.data()!;
-    if (reviewType === "USER_TO_BUSINESS" && reqPre.workerId !== reviewerId) {
-      try { await event.data?.ref.delete(); } catch (_) {}
-      console.log(`❌ [가짜 리뷰 차단] workerId 불일치(${reqPre.workerId} ≠ ${reviewerId}) → 삭제: ${reviewId}`);
-      return;
-    }
-
+    // 검증과 상태 업데이트를 단일 트랜잭션으로 합쳐 review_requests 읽기를 1회로 절약.
     const isAdminReview = reviewType === "ADMIN_TO_USER";
     const statusField = isAdminReview ? "adminStatus" : "workerStatus";
     const reviewIdField = isAdminReview ? "adminReviewId" : "workerReviewId";
@@ -1072,13 +1047,24 @@ export const onReviewCreated = onDocumentCreated(
 
     let shouldPublish = false;
     let otherReviewId: string | null = null;
+    let blocked = false;
 
-    // 트랜잭션: 이 리뷰 측 상태를 원자적으로 업데이트하고 동시 공개 여부 확인
+    // 트랜잭션: 가짜 리뷰 차단 검증 + 상태 원자적 업데이트 + 동시 공개 여부 확인
     await db.runTransaction(async (tx) => {
       const reqSnap = await tx.get(reqRef);
-      if (!reqSnap.exists) return;
+      if (!reqSnap.exists) {
+        blocked = true;
+        return;
+      }
 
       const req = reqSnap.data()!;
+
+      // 소유자 검증 (트랜잭션 안에서 수행 — 외부 읽기 제거)
+      if (reviewType === "USER_TO_BUSINESS" && req.workerId !== reviewerId) {
+        blocked = true;
+        return;
+      }
+
       if (req.isPublished) return;
 
       tx.update(reqRef, {
@@ -1092,6 +1078,12 @@ export const onReviewCreated = onDocumentCreated(
         isAdminReview ? req.workerReviewId : req.adminReviewId
       ) as string | null;
     });
+
+    if (blocked) {
+      try { await event.data?.ref.delete(); } catch (_) {}
+      console.log(`❌ [가짜 리뷰 차단] review_request 미존재 또는 workerId 불일치 → 삭제: ${reviewId}`);
+      return;
+    }
 
     if (!shouldPublish) {
       console.log(`📝 [리뷰 생성] ${requestId} - ${statusField} 제출 (상대방 대기 중)`);
@@ -1981,24 +1973,15 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
 
     console.log(`  📋 [리마인더] 대상 지원서: ${applicationsSnapshot.size}건`);
 
-    // 오늘(KST) 이미 발송된 workReminder userId 조회 — 재시도 시 중복 방지
-    const todayKSTStart = new Date(nowKST);
-    todayKSTStart.setHours(0, 0, 0, 0);
-    const todayUTC = new Date(todayKSTStart.getTime() - KST_OFFSET_MS);
-    const alreadySentSnap = await db
-      .collectionGroup("notifications")
-      .where("type", "==", "workReminder")
-      .where("createdAt", ">=", Timestamp.fromDate(todayUTC))
-      .get();
-    const alreadySentUsers = new Set(
-      alreadySentSnap.docs.map((d) => d.data().userId as string)
-    );
+    // 오늘 KST 날짜 문자열 — applications.reminderSentDate 필드로 중복 방지
+    // (collectionGroup("notifications") 전수 스캔 대신 이미 읽어온 applications 메모리 필터로 대체)
+    const todayStr = `${nowKST.getFullYear()}-${String(nowKST.getMonth() + 1).padStart(2, "0")}-${String(nowKST.getDate()).padStart(2, "0")}`;
 
-    // userId별로 근무 목록 묶기 — 이미 발송된 사용자는 제외
+    // userId별로 근무 목록 묶기 — 오늘 이미 발송된 application은 제외
     const userJobsMap = new Map<string, admin.firestore.QueryDocumentSnapshot[]>();
     for (const appDoc of applicationsSnapshot.docs) {
+      if (appDoc.data().reminderSentDate === todayStr) continue; // 재시도 시 중복 방지
       const uid = appDoc.data().uid as string;
-      if (alreadySentUsers.has(uid)) continue;
       if (!userJobsMap.has(uid)) userJobsMap.set(uid, []);
       userJobsMap.get(uid)!.push(appDoc);
     }
@@ -2064,17 +2047,38 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
           const tokens: string[] =
             (userData?.fcmTokens as string[] | undefined)?.filter(Boolean) ??
             (userData?.fcmToken ? [userData.fcmToken as string] : []);
-          const fcmPayload = {
-            title: "내일 근무 알림 📅",
-            body: fcmBody,
-            data: { type: "workReminder", applicationId: jobs[0].id },
-          };
-          // allSettled: 토큰 1개 실패 시 나머지 토큰 발송도 중단되지 않도록 개선
-          await Promise.allSettled(tokens.map((token) => sendFCMToUser(userId, fcmPayload, token)));
-          if (tokens.length === 0) {
+          if (tokens.length > 0) {
+            // sendEachForMulticast: 단일 HTTP 요청으로 멀티 디바이스 발송
+            const multicastResp = await admin.messaging().sendEachForMulticast({
+              tokens,
+              notification: {title: "내일 근무 알림 📅", body: fcmBody},
+              data: {type: "workReminder", applicationId: jobs[0].id},
+              android: {priority: "high", notification: {channelId: "alfit_notifications", sound: "default"}},
+              apns: {payload: {aps: {sound: "default", badge: 1}}},
+            });
+            const expiredReminderTokens = tokens.filter((_, i) => {
+              const errCode = multicastResp.responses[i].error?.code ?? "";
+              return (
+                errCode === "messaging/invalid-registration-token" ||
+                errCode === "messaging/registration-token-not-registered"
+              );
+            });
+            if (expiredReminderTokens.length > 0) {
+              await db.collection("users").doc(userId).update({
+                fcmTokens: admin.firestore.FieldValue.arrayRemove(...expiredReminderTokens),
+              });
+            }
+          } else {
             console.log(`    ⚠️ FCM 토큰 없음 (리마인더 스킵): ${userId}`);
           }
         }
+
+        // 발송 완료 → applications에 날짜 기록 (재시도 시 중복 방지)
+        const reminderBatch = db.batch();
+        for (const appDoc of jobs) {
+          reminderBatch.update(appDoc.ref, {reminderSentDate: todayStr});
+        }
+        await reminderBatch.commit();
 
         sentCount++;
       } catch (err) {
@@ -2101,9 +2105,12 @@ async function runIntegrityCheck(now: Timestamp): Promise<void> {
     let fixedCount = 0;
 
     // 1. 마감되어야 하는데 ACTIVE인 TO 수정
+    // applicationDeadline <= now 조건으로 범위를 좁혀 전수 조회 방지
+    // (applicationDeadline이 없는 무기한 TO는 정합성 검사 대상 아님 → 필터 안전)
     const activeTOs = await db
       .collection("tos")
       .where("status", "==", "ACTIVE")
+      .where("applicationDeadline", "<=", now)
       .get();
 
     let integrityBatch = db.batch();
@@ -2115,29 +2122,26 @@ async function runIntegrityCheck(now: Timestamp): Promise<void> {
       // closedBy 있음 = 관리자 직접마감 → 정합성 검사 대상 아님
       if (toData.closedBy != null) continue;
 
-      const deadline = toData.applicationDeadline as Timestamp | null;
-      if (deadline && deadline.toMillis() <= now.toMillis()) {
-        integrityBatch.update(toDoc.ref, {
-          status: "CLOSED",
-          closedAt: now,
-          closedReason: "INTEGRITY_CHECK",
-          statusUpdatedAt: now,
-        });
-        integrityBatchCount++;
-        if (integrityBatchCount >= 499) {
-          await integrityBatch.commit();
-          integrityBatch = db.batch();
-          integrityBatchCount = 0;
-        }
-        fixedCount++;
-        console.log(`    → TO ${toDoc.id} 상태 수정`);
+      integrityBatch.update(toDoc.ref, {
+        status: "CLOSED",
+        closedAt: now,
+        closedReason: "INTEGRITY_CHECK",
+        statusUpdatedAt: now,
+      });
+      integrityBatchCount++;
+      if (integrityBatchCount >= 499) {
+        await integrityBatch.commit();
+        integrityBatch = db.batch();
+        integrityBatchCount = 0;
       }
+      fixedCount++;
+      console.log(`    → TO ${toDoc.id} 상태 수정`);
     }
 
     if (integrityBatchCount > 0) await integrityBatch.commit();
 
-    // 2. 슬롯 workDetail 만료 정합성 — 10분 스케줄러에서 못 잡은 케이스 보정
-    await processSlotWorkDetailExpiry(now);
+    // 2. 슬롯 workDetail 만료 정합성 제거 — masterScheduler가 매 시간 processSlotWorkDetailExpiry를
+    // 이미 실행하므로 새벽 3시 정합성 검사에서 재호출하면 이중 실행이 됨
 
     // 3. 모든 그룹 마스터 상태 재동기화
     const masterTOs = await db
@@ -2201,84 +2205,6 @@ function _getNotifCategory(type: string): string | null {
   return map[type] ?? null;
 }
 
-interface FCMPayload {
-  title: string;
-  body: string;
-  data?: Record<string, string>;
-}
-
-/**
- * 특정 사용자에게 FCM 푸시 전송
- * @param {string} userId - 사용자 UID
- * @param {FCMPayload} payload - 알림 내용
- */
-async function sendFCMToUser(
-  userId: string,
-  payload: FCMPayload,
-  existingToken?: string | null
-): Promise<void> {
-  let fcmToken: string | undefined;  // catch 블록에서도 접근 가능하도록 try 밖 선언
-  try {
-    if (existingToken !== undefined) {
-      fcmToken = existingToken ?? undefined;
-    } else {
-      // 토큰이 전달되지 않은 경우에만 user 문서 읽기
-      const userDoc = await db.collection("users").doc(userId).get();
-      if (!userDoc.exists) return;
-      fcmToken = userDoc.data()?.fcmToken as string | undefined;
-    }
-
-    if (!fcmToken) {
-      console.log(`    ⚠️ FCM 토큰 없음: ${userId}`);
-      return;
-    }
-
-    // FCM 메시지 전송
-    await admin.messaging().send({
-      token: fcmToken,
-      notification: {
-        title: payload.title,
-        body: payload.body,
-      },
-      data: payload.data,
-      android: {
-        priority: "high",
-        notification: {
-          channelId: "alfit_notifications",
-          sound: "default",
-        },
-      },
-      apns: {
-        payload: {
-          aps: {
-            sound: "default",
-            badge: 1,
-          },
-        },
-      },
-    });
-
-    console.log(`    ✓ FCM 전송: ${userId}`);
-  } catch (error: unknown) {
-    // 토큰 만료 시 토큰 삭제
-    const errorMessage = error instanceof Error ? error.message : "";
-    if (
-      errorMessage.includes("not-registered") ||
-      errorMessage.includes("invalid-registration-token")
-    ) {
-      console.log(`    ⚠️ 만료된 FCM 토큰 정리: ${userId}`);
-      const updates: Record<string, unknown> = {
-        fcmToken: admin.firestore.FieldValue.delete(),
-      };
-      if (fcmToken) {
-        updates.fcmTokens = admin.firestore.FieldValue.arrayRemove(fcmToken);
-      }
-      await db.collection("users").doc(userId).update(updates);
-    } else {
-      console.log(`    ⚠️ FCM 전송 실패 (${userId}):`, error);
-    }
-  }
-}
 
 // ═══════════════════════════════════════════════════════════
 // 🔧 동기화 헬퍼 함수들
@@ -3631,36 +3557,8 @@ export const rejectForeignWorker = onCall(
   }
 );
 
-// ── cleanExpiredPassTokens ───────────────────────────────────
-// 30분마다 만료된 passTokens 문서 정리 (ISSUE-02)
-// [특이사항] Firestore 콘솔 TTL 정책 대안 — passTokens는 소량이므로 배치 1회로 충분
-export const cleanExpiredPassTokens = onSchedule(
-  {
-    schedule: "every 30 minutes",
-    timeZone: "Asia/Seoul",
-    region: "asia-northeast3",
-    maxInstances: 1,
-  },
-  async () => {
-    const now = Timestamp.now();
-    const expiredSnap = await db
-      .collection("passTokens")
-      .where("expiresAt", "<=", now)
-      .limit(499)
-      .get();
-
-    if (expiredSnap.empty) {
-      console.log("✅ [passTokens 정리] 만료 문서 없음");
-      return;
-    }
-
-    const batch = db.batch();
-    expiredSnap.docs.forEach((doc) => batch.delete(doc.ref));
-    await batch.commit();
-
-    console.log(`✅ [passTokens 정리] ${expiredSnap.size}건 삭제`);
-  }
-);
+// cleanExpiredPassTokens 제거 — Firestore TTL 정책으로 대체
+// 설정: Firebase 콘솔 → Firestore → TTL → passTokens 컬렉션, expiresAt 필드
 
 // ── adminResetForeignPassword ────────────────────────────────
 // 슈퍼어드민 전용 — 외국인 근로자 비밀번호 임시 초기화 (ISSUE-03)

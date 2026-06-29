@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 
+import '../../../models/core/attendance_model.dart';
 import '../../../models/core/business_model.dart';
 import '../../../models/core/payroll_summary_model.dart';
 import '../../../providers/user_provider.dart';
@@ -83,25 +84,118 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
     setState(() { _isLoading = true; _loadError = null; });
 
     try {
-      final futures = List.generate(12, (i) {
-        final mm = (i + 1).toString().padLeft(2, '0');
-        final docId = '${bizId}_$year-$mm';
-        return FirebaseFirestore.instance
-            .collection('payroll_summaries')
-            .doc(docId)
-            .get();
-      });
+      // payroll_summaries(CF 집계)에 의존하지 않고 attendance 직접 집계
+      // → 급여마감 직후 CF 처리 전에도 즉시 데이터가 표시됨
+      final yearStart = DateTime(year, 1, 1);
+      final yearEnd   = DateTime(year + 1, 1, 1);
+      final snap = await FirebaseFirestore.instance
+          .collection('attendance')
+          .where('businessId', isEqualTo: bizId)
+          .where('workDate',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(yearStart))
+          .where('workDate', isLessThan: Timestamp.fromDate(yearEnd))
+          .limit(2000)
+          .get();
 
-      final docs = await Future.wait(futures);
-      final summaries = List.generate(12, (i) {
-        final doc = docs[i];
-        if (doc.exists) {
-          return PayrollSummaryModel.fromFirestore(doc);
+      // 파싱 오류가 있는 문서는 무시
+      final allRecords = snap.docs.map((d) {
+        try { return AttendanceModel.fromFirestore(d); } catch (_) { return null; }
+      }).whereType<AttendanceModel>().toList();
+
+      // confirmed/transferred 만 급여 집계 대상
+      final confirmed = allRecords.where((r) =>
+          r.wageStatus == AttendanceModel.wageConfirmed ||
+          r.wageStatus == AttendanceModel.wageTransferred).toList();
+
+      // 미확정(pending/calculated) — pendingCount 표시용
+      final pending = allRecords.where((r) =>
+          r.wageStatus == AttendanceModel.wagePending ||
+          r.wageStatus == AttendanceModel.wageCalculated).toList();
+
+      // userId 목록 수집 → 이름 일괄 조회 (30개씩 배치)
+      final userIds = confirmed.map((r) => r.userId).toSet().toList();
+      final nameMap = <String, String>{};
+      for (var i = 0; i < userIds.length; i += 30) {
+        final end = (i + 30) < userIds.length ? i + 30 : userIds.length;
+        final chunk = userIds.sublist(i, end);
+        try {
+          final userSnap = await FirebaseFirestore.instance
+              .collection('users')
+              .where(FieldPath.documentId, whereIn: chunk)
+              .get();
+          for (final d in userSnap.docs) {
+            nameMap[d.id] = (d.data()['name'] as String?) ?? '';
+          }
+        } catch (_) {}
+      }
+
+      // 월별 집계 (confirmed/transferred)
+      final monthlyRecs = <int, List<AttendanceModel>>{};
+      for (final r in confirmed) {
+        // yearMonth 필드 우선, 없으면 workDate KST 기준
+        final int month;
+        final ym = r.yearMonth;
+        if (ym != null && ym.startsWith('$year-')) {
+          month = int.tryParse(ym.split('-')[1]) ??
+              r.workDate.toLocal().month;
+        } else {
+          month = r.workDate.toLocal().month;
         }
-        return PayrollSummaryModel.empty(
+        (monthlyRecs[month] ??= []).add(r);
+      }
+
+      // 월별 미확정 카운트
+      final monthlyPending = <int, int>{};
+      for (final r in pending) {
+        final int month;
+        final ym = r.yearMonth;
+        if (ym != null && ym.startsWith('$year-')) {
+          month = int.tryParse(ym.split('-')[1]) ??
+              r.workDate.toLocal().month;
+        } else {
+          month = r.workDate.toLocal().month;
+        }
+        monthlyPending[month] = (monthlyPending[month] ?? 0) + 1;
+      }
+
+      final summaries = List.generate(12, (i) {
+        final month = i + 1;
+        final recs  = monthlyRecs[month] ?? [];
+        final mm    = month.toString().padLeft(2, '0');
+        if (recs.isEmpty) {
+          return PayrollSummaryModel.empty(
+              businessId: bizId, year: year, month: month);
+        }
+        int totalPayout = 0;
+        int notTransferredCount = 0;
+        final workers = <String, PayrollWorkerSummary>{};
+        for (final r in recs) {
+          final wage = r.finalWage ?? 0;
+          totalPayout += wage;
+          if (r.wageStatus == AttendanceModel.wageConfirmed) {
+            notTransferredCount++;
+          }
+          final prev = workers[r.userId];
+          workers[r.userId] = PayrollWorkerSummary(
+            workerId: r.userId,
+            name: nameMap[r.userId] ?? '',
+            totalPayout: (prev?.totalPayout ?? 0) + wage,
+            workDays: (prev?.workDays ?? 0) + 1,
+          );
+        }
+        return PayrollSummaryModel(
+          id: '${bizId}_$year-$mm',
           businessId: bizId,
+          yearMonth: '$year-$mm',
           year: year,
-          month: i + 1,
+          month: month,
+          totalPayout: totalPayout,
+          confirmedCount: recs.length,
+          workerCount: workers.length,
+          pendingCount: monthlyPending[month] ?? 0,
+          notTransferredCount: notTransferredCount,
+          workers: workers,
+          updatedAt: DateTime.now(),
         );
       });
 

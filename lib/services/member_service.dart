@@ -201,12 +201,16 @@ class MemberService {
 
   // ── 초대 조회 ─────────────────────────────────────────────────
 
-  /// 특정 사용자의 pending 초대 목록
+  /// 특정 사용자의 pending 초대 목록 (30일 이내만 — 만료된 초대 자동 제외)
   Future<List<MemberInvitationModel>> getPendingInvitations(String uid) async {
     try {
+      final expiry = Timestamp.fromDate(
+        DateTime.now().subtract(const Duration(days: 30)),
+      );
       final snap = await _invitations
           .where('targetUid', isEqualTo: uid)
           .where('status', isEqualTo: 'pending')
+          .where('createdAt', isGreaterThan: expiry)
           .orderBy('createdAt', descending: true)
           .limit(50)
           .get();

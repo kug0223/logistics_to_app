@@ -44,6 +44,7 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
 
   bool _isLoading    = true;
   bool _isProcessing = false;
+  bool _isExporting  = false;
   List<AttendanceModel> _records = [];
   Map<String, List<AttendanceModel>> _groupedCache = {};
   final Set<String> _selectedIds = {};
@@ -298,14 +299,20 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
   }
 
   Future<void> _exportExcel() async {
-    final today = DateTime.now();
-    final biz = widget.businessName ?? widget.businessId;
-    await PayrollExcelHelper.exportAndShare(
-      context: context,
-      records: _records,
-      title: '$biz ${today.month}월 오늘 처리할 송금',
-      filename: '${biz}_${today.month}월_오늘송금목록.xlsx',
-    );
+    if (_isExporting) return;
+    setState(() => _isExporting = true);
+    try {
+      final today = DateTime.now();
+      final biz = widget.businessName ?? widget.businessId;
+      await PayrollExcelHelper.exportAndShare(
+        context: context,
+        records: _records,
+        title: '$biz ${today.month}월 오늘 처리할 송금',
+        filename: '${biz}_${today.month}월_오늘송금목록.xlsx',
+      );
+    } finally {
+      if (mounted) setState(() => _isExporting = false);
+    }
   }
 
   Future<void> _markTransferred(AttendanceModel record) async {

@@ -1064,6 +1064,7 @@ class _UserTOCardState extends State<UserTOCard> {
 
   /// 하단 "지원하기" 버튼 — flex TO면 전체 슬롯 다이얼로그, contract TO면 단일 다이얼로그
   Future<void> _openApplyDialog() async {
+    if (_isApplyLoading) return; // 연타 방지
     if (widget.to.isFlexType) {
       await _openApplyDialogAllSlots();
       return;
@@ -1169,7 +1170,7 @@ class _UserTOCardState extends State<UserTOCard> {
 
   /// 슬롯 행의 "지원하기" → 해당 날짜 단일 슬롯 다이얼로그
   Future<void> _openApplyDialogForSlot(SlotModel slot) async {
-    if (!mounted) return;
+    if (_isApplyLoading || !mounted) return;
     final slotTO = widget.to.copyWith(rangeStart: slot.date);
     final annotatedDetails = slot.workDetails.map((wd) =>
         slot.isWorkTypeFull(wd.workType)

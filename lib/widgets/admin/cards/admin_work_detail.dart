@@ -493,6 +493,7 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
       context: context,
       builder: (context) => WorkApplicantsDialog(
         toItem: widget.toItem,
+        work: widget.work,
         onChanged: widget.onChanged,
       ),
     );

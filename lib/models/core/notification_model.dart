@@ -125,8 +125,9 @@ class NotificationModel {
       'body': body,
       'data': data,
       'isRead': isRead,
-      'createdAt': Timestamp.fromDate(createdAt),
-      'readAt': readAt != null ? Timestamp.fromDate(readAt!) : null,
+      // CF callable 파라미터는 JSON-serializable만 허용 — Timestamp 불가, ISO 8601 문자열 사용
+      'createdAt': createdAt.toUtc().toIso8601String(),
+      'readAt': readAt?.toUtc().toIso8601String(),
     };
   }
 

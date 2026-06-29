@@ -66,6 +66,7 @@ class _PayrollPaymentDashboardScreenState
 
   // 탭 0: 미이체 / 탭 1: 이체완료 / 탭 2: 변경요청 / 탭 3: 중간정산
   bool _isLoading = false;
+  bool _isExporting = false;
   List<AttendanceModel> _pendingRecords    = [];  // 미이체
   List<AttendanceModel> _transferredRecords = []; // 이체완료
   List<PaymentChangeRequestModel>     _changeRequests    = [];
@@ -660,13 +661,19 @@ class _PayrollPaymentDashboardScreenState
 
   // ── 엑셀 내보내기 → 공통 헬퍼 위임 ─────────────────────────
   Future<void> _exportCsv() async {
-    final bizName = widget.businessName ?? widget.businessId;
-    await PayrollExcelHelper.exportAndShare(
-      context: context,
-      records: _pendingRecords,
-      title: '$bizName ${widget.year}년 ${widget.month}월 이체목록',
-      filename: '${bizName}_${widget.year}년${widget.month}월_이체목록.xlsx',
-    );
+    if (_isExporting) return;
+    setState(() => _isExporting = true);
+    try {
+      final bizName = widget.businessName ?? widget.businessId;
+      await PayrollExcelHelper.exportAndShare(
+        context: context,
+        records: _pendingRecords,
+        title: '$bizName ${widget.year}년 ${widget.month}월 이체목록',
+        filename: '${bizName}_${widget.year}년${widget.month}월_이체목록.xlsx',
+      );
+    } finally {
+      if (mounted) setState(() => _isExporting = false);
+    }
   }
 
   // ── 중간정산 승인 ─────────────────────────────────────────

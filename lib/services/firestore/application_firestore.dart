@@ -1424,6 +1424,12 @@ extension ApplicationFirestore on FirestoreService {
   }) async {
     final dateStart = DateTime(date.year, date.month, date.day);
     final dateEnd = dateStart.add(const Duration(days: 1));
+    // [DATE-DEBUG] 날짜 불일치 원인 추적
+    debugPrint('🗓️ [DATE-DEBUG] getPending:'
+        ' 전달된date=${date.toIso8601String()}(isUtc=${date.isUtc})'
+        ' → dateStart=${dateStart.toIso8601String()}'
+        ' dateEnd=${dateEnd.toIso8601String()}'
+        ' (UTC: ${dateStart.toUtc()} ~ ${dateEnd.toUtc()})');
     try {
       final snap = await _firestore
           .collection('applications')
@@ -1431,10 +1437,17 @@ extension ApplicationFirestore on FirestoreService {
           .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
           .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
           .get(const GetOptions(source: Source.server));
-      return snap.docs
+      final apps = snap.docs
           .map((d) => ApplicationModel.fromFirestore(d))
           .where((app) => app.status == AppStatus.pending && !app.isLongTermApplication)
           .toList();
+      // [DATE-DEBUG] 결과 workDate 확인
+      for (final app in apps) {
+        debugPrint('  📋 [DATE-DEBUG] pending app=${app.id}'
+            ' workDate(local)=${app.workDate.toLocal().toIso8601String()}'
+            ' workDate(utc)=${app.workDate.toUtc().toIso8601String()}');
+      }
+      return apps;
     } catch (e) {
       debugPrint('❌ 지원자 조회 실패: $e');
       return [];
@@ -1480,6 +1493,13 @@ extension ApplicationFirestore on FirestoreService {
   }) async {
     final dateStart = DateTime(date.year, date.month, date.day);
     final dateEnd = dateStart.add(const Duration(days: 1));
+
+    // [DATE-DEBUG] 날짜 불일치 원인 추적
+    debugPrint('🗓️ [DATE-DEBUG] getConfirmed:'
+        ' 전달된date=${date.toIso8601String()}(isUtc=${date.isUtc})'
+        ' → dateStart=${dateStart.toIso8601String()}'
+        ' dateEnd=${dateEnd.toIso8601String()}'
+        ' (UTC: ${dateStart.toUtc()} ~ ${dateEnd.toUtc()})');
 
     try {
       // [BUGFIX] whereIn + equality 복합쿼리 시 Firestore 보안 규칙

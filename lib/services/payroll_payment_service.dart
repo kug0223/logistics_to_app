@@ -281,6 +281,14 @@ class PayrollPaymentService {
   // CSV 내보내기
   // ══════════════════════════════════════════════════════════
 
+  /// CSV Injection 방지: =, +, -, @ 시작 데이터에 작은따옴표 접두어 추가
+  static String _sanitizeCsvField(String value) {
+    if (value.isEmpty) return value;
+    final c = value[0];
+    if (c == '=' || c == '+' || c == '-' || c == '@') return "'$value";
+    return value;
+  }
+
   /// 이체 목록 CSV 생성 (미이체 근무자만)
   /// 형식: 은행, 계좌번호, 예금주, 금액, 메모
   static String generateTransferCsv(List<TransferRow> rows) {
@@ -288,8 +296,8 @@ class PayrollPaymentService {
     buf.writeln('이름,은행명,계좌번호,예금주,이체금액,메모');
     for (final r in rows) {
       buf.writeln(
-          '"${r.workerName}","${r.bankName}","${r.accountNumber}",'
-          '"${r.accountHolder}",${r.netAmount},"${r.memo}"');
+          '"${_sanitizeCsvField(r.workerName)}","${_sanitizeCsvField(r.bankName)}","${r.accountNumber}",'
+          '"${_sanitizeCsvField(r.accountHolder)}",${r.netAmount},"${_sanitizeCsvField(r.memo)}"');
     }
     return buf.toString();
   }

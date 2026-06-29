@@ -745,6 +745,11 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
 
   Future<void> _openApplicantsDialog() async {
     if (_selectedDay == null) return;
+    // [DATE-DEBUG] 캘린더 선택 날짜 확인
+    debugPrint('🗓️ [DATE-DEBUG] _openApplicantsDialog:'
+        ' _selectedDay=${_selectedDay!.toIso8601String()}'
+        ' isUtc=${_selectedDay!.isUtc}'
+        ' local=${_selectedDay!.toLocal().toIso8601String()}');
     try {
       final businesses = await _getAdminBusinesses();
       if (businesses.isEmpty) {

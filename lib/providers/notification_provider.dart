@@ -158,10 +158,29 @@ class NotificationProvider with ChangeNotifier {
 
   // ── 알림 액션 ─────────────────────────────────────────────
 
-  /// 알림 읽음 처리
+  /// 알림 읽음 처리 (로컬 상태 즉시 반영 — 스트림 이벤트 지연 보완)
   Future<void> markAsRead(String notificationId) async {
     if (_userId == null) return;
     await _firestoreService.markNotificationAsRead(_userId!, notificationId);
+    if (_disposed) return;
+    bool changed = false;
+    _streamNotifications = _streamNotifications.map((n) {
+      if (n.id == notificationId && !n.isRead) {
+        changed = true;
+        return n.copyWith(isRead: true);
+      }
+      return n;
+    }).toList();
+    if (_additionalNotifications.isNotEmpty) {
+      _additionalNotifications = _additionalNotifications.map((n) {
+        if (n.id == notificationId && !n.isRead) {
+          changed = true;
+          return n.copyWith(isRead: true);
+        }
+        return n;
+      }).toList();
+    }
+    if (changed) notifyListeners();
   }
 
   /// 모든 알림 읽음 처리
