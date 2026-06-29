@@ -280,7 +280,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       // 2. 알림 타입에 따른 화면 이동
       final userProvider = context.read<UserProvider>();
-      final isUser = userProvider.isUser;
+      // SubAdmin은 role==USER이지만 관리자 알림을 수신하므로 관리자 분기로 처리한다.
+      // isUser만 체크하면 SubAdmin이 isUser==true → 근무자 화면으로 잘못 이동한다.
+      final isUser = userProvider.isUser && !userProvider.isSubAdmin;
 
       switch (notification.type) {
       // ═══════════════════════════════════════════════════════════

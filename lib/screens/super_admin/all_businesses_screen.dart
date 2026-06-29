@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../theme/app_colors.dart';
+import '../../providers/user_provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/core/business_model.dart';
 import '../../widgets/common/loading_widget.dart';
@@ -36,7 +38,15 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
   @override
   void initState() {
     super.initState();
-    _loadAllBusinesses();
+    // 방어 심층화: AuthWrapper 분기 외 2차 역할 확인
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!context.read<UserProvider>().isSuperAdmin) {
+        Navigator.pop(context);
+        return;
+      }
+      _loadAllBusinesses();
+    });
   }
 
   Future<void> _loadAllBusinesses() async {

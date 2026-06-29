@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:provider/provider.dart';
 import '../../models/core/user_model.dart';
+import '../../providers/user_provider.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
@@ -42,7 +44,15 @@ class _AllUsersScreenState extends State<AllUsersScreen>
     _searchController.addListener(() {
       setState(() => _searchQuery = _searchController.text.trim().toLowerCase());
     });
-    _loadAllUsers();
+    // 방어 심층화: AuthWrapper 분기 외 2차 역할 확인 (context는 postFrameCallback에서만 안전하게 접근)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!context.read<UserProvider>().isSuperAdmin) {
+        Navigator.pop(context);
+        return;
+      }
+      _loadAllUsers();
+    });
   }
 
   @override

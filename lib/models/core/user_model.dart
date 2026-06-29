@@ -199,7 +199,13 @@ class UserModel {
       restrictedUntil != null && restrictedUntil!.isAfter(DateTime.now());
 
   /// 관리자 권한이 있는지 (슈퍼 또는 사업장 관리자 또는 하위 관리자)
+  // [주의] SubAdmin(role==USER, subAdminOf!=null)도 포함한다.
+  // Firestore isAdmin() 함수는 SubAdmin을 포함하지 않으므로 규칙과 동일 기준이 아님.
+  // 순수 BUSINESS_ADMIN 여부가 필요하면 isBusinessAdmin을 사용하라.
   bool get isAdmin => role == UserRole.SUPER_ADMIN || role == UserRole.BUSINESS_ADMIN || isSubAdmin;
+
+  /// 사업장 관리자 전용 (SubAdmin 제외) — Firestore isAdmin() 함수와 동일한 기준
+  bool get isBusinessAdmin => role == UserRole.SUPER_ADMIN || role == UserRole.BUSINESS_ADMIN;
 
   /// 역할 문자열
   String get roleString => _roleToString(role);

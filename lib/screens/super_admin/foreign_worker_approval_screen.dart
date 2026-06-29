@@ -453,7 +453,7 @@ class _ForeignWorkerApprovalScreenState
             if (user.idCardImageUrl != null) ...[
               const SizedBox(height: 8),
               GestureDetector(
-                onTap: () => _showIdCardImage(user),
+                onTap: () async => _showIdCardImage(user),
                 child: Row(
                   children: [
                     Icon(Icons.image_outlined, size: 16, color: Theme.of(context).primaryColor),
@@ -585,18 +585,23 @@ class _ForeignWorkerApprovalScreenState
     );
   }
 
-  void _showIdCardImage(UserModel user) {
+  Future<void> _showIdCardImage(UserModel user) async {
     // [특이사항] SUPER_ADMIN 신분증 열람 감사 로그 — 개인정보보호법 접근 기록.
     // businessId == '' (빈 문자열): 슈퍼어드민은 특정 사업장에 귀속되지 않음.
-    // Firestore 규칙(id_card_copy_logs create)에 isSuperAdmin() 조건이 추가되어야 기록 가능.
+    // await로 로그 기록 완료 확인 후 이미지 표시 — 실패 시에도 UX 차단 없이 콘솔 기록만.
     final viewerId = FirebaseAuth.instance.currentUser?.uid ?? '';
-    FirebaseFirestore.instance.collection('id_card_copy_logs').add({
-      'viewerId': viewerId,
-      'targetUserId': user.uid,
-      'businessId': '',
-      'action': 'view_id_card_image',
-      'timestamp': FieldValue.serverTimestamp(),
-    });
+    try {
+      await FirebaseFirestore.instance.collection('id_card_copy_logs').add({
+        'viewerId': viewerId,
+        'targetUserId': user.uid,
+        'businessId': '',
+        'action': 'view_id_card_image',
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('⚠️ [_showIdCardImage] 감사 로그 기록 실패: $e');
+    }
+    if (!mounted) return;
     showDialog(
       context: context,
       builder: (ctx) => Dialog(
