@@ -10,6 +10,7 @@ import '../screens/contract/contract_sign_screen.dart';
 import '../screens/user/my_schedule_screen.dart';
 import '../screens/user/user_contracts_screen.dart';
 import 'contract_service.dart';
+import '../models/core/employment_contract_model.dart';
 
 /// FCM 푸시 알림 서비스
 class FCMService {
@@ -339,21 +340,45 @@ class FCMService {
     }
   }
 
-  /// 계약서 서명 화면 직접 이동 — contractId로 Firestore 조회 후 ContractSignScreen 푸시.
-  /// 조회 실패 시 UserContractsScreen으로 폴백해 사용자가 목록에서 재진입 가능.
+  /// 계약서 서명 화면 직접 이동 — contractId(있으면 단건 GET) 또는 applicationId 기반 조회 후
+  /// ContractSignScreen 푸시. 조회 실패 시 UserContractsScreen으로 폴백.
+  ///
+  /// [보안] USER role은 employment_contracts 직접 list가 거부된다.
+  /// FCM payload에 contractId가 있으면 getById(단건 GET)를 우선 사용하고,
+  /// 없을 때만 getByApplication(workerId 경로) 폴백을 허용한다.
   Future<void> _navigateToContractSign(Map<String, dynamic> data) async {
+    final contractId = data['contractId'] as String?;
     final applicationId = data['applicationId'] as String?;
-    if (applicationId == null || applicationId.isEmpty || _currentUserId == null) {
+
+    // contractId 없고 applicationId도 없으면 목록으로 폴백
+    if ((contractId == null || contractId.isEmpty) &&
+        (applicationId == null || applicationId.isEmpty)) {
+      _navigatorKey?.currentState?.push(
+        MaterialPageRoute(builder: (_) => const UserContractsScreen()),
+      );
+      return;
+    }
+    if (_currentUserId == null) {
       _navigatorKey?.currentState?.push(
         MaterialPageRoute(builder: (_) => const UserContractsScreen()),
       );
       return;
     }
     try {
-      final contract = await ContractService().getByApplication(
-        applicationId,
-        workerId: _currentUserId,
-      );
+      EmploymentContractModel? contract;
+
+      // contractId 우선 — 단건 GET, USER role도 허용됨 (list 쿼리 PERMISSION_DENIED 회피)
+      if (contractId != null && contractId.isNotEmpty) {
+        contract = await ContractService().getById(contractId);
+      }
+
+      // 폴백: contractId 없거나 get 실패 → applicationId 기반 list 쿼리 (USER 컨텍스트 PERMISSION_DENIED 위험)
+      if (contract == null && applicationId != null && applicationId.isNotEmpty) {
+        contract = await ContractService().getByApplication(
+          applicationId,
+          workerId: _currentUserId,
+        );
+      }
       if (_navigatorKey?.currentState == null) return;
       if (contract == null) {
         _navigatorKey!.currentState!.push(
@@ -363,7 +388,7 @@ class FCMService {
       }
       _navigatorKey!.currentState!.push(
         MaterialPageRoute(
-          builder: (_) => ContractSignScreen(contract: contract, role: 'worker'),
+          builder: (_) => ContractSignScreen(contract: contract!, role: 'worker'),
         ),
       );
     } catch (e) {

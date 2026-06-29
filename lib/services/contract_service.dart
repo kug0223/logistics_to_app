@@ -436,6 +436,12 @@ class ContractService {
   /// 보안 규칙상 아래 중 하나를 반드시 전달해야 함:
   ///   [workerId] USER 컨텍스트 — 본인 uid (근무자가 자신의 계약서 조회)
   ///   [businessId] 관리자 컨텍스트 — 소속 사업장 id (관리자가 계약서 조회)
+  ///
+  /// [보안 주의] workerId 경로는 Firestore LIST 복합 쿼리를 실행한다.
+  /// Firestore 보안 규칙은 USER role의 employment_contracts 직접 list를 거부한다
+  /// (규칙 주석: "USER: CF getMyContracts 프록시로 이전 — 직접 list 불허").
+  /// contractId를 이미 알고 있다면 반드시 [getById]를 사용해 단건 GET으로 조회할 것.
+  /// 이 메서드를 USER 컨텍스트에서 호출하는 곳은 contractId가 없을 때만 폴백으로 사용해야 한다.
   Future<EmploymentContractModel?> getByApplication(
     String applicationId, {
     String? workerId,

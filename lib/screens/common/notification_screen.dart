@@ -34,6 +34,7 @@ import '../../models/core/review_request_model.dart';
 import '../../models/core/user_model.dart';
 import '../../widgets/dialogs/monthly_review_dialog.dart';
 import '../../widgets/dialogs/business_review_dialog.dart';
+import '../../services/firestore_service.dart';
 
 /// 알림 목록 화면 (전체 / 미읽음 탭)
 class NotificationScreen extends StatefulWidget {
@@ -718,15 +719,17 @@ class _NotificationScreenState extends State<NotificationScreen> {
           }
           workDaysInMonth = (results[1] as QuerySnapshot<Map<String, dynamic>>).docs.length;
         } else {
-          // 근무자: 자신의 attendance 조회
-          final attSnap = await FirebaseFirestore.instance
-              .collection('attendance')
-              .where('userId', isEqualTo: currentUser.uid)
-              .where('businessId', isEqualTo: req.businessId)
-              .where('yearMonth', isEqualTo: yearMonthStr)
-              .where('wageStatus', whereIn: ['confirmed', 'transferred'])
-              .get();
-          workDaysInMonth = attSnap.docs.length;
+          // 근무자: CF 프록시로 조회 (직접 list 불허 — Firestore 규칙)
+          final attendances = await FirestoreService().getMyMonthlyAttendances(
+            userId: currentUser.uid,
+            year: req.reviewYear,
+            month: req.reviewMonth,
+          );
+          workDaysInMonth = attendances
+              .where((a) =>
+                  a.businessId == req.businessId &&
+                  (a.isWageConfirmed || a.isWageTransferred))
+              .length;
         }
       } catch (e) {
         debugPrint('❌ 리뷰 요청 정보 로드 실패: $e');

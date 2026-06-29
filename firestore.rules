@@ -462,7 +462,7 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════
     match /monthly_reviews/{reviewId} {
 
-      // get: 본인(작성자/수신자), 해당 사업장 관리자, 공개 리뷰
+      // get: 본인(작성자/수신자), 해당 사업장 관리자/하위관리자, 공개 리뷰
       // resource == null: 문서 미존재 시 존재 여부 확인 허용 (리뷰 작성 여부 체크)
       allow get: if isLoggedIn() && (
         isSuperAdmin() ||
@@ -470,6 +470,7 @@ service cloud.firestore {
         resource.data.reviewerId == request.auth.uid ||
         resource.data.targetUserId == request.auth.uid ||
         isAdminOf(resource.data.businessId) ||
+        isSubAdminOf(resource.data.businessId) ||
         resource.data.isPublished == true
       );
       // list: [MEDIUM-003] USER는 본인 필터 필수, 관리자는 소속 사업장 businessId 필터 필수
@@ -593,11 +594,12 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════
     match /schedule_change_requests/{requestId} {
 
-      // get: 지원자 본인 · 해당 사업장 관리자 · 슈퍼어드민 (resource==null: 문서 미존재 시 허용)
+      // get: 지원자 본인 · 해당 사업장 관리자 · 하위관리자 · 슈퍼어드민 (resource==null: 문서 미존재 시 허용)
       allow get: if isLoggedIn() && (
                    resource == null ||
                    isOwner(resource.data.applicantUid) ||
                    isAdminOf(resource.data.businessId) ||
+                   isSubAdminOf(resource.data.businessId) ||
                    isSuperAdmin()
                  );
 
@@ -625,14 +627,15 @@ service cloud.firestore {
                       isSuperAdmin()
                     );
 
-      // 수정: 워커는 본인 요청 취소(CANCELED)만, 관리자는 승인/거절 처리
+      // 수정: 워커는 본인 요청 취소(CANCELED)만, 관리자/하위관리자는 승인/거절 처리
       allow update: if isLoggedIn() && (
-                      // 워커: status=CANCELED로만 변경, respondedByUid·respondedAt은 관리자 전용
+                      // 워커: status=CANCELED + 응답자 정보만 변경 허용
                       (isOwner(resource.data.applicantUid) &&
                        request.resource.data.status == 'CANCELED' &&
                        request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['status'])) ||
+                         .hasOnly(['status', 'respondedByUid', 'respondedAt'])) ||
                       isAdminOf(resource.data.businessId) ||
+                      isSubAdminOf(resource.data.businessId) ||
                       isSuperAdmin()
                     );
 
@@ -738,11 +741,12 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════
     match /review_requests/{requestId} {
 
-      // get: 해당 워커 본인 · 해당 사업장 관리자 · 슈퍼어드민 (resource==null: 문서 미존재 시 허용)
+      // get: 해당 워커 본인 · 해당 사업장 관리자 · 하위관리자 · 슈퍼어드민 (resource==null: 문서 미존재 시 허용)
       allow get: if isLoggedIn() && (
                    resource == null ||
                    isOwner(resource.data.workerId) ||
                    isAdminOf(resource.data.businessId) ||
+                   isSubAdminOf(resource.data.businessId) ||
                    isSuperAdmin()
                  );
 
@@ -768,14 +772,15 @@ service cloud.firestore {
                       isSuperAdmin()
                     );
 
-      // 수정: 워커(자신의 리뷰 제출 필드만) · 해당 사업장 관리자(자신의 필드만) · 슈퍼어드민
+      // 수정: 워커(자신의 리뷰 제출 필드만) · 해당 사업장 관리자/하위관리자(자신의 필드만) · 슈퍼어드민
       allow update: if isLoggedIn() && (
                       // 워커: 자신의 리뷰 제출 필드만 (isPublished 등 변조 불가)
                       (isOwner(resource.data.workerId) &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['workerStatus', 'workerReviewId'])) ||
-                      // 관리자: 자신의 리뷰 제출 필드만
-                      (isAdminOf(resource.data.businessId) &&
+                      // 관리자/하위관리자: 자신의 리뷰 제출 필드만
+                      ((isAdminOf(resource.data.businessId) ||
+                        isSubAdminOf(resource.data.businessId)) &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['adminStatus', 'adminReviewId'])) ||
                       isSuperAdmin()
