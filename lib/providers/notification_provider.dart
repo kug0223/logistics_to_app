@@ -192,8 +192,10 @@ class NotificationProvider with ChangeNotifier {
 
   /// 모든 알림 읽음 처리
   Future<void> markAllAsRead() async {
-    if (_userId == null) return;
-    await _firestoreService.markAllNotificationsAsRead(_userId!);
+    // [ASYNC-GAP] clearUser()와 경쟁 조건 방지 — await 이전에 uid 캡처
+    final uid = _userId;
+    if (uid == null) return;
+    await _firestoreService.markAllNotificationsAsRead(uid);
     if (_disposed) return;
     // 스트림 이벤트가 오기 전에 _additionalNotifications도 즉시 반영
     if (_additionalNotifications.isNotEmpty) {
@@ -205,8 +207,10 @@ class NotificationProvider with ChangeNotifier {
 
   /// 개별 알림 삭제
   Future<bool> deleteNotification(String notificationId) async {
-    if (_userId == null) return false;
-    final result = await _firestoreService.deleteNotification(_userId!, notificationId);
+    // [ASYNC-GAP] clearUser()와 경쟁 조건 방지 — await 이전에 uid 캡처
+    final uid = _userId;
+    if (uid == null) return false;
+    final result = await _firestoreService.deleteNotification(uid, notificationId);
     if (_disposed) return result;
     if (result && _additionalNotifications.isNotEmpty) {
       _additionalNotifications.removeWhere((n) => n.id == notificationId);
@@ -217,8 +221,10 @@ class NotificationProvider with ChangeNotifier {
 
   /// 오래된 알림 삭제 (30일 이상)
   Future<int> deleteOldNotifications() async {
-    if (_userId == null) return 0;
-    return _firestoreService.deleteOldNotifications(_userId!);
+    // [ASYNC-GAP] clearUser()와 경쟁 조건 방지 — await 이전에 uid 캡처
+    final uid = _userId;
+    if (uid == null) return 0;
+    return _firestoreService.deleteOldNotifications(uid);
   }
 
   // ── 리소스 정리 ───────────────────────────────────────────

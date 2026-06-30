@@ -70,7 +70,8 @@ class PayrollSummaryModel {
     }
     final workersRaw = data['workers'] as Map<String, dynamic>? ?? {};
     final workers = workersRaw.map(
-      (k, v) => MapEntry(k, PayrollWorkerSummary.fromMap(k, v as Map<String, dynamic>)),
+      // [SAFETY] Firestore 내부 타입(_JsonMap)은 직접 as Map<String, dynamic> 캐스팅 실패 가능 — from()으로 안전 변환
+      (k, v) => MapEntry(k, PayrollWorkerSummary.fromMap(k, Map<String, dynamic>.from(v as Map))),
     );
     return PayrollSummaryModel(
       id: doc.id,

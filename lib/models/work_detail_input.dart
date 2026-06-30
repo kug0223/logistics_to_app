@@ -62,6 +62,8 @@ class WorkDetailInput {
       endTime != null;
 
   Map<String, dynamic> toMap() {
+    // [SAFETY] isValid == false 상태에서 호출하면 ! 연산자가 예외를 던짐 — 호출 전 반드시 isValid 확인
+    assert(isValid, 'WorkDetailInput.toMap() called on invalid (null) state');
     return {
       'workType': workType!,
       'workTypeIcon': workTypeIcon,
