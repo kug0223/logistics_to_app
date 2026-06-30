@@ -415,6 +415,18 @@ export const createNotification = onCall(
             throw new HttpsError("permission-denied", "발신자가 해당 사업장 소속이 아닙니다.");
           }
         }
+        // [SEC-48] 관리자→근무자 알림: 수신자가 해당 사업장 소속인지 검증
+        // callerIsAdmin=true + !recipientIsAdmin 케이스 — 관리자가 타 사업장 근무자에게 알림 발송 차단
+        if (callerIsAdmin && !recipientIsAdmin) {
+          const recipientBusinessId = recipientSnap.data()?.businessId as string | undefined;
+          if (recipientBusinessId !== targetBusinessId) {
+            const recipMemberSnap = await db.collection("businesses").doc(targetBusinessId)
+                .collection("members").doc(userId).get();
+            if (!recipMemberSnap.exists) {
+              throw new HttpsError("permission-denied", "수신자가 해당 사업장 소속이 아닙니다.");
+            }
+          }
+        }
       }
     }
     // ────────────────────────────────────────────────────────────
@@ -4105,6 +4117,13 @@ export const getMyMonthlyAttendances = onCall(
     const {year, month} = request.data as {year: number; month: number};
     if (!year || !month) {
       throw new HttpsError("invalid-argument", "year, month 파라미터가 필요합니다.");
+    }
+    // SEC-50: year/month 범위 검증 — 비정상 값으로 과도한 범위 쿼리 차단
+    if (!Number.isInteger(year) || year < 2020 || year > 2100) {
+      throw new HttpsError("invalid-argument", "year는 2020~2100 사이여야 합니다.");
+    }
+    if (!Number.isInteger(month) || month < 1 || month > 12) {
+      throw new HttpsError("invalid-argument", "month는 1~12 사이여야 합니다.");
     }
 
     // [BUG-ATT-06 수정] workDate는 Flutter DateTime(y,m,d) KST → UTC 전날 15:00으로 저장됨.

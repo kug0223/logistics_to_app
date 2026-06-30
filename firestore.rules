@@ -248,7 +248,9 @@ service cloud.firestore {
           isSubAdminOf(request.query.filters.businessId) ||
           isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
         )) ||
-        (isUser() && request.query.limit <= 50)
+        // SEC-47: isPublished == true 필터 필수 — 비공개 TO 전체 덤프 차단
+        (isUser() && request.query.limit <= 50 &&
+         request.query.filters.isPublished == true)
       );
 
       // SubAdmin도 공고 생성·삭제 권한 부여 — create에서 누락되어 PERMISSION_DENIED 발생
@@ -260,15 +262,19 @@ service cloud.firestore {
       // [특이사항] CLOSED·EXPIRED TO에서 핵심 운영 필드 변경 차단.
       // 마감 후 workDetailId·totalRequired 등을 변경하면 기존 applications 데이터와
       // 불일치가 발생하므로 슈퍼어드민만 예외 허용 (긴급 운영 수정 시).
+      // [SEC-45] businessId는 상태와 무관하게 항상 불변 — 슈퍼어드민만 예외
       allow update: if isLoggedIn() &&
                        (isAdminOf(resource.data.businessId) ||
                         isSubAdminOf(resource.data.businessId) ||
                         isSuperAdmin()) &&
                        (isSuperAdmin() ||
+                        !request.resource.data.diff(resource.data).affectedKeys()
+                          .hasAny(['businessId'])) &&
+                       (isSuperAdmin() ||
                         !(resource.data.get('status', '') in ['CLOSED', 'EXPIRED']) ||
                         !request.resource.data.diff(resource.data).affectedKeys()
                           .hasAny(['workDetailId', 'totalRequired', 'startDate',
-                                   'endDate', 'workDays', 'businessId', 'workTypeIds']));
+                                   'endDate', 'workDays', 'workTypeIds']));
 
       // 지원자: 지원/취소 시 totalPending 카운터만 수정 허용 (음수 방지)
       // [MEDIUM-FIX] ±1 제한 없이 임의 양수값 설정 가능 → 통계 훼손 가능
