@@ -4563,3 +4563,39 @@ export const callableGetUsersBatch = onCall(
     return {users};
   }
 );
+
+// ═══════════════════════════════════════════════════════════
+// 🏢 내 사업장 목록 조회 (adminIds arrayContains — list 권한 불필요)
+// ═══════════════════════════════════════════════════════════
+
+export const callableGetMyBusiness = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    }
+
+    const callerUid = request.auth.uid;
+
+    const snap = await db
+      .collection("businesses")
+      .where("adminIds", "array-contains", callerUid)
+      .orderBy("createdAt", "desc")
+      .get();
+
+    // adminIds 제거 — 다른 관리자 UID 노출 방지
+    const SENSITIVE_FIELDS = new Set(["adminIds"]);
+
+    const businesses: Array<Record<string, unknown>> = [];
+    for (const doc of snap.docs) {
+      const data = doc.data();
+      const safeData: Record<string, unknown> = {id: doc.id};
+      for (const [key, value] of Object.entries(data)) {
+        if (!SENSITIVE_FIELDS.has(key)) safeData[key] = value;
+      }
+      businesses.push(safeData);
+    }
+
+    return {businesses};
+  }
+);

@@ -50,22 +50,19 @@ extension BusinessFirestore on FirestoreService {
     }
   }
 
-  /// 내 사업장 목록 조회 (adminIds에 포함된 모든 사업장)
+  /// 내 사업장 목록 조회 — CF callableGetMyBusiness (adminIds 노출 없이 서버 검증)
   Future<List<BusinessModel>> getMyBusiness(String uid) async {
     try {
       debugPrint('🔍 [FirestoreService] 내 사업장 조회 시작...');
-      debugPrint('   uid: $uid');
-
-      final snapshot = await _firestore
-          .collection('businesses')
-          .where('adminIds', arrayContains: uid)
-          .orderBy('createdAt', descending: true)
-          .get(const GetOptions(source: Source.server));
-
-      final businesses = snapshot.docs
-          .map((doc) => BusinessModel.fromMap(doc.data(), doc.id))
-          .toList();
-
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetMyBusiness');
+      final response = await callable.call<Map<String, dynamic>>({});
+      final list = (response.data['businesses'] as List?) ?? [];
+      final businesses = list.map((e) {
+        final map = Map<String, dynamic>.from(e as Map);
+        final id = map['id'] as String? ?? '';
+        return BusinessModel.fromMap(map, id);
+      }).toList();
       debugPrint('✅ [FirestoreService] 조회 완료: ${businesses.length}개');
       return businesses;
     } catch (e) {

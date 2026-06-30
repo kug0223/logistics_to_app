@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 // Models
@@ -104,19 +105,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _isSealLoading = false;
     });
 
-    // user.businessId가 없을 때만 Firestore 조회 (내비게이션용, UI 블로킹 없음)
+    // user.businessId가 없을 때만 CF 조회 (내비게이션용, UI 블로킹 없음)
     if (_resolvedBusinessId == null) {
       try {
-        final snap = await FirebaseFirestore.instance
-            .collection('businesses')
-            .where('adminIds', arrayContains: user.uid)
-            .limit(1)
-            .get();
-        if (snap.docs.isNotEmpty && mounted) {
-          setState(() => _resolvedBusinessId = snap.docs.first.id);
+        final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('callableGetMyBusiness');
+        final response = await callable.call<Map<String, dynamic>>({});
+        final list = (response.data['businesses'] as List?) ?? [];
+        if (list.isNotEmpty && mounted) {
+          final first = Map<String, dynamic>.from(list.first as Map);
+          setState(() => _resolvedBusinessId = first['id'] as String?);
         }
       } catch (e) {
-        debugPrint('⚠️ adminIds로 사업장 조회 실패: $e');
+        debugPrint('⚠️ 사업장 조회 실패: $e');
       }
     }
   }

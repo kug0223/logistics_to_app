@@ -195,15 +195,9 @@ service cloud.firestore {
       // adminIds는 getMyBusiness() arrayContains 쿼리에 필수이므로 서브컬렉션 분리 불가.
       // UID 자체는 개인 식별 불가 — 현재 위험 수준은 낮다고 판단.
       allow get: if isLoggedIn();
-      // [데이터 격리] list: arrayContains 필터는 request.query.filters로 검증 불가 — 구조적 한계
-      // 단기 대응: BUSINESS_ADMIN은 limit<=5 제한 (사용자당 최대 사업장 수 제한)
-      //   → 타 사업장 정보를 대량 덤프하는 것은 차단
-      // SubAdmin은 list 불필요 — subAdminOf(단건)으로 소속 사업장 직접 get
-      // [중기 계획] getMyBusiness를 CF Callable Function으로 이전 → list 권한 제거
-      allow list: if isLoggedIn() && (
-                    isSuperAdmin() ||
-                    (isBusinessAdmin() && request.query.limit <= 5)
-                  );
+      // [CF 이전 완료] getMyBusiness → callableGetMyBusiness CF로 이전
+      // BUSINESS_ADMIN/SUB_ADMIN의 직접 list 쿼리 구조적 차단 (adminIds 덤프 방지)
+      allow list: if isLoggedIn() && isSuperAdmin();
 
       // 슈퍼어드민은 ownerId/adminIds 조건 없이 사업장 생성 가능 (타 관리자 대신 등록 포함)
       // 일반 관리자는 본인 ownerId이고 adminIds에 본인 uid가 있어야 함
