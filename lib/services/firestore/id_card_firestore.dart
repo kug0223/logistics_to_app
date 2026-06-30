@@ -137,6 +137,7 @@ extension IdCardFirestore on FirestoreService {
           NotificationModel.createIdCardAccessApproved(
             userId: requestData!['requesterId'],
             targetUserName: requestData!['targetUserName'],
+            // requesterBusinessId는 createIdCardAccessRequest(line 67)에서 항상 저장 — '' 폴백 실제 발생 가능성 없음
             businessId: requestData!['requesterBusinessId'] as String? ?? '',
             requestId: requestId,
           ),
@@ -188,6 +189,7 @@ extension IdCardFirestore on FirestoreService {
           NotificationModel.createIdCardAccessRejected(
             userId: requestData!['requesterId'],
             targetUserName: requestData!['targetUserName'],
+            // requesterBusinessId는 createIdCardAccessRequest(line 67)에서 항상 저장 — '' 폴백 실제 발생 가능성 없음
             businessId: requestData!['requesterBusinessId'] as String? ?? '',
             requestId: requestId,
             rejectionReason: reason,

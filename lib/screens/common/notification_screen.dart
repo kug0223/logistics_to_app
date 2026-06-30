@@ -328,7 +328,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
         } else {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+              initialBusinessId: notification.data?['businessId']?.toString(),
+            )),
           );
         }
         break;
@@ -370,7 +372,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
             } else {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+                MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+                  initialBusinessId: notification.data?['businessId']?.toString(),
+                )),
               );
             }
           }
@@ -403,7 +407,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
           } else {
             Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+                initialBusinessId: notification.data?['businessId']?.toString(),
+              )),
             );
           }
         }
@@ -427,7 +433,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
         } else {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+              initialBusinessId: notification.data?['businessId']?.toString(),
+            )),
           );
         }
         break;
@@ -445,7 +453,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
         } else {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+              initialBusinessId: notification.data?['businessId']?.toString(),
+            )),
           );
         }
         break;
@@ -456,7 +466,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
       case NotificationType.contractRequested:
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+          MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+            initialBusinessId: notification.data?['businessId']?.toString(),
+          )),
         );
         break;
 
@@ -475,7 +487,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
         } else {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+              initialBusinessId: notification.data?['businessId']?.toString(),
+            )),
           );
         }
         break;
@@ -503,7 +517,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
         // 초대 수락/거절 결과는 통합 인력 관리 화면에서 확인 — 의도된 설계.
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+          MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+            initialBusinessId: notification.data?['businessId']?.toString(),
+          )),
         );
         break;
 
@@ -914,15 +930,19 @@ class _NotificationScreenState extends State<NotificationScreen> {
     BuildContext context,
     NotificationModel notification,
   ) async {
-    // 심층 방어: 호출부 isUser 가드 외 함수 진입부에서도 재차 확인
+    // 심층 방어: 호출부 isUser && !isSubAdmin 가드 외 함수 진입부에서도 재차 확인
     // tos 직접 GET을 수행하므로 USER 역할이 도달하면 데이터 노출 위험이 있다.
+    // [주의] 호출부는 isUser && !isSubAdmin으로 분기하지만, 이 가드는 isUser만 체크 — SubAdmin은 통과 (의도됨)
     if (context.read<UserProvider>().isUser) return;
 
     final data = notification.data;
+    final fallbackBusinessId = data?['businessId']?.toString();
     if (data == null) {
       Navigator.push(
         context,
-        MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+        MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+          initialBusinessId: fallbackBusinessId,
+        )),
       );
       return;
     }
@@ -933,7 +953,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
     if (toId == null || toId.isEmpty || workDetailId == null || workDetailId.isEmpty) {
       Navigator.push(
         context,
-        MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+        MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+          initialBusinessId: fallbackBusinessId,
+        )),
       );
       return;
     }

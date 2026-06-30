@@ -15,7 +15,10 @@ import '../../../services/fcm_service.dart';
 
 /// ✨ 세련된 통합 인력 관리 화면 (business_home_screen 테마 적용)
 class IntegratedWorkforceScreen extends StatefulWidget {
-  const IntegratedWorkforceScreen({super.key});
+  /// 알림 딥링크 등에서 특정 사업장을 초기 선택할 때 전달. null이면 effectiveBusinessId 사용.
+  final String? initialBusinessId;
+
+  const IntegratedWorkforceScreen({super.key, this.initialBusinessId});
 
   @override
   State<IntegratedWorkforceScreen> createState() =>
@@ -90,8 +93,11 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
 
       setState(() {
         _allBusinessIds = businesses.map((b) => b.id).toList();
-        // effectiveBusinessId 우선: createdAt DESC 정렬 first와 실제 businessId가 다를 수 있음
-        _selectedBusinessId = userProvider.effectiveBusinessId ?? _allBusinessIds.first;
+        // initialBusinessId(알림 딥링크) 우선 → effectiveBusinessId → 목록 첫 번째
+        final preferred = widget.initialBusinessId;
+        _selectedBusinessId = (preferred != null && _allBusinessIds.contains(preferred))
+            ? preferred
+            : userProvider.effectiveBusinessId ?? _allBusinessIds.first;
       });
 
       if (mounted) _controller.load(context);
