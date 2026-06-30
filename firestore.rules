@@ -269,14 +269,15 @@ service cloud.firestore {
                        (request.resource.data.totalPending == resource.data.totalPending + 1 ||
                         request.resource.data.totalPending == resource.data.totalPending - 1);
 
-      // 지원자: 계약해지 수락 시 totalConfirmed·workTypeConfirmedCounts 감소 허용 (음수 방지)
-      // [MEDIUM-FIX] ±1 제한 추가 — 임의값 설정 차단
+      // 지원자: 계약해지 수락 시 totalConfirmed 감소만 허용 (음수 방지, +1 차단)
+      // [MED-04-FIX] +1도 허용하면 USER가 무한히 카운터를 올릴 수 있음 → -1만 허용
+      // workTypeConfirmedCounts Map 내부 값 변화는 클라이언트 측에서 관리하며
+      //   어떤 workTypeId의 값이 얼마나 변했는지는 규칙에서 검증 불가 (설계 한계)
       allow update: if isLoggedIn() && isUser() &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['totalConfirmed', 'workTypeConfirmedCounts']) &&
                        request.resource.data.totalConfirmed >= 0 &&
-                       (request.resource.data.totalConfirmed == resource.data.totalConfirmed + 1 ||
-                        request.resource.data.totalConfirmed == resource.data.totalConfirmed - 1);
+                       request.resource.data.totalConfirmed == resource.data.totalConfirmed - 1;
 
       // SubAdmin도 공고 삭제 허용 (update에 있으나 delete에 누락)
       allow delete: if isLoggedIn() &&
@@ -310,14 +311,13 @@ service cloud.firestore {
                          request.resource.data.pendingCount >= 0 &&
                          (request.resource.data.pendingCount == resource.data.pendingCount + 1 ||
                           request.resource.data.pendingCount == resource.data.pendingCount - 1);
-        // 지원자: 계약해지 수락 시 confirmedCount·workTypeCounts 감소 허용 (음수 방지)
-        // [MEDIUM-FIX] ±1 제한 추가
+        // 지원자: 계약해지 수락 시 confirmedCount 감소만 허용 (음수 방지, +1 차단)
+        // [MED-04-FIX] +1도 허용하면 USER가 무한히 카운터를 올릴 수 있음 → -1만 허용
         allow update: if isLoggedIn() && isUser() &&
                          request.resource.data.diff(resource.data).affectedKeys()
                            .hasOnly(['confirmedCount', 'workTypeCounts']) &&
                          request.resource.data.confirmedCount >= 0 &&
-                         (request.resource.data.confirmedCount == resource.data.confirmedCount + 1 ||
-                          request.resource.data.confirmedCount == resource.data.confirmedCount - 1);
+                         request.resource.data.confirmedCount == resource.data.confirmedCount - 1;
       }
     }
 
@@ -541,7 +541,8 @@ service cloud.firestore {
         (isUser() && (
           request.query.filters.reviewerId == request.auth.uid ||
           request.query.filters.targetUserId == request.auth.uid ||
-          request.query.filters.isPublished == true
+          // [MED-03-FIX] isPublished==true 단독 필터로 전체 덤프 가능 → limit 50 제한 추가
+          (request.query.filters.isPublished == true && request.query.limit <= 50)
         ))
       );
 
