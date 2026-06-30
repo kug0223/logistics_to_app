@@ -531,8 +531,13 @@ service cloud.firestore {
                          'checkOut', 'checkOutLat', 'checkOutLng', 'checkOutMethod',
                          'workHours', 'status', 'updatedAt', 'originalCheckOut'
                        ])) ||
-                      isAdminOf(resource.data.businessId) ||
-                      isSubAdminOf(resource.data.businessId) ||
+                      // [SEC-46] 관리자: 핵심 식별자 불변 조건 추가 — 출근 기록 재귀속 차단
+                      // userId/businessId/applicationId/workDate는 생성 후 변경 불가 (슈퍼어드민 예외)
+                      // wageDetail/finalWage/wageStatus 등 운영 필드는 wage_confirm_dialog 기능 유지
+                      ((isAdminOf(resource.data.businessId) ||
+                        isSubAdminOf(resource.data.businessId)) &&
+                       !request.resource.data.diff(resource.data).affectedKeys()
+                         .hasAny(['userId', 'businessId', 'applicationId', 'workDate'])) ||
                       isSuperAdmin()
                     );
 
