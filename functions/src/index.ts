@@ -4548,7 +4548,8 @@ export const callableGetUsersBatch = onCall(
 
     const isSuperAdmin = callerRole === "SUPER_ADMIN";
     const isAdmin = callerRole === "BUSINESS_ADMIN" && callerBusinessId === businessId;
-    const isSubAdmin = callerRole === "SUB_ADMIN" && callerSubAdminOf === businessId;
+    // SEC-26: SubAdmin은 role="USER" + subAdminOf 필드로 구별 ("SUB_ADMIN" 문자열 없음)
+    const isSubAdmin = callerRole === "USER" && !!callerSubAdminOf && callerSubAdminOf === businessId;
 
     if (!isSuperAdmin && !isAdmin && !isSubAdmin) {
       throw new HttpsError("permission-denied", "해당 사업장 조회 권한이 없습니다.");
@@ -4863,7 +4864,8 @@ export const callableReportLate = onCall(
       const bizSnap = await db.collection("businesses").doc(businessId).get();
       const adminIds = (bizSnap.data()?.adminIds as string[]) ?? [];
       authorized = adminIds.includes(callerUid);
-    } else if (!authorized && callerRole === "SUB_ADMIN") {
+    } else if (!authorized && callerRole === "USER" && callerSubAdminOf) {
+      // SEC-26: SubAdmin은 role="USER" + subAdminOf 필드로 구별
       authorized = callerSubAdminOf === businessId;
     }
     if (!authorized) throw new HttpsError("permission-denied", "해당 사업장 관리 권한이 필요합니다.");
@@ -4986,7 +4988,8 @@ export const callableConfirmWage = onCall(
         const bizSnap = await tx.get(db.collection("businesses").doc(businessId));
         const adminIds = (bizSnap.data()?.adminIds as string[]) ?? [];
         authorized = adminIds.includes(callerUid);
-      } else if (!authorized && callerRole === "SUB_ADMIN") {
+      } else if (!authorized && callerRole === "USER" && callerSubAdminOf) {
+        // SEC-26: SubAdmin은 role="USER" + subAdminOf 필드로 구별
         authorized = callerSubAdminOf === businessId;
       }
       if (!authorized) {
@@ -5377,7 +5380,8 @@ export const callableCalculateAndConfirmWage = onCall(
     if (!authorized2 && callerRole2 === "BUSINESS_ADMIN") {
       const bizSnap2 = await db.collection("businesses").doc(businessId2).get();
       authorized2 = ((bizSnap2.data()?.adminIds as string[]) ?? []).includes(callerUid);
-    } else if (!authorized2 && callerRole2 === "SUB_ADMIN") {
+    } else if (!authorized2 && callerRole2 === "USER" && callerSubAdminOf2) {
+      // SEC-26: SubAdmin은 role="USER" + subAdminOf 필드로 구별
       authorized2 = callerSubAdminOf2 === businessId2;
     }
     if (!authorized2) throw new HttpsError("permission-denied", "해당 사업장 관리 권한이 필요합니다.");

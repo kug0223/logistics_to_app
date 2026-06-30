@@ -859,6 +859,10 @@ service cloud.firestore {
       //              status only 업데이트 허용 추가 (근무자 승인/거절과 구별)
       allow update: if isLoggedIn() && (
                       (isOwner(resource.data.targetUserId) &&
+                       // SEC-27: pending → approved/rejected 전이만 허용
+                       // (approved → rejected 역변조, rejected → approved 자기 승인 차단)
+                       resource.data.status == 'pending' &&
+                       (request.resource.data.status == 'approved' || request.resource.data.status == 'rejected') &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status', 'respondedAt', 'rejectionReason', 'expiresAt'])) ||
                       ((isAdminOf(resource.data.requesterBusinessId) ||

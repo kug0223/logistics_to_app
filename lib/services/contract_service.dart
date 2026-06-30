@@ -392,24 +392,25 @@ class ContractService {
     required List<ContractArticle> articles,
     String? templateId,
   }) async {
-    // [BUG-수정] 상태 체크: 서명 완료·무효화·근무자 서명 대기 중인 계약서는 수정 금지
-    final snap = await _db.collection('employment_contracts').doc(contractId).get();
-    if (snap.exists) {
-      final contract = EmploymentContractModel.fromFirestore(snap);
-      // H-6: pendingWorker 상태에서 조항 수정 시 근무자 서명이 무효화될 수 있음
-      if (contract.status == ContractStatus.pendingWorker) {
-        throw StateError('근무자 서명 대기 중인 계약서는 조항을 수정할 수 없습니다. 수정이 필요하면 계약서를 재발송하세요.');
+    // SEC-28: TOCTOU 방지 — 상태 체크와 쓰기를 트랜잭션으로 원자 처리
+    final contractRef = _db.collection('employment_contracts').doc(contractId);
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(contractRef);
+      if (snap.exists) {
+        final contract = EmploymentContractModel.fromFirestore(snap);
+        if (contract.status == ContractStatus.pendingWorker) {
+          throw StateError('근무자 서명 대기 중인 계약서는 조항을 수정할 수 없습니다. 수정이 필요하면 계약서를 재발송하세요.');
+        }
+        if (contract.status == ContractStatus.completed ||
+            contract.status == ContractStatus.voided) {
+          throw StateError('서명 완료 또는 무효화된 계약서는 수정할 수 없습니다.');
+        }
       }
-      if (contract.status == ContractStatus.completed ||
-          contract.status == ContractStatus.voided) {
-        throw StateError('서명 완료 또는 무효화된 계약서는 수정할 수 없습니다.');
-      }
-    }
-
-    await _db.collection('employment_contracts').doc(contractId).update({
-      'articles': articles.map((a) => a.toMap()).toList(),
-      if (templateId != null) 'templateId': templateId,
-      'updatedAt': FieldValue.serverTimestamp(),
+      tx.update(contractRef, {
+        'articles': articles.map((a) => a.toMap()).toList(),
+        if (templateId != null) 'templateId': templateId,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
     });
   }
 

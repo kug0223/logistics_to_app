@@ -457,22 +457,26 @@ class AuthService {
         final ciEncrypted = data['ci'] as String?;
         final phone = data['phone'] as String?;
 
-        String? identityHash;
+        // SEC-29: ciHash/phoneHash 필드를 분리 저장
+        // verifyPassAuth CF는 ciHash 필드로 재가입 제한 조회 — 필드명 일치 필수
+        String? ciHash;
+        String? phoneHash;
         if (ciEncrypted != null && ciEncrypted.isNotEmpty) {
           final ciPlain = EncryptionHelper.decrypt(ciEncrypted);
           if (ciPlain != null && ciPlain.isNotEmpty) {
-            identityHash = sha256.convert(utf8.encode(ciPlain)).toString();
+            ciHash = sha256.convert(utf8.encode(ciPlain)).toString();
           }
         }
-        if (identityHash == null && phone != null && phone.isNotEmpty) {
-          identityHash = sha256.convert(utf8.encode(phone)).toString();
+        if (phone != null && phone.isNotEmpty) {
+          phoneHash = sha256.convert(utf8.encode(phone)).toString();
         }
 
-        if (identityHash != null) {
+        if (ciHash != null || phoneHash != null) {
           final isBlacklisted = data['isBlacklisted'] == true;
           await _firestore.collection('deleted_accounts').add({
             'uid': user.uid,
-            'phoneHash': identityHash,
+            if (ciHash != null) 'ciHash': ciHash,
+            if (phoneHash != null) 'phoneHash': phoneHash,
             'deletedAt': FieldValue.serverTimestamp(),
             'canReregisterAt': isBlacklisted
                 ? null
