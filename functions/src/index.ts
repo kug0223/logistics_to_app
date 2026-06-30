@@ -867,12 +867,12 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
         if (!adminAlreadyReviewed) {
           await _sendReviewRequestNotification(
             businessId, workerName,
-            requestKey, year, month, "admin"
+            requestKey, year, month, "admin", businessId
           );
         }
         await _sendReviewRequestNotification(
           workerId, data.businessName ?? "사업장",
-          requestKey, year, month, "worker"
+          requestKey, year, month, "worker", businessId
         );
       } catch {
         // 이미 존재 — workerName 누락인 경우만 보완 (구버전 CF가 workerName 없이 생성한 문서)
@@ -932,12 +932,12 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
         if (!adminAlreadyReviewed) {
           await _sendReviewRequestNotification(
             businessId, workerName,
-            requestKey, endYear, endMonth, "admin"
+            requestKey, endYear, endMonth, "admin", businessId
           );
         }
         await _sendReviewRequestNotification(
           workerId, data.businessName ?? "사업장",
-          requestKey, endYear, endMonth, "worker"
+          requestKey, endYear, endMonth, "worker", businessId
         );
       } catch {
         // 이미 존재 — workerName 누락인 경우만 보완 (구버전 CF가 workerName 없이 생성한 문서)
@@ -1235,11 +1235,11 @@ export const onWageConfirmed = onDocumentUpdated(
       });
       await _sendReviewRequestNotification(
         businessId, workerName3,
-        requestKey, year, month, "admin"
+        requestKey, year, month, "admin", businessId
       );
       await _sendReviewRequestNotification(
         workerId, app.businessName ?? "사업장",
-        requestKey, year, month, "worker"
+        requestKey, year, month, "worker", businessId
       );
       console.log(`✅ [임금 확정] 리뷰 요청 생성: ${requestKey}`);
     } catch {
@@ -1403,6 +1403,7 @@ export const backfillReviewRequests = onCall(
  * @param {number} year - 리뷰 연도
  * @param {number} month - 리뷰 월
  * @param {"admin" | "worker"} role - 수신자 역할
+ * @param {string} businessId - CF 발신자-수신자 검증 및 딥링크 라우팅용
  */
 async function _sendReviewRequestNotification(
   targetId: string,
@@ -1410,7 +1411,8 @@ async function _sendReviewRequestNotification(
   requestKey: string,
   year: number,
   month: number,
-  role: "admin" | "worker"
+  role: "admin" | "worker",
+  businessId: string
 ): Promise<void> {
   try {
     const title = "리뷰 작성 요청";
@@ -1436,7 +1438,7 @@ async function _sendReviewRequestNotification(
       type: "REVIEW_REQUEST",
       title,
       body,
-      data: {requestKey, action: "writeReview"},
+      data: {requestKey, action: "writeReview", businessId},
       isRead: false,
       createdAt: Timestamp.now(),
     });
@@ -2079,7 +2081,7 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
           type: "workReminder",
           title: "내일 근무 알림",
           body: notifBody,
-          data: { applicationId: jobs[0].id, action: "applicationDetail" },
+          data: { applicationId: jobs[0].id, action: "applicationDetail", businessId: jobs[0].data().businessId ?? "" },
           isRead: false,
           createdAt: now,
         });

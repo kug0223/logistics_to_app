@@ -569,7 +569,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
           MaterialPageRoute(
             builder: (_) => isUser
                 ? const MyScheduleScreen()
-                : const IntegratedWorkforceScreen(),
+                : IntegratedWorkforceScreen(
+                    initialBusinessId: notification.data?['businessId']?.toString(),
+                  ),
           ),
         );
         break;

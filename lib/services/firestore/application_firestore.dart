@@ -2459,19 +2459,7 @@ extension ApplicationFirestore on FirestoreService {
     await batch.commit();
     if (original.toId != null) clearCache(toId: original.toId!);
 
-    // [BUG-수정] N-M-4: 계약 연장 확정 후 근무자 알림 미발송 버그 수정
-    // 배치 커밋 완료 후 근무자(original.uid)에게 contractRenewed 알림 발송
-    // 서비스 레이어에서 통합 처리하여 호출 측이 알림 발송을 누락하는 것을 방지
-    if (original.uid.isNotEmpty) {
-      await createNotification(NotificationModel.createContractRenewed(
-        userId: original.uid,
-        businessName: original.businessName,
-        businessId: original.businessId,
-        newEndDate: newEndDate,
-        applicationId: newRef.id,
-      ));
-    }
-
+    // 알림은 각 호출부(_executeExtend, _processRenewal)에서 발송 — 여기서 발송하면 이중 수신
     return ApplicationModel.fromMap(data, newRef.id);
   }
 
