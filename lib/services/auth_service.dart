@@ -793,16 +793,15 @@ class AuthService {
                 }
 
                 // ── 활성 TO 종료 + 하위 PENDING 지원서 REJECTED ─────────
-                // [TODO-SEC] whereIn + businessId 복합쿼리 → filters.businessId null 가능
-                // tos는 isLoggedIn() 전체 허용이므로 PERMISSION_DENIED 없지만
-                // 추후 클라이언트 필터로 교체 권장
-                final activeToSnap = await _firestore
+                // status 필터는 클라이언트에서 적용 (whereIn + isEqualTo 복합쿼리 방지)
+                final allToSnap = await _firestore
                     .collection('tos')
                     .where('businessId', isEqualTo: businessId)
-                    .where('status', whereIn: ['ACTIVE', 'FULL', 'SCHEDULED'])
                     .get();
+                const activeStatuses = ['ACTIVE', 'FULL', 'SCHEDULED'];
 
-                for (final toDoc in activeToSnap.docs) {
+                for (final toDoc in allToSnap.docs.where((d) =>
+                    activeStatuses.contains(d.data()['status'] as String?))) {
                   try {
                     await toDoc.reference.update({
                       'status': 'CLOSED',
