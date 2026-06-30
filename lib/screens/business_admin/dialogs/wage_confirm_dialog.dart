@@ -1220,16 +1220,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           app = _calculatedWorkers.firstWhere((a) => a.id == appId);
         } catch (_) { failCount++; continue; }
 
-        final wd = attendance.wageDetail ?? _calculatedWages[appId];
-        final paymentDueDate = PaymentDueDateCalculator.calculate(
-          payScheduleType: wd?.payScheduleType,
-          payScheduleDay:  wd?.payScheduleDay,
-          workDate: attendance.workDate,
-        );
-        final confirmedWageDetail = wd?.copyWith(
-          confirmedBy: adminUid,
-          confirmedAt: DateTime.now(),
-        );
+        // [SERVER-REREAD] wageDetail·paymentDueDate는 트랜잭션 내 서버 재읽기로 결정
+        // 로컬 캐시(_calculatedWages/attendance.wageDetail)는 폴백용으로만 사용
 
         try {
           final attRef = FirebaseFirestore.instance.collection('attendance').doc(attendance.id);
@@ -1250,6 +1242,22 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               alreadyClosed = true;
               return;
             }
+
+            // [SERVER-REREAD] 서버의 최신 wageDetail 사용 — 로컬 캐시 덮어쓰기 방지
+            final serverWdRaw = snap.data()?['wageDetail'];
+            final effectiveWd = serverWdRaw != null
+                ? WageDetailModel.fromMap(Map<String, dynamic>.from(serverWdRaw as Map))
+                : (attendance.wageDetail ?? _calculatedWages[appId]);
+            final confirmedWageDetail = effectiveWd?.copyWith(
+              confirmedBy: adminUid,
+              confirmedAt: DateTime.now(),
+            );
+            final paymentDueDate = PaymentDueDateCalculator.calculate(
+              payScheduleType: effectiveWd?.payScheduleType,
+              payScheduleDay:  effectiveWd?.payScheduleDay,
+              workDate: attendance.workDate,
+            );
+
             tx.update(attRef, {
               'wageStatus': AttendanceModel.wageConfirmed,
               'finalConfirmedAt': FieldValue.serverTimestamp(),
@@ -1368,6 +1376,12 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       for (final appId in targetIds) {
         final attendance = widget.attendanceMap[appId];
         if (attendance == null) { failCount++; continue; }
+        // [MED-REV] 이체완료(wageTransferred) 건은 마감 취소 불가
+        if (attendance.wageStatus == AttendanceModel.wageTransferred) {
+          debugPrint('⚠️ [REV-BLOCK] 이체완료 건 마감취소 차단 (${attendance.id})');
+          failCount++;
+          continue;
+        }
         final app = _transferredWorkers.firstWhere(
           (a) => a.id == appId,
           orElse: () => throw StateError('app not found: $appId'),

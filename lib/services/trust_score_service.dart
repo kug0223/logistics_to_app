@@ -120,6 +120,30 @@ class TrustScoreService {
     await _updateScore(userId, 'late', isIncrease: false, businessId: businessId);
   }
 
+  /// 지각 해제 시 카운트 감소 + 감점 복원
+  /// [LATE-CANCEL] onLate()의 역연산 — onNoShowCanceled() 패턴과 동일
+  Future<void> onLateCanceled(String userId, String businessId) async {
+    final userRef = _firestore.collection('users').doc(userId);
+    await _firestore.runTransaction((tx) async {
+      final snap = await tx.get(userRef);
+      final current = ((snap.data()?['lateCount'] ?? 0) as num).toInt();
+      final newCount = (current - 1).clamp(0, 9999);
+      tx.update(userRef, {
+        'lateCount': newCount,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+    final settings = await _getSettings();
+    final rule = settings.decreaseRules.firstWhere(
+      (r) => r.type == 'late',
+      orElse: () => TrustRule(type: '', points: 0, description: ''),
+    );
+    if (rule.points != 0) {
+      // [LATE-CANCEL] decreaseRules의 points는 음수이므로 -를 붙여 양수 복원
+      await _applyScoreChange(userId, -rule.points, '지각 해제', businessId: businessId);
+    }
+  }
+
   /// 노쇼 시 점수 업데이트
   Future<void> onNoShow(String userId, String businessId) async {
     // [E-001] increment 후 즉시 get하면 Firestore 반영 전 old 값을 읽을 수 있음

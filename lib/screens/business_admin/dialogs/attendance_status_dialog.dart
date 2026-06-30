@@ -3454,6 +3454,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
             updates['checkIn'] = newCheckIn;
             updates['checkInMethod'] = 'manual';
           }
+
           if (newCheckOut != null) {
             updates['checkOut'] = newCheckOut;
             updates['checkOutMethod'] = 'manual';
@@ -3488,6 +3489,22 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                 .doc(attendance.id)
                 .update(updates);
           }
+
+          // [LATE-CANCEL] 출근 시간 수정 시 지각 상태 변동 → 신뢰도 연동
+          if (newCheckIn != null) {
+            final expectedStartTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
+            final oldCheckIn = attendance.checkIn;
+            final wasLate = oldCheckIn != null &&
+                AttendanceStatusHelper.isLate(oldCheckIn, expectedStartTime);
+            final isNowLate = AttendanceStatusHelper.isLate(newCheckIn, expectedStartTime);
+            final trustService = TrustScoreService();
+            if (wasLate && !isNowLate) {
+              await trustService.onLateCanceled(app.uid, app.businessId);
+            } else if (!wasLate && isNowLate) {
+              await trustService.onLate(app.uid, app.businessId);
+            }
+          }
+
           successCount++;
         } catch (e) {
           debugPrint('❌ 출결 시간 일괄 조정 실패 (${attendance.id}): $e');

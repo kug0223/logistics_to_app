@@ -98,8 +98,13 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
           .where('workDate',
               isGreaterThanOrEqualTo: Timestamp.fromDate(yearStart))
           .where('workDate', isLessThan: Timestamp.fromDate(yearEnd))
-          .limit(5000)
+          .limit(10000) // [LIMIT-01] 150명×52주≈7800건; 5000은 대형 사업장에서 무음 누락 가능
           .get();
+
+      // [LIMIT-01] 10000건 이상 사업장에서 데이터 누락 경고
+      if (snap.size >= 10000) {
+        debugPrint('⚠️ payroll_overview: limit(10000) 도달 — 연간 데이터 누락 가능 (bizId=$bizId, year=$year)');
+      }
 
       // 파싱 오류가 있는 문서는 무시
       final allRecords = snap.docs.map((d) {

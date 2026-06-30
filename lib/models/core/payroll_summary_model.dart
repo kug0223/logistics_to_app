@@ -64,10 +64,9 @@ class PayrollSummaryModel {
       throw ArgumentError('PayrollSummaryModel: document ${doc.id} has no data');
     }
     final data = raw as Map<String, dynamic>;
-    final updatedAt = (data['updatedAt'] as Timestamp?)?.toDate().toLocal();
-    if (updatedAt == null) {
-      throw ArgumentError('PayrollSummaryModel: updatedAt is missing (id=${doc.id})');
-    }
+    // [MED-SAFE] 오프라인 쓰기 직후 읽기 시 updatedAt에 FieldValue.serverTimestamp()가 null로 반환될 수 있음.
+    // ArgumentError 대신 DateTime.now() 폴백으로 crash 방지
+    final updatedAt = (data['updatedAt'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now();
     final workersRaw = data['workers'] as Map<String, dynamic>? ?? {};
     final workers = workersRaw.map(
       // [SAFETY] Firestore 내부 타입(_JsonMap)은 직접 as Map<String, dynamic> 캐스팅 실패 가능 — from()으로 안전 변환

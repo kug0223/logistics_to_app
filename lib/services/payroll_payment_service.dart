@@ -283,12 +283,13 @@ class PayrollPaymentService {
       final today = DateTime(ref.year, ref.month, ref.day, 23, 59, 59);
       // paymentDueDate 범위필터 제거 — 등호+범위 복합쿼리에서 request.query.filters 미작동
       // businessId + wageStatus 등호필터만 사용, 날짜 필터링은 클라이언트에서 처리
-      // limit(1000): 한 사업장의 연간 미이체 건수가 1000건을 초과하는 것은 현실적으로 없음
+      // [PAY-LIMIT-01] limit(5000): 한 사업장의 연간 미이체 건수 한도 상향 (1000→5000)
+      // 대형 사업장(150명×연간)에서도 안전한 여유값
       final snap = await _db
           .collection('attendance')
           .where('businessId', isEqualTo: businessId)
           .where('wageStatus', isEqualTo: AttendanceModel.wageConfirmed)
-          .limit(1000)
+          .limit(5000)
           .get();
       return snap.docs.where((doc) {
         final dueDate = doc.data()['paymentDueDate'];

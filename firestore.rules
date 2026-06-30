@@ -1316,8 +1316,10 @@ service cloud.firestore {
       // [HIGH-FIX] SubAdmin 누락: SubAdmin도 지급방식 변경 처리 가능 → isSubAdminOf 추가
       // [SEC-FIX] workerId == auth.uid 경로: businessId가 본인 소속 사업장인지 검증
       //   → 근무자가 타 사업장 ID를 businessId에 입력해 위조 요청 생성하는 것을 차단
+      // [MED-BYPASS-FIX] businessId != '' 조건 추가 — 미소속(빈 문자열) 사용자의 '' == '' bypass 차단
       allow create: if isLoggedIn() && (
                     (request.resource.data.workerId == request.auth.uid &&
+                     request.resource.data.businessId != '' &&
                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', '') ==
                      request.resource.data.businessId) ||
                     isAdminOf(request.resource.data.businessId) ||
@@ -1368,8 +1370,10 @@ service cloud.firestore {
       // [CRITICAL-FIX] SubAdmin 누락: createInterimSettlementRequest → PERMISSION_DENIED
       // [SEC-FIX] workerId == auth.uid 경로: businessId가 본인 소속 사업장인지 검증
       //   → 근무자가 타 사업장 ID를 businessId에 입력해 급여 관련 위조 요청 생성하는 것을 차단
+      // [MED-BYPASS-FIX] businessId != '' 조건 추가 — 미소속(빈 문자열) 사용자의 '' == '' bypass 차단
       allow create: if isLoggedIn() && (
                     (request.resource.data.workerId == request.auth.uid &&
+                     request.resource.data.businessId != '' &&
                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', '') ==
                      request.resource.data.businessId) ||
                     isAdminOf(request.resource.data.businessId) ||
