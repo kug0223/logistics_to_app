@@ -369,10 +369,13 @@ service cloud.firestore {
                  );
       // 생성: 본인 uid, 관리자 더미 데이터, 또는 해당 사업장 관리자(계약 연장 등)
       // [SEC-04/05] 블랙리스트·이용제한 사용자는 본인 경로에서 서버 레벨 차단
+      // SEC-43: 근무자 경로에서 toId-businessId 소속 교차 검증 — 타 사업장 TO에 지원서 삽입 차단
       allow create: if isLoggedIn() && (
                       (request.resource.data.uid == request.auth.uid
                         && isNotBlacklisted()
-                        && isNotRestricted()) ||
+                        && isNotRestricted()
+                        && get(/databases/$(database)/documents/tos/$(request.resource.data.toId))
+                             .data.get('businessId', '_NONE_') == request.resource.data.businessId) ||
                       (isAdmin() && request.resource.data.isDummy == true) ||
                       isAdminOf(request.resource.data.businessId)
                     );
@@ -1200,16 +1203,22 @@ service cloud.firestore {
       // [SEC-001] 수신자는 status/respondedAt 필드만 변경 가능 (businessId 조작 차단)
       // [SEC-FIX] 상태 전이 검증: pending 상태에서만 수락/거절 가능
       //   → accepted 상태에서 rejected로 재변경하는 것을 차단
+      // SEC-42: 관리자 브랜치에 필드 제한 추가 — targetUid·businessId·invitedBy 위조 차단
       allow update: if isLoggedIn() && (
                       (request.auth.uid == resource.data.targetUid &&
                        resource.data.status == 'pending' &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status', 'respondedAt'])) ||
-                      isAdminOf(resource.data.businessId) ||
+                      (isAdminOf(resource.data.businessId) &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['status', 'canceledAt'])) ||
                       isSuperAdmin()
                     );
 
-      allow delete: if isSuperAdmin();
+      // SEC-44: 관리자·발신자 삭제 허용 추가 (슈퍼어드민 단독 제한 완화)
+      allow delete: if isSuperAdmin() ||
+                       isAdminOf(resource.data.businessId) ||
+                       (isLoggedIn() && request.auth.uid == resource.data.invitedBy);
     }
 
     // ═══════════════════════════════════════════════════════════

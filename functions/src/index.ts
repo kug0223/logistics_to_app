@@ -4579,10 +4579,15 @@ export const callableGetUsersBatch = onCall(
     const snaps = await db.getAll(...refs);
 
     // 반환 제외 민감 필드 (FCM 토큰은 서버 전송 전용 — 클라이언트 노출 금지)
+    // SEC-41: passwordHistory·ciHash·phoneHash·accountNumber 누락으로 관리자에게 노출되던 문제 수정
     const SENSITIVE_FIELDS = new Set([
       "ci", "residentNumber", "foreignIdNumber",
       "idCardImageUrl", "signatureBase64", "sealBase64", "bankbookImageUrl",
       "fcmToken", "fcmTokens",
+      "passwordHistory",  // 비밀번호 해시 이력 — 오프라인 딕셔너리 공격에 활용 가능
+      "ciHash",           // CI 해시 — 개인식별정보
+      "phoneHash",        // 전화번호 해시 — 개인정보
+      "accountNumber",    // 계좌번호 암호화 원문 — 금융정보
     ]);
 
     const users: Record<string, Record<string, unknown>> = {};
