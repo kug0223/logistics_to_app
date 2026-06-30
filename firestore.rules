@@ -276,6 +276,7 @@ service cloud.firestore {
       allow update: if isLoggedIn() && isUser() &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['totalPending']) &&
+                       request.resource.data.totalPending is int &&  // SEC-15: 타입 검증
                        request.resource.data.totalPending >= 0 &&
                        (request.resource.data.totalPending == resource.data.totalPending + 1 ||
                         request.resource.data.totalPending == resource.data.totalPending - 1);
@@ -287,6 +288,7 @@ service cloud.firestore {
       allow update: if isLoggedIn() && isUser() &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['totalConfirmed', 'workTypeConfirmedCounts']) &&
+                       request.resource.data.totalConfirmed is int &&  // SEC-15: 타입 검증
                        request.resource.data.totalConfirmed >= 0 &&
                        request.resource.data.totalConfirmed == resource.data.totalConfirmed - 1;
 

@@ -412,6 +412,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       );
     } catch (e) {
       debugPrint('❌ 급여 계산 실패 (${app.id}): $e');
+      _wageParams.remove(app.id); // 계산 실패 시 불완전한 파라미터 제거
       return null;
     }
   }

@@ -353,7 +353,11 @@ export const createNotification = onCall(
     ]);
     const filteredData: Record<string, unknown> = {};
     for (const key of Object.keys(rawData)) {
-      if (allowedDataKeys.has(key)) filteredData[key] = String(rawData[key]);
+      if (!allowedDataKeys.has(key)) continue;
+      const strVal = String(rawData[key]);
+      // SEC-12: 값 길이 제한 (FCM data payload는 256자 이하 권장)
+      if (strVal.length > 256) continue;
+      filteredData[key] = strVal;
     }
 
     // ── 발신자-수신자 관계 검증 ─────────────────────────────────
@@ -4730,8 +4734,8 @@ export const callableGetMyBusiness = onCall(
       .orderBy("createdAt", "desc")
       .get();
 
-    // adminIds 제거 — 다른 관리자 UID 노출 방지
-    const SENSITIVE_FIELDS = new Set(["adminIds"]);
+    // adminIds/ownerId 제거 — 다른 관리자 UID 노출 방지 (SEC-20)
+    const SENSITIVE_FIELDS = new Set(["adminIds", "ownerId"]);
 
     const businesses: Array<Record<string, unknown>> = [];
     for (const doc of snap.docs) {
@@ -5325,6 +5329,21 @@ export const callableCalculateAndConfirmWage = onCall(
     if (typeof d.baseWage !== "number" || d.baseWage <= 0) {
       throw new HttpsError("invalid-argument", "baseWage는 양수여야 합니다.");
     }
+    // SEC-16: 입력값 형식 검증
+    if (d.wageType !== "hourly" && d.wageType !== "daily") {
+      throw new HttpsError("invalid-argument", "wageType은 'hourly' 또는 'daily'여야 합니다.");
+    }
+    if (!/^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$/.test(d.workDate)) {
+      throw new HttpsError("invalid-argument", "workDate는 YYYY-MM-DD 형식이어야 합니다.");
+    }
+    if (!/^\d{4}(?:0[1-9]|1[0-2])$/.test(d.yearMonth)) {
+      throw new HttpsError("invalid-argument", "yearMonth는 YYYYMM 형식이어야 합니다.");
+    }
+    const _timeRegex = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+    if (!_timeRegex.test(d.scheduledStart) || !_timeRegex.test(d.scheduledEnd) ||
+        !_timeRegex.test(d.actualStart) || !_timeRegex.test(d.actualEnd)) {
+      throw new HttpsError("invalid-argument", "시간은 HH:MM 형식(24시간)이어야 합니다.");
+    }
 
     // 1. attendance 조회 (businessId, userId 확보)
     const attRef2 = db.collection("attendance").doc(d.attendanceId);
@@ -5424,7 +5443,7 @@ export const callableCalculateAndConfirmWage = onCall(
         calculatedBy: callerUid,
       };
       if (wageResult2.earlyArrivalMinutes) wd.earlyArrivalMinutes = wageResult2.earlyArrivalMinutes;
-      if (wageResult2.earlyArrivalAmount) wd.earlyArrivalAmount = wageResult2.earlyArrivalAmount;
+      wd.earlyArrivalAmount = wageResult2.earlyArrivalAmount;
       if (wageResult2.appliedSupplementWage) wd.appliedSupplementWage = wageResult2.appliedSupplementWage;
       if (wageResult2.employmentInsuranceDeduction) wd.employmentInsuranceDeduction = wageResult2.employmentInsuranceDeduction;
       if (wageResult2.nationalPensionDeduction) wd.nationalPensionDeduction = wageResult2.nationalPensionDeduction;
