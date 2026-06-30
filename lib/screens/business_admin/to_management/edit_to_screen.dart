@@ -719,7 +719,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       context: context,
       businessWorkTypes: _businessWorkTypes,
     );
-    if (result != null) {
+    if (result != null && mounted) {
       setState(() {
         _hasChanges = true; // [B-4] workDetails 변경 감지
         _workDetails.add(WorkDetailData(
@@ -754,7 +754,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       work: work,
       businessWorkTypes: _businessWorkTypes,
     );
-    if (result != null) {
+    if (result != null && mounted) {
       final index = _workDetails.indexOf(work);
       if (index != -1) {
         setState(() {
@@ -793,7 +793,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
   Future<void> _deleteWork(WorkDetailData work) async {
     final confirmed = await _showDeleteConfirmDialog(work);
-    if (confirmed == true) {
+    if (confirmed == true && mounted) {
       setState(() { _hasChanges = true; _workDetails.remove(work); }); // [B-4] workDetails 변경 감지
       ToastHelper.showInfo('업무가 삭제되었습니다 (저장 버튼을 눌러주세요)');
     }

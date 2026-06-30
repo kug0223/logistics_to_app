@@ -1766,7 +1766,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     try {
       final result = await DaumAddressService.searchAddress(context);
 
-      if (result != null) {
+      if (result != null && mounted) {
         setState(() {
           _addressController.text = result.fullAddress;
           _latitude = result.latitude;

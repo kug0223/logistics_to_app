@@ -198,7 +198,7 @@ extension NotificationFirestore on FirestoreService {
       final hasMore = snap.docs.length > pageSize;
       final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
       return NotificationPage(
-        records: docs.map(NotificationModel.fromFirestore).toList(),
+        records: docs.map(NotificationModel.tryFromFirestore).whereType<NotificationModel>().toList(),
         hasMore: hasMore,
       );
     } catch (e) {

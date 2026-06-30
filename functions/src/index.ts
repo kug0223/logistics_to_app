@@ -747,6 +747,8 @@ export const masterScheduler = onSchedule(
  * expiresAt이 현재 시각 이전인 문서를 'expired'로 갱신.
  * approved 상태로 영구 잔류하면 만료된 권한이 UI에서 유효하게 보이는 UX 버그 발생.
  */
+// [NEW-14] masterScheduler는 00:00~00:09 윈도우에서 재시도 가능 — 멱등성 보장:
+// where(status=="approved")로 이미 expired 처리된 건은 재조회 안 됨 (safe idempotent)
 async function processExpiredIdCardAccess(now: Timestamp): Promise<void> {
   const snap = await db
     .collection("idCardAccessRequests")
@@ -2935,22 +2937,80 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       // 새 Application 생성 + 기존 Application 갱신 — 원자적 배치
       const newAppRef = db.collection("applications").doc();
       const renewBatch = db.batch();
+      // [CF-11 수정] ...app 스프레드 제거 → 화이트리스트 방식으로 필요 필드만 명시적 복사.
+      // 이전에는 ...app으로 wageDetail·finalWage·wageStatus 등 집계 필드가 새 application에
+      // 그대로 복사되었음. Flutter createRenewedApplication()도 copyWith+toMap() 화이트리스트 방식.
       renewBatch.set(newAppRef, {
-        ...app,
+        // ── 사업장/공고 식별 ──
+        businessId: app.businessId,
+        businessName: app.businessName,
+        toTitle: app.toTitle ?? null,
+        toId: app.toId ?? null,
+        workDetailId: app.workDetailId ?? null,
+        slotId: app.slotId ?? null,
+        groupId: app.groupId ?? null,
+        // ── 근무자 식별 ──
+        uid: app.uid,
+        applicantName: app.applicantName ?? null,
+        // ── 근무 스케줄 (날짜는 새 기간으로 교체) ──
         workDate: Timestamp.fromDate(newStartDate),
         workEndDate: Timestamp.fromDate(newEndDate),
-        confirmedAt: now,
+        workDays: app.workDays ?? null,
+        startTime: app.startTime ?? null,
+        endTime: app.endTime ?? null,
+        // ── 업무 유형 ──
+        selectedWorkType: app.selectedWorkType ?? null,
+        originalWorkType: app.originalWorkType ?? null,
+        originalWage: app.originalWage ?? null,
+        changedAt: app.changedAt ?? null,
+        changedBy: app.changedBy ?? null,
+        workTypeIcon: app.workTypeIcon ?? null,
+        workTypeColor: app.workTypeColor ?? null,
+        workTypeBackgroundColor: app.workTypeBackgroundColor ?? null,
+        // ── 임금 기본값 (TO 레벨 고정값 유지, 집계 필드는 초기화) ──
+        wage: app.wage ?? 0,
+        wageType: app.wageType ?? null,
+        wageStatus: "pending",          // [CF-11] 집계 필드 초기화
+        finalWage: null,                // [CF-11] 집계 필드 초기화
+        wageDetail: null,               // [CF-11] 집계 필드 초기화
+        wageConfirmedAt: null,          // [CF-11] 집계 필드 초기화
+        wageTransferredAt: null,        // [CF-11] 집계 필드 초기화
+        interimSettledAmount: 0,        // [CF-11] 집계 필드 초기화
+        // ── 상태 ──
+        status: "CONFIRMED",
         appliedAt: now,
+        confirmedAt: now,
+        confirmedBy: "SYSTEM",
+        // ── 지원/확정 메시지 (이전 계약 승계 안 함) ──
+        applicationMessage: null,
+        confirmMessage: null,
+        rejectMessage: null,
+        cancelMessage: null,
+        // ── 취소 관련 (초기화) ──
+        canceledAt: null,
+        cancelReason: null,
+        conflictingAppId: null,
+        conflictingBusiness: null,
+        conflictingTime: null,
+        // ── 연장 추적 ──
         renewedFromApplicationId: doc.id,
         renewalDecision: null,
         renewalNotifiedAt: null,
+        renewedToApplicationId: null,
+        // ── 희망 시작일 (초기화) ──
         desiredStartDate: null,
-        statusHistory: [],
+        // ── 휴무/추가근무 (이전 계약 날짜 승계 안 함) ──
+        // [BUG-FIX] H-3: Flutter createRenewedApplication()과 동일하게 초기화.
+        leaveDates: [],
+        extraWorkDates: [],
+        // ── 퇴사/계약해지 (초기화) ──
         resignStatus: null,
         resignRequestedAt: null,
         resignRequestDate: null,
         resignApprovedAt: null,
         resignApprovedBy: null,
+        resignRejectedAt: null,
+        resignRejectedBy: null,
         resignRejectReason: null,
         actualResignDate: null,
         terminationStatus: null,
@@ -2960,11 +3020,10 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         terminationRequestedByUid: null,
         terminationRespondedAt: null,
         terminationRejectReason: null,
-        // [BUG-FIX] H-3: Reset leaveDates and extraWorkDates so previous contract's
-        // leave/extra-work days are not inherited into the renewed contract.
-        // Matches Flutter's createRenewedApplication() (application_firestore.dart:2236-2238).
-        leaveDates: [],
-        extraWorkDates: [],
+        // ── 기타 ──
+        statusHistory: [],
+        type: app.type ?? null,
+        isStarred: false,
       });
       // 기존 Application 갱신 — 배치 실패 시 둘 다 미커밋 → 중복 연장 방지
       // [RENEWAL-001 수정] renewedToApplicationId 역참조 추가 — 원본→연장 양방향 추적
@@ -3083,6 +3142,13 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           });
         });
 
+        // 퇴직 확정 → Auth 토큰 즉시 무효화 (로그아웃 없이도 접근 차단)
+        try {
+          await admin.auth().revokeRefreshTokens(app.uid as string);
+        } catch (tokenErr) {
+          console.warn(`[퇴직] revokeRefreshTokens 실패 uid=${app.uid}: ${tokenErr}`);
+        }
+
         // 근무자에게 자동 승인 알림
         // [FCM-03 수정] businessId 누락 → notification_screen resignApproved 분기에서
         // IntegratedWorkforceScreen(initialBusinessId: null)로 열리는 버그 방지
@@ -3146,6 +3212,13 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
             status: "CANCELED",
           });
         });
+
+        // 퇴직 확정 → Auth 토큰 즉시 무효화 (로그아웃 없이도 접근 차단)
+        try {
+          await admin.auth().revokeRefreshTokens(app.uid as string);
+        } catch (tokenErr) {
+          console.warn(`[퇴직] revokeRefreshTokens 실패 uid=${app.uid}: ${tokenErr}`);
+        }
 
         // 근무자에게 자동 승인 알림
         await db.collection("users").doc(app.uid as string).collection("notifications").add({
@@ -3359,7 +3432,7 @@ function makeSensSignature(
 /** NCP SENS로 SMS 발송 (promise wrapper) */
 async function sendSensSms(to: string, content: string): Promise<void> {
   if (!SENS_ENABLED) {
-    console.log(`[SENS MOCK] SMS to ${to}: ${content}`);
+    console.log(`[SENS MOCK] SMS to ${to.slice(0, 3)}****${to.slice(-4)}: [코드 마스킹]`);
     return;
   }
 
@@ -3617,7 +3690,7 @@ export const onBusinessDeleted = onDocumentDeleted(
       for (let i = 0; i < toIds.length; i += chunkSize) {
         const chunk = toIds.slice(i, i + chunkSize);
 
-        // CONFIRMED 지원서 → CANCELED
+        // CONFIRMED/CONTRACT_PENDING 지원서 → CANCELED
         const appsSnap = await db
           .collection("applications")
           .where("toId", "in", chunk)
@@ -3661,6 +3734,34 @@ export const onBusinessDeleted = onDocumentDeleted(
             }
           }
         }
+
+        // [D-BIZ-01] PENDING 지원서 → AUTO_CANCELED (사업장 삭제로 인한 자동 취소)
+        const pendingAppsSnap = await db
+          .collection("applications")
+          .where("toId", "in", chunk)
+          .where("status", "==", "PENDING")
+          .get();
+
+        if (!pendingAppsSnap.empty) {
+          const batchSize = 499;
+          for (let k = 0; k < pendingAppsSnap.docs.length; k += batchSize) {
+            const pendingBatch = db.batch();
+            const slice = pendingAppsSnap.docs.slice(k, k + batchSize);
+            for (const doc of slice) {
+              pendingBatch.update(doc.ref, {
+                status: "AUTO_CANCELED",
+                cancelReason: "BUSINESS_DELETED",
+                canceledAt: Timestamp.now(),
+              });
+            }
+            await pendingBatch.commit();
+          }
+        }
+      }
+
+      // [D-BIZ-05] TO 삭제 전 slots 서브컬렉션 orphan 방지 — 각 TO의 slots를 먼저 정리
+      for (const toDoc of tosSnap.docs) {
+        await deleteSubcollection(`tos/${toDoc.id}/slots`);
       }
 
       // TO 문서 삭제 (500건 분할)
@@ -4086,7 +4187,7 @@ export const adminResetForeignPassword = onCall(
 
     // [SEC-07] 사용자 이름 평문 로그 제거 (PII 마스킹)
     console.log(`[adminResetForeignPassword] 슈퍼어드민 ${callerUid}가 ${userId}의 비밀번호 초기화`);
-    return {tempPassword};
+    return {success: true};
   }
 );
 

@@ -1792,22 +1792,28 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     // [C-1] 파트변경 전 확정된 급여 건 체크 — 있으면 미확정 처리됨을 사전 경고
     // [BUG-WHEREIN] wageStatus whereIn + applicationId 복합쿼리 → PERMISSION_DENIED 위험
     //   calculated/confirmed 2개 isEqualTo .count() 병렬 쿼리로 분리
-    final wageCountResults = await Future.wait([
-      FirebaseFirestore.instance
-          .collection('attendance')
-          .where('applicationId', isEqualTo: app.id)
-          .where('wageStatus', isEqualTo: 'calculated')
-          .count()
-          .get(),
-      FirebaseFirestore.instance
-          .collection('attendance')
-          .where('applicationId', isEqualTo: app.id)
-          .where('wageStatus', isEqualTo: 'confirmed')
-          .count()
-          .get(),
-    ]);
-    final confirmedWageCount =
-        (wageCountResults[0].count ?? 0) + (wageCountResults[1].count ?? 0);
+    final int confirmedWageCount;
+    try {
+      final wageCountResults = await Future.wait([
+        FirebaseFirestore.instance
+            .collection('attendance')
+            .where('applicationId', isEqualTo: app.id)
+            .where('wageStatus', isEqualTo: 'calculated')
+            .count()
+            .get(),
+        FirebaseFirestore.instance
+            .collection('attendance')
+            .where('applicationId', isEqualTo: app.id)
+            .where('wageStatus', isEqualTo: 'confirmed')
+            .count()
+            .get(),
+      ]);
+      confirmedWageCount =
+          (wageCountResults[0].count ?? 0) + (wageCountResults[1].count ?? 0);
+    } catch (e) {
+      if (mounted) setState(() => _isProcessing = false);
+      return;
+    }
     if (!mounted) return;
 
     if (confirmedWageCount > 0) {
@@ -1964,7 +1970,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       if (!mounted) return;
       await _updateLocalStats();
     } catch (e) {
-      ToastHelper.showError('파트 변경에 실패했습니다');
+      if (mounted) ToastHelper.showError('파트 변경에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -2024,7 +2030,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       if (!mounted) return;
       await _updateLocalStats();
     } catch (e) {
-      ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
+      if (mounted) ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -2062,7 +2068,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       if (!mounted) return;
       await _updateLocalStats();
     } catch (e) {
-      ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
+      if (mounted) ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -2107,7 +2113,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       if (!mounted) return;
       await _updateLocalStats();
     } catch (e) {
-      ToastHelper.showError('확정 취소 중 오류가 발생했습니다');
+      if (mounted) ToastHelper.showError('확정 취소 중 오류가 발생했습니다');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -2390,7 +2396,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         articles: articles,
       );
     } catch (e) {
-      ToastHelper.showError('계약서 미리보기 생성에 실패했습니다');
+      if (mounted) ToastHelper.showError('계약서 미리보기 생성에 실패했습니다');
       return;
     } finally {
       if (mounted) setState(() => _isProcessing = false);
@@ -2485,6 +2491,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         final results = await Future.wait(batch.map(processOne));
         successCount += results.where((r) => r).length;
       }
+      if (!mounted) return;
 
       if (successCount < _selectedIds.length) {
         ToastHelper.showWarning(
@@ -2502,7 +2509,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         _firestoreService.clearCache(toId: toId);
       }
     } catch (e) {
-      ToastHelper.showError('처리 중 오류가 발생했습니다');
+      if (mounted) ToastHelper.showError('처리 중 오류가 발생했습니다');
       debugPrint('❌ 일괄 계약 발송 실패: $e');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
@@ -2691,7 +2698,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         articles: articles,
       );
     } catch (e) {
-      ToastHelper.showError('계약서 미리보기 생성에 실패했습니다');
+      if (mounted) ToastHelper.showError('계약서 미리보기 생성에 실패했습니다');
       return;
     } finally {
       if (mounted) setState(() => _isContractBatchProcessing = false);
@@ -2768,7 +2775,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         });
       }
     } catch (e) {
-      ToastHelper.showError('처리 중 오류가 발생했습니다');
+      if (mounted) ToastHelper.showError('처리 중 오류가 발생했습니다');
       debugPrint('❌ 계약서 일괄 발송 실패: $e');
     } finally {
       if (mounted) setState(() => _isContractBatchProcessing = false);
@@ -2830,7 +2837,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         articles: articles,
       );
     } catch (e) {
-      ToastHelper.showError('계약서 미리보기 생성에 실패했습니다');
+      if (mounted) ToastHelper.showError('계약서 미리보기 생성에 실패했습니다');
       return;
     } finally {
       if (mounted) setState(() => _isProcessing = false);

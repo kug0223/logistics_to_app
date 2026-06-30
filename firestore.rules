@@ -132,12 +132,14 @@ service cloud.firestore {
       // restrictedUntil: 제재 만료 시각 — 본인이 삭제하여 제재 우회 방지
       // SEC-77: businessId 차단 추가 — 변경 시 소속 교차검증을 우회해 타 사업장에
       //   attendance/schedule_change_requests 등 생성 가능 (CF Admin SDK·관리자 경로만 변경 허용)
+      // SEC-78: isAdmin(레거시 필드) 추가 — 본인이 관리자 플래그 직접 설정 차단
+      // SEC-79: sealBase64 추가 — 본인이 인감 이미지를 위조 URL로 교체해 계약서 위변조 차단
       allow update: if isLoggedIn() &&
                        isOwner(userId) &&
                        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
                          'role', 'isBlacklisted', 'subAdminOf', 'businessId',
                          'trustScore', 'noShowCount', 'lateCount', 'totalWorkDays', 'lastRestartAt',
-                         'restrictedUntil'
+                         'restrictedUntil', 'isAdmin', 'sealBase64'
                        ]);
 
       // [SEC-03 완료] trustScore·noShowCount·lateCount·totalWorkDays·restrictedUntil·lastRestartAt
@@ -159,9 +161,16 @@ service cloud.firestore {
                        !('subAdminOf' in request.resource.data);
 
       // 회원가입(본인) 또는 관리자 더미 데이터 생성
+      // [RULE-01] 더미 생성 시 민감 필드 차단 — role/isBlacklisted/sealBase64 등 초기값으로 심으면
+      //           후속 논리 오동작 및 권한 상승에 악용 가능
       allow create: if isLoggedIn() && (
                       isOwner(userId) ||
-                      (isAdmin() && request.resource.data.isDummy == true)
+                      (isAdmin() && request.resource.data.isDummy == true &&
+                       !request.resource.data.keys().hasAny([
+                         'role', 'isBlacklisted', 'restrictedUntil',
+                         'trustScore', 'noShowCount', 'lateCount', 'totalWorkDays',
+                         'isAdmin', 'sealBase64', 'subAdminOf'
+                       ]))
                     );
 
       // isDummy 삭제: 더미 유저는 businessId 미포함 설계이므로 isAdmin() 전체 허용
@@ -560,8 +569,10 @@ service cloud.firestore {
       // [SEC-11 정리] 이전에 isAdmin() 단독으로 타 사업장 더미 삭제 가능했던 취약점 수정이력 있음.
       //   isAdminOf(businessId)가 이미 "소속 사업장 관리자"를 모두 포괄하므로
       //   isDummy 전용 세 번째 조건은 두 번째 조건의 진부분집합 → 제거
+      // RULE-06: isSubAdminOf 추가 — SubAdmin도 TO 삭제 연쇄 작업에서 attendance 고아 데이터 정리 가능
       allow delete: if isSuperAdmin() ||
-                     isAdminOf(resource.data.businessId);
+                     isAdminOf(resource.data.businessId) ||
+                     isSubAdminOf(resource.data.businessId);
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -665,7 +676,10 @@ service cloud.firestore {
     match /reviews/{reviewId} {
 
       // get: 작성자·대상자·사업장 관리자
+      // [RULE-08] resource==null 처리 추가 — 문서 미존재 시 resource.data 접근으로 항상 PERMISSION_DENIED
+      //   발생하던 기능 버그 수정 (monthly_reviews와 동일 패턴 적용)
       allow get: if isLoggedIn() && (
+        resource == null ||
         isSuperAdmin() ||
         resource.data.reviewerId == request.auth.uid ||
         resource.data.targetUserId == request.auth.uid ||

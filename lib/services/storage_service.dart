@@ -165,9 +165,14 @@ class StorageService {
     }
   }
 
-  /// 여러 이미지 일괄 삭제 (병렬)
+  /// 여러 이미지 일괄 삭제 (병렬) — 개별 실패 시 나머지 계속 진행
   Future<void> deleteMultipleByUrls(List<String> urls) async {
-    await Future.wait(urls.map((url) => deleteImageByUrl(url)));
+    await Future.wait(
+      urls.map((url) => deleteImageByUrl(url).catchError((e) {
+        debugPrint('⚠️ 이미지 삭제 실패 (계속 진행): $url — $e');
+        return false;
+      })),
+    );
   }
 
   /// Firebase Storage URL인지 확인

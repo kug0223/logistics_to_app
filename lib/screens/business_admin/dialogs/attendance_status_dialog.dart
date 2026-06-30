@@ -175,10 +175,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
   /// 초기 데이터 로드 (병렬)
   Future<void> _initializeData() async {
-    await Future.wait([
-      _loadBusinessNames(),
-      _loadData(),
-    ]);
+    try {
+      await Future.wait([
+        _loadBusinessNames(),
+        _loadData(),
+      ]);
+    } catch (e) {
+      debugPrint('❌ [당일명단] 초기화 실패: $e');
+    }
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -2203,6 +2207,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         _attendanceMap[app.id] = attendance.copyWith(adminConfirmed: true);
         _selectedIds.remove(app.id);
         _hasChanges = true;
+        _rebuildStatusCache();
       });
     } catch (e) {
       debugPrint('❌ 확인 처리 실패: $e');
@@ -2223,6 +2228,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       setState(() {
         _attendanceMap[app.id] = attendance.copyWith(adminConfirmed: false);
         _hasChanges = true;
+        _rebuildStatusCache();
       });
     } catch (e) {
       debugPrint('❌ 확인 취소 실패: $e');

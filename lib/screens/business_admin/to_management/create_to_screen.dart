@@ -585,7 +585,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       businessWorkTypes: _businessWorkTypes,
     );
 
-    if (result != null) {
+    if (result != null && mounted) {
       final isDuplicate = _workDetails.any((w) =>
           w.workType == result.workType &&
           w.startTime == result.startTime &&
@@ -630,7 +630,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       businessWorkTypes: _businessWorkTypes,
     );
 
-    if (result != null) {
+    if (result != null && mounted) {
       setState(() {
         _workDetails[index] = WorkDetailInput(
           workType: result['workType'] ?? detail.workType,
