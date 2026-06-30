@@ -25,38 +25,24 @@ class PayrollExcelHelper {
     required List<AttendanceModel> records,
     required String title,
     required String filename,
+    required String businessId,  // SEC-22: CF 프록시를 위해 필수
   }) async {
     if (records.isEmpty) {
       ToastHelper.showWarning('이체 내역이 없습니다');
       return;
     }
 
-    // 마스킹 없는 전체 계좌번호 조회
+    // SEC-22: CF callableGetUsersBatch를 통해 조회 — 극도 민감 필드(ci/주민번호 등) 서버 필터링
     final fsService = FirestoreService();
     final bankInfo = <String, Map<String, String>>{};
     final uidList = records.map((r) => r.userId).toSet().toList();
 
-    // 개별 실패가 전체 내보내기를 중단하지 않도록 각 요청을 독립적으로 처리
-    //
-    // ⚠️ D11 설계 방침: Future.wait로 uidList 전체를 동시 조회한다.
-    // 1000명 이상 사업장에서 동시 Firestore 읽기가 폭발할 수 있으나,
-    // Firestore SDK는 내부 연결 풀을 사용하므로 실제 TCP 연결은 제한된다.
-    // 현실적으로 이체 목록은 사업장당 월 수십~수백 명 수준이므로 허용된 트레이드오프.
-    // 500명 이상 사업장이 발생하면 청크(예: 50건씩) 순차 처리로 개선 필요.
-    final users = await Future.wait(
-      uidList.map((uid) async {
-        try {
-          return await fsService.getUser(uid);
-        } catch (_) {
-          return null;
-        }
-      }),
-    );
+    final userMap = await fsService.getUsersBatch(uidList, businessId: businessId);
     int missingCount = 0;
-    for (int i = 0; i < uidList.length; i++) {
-      final user = users[i];
+    for (final uid in uidList) {
+      final user = userMap[uid];
       if (user == null) { missingCount++; continue; }
-      bankInfo[uidList[i]] = {
+      bankInfo[uid] = {
         'name':          user.name,
         'bankName':      user.bankName      ?? '',
         'accountNumber': user.accountNumber ?? '',

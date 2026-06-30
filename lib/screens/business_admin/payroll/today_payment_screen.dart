@@ -309,6 +309,7 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
         records: _records,
         title: '$biz ${today.month}월 오늘 처리할 송금',
         filename: '${biz}_${today.month}월_오늘송금목록.xlsx',
+        businessId: widget.businessId,
       );
     } finally {
       if (mounted) setState(() => _isExporting = false);

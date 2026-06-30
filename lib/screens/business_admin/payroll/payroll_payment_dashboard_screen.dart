@@ -671,6 +671,7 @@ class _PayrollPaymentDashboardScreenState
         records: _pendingRecords,
         title: '$bizName ${widget.year}년 ${widget.month}월 이체목록',
         filename: '${bizName}_${widget.year}년${widget.month}월_이체목록.xlsx',
+        businessId: widget.businessId,
       );
     } finally {
       if (mounted) setState(() => _isExporting = false);

@@ -650,7 +650,7 @@ List<TransferRow> buildTransferRows(
     final bank = userBankInfo[uid];
     if (bank == null) {
       // [D-001] 은행정보 누락 — 해당 근무자 급여가 이체 목록에서 제외됨
-      debugPrint('⚠️ [이체] 은행정보 없음 — uid: $uid, 해당 급여 ${recs.length}건 이체 목록 제외');
+      if (kDebugMode) debugPrint('⚠️ [이체] 은행정보 없음 — uid 해시: ${uid.hashCode}, 급여 ${recs.length}건 제외');
       continue;
     }
 

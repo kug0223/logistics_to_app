@@ -419,11 +419,25 @@ export const createNotification = onCall(
     }
     // ────────────────────────────────────────────────────────────
 
+    // SEC-21: title/body 길이 제한, type enum 검증
+    const rawTitle = data.title as string | undefined;
+    const rawBody = data.body as string | undefined;
+    const rawType = (data.type as string | undefined) ?? "general";
+    if (!rawTitle || rawTitle.length > 100) {
+      throw new HttpsError("invalid-argument", "title은 1~100자여야 합니다.");
+    }
+    if (rawBody && rawBody.length > 500) {
+      throw new HttpsError("invalid-argument", "body는 500자 이하여야 합니다.");
+    }
+    // type: 영문자·숫자·언더스코어만 허용 (XSS·injection 차단), 최대 50자
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,49}$/.test(rawType)) {
+      throw new HttpsError("invalid-argument", "알림 타입 형식이 올바르지 않습니다.");
+    }
     const payload: Record<string, unknown> = {
       userId,
-      title: data.title as string | undefined,
-      body: data.body as string | undefined,
-      type: (data.type as string | undefined) ?? "general",
+      title: rawTitle,
+      body: rawBody,
+      type: rawType,
       data: filteredData,
       isRead: false,
       createdAt: Timestamp.now(),
@@ -4103,11 +4117,12 @@ export const getMyContracts = onCall(
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const uid = request.auth.uid;
-    const {statusFilter, lastDocId, pageSize = 20} = (request.data ?? {}) as {
+    const {statusFilter, lastDocId, pageSize: rawPageSize = 20} = (request.data ?? {}) as {
       statusFilter?: string;
       lastDocId?: string;
       pageSize?: number;
     };
+    const pageSize = Math.min(Math.max(1, rawPageSize ?? 20), 100); // SEC-21: 1~100 제한
 
     let q: FirebaseFirestore.Query = db
       .collection("employment_contracts")

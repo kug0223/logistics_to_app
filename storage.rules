@@ -16,16 +16,15 @@ service firebase.storage {
       return request.resource.size < 10 * 1024 * 1024;
     }
 
-    // 해당 사업장의 관리자(ownerId 또는 subAdminOf)인지 확인
-    // businesses/ delete 시 사용
-    // - ownerId: 사업장 삭제, 이미지 교체 모두 허용
-    // - subAdminOf: 업무유형 이미지 교체 시 필요 (SUB_ADMIN도 해당 화면 접근 가능)
+    // 해당 사업장의 관리자(ownerId / adminIds / subAdminOf)인지 확인
+    // SEC-23: adminIds 배열 체크 추가 — 공동 관리자도 사업장 파일 업로드/삭제 허용
     function isBusinessAdmin(businessId) {
-      return isLoggedIn() && (
-        firestore.get(/databases/(default)/documents/businesses/$(businessId)).data.ownerId
-          == request.auth.uid ||
-        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data
-          .get('subAdminOf', '') == businessId
+      let biz = firestore.get(/databases/(default)/documents/businesses/$(businessId));
+      let usr = firestore.get(/databases/(default)/documents/users/$(request.auth.uid));
+      return isLoggedIn() && biz != null && biz.data != null && (
+        biz.data.ownerId == request.auth.uid ||
+        (request.auth.uid in biz.data.get('adminIds', [])) ||
+        (usr != null && usr.data != null && usr.data.get('subAdminOf', '') == businessId)
       );
     }
 
