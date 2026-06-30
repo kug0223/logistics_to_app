@@ -31,13 +31,13 @@ extension ApplicationFirestore on FirestoreService {
       if (uid != null && uid.isNotEmpty) {
         query = query.where('uid', isEqualTo: uid);
       }
-      if (statuses != null && statuses.isNotEmpty) {
-        query = query.where('status', whereIn: statuses);
-      }
-      // limit(2000) — 일용직 TO 현실적 최대치, 초과 시 관리자 페이지네이션으로 개선 필요
+      // [BUG-WHEREIN] status whereIn + 복합쿼리 → PERMISSION_DENIED 위험
+      //   서버 필터 제거, 클라이언트 필터링으로 대체 (limit 2000 범위 내 충분)
+      final statusSet = statuses != null ? Set<String>.from(statuses) : null;
       final snap = await query.limit(2000).get(const GetOptions(source: Source.server));
       return snap.docs
           .map((d) => ApplicationModel.fromFirestore(d))
+          .where((a) => statusSet == null || statusSet.contains(a.status))
           .toList();
     } catch (e) {
       debugPrint('❌ 지원자 목록 조회 실패: $e');
@@ -61,13 +61,13 @@ extension ApplicationFirestore on FirestoreService {
       if (businessId != null && businessId.isNotEmpty) {
         query = query.where('businessId', isEqualTo: businessId);
       }
-      if (statuses != null && statuses.isNotEmpty) {
-        query = query.where('status', whereIn: statuses);
-      }
-      // limit(2000) — 일용직 TO 현실적 최대치, 초과 시 관리자 페이지네이션으로 개선 필요
+      // [BUG-WHEREIN] status whereIn + 복합쿼리 → PERMISSION_DENIED 위험
+      //   서버 필터 제거, 클라이언트 필터링으로 대체
+      final statusSet = statuses != null ? Set<String>.from(statuses) : null;
       final snap = await query.limit(2000).get(const GetOptions(source: Source.server));
       return snap.docs
           .map((d) => ApplicationModel.fromFirestore(d))
+          .where((a) => statusSet == null || statusSet.contains(a.status))
           .toList();
     } catch (e) {
       debugPrint('❌ 슬롯 지원자 목록 조회 실패: $e');
@@ -167,23 +167,31 @@ extension ApplicationFirestore on FirestoreService {
     String? statusFilter, // null = 전체, 'active', 'inactive'
   }) async {
     try {
-      // where() 필터를 orderBy() 보다 먼저 — Firestore SDK PlatformException 방지
-      Query query = _firestore
-          .collection('applications')
-          .where('uid', isEqualTo: uid);
-
+      // [BUG-WHEREIN] uid isEqualTo + status whereIn 복합쿼리 → filters.uid null 반환
+      //   → PERMISSION_DENIED (isUser() && filters.uid == auth.uid 조건 불만족)
+      //   statusFilter는 서버 필터 제거, orderBy('appliedAt') 커서 기반 페이징 유지
+      //   클라이언트 필터 후 실제 반환 건수가 pageSize보다 적을 수 있음(허용됨)
+      Set<String>? statusSet;
       if (statusFilter == 'active') {
-        query = query.where('status', whereIn: AppStatus.activeStates);
+        statusSet = Set<String>.from(AppStatus.activeStates);
       } else if (statusFilter == 'inactive') {
-        query = query.where('status', whereIn: AppStatus.inactiveStates);
+        statusSet = Set<String>.from(AppStatus.inactiveStates);
       }
 
-      query = query.orderBy('appliedAt', descending: true).limit(pageSize);
+      Query query = _firestore
+          .collection('applications')
+          .where('uid', isEqualTo: uid)
+          .orderBy('appliedAt', descending: true)
+          .limit(pageSize);
       if (startAfter != null) query = query.startAfterDocument(startAfter);
 
       final snap = await query.get();
+      final items = snap.docs
+          .map((d) => ApplicationModel.fromFirestore(d))
+          .where((a) => statusSet == null || statusSet.contains(a.status))
+          .toList();
       return {
-        'items': snap.docs.map((d) => ApplicationModel.fromFirestore(d)).toList(),
+        'items': items,
         'lastDoc': snap.docs.isNotEmpty ? snap.docs.last : null,
         'hasMore': snap.docs.length == pageSize,
       };
@@ -443,9 +451,11 @@ extension ApplicationFirestore on FirestoreService {
           }
           if (s.isLongTermApplication) {
             final sEnd = s.actualResignDate ?? s.workEndDate;
-            if (sEnd == null) continue;
+            // [J-1 수정] workEndDate=null → 무기한 계약으로 간주, 충돌로 처리
             final sStartOnly = DateTime(s.workDate.year, s.workDate.month, s.workDate.day);
-            final sEndOnly   = DateTime(sEnd.year, sEnd.month, sEnd.day);
+            final sEndOnly = sEnd != null
+                ? DateTime(sEnd.year, sEnd.month, sEnd.day)
+                : DateTime(9999, 12, 31);
             if (newEndOnly.isBefore(sStartOnly) || newStartOnly.isAfter(sEndOnly)) continue;
             final sWorkDays = s.workDays ?? [];
             if (!workDays.any((d) => sWorkDays.contains(d))) continue;
@@ -950,8 +960,10 @@ extension ApplicationFirestore on FirestoreService {
           }),
         });
         if (toId != null) {
-          // 트랜잭션 내에서는 WriteBatch를 사용할 수 없으므로 직접 update 사용.
-          // totalPending은 FieldValue.increment로 원자 처리 — 별도 race 없음.
+          // [낙관적 카운터] 앱이 먼저 ±1 반영 → CF syncTOStats가 나중에 count()로 교정.
+          // 이 increment가 실패해도 CF가 자동 복구하므로 rollback 불필요.
+          // [특이사항] workTypeCounts.$workType.pendingCount는 CF가 재계산하므로 이중 쓰기 발생.
+          //   최종값은 CF가 덮어쓰며, 이 increment는 CF 실행 전까지 UI 즉각 반영을 위한 것.
           tx.update(_firestore.collection('tos').doc(toId), {
             'totalPending': FieldValue.increment(-1),
           });
@@ -1861,6 +1873,12 @@ extension ApplicationFirestore on FirestoreService {
           }]),
         },
       );
+      // [J-3 수정] AUTO_CANCELED 시 totalPending 즉시 감소 — CF syncTOStats가 뒤늦게
+      // 반영하기 전까지 낙관적 카운터가 양수로 잔류하는 타이밍 버그 방지
+      if (conflict.toId != null) {
+        _incrementTOPending(batch, conflict.toId!, conflict.slotId,
+            delta: -1, workType: conflict.selectedWorkType);
+      }
     }
 
     try {
@@ -1887,28 +1905,14 @@ extension ApplicationFirestore on FirestoreService {
       await _recalculateSlotStatus(toId, slotId);
     }
 
-    // 자동 취소된(PENDING→AUTO_CANCELED) 충돌 지원서의 TO 통계 감소
+    // 자동 취소된 충돌 지원서의 TO 캐시 무효화
+    // 카운터 재계산은 CF syncTOStats 트리거가 각 지원서 상태 변경 시 자동 처리
     final Set<String> affectedTOIds = {};
-    if (pendingConflicts.isNotEmpty) {
-      final statsBatch = _firestore.batch();
-      for (final conflict in pendingConflicts) {
-        final cToId = conflict.toId;
-        final cSlotId = conflict.slotId;
-        if (cToId != null && cToId.isNotEmpty) {
-          _incrementTOPending(statsBatch, cToId, cSlotId, delta: -1,
-              workType: conflict.selectedWorkType);
-          affectedTOIds.add(cToId);
-          clearCache(toId: cToId);
-        }
-      }
-      try {
-        await statsBatch.commit();
-      } catch (e) {
-        // 통계 배치 실패 → 이미 AUTO_CANCELED된 충돌 지원서의 TO 카운터가 불일치 상태
-        // 주배치(확정/취소)는 이미 커밋됨 — 수동 보정 또는 재동기화 필요
-        debugPrint('❌ [통계] 충돌 지원서 TO 통계 감소 실패 — 수동 보정 필요:\n'
-            '  영향 TO: ${affectedTOIds.join(', ')}\n'
-            '  오류: $e');
+    for (final conflict in pendingConflicts) {
+      final cToId = conflict.toId;
+      if (cToId != null && cToId.isNotEmpty) {
+        affectedTOIds.add(cToId);
+        clearCache(toId: cToId);
       }
     }
 
@@ -1988,7 +1992,7 @@ extension ApplicationFirestore on FirestoreService {
         if (a.isLongTermApplication) {
           // 장기 지원 — 근무 기간 + 요일 겹침 확인
           final aEndDate = a.actualResignDate ?? a.workEndDate;
-          if (aEndDate == null) continue;
+          // [J-1 수정] workEndDate=null → 무기한 계약으로 간주, 충돌 탐지 포함 (null continue 제거)
 
           // [CONFLICT-FIX] 기존 장기 지원서의 실제 근무 시작일은 desiredStartDate 우선.
           // 이전 코드는 workDate만 사용했기 때문에, 지원자가 desiredStartDate를 늦게
@@ -1996,7 +2000,9 @@ extension ApplicationFirestore on FirestoreService {
           // (getConfirmedWorkersByDateAndBusiness는 이미 desiredStartDate를 반영 중)
           final effectiveAStart = a.desiredStartDate ?? a.workDate;
           final aStart = DateTime(effectiveAStart.year, effectiveAStart.month, effectiveAStart.day);
-          final aEnd   = DateTime(aEndDate.year,        aEndDate.month,        aEndDate.day);
+          final aEnd = aEndDate != null
+              ? DateTime(aEndDate.year, aEndDate.month, aEndDate.day)
+              : DateTime(9999, 12, 31);
 
           // 기간 겹침
           if (endOnly.isBefore(aStart) || startOnly.isAfter(aEnd)) continue;
@@ -2160,6 +2166,10 @@ extension ApplicationFirestore on FirestoreService {
 
   /// 확정 인원 변경 후 슬롯 status('open'↔'full') 재계산
   /// CLOSED 슬롯은 건드리지 않음
+  ///
+  /// [특이사항] CF syncTOStats도 동일한 슬롯 status를 count() 기반으로 덮어씀(이중 갱신).
+  ///   이 함수는 CF 실행 전까지 즉각 UI 반영을 위한 낙관적 업데이트.
+  ///   최종 status는 CF가 교정하므로 이 함수의 실패(catch)는 데이터 무결성에 영향 없음.
   Future<void> _recalculateSlotStatus(String toId, String slotId) async {
     final slotRef = _firestore
         .collection('tos').doc(toId)
@@ -2169,7 +2179,8 @@ extension ApplicationFirestore on FirestoreService {
         final snap = await tx.get(slotRef);
         if (!snap.exists) return;
         final data = snap.data()!;
-        if (data['status'] == 'closed') return; // 마감 슬롯은 유지
+        // [B-2 수정] isManualClosed 가드 추가 — updateSlotStats와 일관성 유지
+        if (data['status'] == 'closed' || data['isManualClosed'] == true) return;
         final confirmed = (data['confirmedCount'] as num?)?.toInt() ?? 0;
         final workDetails = data['workDetails'] as List? ?? [];
         final totalRequired = workDetails.fold<int>(

@@ -13,6 +13,9 @@ extension WorkerLocationFirestore on FirestoreService {
   // ───────────────────────────────────────────────────────
 
   /// 위치 공유 동의 저장 (출근 전 배너에서 허용 시 1회 호출)
+  ///
+  /// merge: true로 upsert — 문서 존재 여부 사전 확인(TOCTOU) 없이 원자적으로 처리한다.
+  /// 문서가 없으면 전체 필드로 생성, 있으면 지정 필드만 덮어쓴다.
   Future<void> grantLocationConsent({
     required String applicationId,
     required String userId,
@@ -22,11 +25,8 @@ extension WorkerLocationFirestore on FirestoreService {
   }) async {
     final now = DateTime.now();
     final ref = _firestore.collection(_workerLocationCol).doc(applicationId);
-    final snap = await ref.get();
-    if (snap.exists) {
-      await ref.update({'consentGiven': true, 'updatedAt': Timestamp.fromDate(now)});
-    } else {
-      await ref.set({
+    await ref.set(
+      {
         'userId': userId,
         'businessId': businessId,
         'lat': 0.0,
@@ -39,8 +39,9 @@ extension WorkerLocationFirestore on FirestoreService {
         'consentGiven': true,
         'updatedAt': Timestamp.fromDate(now),
         'createdAt': Timestamp.fromDate(now),
-      });
-    }
+      },
+      SetOptions(merge: true),
+    );
     debugPrint('✅ [WorkerLocation] 위치 공유 동의 저장: $applicationId');
   }
 

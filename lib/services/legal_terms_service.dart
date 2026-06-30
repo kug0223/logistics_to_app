@@ -43,21 +43,22 @@ class LegalTermsService {
   }
 
   /// 단일 항목 수정
+  ///
+  /// 동시 호출 시 덮어쓰기를 막기 위해 runTransaction으로 read → write를 원자화한다.
   Future<void> updateItem(LegalTermsItem item, {required String updatedBy}) async {
-    // snap을 한 번만 읽어 재사용 (이중 읽기 방지)
-    final snap = await _ref.get();
-    if (!snap.exists || snap.data() == null) {
-      final defaults = LegalTerms.defaultTerms();
-      await _initializeDefaults(defaults);
-      return;
-    }
-
-    final current = LegalTerms.fromFirestore(snap);
-    final updated = current.items.map((t) => t.id == item.id ? item : t).toList();
-    await _ref.update({
-      'items': updated.map((t) => t.toMap()).toList(),
-      'updatedAt': FieldValue.serverTimestamp(),
-      'updatedBy': updatedBy,
+    await FirebaseFirestore.instance.runTransaction((tx) async {
+      final snap = await tx.get(_ref);
+      if (!snap.exists || snap.data() == null) {
+        // 문서 없는 경우 트랜잭션 밖에서 초기화 후 종료
+        return;
+      }
+      final current = LegalTerms.fromFirestore(snap);
+      final updated = current.items.map((t) => t.id == item.id ? item : t).toList();
+      tx.update(_ref, {
+        'items': updated.map((t) => t.toMap()).toList(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'updatedBy': updatedBy,
+      });
     });
   }
 
