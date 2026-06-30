@@ -4653,9 +4653,9 @@ function getNoshowPenaltyFromRules(
 // 📊 attendance 문서 변경 → totalWorkDays + TrustScore 서버 자동 처리
 //
 // 설계 원칙:
-//   - wageConfirmed 전환(비노쇼): totalWorkDays +1, trustScore work_complete 적용
-//   - wageConfirmed → wageCalculated 복귀: totalWorkDays -1, trustScore 롤백
-//   - wageTransferred는 취소 불가 경로 — decrement 제외
+//   - confirmed 전환(비노쇼): totalWorkDays +1, trustScore work_complete 적용
+//   - confirmed → calculated 복귀: totalWorkDays -1, trustScore 롤백
+//   - transferred는 취소 불가 경로 — decrement 제외
 //   - status=NO_SHOW 신규: noShowCount +1, trustScore noshow 패널티
 //   - status=NO_SHOW 해제: noShowCount -1, trustScore 패널티 복원
 //   - 멱등성: before/after 비교로 실제 전환 시에만 처리
@@ -4680,15 +4680,17 @@ export const onAttendanceWageStatusChanged = onDocumentWritten(
     const userRef = db.collection("users").doc(userId);
 
     // ─── 1. wageStatus 변경 처리 (노쇼 문서 제외) ────────────
-    // 노쇼 문서는 wageStatus=wageConfirmed이어도 실제 근무 완료가 아님 — 별도 처리
+    // 노쇼 문서는 wageStatus=confirmed이어도 실제 근무 완료가 아님 — 별도 처리
+    // [BUG-FIX] 상태값 수정: "wageConfirmed"→"confirmed", "wageTransferred"→"transferred"
+    //   Dart AttendanceModel.wageConfirmed='confirmed', wageTransferred='transferred'
     const isNoshowDoc = afterStatus === "NO_SHOW" || beforeStatus === "NO_SHOW";
     const wageConfirmedOn = !isNoshowDoc &&
-      afterWageStatus === "wageConfirmed" &&
-      beforeWageStatus !== "wageConfirmed";
+      afterWageStatus === "confirmed" &&
+      beforeWageStatus !== "confirmed";
     const wageConfirmedOff = !isNoshowDoc &&
-      beforeWageStatus === "wageConfirmed" &&
-      afterWageStatus !== "wageConfirmed" &&
-      afterWageStatus !== "wageTransferred";
+      beforeWageStatus === "confirmed" &&
+      afterWageStatus !== "confirmed" &&
+      afterWageStatus !== "transferred";
 
     if (wageConfirmedOn || wageConfirmedOff) {
       const rulesSnap = await db.collection("settings").doc("trust_rules").get();
@@ -5037,8 +5039,11 @@ interface SrvInsuranceRates {
   businessIncomeRate: number;
   businessIncomeLocalRate: number;
 }
+// [BUG-FIX] 보험료율 폴백 상수 수정 (2025년 법적 기준으로 정정)
+// Firestore settings/wage_config.insuranceRates 조회 실패 시 사용
+// 국민연금 4.75%→4.5%, 건강보험 3.595%→3.545%, 장기요양 13.14%→12.95%
 const SRV_DEFAULT_RATES: SrvInsuranceRates = {
-  nationalPensionRate: 4.75, healthInsuranceRate: 3.595, ltcInsuranceRate: 13.14,
+  nationalPensionRate: 4.5, healthInsuranceRate: 3.545, ltcInsuranceRate: 12.95,
   employmentInsuranceRate: 0.9, dailyWageExemption: 150000, dailyWorkerTaxRate: 2.7,
   localIncomeTaxRate: 10.0, businessIncomeRate: 3.0, businessIncomeLocalRate: 0.3,
 };
