@@ -55,12 +55,15 @@ class WorkApplicantsDialog extends StatefulWidget {
   final WorkDetailModel? work;  // null = 전체 업무 그룹 모드
   final TOItem toItem;
   final VoidCallback onChanged;
+  /// 알림 딥링크에서 특정 지원자를 바로 강조 표시할 때 전달. null이면 일반 목록 표시.
+  final String? initialApplicationId;
 
   const WorkApplicantsDialog({
     super.key,
     this.work,
     required this.toItem,
     required this.onChanged,
+    this.initialApplicationId,
   });
 
   @override
@@ -252,6 +255,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         allAppIds,
         businessId: widget.toItem.to.businessId,
       );
+
+      // 알림 딥링크로 진입 시 해당 지원자를 목록 맨 앞으로 이동
+      if (widget.initialApplicationId != null) {
+        final idx = applicantsWithUserInfo.indexWhere(
+          (item) => (item['application'] as ApplicationModel).id == widget.initialApplicationId,
+        );
+        if (idx > 0) {
+          final highlighted = applicantsWithUserInfo.removeAt(idx);
+          applicantsWithUserInfo.insert(0, highlighted);
+        }
+      }
 
       if (!mounted) return;
       setState(() {
@@ -1085,9 +1099,15 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     final isStarred = isPending && _starredIds.contains(app.id);
     final trustScore = TrustScoreHelper.calculate(user);
 
+    final isNotificationTarget = widget.initialApplicationId != null && app.id == widget.initialApplicationId;
+
     Color cardBg = Colors.white;
     Color cardBorder = AppColors.border;
-    if (isSelected) {
+    if (isNotificationTarget) {
+      // 알림 딥링크로 진입한 지원자 — 파란 강조 (isSelected보다 우선)
+      cardBg = Theme.of(context).primaryColor.withValues(alpha: 0.08);
+      cardBorder = Theme.of(context).primaryColor;
+    } else if (isSelected) {
       cardBg = Theme.of(context).primaryColor.withValues(alpha: 0.05);
       cardBorder = Theme.of(context).primaryColor;
     } else if (isStarred) {

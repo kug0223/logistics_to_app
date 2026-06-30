@@ -975,7 +975,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
         ToastHelper.showError('공고를 찾을 수 없습니다');
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+          MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+            initialBusinessId: fallbackBusinessId,
+          )),
         );
         return;
       }
@@ -985,7 +987,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
         if (!context.mounted) return;
         Navigator.pop(context);
         ToastHelper.showError('공고 데이터를 불러올 수 없습니다');
-        Navigator.push(context, MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()));
+        Navigator.push(context, MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+          initialBusinessId: fallbackBusinessId,
+        )));
         return;
       }
       final to = TOModel.fromMap(toData, toId);
@@ -1003,7 +1007,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
         ToastHelper.showError('업무 정보를 찾을 수 없습니다');
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+          MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+            initialBusinessId: fallbackBusinessId,
+          )),
         );
         return;
       }
@@ -1027,6 +1033,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
             work: workDetail,
             toItem: toItem,
             onChanged: () {},
+            // 지원/지원취소 알림에서 특정 지원자를 맨 앞에 하이라이트
+            initialApplicationId: data['applicationId']?.toString(),
           ),
         );
       });
@@ -1037,7 +1045,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
       ToastHelper.showError('데이터를 불러오는데 실패했습니다');
       Navigator.push(
         context,
-        MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+        MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+          initialBusinessId: fallbackBusinessId,
+        )),
       );
     }
   }
