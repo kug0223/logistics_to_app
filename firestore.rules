@@ -127,13 +127,15 @@ service cloud.firestore {
       // isSuperAdmin()을 최상단에 두어 다른 조건(isOwner 등)과 의도하지 않은 교차 해석을 방지.
       allow update: if isSuperAdmin();
 
-      // 본인 문서 수정 (role·isBlacklisted·subAdminOf·신뢰도 관련 필드 변경 차단)
+      // 본인 문서 수정 (role·isBlacklisted·subAdminOf·businessId·신뢰도 관련 필드 변경 차단)
       // subAdminOf는 CF trigger 전용, trustScore/noShowCount/lateCount/totalWorkDays는 관리자 또는 CF 전용
       // restrictedUntil: 제재 만료 시각 — 본인이 삭제하여 제재 우회 방지
+      // SEC-77: businessId 차단 추가 — 변경 시 소속 교차검증을 우회해 타 사업장에
+      //   attendance/schedule_change_requests 등 생성 가능 (CF Admin SDK·관리자 경로만 변경 허용)
       allow update: if isLoggedIn() &&
                        isOwner(userId) &&
                        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-                         'role', 'isBlacklisted', 'subAdminOf',
+                         'role', 'isBlacklisted', 'subAdminOf', 'businessId',
                          'trustScore', 'noShowCount', 'lateCount', 'totalWorkDays', 'lastRestartAt',
                          'restrictedUntil'
                        ]);
