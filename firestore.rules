@@ -600,18 +600,22 @@ service cloud.firestore {
       // 규칙 평가 비용 급증 및 get() 호출 실패 시 PERMISSION_DENIED 오류 발생 위험이 있어
       // CF 레벨 검증으로 위임. 가짜 리뷰는 생성 직후 CF가 삭제하므로 노출 시간 최소화.
       // [HIGH-FIX] SubAdmin 누락: 알림에서 리뷰 작성 요청 수락 시 SubAdmin이 리뷰 생성 → PERMISSION_DENIED
-      allow create: if isLoggedIn() && (
-                      isSuperAdmin() ||
-                      (request.resource.data.reviewType == 'ADMIN_TO_USER' &&
-                       (isAdminOf(request.resource.data.businessId) ||
-                        isSubAdminOf(request.resource.data.businessId))) ||
-                      (request.resource.data.reviewType == 'USER_TO_BUSINESS' &&
-                       isUser() && isNotBlacklisted() &&
-                       request.resource.data.reviewerId == request.auth.uid &&
-                       'businessId' in request.resource.data &&
-                       request.resource.data.businessId.size() > 0 &&
-                       'requestId' in request.resource.data)
-                    );
+      // SEC-76: 생성 시 isPublished를 false로 강제 — 클라이언트가 isPublished:true 직접 설정 차단
+      //   onReviewCreated CF가 shouldPublish 평가 후 isPublished를 서버에서 제어
+      allow create: if isLoggedIn() &&
+                      request.resource.data.get('isPublished', false) == false &&
+                      (
+                        isSuperAdmin() ||
+                        (request.resource.data.reviewType == 'ADMIN_TO_USER' &&
+                         (isAdminOf(request.resource.data.businessId) ||
+                          isSubAdminOf(request.resource.data.businessId))) ||
+                        (request.resource.data.reviewType == 'USER_TO_BUSINESS' &&
+                         isUser() && isNotBlacklisted() &&
+                         request.resource.data.reviewerId == request.auth.uid &&
+                         'businessId' in request.resource.data &&
+                         request.resource.data.businessId.size() > 0 &&
+                         'requestId' in request.resource.data)
+                      );
 
       // 사업장 답변 추가(USER_TO_BUSINESS): 사업장 관리자/하위관리자는 답변 필드만 수정 가능
       // (평점·태그·코멘트 등 근무자가 작성한 필드는 수정 불가 — 리뷰 조작 방지)
