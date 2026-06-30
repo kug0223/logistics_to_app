@@ -4999,3 +4999,451 @@ export const callableConfirmWage = onCall(
     return {success: true};
   },
 );
+
+// ═══════════════════════════════════════════════════════════
+// 📊 급여 계산 서버 헬퍼 (WageCalculator + TaxDeductionService 포팅)
+// ═══════════════════════════════════════════════════════════
+
+const SRV_MINIMUM_WAGE_BY_YEAR: Record<number, number> = {
+  2026: 10320, 2025: 10030, 2024: 9860, 2023: 9620,
+  2022: 9160, 2021: 8720, 2020: 8590,
+};
+const SRV_OVERTIME_RATE = 1.5;
+const SRV_NIGHT_RATE = 0.5;
+const SRV_STANDARD_WORK_MINUTES = 480;
+
+interface SrvInsuranceRates {
+  nationalPensionRate: number;
+  healthInsuranceRate: number;
+  ltcInsuranceRate: number;
+  employmentInsuranceRate: number;
+  dailyWageExemption: number;
+  dailyWorkerTaxRate: number;
+  localIncomeTaxRate: number;
+  businessIncomeRate: number;
+  businessIncomeLocalRate: number;
+}
+const SRV_DEFAULT_RATES: SrvInsuranceRates = {
+  nationalPensionRate: 4.75, healthInsuranceRate: 3.595, ltcInsuranceRate: 13.14,
+  employmentInsuranceRate: 0.9, dailyWageExemption: 150000, dailyWorkerTaxRate: 2.7,
+  localIncomeTaxRate: 10.0, businessIncomeRate: 3.0, businessIncomeLocalRate: 0.3,
+};
+
+interface SrvWageResult {
+  wageType: string; baseWage: number; scheduledMinutes: number; actualMinutes: number;
+  breakMinutes: number; workMinutes: number; overtimeMinutes: number;
+  earlyArrivalMinutes: number; nightMinutes: number; baseAmount: number;
+  overtimeAmount: number; earlyArrivalAmount: number; nightAmount: number;
+  additionalAmount: number; totalAmount: number; nightAllowanceApplied: boolean;
+  appliedMinimumWage: number; appliedSupplementWage: number;
+  taxDeductionType: string; nationalPensionDeduction: number;
+  healthInsuranceDeduction: number; ltcInsuranceDeduction: number;
+  employmentInsuranceDeduction: number; incomeTaxDeduction: number;
+  retroactiveDeduction: number; netWage: number;
+}
+
+function srvParseTime(time: string): number | null {
+  try {
+    const parts = time.split(":");
+    if (parts.length < 2) return null;
+    const hour = parseInt(parts[0], 10);
+    const minute = parseInt(parts[1].substring(0, 2), 10);
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+    return hour * 60 + minute;
+  } catch { return null; }
+}
+
+function srvMinutesBetween(start: string, end: string): number {
+  const s = srvParseTime(start); const e0 = srvParseTime(end);
+  if (s === null || e0 === null) return 0;
+  let e = e0; if (e < s) e += 1440;
+  return e - s;
+}
+
+function srvNightMinutes(start: string, end: string): number {
+  const s = srvParseTime(start); const e0 = srvParseTime(end);
+  if (s === null || e0 === null) return 0;
+  let e = e0; if (e < s) e += 1440;
+  const ov = (a: number, b: number) => Math.max(0, Math.min(e, b) - Math.max(s, a));
+  return ov(0, 360) + ov(1320, 1440) + ov(1440, 1800);
+}
+
+function srvGetMinimumWage(year: number, fs: Record<number, number>): number {
+  if (fs[year] !== undefined) return fs[year];
+  if (SRV_MINIMUM_WAGE_BY_YEAR[year]) return SRV_MINIMUM_WAGE_BY_YEAR[year];
+  const latest = Math.max(...Object.keys(SRV_MINIMUM_WAGE_BY_YEAR).map(Number));
+  return SRV_MINIMUM_WAGE_BY_YEAR[latest];
+}
+
+function srvGetRates(year: number, fs: Record<number, Partial<SrvInsuranceRates>>): SrvInsuranceRates {
+  const raw = fs[year];
+  if (!raw) return SRV_DEFAULT_RATES;
+  const d = SRV_DEFAULT_RATES;
+  return {
+    nationalPensionRate: raw.nationalPensionRate ?? d.nationalPensionRate,
+    healthInsuranceRate: raw.healthInsuranceRate ?? d.healthInsuranceRate,
+    ltcInsuranceRate: raw.ltcInsuranceRate ?? d.ltcInsuranceRate,
+    employmentInsuranceRate: raw.employmentInsuranceRate ?? d.employmentInsuranceRate,
+    dailyWageExemption: raw.dailyWageExemption ?? d.dailyWageExemption,
+    dailyWorkerTaxRate: raw.dailyWorkerTaxRate ?? d.dailyWorkerTaxRate,
+    localIncomeTaxRate: raw.localIncomeTaxRate ?? d.localIncomeTaxRate,
+    businessIncomeRate: raw.businessIncomeRate ?? d.businessIncomeRate,
+    businessIncomeLocalRate: raw.businessIncomeLocalRate ?? d.businessIncomeLocalRate,
+  };
+}
+
+function srvWageCalculate(p: {
+  wageType: string; baseWage: number; minimumWage: number;
+  scheduledStart: string; scheduledEnd: string; actualStart: string; actualEnd: string;
+  breakMinutes: number; scheduledBreakMinutes: number;
+  nightAllowanceApplied: boolean; nightIncluded: boolean; additionalAmount: number;
+  baseHourlyWage?: number;
+}): SrvWageResult {
+  const schedBreak = p.scheduledBreakMinutes;
+  const scheduledMinutes = srvMinutesBetween(p.scheduledStart, p.scheduledEnd);
+  const actualMinutes = srvMinutesBetween(p.actualStart, p.actualEnd);
+  const workMinutes = Math.max(0, actualMinutes - p.breakMinutes);
+
+  let appliedSupplementWage: number;
+  if (p.wageType === "hourly") {
+    appliedSupplementWage = p.baseWage;
+  } else {
+    const schedWorkMins = Math.max(0, scheduledMinutes - schedBreak);
+    const rawOrd = schedWorkMins > 0 ? Math.round(p.baseWage / schedWorkMins * 60) : 0;
+    appliedSupplementWage = p.baseHourlyWage ?? Math.max(rawOrd, p.minimumWage);
+  }
+
+  let overtimeMinutes: number;
+  if (p.wageType === "hourly") {
+    overtimeMinutes = Math.max(0, workMinutes - SRV_STANDARD_WORK_MINUTES);
+  } else {
+    const schedWorkMins = Math.max(0, scheduledMinutes - schedBreak);
+    overtimeMinutes = Math.max(0, workMinutes - schedWorkMins);
+  }
+
+  const schedStartMin = srvParseTime(p.scheduledStart) ?? 0;
+  const actualStartMin = srvParseTime(p.actualStart) ?? 0;
+  const earlyArrivalMinutes = Math.max(0, schedStartMin - actualStartMin);
+
+  let nightMinutes = 0;
+  if (p.nightAllowanceApplied) {
+    if (p.wageType === "daily" && p.nightIncluded) {
+      if (overtimeMinutes > 0) nightMinutes = srvNightMinutes(p.scheduledEnd, p.actualEnd);
+    } else {
+      const rawNight = srvNightMinutes(p.actualStart, p.actualEnd);
+      const dayPortion = actualMinutes - rawNight;
+      const breakInNight = Math.max(0, p.breakMinutes - Math.max(0, Math.min(dayPortion, actualMinutes)));
+      nightMinutes = Math.max(0, rawNight - breakInNight);
+    }
+  }
+
+  let baseAmount = 0; let overtimeAmount = 0; let earlyArrivalAmount = 0; let nightAmount = 0;
+
+  if (p.wageType === "hourly") {
+    const regMins = workMinutes - overtimeMinutes;
+    baseAmount = Math.round(regMins * p.baseWage / 60);
+    overtimeAmount = overtimeMinutes > 0
+      ? Math.round(overtimeMinutes * p.baseWage * SRV_OVERTIME_RATE / 60) : 0;
+    nightAmount = (p.nightAllowanceApplied && nightMinutes > 0)
+      ? Math.round(nightMinutes * p.baseWage * SRV_NIGHT_RATE / 60) : 0;
+  } else {
+    const schedWorkMins = Math.max(0, scheduledMinutes - schedBreak);
+    const rawOrdH = schedWorkMins > 0 ? Math.round(p.baseWage / schedWorkMins * 60) : 0;
+    const suppW = p.baseHourlyWage ?? Math.max(rawOrdH, p.minimumWage);
+    baseAmount = (schedWorkMins === 0 || workMinutes >= schedWorkMins)
+      ? p.baseWage
+      : Math.round(p.baseWage * workMinutes / schedWorkMins);
+    const effEarly = Math.min(earlyArrivalMinutes, overtimeMinutes);
+    if (overtimeMinutes > 0 && schedWorkMins > 0) {
+      if (workMinutes <= SRV_STANDARD_WORK_MINUTES) {
+        overtimeAmount = Math.round(overtimeMinutes * suppW / 60);
+        earlyArrivalAmount = Math.round(effEarly * suppW / 60);
+      } else {
+        const over8 = workMinutes - SRV_STANDARD_WORK_MINUTES;
+        const in8 = Math.max(0, overtimeMinutes - over8);
+        overtimeAmount = Math.round(in8 * suppW / 60) +
+          Math.round(Math.max(0, Math.min(over8, overtimeMinutes)) * suppW * SRV_OVERTIME_RATE / 60);
+        const earlyIn8 = Math.min(effEarly, in8);
+        const earlyOver8 = Math.max(0, effEarly - earlyIn8);
+        earlyArrivalAmount = Math.round(earlyIn8 * suppW / 60) +
+          Math.round(earlyOver8 * suppW * SRV_OVERTIME_RATE / 60);
+      }
+    }
+    nightAmount = (p.nightAllowanceApplied && nightMinutes > 0)
+      ? Math.round(nightMinutes * suppW * SRV_NIGHT_RATE / 60) : 0;
+  }
+
+  const totalAmount = baseAmount + overtimeAmount + nightAmount + p.additionalAmount;
+  return {
+    wageType: p.wageType, baseWage: p.baseWage, scheduledMinutes, actualMinutes,
+    breakMinutes: p.breakMinutes, workMinutes, overtimeMinutes, earlyArrivalMinutes,
+    nightMinutes, baseAmount, overtimeAmount, earlyArrivalAmount, nightAmount,
+    additionalAmount: p.additionalAmount, totalAmount,
+    nightAllowanceApplied: p.nightAllowanceApplied,
+    appliedMinimumWage: p.minimumWage, appliedSupplementWage,
+    taxDeductionType: "none", nationalPensionDeduction: 0, healthInsuranceDeduction: 0,
+    ltcInsuranceDeduction: 0, employmentInsuranceDeduction: 0, incomeTaxDeduction: 0,
+    retroactiveDeduction: 0, netWage: totalAmount,
+  };
+}
+
+function srvApplyFreelancer33(base: SrvWageResult, r: SrvInsuranceRates): SrvWageResult {
+  const g = Math.max(0, base.totalAmount);
+  const inc = Math.round(g * r.businessIncomeRate / 100);
+  const loc = Math.round(inc * r.localIncomeTaxRate / 100);
+  return {...base, taxDeductionType: "freelancer_3_3", incomeTaxDeduction: inc + loc, netWage: g - inc - loc};
+}
+
+function srvApplyDailyWorker(base: SrvWageResult, r: SrvInsuranceRates): SrvWageResult {
+  const g = Math.max(0, base.totalAmount);
+  const tx = Math.max(0, g - r.dailyWageExemption);
+  const inc = tx > 0 ? Math.round(tx * r.dailyWorkerTaxRate / 100) : 0;
+  const loc = inc > 0 ? Math.round(inc * r.localIncomeTaxRate / 100) : 0;
+  const emp = Math.round(g * r.employmentInsuranceRate / 100);
+  return {...base, taxDeductionType: "daily_worker", employmentInsuranceDeduction: emp,
+    incomeTaxDeduction: inc + loc, netWage: g - emp - inc - loc};
+}
+
+function srvApplyEmpIncomeTax(base: SrvWageResult, r: SrvInsuranceRates): SrvWageResult {
+  const g = Math.max(0, base.totalAmount);
+  const emp = Math.round(g * r.employmentInsuranceRate / 100);
+  const tx = Math.max(0, g - r.dailyWageExemption);
+  const inc = tx > 0 ? Math.round(tx * r.dailyWorkerTaxRate / 100) : 0;
+  const loc = inc > 0 ? Math.round(inc * r.localIncomeTaxRate / 100) : 0;
+  return {...base, taxDeductionType: "daily_auto_8", employmentInsuranceDeduction: emp,
+    incomeTaxDeduction: inc + loc, netWage: g - emp - inc - loc};
+}
+
+function srvApplyFourInsurance(base: SrvWageResult, r: SrvInsuranceRates, taxType = "four_insurance_fixed"): SrvWageResult {
+  const g = Math.max(0, base.totalAmount);
+  const pen = Math.round(g * r.nationalPensionRate / 100);
+  const hlt = Math.round(g * r.healthInsuranceRate / 100);
+  const ltc = Math.round(hlt * r.ltcInsuranceRate / 100);
+  const emp = Math.round(g * r.employmentInsuranceRate / 100);
+  return {...base, taxDeductionType: taxType, nationalPensionDeduction: pen,
+    healthInsuranceDeduction: hlt, ltcInsuranceDeduction: ltc,
+    employmentInsuranceDeduction: emp, netWage: g - pen - hlt - ltc - emp};
+}
+
+function srvApplyDeduction(base: SrvWageResult, taxType: string, r: SrvInsuranceRates): SrvWageResult {
+  switch (taxType) {
+    case "none": return {...base, taxDeductionType: "none", netWage: Math.max(0, base.totalAmount)};
+    case "freelancer_3_3": return srvApplyFreelancer33(base, r);
+    case "daily_worker": return srvApplyDailyWorker(base, r);
+    case "daily_auto_8": return srvApplyEmpIncomeTax(base, r);
+    case "four_insurance_fixed": return srvApplyFourInsurance(base, r);
+    default: return {...base, taxDeductionType: "none", netWage: Math.max(0, base.totalAmount)};
+  }
+}
+
+function srvApplyDay8Retroactive(base: SrvWageResult, prevGross: number, r: SrvInsuranceRates): SrvWageResult {
+  const g8 = Math.max(0, base.totalAmount);
+  const prevPen = Math.round(prevGross * r.nationalPensionRate / 100);
+  const prevHlt = Math.round(prevGross * r.healthInsuranceRate / 100);
+  const prevLtc = Math.round(prevHlt * r.ltcInsuranceRate / 100);
+  const retro = prevPen + prevHlt + prevLtc;
+  const pen8 = Math.round(g8 * r.nationalPensionRate / 100);
+  const hlt8 = Math.round(g8 * r.healthInsuranceRate / 100);
+  const ltc8 = Math.round(hlt8 * r.ltcInsuranceRate / 100);
+  const emp8 = Math.round(g8 * r.employmentInsuranceRate / 100);
+  const tx8 = Math.max(0, g8 - r.dailyWageExemption);
+  const inc8 = tx8 > 0 ? Math.round(tx8 * r.dailyWorkerTaxRate / 100) : 0;
+  const loc8 = inc8 > 0 ? Math.round(inc8 * r.localIncomeTaxRate / 100) : 0;
+  return {
+    ...base, taxDeductionType: "daily_auto_8",
+    nationalPensionDeduction: pen8, healthInsuranceDeduction: hlt8,
+    ltcInsuranceDeduction: ltc8, employmentInsuranceDeduction: emp8,
+    incomeTaxDeduction: inc8 + loc8, retroactiveDeduction: retro,
+    netWage: g8 - retro - pen8 - hlt8 - ltc8 - emp8 - inc8 - loc8,
+  };
+}
+
+async function srvGetMonthlyWorkDays(userId: string, biz: string, ym: string, excl: string): Promise<number> {
+  const base = db.collection("attendance")
+    .where("userId", "==", userId).where("businessId", "==", biz).where("yearMonth", "==", ym);
+  const snaps = await Promise.all(
+    ["calculated", "confirmed", "transferred"].map((ws) => base.where("wageStatus", "==", ws).get())
+  );
+  const dates = new Set<string>();
+  for (const snap of snaps) {
+    for (const doc of snap.docs) {
+      if (doc.id === excl) continue;
+      const ts = doc.data().workDate;
+      if (ts && ts.toDate) dates.add((ts.toDate() as Date).toISOString().substring(0, 10));
+    }
+  }
+  return dates.size;
+}
+
+async function srvGetPrevGrossTotal(userId: string, biz: string, ym: string, excl: string): Promise<number> {
+  const base = db.collection("attendance")
+    .where("userId", "==", userId).where("businessId", "==", biz).where("yearMonth", "==", ym);
+  const snaps = await Promise.all(
+    ["calculated", "confirmed", "transferred"].map((ws) => base.where("wageStatus", "==", ws).get())
+  );
+  let total = 0;
+  for (const snap of snaps) {
+    for (const doc of snap.docs) {
+      if (doc.id === excl) continue;
+      const wd = doc.data().wageDetail;
+      if (wd && typeof wd.totalAmount === "number") total += wd.totalAmount;
+    }
+  }
+  return total;
+}
+
+// ── callableCalculateAndConfirmWage ──────────────────────────
+// [Phase 2] 급여 계산 + 확정 (pending → calculated) 서버 사이드 처리
+// 파라미터를 서버에서 재계산 → 8일 소급 자동 처리 → 원자적 저장
+// Input:  { attendanceId, wageType, baseWage, workDate, scheduledStart, scheduledEnd,
+//           actualStart, actualEnd, breakMinutes, scheduledBreakMinutes?,
+//           nightAllowanceApplied, nightIncluded, additionalAmount?, baseHourlyWage?,
+//           taxDeductionType, yearMonth, payScheduleType?, payScheduleDay? }
+// Output: { success: true, effectiveNetWage: number }
+// ═══════════════════════════════════════════════════════════
+export const callableCalculateAndConfirmWage = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const d = request.data as {
+      attendanceId: string; wageType: string; baseWage: number; workDate: string;
+      scheduledStart: string; scheduledEnd: string; actualStart: string; actualEnd: string;
+      breakMinutes: number; scheduledBreakMinutes?: number;
+      nightAllowanceApplied: boolean; nightIncluded: boolean;
+      additionalAmount?: number; baseHourlyWage?: number;
+      taxDeductionType: string; yearMonth: string;
+      payScheduleType?: string; payScheduleDay?: number;
+    };
+
+    if (!d.attendanceId || !d.wageType || !d.workDate ||
+        !d.scheduledStart || !d.scheduledEnd || !d.actualStart || !d.actualEnd ||
+        !d.taxDeductionType || !d.yearMonth) {
+      throw new HttpsError("invalid-argument", "필수 파라미터가 누락되었습니다.");
+    }
+    if (typeof d.baseWage !== "number" || d.baseWage <= 0) {
+      throw new HttpsError("invalid-argument", "baseWage는 양수여야 합니다.");
+    }
+
+    // 1. attendance 조회 (businessId, userId 확보)
+    const attRef2 = db.collection("attendance").doc(d.attendanceId);
+    const attSnap2 = await attRef2.get();
+    if (!attSnap2.exists) throw new HttpsError("not-found", "출근 기록을 찾을 수 없습니다.");
+    const attData2 = attSnap2.data()!;
+    const businessId2 = attData2.businessId as string;
+    const userId2 = attData2.userId as string;
+
+    // 2. 권한 확인
+    const callerSnap2 = await db.collection("users").doc(callerUid).get();
+    const callerData2 = callerSnap2.data() ?? {};
+    const callerRole2 = (callerData2.role as string) ?? "";
+    const callerSubAdminOf2 = (callerData2.subAdminOf as string) ?? "";
+    let authorized2 = callerRole2 === "SUPER_ADMIN";
+    if (!authorized2 && callerRole2 === "BUSINESS_ADMIN") {
+      const bizSnap2 = await db.collection("businesses").doc(businessId2).get();
+      authorized2 = ((bizSnap2.data()?.adminIds as string[]) ?? []).includes(callerUid);
+    } else if (!authorized2 && callerRole2 === "SUB_ADMIN") {
+      authorized2 = callerSubAdminOf2 === businessId2;
+    }
+    if (!authorized2) throw new HttpsError("permission-denied", "해당 사업장 관리 권한이 필요합니다.");
+
+    // 3. 최저시급 + 보험료율 조회
+    const cfgSnap = await db.collection("settings").doc("wage_config").get();
+    const cfg = cfgSnap.data() ?? {};
+    const fsMinWages: Record<number, number> = {};
+    if (cfg.minimumWages && typeof cfg.minimumWages === "object") {
+      for (const [k, v] of Object.entries(cfg.minimumWages as Record<string, unknown>)) {
+        const yr = parseInt(k, 10);
+        if (!isNaN(yr) && typeof v === "number") fsMinWages[yr] = v;
+      }
+    }
+    const fsRates: Record<number, Partial<SrvInsuranceRates>> = {};
+    if (cfg.insuranceRates && typeof cfg.insuranceRates === "object") {
+      for (const [k, v] of Object.entries(cfg.insuranceRates as Record<string, unknown>)) {
+        const yr = parseInt(k, 10);
+        if (!isNaN(yr) && v && typeof v === "object") fsRates[yr] = v as Partial<SrvInsuranceRates>;
+      }
+    }
+
+    // 4. 계산
+    const workYear2 = parseInt(d.workDate.substring(0, 4), 10);
+    const minimumWage2 = srvGetMinimumWage(workYear2, fsMinWages);
+    const rates2 = srvGetRates(workYear2, fsRates);
+    const breakMins = typeof d.breakMinutes === "number" ? d.breakMinutes : 0;
+    const schedBreakMins = typeof d.scheduledBreakMinutes === "number" ? d.scheduledBreakMinutes : breakMins;
+
+    const base2 = srvWageCalculate({
+      wageType: d.wageType, baseWage: d.baseWage, minimumWage: minimumWage2,
+      scheduledStart: d.scheduledStart, scheduledEnd: d.scheduledEnd,
+      actualStart: d.actualStart, actualEnd: d.actualEnd,
+      breakMinutes: breakMins, scheduledBreakMinutes: schedBreakMins,
+      nightAllowanceApplied: d.nightAllowanceApplied ?? true,
+      nightIncluded: d.nightIncluded ?? false,
+      additionalAmount: typeof d.additionalAmount === "number" ? d.additionalAmount : 0,
+      baseHourlyWage: typeof d.baseHourlyWage === "number" ? d.baseHourlyWage : undefined,
+    });
+
+    // 5. 공제 계산 (daily_auto_8 → 8일 소급 자동 처리)
+    let wageResult2: SrvWageResult;
+    if (d.taxDeductionType === "daily_auto_8") {
+      const prevDays = await srvGetMonthlyWorkDays(userId2, businessId2, d.yearMonth, d.attendanceId);
+      if (prevDays + 1 === 8) {
+        const prevGross = await srvGetPrevGrossTotal(userId2, businessId2, d.yearMonth, d.attendanceId);
+        wageResult2 = srvApplyDay8Retroactive(base2, prevGross, rates2);
+      } else if (prevDays + 1 > 8) {
+        wageResult2 = srvApplyFourInsurance(base2, rates2, "daily_auto_8");
+      } else {
+        wageResult2 = srvApplyEmpIncomeTax(base2, rates2);
+      }
+    } else {
+      wageResult2 = srvApplyDeduction(base2, d.taxDeductionType, rates2);
+    }
+    const effectiveNetWage2 = Math.max(0, wageResult2.netWage);
+
+    // 6. 트랜잭션: 상태 재확인 + 원자적 저장
+    await db.runTransaction(async (tx) => {
+      const latestSnap = await tx.get(attRef2);
+      const cur = (latestSnap.data()?.wageStatus as string) ?? "pending";
+      if (cur !== "pending") throw new HttpsError("failed-precondition", `이미 처리된 급여입니다 (${cur})`);
+
+      const wd: Record<string, unknown> = {
+        wageType: wageResult2.wageType, baseWage: wageResult2.baseWage,
+        scheduledMinutes: wageResult2.scheduledMinutes, actualMinutes: wageResult2.actualMinutes,
+        breakMinutes: wageResult2.breakMinutes, workMinutes: wageResult2.workMinutes,
+        overtimeMinutes: wageResult2.overtimeMinutes, nightMinutes: wageResult2.nightMinutes,
+        baseAmount: wageResult2.baseAmount, overtimeAmount: wageResult2.overtimeAmount,
+        nightAmount: wageResult2.nightAmount, additionalAmount: wageResult2.additionalAmount,
+        deductionAmount: 0, weeklyHolidayAmount: 0,
+        totalAmount: wageResult2.totalAmount,
+        nightAllowanceApplied: wageResult2.nightAllowanceApplied,
+        appliedMinimumWage: wageResult2.appliedMinimumWage,
+        taxDeductionType: wageResult2.taxDeductionType,
+        netWage: wageResult2.netWage,
+        calculatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        calculatedBy: callerUid,
+      };
+      if (wageResult2.earlyArrivalMinutes) wd.earlyArrivalMinutes = wageResult2.earlyArrivalMinutes;
+      if (wageResult2.earlyArrivalAmount) wd.earlyArrivalAmount = wageResult2.earlyArrivalAmount;
+      if (wageResult2.appliedSupplementWage) wd.appliedSupplementWage = wageResult2.appliedSupplementWage;
+      if (wageResult2.employmentInsuranceDeduction) wd.employmentInsuranceDeduction = wageResult2.employmentInsuranceDeduction;
+      if (wageResult2.nationalPensionDeduction) wd.nationalPensionDeduction = wageResult2.nationalPensionDeduction;
+      if (wageResult2.healthInsuranceDeduction) wd.healthInsuranceDeduction = wageResult2.healthInsuranceDeduction;
+      if (wageResult2.ltcInsuranceDeduction) wd.ltcInsuranceDeduction = wageResult2.ltcInsuranceDeduction;
+      if (wageResult2.incomeTaxDeduction) wd.incomeTaxDeduction = wageResult2.incomeTaxDeduction;
+      if (wageResult2.retroactiveDeduction) wd.retroactiveDeduction = wageResult2.retroactiveDeduction;
+      if (d.payScheduleType != null) wd.payScheduleType = d.payScheduleType;
+      if (d.payScheduleDay != null) wd.payScheduleDay = d.payScheduleDay;
+
+      tx.update(attRef2, {
+        wageStatus: "calculated",
+        finalWage: effectiveNetWage2,
+        wageDetail: wd,
+        yearMonth: d.yearMonth,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+
+    return {success: true, effectiveNetWage: effectiveNetWage2};
+  },
+);

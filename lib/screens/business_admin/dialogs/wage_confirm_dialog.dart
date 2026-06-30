@@ -88,6 +88,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   
   // 계산된 급여 정보 캐시
   final Map<String, WageDetailModel> _calculatedWages = {};
+  // [Phase 2] CF callableCalculateAndConfirmWage 호출용 파라미터 캐시
+  final Map<String, Map<String, dynamic>> _wageParams = {};
 
   // 파트+시간대 그룹별 칩 선택 상태 — key: workType_startTime_endTime
   final Map<String, int> _groupExtraBreakMinutes = {};
@@ -370,6 +372,24 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       // 관리자가 직접 선택한 석식/야식공제 그대로 적용
       final effectiveBreak = breakMinutes + extraBreakMinutes;
 
+      // [Phase 2] CF callableCalculateAndConfirmWage 호출용 파라미터 캐싱
+      _wageParams[app.id] = {
+        'wageType': wageType,
+        'baseWage': baseWage,
+        'workDate': FormatHelper.formatDateISO(widget.date),
+        'scheduledStart': scheduledStart,
+        'scheduledEnd': scheduledEnd,
+        'actualStart': attendance.checkIn!,
+        'actualEnd': attendance.checkOut!,
+        'breakMinutes': effectiveBreak,
+        'scheduledBreakMinutes': breakMinutes,
+        'nightAllowanceApplied': nightAllowanceApplied,
+        'nightIncluded': nightIncluded,
+        'additionalAmount': 0,
+        if (baseHourlyWage != null) 'baseHourlyWage': baseHourlyWage,
+        'taxDeductionType': taxDeductionType,
+      };
+
       final base = WageCalculator.calculate(
         wageType: wageType,
         baseWage: baseWage,
@@ -535,18 +555,23 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             payScheduleDay:  payScheduleDay  ?? wage.payScheduleDay,
           );
 
-          // [Phase 1] 급여 확정 — CF callableConfirmWage 경유
-          // 권한·상태 검증 + calculatedAt/By 서버 주입 + 원자적 저장을 CF에서 처리
-          await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-              .httpsCallable('callableConfirmWage')
+          // [Phase 2] 급여 확정 — CF callableCalculateAndConfirmWage 경유 (서버 재계산)
+          // 서버에서 파라미터로 재계산 → 8일 소급 자동 처리 → 원자적 저장
+          final params = _wageParams[appId];
+          if (params == null) throw StateError('계산 파라미터 없음: $appId');
+          final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableCalculateAndConfirmWage')
               .call({
+            ...params,
             'attendanceId': attendance.id,
-            'wageDetailMap': calculatedWage.toMap(),
             'yearMonth': yearMonth,
-            'effectiveNetWage': calculatedWage.effectiveNetWage,
+            if (payScheduleType != null) 'payScheduleType': payScheduleType,
+            if (payScheduleDay != null) 'payScheduleDay': payScheduleDay,
           });
+          final serverNetWage = (result.data['effectiveNetWage'] as num?)?.toInt()
+              ?? calculatedWage.effectiveNetWage;
 
-          // 8일 소급 적용된 근로자에게 알림 발송
+          // 8일 소급 적용된 근로자에게 알림 발송 (클라이언트 사전 체크 결과 기반)
           if (calculatedWage.retroactiveDeduction > 0 && app != null) {
             _firestoreService.createNotification(
               NotificationModel.createRetroactiveDeductionAlert(
@@ -556,7 +581,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                 workDate: attendance.workDate,
                 retroactiveAmount: calculatedWage.retroactiveDeduction,
                 grossWage: calculatedWage.totalAmount,
-                netWage: calculatedWage.effectiveNetWage,
+                netWage: serverNetWage,
                 attendanceId: attendance.id,
               ),
             );
@@ -940,15 +965,20 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         payScheduleDay:  payScheduleDay  ?? finalWage.payScheduleDay,
       );
 
-      // [Phase 1] 급여 확정 — CF callableConfirmWage 경유
-      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableConfirmWage')
+      // [Phase 2] 급여 확정 — CF callableCalculateAndConfirmWage 경유 (서버 재계산)
+      final indivParams = _wageParams[app.id];
+      if (indivParams == null) throw StateError('계산 파라미터 없음: ${app.id}');
+      final indivResult = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableCalculateAndConfirmWage')
           .call({
+        ...indivParams,
         'attendanceId': attendance.id,
-        'wageDetailMap': calculatedWage.toMap(),
         'yearMonth': yearMonth,
-        'effectiveNetWage': calculatedWage.effectiveNetWage,
+        if (payScheduleType != null) 'payScheduleType': payScheduleType,
+        if (payScheduleDay != null) 'payScheduleDay': payScheduleDay,
       });
+      final indivServerNetWage = (indivResult.data['effectiveNetWage'] as num?)?.toInt()
+          ?? calculatedWage.effectiveNetWage;
 
       if (calculatedWage.retroactiveDeduction > 0) {
         _firestoreService.createNotification(
@@ -959,7 +989,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             workDate: attendance.workDate,
             retroactiveAmount: calculatedWage.retroactiveDeduction,
             grossWage: calculatedWage.totalAmount,
-            netWage: calculatedWage.effectiveNetWage,
+            netWage: indivServerNetWage,
             attendanceId: attendance.id,
           ),
         );
