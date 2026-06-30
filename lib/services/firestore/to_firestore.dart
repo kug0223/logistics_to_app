@@ -1096,24 +1096,35 @@ extension TOFirestore on FirestoreService {
       }
       if (cancelCount > 0) await cancelBatch.commit();
 
-      // M-2: 확정·계약대기 근무자에게 TO 취소 알림 발송 (PENDING은 단순 거절이므로 제외)
+      // M-2: 지원서 상태별 알림 발송
       // 알림은 배치 커밋(지원서 REJECTED) 직후 fire-and-forget으로 발송됨.
-      // 슬롯 배치 삭제는 알림 발송 후에 커밋되므로 이론상 근무자가 알림 수신 직후 슬롯이 잠깐 잔존 가능.
-      // 타이밍 차이가 매우 짧고 기능 정확성에 영향 없어 의도적 허용.
       for (final doc in allActiveDocs) {
         final status = doc.data()['status'] as String?;
+        final applicantUid = doc.data()['uid'] as String?;
+        if (applicantUid == null) continue;
+
         if (status == AppStatus.confirmed || status == AppStatus.contractPending) {
-          final applicantUid = doc.data()['uid'] as String?;
-          if (applicantUid != null) {
-            _sendTOCanceledNotification(
-              applicantUid: applicantUid,
-              businessName: toBusinessName,
-              businessId: toBusinessId,
-              toTitle: toTitle,
-              status: status!,
-              workDate: (doc.data()['workDate'] as Timestamp?)?.toDate().toLocal(),
-            );
-          }
+          // 확정/계약대기 → TO 취소 알림
+          _sendTOCanceledNotification(
+            applicantUid: applicantUid,
+            businessName: toBusinessName,
+            businessId: toBusinessId,
+            toTitle: toTitle,
+            status: status!,
+            workDate: (doc.data()['workDate'] as Timestamp?)?.toDate().toLocal(),
+          );
+        } else if (status == AppStatus.pending) {
+          // [BUG-E-04 수정] PENDING 지원자에게도 거절 알림 발송
+          // batchCloseSlots와 동일한 패턴으로 일관성 유지
+          _sendApplicationRejectedNotification(
+            applicantUid: applicantUid,
+            applicationId: doc.id,
+            businessName: doc.data()['businessName'] as String? ?? '',
+            businessId: doc.data()['businessId'] as String? ?? '',
+            workType: doc.data()['selectedWorkType'] as String? ?? '',
+            workDate: (doc.data()['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
+            rejectReason: '공고 슬롯이 삭제되었습니다',
+          );
         }
       }
     }
@@ -1261,9 +1272,14 @@ extension TOFirestore on FirestoreService {
             publishTime != null) {
           final parts = publishTime.split(':');
           if (parts.length >= 2) {
+            // [NEW-03 수정] int.parse → int.tryParse: 잘못된 publishTime 입력 시 FormatException 크래시 방지
+            // createTO·_createSlots는 이미 tryParse 사용 중 — 여기서도 통일
+            final hour = int.tryParse(parts[0]);
+            final minute = int.tryParse(parts[1]);
+            if (hour == null || minute == null || hour > 23 || minute > 59) continue;
             final visibleFrom = DateTime(
               slot.date.year, slot.date.month, slot.date.day,
-              int.parse(parts[0]), int.parse(parts[1]),
+              hour, minute,
             ).subtract(Duration(days: publishDaysBefore));
             batch.update(slotRef, {
               'visibleFrom': Timestamp.fromDate(visibleFrom.toUtc()),
@@ -1286,6 +1302,9 @@ extension TOFirestore on FirestoreService {
   }
 
   /// 슬롯 통계 업데이트 (지원/확정/거절 시 호출)
+  /// [B-2] 데드코드 — 코드베이스 전체에서 호출처 없음. application_firestore.dart의
+  /// _decrementTOConfirmed/_incrementTOConfirmed/_incrementTOPending + _recalculateSlotStatus 조합으로 대체됨.
+  /// 삭제 전 안전 확인 후 제거 권장.
   Future<void> updateSlotStats(
     String toId,
     String slotId, {

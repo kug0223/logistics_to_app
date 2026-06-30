@@ -143,6 +143,8 @@ class ContractService {
         // 신규 계약서: 동시 이중 제출 시 문서 중복 생성 방지
         final data = updated.toMap();
         data['createdAt'] = FieldValue.serverTimestamp();
+        // [BUG-CS-01 수정] 신규 계약서 updatedAt도 서버 타임스탬프로 덮어쓰기 — copyWith의 클라이언트 시간 방지
+        data['updatedAt'] = FieldValue.serverTimestamp();
         await _db.runTransaction((tx) async {
           final snap = await tx.get(ref);
           if (snap.exists) {

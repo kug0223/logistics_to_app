@@ -566,6 +566,7 @@ class WorkDetailManagementDialog {
 
   // 긴급모집 종료
   Future<void> _handleBulkStopEmergency(List<WorkDetailModel> works) async {
+    if (_isProcessing) return; // [BUG-수정] 중복 실행 방지 가드 추가 (_handleBulkClose·Reopen과 동일 패턴)
     final confirm = await DialogHelper.showConfirm(
       context,
       title: '긴급모집 종료',
@@ -575,36 +576,37 @@ class WorkDetailManagementDialog {
     );
 
     if (!context.mounted || !confirm) return;
-    {
+    _isProcessing = true;
+    try {
       final adminUID = FirebaseAuth.instance.currentUser?.uid;
       if (adminUID == null) {
         ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
         return;
       }
-      try {
-        for (var work in works) {
-          await firestoreService.stopEmergencyRecruitment(
-            toId: toItem.to.id,
-            workDetailId: work.id,
-            adminUID: adminUID,
-            slotId: toItem.slot?.id,
-          );
-          if (!context.mounted) return;
-
-          // ⭐ 로컬 데이터 업데이트 (clearEmergency 사용)
-          final index = toItem.workDetails.indexWhere((w) => w.id == work.id);
-          if (index != -1) {
-            toItem.workDetails[index] = work.copyWith(clearEmergency: true);
-          }
-        }
-
+      for (var work in works) {
+        await firestoreService.stopEmergencyRecruitment(
+          toId: toItem.to.id,
+          workDetailId: work.id,
+          adminUID: adminUID,
+          slotId: toItem.slot?.id,
+        );
         if (!context.mounted) return;
-        Navigator.pop(context);
-        onLocalStatsChanged?.call();
-        ToastHelper.showSuccess('${works.length}개 업무 긴급모집이 종료되었습니다');
-      } catch (e) {
-        if (context.mounted) ToastHelper.showError('일부 긴급모집 종료에 실패했습니다');
+
+        // ⭐ 로컬 데이터 업데이트 (clearEmergency 사용)
+        final index = toItem.workDetails.indexWhere((w) => w.id == work.id);
+        if (index != -1) {
+          toItem.workDetails[index] = work.copyWith(clearEmergency: true);
+        }
       }
+
+      if (!context.mounted) return;
+      Navigator.pop(context);
+      onLocalStatsChanged?.call();
+      ToastHelper.showSuccess('${works.length}개 업무 긴급모집이 종료되었습니다');
+    } catch (e) {
+      if (context.mounted) ToastHelper.showError('일부 긴급모집 종료에 실패했습니다');
+    } finally {
+      _isProcessing = false;
     }
   }
 }

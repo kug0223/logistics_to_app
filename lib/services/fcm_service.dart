@@ -327,14 +327,36 @@ class FCMService {
           MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
         );
         break;
-      // [BUG-수정] wageTransferred 알림 FCM 라우팅 추가 — wageConfirmed와 동일하게 MyScheduleScreen
+      // [M-001 수정] wageTransferred → UserContractsScreen (계약·급여 내역)
+      // wageConfirmed(급여 확정)는 일정 확인 → MyScheduleScreen 유지
+      // wageTransferred(실송금 완료)는 급여 내역 확인 목적 → UserContractsScreen
       case 'wageTransferred':
         _navigatorKey!.currentState!.push(
-          MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
+          MaterialPageRoute(builder: (_) => const UserContractsScreen()),
         );
         break;
-      // 'contractRenewal'(contractExpiringReminder)은 관리자 전용이나 FCM에서 isUser 구분 불가.
-      // 알림 화면으로 이동 → 사용자가 알림을 탭하면 notification_screen에서 올바른 화면으로 분기한다.
+      // [FCM-01 수정] fixedWorker screen → 인력 관리 화면 직접 이동 (관리자 퇴사 자동 승인 알림 딥링크)
+      // 이전: 케이스 없음 → default → 알림 목록으로 떨어져 관리자가 추가로 탭해야 했음
+      case 'fixedWorker':
+        if (_currentUserIsAdmin) {
+          _navigatorKey!.currentState!.push(
+            MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+          );
+        } else {
+          _navigateToNotificationScreen();
+        }
+        break;
+      // [BUG-FCM-01 수정] 'contractRenewal'(contractExpiringReminder) — 관리자는 인력관리 화면으로 직접 이동.
+      // 기존: case 없어 default → 알림 목록 경유 2탭 필요. 관리자면 바로 IntegratedWorkforceScreen으로.
+      case 'contractRenewal':
+        if (_currentUserIsAdmin) {
+          _navigatorKey!.currentState!.push(
+            MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+          );
+        } else {
+          _navigateToNotificationScreen();
+        }
+        break;
       default:
         _navigateToNotificationScreen();
     }

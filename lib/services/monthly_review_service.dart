@@ -142,6 +142,8 @@ class MonthlyReviewService {
         month: reviewMonth,
       );
 
+      // [BUG-REV-02 수정] rating 범위 강제 클리핑 — UI 레이어 검증 누락 시 0이나 6이 저장되는 것 방지
+      final clampedRating = rating.clamp(1, 5);
       final review = MonthlyReviewModel(
         id: reviewKey,
         reviewKey: reviewKey,
@@ -159,7 +161,7 @@ class MonthlyReviewService {
         workDaysInMonth: workDaysInMonth,
         normalAttendanceDays: normalAttendanceDays,
         lateDays: lateDays,
-        rating: rating,
+        rating: clampedRating,
         wouldRehire: wouldRehire,
         positiveTags: positiveTags,
         improvementTags: improvementTags,
@@ -231,6 +233,8 @@ class MonthlyReviewService {
         month: reviewMonth,
       );
 
+      // [BUG-REV-02 수정] rating 범위 강제 클리핑
+      final clampedRating = rating.clamp(1, 5);
       final review = MonthlyReviewModel(
         id: reviewKey,
         reviewKey: reviewKey,
@@ -242,7 +246,7 @@ class MonthlyReviewService {
         reviewYear: reviewYear,
         reviewMonth: reviewMonth,
         workDaysInMonth: workDaysInMonth,
-        rating: rating,
+        rating: clampedRating,
         wouldRehire: wouldWorkAgain,
         positiveTags: positiveTags,
         improvementTags: improvementTags,

@@ -114,6 +114,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   final Set<String> _starredIds = {};
   Map<String, String> _idCardStatusMap = {};
   final Map<String, bool> _reviewWrittenMap = {};
+  // [BUG-CANCEL-01] 근무 이력 있는 확정자에게 확정취소 버튼 노출 방지용 맵
+  // key = userId, value = 오늘 날짜에 checkIn 기록 존재 여부
+  Map<String, bool> _hasWorkedMap = {};
   bool _isBatchMode = false;
   // BUG-1 수정: 전역 bool → 그룹 key로 스코프화.
   // 전역이면 다중 그룹 시 그룹A 선택 모드가 그룹B UI에도 반영됨.
@@ -167,6 +170,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       _starredIds.clear();
       _idCardStatusMap = {};
       _reviewWrittenMap.clear();
+      _hasWorkedMap = {}; // [BUG-CANCEL-01] 로드 시작 시 초기화 — 이전 날짜 잔류 방지
       _isBatchMode = false;
       _idCardSelectGroupKey = null;
       _selectedIdCardUserIds.clear();
@@ -238,6 +242,13 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           reviewMap.addAll(Map.fromEntries(reviewEntries));
         }
 
+        // [BUG-CANCEL-01] 당일 근무 여부 맵 — 확정취소 버튼 가드용
+        // 공통 로직: FirestoreService.loadHasWorkedMap (attendance_firestore.dart)
+        final hasWorkedMap = confirmedUserIds.isNotEmpty
+            ? await _svc.loadHasWorkedMap(
+                businessId: bizId, date: widget.date)
+            : <String, bool>{};
+
         final starredFromFirestore =
             allApps.where((app) => app.isStarred).map((app) => app.id).toSet();
 
@@ -252,6 +263,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           _idCardStatusMap = idCardMap;
           _reviewWrittenMap.addAll(reviewMap);
           _starredIds.addAll(starredFromFirestore);
+          _hasWorkedMap = hasWorkedMap; // [BUG-CANCEL-01]
           _isLoading = false;
         });
         return;
@@ -264,6 +276,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         _userMap = userMap;
         _contractStatusMap = contractMap;
         _weeklyWorkCountMap = weeklyMap;
+        _hasWorkedMap = {}; // [BUG-CANCEL-01] 확정자 없으면 초기화
         _isLoading = false;
       });
     } catch (e) {
@@ -278,6 +291,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         _idCardStatusMap = {};
         _workDetailCapacityMap = {};
         _weeklyWorkCountMap = {};
+        _hasWorkedMap = {}; // [BUG-CANCEL-01] 로드 실패 시도 초기화
       });
       ToastHelper.showError('데이터를 불러오지 못했습니다. 다시 시도해주세요.');
     }
@@ -1202,31 +1216,39 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                 ],
               ),
             ] else if (!isPending) ...[
-              const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  // 계약 미작성 시 개별 계약서 작성 버튼
-                  if ((_contractStatusMap[app.id] == null ||
+              // [BUG-CANCEL-01] 계약서 작성 또는 확정취소 중 하나라도 표시할 때만 Row 렌더링
+              if ((_contractStatusMap[app.id] == null ||
                       _contractStatusMap[app.id]!.isEmpty ||
-                      _contractStatusMap[app.id] == 'voided')) ...[
-                    _actionButton(
-                      context,
-                      label: '계약서 작성',
-                      color: AppColors.success,
-                      filled: true,
-                      onTap: () => _createContractForOne(app),
-                    ),
-                    const SizedBox(width: 8),
+                      _contractStatusMap[app.id] == 'voided') ||
+                  _canCancelConfirmation(app)) ...[
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    // 계약 미작성 시 개별 계약서 작성 버튼
+                    if ((_contractStatusMap[app.id] == null ||
+                        _contractStatusMap[app.id]!.isEmpty ||
+                        _contractStatusMap[app.id] == 'voided')) ...[
+                      _actionButton(
+                        context,
+                        label: '계약서 작성',
+                        color: AppColors.success,
+                        filled: true,
+                        onTap: () => _createContractForOne(app),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    // [BUG-CANCEL-01] 근무 완료·장기계약 시작 후에는 확정취소 버튼 숨김
+                    if (_canCancelConfirmation(app))
+                      _actionButton(
+                        context,
+                        label: '확정취소',
+                        color: AppColors.error,
+                        onTap: () => _cancelConfirmation(app),
+                      ),
                   ],
-                  _actionButton(
-                    context,
-                    label: '확정취소',
-                    color: AppColors.error,
-                    onTap: () => _cancelConfirmation(app),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ],
           ],
         ),
@@ -1991,6 +2013,26 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   }
 
   // ── 확정 취소 ──────────────────────────────────────────────────────────────
+
+  /// [BUG-CANCEL-01] 확정취소 가능 여부 판단
+  ///
+  /// 단기 근무: 당일 checkIn 기록이 있으면 이미 근무한 것 → 취소 불가
+  /// 장기 근무: 계약 시작일(workDate)이 widget.date 이전이면 이미 근무 시작 → 취소 불가
+  ///            (workDate == widget.date는 첫 근무일 당일 — 아직 출근 전이면 취소 허용)
+  bool _canCancelConfirmation(ApplicationModel app) {
+    // 당일 출근 기록 체크 (단기·장기 공통)
+    if (_hasWorkedMap[app.uid] == true) return false;
+    // 장기 근무자: 계약 시작일 이후 날짜를 보고 있는 경우 취소 불가
+    // [특이사항] workEndDate == null 인 무기한 계약도 동일하게 처리됨
+    if (app.isLongTermApplication) {
+      final contractStart = DateTime(
+          app.workDate.year, app.workDate.month, app.workDate.day);
+      final viewDate = DateTime(
+          widget.date.year, widget.date.month, widget.date.day);
+      if (contractStart.isBefore(viewDate)) return false;
+    }
+    return true;
+  }
 
   Future<void> _cancelConfirmation(ApplicationModel app) async {
     final user = _userMap[app.uid];

@@ -354,6 +354,32 @@ extension AttendanceFirestore on FirestoreService {
     }
   }
 
+  /// 특정 날짜에 실제로 근무한 근로자 맵 반환 (확정취소 버튼 가드 공통 로직)
+  ///
+  /// key = userId, value = true
+  /// 조건: checkIn이 있고 결근·노쇼가 아닌 경우 OR wageStatus가 confirmed/transferred
+  /// [BUG-CANCEL-01] day_applicants_dialog · work_applicants_dialog 공통 사용
+  Future<Map<String, bool>> loadHasWorkedMap({
+    required String businessId,
+    required DateTime date,
+  }) async {
+    try {
+      final atts = await getAttendanceByDate(businessId: businessId, date: date);
+      return {
+        for (final att in atts)
+          if ((att.checkIn != null &&
+                  att.status != AttendanceModel.statusAbsent &&
+                  att.status != AttendanceModel.statusNoShow) ||
+              att.isWageConfirmed ||
+              att.isWageTransferred)
+            att.userId: true
+      };
+    } catch (e) {
+      debugPrint('⚠️ loadHasWorkedMap 실패 ($date): $e');
+      return {};
+    }
+  }
+
   /// 특정 날짜 출근 기록 조회
   Future<List<AttendanceModel>> getAttendanceByDate({
     required String businessId,

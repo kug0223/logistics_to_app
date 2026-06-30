@@ -798,6 +798,14 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           ToastHelper.showWarning('계약 종료일이 과거 날짜입니다. 즉시 마감 처리됩니다');
         }
       }
+      // [D-3 수정] custom 기간에서 rangeStart가 과거 날짜인 경우 경고
+      // 저장 자체는 허용하나 관리자에게 의도 재확인 유도
+      if (_contractPeriodType == 'custom' && _rangeStart != null) {
+        final todayOnly = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
+        if (_rangeStart!.isBefore(todayOnly)) {
+          ToastHelper.showWarning('계약 시작일이 과거 날짜입니다. 게시 즉시 활성 상태로 시작됩니다');
+        }
+      }
       if (_selectedWeekdays.isEmpty) {
         ToastHelper.showError('근무 요일을 선택해주세요');
         return;

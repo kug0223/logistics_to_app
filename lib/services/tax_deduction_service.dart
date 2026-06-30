@@ -74,13 +74,15 @@ class TaxDeductionService {
     // (소득세3% × 10% = 0.3%)이며, round() 시 1원 차이가 발생하는 경우를 소득세 계산
     // 이후 10% 적용으로 통일하는 방식이다. (세법상 지방소득세 = 소득세의 10%)
     // businessIncomeLocalRate 필드는 슈퍼관리자 설정화면 표시용으로만 사용된다.
-    final incomeTax = (gross * rates.businessIncomeRate / 100).round();
+    // [BUG-TAX-02 수정] 음수 gross 방어 — additionalAmount 음수로 totalAmount < 0인 경우
+    final safeGross = gross < 0 ? 0 : gross;
+    final incomeTax = (safeGross * rates.businessIncomeRate / 100).round();
     final localTax = (incomeTax * rates.localIncomeTaxRate / 100).round();
     final totalTax = incomeTax + localTax;
     return base.copyWith(
       taxDeductionType: InsuranceRateModel.typeFreelancer33,
       incomeTaxDeduction: totalTax,
-      netWage: gross - totalTax,
+      netWage: safeGross - totalTax,
     );
   }
 
@@ -109,11 +111,12 @@ class TaxDeductionService {
         : 0;
     final totalTax = incomeTax + localTax;
     final employment = (safeGross * rates.employmentInsuranceRate / 100).round();
+    // [BUG-AID-01 수정] gross 음수 시 netWage가 더 큰 음수가 되는 버그 — safeGross 사용
     return base.copyWith(
       taxDeductionType: InsuranceRateModel.typeDailyWorker,
       employmentInsuranceDeduction: employment,
       incomeTaxDeduction: totalTax,
-      netWage: gross - totalTax - employment,
+      netWage: safeGross - totalTax - employment,
     );
   }
 
@@ -135,11 +138,12 @@ class TaxDeductionService {
         ? (incomeTax * rates.localIncomeTaxRate / 100).round()
         : 0;
     final totalTax = incomeTax + localTax;
+    // [BUG-AID-01 수정] gross 음수 시 netWage가 더 큰 음수가 되는 버그 — safeGross 사용
     return base.copyWith(
       taxDeductionType: InsuranceRateModel.typeDailyAuto8,
       employmentInsuranceDeduction: employment,
       incomeTaxDeduction: totalTax,
-      netWage: gross - employment - totalTax,
+      netWage: safeGross - employment - totalTax,
     );
   }
 
@@ -159,10 +163,12 @@ class TaxDeductionService {
     InsuranceRateModel rates,
     int gross,
   ) {
-    final pension    = (gross * rates.nationalPensionRate / 100).round();
-    final health     = (gross * rates.healthInsuranceRate / 100).round();
+    // [BUG-TAX-01 수정] 음수 gross 방어 — additionalAmount 음수로 totalAmount < 0인 경우
+    final safeGross  = gross < 0 ? 0 : gross;
+    final pension    = (safeGross * rates.nationalPensionRate / 100).round();
+    final health     = (safeGross * rates.healthInsuranceRate / 100).round();
     final ltc        = (health * rates.ltcInsuranceRate / 100).round();
-    final employment = (gross * rates.employmentInsuranceRate / 100).round();
+    final employment = (safeGross * rates.employmentInsuranceRate / 100).round();
     final total      = pension + health + ltc + employment;
     return base.copyWith(
       taxDeductionType: InsuranceRateModel.typeFourInsuranceFixed,
@@ -170,7 +176,7 @@ class TaxDeductionService {
       healthInsuranceDeduction: health,
       ltcInsuranceDeduction: ltc,
       employmentInsuranceDeduction: employment,
-      netWage: gross - total,
+      netWage: safeGross - total,
     );
   }
 
@@ -192,7 +198,10 @@ class TaxDeductionService {
     required int workYear,
   }) {
     final rates = InsuranceRateService.getRates(workYear);
-    final gross8 = day8Base.totalAmount;
+    // [C-1] _applyDailyWorker 등 타 메서드와 일관성을 위한 음수 방어 가드
+    // totalAmount는 WageCalculator가 양수만 반환하는 설계이므로 실운영에서 음수는 없으나
+    // 테스트 경로나 미래 호출부 변경에 대한 방어
+    final gross8 = day8Base.totalAmount < 0 ? 0 : day8Base.totalAmount;
 
     // 1~7일치: 이미 고용보험(0.9%)만 공제했음
     // 소급분 = 1~7일 기준 (국민연금 + 건강보험 + 장기요양) 공제액
@@ -270,13 +279,20 @@ class TaxDeductionService {
                 .get()),
       );
       final allDocs = snaps.expand((snap) => snap.docs).toList();
-      var count = allDocs.length;
 
-      // 현재 처리 중인 attendance는 카운트에서 제외 (중복 방지)
-      if (excludeAttendanceId != null) {
-        count = allDocs.where((d) => d.id != excludeAttendanceId).length;
-      }
-      return count;
+      // [TAX-01 수정] workDate 기준으로 날짜 중복 제거
+      // 같은 날 오전·오후 등 복수 attendance 문서가 있으면 단순 length 카운트는
+      // 실제 근무 일수보다 크게 집계되어 8일차 소급 공제가 오작동함.
+      // ISO 날짜 문자열(yyyy-MM-dd)로 정규화 후 Set으로 유니크화.
+      final uniqueDates = allDocs
+          .where((d) => d.id != excludeAttendanceId)
+          .map((d) => (d.data()['workDate'] as Timestamp?)
+              ?.toDate()
+              .toIso8601String()
+              .substring(0, 10))
+          .whereType<String>()
+          .toSet();
+      return uniqueDates.length;
     } catch (e) {
       // 0 반환(silent fail): 조회 실패 시 8일차 소급이 누락되는 방향으로 처리.
       // _getPrevGrossTotal()은 소급 금액 계산에 필수이므로 rethrow(확정 전체 차단)하는 반면,

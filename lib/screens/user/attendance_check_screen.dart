@@ -141,8 +141,13 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
       final visibleWorks = todayWorks.where((work) {
         final att = _attendanceMap[work.id];
         if (att == null) return true;
-        if (att.checkOut != null && DateUtils.isSameDay(att.workDate, yesterday)) {
-          return false; // 어제 퇴근 완료 → 오늘 화면에서 숨김
+        if (DateUtils.isSameDay(att.workDate, yesterday)) {
+          // [G-3 수정] 어제 기록은 퇴근 완료 또는 missed_checkout 상태 모두 오늘 화면에서 숨김
+          // missed_checkout 상태인 채로 오늘 화면에 남으면 근무자가 출근 버튼을 찾지 못하는 UX 버그 발생
+          // missed_checkout 처리는 관리자의 수동 수정 영역 — 근무자 화면에서 제거
+          if (att.checkOut != null || att.status == 'missed_checkout') {
+            return false;
+          }
         }
         return true;
       }).toList();

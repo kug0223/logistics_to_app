@@ -465,6 +465,8 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
       if (userDoc.exists && userData != null) {
         user = UserModel.fromMap(userData, userDoc.id);
       }
+      // [M-PD-01 수정] 두 번째 await 이후 try 블록 내 명시적 mounted 체크 추가
+      if (!context.mounted) return;
     } catch (e) {
       debugPrint('❌ 지원서/사용자 정보 로드 실패: $e');
     }

@@ -776,6 +776,8 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
 
     try {
       final businesses = await _getAdminBusinesses();
+      // [M-WC-01 수정] await 직후 mounted 체크 — businesses.isEmpty 분기 전에 체크
+      if (!mounted) return;
       if (businesses.isEmpty) {
         ToastHelper.showError('등록된 사업장이 없습니다');
         return;

@@ -558,8 +558,13 @@ class ApplicationModel {
     if (applicationType == AppType.longTerm) return true;
     // workDays가 있으면 장기 (신규 데이터)
     if (workDays != null && workDays!.isNotEmpty) return true;
-    // 계약 종료일이 있으면 장기 (구 데이터 — contract-type TO 지원서)
-    if (workEndDate != null) return true;
+    // [C-001 수정] workEndDate만으로 장기 판정 불충분
+    // 단기 TO(1일 근무)도 workEndDate가 당일로 설정될 수 있어 오분류 위험
+    // 구 데이터(contract-type 장기) 지원서는 workDate < workEndDate를 만족하므로 날짜 비교로 판별
+    if (workEndDate != null) {
+      final e = workEndDate!;
+      return !(workDate.year == e.year && workDate.month == e.month && workDate.day == e.day);
+    }
     return false;
   }
   

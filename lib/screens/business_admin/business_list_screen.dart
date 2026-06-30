@@ -539,6 +539,8 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
 
       // 진행중 공고 수 사전 체크 — 폼 진입 자체를 차단
       final limit = await _firestoreService.getMaxActiveTOLimit();
+      // [M-BL-01 수정] 첫 번째 await 이후 두 번째 await 진입 전 mounted 체크
+      if (!context.mounted) return;
       final activeCount = await _firestoreService.countAllActiveTO(user.uid);
       if (activeCount >= limit) {
         if (!context.mounted) return;

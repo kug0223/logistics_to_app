@@ -1146,18 +1146,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
             if (currentUser?.isBusinessAdmin == true &&
                 currentBusinessId != null) {
               setModal(() { isLoading = true; errorMsg = null; });
-              final activeToSnap = await FirebaseFirestore.instance
+              // [BUGFIX] whereIn + equality 복합쿼리에서 Firestore 보안 규칙의
+              //   filters.businessId가 null 반환 → PERMISSION_DENIED 방지를 위해
+              //   status whereIn 제거 후 클라이언트 필터링으로 전환.
+              final allToSnap = await FirebaseFirestore.instance
                   .collection('tos')
                   .where('businessId', isEqualTo: currentBusinessId)
-                  .where('status', whereIn: [
-                    TOStatus.active, TOStatus.full, TOStatus.scheduled
-                  ])
-                  .limit(1)
                   .get();
+              final hasActiveTo = allToSnap.docs.any((doc) {
+                final status = doc.data()['status'] as String?;
+                return status == TOStatus.active ||
+                    status == TOStatus.full ||
+                    status == TOStatus.scheduled;
+              });
               setModal(() => isLoading = false);
               if (!ctx.mounted) return;
 
-              if (activeToSnap.docs.isNotEmpty) {
+              if (hasActiveTo) {
                 final proceed = await showDialog<bool>(
                   context: ctx,
                   builder: (dCtx) => AlertDialog(

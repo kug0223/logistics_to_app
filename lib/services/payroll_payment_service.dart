@@ -76,9 +76,12 @@ class PayrollPaymentService {
     });
 
     // 트랜잭션 커밋 후 지원자에게 알림 발송
+    // [BUG-PAY-01 수정] businessId == null이면 알림 딥링크가 빈 문자열 → 탭 시 라우팅 실패.
+    // 알림 전체를 건너뛰는 것이 잘못된 딥링크를 발송하는 것보다 안전.
     if (workerUserId != null &&
         workerName != null &&
         businessName != null &&
+        businessId != null &&
         finalWage != null) {
       try {
         await _firestoreService.createNotification(
@@ -86,7 +89,7 @@ class PayrollPaymentService {
             userId: workerUserId,
             workerName: workerName,
             businessName: businessName,
-            businessId: businessId ?? '',
+            businessId: businessId,
             finalWage: finalWage,
             applicationId: applicationId,
           ),

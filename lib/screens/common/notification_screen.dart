@@ -539,21 +539,25 @@ class _NotificationScreenState extends State<NotificationScreen> {
         break;
 
       // ═══════════════════════════════════════════════════════════
-      // 급여 관련 알림 — MyScheduleScreen으로 이동 [의도된 설계]
-      //
-      // · MyScheduleScreen 내 "급여" 탭에서 해당 근무 내역과 확정 금액을 확인할 수 있음
-      // · 별도 급여 전용 화면 없이 MyScheduleScreen이 급여 확인 진입점 역할을 함
-      // · 급여 관련 알림(wageConfirmed·wageCancelConfirmed·retroactiveDeductionAlert)은
-      //   모두 근무자(isUser)에게만 발송되므로 isUser 분기 없이 단일 경로로 처리
+      // 급여 관련 알림
+      // · wageConfirmed(확정) / wageCancelConfirmed / retroactiveDeductionAlert
+      //   → MyScheduleScreen: 근무 일정·확정 금액 확인 목적
+      // · wageTransferred(실송금 완료) → UserContractsScreen: 급여 내역·이체 확인 목적
+      //   [FCM-04 수정] fcm_service.dart M-001 수정(wageTransferred→UserContractsScreen)과
+      //   이 화면의 라우팅(MyScheduleScreen)이 불일치하던 버그 수정
       // ═══════════════════════════════════════════════════════════
       case NotificationType.wageConfirmed:
-      // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
-      case NotificationType.wageTransferred:
       case NotificationType.wageCancelConfirmed:
       case NotificationType.retroactiveDeductionAlert:
         Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
+        );
+        break;
+      case NotificationType.wageTransferred:
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const UserContractsScreen()),
         );
         break;
 
@@ -746,6 +750,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
       try {
         if (!isUser) {
           // 관리자: worker 프로필 + attendance 병렬 조회
+          // [BUGFIX] whereIn + equality 복합쿼리에서 Firestore 보안 규칙의
+          //   filters.businessId가 null 반환 → PERMISSION_DENIED 방지를 위해
+          //   wageStatus whereIn 제거 후 클라이언트 필터링으로 전환.
           final results = await Future.wait([
             FirebaseFirestore.instance.collection('users').doc(req.workerId).get(),
             FirebaseFirestore.instance
@@ -753,7 +760,6 @@ class _NotificationScreenState extends State<NotificationScreen> {
                 .where('userId', isEqualTo: req.workerId)
                 .where('businessId', isEqualTo: req.businessId)
                 .where('yearMonth', isEqualTo: yearMonthStr)
-                .where('wageStatus', whereIn: ['confirmed', 'transferred'])
                 .get(),
           ]);
           final userSnap = results[0] as DocumentSnapshot<Map<String, dynamic>>;
@@ -762,7 +768,14 @@ class _NotificationScreenState extends State<NotificationScreen> {
             workerGender = worker.gender;
             workerAge = worker.age;
           }
-          workDaysInMonth = (results[1] as QuerySnapshot<Map<String, dynamic>>).docs.length;
+          // wageStatus 클라이언트 필터링 (whereIn 제거)
+          workDaysInMonth = (results[1] as QuerySnapshot<Map<String, dynamic>>)
+              .docs
+              .where((doc) {
+                final status = doc.data()['wageStatus'] as String?;
+                return status == 'confirmed' || status == 'transferred';
+              })
+              .length;
         } else {
           // 근무자: CF 프록시로 조회 (직접 list 불허 — Firestore 규칙)
           final attendances = await FirestoreService().getMyMonthlyAttendances(
@@ -859,8 +872,14 @@ class _NotificationScreenState extends State<NotificationScreen> {
       if (!context.mounted) return;
       Navigator.pop(context);
 
-      if (invitation == null || !invitation.isPending) {
-        ToastHelper.showError('이미 처리된 초대입니다');
+      // [BUG-M-01 수정] 만료 초대도 여기서 차단 — acceptInvitation 서버 레이어도 막지만
+      // 팝업을 보여준 뒤 오류 토스트로 끝나는 불필요한 UX를 방지
+      final isExpired = invitation != null &&
+          DateTime.now().isAfter(invitation.createdAt.add(const Duration(days: 30)));
+      if (invitation == null || !invitation.isPending || isExpired) {
+        ToastHelper.showError(
+          isExpired ? '초대 유효기간(30일)이 만료되었습니다.' : '이미 처리된 초대입니다',
+        );
         return;
       }
 

@@ -940,7 +940,7 @@ class NotificationModel {
         'applicationId': applicationId,
         'businessId': businessId,
         'action': 'resignRequest',
-        'businessName': businessName,
+        // [E-1c 정리] businessName은 CF allowedDataKeys에 없어 자동 제거됨 — 제거
       },
       createdAt: DateTime.now(),
     );

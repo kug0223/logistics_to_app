@@ -1786,7 +1786,9 @@ class PersonnelBadge extends StatelessWidget {
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           Text(
-            required == 0 ? '미설정' : '$confirmed/$required',
+            // [S3-1 수정] CF syncTOStats 교정 전 낙관적 increment가 음수가 되는
+            // 짧은 타이밍에 '-1/5' 형태로 표시되는 현상 방지
+            required == 0 ? '미설정' : '${confirmed < 0 ? 0 : confirmed}/$required',
             style: ResponsiveHelper.bodyStyle(
               context,
               color: isFull ? AppColors.successDark : AppColors.infoDark,

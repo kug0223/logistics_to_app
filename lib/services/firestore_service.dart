@@ -1215,17 +1215,28 @@ class FirestoreService {
     DateTime? resignDate,
   }) async {
     try {
-      final appDoc = await _firestore.collection('applications').doc(applicationId).get(const GetOptions(source: Source.server));
-      if (!appDoc.exists) return false;
-      final app = ApplicationModel.fromMap(appDoc.data()!, appDoc.id);
-
-      final effectiveResignDate = resignDate ?? app.workEndDate ?? DateTime.now();
-
-      await _firestore.collection('applications').doc(applicationId).update({
-        'resignStatus': AppStatus.pending,
-        'resignRequestedAt': FieldValue.serverTimestamp(),
-        'resignRequestDate': Timestamp.fromDate(effectiveResignDate),
+      // [S2-1 수정] 중복 퇴사 요청 방지 — 트랜잭션으로 resignStatus=null 또는 rejected 상태만 허용
+      // UI에서 버튼 비활성화로 1차 방어하나, 서버 레벨 이중 방어 필수
+      ApplicationModel? resolvedApp;
+      final appRef = _firestore.collection('applications').doc(applicationId);
+      await _firestore.runTransaction((tx) async {
+        final snap = await tx.get(appRef);
+        if (!snap.exists) throw Exception('지원서 없음: $applicationId');
+        final currentResignStatus = snap.data()?['resignStatus'];
+        if (currentResignStatus != null && currentResignStatus != AppStatus.rejected) {
+          throw Exception('이미 진행 중인 퇴사 요청이 있습니다: $currentResignStatus');
+        }
+        resolvedApp = ApplicationModel.fromMap(snap.data()!, snap.id);
+        final effectiveDate = resignDate ?? resolvedApp!.workEndDate ?? DateTime.now();
+        tx.update(appRef, {
+          'resignStatus': AppStatus.pending,
+          'resignRequestedAt': FieldValue.serverTimestamp(),
+          'resignRequestDate': Timestamp.fromDate(effectiveDate),
+        });
       });
+      if (resolvedApp == null) return false;
+      final app = resolvedApp!;
+      final effectiveResignDate = resignDate ?? app.workEndDate ?? DateTime.now();
 
       // 관리자에게 알림
       final bizDoc = await _firestore.collection('businesses').doc(app.businessId).get(const GetOptions(source: Source.server));
@@ -1257,10 +1268,20 @@ class FirestoreService {
   /// 퇴사 요청 취소 (근무자)
   Future<bool> cancelResignRequest(String applicationId) async {
     try {
-      await _firestore.collection('applications').doc(applicationId).update({
-        'resignStatus': null,
-        'resignRequestedAt': null,
-        'resignRequestDate': null,
+      // [NEW-01 수정] APPROVED/AUTO_APPROVED 상태의 퇴사 요청을 취소하는 버그 방지
+      // 트랜잭션으로 resignStatus=PENDING 검증 후 취소 — 이미 승인된 퇴사 요청을 되돌리는 사고 방지
+      await _firestore.runTransaction((tx) async {
+        final snap = await tx.get(_firestore.collection('applications').doc(applicationId));
+        if (!snap.exists) throw Exception('지원서 없음: $applicationId');
+        final currentResignStatus = snap.data()?['resignStatus'];
+        if (currentResignStatus != AppStatus.pending) {
+          throw Exception('취소 불가 — 현재 퇴사 요청 상태: $currentResignStatus');
+        }
+        tx.update(snap.reference, {
+          'resignStatus': null,
+          'resignRequestedAt': null,
+          'resignRequestDate': null,
+        });
       });
       debugPrint('✅ 퇴사 요청 취소: $applicationId');
       return true;
@@ -1276,9 +1297,30 @@ class FirestoreService {
     required String adminUID,
   }) async {
     try {
-      final appDoc = await _firestore.collection('applications').doc(applicationId).get(const GetOptions(source: Source.server));
-      if (!appDoc.exists) return false;
-      final app = ApplicationModel.fromMap(appDoc.data()!, appDoc.id);
+      // [M-004 수정] 취소-승인 TOCTOU 경쟁 상태 방지
+      // 트랜잭션으로 resignStatus=PENDING 검증 + 앱 상태 업데이트를 원자화.
+      // "사용자 취소 → 관리자 배치 커밋" 순서로 엇갈리면 취소된 퇴사 요청이 승인되는 버그 차단.
+      ApplicationModel? resolvedApp;
+      final appRef = _firestore.collection('applications').doc(applicationId);
+      await _firestore.runTransaction((tx) async {
+        final snap = await tx.get(appRef);
+        if (!snap.exists) throw Exception('지원서 없음: $applicationId');
+        final currentResignStatus = snap.data()?['resignStatus'];
+        if (currentResignStatus != AppStatus.pending) {
+          throw Exception('퇴사 요청 상태가 PENDING이 아님: $currentResignStatus');
+        }
+        resolvedApp = ApplicationModel.fromMap(snap.data()!, snap.id);
+        final actualDate = resolvedApp!.resignRequestDate ?? DateTime.now();
+        tx.update(appRef, {
+          'resignStatus': AppStatus.approved,
+          'resignApprovedAt': FieldValue.serverTimestamp(),
+          'resignApprovedBy': adminUID,
+          'actualResignDate': Timestamp.fromDate(actualDate),
+          'status': AppStatus.canceled,
+        });
+      });
+      if (resolvedApp == null) return false;
+      final app = resolvedApp!;
 
       final actualResignDate = app.resignRequestDate ?? DateTime.now();
 
@@ -1310,15 +1352,8 @@ class FirestoreService {
       }
 
       // [BUG-수정] H-2: 퇴사 승인 시 TO totalConfirmed 미감소 버그 수정
-      // 지원서 상태 업데이트를 batch로 처리하여 TO 카운터와 계약서를 원자적으로 갱신
+      // application 상태는 트랜잭션(M-004)에서 이미 업데이트됨 — 여기서는 TO 카운터 + 계약서만 처리
       final approveBatch = _firestore.batch();
-      approveBatch.update(_firestore.collection('applications').doc(applicationId), {
-        'resignStatus': AppStatus.approved,
-        'resignApprovedAt': FieldValue.serverTimestamp(),
-        'resignApprovedBy': adminUID,
-        'actualResignDate': Timestamp.fromDate(actualResignDate),
-        'status': AppStatus.canceled,
-      });
 
       // H-2: toId가 있고 이전 상태가 확정(CONFIRMED/CONTRACT_PENDING)인 경우에만 카운터 감소
       final resignToId = app.toId;
@@ -1403,18 +1438,29 @@ class FirestoreService {
     String? rejectReason,
   }) async {
     try {
-      final appDoc = await _firestore.collection('applications').doc(applicationId).get(const GetOptions(source: Source.server));
-      if (!appDoc.exists) return false;
-      final app = ApplicationModel.fromMap(appDoc.data()!, appDoc.id);
-
-      // [BUG-수정] M-4: 퇴사 거절인데 승인 필드명(resignApprovedAt/By)을 사용하던 버그 수정
-      // 거절 전용 필드(resignRejectedAt/By)로 교체하여 승인·거절 이력을 독립적으로 추적
-      await _firestore.collection('applications').doc(applicationId).update({
-        'resignStatus': AppStatus.rejected,
-        'resignRejectedAt': FieldValue.serverTimestamp(),
-        'resignRejectedBy': adminUID,
-        'resignRejectReason': rejectReason,
+      // [S2-2 수정] PENDING 상태 트랜잭션 검증 — 이미 취소·승인된 퇴사 요청을 거절하는 사고 방지
+      // approveResignation과 동일한 패턴으로 원자화
+      ApplicationModel? resolvedApp;
+      final appRef = _firestore.collection('applications').doc(applicationId);
+      await _firestore.runTransaction((tx) async {
+        final snap = await tx.get(appRef);
+        if (!snap.exists) throw Exception('지원서 없음: $applicationId');
+        final currentResignStatus = snap.data()?['resignStatus'];
+        if (currentResignStatus != AppStatus.pending) {
+          throw Exception('거절 불가 — 현재 퇴사 요청 상태: $currentResignStatus');
+        }
+        resolvedApp = ApplicationModel.fromMap(snap.data()!, snap.id);
+        // [BUG-수정] M-4: 퇴사 거절인데 승인 필드명(resignApprovedAt/By)을 사용하던 버그 수정
+        // 거절 전용 필드(resignRejectedAt/By)로 교체하여 승인·거절 이력을 독립적으로 추적
+        tx.update(appRef, {
+          'resignStatus': AppStatus.rejected,
+          'resignRejectedAt': FieldValue.serverTimestamp(),
+          'resignRejectedBy': adminUID,
+          'resignRejectReason': rejectReason,
+        });
       });
+      if (resolvedApp == null) return false;
+      final app = resolvedApp!;
 
       // 근무자에게 알림
       if (app.uid.isNotEmpty) {

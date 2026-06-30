@@ -2648,11 +2648,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         );
       }
     } catch (e, stack) {
-      // 로딩 닫기
       if (mounted) Navigator.pop(context);
-      
       debugPrint('❌ 명단 출력 실패: $e\n$stack');
-      ToastHelper.showError('명단 출력 실패');
+      // [BUG-12 수정] Navigator.pop mounted 체크 후 ToastHelper도 mounted 확인
+      if (mounted) ToastHelper.showError('명단 출력 실패');
     }
   }
 

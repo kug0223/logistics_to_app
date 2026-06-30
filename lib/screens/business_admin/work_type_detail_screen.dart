@@ -810,6 +810,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
     );
 
     if (image != null) {
+      if (!mounted) return; // [MOUNTED-01 수정] 이미지 피커 복귀 시 위젯 dispose 경합 방지
       setState(() => _newImages.add(image));
     }
   }

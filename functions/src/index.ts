@@ -3,6 +3,7 @@ import {
   onDocumentCreated,
   onDocumentUpdated,
   onDocumentDeleted,
+  onDocumentWritten,
 } from "firebase-functions/v2/firestore";
 import {onCall, HttpsError} from "firebase-functions/v2/https";
 import {initializeApp} from "firebase-admin/app";
@@ -342,9 +343,13 @@ export const createNotification = onCall(
     // 허용 외 키는 자동 제거 — XSS·딥링크 조작 방지.
     //
     const rawData = (data.data as Record<string, unknown> | undefined) ?? {};
+    // [E-1a 수정] workDetailId·workType — 관리자 알림 탭 시 WorkApplicantsDialog 딥링크에 필요
+    // [E-1b 수정] expiryDate — createContractExpiringReminder FCM payload 보존
+    // [E-1D/E 수정] reason — createApplicationAutoCanceled·createTOCanceled의 reason 필드 보존
     const allowedDataKeys = new Set([
       "screen", "action", "applicationId", "businessId", "toId",
       "requestId", "reviewId", "contractId", "attendanceId", "invitationId",
+      "workDetailId", "workType", "expiryDate", "reason",
     ]);
     const filteredData: Record<string, unknown> = {};
     for (const key of Object.keys(rawData)) {
@@ -379,17 +384,20 @@ export const createNotification = onCall(
         const callerIsAdmin = adminIds.includes(callerUid) ||
                               ownerId === callerUid ||
                               callerSubAdminOf === targetBusinessId;
-        const recipientIsAdmin = adminIds.includes(userId) || ownerId === userId;
+
+        // [BUG-CF-01 수정] 수신자 조회를 앞으로 이동 — subAdminOf 체크에 필요
+        // SubAdmin이 수신자인 경우(근무자→SubAdmin 알림) 기존 코드는 recipientIsAdmin=false로 판단해 차단됨
+        const recipientSnap = await db.collection("users").doc(userId).get();
+        if (!recipientSnap.exists) {
+          throw new HttpsError("not-found", "수신자를 찾을 수 없습니다.");
+        }
+        const recipientSubAdminOf = recipientSnap.data()?.subAdminOf as string | undefined;
+        const recipientIsAdmin = adminIds.includes(userId) || ownerId === userId
+          || recipientSubAdminOf === targetBusinessId;
 
         // 관리자 ↔ 근무자 방향 알림만 허용 — 근무자↔근무자 스팸 차단
         if (!callerIsAdmin && !recipientIsAdmin) {
           throw new HttpsError("permission-denied", "해당 사업장 관리자와 근무자 간 알림만 허용됩니다.");
-        }
-
-        // 수신자 존재 확인 (존재하지 않는 uid로 알림 문서 생성 방지)
-        const recipientSnap = await db.collection("users").doc(userId).get();
-        if (!recipientSnap.exists) {
-          throw new HttpsError("not-found", "수신자를 찾을 수 없습니다.");
         }
       }
     }
@@ -638,25 +646,23 @@ export const masterScheduler = onSchedule(
     // ═══════════════════════════════════════════════════════
     // [특이사항] Cloud Scheduler 재시도 시 minute < 10 윈도우 내 동일 작업 중복 실행 가능 — 각 작업은 idempotency로 자체 방어
     if (hour === 0 && minute < 10) {
-      // 24시간 미퇴근 attendance 자동 처리
-      console.log("⏰ [미퇴근 처리] 시작...");
-      try { await processMissedCheckouts(timestamp); }
-      catch (e) { console.error("❌ [미퇴근 처리] 실패:", e); }
-
-      // 전날 근무 완료된 단기 지원자 리뷰 요청 생성 (14일 윈도우)
-      console.log("📋 [리뷰 요청] 처리 시작...");
-      try { await createPendingReviewRequests(timestamp); }
-      catch (e) { console.error("❌ [리뷰 요청] 실패:", e); }
-
-      // 기한 만료 리뷰 요청 자동 공개
-      console.log("📝 [리뷰 공개] 처리 시작...");
-      try { await processExpiredReviewRequests(timestamp); }
-      catch (e) { console.error("❌ [리뷰 공개] 실패:", e); }
-
-      // 고정근무 계약 만료 D-15 알림 및 D-0 자동 연장
-      console.log("🔄 [계약 연장] 처리 시작...");
-      try { await processContractRenewalChecks(timestamp); }
-      catch (e) { console.error("❌ [계약 연장] 실패:", e); }
+      // [RECOVERY-001 수정] 순차 실행 → Promise.allSettled 병렬 실행
+      // 순차 실행 시 앞 함수가 타임아웃을 소모하면 뒤 함수가 minute<10 윈도우를 놓칠 수 있음
+      // allSettled: 한 함수 실패가 나머지 실행을 차단하지 않음 (기존 개별 try-catch와 동일 격리 수준)
+      // [I-1 수정] processExpiredIdCardAccess 추가 — 만료된 신분증 요청 자동 정리
+      console.log("⏰ [자정 작업] 병렬 실행 시작 (미퇴근처리·리뷰요청·리뷰공개·계약연장·신분증만료)...");
+      const midnightResults = await Promise.allSettled([
+        processMissedCheckouts(timestamp),
+        createPendingReviewRequests(timestamp),
+        processExpiredReviewRequests(timestamp),
+        processContractRenewalChecks(timestamp),
+        processExpiredIdCardAccess(timestamp),
+      ]);
+      const midnightNames = ["미퇴근 처리", "리뷰 요청", "리뷰 공개", "계약 연장", "신분증 만료"];
+      midnightResults.forEach((r, i) => {
+        if (r.status === "rejected") console.error(`❌ [${midnightNames[i]}] 실패:`, r.reason);
+        else console.log(`✅ [${midnightNames[i]}] 완료`);
+      });
 
       // [TODO] idCardAccessExpiringSoon: 신분증 열람 권한 만료 D-1 알림 미구현
       // approvedAccess 중 expiresAt이 내일인 항목 조회 → 근무자에게 알림 발송 필요
@@ -687,6 +693,33 @@ export const masterScheduler = onSchedule(
   // 📦 리뷰 공개 처리 (매일 자정)
   // ═══════════════════════════════════════════════════════════
 
+// ─── 신분증 열람 만료 자동 정리 ──────────────────────────────
+/**
+ * [I-1 수정] 자정 실행: idCardAccessRequests 컬렉션에서 status='approved'이고
+ * expiresAt이 현재 시각 이전인 문서를 'expired'로 갱신.
+ * approved 상태로 영구 잔류하면 만료된 권한이 UI에서 유효하게 보이는 UX 버그 발생.
+ */
+async function processExpiredIdCardAccess(now: Timestamp): Promise<void> {
+  const snap = await db
+    .collection("idCardAccessRequests")
+    .where("status", "==", "approved")
+    .where("expiresAt", "<=", now)
+    .limit(200)
+    .get();
+
+  if (snap.empty) return;
+
+  const batch = db.batch();
+  snap.docs.forEach((doc) => {
+    batch.update(doc.ref, {
+      status: "expired",
+      expiredAt: now,
+    });
+  });
+  await batch.commit();
+  console.log(`⏰ [신분증 만료] ${snap.size}건 expired 처리 완료`);
+}
+
 // ─── 24시간 이상 미퇴근 자동 처리 ───────────────────────────
 /**
  * 자정 실행: checkIn은 있으나 checkOut이 없고 24시간 이상 경과한
@@ -695,12 +728,14 @@ export const masterScheduler = onSchedule(
  */
 async function processMissedCheckouts(now: Timestamp): Promise<void> {
   const cutoff = new Date(now.toDate().getTime() - 24 * 60 * 60 * 1000);
+  // [A-1-1 수정] checkIn!=null 조건 제거 — Firestore는 inequality filter(!=, <=)를
+  // 단일 필드에만 허용하므로 checkIn!=null + createdAt<= 복합 사용 시 FAILED_PRECONDITION.
+  // checkIn==null인 문서(체크인 없는 출근기록)는 아래 JS 필터에서 걸러냄.
   const snap = await db
     .collection("attendance")
     .where("checkOut", "==", null)
-    .where("checkIn", "!=", null)
     .where("createdAt", "<=", Timestamp.fromDate(cutoff))
-    .limit(200)
+    .limit(499) // [BUG-ATT-01 수정] break(>=499)와 limit 일치 — 500번째 문서가 매번 누락되는 현상 방지
     .get();
 
   if (snap.empty) return;
@@ -709,6 +744,8 @@ async function processMissedCheckouts(now: Timestamp): Promise<void> {
   let count = 0;
   for (const doc of snap.docs) {
     const data = doc.data();
+    // checkIn이 없는 문서는 JS에서 후처리로 제외 (쿼리에서 !=null 조건 제거 보완)
+    if (!data.checkIn) continue;
     if (data.status === "NO_SHOW" || data.status === "missed_checkout" || data.canceledWithApplication === true) continue;
     batch.update(doc.ref, {
       status: "missed_checkout",  // 관리자 확인 필요 상태
@@ -1150,12 +1187,14 @@ export const onReviewCreated = onDocumentCreated(
     batch.update(reqRef, {isPublished: true, publishedAt: now});
     await batch.commit();
 
-    // 통계 업데이트
-    const reqSnap = await reqRef.get();
-    const req = reqSnap.data();
-    if (req?.workerId) await updateUserReviewStats(req.workerId as string);
-    if (req?.businessId) {
-      await updateBusinessReviewStats(req.businessId as string);
+    // 통계 업데이트 — reqRef.get() 실패해도 공개는 이미 완료됐으므로 오류 격리
+    try { // [CF-TRY-03 수정]
+      const reqSnap = await reqRef.get();
+      const req = reqSnap.data();
+      if (req?.workerId) await updateUserReviewStats(req.workerId as string);
+      if (req?.businessId) await updateBusinessReviewStats(req.businessId as string);
+    } catch (err) {
+      console.error(`[리뷰 통계 업데이트] ${requestId} 실패 — 공개는 완료:`, err);
     }
 
     console.log(`✅ [리뷰 동시공개] ${requestId} 양방향 즉시 공개 완료`);
@@ -1190,12 +1229,25 @@ export const onWageConfirmed = onDocumentUpdated(
     if (!appDoc.exists) return;
 
     const app = appDoc.data()!;
+    // [특이사항] 급여 확정 후 지원서가 취소/거절된 극히 드문 경쟁 조건에서
+    // 무효한 review_request가 생성되지 않도록 상태 검증.
+    if (!CONFIRMED_STATUSES.includes(app.status as string)) {
+      console.log(
+        `ℹ️ [임금 확정] 지원서 상태 불일치 — review_request 생성 스킵 (id=${applicationId}, status=${app.status})`
+      );
+      return;
+    }
     const workerId = app.uid as string | undefined;
     const businessId = app.businessId as string | undefined;
     if (!workerId || !businessId) return;
 
-    const workDate =
-      (after.workDate as Timestamp | undefined)?.toDate() ?? new Date();
+    // [BUG-ATT-12 수정] workDate 누락 시 new Date() 폴백 → 서버 UTC 기준으로 잘못된 월에 review_request 생성.
+    // 없으면 건너뛴다 — attendance에 workDate 없는 케이스는 데이터 무결성 문제이므로 스킵이 맞음.
+    const workDate = (after.workDate as Timestamp | undefined)?.toDate();
+    if (!workDate) {
+      console.error(`[임금 확정] workDate 없음 → 리뷰 요청 생성 스킵: ${event.params.attendanceId}`);
+      return;
+    }
     const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
     const workDateKST = new Date(workDate.getTime() + KST_OFFSET_MS);
     const year = workDateKST.getUTCFullYear();
@@ -1262,6 +1314,11 @@ export const onWageConfirmed = onDocumentUpdated(
 export const onAttendanceWageChanged = onDocumentUpdated(
   {document: "attendance/{attendanceId}", region: "asia-northeast3"},
   async (event) => {
+    // [M-003 수정] CF at-least-once 전달 보장으로 동일 이벤트 재실행 가능 → 중복 집계 방지
+    // event.id를 _processedWageEvents 컬렉션에 기록해 멱등성 보장
+    const eventId = event.id;
+    const processedRef = db.collection("_processedWageEvents").doc(eventId);
+
     const before = event.data?.before.data();
     const after = event.data?.after.data();
     if (!before || !after) return;
@@ -1313,6 +1370,13 @@ export const onAttendanceWageChanged = onDocumentUpdated(
     type WorkerEntry = {name: string; totalPayout: number; workDays: number};
 
     await db.runTransaction(async (tx) => {
+      // 중복 이벤트 체크 — 이미 처리된 eventId이면 즉시 반환
+      const processedSnap = await tx.get(processedRef);
+      if (processedSnap.exists) {
+        console.log(`ℹ️ [급여집계] 이미 처리된 이벤트 스킵: ${eventId}`);
+        return;
+      }
+
       const summarySnap = await tx.get(summaryRef);
       const now = Timestamp.now();
 
@@ -1331,6 +1395,7 @@ export const onAttendanceWageChanged = onDocumentUpdated(
           },
           updatedAt: now,
         });
+        tx.set(processedRef, {processedAt: now, attendanceId: event.params.attendanceId});
         return;
       }
 
@@ -1362,6 +1427,8 @@ export const onAttendanceWageChanged = onDocumentUpdated(
         workers,
         updatedAt: now,
       });
+      // 처리 완료 표시 — TTL 정책으로 30일 후 자동 삭제 권장
+      tx.set(processedRef, {processedAt: now, attendanceId: event.params.attendanceId});
     });
 
     console.log(`✅ [급여 summary] ${summaryId} 갱신 완료 (delta: ${payoutDelta}원)`);
@@ -1468,20 +1535,28 @@ async function updateUserReviewStats(userId: string): Promise<void> {
     let totalRating = 0;
     let ratedCount = 0;
     let rehireYesCount = 0;
+    let rehireRatedCount = 0;
 
     for (const doc of snapshot.docs) {
       const data = doc.data();
       const r = (data.rating as number) || 0;
       if (r > 0) { totalRating += r; ratedCount++; }
-      if (data.wouldRehire === true) rehireYesCount++;
+      // wouldRehire가 null/undefined인 리뷰는 분모에서 제외 (미응답으로 취급)
+      if (data.wouldRehire != null) {
+        rehireRatedCount++;
+        if (data.wouldRehire === true) rehireYesCount++;
+      }
     }
 
     const avgRating = ratedCount > 0 ? totalRating / ratedCount : null;
-    const rehireRate = rehireYesCount / snapshot.size;
+    // [특이사항] 재고용 의사(wouldRehire)를 미입력한 리뷰는 분모에서 제외.
+    // snapshot.size(전체 리뷰 수)로 나누면 미응답이 '재고용 거부'로 계산되어 재고용률이 낮게 나옴.
+    const rehireRate = rehireRatedCount > 0 ? rehireYesCount / rehireRatedCount : null;
 
+    // [BUG-REV-05 수정] snapshot.size → ratedCount: rating=0 미입력 리뷰를 카운트에서 제외
     await db.collection("users").doc(userId).update({
       averageRating: avgRating,
-      reviewCount: snapshot.size,
+      reviewCount: ratedCount,
       rehireRate: rehireRate,
     });
 
@@ -1699,6 +1774,49 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
       console.log(`    → ${toId}/${wd.workType} WorkDetail 마감`)
     );
     if (toData.groupId) affectedGroupIds.add(toData.groupId);
+
+    // [L001 수정] 만료된 workType의 PENDING 지원서를 AUTO_CANCELED로 처리
+    // CF syncTOStats가 status 변경 시 totalPending을 자동 재계산하므로 카운터 직접 수정 불필요.
+    // [CF-TRY-04 수정] per-workType try-catch — 단일 실패로 나머지 workType 처리 중단 방지
+    for (const workType of expiredTypes) {
+      try {
+        const pendingApps = await db
+          .collection("applications")
+          .where("toId", "==", toId)
+          .where("selectedWorkType", "==", workType)
+          .where("status", "==", "PENDING")
+          .get();
+        if (!pendingApps.empty) {
+          const cancelBatch = db.batch();
+          for (const appDoc of pendingApps.docs) {
+            cancelBatch.update(appDoc.ref, {
+              status: "AUTO_CANCELED",
+              canceledAt: now,
+              cancelReason: "WORK_DETAIL_EXPIRED",
+            });
+          }
+          await cancelBatch.commit();
+          console.log(`    → ${toId}/${workType} PENDING ${pendingApps.size}건 AUTO_CANCELED`);
+          // [BUG-E-02 수정] AUTO_CANCELED 시 근무자에게 알림 발송 — Flutter _confirmWithConflictCheck와 일관성 유지
+          await Promise.all(pendingApps.docs.map((appDoc) => {
+            const d = appDoc.data();
+            if (!d.uid) return Promise.resolve();
+            return db.collection("users").doc(d.uid as string).collection("notifications").add({
+              userId: d.uid,
+              // [BUG-E-02 수정] AUTO_CANCELED 타입 없음 → confirmationCanceled 사용 (createApplicationAutoCanceled 팩토리와 동일)
+              type: "confirmationCanceled",
+              title: "지원 자동 취소",
+              body: `${d.businessName ?? "사업장"} 업무 상세가 마감되어 지원이 자동 취소되었습니다.`,
+              data: {applicationId: appDoc.id, businessId: (d.businessId as string) ?? "", screen: "mySchedule", reason: "WORK_DETAIL_EXPIRED"},
+              isRead: false,
+              createdAt: now,
+            });
+          }));
+        }
+      } catch (err) {
+        console.error(`[WorkDetail 마감] ${toId}/${workType} AUTO_CANCELED 처리 실패 — 나머지 계속:`, err);
+      }
+    }
   }
 
   if (batchCount > 0) await batch.commit();
@@ -1706,8 +1824,13 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
   console.log(`  ✅ [WorkDetail 마감] ${totalClosed}개 마감 완료`);
 
   // 영향받은 TO들의 status 동기화
+  // [CF-TRY-04 수정] per-TO try-catch — 단일 실패로 나머지 동기화 중단 방지
   for (const toId of affectedTOIds) {
-    await syncTOStatusFromWorkDetails(db, toId);
+    try {
+      await syncTOStatusFromWorkDetails(db, toId);
+    } catch (err) {
+      console.error(`[WorkDetail 마감] TO ${toId} status 동기화 실패 — 나머지 계속:`, err);
+    }
   }
 
   // 영향받은 그룹 마스터 동기화 — 병렬 처리
@@ -1734,9 +1857,10 @@ async function processSlotWorkDetailExpiry(now: Timestamp): Promise<void> {
 
   // 열린 슬롯 전체 조회 (collection group)
   // limit(5000): 무제한 조회 시 비용 폭탄 방지 — 5000개 초과 슬롯은 다음 실행에서 처리됨
+  // [SLOT-001 수정] "full" 슬롯도 포함 — full 슬롯도 PENDING 지원서가 있을 수 있음
   const slotsSnap = await db
     .collectionGroup("slots")
-    .where("status", "==", "open")
+    .where("status", "in", ["open", "full"])
     .limit(5000)
     .get();
 
@@ -1827,14 +1951,69 @@ async function processSlotWorkDetailExpiry(now: Timestamp): Promise<void> {
     }
   }
 
+  // [L003 수정] 만료된 슬롯 workType의 PENDING 지원서 → AUTO_CANCELED
+  // processWorkDetailExpiry(L001)의 flex TO 버전 — 슬롯 단위 처리
+  // slotId+selectedWorkType+status 복합 인덱스 사용 (firestore.indexes.json A02/S42 인덱스)
+  // [CF-TRY-05 수정] per-workType try-catch — 단일 실패로 나머지 슬롯/workType 처리 중단 방지
+  for (let i = 0; i < pending.length; i++) {
+    if (results[i].status === "rejected") continue; // 슬롯 업데이트 실패 시 건너뜀
+    const {slotDoc, expiredItems, toId} = pending[i];
+    if (!toId) continue;
+    const expiredTypes = [...new Set(expiredItems.map((wd: any) => wd.workType as string).filter(Boolean))];
+    for (const workType of expiredTypes) {
+      try {
+        const pendingApps = await db
+          .collection("applications")
+          .where("toId", "==", toId)
+          .where("slotId", "==", slotDoc.id)
+          .where("selectedWorkType", "==", workType)
+          .where("status", "==", "PENDING")
+          .get();
+        if (!pendingApps.empty) {
+          const cancelBatch = db.batch();
+          for (const appDoc of pendingApps.docs) {
+            cancelBatch.update(appDoc.ref, {
+              status: "AUTO_CANCELED",
+              canceledAt: now,
+              cancelReason: "SLOT_WORK_DETAIL_EXPIRED",
+            });
+          }
+          await cancelBatch.commit();
+          console.log(`    → [L003] ${toId}/${slotDoc.id}/${workType} PENDING ${pendingApps.size}건 → AUTO_CANCELED`);
+          // [BUG-E-02 수정] 슬롯 업무상세 마감 AUTO_CANCELED 알림 발송
+          await Promise.all(pendingApps.docs.map((appDoc) => {
+            const d = appDoc.data();
+            if (!d.uid) return Promise.resolve();
+            return db.collection("users").doc(d.uid as string).collection("notifications").add({
+              userId: d.uid,
+              type: "confirmationCanceled",
+              title: "지원 자동 취소",
+              body: `${d.businessName ?? "사업장"} 슬롯 업무 상세가 마감되어 지원이 자동 취소되었습니다.`,
+              data: {applicationId: appDoc.id, businessId: (d.businessId as string) ?? "", screen: "mySchedule", reason: "SLOT_WORK_DETAIL_EXPIRED"},
+              isRead: false,
+              createdAt: now,
+            });
+          }));
+        }
+      } catch (err) {
+        console.error(`[슬롯 WorkDetail 마감] ${toId}/${slotDoc.id}/${workType} AUTO_CANCELED 처리 실패 — 나머지 계속:`, err);
+      }
+    }
+  }
+
   console.log(
     `  ✅ [슬롯 WorkDetail 마감] 업무상세 ${totalClosedDetails}개, ` +
       `슬롯 ${totalClosedSlots}개 마감 완료`
   );
 
   // 영향받은 TO status를 슬롯 상태 기반으로 동기화
+  // [CF-TRY-05 수정] per-TO try-catch
   for (const toId of affectedTOIds) {
-    await syncTOStatusFromSlots(db, toId, now);
+    try {
+      await syncTOStatusFromSlots(db, toId, now);
+    } catch (err) {
+      console.error(`[슬롯 WorkDetail 마감] TO ${toId} status 동기화 실패 — 나머지 계속:`, err);
+    }
   }
 }
 
@@ -1866,9 +2045,10 @@ async function syncTOStatusFromSlots(
 
     if (slotsSnap.empty) return;
 
+    // Flutter _maybeCascadeCloseExpiredTO와 동일 조건: open + full 모두 활성으로 판단
     const hasOpenSlot = slotsSnap.docs.some((doc) => {
       const d = doc.data();
-      return !d.isManualClosed && d.status === "open";
+      return !d.isManualClosed && (d.status === "open" || d.status === "full");
     });
 
     const currentStatus = toData.status as string;
@@ -1972,6 +2152,66 @@ async function processTOExpiry(now: Timestamp): Promise<void> {
       batch = db.batch();
       batchCount = 0;
     }
+
+    // [CRITICAL-07 수정] flex TO: 슬롯 서브컬렉션도 함께 CLOSED 처리
+    // processSlotWorkDetailExpiry는 applicationDeadline 기준으로 슬롯 workDetail을 닫지만,
+    // TO 레벨 applicationDeadline이 슬롯 개별 마감보다 먼저 오면 슬롯이 open으로 남을 수 있음
+    if (data.type === "flex" || data.toType === "flex") {
+      const slotsSnap = await db.collection("tos").doc(doc.id).collection("slots")
+        .where("status", "in", ["open", "full"]).get();
+      if (!slotsSnap.empty) {
+        const slotBatch = db.batch();
+        for (const slotDoc of slotsSnap.docs) {
+          slotBatch.update(slotDoc.ref, {
+            status: "closed",
+            closedAt: now,
+            closedReason: "PARENT_TO_EXPIRED",
+          });
+        }
+        await slotBatch.commit();
+        console.log(`    → ${doc.id} flex 슬롯 ${slotsSnap.size}개 CLOSED`);
+      }
+    }
+
+    // [L002 수정] TO 마감 시 남은 PENDING 지원서 AUTO_CANCELED 처리
+    // processWorkDetailExpiry가 먼저 실행되므로 대부분은 이미 처리됨.
+    // 이 블록은 안전망 역할 (processWorkDetailExpiry 실패·skip 시에도 처리 보장).
+    // [CF-TRY-06 수정] try-catch — 단일 TO 처리 실패 시 나머지 TO 계속 처리
+    try {
+      const pendingApps = await db
+        .collection("applications")
+        .where("toId", "==", doc.id)
+        .where("status", "==", "PENDING")
+        .get();
+      if (!pendingApps.empty) {
+        const cancelBatch = db.batch();
+        for (const appDoc of pendingApps.docs) {
+          cancelBatch.update(appDoc.ref, {
+            status: "AUTO_CANCELED",
+            canceledAt: now,
+            cancelReason: "TO_EXPIRED",
+          });
+        }
+        await cancelBatch.commit();
+        console.log(`    → ${doc.id} PENDING ${pendingApps.size}건 AUTO_CANCELED`);
+        // [BUG-E-02 수정] TO 마감 AUTO_CANCELED 알림 발송
+        await Promise.all(pendingApps.docs.map((appDoc) => {
+          const d = appDoc.data();
+          if (!d.uid) return Promise.resolve();
+          return db.collection("users").doc(d.uid as string).collection("notifications").add({
+            userId: d.uid,
+            type: "confirmationCanceled",
+            title: "지원 자동 취소",
+            body: `${d.businessName ?? "사업장"} 공고가 마감되어 지원이 자동 취소되었습니다.`,
+            data: {applicationId: appDoc.id, businessId: (d.businessId as string) ?? "", screen: "mySchedule", reason: "TO_EXPIRED"},
+            isRead: false,
+            createdAt: now,
+          });
+        }));
+      }
+    } catch (err) {
+      console.error(`[TO 마감] ${doc.id} PENDING AUTO_CANCELED 처리 실패 — 나머지 계속:`, err);
+    }
   }
 
   if (batchCount > 0) await batch.commit();
@@ -2006,20 +2246,32 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
     const tomorrow = new Date(tomorrowKST.getTime() - KST_OFFSET_MS);
     const tomorrowEnd = new Date(tomorrowKSTEnd.getTime() - KST_OFFSET_MS);
 
-    // 내일 근무 확정된 지원서 조회
-    const applicationsSnapshot = await db
-      .collection("applications")
-      .where("status", "in", CONFIRMED_STATUSES)
-      .where("workDate", ">=", Timestamp.fromDate(tomorrow))
-      .where("workDate", "<=", Timestamp.fromDate(tomorrowEnd))
-      .get();
+    // [BUG-ATT-03 수정] 단기+장기 근무자 모두 조회 — 기존엔 workDate==내일인 단기만 처리됨
+    // 장기 근무자는 workDate가 계약 시작일로 고정되어 내일 날짜와 매칭되지 않음
+    const KR_WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
+    const tomorrowWeekday = KR_WEEKDAYS[tomorrowKST.getDay()];
 
-    if (applicationsSnapshot.empty) {
+    const [applicationsSnapshot, longTermSnap] = await Promise.all([
+      // 단기 근무자: workDate == 내일
+      db.collection("applications")
+        .where("status", "in", CONFIRMED_STATUSES)
+        .where("workDate", ">=", Timestamp.fromDate(tomorrow))
+        .where("workDate", "<=", Timestamp.fromDate(tomorrowEnd))
+        .get(),
+      // 장기 근무자: workEndDate >= 내일 (만료되지 않은 계약)
+      // [특이사항] workEndDate=null 무기한 계약은 이 쿼리에서 제외됨 (Firestore null 필터 불가)
+      db.collection("applications")
+        .where("status", "in", CONFIRMED_STATUSES)
+        .where("workEndDate", ">=", Timestamp.fromDate(tomorrow))
+        .get(),
+    ]);
+
+    if (applicationsSnapshot.empty && longTermSnap.empty) {
       console.log("  ✅ [리마인더] 내일 근무 예정자 없음");
       return;
     }
 
-    console.log(`  📋 [리마인더] 대상 지원서: ${applicationsSnapshot.size}건`);
+    console.log(`  📋 [리마인더] 단기: ${applicationsSnapshot.size}건, 장기후보: ${longTermSnap.size}건`);
 
     // 오늘 KST 날짜 문자열 — applications.reminderSentDate 필드로 중복 방지
     // (collectionGroup("notifications") 전수 스캔 대신 이미 읽어온 applications 메모리 필터로 대체)
@@ -2030,6 +2282,21 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
     for (const appDoc of applicationsSnapshot.docs) {
       if (appDoc.data().reminderSentDate === todayStr) continue; // 재시도 시 중복 방지
       const uid = appDoc.data().uid as string;
+      if (!uid) continue;
+      if (!userJobsMap.has(uid)) userJobsMap.set(uid, []);
+      userJobsMap.get(uid)!.push(appDoc);
+    }
+    // 장기 근무자 후보 — workDays 포함 여부·계약 시작일·중복 방지 후처리
+    for (const appDoc of longTermSnap.docs) {
+      const d = appDoc.data();
+      const workDays = d.workDays as string[] | undefined;
+      if (!workDays || workDays.length === 0) continue; // 단기 근무자 제외
+      if (!workDays.includes(tomorrowWeekday)) continue; // 내일 요일 불일치
+      const contractStart = (d.workDate as Timestamp | undefined)?.toDate();
+      if (!contractStart || contractStart > tomorrowEnd) continue; // 아직 시작 안 된 계약
+      if (d.reminderSentDate === todayStr) continue; // 오늘 이미 발송됨
+      const uid = d.uid as string | undefined;
+      if (!uid) continue;
       if (!userJobsMap.has(uid)) userJobsMap.set(uid, []);
       userJobsMap.get(uid)!.push(appDoc);
     }
@@ -2100,7 +2367,10 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
             const multicastResp = await admin.messaging().sendEachForMulticast({
               tokens,
               notification: {title: "내일 근무 알림 📅", body: fcmBody},
-              data: {type: "workReminder", applicationId: jobs[0].id},
+              // [FCM-05 수정] screen 필드 추가 — 탭 시 _navigateByPayload가 mySchedule로 이동
+            // 기존엔 screen 없어 default → 알림 목록으로만 이동했음
+            data: {type: "workReminder", applicationId: jobs[0].id, screen: "mySchedule",
+              businessId: jobs[0].data().businessId ?? ""},
               android: {priority: "high", notification: {channelId: "alfit_notifications", sound: "default"}},
               apns: {payload: {aps: {sound: "default", badge: 1}}},
             });
@@ -2205,6 +2475,49 @@ async function runIntegrityCheck(now: Timestamp): Promise<void> {
     }
     // 병렬 동기화 — 중복 groupId는 Set이 제거
     await Promise.all([...processedGroupIds].map((gid) => syncGroupMasterStatus(db, gid)));
+
+    // [IC-01 수정] _processedWageEvents 오래된 레코드 정리 (TTL 대용)
+    // Firestore Native TTL은 콘솔 설정 필요 — 그 전까지 자정 작업에서 7일 이상 된 레코드를 삭제.
+    // onAttendanceWageChanged 멱등성 보장용 컬렉션이므로 7일이면 재시도 윈도우를 충분히 커버.
+    try {
+      const sevenDaysAgo = Timestamp.fromMillis(now.toMillis() - 7 * 24 * 60 * 60 * 1000);
+      const oldEvents = await db
+        .collection("_processedWageEvents")
+        .where("processedAt", "<=", sevenDaysAgo)
+        .limit(500)
+        .get();
+      if (!oldEvents.empty) {
+        const cleanBatch = db.batch();
+        oldEvents.docs.forEach((doc) => cleanBatch.delete(doc.ref));
+        await cleanBatch.commit();
+        console.log(`  🧹 [정합성 검사] _processedWageEvents ${oldEvents.size}건 정리`);
+      }
+    } catch (cleanErr) {
+      // 정리 실패는 비치명적 — 다음 자정 작업에서 재시도
+      console.warn("  ⚠️ [정합성 검사] _processedWageEvents 정리 실패:", cleanErr);
+    }
+
+    // [F-2 보완] CONTRACT_PENDING limbo 탐지 — 배치 커밋 실패+롤백 실패 시 영구 limbo 가능성
+    // 24시간 이상 CONTRACT_PENDING 상태인 지원서를 탐지해 콘솔 경고 출력 (자동 롤백은 위험 — 정상 처리 가능성)
+    // 수동 수정 대상 목록을 로그로 남겨 슈퍼어드민이 확인하도록 함
+    try {
+      const oneDayAgo = Timestamp.fromMillis(now.toMillis() - 24 * 60 * 60 * 1000);
+      const limboApps = await db
+        .collection("applications")
+        .where("status", "==", "CONTRACT_PENDING")
+        .where("confirmedAt", "<=", oneDayAgo)
+        .limit(50)
+        .get();
+      if (!limboApps.empty) {
+        console.warn(`  ⚠️ [정합성 검사] CONTRACT_PENDING 24h+ limbo 의심 ${limboApps.size}건 — 수동 확인 필요:`);
+        limboApps.docs.forEach((d) => {
+          const data = d.data();
+          console.warn(`    applicationId=${d.id} businessId=${data.businessId} uid=${data.uid} confirmedAt=${data.confirmedAt?.toDate().toISOString()}`);
+        });
+      }
+    } catch (limboErr) {
+      console.warn("  ⚠️ [정합성 검사] CONTRACT_PENDING limbo 탐지 실패:", limboErr);
+    }
 
     console.log(
       `  ✅ [정합성 검사] 완료: ${fixedCount}개 수정, ` +
@@ -2531,6 +2844,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       .get();
 
     for (const doc of d0Snap.docs) {
+      try { // [CF-TRY-01 수정] per-document 오류 격리 — 한 건 실패해도 나머지 계속 처리
       const app = doc.data();
       if (!app.workDays || app.workDays.length === 0) continue;
       if (app.renewalDecision) continue; // 이미 결정됨
@@ -2550,15 +2864,22 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         (oldEndDate.getMonth() - startDate.getMonth());
       const renewalMonths = contractMonths > 0 ? contractMonths : 1;
 
-      // 새 계약 시작: 다음날
-      const newStartDate = new Date(oldEndDate);
-      newStartDate.setDate(newStartDate.getDate() + 1);
+      // [BUG-F-03 수정] KST 기준으로 날짜 계산 — Firestore Timestamp는 UTC이므로
+      // Flutter가 DateTime(y,m,d) KST 자정으로 저장 → UTC 전날 15:00이 됨.
+      // UTC 기준 getDate()는 전날을 반환해 newStartDate와 newEndDate가 1일 오차 발생.
+      const oldEndDateKST = new Date(oldEndDate.getTime() + KST_OFFSET_MS);
 
-      // 새 계약 종료: 기존 종료일 기준 renewalMonths 개월 후 (같은 날짜, 월말 clamp)
-      const rawEndYear = oldEndDate.getFullYear() + Math.floor((oldEndDate.getMonth() + renewalMonths) / 12);
-      const rawEndMonthZero = (oldEndDate.getMonth() + renewalMonths) % 12; // 0-based
+      // 새 계약 시작: 다음날 (KST 기준 +1일 후 UTC로 복원)
+      const newStartDateKST = new Date(oldEndDateKST);
+      newStartDateKST.setDate(newStartDateKST.getDate() + 1);
+      const newStartDate = new Date(newStartDateKST.getTime() - KST_OFFSET_MS);
+
+      // 새 계약 종료: 기존 종료일 기준 renewalMonths 개월 후 (같은 날짜, 월말 clamp) — KST 기준
+      const rawEndYear = oldEndDateKST.getFullYear() + Math.floor((oldEndDateKST.getMonth() + renewalMonths) / 12);
+      const rawEndMonthZero = (oldEndDateKST.getMonth() + renewalMonths) % 12; // 0-based
       const lastDayOfMonth = new Date(rawEndYear, rawEndMonthZero + 1, 0).getDate();
-      const newEndDate = new Date(rawEndYear, rawEndMonthZero, Math.min(oldEndDate.getDate(), lastDayOfMonth));
+      const newEndDateKST = new Date(rawEndYear, rawEndMonthZero, Math.min(oldEndDateKST.getDate(), lastDayOfMonth));
+      const newEndDate = new Date(newEndDateKST.getTime() - KST_OFFSET_MS);
 
       // 새 Application 생성 + 기존 Application 갱신 — 원자적 배치
       const newAppRef = db.collection("applications").doc();
@@ -2595,7 +2916,16 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         extraWorkDates: [],
       });
       // 기존 Application 갱신 — 배치 실패 시 둘 다 미커밋 → 중복 연장 방지
-      renewBatch.update(doc.ref, {renewalDecision: "EXTEND"});
+      // [RENEWAL-001 수정] renewedToApplicationId 역참조 추가 — 원본→연장 양방향 추적
+      //
+      // [F-3 특이사항] 이전 application의 status가 CONFIRMED 그대로 남는 설계상 한계.
+      // RENEWED 전용 상태가 없으므로 status를 변경하지 않는다.
+      // 앱에서는 renewedToApplicationId != null 조건으로 "갱신된 이전 계약"을 식별 가능.
+      // sendWorkReminders는 workDate=내일 쿼리이므로 기간 만료된 이전 계약은 자연히 제외됨.
+      // processContractRenewalChecks도 workEndDate 기준이므로 다음 D-15/D-0에 이전 계약이 다시
+      // 걸리지 않음 (renewalDecision="EXTEND" 필드로 이미 처리 완료 표시됨).
+      // TODO: RENEWED 상태 추가 후 이전 application status 전환 필요 (Flutter+CF 동시 배포 필요)
+      renewBatch.update(doc.ref, {renewalDecision: "EXTEND", renewedToApplicationId: newAppRef.id});
       await renewBatch.commit();
 
       // 근무자에게 연장 알림
@@ -2608,6 +2938,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           "까지 자동 연장되었습니다.",
         data: {
           applicationId: newAppRef.id,
+          businessId: app.businessId,
           screen: "mySchedule",
         },
         isRead: false,
@@ -2615,6 +2946,9 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       });
 
       d0Count++;
+      } catch (err) {
+        console.error(`[D-0 자동연장] 문서 ${doc.id} 처리 실패 — 나머지 계속:`, err);
+      }
     }
 
     console.log(`  ✅ [D-0 자동연장] ${d0Count}건 처리`);
@@ -2631,6 +2965,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       .get();
 
     for (const doc of d0TerminateSnap.docs) {
+      try { // [CF-TRY-02 수정] per-document 오류 격리 — 한 건 실패해도 나머지 계속 처리
       const app = doc.data();
       if (!app.workDays || app.workDays.length === 0) continue;
       // 이미 종료 알림 보낸 경우 스킵 (terminationNotifiedAt 필드로 중복 방지)
@@ -2643,12 +2978,15 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         type: "contractTerminating",
         title: "계약 종료 완료",
         body: `${app.businessName} 계약이 종료되었습니다. 이용해 주셔서 감사합니다.`,
-        data: {applicationId: doc.id, screen: "mySchedule"},
+        data: {applicationId: doc.id, businessId: app.businessId, screen: "mySchedule"},
         isRead: false,
         createdAt: now,
       });
       await doc.ref.update({terminationCompletionNotifiedAt: now});
       terminateD0Count++;
+      } catch (err) {
+        console.error(`[D-0 종료알림] 문서 ${doc.id} 처리 실패 — 나머지 계속:`, err);
+      }
     }
     console.log(`  ✅ [D-0 종료알림] ${terminateD0Count}건 처리`);
 
@@ -2682,21 +3020,27 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         await db.runTransaction(async (tx) => {
           const snap = await tx.get(doc.ref);
           if (snap.data()?.resignStatus !== "PENDING") return; // 이미 처리됨
+          // [RESIGNATION-001 수정] status="CANCELED" 설정 시 cancelReason 명시
+          // cancelReason 없으면 일반 취소와 구분 불가 → 퇴사 처리 원인 추적 불가
           tx.update(doc.ref, {
             resignStatus: "AUTO_APPROVED",
             resignApprovedAt: now,
             actualResignDate: Timestamp.fromDate(actualResignDate),
             status: "CANCELED",
+            canceledAt: now,
+            cancelReason: "RESIGNATION_APPROVED",
           });
         });
 
         // 근무자에게 자동 승인 알림
+        // [FCM-03 수정] businessId 누락 → notification_screen resignApproved 분기에서
+        // IntegratedWorkforceScreen(initialBusinessId: null)로 열리는 버그 방지
         await db.collection("users").doc(app.uid as string).collection("notifications").add({
           userId: app.uid,
           type: "resignApproved",
           title: "퇴사 요청 자동 승인",
           body: `${app.businessName} 퇴사 요청이 자동 승인되었습니다.`,
-          data: {applicationId: doc.id, screen: "mySchedule"},
+          data: {applicationId: doc.id, businessId: app.businessId, screen: "mySchedule"},
           isRead: false,
           createdAt: now,
         });
@@ -2710,7 +3054,9 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           type: "resignApproved",
           title: "퇴사 요청 자동 승인됨",
           body: `${app.applicantName ?? "근무자"}님의 퇴사 요청이 자동 승인되었습니다.`,
-          data: {applicationId: doc.id, screen: "fixedWorker"},
+          // [E-1-B 수정] businessId 추가 — notification_screen resignApproved 케이스에서
+          // initialBusinessId를 인자로 전달할 때 null이 되는 버그 방지
+          data: {applicationId: doc.id, businessId: app.businessId, screen: "fixedWorker"},
           isRead: false,
           createdAt: now,
         })));
@@ -2756,10 +3102,27 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           type: "terminationApproved",
           title: "계약해지 자동 승인",
           body: `${app.businessName} 계약해지 요청이 자동 승인되었습니다.`,
-          data: {applicationId: doc.id, screen: "mySchedule"},
+          // [E-1-A 수정] businessId 추가 — mySchedule 딥링크 라우팅 일관성 보장
+          data: {applicationId: doc.id, businessId: app.businessId, screen: "mySchedule"},
           isRead: false,
           createdAt: now,
         });
+
+        // [BUG-CF-03 수정] 관리자에게도 계약해지 자동승인 알림 — 퇴사(resignApproved)와 일관성 유지
+        const terminationBizDoc = await db.collection("businesses").doc(app.businessId as string).get();
+        const terminationAdminIds: string[] = terminationBizDoc.exists ?
+          (terminationBizDoc.data()?.adminIds as string[] ?? []) : [];
+        await Promise.all(terminationAdminIds.map((adminId) =>
+          db.collection("users").doc(adminId).collection("notifications").add({
+            userId: adminId,
+            type: "terminationApproved",
+            title: "계약해지 자동 승인됨",
+            body: `${app.applicantName ?? "근무자"}님의 계약해지 요청이 자동 승인되었습니다.`,
+            data: {applicationId: doc.id, businessId: app.businessId, screen: "fixedWorker"},
+            isRead: false,
+            createdAt: now,
+          })
+        ));
 
         autoTerminationCount++;
       } catch (err) {
@@ -3694,8 +4057,12 @@ export const getMyMonthlyAttendances = onCall(
       throw new HttpsError("invalid-argument", "year, month 파라미터가 필요합니다.");
     }
 
-    const monthStart = new Date(year, month - 1, 1);
-    const monthEnd = new Date(year, month, 1);
+    // [BUG-ATT-06 수정] workDate는 Flutter DateTime(y,m,d) KST → UTC 전날 15:00으로 저장됨.
+    // new Date(year, month-1, 1)은 Node.js UTC 자정 → KST 1일 00:00과 9시간 차이.
+    // KST 1일 기록이 UTC 기준으로 이전 달 말일 15:00이므로 쿼리에서 누락됨.
+    const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+    const monthStart = new Date(Date.UTC(year, month - 1, 1) - KST_OFFSET_MS);
+    const monthEnd = new Date(Date.UTC(year, month, 1) - KST_OFFSET_MS);
 
     const snap = await db
       .collection("attendance")
@@ -3816,15 +4183,16 @@ export const onBusinessDeactivated = onDocumentUpdated(
     for (const toDoc of activeTos) {
       const toId = toDoc.id;
 
-      // PENDING 지원서 조회
-      const pendingAppsSnap = await db
-        .collection("applications")
-        .where("toId", "==", toId)
-        .where("status", "==", "PENDING")
-        .get();
+      // PENDING + CONTRACT_PENDING + CONFIRMED 지원서 병렬 조회
+      const [pendingAppsSnap, contractPendingSnap, confirmedSnap] = await Promise.all([
+        db.collection("applications").where("toId", "==", toId).where("status", "==", "PENDING").get(),
+        db.collection("applications").where("toId", "==", toId).where("status", "==", "CONTRACT_PENDING").get(),
+        db.collection("applications").where("toId", "==", toId).where("status", "==", "CONFIRMED").get(),
+      ]);
 
-      // batch에 TO 업데이트 + PENDING 지원서 REJECTED 처리를 함께 묶음
-      // 500건 초과 시 청크 분할
+      // batch에 TO 업데이트 + 전체 지원서 처리
+      // [특이사항/CRITICAL-003] CONTRACT_PENDING·CONFIRMED도 포함 — 비활성화 사업장의 좀비 상태 계약 방지
+      // 근로기준법 제42조 "3년 보존" 의무는 계약서 문서에 적용 (자동 삭제 금지), 지원서 상태는 별개
       const allUpdates: Array<{ref: FirebaseFirestore.DocumentReference; data: Record<string, unknown>}> = [
         {
           ref: toDoc.ref,
@@ -3842,22 +4210,260 @@ export const onBusinessDeactivated = onDocumentUpdated(
             rejectedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
         })),
+        ...contractPendingSnap.docs.map((appDoc) => ({
+          ref: appDoc.ref,
+          data: {
+            status: "CANCELED",
+            cancelReason: "BUSINESS_DEACTIVATED",
+            canceledAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+        })),
+        ...confirmedSnap.docs.map((appDoc) => ({
+          ref: appDoc.ref,
+          data: {
+            status: "CANCELED",
+            cancelReason: "BUSINESS_DEACTIVATED",
+            canceledAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+        })),
       ];
 
       // 청크 단위 batch 커밋
+      // [WARNING-007] race condition으로 TO 문서가 동시 삭제된 경우 배치 전체 실패 가능
+      // → try-catch 격리 후 개별 update로 전환하여 나머지 지원서 처리 보장
       for (let i = 0; i < allUpdates.length; i += BATCH_LIMIT) {
         const chunk = allUpdates.slice(i, i + BATCH_LIMIT);
         const batch = db.batch();
         chunk.forEach(({ref, data}) => batch.update(ref, data));
-        await batch.commit();
+        try {
+          await batch.commit();
+        } catch (err) {
+          console.warn(`⚠️ [사업장 비활성화] 배치 커밋 실패 — 개별 처리 전환 (TO ${toId}):`, err);
+          await Promise.allSettled(chunk.map(({ref, data}) => ref.update(data)));
+        }
       }
 
-      totalRejected += pendingAppsSnap.size;
-      console.log(`✅ [사업장 비활성화] TO ${toId} → CLOSED, PENDING 지원서 ${pendingAppsSnap.size}건 → REJECTED`);
+      const canceledCount = contractPendingSnap.size + confirmedSnap.size;
+      totalRejected += pendingAppsSnap.size + canceledCount;
+      console.log(
+        `✅ [사업장 비활성화] TO ${toId} → CLOSED, ` +
+        `PENDING ${pendingAppsSnap.size}건 → REJECTED, ` +
+        `CONTRACT_PENDING+CONFIRMED ${canceledCount}건 → CANCELED`
+      );
     }
 
-    // TODO: CONFIRMED / CONTRACT_PENDING 지원서는 근로기준법 제42조 보존 의무로 미처리.
-    // 향후 관리자 수동 정리 워크플로(슈퍼어드민 화면에서 일괄 확인 후 처리) 구현 필요.
     console.log(`✅ [사업장 비활성화] 완료: ${businessId} — TO ${activeTos.length}건, 지원서 ${totalRejected}건 처리`);
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+// 📊 TO 통계 자동 동기화 트리거
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * applications 문서의 status가 변경될 때마다 TO 카운터를 실제 데이터 기준으로 재계산.
+ * - 앱 코드의 +1/-1 증감이 실패해도 CF가 자동으로 정확한 값으로 수렴시킴
+ * - statsBatch 분리 문제(S36) 원천 해결
+ */
+export const syncTOStats = onDocumentWritten(
+  {document: "applications/{applicationId}", region: "asia-northeast3"},
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+
+    const beforeStatus = before?.status as string | undefined;
+    const afterStatus = after?.status as string | undefined;
+
+    // 상태 변경이 없으면 카운터 변화 없음 → 불필요한 집계 skip
+    if (beforeStatus === afterStatus) return;
+
+    const toId = (after?.toId ?? before?.toId) as string | undefined;
+    const slotId = (after?.slotId ?? before?.slotId) as string | undefined;
+
+    if (!toId) return;
+
+    await _syncTOCounters(toId, slotId);
+  }
+);
+
+/**
+ * TO 카운터 재계산 — 모든 읽기를 병렬로, 쓰기를 1번 배치로 처리
+ *
+ * [비용 특이사항]
+ * - contract TO(slotId 없음): count() 2번 + 쓰기 1번
+ * - flex TO(slotId 있음):    count() (4 + workType수 × 2)번 + 문서 읽기 1번 + 배치 쓰기 1번
+ *   workType이 늘어날수록 Firestore 읽기 비용 증가. 현재 슬롯당 최대 5~6가지 업무 가정.
+ *
+ * [설계 결정] 낙관적 카운터 + CF 교정 이중 구조
+ *   앱: FieldValue.increment(±1)으로 즉각 UI 반영 (낙관적 업데이트)
+ *   CF: count()로 절대값 덮어쓰기 → 앱 증감 실패·경쟁 조건 모두 자동 교정
+ *
+ * [특이사항] workTypeConfirmedCounts (TO 문서, contract TO 전용):
+ *   TO 문서의 workDetails 배열에서 workType 목록을 읽어 count() 재계산.
+ *   flex TO의 workTypeCounts(슬롯 문서)와 달리 slotAppsRef가 없으므로 appsRef(toId 기준)로 집계.
+ *   인덱스: applications[toId + selectedWorkType + status] 필요.
+ */
+async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
+  const toRef = db.collection("tos").doc(toId);
+
+  // TO 삭제된 경우 update()가 NOT_FOUND 예외 → 7번 재시도 루프 방지
+  const toSnap = await toRef.get();
+  if (!toSnap.exists) {
+    console.warn(`[syncTOStats] TO 문서 없음 — skip: ${toId}`);
+    return;
+  }
+
+  const appsRef = db.collection("applications").where("toId", "==", toId);
+
+  if (!slotId) {
+    // contract TO: TO 카운터 + 업무별 확정 카운터 재계산
+    // workTypeConfirmedCounts.$workType은 applyToTO 정원 초과 체크에서 직접 읽으므로
+    // 앱 increment 실패 시 영구 불일치 방지를 위해 CF가 count()로 교정.
+    const toData = toSnap.data();
+    const contractWorkDetails =
+      (toData?.workDetails as Array<{workType?: string}> | undefined) ?? [];
+    const contractWorkTypes = [
+      ...new Set(
+        contractWorkDetails.map((d) => d.workType).filter((w): w is string => !!w)
+      ),
+    ];
+
+    const [confirmedSnap, pendingSnap, ...wtSnaps] = await Promise.all([
+      appsRef.where("status", "in", CONFIRMED_STATUSES).count().get(),
+      appsRef.where("status", "==", "PENDING").count().get(),
+      ...contractWorkTypes.map((wt) =>
+        appsRef
+          .where("selectedWorkType", "==", wt)
+          .where("status", "in", CONFIRMED_STATUSES)
+          .count()
+          .get()
+      ),
+    ]);
+
+    const workTypeConfirmedUpdate: Record<string, number> = {};
+    contractWorkTypes.forEach((wt, i) => {
+      workTypeConfirmedUpdate[`workTypeConfirmedCounts.${wt}`] = wtSnaps[i].data().count;
+    });
+
+    await toRef.update({
+      totalConfirmed: confirmedSnap.data().count,
+      totalPending: pendingSnap.data().count,
+      statsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      ...workTypeConfirmedUpdate,
+    });
+    return;
+  }
+
+  // flex TO: TO + 슬롯 집계 전체 병렬 실행 후 배치 쓰기
+  const slotRef = toRef.collection("slots").doc(slotId);
+  const slotAppsRef = appsRef.where("slotId", "==", slotId);
+
+  const [
+    toConfirmedSnap,
+    toPendingSnap,
+    slotConfirmedSnap,
+    slotPendingSnap,
+    slotDoc,
+  ] = await Promise.all([
+    appsRef.where("status", "in", CONFIRMED_STATUSES).count().get(),
+    appsRef.where("status", "==", "PENDING").count().get(),
+    slotAppsRef.where("status", "in", CONFIRMED_STATUSES).count().get(),
+    slotAppsRef.where("status", "==", "PENDING").count().get(),
+    slotRef.get(),
+  ]);
+
+  const confirmedCount = slotConfirmedSnap.data().count;
+  // 슬롯 문서는 workDetails[].requiredCount 합계로 총 필요 인원 계산
+  const workDetails =
+    (slotDoc.data()?.workDetails as
+      Array<{workType?: string; requiredCount?: number}> | undefined) ?? [];
+  const required = workDetails.reduce((acc, d) => acc + (d.requiredCount ?? 0), 0);
+  const newStatus = required > 0 && confirmedCount >= required ? "full" : "open";
+  // [BUG-E-01 수정] 수동 마감 슬롯 여부 사전 확인 — status를 덮어쓰지 않기 위해
+  const isManualClosed = slotDoc.data()?.isManualClosed === true;
+  const currentSlotStatus = slotDoc.data()?.status as string | undefined;
+
+  // 업무별(workType) 카운터 재계산 — applyToTO 정원 초과 체크(workTypeCounts.$wt.confirmedCount)가
+  // 이 값을 직접 읽으므로 CF가 재계산하지 않으면 앱 increment 실패 시 정원 초과 체크 오동작 발생.
+  // [비용] workType 1개당 count() 2회 추가 발생 (슬롯당 최대 ~10회 추가 예상).
+  const workTypes = [
+    ...new Set(
+      workDetails.map((d) => d.workType).filter((w): w is string => !!w)
+    ),
+  ];
+  const wtCountResults = await Promise.all(
+    workTypes.map((wt) =>
+      Promise.all([
+        slotAppsRef
+          .where("selectedWorkType", "==", wt)
+          .where("status", "in", CONFIRMED_STATUSES)
+          .count()
+          .get(),
+        slotAppsRef
+          .where("selectedWorkType", "==", wt)
+          .where("status", "==", "PENDING")
+          .count()
+          .get(),
+      ])
+    )
+  );
+  const workTypeCountsUpdate: Record<string, number> = {};
+  workTypes.forEach((wt, i) => {
+    workTypeCountsUpdate[`workTypeCounts.${wt}.confirmedCount`] =
+      wtCountResults[i][0].data().count;
+    workTypeCountsUpdate[`workTypeCounts.${wt}.pendingCount`] =
+      wtCountResults[i][1].data().count;
+  });
+
+  const writeBatch = db.batch();
+  writeBatch.update(toRef, {
+    totalConfirmed: toConfirmedSnap.data().count,
+    totalPending: toPendingSnap.data().count,
+    statsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  if (slotDoc.exists) {
+    writeBatch.update(slotRef, {
+      confirmedCount,
+      pendingCount: slotPendingSnap.data().count,
+      // [BUG-E-01 수정] 수동 마감(isManualClosed) 또는 closed 슬롯은 status 덮어쓰기 금지
+      // Flutter _recalculateSlotStatus(dart 2175줄)와 동일한 가드 — CF에만 누락되어 있었음
+      ...(isManualClosed || currentSlotStatus === "closed" ? {} : {status: newStatus}),
+      ...workTypeCountsUpdate,
+    });
+  }
+  await writeBatch.commit();
+}
+
+// ═══════════════════════════════════════════════════════════
+// 🔗 그룹 마스터 TO 자동 동기화 트리거
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * [SM-01 수정] 멤버 TO의 status가 바뀔 때 그룹 마스터 TO 상태 자동 동기화.
+ *
+ * 문제: Flutter batchReopenSlots → _syncTOCascadeStatus가 TO status를 업데이트해도
+ *       CF의 syncGroupMasterStatus는 자정 작업에서만 직접 호출되므로
+ *       슬롯 재오픈 후 그룹 마스터가 ACTIVE로 복구되지 않는 상태 불일치 발생.
+ *
+ * 해결: Firestore 트리거로 TO 상태 변경 → 그룹 마스터 자동 동기화.
+ *       isGroupMaster === true인 마스터 TO 업데이트는 skip(무한 루프 방지).
+ */
+export const onTOStatusChanged = onDocumentUpdated(
+  {document: "tos/{toId}", region: "asia-northeast3"},
+  async (event) => {
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
+    if (!before || !after) return;
+
+    // 상태 변경이 없으면 skip — 불필요한 그룹 동기화 방지
+    if (before.status === after.status) return;
+
+    // 마스터 TO 자체가 변경된 경우 skip — 무한 루프 방지
+    if (after.isGroupMaster === true) return;
+
+    const groupId = after.groupId as string | undefined;
+    if (!groupId) return;
+
+    await syncGroupMasterStatus(db, groupId);
   }
 );

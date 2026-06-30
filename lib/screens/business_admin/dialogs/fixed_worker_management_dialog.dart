@@ -9,6 +9,7 @@
 // - 계약해지 요청 (NEW)
 
 import 'dart:math' show min;
+import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
@@ -1702,6 +1703,13 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             app.id,
             canceledBy: adminUID,
             cancelReason: '계약 종료 (만료일 도달)',
+          );
+          // [CRITICAL-005 수정] 만료일 당일 즉시 처리 시 terminationCompletionNotifiedAt 설정
+          // Flutter에서 이미 "계약 종료 통보" 알림을 발송했으므로, Functions D-0 처리에서
+          // 이 필드가 없으면 "계약 종료 완료" 알림을 이중 발송하는 버그 방지
+          await _firestoreService.updateApplicationFields(
+            app.id,
+            {'terminationCompletionNotifiedAt': Timestamp.now()},
           );
         }
         // 미래 종료일이면 Cloud Functions가 D-0에 자동 처리 — 별도 조치 불필요
