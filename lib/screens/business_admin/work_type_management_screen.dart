@@ -77,8 +77,10 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       color: result['iconColor'] as String? ?? '#FFFFFF',
       backgroundColor: result['backgroundColor'] as String?,
     );
-
-    if (newId != null && mounted) {
+    // [MOUNTED-02 수정] addBusinessWorkType await 후 mounted 체크를 &&로만 처리하면
+    // newId == null일 때 mounted 미체크 — 명시적 가드로 통일
+    if (!mounted) return;
+    if (newId != null) {
       await _loadWorkTypes();
       if (!mounted) return;
 
@@ -157,14 +159,32 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     if (_isDeleting) return;
     setState(() => _isDeleting = true);
     try {
-      final activeTOSnap = await FirebaseFirestore.instance
-          .collection('tos')
-          .where('businessId', isEqualTo: widget.businessId)
-          .where('status',
-              whereIn: [TOStatus.active, TOStatus.full, TOStatus.scheduled])
-          .get();
+      // [BUG-WHEREIN] status whereIn + businessId 복합쿼리 → PERMISSION_DENIED 위험
+      //   active/full/scheduled 3개 isEqualTo 병렬 쿼리로 분리
+      final snaps = await Future.wait([
+        FirebaseFirestore.instance
+            .collection('tos')
+            .where('businessId', isEqualTo: widget.businessId)
+            .where('status', isEqualTo: TOStatus.active)
+            .get(),
+        FirebaseFirestore.instance
+            .collection('tos')
+            .where('businessId', isEqualTo: widget.businessId)
+            .where('status', isEqualTo: TOStatus.full)
+            .get(),
+        FirebaseFirestore.instance
+            .collection('tos')
+            .where('businessId', isEqualTo: widget.businessId)
+            .where('status', isEqualTo: TOStatus.scheduled)
+            .get(),
+      ]);
+      final activeTODocs = [
+        ...(snaps[0] as QuerySnapshot<Map<String, dynamic>>).docs,
+        ...(snaps[1] as QuerySnapshot<Map<String, dynamic>>).docs,
+        ...(snaps[2] as QuerySnapshot<Map<String, dynamic>>).docs,
+      ];
 
-      final affectedCount = activeTOSnap.docs.where((doc) {
+      final affectedCount = activeTODocs.where((doc) {
         final details = doc.data()['workDetails'] as List<dynamic>? ?? [];
         return details.any(
             (d) => (d as Map<String, dynamic>)['workType'] == workType.name);

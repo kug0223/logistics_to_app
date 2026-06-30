@@ -837,6 +837,8 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
         '${req.reviewYear}-${req.reviewMonth.toString().padLeft(2, '0')}';
 
     try {
+      // [BUG-WHEREIN] wageStatus whereIn + 복합쿼리 → PERMISSION_DENIED 위험
+      //   isEqualTo 2개 병렬 쿼리 + user 조회 총 3개 병렬로 분리
       final results = await Future.wait([
         FirebaseFirestore.instance.collection('users').doc(req.workerId).get(),
         FirebaseFirestore.instance
@@ -844,10 +846,14 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
             .where('userId', isEqualTo: req.workerId)
             .where('businessId', isEqualTo: req.businessId)
             .where('yearMonth', isEqualTo: yearMonthStr)
-            .where('wageStatus', whereIn: [
-              'confirmed',
-              'transferred',
-            ])
+            .where('wageStatus', isEqualTo: 'confirmed')
+            .get(),
+        FirebaseFirestore.instance
+            .collection('attendance')
+            .where('userId', isEqualTo: req.workerId)
+            .where('businessId', isEqualTo: req.businessId)
+            .where('yearMonth', isEqualTo: yearMonthStr)
+            .where('wageStatus', isEqualTo: 'transferred')
             .get(),
       ]);
 
@@ -858,8 +864,9 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
         workerAge = worker.age;
       }
 
-      final attSnap = results[1] as QuerySnapshot<Map<String, dynamic>>;
-      workDaysInMonth = attSnap.docs.length;
+      final confirmedSnap = results[1] as QuerySnapshot<Map<String, dynamic>>;
+      final transferredSnap = results[2] as QuerySnapshot<Map<String, dynamic>>;
+      workDaysInMonth = confirmedSnap.docs.length + transferredSnap.docs.length;
     } catch (e) {
       debugPrint('❌ 리뷰 요청 정보 로드 실패: $e');
     }

@@ -551,13 +551,24 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   // wageType·breakMinutes·야간설정은 저장 시점 TO값 재참조 — 확정 전 근무자 급여에 영향
   Future<bool> _showWageGuardWarning() async {
     try {
-      final snap = await FirebaseFirestore.instance
-          .collection('applications')
-          .where('toId', isEqualTo: widget.to.id)
-          .where('status', whereIn: AppStatus.confirmedStatuses)
-          .limit(1)
-          .get();
-      if (snap.docs.isEmpty) return true; // 미확정 근무자 없음 — 경고 불필요
+      // [BUG-WHEREIN] status whereIn + toId 복합쿼리 → PERMISSION_DENIED 위험
+      //   confirmedStatuses = [confirmed, contractPending] 를 isEqualTo 2개 병렬로 분리
+      final snaps = await Future.wait([
+        FirebaseFirestore.instance
+            .collection('applications')
+            .where('toId', isEqualTo: widget.to.id)
+            .where('status', isEqualTo: AppStatus.confirmed)
+            .limit(1)
+            .get(),
+        FirebaseFirestore.instance
+            .collection('applications')
+            .where('toId', isEqualTo: widget.to.id)
+            .where('status', isEqualTo: AppStatus.contractPending)
+            .limit(1)
+            .get(),
+      ]);
+      final hasConfirmed = snaps.any((s) => (s as QuerySnapshot).docs.isNotEmpty);
+      if (!hasConfirmed) return true; // 미확정 근무자 없음 — 경고 불필요
     } catch (e) {
       debugPrint('⚠️ WAGE-GUARD 쿼리 실패 (진행 허용): $e');
       return true; // 조회 실패 시 강제 차단 금지

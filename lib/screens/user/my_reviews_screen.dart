@@ -72,6 +72,7 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
   Future<void> _loadMore() async {
     final uid = context.read<UserProvider>().currentUser?.uid;
     if (uid == null || !_hasMore || _isLoadingMore) return;
+    if (!mounted) return; // dispose 직후 스크롤 이벤트 재진입 방지
     setState(() => _isLoadingMore = true);
     try {
       final page = await _reviewService.getAllReviewsForUserPaged(

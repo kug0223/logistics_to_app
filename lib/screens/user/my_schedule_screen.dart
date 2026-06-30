@@ -82,6 +82,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   // ─── 데이터 로드 ────────────────────────────────────────────
 
   Future<void> _loadApplications() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
     try {
       final uid = context.read<UserProvider>().currentUser?.uid;

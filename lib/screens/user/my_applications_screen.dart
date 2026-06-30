@@ -88,6 +88,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   }
 
   Future<void> _loadApplications() async {
+    if (!mounted) return; // _cancelApplication 등 재호출 경로에서 화면 pop 후 진입 방지
     final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
     if (uid == null) {
       ToastHelper.showError('로그인이 필요합니다.');
@@ -212,7 +213,15 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         a.application.status == AppStatus.contractPending);
     if (!hasConfirmed) return {};
     final contracts = await _contractService.getByWorker(uid);
-    return {for (final c in contracts) c.applicationId: c};
+    // 번들 계약서는 applicationIds 배열이 여러 지원서를 포함 → 모든 ID를 키로 맵핑
+    final Map<String, EmploymentContractModel> result = {};
+    for (final c in contracts) {
+      final ids = c.applicationIds.isNotEmpty ? c.applicationIds : [c.applicationId];
+      for (final id in ids) {
+        if (id.isNotEmpty) result[id] = c;
+      }
+    }
+    return result;
   }
 
   /// 과거 확정 지원서의 내가 쓴 사업장 리뷰 병렬 조회
@@ -585,8 +594,10 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                   style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
                 ),
                 
-                // 자동 취소인 경우 충돌 정보
-                if (app.status == AppStatus.autoCanceled && app.conflictingBusiness != null)
+                // 자동 취소인 경우 취소 사유 표시
+                // [H-001 수정] conflictingBusiness 유무와 관계없이 항상 표시
+                // cancelReason(마감·슬롯 만료)도 UI에서 전달
+                if (app.status == AppStatus.autoCanceled)
                   _buildAutoCanceledInfo(app),
 
                 // 대기 중인 경우 취소 버튼
@@ -760,6 +771,21 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
   /// 자동 취소 충돌 정보 (간소화)
   Widget _buildAutoCanceledInfo(ApplicationModel app) {
+    // [H-001 수정] cancelReason 기반 안내 문구 분기
+    // conflictingBusiness가 없는 마감·슬롯 만료 케이스도 사유 전달
+    final String reasonText;
+    final bool hasConflict = app.conflictingBusiness != null;
+    switch (app.cancelReason) {
+      case 'SLOT_WORK_DETAIL_EXPIRED':
+        reasonText = '슬롯 업무 마감으로 자동 취소됨';
+      case 'WORK_DETAIL_EXPIRED':
+        reasonText = '업무 마감으로 자동 취소됨';
+      case 'TO_EXPIRED':
+        reasonText = '공고 마감으로 자동 취소됨';
+      default:
+        reasonText = hasConflict ? '시간 충돌로 자동 취소됨' : '자동으로 취소되었습니다';
+    }
+
     return Container(
       margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 10)),
       padding: ResponsiveHelper.listPadding(context),
@@ -780,7 +806,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
               Text(
-                '시간 충돌로 자동 취소됨',
+                reasonText,
                 style: ResponsiveHelper.smallStyle(
                   context,
                   color: AppColors.warningDark,
@@ -789,46 +815,48 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
               ),
             ],
           ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-          // 충돌 공고 정보 (한 줄로 간소화)
-          Row(
-            children: [
-              Icon(
-                Icons.business,
-                size: ResponsiveHelper.iconSize(context, 12),
-                color: AppColors.grey600,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Expanded(
-                child: Text(
-                  [app.conflictingBusiness, app.conflictingTime]
-                      .where((s) => s != null && s.isNotEmpty)
-                      .join(' · '),
-                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey700),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+          // 시간 충돌인 경우에만 충돌 공고 정보 표시
+          if (hasConflict) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+            Row(
+              children: [
+                Icon(
+                  Icons.business,
+                  size: ResponsiveHelper.iconSize(context, 12),
+                  color: AppColors.grey600,
                 ),
-              ),
-              Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 6),
-                  vertical: ResponsiveHelper.spacing(context, 2),
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.successBg,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  '확정됨',
-                  style: ResponsiveHelper.tinyStyle(
-                    context,
-                    color: AppColors.successDark,
-                    fontWeight: FontWeight.bold,
+                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                Expanded(
+                  child: Text(
+                    [app.conflictingBusiness, app.conflictingTime]
+                        .where((s) => s != null && s.isNotEmpty)
+                        .join(' · '),
+                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey700),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-              ),
-            ],
-          ),
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 6),
+                    vertical: ResponsiveHelper.spacing(context, 2),
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.successBg,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    '확정됨',
+                    style: ResponsiveHelper.tinyStyle(
+                      context,
+                      color: AppColors.successDark,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );

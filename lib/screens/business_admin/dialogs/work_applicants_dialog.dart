@@ -102,6 +102,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   Map<String, String?> _contractStatusMap = {};
   // 계약서 일괄작성 처리 중 플래그
   bool _isContractBatchProcessing = false;
+  // [BUG-CANCEL-01] 확정취소 버튼 가드 — 근무 이력 있는 확정자 노출 방지
+  // key = userId, value = 슬롯 날짜(or 주간)에 checkIn/급여확정 기록 존재 여부
+  Map<String, bool> _hasWorkedMap = {};
 
   @override
   void initState() {
@@ -256,6 +259,44 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         businessId: widget.toItem.to.businessId,
       );
 
+      // [BUG-CANCEL-01] 확정취소 버튼 가드 — 근무 이력 맵 구성
+      // 슬롯 기반: loadHasWorkedMap(슬롯 날짜) → 정확한 당일 출퇴근 조회
+      // 비슬롯: 이미 로드된 weeklyMap 에서 app.workDate 매칭으로 근무 여부 파악
+      //         주간 범위를 벗어난 과거 날짜는 hasWorked = false (버튼 표시 허용,
+      //         실질 피해는 적음 — 장기계약자는 이미 고정근무 관리로 분기됨)
+      final Map<String, bool> hasWorkedMap;
+      if (slotDate != null && confirmedUserIds.isNotEmpty) {
+        hasWorkedMap = await _firestoreService.loadHasWorkedMap(
+          businessId: widget.toItem.to.businessId,
+          date: slotDate,
+        );
+      } else {
+        hasWorkedMap = {};
+        final confirmedShortTermApps = filtered.where((app) =>
+            (app.status == AppStatus.confirmed ||
+                app.status == AppStatus.contractPending) &&
+            !app.isLongTermApplication);
+        for (final app in confirmedShortTermApps) {
+          final appDay = DateTime(
+              app.workDate.year, app.workDate.month, app.workDate.day);
+          final userAtts = (weeklyMap[app.uid] ?? []).cast<AttendanceModel>();
+          for (final att in userAtts) {
+            final attDay = DateTime(
+                att.workDate.year, att.workDate.month, att.workDate.day);
+            if (attDay == appDay) {
+              if ((att.checkIn != null &&
+                      att.status != AttendanceModel.statusAbsent &&
+                      att.status != AttendanceModel.statusNoShow) ||
+                  att.isWageConfirmed ||
+                  att.isWageTransferred) {
+                hasWorkedMap[app.uid] = true;
+              }
+              break;
+            }
+          }
+        }
+      }
+
       // 알림 딥링크로 진입 시 해당 지원자를 목록 맨 앞으로 이동
       if (widget.initialApplicationId != null) {
         final idx = applicantsWithUserInfo.indexWhere(
@@ -279,6 +320,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           ..clear()
           ..addAll(weeklyCountMap);
         _contractStatusMap = contractMap;
+        _hasWorkedMap = hasWorkedMap; // [BUG-CANCEL-01]
       });
   }, errorTag: '지원자 목록 로드');
 
@@ -1417,7 +1459,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                 // [B-3] item 전달 → 해당 근무자 uid로 자동 포커스
                                 onTap: () => _openFixedWorkerManagement(item),
                               )
-                            else
+                            // [BUG-CANCEL-01] 근무 이력 있는 단기 확정자 취소 버튼 숨김
+                            else if (_canCancelConfirmation(app))
                               _buildActionButton(
                                 context,
                                 label: '확정취소',
@@ -1747,13 +1790,24 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     }
 
     // [C-1] 파트변경 전 확정된 급여 건 체크 — 있으면 미확정 처리됨을 사전 경고
-    final calculatedAttSnap = await FirebaseFirestore.instance
-        .collection('attendance')
-        .where('applicationId', isEqualTo: app.id)
-        .where('wageStatus', whereIn: ['calculated', 'confirmed'])
-        .count()
-        .get();
-    final confirmedWageCount = calculatedAttSnap.count ?? 0;
+    // [BUG-WHEREIN] wageStatus whereIn + applicationId 복합쿼리 → PERMISSION_DENIED 위험
+    //   calculated/confirmed 2개 isEqualTo .count() 병렬 쿼리로 분리
+    final wageCountResults = await Future.wait([
+      FirebaseFirestore.instance
+          .collection('attendance')
+          .where('applicationId', isEqualTo: app.id)
+          .where('wageStatus', isEqualTo: 'calculated')
+          .count()
+          .get(),
+      FirebaseFirestore.instance
+          .collection('attendance')
+          .where('applicationId', isEqualTo: app.id)
+          .where('wageStatus', isEqualTo: 'confirmed')
+          .count()
+          .get(),
+    ]);
+    final confirmedWageCount =
+        (wageCountResults[0].count ?? 0) + (wageCountResults[1].count ?? 0);
     if (!mounted) return;
 
     if (confirmedWageCount > 0) {
@@ -2012,6 +2066,12 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
+  }
+
+  /// [BUG-CANCEL-01] 확정취소 가능 여부
+  /// 단기 근무자 전용 — 장기는 이미 UI에서 '고정근무 관리' 버튼으로 분기됨
+  bool _canCancelConfirmation(ApplicationModel app) {
+    return _hasWorkedMap[app.uid] != true;
   }
 
   /// 확정취소 (단기)
@@ -2846,12 +2906,15 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         );
       }
 
+      // [BUG-6 수정] for 루프 await 완료 후 mounted 체크 추가
+      if (!mounted) return;
       ToastHelper.showSuccess('${idsToReject.length}명이 거절되었습니다');
       _selectedIds.clear();
       await _loadApplicants();
+      if (!mounted) return;
       await _updateLocalStats();
     } catch (e) {
-      ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
+      if (mounted) ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
