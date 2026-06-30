@@ -1229,6 +1229,7 @@ service cloud.firestore {
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status', 'respondedAt'])) ||
                       (isAdminOf(resource.data.businessId) &&
+                       resource.data.status == 'pending' &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status', 'canceledAt'])) ||
                       isSuperAdmin()
@@ -1402,10 +1403,20 @@ service cloud.firestore {
                     isSuperAdmin()
                   );
       // 수정: 해당 사업장 관리자/하위관리자 · 슈퍼어드민 (승인/거절)
+      // SEC-61: 상태 전이 검증 (PENDING → APPROVED/REJECTED만), 필드 화이트리스트
+      //   → 이미 처리된 요청 재처리 차단, 임의 필드 덮어쓰기 차단
       allow update: if isLoggedIn() && (
                     isAdminOf(resource.data.businessId) ||
                     isSubAdminOf(resource.data.businessId) ||
                     isSuperAdmin()
+                  ) && (
+                    isSuperAdmin() ||
+                    (resource.data.status == 'PENDING' &&
+                     (request.resource.data.status == 'APPROVED' ||
+                      request.resource.data.status == 'REJECTED') &&
+                     request.resource.data.diff(resource.data).affectedKeys()
+                       .hasOnly(['status', 'processedBy', 'processedAt',
+                                 'rejectReason', 'updatedAt']))
                   );
       allow delete: if isSuperAdmin();
     }
