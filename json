@@ -1,0 +1,28 @@
+{
+  "parameters": {
+    "min_version": {
+      "defaultValue": {
+        "value": "0.0.0"
+      },
+      "valueType": "STRING"
+    },
+    "latest_version": {
+      "defaultValue": {
+        "value": "0.0.0"
+      },
+      "valueType": "STRING"
+    },
+    "update_url_android": {
+      "defaultValue": {
+        "value": ""
+      },
+      "valueType": "STRING"
+    },
+    "update_url_ios": {
+      "defaultValue": {
+        "value": ""
+      },
+      "valueType": "STRING"
+    }
+  }
+}
