@@ -1067,9 +1067,15 @@ extension ApplicationFirestore on FirestoreService {
       await batch.commit();
       if (toId != null) clearCache(toId: toId);
 
-      // 노쇼 페널티: 배치 후 별도 트랜잭션으로 카운트 원자적 갱신
+      // 노쇼 패널티: CF callableApplyNoShowPenalty — USER가 본인 noShowCount를 직접 write 불가
       if (applyNoShowPenalty) {
-        await _applyNoShowPenaltyTransactional(uid);
+        try {
+          final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableApplyNoShowPenalty');
+          await callable.call({'applicationId': applicationId});
+        } catch (e) {
+          debugPrint('⚠️ 노쇼 패널티 CF 실패 ($uid): $e');
+        }
       }
 
       // 취소 후 슬롯 상태('full'→'open') 재계산
@@ -2103,62 +2109,6 @@ extension ApplicationFirestore on FirestoreService {
     String? workType,
   }) =>
       _incrementTOConfirmed(batch, toId, slotId, delta: -1, workType: workType);
-
-  // ───────────────────────────────────────────────────────
-  // 노쇼 페널티 원자적 갱신
-  // ───────────────────────────────────────────────────────
-
-  /// 노쇼 카운트를 트랜잭션으로 원자적으로 증가시키고 단계별 이용 제한을 적용한다.
-  ///
-  /// [설계 원칙]
-  ///   - `noShowCount` : 누적 통계용. TrustScoreHelper 공식의 입력값이므로 절대 리셋하지 않는다.
-  ///   - 이용 제한은 누적 횟수 기준 단계형 적용:
-  ///       1회 → 3일, 2회 → 7일, 3회 → 30일, 4회+ → 사실상 영구(슈퍼관리자 해제 필요)
-  ///   - `noShowCycleCount`는 구 제재 사이클 카운터. 더 이상 쓰지 않으므로 갱신하지 않는다.
-  Future<void> _applyNoShowPenaltyTransactional(String uid) async {
-    try {
-      final userRef = _firestore.collection('users').doc(uid);
-      await _firestore.runTransaction((tx) async {
-        final snap = await tx.get(userRef);
-        final prev = (snap.data()?['noShowCount'] as num?)?.toInt() ?? 0;
-        final newCount = prev + 1;
-
-        final restrictedUntil = _noShowRestrictionUntil(newCount);
-        tx.update(userRef, {
-          'noShowCount': newCount,
-          'updatedAt': FieldValue.serverTimestamp(),
-          if (restrictedUntil != null)
-            'restrictedUntil': Timestamp.fromDate(restrictedUntil),
-        });
-        debugPrint('⚠️ 노쇼 $newCount회 — '
-            '${restrictedUntil != null ? "${_restrictionLabel(newCount)} 이용 제한" : "기록"}: $uid');
-      });
-    } catch (e) {
-      debugPrint('❌ 노쇼 카운트 업데이트 실패: $e');
-    }
-  }
-
-  /// 누적 노쇼 횟수에 따른 이용 제한 만료 시각.
-  /// 0회=null(제한 없음) / 1회=3일 / 2회=7일 / 3회=30일 / 4회+=영구(9999년).
-  DateTime? _noShowRestrictionUntil(int noShowCount) {
-    if (noShowCount <= 0) return null;
-    final now = DateTime.now();
-    switch (noShowCount) {
-      case 1: return now.add(const Duration(days: 3));
-      case 2: return now.add(const Duration(days: 7));
-      case 3: return now.add(const Duration(days: 30));
-      default: return DateTime(9999, 12, 31); // 슈퍼관리자 수동 해제 전까지 영구
-    }
-  }
-
-  String _restrictionLabel(int count) {
-    switch (count) {
-      case 1: return '3일';
-      case 2: return '7일';
-      case 3: return '30일';
-      default: return '영구';
-    }
-  }
 
   // ───────────────────────────────────────────────────────
   // 슬롯 상태 재계산

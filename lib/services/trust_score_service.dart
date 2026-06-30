@@ -50,12 +50,8 @@ class TrustScoreService {
         return (userData['trustScore'] as num).toInt();
       }
       
-      // trustScore 미설정 구 계정 — 계산 후 Firestore에 저장해 이후 incremental 경로 단일화
-      final computed = _computeScore(userData, settings);
-      _firestore.collection('users').doc(userId).update({'trustScore': computed}).catchError((e) {
-        debugPrint('⚠️ [TrustScore] 구 계정 trustScore 저장 실패 ($userId): $e');
-      });
-      return computed;
+      // trustScore 미설정 구 계정 — 표시용으로만 계산 (CF Admin SDK 전용 필드, 클라이언트 write 차단)
+      return _computeScore(userData, settings);
     } catch (e) {
       debugPrint('❌ 신뢰도 계산 실패: $e');
       return 50; // 기본값

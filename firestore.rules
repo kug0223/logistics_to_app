@@ -128,25 +128,15 @@ service cloud.firestore {
                          'restrictedUntil'
                        ]);
 
-      // 관리자·하위관리자: 신뢰도·노쇼·근무일수 관련 필드만 업데이트 허용 (restrictedUntil 포함 — 노쇼 제재)
-      // SUB_ADMIN도 출근 마감 처리 시 TrustScoreService를 통해 이 필드들을 업데이트한다
-      // [SEC-02] user.businessId가 null인 경우(신규 가입·더미·하위호환 유저)에도 관리자가 수정해야 하므로
-      // businessId 미설정 유저는 역할 체크만으로 통과, 설정된 유저는 소속 사업장 검증 필수
-      // [HIGH-FIX] 크로스-사업장 trustScore 조작: A사 관리자가 B사 근무자 신뢰도·restrictedUntil 수정 가능
-      //            → businessId가 설정된 경우 소속 사업장 관리자만 수정 허용으로 제한
-      allow update: if isLoggedIn() &&
-                       request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['noShowCount', 'lateCount', 'trustScore',
-                                   'totalWorkDays', 'lastRestartAt', 'updatedAt',
-                                   'restrictedUntil']) &&
-                       (isSuperAdmin() ||
-                        // businessId 미설정 유저(신규·더미): BUSINESS_ADMIN/SUPER_ADMIN만 허용
-                        // [SEC-FIX] isSubAdmin() 제거 — 타 사업장 SubAdmin이 businessId 미할당 유저의 신뢰도 조작 가능
-                        (resource.data.get('businessId', '') == '' && isAdmin()) ||
-                        // businessId 설정된 유저: 소속 사업장 관리자/하위관리자만 허용
-                        (resource.data.get('businessId', '') != '' &&
-                         (isAdminOf(resource.data.get('businessId', '')) ||
-                          isSubAdminOf(resource.data.get('businessId', '')))));
+      // [SEC-03 완료] trustScore·noShowCount·lateCount·totalWorkDays·restrictedUntil·lastRestartAt
+      // 은 CF Admin SDK 전용 — 클라이언트(관리자 포함) 직접 write 차단.
+      // 처리 경로:
+      //   - totalWorkDays: onAttendanceWageStatusChanged CF 트리거 (wageConfirmed 전환)
+      //   - noShowCount·restrictedUntil: callableApplyNoShowPenalty CF (당일 취소) 또는
+      //                                  onAttendanceWageStatusChanged CF 트리거 (status=NO_SHOW)
+      //   - lateCount·trustScore: callableReportLate CF (지각 처리)
+      //   - lastRestartAt: applyRestartProgram CF
+      //   - 슈퍼어드민 긴급 수정: isSuperAdmin() 규칙(위)으로 허용
 
       // BUSINESS_ADMIN이 자기 사업장 멤버 제거 시 subAdminOf 삭제만 허용 (설정은 CF trigger 전용)
       // subAdminOf 지정(CF Admin SDK)·전체 수정(isSuperAdmin)은 위 최상단 규칙에서 처리
@@ -1015,13 +1005,10 @@ service cloud.firestore {
                    // isUser() 제거: getScoreHistory는 B03 미완성(UI 진입점 없음)
                    // USER 직접 조회 필요 시 CF 프록시로 구현할 것
                  );
-      // 생성: 해당 사업장 관리자·하위관리자 또는 슈퍼어드민
-      // SUB_ADMIN도 출근 마감 처리 시 TrustScoreService를 통해 생성한다
-      allow create: if isLoggedIn() && (
-                     isAdminOf(request.resource.data.businessId) ||
-                     isSubAdminOf(request.resource.data.businessId) ||
-                     isSuperAdmin()
-                   );
+      // [SEC-03 완료] 생성: CF Admin SDK 전용 — 클라이언트 직접 create 차단
+      // callableReportLate·onAttendanceWageStatusChanged CF 트리거에서 Admin SDK로 기록
+      // 슈퍼어드민 긴급 수정만 허용
+      allow create: if isSuperAdmin();
       allow update, delete: if isSuperAdmin();
     }
 

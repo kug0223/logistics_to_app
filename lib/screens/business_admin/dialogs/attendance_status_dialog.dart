@@ -13,6 +13,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:intl/intl.dart';
 // Models
 import '../../../models/core/application_model.dart';
@@ -27,7 +28,6 @@ import '../../../services/firestore_service.dart';
 
 // Utils
 import '../../../utils/toast_helper.dart';
-import '../../../services/trust_score_service.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../utils/format_helper.dart';
@@ -3489,11 +3489,16 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
             final wasLate = oldCheckIn != null &&
                 AttendanceStatusHelper.isLate(oldCheckIn, expectedStartTime);
             final isNowLate = AttendanceStatusHelper.isLate(newCheckIn, expectedStartTime);
-            final trustService = TrustScoreService();
+            final lateCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+                .httpsCallable('callableReportLate');
             if (wasLate && !isNowLate) {
-              await trustService.onLateCanceled(app.uid, app.businessId);
+              await lateCallable.call({
+                'userId': app.uid, 'businessId': app.businessId, 'mode': 'late_canceled',
+              });
             } else if (!wasLate && isNowLate) {
-              await trustService.onLate(app.uid, app.businessId);
+              await lateCallable.call({
+                'userId': app.uid, 'businessId': app.businessId, 'mode': 'late',
+              });
             }
           }
 
@@ -3959,11 +3964,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
             checkIn: time,
           );
 
-          // 지각 여부 체크 및 신뢰도 반영
+          // 지각 여부 체크 및 신뢰도 반영 — CF callableReportLate 서버 처리
           final expectedStartTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
           if (AttendanceStatusHelper.isLate(time, expectedStartTime)) {
-            final trustService = TrustScoreService();
-            await trustService.onLate(app.uid, app.businessId);
+            await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+                .httpsCallable('callableReportLate')
+                .call({'userId': app.uid, 'businessId': app.businessId, 'mode': 'late'});
           }
 
           successCount++;
@@ -4081,7 +4087,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           await _createOrUpdateAttendance(app: app, checkIn: time);
           final expectedStartTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
           if (AttendanceStatusHelper.isLate(time, expectedStartTime)) {
-            await TrustScoreService().onLate(app.uid, app.businessId);
+            await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+                .httpsCallable('callableReportLate')
+                .call({'userId': app.uid, 'businessId': app.businessId, 'mode': 'late'});
           }
           successCount++;
         } catch (e) {

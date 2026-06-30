@@ -4745,3 +4745,155 @@ export const callableGetMyBusiness = onCall(
     return {businesses};
   }
 );
+
+// ─── 노쇼 제한 만료 계산 헬퍼 ─────────────────────────────
+function _noShowRestrictionUntilFromCount(count: number): Date | null {
+  if (count <= 0) return null;
+  const now = new Date();
+  switch (count) {
+    case 1: return new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+    case 2: return new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    case 3: return new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    default: return new Date(9999, 11, 31); // 슈퍼관리자 수동 해제 전까지 영구
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// 📛 당일 취소 노쇼 패널티 — 본인 확정 취소 시 클라이언트에서 호출
+//
+// 설계 원칙:
+//   - Firestore 규칙상 USER가 본인 noShowCount를 직접 write 불가
+//   - Admin SDK로 noShowCount +1 + 단계별 restrictedUntil 설정
+//   - 본인 applicationId만 처리 (userId == callerUid 검증)
+// ═══════════════════════════════════════════════════════════
+export const callableApplyNoShowPenalty = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {applicationId} = request.data as {applicationId: string};
+    if (!applicationId) throw new HttpsError("invalid-argument", "applicationId 필수");
+
+    const appSnap = await db.collection("applications").doc(applicationId).get();
+    if (!appSnap.exists) throw new HttpsError("not-found", "지원 정보를 찾을 수 없습니다.");
+    const appData = appSnap.data()!;
+    const userId = appData.uid as string;
+
+    if (userId !== callerUid) {
+      throw new HttpsError("permission-denied", "본인 지원만 처리할 수 있습니다.");
+    }
+
+    const userRef = db.collection("users").doc(userId);
+
+    await db.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      if (!userSnap.exists) return;
+      const prev = (userSnap.data()?.noShowCount ?? 0) as number;
+      const newCount = prev + 1;
+      const restrictedUntil = _noShowRestrictionUntilFromCount(newCount);
+
+      const updates: Record<string, unknown> = {
+        noShowCount: newCount,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      if (restrictedUntil !== null) {
+        updates.restrictedUntil = admin.firestore.Timestamp.fromDate(restrictedUntil);
+      }
+      tx.update(userRef, updates);
+    });
+
+    return {success: true};
+  },
+);
+
+// ═══════════════════════════════════════════════════════════
+// ⏰ 지각 신뢰도 처리 — 관리자/하위관리자 출근 처리 시 호출
+//
+// 설계 원칙:
+//   - 호출자(관리자/하위관리자) 권한 검증
+//   - mode: "late" — lateCount+1, trustScore 감소
+//   - mode: "late_canceled" — lateCount-1, trustScore 복원
+//   - trust_score_history 이력 기록
+// ═══════════════════════════════════════════════════════════
+export const callableReportLate = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {userId, businessId, mode} = request.data as {
+      userId: string;
+      businessId: string;
+      mode: "late" | "late_canceled";
+    };
+
+    if (!userId || !businessId || !mode) {
+      throw new HttpsError("invalid-argument", "userId, businessId, mode 필수");
+    }
+    if (mode !== "late" && mode !== "late_canceled") {
+      throw new HttpsError("invalid-argument", "mode는 late 또는 late_canceled");
+    }
+
+    // 호출자 권한 검증 (해당 사업장 관리자/하위관리자/슈퍼어드민)
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const callerRole = (callerSnap.data()?.role ?? "") as string;
+    const callerSubAdminOf = (callerSnap.data()?.subAdminOf ?? "") as string;
+
+    let authorized = callerRole === "SUPER_ADMIN";
+    if (!authorized && callerRole === "BUSINESS_ADMIN") {
+      const bizSnap = await db.collection("businesses").doc(businessId).get();
+      const adminIds = (bizSnap.data()?.adminIds as string[]) ?? [];
+      authorized = adminIds.includes(callerUid);
+    } else if (!authorized && callerRole === "SUB_ADMIN") {
+      authorized = callerSubAdminOf === businessId;
+    }
+    if (!authorized) throw new HttpsError("permission-denied", "해당 사업장 관리 권한이 필요합니다.");
+
+    const rulesSnap = await db.collection("settings").doc("trust_rules").get();
+    const rulesData = rulesSnap.data() ?? {};
+    const maxScore = (rulesData.maxScore as number) ?? 100;
+    const decreaseRules = (rulesData.decreaseRules as Record<string, number>) ?? {};
+    const latePoints = decreaseRules["late"] ?? -1;
+    const lateRepeatPoints = decreaseRules["late_repeat"] ?? -2;
+
+    const userRef = db.collection("users").doc(userId);
+
+    await db.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      if (!userSnap.exists) return;
+      const userData = userSnap.data()!;
+      const currentScore = (userData.trustScore ?? 50) as number;
+      const currentLateCount = (userData.lateCount ?? 0) as number;
+
+      let newLateCount: number;
+      let trustChange: number;
+      let trustReason: string;
+
+      if (mode === "late") {
+        newLateCount = currentLateCount + 1;
+        trustChange = newLateCount >= 2 ? lateRepeatPoints : latePoints;
+        trustReason = "late";
+      } else {
+        const applied = currentLateCount >= 2 ? lateRepeatPoints : latePoints;
+        newLateCount = Math.max(0, currentLateCount - 1);
+        trustChange = -applied;
+        trustReason = "late_canceled";
+      }
+
+      const newScore = Math.min(maxScore, Math.max(0, currentScore + trustChange));
+
+      tx.update(userRef, {lateCount: newLateCount, trustScore: newScore});
+
+      const histRef = db.collection("trust_score_history").doc();
+      tx.set(histRef, {
+        userId, businessId,
+        previousScore: currentScore,
+        newScore,
+        change: trustChange,
+        reason: trustReason,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+
+    return {success: true};
+  },
+);
