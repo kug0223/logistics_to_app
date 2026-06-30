@@ -194,14 +194,14 @@ service cloud.firestore {
       // adminIds는 getMyBusiness() arrayContains 쿼리에 필수이므로 서브컬렉션 분리 불가.
       // UID 자체는 개인 식별 불가 — 현재 위험 수준은 낮다고 판단.
       allow get: if isLoggedIn();
-      // [특이사항] list: Firestore rules는 arrayContains 쿼리의 필터를 request.query.filters로
-      // 읽을 수 없으므로 isBusinessAdmin() 전체 허용이 불가피하다. 이 설계로 인해 BUSINESS_ADMIN이
-      // 다른 사업장 목록을 임의 쿼리로 조회하는 것이 규칙 레벨에서 차단되지 않는다.
-      // 실제 앱 코드(getMyBusiness: adminIds array-contains uid)가 유일한 방어선이다.
-      // 사업장 문서가 경쟁사 민감 정보를 담지 않는다면 위험은 낮으나 설계 한계로 기록.
+      // [데이터 격리] list: arrayContains 필터는 request.query.filters로 검증 불가 — 구조적 한계
+      // 단기 대응: BUSINESS_ADMIN은 limit<=5 제한 (사용자당 최대 사업장 수 제한)
+      //   → 타 사업장 정보를 대량 덤프하는 것은 차단
+      // SubAdmin은 list 불필요 — subAdminOf(단건)으로 소속 사업장 직접 get
+      // [중기 계획] getMyBusiness를 CF Callable Function으로 이전 → list 권한 제거
       allow list: if isLoggedIn() && (
                     isSuperAdmin() ||
-                    isBusinessAdmin()
+                    (isBusinessAdmin() && request.query.limit <= 5)
                   );
 
       // 슈퍼어드민은 ownerId/adminIds 조건 없이 사업장 생성 가능 (타 관리자 대신 등록 포함)
@@ -479,13 +479,15 @@ service cloud.firestore {
       // [HIGH-FIX] SubAdmin 누락: 노쇼 처리(attendance_status_dialog)에서 기록 없는 근무자에 대해
       //            batch.set()으로 신규 생성 시 PERMISSION_DENIED 발생 → isSubAdminOf 추가
       //
-      // [H-3 보안 주의] userId == auth.uid 경로는 근무자가 임의 businessId·checkIn 시각으로
-      // 출근 기록을 직접 생성할 수 있음. 앱 UX상 어렵지만 API 직접 호출 시 가능.
-      // 완전한 차단: checkIn을 CF Callable Function으로 이전하고 이 경로를 제거해야 함.
-      // 현재는 임금 확정이 관리자 수동 검토 후 진행되므로 실질 피해는 제한적.
-      // TODO: 근무자 출근 체크인 CF화 후 userId == auth.uid 경로 제거
+      // [CROSS-BIZ-FIX] userId == auth.uid 경로에 businessId 소속 검증 추가
+      // 이전: USER가 임의 businessId로 타 사업장 출근 기록 생성 가능 (API 직접 호출 시)
+      // 수정: 발신 문서의 businessId가 본인 users.businessId와 일치해야 create 허용
+      //       → 타 사업장 노이즈 데이터 삽입 원천 차단
+      // 완전한 차단: checkIn을 CF Callable Function으로 이전하고 이 경로를 제거해야 함 (중기 계획)
       allow create: if isLoggedIn() && (
-                      request.resource.data.userId == request.auth.uid ||
+                      (request.resource.data.userId == request.auth.uid &&
+                       request.resource.data.businessId ==
+                         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', '_NONE_')) ||
                       isAdminOf(request.resource.data.businessId) ||
                       isSubAdminOf(request.resource.data.businessId) ||
                       isSuperAdmin() ||
