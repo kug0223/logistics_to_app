@@ -288,13 +288,28 @@ class _NotificationScreenState extends State<NotificationScreen> {
       // ═══════════════════════════════════════════════════════════
       // 지원 관련 알림
       // ═══════════════════════════════════════════════════════════
+      // applicationConfirmed·applicationRejected는 근무자(지원자) 전용 발송 — isUser 가드 불필요
       case NotificationType.applicationConfirmed:
       case NotificationType.applicationRejected:
-      case NotificationType.confirmationCanceled:
         Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
         );
+        break;
+
+      // confirmationCanceled는 양방향:
+      //   createConfirmationCanceled        → 지원자에게 (data에 toId/workDetailId 없음)
+      //   createConfirmationCanceledByWorker → 관리자에게 (data에 toId/workDetailId 포함)
+      // 관리자가 탭하면 WorkApplicantsDialog를 열고, 없으면 IntegratedWorkforceScreen 폴백.
+      case NotificationType.confirmationCanceled:
+        if (isUser) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
+          );
+        } else {
+          await _openWorkApplicantsFromNotification(context, notification);
+        }
         break;
 
       // 파트변경 알림 — 근무자에게만 발송, 내 지원내역에서 변경된 파트 확인 가능
