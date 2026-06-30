@@ -229,7 +229,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
       final step2Results = await Future.wait([
         _getAttendanceRecords(appIds),                              // [0] 출근 기록
-        _firestoreService.getUsersBatch(uids),                       // [1] 사용자 정보
+        _firestoreService.getUsersBatch(uids, businessId: _selectedBusinessId ?? ''),                       // [1] 사용자 정보
         _firestoreService.getLocationsForApplications(appIds, businessId: _selectedBusinessId ?? ''),       // [2] 위치 정보
         _getWorkDetailTimes(confirmedWorkers),                        // [3] WorkDetail 시간 정보 (근무자 목록 전달)
       ]);

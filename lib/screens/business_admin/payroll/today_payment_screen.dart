@@ -87,7 +87,7 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
           .difference(_nameCache.keys.toSet()).toList();
       if (uidList.isNotEmpty) {
         // getUsersBatch: 30개 청크 + limit 처리, 보안 규칙 준수
-        final userMap = await _fsService.getUsersBatch(uidList);
+        final userMap = await _fsService.getUsersBatch(uidList, businessId: widget.businessId);
         for (final uid in uidList) {
           final user = userMap[uid];
           if (user != null) _nameCache[uid] = user.name;

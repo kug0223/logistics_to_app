@@ -58,7 +58,7 @@ class _ScheduleRequestManagementDialogState
         .toList();
 
     final uniqueUids = workerRequests.map((r) => r.applicantUid).toSet().toList();
-    final userMap = await _firestoreService.getUsersBatch(uniqueUids);
+    final userMap = await _firestoreService.getUsersBatch(uniqueUids, businessId: widget.businessId);
 
     final results = workerRequests.map((request) {
       final user = userMap[request.applicantUid];

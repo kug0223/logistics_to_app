@@ -286,7 +286,7 @@ class _PayrollPaymentDashboardScreenState
     if (uncached.isEmpty) return;
     try {
       // getUsersBatch: 30개 청크 + limit(chunk.length) 처리, 보안 규칙 준수
-      final userMap = await _fsService.getUsersBatch(uncached);
+      final userMap = await _fsService.getUsersBatch(uncached, businessId: widget.businessId);
       for (final uid in uncached) {
         final user = userMap[uid];
         if (user == null) continue;

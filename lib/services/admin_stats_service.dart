@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/core/attendance_model.dart';
@@ -336,8 +337,7 @@ class AdminStatsService {
     // 예외 알림 — 가장 최근 데이터 있는 달 기준
     final exceptionMonth = _latestActiveMonth(monthlyTrends);
     final exceptionRecords = exceptionMonth > 0 ? trendMap[exceptionMonth]! : <AttendanceModel>[];
-    final nameMap = await _fetchUserNames(
-        exceptionRecords.map((r) => r.userId).toSet().toList());
+    final nameMap = await _fetchUserNamesByRecords(exceptionRecords);
     final exceptions =
         _buildExceptions(exceptionRecords, nameMap, exceptionMonth);
 
@@ -387,8 +387,7 @@ class AdminStatsService {
     final attendance = results[0] as List<AttendanceModel>;
     final reviews = results[1] as List<MonthlyReviewModel>;
 
-    final userIds = attendance.map((r) => r.userId).toSet().toList();
-    final infoMap = await _fetchUserInfo(userIds);
+    final infoMap = await _fetchUserInfoByRecords(attendance);
 
     // 직원별 집계
     final workerMap = <String, List<AttendanceModel>>{};
@@ -547,52 +546,83 @@ class AdminStatsService {
     return results.expand((list) => list).toList();
   }
 
-  Future<Map<String, String>> _fetchUserNames(List<String> ids) async {
-    if (ids.isEmpty) return {};
+  /// CF callableGetUsersBatch를 통해 이름만 조회
+  /// attendance 레코드로부터 (businessId → userIds) 그룹핑 후 각 사업장별 CF 호출
+  Future<Map<String, String>> _fetchUserNamesByRecords(
+      List<AttendanceModel> records) async {
+    if (records.isEmpty) return {};
     final map = <String, String>{};
-    // 30개 청크를 순차 await — whereIn 30개 제한(QUERY-01) 준수 설계
-    // Future.wait로 병렬화 가능하나, 다수 청크 동시 요청 시 Firestore 부하 우려로 순차 유지
-    for (int i = 0; i < ids.length; i += 30) {
-      final chunk = ids.sublist(i, (i + 30).clamp(0, ids.length));
-      try {
-        final snap = await _db
-            .collection('users')
-            .where(FieldPath.documentId, whereIn: chunk)
-            .limit(chunk.length)
-            .get()
-            .timeout(const Duration(seconds: 15));
-        for (final doc in snap.docs) {
-          map[doc.id] = doc.data()['name'] as String? ?? '알 수 없음';
+
+    // businessId별로 userId 그룹핑
+    final grouped = <String, Set<String>>{};
+    for (final r in records) {
+      if (r.businessId.isNotEmpty) {
+        grouped.putIfAbsent(r.businessId, () => {}).add(r.userId);
+      }
+    }
+
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetUsersBatch');
+
+    for (final entry in grouped.entries) {
+      final businessId = entry.key;
+      final uids = entry.value.toList();
+      for (int i = 0; i < uids.length; i += 30) {
+        final chunk = uids.skip(i).take(30).toList();
+        try {
+          final response = await callable
+              .call<Map<String, dynamic>>({'uids': chunk, 'businessId': businessId})
+              .timeout(const Duration(seconds: 15));
+          final usersRaw = (response.data['users'] as Map?)?.cast<String, dynamic>() ?? {};
+          for (final e in usersRaw.entries) {
+            map[e.key] = (e.value as Map)['name'] as String? ?? '알 수 없음';
+          }
+        } catch (e) {
+          debugPrint('⚠️ 사용자 이름 조회 실패 ($businessId): $e');
         }
-      } catch (e) {
-        debugPrint('⚠️ 사용자 이름 조회 실패: $e');
       }
     }
     return map;
   }
 
-  Future<Map<String, UserInfo>> _fetchUserInfo(List<String> ids) async {
-    if (ids.isEmpty) return {};
+  /// CF callableGetUsersBatch를 통해 이름·성별·전화번호 조회
+  /// attendance 레코드로부터 (businessId → userIds) 그룹핑 후 각 사업장별 CF 호출
+  Future<Map<String, UserInfo>> _fetchUserInfoByRecords(
+      List<AttendanceModel> records) async {
+    if (records.isEmpty) return {};
     final map = <String, UserInfo>{};
-    for (int i = 0; i < ids.length; i += 30) {
-      final chunk = ids.sublist(i, (i + 30).clamp(0, ids.length));
-      try {
-        final snap = await _db
-            .collection('users')
-            .where(FieldPath.documentId, whereIn: chunk)
-            .limit(chunk.length)
-            .get()
-            .timeout(const Duration(seconds: 15));
-        for (final doc in snap.docs) {
-          final d = doc.data();
-          map[doc.id] = UserInfo(
-            name: d['name'] as String? ?? '알 수 없음',
-            gender: d['gender'] as String?,
-            phone: d['phone'] as String?,
-          );
+
+    final grouped = <String, Set<String>>{};
+    for (final r in records) {
+      if (r.businessId.isNotEmpty) {
+        grouped.putIfAbsent(r.businessId, () => {}).add(r.userId);
+      }
+    }
+
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetUsersBatch');
+
+    for (final entry in grouped.entries) {
+      final businessId = entry.key;
+      final uids = entry.value.toList();
+      for (int i = 0; i < uids.length; i += 30) {
+        final chunk = uids.skip(i).take(30).toList();
+        try {
+          final response = await callable
+              .call<Map<String, dynamic>>({'uids': chunk, 'businessId': businessId})
+              .timeout(const Duration(seconds: 15));
+          final usersRaw = (response.data['users'] as Map?)?.cast<String, dynamic>() ?? {};
+          for (final e in usersRaw.entries) {
+            final d = e.value as Map;
+            map[e.key] = UserInfo(
+              name: d['name'] as String? ?? '알 수 없음',
+              gender: d['gender'] as String?,
+              phone: d['phone'] as String?,
+            );
+          }
+        } catch (e) {
+          debugPrint('⚠️ 사용자 정보 조회 실패 ($businessId): $e');
         }
-      } catch (e) {
-        debugPrint('⚠️ 사용자 정보 조회 실패: $e');
       }
     }
     return map;

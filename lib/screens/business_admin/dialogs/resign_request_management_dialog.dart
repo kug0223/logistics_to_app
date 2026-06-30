@@ -48,7 +48,7 @@ class _ResignRequestManagementDialogState
     );
 
     final uniqueUids = applications.map((app) => app.uid).toSet().toList();
-    final userMap = await _firestoreService.getUsersBatch(uniqueUids);
+    final userMap = await _firestoreService.getUsersBatch(uniqueUids, businessId: widget.businessId);
 
     final results = applications.map((app) {
       final user = userMap[app.uid];

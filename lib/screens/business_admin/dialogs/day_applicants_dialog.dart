@@ -202,7 +202,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
         Map<String, int> workDetailCapacityMap = {};
         final results = await Future.wait([
-          _svc.getUsersBatch(allUids),
+          _svc.getUsersBatch(allUids, businessId: bizId),
           _contractSvc.getContractStatusBatch(allAppIds, businessId: bizId),
           _loadWeeklyCount(bizId),
           _loadWorkDetailCapacities(allApps),

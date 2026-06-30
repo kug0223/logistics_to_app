@@ -148,7 +148,13 @@ class FirestoreService {
   // ═══════════════════════════════════════════════════════════
 
   /// UID 목록으로 사용자 일괄 조회 (1시간 캐시, 30개씩 청크)
-  Future<Map<String, UserModel>> getUsersBatch(List<String> uids) async {
+  /// CF callableGetUsersBatch를 통해 서버 사이드 소속 검증 후 반환
+  /// — 극도 민감 필드(ci, residentNumber, foreignIdNumber, idCardImageUrl,
+  ///   signatureBase64, sealBase64, bankbookImageUrl)는 CF에서 제거됨
+  Future<Map<String, UserModel>> getUsersBatch(
+    List<String> uids, {
+    required String businessId,
+  }) async {
     if (uids.isEmpty) return {};
 
     final result = <String, UserModel>{};
@@ -165,18 +171,29 @@ class FirestoreService {
       }
     }
 
+    if (uncached.isEmpty) return result;
+
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetUsersBatch');
+
     for (int i = 0; i < uncached.length; i += 30) {
       final chunk = uncached.skip(i).take(30).toList();
-      final snap = await _firestore
-          .collection('users')
-          .where(FieldPath.documentId, whereIn: chunk)
-          .limit(chunk.length) // 보안규칙 request.query.limit <= 30 충족
-          .get(const GetOptions(source: Source.server));
-      for (final doc in snap.docs) {
-        final user = UserModel.fromMap(doc.data(), doc.id);
-        _userCache[doc.id] = user;
-        _userCacheTimestamps[doc.id] = now;
-        result[doc.id] = user;
+      try {
+        final response = await callable.call<Map<String, dynamic>>({
+          'uids': chunk,
+          'businessId': businessId,
+        });
+        final usersRaw = (response.data['users'] as Map?)?.cast<String, dynamic>() ?? {};
+        for (final entry in usersRaw.entries) {
+          final uid = entry.key;
+          final data = Map<String, dynamic>.from(entry.value as Map);
+          final user = UserModel.fromMap(data, uid);
+          _userCache[uid] = user;
+          _userCacheTimestamps[uid] = now;
+          result[uid] = user;
+        }
+      } catch (e) {
+        debugPrint('❌ getUsersBatch CF 실패 (chunk $i): $e');
       }
     }
 

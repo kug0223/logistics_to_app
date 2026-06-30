@@ -121,7 +121,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
       final uniqueUids = confirmed.map((app) => app.uid).toSet().toList();
 
       // ✅ 2. 사용자 정보 일괄 조회 (캐시 포함)
-      final userMap = await widget.firestoreService.getUsersBatch(uniqueUids);
+      final userMap = await widget.firestoreService.getUsersBatch(uniqueUids, businessId: widget.toItem.to.businessId);
       
       // ✅ 3. 결과 매핑 (추가 조회 없음)
       final results = confirmed.map((app) {

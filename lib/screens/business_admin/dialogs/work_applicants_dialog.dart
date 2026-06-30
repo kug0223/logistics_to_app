@@ -162,7 +162,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       final uniqueUids = filtered.map((app) => app.uid).toSet().toList();
 
       // ✅ 2. 사용자 정보 일괄 조회 (캐시 포함)
-      final userMap = await _firestoreService.getUsersBatch(uniqueUids);
+      final userMap = await _firestoreService.getUsersBatch(uniqueUids, businessId: widget.toItem.to.businessId);
       
       // ✅ 3. 결과 매핑 (추가 조회 없음)
       final applicantsWithUserInfo = filtered.map((app) {
