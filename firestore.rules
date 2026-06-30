@@ -73,9 +73,19 @@ service cloud.firestore {
         u.data.get('subAdminOf', '') != '';
     }
 
+    // [SEC-04] u == null 시 true 반환 → 블랙리스트 우회 가능 취약점 수정
+    // 회원가입 시 users 문서가 항상 생성되므로 u == null은 비정상 케이스 → false 반환
     function isNotBlacklisted() {
       let u = get(/databases/$(database)/documents/users/$(request.auth.uid));
-      return u == null || u.data.get('isBlacklisted', false) == false;
+      return u != null && u.data != null && u.data.get('isBlacklisted', false) == false;
+    }
+
+    // [SEC-05] 노쇼 누적 이용 제한(restrictedUntil) 서버 검증
+    // 클라이언트 체크만 있으면 앱 조작으로 우회 가능 — Firestore 규칙 레벨에서 차단
+    function isNotRestricted() {
+      let u = get(/databases/$(database)/documents/users/$(request.auth.uid));
+      let until = u != null && u.data != null ? u.data.get('restrictedUntil', null) : null;
+      return until == null || request.time > until;
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -356,8 +366,11 @@ service cloud.firestore {
                    (isUser() && request.query.filters.uid == request.auth.uid)
                  );
       // 생성: 본인 uid, 관리자 더미 데이터, 또는 해당 사업장 관리자(계약 연장 등)
+      // [SEC-04/05] 블랙리스트·이용제한 사용자는 본인 경로에서 서버 레벨 차단
       allow create: if isLoggedIn() && (
-                      request.resource.data.uid == request.auth.uid ||
+                      (request.resource.data.uid == request.auth.uid
+                        && isNotBlacklisted()
+                        && isNotRestricted()) ||
                       (isAdmin() && request.resource.data.isDummy == true) ||
                       isAdminOf(request.resource.data.businessId)
                     );

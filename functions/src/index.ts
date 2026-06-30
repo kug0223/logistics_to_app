@@ -4025,7 +4025,8 @@ export const adminResetForeignPassword = onCall(
 
     await admin.auth().updateUser(userId, {password: tempPassword});
 
-    console.log(`[adminResetForeignPassword] 슈퍼어드민 ${callerUid}가 ${userId}(${userData.name})의 비밀번호 초기화`);
+    // [SEC-07] 사용자 이름 평문 로그 제거 (PII 마스킹)
+    console.log(`[adminResetForeignPassword] 슈퍼어드민 ${callerUid}가 ${userId}의 비밀번호 초기화`);
     return {tempPassword};
   }
 );
@@ -4847,6 +4848,20 @@ export const callableReportLate = onCall(
       authorized = callerSubAdminOf === businessId;
     }
     if (!authorized) throw new HttpsError("permission-denied", "해당 사업장 관리 권한이 필요합니다.");
+
+    // [SEC-06] userId가 해당 businessId 소속 근무자인지 서버 검증
+    // SUPER_ADMIN은 모든 사업장 조회 권한이 있으므로 소속 검증 면제
+    if (callerRole !== "SUPER_ADMIN") {
+      const memberSnap = await db.collection("applications")
+        .where("uid", "==", userId)
+        .where("businessId", "==", businessId)
+        .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
+        .limit(1)
+        .get();
+      if (memberSnap.empty) {
+        throw new HttpsError("invalid-argument", "해당 사업장 소속 활성 근무자가 아닙니다.");
+      }
+    }
 
     const rulesSnap = await db.collection("settings").doc("trust_rules").get();
     const rulesData = rulesSnap.data() ?? {};
