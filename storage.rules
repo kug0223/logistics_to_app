@@ -76,10 +76,8 @@ service firebase.storage {
     //   SUPER_ADMIN 열람 감사 로그는 id_card_copy_logs 컬렉션에 별도 기록됨.
     match /users/{uid}/{allPaths=**} {
       allow read: if request.auth != null && request.auth.uid == uid;
-      allow create, update: if isLoggedIn() && isUnder5MB() && (
-        request.auth.uid == uid ||
-        uid.matches('temp_.*')   // 회원가입 임시 경로
-      );
+      // SEC-71: temp_* 경로 조건 제거 — Dart 코드에서 미사용, 타 사용자 임의 경로 업로드 허용 제거
+      allow create, update: if isLoggedIn() && isUnder5MB() && request.auth.uid == uid;
       allow delete: if isLoggedIn() && request.auth.uid == uid;
     }
 

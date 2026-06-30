@@ -5004,79 +5004,13 @@ export const callableReportLate = onCall(
 // ═══════════════════════════════════════════════════════════
 export const callableConfirmWage = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
-  async (request) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
-    const callerUid = request.auth.uid;
-
-    const {attendanceId, wageDetailMap, yearMonth, effectiveNetWage} =
-      request.data as {
-        attendanceId: string;
-        wageDetailMap: Record<string, unknown>;
-        yearMonth: string;
-        effectiveNetWage: number;
-      };
-
-    if (!attendanceId || !wageDetailMap || !yearMonth) {
-      throw new HttpsError("invalid-argument", "attendanceId, wageDetailMap, yearMonth 필수");
-    }
-    if (typeof effectiveNetWage !== "number" || effectiveNetWage < 0) {
-      throw new HttpsError("invalid-argument", "effectiveNetWage는 0 이상의 숫자여야 합니다.");
-    }
-    const totalAmount = wageDetailMap["totalAmount"];
-    if (typeof totalAmount !== "number" || totalAmount < 0) {
-      throw new HttpsError("invalid-argument", "totalAmount가 유효하지 않습니다.");
-    }
-
-    const attRef = db.collection("attendance").doc(attendanceId);
-
-    await db.runTransaction(async (tx) => {
-      const attSnap = await tx.get(attRef);
-      if (!attSnap.exists) throw new HttpsError("not-found", "출근 기록을 찾을 수 없습니다.");
-      const attData = attSnap.data()!;
-      const businessId = attData.businessId as string;
-
-      // 호출자 권한 검증
-      const callerSnap = await tx.get(db.collection("users").doc(callerUid));
-      const callerData = callerSnap.data() ?? {};
-      const callerRole = (callerData.role as string) ?? "";
-      const callerSubAdminOf = (callerData.subAdminOf as string) ?? "";
-
-      let authorized = callerRole === "SUPER_ADMIN";
-      if (!authorized && callerRole === "BUSINESS_ADMIN") {
-        const bizSnap = await tx.get(db.collection("businesses").doc(businessId));
-        const adminIds = (bizSnap.data()?.adminIds as string[]) ?? [];
-        authorized = adminIds.includes(callerUid);
-      } else if (!authorized && callerRole === "USER" && callerSubAdminOf) {
-        // SEC-26: SubAdmin은 role="USER" + subAdminOf 필드로 구별
-        authorized = callerSubAdminOf === businessId;
-      }
-      if (!authorized) {
-        throw new HttpsError("permission-denied", "해당 사업장 관리 권한이 필요합니다.");
-      }
-
-      // 중복 확정 방지 — pending 상태에서만 허용
-      const currentStatus = (attData.wageStatus as string) ?? "pending";
-      if (currentStatus !== "pending") {
-        throw new HttpsError("failed-precondition", `이미 처리된 급여입니다 (${currentStatus})`);
-      }
-
-      // calculatedAt·calculatedBy 서버 강제 주입 (클라이언트 값 덮어쓰기)
-      const enrichedWageDetail = {
-        ...wageDetailMap,
-        calculatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        calculatedBy: callerUid,
-      };
-
-      tx.update(attRef, {
-        wageStatus: "calculated",
-        finalWage: effectiveNetWage,
-        wageDetail: enrichedWageDetail,
-        yearMonth,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-    });
-
-    return {success: true};
+  async (_request) => {
+    // SEC-70: callableCalculateAndConfirmWage로 대체된 레거시 함수 비활성화
+    // wageDetailMap 클라이언트 신뢰 설계 위험 제거 및 불필요한 attack surface 차단
+    throw new HttpsError(
+      "permission-denied",
+      "이 함수는 더 이상 사용되지 않습니다. callableCalculateAndConfirmWage를 사용하세요."
+    );
   },
 );
 
