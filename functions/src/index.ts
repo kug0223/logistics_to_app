@@ -4538,10 +4538,11 @@ export const callableGetUsersBatch = onCall(
     const refs = uids.map((uid) => db.collection("users").doc(uid));
     const snaps = await db.getAll(...refs);
 
-    // 반환 제외 민감 필드
+    // 반환 제외 민감 필드 (FCM 토큰은 서버 전송 전용 — 클라이언트 노출 금지)
     const SENSITIVE_FIELDS = new Set([
       "ci", "residentNumber", "foreignIdNumber",
       "idCardImageUrl", "signatureBase64", "sealBase64", "bankbookImageUrl",
+      "fcmToken", "fcmTokens",
     ]);
 
     const users: Record<string, Record<string, unknown>> = {};
