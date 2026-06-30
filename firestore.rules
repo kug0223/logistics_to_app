@@ -474,7 +474,7 @@ service cloud.firestore {
       // 노쇼 처리 시 관리자가 API 직접 호출로 finalWage를 임의 값으로 설정하는 것 차단.
       // onAttendanceWageStatusChanged CF 트리거와 함께 이중 방어.
       allow create: if isLoggedIn() &&
-                      !(request.resource.data.get('status', '') == 'noshow' &&
+                      !(request.resource.data.get('status', '') == 'NO_SHOW' &&
                         request.resource.data.get('finalWage', 0) != 0) &&
                       (
                         (request.resource.data.userId == request.auth.uid &&
@@ -492,7 +492,7 @@ service cloud.firestore {
       // [143] transferredBy 필드 변경 시 본인 UID만 허용 — 감사 추적 위변조 방지
       // [NOSHOW-FIX] 노쇼 상태로 변경 시 finalWage 0 강제
       allow update: if isLoggedIn() &&
-                      !(request.resource.data.get('status', '') == 'noshow' &&
+                      !(request.resource.data.get('status', '') == 'NO_SHOW' &&
                         request.resource.data.get('finalWage', 0) != 0) &&
                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['transferredBy']) ||
                        request.resource.data.transferredBy == request.auth.uid) &&
