@@ -226,7 +226,15 @@ service cloud.firestore {
 
       match /contract_templates/{templateId} {
         allow read: if isLoggedIn();
-        allow write: if isAdminOf(businessId) || isSubAdminOf(businessId) || isSuperAdmin();
+        // SEC-78: write 단일 규칙 → create/update/delete 분리
+        // update 시 수정 가능 필드 화이트리스트 — businessId·createdAt 불변 보장
+        // (ContractTemplateModel.copyWith: name·templateType·articles·updatedAt만 편집 허용)
+        allow create: if isAdminOf(businessId) || isSubAdminOf(businessId) || isSuperAdmin();
+        allow update: if (isAdminOf(businessId) || isSubAdminOf(businessId) || isSuperAdmin()) &&
+          (isSuperAdmin() ||
+           request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['name', 'templateType', 'articles', 'updatedAt']));
+        allow delete: if isAdminOf(businessId) || isSubAdminOf(businessId) || isSuperAdmin();
       }
     }
 

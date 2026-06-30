@@ -5039,13 +5039,21 @@ interface SrvInsuranceRates {
   businessIncomeRate: number;
   businessIncomeLocalRate: number;
 }
-// [BUG-FIX] 보험료율 폴백 상수 수정 (2025년 법적 기준으로 정정)
-// Firestore settings/wage_config.insuranceRates 조회 실패 시 사용
-// 국민연금 4.75%→4.5%, 건강보험 3.595%→3.545%, 장기요양 13.14%→12.95%
-const SRV_DEFAULT_RATES: SrvInsuranceRates = {
-  nationalPensionRate: 4.5, healthInsuranceRate: 3.545, ltcInsuranceRate: 12.95,
-  employmentInsuranceRate: 0.9, dailyWageExemption: 150000, dailyWorkerTaxRate: 2.7,
-  localIncomeTaxRate: 10.0, businessIncomeRate: 3.0, businessIncomeLocalRate: 0.3,
+// [특이사항] 연도별 법정 보험료율 — 매년 1월 정부고시 후 Firestore 또는 여기에 업데이트 필요
+// 우선순위: Firestore settings/wage_config.insuranceRates[year] > 연도별 상수 > 최신 연도 폴백
+// srvGetMinimumWage()와 동일한 3단계 우선순위 패턴 적용
+const SRV_INSURANCE_RATES_BY_YEAR: Record<number, SrvInsuranceRates> = {
+  2025: {
+    nationalPensionRate: 4.5, healthInsuranceRate: 3.545, ltcInsuranceRate: 12.95,
+    employmentInsuranceRate: 0.9, dailyWageExemption: 150000, dailyWorkerTaxRate: 2.7,
+    localIncomeTaxRate: 10.0, businessIncomeRate: 3.0, businessIncomeLocalRate: 0.3,
+  },
+  // [특이사항] 2026년 보험료율 미확정 — 정부고시 후 실제 값으로 교체 필요 (현재 2025년 값 임시 사용)
+  2026: {
+    nationalPensionRate: 4.5, healthInsuranceRate: 3.545, ltcInsuranceRate: 12.95,
+    employmentInsuranceRate: 0.9, dailyWageExemption: 150000, dailyWorkerTaxRate: 2.7,
+    localIncomeTaxRate: 10.0, businessIncomeRate: 3.0, businessIncomeLocalRate: 0.3,
+  },
 };
 
 interface SrvWageResult {
@@ -5095,19 +5103,20 @@ function srvGetMinimumWage(year: number, fs: Record<number, number>): number {
 }
 
 function srvGetRates(year: number, fs: Record<number, Partial<SrvInsuranceRates>>): SrvInsuranceRates {
+  const latestYear = Math.max(...Object.keys(SRV_INSURANCE_RATES_BY_YEAR).map(Number));
+  const base = SRV_INSURANCE_RATES_BY_YEAR[year] ?? SRV_INSURANCE_RATES_BY_YEAR[latestYear];
   const raw = fs[year];
-  if (!raw) return SRV_DEFAULT_RATES;
-  const d = SRV_DEFAULT_RATES;
+  if (!raw) return base;
   return {
-    nationalPensionRate: raw.nationalPensionRate ?? d.nationalPensionRate,
-    healthInsuranceRate: raw.healthInsuranceRate ?? d.healthInsuranceRate,
-    ltcInsuranceRate: raw.ltcInsuranceRate ?? d.ltcInsuranceRate,
-    employmentInsuranceRate: raw.employmentInsuranceRate ?? d.employmentInsuranceRate,
-    dailyWageExemption: raw.dailyWageExemption ?? d.dailyWageExemption,
-    dailyWorkerTaxRate: raw.dailyWorkerTaxRate ?? d.dailyWorkerTaxRate,
-    localIncomeTaxRate: raw.localIncomeTaxRate ?? d.localIncomeTaxRate,
-    businessIncomeRate: raw.businessIncomeRate ?? d.businessIncomeRate,
-    businessIncomeLocalRate: raw.businessIncomeLocalRate ?? d.businessIncomeLocalRate,
+    nationalPensionRate: raw.nationalPensionRate ?? base.nationalPensionRate,
+    healthInsuranceRate: raw.healthInsuranceRate ?? base.healthInsuranceRate,
+    ltcInsuranceRate: raw.ltcInsuranceRate ?? base.ltcInsuranceRate,
+    employmentInsuranceRate: raw.employmentInsuranceRate ?? base.employmentInsuranceRate,
+    dailyWageExemption: raw.dailyWageExemption ?? base.dailyWageExemption,
+    dailyWorkerTaxRate: raw.dailyWorkerTaxRate ?? base.dailyWorkerTaxRate,
+    localIncomeTaxRate: raw.localIncomeTaxRate ?? base.localIncomeTaxRate,
+    businessIncomeRate: raw.businessIncomeRate ?? base.businessIncomeRate,
+    businessIncomeLocalRate: raw.businessIncomeLocalRate ?? base.businessIncomeLocalRate,
   };
 }
 
