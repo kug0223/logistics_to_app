@@ -103,6 +103,10 @@ service cloud.firestore {
 
       // 쿼리(LIST): 비로그인 limit=1 허용 (로그인·회원가입 username 조회용)
       // limit=30 제한으로 대량 덤프 방지 / getUsersBatch는 반드시 .limit(chunk.length) 필요
+      // [MED-02 설계 한계] getUsersBatch는 whereIn(FieldPath.documentId, chunk)를 사용하므로
+      //   request.query.filters.businessId가 없어 소속 사업장 검증 불가.
+      //   관리자가 타 사업장 UID를 추측해 30건씩 users 정보를 쿼리할 수 있음.
+      //   근본 해결: getUsersBatch를 CF Callable Function 프록시로 이전 (출시 이후 개선 예정)
       allow list: if (!isLoggedIn() && request.query.limit <= 1) ||
                    (isLoggedIn() && isSuperAdmin()) ||
                    (isLoggedIn() && (isBusinessAdmin() || isSubAdmin()) && request.query.limit <= 30);
@@ -237,8 +241,20 @@ service cloud.firestore {
       // get: 로그인한 모든 사용자 (공고 상세 조회)
       allow get: if isLoggedIn();
       // list: request.query.filters 미지원으로 역할 기반으로 허용
-      // get이 isLoggedIn()으로 공개이므로 동일 수준의 노출
-      allow list: if isLoggedIn();
+      // [MED-01] 관리자는 소속 사업장 검증 추가, USER는 limit<=50 제한
+      //   tos 공고 정보는 임금·인원 등 사업장 민감 정보 포함 → 무제한 덤프 차단
+      allow list: if isLoggedIn() && (
+        isSuperAdmin() ||
+        (isBusinessAdmin() && (
+          isAdminOf(request.query.filters.businessId) ||
+          isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
+        )) ||
+        (isSubAdmin() && (
+          isSubAdminOf(request.query.filters.businessId) ||
+          isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
+        )) ||
+        (isUser() && request.query.limit <= 50)
+      );
 
       // SubAdmin도 공고 생성·삭제 권한 부여 — create에서 누락되어 PERMISSION_DENIED 발생
       allow create: if isLoggedIn() &&
