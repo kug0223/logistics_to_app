@@ -26,21 +26,19 @@ extension BusinessFirestore on FirestoreService {
     }
   }
 
-  /// 여러 사업장의 이름을 한 번에 조회 (whereIn 배치)
+  /// 여러 사업장의 이름을 한 번에 조회 (병렬 get — list 권한 불필요)
   Future<Map<String, String>> getBusinessNames(List<String> businessIds) async {
     if (businessIds.isEmpty) return {};
     try {
       final ids = businessIds.toSet().toList();
+      final docs = await Future.wait(
+        ids.map((id) => _firestore.collection('businesses').doc(id)
+            .get(const GetOptions(source: Source.server))),
+      );
       final Map<String, String> result = {};
-      // whereIn 최대 30개 제한 처리
-      for (int i = 0; i < ids.length; i += 30) {
-        final chunk = ids.sublist(i, i + 30 > ids.length ? ids.length : i + 30);
-        final snapshot = await _firestore
-            .collection('businesses')
-            .where(FieldPath.documentId, whereIn: chunk)
-            .get();
-        for (final doc in snapshot.docs) {
-          result[doc.id] = (doc.data()['name'] as String?) ?? 'Unknown';
+      for (final doc in docs) {
+        if (doc.exists) {
+          result[doc.id] = (doc.data()?['name'] as String?) ?? 'Unknown';
         }
       }
       return result;
