@@ -345,10 +345,12 @@ class AdminStatsService {
       year: year,
       filterBusinessId: filterBusinessId,
       totalWage: totalWage,
-      totalWorkCount: thisYearAtt.length,
+      // [MED-STAT] totalWorkCount: confirmed+transferred만 집계 — totalWage와 동일 기준
+      // 이전: thisYearAtt.length (노쇼·pending 포함 → 과대 계상)
+      totalWorkCount: thisYearAtt.where(isPaid).length,
       totalWorkerCount: workerIds,
       prevYearTotalWage: prevYearWage,
-      prevYearTotalWorkCount: prevYearAtt.length,
+      prevYearTotalWorkCount: prevYearAtt.where(isPaid).length,
       attendanceRate: attRate,
       prevYearAttendanceRate: prevAttRate,
       rehireRate: rehireRate,
@@ -600,9 +602,12 @@ class AdminStatsService {
 
   double _calcAttendanceRate(List<AttendanceModel> list) {
     if (list.isEmpty) return 0;
-    final present =
-        list.where((r) => r.status == AttendanceModel.statusPresent).length;
-    return present / list.length * 100;
+    // [MED-STAT] 출근율 = (정시출근 + 지각) / 전체 — 지각도 "출근"으로 집계
+    // 이전: statusPresent만 분자 → 지각이 많은 사업장에서 출근율 과소 집계
+    final attended = list.where((r) =>
+        r.status == AttendanceModel.statusPresent ||
+        r.status == AttendanceModel.statusLate).length;
+    return attended / list.length * 100;
   }
 
   int _latestActiveMonth(List<MonthlyTrend> trends) {

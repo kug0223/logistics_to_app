@@ -399,6 +399,14 @@ export const createNotification = onCall(
         if (!callerIsAdmin && !recipientIsAdmin) {
           throw new HttpsError("permission-denied", "해당 사업장 관리자와 근무자 간 알림만 허용됩니다.");
         }
+        // [SEC-SENDER-VERIFY] 근무자→관리자 알림: 발신자가 해당 사업장 소속인지 검증
+        // callerIsAdmin=false + recipientIsAdmin=true 케이스 — 발신자가 타 사업장 근무자이면 차단
+        if (!callerIsAdmin && recipientIsAdmin) {
+          const callerBusinessId = callerSnap.data()?.businessId as string | undefined;
+          if (callerBusinessId !== targetBusinessId) {
+            throw new HttpsError("permission-denied", "발신자가 해당 사업장 소속이 아닙니다.");
+          }
+        }
       }
     }
     // ────────────────────────────────────────────────────────────
