@@ -508,7 +508,8 @@ class ContractService {
     if (applicationIds.isEmpty) return {};
     final result = <String, String?>{};
 
-    // Phase 1: applicationId 배치 조회
+    // Phase 1: applicationId 배치 조회 (businessId 서버 필터 포함 — 타사업장 계약서 클라이언트 전달 차단)
+    // 인덱스: applicationId ASC + businessId ASC + createdAt DESC (firestore.indexes.json)
     for (var i = 0; i < applicationIds.length; i += 10) {
       final end = (i + 10).clamp(0, applicationIds.length);
       final chunk = applicationIds.sublist(i, end);
@@ -516,10 +517,10 @@ class ContractService {
         final snap = await _db
             .collection('employment_contracts')
             .where('applicationId', whereIn: chunk)
+            .where('businessId', isEqualTo: businessId)
             .get();
         for (final doc in snap.docs) {
           final data = doc.data();
-          if (data['businessId'] != businessId) continue;
           final appId = data['applicationId'] as String?;
           if (appId != null && !result.containsKey(appId)) {
             result[appId] = data['status'] as String?;

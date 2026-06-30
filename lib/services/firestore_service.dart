@@ -490,44 +490,56 @@ class FirestoreService {
     List<String>? businessIds,
   }) async {
     try {
-      // 사업장 목록이 빈 리스트면 조회 대상 없음
       if (businessIds != null && businessIds.isEmpty) return [];
 
-      // businessIds > 30 이면 청크 분할 (Firestore whereIn 30개 제한)
+      // businessId가 2개 이상이면 whereIn 사용 → status whereIn 이중 불가 → 클라이언트 필터
+      // businessId가 1개이면 isEqualTo → status whereIn 단독 가능
+      // businessIds == null(슈퍼어드민 전체)이면 businessId 필터 없음 → status whereIn 단독 가능
+      final needClientStatusFilter = businessIds != null && businessIds.length > 1;
+
+      List<TOGroupItem> allItems;
+
       if (businessIds != null && businessIds.length > 30) {
-        final allItems = <TOGroupItem>[];
+        // 30개 초과: 청크 분할 — businessId whereIn만, status는 클라이언트에서
+        final collected = <TOGroupItem>[];
         for (int i = 0; i < businessIds.length; i += 30) {
           final chunk = businessIds.skip(i).take(30).toList();
-          Query chunkQuery = _firestore.collection('tos').orderBy('createdAt', descending: true)
-              .where('businessId', whereIn: chunk);
-          if (activeOnly) {
-            chunkQuery = chunkQuery.where('status', whereIn: TOStatus.openStates);
-          } else if (closedOnly) {
-            chunkQuery = chunkQuery.where('status', whereIn: TOStatus.closedStates);
-          }
-          final chunkSnap = await chunkQuery.get(const GetOptions(source: Source.server));
-          allItems.addAll(chunkSnap.docs.map(
+          final chunkSnap = await _firestore.collection('tos')
+              .orderBy('createdAt', descending: true)
+              .where('businessId', whereIn: chunk)
+              .get(const GetOptions(source: Source.server));
+          collected.addAll(chunkSnap.docs.map(
             (d) => TOGroupItem(singleTO: TOModel.fromMap(d.data() as Map<String, dynamic>, d.id))));
         }
-        allItems.sort((a, b) => b.singleTO.createdAt.compareTo(a.singleTO.createdAt));
-        return allItems;
+        collected.sort((a, b) => b.singleTO.createdAt.compareTo(a.singleTO.createdAt));
+        allItems = collected;
+      } else {
+        Query query = _firestore.collection('tos').orderBy('createdAt', descending: true);
+        if (businessIds != null && businessIds.length == 1) {
+          query = query.where('businessId', isEqualTo: businessIds.first);
+        } else if (businessIds != null) {
+          query = query.where('businessId', whereIn: businessIds.toList());
+        }
+        // businessId whereIn이 없는 경우에만 status whereIn 서버 적용 (이중 whereIn 금지)
+        if (!needClientStatusFilter) {
+          if (activeOnly) {
+            query = query.where('status', whereIn: TOStatus.openStates);
+          } else if (closedOnly) {
+            query = query.where('status', whereIn: TOStatus.closedStates);
+          }
+        }
+        final snap = await query.get(const GetOptions(source: Source.server));
+        allItems = snap.docs
+            .map((d) => TOGroupItem(singleTO: TOModel.fromMap(d.data() as Map<String, dynamic>, d.id)))
+            .toList();
       }
 
-      Query query = _firestore.collection('tos').orderBy('createdAt', descending: true);
-      if (businessIds != null && businessIds.length == 1) {
-        query = query.where('businessId', isEqualTo: businessIds.first);
-      } else if (businessIds != null && businessIds.length > 1) {
-        query = query.where('businessId', whereIn: businessIds.toList());
+      // businessId whereIn 사용 시 status 클라이언트 필터 적용
+      if (needClientStatusFilter) {
+        if (activeOnly) return allItems.where((item) => TOStatus.openStates.contains(item.singleTO.status)).toList();
+        if (closedOnly) return allItems.where((item) => TOStatus.closedStates.contains(item.singleTO.status)).toList();
       }
-      if (activeOnly) {
-        query = query.where('status', whereIn: TOStatus.openStates);
-      } else if (closedOnly) {
-        query = query.where('status', whereIn: TOStatus.closedStates);
-      }
-      final snap = await query.get(const GetOptions(source: Source.server));
-      return snap.docs
-          .map((d) => TOGroupItem(singleTO: TOModel.fromMap(d.data() as Map<String, dynamic>, d.id)))
-          .toList();
+      return allItems;
     } catch (e) {
       debugPrint('❌ getTOGroupItemsLight 실패: $e');
       return [];
