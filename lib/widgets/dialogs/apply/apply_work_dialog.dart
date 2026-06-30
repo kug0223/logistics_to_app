@@ -2457,12 +2457,14 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
   /// 지원 취소
   Future<void> _cancelApplication(ApplicationModel application) async {
+    // [LOCK-01] 다이얼로그 await 이전 이중 진입 방지 — 연속 탭 시 두 번째 취소 요청 차단
+    if (_isSubmitting) return;
     // AUTO_CANCELED 상태면 이미 취소된 것
     if (application.status == AppStatus.autoCanceled) {
       ToastHelper.showInfo('이미 자동취소된 지원입니다 (시간 충돌)');
       return;
     }
-    
+
     final confirmed = await DialogHelper.showConfirm(
       context,
       title: '지원 취소',
@@ -2474,11 +2476,14 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
     // ✅ 로딩 키 통일 (applyForWork와 동일한 방식)
     final loadingKey = _makeWorkKey(
-      application.selectedWorkType, 
-      application.startTime, 
+      application.selectedWorkType,
+      application.startTime,
       application.endTime,
     );
-    setState(() => _loadingWorkIds.add(loadingKey));
+    setState(() {
+      _isSubmitting = true; // finally에서 해제
+      _loadingWorkIds.add(loadingKey);
+    });
 
     try {
       await _firestoreService.cancelApplication(application.id, _currentUserId!);
@@ -2496,11 +2501,14 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       if (mounted) {
         // ✅ 로딩 키 통일
         final loadingKey = _makeWorkKey(
-          application.selectedWorkType, 
-          application.startTime, 
+          application.selectedWorkType,
+          application.startTime,
           application.endTime,
         );
-        setState(() => _loadingWorkIds.remove(loadingKey));
+        setState(() {
+          _isSubmitting = false;
+          _loadingWorkIds.remove(loadingKey);
+        });
       }
     }
   }
@@ -2511,6 +2519,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     WorkDetailModel work, {
     DateTime? date,
   }) async {
+    // [LOCK-01] 다이얼로그 await 이전 이중 진입 방지
+    if (_isSubmitting) return;
     final result = await ConfirmCancelDialog.show(
       context: context,
       workDate: date ?? application.workDate,
@@ -2525,8 +2535,11 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     final loadingKey = date != null
         ? '${date.millisecondsSinceEpoch}_${work.id}'
         : work.id;
-    
-    setState(() => _loadingWorkIds.add(loadingKey));
+
+    setState(() {
+      _isSubmitting = true; // finally에서 해제
+      _loadingWorkIds.add(loadingKey);
+    });
 
     try {
       // 패널티 적용 여부
@@ -2561,7 +2574,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       ToastHelper.showError('확정 취소에 실패했습니다');
     } finally {
       if (mounted) {
-        setState(() => _loadingWorkIds.remove(loadingKey));
+        setState(() {
+          _isSubmitting = false;
+          _loadingWorkIds.remove(loadingKey);
+        });
       }
     }
   }
