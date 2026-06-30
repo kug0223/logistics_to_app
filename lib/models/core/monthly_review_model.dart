@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 enum ReviewType {
   ADMIN_TO_USER,    // 관리자 → 지원자
@@ -151,6 +152,16 @@ class MonthlyReviewModel {
           (data['businessRespondedAt'] as Timestamp?)?.toDate().toLocal(),
       createdAt: createdAtTs.toDate().toLocal(),
     );
+  }
+
+  // [SCHEMA-09] 역직렬화 실패 격리 — 손상 문서 1건이 목록 전체 크래시 방지
+  static MonthlyReviewModel? tryFromFirestore(DocumentSnapshot doc) {
+    try {
+      return MonthlyReviewModel.fromFirestore(doc);
+    } catch (e, st) {
+      debugPrint('[MonthlyReviewModel] 역직렬화 실패 id=${doc.id}: $e\n$st');
+      return null;
+    }
   }
 
   Map<String, dynamic> toMap() => {

@@ -63,7 +63,8 @@ extension NotificationFirestore on FirestoreService {
       query = query.orderBy('createdAt', descending: true).limit(limit);
       final snapshot = await query.get();
       return snapshot.docs
-          .map((doc) => NotificationModel.fromFirestore(doc))
+          .map(NotificationModel.tryFromFirestore)
+          .whereType<NotificationModel>()
           .toList();
     } catch (e) {
       debugPrint('❌ 알림 조회 실패: $e');
@@ -177,7 +178,8 @@ extension NotificationFirestore on FirestoreService {
         .limit(31)
         .snapshots()
         .map((snapshot) => snapshot.docs
-            .map((doc) => NotificationModel.fromFirestore(doc))
+            .map(NotificationModel.tryFromFirestore)
+            .whereType<NotificationModel>()
             .toList());
   }
 

@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'wage_detail_model.dart';
 import '../../utils/firestore_helper.dart';
 
@@ -145,6 +146,17 @@ class AttendanceModel {
       throw ArgumentError('AttendanceModel.fromFirestore: 문서 데이터 없음 (id: ${doc.id})');
     }
     return AttendanceModel.fromMap(raw as Map<String, dynamic>, doc.id);
+  }
+
+  // [SCHEMA-09] 역직렬화 실패 격리 — 손상 문서 1건이 목록 전체 크래시 방지
+  // 목록 조회: snap.docs.map(tryFromFirestore).whereType<AttendanceModel>().toList()
+  static AttendanceModel? tryFromFirestore(DocumentSnapshot doc) {
+    try {
+      return AttendanceModel.fromFirestore(doc);
+    } catch (e, st) {
+      debugPrint('[AttendanceModel] 역직렬화 실패 id=${doc.id}: $e\n$st');
+      return null;
+    }
   }
 
   /// Map → AttendanceModel

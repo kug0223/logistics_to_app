@@ -36,7 +36,8 @@ extension ApplicationFirestore on FirestoreService {
       final statusSet = statuses != null ? Set<String>.from(statuses) : null;
       final snap = await query.limit(2000).get(const GetOptions(source: Source.server));
       return snap.docs
-          .map((d) => ApplicationModel.fromFirestore(d))
+          .map(ApplicationModel.tryFromFirestore)
+          .whereType<ApplicationModel>()
           .where((a) => statusSet == null || statusSet.contains(a.status))
           .toList();
     } catch (e) {
@@ -66,7 +67,8 @@ extension ApplicationFirestore on FirestoreService {
       final statusSet = statuses != null ? Set<String>.from(statuses) : null;
       final snap = await query.limit(2000).get(const GetOptions(source: Source.server));
       return snap.docs
-          .map((d) => ApplicationModel.fromFirestore(d))
+          .map(ApplicationModel.tryFromFirestore)
+          .whereType<ApplicationModel>()
           .where((a) => statusSet == null || statusSet.contains(a.status))
           .toList();
     } catch (e) {
@@ -144,7 +146,8 @@ extension ApplicationFirestore on FirestoreService {
           .limit(200)
           .get(const GetOptions(source: Source.server));
       final result = snap.docs
-          .map((d) => ApplicationModel.fromFirestore(d))
+          .map(ApplicationModel.tryFromFirestore)
+          .whereType<ApplicationModel>()
           .toList()
         ..sort((a, b) => b.appliedAt.compareTo(a.appliedAt));
       _myApplicationsCache[uid] = result;
@@ -187,7 +190,8 @@ extension ApplicationFirestore on FirestoreService {
 
       final snap = await query.get();
       final items = snap.docs
-          .map((d) => ApplicationModel.fromFirestore(d))
+          .map(ApplicationModel.tryFromFirestore)
+          .whereType<ApplicationModel>()
           .where((a) => statusSet == null || statusSet.contains(a.status))
           .toList();
       return {
@@ -435,7 +439,8 @@ extension ApplicationFirestore on FirestoreService {
             .where('status', isEqualTo: s)
             .get(const GetOptions(source: Source.server))),
       )).expand((snap) => snap.docs)
-          .map((d) => ApplicationModel.fromFirestore(d))
+          .map(ApplicationModel.tryFromFirestore)
+          .whereType<ApplicationModel>()
           .toList();
 
       if (isContract && workEndDate != null && workDays != null && workDays.isNotEmpty) {
@@ -1428,7 +1433,8 @@ extension ApplicationFirestore on FirestoreService {
 
       return snap.docs
           .where((d) => d.id != excludeId)
-          .map((d) => ApplicationModel.fromFirestore(d))
+          .map(ApplicationModel.tryFromFirestore)
+          .whereType<ApplicationModel>()
           .where((a) => statusFilter.contains(a.status))
           .where((a) => a.isWorkingOnDate(workDate))
           .where((a) => ApplicationModel.hasTimeOverlap(startTime, endTime, a.startTime, a.endTime))
@@ -1454,7 +1460,8 @@ extension ApplicationFirestore on FirestoreService {
           .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
           .get(const GetOptions(source: Source.server));
       final apps = snap.docs
-          .map((d) => ApplicationModel.fromFirestore(d))
+          .map(ApplicationModel.tryFromFirestore)
+          .whereType<ApplicationModel>()
           .where((app) => app.status == AppStatus.pending && !app.isLongTermApplication)
           .toList();
       return apps;
@@ -1521,12 +1528,14 @@ extension ApplicationFirestore on FirestoreService {
       // isLongTermApplication getter로 클라이언트 필터링하여 단기만 남긴다.
       const confirmedStatuses = {AppStatus.confirmed, AppStatus.contractPending};
       final shortTermApps = results[0].docs
-          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .map(ApplicationModel.tryFromFirestore)
+          .whereType<ApplicationModel>()
           .where((app) => confirmedStatuses.contains(app.status) && !app.isLongTermApplication)
           .toList();
 
       final longTermCandidates = results[1].docs
-          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .map(ApplicationModel.tryFromFirestore)
+          .whereType<ApplicationModel>()
           .where((app) => confirmedStatuses.contains(app.status) && app.workDays != null && app.workDays!.isNotEmpty)
           .toList();
 
@@ -1593,7 +1602,8 @@ extension ApplicationFirestore on FirestoreService {
             .where('status', isEqualTo: s)
             .get()),
       )).expand((snap) => snap.docs)
-          .map((d) => ApplicationModel.fromFirestore(d))
+          .map(ApplicationModel.tryFromFirestore)
+          .whereType<ApplicationModel>()
           .toList();
 
       final dateStart = DateTime(workDate.year, workDate.month, workDate.day);

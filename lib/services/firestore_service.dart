@@ -639,7 +639,7 @@ class FirestoreService {
           .where('businessId', isEqualTo: businessId)
           .where('toTitle', isEqualTo: toTitle)
           .get();
-      return snap.docs.map((d) => ApplicationModel.fromFirestore(d)).toList();
+      return snap.docs.map(ApplicationModel.tryFromFirestore).whereType<ApplicationModel>().toList();
     } catch (e) {
       debugPrint('❌ getApplicationsByTO 실패: $e');
       return [];
@@ -1520,7 +1520,7 @@ class FirestoreService {
         .orderBy('resignRequestedAt', descending: true)
         .limit(200)
         .get(const GetOptions(source: Source.server));
-    return snap.docs.map((d) => ApplicationModel.fromFirestore(d)).toList();
+    return snap.docs.map(ApplicationModel.tryFromFirestore).whereType<ApplicationModel>().toList();
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -1554,7 +1554,8 @@ class FirestoreService {
       }
       
       final applications = snapshot.docs
-          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .map(ApplicationModel.tryFromFirestore)
+          .whereType<ApplicationModel>()
           .toList();
       
       final reviewSnapshot = await _firestore
@@ -1566,7 +1567,8 @@ class FirestoreService {
           .get(const GetOptions(source: Source.server));
       
       final reviews = reviewSnapshot.docs
-          .map((doc) => ReviewModel.fromFirestore(doc))
+          .map(ReviewModel.tryFromFirestore)
+          .whereType<ReviewModel>()
           .toList();
       
       double? avgRating;

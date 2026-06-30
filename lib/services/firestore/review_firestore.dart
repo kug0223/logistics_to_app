@@ -31,7 +31,8 @@
           .get();
       
       return snapshot.docs
-          .map((doc) => ReviewModel.fromFirestore(doc))
+          .map(ReviewModel.tryFromFirestore)
+          .whereType<ReviewModel>()
           .toList();
     } catch (e) {
       debugPrint('❌ 사용자 리뷰 조회 실패: $e');

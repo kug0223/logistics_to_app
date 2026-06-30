@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 /// 업무 유형 모델
 class WorkTypeModel {
@@ -63,6 +64,16 @@ class WorkTypeModel {
     final raw = doc.data();
     if (raw == null) throw ArgumentError('WorkTypeModel.fromFirestore: doc.data() is null (id: ${doc.id})');
     return WorkTypeModel.fromMap(raw as Map<String, dynamic>, doc.id);
+  }
+
+  // [SCHEMA-09] 역직렬화 실패 격리 — 손상 문서 1건이 목록 전체 크래시 방지
+  static WorkTypeModel? tryFromFirestore(DocumentSnapshot doc) {
+    try {
+      return WorkTypeModel.fromFirestore(doc);
+    } catch (e, st) {
+      debugPrint('[WorkTypeModel] 역직렬화 실패 id=${doc.id}: $e\n$st');
+      return null;
+    }
   }
 
   /// Map을 WorkTypeModel로 변환

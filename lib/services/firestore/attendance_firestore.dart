@@ -287,7 +287,8 @@ extension AttendanceFirestore on FirestoreService {
           .get(const GetOptions(source: Source.server));
 
       final attendances = snapshot.docs
-          .map((doc) => AttendanceModel.fromFirestore(doc))
+          .map(AttendanceModel.tryFromFirestore)
+          .whereType<AttendanceModel>()
           .toList();
 
       debugPrint('✅ 오늘 출근 현황: ${attendances.length}명');
@@ -329,14 +330,16 @@ extension AttendanceFirestore on FirestoreService {
       ]);
 
       final shortTerm = snapshots[0].docs
-          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .map(ApplicationModel.tryFromFirestore)
+          .whereType<ApplicationModel>()
           .where((app) => confirmedSet.contains(app.status))
           .toList();
 
       debugPrint('   단기 근무자: ${shortTerm.length}명');
 
       final longTerm = snapshots[1].docs
-          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .map(ApplicationModel.tryFromFirestore)
+          .whereType<ApplicationModel>()
           .where((app) => confirmedSet.contains(app.status))
           // isWorkingOnDate: actualResignDate·leaveDates·extraWorkDates·workDays 모두 반영
           .where((app) => app.isWorkingOnDate(todayStart))
@@ -397,7 +400,8 @@ extension AttendanceFirestore on FirestoreService {
           .get(const GetOptions(source: Source.server));
 
       return snapshot.docs
-          .map((doc) => AttendanceModel.fromFirestore(doc))
+          .map(AttendanceModel.tryFromFirestore)
+          .whereType<AttendanceModel>()
           .toList();
     } catch (e) {
       debugPrint('❌ 출근 기록 조회 실패: $e');

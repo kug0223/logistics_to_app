@@ -21,7 +21,8 @@ class ContractTemplateService {
           .get();
       debugPrint('✅ [getTemplates] ${snap.docs.length}개 조회됨');
       return snap.docs
-          .map((d) => ContractTemplateModel.fromFirestore(d))
+          .map(ContractTemplateModel.tryFromFirestore)
+          .whereType<ContractTemplateModel>()
           .toList();
     } catch (e) {
       debugPrint('❌ [getTemplates] businessId=$businessId 조회 실패: $e');

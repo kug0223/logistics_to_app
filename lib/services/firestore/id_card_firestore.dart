@@ -274,7 +274,8 @@ extension IdCardFirestore on FirestoreService {
           .get();
 
       return snapshot.docs
-          .map((doc) => IdCardAccessRequestModel.fromFirestore(doc))
+          .map(IdCardAccessRequestModel.tryFromFirestore)
+          .whereType<IdCardAccessRequestModel>()
           .toList();
     } catch (e) {
       debugPrint('❌ 신분증 요청 조회 실패: $e');
@@ -296,7 +297,8 @@ extension IdCardFirestore on FirestoreService {
       );
       return results
           .expand((snap) => snap.docs)
-          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .map(ApplicationModel.tryFromFirestore)
+          .whereType<ApplicationModel>()
           .toList();
     } catch (e) {
       debugPrint('❌ 계약해지 요청 조회 실패: $e');
@@ -315,7 +317,8 @@ extension IdCardFirestore on FirestoreService {
           .get();
       
       return snapshot.docs
-          .map((doc) => IdCardAccessRequestModel.fromFirestore(doc))
+          .map(IdCardAccessRequestModel.tryFromFirestore)
+          .whereType<IdCardAccessRequestModel>()
           .toList();
     } catch (e) {
       debugPrint('❌ 내 요청 조회 실패: $e');

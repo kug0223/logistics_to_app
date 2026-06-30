@@ -204,7 +204,8 @@ class ScheduleConflictService {
           .get();
 
       final allConfirmed = snapshot.docs
-          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .map(ApplicationModel.tryFromFirestore)
+          .whereType<ApplicationModel>()
           .where((app) => AppStatus.confirmedStatuses.contains(app.status))
           .toList();
 

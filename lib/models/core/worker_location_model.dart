@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 /// 근로자 실시간 위치 모델
 /// Firestore 컬렉션: worker_locations/{applicationId}
@@ -48,6 +49,16 @@ class WorkerLocationModel {
     final raw = doc.data();
     if (raw == null) throw ArgumentError('WorkerLocationModel.fromFirestore: doc.data() is null (id: ${doc.id})');
     return WorkerLocationModel.fromMap(raw as Map<String, dynamic>, doc.id);
+  }
+
+  // [SCHEMA-09] 역직렬화 실패 격리 — 손상 문서 1건이 목록 전체 크래시 방지
+  static WorkerLocationModel? tryFromFirestore(DocumentSnapshot doc) {
+    try {
+      return WorkerLocationModel.fromFirestore(doc);
+    } catch (e, st) {
+      debugPrint('[WorkerLocationModel] 역직렬화 실패 id=${doc.id}: $e\n$st');
+      return null;
+    }
   }
 
   factory WorkerLocationModel.fromMap(Map<String, dynamic> map, String id) {

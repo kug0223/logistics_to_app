@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'contract_template_model.dart';
 import 'insurance_rate_model.dart';
 import '../../utils/firestore_helper.dart';
@@ -433,6 +434,16 @@ class EmploymentContractModel {
       throw ArgumentError('EmploymentContractModel.fromFirestore: 문서 데이터 없음 (id: ${doc.id})');
     }
     return EmploymentContractModel.fromMap(raw as Map<String, dynamic>, doc.id);
+  }
+
+  // [SCHEMA-09] 역직렬화 실패 격리
+  static EmploymentContractModel? tryFromFirestore(DocumentSnapshot doc) {
+    try {
+      return EmploymentContractModel.fromFirestore(doc);
+    } catch (e, st) {
+      debugPrint('[EmploymentContractModel] 역직렬화 실패 id=${doc.id}: $e\n$st');
+      return null;
+    }
   }
 
   factory EmploymentContractModel.fromMap(Map<String, dynamic> d, String id) {

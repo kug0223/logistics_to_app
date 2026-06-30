@@ -5,6 +5,7 @@
 // 관리자 승인 → 해당 출근기록 wageStatus = 'transferred'로 일괄 처리
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 class InterimSettlementRequestModel {
   // ── 상태 상수 ────────────────────────────────────────────────
@@ -71,6 +72,16 @@ class InterimSettlementRequestModel {
       throw ArgumentError('InterimSettlementRequestModel.fromFirestore: 문서 데이터 없음 (id: ${doc.id})');
     }
     return InterimSettlementRequestModel.fromMap(raw as Map<String, dynamic>, doc.id);
+  }
+
+  // [SCHEMA-09] 역직렬화 실패 격리 — 손상 문서 1건이 목록 전체 크래시 방지
+  static InterimSettlementRequestModel? tryFromFirestore(DocumentSnapshot doc) {
+    try {
+      return InterimSettlementRequestModel.fromFirestore(doc);
+    } catch (e, st) {
+      debugPrint('[InterimSettlementRequestModel] 역직렬화 실패 id=${doc.id}: $e\n$st');
+      return null;
+    }
   }
 
   factory InterimSettlementRequestModel.fromMap(Map<String, dynamic> d, String id) {

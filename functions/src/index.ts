@@ -2390,8 +2390,12 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
           fcmBody = `내일 ${jobs.length}건의 근무가 예정되어 있습니다`;
         }
 
-        // 앱 내 알림 저장
-        await db.collection("users").doc(userId).collection("notifications").add({
+        // [STRUCT-02] Firestore 먼저 (알림 저장 + reminderSentDate 배치 통합) → FCM fire-and-forget
+        // 수정 전: FCM await 성공 → Firestore 배치 실패 시 재실행에서 중복 알림 발송
+        // 수정 후: Firestore 커밋 성공 후 FCM 발송 → 실패해도 앱 내 알림은 보존, 재실행 시 중복 없음
+        const reminderBatch = db.batch();
+        const notifRef = db.collection("users").doc(userId).collection("notifications").doc();
+        reminderBatch.set(notifRef, {
           userId,
           type: "workReminder",
           title: "내일 근무 알림",
@@ -2400,51 +2404,50 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
           isRead: false,
           createdAt: now,
         });
+        for (const appDoc of jobs) {
+          reminderBatch.update(appDoc.ref, {reminderSentDate: todayStr});
+        }
+        await reminderBatch.commit(); // Firestore 원자적 기록 완료 → 이후 재실행 시 reminderSentDate 필터로 중복 방지
 
-        // FCM 푸시 — workReminder 수신 설정 확인 (onNotificationCreated가 workReminder 스킵하므로 여기서 직접 처리)
+        // FCM 푸시 — fire-and-forget (실패해도 Firestore에 이미 기록됨)
+        // workReminder 수신 설정 확인 (onNotificationCreated가 workReminder 스킵하므로 여기서 직접 처리)
         const notifPrefs = userData?.notifPrefs as Record<string, boolean> | undefined;
-        if (notifPrefs?.["workReminder"] === false) {
-          console.log(`    ⚠️ 근무 리마인더 FCM 스킵 (수신 차단): ${userId}`);
-        } else {
+        if (notifPrefs?.["workReminder"] !== false) {
           // [G-001] fcmTokens 배열 우선 사용, 없으면 레거시 fcmToken 단일 필드 폴백
           const tokens: string[] =
             (userData?.fcmTokens as string[] | undefined)?.filter(Boolean) ??
             (userData?.fcmToken ? [userData.fcmToken as string] : []);
           if (tokens.length > 0) {
             // sendEachForMulticast: 단일 HTTP 요청으로 멀티 디바이스 발송
-            const multicastResp = await admin.messaging().sendEachForMulticast({
+            admin.messaging().sendEachForMulticast({
               tokens,
               notification: {title: "내일 근무 알림 📅", body: fcmBody},
               // [FCM-05 수정] screen 필드 추가 — 탭 시 _navigateByPayload가 mySchedule로 이동
-            // 기존엔 screen 없어 default → 알림 목록으로만 이동했음
-            data: {type: "workReminder", applicationId: jobs[0].id, screen: "mySchedule",
-              businessId: jobs[0].data().businessId ?? ""},
+              // 기존엔 screen 없어 default → 알림 목록으로만 이동했음
+              data: {type: "workReminder", applicationId: jobs[0].id, screen: "mySchedule",
+                businessId: jobs[0].data().businessId ?? ""},
               android: {priority: "high", notification: {channelId: "alfit_notifications", sound: "default"}},
               apns: {payload: {aps: {sound: "default", badge: 1}}},
-            });
-            const expiredReminderTokens = tokens.filter((_, i) => {
-              const errCode = multicastResp.responses[i].error?.code ?? "";
-              return (
-                errCode === "messaging/invalid-registration-token" ||
-                errCode === "messaging/registration-token-not-registered"
-              );
-            });
-            if (expiredReminderTokens.length > 0) {
-              await db.collection("users").doc(userId).update({
-                fcmTokens: admin.firestore.FieldValue.arrayRemove(...expiredReminderTokens),
+            }).then((multicastResp) => {
+              const expiredReminderTokens = tokens.filter((_, i) => {
+                const errCode = multicastResp.responses[i].error?.code ?? "";
+                return (
+                  errCode === "messaging/invalid-registration-token" ||
+                  errCode === "messaging/registration-token-not-registered"
+                );
               });
-            }
+              if (expiredReminderTokens.length > 0) {
+                db.collection("users").doc(userId).update({
+                  fcmTokens: admin.firestore.FieldValue.arrayRemove(...expiredReminderTokens),
+                }).catch((e) => console.error(`[리마인더] FCM 만료 토큰 정리 실패 userId=${userId}:`, e));
+              }
+            }).catch((e) => console.error(`    ❌ [리마인더] FCM 발송 실패 userId=${userId}:`, e));
           } else {
             console.log(`    ⚠️ FCM 토큰 없음 (리마인더 스킵): ${userId}`);
           }
+        } else {
+          console.log(`    ⚠️ 근무 리마인더 FCM 스킵 (수신 차단): ${userId}`);
         }
-
-        // 발송 완료 → applications에 날짜 기록 (재시도 시 중복 방지)
-        const reminderBatch = db.batch();
-        for (const appDoc of jobs) {
-          reminderBatch.update(appDoc.ref, {reminderSentDate: todayStr});
-        }
-        await reminderBatch.commit();
 
         sentCount++;
       } catch (err) {
@@ -2973,11 +2976,9 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       // processContractRenewalChecks도 workEndDate 기준이므로 다음 D-15/D-0에 이전 계약이 다시
       // 걸리지 않음 (renewalDecision="EXTEND" 필드로 이미 처리 완료 표시됨).
       // TODO: RENEWED 상태 추가 후 이전 application status 전환 필요 (Flutter+CF 동시 배포 필요)
-      renewBatch.update(doc.ref, {renewalDecision: "EXTEND", renewedToApplicationId: newAppRef.id});
-      await renewBatch.commit();
-
-      // 근무자에게 연장 알림
-      await db.collection("users").doc(app.uid as string).collection("notifications").add({
+      // [STRUCT-08] 알림을 배치에 포함 — commit 후 별도 .add() 발송 시 중간 실패로 알림 누락 방지
+      const renewNotifRef = db.collection("users").doc(app.uid as string).collection("notifications").doc();
+      renewBatch.set(renewNotifRef, {
         userId: app.uid,
         type: "contractRenewed",
         title: "계약 자동 연장",
@@ -2992,6 +2993,8 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         isRead: false,
         createdAt: now,
       });
+      renewBatch.update(doc.ref, {renewalDecision: "EXTEND", renewedToApplicationId: newAppRef.id});
+      await renewBatch.commit(); // 새 application + 알림 + 기존 상태 변경 원자적 처리
 
       d0Count++;
       } catch (err) {
@@ -3536,21 +3539,21 @@ export const onBusinessDeleted = onDocumentDeleted(
     const businessId = event.params.businessId;
     console.log(`사업장 삭제 cascade 시작: ${businessId}`);
 
+    // [STRUCT-07] limit 없는 get()은 수만 건 문서 시 CF 메모리 초과 위험 — 500건 단위 페이지네이션으로 안전 삭제
     async function deleteSubcollection(collPath: string) {
-      const snap = await db.collection(collPath).get();
-      const batches: FirebaseFirestore.WriteBatch[] = [];
-      let batch = db.batch();
-      let count = 0;
-      for (const doc of snap.docs) {
-        batch.delete(doc.ref);
-        count++;
-        if (count % 500 === 0) {
-          batches.push(batch);
-          batch = db.batch();
-        }
+      const PAGE = 500;
+      let last: FirebaseFirestore.DocumentSnapshot | undefined;
+      while (true) {
+        let q: FirebaseFirestore.Query = db.collection(collPath).limit(PAGE);
+        if (last) q = q.startAfter(last);
+        const snap = await q.get();
+        if (snap.empty) break;
+        const batch = db.batch();
+        snap.docs.forEach((doc) => batch.delete(doc.ref));
+        await batch.commit();
+        if (snap.docs.length < PAGE) break;
+        last = snap.docs[snap.docs.length - 1];
       }
-      if (count % 500 !== 0) batches.push(batch);
-      await Promise.all(batches.map((b) => b.commit()));
     }
 
     // 서브컬렉션 삭제
@@ -3601,6 +3604,7 @@ export const onBusinessDeleted = onDocumentDeleted(
     }
 
     // 해당 사업장의 TO 목록
+    // [STRUCT-07] TO 수가 매우 많은 사업장에서는 메모리 초과 가능 — 현재 retry:true로 실패 시 재처리되나, 대규모 사업장은 페이지네이션 필요 (3단계 개선)
     const tosSnap = await db
       .collection("tos")
       .where("businessId", "==", businessId)

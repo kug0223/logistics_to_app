@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 /// 하위 관리자 권한 항목
 class MemberPermissions {
@@ -104,6 +105,16 @@ class BusinessMemberModel {
       addedBy: d['addedBy'] ?? '',
       invitationId: d['invitationId'],
     );
+  }
+
+  // [SCHEMA-09] 역직렬화 실패 격리 — 손상 문서 1건이 목록 전체 크래시 방지
+  static BusinessMemberModel? tryFromFirestore(DocumentSnapshot doc) {
+    try {
+      return BusinessMemberModel.fromFirestore(doc);
+    } catch (e, st) {
+      debugPrint('[BusinessMemberModel] 역직렬화 실패 id=${doc.id}: $e\n$st');
+      return null;
+    }
   }
 
   Map<String, dynamic> toMap() {

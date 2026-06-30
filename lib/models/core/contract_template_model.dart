@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 // ─── 계약서 유형 상수 ─────────────────────────────────────────────
 abstract class ContractTemplateType {
@@ -415,6 +416,16 @@ class ContractTemplateModel {
           : (throw ArgumentError('ContractTemplateModel: createdAt 필드 누락 (id: ${doc.id})')),
       updatedAt: (d['updatedAt'] as Timestamp?)?.toDate().toLocal(),
     );
+  }
+
+  // [SCHEMA-09] 역직렬화 실패 격리 — 손상 문서 1건이 목록 전체 크래시 방지
+  static ContractTemplateModel? tryFromFirestore(DocumentSnapshot doc) {
+    try {
+      return ContractTemplateModel.fromFirestore(doc);
+    } catch (e, st) {
+      debugPrint('[ContractTemplateModel] 역직렬화 실패 id=${doc.id}: $e\n$st');
+      return null;
+    }
   }
 
   Map<String, dynamic> toMap() => {

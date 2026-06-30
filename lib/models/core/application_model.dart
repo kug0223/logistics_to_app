@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import '../../utils/format_helper.dart';
 
 /// 지원서 모델 - 업무유형 선택 및 변경 이력 지원
@@ -297,7 +298,17 @@ class ApplicationModel {
     }
     return ApplicationModel.fromMap(raw as Map<String, dynamic>, doc.id);
   }
-  
+
+  // [SCHEMA-09] 역직렬화 실패 격리 — 손상 문서 1건이 목록 전체 크래시 방지
+  static ApplicationModel? tryFromFirestore(DocumentSnapshot doc) {
+    try {
+      return ApplicationModel.fromFirestore(doc);
+    } catch (e, st) {
+      debugPrint('[ApplicationModel] 역직렬화 실패 id=${doc.id}: $e\n$st');
+      return null;
+    }
+  }
+
   /// ApplicationModel을 Firestore 문서로 변환
   Map<String, dynamic> toMap() {
     return {

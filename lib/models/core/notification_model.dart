@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 import 'application_model.dart';
 
@@ -114,6 +115,16 @@ class NotificationModel {
     final raw = doc.data();
     if (raw == null) throw ArgumentError('Document ${doc.id} has no data');
     return NotificationModel.fromMap(raw as Map<String, dynamic>, doc.id);
+  }
+
+  // [SCHEMA-09] 역직렬화 실패 격리 — 손상 문서 1건이 목록 전체 크래시 방지
+  static NotificationModel? tryFromFirestore(DocumentSnapshot doc) {
+    try {
+      return NotificationModel.fromFirestore(doc);
+    } catch (e, st) {
+      debugPrint('[NotificationModel] 역직렬화 실패 id=${doc.id}: $e\n$st');
+      return null;
+    }
   }
 
   /// Firestore에 저장

@@ -101,7 +101,8 @@ extension BusinessFirestore on FirestoreService {
       QuerySnapshot snapshot = await query.get();
       
       return snapshot.docs
-          .map((doc) => WorkTypeModel.fromFirestore(doc))
+          .map(WorkTypeModel.tryFromFirestore)
+          .whereType<WorkTypeModel>()
           .toList();
     } catch (e) {
       debugPrint('❌ 업무 유형 목록 조회 실패: $e');

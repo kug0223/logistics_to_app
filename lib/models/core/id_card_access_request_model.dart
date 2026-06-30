@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 /// 신분증 열람 요청 사유
 enum IdCardAccessReason {
@@ -82,6 +83,16 @@ class IdCardAccessRequestModel {
       throw ArgumentError('IdCardAccessRequestModel.fromFirestore: 문서 데이터 없음 (id: ${doc.id})');
     }
     return IdCardAccessRequestModel.fromMap(raw as Map<String, dynamic>, doc.id);
+  }
+
+  // [SCHEMA-09] 역직렬화 실패 격리 — 손상 문서 1건이 목록 전체 크래시 방지
+  static IdCardAccessRequestModel? tryFromFirestore(DocumentSnapshot doc) {
+    try {
+      return IdCardAccessRequestModel.fromFirestore(doc);
+    } catch (e, st) {
+      debugPrint('[IdCardAccessRequestModel] 역직렬화 실패 id=${doc.id}: $e\n$st');
+      return null;
+    }
   }
 
   /// Firestore에 저장

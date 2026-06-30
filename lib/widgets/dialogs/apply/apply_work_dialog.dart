@@ -441,7 +441,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           .get();
       
       final allConfirmed = snapshot.docs
-          .map((doc) => ApplicationModel.fromFirestore(doc))
+          .map(ApplicationModel.tryFromFirestore)
+          .whereType<ApplicationModel>()
           .toList();
       
       debugPrint('📅 [장기충돌] 전체 CONFIRMED: ${allConfirmed.length}개');

@@ -76,7 +76,8 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
         AttendanceModel.wageTransferred,
       };
       final records = snap.docs
-          .map((d) => AttendanceModel.fromFirestore(d))
+          .map(AttendanceModel.tryFromFirestore)
+          .whereType<AttendanceModel>()
           .where((r) => allowedStatuses.contains(r.wageStatus))
           .toList();
 

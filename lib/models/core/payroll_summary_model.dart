@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 class PayrollWorkerSummary {
   final String workerId;
@@ -86,6 +87,16 @@ class PayrollSummaryModel {
       workers: workers,
       updatedAt: updatedAt,
     );
+  }
+
+  // [SCHEMA-09] 역직렬화 실패 격리 — workers 맵 손상 시 급여 조회 화면 전체 크래시 방지
+  static PayrollSummaryModel? tryFromFirestore(DocumentSnapshot doc) {
+    try {
+      return PayrollSummaryModel.fromFirestore(doc);
+    } catch (e, st) {
+      debugPrint('[PayrollSummaryModel] 역직렬화 실패 id=${doc.id}: $e\n$st');
+      return null;
+    }
   }
 
   /// 빈 요약 (해당 월 데이터 없음)
