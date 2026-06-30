@@ -401,9 +401,13 @@ export const createNotification = onCall(
         }
         // [SEC-SENDER-VERIFY] 근무자→관리자 알림: 발신자가 해당 사업장 소속인지 검증
         // callerIsAdmin=false + recipientIsAdmin=true 케이스 — 발신자가 타 사업장 근무자이면 차단
+        // 주의: 초대 수락(acceptInvitation) 흐름에서 users.businessId가 아직 미설정일 수 있음
+        //   → members 서브컬렉션 존재 여부를 병행 확인 (batch.commit 직후 members에 이미 추가됨)
         if (!callerIsAdmin && recipientIsAdmin) {
           const callerBusinessId = callerSnap.data()?.businessId as string | undefined;
-          if (callerBusinessId !== targetBusinessId) {
+          const memberSnap = await db.collection("businesses").doc(targetBusinessId)
+              .collection("members").doc(callerUid).get();
+          if (callerBusinessId !== targetBusinessId && !memberSnap.exists) {
             throw new HttpsError("permission-denied", "발신자가 해당 사업장 소속이 아닙니다.");
           }
         }
