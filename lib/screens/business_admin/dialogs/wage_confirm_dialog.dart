@@ -7,6 +7,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
 
 // Models
@@ -534,30 +535,15 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             payScheduleDay:  payScheduleDay  ?? wage.payScheduleDay,
           );
 
-          // 동시 확정 방지 — 현재 wageStatus가 pending인지 트랜잭션으로 검증
-          // 3가지 상태를 모두 차단하는 이유:
-          //   wageCalculated: 이미 1차 확정된 케이스 (중복 확정 방지)
-          //   wageConfirmed: 이미 마감 처리된 케이스
-          //   wageTransferred: 이미 이체 완료된 케이스
-          // pending 외 어떤 상태에서든 재확정하면 finalWage·wageDetail이 덮어씌워지므로 전부 차단.
-          final attRef = FirebaseFirestore.instance
-              .collection('attendance')
-              .doc(attendance.id);
-          await FirebaseFirestore.instance.runTransaction((tx) async {
-            final snap = await tx.get(attRef);
-            final currentStatus = snap.data()?['wageStatus'] as String?;
-            if (currentStatus == AttendanceModel.wageCalculated ||
-                currentStatus == AttendanceModel.wageConfirmed ||
-                currentStatus == AttendanceModel.wageTransferred) {
-              throw Exception('이미 처리된 급여입니다 ($currentStatus)');
-            }
-            tx.update(attRef, {
-              'wageStatus': AttendanceModel.wageCalculated,
-              'finalWage': calculatedWage.effectiveNetWage,
-              'wageDetail': calculatedWage.toMap(),
-              'yearMonth': yearMonth,
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
+          // [Phase 1] 급여 확정 — CF callableConfirmWage 경유
+          // 권한·상태 검증 + calculatedAt/By 서버 주입 + 원자적 저장을 CF에서 처리
+          await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableConfirmWage')
+              .call({
+            'attendanceId': attendance.id,
+            'wageDetailMap': calculatedWage.toMap(),
+            'yearMonth': yearMonth,
+            'effectiveNetWage': calculatedWage.effectiveNetWage,
           });
 
           // 8일 소급 적용된 근로자에게 알림 발송
@@ -954,24 +940,14 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         payScheduleDay:  payScheduleDay  ?? finalWage.payScheduleDay,
       );
 
-      final attRef = FirebaseFirestore.instance
-          .collection('attendance')
-          .doc(attendance.id);
-      await FirebaseFirestore.instance.runTransaction((tx) async {
-        final snap = await tx.get(attRef);
-        final currentStatus = snap.data()?['wageStatus'] as String?;
-        if (currentStatus == AttendanceModel.wageCalculated ||
-            currentStatus == AttendanceModel.wageConfirmed ||
-            currentStatus == AttendanceModel.wageTransferred) {
-          throw Exception('이미 처리된 급여입니다 ($currentStatus)');
-        }
-        tx.update(attRef, {
-          'wageStatus': 'calculated',
-          'finalWage': calculatedWage.effectiveNetWage,
-          'wageDetail': calculatedWage.toMap(),
-          'yearMonth': yearMonth,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
+      // [Phase 1] 급여 확정 — CF callableConfirmWage 경유
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableConfirmWage')
+          .call({
+        'attendanceId': attendance.id,
+        'wageDetailMap': calculatedWage.toMap(),
+        'yearMonth': yearMonth,
+        'effectiveNetWage': calculatedWage.effectiveNetWage,
       });
 
       if (calculatedWage.retroactiveDeduction > 0) {
