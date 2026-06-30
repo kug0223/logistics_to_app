@@ -4823,6 +4823,15 @@ export const callableApplyNoShowPenalty = onCall(
       throw new HttpsError("permission-denied", "본인 지원만 처리할 수 있습니다.");
     }
 
+    // SEC-36: 확정된 지원서에만 노쇼 패널티 적용 — 취소된 지원서 반복 호출 차단
+    const appStatus = appData.status as string;
+    if (!["CONFIRMED", "CONTRACT_PENDING"].includes(appStatus)) {
+      throw new HttpsError(
+        "failed-precondition",
+        `노쇼 패널티는 확정된 지원에만 적용 가능합니다 (현재: ${appStatus})`
+      );
+    }
+
     const userRef = db.collection("users").doc(userId);
 
     await db.runTransaction(async (tx) => {
@@ -5380,6 +5389,16 @@ export const callableCalculateAndConfirmWage = onCall(
     if (!_timeRegex.test(d.scheduledStart) || !_timeRegex.test(d.scheduledEnd) ||
         !_timeRegex.test(d.actualStart) || !_timeRegex.test(d.actualEnd)) {
       throw new HttpsError("invalid-argument", "시간은 HH:MM 형식(24시간)이어야 합니다.");
+    }
+    // SEC-39: 음수 값 차단 — additionalAmount 음수 시 totalAmount 음수 저장 가능
+    if (typeof d.additionalAmount === "number" && d.additionalAmount < 0) {
+      throw new HttpsError("invalid-argument", "additionalAmount는 0 이상이어야 합니다.");
+    }
+    if (typeof d.breakMinutes === "number" && d.breakMinutes < 0) {
+      throw new HttpsError("invalid-argument", "breakMinutes는 0 이상이어야 합니다.");
+    }
+    if (typeof d.scheduledBreakMinutes === "number" && d.scheduledBreakMinutes < 0) {
+      throw new HttpsError("invalid-argument", "scheduledBreakMinutes는 0 이상이어야 합니다.");
     }
 
     // 1. attendance 조회 (businessId, userId 확보)

@@ -1094,10 +1094,14 @@ service cloud.firestore {
       // [HIGH-FIX] SubAdmin 누락: work_applicants_dialog에서 _batchApprove 실행 시
       //            findOrCreateContract() → employment_contracts CREATE → PERMISSION_DENIED
       //            → SubAdmin의 지원자 일괄 승인 기능 전체 불가 → isSubAdminOf 추가
+      // SEC-38: workerId 위조 차단 — applicationId의 실제 지원자(uid)와 workerId 일치 검증
       allow create: if isLoggedIn() && (
-                      isAdminOf(request.resource.data.businessId) ||
-                      isSubAdminOf(request.resource.data.businessId) ||
-                      isSuperAdmin()
+                      isSuperAdmin() ||
+                      ((isAdminOf(request.resource.data.businessId) ||
+                        isSubAdminOf(request.resource.data.businessId)) &&
+                       'applicationId' in request.resource.data &&
+                       get(/databases/$(database)/documents/applications/$(request.resource.data.applicationId))
+                         .data.get('uid', '_NONE_') == request.resource.data.workerId)
                     );
 
       // 슈퍼어드민: 계약 상태에 관계없이 수정 가능 (오기재 정정 등 운영 목적)
@@ -1297,8 +1301,11 @@ service cloud.firestore {
       // 읽기: 슈퍼어드민만 (원본 복구·블랙리스트 관리용)
       allow read: if isSuperAdmin();
 
-      // 쓰기(추가): 본인 uid와 일치하는 경우만 생성 (타인 탈퇴 위조 방지)
-      allow create: if isLoggedIn() && request.resource.data.uid == request.auth.uid;
+      // 쓰기(추가): 본인 uid와 일치하고 ciHash 또는 phoneHash가 반드시 존재해야 함
+      // SEC-40: ciHash/phoneHash 없는 쓰레기 문서 생성 차단 — 재가입 차단 우회 방지
+      allow create: if isLoggedIn() &&
+                      request.resource.data.uid == request.auth.uid &&
+                      ('ciHash' in request.resource.data || 'phoneHash' in request.resource.data);
 
       // 수정·삭제: 슈퍼어드민만
       allow update, delete: if isSuperAdmin();
