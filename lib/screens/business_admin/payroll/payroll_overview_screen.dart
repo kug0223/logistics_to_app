@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
 
 import '../../../models/core/attendance_model.dart';
@@ -121,21 +122,22 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
           r.wageStatus == AttendanceModel.wagePending ||
           r.wageStatus == AttendanceModel.wageCalculated).toList();
 
-      // userId 목록 수집 → 이름 일괄 조회 (30개씩 배치)
+      // userId 목록 수집 → 이름 일괄 조회 (CF callableGetUsersBatch 경유 — 서버 소속 검증)
       final userIds = confirmed.map((r) => r.userId).toSet().toList();
       final nameMap = <String, String>{};
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetUsersBatch');
       for (var i = 0; i < userIds.length; i += 30) {
         final end = (i + 30) < userIds.length ? i + 30 : userIds.length;
         final chunk = userIds.sublist(i, end);
         try {
-          // limit(chunk.length) 필수 — 보안 규칙 request.query.limit <= 30 충족
-          final userSnap = await FirebaseFirestore.instance
-              .collection('users')
-              .where(FieldPath.documentId, whereIn: chunk)
-              .limit(chunk.length)
-              .get();
-          for (final d in userSnap.docs) {
-            nameMap[d.id] = (d.data()['name'] as String?) ?? '';
+          final response = await callable.call<Map<String, dynamic>>({
+            'uids': chunk,
+            'businessId': _businessId ?? '',
+          });
+          final usersRaw = (response.data['users'] as Map?)?.cast<String, dynamic>() ?? {};
+          for (final entry in usersRaw.entries) {
+            nameMap[entry.key] = (entry.value as Map)['name'] as String? ?? '';
           }
         } catch (_) {}
       }

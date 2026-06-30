@@ -1,6 +1,7 @@
 // lib/screens/business_admin/admin_review_list_screen.dart
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../utils/toast_helper.dart';
@@ -228,28 +229,27 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
       final allNonPublished = results[3] as List<ReviewRequestModel>;
       _requestDeadlines = {for (final r in allNonPublished) r.id: r.deadline};
 
-      // workerName 누락 항목 보완 조회 (CF가 applicantName/user 조회 실패한 경우)
+      // workerName 누락 항목 보완 조회 (CF callableGetUsersBatch 경유 — 서버 소속 검증)
       final missingNameIds = _rawPending
           .where((r) => r.workerName.isEmpty && r.workerId.isNotEmpty)
           .map((r) => r.workerId)
           .toSet();
-      if (missingNameIds.isNotEmpty) {
-        // whereIn 30개 제한으로 take(30) 적용; 초과 uid는 이름 미조회 → '근무자'로 표시됨
+      if (missingNameIds.isNotEmpty && _cachedBusinessId != null) {
         final ids = missingNameIds.take(30).toList();
         final resolvedMap = <String, String>{};
         try {
-          final snap = await FirebaseFirestore.instance
-              .collection('users')
-              .where(FieldPath.documentId, whereIn: ids)
-              .limit(ids.length) // 보안 규칙 request.query.limit <= 30 충족
-              .get();
-          for (final doc in snap.docs) {
-            final name = doc.data()['name'] as String? ?? '';
-            resolvedMap[doc.id] = name.isNotEmpty ? name : '근무자';
+          final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableGetUsersBatch');
+          final response = await callable.call<Map<String, dynamic>>({
+            'uids': ids,
+            'businessId': _cachedBusinessId,
+          });
+          final usersRaw = (response.data['users'] as Map?)?.cast<String, dynamic>() ?? {};
+          for (final entry in usersRaw.entries) {
+            final name = (entry.value as Map)['name'] as String? ?? '';
+            resolvedMap[entry.key] = name.isNotEmpty ? name : '근무자';
           }
-        // 이름 일괄 조회 실패 시 무시 — 아래 putIfAbsent로 '근무자' 폴백 처리됨
         } catch (_) {}
-        // 조회에 포함됐으나 문서가 없는 uid는 폴백 처리
         for (final uid in ids) {
           resolvedMap.putIfAbsent(uid, () => '근무자');
         }
