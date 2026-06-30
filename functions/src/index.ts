@@ -371,7 +371,13 @@ export const createNotification = onCall(
       const callerSnap = await db.collection("users").doc(callerUid).get();
       const callerRole = callerSnap.data()?.role as string | undefined;
 
-      if (callerRole !== "SUPER_ADMIN") {
+      // SEC-56: SUPER_ADMIN도 수신자 존재 확인 — 존재하지 않는 userId로 알림 문서 생성 차단
+      if (callerRole === "SUPER_ADMIN") {
+        const recipientSnap = await db.collection("users").doc(userId).get();
+        if (!recipientSnap.exists) {
+          throw new HttpsError("not-found", "수신자를 찾을 수 없습니다.");
+        }
+      } else {
         const targetBusinessId = filteredData.businessId as string | undefined;
         if (!targetBusinessId) {
           throw new HttpsError("permission-denied", "타인에게 알림 발송 시 businessId가 필요합니다.");

@@ -759,6 +759,8 @@ service cloud.firestore {
       // 수정: 워커는 본인 요청 취소(CANCELED)만, 관리자/하위관리자는 승인/거절 처리
       // [SEC-12] 워커 취소 시 기존 상태가 PENDING이어야만 허용
       //   — 이미 APPROVED/REJECTED 처리된 요청을 재취소하는 취약점 차단
+      // [SEC-51] 관리자 브랜치: PENDING → APPROVED/REJECTED 상태 전이만 허용 + 필드 화이트리스트
+      //   — REJECTED → APPROVED 역변조 차단 (이미 처리된 요청 상태 변경 방지)
       allow update: if isLoggedIn() && (
                       // 워커: PENDING 상태일 때만 CANCELED 전환 허용, 응답자 정보만 변경
                       (isOwner(resource.data.applicantUid) &&
@@ -766,9 +768,15 @@ service cloud.firestore {
                        request.resource.data.status == 'CANCELED' &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status', 'respondedByUid', 'respondedAt'])) ||
-                      isAdminOf(resource.data.businessId) ||
-                      isSubAdminOf(resource.data.businessId) ||
-                      isSuperAdmin()
+                      // 관리자: PENDING → APPROVED/REJECTED 전환만 허용
+                      ((isAdminOf(resource.data.businessId) ||
+                        isSubAdminOf(resource.data.businessId) ||
+                        isSuperAdmin()) &&
+                       resource.data.status == 'PENDING' &&
+                       (request.resource.data.status == 'APPROVED' ||
+                        request.resource.data.status == 'REJECTED') &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['status', 'respondedByUid', 'respondedAt', 'rejectReason']))
                     );
 
       // 관리자/하위관리자: 소속 사업장 스케줄 변경 요청 삭제 허용 (TO 삭제 시 고아 데이터 정리)
@@ -1443,11 +1451,19 @@ service cloud.firestore {
                     isSuperAdmin()
                   );
       // [CRITICAL-FIX] SubAdmin 누락: approveInterimSettlement → PERMISSION_DENIED
-      allow update: if isLoggedIn() && (
-                    isAdminOf(resource.data.businessId) ||
-                    isSubAdminOf(resource.data.businessId) ||
-                    isSuperAdmin()
-                  );
+      // [SEC-52] PENDING 상태에서만 처리 허용 + 허용 필드 화이트리스트
+      //   — REJECTED → APPROVED 역변조 차단 (상태 전이 무결성 보장)
+      allow update: if isLoggedIn() &&
+                    (isAdminOf(resource.data.businessId) ||
+                     isSubAdminOf(resource.data.businessId) ||
+                     isSuperAdmin()) &&
+                    resource.data.status == 'PENDING' &&
+                    (request.resource.data.status == 'PROCESSED' ||
+                     request.resource.data.status == 'APPROVED' ||
+                     request.resource.data.status == 'REJECTED') &&
+                    request.resource.data.diff(resource.data).affectedKeys()
+                      .hasOnly(['status', 'processedBy', 'processedAt',
+                                'rejectReason', 'transferNote', 'updatedAt']);
       allow delete: if isSuperAdmin();
     }
 
