@@ -754,8 +754,13 @@ service cloud.firestore {
                   );
 
       // 생성: 지원자 본인 또는 해당 사업장 관리자/하위관리자(추가근무/미출근 요청)
+      // SEC-72: USER 경로 businessId 소속 검증 추가 — 타 사업장 ID로 노이즈 문서 삽입 차단
+      //   payment_change_requests·interim_settlement_requests와 동일한 패턴 적용
       allow create: if isLoggedIn() && (
-                      request.resource.data.applicantUid == request.auth.uid ||
+                      (request.resource.data.applicantUid == request.auth.uid &&
+                       request.resource.data.businessId != '' &&
+                       get(/databases/$(database)/documents/users/$(request.auth.uid))
+                         .data.get('businessId', '') == request.resource.data.businessId) ||
                       isAdminOf(request.resource.data.businessId) ||
                       isSubAdminOf(request.resource.data.businessId) ||
                       isSuperAdmin()
