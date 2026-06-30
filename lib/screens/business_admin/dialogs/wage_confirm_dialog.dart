@@ -38,7 +38,6 @@ import '../../../services/firestore_service.dart';
 // Providers
 import '../../../providers/user_provider.dart';
 import '../../../utils/payment_due_date_calculator.dart';
-import '../../../services/trust_score_service.dart';
 
 /// 급여 확정 다이얼로그
 class WageConfirmDialog extends StatefulWidget {
@@ -1279,13 +1278,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         }
       }
 
-      // 신뢰도 업데이트 + 지원자 알림
+      // 지원자 알림 (TrustScore는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리)
       for (final app in processedApps) {
-        try {
-          await TrustScoreService().onWorkComplete(app.uid, app.businessId);
-        } catch (e) {
-          debugPrint('⚠️ 신뢰도 업데이트 실패 (${app.uid}): $e');
-        }
         final att = widget.attendanceMap[app.id];
         if (att != null) {
           // att.finalWage는 다이얼로그 오픈 시점 스냅샷이므로 0일 수 있음.
@@ -1408,19 +1402,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         successCount += batchCount;
       }
 
-      // [W-4] TrustScore 롤백 — batch 커밋이 확인된 항목에만 적용
-      // targetIds 전체에 적용하면 중간 batch 실패 시 커밋 안 된 항목도 롤백되는 불일치 발생
-      for (final appId in committedAppIds) {
-        final app = _transferredWorkers.where((a) => a.id == appId).firstOrNull;
-        if (app == null) continue;
-        try {
-          await TrustScoreService().onWorkCanceled(app.uid, app.businessId);
-        } catch (e) {
-          debugPrint('⚠️ 신뢰도 롤백 실패 (${app.uid}): $e');
-        }
-      }
-
       // 마감 취소 알림 발송 — 커밋 성공 항목에만 발송
+      // (TrustScore는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리)
       for (final appId in committedAppIds) {
         final attendance = widget.attendanceMap[appId];
         if (attendance == null) continue;

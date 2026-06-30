@@ -2880,10 +2880,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     }
     try {
       await batch.commit();
-      // 신규 생성 or 기존 레코드 둘 다 신뢰도 감점 처리 (병렬)
-      await Future.wait(
-        targets.map((app) => TrustScoreService().onNoShow(app.uid, app.businessId)),
-      );
+      // TrustScore noShowCount/trustScore는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리
       if (!mounted) return;
       setState(() {
         for (final app in targets) {
@@ -2956,12 +2953,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     }
     try {
       await batch.commit();
-      // batch에서 스킵된 경우 신뢰도도 스킵, 나머지 병렬 처리
-      await Future.wait(
-        targets
-            .where((app) => _attendanceMap[app.id] != null)
-            .map((app) => TrustScoreService().onNoShowCanceled(app.uid, app.businessId)),
-      );
+      // TrustScore noShowCount/trustScore는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리
       if (!mounted) return;
       setState(() {
         for (final app in targets) {
@@ -4296,11 +4288,6 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           'updatedAt': now,
         },
       );
-      // [SEC-02] totalWorkDays 클라이언트 write — wage_confirm_dialog 동일 이슈
-      batch.update(
-        FirebaseFirestore.instance.collection('users').doc(app.uid),
-        {'totalWorkDays': FieldValue.increment(-1)},
-      );
       processed.add((app: app, attendance: attendance));
     }
 
@@ -4313,14 +4300,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       return;
     }
 
-    // 2단계: TrustScore + 알림 (핵심 데이터 완료 후 보조 처리, 실패해도 계속)
+    // 2단계: 알림 (TrustScore는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리)
     for (final p in processed) {
       if (!mounted) break;
-      try {
-        await TrustScoreService().onWorkCanceled(p.app.uid, p.app.businessId);
-      } catch (e) {
-        debugPrint('⚠️ TrustScore 취소 실패 (${p.app.uid}): $e');
-      }
       try {
         final businessName = _businessNameMap[p.app.businessId] ?? '';
         await _firestoreService.createNotification(

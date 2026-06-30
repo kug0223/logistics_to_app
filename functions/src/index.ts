@@ -4569,13 +4569,25 @@ export const callableGetUsersBatch = onCall(
 // 🏢 내 사업장 목록 조회 (adminIds arrayContains — list 권한 불필요)
 // ═══════════════════════════════════════════════════════════
 
+// ─── TrustScore 노쇼 패널티 계산 헬퍼 ───────────────────────
+function getNoshowPenaltyFromRules(
+  count: number,
+  rules: Record<string, number>,
+): number {
+  if (count === 1) return rules["noshow_1"] ?? -5;
+  if (count === 2) return rules["noshow_2"] ?? -8;
+  return rules["noshow_3plus"] ?? -10;
+}
+
 // ═══════════════════════════════════════════════════════════
-// 📊 attendance wageStatus 변경 → totalWorkDays 서버 자동 처리
+// 📊 attendance 문서 변경 → totalWorkDays + TrustScore 서버 자동 처리
 //
 // 설계 원칙:
-//   - wageConfirmed 전환 시 totalWorkDays +1 (클라이언트 수동 increment 대체)
-//   - wageConfirmed → wageCalculated 복귀 시 totalWorkDays -1 (마감 취소)
+//   - wageConfirmed 전환(비노쇼): totalWorkDays +1, trustScore work_complete 적용
+//   - wageConfirmed → wageCalculated 복귀: totalWorkDays -1, trustScore 롤백
 //   - wageTransferred는 취소 불가 경로 — decrement 제외
+//   - status=NO_SHOW 신규: noShowCount +1, trustScore noshow 패널티
+//   - status=NO_SHOW 해제: noShowCount -1, trustScore 패널티 복원
 //   - 멱등성: before/after 비교로 실제 전환 시에만 처리
 // ═══════════════════════════════════════════════════════════
 export const onAttendanceWageStatusChanged = onDocumentWritten(
@@ -4588,34 +4600,115 @@ export const onAttendanceWageStatusChanged = onDocumentWritten(
 
     const beforeWageStatus = before?.wageStatus as string | undefined;
     const afterWageStatus = after.wageStatus as string | undefined;
+    const beforeStatus = before?.status as string | undefined;
+    const afterStatus = after.status as string | undefined;
     const userId = after.userId as string | undefined;
+    const businessId = (after.businessId ?? before?.businessId) as string | undefined;
 
-    if (!userId) return null;
+    if (!userId || !businessId) return null;
 
     const userRef = db.collection("users").doc(userId);
 
-    // wageConfirmed 전환: totalWorkDays +1
-    if (afterWageStatus === "wageConfirmed" && beforeWageStatus !== "wageConfirmed") {
-      await userRef.update({
-        totalWorkDays: admin.firestore.FieldValue.increment(1),
+    // ─── 1. wageStatus 변경 처리 (노쇼 문서 제외) ────────────
+    // 노쇼 문서는 wageStatus=wageConfirmed이어도 실제 근무 완료가 아님 — 별도 처리
+    const isNoshowDoc = afterStatus === "NO_SHOW" || beforeStatus === "NO_SHOW";
+    const wageConfirmedOn = !isNoshowDoc &&
+      afterWageStatus === "wageConfirmed" &&
+      beforeWageStatus !== "wageConfirmed";
+    const wageConfirmedOff = !isNoshowDoc &&
+      beforeWageStatus === "wageConfirmed" &&
+      afterWageStatus !== "wageConfirmed" &&
+      afterWageStatus !== "wageTransferred";
+
+    if (wageConfirmedOn || wageConfirmedOff) {
+      const rulesSnap = await db.collection("settings").doc("trust_rules").get();
+      const rulesData = rulesSnap.data() ?? {};
+      const maxScore = (rulesData.maxScore as number) ?? 100;
+      const increaseRules = (rulesData.increaseRules as Record<string, number>) ?? {};
+      const workCompletePoints = increaseRules["work_complete"] ?? 1;
+      const workDayDelta = wageConfirmedOn ? 1 : -1;
+      const trustChange = wageConfirmedOn ? workCompletePoints : -workCompletePoints;
+      const trustReason = wageConfirmedOn ? "work_complete" : "work_complete_canceled";
+
+      await db.runTransaction(async (tx) => {
+        const userSnap = await tx.get(userRef);
+        if (!userSnap.exists) return;
+        const currentScore = (userSnap.data()?.trustScore ?? 50) as number;
+        const newScore = Math.min(maxScore, Math.max(0, currentScore + trustChange));
+
+        tx.update(userRef, {
+          totalWorkDays: admin.firestore.FieldValue.increment(workDayDelta),
+          trustScore: newScore,
+        });
+
+        const histRef = db.collection("trust_score_history").doc();
+        tx.set(histRef, {
+          userId,
+          businessId,
+          previousScore: currentScore,
+          newScore,
+          change: trustChange,
+          reason: trustReason,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
       });
       return null;
     }
 
-    // wageConfirmed → 이전 상태 복귀 (마감 취소): totalWorkDays -1
-    if (
-      beforeWageStatus === "wageConfirmed" &&
-      afterWageStatus !== "wageConfirmed" &&
-      afterWageStatus !== "wageTransferred"
-    ) {
-      await userRef.update({
-        totalWorkDays: admin.firestore.FieldValue.increment(-1),
+    // ─── 2. status 노쇼 변경 처리 ────────────────────────────
+    const noshowOn = afterStatus === "NO_SHOW" && beforeStatus !== "NO_SHOW";
+    const noshowOff = beforeStatus === "NO_SHOW" && afterStatus !== "NO_SHOW";
+
+    if (noshowOn || noshowOff) {
+      const rulesSnap = await db.collection("settings").doc("trust_rules").get();
+      const rulesData = rulesSnap.data() ?? {};
+      const maxScore = (rulesData.maxScore as number) ?? 100;
+      const decreaseRules = (rulesData.decreaseRules as Record<string, number>) ?? {};
+
+      await db.runTransaction(async (tx) => {
+        const userSnap = await tx.get(userRef);
+        if (!userSnap.exists) return;
+        const userData = userSnap.data()!;
+        const currentScore = (userData.trustScore ?? 50) as number;
+        const currentNoShowCount = (userData.noShowCount ?? 0) as number;
+
+        let newNoShowCount: number;
+        let trustChange: number;
+        let trustReason: string;
+
+        if (noshowOn) {
+          newNoShowCount = currentNoShowCount + 1;
+          trustChange = getNoshowPenaltyFromRules(newNoShowCount, decreaseRules);
+          trustReason = "noshow";
+        } else {
+          const appliedPenalty = getNoshowPenaltyFromRules(currentNoShowCount, decreaseRules);
+          newNoShowCount = Math.max(0, currentNoShowCount - 1);
+          trustChange = -appliedPenalty; // 음수 패널티의 역수 → 양수 복원
+          trustReason = "noshow_canceled";
+        }
+
+        const newScore = Math.min(maxScore, Math.max(0, currentScore + trustChange));
+
+        tx.update(userRef, {
+          noShowCount: newNoShowCount,
+          trustScore: newScore,
+        });
+
+        const histRef = db.collection("trust_score_history").doc();
+        tx.set(histRef, {
+          userId,
+          businessId,
+          previousScore: currentScore,
+          newScore,
+          change: trustChange,
+          reason: trustReason,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
       });
-      return null;
     }
 
     return null;
-  }
+  },
 );
 
 // ═══════════════════════════════════════════════════════════
