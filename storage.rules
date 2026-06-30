@@ -52,15 +52,18 @@ service firebase.storage {
     // ═══════════════════════════════════════════════════════════
     // businesses/ — 사업장 이미지 (대표, 추가, 업무유형)
     // ═══════════════════════════════════════════════════════════
-    // read: 로그인한 모든 사용자 허용 — 공고(TO) 상세 화면에서 모든 근무자가 사업장 이미지를 열람할 수 있어야 함.
-    //       사업자등록증·계약서 등 민감 파일은 이 경로에 저장하지 않으며, users/ 및 contracts/ 경로로 분리됨.
+    // get: 로그인한 모든 사용자 허용 — 공고(TO) 상세 화면에서 모든 근무자가 사업장 이미지를 열람할 수 있어야 함.
+    //      사업자등록증·계약서 등 민감 파일은 이 경로에 저장하지 않으며, users/ 및 contracts/ 경로로 분리됨.
+    // list: 해당 사업장 관리자·슈퍼어드민만 허용 (SEC-60: 파일 목록 열거로 타 사업장 자산 정보 수집 차단)
+    //       앱 코드에서 businesses/ 경로에 listAll()을 사용하지 않으므로 기능 영향 없음.
     // delete: ownerId 또는 subAdminOf 허용 (isBusinessAdmin)
     // - 사업장 삭제 버튼은 UI에서 ownerId만 노출
     // - 업무유형 이미지 교체 시 SUB_ADMIN도 delete 필요 (해당 화면 접근 제한 없음)
     // [특이사항] isBusinessAdmin: ownerId 또는 subAdminOf 체크 — SUB_ADMIN도 업무유형 이미지 교체 허용.
     // 이전에 isLoggedIn()만 체크해 누구든 타 사업장 파일 덮어쓰기 가능했던 취약점 수정.
     match /businesses/{businessId}/{allPaths=**} {
-      allow read: if isLoggedIn();
+      allow get: if isLoggedIn();
+      allow list: if isBusinessAdmin(businessId) || isSuperAdminUser();
       allow create, update: if isBusinessAdmin(businessId) && isUnder5MB();
       allow delete: if isBusinessAdmin(businessId);
     }
