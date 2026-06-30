@@ -1,0 +1,15 @@
+{
+  "name": "alfit-firestore-rules-tests",
+  "version": "1.0.0",
+  "description": "Firestore security rules unit tests",
+  "scripts": {
+    "test": "mocha --timeout 60000 firestore-rules.test.js",
+    "test:rules": "cd .. && firebase emulators:exec --only firestore \"cd tests && npx mocha --timeout 60000 firestore-rules.test.js\""
+  },
+  "dependencies": {
+    "@firebase/rules-unit-testing": "^5.0.1",
+    "firebase": "^11.0.0",
+    "mocha": "^10.4.0",
+    "chai": "^4.4.1"
+  }
+}

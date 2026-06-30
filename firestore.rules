@@ -165,11 +165,16 @@ service cloud.firestore {
       // ─── users/{userId}/notifications 서브컬렉션 ─────────────
       // create: CF createNotification Callable(Admin SDK)로 단일화 — 클라이언트 직접 write 차단
       //   → 악의적 사용자가 타인에게 임의 알림을 발송하는 취약점 해소
-      // read/update/delete: 본인 경로만 허용 (소유권 유지)
+      // read/delete: 본인 경로만 허용 (소유권 유지)
+      // [SEC-14] update는 isRead·readAt 2개 필드만 허용
+      //   — 클라이언트가 title/body/deepLink 등 알림 내용을 변조하는 취약점 차단
       match /notifications/{notificationId} {
         allow read: if isLoggedIn() && isOwner(userId);
         allow create: if false;
-        allow update, delete: if isLoggedIn() && isOwner(userId);
+        allow update: if isLoggedIn() && isOwner(userId) &&
+                        request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['isRead', 'readAt']);
+        allow delete: if isLoggedIn() && isOwner(userId);
       }
     }
 
@@ -457,6 +462,12 @@ service cloud.firestore {
       // 슈퍼어드민은 isAdminOf() 없이도 모든 사업장 출근 기록 수동 생성 가능
       // [HIGH-FIX] SubAdmin 누락: 노쇼 처리(attendance_status_dialog)에서 기록 없는 근무자에 대해
       //            batch.set()으로 신규 생성 시 PERMISSION_DENIED 발생 → isSubAdminOf 추가
+      //
+      // [H-3 보안 주의] userId == auth.uid 경로는 근무자가 임의 businessId·checkIn 시각으로
+      // 출근 기록을 직접 생성할 수 있음. 앱 UX상 어렵지만 API 직접 호출 시 가능.
+      // 완전한 차단: checkIn을 CF Callable Function으로 이전하고 이 경로를 제거해야 함.
+      // 현재는 임금 확정이 관리자 수동 검토 후 진행되므로 실질 피해는 제한적.
+      // TODO: 근무자 출근 체크인 CF화 후 userId == auth.uid 경로 제거
       allow create: if isLoggedIn() && (
                       request.resource.data.userId == request.auth.uid ||
                       isAdminOf(request.resource.data.businessId) ||
@@ -490,10 +501,11 @@ service cloud.firestore {
 
       // 관리자: 소속 사업장 출근 기록 삭제 허용 (TO 삭제 시 고아 데이터 정리)
       // wageTransferred/wageConfirmed 기록은 코드 레벨에서 보존 처리
-      // isDummy 삭제 시 자신의 사업장만 허용 — isAdmin() 역할만으로는 타 사업장 더미 삭제 가능했던 취약점 수정
+      // [SEC-11 정리] 이전에 isAdmin() 단독으로 타 사업장 더미 삭제 가능했던 취약점 수정이력 있음.
+      //   isAdminOf(businessId)가 이미 "소속 사업장 관리자"를 모두 포괄하므로
+      //   isDummy 전용 세 번째 조건은 두 번째 조건의 진부분집합 → 제거
       allow delete: if isSuperAdmin() ||
-                     isAdminOf(resource.data.businessId) ||
-                     (isAdmin() && resource.data.isDummy == true && isAdminOf(resource.data.businessId));
+                     isAdminOf(resource.data.businessId);
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -707,9 +719,12 @@ service cloud.firestore {
                     );
 
       // 수정: 워커는 본인 요청 취소(CANCELED)만, 관리자/하위관리자는 승인/거절 처리
+      // [SEC-12] 워커 취소 시 기존 상태가 PENDING이어야만 허용
+      //   — 이미 APPROVED/REJECTED 처리된 요청을 재취소하는 취약점 차단
       allow update: if isLoggedIn() && (
-                      // 워커: status=CANCELED + 응답자 정보만 변경 허용
+                      // 워커: PENDING 상태일 때만 CANCELED 전환 허용, 응답자 정보만 변경
                       (isOwner(resource.data.applicantUid) &&
+                       resource.data.status == 'PENDING' &&
                        request.resource.data.status == 'CANCELED' &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status', 'respondedByUid', 'respondedAt'])) ||
@@ -1250,6 +1265,16 @@ service cloud.firestore {
     }
 
     // ═══════════════════════════════════════════════════════════
+    // _processedWageEvents 컬렉션 (임금 이벤트 멱등성 체크 — CF 내부용)
+    // ═══════════════════════════════════════════════════════════
+    match /_processedWageEvents/{eventId} {
+      // [SEC-01 수정] 보안 규칙 누락으로 인증된 사용자가 읽을 수 있던 취약점 차단.
+      // 이 컬렉션은 onAttendanceWageChanged CF 가 event.id 중복 처리를 방지하기 위한 내부 저장소.
+      // Admin SDK는 규칙 우회 → 클라이언트 접근만 차단.
+      allow read, write: if false;
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // passwordResetCodes 컬렉션 (비밀번호 재설정 인증코드)
     // ═══════════════════════════════════════════════════════════
     match /passwordResetCodes/{username} {
@@ -1372,6 +1397,14 @@ service cloud.firestore {
     // 이메일 인증 코드 — Cloud Functions Admin SDK만 접근
     // ═══════════════════════════════════════════════════════════
     match /emailVerificationCodes/{email} {
+      allow read, write: if false;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // PASS 본인인증 토큰 — Cloud Functions Admin SDK만 접근 (CF verifyPassAuth)
+    // [BUG-FR-01 수정] 명시적 차단 규칙 추가 — 미명시 시 향후 rules 변경으로 의도치 않게 열릴 위험
+    // ═══════════════════════════════════════════════════════════
+    match /passTokens/{token} {
       allow read, write: if false;
     }
 
