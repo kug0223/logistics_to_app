@@ -4479,3 +4479,87 @@ export const onTOStatusChanged = onDocumentUpdated(
     await syncGroupMasterStatus(db, groupId);
   }
 );
+
+// ═══════════════════════════════════════════════════════════
+// 👥 사용자 배치 조회 (서버 사이드 소속 검증)
+// ═══════════════════════════════════════════════════════════
+/**
+ * 관리자가 자신의 사업장 소속 근무자 정보를 일괄 조회하는 CF.
+ *
+ * 보안:
+ *   - 호출자 역할(BUSINESS_ADMIN / SUB_ADMIN / SUPER_ADMIN) 서버 검증
+ *   - 요청 UID 중 해당 businessId 소속 아닌 것 제외 (SUPER_ADMIN 예외)
+ *   - ci, residentNumber, foreignIdNumber, idCardImageUrl,
+ *     signatureBase64, sealBase64, bankbookImageUrl 필드 제거
+ *   - accountNumber는 암호화 상태로 반환 (클라이언트에서 마스킹 처리)
+ *
+ * 입력: { uids: string[], businessId: string }  (uids 최대 30개)
+ * 출력: { users: Record<uid, SafeUserData> }
+ */
+export const callableGetUsersBatch = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    }
+
+    const uids = request.data.uids as string[] | undefined;
+    const businessId = request.data.businessId as string | undefined;
+
+    if (!uids || !Array.isArray(uids) || uids.length === 0) return {users: {}};
+    if (uids.length > 30) {
+      throw new HttpsError("invalid-argument", "uid는 최대 30개까지 요청 가능합니다.");
+    }
+    if (!businessId) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+
+    // 호출자 역할 검증
+    const callerUid = request.auth.uid;
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const callerData = callerSnap.data();
+    if (!callerData) {
+      throw new HttpsError("not-found", "호출자 정보를 찾을 수 없습니다.");
+    }
+
+    const callerRole = callerData.role as string | undefined;
+    const callerBusinessId = callerData.businessId as string | undefined;
+    const callerSubAdminOf = callerData.subAdminOf as string | undefined;
+
+    const isSuperAdmin = callerRole === "SUPER_ADMIN";
+    const isAdmin = callerRole === "BUSINESS_ADMIN" && callerBusinessId === businessId;
+    const isSubAdmin = callerRole === "SUB_ADMIN" && callerSubAdminOf === businessId;
+
+    if (!isSuperAdmin && !isAdmin && !isSubAdmin) {
+      throw new HttpsError("permission-denied", "해당 사업장 조회 권한이 없습니다.");
+    }
+
+    // Admin SDK 배치 조회 (Firestore 보안 규칙 우회 — 서버 검증으로 대체)
+    const refs = uids.map((uid) => db.collection("users").doc(uid));
+    const snaps = await db.getAll(...refs);
+
+    // 반환 제외 민감 필드
+    const SENSITIVE_FIELDS = new Set([
+      "ci", "residentNumber", "foreignIdNumber",
+      "idCardImageUrl", "signatureBase64", "sealBase64", "bankbookImageUrl",
+    ]);
+
+    const users: Record<string, Record<string, unknown>> = {};
+    for (const snap of snaps) {
+      if (!snap.exists) continue;
+      const data = snap.data()!;
+
+      // 소속 검증: SUPER_ADMIN 외에는 해당 businessId 소속만 반환
+      if (!isSuperAdmin && data.businessId !== businessId) continue;
+
+      // 민감 필드 제거 후 반환
+      const safeData: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(data)) {
+        if (!SENSITIVE_FIELDS.has(key)) safeData[key] = value;
+      }
+      users[snap.id] = safeData;
+    }
+
+    return {users};
+  }
+);
