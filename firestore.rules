@@ -523,9 +523,13 @@ service cloud.firestore {
                       !(resource.data.wageStatus == 'transferred' &&
                         request.resource.data.wageStatus != 'transferred') && (
                       // 근무자: wageStatus가 pending/unchecked 상태일 때만 퇴근 관련 필드 수정 허용
+                      // SEC-74: NO_SHOW 상태에서 근무자의 status 역전환 차단
+                      //   (노쇼 처리 시 wageStatus=confirmed가 함께 설정되어 중복 보호되지만
+                      //    예외 경로 대비 명시적 차단)
                       (resource.data.wageStatus != 'transferred' &&
                        resource.data.wageStatus != 'confirmed' &&
                        resource.data.wageStatus != 'calculated' &&
+                       resource.data.get('status', '') != 'NO_SHOW' &&
                        isOwner(resource.data.userId) &&
                        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                          'checkOut', 'checkOutLat', 'checkOutLng', 'checkOutMethod',
