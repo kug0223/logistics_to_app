@@ -3655,6 +3655,25 @@ export const onBusinessDeleted = onDocumentDeleted(
       if (tosCount % 500 !== 0) await tosBatch.commit();
     }
 
+    // [SEC-32] idCardAccessRequests 정리 — 신분증 열람 요청 기록 삭제
+    const idCardSnap = await db
+      .collection("idCardAccessRequests")
+      .where("requesterBusinessId", "==", businessId)
+      .get();
+    if (!idCardSnap.empty) {
+      let idCardBatch = db.batch();
+      let idCardCount = 0;
+      for (const doc of idCardSnap.docs) {
+        idCardBatch.delete(doc.ref);
+        idCardCount++;
+        if (idCardCount % 500 === 0) {
+          await idCardBatch.commit();
+          idCardBatch = db.batch();
+        }
+      }
+      if (idCardCount % 500 !== 0) await idCardBatch.commit();
+    }
+
     console.log(`사업장 삭제 cascade 완료: ${businessId}`);
   }
 );

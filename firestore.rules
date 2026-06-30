@@ -1177,8 +1177,11 @@ service cloud.firestore {
                  );
 
       // 생성: 해당 사업장 관리자만 (초대 발송)
+      // SEC-31: invitedBy 위조 차단 — 본인 명의로만 초대 생성 가능
+      //   invitedBy 위조 시 get 조건의 invitedBy==auth.uid를 통해 타 사업장 초대 내용 열람 가능
       allow create: if isLoggedIn() && (
-                      isAdminOf(request.resource.data.businessId) ||
+                      (isAdminOf(request.resource.data.businessId) &&
+                       request.resource.data.invitedBy == request.auth.uid) ||
                       isSuperAdmin()
                     );
 
