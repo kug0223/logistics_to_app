@@ -568,9 +568,9 @@ service cloud.firestore {
         )) ||
         (isUser() && (
           request.query.filters.reviewerId == request.auth.uid ||
-          request.query.filters.targetUserId == request.auth.uid ||
-          // [MED-03-FIX] isPublished==true 단독 필터로 전체 덤프 가능 → limit 50 제한 추가
-          (request.query.filters.isPublished == true && request.query.limit <= 50)
+          request.query.filters.targetUserId == request.auth.uid
+          // SEC-35: isPublished==true 단독 필터 제거 — 타 사업장 리뷰 전체 수집 차단
+          // 앱 쿼리는 항상 targetUserId 필터를 함께 사용하므로 기능 영향 없음
         ))
       );
 
@@ -868,7 +868,10 @@ service cloud.firestore {
                       ((isAdminOf(resource.data.requesterBusinessId) ||
                         isSubAdminOf(resource.data.requesterBusinessId)) &&
                        request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['status'])) ||
+                         .hasOnly(['status']) &&
+                       // SEC-33: 관리자 취소/만료만 허용 — 스스로 approved 전환 차단
+                       (request.resource.data.status == 'canceled' ||
+                        request.resource.data.status == 'expired')) ||
                       isSuperAdmin()
                     );
 
@@ -979,8 +982,12 @@ service cloud.firestore {
                   );
 
       // 생성·수정: 본인(userId == auth.uid) 또는 슈퍼어드민
+      // SEC-34: businessId 소속 검증 추가 — 타 사업장에 위치 데이터 삽입 차단
       allow create: if isLoggedIn() && (
-                      request.resource.data.userId == request.auth.uid ||
+                      (request.resource.data.userId == request.auth.uid &&
+                       request.resource.data.businessId ==
+                         get(/databases/$(database)/documents/users/$(request.auth.uid))
+                           .data.get('businessId', '_NONE_')) ||
                       isSuperAdmin()
                     );
 
