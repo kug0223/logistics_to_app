@@ -4569,6 +4569,58 @@ export const callableGetUsersBatch = onCall(
 // 🏢 내 사업장 목록 조회 (adminIds arrayContains — list 권한 불필요)
 // ═══════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════
+// 📊 attendance wageStatus 변경 → totalWorkDays 서버 자동 처리
+//
+// 설계 원칙:
+//   - wageConfirmed 전환 시 totalWorkDays +1 (클라이언트 수동 increment 대체)
+//   - wageConfirmed → wageCalculated 복귀 시 totalWorkDays -1 (마감 취소)
+//   - wageTransferred는 취소 불가 경로 — decrement 제외
+//   - 멱등성: before/after 비교로 실제 전환 시에만 처리
+// ═══════════════════════════════════════════════════════════
+export const onAttendanceWageStatusChanged = onDocumentWritten(
+  {document: "attendance/{attendanceId}", region: "asia-northeast3"},
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+
+    if (!after) return null; // 삭제 이벤트 무시
+
+    const beforeWageStatus = before?.wageStatus as string | undefined;
+    const afterWageStatus = after.wageStatus as string | undefined;
+    const userId = after.userId as string | undefined;
+
+    if (!userId) return null;
+
+    const userRef = db.collection("users").doc(userId);
+
+    // wageConfirmed 전환: totalWorkDays +1
+    if (afterWageStatus === "wageConfirmed" && beforeWageStatus !== "wageConfirmed") {
+      await userRef.update({
+        totalWorkDays: admin.firestore.FieldValue.increment(1),
+      });
+      return null;
+    }
+
+    // wageConfirmed → 이전 상태 복귀 (마감 취소): totalWorkDays -1
+    if (
+      beforeWageStatus === "wageConfirmed" &&
+      afterWageStatus !== "wageConfirmed" &&
+      afterWageStatus !== "wageTransferred"
+    ) {
+      await userRef.update({
+        totalWorkDays: admin.firestore.FieldValue.increment(-1),
+      });
+      return null;
+    }
+
+    return null;
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+// 🏢 내 사업장 목록 조회 (adminIds arrayContains — list 권한 불필요)
+// ═══════════════════════════════════════════════════════════
 export const callableGetMyBusiness = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {

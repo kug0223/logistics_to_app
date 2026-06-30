@@ -1225,13 +1225,12 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
         try {
           final attRef = FirebaseFirestore.instance.collection('attendance').doc(attendance.id);
-          final userRef = FirebaseFirestore.instance.collection('users').doc(app.uid);
 
           bool alreadyClosed = false;
           await FirebaseFirestore.instance.runTransaction((tx) async {
             final snap = await tx.get(attRef);
             final serverStatus = snap.data()?['wageStatus'] as String?;
-            // 이미 마감됐거나 송금완료이면 skip (멱등성 + 이중 totalWorkDays 방지)
+            // 이미 마감됐거나 송금완료이면 skip
             if (serverStatus == AttendanceModel.wageConfirmed ||
                 serverStatus == AttendanceModel.wageTransferred) {
               alreadyClosed = true;
@@ -1265,12 +1264,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               if (confirmedWageDetail != null) 'wageDetail': confirmedWageDetail.toMap(),
               if (paymentDueDate != null) 'paymentDueDate': Timestamp.fromDate(paymentDueDate),
             });
-            // [SEC-02] totalWorkDays를 관리자 클라이언트에서 직접 write.
-            // 이상적으로는 Cloud Functions에서 wageStatus 변경 이벤트로 자동 갱신하는 것이 안전.
-            // 현재는 관리자 권한 보안 규칙으로 완화. 규모 확장 시 Cloud Functions 이관 권장.
-            // FieldValue.increment는 원자적이나, alreadyClosed 경로에서는 업데이트하지 않아야
-            // 하므로 트랜잭션 내부에서 조건부 처리
-            tx.update(userRef, {'totalWorkDays': FieldValue.increment(1)});
+            // totalWorkDays는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리
           });
 
           if (alreadyClosed) {
@@ -1382,11 +1376,6 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           failCount++;
           continue;
         }
-        final app = _transferredWorkers.firstWhere(
-          (a) => a.id == appId,
-          orElse: () => throw StateError('app not found: $appId'),
-        );
-
         batch.update(
           FirebaseFirestore.instance.collection('attendance').doc(attendance.id),
           {
@@ -1400,19 +1389,15 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             'paymentDueDate': FieldValue.delete(),
           },
         );
-        // _closeWages에서 increment(1)했으므로 취소 시 되돌림 [SEC-02 동일 이슈]
-        batch.update(
-          FirebaseFirestore.instance.collection('users').doc(app.uid),
-          {'totalWorkDays': FieldValue.increment(-1)},
-        );
+        // totalWorkDays -1은 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리
         pendingBatchIds.add(appId); // [W-4] 이 청크에 포함된 appId 추적
-        batchCount += 2;
+        batchCount += 1;
 
-        if (batchCount >= 498) {
+        if (batchCount >= 499) {
           await batch.commit();
           committedAppIds.addAll(pendingBatchIds); // [W-4] 커밋 성공 시에만 확정
           pendingBatchIds.clear();
-          successCount += batchCount ~/ 2;
+          successCount += batchCount;
           batch = FirebaseFirestore.instance.batch();
           batchCount = 0;
         }
@@ -1420,7 +1405,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       if (batchCount > 0) {
         await batch.commit();
         committedAppIds.addAll(pendingBatchIds); // [W-4] 마지막 청크 커밋 성공
-        successCount += batchCount ~/ 2;
+        successCount += batchCount;
       }
 
       // [W-4] TrustScore 롤백 — batch 커밋이 확인된 항목에만 적용

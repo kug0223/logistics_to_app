@@ -479,21 +479,31 @@ service cloud.firestore {
       // 수정: 발신 문서의 businessId가 본인 users.businessId와 일치해야 create 허용
       //       → 타 사업장 노이즈 데이터 삽입 원천 차단
       // 완전한 차단: checkIn을 CF Callable Function으로 이전하고 이 경로를 제거해야 함 (중기 계획)
-      allow create: if isLoggedIn() && (
-                      (request.resource.data.userId == request.auth.uid &&
-                       request.resource.data.businessId ==
-                         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', '_NONE_')) ||
-                      isAdminOf(request.resource.data.businessId) ||
-                      isSubAdminOf(request.resource.data.businessId) ||
-                      isSuperAdmin() ||
-                      (isAdmin() && request.resource.data.isDummy == true)
-                    );
+      //
+      // [NOSHOW-FIX] 노쇼 상태 레코드의 finalWage=0 서버 강제
+      // 노쇼 처리 시 관리자가 API 직접 호출로 finalWage를 임의 값으로 설정하는 것 차단.
+      // onAttendanceWageStatusChanged CF 트리거와 함께 이중 방어.
+      allow create: if isLoggedIn() &&
+                      !(request.resource.data.get('status', '') == 'noshow' &&
+                        request.resource.data.get('finalWage', 0) != 0) &&
+                      (
+                        (request.resource.data.userId == request.auth.uid &&
+                         request.resource.data.businessId ==
+                           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', '_NONE_')) ||
+                        isAdminOf(request.resource.data.businessId) ||
+                        isSubAdminOf(request.resource.data.businessId) ||
+                        isSuperAdmin() ||
+                        (isAdmin() && request.resource.data.isDummy == true)
+                      );
 
       // wageStatus 역전환 방지: transferred 상태는 관리자/슈퍼어드민도 되돌릴 수 없음
       // 근무자: 퇴근 체크 전용 필드만 수정 허용 (checkIn/wageDetail 등 변조 불가)
       // wageStatus가 confirmed/calculated 이상이면 근무자의 퇴근 수정도 차단
       // [143] transferredBy 필드 변경 시 본인 UID만 허용 — 감사 추적 위변조 방지
+      // [NOSHOW-FIX] 노쇼 상태로 변경 시 finalWage 0 강제
       allow update: if isLoggedIn() &&
+                      !(request.resource.data.get('status', '') == 'noshow' &&
+                        request.resource.data.get('finalWage', 0) != 0) &&
                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['transferredBy']) ||
                        request.resource.data.transferredBy == request.auth.uid) &&
                       !(resource.data.wageStatus == 'transferred' &&
