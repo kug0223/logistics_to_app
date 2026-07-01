@@ -457,6 +457,7 @@ class EmploymentContractModel {
       isLongTerm: d['isLongTerm'] ?? false,
       toId: d['toId'] ?? '',
       workDetailId: d['workDetailId'] ?? '',
+      // [CRASH-GUARD] whereType<Map>()은 Dart에서 LinkedHashMap 등 모든 Map 구현체 포함 — 안전
       slots: rawSlots != null
           ? rawSlots.whereType<Map>()
               .map((s) { try { return ContractSlot.fromMap(Map<String, dynamic>.from(s)); } catch (_) { return null; } })

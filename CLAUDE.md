@@ -168,3 +168,42 @@ flutter analyze       # 정적 분석 (No issues found 확인)
 ```
 
 NET-01(보험료 미차감 폴백), TMP-01(임시파일 누수), LOG-01(print 직접사용), QUERY-01(whereIn 30개 제한) 탐지.
+
+---
+
+## Firestore 크래시 방어 — 이미 완료된 패턴 (재탐색 금지)
+
+### tryFromMap / tryFromFirestore 패턴 — 전체 적용 완료
+
+다음 모델에 `tryFromMap`/`tryFromFirestore` 정적 메서드가 추가되어 있다:
+`TOModel`, `SlotModel`, `ApplicationModel`, `ScheduleChangeRequestModel`,
+`UserModel`, `BusinessWorkTypeModel`, `MemberInvitationModel`,
+`WorkDetailData`, `TrustSettingsModel` (TrustRule 포함),
+`WageDetailModel`, `LegalTerms`, `PayrollSummaryModel` (PayrollWorkerSummary 포함),
+`AttendanceModel` (wageDetail 필드), `EmploymentContractModel` (slots/articles 필드),
+`ContractTemplateModel` (articles 필드)
+
+Firestore 리스트 쿼리 결과를 파싱하는 모든 서비스는 `tryFromMap + whereType<T>()` 패턴으로 전환 완료:
+`to_firestore.dart`, `attendance_firestore.dart`, `application_firestore.dart`,
+`business_firestore.dart`, `member_service.dart`, `firestore_service.dart` (전체)
+
+### 잘못 탐지되기 쉬운 패턴 — HIGH 아님
+
+```dart
+// ✅ 안전 — whereType<Map>()은 Dart에서 LinkedHashMap 등 모든 Map 구현체 포함
+rawList.whereType<Map>().map((s) { ... }).whereType<ContractSlot>().toList()
+
+// ✅ 안전 — 외부 try-catch가 있으면 단일 fromMap 호출도 크래시 방지됨
+try {
+  final model = SomeModel.fromMap(data, id);  // 실패 시 catch로 이동
+} catch (e) { debugPrint(...); }
+
+// ✅ 안전 — Future.wait() 실패 시 outer catch가 처리, 불완전 데이터 미반영
+try {
+  final results = await Future.wait([queryA, queryB]);
+  setState(() { ... });
+} catch (e) { ToastHelper.showError(...); }  // 전체 롤백
+
+// ✅ 안전 — 서비스 파일(StatelessService)은 mounted 개념 없음, 체크 불필요
+class SomeService { Future<void> doSomething() async { ... } }
+```
