@@ -252,8 +252,15 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════
     match /tos/{toId} {
 
-      // get: 로그인한 모든 사용자 (공고 상세 조회)
-      allow get: if isLoggedIn();
+      // get: 공개 TO는 로그인 사용자 전체, 비공개 TO는 관리자만
+      // [S-M3-FIX] 비공개(미출판) TO 임금·인원 정보 비인가 접근 차단
+      // list 규칙 주석(SEC-47)에서 "get 규칙에서 isPublished 검증"을 명시했으나 누락되어 있었음
+      allow get: if isLoggedIn() && (
+        isSuperAdmin() ||
+        isAdminOf(resource.data.businessId) ||
+        isSubAdminOf(resource.data.businessId) ||
+        resource.data.get('isPublished', false) == true
+      );
       // list: request.query.filters 미지원으로 역할 기반으로 허용
       // [MED-01] 관리자는 소속 사업장 검증 추가, USER는 limit<=50 제한
       //   tos 공고 정보는 임금·인원 등 사업장 민감 정보 포함 → 무제한 덤프 차단
@@ -460,7 +467,12 @@ service cloud.firestore {
                       ((isAdminOf(resource.data.businessId) ||
                         isSubAdminOf(resource.data.businessId)) &&
                        !request.resource.data.diff(resource.data).affectedKeys()
-                         .hasAny(['uid', 'businessId', 'toId', 'workDetailId'])) ||
+                         .hasAny(['uid', 'businessId', 'toId', 'workDetailId']) &&
+                       // [S-M1-FIX] resignStatus 상태 전이 검증
+                       // 관리자도 PENDING 없이 직접 APPROVED·REJECTED 설정 불가
+                       (!request.resource.data.diff(resource.data).affectedKeys()
+                         .hasAny(['resignStatus']) ||
+                        resource.data.get('resignStatus', null) == 'PENDING')) ||
                       isSuperAdmin()
                     );
 

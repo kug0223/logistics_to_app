@@ -1120,10 +1120,28 @@ class FirestoreService {
   /// 계약해지 승인 (근무자 → 관리자 요청 수락)
   Future<bool> approveTermination(String applicationId, {String? adminUID}) async {
     try {
-      final appDoc = await _firestore.collection('applications').doc(applicationId).get(const GetOptions(source: Source.server));
-      if (!appDoc.exists) return false;
-      final app = ApplicationModel.fromMap(appDoc.data()!, appDoc.id);
-
+      // [R-M1-FIX] 트랜잭션으로 terminationStatus=PENDING 검증 + 상태 전이 원자화
+      // 근무자 수락·D+3 자동승인이 동시에 실행될 때 이중 처리 방지
+      ApplicationModel? resolvedApp;
+      final appRef = _firestore.collection('applications').doc(applicationId);
+      await _firestore.runTransaction((tx) async {
+        final snap = await tx.get(appRef);
+        if (!snap.exists) throw Exception('지원서 없음: $applicationId');
+        final currentTermStatus = snap.data()?['terminationStatus'];
+        if (currentTermStatus != AppStatus.pending) {
+          throw Exception('수락 불가 — 현재 계약해지 상태: $currentTermStatus');
+        }
+        resolvedApp = ApplicationModel.fromMap(snap.data()!, snap.id);
+        final effectiveDate = resolvedApp!.terminationEffectiveDate ?? DateTime.now();
+        tx.update(appRef, {
+          'terminationStatus': AppStatus.approved,
+          'terminationRespondedAt': FieldValue.serverTimestamp(),
+          'actualResignDate': Timestamp.fromDate(effectiveDate),
+          'status': AppStatus.canceled,
+        });
+      });
+      if (resolvedApp == null) return false;
+      final app = resolvedApp!;
       final effectiveDate = app.terminationEffectiveDate ?? DateTime.now();
 
       // [C04 설계 의도]
@@ -1162,15 +1180,8 @@ class FirestoreService {
         if (cq2Match.isNotEmpty) contractDoc = cq2Match.first;
       }
 
-      // [BUG-수정] H-2: 계약해지 승인 시 TO totalConfirmed 미감소 버그 수정
-      // cancelConfirmedApplication과 동일하게 batch를 사용하여 원자적으로 카운터 감소
+      // [R-M1-FIX] 트랜잭션에서 이미 app 상태 전이 완료 — 배치는 TO counter + contract void만 처리
       final batch = _firestore.batch();
-      batch.update(_firestore.collection('applications').doc(applicationId), {
-        'terminationStatus': AppStatus.approved,
-        'terminationRespondedAt': FieldValue.serverTimestamp(),
-        'actualResignDate': Timestamp.fromDate(effectiveDate),
-        'status': AppStatus.canceled,
-      });
 
       // H-2: toId가 있고 이전 상태가 확정(CONFIRMED/CONTRACT_PENDING)인 경우에만 카운터 감소
       final toId = app.toId;
@@ -1235,16 +1246,26 @@ class FirestoreService {
     String? rejectReason,
   }) async {
     try {
-      final appDoc = await _firestore.collection('applications').doc(applicationId)
-          .get(const GetOptions(source: Source.server));
-      if (!appDoc.exists) return false;
-      final appData = appDoc.data()!;
-
-      await _firestore.collection('applications').doc(applicationId).update({
-        'terminationStatus': AppStatus.rejected,
-        'terminationRespondedAt': FieldValue.serverTimestamp(),
-        'terminationRejectReason': rejectReason,
+      // [R-M2-FIX] 트랜잭션으로 terminationStatus=PENDING 검증 + 거절 원자화
+      // D+3 자동승인과 근무자 거절이 동시에 실행될 때 이중 처리 방지
+      Map<String, dynamic>? resolvedAppData;
+      final appRef = _firestore.collection('applications').doc(applicationId);
+      await _firestore.runTransaction((tx) async {
+        final snap = await tx.get(appRef);
+        if (!snap.exists) throw Exception('지원서 없음: $applicationId');
+        final currentTermStatus = snap.data()?['terminationStatus'];
+        if (currentTermStatus != AppStatus.pending) {
+          throw Exception('거절 불가 — 현재 계약해지 상태: $currentTermStatus');
+        }
+        resolvedAppData = snap.data()!;
+        tx.update(appRef, {
+          'terminationStatus': AppStatus.rejected,
+          'terminationRespondedAt': FieldValue.serverTimestamp(),
+          'terminationRejectReason': rejectReason,
+        });
       });
+      if (resolvedAppData == null) return false;
+      final appData = resolvedAppData!;
 
       // [C05 fix] 거절 후 근무자 캐시 무효화 — terminationStatus 변경을 즉시 반영
       // 알림 수신자는 해지를 요청한 관리자(terminationRequestedByUid).
@@ -1310,8 +1331,10 @@ class FirestoreService {
       // 관리자에게 알림
       final bizDoc = await _firestore.collection('businesses').doc(app.businessId).get(const GetOptions(source: Source.server));
       final ownerId = bizDoc.data()?['ownerId'] as String?;
-      final workerName = uid != null
-          ? (await getUser(uid))?.name ?? '근무자'
+      // [R-M5-FIX] uid 파라미터 미전달 시 app.uid 폴백 — 알림에 '근무자' 대신 실명 표시
+      final effectiveWorkerUid = uid?.isNotEmpty == true ? uid! : app.uid;
+      final workerName = effectiveWorkerUid.isNotEmpty
+          ? (await getUser(effectiveWorkerUid))?.name ?? '근무자'
           : '근무자';
 
       if (ownerId != null && ownerId.isNotEmpty) {
