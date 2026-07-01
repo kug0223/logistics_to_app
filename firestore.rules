@@ -290,6 +290,9 @@ service cloud.firestore {
       // 마감 후 workDetailId·totalRequired 등을 변경하면 기존 applications 데이터와
       // 불일치가 발생하므로 슈퍼어드민만 예외 허용 (긴급 운영 수정 시).
       // [SEC-45] businessId는 상태와 무관하게 항상 불변 — 슈퍼어드민만 예외
+      // [TO-H1] totalRequired를 totalConfirmed 미만으로 낮추면 정원 초과 체크 오작동 →
+      //   기존 확정자 재지원 차단, 신규 지원서 정원 계산 혼란 발생. 슈퍼어드민만 예외.
+      //   totalRequired=0(무제한)으로 변경은 항상 허용.
       allow update: if isLoggedIn() &&
                        (isAdminOf(resource.data.businessId) ||
                         isSubAdminOf(resource.data.businessId) ||
@@ -301,7 +304,13 @@ service cloud.firestore {
                         !(resource.data.get('status', '') in ['CLOSED', 'EXPIRED']) ||
                         !request.resource.data.diff(resource.data).affectedKeys()
                           .hasAny(['workDetailId', 'totalRequired', 'startDate',
-                                   'endDate', 'workDays', 'workTypeIds']));
+                                   'endDate', 'workDays', 'workTypeIds'])) &&
+                       (isSuperAdmin() ||
+                        !request.resource.data.diff(resource.data).affectedKeys()
+                          .hasAny(['totalRequired']) ||
+                        request.resource.data.totalRequired == 0 ||
+                        request.resource.data.totalRequired >=
+                          resource.data.get('totalConfirmed', 0));
 
       // 지원자: 지원/취소 시 totalPending 카운터만 수정 허용 (음수 방지)
       // [MEDIUM-FIX] ±1 제한 없이 임의 양수값 설정 가능 → 통계 훼손 가능
