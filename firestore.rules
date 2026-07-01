@@ -755,8 +755,10 @@ service cloud.firestore {
 
       // Deprecated 컬렉션이지만 잔존 데이터의 크로스-사업장 노출 차단
       // [크로스-사업장 방지] isAdmin()만으로는 사업장 구분 없이 전체 그룹 조회 가능
+      // [M-02] resource == null 가드 추가 — 문서 미존재 시 resource.data 접근 오류 방지
       allow get: if isLoggedIn() && (
         isSuperAdmin() ||
+        resource == null ||
         isAdminOf(resource.data.businessId) ||
         isSubAdminOf(resource.data.businessId)
       );
@@ -777,8 +779,10 @@ service cloud.firestore {
                       isSuperAdmin()
                     );
 
+      // [M-01] SubAdmin update/delete 추가 — get/list는 이미 isSubAdminOf 허용하면서 수정은 막히던 불일치 해소
       allow update, delete: if isLoggedIn() && (
                               (isBusinessAdmin() && isAdminOf(resource.data.businessId)) ||
+                              (isSubAdmin() && isSubAdminOf(resource.data.businessId)) ||
                               isSuperAdmin()
                             );
     }
