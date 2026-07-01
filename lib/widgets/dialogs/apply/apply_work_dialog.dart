@@ -2293,10 +2293,13 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
     final active = scoped.where((app) {
       if (app.isLongTermApplication) {
+        // [AP-M3-FIX] CANCELED/REJECTED 장기 지원서도 명시적으로 제외
+        // 이전 코드: pending/confirmed가 아닌 케이스에서 return false 없이 outer return true로 흘러
+        //           CANCELED(USER_CANCELED 등)가 캐시에 포함되는 버그
         if (app.status == AppStatus.pending || AppStatus.confirmedStatuses.contains(app.status)) {
           return true;
         }
-        if (app.isTerminationApproved) return false;
+        return false;  // CANCELED·REJECTED·그외 → 제외
       }
       return true;
     }).toList();

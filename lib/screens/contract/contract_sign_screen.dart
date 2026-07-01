@@ -540,11 +540,14 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
                   ? (isEmployer
                       ? '내용을 검토 후 서명하면 근무자에게 발송됩니다.'
                       : '내용을 끝까지 확인하신 후 서명해주세요.')
-                  : (widget.contract.isCompleted
-                      ? '쌍방 서명이 완료된 계약서입니다.'
-                      : isEmployer
-                          ? '서명 완료 — 근무자의 서명을 기다리고 있습니다.'
-                          : '서명 완료 — 계약이 확정됩니다.'),
+                  // [C-M2-FIX] voided 계약서 딥링크 진입 시 "서명 완료" 오표시 방지
+                  : (widget.contract.status == ContractStatus.voided
+                      ? '이 계약서는 무효 처리되었습니다.'
+                      : (widget.contract.isCompleted
+                          ? '쌍방 서명이 완료된 계약서입니다.'
+                          : isEmployer
+                              ? '서명 완료 — 근무자의 서명을 기다리고 있습니다.'
+                              : '서명 완료 — 계약이 확정됩니다.')),
               style: ResponsiveHelper.smallStyle(context,
                   color: theme.primaryColor),
             ),
