@@ -546,9 +546,10 @@ class FirestoreService {
           }
         }
         final snap = await query.get(const GetOptions(source: Source.server));
-        allItems = snap.docs
-            .map((d) => TOGroupItem(singleTO: TOModel.fromMap(d.data() as Map<String, dynamic>, d.id)))
-            .toList();
+        allItems = snap.docs.map((d) {
+              final to = TOModel.tryFromMap(d.data() as Map<String, dynamic>, d.id);
+              return to != null ? TOGroupItem(singleTO: to) : null;
+            }).whereType<TOGroupItem>().toList();
       }
 
       // businessId whereIn 사용 시 status 클라이언트 필터 적용
@@ -579,15 +580,20 @@ class FirestoreService {
       if (model == null) return [];
 
       return snap.docs.map((d) {
-        final slot = SlotModel.fromMap(d.data(), d.id, toId);
-        return TOItem(
-          to: model,
-          slot: slot,
-          confirmedCount: slot.confirmedCount,
-          pendingCount: slot.pendingCount,
-          totalRequired: slot.totalRequired,
-        );
-      }).toList();
+        try {
+          final slot = SlotModel.fromMap(d.data(), d.id, toId);
+          return TOItem(
+            to: model,
+            slot: slot,
+            confirmedCount: slot.confirmedCount,
+            pendingCount: slot.pendingCount,
+            totalRequired: slot.totalRequired,
+          );
+        } catch (e) {
+          debugPrint('⚠️ 슬롯 파싱 실패 (id=${d.id}): $e');
+          return null;
+        }
+      }).whereType<TOItem>().toList();
     } catch (e) {
       debugPrint('❌ loadGroupTOsLight 실패: $e');
       return [];
