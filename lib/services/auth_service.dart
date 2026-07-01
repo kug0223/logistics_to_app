@@ -1,5 +1,3 @@
-import 'dart:convert';
-import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -448,43 +446,16 @@ class AuthService {
       await FCMService().clearToken();
 
       // 2. 탈퇴 기록 저장 (재가입 30일 제한용)
-      // [BUG-수정] A-H-1: CI 해시로 저장 — CI 없으면 전화번호 해시 폴백
-      // CI는 암호화 저장되므로 EncryptionHelper.decrypt 후 해시 생성
-      final userDoc = await _firestore.collection('users').doc(user.uid).get();
-      if (userDoc.exists) {
-        final data = userDoc.data()!;
-        final ciEncrypted = data['ci'] as String?;
-        final phone = data['phone'] as String?;
-
-        // SEC-29: ciHash/phoneHash 필드를 분리 저장
-        // verifyPassAuth CF는 ciHash 필드로 재가입 제한 조회 — 필드명 일치 필수
-        String? ciHash;
-        String? phoneHash;
-        if (ciEncrypted != null && ciEncrypted.isNotEmpty) {
-          final ciPlain = EncryptionHelper.decrypt(ciEncrypted);
-          if (ciPlain != null && ciPlain.isNotEmpty) {
-            ciHash = sha256.convert(utf8.encode(ciPlain)).toString();
-          }
-        }
-        if (phone != null && phone.isNotEmpty) {
-          phoneHash = sha256.convert(utf8.encode(phone)).toString();
-        }
-
-        if (ciHash != null || phoneHash != null) {
-          final isBlacklisted = data['isBlacklisted'] == true;
-          await _firestore.collection('deleted_accounts').add({
-            'uid': user.uid,
-            if (ciHash != null) 'ciHash': ciHash,
-            if (phoneHash != null) 'phoneHash': phoneHash,
-            'deletedAt': FieldValue.serverTimestamp(),
-            'canReregisterAt': isBlacklisted
-                ? null
-                : Timestamp.fromDate(DateTime.now().add(const Duration(days: 30))),
-            'isBlacklisted': isBlacklisted,
-            'noShowCount': data['noShowCount'] ?? 0,
-            'role': data['role'] ?? 'USER',
-          });
-        }
+      // [AUTH-H2] deleted_accounts 직접 쓰기 → CF(Admin SDK) 경유로 전환
+      //   CF가 users 문서에서 ciHash·phone을 직접 읽어 서버에서 처리하므로
+      //   클라이언트 EncryptionHelper 복호화 불필요.
+      try {
+        await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('recordDeletedAccount')
+            .call();
+      } catch (e) {
+        debugPrint('⚠️ 탈퇴 기록 저장 실패 (계속 진행): $e');
+        // best-effort — 기록 실패해도 계정 삭제는 진행
       }
 
       // 3. Firestore 사용자 문서 삭제 — 개인정보보호법 제21조
@@ -721,6 +692,9 @@ class AuthService {
       //   [점검] businesses Storage(로고·사진)는 개인정보가 아니므로 보존.
       //          슈퍼관리자가 비활성 사업장 일괄 정리 시 삭제 예정.
       // ──────────────────────────────────────────────────────────────
+      // [AUTH-H2] recordDeletedAccount CF로 이전 후 userDoc 참조가 제거됐으나
+      //   BUSINESS_ADMIN 사업장 정리 로직에서 role·businessId 확인이 필요하므로 재조회
+      final userDoc = await _firestore.collection('users').doc(user.uid).get();
       if (userDoc.exists) {
         final roleStr = userDoc.data()?['role'] as String?;
         final businessId = userDoc.data()?['businessId'] as String?;
