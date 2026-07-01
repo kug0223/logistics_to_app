@@ -433,16 +433,18 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     final workEndTime = widget.workDetails.isNotEmpty ? widget.workDetails.first.endTime : '';
     
     try {
-      // ✅ 1. 사용자의 모든 CONFIRMED 지원서 한 번에 조회
+      // ✅ 1. 사용자의 모든 지원서 조회 후 클라이언트 필터링
+      // [BUGFIX-WHEREIN] uid isEqualTo + status whereIn 복합쿼리 → filters.uid null → PERMISSION_DENIED
+      // status whereIn 제거 후 클라이언트에서 confirmedStatuses 필터링으로 전환
       final snapshot = await FirebaseFirestore.instance
           .collection('applications')
           .where('uid', isEqualTo: _currentUserId)
-          .where('status', whereIn: AppStatus.confirmedStatuses)
           .get();
-      
+
       final allConfirmed = snapshot.docs
           .map(ApplicationModel.tryFromFirestore)
           .whereType<ApplicationModel>()
+          .where((app) => AppStatus.confirmedStatuses.contains(app.status))
           .toList();
       
       debugPrint('📅 [장기충돌] 전체 CONFIRMED: ${allConfirmed.length}개');
