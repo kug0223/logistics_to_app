@@ -4383,6 +4383,10 @@ export const adminResetForeignPassword = onCall(
     if (!userData.foreignIdNumber) {
       throw new HttpsError("failed-precondition", "내국인 사용자는 이 기능을 사용할 수 없습니다.");
     }
+    // [LOW-01] active 상태가 아닌 계정 비밀번호 초기화 차단 — rejected 계정 재활성화 오용 방지
+    if (userData.accountStatus !== "active") {
+      throw new HttpsError("failed-precondition", "승인된 계정만 비밀번호를 초기화할 수 있습니다.");
+    }
 
     // 혼동 없는 문자만 사용 (O/0, I/l/1 제외), crypto.randomInt으로 암호학적 안전성 보장
     const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
