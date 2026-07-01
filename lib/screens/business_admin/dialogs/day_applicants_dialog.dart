@@ -2409,18 +2409,18 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     }
 
     setState(() => _isProcessing = true);
-    final count = _selectedIds.length;
-    final confirmed = await DialogHelper.showConfirm(
-      context,
-      title: '일괄 확정',
-      message:
-          '선택한 $count명을 계약 대기 상태로 변경하시겠습니까?\n이후 각 지원자의 계약서를 직접 작성·서명해야 합니다.',
-      confirmText: '일괄 확정',
-    );
-    if (!confirmed || !mounted) return;
-    int successCount = 0;
-    final ids = _selectedIds.toList();
     try {
+      final count = _selectedIds.length;
+      final confirmed = await DialogHelper.showConfirm(
+        context,
+        title: '일괄 확정',
+        message:
+            '선택한 $count명을 계약 대기 상태로 변경하시겠습니까?\n이후 각 지원자의 계약서를 직접 작성·서명해야 합니다.',
+        confirmText: '일괄 확정',
+      );
+      if (!confirmed || !mounted) return;
+      int successCount = 0;
+      final ids = _selectedIds.toList();
       final adminUID = FirebaseAuth.instance.currentUser?.uid;
       for (final appId in ids) {
         if (!mounted) break;
