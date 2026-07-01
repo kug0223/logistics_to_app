@@ -95,7 +95,7 @@ class SlotStatusBadge extends StatelessWidget {
         children: [
           Icon(icon, size: iconSize, color: color),
           SizedBox(width: ResponsiveHelper.spacing(context, compact ? 3 : 4)),
-          Text(label, style: textStyle),
+          Text(label, style: textStyle, overflow: TextOverflow.ellipsis, maxLines: 1),
         ],
       ),
     );

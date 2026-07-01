@@ -389,7 +389,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(app.businessName),
+            Text(app.businessName, overflow: TextOverflow.ellipsis, maxLines: 1),
             if (app.terminationReason != null)
               Text(
                 '사유: ${app.terminationReason}',

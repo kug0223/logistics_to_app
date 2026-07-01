@@ -527,6 +527,8 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                         style: ResponsiveHelper.bodyStyle(context).copyWith(
                           color: AppColors.grey600,
                         ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ],

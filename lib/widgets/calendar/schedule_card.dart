@@ -120,9 +120,13 @@ class ScheduleCard extends StatelessWidget {
                       color: AppColors.grey500,
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                    Text(
-                      '${application.startTime}~${application.endTime}',
-                      style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+                    Flexible(
+                      child: Text(
+                        '${application.startTime}~${application.endTime}',
+                        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                     // 업무유형 아이콘 (WorkTypeIcon 사용)
@@ -161,6 +165,8 @@ class ScheduleCard extends StatelessWidget {
                       style: ResponsiveHelper.bodyStyle(context, color: AppColors.success).copyWith(
                         fontWeight: FontWeight.bold,
                       ),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
                     ),
                   ],
                 ),

@@ -95,13 +95,15 @@ class TODetailDialogs {
                             Row(children: [
                               const Icon(Icons.work_outline, size: 14, color: AppColors.grey600),
                               const SizedBox(width: 4),
-                              Text('${applicant['workType']} (${applicant['workTime']})'),
+                              Flexible(child: Text('${applicant['workType']} (${applicant['workTime']})',
+                                  overflow: TextOverflow.ellipsis, maxLines: 1)),
                             ]),
                             if (toItems.length > 1)
                               Row(children: [
                                 const Icon(Icons.assignment_outlined, size: 14, color: AppColors.grey600),
                                 const SizedBox(width: 4),
-                                Text(applicant['toTitle']),
+                                Flexible(child: Text(applicant['toTitle'],
+                                    overflow: TextOverflow.ellipsis, maxLines: 1)),
                               ]),
                           ],
                         ),

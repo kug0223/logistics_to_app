@@ -607,9 +607,14 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
             style: ResponsiveHelper.bodyStyle(context,
                 color: AppColors.grey600)),
         const Spacer(),
-        Text(row.value,
-            style: ResponsiveHelper.bodyStyle(context)
-                .copyWith(fontWeight: FontWeight.w600)),
+        Flexible(
+          child: Text(row.value,
+              style: ResponsiveHelper.bodyStyle(context)
+                  .copyWith(fontWeight: FontWeight.w600),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+              textAlign: TextAlign.end),
+        ),
       ]),
     );
   }

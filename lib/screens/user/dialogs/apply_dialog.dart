@@ -347,10 +347,14 @@ class _ApplyDialogContentState extends State<_ApplyDialogContent> {
             size: ResponsiveHelper.iconSize(context, 14),
             color: color ?? AppColors.grey600),
         const SizedBox(width: 6),
-        Text(
-          text,
-          style: ResponsiveHelper.smallStyle(context,
-              color: color ?? AppColors.grey700),
+        Flexible(
+          child: Text(
+            text,
+            style: ResponsiveHelper.smallStyle(context,
+                color: color ?? AppColors.grey700),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
         ),
       ],
     );

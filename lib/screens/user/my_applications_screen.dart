@@ -715,9 +715,13 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
             color: AppColors.grey500,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-          Text(
-            timeDisplay,
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+          Flexible(
+            child: Text(
+              timeDisplay,
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
           ),
         ],
       ],
@@ -834,12 +838,16 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                 color: AppColors.warningDark,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Text(
-                reasonText,
-                style: ResponsiveHelper.smallStyle(
-                  context,
-                  color: AppColors.warningDark,
-                  fontWeight: FontWeight.bold,
+              Flexible(
+                child: Text(
+                  reasonText,
+                  style: ResponsiveHelper.smallStyle(
+                    context,
+                    color: AppColors.warningDark,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
                 ),
               ),
             ],

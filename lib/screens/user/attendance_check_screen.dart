@@ -953,6 +953,8 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
                     style: ResponsiveHelper.subtitleStyle(context).copyWith(
                       fontWeight: FontWeight.bold,
                     ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],

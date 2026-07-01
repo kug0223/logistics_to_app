@@ -155,6 +155,9 @@ class MonthlyStatsCard extends StatelessWidget {
             context,
             color: color,
           ).copyWith(fontWeight: FontWeight.bold),
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
+          textAlign: TextAlign.center,
         ),
       ],
     );
