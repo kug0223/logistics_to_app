@@ -33,8 +33,8 @@ class AuthService {
           .get();
       
       if (userSnapshot.docs.isEmpty) {
-        // throw만 — 호출부 catch에서 toast 처리
-        throw Exception('존재하지 않는 아이디입니다.');
+        // [AUTH-H4] 사용자 열거 차단 — 아이디 존재 여부를 에러 메시지로 노출하지 않음
+        throw Exception('아이디 또는 비밀번호가 올바르지 않습니다.');
       }
       
       final userDoc = userSnapshot.docs.first;
@@ -124,10 +124,8 @@ class AuthService {
       String message = '로그인에 실패했습니다.';
       switch (e.code) {
         case 'user-not-found':
-          message = '존재하지 않는 아이디입니다.';
-          break;
         case 'wrong-password':
-          message = '비밀번호가 일치하지 않습니다.';
+          message = '아이디 또는 비밀번호가 올바르지 않습니다.';
           break;
         case 'invalid-email':
           message = '계정 정보에 문제가 있습니다.';
@@ -139,7 +137,7 @@ class AuthService {
           message = '너무 많은 로그인 시도가 있었습니다.\n잠시 후 다시 시도해주세요.';
           break;
         case 'invalid-credential':
-          message = '아이디 또는 비밀번호가 일치하지 않습니다.';
+          message = '아이디 또는 비밀번호가 올바르지 않습니다.';
           break;
         case 'network-request-failed':
           message = '네트워크 연결을 확인해주세요.';

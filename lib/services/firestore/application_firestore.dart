@@ -2384,10 +2384,21 @@ extension ApplicationFirestore on FirestoreService {
   }
 
   /// 특정 필드만 업데이트
+  /// [APP-H2] 화이트리스트 필드만 허용 — 임의 필드 덮어쓰기 차단
+  static const _updateApplicationAllowedFields = {
+    'isStarred',
+    'renewalDecision',
+    'terminationCompletionNotifiedAt',
+  };
+
   Future<void> updateApplicationFields(
     String applicationId,
     Map<String, dynamic> fields,
   ) async {
+    final invalid = fields.keys.where((k) => !_updateApplicationAllowedFields.contains(k)).toList();
+    if (invalid.isNotEmpty) {
+      throw Exception('[updateApplicationFields] 허용되지 않은 필드: $invalid');
+    }
     await _firestore.collection('applications').doc(applicationId).update(fields);
   }
 

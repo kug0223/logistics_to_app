@@ -378,19 +378,25 @@ class PayrollPaymentService {
   }
 
   /// 변경 요청 승인
-  ///
-  /// 상태 체크(PENDING 확인) 트랜잭션 없음: 동시 처리 가능성이 낮고
-  /// 이미 승인된 건을 재승인해도 status 덮어쓰기에 그쳐 데이터 손상 없음.
-  /// 엄격한 멱등성이 필요하면 runTransaction으로 PENDING 체크 후 update 패턴으로 전환.
+  /// [PAY-H2] 트랜잭션으로 PENDING 상태 확인 후 update — 동시 이중 승인 + 감사 추적 오염 차단
   Future<void> approveChangeRequest({
     required String requestId,
     required String processedBy,
   }) async {
-    await _db.collection('payment_change_requests').doc(requestId).update({
-      'status':      PaymentChangeRequestModel.statusApproved,
-      'processedBy': processedBy,
-      'processedAt': FieldValue.serverTimestamp(),
-      'updatedAt':   FieldValue.serverTimestamp(),
+    final ref = _db.collection('payment_change_requests').doc(requestId);
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(ref);
+      if (!snap.exists) throw Exception('변경 요청 문서가 존재하지 않습니다.');
+      final currentStatus = snap.data()?['status'] as String?;
+      if (currentStatus != PaymentChangeRequestModel.statusPending) {
+        throw Exception('이미 처리된 요청입니다. (현재 상태: $currentStatus)');
+      }
+      tx.update(ref, {
+        'status':      PaymentChangeRequestModel.statusApproved,
+        'processedBy': processedBy,
+        'processedAt': FieldValue.serverTimestamp(),
+        'updatedAt':   FieldValue.serverTimestamp(),
+      });
     });
   }
 

@@ -1152,16 +1152,12 @@ class NotificationModel {
     required int finalWage,
     String? applicationId,
   }) {
-    final formattedWage = finalWage.toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-      (Match m) => '${m[1]},',
-    );
     return NotificationModel(
       id: '',
       userId: userId,
       type: NotificationType.wageTransferred,
       title: '급여 송금 완료',
-      body: '[$businessName] $workerName님의 급여 $formattedWage원이 송금 처리되었습니다.',
+      body: '[$businessName] $workerName님의 급여가 송금 처리되었습니다. 앱에서 확인하세요.',
       createdAt: DateTime.now(),
       data: {
         if (applicationId != null) 'applicationId': applicationId,
@@ -1180,17 +1176,12 @@ class NotificationModel {
     required int totalWage,
     required String attendanceId,
   }) {
-    final formattedWage = totalWage.toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-      (Match m) => '${m[1]},',
-    );
-
     return NotificationModel(
       id: '',
       userId: userId,
       type: NotificationType.wageConfirmed,
       title: '급여 정산 완료',
-      body: '$businessName ${workDate.month}/${workDate.day} 근무 급여가 정산되었습니다.\n정산 금액: $formattedWage원',
+      body: '$businessName ${workDate.month}/${workDate.day} 근무 급여가 정산되었습니다. 앱에서 확인하세요.',
       data: {
         'attendanceId': attendanceId,
         'businessId': businessId,

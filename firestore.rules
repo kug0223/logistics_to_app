@@ -167,8 +167,17 @@ service cloud.firestore {
       // 회원가입(본인) 또는 관리자 더미 데이터 생성
       // [RULE-01] 더미 생성 시 민감 필드 차단 — role/isBlacklisted/sealBase64 등 초기값으로 심으면
       //           후속 논리 오동작 및 권한 상승에 악용 가능
+      // [AUTH-H1/M6] isOwner 경로에도 민감 필드 차단 추가 — 회원가입 시 role=SUPER_ADMIN,
+      //   accountStatus=active, ciHash 등을 직접 설정해 권한 상승 또는 PASS 인증 우회 차단
       allow create: if isLoggedIn() && (
-                      isOwner(userId) ||
+                      (isOwner(userId) &&
+                       !request.resource.data.keys().hasAny([
+                         'role', 'isBlacklisted', 'subAdminOf', 'businessId',
+                         'accountStatus', 'ci', 'ciHash',
+                         'restrictedUntil', 'isAdmin', 'sealBase64',
+                         'approvedBy', 'approvedAt', 'rejectedBy', 'rejectedAt', 'rejectionReason',
+                         'trustScore', 'noShowCount', 'lateCount', 'totalWorkDays', 'lastRestartAt'
+                       ])) ||
                       (isAdmin() && request.resource.data.isDummy == true &&
                        !request.resource.data.keys().hasAny([
                          'role', 'isBlacklisted', 'restrictedUntil',
@@ -278,10 +287,11 @@ service cloud.firestore {
           isSubAdminOf(request.query.filters.businessId) ||
           isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
         )) ||
-        // SEC-47: 비공개 TO 덤프 차단 — limit <= 50으로 제한
-        // whereIn 복합쿼리에서 filters.isPublished 접근 불가(Firebase 버그)이므로
-        // 개별 document는 get 규칙에서 isPublished 검증, list는 limit으로만 방어
-        (isUser() && request.query.limit <= 50)
+        // SEC-47: 비공개 TO 덤프 차단 — isPublished 필터 강제 + limit <= 50 제한
+        // isPublished 단독 isEqualTo 쿼리에서 request.query.filters.isPublished 정상 반환됨
+        // (whereIn 복합쿼리는 Firebase 버그로 filters 접근 불가 — 관리자 경로는 isAdminOf 분기 사용)
+        (isUser() && request.query.limit <= 50 &&
+         request.query.filters.get('isPublished', false) == true)
       );
 
       // SubAdmin도 공고 생성·삭제 권한 부여 — create에서 누락되어 PERMISSION_DENIED 발생
