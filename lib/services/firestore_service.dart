@@ -741,7 +741,8 @@ class FirestoreService {
 
       final raw = (snap.data() as Map<String, dynamic>)['workDetails'] as List? ?? [];
       final details = raw
-          .map((e) => WorkDetailData.fromMap(Map<String, dynamic>.from(e as Map)))
+          .map((e) => WorkDetailData.tryFromMap(Map<String, dynamic>.from(e as Map)))
+          .whereType<WorkDetailData>()
           .toList();
 
       final idx = details.indexWhere((d) {
@@ -848,7 +849,8 @@ class FirestoreService {
       final rawList = slotData['workDetails'] as List? ?? [];
       if (rawList.isEmpty) return;
       final workDetails = rawList
-          .map((e) => WorkDetailData.fromMap(Map<String, dynamic>.from(e as Map)))
+          .map((e) => WorkDetailData.tryFromMap(Map<String, dynamic>.from(e as Map)))
+          .whereType<WorkDetailData>()
           .toList();
 
       final allClosed = workDetails.every((d) => d.isClosed || d.isTimeExpired);

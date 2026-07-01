@@ -23,6 +23,10 @@ class TrustRule {
     );
   }
 
+  static TrustRule? tryFromMap(Map<String, dynamic> map) {
+    try { return TrustRule.fromMap(map); } catch (_) { return null; }
+  }
+
   Map<String, dynamic> toMap() {
     return {
       'type': type,
@@ -113,10 +117,12 @@ class TrustSettingsModel {
       startScore: (map['startScore'] as num?)?.toInt() ?? 60,
       maxScore: (map['maxScore'] as num?)?.toInt() ?? 100,
       increaseRules: (map['increaseRules'] as List<dynamic>?)
-          ?.map((e) => TrustRule.fromMap(e as Map<String, dynamic>))
+          ?.map((e) => TrustRule.tryFromMap(e as Map<String, dynamic>))
+          .whereType<TrustRule>()
           .toList() ?? [],
       decreaseRules: (map['decreaseRules'] as List<dynamic>?)
-          ?.map((e) => TrustRule.fromMap(e as Map<String, dynamic>))
+          ?.map((e) => TrustRule.tryFromMap(e as Map<String, dynamic>))
+          .whereType<TrustRule>()
           .toList() ?? [],
       restartProgram: map['restartProgram'] != null
           ? RestartProgramSettings.fromMap(map['restartProgram'])
