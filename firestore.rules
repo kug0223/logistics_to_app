@@ -579,10 +579,14 @@ service cloud.firestore {
                       // [SEC-46] 관리자: 핵심 식별자 불변 조건 추가 — 출근 기록 재귀속 차단
                       // userId/businessId/applicationId/workDate는 생성 후 변경 불가 (슈퍼어드민 예외)
                       // wageDetail/finalWage/wageStatus 등 운영 필드는 wage_confirm_dialog 기능 유지
+                      // [M-2] wageTransferred 전환은 wageConfirmed 상태에서만 허용 (markTransferredBatch 2차 방어선)
                       ((isAdminOf(resource.data.businessId) ||
                         isSubAdminOf(resource.data.businessId)) &&
                        !request.resource.data.diff(resource.data).affectedKeys()
-                         .hasAny(['userId', 'businessId', 'applicationId', 'workDate'])) ||
+                         .hasAny(['userId', 'businessId', 'applicationId', 'workDate']) &&
+                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['wageStatus']) ||
+                        request.resource.data.get('wageStatus', '') != 'wageTransferred' ||
+                        resource.data.get('wageStatus', '') == 'wageConfirmed')) ||
                       isSuperAdmin()
                     );
 
