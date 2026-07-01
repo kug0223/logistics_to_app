@@ -455,7 +455,7 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
           .collection('applications')
           .doc(record.applicationId)
           .get();
-      if (appDoc.exists) app = ApplicationModel.fromFirestore(appDoc);
+      if (appDoc.exists) app = ApplicationModel.tryFromFirestore(appDoc);
       if (!context.mounted) return; // [BUG-수정] appDoc.get() 이후 async gap에서 mounted 체크 (D-M-1)
 
       final userDoc = await FirebaseFirestore.instance

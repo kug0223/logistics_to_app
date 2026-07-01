@@ -285,7 +285,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     // 단기만 필터 (workDays가 없는 것) + 확정 상태 클라이언트 필터
     const confirmedStatuses = {AppStatus.confirmed, AppStatus.contractPending};
     for (var doc in shortTermSnapshot.docs) {
-      final app = ApplicationModel.fromFirestore(doc);
+      final app = ApplicationModel.tryFromFirestore(doc);
+      if (app == null) continue;
       if (!confirmedStatuses.contains(app.status)) continue;
       if (app.workDays == null || app.workDays!.isEmpty) {
         if (seenIds.add(app.id)) result.add(app);
@@ -304,7 +305,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
     int longTermCount = 0;
     for (var doc in longTermSnapshot.docs) {
-      final app = ApplicationModel.fromFirestore(doc);
+      final app = ApplicationModel.tryFromFirestore(doc);
+      if (app == null) continue;
       if (!confirmedStatuses.contains(app.status)) continue;
       
       // 🔥 퇴사일이 있으면 그 날짜까지만

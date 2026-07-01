@@ -135,7 +135,8 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
 
       final Map<String, List<ApplicationModel>> appsByDate = {};
       for (final doc in shortTermSnapshot.docs) {
-        final app = ApplicationModel.fromFirestore(doc);
+        final app = ApplicationModel.tryFromFirestore(doc);
+        if (app == null) continue;
         if (!AppStatus.confirmedStatuses.contains(app.status)) continue;
         debugPrint('    단기 app: id=${app.id}, workDate=${app.workDate}, '
             'workDays=${app.workDays}, status=${app.status}');
@@ -158,7 +159,8 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
       debugPrint('  [장기 전체] businessId=$businessId → ${longTermSnapshot.docs.length}건');
 
       for (final doc in longTermSnapshot.docs) {
-        final app = ApplicationModel.fromFirestore(doc);
+        final app = ApplicationModel.tryFromFirestore(doc);
+        if (app == null) continue;
         if (!AppStatus.confirmedStatuses.contains(app.status)) continue;
         if (app.workDays == null || app.workDays!.isEmpty) continue;
         debugPrint('    장기 app: id=${app.id}, workDate=${app.workDate}, workDays=${app.workDays}');
@@ -235,7 +237,8 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
               .where('applicationId', whereIn: batchIds)
               .get();
           for (final doc in snap.docs) {
-            final att = AttendanceModel.fromFirestore(doc);
+            final att = AttendanceModel.tryFromFirestore(doc);
+            if (att == null) continue;
             // 코드에서 월 범위 필터링 (monthEndExclusive의 하루 전 = 말일 23:59:59.999 이하)
             if (att.workDate.isBefore(monthStart) || !att.workDate.isBefore(monthEndExclusive)) {
               continue;
