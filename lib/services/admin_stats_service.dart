@@ -494,7 +494,8 @@ class AdminStatsService {
             .where('workDate',
                 isGreaterThanOrEqualTo: Timestamp.fromDate(start))
             .where('workDate', isLessThan: Timestamp.fromDate(end))
-            .get()
+            .limit(10000)
+            .get(const GetOptions(source: Source.server))
             .timeout(const Duration(seconds: 20));
         return snap.docs.map(AttendanceModel.fromFirestore).toList();
       } catch (e) {

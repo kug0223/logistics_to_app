@@ -3419,6 +3419,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     String? newCheckIn,
     String? newCheckOut,
   ) async {
+    if (_isLoading) return;
     try {
       int successCount = 0;
       int failCount = 0;

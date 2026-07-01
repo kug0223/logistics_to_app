@@ -890,7 +890,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     );
 
     if (result == true && mounted) {
-      _loadReviews();
+      await _loadReviews();
     }
   }
 
