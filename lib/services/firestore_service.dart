@@ -525,8 +525,10 @@ class FirestoreService {
               .orderBy('createdAt', descending: true)
               .where('businessId', whereIn: chunk)
               .get(const GetOptions(source: Source.server));
-          collected.addAll(chunkSnap.docs.map(
-            (d) => TOGroupItem(singleTO: TOModel.fromMap(d.data() as Map<String, dynamic>, d.id))));
+          collected.addAll(chunkSnap.docs.map((d) {
+            final to = TOModel.tryFromMap(d.data() as Map<String, dynamic>, d.id);
+            return to != null ? TOGroupItem(singleTO: to) : null;
+          }).whereType<TOGroupItem>());
         }
         collected.sort((a, b) => b.singleTO.createdAt.compareTo(a.singleTO.createdAt));
         allItems = collected;

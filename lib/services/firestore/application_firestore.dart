@@ -301,7 +301,11 @@ extension ApplicationFirestore on FirestoreService {
         return false;
       }
       // 게시 기간 만료 또는 지원 마감일 경과 체크 (contract 타입)
-      final toModel = TOModel.fromMap(toData, toId);
+      final toModel = TOModel.tryFromMap(toData, toId);
+      if (toModel == null) {
+        ToastHelper.showError('공고 데이터가 손상되었습니다.');
+        return false;
+      }
       if (toModel.isPostingExpired || toModel.isDeadlinePassed) {
         ToastHelper.showError('지원 마감된 공고입니다.');
         return false;
@@ -1739,7 +1743,7 @@ extension ApplicationFirestore on FirestoreService {
 
     // ── TO 로드 (계약기간 계산 + 충돌 탐색에 사용) ──
     final toDoc = await _firestore.collection('tos').doc(toId).get(const GetOptions(source: Source.server));
-    final toModel = toDoc.exists ? TOModel.fromMap(toDoc.data()!, toDoc.id) : null;
+    final toModel = toDoc.exists ? TOModel.tryFromMap(toDoc.data()!, toDoc.id) : null;
 
     // ── 장기공고 확정 시 workEndDate 자동 계산 ──
     // (지원 시 workEndDate가 null인 경우: apply_dialog 경유 or preset period TO)

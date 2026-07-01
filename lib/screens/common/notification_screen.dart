@@ -1028,7 +1028,16 @@ class _NotificationScreenState extends State<NotificationScreen> {
         )));
         return;
       }
-      final to = TOModel.fromMap(toData, toId);
+      final to = TOModel.tryFromMap(toData, toId);
+      if (to == null) {
+        if (!context.mounted) return;
+        Navigator.pop(context);
+        ToastHelper.showError('공고 데이터를 불러올 수 없습니다');
+        Navigator.push(context, MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+          initialBusinessId: fallbackBusinessId,
+        )));
+        return;
+      }
 
       // workDetails는 tos/{toId}의 배열 필드 — 서브컬렉션이 아님.
       // 알림의 workDetailId는 id(workType_start_end 합성키) 또는 legacyId(workType)일 수 있음.

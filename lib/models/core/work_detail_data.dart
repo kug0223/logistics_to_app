@@ -345,10 +345,16 @@ class WorkDetailData {
   static WorkDetailData fromLegacyMap(Map<String, dynamic> map) =>
       WorkDetailData.fromMap(map);
 
+  static WorkDetailData? tryFromMap(Map<String, dynamic> map, [String? id]) {
+    try { return WorkDetailData.fromMap(map, id); } catch (_) { return null; }
+  }
+
   /// Timestamp 없이 순수 Map만 사용하므로 Timestamp 변환 불필요
   static List<WorkDetailData> listFromFirestore(dynamic raw) {
     if (raw == null) return [];
-    return (raw as List).map((e) => WorkDetailData.fromMap(Map<String, dynamic>.from(e as Map))).toList();
+    return (raw as List).map((e) {
+      try { return WorkDetailData.fromMap(Map<String, dynamic>.from(e as Map)); } catch (_) { return null; }
+    }).whereType<WorkDetailData>().toList();
   }
 
   static List<Map<String, dynamic>> listToFirestore(List<WorkDetailData> list) =>
