@@ -56,7 +56,7 @@ class MonthlyReviewService {
           .where('workerStatus', isEqualTo: 'pending')
           .where('isPublished', isEqualTo: false)
           .get();
-      return snap.docs.map(ReviewRequestModel.fromFirestore).toList();
+      return snap.docs.map(ReviewRequestModel.tryFromFirestore).whereType<ReviewRequestModel>().toList();
     } catch (e) {
       debugPrint('❌ worker 리뷰 요청 조회 실패: $e');
       return [];
@@ -74,7 +74,7 @@ class MonthlyReviewService {
           .where('isPublished', isEqualTo: false)
           .limit(200)
           .get();
-      return snap.docs.map(ReviewRequestModel.fromFirestore).toList();
+      return snap.docs.map(ReviewRequestModel.tryFromFirestore).whereType<ReviewRequestModel>().toList();
     } catch (e) {
       debugPrint('❌ admin 리뷰 요청 조회 실패: $e');
       return [];
@@ -92,7 +92,7 @@ class MonthlyReviewService {
           .where('isPublished', isEqualTo: false)
           .limit(500)
           .get();
-      return snap.docs.map(ReviewRequestModel.fromFirestore).toList();
+      return snap.docs.map(ReviewRequestModel.tryFromFirestore).whereType<ReviewRequestModel>().toList();
     } catch (e) {
       debugPrint('❌ 미공개 리뷰 요청 조회 실패: $e');
       return [];
@@ -684,7 +684,7 @@ class MonthlyReviewService {
       final hasMore = snap.docs.length > pageSize;
       final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
       return ReviewPage(
-        records: docs.map(MonthlyReviewModel.fromFirestore).toList(),
+        records: docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList(),
         cursor: docs.isNotEmpty ? docs.last : null,
         hasMore: hasMore,
       );
@@ -713,7 +713,7 @@ class MonthlyReviewService {
       final hasMore = snap.docs.length > pageSize;
       final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
       return ReviewPage(
-        records: docs.map(MonthlyReviewModel.fromFirestore).toList(),
+        records: docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList(),
         cursor: docs.isNotEmpty ? docs.last : null,
         hasMore: hasMore,
       );
@@ -742,7 +742,7 @@ class MonthlyReviewService {
       final hasMore = snap.docs.length > pageSize;
       final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
       return ReviewPage(
-        records: docs.map(MonthlyReviewModel.fromFirestore).toList(),
+        records: docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList(),
         cursor: docs.isNotEmpty ? docs.last : null,
         hasMore: hasMore,
       );
@@ -771,7 +771,7 @@ class MonthlyReviewService {
       final hasMore = snap.docs.length > pageSize;
       final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
       return ReviewPage(
-        records: docs.map(MonthlyReviewModel.fromFirestore).toList(),
+        records: docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList(),
         cursor: docs.isNotEmpty ? docs.last : null,
         hasMore: hasMore,
       );

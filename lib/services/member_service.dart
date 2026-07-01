@@ -215,7 +215,7 @@ class MemberService {
           .orderBy('createdAt', descending: true)
           .limit(50)
           .get();
-      return snap.docs.map(MemberInvitationModel.fromFirestore).toList();
+      return snap.docs.map(MemberInvitationModel.tryFromFirestore).whereType<MemberInvitationModel>().toList();
     } catch (e) {
       debugPrint('초대 목록 조회 실패: $e');
       return [];
@@ -243,7 +243,7 @@ class MemberService {
           .orderBy('addedAt', descending: false)
           .limit(200)
           .get();
-      return snap.docs.map(BusinessMemberModel.fromFirestore).toList();
+      return snap.docs.map(BusinessMemberModel.tryFromFirestore).whereType<BusinessMemberModel>().toList();
     } catch (e) {
       debugPrint('멤버 목록 조회 실패: $e');
       return [];

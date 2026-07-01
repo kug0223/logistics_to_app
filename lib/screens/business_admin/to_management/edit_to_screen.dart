@@ -226,15 +226,15 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     // draft 제외 의도: TO 최초 공개 전 draft 수정에는 확정 근무자가 없으므로 경고 불필요.
     // 단, slot != null이면 이미 공개된 슬롯을 수정하는 것이므로 확정 근무자가 존재할 수 있음.
     final isExistingSlotEdit = widget.slot != null || widget.isBatchMode;
-    if (!widget.isNewSlot && (_publishMode != 'draft' || isExistingSlotEdit)) {
-      final proceed = await _showWageGuardWarning();
-      if (!mounted) return;
-      if (!proceed) return;
-    }
 
     setState(() { _isSaving = true; _hasChanges = false; });
 
     try {
+      if (!widget.isNewSlot && (_publishMode != 'draft' || isExistingSlotEdit)) {
+        final proceed = await _showWageGuardWarning();
+        if (!mounted) return;
+        if (!proceed) return;
+      }
       // ── 슬롯 수정 모드 ──────────────────────────────────────
       if (widget.isNewSlot) {
         if (_isNewSlotDeadlineExpired()) {

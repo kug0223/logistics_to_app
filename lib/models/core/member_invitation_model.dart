@@ -33,6 +33,10 @@ class MemberInvitationModel {
     this.respondedAt,
   });
 
+  static MemberInvitationModel? tryFromFirestore(DocumentSnapshot doc) {
+    try { return MemberInvitationModel.fromFirestore(doc); } catch (_) { return null; }
+  }
+
   factory MemberInvitationModel.fromFirestore(DocumentSnapshot doc) {
     final raw = doc.data();
     if (raw == null) throw ArgumentError('Document ${doc.id} has no data');

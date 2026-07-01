@@ -72,9 +72,9 @@ class _AllUsersScreenState extends State<AllUsersScreen>
 
       if (!mounted) return;
       setState(() {
-        _users = snap.docs
-            .map((d) => UserModel.fromMap(d.data(), d.id))
-            .toList();
+        _users = snap.docs.map((d) {
+          try { return UserModel.fromMap(d.data(), d.id); } catch (_) { return null; }
+        }).whereType<UserModel>().toList();
       });
       setLoading(false);
     } catch (e) {

@@ -60,6 +60,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   // 계약서 요청 쿨다운 (앱ID → 마지막 요청 시각)
   final Map<String, DateTime> _lastContractRequestMap = {};
   final Map<String, bool> _isRequestingContract = {};
+  final Set<String> _cancellingIds = {};
   static const Duration _contractRequestCooldown = Duration(hours: 24);
 
   static const int _pageSize = 20;
@@ -346,6 +347,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   }
 
   Future<void> _cancelApplication(String applicationId) async {
+    if (_cancellingIds.contains(applicationId)) return;
     final userProvider = Provider.of<UserProvider>(context, listen: false);
     final uid = userProvider.currentUser?.uid;
 
@@ -354,24 +356,28 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       return;
     }
 
-    final confirmed = await DialogHelper.showCancelConfirm(
-      context,
-      title: '지원 취소',
-      message: '정말 지원을 취소하시겠습니까?',
-    );
+    setState(() => _cancellingIds.add(applicationId));
+    try {
+      final confirmed = await DialogHelper.showCancelConfirm(
+        context,
+        title: '지원 취소',
+        message: '정말 지원을 취소하시겠습니까?',
+      );
 
-    if (!confirmed) return;
-    if (!mounted) return;
+      if (!confirmed || !mounted) return;
 
-    // cancelApplication 내부에서 이미 상태에 맞는 토스트(showSuccess/showInfo/showError)를
-    // 표시하므로, 여기서는 추가 메시지 없이 화면 갱신만 수행한다.
-    // (REJECTED·이미취소 상태에서 success=true가 반환될 때 중복 토스트 방지)
-    final success = await _firestoreService.cancelApplication(applicationId, uid);
-    if (!mounted) return;
-    if (success) {
-      _loadApplications();
-    } else {
-      ToastHelper.showError('취소에 실패했습니다.');
+      // cancelApplication 내부에서 이미 상태에 맞는 토스트(showSuccess/showInfo/showError)를
+      // 표시하므로, 여기서는 추가 메시지 없이 화면 갱신만 수행한다.
+      // (REJECTED·이미취소 상태에서 success=true가 반환될 때 중복 토스트 방지)
+      final success = await _firestoreService.cancelApplication(applicationId, uid);
+      if (!mounted) return;
+      if (success) {
+        _loadApplications();
+      } else {
+        ToastHelper.showError('취소에 실패했습니다.');
+      }
+    } finally {
+      if (mounted) setState(() => _cancellingIds.remove(applicationId));
     }
   }
 

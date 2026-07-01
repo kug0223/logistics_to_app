@@ -58,9 +58,9 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
           .limit(300)
           .get();
 
-      final businesses = businessSnapshot.docs
-          .map((doc) => BusinessModel.fromMap(doc.data(), doc.id))
-          .toList();
+      final businesses = businessSnapshot.docs.map((doc) {
+        try { return BusinessModel.fromMap(doc.data(), doc.id); } catch (_) { return null; }
+      }).whereType<BusinessModel>().toList();
 
       // 소유자 일괄 조회: whereIn 30개 청크 배치 → 최대 10회 read (기존 300회 → 97% 절감)
       final ownerIds = businesses.map((b) => b.ownerId).toSet().toList();

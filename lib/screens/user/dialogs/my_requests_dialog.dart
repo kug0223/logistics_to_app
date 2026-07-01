@@ -464,6 +464,8 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
 
   Future<void> _handleIdCardApprove(IdCardAccessRequestModel request) async {
     if (_isProcessing) return;
+    setState(() => _isProcessing = true);
+    try {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -499,11 +501,8 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       ),
     );
 
-    if (confirmed != true) return;
-    if (!mounted) return;
+    if (confirmed != true || !mounted) return;
 
-    setState(() => _isProcessing = true);
-    try {
       final success = await _firestoreService.approveIdCardAccessRequest(request.id);
       if (!mounted) return;
       if (success) {
@@ -521,8 +520,9 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
 
   Future<void> _handleIdCardReject(IdCardAccessRequestModel request) async {
     if (_isProcessing) return;
+    setState(() => _isProcessing = true);
     final reasonController = TextEditingController();
-
+    try {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -560,13 +560,9 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
     );
 
     final idCardRejectReason = reasonController.text.trim().isEmpty ? null : reasonController.text.trim();
-    reasonController.dispose();
 
-    if (confirmed != true) return;
-    if (!mounted) return;
+    if (confirmed != true || !mounted) return;
 
-    setState(() => _isProcessing = true);
-    try {
       final success = await _firestoreService.rejectIdCardAccessRequest(
         request.id,
         reason: idCardRejectReason,
@@ -581,6 +577,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
         ToastHelper.showError('거절 실패');
       }
     } finally {
+      reasonController.dispose();
       if (mounted) setState(() => _isProcessing = false);
     }
   }
@@ -591,6 +588,8 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
 
   Future<void> _handleTerminationApprove(ApplicationModel app) async {
     if (_isProcessing) return;
+    setState(() => _isProcessing = true);
+    try {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -627,11 +626,8 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       ),
     );
 
-    if (confirmed != true) return;
-    if (!mounted) return;
+    if (confirmed != true || !mounted) return;
 
-    setState(() => _isProcessing = true);
-    try {
       final success = await _firestoreService.approveTermination(app.id);
       if (!mounted) return;
       if (success) {
@@ -649,8 +645,9 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
 
   Future<void> _handleTerminationReject(ApplicationModel app) async {
     if (_isProcessing) return;
+    setState(() => _isProcessing = true);
     final reasonController = TextEditingController();
-
+    try {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -688,13 +685,9 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
     );
 
     final terminationRejectReason = reasonController.text.trim().isEmpty ? null : reasonController.text.trim();
-    reasonController.dispose();
 
-    if (confirmed != true) return;
-    if (!mounted) return;
+    if (confirmed != true || !mounted) return;
 
-    setState(() => _isProcessing = true);
-    try {
       final success = await _firestoreService.rejectTermination(
         applicationId: app.id,
         rejectReason: terminationRejectReason,
@@ -709,6 +702,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
         ToastHelper.showError('거절 실패');
       }
     } finally {
+      reasonController.dispose();
       if (mounted) setState(() => _isProcessing = false);
     }
   }

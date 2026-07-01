@@ -497,7 +497,7 @@ class AdminStatsService {
             .limit(10000)
             .get(const GetOptions(source: Source.server))
             .timeout(const Duration(seconds: 20));
-        return snap.docs.map(AttendanceModel.fromFirestore).toList();
+        return snap.docs.map(AttendanceModel.tryFromFirestore).whereType<AttendanceModel>().toList();
       } catch (e) {
         debugPrint('❌ 근태 조회 실패 ($id): $e');
         return <AttendanceModel>[];
@@ -517,7 +517,7 @@ class AdminStatsService {
             .where('reviewType', isEqualTo: 'ADMIN_TO_USER')
             .get()
             .timeout(const Duration(seconds: 20));
-        return snap.docs.map(MonthlyReviewModel.fromFirestore).toList();
+        return snap.docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList();
       } catch (e) {
         debugPrint('⚠️ 연간 리뷰 조회 실패 ($id): $e');
         return <MonthlyReviewModel>[];
@@ -538,7 +538,7 @@ class AdminStatsService {
             .where('reviewType', isEqualTo: 'ADMIN_TO_USER')
             .get()
             .timeout(const Duration(seconds: 20));
-        return snap.docs.map(MonthlyReviewModel.fromFirestore).toList();
+        return snap.docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList();
       } catch (e) {
         debugPrint('⚠️ 월간 리뷰 조회 실패 ($id): $e');
         return <MonthlyReviewModel>[];

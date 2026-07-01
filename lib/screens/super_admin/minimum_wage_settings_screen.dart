@@ -82,7 +82,7 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
     }
   }
 
-  void _showAddOrEditDialog({int? existingYear, int? existingWage}) {
+  Future<void> _showAddOrEditDialog({int? existingYear, int? existingWage}) async {
     final isEdit = existingYear != null;
     final yearController = TextEditingController(
       text: isEdit ? existingYear.toString() : '',
@@ -91,7 +91,7 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
       text: isEdit ? FormatHelper.formatNumber(existingWage!) : '',
     );
 
-    showDialog(
+    await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -163,6 +163,8 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
         ],
       ),
     );
+    yearController.dispose();
+    wageController.dispose();
   }
 
   Future<void> _confirmDelete(int year) async {

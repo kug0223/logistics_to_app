@@ -32,6 +32,7 @@ import '../../../widgets/app_select_field.dart';
 import '../../../widgets/common/app_checkbox.dart';
 import '../../../widgets/common/app_empty_state.dart';
 import '../../../widgets/common/loading_widget.dart';
+import '../../../models/core/contract_template_model.dart' show ContractArticle;
 import '../../../widgets/dialogs/contract_template_selector_dialog.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../widgets/dialogs/worker_detail_dialog.dart';
@@ -1749,37 +1750,40 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     }).toList();
     if (toProcess.isEmpty) return;
 
-    // 1. 템플릿 선택
-    final articles =
-        await ContractTemplateSelectorDialog.show(context, businessId: bizId);
-    if (articles == null || !mounted) return;
-
-    // 2. 인감 확인
-    final currentUser = context.read<UserProvider>().currentUser;
-    final sealBase64 = currentUser?.sealBase64 ?? '';
-    final sealType = currentUser?.sealType ?? 'stamp';
-    if (sealBase64.isEmpty) {
-      if (!mounted) return;
-      final goSettings = await DialogHelper.showConfirm(
-        context,
-        title: '사업주 날인 미등록',
-        message:
-            '일괄 계약 발송에는 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 또는 서명을 먼저 등록해주세요.',
-        confirmText: '설정으로 이동',
-        cancelText: '취소',
-      );
-      if (!mounted) return;
-      if (goSettings) {
-        Navigator.of(context, rootNavigator: true)
-            .push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
-      }
-      return;
-    }
-
-    // 3. TO에서 WorkDetailData 조회
+    List<ContractArticle>? articles;
+    String sealBase64 = '';
+    String sealType = 'stamp';
     setState(() => _contractBatchGroupKey = g.groupKey);
     WorkDetailData? workDetail;
     try {
+      // 1. 템플릿 선택
+      articles =
+          await ContractTemplateSelectorDialog.show(context, businessId: bizId);
+      if (articles == null || !mounted) return;
+
+      // 2. 인감 확인
+      final currentUser = context.read<UserProvider>().currentUser;
+      sealBase64 = currentUser?.sealBase64 ?? '';
+      sealType = currentUser?.sealType ?? 'stamp';
+      if (sealBase64.isEmpty) {
+        if (!mounted) return;
+        final goSettings = await DialogHelper.showConfirm(
+          context,
+          title: '사업주 날인 미등록',
+          message:
+              '일괄 계약 발송에는 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 또는 서명을 먼저 등록해주세요.',
+          confirmText: '설정으로 이동',
+          cancelText: '취소',
+        );
+        if (!mounted) return;
+        if (goSettings) {
+          Navigator.of(context, rootNavigator: true)
+              .push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
+        }
+        return;
+      }
+
+      // 3. TO에서 WorkDetailData 조회
       if (g.toId != null) {
         final to = await _svc.getTO(g.toId!);
         if (to != null && to.workDetails.isNotEmpty) {
@@ -1854,7 +1858,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             business: business,
             worker: user,
             workDetail: finalWorkDetail,
-            articles: articles,
+            articles: articles!,
           );
           await ContractService().saveEmployerSignature(
             contract: contract,

@@ -848,56 +848,53 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     // 사업주 날인 미등록 차단 — 근로계약서 서명에 필요 (전역 체크)
     final userProvider = Provider.of<UserProvider>(context, listen: false);
     final uid = userProvider.currentUser?.uid;
-    if (uid != null) {
-      // sealBase64는 users/{uid} 문서에만 저장 — businesses 문서 폴백 불필요
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users').doc(uid).get();
-      if (!mounted) return;
-      final String? sealBase64 = userDoc.data()?['sealBase64'] as String?;
-
-      if (sealBase64 == null || sealBase64.isEmpty) {
-        final goToSettings = await DialogHelper.showConfirm(
-          context,
-          title: '사업주 날인 미등록',
-          message: '근로계약서 서명을 위해 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 이미지 또는 서명을 먼저 등록해주세요.',
-          confirmText: '설정으로 이동',
-          cancelText: '취소',
-        );
-        if (!mounted) return;
-        if (goToSettings) {
-          await NavigationHelper.push<void>(context, destination: const SettingsScreen());
-        }
-        return;
-      }
-    }
-
-    // flex 당일 슬롯 마감 경과 처리
-    if (_selectedJobType == TOType.flex) {
-      if (_allSlotsExpired) {
-        // 전체 날짜 만료 → 강한 경고 (팝업)
-        final proceed = await DialogHelper.showConfirm(
-          context,
-          title: '지원 마감 경과',
-          message: '선택한 모든 날짜의 지원 마감이 이미 지났습니다.\n등록 즉시 마감 상태가 됩니다.\n그래도 등록하시겠습니까?',
-          confirmText: '등록',
-          cancelText: '취소',
-        );
-        if (!proceed || !mounted) return;
-      } else if (_someSlotExpired) {
-        // 일부 날짜만 만료 → 토스트 안내 후 그대로 진행
-        ToastHelper.showInfo('오늘 날짜 슬롯은 마감시간이 지나 등록 즉시 마감됩니다');
-      }
-    }
 
     setState(() => _isCreating = true);
 
     try {
-      final userProvider = Provider.of<UserProvider>(context, listen: false);
-      final uid = userProvider.currentUser?.uid;
+      if (uid != null) {
+        // sealBase64는 users/{uid} 문서에만 저장 — businesses 문서 폴백 불필요
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users').doc(uid).get();
+        if (!mounted) return;
+        final String? sealBase64 = userDoc.data()?['sealBase64'] as String?;
+
+        if (sealBase64 == null || sealBase64.isEmpty) {
+          final goToSettings = await DialogHelper.showConfirm(
+            context,
+            title: '사업주 날인 미등록',
+            message: '근로계약서 서명을 위해 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 이미지 또는 서명을 먼저 등록해주세요.',
+            confirmText: '설정으로 이동',
+            cancelText: '취소',
+          );
+          if (!mounted) return;
+          if (goToSettings) {
+            await NavigationHelper.push<void>(context, destination: const SettingsScreen());
+          }
+          return;
+        }
+      }
+
+      // flex 당일 슬롯 마감 경과 처리
+      if (_selectedJobType == TOType.flex) {
+        if (_allSlotsExpired) {
+          // 전체 날짜 만료 → 강한 경고 (팝업)
+          final proceed = await DialogHelper.showConfirm(
+            context,
+            title: '지원 마감 경과',
+            message: '선택한 모든 날짜의 지원 마감이 이미 지났습니다.\n등록 즉시 마감 상태가 됩니다.\n그래도 등록하시겠습니까?',
+            confirmText: '등록',
+            cancelText: '취소',
+          );
+          if (!proceed || !mounted) return;
+        } else if (_someSlotExpired) {
+          // 일부 날짜만 만료 → 토스트 안내 후 그대로 진행
+          ToastHelper.showInfo('오늘 날짜 슬롯은 마감시간이 지나 등록 즉시 마감됩니다');
+        }
+      }
 
       if (uid == null) {
         ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
-        if (mounted) setState(() => _isCreating = false);
         return;
       }
 

@@ -86,7 +86,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       });
     } catch (e) {
       debugPrint('❌ 사업장 로드 실패: $e');
-      ToastHelper.showError('사업장 목록을 불러오는데 실패했습니다');
+      if (mounted) ToastHelper.showError('사업장 목록을 불러오는데 실패했습니다');
       if (mounted) setState(() => _isLoading = false);
     }
   }
@@ -94,6 +94,8 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
   /// 사업장 삭제
   Future<void> _deleteBusiness(BusinessModel business) async {
     if (_isDeleting) return;
+    setState(() => _isDeleting = true);
+    try {
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
       title: '사업장 삭제',
@@ -101,11 +103,8 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       confirmText: '삭제',
     );
 
-    if (confirmed != true) return;
-    if (!mounted) return;
-    setState(() => _isDeleting = true);
+    if (confirmed != true || !mounted) return;
 
-    try {
       final storage = FirebaseStorage.instance;
       final bizRef = FirebaseFirestore.instance.collection('businesses').doc(business.id);
 

@@ -157,20 +157,20 @@ class _AdminContractManagementScreenState
 
   Future<void> _voidContract(EmploymentContractModel c) async {
     if (_isVoidingContract) return;
-    final ok = await DialogHelper.showConfirm(
-      context,
-      title: '계약서 무효화',
-      message: '${c.snapshot.workerName}님의 계약서를 무효 처리하시겠습니까?\n'
-          '무효 처리 후에는 되돌릴 수 없습니다.',
-      confirmText: '무효 처리',
-      cancelText: '취소',
-      confirmColor: AppColors.error,
-      icon: Icons.block_outlined,
-      iconColor: AppColors.error,
-    );
-    if (ok != true || !mounted) return;
     setState(() => _isVoidingContract = true);
     try {
+      final ok = await DialogHelper.showConfirm(
+        context,
+        title: '계약서 무효화',
+        message: '${c.snapshot.workerName}님의 계약서를 무효 처리하시겠습니까?\n'
+            '무효 처리 후에는 되돌릴 수 없습니다.',
+        confirmText: '무효 처리',
+        cancelText: '취소',
+        confirmColor: AppColors.error,
+        icon: Icons.block_outlined,
+        iconColor: AppColors.error,
+      );
+      if (ok != true || !mounted) return;
       await _contractService.voidContract(c.id);
       if (!mounted) return;
       ToastHelper.showSuccess('계약서가 무효 처리되었습니다');

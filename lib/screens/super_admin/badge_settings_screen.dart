@@ -49,9 +49,9 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
         }
         await batch.commit();
       } else {
-        _badges = snapshot.docs
-            .map((doc) => BadgeModel.fromMap(doc.data(), doc.id))
-            .toList();
+        _badges = snapshot.docs.map((doc) {
+          try { return BadgeModel.fromMap(doc.data(), doc.id); } catch (_) { return null; }
+        }).whereType<BadgeModel>().toList();
       }
     } catch (e) {
       debugPrint('❌ 배지 로드 실패: $e');

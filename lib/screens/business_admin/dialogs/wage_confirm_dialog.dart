@@ -438,22 +438,19 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       ToastHelper.showWarning('급여 확정할 인원을 선택해주세요');
       return;
     }
-    
+    setState(() => _isProcessing = true);
+    try {
     final confirmed = await DialogHelper.showConfirm(
       context,
       title: '급여 확정',
       message: '선택한 ${_pendingSelectedIds.length}명의 급여를 확정하시겠습니까?',
       confirmText: '확정',
     );
-    
     if (confirmed != true || !mounted) return;
 
     final adminUid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
 
     // ── 8일 소급 사전 체크 ──────────────────────────────────────
-    setState(() => _isProcessing = true);
-
-    try {
       final day8Previews = <String, WageDetailModel>{};
       for (var appId in _pendingSelectedIds) {
         final w = _calculatedWages[appId];
@@ -1152,8 +1149,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
   /// 선택된 인원 일괄 급여 확정 취소
   Future<void> _cancelSelectedWages() async {
+    if (_isProcessing) return;
     if (_calculatedSelectedIds.isEmpty) return;
 
+    setState(() => _isProcessing = true);
+    try {
     final count = _calculatedSelectedIds.length;
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
@@ -1161,11 +1161,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       message: '선택한 $count명의 급여 확정을 취소하시겠습니까?\n미확정 상태로 되돌아갑니다.',
       confirmText: '취소',
     );
-    // [C26 Bug 수정] async gap 후 mounted 체크 추가
     if (!confirmed || !mounted) return;
-
-    setState(() => _isProcessing = true);
-    try {
       final ids = List<String>.from(_calculatedSelectedIds);
       // 루프 전에 앱 스냅샷 확보 — _processWageCancel 내부 setState가 _calculatedWorkers를 수정하기 때문
       final appSnapshots = <String, ApplicationModel>{};
@@ -1191,6 +1187,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
   /// 선택된 wageCalculated 항목 → wageConfirmed 마감 처리
   Future<void> _closeWages() async {
+    if (_isProcessing) return;
     // 선택된 항목 중 wageCalculated 상태인 것만 처리
     final targetIds = _calculatedSelectedIds.where((id) {
       final att = widget.attendanceMap[id];
@@ -1202,15 +1199,6 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       return;
     }
 
-    final confirmed = await DialogHelper.showConfirm(
-      context,
-      title: '마감',
-      message: '선택한 ${targetIds.length}명을 마감하시겠습니까?\n마감 후에는 급여 취소가 불가합니다.',
-      confirmText: '마감',
-    );
-    if (confirmed != true || !mounted) return;
-
-    final adminUid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
     setState(() => _isProcessing = true);
 
     int successCount = 0;
@@ -1221,6 +1209,16 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     // 이미 wageConfirmed/wageTransferred이면 skip하여 멱등성 보장.
     final processedApps = <ApplicationModel>[];
     try {
+      final confirmed = await DialogHelper.showConfirm(
+        context,
+        title: '마감',
+        message: '선택한 ${targetIds.length}명을 마감하시겠습니까?\n마감 후에는 급여 취소가 불가합니다.',
+        confirmText: '마감',
+      );
+      if (confirmed != true || !mounted) return;
+
+      final adminUid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
+
       for (final appId in targetIds) {
         final attendance = widget.attendanceMap[appId];
         if (attendance == null) { failCount++; continue; }
@@ -1348,6 +1346,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
   /// 선택된 wageConfirmed 항목 → wageCalculated 마감 취소 처리
   Future<void> _reverseCloseWages() async {
+    if (_isProcessing) return;
     final targetIds = _transferredSelectedIds.where((id) {
       final att = widget.attendanceMap[id];
       return att?.wageStatus == AttendanceModel.wageConfirmed;
@@ -1358,14 +1357,6 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       return;
     }
 
-    final confirmed = await DialogHelper.showConfirm(
-      context,
-      title: '마감 취소',
-      message: '선택한 ${targetIds.length}명을 확정내역으로 되돌리시겠습니까?',
-      confirmText: '마감 취소',
-    );
-    if (confirmed != true || !mounted) return;
-
     setState(() => _isProcessing = true);
 
     int successCount = 0;
@@ -1375,6 +1366,14 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     final List<String> pendingBatchIds = [];
     final List<String> committedAppIds = [];
     try {
+      final confirmed = await DialogHelper.showConfirm(
+        context,
+        title: '마감 취소',
+        message: '선택한 ${targetIds.length}명을 확정내역으로 되돌리시겠습니까?',
+        confirmText: '마감 취소',
+      );
+      if (confirmed != true || !mounted) return;
+
       var batch = FirebaseFirestore.instance.batch();
       int batchCount = 0;
 
