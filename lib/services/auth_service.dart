@@ -3,6 +3,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import '../models/core/user_model.dart';
 import '../utils/toast_helper.dart';
@@ -945,7 +946,16 @@ class AuthService {
       
       // 2. 비밀번호 변경
       await user.updatePassword(newPassword);
-      
+
+      // 3. [AUTH-M1] 다른 기기 세션 무효화 — best-effort (실패해도 비밀번호 변경은 유효)
+      try {
+        await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('revokeUserSession')
+            .call();
+      } catch (e) {
+        debugPrint('⚠️ [changePassword] revokeUserSession 실패: $e');
+      }
+
       return true;
     } on FirebaseAuthException catch (e) {
       String message = '비밀번호 변경에 실패했습니다';

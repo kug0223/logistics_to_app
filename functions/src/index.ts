@@ -4204,6 +4204,21 @@ export const finalizeRegistration = onCall(
   }
 );
 
+// ── revokeUserSession ───────────────────────────────────
+// 본인 세션 무효화 — 비밀번호 변경 후 다른 기기 강제 로그아웃
+// [AUTH-M1] 클라이언트 updatePassword()는 다른 기기 리프레시 토큰을 무효화하지 않음.
+//   Admin SDK를 통해 revokeRefreshTokens를 호출해야 다른 기기 세션이 만료됨.
+export const revokeUserSession = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "로그인 필요");
+    }
+    await admin.auth().revokeRefreshTokens(request.auth.uid);
+    return {success: true};
+  }
+);
+
 // ── resetPasswordWithPass ────────────────────────────────
 // passToken + username → CI 매칭 → Firebase Custom Token 발급
 // Input:  { passToken, username }

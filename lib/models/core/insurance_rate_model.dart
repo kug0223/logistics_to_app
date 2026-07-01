@@ -95,26 +95,22 @@ class InsuranceRateModel {
       businessIncomeRate: 3.0,
       businessIncomeLocalRate: 0.3,
     );
+    // [MEDIUM-01] 요율 범위 clamp — 슈퍼관리자 계정 탈취 시 극단값으로 급여 계산 왜곡 방지
+    double clampRate(String key, double fallback, {double min = 0, double max = 20}) =>
+        ((map[key] as num?)?.toDouble() ?? fallback).clamp(min, max);
+
     return InsuranceRateModel(
         year: (map['year'] as num?)?.toInt() ?? d.year,
-        nationalPensionRate:
-            (map['nationalPensionRate'] as num?)?.toDouble() ?? d.nationalPensionRate,
-        healthInsuranceRate:
-            (map['healthInsuranceRate'] as num?)?.toDouble() ?? d.healthInsuranceRate,
-        ltcInsuranceRate:
-            (map['ltcInsuranceRate'] as num?)?.toDouble() ?? d.ltcInsuranceRate,
-        employmentInsuranceRate:
-            (map['employmentInsuranceRate'] as num?)?.toDouble() ?? d.employmentInsuranceRate,
+        nationalPensionRate:   clampRate('nationalPensionRate',   d.nationalPensionRate),
+        healthInsuranceRate:   clampRate('healthInsuranceRate',   d.healthInsuranceRate),
+        ltcInsuranceRate:      clampRate('ltcInsuranceRate',      d.ltcInsuranceRate,     max: 30),
+        employmentInsuranceRate: clampRate('employmentInsuranceRate', d.employmentInsuranceRate),
         dailyWageExemption:
-            (map['dailyWageExemption'] as num?)?.toInt() ?? d.dailyWageExemption,
-        dailyWorkerTaxRate:
-            (map['dailyWorkerTaxRate'] as num?)?.toDouble() ?? d.dailyWorkerTaxRate,
-        localIncomeTaxRate:
-            (map['localIncomeTaxRate'] as num?)?.toDouble() ?? d.localIncomeTaxRate,
-        businessIncomeRate:
-            (map['businessIncomeRate'] as num?)?.toDouble() ?? d.businessIncomeRate,
-        businessIncomeLocalRate:
-            (map['businessIncomeLocalRate'] as num?)?.toDouble() ?? d.businessIncomeLocalRate,
+            ((map['dailyWageExemption'] as num?)?.toInt() ?? d.dailyWageExemption).clamp(0, 500000),
+        dailyWorkerTaxRate:    clampRate('dailyWorkerTaxRate',    d.dailyWorkerTaxRate,   max: 30),
+        localIncomeTaxRate:    clampRate('localIncomeTaxRate',    d.localIncomeTaxRate,   max: 30),
+        businessIncomeRate:    clampRate('businessIncomeRate',    d.businessIncomeRate,   max: 30),
+        businessIncomeLocalRate: clampRate('businessIncomeLocalRate', d.businessIncomeLocalRate, max: 30),
       );
   }
 
