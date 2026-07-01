@@ -145,7 +145,8 @@ extension WorkerLocationFirestore on FirestoreService {
             .where(FieldPath.documentId, whereIn: chunk)
             .get();
         for (final doc in snap.docs) {
-          result[doc.id] = WorkerLocationModel.fromFirestore(doc);
+          final model = WorkerLocationModel.tryFromFirestore(doc);
+          if (model != null) result[doc.id] = model;
         }
       }
       return result;

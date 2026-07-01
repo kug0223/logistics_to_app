@@ -252,7 +252,8 @@ extension AttendanceFirestore on FirestoreService {
         final docId = '${applicationId}_${dateStr(date)}';
         final doc = await _firestore.collection('attendance').doc(docId).get();
         if (!doc.exists) continue;
-        final att = AttendanceModel.fromFirestore(doc);
+        final att = AttendanceModel.tryFromFirestore(doc);
+        if (att == null) continue;
         // 소유자 검증 (타인 applicationId 조회 방지)
         if (att.userId != userId) continue;
         return att;

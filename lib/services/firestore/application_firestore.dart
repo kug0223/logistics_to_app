@@ -1998,7 +1998,8 @@ extension ApplicationFirestore on FirestoreService {
 
       for (final doc in snapDocs) {
         if (doc.id == excludeId) continue;
-        final a = ApplicationModel.fromFirestore(doc);
+        final a = ApplicationModel.tryFromFirestore(doc);
+        if (a == null) continue;
 
         // 시간 겹침 먼저 확인 (빠른 탈락)
         if (!ApplicationModel.hasTimeOverlap(startTime, endTime, a.startTime, a.endTime)) {
