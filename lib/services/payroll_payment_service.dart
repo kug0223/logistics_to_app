@@ -228,7 +228,7 @@ class PayrollPaymentService {
       final docs = hasMore ? snap.docs.take(pageSize).toList() : snap.docs;
 
       return PayrollPage(
-        records: docs.map(AttendanceModel.fromFirestore).toList(),
+        records: docs.map(AttendanceModel.tryFromFirestore).whereType<AttendanceModel>().toList(),
         cursor: docs.isNotEmpty ? docs.last : null,
         hasMore: hasMore,
       );
@@ -261,7 +261,7 @@ class PayrollPaymentService {
           .orderBy('paymentDueDate')
           .orderBy('workDate')
           .get();
-      return snap.docs.map(AttendanceModel.fromFirestore).toList();
+      return snap.docs.map(AttendanceModel.tryFromFirestore).whereType<AttendanceModel>().toList();
     } catch (e) {
       debugPrint('❌ 오늘 지급 조회 실패: $e');
       return [];
@@ -364,7 +364,7 @@ class PayrollPaymentService {
       final hasMore = snap.docs.length > pageSize;
       final docs = hasMore ? snap.docs.take(pageSize).toList() : snap.docs;
       return PayrollPage(
-        records: docs.map(PaymentChangeRequestModel.fromFirestore).toList(),
+        records: docs.map(PaymentChangeRequestModel.tryFromFirestore).whereType<PaymentChangeRequestModel>().toList(),
         cursor: docs.isNotEmpty ? docs.last : null,
         hasMore: hasMore,
       );
@@ -455,7 +455,7 @@ class PayrollPaymentService {
       final hasMore = snap.docs.length > pageSize;
       final docs = hasMore ? snap.docs.take(pageSize).toList() : snap.docs;
       return PayrollPage(
-        records: docs.map(InterimSettlementRequestModel.fromFirestore).toList(),
+        records: docs.map(InterimSettlementRequestModel.tryFromFirestore).whereType<InterimSettlementRequestModel>().toList(),
         cursor: docs.isNotEmpty ? docs.last : null,
         hasMore: hasMore,
       );

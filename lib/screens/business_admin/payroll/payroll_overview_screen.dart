@@ -110,7 +110,10 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
 
       // 파싱 오류가 있는 문서는 무시
       final allRecords = snap.docs.map((d) {
-        try { return AttendanceModel.fromFirestore(d); } catch (_) { return null; }
+        try { return AttendanceModel.fromFirestore(d); } catch (e) {
+          debugPrint('⚠️ payroll_overview: 문서 파싱 실패 (id=${d.id}): $e');
+          return null;
+        }
       }).whereType<AttendanceModel>().toList();
 
       // confirmed/transferred 만 급여 집계 대상
