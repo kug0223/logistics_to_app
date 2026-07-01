@@ -234,17 +234,23 @@ class FirestoreService {
 
       // 3단계: 활성 지원서 AUTO_CANCELED 처리 + 지원자 알림
       try {
+        // [BUGFIX-WHEREIN] toId isEqualTo + status whereIn → PERMISSION_DENIED
+        // status 서버 필터 제거, 클라이언트에서 activeStates 필터링
         final appsSnap = await _firestore
             .collection('applications')
             .where('toId', isEqualTo: toId)
-            .where('status', whereIn: AppStatus.activeStates)
-            .get();
+            .get(const GetOptions(source: Source.server));
 
-        if (appsSnap.docs.isNotEmpty) {
+        final activeDocs = appsSnap.docs.where((d) {
+          final s = (d.data())['status'] as String?;
+          return AppStatus.activeStates.contains(s);
+        }).toList();
+
+        if (activeDocs.isNotEmpty) {
           // 인기 TO의 경우 활성 지원서가 500건 초과 가능 — 499건 단위 분할 커밋
-          for (var offset = 0; offset < appsSnap.docs.length; offset += 499) {
+          for (var offset = 0; offset < activeDocs.length; offset += 499) {
             final batch = _firestore.batch();
-            final slice = appsSnap.docs.skip(offset).take(499);
+            final slice = activeDocs.skip(offset).take(499);
             for (final doc in slice) {
               batch.update(doc.reference, {
                 'status': AppStatus.autoCanceled,
@@ -256,7 +262,7 @@ class FirestoreService {
           }
 
           // 알림은 배치 커밋 후 개별 발송 (실패해도 TO 상태 변경은 유지)
-          for (final doc in appsSnap.docs) {
+          for (final doc in activeDocs) {
             final data = doc.data();
             _sendTOCanceledNotification(
               applicantUid: data['uid'] as String? ?? '',
@@ -304,19 +310,25 @@ class FirestoreService {
   Future<void> reconcileTOStats(String toId) async {
     try {
       // 실제 CONFIRMED/PENDING 지원서 수 집계
-      final confirmedSnap = await _firestore
-          .collection('applications')
-          .where('toId', isEqualTo: toId)
-          .where('status', whereIn: AppStatus.confirmedStatuses)
-          .get(const GetOptions(source: Source.server));
-      final pendingSnap = await _firestore
+      // [BUGFIX-WHEREIN] toId isEqualTo + status whereIn → PERMISSION_DENIED
+      // confirmedStatuses 각각 병렬 isEqualTo 쿼리로 대체 (whereIn 제거)
+      final confirmedResults = await Future.wait(
+        AppStatus.confirmedStatuses.map((s) => _firestore
+            .collection('applications')
+            .where('toId', isEqualTo: toId)
+            .where('status', isEqualTo: s)
+            .count()
+            .get()),
+      );
+      final confirmedCount = confirmedResults.fold<int>(0, (acc, r) => acc + (r.count ?? 0));
+
+      final pendingResult = await _firestore
           .collection('applications')
           .where('toId', isEqualTo: toId)
           .where('status', isEqualTo: AppStatus.pending)
-          .get(const GetOptions(source: Source.server));
-
-      final confirmedCount = confirmedSnap.docs.length;
-      final pendingCount = pendingSnap.docs.length;
+          .count()
+          .get();
+      final pendingCount = pendingResult.count ?? 0;
 
       await _firestore.collection('tos').doc(toId).update({
         'totalConfirmed': confirmedCount,
@@ -1545,11 +1557,12 @@ class FirestoreService {
     try {
       debugPrint('🔍 [getBusinessWorkHistory] 조회: userId=$userId, businessId=$businessId');
       
+      // [BUGFIX-WHEREIN] uid + businessId isEqualTo + status whereIn → PERMISSION_DENIED
+      // status 서버 필터 제거, 클라이언트에서 confirmedStatuses 필터링
       final snapshot = await _firestore
           .collection('applications')
           .where('uid', isEqualTo: userId)
           .where('businessId', isEqualTo: businessId)
-          .where('status', whereIn: AppStatus.confirmedStatuses)
           .orderBy('workDate', descending: true)
           .get(const GetOptions(source: Source.server));
       
@@ -1566,8 +1579,9 @@ class FirestoreService {
       final applications = snapshot.docs
           .map(ApplicationModel.tryFromFirestore)
           .whereType<ApplicationModel>()
+          .where((a) => AppStatus.confirmedStatuses.contains(a.status))
           .toList();
-      
+
       final reviewSnapshot = await _firestore
           .collection('reviews')
           .where('targetUserId', isEqualTo: userId)

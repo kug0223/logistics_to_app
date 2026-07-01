@@ -86,15 +86,18 @@ extension TOFirestore on FirestoreService {
           .where('businessId', isEqualTo: businessId)
           .orderBy('createdAt', descending: true);
 
-      if (activeOnly) {
-        query = query.where('status', whereIn: TOStatus.openStates);
-      } else if (closedOnly) {
-        query = query.where('status', whereIn: TOStatus.closedStates);
-      }
+      // [BUGFIX-WHEREIN] businessId isEqualTo + status whereIn → PERMISSION_DENIED
+      // status 서버 필터 제거, 클라이언트에서 필터링으로 전환
       if (limit != null) query = query.limit(limit);
 
       final snap = await query.get(const GetOptions(source: Source.server));
-      return snap.docs.map((d) => TOModel.tryFromMap(d.data() as Map<String, dynamic>, d.id)).whereType<TOModel>().toList();
+      var models = snap.docs.map((d) => TOModel.tryFromMap(d.data() as Map<String, dynamic>, d.id)).whereType<TOModel>().toList();
+      if (activeOnly) {
+        models = models.where((t) => TOStatus.openStates.contains(t.status)).toList();
+      } else if (closedOnly) {
+        models = models.where((t) => TOStatus.closedStates.contains(t.status)).toList();
+      }
+      return models;
     } catch (e) {
       debugPrint('❌ [TO] 사업장 공고 목록 조회 실패: $e');
       return [];
@@ -104,15 +107,21 @@ extension TOFirestore on FirestoreService {
   /// 공개 공고 목록 (지원자용 — isPublished: true 만)
   Future<List<TOModel>> getPublishedTOs() async {
     try {
+      // [BUGFIX-WHEREIN] isPublished isEqualTo + status whereIn → PERMISSION_DENIED
+      // status 서버 필터 제거, 클라이언트에서 active/full 필터링
       final snap = await _firestore
           .collection('tos')
           .where('isPublished', isEqualTo: true)
-          .where('status', whereIn: [TOStatus.active, TOStatus.full])
           .orderBy('createdAt', descending: true)
-          .limit(50)
+          .limit(100)
           .get(const GetOptions(source: Source.server));
 
-      return snap.docs.map((d) => TOModel.tryFromMap(d.data(), d.id)).whereType<TOModel>().toList();
+      return snap.docs
+          .map((d) => TOModel.tryFromMap(d.data(), d.id))
+          .whereType<TOModel>()
+          .where((t) => t.status == TOStatus.active || t.status == TOStatus.full)
+          .take(50)
+          .toList();
     } catch (e) {
       debugPrint('❌ [TO] 공개 공고 목록 조회 실패: $e');
       return [];
@@ -125,10 +134,11 @@ extension TOFirestore on FirestoreService {
     int pageSize = 30,
     TOFilterState? filter,
   }) async {
+    // [BUGFIX-WHEREIN] isPublished isEqualTo + status whereIn → PERMISSION_DENIED
+    // status 서버 필터 제거, 페이지 수신 후 클라이언트에서 active/full 필터링
     Query query = _firestore
         .collection('tos')
-        .where('isPublished', isEqualTo: true)
-        .where('status', whereIn: [TOStatus.active, TOStatus.full]);
+        .where('isPublished', isEqualTo: true);
 
     if (filter?.type != null) {
       query = query.where('type', isEqualTo: filter!.type);
@@ -152,8 +162,14 @@ extension TOFirestore on FirestoreService {
     }
 
     final snap = await query.get(const GetOptions(source: Source.server));
+    final items = snap.docs
+        .map((d) => TOModel.tryFromMap(d.data() as Map<String, dynamic>, d.id))
+        .whereType<TOModel>()
+        // [BUGFIX-WHEREIN] status whereIn 제거로 클라이언트에서 active/full 필터링
+        .where((t) => t.status == TOStatus.active || t.status == TOStatus.full)
+        .toList();
     return {
-      'items': snap.docs.map((d) => TOModel.tryFromMap(d.data() as Map<String, dynamic>, d.id)).whereType<TOModel>().toList(),
+      'items': items,
       'lastDoc': snap.docs.isNotEmpty ? snap.docs.last : null,
       'hasMore': snap.docs.length >= pageSize,
     };
@@ -746,7 +762,7 @@ extension TOFirestore on FirestoreService {
             if (parts.length >= 2) {
               deadline = DateTime(
                 slot.date.year, slot.date.month, slot.date.day,
-                int.parse(parts[0]), int.parse(parts[1]),
+                int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0,
               ).subtract(Duration(hours: hoursBeforeStart)).toUtc();
             }
           } else if (deadlineType == 'FIXED_TIME' && fixedDeadline != null) {
@@ -1400,7 +1416,7 @@ extension TOFirestore on FirestoreService {
           if (parts.length >= 2) {
             deadline = DateTime(
               date.year, date.month, date.day,
-              int.parse(parts[0]), int.parse(parts[1]),
+              int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0,
             ).subtract(Duration(hours: hoursBeforeStart)).toUtc();
           }
         } else if (deadlineType == 'FIXED_TIME' && fixedDeadline != null) {
@@ -1426,7 +1442,7 @@ extension TOFirestore on FirestoreService {
         if (parts.length >= 2) {
           visibleFrom = DateTime(
             date.year, date.month, date.day,
-            int.parse(parts[0]), int.parse(parts[1]),
+            int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0,
           ).subtract(Duration(days: publishDaysBefore)).toUtc();
         }
       }

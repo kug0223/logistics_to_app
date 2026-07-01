@@ -411,15 +411,17 @@ extension BusinessFirestore on FirestoreService {
   /// 활성 TO 조회 (사업장별)
   Future<List<TOModel>> getActiveTOsByBusinessId(String businessId) async {
     try {
+      // [BUGFIX-WHEREIN] businessId isEqualTo + status whereIn → PERMISSION_DENIED
+      // status 서버 필터 제거, 클라이언트에서 openStates 필터링
       final snapshot = await _firestore
           .collection('tos')
           .where('businessId', isEqualTo: businessId)
-          .where('status', whereIn: TOStatus.openStates)
-          .limit(100)
+          .limit(200)
           .get(const GetOptions(source: Source.server));
       return snapshot.docs
           .map((doc) => TOModel.tryFromMap(doc.data(), doc.id))
           .whereType<TOModel>()
+          .where((t) => TOStatus.openStates.contains(t.status))
           .toList();
     } catch (e) {
       debugPrint('❌ 활성 TO 조회 실패: $e');
@@ -430,15 +432,17 @@ extension BusinessFirestore on FirestoreService {
   /// 마감된 TO 조회 (사업장별)
   Future<List<TOModel>> getClosedTOsByBusinessId(String businessId) async {
     try {
+      // [BUGFIX-WHEREIN] businessId isEqualTo + status whereIn → PERMISSION_DENIED
+      // status 서버 필터 제거, 클라이언트에서 closedStates 필터링
       final snapshot = await _firestore
           .collection('tos')
           .where('businessId', isEqualTo: businessId)
-          .where('status', whereIn: TOStatus.closedStates)
-          .limit(100)
+          .limit(200)
           .get(const GetOptions(source: Source.server));
       return snapshot.docs
           .map((doc) => TOModel.tryFromMap(doc.data(), doc.id))
           .whereType<TOModel>()
+          .where((t) => TOStatus.closedStates.contains(t.status))
           .toList();
     } catch (e) {
       debugPrint('❌ 마감 TO 조회 실패: $e');
