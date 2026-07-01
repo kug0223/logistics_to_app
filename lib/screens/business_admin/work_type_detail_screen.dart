@@ -957,7 +957,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
         _imagesToDelete.clear();
       });
 
-      ToastHelper.showSuccess('업무유형이 수정되었습니다');
+      if (mounted) ToastHelper.showSuccess('업무유형이 수정되었습니다');
     } catch (e) {
       debugPrint('❌ 저장 실패: $e');
       if (mounted) ToastHelper.showError('저장에 실패했습니다');
