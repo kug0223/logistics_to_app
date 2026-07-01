@@ -206,4 +206,17 @@ try {
 
 // ✅ 안전 — 서비스 파일(StatelessService)은 mounted 개념 없음, 체크 불필요
 class SomeService { Future<void> doSomething() async { ... } }
+
+// ✅ 안전 — await 이전의 setState는 동기 컨텍스트에서 실행되므로 mounted 체크 불필요
+// mounted 체크가 필요한 것은 await 이후의 setState/ToastHelper/Navigator
+setState(() => _isLoading = true);  // 이 줄은 OK — mounted 보장됨
+try {
+  final result = await someAsyncCall();
+  if (!mounted) return;            // await 이후에 체크 필수
+  setState(() { _data = result; _isLoading = false; });
+} catch (e) {
+  if (mounted) ToastHelper.showError(...);  // await 이후 체크
+} finally {
+  if (mounted) setState(() => _isLoading = false);  // await 이후 체크
+}
 ```
