@@ -250,6 +250,14 @@ class UserModel {
 
   // ── Firestore 변환 ──
 
+  static UserModel? tryFromMap(Map<String, dynamic> map, String uid) {
+    try {
+      return UserModel.fromMap(map, uid);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Firestore에서 데이터 가져올 때
   factory UserModel.fromMap(Map<String, dynamic> map, String uid) {
     // 기존 isAdmin 필드가 있는 경우 호환성 유지

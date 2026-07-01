@@ -78,6 +78,14 @@ class BusinessWorkTypeModel {
     );
   }
 
+  static BusinessWorkTypeModel? tryFromFirestore(DocumentSnapshot doc) {
+    try {
+      return BusinessWorkTypeModel.fromFirestore(doc);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Firestore DocumentSnapshot → 모델
   factory BusinessWorkTypeModel.fromFirestore(DocumentSnapshot doc) {
     final raw = doc.data();

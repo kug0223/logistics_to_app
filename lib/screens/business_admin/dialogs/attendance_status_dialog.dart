@@ -428,8 +428,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           .get();
 
       for (var doc in snapshot.docs) {
-        final workType = BusinessWorkTypeModel.fromFirestore(doc);
-        workTypeMap[workType.name] = workType;
+        final workType = BusinessWorkTypeModel.tryFromFirestore(doc);
+        if (workType != null) workTypeMap[workType.name] = workType;
       }
     } catch (e) {
       debugPrint('업무유형 조회 실패: $e');

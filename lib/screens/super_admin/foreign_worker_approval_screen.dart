@@ -57,7 +57,8 @@ class _ForeignWorkerApprovalScreenState
       if (!mounted) return;
       setState(() {
         _pending = snap.docs
-            .map((d) => UserModel.fromMap(d.data(), d.id))
+            .map((d) => UserModel.tryFromMap(d.data(), d.id))
+            .whereType<UserModel>()
             .where((u) => u.foreignIdNumber != null) // 외국인만
             .toList();
       });
