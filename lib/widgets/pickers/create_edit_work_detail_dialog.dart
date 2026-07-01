@@ -44,7 +44,7 @@ class WorkDetailDialog {
     final baseHourlyWageController = TextEditingController();
     final descriptionController = TextEditingController();
 
-    return showDialog<WorkDetailInput>(
+    final result = await showDialog<WorkDetailInput>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
@@ -227,6 +227,11 @@ class WorkDetailDialog {
         },
       ),
     );
+    wageController.dispose();
+    countController.dispose();
+    baseHourlyWageController.dispose();
+    descriptionController.dispose();
+    return result;
   }
   /// ✨ 업무 수정 다이얼로그 표시
   /// [businessWorkTypes] 전달 시 업무 유형 변경 가능 (TO 생성 시)
@@ -273,7 +278,7 @@ class WorkDetailDialog {
       text: work.description ?? '',
     );
 
-    return showDialog<Map<String, dynamic>>(
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
@@ -460,6 +465,11 @@ class WorkDetailDialog {
         },
       ),
     );
+    wageController.dispose();
+    countController.dispose();
+    baseHourlyWageController.dispose();
+    descriptionController.dispose();
+    return result;
   }
 
   /// ✨ 수정 헤더
