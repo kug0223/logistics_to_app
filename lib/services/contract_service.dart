@@ -397,7 +397,8 @@ class ContractService {
     await _db.runTransaction((tx) async {
       final snap = await tx.get(contractRef);
       if (snap.exists) {
-        final contract = EmploymentContractModel.fromFirestore(snap);
+        final contract = EmploymentContractModel.tryFromFirestore(snap);
+        if (contract == null) throw StateError('계약서 데이터를 파싱할 수 없습니다.');
         if (contract.status == ContractStatus.pendingWorker) {
           throw StateError('근무자 서명 대기 중인 계약서는 조항을 수정할 수 없습니다. 수정이 필요하면 계약서를 재발송하세요.');
         }
@@ -674,7 +675,8 @@ class ContractService {
     final contractDoc = await _db.collection('employment_contracts').doc(contractId).get();
     if (!contractDoc.exists) return;
 
-    final contract = EmploymentContractModel.fromFirestore(contractDoc);
+    final contract = EmploymentContractModel.tryFromFirestore(contractDoc);
+    if (contract == null) throw StateError('계약서 데이터를 파싱할 수 없습니다: $contractId');
 
     // 이미 voided 상태면 조기 반환 — 재호출 시 이미 취소된 지원서를 재취소 시도해
     // failedIds가 발생하고 오해의 소지 있는 에러 토스트가 뜨는 버그 방지 (BUG-E-01)
@@ -815,7 +817,7 @@ class ContractService {
           .limit(1)
           .get();
       if (snap.docs.isEmpty) return null;
-      return EmploymentContractModel.fromFirestore(snap.docs.first);
+      return EmploymentContractModel.tryFromFirestore(snap.docs.first);
     } catch (e) {
       debugPrint('❌ 번들 계약서 조회 실패: $e');
       return null;
@@ -845,7 +847,8 @@ class ContractService {
     final updatedContract = await _db.runTransaction((tx) async {
       final snap = await tx.get(contractRef);
       if (!snap.exists) throw Exception('계약서를 찾을 수 없습니다: ${contract.id}');
-      final current = EmploymentContractModel.fromFirestore(snap);
+      final current = EmploymentContractModel.tryFromFirestore(snap);
+      if (current == null) throw StateError('계약서 데이터를 파싱할 수 없습니다: ${contract.id}');
 
       // 멱등성 보호 — 동일 applicationId가 이미 등록된 경우 슬롯 중복 추가 방지
       // (이중 확정 또는 동시 호출 시 발생 가능)
