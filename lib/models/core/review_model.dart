@@ -56,7 +56,7 @@ class ReviewModel {
       businessName: map['businessName'] ?? '',
       workType: map['workType'] ?? '',
       workDate: workDate,
-      rating: ((map['rating'] as num?)?.toInt() ?? 0).clamp(0, 5),
+      rating: ((map['rating'] as num?)?.toInt() ?? 1).clamp(1, 5),
       comment: map['comment'],
       wouldRehire: map['wouldRehire'] ?? true,
       createdAt: createdAt,

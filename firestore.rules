@@ -661,7 +661,9 @@ service cloud.firestore {
                           isSubAdminOf(request.resource.data.businessId))) ||
                         (request.resource.data.reviewType == 'USER_TO_BUSINESS' &&
                          isUser() && isNotBlacklisted() &&
-                         request.resource.data.reviewerId == request.auth.uid &&
+                         // [H-01] reviewerId는 익명 보장을 위해 저장하지 않으므로 필드 부재를 강제
+                         // (toMap()이 USER_TO_BUSINESS 케이스에서 reviewerId를 생략하는 설계와 일치)
+                         !('reviewerId' in request.resource.data) &&
                          'businessId' in request.resource.data &&
                          request.resource.data.businessId.size() > 0 &&
                          'requestId' in request.resource.data)
@@ -670,10 +672,12 @@ service cloud.firestore {
       // 사업장 답변 추가(USER_TO_BUSINESS): 사업장 관리자/하위관리자는 답변 필드만 수정 가능
       // (평점·태그·코멘트 등 근무자가 작성한 필드는 수정 불가 — 리뷰 조작 방지)
       // [FIX] isSubAdminOf 누락 — SubAdmin이 사업장 대표 답변 작성 시 PERMISSION_DENIED
+      // [H-02] 기존 답변 덮어쓰기 차단 — businessResponse가 없을 때만 작성 허용
       allow update: if isSuperAdmin() ||
                      (isLoggedIn() &&
                       (isAdminOf(resource.data.businessId) ||
                        isSubAdminOf(resource.data.businessId)) &&
+                      resource.data.get('businessResponse', null) == null &&
                       request.resource.data.diff(resource.data).affectedKeys()
                         .hasOnly(['businessResponse', 'businessRespondedAt']));
 
