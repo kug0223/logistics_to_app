@@ -101,6 +101,7 @@ class WageDetailDialog extends StatefulWidget {
 
 class _WageDetailDialogState extends State<WageDetailDialog> {
   late WageDetailModel _wage;
+  bool _isActing = false;
   final _additionalController = TextEditingController();
   final _deductionController = TextEditingController();
   final _memoController = TextEditingController();
@@ -314,6 +315,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
   }
 
   Future<void> _onAction(String action) async {
+    if (_isActing) return; // 중복 탭 방지
     _updateWage();
     final userName = widget.user?.name ?? '근무자';
     final hasDeductions = _wage.taxDeductionType != InsuranceRateModel.typeNone &&
@@ -352,9 +354,9 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         return;
     }
 
-    // 이 mounted 체크는 첫 await 이전이라 비동기 갭 보호 효과 없음 — 실질 보호는 아래 373행
     if (!mounted) return;
-    bool confirmed;
+    setState(() => _isActing = true);
+    bool confirmed = false;
     if (isDanger) {
       confirmed = await DialogHelper.showDangerConfirm(
         context,
@@ -370,6 +372,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         confirmText: confirmText,
       );
     }
+    if (mounted) setState(() => _isActing = false);
 
     if (confirmed && mounted) {
       Navigator.pop(context, WageDialogResult(action: action, wage: _wage));

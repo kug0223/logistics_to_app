@@ -152,7 +152,7 @@ class _AdminContractManagementScreenState
       builder: (_) => ContractSignScreen(contract: c, role: 'employer'),
     ));
     if (!mounted) return;
-    _refresh(); // 서명 후 목록 갱신
+    await _refresh(); // 서명 후 목록 갱신
   }
 
   Future<void> _voidContract(EmploymentContractModel c) async {

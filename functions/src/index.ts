@@ -961,7 +961,9 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
           workerId, data.businessName ?? "사업장",
           requestKey, year, month, "worker", businessId
         );
-      } catch {
+      } catch (err: any) {
+        // ALREADY_EXISTS(gRPC 코드 6)만 처리 — 다른 에러는 상위로 전파
+        if (err?.code !== 6) throw err;
         // 이미 존재 — workerName 누락인 경우만 보완 (구버전 CF가 workerName 없이 생성한 문서)
         try {
           const existing = await requestRef.get();
@@ -1026,7 +1028,9 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
           workerId, data.businessName ?? "사업장",
           requestKey, endYear, endMonth, "worker", businessId
         );
-      } catch {
+      } catch (err: any) {
+        // ALREADY_EXISTS(gRPC 코드 6)만 처리 — 다른 에러는 상위로 전파
+        if (err?.code !== 6) throw err;
         // 이미 존재 — workerName 누락인 경우만 보완 (구버전 CF가 workerName 없이 생성한 문서)
         try {
           const existing = await requestRef.get();
@@ -3780,6 +3784,26 @@ export const onBusinessDeleted = onDocumentDeleted(
         await deleteSubcollection(`tos/${toDoc.id}/slots`);
       }
 
+      // [NEW-06] groups 컬렉션 정리 — TO에 연결된 그룹 문서 삭제
+      const groupIds = new Set<string>();
+      for (const toDoc of tosSnap.docs) {
+        const gid = toDoc.data().groupId as string | undefined;
+        if (gid) groupIds.add(gid);
+      }
+      if (groupIds.size > 0) {
+        let groupBatch = db.batch();
+        let groupCount = 0;
+        for (const gid of groupIds) {
+          groupBatch.delete(db.collection("groups").doc(gid));
+          groupCount++;
+          if (groupCount % 500 === 0) {
+            await groupBatch.commit();
+            groupBatch = db.batch();
+          }
+        }
+        if (groupCount % 500 !== 0) await groupBatch.commit();
+      }
+
       // TO 문서 삭제 (500건 분할)
       let tosBatch = db.batch();
       let tosCount = 0;
@@ -3811,6 +3835,25 @@ export const onBusinessDeleted = onDocumentDeleted(
         }
       }
       if (idCardCount % 500 !== 0) await idCardBatch.commit();
+    }
+
+    // [NEW-08] review_requests 정리 — 사업장 연관 리뷰 요청 삭제
+    const reviewRequestsSnap = await db
+      .collection("review_requests")
+      .where("businessId", "==", businessId)
+      .get();
+    if (!reviewRequestsSnap.empty) {
+      let rrBatch = db.batch();
+      let rrCount = 0;
+      for (const doc of reviewRequestsSnap.docs) {
+        rrBatch.delete(doc.ref);
+        rrCount++;
+        if (rrCount % 500 === 0) {
+          await rrBatch.commit();
+          rrBatch = db.batch();
+        }
+      }
+      if (rrCount % 500 !== 0) await rrBatch.commit();
     }
 
     console.log(`사업장 삭제 cascade 완료: ${businessId}`);
@@ -4694,6 +4737,9 @@ export const callableGetUsersBatch = onCall(
     if (!uids || !Array.isArray(uids) || uids.length === 0) return {users: {}};
     if (uids.length > 30) {
       throw new HttpsError("invalid-argument", "uid는 최대 30개까지 요청 가능합니다.");
+    }
+    if (!uids.every((u) => typeof u === "string" && u.length > 0)) {
+      throw new HttpsError("invalid-argument", "uids 배열의 모든 요소는 비어있지 않은 문자열이어야 합니다.");
     }
     if (!businessId) {
       throw new HttpsError("invalid-argument", "businessId가 필요합니다.");

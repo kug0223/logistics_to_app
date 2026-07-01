@@ -72,6 +72,8 @@ class NotificationProvider with ChangeNotifier {
     _additionalNotifications = [];
     _hasMore = false;
     _isLoadingMore = false;
+    _isLoading = false;
+    _hasError = false;
     notifyListeners();
   }
 

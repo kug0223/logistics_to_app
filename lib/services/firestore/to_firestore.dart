@@ -21,7 +21,7 @@ extension TOFirestore on FirestoreService {
           .collection('tos')
           .where('businessId', isEqualTo: biz.id)
           .where('status', isEqualTo: TOStatus.active)
-          .get();
+          .get(const GetOptions(source: Source.server)); // 캐시 우회 — TO 등록 제한 정확도
       return snap.docs.length;
     }));
     return counts.fold<int>(0, (acc, c) => acc + c);

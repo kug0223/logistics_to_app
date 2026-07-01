@@ -139,7 +139,7 @@ class _UserContractsScreenState extends State<UserContractsScreen>
     await Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => ContractSignScreen(contract: c, role: 'worker'),
     ));
-    if (mounted) _refresh();
+    if (mounted) await _refresh();
   }
 
   @override

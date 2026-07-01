@@ -897,7 +897,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
       if (uid == null) {
         ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
-        setState(() => _isCreating = false);
+        if (mounted) setState(() => _isCreating = false);
         return;
       }
 

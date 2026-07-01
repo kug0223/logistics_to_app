@@ -647,7 +647,7 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
         children: [
           Expanded(
             child: StyledDialogButton.cancel(
-              onPressed: () => Navigator.pop(context),
+              onPressed: _isSubmitting ? null : () => Navigator.pop(context),
             ),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),

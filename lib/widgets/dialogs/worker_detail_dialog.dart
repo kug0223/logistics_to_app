@@ -1894,6 +1894,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   /// 확정 취소 (CONFIRMED / CONTRACT_PENDING 모두 처리)
   Future<void> _cancelConfirmation() async {
     if (widget.application == null) return;
+    if (_isLoading) return; // 중복 실행 방어
 
     final adminUID = context.read<UserProvider>().currentUser?.uid;
 

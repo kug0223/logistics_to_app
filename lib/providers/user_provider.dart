@@ -310,6 +310,7 @@ class UserProvider with ChangeNotifier {
       _memberPermissions = null;
       _isAdminMode = false;
       _error = null;
+      _isLoading = false;
 
       // [특이사항] 로그아웃 시 FirestoreService 메모리 캐시 정리.
       // Firestore 오프라인 영속성 캐시(clearPersistence)는 활성 리스너와 충돌 위험이 있어

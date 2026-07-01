@@ -2428,6 +2428,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       await _refreshApplicationStatus(date ?? to.date, work.workType);
       _reloadAllMyApplications(); // fire-and-forget: 내 지원 현황 갱신
 
+      if (!mounted) return;
       _hasChanges = true;
       ToastHelper.showSuccess('지원이 완료되었습니다');
       AnalyticsService.logApply(
@@ -2563,8 +2564,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       await _loadConflictsForDate(targetDate);
       _reloadAllMyApplications(); // fire-and-forget: 내 지원 현황 갱신
 
+      if (!mounted) return;
       _hasChanges = true;
-      
+
       if (hasPenalty) {
         ToastHelper.showWarning('확정이 취소되었습니다. 노쇼 1회가 기록되었습니다.');
       } else {
