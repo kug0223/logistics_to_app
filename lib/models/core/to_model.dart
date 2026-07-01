@@ -127,6 +127,14 @@ class TOModel {
 
   // ── 직렬화 ────────────────────────────────────────
 
+  static TOModel? tryFromMap(Map<String, dynamic> data, String documentId) {
+    try {
+      return TOModel.fromMap(data, documentId);
+    } catch (_) {
+      return null;
+    }
+  }
+
   factory TOModel.fromMap(Map<String, dynamic> data, String documentId) {
     return TOModel(
       id: documentId,

@@ -94,7 +94,7 @@ extension TOFirestore on FirestoreService {
       if (limit != null) query = query.limit(limit);
 
       final snap = await query.get(const GetOptions(source: Source.server));
-      return snap.docs.map((d) => TOModel.fromMap(d.data() as Map<String, dynamic>, d.id)).toList();
+      return snap.docs.map((d) => TOModel.tryFromMap(d.data() as Map<String, dynamic>, d.id)).whereType<TOModel>().toList();
     } catch (e) {
       debugPrint('❌ [TO] 사업장 공고 목록 조회 실패: $e');
       return [];
@@ -112,7 +112,7 @@ extension TOFirestore on FirestoreService {
           .limit(50)
           .get(const GetOptions(source: Source.server));
 
-      return snap.docs.map((d) => TOModel.fromMap(d.data(), d.id)).toList();
+      return snap.docs.map((d) => TOModel.tryFromMap(d.data(), d.id)).whereType<TOModel>().toList();
     } catch (e) {
       debugPrint('❌ [TO] 공개 공고 목록 조회 실패: $e');
       return [];
@@ -153,7 +153,7 @@ extension TOFirestore on FirestoreService {
 
     final snap = await query.get(const GetOptions(source: Source.server));
     return {
-      'items': snap.docs.map((d) => TOModel.fromMap(d.data() as Map<String, dynamic>, d.id)).toList(),
+      'items': snap.docs.map((d) => TOModel.tryFromMap(d.data() as Map<String, dynamic>, d.id)).whereType<TOModel>().toList(),
       'lastDoc': snap.docs.isNotEmpty ? snap.docs.last : null,
       'hasMore': snap.docs.length >= pageSize,
     };
@@ -174,7 +174,8 @@ extension TOFirestore on FirestoreService {
       // Firestore whereIn을 두 개 쓸 수 없으므로 클라이언트 필터링
       results.addAll(
         snap.docs
-            .map((d) => TOModel.fromMap(d.data(), d.id))
+            .map((d) => TOModel.tryFromMap(d.data(), d.id))
+            .whereType<TOModel>()
             .where((to) => to.isPublished && !to.isClosed),
       );
     }
@@ -196,7 +197,7 @@ extension TOFirestore on FirestoreService {
           .limit(20)
           .get(const GetOptions(source: Source.server));
 
-      return snap.docs.map((d) => TOModel.fromMap(d.data(), d.id)).toList();
+      return snap.docs.map((d) => TOModel.tryFromMap(d.data(), d.id)).whereType<TOModel>().toList();
     } catch (e) {
       debugPrint('❌ [TO] 최근 공고 조회 실패: $e');
       return [];
