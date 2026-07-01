@@ -767,6 +767,10 @@ async function processExpiredIdCardAccess(now: Timestamp): Promise<void> {
     });
   });
   await batch.commit();
+  // limit(200)에 도달했으면 미처리 항목이 남아 있을 수 있음 — 다음 실행 시 처리됨 (멱등성 보장)
+  if (snap.size >= 200) {
+    console.warn(`⚠️ [신분증 만료] limit(200) 도달 — 미처리 항목이 남아 있을 수 있습니다. 다음 실행에서 재처리됩니다.`);
+  }
   console.log(`⏰ [신분증 만료] ${snap.size}건 expired 처리 완료`);
 }
 
@@ -5520,8 +5524,8 @@ export const callableCalculateAndConfirmWage = onCall(
         !d.taxDeductionType || !d.yearMonth) {
       throw new HttpsError("invalid-argument", "필수 파라미터가 누락되었습니다.");
     }
-    if (typeof d.baseWage !== "number" || d.baseWage <= 0) {
-      throw new HttpsError("invalid-argument", "baseWage는 양수여야 합니다.");
+    if (typeof d.baseWage !== "number" || d.baseWage <= 0 || d.baseWage > 10_000_000) {
+      throw new HttpsError("invalid-argument", "baseWage는 1 이상 10,000,000 이하여야 합니다.");
     }
     // SEC-16: 입력값 형식 검증
     if (d.wageType !== "hourly" && d.wageType !== "daily") {
@@ -5538,15 +5542,19 @@ export const callableCalculateAndConfirmWage = onCall(
         !_timeRegex.test(d.actualStart) || !_timeRegex.test(d.actualEnd)) {
       throw new HttpsError("invalid-argument", "시간은 HH:MM 형식(24시간)이어야 합니다.");
     }
+    if (d.baseHourlyWage !== undefined &&
+        (typeof d.baseHourlyWage !== "number" || d.baseHourlyWage <= 0 || d.baseHourlyWage > 10_000_000)) {
+      throw new HttpsError("invalid-argument", "baseHourlyWage는 1 이상 10,000,000 이하여야 합니다.");
+    }
     // SEC-39: 음수 값 차단 — additionalAmount 음수 시 totalAmount 음수 저장 가능
     if (typeof d.additionalAmount === "number" && d.additionalAmount < 0) {
       throw new HttpsError("invalid-argument", "additionalAmount는 0 이상이어야 합니다.");
     }
-    if (typeof d.breakMinutes === "number" && d.breakMinutes < 0) {
-      throw new HttpsError("invalid-argument", "breakMinutes는 0 이상이어야 합니다.");
+    if (typeof d.breakMinutes === "number" && (d.breakMinutes < 0 || d.breakMinutes > 1440)) {
+      throw new HttpsError("invalid-argument", "breakMinutes는 0 이상 1440 이하여야 합니다.");
     }
-    if (typeof d.scheduledBreakMinutes === "number" && d.scheduledBreakMinutes < 0) {
-      throw new HttpsError("invalid-argument", "scheduledBreakMinutes는 0 이상이어야 합니다.");
+    if (typeof d.scheduledBreakMinutes === "number" && (d.scheduledBreakMinutes < 0 || d.scheduledBreakMinutes > 1440)) {
+      throw new HttpsError("invalid-argument", "scheduledBreakMinutes는 0 이상 1440 이하여야 합니다.");
     }
 
     // 1. attendance 조회 (businessId, userId 확보)

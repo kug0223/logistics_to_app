@@ -1999,17 +1999,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       return;
     }
 
-    final confirm = await DialogHelper.showConfirm(
-      context,
-      title: '지원 승인',
-      message: '${user?.name ?? '지원자'}님을 승인하시겠습니까?',
-      confirmText: '승인',
-    );
-
-    if (confirm != true || !mounted) return;
-
     setState(() => _isProcessing = true);
     try {
+      final confirm = await DialogHelper.showConfirm(
+        context,
+        title: '지원 승인',
+        message: '${user?.name ?? '지원자'}님을 승인하시겠습니까?',
+        confirmText: '승인',
+      );
+
+      if (confirm != true || !mounted) return;
+
       final adminUID = userProvider.currentUser?.uid;
 
       final affectedTOIds = await _firestoreService.updateApplicationStatus(
@@ -2043,16 +2043,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     final user = item['user'] as UserModel?;
     final userProvider = context.read<UserProvider>();
 
-    final reason = await DialogHelper.showRejectReasonPicker(
-      context,
-      title: '지원 거절',
-      message: '${user?.name ?? '지원자'}님을 거절합니다.\n거절 사유를 선택해주세요.',
-    );
-
-    if (reason == null || !mounted) return;
-
     setState(() => _isProcessing = true);
     try {
+      final reason = await DialogHelper.showRejectReasonPicker(
+        context,
+        title: '지원 거절',
+        message: '${user?.name ?? '지원자'}님을 거절합니다.\n거절 사유를 선택해주세요.',
+      );
+
+      if (reason == null || !mounted) return;
+
       final adminUID = userProvider.currentUser?.uid;
 
       await _firestoreService.updateApplicationStatus(
