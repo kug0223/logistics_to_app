@@ -3003,10 +3003,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         .toList();
     if (targets.isEmpty) return;
 
-    // 급여 확정·이체 완료 건은 리셋 제외
+    // [HIGH-04] 급여 1차확정(calculated) · 마감(confirmed) · 이체 완료(transferred) 건은 리셋 제외
+    // calculated는 관리자가 계산 검토 중인 상태 — 리셋 시 급여 계산 결과 소실됨
     final wageFinalized = targets.where((app) {
       final s = _attendanceMap[app.id]?.wageStatus;
-      return s == AttendanceModel.wageConfirmed ||
+      return s == AttendanceModel.wageCalculated ||
+          s == AttendanceModel.wageConfirmed ||
           s == AttendanceModel.wageTransferred;
     }).toList();
 
@@ -3015,7 +3017,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         .toList();
 
     if (resetTargets.isEmpty) {
-      ToastHelper.showWarning('선택한 인원 모두 급여가 확정/이체 완료 상태라 리셋할 수 없습니다.');
+      ToastHelper.showWarning('선택한 인원 모두 급여가 계산됐거나 확정/이체 완료 상태라 리셋할 수 없습니다.');
       return;
     }
 
@@ -3430,8 +3432,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         final attendance = _attendanceMap[app.id];
         if (attendance == null) continue;
 
-        // 이체완료 건 스킵
-        if (attendance.wageStatus == AttendanceModel.wageTransferred) {
+        // [HIGH-01] 급여 마감(confirmed)·이체완료(transferred) 건 스킵
+        // confirmed 상태에서 시간 수정을 허용하면 확정된 급여와 실제 근태가 불일치함
+        if (attendance.wageStatus == AttendanceModel.wageConfirmed ||
+            attendance.wageStatus == AttendanceModel.wageTransferred) {
           failCount++;
           continue;
         }
@@ -4025,8 +4029,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         final attendance = _attendanceMap[app.id];
         if (attendance == null) continue;
 
-        // 이체완료 건 스킵
-        if (attendance.wageStatus == AttendanceModel.wageTransferred) {
+        // [HIGH-01] 급여 마감(confirmed)·이체완료(transferred) 건 스킵 (일괄 퇴근 처리 동일 정책)
+        if (attendance.wageStatus == AttendanceModel.wageConfirmed ||
+            attendance.wageStatus == AttendanceModel.wageTransferred) {
           failCount++;
           continue;
         }

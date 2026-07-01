@@ -136,6 +136,14 @@ class MemberService {
     if (DateTime.now().isAfter(expiryDate)) {
       throw Exception('초대 유효기간(30일)이 만료되었습니다.');
     }
+    // [HIGH-01] 이미 해당 사업장 멤버이면 batch.set으로 기존 권한이 덮어씌워짐 — 사전 차단
+    final alreadyMember = await isAlreadyMember(
+      invitation.businessId,
+      invitation.targetUid,
+    );
+    if (alreadyMember) {
+      throw Exception('이미 해당 사업장의 멤버입니다.');
+    }
 
     final batch = _db.batch();
     final now = DateTime.now();
@@ -178,8 +186,12 @@ class MemberService {
     }
   }
 
-  /// 초대 거절
+  /// 초대 거절 (근로자 측)
   Future<void> rejectInvitation(MemberInvitationModel invitation) async {
+    // [MEDIUM-03] pending 상태가 아닌 초대에 대한 중복 거절 방어
+    if (!invitation.isPending) {
+      throw Exception('이미 처리된 초대입니다.');
+    }
     await _invitations.doc(invitation.id).update({
       'status': 'rejected',
       'respondedAt': Timestamp.fromDate(DateTime.now()),
@@ -198,6 +210,17 @@ class MemberService {
     } catch (e) {
       debugPrint('초대 거절 알림 발송 실패: $e');
     }
+  }
+
+  /// 초대 취소 (관리자 측) — [HIGH-02] Firestore rules status 화이트리스트와 동기화
+  Future<void> cancelInvitation(MemberInvitationModel invitation) async {
+    if (!invitation.isPending) {
+      throw Exception('이미 처리된 초대는 취소할 수 없습니다.');
+    }
+    await _invitations.doc(invitation.id).update({
+      'status': 'cancelled',
+      'canceledAt': Timestamp.fromDate(DateTime.now()),
+    });
   }
 
   // ── 초대 조회 ─────────────────────────────────────────────────

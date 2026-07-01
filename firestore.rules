@@ -1291,6 +1291,7 @@ service cloud.firestore {
                          .hasOnly(['status', 'respondedAt'])) ||
                       (isAdminOf(resource.data.businessId) &&
                        resource.data.status == 'pending' &&
+                       request.resource.data.status == 'cancelled' &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status', 'canceledAt'])) ||
                       isSuperAdmin()
