@@ -42,6 +42,14 @@ class BusinessWorkTypeModel {
     this.images,
   });
 
+  static BusinessWorkTypeModel? tryFromMap(Map<String, dynamic> map, String id) {
+    try {
+      return BusinessWorkTypeModel.fromMap(map, id);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Firestore 문서 → 모델
   factory BusinessWorkTypeModel.fromMap(Map<String, dynamic> map, String id) {
     return BusinessWorkTypeModel(

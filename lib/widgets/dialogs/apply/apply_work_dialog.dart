@@ -2494,11 +2494,12 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       await _refreshApplicationStatus(application.workDate, application.selectedWorkType);
       _reloadAllMyApplications(); // fire-and-forget: 내 지원 현황 갱신
 
+      if (!mounted) return;
       _hasChanges = true;
       ToastHelper.showSuccess('지원이 취소되었습니다');
     } catch (e) {
       debugPrint('❌ 지원 취소 실패: $e');
-      ToastHelper.showError('지원 취소에 실패했습니다');
+      if (mounted) ToastHelper.showError('지원 취소에 실패했습니다');
     } finally {
       if (mounted) {
         // ✅ 로딩 키 통일

@@ -492,7 +492,8 @@ extension AttendanceFirestore on FirestoreService {
           .get(const GetOptions(source: Source.server));
 
       return snapshot.docs
-          .map((doc) => ScheduleChangeRequestModel.fromMap(doc.data(), doc.id))
+          .map((doc) => ScheduleChangeRequestModel.tryFromMap(doc.data(), doc.id))
+          .whereType<ScheduleChangeRequestModel>()
           .toList();
     } catch (e) {
       debugPrint('❌ 대기중인 스케줄 변경 요청 조회 실패: $e');
@@ -511,7 +512,8 @@ extension AttendanceFirestore on FirestoreService {
           .get(const GetOptions(source: Source.server));
 
       return snapshot.docs
-          .map((doc) => ScheduleChangeRequestModel.fromMap(doc.data(), doc.id))
+          .map((doc) => ScheduleChangeRequestModel.tryFromMap(doc.data(), doc.id))
+          .whereType<ScheduleChangeRequestModel>()
           .toList();
     } catch (e) {
       debugPrint('❌ 스케줄 변경 요청 조회 실패: $e');
@@ -532,7 +534,8 @@ extension AttendanceFirestore on FirestoreService {
           .get(const GetOptions(source: Source.server));
 
       return snapshot.docs
-          .map((doc) => ScheduleChangeRequestModel.fromMap(doc.data(), doc.id))
+          .map((doc) => ScheduleChangeRequestModel.tryFromMap(doc.data(), doc.id))
+          .whereType<ScheduleChangeRequestModel>()
           .toList();
     } catch (e) {
       debugPrint('❌ 내 스케줄 변경 요청 조회 실패: $e');

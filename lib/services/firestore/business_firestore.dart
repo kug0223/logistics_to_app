@@ -195,7 +195,8 @@ extension BusinessFirestore on FirestoreService {
           .get();
 
       final workTypes = snapshot.docs
-          .map((doc) => BusinessWorkTypeModel.fromMap(doc.data(), doc.id))
+          .map((doc) => BusinessWorkTypeModel.tryFromMap(doc.data(), doc.id))
+          .whereType<BusinessWorkTypeModel>()
           .toList();
 
       debugPrint('🔍 Firestore 조회: ${workTypes.length}개');
@@ -417,7 +418,8 @@ extension BusinessFirestore on FirestoreService {
           .limit(100)
           .get(const GetOptions(source: Source.server));
       return snapshot.docs
-          .map((doc) => TOModel.fromMap(doc.data(), doc.id))
+          .map((doc) => TOModel.tryFromMap(doc.data(), doc.id))
+          .whereType<TOModel>()
           .toList();
     } catch (e) {
       debugPrint('❌ 활성 TO 조회 실패: $e');
@@ -435,7 +437,8 @@ extension BusinessFirestore on FirestoreService {
           .limit(100)
           .get(const GetOptions(source: Source.server));
       return snapshot.docs
-          .map((doc) => TOModel.fromMap(doc.data(), doc.id))
+          .map((doc) => TOModel.tryFromMap(doc.data(), doc.id))
+          .whereType<TOModel>()
           .toList();
     } catch (e) {
       debugPrint('❌ 마감 TO 조회 실패: $e');
