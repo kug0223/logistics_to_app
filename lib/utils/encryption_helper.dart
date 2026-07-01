@@ -48,11 +48,12 @@ class EncryptionHelper {
     if (plainText == null || plainText.isEmpty) return null;
     try {
       _init();
-      if (_encrypter == null) return plainText;
+      if (_encrypter == null) return plainText; // 디버그 전용 폴백
       return _encrypter!.encrypt(plainText, iv: _iv!).base64;
     } catch (e) {
-      debugPrint('❌ [EncryptionHelper] 암호화 실패: $e');
-      return plainText;
+      // 릴리즈 빌드에서 암호화 실패 시 평문 저장 방지 — null 반환으로 안전 실패
+      debugPrint('❌ [EncryptionHelper] 암호화 실패: ${e.runtimeType}');
+      return null;
     }
   }
 
