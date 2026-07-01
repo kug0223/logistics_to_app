@@ -342,6 +342,9 @@ class AttendanceModel {
   }
   
   /// 표시용 급여 (지원자용 - confirmed·transferred 모두 표시)
+  /// [SAFE] 확정 전 null 반환(→ UI에서 '-')은 의도된 설계.
+  /// 관리자가 확정 시 출퇴근 시간을 조정할 수 있어 예상 금액이 최종 금액과 달라짐.
+  /// wageDetail.effectiveNetWage로 예상치를 노출하면 혼란 유발 — 현행 유지.
   int? get displayWage => (isWageConfirmed || isWageTransferred) ? finalWage : null;
   
   /// 포맷팅된 표시용 급여
