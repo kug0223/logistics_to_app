@@ -3634,7 +3634,7 @@ export const onBusinessDeleted = onDocumentDeleted(
 
     // [STRUCT-07] limit 없는 get()은 수만 건 문서 시 CF 메모리 초과 위험 — 500건 단위 페이지네이션으로 안전 삭제
     async function deleteSubcollection(collPath: string) {
-      const PAGE = 500;
+      const PAGE = 499; // Firestore batch 500건 제한 안전 마진
       let last: FirebaseFirestore.DocumentSnapshot | undefined;
       while (true) {
         let q: FirebaseFirestore.Query = db.collection(collPath).limit(PAGE);
