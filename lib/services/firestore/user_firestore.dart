@@ -9,7 +9,9 @@ extension UserFirestore on FirestoreService {
   /// 사용자 정보 저장
   Future<void> saveUser(UserModel user) async {
     try {
-      await _firestore.collection('users').doc(user.uid).set(user.toMap());
+      // [M-3] role 제거 — 권한 상승 경로 차단 (role 변경은 CF/SUPER_ADMIN 전용)
+      final data = user.toMap()..remove('role');
+      await _firestore.collection('users').doc(user.uid).set(data);
       _userCache.remove(user.uid);
       _userCacheTimestamps.remove(user.uid);
     } catch (e) {
