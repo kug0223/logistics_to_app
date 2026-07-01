@@ -4073,6 +4073,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
   /// 파트별 일괄 출근 처리
   Future<void> _processBatchCheckInByGroup(Map<String, String> groupTimes) async {
+    if (_isLoading) return; // [BUG-01] 중복 실행 방어
+    setState(() => _isLoading = true);
     try {
       int successCount = 0;
       int failCount = 0;
@@ -4111,14 +4113,17 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       await _loadData();
     } catch (e) {
       debugPrint('❌ 파트별 일괄 출근 처리 실패: $e');
-      if (!mounted) return;
-      ToastHelper.showError('일괄 출근 처리 실패');
+      if (mounted) ToastHelper.showError('일괄 출근 처리 실패');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   /// 파트별 일괄 퇴근 처리
   Future<void> _processBatchCheckOutByGroup(
       Map<String, String> groupTimes, List<String> targetIds) async {
+    if (_isLoading) return; // [BUG-01] 중복 실행 방어
+    setState(() => _isLoading = true);
     try {
       int successCount = 0;
       // [W-3] 실패 이유를 이름과 함께 수집 — 단순 failCount만 표시하면 관리자가 원인 파악 불가
@@ -4185,8 +4190,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       await _loadData();
     } catch (e) {
       debugPrint('❌ 파트별 일괄 퇴근 처리 실패: $e');
-      if (!mounted) return;
-      ToastHelper.showError('일괄 퇴근 처리 실패');
+      if (mounted) ToastHelper.showError('일괄 퇴근 처리 실패');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 

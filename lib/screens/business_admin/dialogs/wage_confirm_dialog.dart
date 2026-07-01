@@ -920,7 +920,10 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               net: finalWage.effectiveNetWage,
             ),
           ]);
-          if (!confirmed || !mounted) return;
+          if (!confirmed || !mounted) {
+            if (mounted) setState(() => _isProcessing = false);
+            return;
+          }
         }
       }
 

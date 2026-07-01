@@ -1389,7 +1389,11 @@ export const onAttendanceWageChanged = onDocumentUpdated(
     if (!businessId || !userId) return;
 
     const rawDate = after.workDate as Timestamp | undefined;
-    const workDate = rawDate?.toDate() ?? new Date();
+    if (!rawDate) {
+      console.warn(`[onAttendanceWageChanged] workDate 없음 — 월별 집계 생략 docId=${event.params.attendanceId}`);
+      return;
+    }
+    const workDate = rawDate.toDate();
     const KST_OFFSET_MS_W = 9 * 60 * 60 * 1000;
     const workDateKST = new Date(workDate.getTime() + KST_OFFSET_MS_W);
     const year = workDateKST.getUTCFullYear();
@@ -1646,7 +1650,7 @@ async function updateBusinessReviewStats(businessId: string): Promise<void> {
 
     await db.collection("businesses").doc(businessId).update({
       rating: avgRating,
-      reviewCount: snapshot.size,
+      reviewCount: ratedCount, // [CF-BUG-05] snapshot.size 대신 ratedCount — rating=0 미입력 건 제외
     });
 
     console.log(`    ✓ 사업장 ${businessId} 통계 업데이트`);
@@ -1837,15 +1841,19 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
           .where("status", "==", "PENDING")
           .get();
         if (!pendingApps.empty) {
-          const cancelBatch = db.batch();
-          for (const appDoc of pendingApps.docs) {
-            cancelBatch.update(appDoc.ref, {
-              status: "AUTO_CANCELED",
-              canceledAt: now,
-              cancelReason: "WORK_DETAIL_EXPIRED",
-            });
+          // [CF-PERF-01] 500건 초과 배치 분할 처리
+          const BATCH_SIZE = 499;
+          for (let bi = 0; bi < pendingApps.docs.length; bi += BATCH_SIZE) {
+            const cancelBatch = db.batch();
+            for (const appDoc of pendingApps.docs.slice(bi, bi + BATCH_SIZE)) {
+              cancelBatch.update(appDoc.ref, {
+                status: "AUTO_CANCELED",
+                canceledAt: now,
+                cancelReason: "WORK_DETAIL_EXPIRED",
+              });
+            }
+            await cancelBatch.commit();
           }
-          await cancelBatch.commit();
           console.log(`    → ${toId}/${workType} PENDING ${pendingApps.size}건 AUTO_CANCELED`);
           // [BUG-E-02 수정] AUTO_CANCELED 시 근무자에게 알림 발송 — Flutter _confirmWithConflictCheck와 일관성 유지
           await Promise.all(pendingApps.docs.map((appDoc) => {
@@ -2020,15 +2028,19 @@ async function processSlotWorkDetailExpiry(now: Timestamp): Promise<void> {
           .where("status", "==", "PENDING")
           .get();
         if (!pendingApps.empty) {
-          const cancelBatch = db.batch();
-          for (const appDoc of pendingApps.docs) {
-            cancelBatch.update(appDoc.ref, {
-              status: "AUTO_CANCELED",
-              canceledAt: now,
-              cancelReason: "SLOT_WORK_DETAIL_EXPIRED",
-            });
+          // [CF-PERF-01] 500건 초과 배치 분할 처리
+          const BATCH_SIZE = 499;
+          for (let bi = 0; bi < pendingApps.docs.length; bi += BATCH_SIZE) {
+            const cancelBatch = db.batch();
+            for (const appDoc of pendingApps.docs.slice(bi, bi + BATCH_SIZE)) {
+              cancelBatch.update(appDoc.ref, {
+                status: "AUTO_CANCELED",
+                canceledAt: now,
+                cancelReason: "SLOT_WORK_DETAIL_EXPIRED",
+              });
+            }
+            await cancelBatch.commit();
           }
-          await cancelBatch.commit();
           console.log(`    → [L003] ${toId}/${slotDoc.id}/${workType} PENDING ${pendingApps.size}건 → AUTO_CANCELED`);
           // [BUG-E-02 수정] 슬롯 업무상세 마감 AUTO_CANCELED 알림 발송
           await Promise.all(pendingApps.docs.map((appDoc) => {
@@ -2234,15 +2246,19 @@ async function processTOExpiry(now: Timestamp): Promise<void> {
         .where("status", "==", "PENDING")
         .get();
       if (!pendingApps.empty) {
-        const cancelBatch = db.batch();
-        for (const appDoc of pendingApps.docs) {
-          cancelBatch.update(appDoc.ref, {
-            status: "AUTO_CANCELED",
-            canceledAt: now,
-            cancelReason: "TO_EXPIRED",
-          });
+        // [CF-PERF-02] 500건 초과 배치 분할 처리
+        const BATCH_SIZE = 499;
+        for (let bi = 0; bi < pendingApps.docs.length; bi += BATCH_SIZE) {
+          const cancelBatch = db.batch();
+          for (const appDoc of pendingApps.docs.slice(bi, bi + BATCH_SIZE)) {
+            cancelBatch.update(appDoc.ref, {
+              status: "AUTO_CANCELED",
+              canceledAt: now,
+              cancelReason: "TO_EXPIRED",
+            });
+          }
+          await cancelBatch.commit();
         }
-        await cancelBatch.commit();
         console.log(`    → ${doc.id} PENDING ${pendingApps.size}건 AUTO_CANCELED`);
         // [BUG-E-02 수정] TO 마감 AUTO_CANCELED 알림 발송
         await Promise.all(pendingApps.docs.map((appDoc) => {

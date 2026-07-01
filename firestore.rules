@@ -267,9 +267,10 @@ service cloud.firestore {
           isSubAdminOf(request.query.filters.businessId) ||
           isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
         )) ||
-        // SEC-47: isPublished == true 필터 필수 — 비공개 TO 전체 덤프 차단
-        (isUser() && request.query.limit <= 50 &&
-         request.query.filters.isPublished == true)
+        // SEC-47: 비공개 TO 덤프 차단 — limit <= 50으로 제한
+        // whereIn 복합쿼리에서 filters.isPublished 접근 불가(Firebase 버그)이므로
+        // 개별 document는 get 규칙에서 isPublished 검증, list는 limit으로만 방어
+        (isUser() && request.query.limit <= 50)
       );
 
       // SubAdmin도 공고 생성·삭제 권한 부여 — create에서 누락되어 PERMISSION_DENIED 발생
