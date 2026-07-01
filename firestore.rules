@@ -542,7 +542,10 @@ service cloud.firestore {
       // [NOSHOW-FIX] 노쇼 상태 레코드의 finalWage=0 서버 강제
       // 노쇼 처리 시 관리자가 API 직접 호출로 finalWage를 임의 값으로 설정하는 것 차단.
       // onAttendanceWageStatusChanged CF 트리거와 함께 이중 방어.
+      // [HIGH-02/HIGH-03] checkInSuspicious/checkInDistance는 CF Admin SDK 전용 — 클라이언트 생성 차단
       allow create: if isLoggedIn() &&
+                      !('checkInSuspicious' in request.resource.data) &&
+                      !('checkInDistance' in request.resource.data) &&
                       !(request.resource.data.get('status', '') == 'NO_SHOW' &&
                         request.resource.data.get('finalWage', 0) != 0) &&
                       (
@@ -588,7 +591,8 @@ service cloud.firestore {
                       ((isAdminOf(resource.data.businessId) ||
                         isSubAdminOf(resource.data.businessId)) &&
                        !request.resource.data.diff(resource.data).affectedKeys()
-                         .hasAny(['userId', 'businessId', 'applicationId', 'workDate']) &&
+                         .hasAny(['userId', 'businessId', 'applicationId', 'workDate',
+                                  'checkInSuspicious', 'checkInDistance']) &&
                        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['wageStatus']) ||
                         request.resource.data.get('wageStatus', '') != 'wageTransferred' ||
                         resource.data.get('wageStatus', '') == 'wageConfirmed') &&

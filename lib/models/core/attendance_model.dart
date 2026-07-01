@@ -91,6 +91,12 @@ class AttendanceModel {
   /// 송금 처리한 관리자 UID
   final String? transferredBy;
 
+  // ========== 서버 측 GPS 검증 결과 ==========
+  /// CF onAttendanceCreated가 GPS 좌표를 서버에서 검증한 결과 — 반경 초과 시 true
+  final bool checkInSuspicious;
+  /// 출근 시 사업장까지 거리 (미터, GPS 방식일 때만 설정)
+  final int? checkInDistance;
+
   final DateTime createdAt;
   final DateTime? updatedAt;
 
@@ -137,6 +143,9 @@ class AttendanceModel {
     this.transferDate,
     this.transferNote,
     this.transferredBy,
+    // 서버 GPS 검증
+    this.checkInSuspicious = false,
+    this.checkInDistance,
   });
 
   /// Firestore → AttendanceModel
@@ -210,6 +219,9 @@ class AttendanceModel {
       transferDate: parseTimestampNullable(map['transferDate']),
       transferNote: map['transferNote'] as String?,
       transferredBy: map['transferredBy'] as String?,
+      // 서버 GPS 검증
+      checkInSuspicious: map['checkInSuspicious'] as bool? ?? false,
+      checkInDistance: (map['checkInDistance'] as num?)?.toInt(),
     );
   }
 
@@ -269,6 +281,9 @@ class AttendanceModel {
         'transferDate': Timestamp.fromDate(transferDate!),
       if (transferNote != null) 'transferNote': transferNote,
       if (transferredBy != null) 'transferredBy': transferredBy,
+      // 서버 GPS 검증 (CF 전용 필드, 클라이언트는 읽기만)
+      if (checkInSuspicious) 'checkInSuspicious': checkInSuspicious,
+      if (checkInDistance != null) 'checkInDistance': checkInDistance,
     };
   }
 
@@ -400,6 +415,9 @@ class AttendanceModel {
     DateTime? transferDate,
     String? transferNote,
     String? transferredBy,
+    // 서버 GPS 검증
+    bool? checkInSuspicious,
+    int? checkInDistance,
   }) {
     return AttendanceModel(
       id: id ?? this.id,
@@ -444,6 +462,9 @@ class AttendanceModel {
       transferDate: transferDate ?? this.transferDate,
       transferNote: transferNote ?? this.transferNote,
       transferredBy: transferredBy ?? this.transferredBy,
+      // 서버 GPS 검증
+      checkInSuspicious: checkInSuspicious ?? this.checkInSuspicious,
+      checkInDistance: checkInDistance ?? this.checkInDistance,
     );
   }
 }

@@ -1919,6 +1919,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                           // 출근 방식 배지 (GPS/비콘/수동)
                           _buildCheckInMethodBadge(_attendanceMap[app.id]),
 
+                          // GPS 의심 출근 배지 (CF 서버 검증 결과)
+                          if (_attendanceMap[app.id]?.checkInSuspicious == true)
+                            _buildCheckInSuspiciousBadge(_attendanceMap[app.id]!),
+
                           // 퇴근 미처리 경고 배지
                           if (overdueCheckout)
                             Container(
@@ -2106,6 +2110,37 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
             label,
             style: ResponsiveHelper.tinyStyle(context, color: color,
                 fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// GPS 의심 출근 배지 — CF 서버 검증에서 반경 초과로 마킹된 경우 표시
+  Widget _buildCheckInSuspiciousBadge(AttendanceModel attendance) {
+    final distance = attendance.checkInDistance;
+    final label = distance != null ? '위치의심 ${distance}m' : '위치의심';
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 6),
+        vertical: ResponsiveHelper.spacing(context, 2),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.error.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: AppColors.error.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.location_off_outlined,
+              size: ResponsiveHelper.iconSize(context, 11),
+              color: AppColors.error),
+          SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+          Text(
+            label,
+            style: ResponsiveHelper.tinyStyle(context,
+                color: AppColors.error, fontWeight: FontWeight.w600),
           ),
         ],
       ),

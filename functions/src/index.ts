@@ -5121,6 +5121,142 @@ export const onAttendanceWageStatusChanged = onDocumentWritten(
 );
 
 // ═══════════════════════════════════════════════════════════
+// 출근 기록 생성 시 서버 검증 — 지각 재판정 + GPS 위치 검증
+// ═══════════════════════════════════════════════════════════
+// [HIGH-02] 클라이언트 로컬 시각(checkIn) → 서버 타임스탬프(checkInTime) 기준 지각 재판정
+// [HIGH-03] checkInLat/Lng을 사업장 좌표와 서버에서 재비교
+//   반경 초과 시 checkInSuspicious:true, checkInDistance:N 마킹 (관리자 검토용)
+export const onAttendanceCreated = onDocumentCreated(
+  {document: "attendance/{attendanceId}", region: "asia-northeast3"},
+  async (event) => {
+    const data = event.data?.data();
+    if (!data || !data.checkIn) return null;
+
+    const applicationId = data.applicationId as string | undefined;
+    const businessId = data.businessId as string | undefined;
+    const checkInTime = data.checkInTime as Timestamp | undefined;
+    const checkInLat = data.checkInLat as number | undefined;
+    const checkInLng = data.checkInLng as number | undefined;
+    const checkInMethod = data.checkInMethod as string | undefined;
+    const workDate = data.workDate as Timestamp | undefined;
+
+    if (!applicationId || !businessId || !checkInTime) return null;
+
+    const updates: Record<string, unknown> = {};
+
+    // 1. Application 조회 → 예정 출근 시각
+    let scheduledStart: string | undefined;
+    try {
+      const appDoc = await db.collection("applications").doc(applicationId).get();
+      if (appDoc.exists) {
+        const appData = appDoc.data()!;
+        const slotId = appData.slotId as string | undefined;
+        const toId = appData.toId as string | undefined;
+        if (slotId && toId) {
+          // flex 공고: 슬롯 workDetails[0].startTime 우선
+          const slotDoc = await db.collection("tos").doc(toId)
+            .collection("slots").doc(slotId).get();
+          if (slotDoc.exists) {
+            const wds = slotDoc.data()?.workDetails as Array<{startTime?: string}> | undefined;
+            scheduledStart = wds?.[0]?.startTime;
+          }
+        }
+        if (!scheduledStart) {
+          scheduledStart = appData.startTime as string | undefined;
+        }
+      }
+    } catch (e) {
+      console.error("[onAttendanceCreated] Application 조회 실패:", e);
+    }
+
+    // 2. 지각 재판정 (서버 타임스탬프 기준)
+    if (scheduledStart && workDate) {
+      try {
+        const checkInDate = checkInTime.toDate();
+        const workDateObj = workDate.toDate();
+        // 야간 근무: checkInTime 날짜가 workDate와 다르면 다음 날 기준으로 예정 시각 계산
+        const isNextDay =
+          checkInDate.getFullYear() !== workDateObj.getFullYear() ||
+          checkInDate.getMonth() !== workDateObj.getMonth() ||
+          checkInDate.getDate() !== workDateObj.getDate();
+
+        const [schedHour, schedMin] = scheduledStart.split(":").map(Number);
+        let isLate: boolean;
+        if (isNextDay) {
+          const schedDate = new Date(workDateObj);
+          schedDate.setDate(schedDate.getDate() + 1);
+          schedDate.setHours(schedHour, schedMin, 0, 0);
+          isLate = checkInDate > schedDate;
+        } else {
+          isLate =
+            checkInDate.getHours() > schedHour ||
+            (checkInDate.getHours() === schedHour && checkInDate.getMinutes() > schedMin);
+        }
+
+        const serverStatus = isLate ? "late" : "present";
+        if ((data.status as string) !== serverStatus) {
+          updates.status = serverStatus;
+          console.log(
+            `[onAttendanceCreated] 지각 재판정: ${data.status} → ${serverStatus}` +
+            ` (${event.params.attendanceId})`
+          );
+        }
+      } catch (e) {
+        console.error("[onAttendanceCreated] 지각 재판정 실패:", e);
+      }
+    }
+
+    // 3. GPS 좌표 서버 검증 (gps 방식만)
+    if (checkInMethod === "gps" && checkInLat != null && checkInLng != null) {
+      try {
+        const bizDoc = await db.collection("businesses").doc(businessId).get();
+        if (bizDoc.exists) {
+          const bizData = bizDoc.data()!;
+          const bizLat = bizData.latitude as number | undefined;
+          const bizLng = bizData.longitude as number | undefined;
+          const gpsRadius = (bizData.gpsRadius as number | undefined) ?? 100;
+          if (bizLat != null && bizLng != null) {
+            const distM = haversineDistanceMeters(checkInLat, checkInLng, bizLat, bizLng);
+            updates.checkInDistance = Math.round(distM);
+            if (distM > gpsRadius * 1.5) {
+              updates.checkInSuspicious = true;
+              console.log(
+                `[onAttendanceCreated] GPS 의심: ${Math.round(distM)}m > ` +
+                `허용 ${Math.round(gpsRadius * 1.5)}m (${event.params.attendanceId})`
+              );
+            }
+          }
+        }
+      } catch (e) {
+        console.error("[onAttendanceCreated] 사업장 위치 조회 실패:", e);
+      }
+    }
+
+    if (Object.keys(updates).length === 0) return null;
+    try {
+      await event.data!.ref.update(updates);
+    } catch (e) {
+      console.error("[onAttendanceCreated] 업데이트 실패:", e);
+    }
+    return null;
+  }
+);
+
+// Haversine 공식 — 두 좌표 간 거리 (미터)
+function haversineDistanceMeters(
+  lat1: number, lng1: number, lat2: number, lng2: number
+): number {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// ═══════════════════════════════════════════════════════════
 // 🏢 내 사업장 목록 조회 (adminIds arrayContains — list 권한 불필요)
 // ═══════════════════════════════════════════════════════════
 export const callableGetMyBusiness = onCall(
