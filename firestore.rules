@@ -1435,9 +1435,12 @@ service cloud.firestore {
 
       // 쓰기(추가): 본인 uid와 일치하고 ciHash 또는 phoneHash가 반드시 존재해야 함
       // SEC-40: ciHash/phoneHash 없는 쓰레기 문서 생성 차단 — 재가입 차단 우회 방지
+      // [AUTH-H2] users/{uid} 문서가 존재하는 상태에서만 허용 — 실제 탈퇴 흐름에서만 가능
+      //   탈퇴하지 않은 사용자가 deleted_accounts에 임의 문서를 심어 재가입 차단 우회 불가
       allow create: if isLoggedIn() &&
                       request.resource.data.uid == request.auth.uid &&
-                      ('ciHash' in request.resource.data || 'phoneHash' in request.resource.data);
+                      ('ciHash' in request.resource.data || 'phoneHash' in request.resource.data) &&
+                      exists(/databases/$(database)/documents/users/$(request.auth.uid));
 
       // 수정·삭제: 슈퍼어드민만
       allow update, delete: if isSuperAdmin();

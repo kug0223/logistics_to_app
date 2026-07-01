@@ -721,6 +721,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       if (!mounted) return;
 
+      // [AUTH-H3] 가입 완료 후 passToken 즉시 소비 (15분 재사용 차단)
+      if (_isKorean && _passAuthResult != null) {
+        await PassVerificationService.finalizeRegistration(_passAuthResult!.passToken);
+      }
+
+      if (!mounted) return;
+
       AnalyticsService.logSignUp('USER');
       ToastHelper.showSuccess('가입을 환영합니다!');
       Navigator.of(context).popUntil((route) => route.isFirst);

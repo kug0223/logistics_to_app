@@ -4161,6 +4161,49 @@ export const verifyPassAuth = onCall(
   }
 );
 
+// ── finalizeRegistration ─────────────────────────────────
+// 가입 완료 후 passToken 소비 (삭제) + ciHash를 users/{uid}에 복사
+// [AUTH-H3] verifyPassAuth의 register 토큰은 가입 경로에서 소비되지 않아 15분 재사용 가능.
+//   가입 성공 직후 이 CF를 호출하여 토큰을 즉시 무효화한다.
+// Input:  { passToken }
+// Output: { success: true }
+export const finalizeRegistration = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "로그인 필요");
+    }
+    const {passToken} = request.data as {passToken?: string};
+    if (!passToken || typeof passToken !== "string") {
+      throw new HttpsError("invalid-argument", "passToken 필수");
+    }
+    // mock 토큰(다날 미연동 환경)은 무시 — 실제 Firestore 문서가 없으므로 noop 처리
+    if (passToken.startsWith("mock-")) {
+      return {success: true};
+    }
+
+    const tokenRef = db.collection("passTokens").doc(passToken);
+    const tokenSnap = await tokenRef.get();
+    if (!tokenSnap.exists) {
+      // 이미 소비됐거나 만료된 토큰 — 멱등 처리
+      return {success: true};
+    }
+    const tokenData = tokenSnap.data() ?? {};
+    if (tokenData["purpose"] !== "register") {
+      throw new HttpsError("permission-denied", "register 토큰만 소비 가능");
+    }
+
+    // ciHash를 users/{uid}에 복사 (비밀번호 찾기 CI 매칭에 필요)
+    const ciHash = tokenData["ciHash"] as string | undefined;
+    if (ciHash) {
+      await db.collection("users").doc(request.auth.uid).update({ciHash});
+    }
+    // 토큰 즉시 삭제 (일회용)
+    await tokenRef.delete();
+    return {success: true};
+  }
+);
+
 // ── resetPasswordWithPass ────────────────────────────────
 // passToken + username → CI 매칭 → Firebase Custom Token 발급
 // Input:  { passToken, username }
