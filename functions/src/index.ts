@@ -4964,6 +4964,22 @@ function getNoshowPenaltyFromRules(
   return rules["noshow_3plus"] ?? -10;
 }
 
+// ─── [HIGH-02] TrustRule 배열 → lookup 맵 변환 ──────────────
+// Firestore에 [{type, points, description, ...}] 배열로 저장되므로
+// CF에서 type-keyed 맵으로 변환해 사용해야 함.
+// 이전에 Record<string, number>로 직접 캐스팅하면 항상 {} (빈 맵)이 반환되어
+// 모든 신뢰도 규칙 설정이 무시되고 하드코딩 기본값만 사용되는 버그 방지.
+function ruleArrayToMap(rules: unknown): Record<string, number> {
+  if (!Array.isArray(rules)) return {};
+  const map: Record<string, number> = {};
+  for (const r of rules) {
+    if (r && typeof r === "object" && "type" in r && "points" in r) {
+      map[r.type as string] = (r.points as number) ?? 0;
+    }
+  }
+  return map;
+}
+
 // ═══════════════════════════════════════════════════════════
 // 📊 attendance 문서 변경 → totalWorkDays + TrustScore 서버 자동 처리
 //
@@ -5011,7 +5027,7 @@ export const onAttendanceWageStatusChanged = onDocumentWritten(
       const rulesSnap = await db.collection("settings").doc("trust_rules").get();
       const rulesData = rulesSnap.data() ?? {};
       const maxScore = (rulesData.maxScore as number) ?? 100;
-      const increaseRules = (rulesData.increaseRules as Record<string, number>) ?? {};
+      const increaseRules = ruleArrayToMap(rulesData.increaseRules);
       const workCompletePoints = increaseRules["work_complete"] ?? 1;
       const workDayDelta = wageConfirmedOn ? 1 : -1;
       const trustChange = wageConfirmedOn ? workCompletePoints : -workCompletePoints;
@@ -5050,7 +5066,7 @@ export const onAttendanceWageStatusChanged = onDocumentWritten(
       const rulesSnap = await db.collection("settings").doc("trust_rules").get();
       const rulesData = rulesSnap.data() ?? {};
       const maxScore = (rulesData.maxScore as number) ?? 100;
-      const decreaseRules = (rulesData.decreaseRules as Record<string, number>) ?? {};
+      const decreaseRules = ruleArrayToMap(rulesData.decreaseRules);
 
       await db.runTransaction(async (tx) => {
         const userSnap = await tx.get(userRef);
@@ -5181,21 +5197,46 @@ export const callableApplyNoShowPenalty = onCall(
 
     const userRef = db.collection("users").doc(userId);
 
+    // [HIGH-01] trustScore 갱신: noShowCount+1과 동시에 패널티 적용
+    // [HIGH-02] ruleArrayToMap: Firestore 배열 형식 올바르게 파싱
+    const rulesSnap = await db.collection("settings").doc("trust_rules").get();
+    const rulesData = rulesSnap.data() ?? {};
+    const maxScore = (rulesData.maxScore as number) ?? 100;
+    const decreaseRules = ruleArrayToMap(rulesData.decreaseRules);
+    const businessId = (appData.businessId as string | undefined) ?? "";
+
     await db.runTransaction(async (tx) => {
       const userSnap = await tx.get(userRef);
       if (!userSnap.exists) return;
-      const prev = (userSnap.data()?.noShowCount ?? 0) as number;
+      const userData = userSnap.data()!;
+      const prev = (userData.noShowCount ?? 0) as number;
+      const prevScore = (userData.trustScore ?? 50) as number;
       const newCount = prev + 1;
       const restrictedUntil = _noShowRestrictionUntilFromCount(newCount);
 
+      const penaltyPoints = getNoshowPenaltyFromRules(newCount, decreaseRules);
+      const newScore = Math.min(maxScore, Math.max(0, prevScore + penaltyPoints));
+
       const updates: Record<string, unknown> = {
         noShowCount: newCount,
+        trustScore: newScore,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
       if (restrictedUntil !== null) {
         updates.restrictedUntil = admin.firestore.Timestamp.fromDate(restrictedUntil);
       }
       tx.update(userRef, updates);
+
+      const histRef = db.collection("trust_score_history").doc();
+      tx.set(histRef, {
+        userId,
+        businessId,
+        previousScore: prevScore,
+        newScore,
+        change: penaltyPoints,
+        reason: "noshow_same_day_cancel",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
     });
 
     return {success: true};
@@ -5262,9 +5303,12 @@ export const callableReportLate = onCall(
     const rulesSnap = await db.collection("settings").doc("trust_rules").get();
     const rulesData = rulesSnap.data() ?? {};
     const maxScore = (rulesData.maxScore as number) ?? 100;
-    const decreaseRules = (rulesData.decreaseRules as Record<string, number>) ?? {};
+    // [HIGH-02] ruleArrayToMap: Firestore 배열 형식 올바르게 파싱
+    const decreaseRules = ruleArrayToMap(rulesData.decreaseRules);
     const latePoints = decreaseRules["late"] ?? -1;
     const lateRepeatPoints = decreaseRules["late_repeat"] ?? -2;
+    // [HIGH-03] late_chronic: 6회 이상 지각 단계 추가 (기존 2단계 → 3단계)
+    const lateChronicPoints = decreaseRules["late_chronic"] ?? -3;
 
     const userRef = db.collection("users").doc(userId);
 
@@ -5281,10 +5325,25 @@ export const callableReportLate = onCall(
 
       if (mode === "late") {
         newLateCount = currentLateCount + 1;
-        trustChange = newLateCount >= 2 ? lateRepeatPoints : latePoints;
+        // [HIGH-03] 3단계 지각: 1~2회=late, 3~5회=late_repeat, 6회+=late_chronic
+        if (newLateCount >= 6) {
+          trustChange = lateChronicPoints;
+        } else if (newLateCount >= 3) {
+          trustChange = lateRepeatPoints;
+        } else {
+          trustChange = latePoints;
+        }
         trustReason = "late";
       } else {
-        const applied = currentLateCount >= 2 ? lateRepeatPoints : latePoints;
+        // 취소 시 적용됐던 감점 계산 (currentLateCount 기준)
+        let applied: number;
+        if (currentLateCount >= 6) {
+          applied = lateChronicPoints;
+        } else if (currentLateCount >= 3) {
+          applied = lateRepeatPoints;
+        } else {
+          applied = latePoints;
+        }
         newLateCount = Math.max(0, currentLateCount - 1);
         trustChange = -applied;
         trustReason = "late_canceled";
