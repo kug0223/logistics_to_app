@@ -857,86 +857,76 @@ extension AttendanceFirestore on FirestoreService {
     required String canceledByUid,
   }) async {
     try {
-      // 1. 요청 정보 조회
-      final requestDoc = await _firestore
-          .collection('schedule_change_requests')
-          .doc(requestId)
-          .get(const GetOptions(source: Source.server));
+      // [MEDIUM-03] batch → runTransaction 전환으로 TOCTOU 경쟁 상태 방지.
+      // 조회와 쓰기 사이에 다른 관리자/근로자가 상태를 바꾸는 경우를 원자적으로 처리.
+      bool canceled = false;
+      await _firestore.runTransaction((tx) async {
+        // 1. 트랜잭션 내 요청 문서 읽기
+        final requestRef = _firestore.collection('schedule_change_requests').doc(requestId);
+        final requestSnap = await tx.get(requestRef);
 
-      if (!requestDoc.exists) {
-        debugPrint('❌ 요청을 찾을 수 없음');
-        return false;
-      }
+        if (!requestSnap.exists) return;
 
-      final request = ScheduleChangeRequestModel.fromMap(requestDoc.data()!, requestId);
+        final request = ScheduleChangeRequestModel.fromMap(requestSnap.data()!, requestId);
 
-      // 취소 가능 상태: PENDING(미처리) 또는 APPROVED(적용 취소)
-      // REJECTED/CANCELED 요청은 재취소 불가 — 상태 이력 왜곡 방지
-      if (!request.isPending && !request.isApproved) {
-        debugPrint('⚠️ 취소 불가 상태: ${request.status}');
-        return false;
-      }
+        // 취소 가능 상태: PENDING(미처리) 또는 APPROVED(적용 취소)
+        // REJECTED/CANCELED 요청은 재취소 불가 — 상태 이력 왜곡 방지
+        if (!request.isPending && !request.isApproved) {
+          debugPrint('⚠️ 취소 불가 상태: ${request.status}');
+          return;
+        }
 
-      // 2. 승인된 요청이면 ApplicationModel에서도 제거 (batch로 원자화)
-      final batch = _firestore.batch();
+        // 2. 승인된 요청이면 applications 문서도 트랜잭션 내에서 읽고 업데이트
+        if (request.isApproved) {
+          final appRef = _firestore.collection('applications').doc(request.applicationId);
+          final appSnap = await tx.get(appRef);
 
-      if (request.isApproved) {
-        final appSnapshot = await _firestore
-            .collection('applications')
-            .doc(request.applicationId)
-            .get(const GetOptions(source: Source.server));
+          if (appSnap.exists) {
+            final appData = appSnap.data()!;
 
-        if (appSnapshot.exists) {
-          final appData = appSnapshot.data()!;
-
-          if (request.isLeaveRequest || request.isNoWorkRequest) {
-            // leaveDates에서 제거 (.toLocal()로 approve 경로와 일관성 유지)
-            List<DateTime> leaveDates = [];
-            if (appData['leaveDates'] is List) {
-              leaveDates = (appData['leaveDates'] as List)
-                  .map((e) => (e as Timestamp).toDate().toLocal())
-                  .toList();
+            if (request.isLeaveRequest || request.isNoWorkRequest) {
+              List<DateTime> leaveDates = [];
+              if (appData['leaveDates'] is List) {
+                leaveDates = (appData['leaveDates'] as List)
+                    .map((e) => (e as Timestamp).toDate().toLocal())
+                    .toList();
+              }
+              leaveDates.removeWhere((d) =>
+                  d.year == request.targetDate.year &&
+                  d.month == request.targetDate.month &&
+                  d.day == request.targetDate.day);
+              tx.update(appRef, {
+                'leaveDates': leaveDates.map((e) => Timestamp.fromDate(e)).toList(),
+              });
+            } else if (request.isExtraWorkRequest) {
+              List<DateTime> extraWorkDates = [];
+              if (appData['extraWorkDates'] is List) {
+                extraWorkDates = (appData['extraWorkDates'] as List)
+                    .map((e) => (e as Timestamp).toDate().toLocal())
+                    .toList();
+              }
+              extraWorkDates.removeWhere((d) =>
+                  d.year == request.targetDate.year &&
+                  d.month == request.targetDate.month &&
+                  d.day == request.targetDate.day);
+              tx.update(appRef, {
+                'extraWorkDates': extraWorkDates.map((e) => Timestamp.fromDate(e)).toList(),
+              });
             }
-
-            leaveDates.removeWhere((d) =>
-                d.year == request.targetDate.year &&
-                d.month == request.targetDate.month &&
-                d.day == request.targetDate.day);
-
-            batch.update(_firestore.collection('applications').doc(request.applicationId), {
-              'leaveDates': leaveDates.map((e) => Timestamp.fromDate(e)).toList(),
-            });
-          } else if (request.isExtraWorkRequest) {
-            // extraWorkDates에서 제거 (.toLocal()로 approve 경로와 일관성 유지)
-            List<DateTime> extraWorkDates = [];
-            if (appData['extraWorkDates'] is List) {
-              extraWorkDates = (appData['extraWorkDates'] as List)
-                  .map((e) => (e as Timestamp).toDate().toLocal())
-                  .toList();
-            }
-
-            extraWorkDates.removeWhere((d) =>
-                d.year == request.targetDate.year &&
-                d.month == request.targetDate.month &&
-                d.day == request.targetDate.day);
-
-            batch.update(_firestore.collection('applications').doc(request.applicationId), {
-              'extraWorkDates': extraWorkDates.map((e) => Timestamp.fromDate(e)).toList(),
-            });
           }
         }
-      }
 
-      // 3. 요청 상태 업데이트 (batch에 포함 — applications 업데이트와 원자적으로 처리)
-      batch.update(_firestore.collection('schedule_change_requests').doc(requestId), {
-        'status': 'CANCELED',
-        'respondedByUid': canceledByUid,
-        'respondedAt': FieldValue.serverTimestamp(),
+        // 3. 요청 상태 업데이트 (트랜잭션 내 — 원자적 처리)
+        tx.update(requestRef, {
+          'status': 'CANCELED',
+          'respondedByUid': canceledByUid,
+          'respondedAt': FieldValue.serverTimestamp(),
+        });
+        canceled = true;
       });
-      await batch.commit();
 
-      debugPrint('✅ 스케줄 변경 요청 취소 완료: $requestId');
-      return true;
+      if (canceled) debugPrint('✅ 스케줄 변경 요청 취소 완료: $requestId');
+      return canceled;
     } catch (e) {
       debugPrint('❌ 스케줄 변경 요청 취소 실패: $e');
       return false;
