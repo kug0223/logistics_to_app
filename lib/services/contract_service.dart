@@ -635,7 +635,7 @@ class ContractService {
       final hasMore = snap.docs.length > pageSize;
       final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
       return (
-        items: docs.map(EmploymentContractModel.fromFirestore).toList(),
+        items: docs.map(EmploymentContractModel.tryFromFirestore).whereType<EmploymentContractModel>().toList(),
         lastDoc: docs.isNotEmpty ? docs.last : null,
         hasMore: hasMore,
       );
@@ -657,7 +657,7 @@ class ContractService {
           .orderBy('createdAt', descending: true)
           .limit(200) // 대량 읽기 방지 상한
           .get();
-      return snap.docs.map(EmploymentContractModel.fromFirestore).toList();
+      return snap.docs.map(EmploymentContractModel.tryFromFirestore).whereType<EmploymentContractModel>().toList();
     } catch (e) {
       debugPrint('❌ 사업장 계약서 조회 실패: $e');
       return [];

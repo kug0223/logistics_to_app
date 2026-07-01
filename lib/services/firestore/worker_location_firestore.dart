@@ -117,7 +117,7 @@ extension WorkerLocationFirestore on FirestoreService {
           .where('isActive', isEqualTo: true)
           .get();
 
-      return snap.docs.map(WorkerLocationModel.fromFirestore).toList();
+      return snap.docs.map(WorkerLocationModel.tryFromFirestore).whereType<WorkerLocationModel>().toList();
     } catch (e) {
       debugPrint('❌ [WorkerLocation] 목록 조회 실패: $e');
       return [];
