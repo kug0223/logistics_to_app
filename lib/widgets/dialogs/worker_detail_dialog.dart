@@ -1801,7 +1801,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           .get(const GetOptions(source: Source.server));
       // 승인 처리 직후 문서가 삭제된 경쟁 상태 방어 (catch(e)로 에러 토스트 처리됨)
       if (!freshAppDoc.exists) throw Exception('지원서를 찾을 수 없습니다');
-      final freshApp = ApplicationModel.fromMap(freshAppDoc.data()!, freshAppDoc.id);
+      // [CRASH-GUARD] tryFromMap — 손상된 Firestore 문서에서 크래시 방지
+      final freshApp = ApplicationModel.tryFromMap(freshAppDoc.data()!, freshAppDoc.id);
+      if (freshApp == null) throw Exception('지원서 데이터가 손상되었습니다');
 
       // findOrCreateContract: 기존 번들 계약서가 있으면 슬롯 추가,
       // 없으면 신규 생성. 중복 방지 + 단기 번들링 처리.
