@@ -859,9 +859,9 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
 
       final userSnap = results[0] as DocumentSnapshot<Map<String, dynamic>>;
       if (userSnap.exists && userSnap.data() != null) {
-        final worker = UserModel.fromMap(userSnap.data()!, userSnap.id);
-        workerGender = worker.gender;
-        workerAge = worker.age;
+        final worker = UserModel.tryFromMap(userSnap.data()!, userSnap.id);
+        workerGender = worker?.gender;
+        workerAge = worker?.age;
       }
 
       final confirmedSnap = results[1] as QuerySnapshot<Map<String, dynamic>>;
