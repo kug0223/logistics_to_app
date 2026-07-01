@@ -321,7 +321,9 @@ class _LoginScreenState extends State<LoginScreen> {
               // UX 흐름만 테스트하기 위해 건너뜀. 실제 비밀번호는 변경되지 않음.
               if (kDebugMode) {
                 setSheetState(() { isAuthenticating = false; step = 1; });
-                Future.delayed(const Duration(milliseconds: 300), () => newPasswordFocus.requestFocus());
+                Future.delayed(const Duration(milliseconds: 300), () {
+                  if (ctx.mounted) newPasswordFocus.requestFocus();
+                });
                 return;
               }
 
@@ -337,7 +339,9 @@ class _LoginScreenState extends State<LoginScreen> {
               if (!ctx.mounted) return;
               customToken = result.data['customToken'] as String?;
               setSheetState(() { isAuthenticating = false; step = 1; });
-              Future.delayed(const Duration(milliseconds: 300), () => newPasswordFocus.requestFocus());
+              Future.delayed(const Duration(milliseconds: 300), () {
+                if (ctx.mounted) newPasswordFocus.requestFocus();
+              });
             } on FirebaseFunctionsException catch (e) {
               if (!ctx.mounted) return;
               setSheetState(() => isAuthenticating = false);

@@ -657,19 +657,16 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
   /// 퇴근 체크 — attendanceType에 따라 GPS/비콘 분기
   Future<void> _checkOut(ApplicationModel work, AttendanceModel attendance) async {
     if (_isProcessing) return;
-
-    final confirmed = await DialogHelper.showConfirm(
-      context,
-      title: '퇴근 확인',
-      message: '퇴근 처리하시겠습니까?',
-      confirmText: '퇴근',
-    );
-    // [U-1] showConfirm await 후 mounted 체크 — 다이얼로그 열린 채 화면 팝 시 setState crash 방지
-    if (!confirmed || !mounted) return;
-
     setState(() => _isProcessing = true);
 
     try {
+      final confirmed = await DialogHelper.showConfirm(
+        context,
+        title: '퇴근 확인',
+        message: '퇴근 처리하시겠습니까?',
+        confirmText: '퇴근',
+      );
+      if (!confirmed || !mounted) return;
       final business = await _firestoreService.getBusinessById(work.businessId);
       if (business == null) {
         if (mounted) await DialogHelper.showError(context, message: '사업장 정보를 찾을 수 없습니다.');

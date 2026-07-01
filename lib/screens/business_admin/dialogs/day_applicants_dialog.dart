@@ -2035,17 +2035,17 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   }
 
   Future<void> _cancelConfirmation(ApplicationModel app) async {
-    final user = _userMap[app.uid];
-    final ok = await DialogHelper.showConfirm(
-      context,
-      title: '확정 취소',
-      message: '${user?.name ?? '근무자'}의 확정을 취소하시겠습니까?\n취소 후 해당 지원자는 목록에서 제거됩니다.',
-      confirmText: '확정 취소',
-    );
-    if (!ok || !mounted) return;
-
+    if (_isProcessing) return;
     setState(() => _isProcessing = true);
     try {
+      final user = _userMap[app.uid];
+      final ok = await DialogHelper.showConfirm(
+        context,
+        title: '확정 취소',
+        message: '${user?.name ?? '근무자'}의 확정을 취소하시겠습니까?\n취소 후 해당 지원자는 목록에서 제거됩니다.',
+        confirmText: '확정 취소',
+      );
+      if (!ok || !mounted) return;
       await _svc.updateApplicationStatus(
         applicationId: app.id,
         status: AppStatus.canceled,
@@ -2281,17 +2281,18 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   // ── Actions ────────────────────────────────────────────────────────────────
 
   Future<void> _approveApp(ApplicationModel app) async {
-    final name = _userMap[app.uid]?.name ?? '근무자';
-    final ok = await DialogHelper.showConfirm(
-      context,
-      title: '확정',
-      message:
-          '$name을(를) 계약 대기 상태로 변경하시겠습니까?\n이후 계약서를 직접 작성·서명해야 합니다.',
-      confirmText: '확정',
-    );
-    if (!ok || !mounted) return;
+    if (_isProcessing) return;
     setState(() => _isProcessing = true);
     try {
+      final name = _userMap[app.uid]?.name ?? '근무자';
+      final ok = await DialogHelper.showConfirm(
+        context,
+        title: '확정',
+        message:
+            '$name을(를) 계약 대기 상태로 변경하시겠습니까?\n이후 계약서를 직접 작성·서명해야 합니다.',
+        confirmText: '확정',
+      );
+      if (!ok || !mounted) return;
       final adminUID = FirebaseAuth.instance.currentUser?.uid;
       await _svc.updateApplicationStatus(
         applicationId: app.id,
@@ -2310,16 +2311,16 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   }
 
   Future<void> _rejectApp(ApplicationModel app) async {
-    if (!mounted) return;
-    final userName = _userMap[app.uid]?.name ?? '지원자';
-    final reason = await DialogHelper.showRejectReasonPicker(
-      context,
-      title: '지원 거절',
-      message: '$userName님을 거절합니다.\n거절 사유를 선택해주세요.',
-    );
-    if (reason == null || !mounted) return;
+    if (_isProcessing || !mounted) return;
     setState(() => _isProcessing = true);
     try {
+      final userName = _userMap[app.uid]?.name ?? '지원자';
+      final reason = await DialogHelper.showRejectReasonPicker(
+        context,
+        title: '지원 거절',
+        message: '$userName님을 거절합니다.\n거절 사유를 선택해주세요.',
+      );
+      if (reason == null || !mounted) return;
       final adminUID = FirebaseAuth.instance.currentUser?.uid;
       await _svc.updateApplicationStatus(
         applicationId: app.id,
@@ -2403,6 +2404,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       return;
     }
 
+    setState(() => _isProcessing = true);
     final count = _selectedIds.length;
     final confirmed = await DialogHelper.showConfirm(
       context,
@@ -2412,8 +2414,6 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       confirmText: '일괄 확정',
     );
     if (!confirmed || !mounted) return;
-
-    setState(() => _isProcessing = true);
     int successCount = 0;
     final ids = _selectedIds.toList();
     try {

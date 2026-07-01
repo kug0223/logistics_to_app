@@ -4167,6 +4167,9 @@ export const rejectForeignWorker = onCall(
     if (!userId || !reason) {
       throw new HttpsError("invalid-argument", "userId, reason 필수입니다.");
     }
+    if (typeof reason !== "string" || reason.length > 200) {
+      throw new HttpsError("invalid-argument", "거절 사유는 200자 이하여야 합니다.");
+    }
 
     const userRef = db.collection("users").doc(userId);
     const userDoc = await userRef.get();
