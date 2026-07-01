@@ -271,6 +271,8 @@ extension ApplicationFirestore on FirestoreService {
 
       // ── 1.3. 신분증 인증 체크 (단기 공고 지원 시 필수) ──
       // 장기공고(contract type, slotId==null)는 계약서 서명 시 신분증 확인하므로 단기만 체크
+      // [SAFE] isIdVerified는 OCR(이름+생년월일 일치) 통과 시 자동으로 true 세팅됨.
+      // 수동 관리자 승인 없음 — "심사 중 상태"가 존재하지 않으므로 별도 심사상태 체크 불필요.
       if (slotId != null && userData['isIdVerified'] != true) {
         ToastHelper.showError('신분증 인증 후 지원할 수 있습니다.\n설정 > 서류 관리에서 신분증을 등록해주세요.');
         return false;
@@ -424,6 +426,9 @@ extension ApplicationFirestore on FirestoreService {
           activeApp = doc;
           break;
         }
+        // [SAFE] inactiveStates = [REJECTED, CANCELED, AUTO_CANCELED]
+        // REJECTED 포함이 의도된 설계 — 관리자가 거절해도 지원자는 재지원 가능(대규모 운영 특성).
+        // 관리자가 직접 REJECTED → PENDING 복원은 B-001 규칙으로 차단됨.
         if (AppStatus.inactiveStates.contains(status)) {
           reactivatableApp = doc;
         }
@@ -1744,6 +1749,9 @@ extension ApplicationFirestore on FirestoreService {
     if (toId == null) throw Exception('toId가 없는 지원서입니다');
 
     // ── TO 로드 (계약기간 계산 + 충돌 탐색에 사용) ──
+    // [SAFE] TO status(CLOSED/FULL) 체크 없음 — 의도된 설계.
+    // 관리자가 공고를 수동 마감한 후에도 기존 PENDING 지원자는 계속 심사 가능.
+    // 새 지원은 applyToTO()에서 CLOSED/FULL 차단, 기존 심사는 정원 CAPACITY-GUARD로만 제한.
     final toDoc = await _firestore.collection('tos').doc(toId).get(const GetOptions(source: Source.server));
     final toModel = toDoc.exists ? TOModel.tryFromMap(toDoc.data()!, toDoc.id) : null;
 

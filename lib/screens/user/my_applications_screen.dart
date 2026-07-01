@@ -191,6 +191,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
   /// 지원서 목록에 TO 정보 결합
   /// TO가 삭제됐더라도 지원서는 표시 (to=null로 폴백)
+  /// [SAFE] to==null 시 간소화 카드(AppColors.grey50)로 안전 렌더링됨 — null 크래시 없음
   Future<List<_ApplicationWithTO>> _attachTOInfo(List<ApplicationModel> apps) async {
     final toIds = apps.map((a) => a.toId).whereType<String>().toSet().toList();
     if (toIds.isEmpty) return apps.map((a) => _ApplicationWithTO(application: a, to: null)).toList();
