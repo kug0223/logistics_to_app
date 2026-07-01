@@ -1027,6 +1027,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       final adminUid = userProvider.currentUser?.uid;
       final user = widget.userMap[app.uid];
 
+      // [임금H-1] 음수 additionalAmount/deductionAmount 차단
+      // 관리자 REST API 직접 호출 경로는 Firestore 규칙 finalWage >= 0 조건으로 2차 차단
+      if (wage.additionalAmount < 0) throw Exception('추가수당은 0 이상이어야 합니다');
+      if (wage.deductionAmount < 0) throw Exception('추가공제는 0 이상이어야 합니다');
+
       final updatedWage = wage.copyWith(
         calculatedBy: adminUid,
         calculatedAt: DateTime.now(),

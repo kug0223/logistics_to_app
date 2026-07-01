@@ -580,13 +580,16 @@ service cloud.firestore {
                       // userId/businessId/applicationId/workDate는 생성 후 변경 불가 (슈퍼어드민 예외)
                       // wageDetail/finalWage/wageStatus 등 운영 필드는 wage_confirm_dialog 기능 유지
                       // [M-2] wageTransferred 전환은 wageConfirmed 상태에서만 허용 (markTransferredBatch 2차 방어선)
+                      // [임금H-1] finalWage 음수 저장 차단 — 관리자 직접 API 호출로 임의 음수 급여 기록 방지
                       ((isAdminOf(resource.data.businessId) ||
                         isSubAdminOf(resource.data.businessId)) &&
                        !request.resource.data.diff(resource.data).affectedKeys()
                          .hasAny(['userId', 'businessId', 'applicationId', 'workDate']) &&
                        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['wageStatus']) ||
                         request.resource.data.get('wageStatus', '') != 'wageTransferred' ||
-                        resource.data.get('wageStatus', '') == 'wageConfirmed')) ||
+                        resource.data.get('wageStatus', '') == 'wageConfirmed') &&
+                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['finalWage']) ||
+                        request.resource.data.get('finalWage', 0) >= 0)) ||
                       isSuperAdmin()
                     );
 
@@ -949,7 +952,10 @@ service cloud.firestore {
                        resource.data.status == 'pending' &&
                        (request.resource.data.status == 'approved' || request.resource.data.status == 'rejected') &&
                        request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['status', 'respondedAt', 'rejectionReason', 'expiresAt'])) ||
+                         .hasOnly(['status', 'respondedAt', 'rejectionReason', 'expiresAt']) &&
+                       // [H-1] expiresAt 서버 시각 + 7일 이내로 제한 — 임의 무기한 연장 차단
+                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['expiresAt']) ||
+                        request.resource.data.expiresAt <= request.time + duration.value(7, 'd'))) ||
                       ((isAdminOf(resource.data.requesterBusinessId) ||
                         isSubAdminOf(resource.data.requesterBusinessId)) &&
                        request.resource.data.diff(resource.data).affectedKeys()
@@ -1076,8 +1082,13 @@ service cloud.firestore {
                       isSuperAdmin()
                     );
 
+      // [M-1] 식별자 필드 불변 조건 추가 — userId/businessId/applicationId 변조 차단
+      // create 규칙이 userId == auth.uid를 강제하지만 update에서 변경을 허용하면
+      // 타인 userId로 교체하여 get 규칙의 isOwner 체크를 우회할 수 있음
       allow update: if isLoggedIn() && (
-                      isOwner(resource.data.userId) ||
+                      (isOwner(resource.data.userId) &&
+                       !request.resource.data.diff(resource.data).affectedKeys()
+                         .hasAny(['userId', 'businessId', 'applicationId'])) ||
                       isSuperAdmin()
                     );
 
