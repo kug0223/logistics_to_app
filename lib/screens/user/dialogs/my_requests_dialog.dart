@@ -62,6 +62,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
 
   /// 모든 알림 로드 (3가지 타입 통합)
   Future<void> _loadAllNotifications() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
 
     try {

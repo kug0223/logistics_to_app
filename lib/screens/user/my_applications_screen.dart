@@ -1081,6 +1081,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   }
 
   Future<void> _openContractSign(EmploymentContractModel contract) async {
+    if (!mounted) return;
     await Navigator.push(
       context,
       MaterialPageRoute(

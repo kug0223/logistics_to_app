@@ -958,7 +958,8 @@ extension AttendanceFirestore on FirestoreService {
           .get(const GetOptions(source: Source.server));
       final map = <String, List<AttendanceModel>>{};
       for (final doc in snapshot.docs) {
-        final att = AttendanceModel.fromFirestore(doc);
+        final att = AttendanceModel.tryFromFirestore(doc);
+        if (att == null) continue;
         map.putIfAbsent(att.userId, () => []).add(att);
       }
       return map;

@@ -102,9 +102,10 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
           .limit(10000) // [LIMIT-01] 150명×52주≈7800건; 5000은 대형 사업장에서 무음 누락 가능
           .get();
 
-      // [LIMIT-01] 10000건 이상 사업장에서 데이터 누락 경고
+      // [LIMIT-01] 10000건 이상 사업장에서 데이터 누락 경고 — UI 토스트로 사용자에게 알림
       if (snap.size >= 10000) {
         debugPrint('⚠️ payroll_overview: limit(10000) 도달 — 연간 데이터 누락 가능 (bizId=$bizId, year=$year)');
+        if (mounted) ToastHelper.showWarning('데이터가 많아 일부 급여 내역이 표시되지 않을 수 있습니다.');
       }
 
       // 파싱 오류가 있는 문서는 무시

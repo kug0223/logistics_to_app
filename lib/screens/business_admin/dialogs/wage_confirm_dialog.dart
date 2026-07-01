@@ -1328,6 +1328,13 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       _transferredWorkers.addAll(moved);
       _calculatedSelectedIds.removeAll(processed);
       _isProcessing = false;
+      // [BUG-03] attendanceMap 동기화 — 미갱신 시 마감내역 체크박스·마감취소 기능 오동작
+      for (final id in processed) {
+        final att = widget.attendanceMap[id];
+        if (att != null) {
+          widget.attendanceMap[id] = att.copyWith(wageStatus: AttendanceModel.wageConfirmed);
+        }
+      }
     });
 
     if (failCount == 0) {

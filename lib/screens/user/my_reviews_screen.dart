@@ -38,9 +38,10 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
   }
 
   Future<void> _loadReviews() async {
+    if (!mounted) return;
     final uid = context.read<UserProvider>().currentUser?.uid;
     if (uid == null) {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
       return;
     }
     setState(() { _isLoading = true; _loadError = null; _cursor = null; _hasMore = false; });

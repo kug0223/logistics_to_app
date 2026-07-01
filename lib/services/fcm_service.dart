@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../screens/business_admin/admin_review_list_screen.dart';
 import '../screens/business_admin/workforce_management/integrated_workforce_screen.dart';
 import '../screens/common/notification_screen.dart';
 import '../screens/contract/contract_sign_screen.dart';
+import '../screens/user/my_applications_screen.dart';
 import '../screens/user/my_schedule_screen.dart';
 import '../screens/user/user_contracts_screen.dart';
 import 'contract_service.dart';
@@ -356,6 +358,110 @@ class FCMService {
         } else {
           _navigateToNotificationScreen();
         }
+        break;
+      // ─── 지원 확정/거부 (근무자 전용) ──────────────────────────
+      case 'applicationConfirmed':
+      case 'applicationRejected':
+        _navigatorKey!.currentState!.push(
+          MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
+        );
+        break;
+      // ─── 신규지원/지원취소 — 관리자:알림목록위임, 근무자:내지원내역 ───
+      // WorkApplicantsDialog는 toId·context 필요 → 알림 탭에서 처리
+      case 'newApplication':
+      case 'applicationCanceled':
+        if (_currentUserIsAdmin) {
+          _navigateToNotificationScreen();
+        } else {
+          _navigatorKey!.currentState!.push(
+            MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
+          );
+        }
+        break;
+      // ─── 근무 알림 (근무자 전용) ─────────────────────────────────
+      case 'workReminder':
+      case 'workCanceled':
+        _navigatorKey!.currentState!.push(
+          MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
+        );
+        break;
+      // ─── 스케줄 변경 ─────────────────────────────────────────────
+      case 'scheduleChangeRequested':
+        if (_currentUserIsAdmin) {
+          _navigatorKey!.currentState!.push(
+            MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+          );
+        } else {
+          _navigateToNotificationScreen(); // MyRequestsDialog는 알림 탭에서 열림
+        }
+        break;
+      case 'scheduleChangeApproved':
+      case 'scheduleChangeRejected':
+        _navigatorKey!.currentState!.push(
+          MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
+        );
+        break;
+      // ─── 계약해지·퇴사 신청 ──────────────────────────────────────
+      case 'terminationRequested':
+      case 'resignRequested':
+        if (_currentUserIsAdmin) {
+          _navigatorKey!.currentState!.push(
+            MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+          );
+        } else {
+          _navigateToNotificationScreen();
+        }
+        break;
+      case 'terminationApproved':
+      case 'terminationRejected':
+      case 'resignApproved':
+      case 'resignRejected':
+        if (_currentUserIsAdmin) {
+          _navigatorKey!.currentState!.push(
+            MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+          );
+        } else {
+          _navigatorKey!.currentState!.push(
+            MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
+          );
+        }
+        break;
+      // ─── 신분증 열람 ─────────────────────────────────────────────
+      case 'idCardAccessRequested':
+        _navigateToNotificationScreen(); // MyRequestsDialog는 알림 탭에서 열림
+        break;
+      case 'idCardAccessApproved':
+      case 'idCardAccessRejected':
+        if (_currentUserIsAdmin) {
+          _navigatorKey!.currentState!.push(
+            MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+          );
+        } else {
+          _navigateToNotificationScreen();
+        }
+        break;
+      // ─── 리뷰 ────────────────────────────────────────────────────
+      case 'reviewReceived':
+        if (_currentUserIsAdmin) {
+          _navigatorKey!.currentState!.push(
+            MaterialPageRoute(builder: (_) => const AdminReviewListScreen()),
+          );
+        } else {
+          _navigatorKey!.currentState!.push(
+            MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
+          );
+        }
+        break;
+      case 'reviewRequest':
+        _navigateToNotificationScreen(); // 리뷰 다이얼로그는 context 필요 → 알림 탭에서 처리
+        break;
+      // ─── 급여 확정/취소/소급 공제 (근무자 전용) ─────────────────
+      case 'wageConfirmed':
+      case 'wageCancelConfirmed':
+      case 'retroactiveDeductionAlert':
+        _navigatorKey!.currentState!.push(
+          MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
+        );
         break;
       default:
         _navigateToNotificationScreen();
