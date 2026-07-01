@@ -1033,27 +1033,35 @@ class FirestoreService {
     String? requestedByUid,
   }) async {
     try {
-      final appDoc = await _firestore.collection('applications').doc(applicationId).get(const GetOptions(source: Source.server));
-      if (!appDoc.exists) return false;
-      final app = ApplicationModel.fromMap(appDoc.data()!, appDoc.id);
+      // [R-H1-FIX] requestTermination TOCTOU 방지 — 트랜잭션으로 terminationStatus 체크+업데이트 원자화
+      // requestResignation과 동일한 패턴: 동시 중복 요청이 둘 다 pending으로 저장되는 경쟁 상태 차단
+      ApplicationModel? resolvedApp;
+      DateTime? terminationDate;
+      final appRef = _firestore.collection('applications').doc(applicationId);
+      await _firestore.runTransaction((tx) async {
+        final snap = await tx.get(appRef);
+        if (!snap.exists) throw Exception('지원서 없음: $applicationId');
+        final currentTerminationStatus = snap.data()?['terminationStatus'];
+        if (currentTerminationStatus == AppStatus.pending) {
+          throw Exception('이미 계약해지 요청이 진행 중입니다: $currentTerminationStatus');
+        }
+        resolvedApp = ApplicationModel.fromMap(snap.data()!, snap.id);
+        terminationDate = resolvedApp!.workEndDate ?? DateTime.now().add(const Duration(days: 30));
+        tx.update(appRef, {
+          'terminationStatus': AppStatus.pending,
+          'terminationRequestedAt': FieldValue.serverTimestamp(),
+          'terminationReason': reason,
+          'terminationRequestedByUid': requestedByUid,
+          'terminationEffectiveDate': Timestamp.fromDate(terminationDate!),
+        });
+      });
+      if (resolvedApp == null) return false;
+      final app = resolvedApp!;
 
-      // [E02] 이미 해지 요청 중이면 중복 요청 차단
-      if (app.terminationStatus == AppStatus.pending) {
-        ToastHelper.showWarning('이미 계약해지 요청이 진행 중입니다.');
-        return false;
-      }
-
+      // [E02] 이미 해지 요청 중이면 중복 요청 차단 — 트랜잭션 예외로 처리됨 (위)
       final workerUid = uid ?? app.uid;
       final bId = businessId ?? app.businessId;
-      final terminationDate = app.workEndDate ?? DateTime.now().add(const Duration(days: 30));
-
-      await _firestore.collection('applications').doc(applicationId).update({
-        'terminationStatus': AppStatus.pending,
-        'terminationRequestedAt': FieldValue.serverTimestamp(),
-        'terminationReason': reason,
-        'terminationRequestedByUid': requestedByUid,
-        'terminationEffectiveDate': Timestamp.fromDate(terminationDate),
-      });
+      final effectiveTerminationDate = terminationDate!;
 
       String businessName = '';
       if (bId.isNotEmpty) {
@@ -1066,7 +1074,7 @@ class FirestoreService {
           userId: workerUid,
           businessName: businessName,
           businessId: bId,
-          terminationDate: terminationDate,
+          terminationDate: effectiveTerminationDate,
           applicationId: applicationId,
           reason: reason,
         );
@@ -1084,12 +1092,22 @@ class FirestoreService {
   /// 계약해지 요청 취소
   Future<bool> cancelTerminationRequest(String applicationId) async {
     try {
-      await _firestore.collection('applications').doc(applicationId).update({
-        'terminationStatus': null,
-        'terminationRequestedAt': null,
-        'terminationReason': null,
-        'terminationRequestedByUid': null,
-        'terminationEffectiveDate': null,
+      // [R-H2-FIX] cancelResignRequest와 동일하게 트랜잭션으로 PENDING 상태 검증 후 취소
+      // 트랜잭션 없이 update()만 하면 이미 APPROVED/AUTO_APPROVED된 해지 요청도 null로 덮어씌움
+      await _firestore.runTransaction((tx) async {
+        final snap = await tx.get(_firestore.collection('applications').doc(applicationId));
+        if (!snap.exists) throw Exception('지원서 없음: $applicationId');
+        final currentTerminationStatus = snap.data()?['terminationStatus'];
+        if (currentTerminationStatus != AppStatus.pending) {
+          throw Exception('취소 불가 — 현재 계약해지 상태: $currentTerminationStatus');
+        }
+        tx.update(snap.reference, {
+          'terminationStatus': null,
+          'terminationRequestedAt': null,
+          'terminationReason': null,
+          'terminationRequestedByUid': null,
+          'terminationEffectiveDate': null,
+        });
       });
       debugPrint('✅ 계약해지 요청 취소: $applicationId');
       return true;

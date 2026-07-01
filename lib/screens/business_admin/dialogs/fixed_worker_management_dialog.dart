@@ -1699,18 +1699,21 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         final todayOnly = DateTime(today.year, today.month, today.day);
         if (!endDateOnly.isAfter(todayOnly)) {
           // 이미 만료됐거나 오늘이 종료일인 경우 — 즉시 CANCELED 처리
-          await _firestoreService.cancelConfirmedApplication(
+          // [C-H4-FIX] 반환값 체크 — false 반환 시(이미 취소됨·찾을 수 없음) 후속 처리 스킵
+          final canceled = await _firestoreService.cancelConfirmedApplication(
             app.id,
             canceledBy: adminUID,
             cancelReason: '계약 종료 (만료일 도달)',
           );
-          // [CRITICAL-005 수정] 만료일 당일 즉시 처리 시 terminationCompletionNotifiedAt 설정
-          // Flutter에서 이미 "계약 종료 통보" 알림을 발송했으므로, Functions D-0 처리에서
-          // 이 필드가 없으면 "계약 종료 완료" 알림을 이중 발송하는 버그 방지
-          await _firestoreService.updateApplicationFields(
-            app.id,
-            {'terminationCompletionNotifiedAt': Timestamp.now()},
-          );
+          if (canceled) {
+            // [CRITICAL-005 수정] 만료일 당일 즉시 처리 시 terminationCompletionNotifiedAt 설정
+            // Flutter에서 이미 "계약 종료 통보" 알림을 발송했으므로, Functions D-0 처리에서
+            // 이 필드가 없으면 "계약 종료 완료" 알림을 이중 발송하는 버그 방지
+            await _firestoreService.updateApplicationFields(
+              app.id,
+              {'terminationCompletionNotifiedAt': Timestamp.now()},
+            );
+          }
         }
         // 미래 종료일이면 Cloud Functions가 D-0에 자동 처리 — 별도 조치 불필요
       }

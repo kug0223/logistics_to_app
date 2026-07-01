@@ -2406,6 +2406,27 @@ extension ApplicationFirestore on FirestoreService {
     final newRef = _firestore.collection('applications').doc();
     final originalRef = _firestore.collection('applications').doc(original.id);
     final now = DateTime.now();
+
+    // [C-H1-FIX] 계약 연장 시 원본 지원서의 서명 대기 계약서를 voided 전환
+    // 갱신 전 pending_employer/pending_worker 상태로 남아있는 계약서는 신규 계약서와 충돌 방지
+    const pendingContractStatuses = ['pending_employer', 'pending_worker'];
+    final List<QueryDocumentSnapshot> oldPendingContracts = [];
+    final contractQ1 = await _firestore
+        .collection('employment_contracts')
+        .where('applicationId', isEqualTo: original.id)
+        .where('businessId', isEqualTo: original.businessId)
+        .limit(5).get();
+    oldPendingContracts.addAll(
+        contractQ1.docs.where((d) => pendingContractStatuses.contains(d.data()['status'])));
+    if (oldPendingContracts.isEmpty) {
+      final contractQ2 = await _firestore
+          .collection('employment_contracts')
+          .where('applicationIds', arrayContains: original.id)
+          .where('businessId', isEqualTo: original.businessId)
+          .limit(5).get();
+      oldPendingContracts.addAll(
+          contractQ2.docs.where((d) => pendingContractStatuses.contains(d.data()['status'])));
+    }
     // copyWith으로 기본 필드 복사 후, null로 초기화해야 할 필드는
     // map을 직접 수정 (copyWith null-coalescing 패턴 우회)
     final base = original.copyWith(
@@ -2438,6 +2459,14 @@ extension ApplicationFirestore on FirestoreService {
     // 원본 계약 renewalDecision=EXTEND 표시 — 호출 측에서 별도로 updateFields 하지 말 것
     // (신규 계약 생성과 같은 배치여야 원자성 보장)
     batch.update(originalRef, {'renewalDecision': AppStatus.renewalExtend});
+    // [C-H1-FIX] 원본 지원서의 서명 대기 계약서 voided 처리 (신규 계약과 같은 배치)
+    for (final c in oldPendingContracts) {
+      batch.update(c.reference, {
+        'status': 'voided',
+        'contractVoidedAt': now,
+        'voidReason': 'RENEWAL',
+      });
+    }
     // TO / 슬롯 확정 카운터 증가 — CONTRACT_PENDING은 확정 인원으로 집계됨
     if (original.toId != null) {
       _incrementTOConfirmed(batch, original.toId!, original.slotId,

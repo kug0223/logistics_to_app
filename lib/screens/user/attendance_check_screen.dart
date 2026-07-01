@@ -105,7 +105,8 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
       for (final app in allApplications) {
         if (!AppStatus.confirmedStatuses.contains(app.status)) continue;
 
-        final isReallyLongTerm = app.workDays != null && app.workDays!.isNotEmpty;
+        // [A-H1-FIX] isLongTermApplication 게터 사용 — applicationType·workDays·workEndDate 3조건 모두 반영
+      final isReallyLongTerm = app.isLongTermApplication;
 
         if (!isReallyLongTerm) {
           // 어제 시작한 야간 근무(자정 이후 퇴근 대기)도 포함

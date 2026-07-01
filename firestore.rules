@@ -1192,6 +1192,8 @@ service cloud.firestore {
                         // [H-003] articles/templateId는 근무자 서명 전에만 수정 가능
                         // [HIGH-FIX] SubAdmin 누락: day_applicants_dialog 계약서 서명·수정 시
                         //            PERMISSION_DENIED 발생 → isSubAdminOf 추가
+                        // [S-H1-FIX] slots 필드도 근무자 서명 후 변경 불가로 보호
+                        //            articles/templateId와 동일 조건 적용 — 계약 위변조 방지
                         ((isAdminOf(resource.data.businessId) ||
                           isSubAdminOf(resource.data.businessId)) &&
                          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -1199,7 +1201,7 @@ service cloud.firestore {
                            'employerSignedAt', 'updatedAt',
                            'articles', 'templateId', 'slots', 'applicationIds'
                          ]) &&
-                         (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['articles', 'templateId']) ||
+                         (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['articles', 'templateId', 'slots']) ||
                           resource.data.get('workerSignedAt', null) == null))
                       );
 

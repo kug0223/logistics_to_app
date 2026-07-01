@@ -3174,6 +3174,87 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           console.warn(`[퇴직] revokeRefreshTokens 실패 uid=${app.uid}: ${tokenErr}`);
         }
 
+        // [R-H4/H5/H6-FIX] AUTO_APPROVED 수동 approveResignation()과 동일하게 3가지 정리 추가
+        // 수동 승인 경로에만 있던 처리(카운터·계약서·attendance)를 AUTO_APPROVED에도 적용
+        try {
+          const resignPendingContractStatuses = ["pending_employer", "pending_worker"];
+          const resignConfirmedStatuses = ["CONFIRMED", "CONTRACT_PENDING"];
+          const resignCleanupBatch = db.batch();
+
+          // [R-H6] TO totalConfirmed 카운터 감소 — 이전 status가 확정 상태였던 경우만
+          if (app.toId && resignConfirmedStatuses.includes(app.status as string)) {
+            const toRef = db.collection("tos").doc(app.toId as string);
+            const toCounterUpdate: {[key: string]: admin.firestore.FieldValue} = {
+              totalConfirmed: admin.firestore.FieldValue.increment(-1),
+            };
+            if (!app.slotId && app.selectedWorkType) {
+              toCounterUpdate[`workTypeConfirmedCounts.${app.selectedWorkType}`] =
+                admin.firestore.FieldValue.increment(-1);
+            }
+            resignCleanupBatch.update(toRef, toCounterUpdate);
+            if (app.slotId) {
+              const slotRef = toRef.collection("slots").doc(app.slotId as string);
+              const slotCounterUpdate: {[key: string]: admin.firestore.FieldValue} = {
+                confirmedCount: admin.firestore.FieldValue.increment(-1),
+              };
+              if (app.selectedWorkType) {
+                slotCounterUpdate[`workTypeCounts.${app.selectedWorkType}.confirmedCount`] =
+                  admin.firestore.FieldValue.increment(-1);
+              }
+              resignCleanupBatch.update(slotRef, slotCounterUpdate);
+            }
+          }
+
+          // [R-H5] 서명 대기 계약서 voided 전환 (applicationId 직접 매칭 → applicationIds arrayContains 순서)
+          const resignContractQ1 = await db.collection("employment_contracts")
+            .where("applicationId", "==", doc.id)
+            .where("businessId", "==", app.businessId)
+            .limit(5).get();
+          let resignContractsToVoid = resignContractQ1.docs.filter(
+            (d) => resignPendingContractStatuses.includes(d.data().status as string)
+          );
+          if (resignContractsToVoid.length === 0) {
+            const resignContractQ2 = await db.collection("employment_contracts")
+              .where("applicationIds", "array-contains", doc.id)
+              .where("businessId", "==", app.businessId)
+              .limit(5).get();
+            resignContractsToVoid = resignContractQ2.docs.filter(
+              (d) => resignPendingContractStatuses.includes(d.data().status as string)
+            );
+          }
+          for (const contractDoc of resignContractsToVoid) {
+            resignCleanupBatch.update(contractDoc.ref, {
+              status: "voided", contractVoidedAt: now, voidReason: "RESIGNATION",
+            });
+          }
+          await resignCleanupBatch.commit();
+
+          // [R-H4] actualResignDate 이후 scheduled attendance → absent 처리 (orphan 방지)
+          const resignScheduledSnap = await db.collection("attendance")
+            .where("applicationId", "==", doc.id)
+            .where("status", "==", "scheduled").get();
+          if (!resignScheduledSnap.empty) {
+            let attBatch = db.batch();
+            let attCount = 0;
+            for (const attDoc of resignScheduledSnap.docs) {
+              const workDate = (attDoc.data().workDate as {toDate(): Date} | undefined)?.toDate();
+              if (workDate && workDate >= actualResignDate) {
+                attBatch.update(attDoc.ref, {status: "absent", updatedAt: now});
+                attCount++;
+                if (attCount >= 499) {
+                  await attBatch.commit();
+                  attBatch = db.batch();
+                  attCount = 0;
+                }
+              }
+            }
+            if (attCount > 0) await attBatch.commit();
+          }
+        } catch (cleanupErr) {
+          // 정리 실패 시에도 알림은 발송 (CF reconcileTOStats가 카운터를 교정함)
+          console.error(`[D+3 퇴사 AUTO_APPROVED] 정리 실패 ${doc.id}:`, cleanupErr);
+        }
+
         // 근무자에게 자동 승인 알림
         // [FCM-03 수정] businessId 누락 → notification_screen resignApproved 분기에서
         // IntegratedWorkforceScreen(initialBusinessId: null)로 열리는 버그 방지
@@ -3243,6 +3324,65 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           await admin.auth().revokeRefreshTokens(app.uid as string);
         } catch (tokenErr) {
           console.warn(`[퇴직] revokeRefreshTokens 실패 uid=${app.uid}: ${tokenErr}`);
+        }
+
+        // [R-H5/H6-FIX] AUTO_APPROVED 수동 approveTermination()과 동일하게 계약서+카운터 정리
+        // [C04 설계 의도] 계약해지는 terminationEffectiveDate 기반 isWorkingOnDate 처리
+        //                 → scheduled attendance 정리는 불필요 (퇴사와 다름)
+        try {
+          const termPendingStatuses = ["pending_employer", "pending_worker"];
+          const termConfirmedStatuses = ["CONFIRMED", "CONTRACT_PENDING"];
+          const termCleanupBatch = db.batch();
+
+          // [R-H6] TO totalConfirmed 카운터 감소 — 이전 status가 확정 상태였던 경우만
+          if (app.toId && termConfirmedStatuses.includes(app.status as string)) {
+            const toRef = db.collection("tos").doc(app.toId as string);
+            const toCounterUpdate: {[key: string]: admin.firestore.FieldValue} = {
+              totalConfirmed: admin.firestore.FieldValue.increment(-1),
+            };
+            if (!app.slotId && app.selectedWorkType) {
+              toCounterUpdate[`workTypeConfirmedCounts.${app.selectedWorkType}`] =
+                admin.firestore.FieldValue.increment(-1);
+            }
+            termCleanupBatch.update(toRef, toCounterUpdate);
+            if (app.slotId) {
+              const slotRef = toRef.collection("slots").doc(app.slotId as string);
+              const slotCounterUpdate: {[key: string]: admin.firestore.FieldValue} = {
+                confirmedCount: admin.firestore.FieldValue.increment(-1),
+              };
+              if (app.selectedWorkType) {
+                slotCounterUpdate[`workTypeCounts.${app.selectedWorkType}.confirmedCount`] =
+                  admin.firestore.FieldValue.increment(-1);
+              }
+              termCleanupBatch.update(slotRef, slotCounterUpdate);
+            }
+          }
+
+          // [R-H5] 서명 대기 계약서 voided 전환
+          const termContractQ1 = await db.collection("employment_contracts")
+            .where("applicationId", "==", doc.id)
+            .where("businessId", "==", app.businessId)
+            .limit(5).get();
+          let termContractsToVoid = termContractQ1.docs.filter(
+            (d) => termPendingStatuses.includes(d.data().status as string)
+          );
+          if (termContractsToVoid.length === 0) {
+            const termContractQ2 = await db.collection("employment_contracts")
+              .where("applicationIds", "array-contains", doc.id)
+              .where("businessId", "==", app.businessId)
+              .limit(5).get();
+            termContractsToVoid = termContractQ2.docs.filter(
+              (d) => termPendingStatuses.includes(d.data().status as string)
+            );
+          }
+          for (const contractDoc of termContractsToVoid) {
+            termCleanupBatch.update(contractDoc.ref, {
+              status: "voided", contractVoidedAt: now, voidReason: "TERMINATION",
+            });
+          }
+          await termCleanupBatch.commit();
+        } catch (cleanupErr) {
+          console.error(`[D+3 계약해지 AUTO_APPROVED] 정리 실패 ${doc.id}:`, cleanupErr);
         }
 
         // 근무자에게 자동 승인 알림
