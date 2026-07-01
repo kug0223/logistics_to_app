@@ -106,7 +106,8 @@ class LegalTerms {
     final rawItems = (data['items'] as List<dynamic>?) ?? [];
     return LegalTerms(
       items: rawItems
-          .map((e) => LegalTermsItem.fromMap(e as Map<String, dynamic>))
+          .map((e) { try { return LegalTermsItem.fromMap(e as Map<String, dynamic>); } catch (_) { return null; } })
+          .whereType<LegalTermsItem>()
           .toList(),
       updatedAt: (data['updatedAt'] as Timestamp?)?.toDate().toLocal(),
       updatedBy: data['updatedBy'] as String?,

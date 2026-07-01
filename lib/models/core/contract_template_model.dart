@@ -407,8 +407,8 @@ class ContractTemplateModel {
       name: d['name'] as String? ?? '',
       templateType: d['templateType'] as String? ?? ContractTemplateType.daily,
       articles: (d['articles'] as List<dynamic>?)
-              ?.map((a) => ContractArticle.fromMap(
-                  Map<String, dynamic>.from(a as Map)))
+              ?.map((a) { try { return ContractArticle.fromMap(Map<String, dynamic>.from(a as Map)); } catch (_) { return null; } })
+              .whereType<ContractArticle>()
               .toList() ??
           [],
       createdAt: d['createdAt'] != null

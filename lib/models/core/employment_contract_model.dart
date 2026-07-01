@@ -459,7 +459,8 @@ class EmploymentContractModel {
       workDetailId: d['workDetailId'] ?? '',
       slots: rawSlots != null
           ? rawSlots.whereType<Map>()
-              .map((s) => ContractSlot.fromMap(Map<String, dynamic>.from(s)))
+              .map((s) { try { return ContractSlot.fromMap(Map<String, dynamic>.from(s)); } catch (_) { return null; } })
+              .whereType<ContractSlot>()
               .toList()
           : [],
       applicationIds: d['applicationIds'] != null
@@ -477,8 +478,8 @@ class EmploymentContractModel {
           : (throw ArgumentError('EmploymentContractModel: snapshot 필드 누락 (id: $id)')),
       articles: rawArticles != null
           ? rawArticles
-              .map((a) => ContractArticle.fromMap(
-                  Map<String, dynamic>.from(a as Map)))
+              .map((a) { try { return ContractArticle.fromMap(Map<String, dynamic>.from(a as Map)); } catch (_) { return null; } })
+              .whereType<ContractArticle>()
               .toList()
           : [],
       templateId: d['templateId'] as String?,
