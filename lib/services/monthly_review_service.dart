@@ -90,6 +90,7 @@ class MonthlyReviewService {
           .collection('review_requests')
           .where('businessId', isEqualTo: businessId)
           .where('isPublished', isEqualTo: false)
+          .limit(500)
           .get();
       return snap.docs.map(ReviewRequestModel.fromFirestore).toList();
     } catch (e) {
@@ -326,7 +327,7 @@ class MonthlyReviewService {
           .orderBy('createdAt', descending: true)
           .limit(limit)
           .get();
-      return snap.docs.map(MonthlyReviewModel.fromFirestore).toList();
+      return snap.docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList();
     } catch (e) {
       debugPrint('❌ 사업장 작성 리뷰 조회 실패: $e');
       return [];
@@ -347,7 +348,7 @@ class MonthlyReviewService {
           .orderBy('createdAt', descending: true)
           .limit(limit)
           .get();
-      return snap.docs.map(MonthlyReviewModel.fromFirestore).toList();
+      return snap.docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList();
     } catch (e) {
       debugPrint('❌ 공개 리뷰 조회 실패: $e');
       return [];
@@ -367,7 +368,7 @@ class MonthlyReviewService {
           .orderBy('createdAt', descending: true)
           .limit(limit)
           .get();
-      return snap.docs.map(MonthlyReviewModel.fromFirestore).toList();
+      return snap.docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList();
     } catch (e) {
       debugPrint('❌ 사용자 리뷰 조회 실패: $e');
       return [];
@@ -388,7 +389,7 @@ class MonthlyReviewService {
           .orderBy('createdAt', descending: true)
           .limit(limit)
           .get();
-      return snap.docs.map(MonthlyReviewModel.fromFirestore).toList();
+      return snap.docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList();
     } catch (e) {
       debugPrint('❌ 사업장 리뷰 조회 실패: $e');
       return [];

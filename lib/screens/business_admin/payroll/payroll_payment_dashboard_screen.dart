@@ -681,23 +681,22 @@ class _PayrollPaymentDashboardScreenState
   // ── 중간정산 승인 ─────────────────────────────────────────
   Future<void> _approveSettlement(InterimSettlementRequestModel req) async {
     if (_isTransferring) return;
-    final ok = await DialogHelper.showConfirm(
-      context,
-      title: '중간정산 승인',
-      message: '${req.workerName}님의 중간정산 요청을 승인하시겠습니까?\n'
-          '기간: ${req.periodLabel} (${req.recordCount}건)\n'
-          '금액: ${FormatHelper.formatWage(req.netAmount)}',
-      confirmText: '승인 및 이체완료',
-      cancelText: '취소',
-    );
-    if (ok != true || !mounted) return;
-    final note = await _showTransferNoteDialog();
-    if (!mounted) return;
     setState(() => _isTransferring = true);
     try {
+      final ok = await DialogHelper.showConfirm(
+        context,
+        title: '중간정산 승인',
+        message: '${req.workerName}님의 중간정산 요청을 승인하시겠습니까?\n'
+            '기간: ${req.periodLabel} (${req.recordCount}건)\n'
+            '금액: ${FormatHelper.formatWage(req.netAmount)}',
+        confirmText: '승인 및 이체완료',
+        cancelText: '취소',
+      );
+      if (ok != true || !mounted) return;
+      final note = await _showTransferNoteDialog();
+      if (!mounted) return;
       await _payService.approveInterimSettlement(
         req: req, processedBy: _uid, transferNote: note);
-      // [D-BUG-01] async gap 후 mounted 체크
       if (mounted) {
         ToastHelper.showSuccess('중간정산이 처리되었습니다');
         _load();
@@ -712,31 +711,29 @@ class _PayrollPaymentDashboardScreenState
   Future<void> _rejectSettlement(InterimSettlementRequestModel req) async {
     if (_isTransferring) return;
     final ctrl = TextEditingController();
-    final reason = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('중간정산 거절'),
-        content: TextField(
-          controller: ctrl,
-          decoration: const InputDecoration(hintText: '거절 사유를 입력하세요'),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('취소')),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-            child: const Text('거절'),
-          ),
-        ],
-      ),
-    );
-    ctrl.dispose();
-    if (reason == null || reason.isEmpty || !mounted) return;
     setState(() => _isTransferring = true);
     try {
+      final reason = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('중간정산 거절'),
+          content: TextField(
+            controller: ctrl,
+            decoration: const InputDecoration(hintText: '거절 사유를 입력하세요'),
+            autofocus: true,
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('취소')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+              child: const Text('거절'),
+            ),
+          ],
+        ),
+      );
+      if (reason == null || reason.isEmpty || !mounted) return;
       await _payService.rejectInterimSettlement(
         requestId: req.id, processedBy: _uid, rejectReason: reason);
-      // [D-BUG-02] async gap 후 mounted 체크
       if (mounted) {
         ToastHelper.showSuccess('거절 처리되었습니다');
         _load();
@@ -744,6 +741,7 @@ class _PayrollPaymentDashboardScreenState
     } catch (e) {
       if (mounted) ToastHelper.showError('처리에 실패했습니다');
     } finally {
+      ctrl.dispose();
       if (mounted) setState(() => _isTransferring = false);
     }
   }
@@ -751,21 +749,20 @@ class _PayrollPaymentDashboardScreenState
   // ── 변경요청 처리 ─────────────────────────────────────────
   Future<void> _approveChangeRequest(PaymentChangeRequestModel req) async {
     if (_isTransferring) return;
-    final ok = await DialogHelper.showConfirm(
-      context,
-      title: '지급방식 변경 승인',
-      message: '${req.workerName}님의 변경 요청을 승인하시겠습니까?\n'
-          '${req.changeDescription}\n'
-          '효력: ${req.effectiveFrom}부터 (다음 지급 주기)',
-      confirmText: '승인',
-      cancelText: '취소',
-    );
-    if (ok != true || !mounted) return;
     setState(() => _isTransferring = true);
     try {
+      final ok = await DialogHelper.showConfirm(
+        context,
+        title: '지급방식 변경 승인',
+        message: '${req.workerName}님의 변경 요청을 승인하시겠습니까?\n'
+            '${req.changeDescription}\n'
+            '효력: ${req.effectiveFrom}부터 (다음 지급 주기)',
+        confirmText: '승인',
+        cancelText: '취소',
+      );
+      if (ok != true || !mounted) return;
       await _payService.approveChangeRequest(
           requestId: req.id, processedBy: _uid);
-      // [D-BUG-03] async gap 후 mounted 체크
       if (mounted) {
         ToastHelper.showSuccess('변경 요청이 승인되었습니다');
         _load();
@@ -780,31 +777,29 @@ class _PayrollPaymentDashboardScreenState
   Future<void> _rejectChangeRequest(PaymentChangeRequestModel req) async {
     if (_isTransferring) return;
     final ctrl = TextEditingController();
-    final reason = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('지급방식 변경 거절'),
-        content: TextField(
-          controller: ctrl,
-          decoration: const InputDecoration(hintText: '거절 사유'),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('취소')),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-            child: const Text('거절'),
-          ),
-        ],
-      ),
-    );
-    ctrl.dispose();
-    if (reason == null || reason.isEmpty || !mounted) return;
     setState(() => _isTransferring = true);
     try {
+      final reason = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('지급방식 변경 거절'),
+          content: TextField(
+            controller: ctrl,
+            decoration: const InputDecoration(hintText: '거절 사유'),
+            autofocus: true,
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('취소')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+              child: const Text('거절'),
+            ),
+          ],
+        ),
+      );
+      if (reason == null || reason.isEmpty || !mounted) return;
       await _payService.rejectChangeRequest(
         requestId: req.id, processedBy: _uid, rejectReason: reason);
-      // [D-BUG-04] async gap 후 mounted 체크
       if (mounted) {
         ToastHelper.showSuccess('거절 처리되었습니다');
         _load();
@@ -812,6 +807,7 @@ class _PayrollPaymentDashboardScreenState
     } catch (e) {
       if (mounted) ToastHelper.showError('처리에 실패했습니다');
     } finally {
+      ctrl.dispose();
       if (mounted) setState(() => _isTransferring = false);
     }
   }

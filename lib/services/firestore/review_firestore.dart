@@ -50,7 +50,7 @@
           .get();
       
       if (snapshot.docs.isEmpty) return null;
-      return ReviewModel.fromFirestore(snapshot.docs.first);
+      return ReviewModel.tryFromFirestore(snapshot.docs.first);
     } catch (e) {
       debugPrint('❌ 리뷰 조회 실패: $e');
       return null;

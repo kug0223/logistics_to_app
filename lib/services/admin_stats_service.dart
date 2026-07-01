@@ -276,7 +276,7 @@ class AdminStatsService {
       final wage = records.fold<int>(0, (acc, r) =>
           acc + ((r.wageStatus == AttendanceModel.wageConfirmed ||
               r.wageStatus == AttendanceModel.wageTransferred)
-              ? (r.finalWage ?? 0) : 0));
+              ? (r.wageDetail?.effectiveNetWage ?? r.finalWage ?? 0) : 0));
       final workerIds = records.map((r) => r.userId).toSet().length;
       return MonthlyTrend(
         year: year,
@@ -292,9 +292,9 @@ class AdminStatsService {
         r.wageStatus == AttendanceModel.wageConfirmed ||
         r.wageStatus == AttendanceModel.wageTransferred;
     final totalWage =
-        thisYearAtt.fold<int>(0, (acc, r) => acc + (isPaid(r) ? (r.finalWage ?? 0) : 0));
+        thisYearAtt.fold<int>(0, (acc, r) => acc + (isPaid(r) ? (r.wageDetail?.effectiveNetWage ?? r.finalWage ?? 0) : 0));
     final prevYearWage =
-        prevYearAtt.fold<int>(0, (acc, r) => acc + (isPaid(r) ? (r.finalWage ?? 0) : 0));
+        prevYearAtt.fold<int>(0, (acc, r) => acc + (isPaid(r) ? (r.wageDetail?.effectiveNetWage ?? r.finalWage ?? 0) : 0));
     final workerIds = thisYearAtt.map((r) => r.userId).toSet().length;
 
     // 출근율
@@ -327,7 +327,7 @@ class AdminStatsService {
     final wageTypeMap = <String, int>{};
     for (final r in thisYearAtt) {
       if (r.workType.isNotEmpty && isPaid(r)) {
-        wageTypeMap[r.workType] = (wageTypeMap[r.workType] ?? 0) + (r.finalWage ?? 0);
+        wageTypeMap[r.workType] = (wageTypeMap[r.workType] ?? 0) + (r.wageDetail?.effectiveNetWage ?? r.finalWage ?? 0);
       }
     }
     final sortedEntries = wageTypeMap.entries.toList()
@@ -409,7 +409,7 @@ class AdminStatsService {
         }
         if (r.wageStatus == AttendanceModel.wageConfirmed ||
             r.wageStatus == AttendanceModel.wageTransferred) {
-          wage += r.finalWage ?? 0;
+          wage += r.wageDetail?.effectiveNetWage ?? r.finalWage ?? 0;
         }
       }
       return WorkerMonthSummary(
@@ -438,7 +438,7 @@ class AdminStatsService {
       }
       if (a.wageStatus == AttendanceModel.wageConfirmed ||
           a.wageStatus == AttendanceModel.wageTransferred) {
-        tw += a.finalWage ?? 0;
+        tw += a.wageDetail?.effectiveNetWage ?? a.finalWage ?? 0;
       }
     }
 

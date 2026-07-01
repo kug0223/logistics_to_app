@@ -399,7 +399,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     final Map<String, AttendanceModel> attendanceMap = {};
 
     for (var doc in snapshot.docs) {
-      final attendance = AttendanceModel.fromFirestore(doc);
+      final attendance = AttendanceModel.tryFromFirestore(doc);
+      if (attendance == null) continue;
       // applicationIds에 포함된 근무자만 맵에 저장 (전날 기록이 오늘 명단에 섞이지 않도록 필터)
       if (applicationIds.contains(attendance.applicationId)) {
         attendanceMap[attendance.applicationId] = attendance;
@@ -2821,6 +2822,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   // 레코드가 없는 경우 set(), 있는 경우 update() 1 op씩이므로 targets.length개의 op가 발생한다.
   // 현실적 최대 규모(하루 수백 명)는 단일 batch(500 ops)로 충분하다.
   Future<void> _showBatchNoShowDialog(List<ApplicationModel> targets) async {
+    if (_isLoading) return; // 중복 실행 방어
     final names = targets.map((a) => _getDisplayName(a.uid)).join(', ');
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
@@ -2927,6 +2929,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   // 노쇼 취소 대상은 status == 'NO_SHOW'인 인원만이며, 1인당 1 op.
   // 현실적 규모(하루 수백 명)로 단일 batch 범위 내이다.
   Future<void> _showBatchCancelNoShowDialog(List<ApplicationModel> targets) async {
+    if (_isLoading) return; // 중복 실행 방어
     final names = targets.map((a) => _getDisplayName(a.uid)).join(', ');
     final confirmed = await DialogHelper.showConfirm(
       context,

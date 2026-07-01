@@ -166,7 +166,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         });
       }
     } else {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -196,6 +196,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   /// 푸시 알림 토글
   Future<void> _togglePushNotification(bool value) async {
+    if (_isLoading) return; // 중복 실행 방어
     setState(() => _isLoading = true);
 
     try {
