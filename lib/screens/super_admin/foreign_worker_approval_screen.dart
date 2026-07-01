@@ -74,16 +74,16 @@ class _ForeignWorkerApprovalScreenState
 
   Future<void> _approve(UserModel user) async {
     if (_isProcessing) return;
-    final confirmed = await _showConfirmDialog(
-      title: '승인 확인',
-      message: '${user.name}님의 가입을 승인하시겠습니까?\n승인 후 앱 사용이 가능해집니다.',
-      confirmLabel: '승인',
-      confirmColor: AppColors.success,
-    );
-    if (!confirmed || !mounted) return;
-
     setState(() => _isProcessing = true);
     try {
+      final confirmed = await _showConfirmDialog(
+        title: '승인 확인',
+        message: '${user.name}님의 가입을 승인하시겠습니까?\n승인 후 앱 사용이 가능해집니다.',
+        confirmLabel: '승인',
+        confirmColor: AppColors.success,
+      );
+      if (!confirmed || !mounted) return;
+
       await _fn.httpsCallable('approveForeignWorker').call({'userId': user.uid});
       if (!mounted) return;
       ToastHelper.showSuccess('${user.name}님이 승인되었습니다');
@@ -101,11 +101,11 @@ class _ForeignWorkerApprovalScreenState
 
   Future<void> _reject(UserModel user) async {
     if (_isProcessing) return;
-    final reason = await _showRejectDialog(user.name);
-    if (reason == null || !mounted) return;
-
     setState(() => _isProcessing = true);
     try {
+      final reason = await _showRejectDialog(user.name);
+      if (reason == null || !mounted) return;
+
       await _fn.httpsCallable('rejectForeignWorker').call({
         'userId': user.uid,
         'reason': reason,

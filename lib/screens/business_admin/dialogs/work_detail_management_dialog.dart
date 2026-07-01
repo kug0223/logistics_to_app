@@ -566,18 +566,19 @@ class WorkDetailManagementDialog {
 
   // 긴급모집 종료
   Future<void> _handleBulkStopEmergency(List<WorkDetailModel> works) async {
-    if (_isProcessing) return; // [BUG-수정] 중복 실행 방지 가드 추가 (_handleBulkClose·Reopen과 동일 패턴)
-    final confirm = await DialogHelper.showConfirm(
-      context,
-      title: '긴급모집 종료',
-      message: '${works.length}개 업무의 긴급모집을 종료하시겠습니까?',
-      confirmText: '종료',
-      confirmColor: AppColors.warning,
-    );
-
-    if (!context.mounted || !confirm) return;
+    if (_isProcessing) return;
     _isProcessing = true;
     try {
+      final confirm = await DialogHelper.showConfirm(
+        context,
+        title: '긴급모집 종료',
+        message: '${works.length}개 업무의 긴급모집을 종료하시겠습니까?',
+        confirmText: '종료',
+        confirmColor: AppColors.warning,
+      );
+
+      if (!context.mounted || !confirm) return;
+
       final adminUID = FirebaseAuth.instance.currentUser?.uid;
       if (adminUID == null) {
         ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
