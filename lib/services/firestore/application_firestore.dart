@@ -296,7 +296,9 @@ extension ApplicationFirestore on FirestoreService {
         ToastHelper.showError('비공개 공고에는 지원할 수 없습니다.');
         return false;
       }
-      if (toData['isManualClosed'] == true || toData['status'] == TOStatus.closed) {
+      if (toData['isManualClosed'] == true ||
+          toData['status'] == TOStatus.closed ||
+          toData['status'] == TOStatus.full) {
         ToastHelper.showError('마감된 공고입니다.');
         return false;
       }

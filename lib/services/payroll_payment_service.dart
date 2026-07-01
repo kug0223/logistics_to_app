@@ -97,6 +97,9 @@ class PayrollPaymentService {
       } catch (e) {
         debugPrint('⚠️ 이체 완료 알림 발송 실패 (attendanceId: $attendanceId): $e');
       }
+    } else {
+      // 필수 파라미터 누락으로 알림 스킵 — 잘못된 딥링크보다 안전 (BUG-PAY-01)
+      debugPrint('⚠️ 이체 완료 알림 스킵 (attendanceId: $attendanceId) — workerUserId=$workerUserId businessId=$businessId finalWage=$finalWage');
     }
   }
 
