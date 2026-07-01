@@ -201,7 +201,7 @@ class AttendanceModel {
       wageStatus: map['wageStatus'] ?? 'pending',
       finalWage: (map['finalWage'] as num?)?.toInt(),
       wageDetail: map['wageDetail'] != null
-          ? WageDetailModel.fromMap(Map<String, dynamic>.from(map['wageDetail'] as Map))
+          ? WageDetailModel.tryFromMap(Map<String, dynamic>.from(map['wageDetail'] as Map))
           : null,
       yearMonth: map['yearMonth'] as String?,
       adminConfirmed: map['adminConfirmed'] ?? false,

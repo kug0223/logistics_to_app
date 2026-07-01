@@ -23,6 +23,10 @@ class PayrollWorkerSummary {
     );
   }
 
+  static PayrollWorkerSummary? tryFromMap(String workerId, Map<String, dynamic> map) {
+    try { return PayrollWorkerSummary.fromMap(workerId, map); } catch (_) { return null; }
+  }
+
   Map<String, dynamic> toMap() => {
     'name': name,
     'totalPayout': totalPayout,
@@ -69,9 +73,12 @@ class PayrollSummaryModel {
     // ArgumentError 대신 DateTime.now() 폴백으로 crash 방지
     final updatedAt = (data['updatedAt'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now();
     final workersRaw = data['workers'] as Map<String, dynamic>? ?? {};
-    final workers = workersRaw.map(
-      // [SAFETY] Firestore 내부 타입(_JsonMap)은 직접 as Map<String, dynamic> 캐스팅 실패 가능 — from()으로 안전 변환
-      (k, v) => MapEntry(k, PayrollWorkerSummary.fromMap(k, Map<String, dynamic>.from(v as Map))),
+    // [SAFETY] Firestore 내부 타입(_JsonMap)은 직접 as Map<String, dynamic> 캐스팅 실패 가능 — from()으로 안전 변환
+    final workers = Map.fromEntries(
+      workersRaw.entries.map((e) {
+        final s = PayrollWorkerSummary.tryFromMap(e.key, Map<String, dynamic>.from(e.value as Map));
+        return s != null ? MapEntry(e.key, s) : null;
+      }).whereType<MapEntry<String, PayrollWorkerSummary>>(),
     );
     return PayrollSummaryModel(
       id: doc.id,

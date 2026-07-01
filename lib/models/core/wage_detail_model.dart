@@ -148,6 +148,10 @@ class WageDetailModel {
     );
   }
 
+  static WageDetailModel? tryFromMap(Map<String, dynamic> map) {
+    try { return WageDetailModel.fromMap(map); } catch (_) { return null; }
+  }
+
   /// WageDetailModel → Map
   Map<String, dynamic> toMap() {
     return {

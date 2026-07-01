@@ -1252,7 +1252,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             // [SERVER-REREAD] 서버의 최신 wageDetail 사용 — 로컬 캐시 덮어쓰기 방지
             final serverWdRaw = snap.data()?['wageDetail'];
             final effectiveWd = serverWdRaw != null
-                ? WageDetailModel.fromMap(Map<String, dynamic>.from(serverWdRaw as Map))
+                ? WageDetailModel.tryFromMap(Map<String, dynamic>.from(serverWdRaw as Map))
                 : (attendance.wageDetail ?? _calculatedWages[appId]);
             final confirmedWageDetail = effectiveWd?.copyWith(
               confirmedBy: adminUid,

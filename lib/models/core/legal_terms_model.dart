@@ -114,6 +114,10 @@ class LegalTerms {
     );
   }
 
+  static LegalTerms? tryFromFirestore(DocumentSnapshot doc) {
+    try { return LegalTerms.fromFirestore(doc); } catch (_) { return null; }
+  }
+
   /// Firestore에 존재하지 않을 때 기본값 (한국 법령 기준)
   static LegalTerms defaultTerms() {
     final now = DateTime.now();
