@@ -4204,6 +4204,59 @@ export const finalizeRegistration = onCall(
   }
 );
 
+// ── recordDeletedAccount ────────────────────────────────
+// 탈퇴 기록을 deleted_accounts에 Admin SDK로 저장
+// [AUTH-H2] 클라이언트가 deleted_accounts에 직접 쓰면 탈퇴 안 한 상태에서 임의 문서를
+//   심을 수 있어 재가입 차단 우회 가능. Admin SDK 경유로 전환하고 rules는 if false로 차단.
+// Input:  {} (호출자 uid로 users 문서를 직접 조회)
+// Output: { success: true }
+export const recordDeletedAccount = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "로그인 필요");
+    }
+    const uid = request.auth.uid;
+
+    const userSnap = await db.collection("users").doc(uid).get();
+    if (!userSnap.exists) {
+      return {success: true}; // 이미 삭제됨 — 멱등 처리
+    }
+    const data = userSnap.data() ?? {};
+
+    // ciHash: finalizeRegistration CF가 다날 연동 후 설정 (없으면 null)
+    const ciHash = data["ciHash"] as string | undefined;
+    // phoneHash: phone 필드를 SHA-256으로 해시 (폴백)
+    const phone = data["phone"] as string | undefined;
+    const phoneHash = phone
+      ? crypto.createHash("sha256").update(phone).digest("hex")
+      : undefined;
+
+    if (!ciHash && !phoneHash) {
+      return {success: true}; // 식별자 없음 — 기록 불필요
+    }
+
+    const isBlacklisted = data["isBlacklisted"] === true;
+    const docData: Record<string, unknown> = {
+      uid,
+      deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+      isBlacklisted,
+      noShowCount: data["noShowCount"] ?? 0,
+      role: data["role"] ?? "USER",
+    };
+    if (ciHash) docData["ciHash"] = ciHash;
+    if (phoneHash) docData["phoneHash"] = phoneHash;
+    if (!isBlacklisted) {
+      docData["canReregisterAt"] = admin.firestore.Timestamp.fromDate(
+        new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+      );
+    }
+
+    await db.collection("deleted_accounts").add(docData);
+    return {success: true};
+  }
+);
+
 // ── revokeUserSession ───────────────────────────────────
 // 본인 세션 무효화 — 비밀번호 변경 후 다른 기기 강제 로그아웃
 // [AUTH-M1] 클라이언트 updatePassword()는 다른 기기 리프레시 토큰을 무효화하지 않음.
