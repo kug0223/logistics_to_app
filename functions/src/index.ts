@@ -4340,7 +4340,8 @@ export const rejectForeignWorker = onCall(
           token: fcmToken,
           notification: {
             title: "AlFit",
-            body: `계정 승인이 거절되었습니다. 사유: ${reason}`,
+            // [M-02] 거절 사유를 알림 본문에서 제거 — 잠금 화면 등에서 개인정보 노출 방지
+            body: "계정 승인이 거절되었습니다. 앱에서 확인하세요.",
           },
           data: {type: "foreignAccountRejected", reason},
         });
@@ -4394,7 +4395,8 @@ export const adminResetForeignPassword = onCall(
 
     // [SEC-07] 사용자 이름 평문 로그 제거 (PII 마스킹)
     console.log(`[adminResetForeignPassword] 슈퍼어드민 ${callerUid}가 ${userId}의 비밀번호 초기화`);
-    return {success: true};
+    // [HIGH-02] tempPassword 반환 — 클라이언트가 관리자에게 임시 비밀번호를 표시해야 함
+    return {success: true, tempPassword};
   }
 );
 

@@ -134,12 +134,16 @@ service cloud.firestore {
       //   attendance/schedule_change_requests 등 생성 가능 (CF Admin SDK·관리자 경로만 변경 허용)
       // SEC-78: isAdmin(레거시 필드) 추가 — 본인이 관리자 플래그 직접 설정 차단
       // SEC-79: sealBase64 추가 — 본인이 인감 이미지를 위조 URL로 교체해 계약서 위변조 차단
+      // [HIGH-01] accountStatus 등 외국인 승인 관련 필드 추가 — 본인이 accountStatus를
+      //   pending → active로 직접 변경해 슈퍼관리자 승인을 우회하는 취약점 차단
       allow update: if isLoggedIn() &&
                        isOwner(userId) &&
                        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
                          'role', 'isBlacklisted', 'subAdminOf', 'businessId',
                          'trustScore', 'noShowCount', 'lateCount', 'totalWorkDays', 'lastRestartAt',
-                         'restrictedUntil', 'isAdmin', 'sealBase64'
+                         'restrictedUntil', 'isAdmin', 'sealBase64',
+                         'accountStatus', 'rejectionReason', 'approvedBy', 'approvedAt',
+                         'rejectedBy', 'rejectedAt'
                        ]);
 
       // [SEC-03 완료] trustScore·noShowCount·lateCount·totalWorkDays·restrictedUntil·lastRestartAt
