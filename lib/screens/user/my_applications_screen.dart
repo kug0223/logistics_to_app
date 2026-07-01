@@ -133,10 +133,28 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     } catch (e) {
       debugPrint('❌ 지원 내역 로드 실패: $e');
       if (mounted) {
-        ToastHelper.showError('지원 내역을 불러오는데 실패했습니다.');
+        ToastHelper.showError(_firestoreErrMsg(e, '지원 내역을 불러오는데 실패했습니다.'));
         setState(() => _isLoading = false);
       }
     }
+  }
+
+  /// Firestore 예외 코드에 따라 사용자 친화적 오류 메시지 반환
+  String _firestoreErrMsg(dynamic e, String fallback) {
+    if (e is FirebaseException) {
+      return switch (e.code) {
+        'unavailable' || 'network-request-failed' =>
+          '네트워크 연결을 확인해 주세요.',
+        'permission-denied' =>
+          '권한이 없습니다. 관리자에게 문의하세요.',
+        'not-found' =>
+          '데이터를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.',
+        'deadline-exceeded' || 'cancelled' =>
+          '요청 시간이 초과되었습니다. 다시 시도해 주세요.',
+        _ => fallback,
+      };
+    }
+    return fallback;
   }
 
   Future<void> _loadMore() async {
@@ -184,7 +202,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       debugPrint('❌ 추가 로드 실패: $e');
       if (mounted) {
         setState(() => _isLoadingMore = false);
-        ToastHelper.showError('추가 데이터를 불러오지 못했습니다');
+        ToastHelper.showError(_firestoreErrMsg(e, '추가 데이터를 불러오지 못했습니다.'));
       }
     }
   }
@@ -341,7 +359,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     } catch (e) {
       debugPrint('❌ 계약서 요청 실패: $e');
       if (!mounted) return;
-      ToastHelper.showError('요청에 실패했습니다. 다시 시도해 주세요.');
+      ToastHelper.showError(_firestoreErrMsg(e, '계약서 요청에 실패했습니다. 다시 시도해 주세요.'));
     } finally {
       if (mounted) setState(() => _isRequestingContract[app.id] = false);
     }
@@ -618,6 +636,10 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                 if (app.status == AppStatus.confirmed ||
                     app.status == AppStatus.contractPending)
                   _buildContractSection(app),
+
+                // 장기 공고: 퇴사/계약해지 복합 상태 배너
+                if (app.isLongTermApplication)
+                  _buildLongTermStatusSection(app),
 
                 // 과거 확정 근무 → 리뷰 섹션
                 _buildReviewSection(app),
@@ -1085,6 +1107,152 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     }
 
     return const SizedBox.shrink();
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 장기 공고 퇴사/계약해지 복합 상태 배너
+  // ═══════════════════════════════════════════════════════════
+
+  Widget _buildLongTermStatusSection(ApplicationModel app) {
+    final resignStatus = app.resignStatus;
+    final terminationStatus = app.terminationStatus;
+
+    if (resignStatus == null && terminationStatus == null) {
+      return const SizedBox.shrink();
+    }
+
+    final banners = <Widget>[];
+
+    // 퇴사 신청 상태
+    if (resignStatus != null) {
+      final (icon, color, bgColor, label) = switch (resignStatus) {
+        'PENDING' => (
+            Icons.exit_to_app_outlined,
+            AppColors.warningDark,
+            AppColors.warningBg,
+            app.resignRequestDate != null
+                ? '퇴사 신청 중 · 희망일 ${DateFormat('MM.dd').format(app.resignRequestDate!)}'
+                : '퇴사 신청 중',
+          ),
+        'APPROVED' || 'AUTO_APPROVED' => (
+            Icons.check_circle_outline,
+            AppColors.successDark,
+            AppColors.successBg,
+            app.actualResignDate != null
+                ? '퇴사 확정 · ${DateFormat('MM.dd').format(app.actualResignDate!)}'
+                : '퇴사 확정',
+          ),
+        'REJECTED' => (
+            Icons.cancel_outlined,
+            AppColors.errorDark,
+            AppColors.errorBg,
+            app.resignRejectReason?.isNotEmpty == true
+                ? '퇴사 신청 거절 · ${app.resignRejectReason}'
+                : '퇴사 신청이 거절되었습니다',
+          ),
+        _ => (
+            Icons.info_outline,
+            AppColors.grey600,
+            AppColors.grey100,
+            '퇴사 신청 처리 중',
+          ),
+      };
+
+      banners.add(
+        Container(
+          margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 8)),
+          width: double.infinity,
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 12),
+            vertical: ResponsiveHelper.spacing(context, 8),
+          ),
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: color.withValues(alpha: 0.3)),
+          ),
+          child: Row(children: [
+            Icon(icon, size: ResponsiveHelper.iconSize(context, 14), color: color),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Expanded(
+              child: Text(
+                label,
+                style: ResponsiveHelper.smallStyle(context, color: color)
+                    .copyWith(fontWeight: FontWeight.w500),
+              ),
+            ),
+          ]),
+        ),
+      );
+    }
+
+    // 계약해지 상태
+    if (terminationStatus != null) {
+      final (icon, color, bgColor, label) = switch (terminationStatus) {
+        'PENDING' => (
+            Icons.warning_amber_outlined,
+            AppColors.warningDark,
+            AppColors.warningBg,
+            app.terminationReason?.isNotEmpty == true
+                ? '계약해지 요청 수신 · ${app.terminationReason}'
+                : '계약해지 요청이 접수되었습니다',
+          ),
+        'APPROVED' || 'AUTO_APPROVED' => (
+            Icons.assignment_turned_in_outlined,
+            AppColors.infoDark,
+            AppColors.infoBg,
+            app.terminationEffectiveDate != null
+                ? '계약해지 완료 · ${DateFormat('MM.dd').format(app.terminationEffectiveDate!)}'
+                : '계약해지 완료',
+          ),
+        'REJECTED' => (
+            Icons.block_outlined,
+            AppColors.grey600,
+            AppColors.grey100,
+            app.terminationRejectReason?.isNotEmpty == true
+                ? '계약해지 거절 · ${app.terminationRejectReason}'
+                : '계약해지 거절 처리됨',
+          ),
+        _ => (
+            Icons.info_outline,
+            AppColors.grey600,
+            AppColors.grey100,
+            '계약해지 처리 중',
+          ),
+      };
+
+      banners.add(
+        Container(
+          margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 8)),
+          width: double.infinity,
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 12),
+            vertical: ResponsiveHelper.spacing(context, 8),
+          ),
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: color.withValues(alpha: 0.3)),
+          ),
+          child: Row(children: [
+            Icon(icon, size: ResponsiveHelper.iconSize(context, 14), color: color),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Expanded(
+              child: Text(
+                label,
+                style: ResponsiveHelper.smallStyle(context, color: color)
+                    .copyWith(fontWeight: FontWeight.w500),
+              ),
+            ),
+          ]),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: banners,
+    );
   }
 
   Future<void> _openContractSign(EmploymentContractModel contract) async {
