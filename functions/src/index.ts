@@ -1455,6 +1455,7 @@ export const onAttendanceWageChanged = onDocumentUpdated(
           workers: {
             [userId]: {name: workerName, totalPayout: afterWage, workDays: 1},
           },
+          createdAt: now,
           updatedAt: now,
         });
         tx.set(processedRef, {processedAt: now, attendanceId: event.params.attendanceId});
