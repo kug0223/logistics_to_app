@@ -93,6 +93,14 @@ class SlotModel {
     required this.createdAt,
   });
 
+  static SlotModel? tryFromMap(Map<String, dynamic> data, String documentId, String toId) {
+    try {
+      return SlotModel.fromMap(data, documentId, toId);
+    } catch (_) {
+      return null;
+    }
+  }
+
   factory SlotModel.fromMap(Map<String, dynamic> data, String documentId, String toId) {
     final workDetails = WorkDetailData.listFromFirestore(data['workDetails']);
 

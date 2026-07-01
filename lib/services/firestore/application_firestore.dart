@@ -110,7 +110,8 @@ extension ApplicationFirestore on FirestoreService {
           .limit(1000)
           .get(const GetOptions(source: Source.server));
       return snap.docs
-          .map((d) => ApplicationModel.fromMap(d.data(), d.id))
+          .map((d) => ApplicationModel.tryFromMap(d.data(), d.id))
+          .whereType<ApplicationModel>()
           .toList();
     } catch (e) {
       debugPrint('❌ 사업장별 지원서 조회 실패: $e');

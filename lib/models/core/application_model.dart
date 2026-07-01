@@ -165,6 +165,14 @@ class ApplicationModel {
     this.isStarred = false,
   });
 
+  static ApplicationModel? tryFromMap(Map<String, dynamic> data, String documentId) {
+    try {
+      return ApplicationModel.fromMap(data, documentId);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Firestore 문서를 ApplicationModel로 변환
   factory ApplicationModel.fromMap(Map<String, dynamic> data, String documentId) {
     return ApplicationModel(

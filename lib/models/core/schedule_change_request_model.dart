@@ -130,6 +130,14 @@ class ScheduleChangeRequestModel {
 
   // ── Firestore 변환 ───────────────────────────────────────────
 
+  static ScheduleChangeRequestModel? tryFromMap(Map<String, dynamic> map, String id) {
+    try {
+      return ScheduleChangeRequestModel.fromMap(map, id);
+    } catch (_) {
+      return null;
+    }
+  }
+
   factory ScheduleChangeRequestModel.fromMap(Map<String, dynamic> map, String id) {
     final targetDate = (map['targetDate'] as Timestamp?)?.toDate().toLocal();
     if (targetDate == null) {

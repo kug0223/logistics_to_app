@@ -561,7 +561,7 @@ extension AttendanceFirestore on FirestoreService {
       );
       return snaps
           .expand((snap) => snap.docs
-              .map((d) => ScheduleChangeRequestModel.fromMap(d.data(), d.id))
+              .map((d) => ScheduleChangeRequestModel.tryFromMap(d.data(), d.id)).whereType<ScheduleChangeRequestModel>()
               .where((r) =>
                   r.targetDate.year == date.year &&
                   r.targetDate.month == date.month &&

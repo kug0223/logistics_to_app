@@ -698,7 +698,8 @@ extension TOFirestore on FirestoreService {
           .get(const GetOptions(source: Source.server));
 
       final slots = snap.docs
-          .map((d) => SlotModel.fromMap(d.data(), d.id, toId))
+          .map((d) => SlotModel.tryFromMap(d.data(), d.id, toId))
+          .whereType<SlotModel>()
           .toList();
 
       if (!visibleOnly) return slots;
