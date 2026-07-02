@@ -132,7 +132,8 @@ service cloud.firestore {
       // [RESOLVED MED-02] whereIn(FieldPath.documentId) 대량 쿼리 →
       //   CF callableGetUsersBatch 이전 완료 — 관리자 직접 list 30건 권한 제거
       allow list: if request.query.limit <= 1 ||
-                   (isLoggedIn() && isSuperAdmin());
+                   (isLoggedIn() && isSuperAdmin()) ||
+                   (isLoggedIn() && isAdmin() && request.query.limit <= 30);
 
       // 슈퍼관리자: 민감 필드 포함 모든 필드 수정 가능 (최우선 — 운영 긴급 수정용)
       // [특이사항] Firestore Rules는 어느 allow 하나라도 true면 허용(OR)이므로 순서가 보안에는 영향 없음.
