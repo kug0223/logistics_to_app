@@ -559,7 +559,8 @@ service cloud.firestore {
       // 이전: USER가 임의 businessId로 타 사업장 출근 기록 생성 가능 (API 직접 호출 시)
       // 수정: 발신 문서의 businessId가 본인 users.businessId와 일치해야 create 허용
       //       → 타 사업장 노이즈 데이터 삽입 원천 차단
-      // 완전한 차단: checkIn을 CF Callable Function으로 이전하고 이 경로를 제거해야 함 (중기 계획)
+      // [HIGH-02/03 현황] onAttendanceCreated CF + isMocked + 반경 체크 + serverTimestamp로 4단계 방어 구축됨.
+      // CF Callable 이전(직접 write 경로 제거)은 루팅 기기 방어 추가 효과가 있으나 ROI 낮아 보류.
       //
       // [NOSHOW-FIX] 노쇼 상태 레코드의 finalWage=0 서버 강제
       // 노쇼 처리 시 관리자가 API 직접 호출로 finalWage를 임의 값으로 설정하는 것 차단.
