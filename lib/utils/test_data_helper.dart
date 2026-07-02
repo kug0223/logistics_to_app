@@ -677,32 +677,30 @@ class TestDataHelper {
       Set<String> affectedTOIds = {};
       final Map<String, Set<String>> affectedSlots = {}; // toId → Set<slotId>
 
-      // 1. 더미 지원자 삭제
+      // 1. 더미 지원자 삭제 (users list 규칙: limit <= 30 필수 → 반복 쿼리)
       debugPrint('📋 1단계: 더미 지원자(users) 삭제 중...');
 
-      // users list 규칙: BUSINESS_ADMIN은 limit <= 30 필수
-      final dummyUsersSnapshot = await _firestore
-          .collection('users')
-          .where('isDummy', isEqualTo: true)
-          .limit(30)
-          .get();
-      final dummyUsers = dummyUsersSnapshot.docs;
+      int userDeletedCount = 0;
+      while (true) {
+        final snapshot = await _firestore
+            .collection('users')
+            .where('isDummy', isEqualTo: true)
+            .limit(30)
+            .get();
+        if (snapshot.docs.isEmpty) break;
 
-      debugPrint('   더미 users: ${dummyUsers.length}개');
-
-      if (dummyUsers.isNotEmpty) {
-        for (int i = 0; i < dummyUsers.length; i += 500) {
-          final batch = _firestore.batch();
-          final chunk = dummyUsers.skip(i).take(500);
-          
-          for (var doc in chunk) {
-            batch.delete(doc.reference);
-          }
-          
-          await batch.commit();
+        final batch = _firestore.batch();
+        for (var doc in snapshot.docs) {
+          batch.delete(doc.reference);
         }
-        debugPrint('✅ 더미 지원자 ${dummyUsers.length}명 삭제 완료');
-        totalDeleted += dummyUsers.length;
+        await batch.commit();
+        userDeletedCount += snapshot.docs.length;
+        debugPrint('   삭제 중... ($userDeletedCount명)');
+      }
+
+      if (userDeletedCount > 0) {
+        debugPrint('✅ 더미 지원자 $userDeletedCount명 삭제 완료');
+        totalDeleted += userDeletedCount;
       } else {
         debugPrint('   ℹ️  삭제할 더미 users 없음');
       }

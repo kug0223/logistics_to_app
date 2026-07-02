@@ -193,7 +193,6 @@ service cloud.firestore {
                       (isAdmin() && request.resource.data.isDummy == true &&
                        !request.resource.data.keys().hasAny([
                          'role', 'isBlacklisted', 'restrictedUntil',
-                         'trustScore', 'noShowCount', 'lateCount', 'totalWorkDays',
                          'isAdmin', 'sealBase64', 'subAdminOf'
                        ]))
                     );
