@@ -681,6 +681,7 @@ class TestDataHelper {
       debugPrint('📋 1단계: 더미 지원자(users) 삭제 중...');
 
       int userDeletedCount = 0;
+      int notifDeletedCount = 0;
       while (true) {
         final snapshot = await _firestore
             .collection('users')
@@ -689,17 +690,37 @@ class TestDataHelper {
             .get();
         if (snapshot.docs.isEmpty) break;
 
+        // 각 더미 유저의 알림 서브컬렉션 먼저 삭제
+        for (var userDoc in snapshot.docs) {
+          final notifSnap = await _firestore
+              .collection('users')
+              .doc(userDoc.id)
+              .collection('notifications')
+              .get();
+          if (notifSnap.docs.isNotEmpty) {
+            for (int i = 0; i < notifSnap.docs.length; i += 500) {
+              final nb = _firestore.batch();
+              for (var n in notifSnap.docs.skip(i).take(500)) {
+                nb.delete(n.reference);
+              }
+              await nb.commit();
+            }
+            notifDeletedCount += notifSnap.docs.length;
+          }
+        }
+
+        // 유저 문서 삭제
         final batch = _firestore.batch();
         for (var doc in snapshot.docs) {
           batch.delete(doc.reference);
         }
         await batch.commit();
         userDeletedCount += snapshot.docs.length;
-        debugPrint('   삭제 중... ($userDeletedCount명)');
+        debugPrint('   삭제 중... ($userDeletedCount명, 알림 $notifDeletedCount건)');
       }
 
       if (userDeletedCount > 0) {
-        debugPrint('✅ 더미 지원자 $userDeletedCount명 삭제 완료');
+        debugPrint('✅ 더미 지원자 $userDeletedCount명 + 알림 $notifDeletedCount건 삭제 완료');
         totalDeleted += userDeletedCount;
       } else {
         debugPrint('   ℹ️  삭제할 더미 users 없음');
