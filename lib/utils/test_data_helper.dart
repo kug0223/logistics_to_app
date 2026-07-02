@@ -228,6 +228,7 @@ class TestDataHelper {
         'availableFrom': null,
         'isBlacklisted': false,
         'blacklistReason': null,
+        'accountStatus': 'active', // PASS 인증 도입 후 필수 필드
 
         'isDummy': true, // ⭐ 더미 데이터 표시
       });
@@ -985,6 +986,7 @@ class TestDataHelper {
           'comment': comment,
           'wouldRehire': wouldRehire,
           'createdAt': FieldValue.serverTimestamp(),
+          'isPublished': true, // 공개 리뷰 조회 필터 통과용
           'isDummy': true,  // ⭐ 더미 표시 추가
         });
 
