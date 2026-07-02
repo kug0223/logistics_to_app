@@ -702,7 +702,7 @@ class _PayrollPaymentDashboardScreenState
         _load();
       }
     } catch (e) {
-      if (mounted) ToastHelper.showError('처리에 실패했습니다');
+      if (mounted) ToastHelper.showError('처리에 실패했습니다\n$e');
     } finally {
       if (mounted) setState(() => _isTransferring = false);
     }

@@ -122,7 +122,8 @@ class PayrollPaymentService {
     List<TransferNotificationInfo>? notificationInfos,
   }) async {
     for (int i = 0; i < attendanceIds.length; i += 450) {
-      final chunk = attendanceIds.skip(i).take(450);
+      final chunkStart = i;
+      final chunk = attendanceIds.skip(chunkStart).take(450).toList();
       final batch = _db.batch();
       for (final id in chunk) {
         batch.update(_db.collection('attendance').doc(id), {
@@ -134,7 +135,17 @@ class PayrollPaymentService {
           'updatedAt':     FieldValue.serverTimestamp(),
         });
       }
-      await batch.commit();
+      try {
+        await batch.commit();
+      } catch (e) {
+        final processed = chunkStart;
+        final remaining = attendanceIds.length - processed;
+        throw Exception(
+          '일괄 이체 중 오류가 발생했습니다.\n'
+          '처리 완료: $processed건 / 미처리: $remaining건\n'
+          '다시 시도하면 이미 처리된 건은 건너뛰고 안전하게 완료됩니다. ($e)',
+        );
+      }
     }
 
     // 배치 커밋 후 각 항목별로 지원자에게 알림 발송 — Future.wait으로 병렬 처리
@@ -546,16 +557,26 @@ class PayrollPaymentService {
     }
 
     // 2단계: 요청 상태 변경 (출근기록 이체 완료 후)
-    await _db
-        .collection('interim_settlement_requests')
-        .doc(req.id)
-        .update({
-      'status':      InterimSettlementRequestModel.statusProcessed,
-      'processedBy': processedBy,
-      'processedAt': FieldValue.serverTimestamp(),
-      if (transferNote != null) 'transferNote': transferNote,
-      'updatedAt':   FieldValue.serverTimestamp(),
-    });
+    // ⚠️ 1단계 성공 후 여기서 실패하면 attendance=transferred, status=pending 불일치.
+    //   단, 멱등 재시도로 안전하게 복구되므로 관리자에게 "재시도 안내" 메시지 전달.
+    try {
+      await _db
+          .collection('interim_settlement_requests')
+          .doc(req.id)
+          .update({
+        'status':      InterimSettlementRequestModel.statusProcessed,
+        'processedBy': processedBy,
+        'processedAt': FieldValue.serverTimestamp(),
+        if (transferNote != null) 'transferNote': transferNote,
+        'updatedAt':   FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      // 이체 자체는 완료됐으므로 재시도 시 중복 이체 없이 안전하게 복구됨
+      throw Exception(
+        '이체는 완료되었으나 상태 업데이트에 실패했습니다.\n'
+        '다시 시도하면 안전하게 처리됩니다. ($e)',
+      );
+    }
   }
 
   /// 중간정산 거절

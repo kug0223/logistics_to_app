@@ -231,6 +231,18 @@ class TaxDeductionService {
 
     debugPrint('📊 8일 소급 계산: 이전합계=$prevGrossTotal원, 소급=$retroactive원, 당일4대보험=${pension8 + health8 + ltc8 + employment8}원, 당일소득세=$totalTax8원');
 
+    final netWage8 = gross8 - totalDeduction;
+
+    // 소급공제가 당일 급여를 초과하면 netWage가 음수 — 설계상 허용된 한계.
+    // UI는 effectiveNetWage(clamp 0)로 표시. 초과분은 다음 급여에서 수동 공제.
+    if (netWage8 < 0) {
+      debugPrint(
+        '⚠️ [8일 소급] 음수 netWage 발생: gross=$gross8원, 총공제=$totalDeduction원 '
+        '(소급=$retroactive + 당일보험=${pension8 + health8 + ltc8 + employment8} + 세금=$totalTax8), '
+        'netWage=$netWage8원 — 초과분 ${-netWage8}원은 다음 급여에서 수동 공제 필요.',
+      );
+    }
+
     return day8Base.copyWith(
       taxDeductionType: InsuranceRateModel.typeDailyAuto8,
       nationalPensionDeduction: pension8,
@@ -239,11 +251,7 @@ class TaxDeductionService {
       employmentInsuranceDeduction: employment8,
       incomeTaxDeduction: totalTax8,
       retroactiveDeduction: retroactive,
-      // 8일차 소급 공제 총액이 당일 세전 급여(gross8)를 초과하면 netWage가 음수.
-      // 이는 1~7일치 4대보험 소급분이 클 때 발생할 수 있는 설계상 한계.
-      // 실수령액 표시는 effectiveNetWage(clamp 0)를 사용하므로 UI는 0원으로 보임.
-      // 초과분은 실무상 다음 급여에서 추가 공제하며, 앱에서는 별도 추적하지 않는다.
-      netWage: gross8 - totalDeduction,
+      netWage: netWage8,
     );
   }
 
