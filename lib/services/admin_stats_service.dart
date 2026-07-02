@@ -633,11 +633,13 @@ class AdminStatsService {
 
   double _calcAttendanceRate(List<AttendanceModel> list) {
     if (list.isEmpty) return 0;
-    // [MED-STAT] 출근율 = (정시출근 + 지각) / 전체 — 지각도 "출근"으로 집계
+    // [MED-STAT] 출근율 = (정시출근 + 지각 + 조퇴) / 전체 — 지각·조퇴도 "출근"으로 집계
     // 이전: statusPresent만 분자 → 지각이 많은 사업장에서 출근율 과소 집계
+    // [STAT-FIX] earlyLeave도 출근 인정 — badge_service/work_applicants_dialog와 동일 기준
     final attended = list.where((r) =>
         r.status == AttendanceModel.statusPresent ||
-        r.status == AttendanceModel.statusLate).length;
+        r.status == AttendanceModel.statusLate ||
+        r.status == AttendanceModel.statusEarlyLeave).length;
     return attended / list.length * 100;
   }
 
@@ -659,8 +661,8 @@ class AdminStatsService {
       if (r.status == AttendanceModel.statusLate) {
         lateMap[r.userId] = (lateMap[r.userId] ?? 0) + 1;
       } else if (r.status == AttendanceModel.statusAbsent ||
-          r.status == AttendanceModel.statusNoShow ||
-          r.status == AttendanceModel.statusEarlyLeave) {
+          r.status == AttendanceModel.statusNoShow) {
+        // [STAT-FIX] earlyLeave 제거 — 조퇴는 출근으로 인정, absent/noShow만 결근 집계
         absentMap[r.userId] = (absentMap[r.userId] ?? 0) + 1;
       }
     }
