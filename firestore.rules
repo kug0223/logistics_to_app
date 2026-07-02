@@ -99,6 +99,18 @@ service cloud.firestore {
         isSubAdminOf(to.data.get('businessId', ''))
       );
     }
+
+    // 멤버 초대 유효성 검증: pending 상태 + 대상 일치 + 30일 이내
+    // [MEDIUM-01] 클라이언트 만료 필터링(30일)을 Firestore 규칙 레벨에서 보강
+    //   get() 1회로 4개 조건을 한 번에 검증 (기존 3회 반복 호출 통합)
+    function isValidPendingInvitation(invId, uid, bizId) {
+      let inv = get(/databases/$(database)/documents/member_invitations/$(invId)).data;
+      return inv != null &&
+        inv.targetUid == uid &&
+        inv.businessId == bizId &&
+        inv.status == 'pending' &&
+        inv.createdAt > request.time - duration.value(30, 'd');
+    }
     // users 컬렉션
     // ═══════════════════════════════════════════════════════════
     match /users/{userId} {
@@ -1367,15 +1379,13 @@ service cloud.firestore {
 
       // 생성: 해당 사업장 관리자 · 유효한 pending 초대 수락 시 본인(uid 일치) · 슈퍼어드민
       // [MEDIUM-FIX] request.auth.uid == uid 단독 허용으로 어느 사업장에나 자기 등록 가능했던 취약점 수정
-      //   초대 수락 경로: members 문서에 invitationId 포함 필수 → member_invitations 문서에서
-      //   targetUid·businessId 일치 + status == 'pending' 검증
+      // [MEDIUM-01] isValidPendingInvitation — pending 상태 + 대상 일치 + 30일 이내 통합 검증
+      //   초대 수락 경로: members 문서에 invitationId 포함 필수 → get() 1회로 전체 검증
       allow create: if isLoggedIn() && (
                       isAdminOf(businessId) ||
                       (request.auth.uid == uid &&
                        'invitationId' in request.resource.data &&
-                       get(/databases/$(database)/documents/member_invitations/$(request.resource.data.invitationId)).data.targetUid == uid &&
-                       get(/databases/$(database)/documents/member_invitations/$(request.resource.data.invitationId)).data.businessId == businessId &&
-                       get(/databases/$(database)/documents/member_invitations/$(request.resource.data.invitationId)).data.status == 'pending') ||
+                       isValidPendingInvitation(request.resource.data.invitationId, uid, businessId)) ||
                       isSuperAdmin()
                     );
 
