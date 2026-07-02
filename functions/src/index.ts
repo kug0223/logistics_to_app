@@ -1850,35 +1850,36 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
           .where("status", "==", "PENDING")
           .get();
         if (!pendingApps.empty) {
-          // [CF-PERF-01] 500건 초과 배치 분할 처리
-          const BATCH_SIZE = 499;
+          // [CF-PERF-01] 500건 초과 배치 분할 처리 — 상태+알림 원자성을 위해 249건씩 (2 ops/건)
+          // [CF-NOTIF-01 수정] 알림을 배치에 포함 — commit 실패 시 상태·알림 모두 롤백되어 재시도 안전
+          const BATCH_SIZE = 249;
           for (let bi = 0; bi < pendingApps.docs.length; bi += BATCH_SIZE) {
             const cancelBatch = db.batch();
             for (const appDoc of pendingApps.docs.slice(bi, bi + BATCH_SIZE)) {
+              const d = appDoc.data();
               cancelBatch.update(appDoc.ref, {
                 status: "AUTO_CANCELED",
                 canceledAt: now,
                 cancelReason: "WORK_DETAIL_EXPIRED",
               });
+              if (d.uid) {
+                cancelBatch.set(
+                  db.collection("users").doc(d.uid as string).collection("notifications").doc(),
+                  {
+                    userId: d.uid,
+                    type: "confirmationCanceled",
+                    title: "지원 자동 취소",
+                    body: `${d.businessName ?? "사업장"} 업무 상세가 마감되어 지원이 자동 취소되었습니다.`,
+                    data: {applicationId: appDoc.id, businessId: (d.businessId as string) ?? "", screen: "mySchedule", reason: "WORK_DETAIL_EXPIRED"},
+                    isRead: false,
+                    createdAt: now,
+                  }
+                );
+              }
             }
             await cancelBatch.commit();
           }
           console.log(`    → ${toId}/${workType} PENDING ${pendingApps.size}건 AUTO_CANCELED`);
-          // [BUG-E-02 수정] AUTO_CANCELED 시 근무자에게 알림 발송 — Flutter _confirmWithConflictCheck와 일관성 유지
-          await Promise.all(pendingApps.docs.map((appDoc) => {
-            const d = appDoc.data();
-            if (!d.uid) return Promise.resolve();
-            return db.collection("users").doc(d.uid as string).collection("notifications").add({
-              userId: d.uid,
-              // [BUG-E-02 수정] AUTO_CANCELED 타입 없음 → confirmationCanceled 사용 (createApplicationAutoCanceled 팩토리와 동일)
-              type: "confirmationCanceled",
-              title: "지원 자동 취소",
-              body: `${d.businessName ?? "사업장"} 업무 상세가 마감되어 지원이 자동 취소되었습니다.`,
-              data: {applicationId: appDoc.id, businessId: (d.businessId as string) ?? "", screen: "mySchedule", reason: "WORK_DETAIL_EXPIRED"},
-              isRead: false,
-              createdAt: now,
-            });
-          }));
         }
       } catch (err) {
         console.error(`[WorkDetail 마감] ${toId}/${workType} AUTO_CANCELED 처리 실패 — 나머지 계속:`, err);
@@ -2037,34 +2038,36 @@ async function processSlotWorkDetailExpiry(now: Timestamp): Promise<void> {
           .where("status", "==", "PENDING")
           .get();
         if (!pendingApps.empty) {
-          // [CF-PERF-01] 500건 초과 배치 분할 처리
-          const BATCH_SIZE = 499;
+          // [CF-PERF-01] 500건 초과 배치 분할 처리 — 상태+알림 원자성을 위해 249건씩 (2 ops/건)
+          // [CF-NOTIF-01 수정] 알림을 배치에 포함 — commit 실패 시 상태·알림 모두 롤백되어 재시도 안전
+          const BATCH_SIZE = 249;
           for (let bi = 0; bi < pendingApps.docs.length; bi += BATCH_SIZE) {
             const cancelBatch = db.batch();
             for (const appDoc of pendingApps.docs.slice(bi, bi + BATCH_SIZE)) {
+              const d = appDoc.data();
               cancelBatch.update(appDoc.ref, {
                 status: "AUTO_CANCELED",
                 canceledAt: now,
                 cancelReason: "SLOT_WORK_DETAIL_EXPIRED",
               });
+              if (d.uid) {
+                cancelBatch.set(
+                  db.collection("users").doc(d.uid as string).collection("notifications").doc(),
+                  {
+                    userId: d.uid,
+                    type: "confirmationCanceled",
+                    title: "지원 자동 취소",
+                    body: `${d.businessName ?? "사업장"} 슬롯 업무 상세가 마감되어 지원이 자동 취소되었습니다.`,
+                    data: {applicationId: appDoc.id, businessId: (d.businessId as string) ?? "", screen: "mySchedule", reason: "SLOT_WORK_DETAIL_EXPIRED"},
+                    isRead: false,
+                    createdAt: now,
+                  }
+                );
+              }
             }
             await cancelBatch.commit();
           }
           console.log(`    → [L003] ${toId}/${slotDoc.id}/${workType} PENDING ${pendingApps.size}건 → AUTO_CANCELED`);
-          // [BUG-E-02 수정] 슬롯 업무상세 마감 AUTO_CANCELED 알림 발송
-          await Promise.all(pendingApps.docs.map((appDoc) => {
-            const d = appDoc.data();
-            if (!d.uid) return Promise.resolve();
-            return db.collection("users").doc(d.uid as string).collection("notifications").add({
-              userId: d.uid,
-              type: "confirmationCanceled",
-              title: "지원 자동 취소",
-              body: `${d.businessName ?? "사업장"} 슬롯 업무 상세가 마감되어 지원이 자동 취소되었습니다.`,
-              data: {applicationId: appDoc.id, businessId: (d.businessId as string) ?? "", screen: "mySchedule", reason: "SLOT_WORK_DETAIL_EXPIRED"},
-              isRead: false,
-              createdAt: now,
-            });
-          }));
         }
       } catch (err) {
         console.error(`[슬롯 WorkDetail 마감] ${toId}/${slotDoc.id}/${workType} AUTO_CANCELED 처리 실패 — 나머지 계속:`, err);
@@ -2255,34 +2258,36 @@ async function processTOExpiry(now: Timestamp): Promise<void> {
         .where("status", "==", "PENDING")
         .get();
       if (!pendingApps.empty) {
-        // [CF-PERF-02] 500건 초과 배치 분할 처리
-        const BATCH_SIZE = 499;
+        // [CF-PERF-02] 500건 초과 배치 분할 처리 — 상태+알림 원자성을 위해 249건씩 (2 ops/건)
+        // [CF-NOTIF-01 수정] 알림을 배치에 포함 — commit 실패 시 상태·알림 모두 롤백되어 재시도 안전
+        const BATCH_SIZE = 249;
         for (let bi = 0; bi < pendingApps.docs.length; bi += BATCH_SIZE) {
           const cancelBatch = db.batch();
           for (const appDoc of pendingApps.docs.slice(bi, bi + BATCH_SIZE)) {
+            const d = appDoc.data();
             cancelBatch.update(appDoc.ref, {
               status: "AUTO_CANCELED",
               canceledAt: now,
               cancelReason: "TO_EXPIRED",
             });
+            if (d.uid) {
+              cancelBatch.set(
+                db.collection("users").doc(d.uid as string).collection("notifications").doc(),
+                {
+                  userId: d.uid,
+                  type: "confirmationCanceled",
+                  title: "지원 자동 취소",
+                  body: `${d.businessName ?? "사업장"} 공고가 마감되어 지원이 자동 취소되었습니다.`,
+                  data: {applicationId: appDoc.id, businessId: (d.businessId as string) ?? "", screen: "mySchedule", reason: "TO_EXPIRED"},
+                  isRead: false,
+                  createdAt: now,
+                }
+              );
+            }
           }
           await cancelBatch.commit();
         }
         console.log(`    → ${doc.id} PENDING ${pendingApps.size}건 AUTO_CANCELED`);
-        // [BUG-E-02 수정] TO 마감 AUTO_CANCELED 알림 발송
-        await Promise.all(pendingApps.docs.map((appDoc) => {
-          const d = appDoc.data();
-          if (!d.uid) return Promise.resolve();
-          return db.collection("users").doc(d.uid as string).collection("notifications").add({
-            userId: d.uid,
-            type: "confirmationCanceled",
-            title: "지원 자동 취소",
-            body: `${d.businessName ?? "사업장"} 공고가 마감되어 지원이 자동 취소되었습니다.`,
-            data: {applicationId: appDoc.id, businessId: (d.businessId as string) ?? "", screen: "mySchedule", reason: "TO_EXPIRED"},
-            isRead: false,
-            createdAt: now,
-          });
-        }));
       }
     } catch (err) {
       console.error(`[TO 마감] ${doc.id} PENDING AUTO_CANCELED 처리 실패 — 나머지 계속:`, err);
@@ -2824,7 +2829,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
     const d15Snap = await db.collection("applications")
       .where("status", "in", CONFIRMED_STATUSES)
       .where("workEndDate", ">=", d15Start)
-      .where("workEndDate", "<", d15End)
+      .where("workEndDate", "<=", d15End)
       .get();
 
     // [특이사항] 루프 안에서 users/businesses를 개별 순차 조회하면 N×2 I/O → 타임아웃 위험.
@@ -3108,16 +3113,22 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       // 이론적으로 중복 발송 가능. 그러나 Cloud Scheduler는 동일 잡을 겹쳐 실행하지 않으므로 저위험.
       if (app.terminationCompletionNotifiedAt) continue;
 
-      await db.collection("users").doc(app.uid as string).collection("notifications").add({
-        userId: app.uid,
-        type: "contractTerminating",
-        title: "계약 종료 완료",
-        body: `${app.businessName} 계약이 종료되었습니다. 이용해 주셔서 감사합니다.`,
-        data: {applicationId: doc.id, businessId: app.businessId, screen: "mySchedule"},
-        isRead: false,
-        createdAt: now,
-      });
-      await doc.ref.update({terminationCompletionNotifiedAt: now});
+      // [CF-NOTIF-01 수정] 알림+플래그를 배치로 원자 처리 — 알림 성공 후 update 실패 시 다음 실행에서 중복 발송 방지
+      const termBatch = db.batch();
+      termBatch.set(
+        db.collection("users").doc(app.uid as string).collection("notifications").doc(),
+        {
+          userId: app.uid,
+          type: "contractTerminating",
+          title: "계약 종료 완료",
+          body: `${app.businessName} 계약이 종료되었습니다. 이용해 주셔서 감사합니다.`,
+          data: {applicationId: doc.id, businessId: app.businessId, screen: "mySchedule"},
+          isRead: false,
+          createdAt: now,
+        }
+      );
+      termBatch.update(doc.ref, {terminationCompletionNotifiedAt: now});
+      await termBatch.commit();
       terminateD0Count++;
       } catch (err) {
         console.error(`[D-0 종료알림] 문서 ${doc.id} 처리 실패 — 나머지 계속:`, err);

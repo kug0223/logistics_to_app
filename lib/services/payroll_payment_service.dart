@@ -118,7 +118,7 @@ class PayrollPaymentService {
     required List<String> attendanceIds,
     required String processedBy,
     String? transferNote,
-    // 알림 발송용 — null이면 알림 생략. 각 항목은 attendanceIds와 동일 순서여야 함
+    // 알림 발송용 — null이면 알림 생략. 각 항목은 workerUserId 등 자체 완결적이므로 attendanceIds 순서와 무관
     List<TransferNotificationInfo>? notificationInfos,
   }) async {
     for (int i = 0; i < attendanceIds.length; i += 450) {
