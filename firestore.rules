@@ -1277,7 +1277,7 @@ service cloud.firestore {
                            'articles', 'templateId', 'slots', 'applicationIds'
                          ]) &&
                          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['articles', 'templateId', 'slots']) ||
-                          resource.data.get('workerSignedAt', null) == null))
+                          resource.data.status == 'pending_employer'))
                       );
 
       // [특이사항] voidContract() 실행 흐름: 계약서를 voided 전환 후 application 취소 루프 실행.
