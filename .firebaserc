@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "alfit-89567"
+    "default": "alfit-89567",
+    "dev": "alfit-89567",
+    "prod": "alfit-prod"
   }
 }
