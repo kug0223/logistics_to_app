@@ -237,7 +237,7 @@ class UserProvider with ChangeNotifier {
       }
       return false;
     } catch (e) {
-      _error = e.toString();
+      _error = e.toString().replaceFirst('Exception: ', '');
       debugPrint('❌ 회원가입 실패: $e');
       return false;
     } finally {
@@ -268,27 +268,9 @@ class UserProvider with ChangeNotifier {
       _error = '로그인에 실패했습니다';
       return false;
     } catch (e) {
-      _error = e.toString();
+      // auth_service가 이미 사용자 친화적 메시지로 throw하므로 'Exception: ' prefix만 제거
+      _error = e.toString().replaceFirst('Exception: ', '');
       debugPrint('❌ 로그인 실패: $e');
-      
-      // 사용자 친화적인 에러 메시지
-      final errStr = e.toString();
-      if (errStr.contains('invalid-credential') ||
-          errStr.contains('user-not-found') ||
-          errStr.contains('wrong-password') ||
-          errStr.contains('아이디 또는 비밀번호')) {
-        _error = '아이디 또는 비밀번호가 올바르지 않습니다';
-      } else if (errStr.contains('invalid-email')) {
-        _error = '유효하지 않은 이메일 형식입니다';
-      } else if (errStr.contains('network-request-failed') ||
-          errStr.contains('NETWORK_ERROR')) {
-        _error = '네트워크 연결을 확인해주세요';
-      } else if (errStr.contains('too-many-requests')) {
-        _error = '로그인 시도가 너무 많습니다. 잠시 후 다시 시도해주세요';
-      } else if (errStr.contains('user-disabled')) {
-        _error = '비활성화된 계정입니다. 관리자에게 문의해주세요';
-      }
-      
       return false;
     } finally {
       // [BUG-수정] SP-M-1: _loadUserData() 성공 시 내부에서 이미 _isLoading=false + notifyListeners() 처리됨.

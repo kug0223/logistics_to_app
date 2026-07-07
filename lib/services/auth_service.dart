@@ -41,8 +41,7 @@ class AuthService {
       final email = userData['email'] as String?;
       
       if (email == null || email.isEmpty) {
-        ToastHelper.showError('계정 정보에 이메일이 없습니다.');
-        throw Exception('이메일 정보 없음');
+        throw Exception('계정 정보에 이메일이 없습니다.');
       }
       
       // 2. 이메일로 Firebase Auth 로그인
@@ -65,16 +64,14 @@ class AuthService {
           if (data['isBlacklisted'] == true) {
             final reason = data['blacklistReason'] as String? ?? '이용 정책 위반';
             await _auth.signOut();
-            ToastHelper.showError('이용 제한된 계정입니다.\n사유: $reason\n고객센터에 문의해주세요.');
-            throw Exception('블랙리스트 사용자');
+            throw Exception('이용 제한된 계정입니다.\n사유: $reason\n고객센터에 문의해주세요.');
           }
 
           // 가입 승인 상태 체크
           final status = data['accountStatus'] as String? ?? 'active';
           if (status == 'pending') {
             await _auth.signOut();
-            ToastHelper.showError('가입 승인 대기 중입니다.\n슈퍼관리자 승인 후 이용 가능합니다.');
-            throw Exception('가입 승인 대기');
+            throw Exception('가입 승인 대기 중입니다.\n슈퍼관리자 승인 후 이용 가능합니다.');
           }
           if (status == 'rejected') {
             await _auth.signOut();
@@ -82,8 +79,7 @@ class AuthService {
             final msg = reason != null
                 ? '가입이 거절되었습니다.\n사유: $reason'
                 : '가입이 거절되었습니다.\n고객센터에 문의해주세요.';
-            ToastHelper.showError(msg);
-            throw Exception('가입 거절');
+            throw Exception(msg);
           }
 
           // 제재 기간 체크
@@ -98,8 +94,7 @@ class AuthService {
                   ? '노쇼 누적으로 서비스 이용이 영구 제한되었습니다.\n해제를 원하시면 고객센터에 문의해 주세요.'
                   : '노쇼로 인해 ${restrictedDate.year}년 ${restrictedDate.month}월 ${restrictedDate.day}일까지 이용이 제한됩니다.\n'
                     '(노쇼 1회=3일 · 2회=7일 · 3회=30일 제한)\n고객센터: 문의하기 메뉴 이용';
-              ToastHelper.showError(message);
-              throw Exception('이용 제한 사용자');
+              throw Exception(message);
             }
           }
 
@@ -113,8 +108,7 @@ class AuthService {
             result.user!.uid,
           );
         } else {
-          ToastHelper.showError('사용자 정보를 찾을 수 없습니다.');
-          throw Exception('Firestore에 사용자 정보 없음');
+          throw Exception('사용자 정보를 찾을 수 없습니다.');
         }
       }
       return null;
@@ -142,33 +136,26 @@ class AuthService {
           message = '네트워크 연결을 확인해주세요.';
           break;
       }
-      ToastHelper.showError(message);
       throw Exception(message);
-      
+
     } on FirebaseException catch (e) {
       // Firestore 예외 (FirebaseAuthException이 아닌 것) — 네트워크·권한·토큰 만료 등
       debugPrint('❌ [signIn] FirebaseException: ${e.code} / ${e.message}');
       String message;
       if (e.code == 'permission-denied' || e.code == 'unauthenticated') {
-        message = '인증이 만료되었습니다. 다시 시도해주세요';
+        message = '인증이 만료되었습니다. 다시 시도해주세요.';
       } else if (e.code == 'unavailable' || e.code == 'network-request-failed') {
-        message = '네트워크 연결을 확인해주세요';
+        message = '네트워크 연결을 확인해주세요.';
       } else {
-        message = '로그인 중 오류가 발생했습니다';
+        message = '로그인 중 오류가 발생했습니다.';
       }
-      ToastHelper.showError(message);
       throw Exception(message);
 
     } catch (e) {
-      // 그 외 예외 (Firestore 조회 실패, fromMap 파싱 오류 등)
+      // 내부에서 의도적으로 throw한 Exception은 그대로 전파 (메시지가 이미 사용자 친화적)
       debugPrint('❌ [signIn] 알 수 없는 오류: $e');
-      final errStr = e.toString();
-      // 내부에서 의도적으로 throw한 사용자 친화적 메시지 — 재래핑 없이 그대로 전파
-      if (errStr.contains('아이디 또는 비밀번호') || errStr.contains('사용자를 찾을 수 없습니다')) {
-        rethrow;
-      }
-      ToastHelper.showError('로그인 중 오류가 발생했습니다');
-      throw Exception('로그인 실패: $e');
+      if (e is Exception) rethrow;
+      throw Exception('로그인 중 오류가 발생했습니다.');
     }
   }
 
@@ -286,11 +273,10 @@ class AuthService {
           message = '이메일/비밀번호 로그인이 비활성화되어 있습니다.';
           break;
       }
-      ToastHelper.showError(message);
       throw Exception(message);
     } catch (e) {
-      ToastHelper.showError('회원가입 중 오류가 발생했습니다.');
-      throw Exception('회원가입 실패: $e');
+      if (e is Exception) rethrow;
+      throw Exception('회원가입 중 오류가 발생했습니다.');
     }
   }
 
@@ -324,8 +310,7 @@ class AuthService {
       await _auth.signOut();
       ToastHelper.showInfo('로그아웃되었습니다.');
     } catch (e) {
-      ToastHelper.showError('로그아웃 중 오류가 발생했습니다.');
-      throw Exception('로그아웃 실패: $e');
+      throw Exception('로그아웃 중 오류가 발생했습니다.');
     }
   }
 
@@ -366,8 +351,7 @@ class AuthService {
       });
       ToastHelper.showSuccess('사용자 권한이 업데이트되었습니다.');
     } catch (e) {
-      ToastHelper.showError('권한 업데이트에 실패했습니다.');
-      throw Exception('권한 업데이트 실패: $e');
+      throw Exception('권한 업데이트에 실패했습니다.');
     }
   }
 
@@ -388,11 +372,10 @@ class AuthService {
           message = '등록되지 않은 이메일입니다.';
           break;
       }
-      ToastHelper.showError(message);
       throw Exception(message);
     } catch (e) {
-      ToastHelper.showError('이메일 발송 중 오류가 발생했습니다.');
-      throw Exception('이메일 발송 실패: $e');
+      if (e is Exception) rethrow;
+      throw Exception('이메일 발송 중 오류가 발생했습니다.');
     }
   }
 
