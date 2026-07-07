@@ -2449,9 +2449,11 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       }
     } catch (e) {
       debugPrint('❌ 지원 실패: $e');
-      ToastHelper.showError(
-        e is NetworkOfflineException ? e.message : '지원에 실패했습니다',
-      );
+      if (mounted) {
+        ToastHelper.showError(
+          e is NetworkOfflineException ? e.message : '지원에 실패했습니다',
+        );
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -2580,7 +2582,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       }
     } catch (e) {
       debugPrint('❌ 확정 취소 실패: $e');
-      ToastHelper.showError('확정 취소에 실패했습니다');
+      if (mounted) ToastHelper.showError('확정 취소에 실패했습니다');
     } finally {
       if (mounted) {
         setState(() {

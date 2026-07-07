@@ -461,7 +461,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     try {
       final businesses = await _getAdminBusinesses();
       if (businesses.isEmpty) {
-        ToastHelper.showWarning('등록된 사업장이 없습니다');
+        if (mounted) ToastHelper.showWarning('등록된 사업장이 없습니다');
         return;
       }
       if (!mounted) return;
@@ -476,7 +476,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       );
     } catch (e) {
       debugPrint('❌ 사업장 조회 실패: $e');
-      ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+      if (mounted) ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
     }
   }
 
@@ -660,6 +660,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         _contractTOItems[key]?.setWorkDetails(details, stats);
       } catch (e) {
         debugPrint('❌ 고정근무 업무 상세 로드 실패: $e');
+        if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
       }
       if (mounted) setState(() => _loadingSlots.remove(key));
     } else {
@@ -676,6 +677,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           cachedItem.setWorkDetails(details, stats);
         } catch (e) {
           debugPrint('❌ 고정근무 업무 상세 로드 실패 (재시도): $e');
+          if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
         }
         if (mounted) setState(() => _loadingSlots.remove(key));
       }
@@ -706,6 +708,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         );
       } catch (e) {
         debugPrint('❌ 슬롯 업무 상세 로드 실패: $e');
+        if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
       }
       if (mounted) setState(() => _loadingSlots.remove(key));
     }
@@ -748,7 +751,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     try {
       final businesses = await _getAdminBusinesses();
       if (businesses.isEmpty) {
-        ToastHelper.showWarning('등록된 사업장이 없습니다');
+        if (mounted) ToastHelper.showWarning('등록된 사업장이 없습니다');
         return;
       }
       if (!mounted) return;
@@ -765,7 +768,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       }
     } catch (e) {
       debugPrint('❌ 지원명단 조회 실패: $e');
-      ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+      if (mounted) ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
     }
   }
 
@@ -802,7 +805,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       }
     } catch (e) {
       debugPrint('❌ 사업장 조회 실패: $e');
-      ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+      if (mounted) ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
     }
   }
 }

@@ -16,8 +16,6 @@ AttendanceModel _base({
   bool adminConfirmed = false,
   String wageStatus = 'pending',
   String status = 'present',
-  String? checkIn,
-  String? checkOut,
 }) =>
     AttendanceModel(
       id: 'test-att-id',
@@ -31,8 +29,6 @@ AttendanceModel _base({
       createdAt: DateTime(2026, 6, 15, 9, 0),
       wageStatus: wageStatus,
       adminConfirmed: adminConfirmed,
-      checkIn: checkIn,
-      checkOut: checkOut,
     );
 
 void main() {

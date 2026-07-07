@@ -53,7 +53,8 @@ extension BusinessFirestore on FirestoreService {
     try {
       debugPrint('🔍 [FirestoreService] 내 사업장 조회 시작...');
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetMyBusiness');
+          .httpsCallable('callableGetMyBusiness',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
       final response = await callable.call<Map<String, dynamic>>({});
       final list = (response.data['businesses'] as List?) ?? [];
       final businesses = list.map((e) {

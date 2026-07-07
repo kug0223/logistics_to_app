@@ -184,7 +184,10 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       if (mounted) setState(() => _isLoading = false);
     } catch (e) {
       debugPrint('❌ 추가 데이터 로드 실패: $e');
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+      }
     }
   }
 
@@ -1654,7 +1657,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri);
     } else {
-      ToastHelper.showInfo('전화: $phone');
+      if (mounted) ToastHelper.showInfo('전화: $phone');
     }
   }
 

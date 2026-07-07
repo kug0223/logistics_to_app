@@ -451,12 +451,24 @@ class AuthService {
       //   클라이언트 EncryptionHelper 복호화 불필요.
       try {
         await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-            .httpsCallable('recordDeletedAccount')
+            .httpsCallable('recordDeletedAccount',
+                options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
             .call();
       } catch (e) {
         debugPrint('⚠️ 탈퇴 기록 저장 실패 (계속 진행): $e');
         // best-effort — 기록 실패해도 계정 삭제는 진행
       }
+
+      // [M-01 fix] 스텝 11(BUSINESS_ADMIN 사업장 정리)에서 users 문서가 필요하므로
+      // 삭제 전에 role·businessId를 미리 읽어둔다.
+      // 삭제 후 재조회하면 exists=false → 사업장 비활성화 로직이 실행되지 않는 버그.
+      String? preDeleteRole;
+      String? preDeleteBusinessId;
+      try {
+        final preDoc = await _firestore.collection('users').doc(user.uid).get();
+        preDeleteRole = preDoc.data()?['role'] as String?;
+        preDeleteBusinessId = preDoc.data()?['businessId'] as String?;
+      } catch (_) {}
 
       // 3. Firestore 사용자 문서 삭제 — 개인정보보호법 제21조
       // Storage URL 참조를 먼저 제거해야 broken URL 방지 (CLAUDE.md 삭제 순서 규칙)
@@ -692,15 +704,11 @@ class AuthService {
       //   [점검] businesses Storage(로고·사진)는 개인정보가 아니므로 보존.
       //          슈퍼관리자가 비활성 사업장 일괄 정리 시 삭제 예정.
       // ──────────────────────────────────────────────────────────────
-      // [AUTH-H2] recordDeletedAccount CF로 이전 후 userDoc 참조가 제거됐으나
-      //   BUSINESS_ADMIN 사업장 정리 로직에서 role·businessId 확인이 필요하므로 재조회
-      final userDoc = await _firestore.collection('users').doc(user.uid).get();
-      if (userDoc.exists) {
-        final roleStr = userDoc.data()?['role'] as String?;
-        final businessId = userDoc.data()?['businessId'] as String?;
-
-        if (roleStr == 'BUSINESS_ADMIN' && businessId != null) {
-          try {
+      // [M-01 fix] 스텝 3에서 users 문서를 삭제했으므로 재조회 불가.
+      // 삭제 전에 미리 읽어둔 preDeleteRole·preDeleteBusinessId 사용.
+      if (preDeleteRole == 'BUSINESS_ADMIN' && preDeleteBusinessId != null) {
+        final businessId = preDeleteBusinessId;
+        try {
             final bizRef = _firestore.collection('businesses').doc(businessId);
             final bizDoc = await bizRef.get();
 
@@ -878,7 +886,6 @@ class AuthService {
             debugPrint('⚠️ 계정 삭제: 사업장 정리 실패 (계속 진행): $e');
           }
         }
-      }
 
       // 12. Firebase Auth 계정 삭제 — 개인정보보호법 제21조 (이메일·로그인 정보)
       await user.delete();
@@ -924,7 +931,8 @@ class AuthService {
       // 3. [AUTH-M1] 다른 기기 세션 무효화 — best-effort (실패해도 비밀번호 변경은 유효)
       try {
         await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-            .httpsCallable('revokeUserSession')
+            .httpsCallable('revokeUserSession',
+                options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
             .call();
       } catch (e) {
         debugPrint('⚠️ [changePassword] revokeUserSession 실패: $e');

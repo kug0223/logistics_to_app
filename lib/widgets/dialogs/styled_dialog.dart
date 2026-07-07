@@ -1,6 +1,7 @@
 ﻿// lib/widgets/dialogs/styled_dialog.dart
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
 
@@ -353,7 +354,7 @@ class StyledDialogTextField extends StatelessWidget {
   final TextEditingController controller;
   final String labelText;
   final String? hintText;
-  final IconData prefixIcon;
+  final IconData? prefixIcon;
   final Widget? suffixIcon;
   final bool obscureText;
   final TextInputType? keyboardType;
@@ -363,13 +364,15 @@ class StyledDialogTextField extends StatelessWidget {
   final void Function(String)? onFieldSubmitted;
   final bool enabled;
   final bool autofocus;
+  final List<TextInputFormatter>? inputFormatters;
+  final int? maxLines;
 
   const StyledDialogTextField({
     super.key,
     required this.controller,
     required this.labelText,
     this.hintText,
-    required this.prefixIcon,
+    this.prefixIcon,
     this.suffixIcon,
     this.obscureText = false,
     this.keyboardType,
@@ -379,6 +382,8 @@ class StyledDialogTextField extends StatelessWidget {
     this.onFieldSubmitted,
     this.enabled = true,
     this.autofocus = false,
+    this.inputFormatters,
+    this.maxLines = 1,
   });
 
   @override
@@ -403,8 +408,11 @@ class StyledDialogTextField extends StatelessWidget {
           onSubmitted: onFieldSubmitted,
           obscureText: obscureText,
           keyboardType: keyboardType,
+          inputFormatters: inputFormatters,
           onChanged: onChanged,
           maxLength: maxLength,
+          maxLines: maxLines,
+          minLines: 1,
           style: ResponsiveHelper.bodyStyle(context),
           decoration: InputDecoration(
             hintText: hintText,
@@ -412,11 +420,13 @@ class StyledDialogTextField extends StatelessWidget {
               context,
               color: AppColors.grey400,
             ),
-            prefixIcon: Icon(
-              prefixIcon,
-              color: theme.primaryColor,
-              size: ResponsiveHelper.iconSize(context, 22),
-            ),
+            prefixIcon: prefixIcon != null
+                ? Icon(
+                    prefixIcon,
+                    color: theme.primaryColor,
+                    size: ResponsiveHelper.iconSize(context, 22),
+                  )
+                : null,
             suffixIcon: suffixIcon,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),

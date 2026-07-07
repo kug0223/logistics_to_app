@@ -157,7 +157,7 @@ class IdCardHelper {
           successCount++;
         }
       } catch (e) {
-        debugPrint('⚠️ 신분증 요청 실패 (${target['name']}): $e');
+        debugPrint('⚠️ 신분증 요청 실패: $e');
       }
     }
 

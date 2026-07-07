@@ -728,7 +728,7 @@ class _ScheduleRequestManagementDialogState
     );
 
     final rejectReason = reasonController.text.trim().isEmpty ? null : reasonController.text.trim();
-    reasonController.dispose();
+    WidgetsBinding.instance.addPostFrameCallback((_) => reasonController.dispose());
     if (confirmed != true) return;
     if (!mounted) return;
 

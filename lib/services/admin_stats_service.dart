@@ -389,9 +389,16 @@ class AdminStatsService {
 
     final infoMap = await _fetchUserInfoByRecords(attendance);
 
+    // (userId, workDate) 기준 중복 제거 — 동일 근무자·날짜 문서가 2개 이상이면 이중 계산 방지
+    final seen = <String>{};
+    final dedupedAttendance = attendance.where((a) {
+      final key = '${a.userId}_${a.workDate.millisecondsSinceEpoch}';
+      return seen.add(key);
+    }).toList();
+
     // 직원별 집계
     final workerMap = <String, List<AttendanceModel>>{};
-    for (final a in attendance) {
+    for (final a in dedupedAttendance) {
       workerMap.putIfAbsent(a.userId, () => []).add(a);
     }
 
@@ -401,6 +408,7 @@ class AdminStatsService {
       for (final r in records) {
         switch (r.status) {
           case AttendanceModel.statusPresent:
+          case AttendanceModel.statusEarlyLeave:
             present++;
           case AttendanceModel.statusLate:
             late++;
@@ -563,7 +571,8 @@ class AdminStatsService {
     }
 
     final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-        .httpsCallable('callableGetUsersBatch');
+        .httpsCallable('callableGetUsersBatch',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
 
     for (final entry in grouped.entries) {
       final businessId = entry.key;
@@ -601,7 +610,8 @@ class AdminStatsService {
     }
 
     final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-        .httpsCallable('callableGetUsersBatch');
+        .httpsCallable('callableGetUsersBatch',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
 
     for (final entry in grouped.entries) {
       final businessId = entry.key;

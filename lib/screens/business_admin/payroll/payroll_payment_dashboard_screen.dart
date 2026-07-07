@@ -741,7 +741,7 @@ class _PayrollPaymentDashboardScreenState
     } catch (e) {
       if (mounted) ToastHelper.showError('처리에 실패했습니다');
     } finally {
-      ctrl.dispose();
+      WidgetsBinding.instance.addPostFrameCallback((_) => ctrl.dispose());
       if (mounted) setState(() => _isTransferring = false);
     }
   }
@@ -807,7 +807,7 @@ class _PayrollPaymentDashboardScreenState
     } catch (e) {
       if (mounted) ToastHelper.showError('처리에 실패했습니다');
     } finally {
-      ctrl.dispose();
+      WidgetsBinding.instance.addPostFrameCallback((_) => ctrl.dispose());
       if (mounted) setState(() => _isTransferring = false);
     }
   }

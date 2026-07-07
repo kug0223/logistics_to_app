@@ -470,6 +470,8 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
       if (!context.mounted) return;
     } catch (e) {
       debugPrint('❌ 지원서/사용자 정보 로드 실패: $e');
+      if (context.mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+      return;
     }
 
     if (app == null || !context.mounted) return;
@@ -529,6 +531,10 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
         periodStart: settleableRecords.first.workDate,
         periodEnd: settleableRecords.last.workDate,
         attendanceIds: settleableRecords.map((r) => r.id).toList(),
+        // [I-02] requestedAmount·netAmount는 화면 캐시(_records) 기준 집계.
+        // 승인 시 서버 재조회에서 wageConfirmed 항목만 실제 이체되므로
+        // 다른 관리자가 일부 항목을 취소한 상태라면 기록 금액 ≠ 실제 이체 금액이 될 수 있음.
+        // 실제 이중 이체는 방어되나 운영 감사 시 금액 불일치로 보일 수 있음.
         requestedAmount: settleableRecords.fold(0,
             (acc, r) => acc + (r.wageDetail?.totalAmount ?? 0)),
         netAmount: totalNet,

@@ -196,6 +196,13 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
               _loadMore();
             }
           });
+        } else if (_filteredApplications.isEmpty && _hasMore &&
+            _autoLoadCount >= _maxAutoLoad) {
+          // [W-01 fix] 자동로드 5회 소진 후에도 필터 통과 항목 없음.
+          // _hasMore=true 유지 시 _onScroll이 계속 _loadMore()를 호출하는 무한루프 발생.
+          // hasMore를 닫아 추가 로드 차단 — 실제 데이터가 더 있더라도 클라이언트 필터가
+          // 100건(5×20)을 전부 탈락시킨 것이므로 UX상 종료가 적절.
+          setState(() => _hasMore = false);
         }
       }
     } catch (e) {

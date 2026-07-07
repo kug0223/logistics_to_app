@@ -12,6 +12,7 @@ import '../../services/firestore_service.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/image_helper.dart';
+import '../../utils/toast_helper.dart';
 import '../../theme/app_colors.dart';
 import 'styled_dialog.dart';
 import '../../widgets/common/common_widgets.dart';
@@ -75,6 +76,7 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
       debugPrint('❌ 상세 정보 로드 실패: $e');
       if (!mounted) return;
       setState(() => _isLoading = false);
+      ToastHelper.showError('일정 정보를 불러오는데 실패했습니다.');
     }
   }
 

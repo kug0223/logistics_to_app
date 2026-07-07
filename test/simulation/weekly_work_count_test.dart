@@ -7,6 +7,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ALfit/models/core/attendance_model.dart';
 import 'package:ALfit/utils/week_helper.dart';
 
+DateTime? _parseTime(DateTime date, String? hhmm) {
+  if (hhmm == null) return null;
+  final parts = hhmm.split(':');
+  return DateTime(date.year, date.month, date.day,
+      int.parse(parts[0]), int.parse(parts[1]));
+}
+
 // ── 테스트용 AttendanceModel 생성 헬퍼 ──────────────────────────────
 AttendanceModel _att({
   required String userId,
@@ -24,8 +31,8 @@ AttendanceModel _att({
       businessName: '테스트 사업장',
       workDate: workDate,
       workType: 'PICK',
-      checkIn: checkIn,
-      checkOut: checkOut,
+      checkInAt: _parseTime(workDate, checkIn),
+      checkOutAt: _parseTime(workDate, checkOut),
       status: status,
       createdAt: DateTime.now(),
     );

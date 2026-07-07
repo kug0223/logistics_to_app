@@ -319,7 +319,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
           );
         }
 
-        if (_isOnboardingCompleted == false) {
+        if (_isOnboardingCompleted == false && !user.isSuperAdmin) {
           debugPrint('📚 온보딩 미완료 → OnboardingScreen');
           return OnboardingScreen(
             role: user.roleString,

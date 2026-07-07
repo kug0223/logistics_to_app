@@ -117,6 +117,7 @@ class _AdminContractManagementScreenState
       });
     } catch (e) {
       debugPrint('❌ 계약 목록 로드 실패: $e');
+      if (mounted) ToastHelper.showError('계약서 목록을 불러오는데 실패했습니다.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -141,6 +142,7 @@ class _AdminContractManagementScreenState
       });
     } catch (e) {
       debugPrint('❌ 계약 목록 추가 로드 실패: $e');
+      if (mounted) ToastHelper.showError('계약서를 더 불러오는데 실패했습니다.');
     } finally {
       if (mounted) setState(() => _isLoadingMore = false);
     }

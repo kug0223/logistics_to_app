@@ -10,21 +10,27 @@ extension TOFirestore on FirestoreService {
   // 사업장 공고 등록 개수 제한 (슈퍼관리자 설정)
   // ───────────────────────────────────────────────────────
 
-  /// 관리자 uid 기준 전체 사업장의 active TO 합산 개수 반환
+  /// 관리자 uid 기준 전체 사업장의 active TO 합산 개수 반환.
+  /// Firestore 오류 시 0 반환(fail-open) — 실제 제한은 서버 CF가 재확인
   Future<int> countAllActiveTO(String uid) async {
     if (uid.isEmpty) return 0;
-    final myBusinesses = await getMyBusiness(uid);
-    if (myBusinesses.isEmpty) return 0;
-    // Future.wait의 클로저에서 total += 직접 수정하면 race condition 발생 — fold로 안전하게 합산
-    final counts = await Future.wait<int>(myBusinesses.map((biz) async {
-      final snap = await _firestore
-          .collection('tos')
-          .where('businessId', isEqualTo: biz.id)
-          .where('status', isEqualTo: TOStatus.active)
-          .get(const GetOptions(source: Source.server)); // 캐시 우회 — TO 등록 제한 정확도
-      return snap.docs.length;
-    }));
-    return counts.fold<int>(0, (acc, c) => acc + c);
+    try {
+      final myBusinesses = await getMyBusiness(uid);
+      if (myBusinesses.isEmpty) return 0;
+      // Future.wait의 클로저에서 total += 직접 수정하면 race condition 발생 — fold로 안전하게 합산
+      final counts = await Future.wait<int>(myBusinesses.map((biz) async {
+        final snap = await _firestore
+            .collection('tos')
+            .where('businessId', isEqualTo: biz.id)
+            .where('status', isEqualTo: TOStatus.active)
+            .get(const GetOptions(source: Source.server)); // 캐시 우회 — TO 등록 제한 정확도
+        return snap.docs.length;
+      }));
+      return counts.fold<int>(0, (acc, c) => acc + c);
+    } catch (e) {
+      debugPrint('⚠️ [TOFirestore] active TO 개수 조회 실패, fail-open(0): $e');
+      return 0;
+    }
   }
 
   /// settings/app_config.maxActiveTOPerBusiness 읽기, 미설정 시 기본값 4

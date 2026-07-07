@@ -54,6 +54,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
 
   bool _isLoading = true;
   bool _hasError = false;
+  bool _isProcessing = false;
 
   // 전량 원본 데이터 (DB 재쿼리 없이 메모리 필터 사용)
   List<MonthlyReviewModel> _rawWritten = [];
@@ -145,6 +146,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
   }
 
   Future<void> _showReplyDialog(MonthlyReviewModel review) async {
+    if (_isProcessing) return;
     final ctrl = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
@@ -172,18 +174,23 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
       ),
     );
     final text = ctrl.text.trim();
-    ctrl.dispose();
+    WidgetsBinding.instance.addPostFrameCallback((_) => ctrl.dispose());
     if (confirmed != true || !mounted) return;
     if (text.isEmpty) return;
-    final ok = await _reviewService.addBusinessResponse(
-      reviewId: review.id,
-      response: text,
-    );
-    if (!mounted) return;
-    if (ok) {
-      await _loadReviews();
-    } else {
-      ToastHelper.showError('답변 등록에 실패했습니다');
+    setState(() => _isProcessing = true);
+    try {
+      final ok = await _reviewService.addBusinessResponse(
+        reviewId: review.id,
+        response: text,
+      );
+      if (!mounted) return;
+      if (ok) {
+        await _loadReviews();
+      } else {
+        ToastHelper.showError('답변 등록에 실패했습니다');
+      }
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -230,6 +237,8 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
       _requestDeadlines = {for (final r in allNonPublished) r.id: r.deadline};
 
       // workerName 누락 항목 보완 조회 (CF callableGetUsersBatch 경유 — 서버 소속 검증)
+      // [S-01 fix] Future.wait 이후 mounted 체크 — CF 과금·dispose된 State 쓰기 방지
+      if (!mounted) return;
       final missingNameIds = _rawPending
           .where((r) => r.workerName.isEmpty && r.workerId.isNotEmpty)
           .map((r) => r.workerId)
@@ -239,7 +248,8 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
         final resolvedMap = <String, String>{};
         try {
           final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-              .httpsCallable('callableGetUsersBatch');
+              .httpsCallable('callableGetUsersBatch',
+                  options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
           final response = await callable.call<Map<String, dynamic>>({
             'uids': ids,
             'businessId': _cachedBusinessId,

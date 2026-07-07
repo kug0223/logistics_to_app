@@ -379,8 +379,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         'workDate': FormatHelper.formatDateISO(widget.date),
         'scheduledStart': scheduledStart,
         'scheduledEnd': scheduledEnd,
-        'actualStart': attendance.checkIn!,
-        'actualEnd': attendance.checkOut!,
+        'actualStart': attendance.checkIn!.split(':').take(2).join(':'),
+        'actualEnd': attendance.checkOut!.split(':').take(2).join(':'),
         'breakMinutes': effectiveBreak,
         'scheduledBreakMinutes': breakMinutes,
         'nightAllowanceApplied': nightAllowanceApplied,
@@ -558,7 +558,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           final params = _wageParams[appId];
           if (params == null) throw StateError('계산 파라미터 없음: $appId');
           final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-              .httpsCallable('callableCalculateAndConfirmWage')
+              .httpsCallable('callableCalculateAndConfirmWage',
+                  options: HttpsCallableOptions(timeout: const Duration(seconds: 30)))
               .call({
             ...params,
             'attendanceId': attendance.id,
@@ -615,11 +616,14 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       }
       
       if (failCount > 0) {
-        ToastHelper.showWarning('$failCount명 처리 실패');
+        if (mounted) ToastHelper.showWarning('$failCount명 처리 실패');
       }
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('❌ 일괄 급여 확정 CF 오류 [${e.code}]: ${e.message}');
+      if (mounted) ToastHelper.showError('급여 확정 실패: ${e.message ?? e.code}');
     } catch (e) {
       debugPrint('❌ 일괄 급여 확정 실패: $e');
-      ToastHelper.showError('급여 확정에 실패했습니다');
+      if (mounted) ToastHelper.showError('급여 확정에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -706,6 +710,10 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       for (final snapshot in snapshots) {
         for (final doc in snapshot.docs) {
           if (doc.id == excludeId) continue;
+          // [BUG-TAX-03 fix] getMonthlyWorkDays와 일관성: NO_SHOW 레코드 제외.
+          // NO_SHOW가 wageStatus='calculated'로 저장되고 totalAmount>0이면 소급 기준 금액이
+          // 부풀려져 보험료 소급 공제액이 과다 계산됨.
+          if ((doc.data()['status'] as String?) == 'NO_SHOW') continue;
           final wageDetail = doc.data()['wageDetail'] as Map<String, dynamic>?;
           total += (wageDetail?['totalAmount'] as num?)?.toInt() ?? 0;
         }
@@ -970,7 +978,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       final indivParams = _wageParams[app.id];
       if (indivParams == null) throw StateError('계산 파라미터 없음: ${app.id}');
       final indivResult = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableCalculateAndConfirmWage')
+          .httpsCallable('callableCalculateAndConfirmWage',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)))
           .call({
         ...indivParams,
         'attendanceId': attendance.id,
@@ -1008,10 +1017,13 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         });
       }
       
-      ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 확정 완료');
+      if (mounted) ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 확정 완료');
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('❌ 개별 급여 확정 CF 오류 [${e.code}]: ${e.message}');
+      if (mounted) ToastHelper.showError('급여 확정 실패: ${e.message ?? e.code}');
     } catch (e) {
       debugPrint('❌ 개별 급여 확정 실패: $e');
-      ToastHelper.showError('급여 확정에 실패했습니다');
+      if (mounted) ToastHelper.showError('급여 확정에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -1063,7 +1075,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         });
       }
 
-      ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 수정 완료');
+      if (mounted) ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 수정 완료');
     } catch (e) {
       debugPrint('❌ 급여 수정 실패: $e');
       if (mounted) ToastHelper.showError(e.toString().replaceAll('Exception: ', ''));
@@ -1090,6 +1102,10 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   /// 완전한 방어를 원하면 wageCalculated 상태 확인 트랜잭션을 추가해야 하나 현 단계에서 허용.
   // [B-8] showToast: 개별 취소 시 true, 일괄 취소(_cancelSelectedWages) 시 false — 중복 토스트 방지
   Future<void> _processWageCancel(ApplicationModel app, AttendanceModel attendance, {bool showToast = true}) async {
+    // [U-01 fix] _confirmWages 루프 진행 중 다른 경로로 취소 요청이 들어오면 UI 상태 불일치 발생
+    // sibling 메서드(_processIndividualConfirm, _processWageUpdate)와 동일하게 가드 추가
+    if (_isProcessing) return;
+    setState(() => _isProcessing = true);
     try {
       final user = widget.userMap[app.uid];
 
@@ -1144,11 +1160,13 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         });
       }
       
-      if (showToast) ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 확정 취소');
+      if (showToast && mounted) ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 확정 취소');
     } catch (e) {
       debugPrint('❌ 급여 취소 실패: $e');
       // StateError: 이미 마감된 급여 — 안내 메시지 그대로 표시
-      ToastHelper.showError(e is StateError ? e.message : '급여 취소에 실패했습니다');
+      if (mounted) ToastHelper.showError(e is StateError ? e.message : '급여 취소에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -1181,10 +1199,10 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         if (attendance == null) continue;
         await _processWageCancel(app, attendance, showToast: false); // [B-8] 일괄 취소 시 개별 토스트 억제
       }
-      ToastHelper.showSuccess('$count명 급여 확정 취소 완료');
+      if (mounted) ToastHelper.showSuccess('$count명 급여 확정 취소 완료');
     } catch (e) {
       debugPrint('❌ 일괄 급여 취소 실패: $e');
-      ToastHelper.showError('급여 확정 취소에 실패했습니다');
+      if (mounted) ToastHelper.showError('급여 확정 취소에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -1799,7 +1817,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               final wage = _calculatedWages[app.id];
 
               final name = user?.name ?? '이름 없음';
-              final workTime = '${attendance?.checkIn ?? '-'} ~ ${attendance?.checkOut ?? '-'}';
+              final workTime = '${attendance?.checkIn?.split(':').take(2).join(':') ?? '-'} ~ ${attendance?.checkOut?.split(':').take(2).join(':') ?? '-'}';
               final workHours = wage?.workHours.toStringAsFixed(1) ?? '-';
               final netWage = wage != null
                   ? FormatHelper.formatWage(wage.effectiveNetWage)
@@ -2075,7 +2093,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
     final name = user?.name ?? '이름 없음';
     final genderAge = _formatGenderAge(user);
-    final workTime = '${attendance?.checkIn ?? '-'} ~ ${attendance?.checkOut ?? '-'}';
+    final workTime = '${attendance?.checkIn?.split(':').take(2).join(':') ?? '-'} ~ ${attendance?.checkOut?.split(':').take(2).join(':') ?? '-'}';
     final workHours = wage?.workHours.toStringAsFixed(1) ?? '-';
     final hasDeductions = wage != null &&
         wage.taxDeductionType != InsuranceRateModel.typeNone &&

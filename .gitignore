@@ -72,3 +72,7 @@ GoogleService-Info.plist
 # 환경별 Firebase 설정 디렉토리 (API 키 포함)
 config/dev/
 config/prod/
+
+# Firebase 서비스 계정 키 (절대 커밋 금지)
+functions/*-adminsdk-*.json
+functions/service-account-key.json

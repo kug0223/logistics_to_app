@@ -65,8 +65,11 @@ class PayslipData {
     String ownerName = '',
     DateTime? paymentDate,
   }) {
-    assert(attendance.wageDetail != null,
-        'wageDetail이 없는 출근 기록으로는 임금명세서를 생성할 수 없습니다');
+    // assert는 release 빌드에서 제거됨 → ArgumentError로 교체해 런타임 크래시 방지
+    final wd = attendance.wageDetail;
+    if (wd == null) {
+      throw ArgumentError('wageDetail이 없는 출근 기록으로는 임금명세서를 생성할 수 없습니다');
+    }
     return PayslipData(
       businessName: attendance.businessName,
       businessNumber: businessNumber,
@@ -76,10 +79,10 @@ class PayslipData {
       workerBirthDate: workerBirthDate,
       workDate: attendance.workDate,
       workType: attendance.workType,
-      checkIn: attendance.checkIn,
-      checkOut: attendance.checkOut,
-      workMinutes: attendance.wageDetail!.workMinutes,
-      wageDetail: attendance.wageDetail!,
+      checkIn: attendance.checkIn?.split(':').take(2).join(':'),
+      checkOut: attendance.checkOut?.split(':').take(2).join(':'),
+      workMinutes: wd.workMinutes,
+      wageDetail: wd,
       paymentDate: paymentDate,
     );
   }
@@ -329,7 +332,8 @@ class PayslipPdfBuilder {
     rows.add(_payRow(
       '기본급 ($wageLabel ${_fmtWon(wd.baseWage)})',
       _fmtWon(wd.baseAmount),
-      '${_fmtMin(wd.workMinutes - wd.overtimeMinutes)} 근무',
+      // [Q-02 fix] overtimeMinutes >= workMinutes 시 음수가 되어 '- 근무' 표시되는 것 방지
+      '${_fmtMin((wd.workMinutes - wd.overtimeMinutes).clamp(0, wd.workMinutes))} 근무',
       ts,
     ));
 
@@ -610,7 +614,8 @@ class PayslipPdfBuilder {
   }
 
   static String _fmtWon(int amount) {
-    if (amount == 0) return '-';
+    // [Q-01 fix] 0원은 '-'가 아닌 '0원'으로 표시 — 실수령액 0인 경우 법적 명세 명확성 확보
+    if (amount == 0) return '0원';
     final abs = amount.abs();
     final formatted = abs.toString().replaceAllMapped(
       RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),

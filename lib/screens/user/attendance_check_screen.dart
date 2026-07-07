@@ -123,16 +123,19 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
         }
       }
 
-      // 각 근무의 출근 기록 병렬 조회 (성능 개선)
+      // 각 근무의 출근 기록 병렬 조회 — 로컬 맵으로 수집 후 한번에 반영
+      // (클로저 내 직접 변이 시 부분 실패 때 stale/new 데이터 혼재 방지)
+      final tempMap = <String, AttendanceModel?>{};
       await Future.wait(
         todayWorks.map((work) async {
           final attendance = await _firestoreService.getTodayAttendance(
             userId: uid,
             applicationId: work.id,
           );
-          _attendanceMap[work.id] = attendance;
+          tempMap[work.id] = attendance;
         }),
       );
+      _attendanceMap.addAll(tempMap);
 
       // [C-001] 어제 날짜 출근 기록이 퇴근 완료인 항목은 오늘 화면에서 제외 (stale 방지)
       // work.workDate 대신 att.workDate 기준으로 어제를 판단:
@@ -192,9 +195,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
     final now = DateTime.now();
 
     // 장기 근무는 오늘 날짜 기준, 단기 근무는 workDate 기준으로 scheduledStart 구성
-    final baseDate = (work.workDays != null && work.workDays!.isNotEmpty)
-        ? now
-        : work.workDate;
+    final baseDate = work.isLongTermApplication ? now : work.workDate;
     final scheduledStart = DateTime(
       baseDate.year, baseDate.month, baseDate.day, h, m,
     );
@@ -202,7 +203,10 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
     // h < 6 (자정 근처 새벽 근무)이면 workDate + 1일 기준으로도 체크
     // ex: workDate = 5/30, startTime = "00:30" → scheduledStart = 5/30 00:30
     final windowStart = scheduledStart.subtract(const Duration(minutes: 60));
-    final windowEnd   = scheduledStart.add(const Duration(hours: 2));
+    // 야간 시프트(20:00~): 익일 새벽까지 체크인 가능 → 최대 08:00까지 = +10h
+    final windowEnd = h >= 20
+        ? scheduledStart.add(const Duration(hours: 10))
+        : scheduledStart.add(const Duration(hours: 2));
 
     // 기본 체크
     if (now.isAfter(windowStart) && now.isBefore(windowEnd)) return true;
@@ -282,6 +286,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
       _startLocationTimer();
     } catch (e) {
       debugPrint('⚠️ [AttendanceCheckScreen] 위치 공유 동의 실패: $e');
+      if (mounted) ToastHelper.showError('위치 공유 동의 저장에 실패했습니다. 다시 시도해주세요.');
     } finally {
       _isGrantingConsent = false;
     }
@@ -446,8 +451,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
       // 3. Firestore 출근 기록 저장 (비콘 방식은 lat/lng null — 불필요)
       // 단기 근무: work.workDate 사용 — 야간 근무 자정 이후 체크인 시 docId가 다음 날로 밀리는 것 방지 [060]
       // 장기 근무: 오늘 날짜 사용 — work.workDate는 계약 시작일(고정값)이라 날짜별 docId 분리 불가
-      final isReallyLongTerm = work.workDays != null && work.workDays!.isNotEmpty;
-      final attendanceWorkDate = isReallyLongTerm
+      final attendanceWorkDate = work.isLongTermApplication
           ? DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day)
           : work.workDate;
       final attendanceId = await _firestoreService.checkIn(
@@ -460,7 +464,9 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
         latitude: lat,
         longitude: lng,
         scheduledStartTime: work.startTime.isNotEmpty ? work.startTime : null,
+        scheduledEndTime: work.endTime.isNotEmpty ? work.endTime : null,
         method: usedMethod,
+        attendanceRules: business.attendanceRules,
       );
 
       if (attendanceId != null && mounted) {
@@ -470,6 +476,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
         if (!mounted) return;
         await _loadTodayWorks();
         if (!mounted) return;
+        _showRoundingFeedback(work.id, isCheckIn: true);
         _checkAndStartTracking();
       }
     } catch (e) {
@@ -485,6 +492,31 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
       _isProcessing = false;
       if (mounted) setState(() {});
     }
+  }
+
+  // ── 반올림 피드백 ──────────────────────────────────────────────
+  /// _loadTodayWorks() 완료 후 호출. 반올림이 발생한 경우에만 안내 토스트 표시.
+  void _showRoundingFeedback(String workId, {required bool isCheckIn}) {
+    final att = _attendanceMap[workId];
+    if (att == null) return;
+
+    final String? original;
+    final String? rounded;
+    if (isCheckIn) {
+      original = att.originalCheckIn;
+      rounded = att.checkIn;
+    } else {
+      original = att.originalCheckOut;
+      rounded = att.checkOut;
+    }
+
+    if (original == null || rounded == null || rounded.isEmpty) return;
+    final originalTrimmed = original.split(':').take(2).join(':');
+    final roundedTrimmed  = rounded.split(':').take(2).join(':');
+    if (originalTrimmed == roundedTrimmed) return;
+
+    final label = isCheckIn ? '출근' : '퇴근';
+    ToastHelper.showInfo('$label 시간 $originalTrimmed → $roundedTrimmed 으로 처리됐어요');
   }
 
   // ── GPS 검증 헬퍼 ──────────────────────────────────────────────
@@ -723,16 +755,21 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
       //           클라이언트에서는 사전 차단 없이 서비스 계층의 에러 응답에만 의존.
       final success = await _firestoreService.checkOut(
         attendanceId: attendance.id,
+        workDate: attendance.workDate,
         latitude: lat,
         longitude: lng,
         method: usedMethod,
         scheduledEndTime: work.endTime.isNotEmpty ? work.endTime : null,
+        scheduledStartTime: work.startTime.isNotEmpty ? work.startTime : null,
+        attendanceRules: business.attendanceRules,
       );
 
       if (success && mounted) {
         ToastHelper.showSuccess('퇴근이 완료되었습니다!');
         AnalyticsService.logCheckOut(method: usedMethod);
         await _loadTodayWorks();
+        if (!mounted) return;
+        _showRoundingFeedback(work.id, isCheckIn: false);
       }
     } catch (e) {
       debugPrint('❌ 퇴근 체크 실패: $e');

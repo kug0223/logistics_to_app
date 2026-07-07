@@ -483,6 +483,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
           await controller.loadGroupDetails(context, groupItem);
         } catch (e) {
           debugPrint('❌ 그룹 상세 로드 실패: $e');
+          if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
         } finally {
           if (mounted) setState(() => _loadingGroups.remove(key));
         }
@@ -499,7 +500,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         }
       } catch (e) {
         debugPrint('❌ 그룹 상세 로드 실패: $e');
-        ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+        if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
       } finally {
         if (mounted) setState(() => _loadingTOs.remove(key));
       }
@@ -527,6 +528,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         await context.read<WorkforceController>().loadWorkDetails(toItem);
       } catch (e) {
         debugPrint('❌ 업무 상세 로드 실패: $e');
+        if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
       } finally {
         if (mounted) setState(() => _loadingTOs.remove(key));
       }

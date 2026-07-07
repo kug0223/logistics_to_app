@@ -22,6 +22,8 @@ extension AttendanceFirestore on FirestoreService {
     double? longitude,  // 비콘 방식은 null 가능
     String method = 'gps',
     String? scheduledStartTime,
+    String? scheduledEndTime,
+    AttendanceRules? attendanceRules,
   }) async {
     NetworkChecker.instance.assertOnline('출근 체크를 하려면 인터넷 연결이 필요합니다.');
     try {
@@ -104,23 +106,38 @@ extension AttendanceFirestore on FirestoreService {
 
       // 3. 출근 시간 계산 (트랜잭션 밖에서 수행해도 무방)
       final now = DateTime.now();
-      final checkInTime = FormatHelper.formatTimeWithSeconds(now);
-      final isNextDay = now.year != workDate.year ||
-          now.month != workDate.month ||
-          now.day != workDate.day;
-      final isLate = scheduledStartTime != null &&
-          AttendanceStatusHelper.isLate(checkInTime, scheduledStartTime, isNextDay: isNextDay);
+
+      // 3-1. 근태 규칙 자동 반올림 — DateTime 기반 offset 계산
+      // scheduledStartTime 이 있을 때만 적용; 없으면 now 그대로 사용
+      DateTime effectiveCheckInAt = now;
+      bool isLate = false;
+      if (scheduledStartTime != null && scheduledStartTime.isNotEmpty) {
+        final contractStart = contractStartAt(workDate, scheduledStartTime);
+        final rules  = resolveRules(attendanceRules);
+        final offset = now.difference(contractStart).inMinutes;
+        final result = processCheckin(
+          offsetMinutes: offset,
+          referenceAt: contractStart,
+          rules: rules,
+        );
+        effectiveCheckInAt = result.roundedAt;
+        isLate = result.type == RoundingType.late;
+        debugLogRounding(label: 'checkIn', punchAt: now, result: result);
+      }
+
       final dbStatus = isLate
           ? AttendanceModel.statusLate
           : AttendanceModel.statusPresent;
 
-      debugPrint('   checkInTime: $checkInTime, scheduled: $scheduledStartTime, isLate: $isLate');
+      debugPrint('   effectiveCheckInAt: $effectiveCheckInAt, scheduled: $scheduledStartTime, isLate: $isLate');
 
       // 4. 트랜잭션으로 원자적 체크 + 생성 (동시 요청 시 중복 출근 방지)
       await _firestore.runTransaction((tx) async {
         final existing = await tx.get(docRef);
-        if (existing.exists && ((existing.data()?['checkIn'] as String?) ?? '').isNotEmpty) {
-          debugPrint('⚠️ 이미 출근 완료');
+        // 기존 문서가 있으면 무조건 차단 — checkIn 여부 불문.
+        // checkIn 없는 노쇼 사전 생성 레코드가 덮어쓰이는 것을 방지.
+        if (existing.exists) {
+          debugPrint('⚠️ 이미 출근 완료 또는 기록 존재');
           throw Exception('오늘 이미 출근하셨습니다.');
         }
         tx.set(docRef, {
@@ -128,11 +145,13 @@ extension AttendanceFirestore on FirestoreService {
           'userId': userId,
           'businessId': businessId,
           'businessName': businessName,
-          'workDate': Timestamp.fromDate(workDate),
+          'workDate': Timestamp.fromDate(DateTime(workDate.year, workDate.month, workDate.day)),
           'workType': workType,
-          'checkIn': checkInTime,           // HH:mm:ss 표시용 (클라이언트 로컬 시간)
-          'checkInTime': FieldValue.serverTimestamp(), // 서버 시간 기준 실제 기록
-          'originalCheckIn': checkInTime,  // 원본 보존
+          'checkIn': Timestamp.fromDate(effectiveCheckInAt),  // 반올림 적용 최종값 (Timestamp)
+          'originalCheckIn': Timestamp.fromDate(now),         // GPS/비콘 원본 (절대 불변)
+          // [P-01] 설계 스펙(attendance_rounding_design): autoRounded 플래그(bool) 미구현.
+          // checkIn != originalCheckIn 비교로 자동 반올림 여부를 역추론할 수는 있으나,
+          // 관리자 수동 수정 후에는 구분 불가. 이력 감사·근무자 UI 표시를 위해 나중에 추가 필요.
           if (latitude != null) 'checkInLat': latitude,
           if (longitude != null) 'checkInLng': longitude,
           'checkInMethod': method,
@@ -154,12 +173,16 @@ extension AttendanceFirestore on FirestoreService {
 
   /// 퇴근 체크
   /// [scheduledEndTime] "HH:mm" 형식 예정 퇴근 시간 — 전달 시 조퇴 여부 자동 판단
+  /// [workDate] 근무 기준일 — contractEndAt 계산에 필요 (야간 교대 자정 처리)
   Future<bool> checkOut({
     required String attendanceId,
+    required DateTime workDate,
     double? latitude,
     double? longitude,
     String method = 'gps',
     String? scheduledEndTime,
+    String? scheduledStartTime,
+    AttendanceRules? attendanceRules,
   }) async {
     NetworkChecker.instance.assertOnline('퇴근 체크를 하려면 인터넷 연결이 필요합니다.');
     try {
@@ -169,7 +192,25 @@ extension AttendanceFirestore on FirestoreService {
       final attendanceRef =
           _firestore.collection('attendance').doc(attendanceId);
       final now = DateTime.now();
-      final checkOutTime = FormatHelper.formatTimeWithSeconds(now);
+
+      // 근태 규칙 자동 반올림 — DateTime 기반 offset 계산
+      // start·end 시간이 모두 있을 때만 적용
+      DateTime effectiveCheckOutAt = now;
+      bool isEarlyLeaveFromRounding = false;
+      if (scheduledStartTime != null && scheduledStartTime.isNotEmpty &&
+          scheduledEndTime   != null && scheduledEndTime.isNotEmpty) {
+        final contractEnd = contractEndAt(workDate, scheduledStartTime, scheduledEndTime);
+        final rules  = resolveRules(attendanceRules);
+        final offset = now.difference(contractEnd).inMinutes;
+        final result = processCheckout(
+          offsetMinutes: offset,
+          referenceAt: contractEnd,
+          rules: rules,
+        );
+        effectiveCheckOutAt = result.roundedAt;
+        isEarlyLeaveFromRounding = result.type == RoundingType.earlyLeave;
+        debugLogRounding(label: 'checkOut', punchAt: now, result: result);
+      }
 
       // 트랜잭션으로 원자적 체크 + 업데이트 (동시 요청 시 중복 퇴근 방지)
       await _firestore.runTransaction((tx) async {
@@ -191,34 +232,47 @@ extension AttendanceFirestore on FirestoreService {
           throw Exception('급여 처리가 완료된 근무 기록은 수정할 수 없습니다.');
         }
 
-        final checkInTime = data['checkIn'] as String?;
-        if (checkInTime == null) throw Exception('출근 기록에 시간 정보가 없습니다.');
-        final workMins = AttendanceStatusHelper.workMinutes(checkInTime, checkOutTime);
-        final workHours = workMins / 60.0;
+        // checkIn — Timestamp(신규) 또는 "HH:mm" String(v1 레거시) 모두 처리
+        final checkInRaw = data['checkIn'];
+        if (checkInRaw == null) throw Exception('출근 기록에 시간 정보가 없습니다.');
+        DateTime? checkInAt;
+        if (checkInRaw is Timestamp) {
+          checkInAt = checkInRaw.toDate();
+        } else if (checkInRaw is String && checkInRaw.contains(':')) {
+          final parts = checkInRaw.split(':');
+          final h = int.tryParse(parts[0]);
+          final m = parts.length > 1 ? int.tryParse(parts[1]) : null;
+          final wdRaw = data['workDate'];
+          if (h != null && m != null && wdRaw is Timestamp) {
+            final wd = wdRaw.toDate();
+            checkInAt = DateTime(wd.year, wd.month, wd.day, h, m);
+          }
+        }
+        if (checkInAt == null) throw Exception('출근 기록 시간 파싱 실패');
+        final workMins  = effectiveCheckOutAt.difference(checkInAt).inMinutes;
+        // 반올림 후 checkIn > checkOut 가능성(음수 근무) → 0으로 clamp
+        final workHours = (workMins < 0 ? 0 : workMins) / 60.0;
 
         final currentStatus =
             data['status'] as String? ?? AttendanceModel.statusPresent;
-        final isEarlyLeave = scheduledEndTime != null &&
-            AttendanceStatusHelper.isEarlyLeave(
-                checkOutTime, scheduledEndTime, checkIn: checkInTime);
-        final updatedStatus = isEarlyLeave
+        final updatedStatus = isEarlyLeaveFromRounding
             ? AttendanceModel.statusEarlyLeave
             : currentStatus;
 
         tx.update(attendanceRef, {
-          'checkOut': checkOutTime,
+          'checkOut': Timestamp.fromDate(effectiveCheckOutAt),  // 반올림 적용 최종값 (Timestamp)
           if (data['originalCheckOut'] == null)
-            'originalCheckOut': checkOutTime,  // 최초 퇴근 시에만 원본 보존
+            'originalCheckOut': Timestamp.fromDate(now),        // GPS/비콘 원본 (절대 불변)
           if (latitude != null) 'checkOutLat': latitude,
           if (longitude != null) 'checkOutLng': longitude,
           'checkOutMethod': method,
           'workHours': workHours,
           'status': updatedStatus,
-          // M-3: 0분 근무(출근 직후 퇴근) 플래그 — 관리자 검토 배지 표시용
-          if (workMins == 0) 'isZeroWork': true,
+          // 0분 이하 근무(반올림 충돌 포함) 플래그 — 관리자 검토 배지 표시용
+          if (workMins <= 0) 'isZeroWork': true,
           'updatedAt': FieldValue.serverTimestamp(),
         });
-        debugPrint('   checkOutTime: $checkOutTime, scheduled: $scheduledEndTime, isEarlyLeave: $isEarlyLeave');
+        debugPrint('   effectiveCheckOutAt: $effectiveCheckOutAt, scheduled: $scheduledEndTime, isEarlyLeave: $isEarlyLeaveFromRounding');
       });
 
       debugPrint('✅ 퇴근 체크 완료');
@@ -284,7 +338,6 @@ extension AttendanceFirestore on FirestoreService {
           .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(todayStart))
           .where('workDate', isLessThan: Timestamp.fromDate(todayEnd))
           .orderBy('workDate', descending: false)
-          .orderBy('checkInTime', descending: false)
           .get(const GetOptions(source: Source.server));
 
       final attendances = snapshot.docs
@@ -418,15 +471,17 @@ extension AttendanceFirestore on FirestoreService {
   }) async {
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('getMyMonthlyAttendances');
+          .httpsCallable('getMyMonthlyAttendances',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
       final result = await callable.call({'year': year, 'month': month});
       final items = (result.data['items'] as List<dynamic>? ?? []);
       return items
           .map((e) {
             final m = Map<String, dynamic>.from(e as Map);
             final id = m.remove('id') as String? ?? '';
-            return AttendanceModel.fromMap(m, id);
+            return AttendanceModel.tryFromMap(m, id);
           })
+          .whereType<AttendanceModel>()
           .toList();
     } catch (e) {
       debugPrint('❌ 월별 출근 기록 조회 실패: $e');
@@ -453,7 +508,7 @@ extension AttendanceFirestore on FirestoreService {
             .doc('${request.applicationId}_$dateStr')
             .get();
         if (attendanceDoc.exists &&
-            (attendanceDoc.data()?['checkIn'] as String?) != null) {
+            attendanceDoc.data()?['checkIn'] != null) {
           throw Exception('이미 출근한 날짜는 휴무 요청을 할 수 없습니다.');
         }
       }
@@ -617,6 +672,9 @@ extension AttendanceFirestore on FirestoreService {
         // 타이밍 불일치가 생길 수 있으므로 반드시 같은 tx 안에서 처리.
         final appRef = _firestore.collection('applications').doc(request!.applicationId);
         final appSnapshot = await tx.get(appRef);
+        // [K-01] appSnapshot.exists=false인 경우 application 배열 업데이트 없이
+        // request만 APPROVED 처리됨. 정상 플로우에서 미발생하지만 application이 먼저
+        // 삭제된 케이스에서 조용히 실패 → leaveDates/extraWorkDates 미반영.
         if (appSnapshot.exists) {
           final appData = appSnapshot.data()!;
 

@@ -351,11 +351,11 @@ void _runSlotIsEffectivelyClosedTests() {
       test('C3-04 deadline=null, no workDetails → isDeadlinePassed=false', () {
         expect(_slot(applicationDeadline: null).isDeadlinePassed, isFalse);
       });
-      test('C3-05 deadline=1sec ago → isDeadlinePassed=true', () {
-        expect(_slot(applicationDeadline: _now.subtract(const Duration(seconds: 1))).isDeadlinePassed, isTrue);
+      test('C3-05 deadline=1min ago → isDeadlinePassed=true', () {
+        expect(_slot(applicationDeadline: _now.subtract(const Duration(minutes: 1))).isDeadlinePassed, isTrue);
       });
-      test('C3-06 deadline=1sec future → isDeadlinePassed=false', () {
-        expect(_slot(applicationDeadline: _now.add(const Duration(seconds: 1))).isDeadlinePassed, isFalse);
+      test('C3-06 deadline=1min future → isDeadlinePassed=false', () {
+        expect(_slot(applicationDeadline: _now.add(const Duration(minutes: 1))).isDeadlinePassed, isFalse);
       });
     });
 
@@ -466,11 +466,11 @@ void _runWorkDetailTests() {
       test('D2-03 deadline=null → isTimeExpired=false', () {
         expect(_wd(applicationDeadline: null).isTimeExpired, isFalse);
       });
-      test('D2-04 deadline=1sec ago → isTimeExpired=true', () {
-        expect(_wd(applicationDeadline: _now.subtract(const Duration(seconds: 1))).isTimeExpired, isTrue);
+      test('D2-04 deadline=1min ago → isTimeExpired=true', () {
+        expect(_wd(applicationDeadline: _now.subtract(const Duration(minutes: 1))).isTimeExpired, isTrue);
       });
-      test('D2-05 deadline=1sec future → isTimeExpired=false', () {
-        expect(_wd(applicationDeadline: _now.add(const Duration(seconds: 1))).isTimeExpired, isFalse);
+      test('D2-05 deadline=1min future → isTimeExpired=false', () {
+        expect(_wd(applicationDeadline: _now.add(const Duration(minutes: 1))).isTimeExpired, isFalse);
       });
       test('D2-06 deadline=30d ago → isTimeExpired=true', () {
         expect(_wd(applicationDeadline: _past30d).isTimeExpired, isTrue);

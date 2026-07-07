@@ -122,6 +122,9 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   final _beaconMajorController = TextEditingController();
   final _beaconMinorController = TextEditingController();
 
+  // 근태 반올림 규칙
+  AttendanceRules _attendanceRules = AttendanceRules.defaults();
+
   @override
   void initState() {
     super.initState();
@@ -201,6 +204,9 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     if (business.beaconUUID != null) _beaconUUIDController.text = business.beaconUUID!;
     if (business.beaconMajor != null) _beaconMajorController.text = business.beaconMajor.toString();
     if (business.beaconMinor != null) _beaconMinorController.text = business.beaconMinor.toString();
+
+    // 근태 반올림 규칙
+    _attendanceRules = business.attendanceRules ?? AttendanceRules.defaults();
   }
 
 
@@ -935,8 +941,215 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
         _buildAttendanceSection(context, theme),
 
+        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+
+        // 근태 반올림 규칙
+        CommonWidgets.sectionHeader(
+          context: context,
+          title: '근태 반올림 규칙',
+          icon: Icons.tune_outlined,
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        Text(
+          'GPS/비콘 체크 시각에 자동 적용할 반올림 규칙입니다. 기본값으로 대부분의 사업장에 적합합니다.',
+          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        _buildAttendanceRulesSection(context, theme),
+
         SizedBox(height: ResponsiveHelper.spacing(context, 16)),
       ],
+    );
+  }
+
+  /// 근태 반올림 규칙 섹션
+  Widget _buildAttendanceRulesSection(BuildContext context, ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 출근 규칙 카드
+        Container(
+          padding: ResponsiveHelper.cardPadding(context),
+          decoration: CommonWidgets.cardDecoration(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.login, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.infoDark),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                  Text('출근 처리 규칙',
+                      style: ResponsiveHelper.bodyStyle(context)
+                          .copyWith(fontWeight: FontWeight.bold, color: AppColors.infoDark)),
+                ],
+              ),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+              _buildRuleSlider(context, theme,
+                label: '조출 인정 범위',
+                description: '정시보다 N분 이상 일찍 도착하면 조출 처리',
+                value: _attendanceRules.earlyWindow,
+                min: 0, max: 120, divisions: 24, unit: '분',
+                onChanged: (v) => _attendanceRules = _attendanceRules.copyWith(earlyWindow: v),
+              ),
+              _buildRuleSlider(context, theme,
+                label: '조출 반올림 단위',
+                description: '조출 도착 시각을 N분 단위로 올림 처리',
+                value: _attendanceRules.earlyArrivalUnit,
+                min: 5, max: 60, divisions: 11, unit: '분',
+                onChanged: (v) => _attendanceRules = _attendanceRules.copyWith(earlyArrivalUnit: v),
+              ),
+              _buildRuleSlider(context, theme,
+                label: '지각 유예 시간',
+                description: '정시 후 N분 이내 도착은 지각 없이 정시 처리',
+                value: _attendanceRules.lateGrace,
+                min: 0, max: 30, divisions: 30, unit: '분',
+                onChanged: (v) => _attendanceRules = _attendanceRules.copyWith(lateGrace: v),
+              ),
+              _buildRuleSlider(context, theme,
+                label: '지각 반올림 단위',
+                description: '지각 시간을 N분 단위로 올림 처리',
+                value: _attendanceRules.lateUnit,
+                min: 5, max: 60, divisions: 11, unit: '분',
+                onChanged: (v) => _attendanceRules = _attendanceRules.copyWith(lateUnit: v),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        // 퇴근 규칙 카드
+        Container(
+          padding: ResponsiveHelper.cardPadding(context),
+          decoration: CommonWidgets.cardDecoration(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.logout, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.successDark),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                  Text('퇴근 처리 규칙',
+                      style: ResponsiveHelper.bodyStyle(context)
+                          .copyWith(fontWeight: FontWeight.bold, color: AppColors.successDark)),
+                ],
+              ),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+              _buildRuleSlider(context, theme,
+                label: '정시 퇴근 인정 범위',
+                description: '퇴근 예정 후 N분 이내 퇴근도 정시로 처리',
+                value: _attendanceRules.lateWindow,
+                min: 0, max: 60, divisions: 12, unit: '분',
+                onChanged: (v) => _attendanceRules = _attendanceRules.copyWith(lateWindow: v),
+              ),
+              _buildRuleSlider(context, theme,
+                label: '연장 반올림 단위',
+                description: '연장 근무 시간을 N분 단위로 내림 처리',
+                value: _attendanceRules.overtimeUnit,
+                min: 5, max: 30, divisions: 5, unit: '분',
+                onChanged: (v) => _attendanceRules = _attendanceRules.copyWith(overtimeUnit: v),
+              ),
+              _buildRuleSlider(context, theme,
+                label: '조퇴 반올림 단위',
+                description: '조퇴 시간을 N분 단위로 내림 처리',
+                value: _attendanceRules.earlyLeaveUnit,
+                min: 5, max: 60, divisions: 11, unit: '분',
+                onChanged: (v) => _attendanceRules = _attendanceRules.copyWith(earlyLeaveUnit: v),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        // 요약 프리뷰
+        Container(
+          padding: ResponsiveHelper.cardPadding(context),
+          decoration: BoxDecoration(
+            color: AppColors.infoBg,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.info.withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.info_outline,
+                  size: ResponsiveHelper.iconSize(context, 16), color: AppColors.infoDark),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              Expanded(
+                child: Text(
+                  _attendanceRules.summary,
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 규칙 슬라이더 행 (근태 반올림 규칙 공용)
+  Widget _buildRuleSlider(
+    BuildContext context,
+    ThemeData theme, {
+    required String label,
+    required String description,
+    required int value,
+    required double min,
+    required double max,
+    required int divisions,
+    required String unit,
+    required void Function(int) onChanged,
+  }) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label,
+                        style: ResponsiveHelper.smallStyle(context)
+                            .copyWith(fontWeight: FontWeight.w600)),
+                    Text(description,
+                        style: ResponsiveHelper.tinyStyle(context,
+                            color: AppColors.grey500)),
+                  ],
+                ),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 10),
+                  vertical: ResponsiveHelper.spacing(context, 3),
+                ),
+                decoration: BoxDecoration(
+                  color: theme.primaryColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text('$value$unit',
+                    style: ResponsiveHelper.smallStyle(context,
+                            color: theme.primaryColor)
+                        .copyWith(fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 3,
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+            ),
+            child: Slider(
+              value: value.toDouble().clamp(min, max),
+              min: min,
+              max: max,
+              divisions: divisions,
+              activeColor: theme.primaryColor,
+              onChanged: (v) => setState(() => onChanged(v.round())),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1782,7 +1995,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       }
     } catch (e) {
       debugPrint('⚠️ 주소 검색 실패, 수기 입력 모드: $e');
-      _showManualAddressDialog();
+      if (mounted) _showManualAddressDialog();
     }
   }
 
@@ -1938,6 +2151,12 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         }
       }
 
+      // 저장 시점의 타임스탬프/변경자 주입 — 감사 이력
+      _attendanceRules = _attendanceRules.copyWith(
+        rulesUpdatedAt: DateTime.now(),
+        rulesUpdatedBy: ownerId,
+      );
+
       final businessData = {
         'name': _nameController.text.trim(),
         'businessNumber': _businessNumberController.text.replaceAll('-', ''),
@@ -1977,6 +2196,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         if (int.tryParse(_beaconMinorController.text.trim()) != null)
           'beaconMinor': int.tryParse(_beaconMinorController.text.trim()),
         'beaconRssiThreshold': _beaconRssiThreshold,
+        'attendanceRules': _attendanceRules.toMap(),
       };
 
       if (_isEditMode) {

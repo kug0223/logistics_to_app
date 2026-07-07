@@ -103,12 +103,8 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
     for (final r in sorted) {
       final info = infoMap[r.userId];
       final dateStr = FormatHelper.formatDateISO(r.workDate);
-      final checkIn = r.checkIn ?? (r.checkInTime != null
-          ? FormatHelper.formatTime(r.checkInTime!)
-          : '-');
-      final checkOut = r.checkOut ?? (r.checkOutTime != null
-          ? FormatHelper.formatTime(r.checkOutTime!)
-          : '-');
+      final checkIn  = r.checkIn  ?? '-';
+      final checkOut = r.checkOut ?? '-';
       final note = r.statusLabel +
           (r.modifyReason?.isNotEmpty ?? false ? ' / ${r.modifyReason}' : '');
 

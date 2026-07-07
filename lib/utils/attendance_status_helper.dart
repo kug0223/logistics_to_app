@@ -30,6 +30,18 @@ class AttendanceStatusHelper {
     return e - s;
   }
 
+  // ── 야간 시프트 익일 출근 판단 ───────────────────────────────
+
+  /// 야간 시프트(스케줄 시작 20:00~)에서 checkIn이 익일 새벽(08:00 이하)인지 판단.
+  ///
+  /// [isLate] 에 [isNextDay] 파라미터로 전달하기 위한 공통 헬퍼.
+  /// 임계값 08:00 — 야간 교대 종료 최대 범위(06:00) + 2h 여유.
+  static bool isNextDayCheckIn(String checkIn, String scheduledStart) {
+    final startMins = timeToMinutes(scheduledStart);
+    final ciMins = timeToMinutes(checkIn);
+    return startMins >= 20 * 60 && ciMins <= 8 * 60;
+  }
+
   // ── 지각 판단 ──────────────────────────────────────────────
 
   /// 실제 출근이 예정보다 1분 이상 늦은지

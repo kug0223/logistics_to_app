@@ -1,6 +1,102 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
+/// 사업장 근태 처리 규칙
+///
+/// 출퇴근 펀치 시점에 자동 반올림 적용 기준.
+/// null인 사업장은 [AttendanceRules.defaults()]로 폴백.
+class AttendanceRules {
+  /// 출근 N분 이내 조기 도착 → 정시 처리 (기본 30분)
+  final int earlyWindow;
+  /// 조출 올림 단위 (기본 30분) — ceil 방향
+  final int earlyArrivalUnit;
+  /// 지각 유예 (기본 5분) — 이내면 정시 처리
+  final int lateGrace;
+  /// 지각 올림 단위 (기본 30분) — ceil 방향
+  final int lateUnit;
+  /// 퇴근 후 N분 이내 → 정시 퇴근 (기본 30분)
+  final int lateWindow;
+  /// 연장 내림 단위 (기본 10분) — floor 방향
+  final int overtimeUnit;
+  /// 조퇴 내림 단위 (기본 30분) — floor 방향
+  final int earlyLeaveUnit;
+  /// 규칙 마지막 변경 일시
+  final DateTime? rulesUpdatedAt;
+  /// 규칙 마지막 변경자 UID
+  final String? rulesUpdatedBy;
+
+  const AttendanceRules({
+    this.earlyWindow      = 30,
+    this.earlyArrivalUnit = 30,
+    this.lateGrace        = 5,
+    this.lateUnit         = 30,
+    this.lateWindow       = 30,
+    this.overtimeUnit     = 10,
+    this.earlyLeaveUnit   = 30,
+    this.rulesUpdatedAt,
+    this.rulesUpdatedBy,
+  });
+
+  factory AttendanceRules.defaults() => const AttendanceRules();
+
+  factory AttendanceRules.fromMap(Map<String, dynamic> map) {
+    return AttendanceRules(
+      earlyWindow:      (map['earlyWindow']      as num?)?.toInt().clamp(0,  120) ?? 30,
+      earlyArrivalUnit: (map['earlyArrivalUnit'] as num?)?.toInt().clamp(5,  60)  ?? 30,
+      lateGrace:        (map['lateGrace']        as num?)?.toInt().clamp(0,  30)  ?? 5,
+      lateUnit:         (map['lateUnit']         as num?)?.toInt().clamp(5,  60)  ?? 30,
+      lateWindow:       (map['lateWindow']       as num?)?.toInt().clamp(0,  60)  ?? 30,
+      overtimeUnit:     (map['overtimeUnit']     as num?)?.toInt().clamp(5,  30)  ?? 10,
+      earlyLeaveUnit:   (map['earlyLeaveUnit']   as num?)?.toInt().clamp(5,  60)  ?? 30,
+      rulesUpdatedAt: map['rulesUpdatedAt'] != null
+          ? (map['rulesUpdatedAt'] as Timestamp).toDate().toLocal()
+          : null,
+      rulesUpdatedBy: map['rulesUpdatedBy'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toMap() => {
+    'earlyWindow':      earlyWindow,
+    'earlyArrivalUnit': earlyArrivalUnit,
+    'lateGrace':        lateGrace,
+    'lateUnit':         lateUnit,
+    'lateWindow':       lateWindow,
+    'overtimeUnit':     overtimeUnit,
+    'earlyLeaveUnit':   earlyLeaveUnit,
+    if (rulesUpdatedAt != null)
+      'rulesUpdatedAt': Timestamp.fromDate(rulesUpdatedAt!.toUtc()),
+    if (rulesUpdatedBy != null) 'rulesUpdatedBy': rulesUpdatedBy,
+  };
+
+  AttendanceRules copyWith({
+    int? earlyWindow,
+    int? earlyArrivalUnit,
+    int? lateGrace,
+    int? lateUnit,
+    int? lateWindow,
+    int? overtimeUnit,
+    int? earlyLeaveUnit,
+    DateTime? rulesUpdatedAt,
+    String? rulesUpdatedBy,
+  }) {
+    return AttendanceRules(
+      earlyWindow:      earlyWindow      ?? this.earlyWindow,
+      earlyArrivalUnit: earlyArrivalUnit ?? this.earlyArrivalUnit,
+      lateGrace:        lateGrace        ?? this.lateGrace,
+      lateUnit:         lateUnit         ?? this.lateUnit,
+      lateWindow:       lateWindow       ?? this.lateWindow,
+      overtimeUnit:     overtimeUnit     ?? this.overtimeUnit,
+      earlyLeaveUnit:   earlyLeaveUnit   ?? this.earlyLeaveUnit,
+      rulesUpdatedAt:   rulesUpdatedAt   ?? this.rulesUpdatedAt,
+      rulesUpdatedBy:   rulesUpdatedBy   ?? this.rulesUpdatedBy,
+    );
+  }
+
+  /// 지원자/근무자용 한 줄 요약 문구
+  String get summary =>
+      '출근 $earlyWindow분 이내 정시 · 지각 유예 $lateGrace분 · $lateUnit분 단위 처리';
+}
+
 class BusinessModel {
   final String id;
   final String businessNumber;  // 사업자등록번호
@@ -76,6 +172,10 @@ class BusinessModel {
   /// 슈퍼관리자 또는 단독 관리자 탈퇴로 비활성화된 시각
   final DateTime? deactivatedAt;
 
+  // ── 근태 처리 규칙 ────────────────────────────────────────
+  /// null이면 AttendanceRules.defaults() 로 폴백
+  final AttendanceRules? attendanceRules;
+
   bool get isDeactivated => deactivatedAt != null;
 
   BusinessModel({
@@ -129,6 +229,7 @@ class BusinessModel {
     this.wagePaymentDay,
     this.sealType = 'stamp',
     this.deactivatedAt,
+    this.attendanceRules,
   }) : adminIds = (adminIds != null && adminIds.isNotEmpty)
            ? adminIds
            : [ownerId];
@@ -202,6 +303,10 @@ class BusinessModel {
       deactivatedAt: map['deactivatedAt'] != null
           ? (map['deactivatedAt'] as Timestamp).toDate().toLocal()
           : null,
+      attendanceRules: map['attendanceRules'] != null
+          ? AttendanceRules.fromMap(
+              Map<String, dynamic>.from(map['attendanceRules'] as Map))
+          : null,
     );
   }
   factory BusinessModel.fromFirestore(DocumentSnapshot doc) {
@@ -274,6 +379,7 @@ class BusinessModel {
       'wagePaymentDay': wagePaymentDay,
       'sealType': sealType,
       'deactivatedAt': deactivatedAt != null ? Timestamp.fromDate(deactivatedAt!) : null,
+      if (attendanceRules != null) 'attendanceRules': attendanceRules!.toMap(),
     };
   }
   String get formattedBusinessNumber {
@@ -333,6 +439,7 @@ class BusinessModel {
     int? beaconRssiThreshold,
     DateTime? deactivatedAt,
     bool clearDeactivatedAt = false,
+    AttendanceRules? attendanceRules,
   }) {
     return BusinessModel(
       id: id ?? this.id,
@@ -380,6 +487,7 @@ class BusinessModel {
       beaconMinor: beaconMinor ?? this.beaconMinor,
       beaconRssiThreshold: beaconRssiThreshold ?? this.beaconRssiThreshold,
       deactivatedAt: clearDeactivatedAt ? null : (deactivatedAt ?? this.deactivatedAt),
+      attendanceRules: attendanceRules ?? this.attendanceRules,
     );
   }
 

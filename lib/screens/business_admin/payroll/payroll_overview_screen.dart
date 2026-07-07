@@ -130,7 +130,8 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
       final userIds = confirmed.map((r) => r.userId).toSet().toList();
       final nameMap = <String, String>{};
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetUsersBatch');
+          .httpsCallable('callableGetUsersBatch',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
       for (var i = 0; i < userIds.length; i += 30) {
         final end = (i + 30) < userIds.length ? i + 30 : userIds.length;
         final chunk = userIds.sublist(i, end);

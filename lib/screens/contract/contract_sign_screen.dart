@@ -140,6 +140,7 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
           }
         } catch (e) {
           debugPrint('⚠️ 사업주 정보 조회 실패: $e');
+          if (mounted) ToastHelper.showError('사업주 정보를 불러오는데 실패했습니다.');
         }
       }
 
@@ -157,6 +158,7 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
       await _checkTOType();
     } catch (e) {
       debugPrint('인감/대표자 로드 실패: $e');
+      if (mounted) ToastHelper.showError('계약서 정보를 불러오는데 실패했습니다.');
     }
   }
 

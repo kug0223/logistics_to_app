@@ -13,7 +13,7 @@ import 'insurance_rate_service.dart';
 ///   none              → 공제 없음, netWage = totalAmount
 ///   freelancer_3_3    → 총액 × 3.3% (소득세 3% + 지방소득세 0.3%)
 ///   daily_worker      → (총액 - 150,000원 비과세) × 2.97% (소득세 2.7% + 지방 0.27%)
-///                       단, 총액 ≤ 150,000원이면 공제 0
+///                       + 고용보험 0.9% / 단, 총액 ≤ 150,000원이면 소득세 0 (고용보험은 부과)
 ///   daily_auto_8      → [별도 처리] 이 메서드는 1~7일(고용보험만) 계산만 담당
 ///                       8일 소급은 RetroactiveDeductionService에서 처리
 ///   four_insurance_fixed → 총액 × (국민연금 + 건강보험 + 장기요양 + 고용보험)
@@ -189,9 +189,9 @@ class TaxDeductionService {
   /// [workYear]: 근무일 연도
   ///
   /// 반환값: 8일차 WageDetailModel (소급분 포함)
-  /// - retroactiveDeduction: 1~7일분 4대보험 소급액
-  /// - employmentInsuranceDeduction: 8일차 고용보험 (이전에 이미 공제했으므로 소급분에서 차감)
-  /// - 나머지 보험: 1~7일 소급 + 8일차 당일분 합산
+  /// - retroactiveDeduction: 1~7일분 소급액 (국민연금 + 건강보험 + 장기요양 합산, 고용보험 제외)
+  /// - nationalPensionDeduction / healthInsuranceDeduction / ltcInsuranceDeduction: 8일차 당일분만
+  /// - employmentInsuranceDeduction: 8일차 당일분만 (1~7일 고용보험은 이미 각 날짜에서 공제됨)
   static WageDetailModel applyDay8Retroactive({
     required WageDetailModel day8Base,
     required int prevGrossTotal,
@@ -205,8 +205,11 @@ class TaxDeductionService {
 
     // 1~7일치: 이미 고용보험(0.9%)만 공제했음
     // 소급분 = 1~7일 기준 (국민연금 + 건강보험 + 장기요양) 공제액
-    final prevPension    = (prevGrossTotal * rates.nationalPensionRate / 100).round();
-    final prevHealth     = (prevGrossTotal * rates.healthInsuranceRate / 100).round();
+    // [BUG-TAX-02 fix] prevGrossTotal 음수 방어 — 구버전 데이터에서 totalAmount<0 저장 시
+    // retroactive가 음수 → totalDeduction 감소 → netWage 의도치 않게 증가하는 버그 방지.
+    final safePrev = prevGrossTotal < 0 ? 0 : prevGrossTotal;
+    final prevPension    = (safePrev * rates.nationalPensionRate / 100).round();
+    final prevHealth     = (safePrev * rates.healthInsuranceRate / 100).round();
     final prevLtc        = (prevHealth * rates.ltcInsuranceRate / 100).round();
     // 고용보험: 1~7일 이미 공제됨 → 소급 추가 없음
     final retroactive    = prevPension + prevHealth + prevLtc;
@@ -292,8 +295,10 @@ class TaxDeductionService {
       // 같은 날 오전·오후 등 복수 attendance 문서가 있으면 단순 length 카운트는
       // 실제 근무 일수보다 크게 집계되어 8일차 소급 공제가 오작동함.
       // ISO 날짜 문자열(yyyy-MM-dd)로 정규화 후 Set으로 유니크화.
+      // 노쇼(NO_SHOW)는 실제 근무가 아니므로 8일차 판단 기준에서 제외
       final uniqueDates = allDocs
           .where((d) => d.id != excludeAttendanceId)
+          .where((d) => (d.data()['status'] as String?) != 'NO_SHOW')
           .map((d) => (d.data()['workDate'] as Timestamp?)
               ?.toDate()
               .toIso8601String()

@@ -195,6 +195,13 @@ extension ApplicationFirestore on FirestoreService {
           .whereType<ApplicationModel>()
           .where((a) => statusSet == null || statusSet.contains(a.status))
           .toList();
+      // [W-01 fix] hasMore는 raw 결과 기준이므로, 클라이언트 필터가 전부 제거하면
+      // items=[]이지만 hasMore=true가 되어 무한 페이지 루프 발생.
+      // raw 결과가 pageSize이면 다음 페이지가 있을 수 있음(상한), items가 비어도 커서는 유지.
+      // 호출자가 items.isEmpty && hasMore=true인 경우 계속 로드하지 않도록 UI에서 처리해야 하나,
+      // 서비스 레이어에서도 raw full page = 필터 전부 탈락 시 hasMore 신뢰도 저하 경고를 위해
+      // lastDoc은 raw 마지막으로 유지하되, items가 비면 hasMore를 raw 기준으로 유지.
+      // 근본 해결: status 필터를 Firestore 서버 쿼리로 이전해야 함 (현재는 클라이언트 필터).
       return {
         'items': items,
         'lastDoc': snap.docs.isNotEmpty ? snap.docs.last : null,
@@ -960,6 +967,9 @@ extension ApplicationFirestore on FirestoreService {
           // 이미 취소됨 — 멱등 처리
           return;
         }
+        // 트랜잭션 시작 후 문서가 삭제된 경우(경쟁조건) — 멱등 처리
+        final freshData = fresh.data();
+        if (freshData == null) return;
         tx.update(appDoc.reference, {
           'status': 'CANCELED',
           'canceledAt': FieldValue.serverTimestamp(),
@@ -967,8 +977,8 @@ extension ApplicationFirestore on FirestoreService {
           // 이전 코드는 cancelReason을 저장하지 않아 분쟁 발생 시 취소 경위 추적이 불가능했다.
           'cancelReason': 'USER_CANCELED',
           // [RACE-FIX] 트랜잭션 외부 스냅샷(appData)의 statusHistory 사용 → 동시 업데이트 시 유실
-          // fresh.data()!로 교체하여 트랜잭션 내 최신 데이터 기반으로 append
-          'statusHistory': _appendHistory(fresh.data()!, {
+          // freshData로 교체하여 트랜잭션 내 최신 데이터 기반으로 append
+          'statusHistory': _appendHistory(freshData, {
             'status': 'CANCELED',
             'at': Timestamp.now(),
             'by': uid,
@@ -1088,7 +1098,8 @@ extension ApplicationFirestore on FirestoreService {
       if (applyNoShowPenalty) {
         try {
           final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-              .httpsCallable('callableApplyNoShowPenalty');
+              .httpsCallable('callableApplyNoShowPenalty',
+                  options: HttpsCallableOptions(timeout: const Duration(seconds: 10)));
           await callable.call({'applicationId': applicationId});
         } catch (e) {
           debugPrint('⚠️ 노쇼 패널티 CF 실패 ($uid): $e');
@@ -1347,17 +1358,29 @@ extension ApplicationFirestore on FirestoreService {
       }
 
       // [C-1] 확정된 급여 → wagePending 초기화 (파트변경으로 wage/wageType 변경되므로 재계산 필요)
-      for (final attDoc in calculatedAttDocs) {
-        batch.update(attDoc.reference, {
-          'wageStatus': AttendanceModel.wagePending,
-          'finalWage': FieldValue.delete(),
-          'wageDetail': FieldValue.delete(),
-          'yearMonth': FieldValue.delete(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      }
-
+      // [V-01 fix] Firestore 배치 500-op 한계 초과 방지:
+      // application/slot/TO/contract 고정 ops(최대 4개)는 첫 번째 배치에,
+      // attendance 초기화는 450개 단위 청크 배치로 분리.
+      // 장기 근무자(1.5년 이상 미이체)의 attendance 500+건 초과 케이스 대응.
       await batch.commit();
+
+      // attendance 청크 커밋 (450-op 단위)
+      for (var i = 0; i < calculatedAttDocs.length; i += 450) {
+        final end = (i + 450 < calculatedAttDocs.length)
+            ? i + 450
+            : calculatedAttDocs.length;
+        final attBatch = _firestore.batch();
+        for (final attDoc in calculatedAttDocs.sublist(i, end)) {
+          attBatch.update(attDoc.reference, {
+            'wageStatus': AttendanceModel.wagePending,
+            'finalWage': FieldValue.delete(),
+            'wageDetail': FieldValue.delete(),
+            'yearMonth': FieldValue.delete(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+        await attBatch.commit();
+      }
       if (toId != null) clearCache(toId: toId);
 
       _sendWorkTypeChangedNotification(

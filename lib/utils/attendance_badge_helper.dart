@@ -49,9 +49,7 @@ class AttendanceBadgeHelper {
 
     // 지각: checkIn만 있으면 판단 가능 (아직 퇴근 안 한 상태에서도 표시)
     // 야간 시프트(effStart >= 20:00, checkIn < 06:00): 자정 넘김 보정 필요
-    final effStartMins = AttendanceStatusHelper.timeToMinutes(effStart);
-    final checkInMins = AttendanceStatusHelper.timeToMinutes(checkIn);
-    final isNextDay = effStartMins >= 20 * 60 && checkInMins < 6 * 60;
+    final isNextDay = AttendanceStatusHelper.isNextDayCheckIn(checkIn, effStart);
     final isLate = AttendanceStatusHelper.isLate(checkIn, effStart, isNextDay: isNextDay);
     // isNextDay=true(자정 이후 체크인)이면 effStart보다 반드시 늦으므로 조출 불가
     final isEarlyArrival = isNextDay

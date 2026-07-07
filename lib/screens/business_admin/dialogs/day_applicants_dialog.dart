@@ -1116,17 +1116,22 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                 ),
                 if (isPending)
                   GestureDetector(
-                    onTap: () {
+                    onTap: () async {
                       final nowStarred = !_starredIds.contains(app.id);
-                      setState(() {
-                        if (nowStarred) {
-                          _starredIds.add(app.id);
-                        } else {
-                          _starredIds.remove(app.id);
-                        }
-                      });
-                      _svc.updateApplicationFields(
-                          app.id, {'isStarred': nowStarred});
+                      try {
+                        await _svc.updateApplicationFields(
+                            app.id, {'isStarred': nowStarred});
+                        if (!mounted) return;
+                        setState(() {
+                          if (nowStarred) {
+                            _starredIds.add(app.id);
+                          } else {
+                            _starredIds.remove(app.id);
+                          }
+                        });
+                      } catch (e) {
+                        if (mounted) ToastHelper.showError('별 표시 저장에 실패했습니다');
+                      }
                     },
                     behavior: HitTestBehavior.opaque,
                     child: Padding(
@@ -1828,7 +1833,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         articles: articles,
       );
     } catch (e) {
-      ToastHelper.showError('계약서 미리보기 생성에 실패했습니다');
+      if (mounted) ToastHelper.showError('계약서 미리보기 생성에 실패했습니다');
       return;
     } finally {
       if (mounted) setState(() => _contractBatchGroupKey = null);
@@ -1903,7 +1908,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         });
       }
     } catch (e) {
-      ToastHelper.showError('처리 중 오류가 발생했습니다');
+      if (mounted) ToastHelper.showError('처리 중 오류가 발생했습니다');
       debugPrint('❌ 계약서 일괄 발송 실패: $e');
     } finally {
       if (mounted) setState(() => _contractBatchGroupKey = null);
@@ -2157,7 +2162,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         articles: articles,
       );
     } catch (e) {
-      ToastHelper.showError('계약서 미리보기 생성에 실패했습니다');
+      if (mounted) ToastHelper.showError('계약서 미리보기 생성에 실패했습니다');
       return;
     } finally {
       if (mounted) setState(() => _isProcessing = false);

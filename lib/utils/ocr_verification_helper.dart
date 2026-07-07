@@ -20,13 +20,13 @@ class OcrVerificationHelper {
       final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
       
       final rawText = recognizedText.text;
-      debugPrint('📄 [신분증 OCR] 원본: $rawText');
-      
+      if (kDebugMode) debugPrint('📄 [신분증 OCR] 원본: $rawText');
+
       final cleanedOcr = _cleanText(rawText);
       final cleanedExpected = _cleanText(expectedName);
-      
-      debugPrint('📄 [신분증 OCR] 정제됨: $cleanedOcr');
-      debugPrint('📄 [신분증 OCR] 예상 이름: $cleanedExpected');
+
+      if (kDebugMode) debugPrint('📄 [신분증 OCR] 정제됨: $cleanedOcr');
+      if (kDebugMode) debugPrint('📄 [신분증 OCR] 예상 이름: $cleanedExpected');
       
       final isNameValid = cleanedOcr.contains(cleanedExpected);
       
@@ -117,7 +117,7 @@ class OcrVerificationHelper {
       final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
       
       final rawText = recognizedText.text;
-      debugPrint('📄 [통장사본 OCR] 원본: $rawText');
+      if (kDebugMode) debugPrint('📄 [통장사본 OCR] 원본: $rawText');
       
       // ✅ 예금주명 추출
       String? extractedName = _extractAccountHolder(rawText, recognizedText);
@@ -128,10 +128,10 @@ class OcrVerificationHelper {
       // ✅ 은행명 추출
       String? extractedBankName = _extractBankName(rawText);
       
-      debugPrint('📄 [통장사본 OCR] 추출된 예금주: $extractedName');
-      debugPrint('📄 [통장사본 OCR] 계좌번호 추출 완료');
-      debugPrint('📄 [통장사본 OCR] 추출된 은행명: $extractedBankName');
-      debugPrint('📄 [통장사본 OCR] 예상 예금주: $expectedName');
+      if (kDebugMode) debugPrint('📄 [통장사본 OCR] 추출된 예금주: $extractedName');
+      if (kDebugMode) debugPrint('📄 [통장사본 OCR] 계좌번호 추출 완료');
+      if (kDebugMode) debugPrint('📄 [통장사본 OCR] 추출된 은행명: $extractedBankName');
+      if (kDebugMode) debugPrint('📄 [통장사본 OCR] 예상 예금주: $expectedName');
       
       // ✅ 검증
       final cleanedOcr = _cleanText(rawText);
@@ -379,13 +379,13 @@ class OcrVerificationHelper {
       final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
       
       final rawText = recognizedText.text;
-      debugPrint('📄 [사업자등록증 OCR] 원본: $rawText');
-      
+      if (kDebugMode) debugPrint('📄 [사업자등록증 OCR] 원본: $rawText');
+
       String? extractedNumber = _extractBusinessNumber(rawText);
       String? extractedName = _extractCeoName(rawText);
-      
-      debugPrint('📄 [사업자등록증 OCR] 추출된 번호: $extractedNumber');
-      debugPrint('📄 [사업자등록증 OCR] 추출된 대표자: $extractedName');
+
+      if (kDebugMode) debugPrint('📄 [사업자등록증 OCR] 추출된 번호: $extractedNumber');
+      if (kDebugMode) debugPrint('📄 [사업자등록증 OCR] 추출된 대표자: $extractedName');
       
       bool isValidNumber = false;
       bool isValidName = false;
@@ -394,14 +394,14 @@ class OcrVerificationHelper {
         final cleanedExtracted = extractedNumber.replaceAll(RegExp(r'\D'), '');
         final cleanedExpected = expectedBusinessNumber.replaceAll(RegExp(r'\D'), '');
         isValidNumber = cleanedExtracted == cleanedExpected;
-        debugPrint('📄 [사업자등록증 OCR] 번호 비교: $cleanedExtracted == $cleanedExpected → $isValidNumber');
+        if (kDebugMode) debugPrint('📄 [사업자등록증 OCR] 번호 비교: $cleanedExtracted == $cleanedExpected → $isValidNumber');
       }
       
       if (expectedCeoName != null && extractedName != null) {
         final cleanedExtracted = _cleanText(extractedName);
         final cleanedExpected = _cleanText(expectedCeoName);
         isValidName = cleanedExtracted == cleanedExpected;
-        debugPrint('📄 [사업자등록증 OCR] 이름 비교: $cleanedExtracted vs $cleanedExpected → $isValidName');
+        if (kDebugMode) debugPrint('📄 [사업자등록증 OCR] 이름 비교: $cleanedExtracted vs $cleanedExpected → $isValidName');
       }
       
       double confidence = 0.0;

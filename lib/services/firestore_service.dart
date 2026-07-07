@@ -13,7 +13,6 @@ import '../models/ui/admin_to_list_ui_models.dart';
 import '../models/core/business_model.dart';
 import '../models/core/work_type_model.dart';
 import '../utils/toast_helper.dart';
-import '../utils/attendance_status_helper.dart';
 import '../models/core/business_work_type_model.dart';
 import '../models/core/attendance_model.dart';
 import '../models/core/schedule_change_request_model.dart';
@@ -25,6 +24,7 @@ import '../models/core/to_filter_state.dart';
 import '../utils/week_helper.dart';
 import '../utils/wage_calculator.dart';
 import '../utils/network_checker.dart';
+import '../utils/attendance_rounding_helper.dart';
 
 // ═══════════════════════════════════════════════════════════
 // Part 파일 선언
@@ -174,7 +174,8 @@ class FirestoreService {
     if (uncached.isEmpty) return result;
 
     final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-        .httpsCallable('callableGetUsersBatch');
+        .httpsCallable('callableGetUsersBatch',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
 
     for (int i = 0; i < uncached.length; i += 30) {
       final chunk = uncached.skip(i).take(30).toList();
@@ -549,6 +550,7 @@ class FirestoreService {
         if (businessIds != null && businessIds.length == 1) {
           query = query.where('businessId', isEqualTo: businessIds.first);
         } else if (businessIds != null) {
+          // 이 else 분기는 2 ≤ businessIds.length ≤ 30 보장 — 상위 if(length>30)가 먼저 처리.
           query = query.where('businessId', whereIn: businessIds.toList());
         }
         // businessId whereIn이 없는 경우에만 status whereIn 서버 적용 (이중 whereIn 금지)
@@ -1120,10 +1122,45 @@ class FirestoreService {
   /// 계약해지 승인 (근무자 → 관리자 요청 수락)
   Future<bool> approveTermination(String applicationId, {String? adminUID}) async {
     try {
+      final appRef = _firestore.collection('applications').doc(applicationId);
+
+      // [R-02 fix] 계약서 void를 runTransaction 내부로 이동 — app 상태 전이와 원자화.
+      // 트랜잭션 전에 businessId를 프리리드하여 계약서 쿼리에 사용.
+      // TO 카운터는 WriteBatch 전용 API(_decrementTOConfirmed)라 트랜잭션 통합 불가 →
+      // 별도 배치로 유지하되 CF syncTOStats가 다음 이벤트 시 자동 교정.
+      final preSnap = await appRef.get(const GetOptions(source: Source.server));
+      if (!preSnap.exists) return false;
+      final preBusinessId = preSnap.data()?['businessId'] as String? ?? '';
+
+      // 계약서 쿼리 (트랜잭션 전 — 결과를 tx.update에 전달)
+      const pendingContractStatuses = {'pending_employer', 'pending_worker'};
+      DocumentSnapshot<Map<String, dynamic>>? contractDoc;
+      final cq1 = await _firestore
+          .collection('employment_contracts')
+          .where('applicationId', isEqualTo: applicationId)
+          .where('businessId', isEqualTo: preBusinessId)
+          .limit(5)
+          .get(const GetOptions(source: Source.server));
+      final cq1Match = cq1.docs.where(
+          (d) => pendingContractStatuses.contains(d.data()['status']));
+      if (cq1Match.isNotEmpty) {
+        contractDoc = cq1Match.first;
+      } else {
+        final cq2 = await _firestore
+            .collection('employment_contracts')
+            .where('applicationIds', arrayContains: applicationId)
+            .where('businessId', isEqualTo: preBusinessId)
+            .limit(5)
+            .get(const GetOptions(source: Source.server));
+        final cq2Match = cq2.docs.where(
+            (d) => pendingContractStatuses.contains(d.data()['status']));
+        if (cq2Match.isNotEmpty) contractDoc = cq2Match.first;
+      }
+
       // [R-M1-FIX] 트랜잭션으로 terminationStatus=PENDING 검증 + 상태 전이 원자화
       // 근무자 수락·D+3 자동승인이 동시에 실행될 때 이중 처리 방지
+      // [R-02 fix] 계약서 void도 트랜잭션에 포함 — app CANCELED와 원자적 처리
       ApplicationModel? resolvedApp;
-      final appRef = _firestore.collection('applications').doc(applicationId);
       await _firestore.runTransaction((tx) async {
         final snap = await tx.get(appRef);
         if (!snap.exists) throw Exception('지원서 없음: $applicationId');
@@ -1139,6 +1176,14 @@ class FirestoreService {
           'actualResignDate': Timestamp.fromDate(effectiveDate),
           'status': AppStatus.canceled,
         });
+        // M-3: 계약서 void — app 상태 전이와 원자화 (R-02 fix)
+        if (contractDoc != null) {
+          tx.update(contractDoc.reference, {
+            'status': 'voided',
+            'contractVoidedAt': FieldValue.serverTimestamp(),
+            'voidReason': 'TERMINATION',
+          });
+        }
       });
       if (resolvedApp == null) return false;
       final app = resolvedApp!;
@@ -1152,55 +1197,19 @@ class FirestoreService {
       // · _cleanupApplicationRelatedData 미호출:
       //   approveResignation과 동일 이유 — 예고된 종료이므로 pending 요청 정리는 관리자 위임.
 
-      // [BUG-수정] M-3: 해지 승인 시 CONTRACT_PENDING 계약서 voided 전환 누락 수정
-      // 배치 커밋 전 계약서를 미리 조회하여 원자적 업데이트 보장
-      // whereIn 제거: applicationId + businessId 필터 + status 클라이언트 필터링
-      // (whereIn 복합쿼리에서 filters.businessId null → 크로스-사업장 계약서 조회 위험)
-      const pendingContractStatuses = {'pending_employer', 'pending_worker'};
-      DocumentSnapshot<Map<String, dynamic>>? contractDoc;
-      final cq1 = await _firestore
-          .collection('employment_contracts')
-          .where('applicationId', isEqualTo: applicationId)
-          .where('businessId', isEqualTo: app.businessId)
-          .limit(5)
-          .get(const GetOptions(source: Source.server));
-      final cq1Match = cq1.docs.where(
-          (d) => pendingContractStatuses.contains(d.data()['status']));
-      if (cq1Match.isNotEmpty) {
-        contractDoc = cq1Match.first;
-      } else {
-        final cq2 = await _firestore
-            .collection('employment_contracts')
-            .where('applicationIds', arrayContains: applicationId)
-            .where('businessId', isEqualTo: app.businessId)
-            .limit(5)
-            .get(const GetOptions(source: Source.server));
-        final cq2Match = cq2.docs.where(
-            (d) => pendingContractStatuses.contains(d.data()['status']));
-        if (cq2Match.isNotEmpty) contractDoc = cq2Match.first;
-      }
-
-      // [R-M1-FIX] 트랜잭션에서 이미 app 상태 전이 완료 — 배치는 TO counter + contract void만 처리
+      // TO 카운터 감소 — _decrementTOConfirmed은 WriteBatch 전용, 트랜잭션 통합 불가.
+      // 실패 시 CF syncTOStats가 다음 이벤트에서 자동 교정.
       final batch = _firestore.batch();
-
-      // H-2: toId가 있고 이전 상태가 확정(CONFIRMED/CONTRACT_PENDING)인 경우에만 카운터 감소
       final toId = app.toId;
       final slotId = app.slotId;
       if (toId != null &&
           AppStatus.confirmedStatuses.contains(app.status)) {
         _decrementTOConfirmed(batch, toId, slotId, workType: app.selectedWorkType);
+        await batch.commit();
       }
 
-      // M-3: 서명 대기 중인 계약서를 voided로 전환
-      if (contractDoc != null) {
-        batch.update(contractDoc.reference, {
-          'status': 'voided',
-          'contractVoidedAt': FieldValue.serverTimestamp(),
-          'voidReason': 'TERMINATION',
-        });
-      }
-
-      await batch.commit();
+      // [BUG-수정] M-3: 해지 승인 시 CONTRACT_PENDING 계약서 voided 전환 누락 수정
+      // (계약서 void는 위 runTransaction에서 원자적으로 처리됨)
       if (toId != null) clearCache(toId: toId);
 
       // [E16] 해지 승인 후 근무자의 캐시를 무효화하여 캘린더/스케줄 화면에서 즉시 반영
@@ -1389,11 +1398,47 @@ class FirestoreService {
     required String adminUID,
   }) async {
     try {
+      final appRef = _firestore.collection('applications').doc(applicationId);
+
+      // [R-01 fix] 계약서 void를 runTransaction 내부로 이동 — app 상태 전이와 원자화.
+      // 트랜잭션 전에 businessId를 프리리드하여 계약서 쿼리에 사용.
+      // TO 카운터는 WriteBatch 전용 API(_decrementTOConfirmed)라 트랜잭션 통합 불가 →
+      // 별도 배치로 유지하되 CF syncTOStats가 다음 이벤트 시 자동 교정.
+      final preSnap = await appRef.get(const GetOptions(source: Source.server));
+      if (!preSnap.exists) return false;
+      final preBusinessId = preSnap.data()?['businessId'] as String? ?? '';
+
+      // 계약서 쿼리 (트랜잭션 전 — 결과를 tx.update에 전달)
+      // whereIn 제거: applicationId + businessId 필터 + status 클라이언트 필터링
+      const pendingContractStatuses = {'pending_employer', 'pending_worker'};
+      DocumentSnapshot<Map<String, dynamic>>? contractDoc;
+      final cq1 = await _firestore
+          .collection('employment_contracts')
+          .where('applicationId', isEqualTo: applicationId)
+          .where('businessId', isEqualTo: preBusinessId)
+          .limit(5)
+          .get(const GetOptions(source: Source.server));
+      final cq1Match = cq1.docs.where(
+          (d) => pendingContractStatuses.contains(d.data()['status']));
+      if (cq1Match.isNotEmpty) {
+        contractDoc = cq1Match.first;
+      } else {
+        final cq2 = await _firestore
+            .collection('employment_contracts')
+            .where('applicationIds', arrayContains: applicationId)
+            .where('businessId', isEqualTo: preBusinessId)
+            .limit(5)
+            .get(const GetOptions(source: Source.server));
+        final cq2Match = cq2.docs.where(
+            (d) => pendingContractStatuses.contains(d.data()['status']));
+        if (cq2Match.isNotEmpty) contractDoc = cq2Match.first;
+      }
+
       // [M-004 수정] 취소-승인 TOCTOU 경쟁 상태 방지
       // 트랜잭션으로 resignStatus=PENDING 검증 + 앱 상태 업데이트를 원자화.
       // "사용자 취소 → 관리자 배치 커밋" 순서로 엇갈리면 취소된 퇴사 요청이 승인되는 버그 차단.
+      // [R-01 fix] 계약서 void도 트랜잭션에 포함 — app CANCELED와 원자적 처리
       ApplicationModel? resolvedApp;
-      final appRef = _firestore.collection('applications').doc(applicationId);
       await _firestore.runTransaction((tx) async {
         final snap = await tx.get(appRef);
         if (!snap.exists) throw Exception('지원서 없음: $applicationId');
@@ -1410,62 +1455,32 @@ class FirestoreService {
           'actualResignDate': Timestamp.fromDate(actualDate),
           'status': AppStatus.canceled,
         });
+        // M-3: 계약서 void — app 상태 전이와 원자화 (R-01 fix)
+        if (contractDoc != null) {
+          tx.update(contractDoc.reference, {
+            'status': 'voided',
+            'contractVoidedAt': FieldValue.serverTimestamp(),
+            'voidReason': 'RESIGNATION',
+          });
+        }
       });
       if (resolvedApp == null) return false;
       final app = resolvedApp!;
 
       final actualResignDate = app.resignRequestDate ?? DateTime.now();
 
-      // [BUG-수정] M-3: 퇴사 승인 시 CONTRACT_PENDING 계약서 voided 전환 누락 수정
-      // 배치 커밋 전 계약서를 미리 조회하여 원자적 업데이트 보장
-      // whereIn 제거: applicationId + businessId 필터 + status 클라이언트 필터링
-      const pendingContractStatuses = {'pending_employer', 'pending_worker'};
-      DocumentSnapshot<Map<String, dynamic>>? contractDoc;
-      final cq1 = await _firestore
-          .collection('employment_contracts')
-          .where('applicationId', isEqualTo: applicationId)
-          .where('businessId', isEqualTo: app.businessId)
-          .limit(5)
-          .get(const GetOptions(source: Source.server));
-      final cq1Match = cq1.docs.where(
-          (d) => pendingContractStatuses.contains(d.data()['status']));
-      if (cq1Match.isNotEmpty) {
-        contractDoc = cq1Match.first;
-      } else {
-        final cq2 = await _firestore
-            .collection('employment_contracts')
-            .where('applicationIds', arrayContains: applicationId)
-            .where('businessId', isEqualTo: app.businessId)
-            .limit(5)
-            .get(const GetOptions(source: Source.server));
-        final cq2Match = cq2.docs.where(
-            (d) => pendingContractStatuses.contains(d.data()['status']));
-        if (cq2Match.isNotEmpty) contractDoc = cq2Match.first;
-      }
-
       // [BUG-수정] H-2: 퇴사 승인 시 TO totalConfirmed 미감소 버그 수정
-      // application 상태는 트랜잭션(M-004)에서 이미 업데이트됨 — 여기서는 TO 카운터 + 계약서만 처리
+      // TO 카운터만 별도 배치 처리 — 실패 시 CF syncTOStats가 다음 이벤트에서 자동 교정.
+      // 계약서 void는 위 runTransaction에서 원자적으로 처리됨 (R-01 fix).
       final approveBatch = _firestore.batch();
-
-      // H-2: toId가 있고 이전 상태가 확정(CONFIRMED/CONTRACT_PENDING)인 경우에만 카운터 감소
       final resignToId = app.toId;
       final resignSlotId = app.slotId;
       if (resignToId != null &&
           AppStatus.confirmedStatuses.contains(app.status)) {
         _decrementTOConfirmed(approveBatch, resignToId, resignSlotId,
             workType: app.selectedWorkType);
+        await approveBatch.commit();
       }
-
-      // M-3: 서명 대기 중인 계약서를 voided로 전환
-      if (contractDoc != null) {
-        approveBatch.update(contractDoc.reference, {
-          'status': 'voided',
-          'contractVoidedAt': FieldValue.serverTimestamp(),
-          'voidReason': 'RESIGNATION',
-        });
-      }
-
-      await approveBatch.commit();
       if (resignToId != null) clearCache(toId: resignToId);
 
       // 탈퇴일 이후 scheduled 출근기록 → absent 처리 (orphan 방지)

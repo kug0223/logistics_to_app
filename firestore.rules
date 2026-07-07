@@ -604,8 +604,20 @@ service cloud.firestore {
                        isOwner(resource.data.userId) &&
                        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                          'checkOut', 'checkOutLat', 'checkOutLng', 'checkOutMethod',
-                         'workHours', 'status', 'updatedAt', 'originalCheckOut'
-                       ])) ||
+                         'workHours', 'status', 'updatedAt', 'originalCheckOut',
+                         'isZeroWork'
+                       ]) &&
+                       // originalCheckOut 불변: 이미 설정된 경우 동일 값만 허용
+                       (!('originalCheckOut' in resource.data) ||
+                        request.resource.data.get('originalCheckOut', null) == resource.data.get('originalCheckOut', null)) &&
+                       // isZeroWork 는 false→true 단방향만 허용 (플래그 제거 차단)
+                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['isZeroWork']) ||
+                        request.resource.data.isZeroWork == true) &&
+                       // workHours 범위 검증
+                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['workHours']) ||
+                        (request.resource.data.workHours is number &&
+                         request.resource.data.workHours >= 0 &&
+                         request.resource.data.workHours <= 24))) ||
                       // [SEC-46] 관리자: 핵심 식별자 불변 조건 추가 — 출근 기록 재귀속 차단
                       // userId/businessId/applicationId/workDate는 생성 후 변경 불가 (슈퍼어드민 예외)
                       // wageDetail/finalWage/wageStatus 등 운영 필드는 wage_confirm_dialog 기능 유지
@@ -615,10 +627,15 @@ service cloud.firestore {
                         isSubAdminOf(resource.data.businessId)) &&
                        !request.resource.data.diff(resource.data).affectedKeys()
                          .hasAny(['userId', 'businessId', 'applicationId', 'workDate',
-                                  'checkInSuspicious', 'checkInDistance']) &&
+                                  'checkInSuspicious', 'checkInDistance',
+                                  // GPS 원본 시각은 관리자도 덮어쓸 수 없음
+                                  'originalCheckIn', 'originalCheckOut']) &&
+                       // [G-01 fix] 문자열 불일치 수정: 실제 저장값은 'transferred'/'confirmed'
+                       // (잘못된 'wageTransferred'/'wageConfirmed' 사용 시 이 조건이 항상 통과되어
+                       // wagePending→transferred 직접 전환이 관리자에게 허용되던 취약점)
                        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['wageStatus']) ||
-                        request.resource.data.get('wageStatus', '') != 'wageTransferred' ||
-                        resource.data.get('wageStatus', '') == 'wageConfirmed') &&
+                        request.resource.data.get('wageStatus', '') != 'transferred' ||
+                        resource.data.get('wageStatus', '') == 'confirmed') &&
                        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['finalWage']) ||
                         request.resource.data.get('finalWage', 0) >= 0)) ||
                       isSuperAdmin()

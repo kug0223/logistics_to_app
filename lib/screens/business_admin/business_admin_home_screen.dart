@@ -628,6 +628,16 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
             ),
             const Divider(height: 1),
             ListTile(
+              leading: const Icon(Icons.schedule, color: AppColors.info),
+              title: const Text('시나리오별 출퇴근 생성'),
+              subtitle: const Text('정시·지각·조퇴·연장 등 8가지 상황 랜덤 배정'),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await _createDummyAttendanceScenariosFlow(businessId);
+              },
+            ),
+            const Divider(height: 1),
+            ListTile(
               leading: const Icon(Icons.star_outline, color: AppColors.warning),
               title: const Text('리뷰 데이터 생성'),
               subtitle: const Text('모든 더미 근무자에게 평점 생성'),
@@ -682,7 +692,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
       return;
     }
 
-    // 모든 사업장 공고를 표시하므로 사업장명·상태를 라벨에 포함
+    // 활성·비활성 포함 전체 공고 표시 — 상태를 라벨에 표기
     final toDocs = snap.docs.map((d) {
       final data = d.data();
       final title = data['title'] as String? ?? d.id;
@@ -1133,6 +1143,29 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
       if (mounted) ToastHelper.showSuccess('더미 출근 데이터 생성 완료');
     } catch (e) {
       if (mounted) ToastHelper.showError('출근 데이터 생성 실패: 확정된 더미 지원자가 없을 수 있습니다.');
+    }
+  }
+
+  /// 시나리오별 출퇴근 데이터 생성 흐름 — 날짜 선택 후 8가지 상황 랜덤 배정
+  Future<void> _createDummyAttendanceScenariosFlow(String businessId) async {
+    final now = DateTime.now();
+    final date = await showDatePicker(
+      context: context,
+      initialDate: now,
+      firstDate: now.subtract(const Duration(days: 30)),
+      lastDate: now,
+      helpText: '시나리오 출퇴근 날짜 선택',
+      confirmText: '생성',
+      cancelText: '취소',
+    );
+    if (date == null || !mounted) return;
+
+    try {
+      await TestDataHelper.createDummyAttendanceScenarios(
+          businessId: businessId, date: date);
+      if (mounted) ToastHelper.showSuccess('시나리오별 출퇴근 데이터 생성 완료');
+    } catch (e) {
+      if (mounted) ToastHelper.showError('생성 실패: 확정된 더미 지원자가 없을 수 있습니다.');
     }
   }
 

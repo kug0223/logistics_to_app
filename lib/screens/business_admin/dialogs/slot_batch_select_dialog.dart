@@ -4,6 +4,7 @@ import '../../../models/core/slot_model.dart';
 import '../../../models/core/to_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/toast_helper.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../theme/app_colors.dart';
 import '../../../utils/slot_status_util.dart';
@@ -93,7 +94,10 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
       });
     } catch (e) {
       debugPrint('❌ 슬롯 로드 실패: $e');
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ToastHelper.showError('날짜 목록을 불러오는데 실패했습니다.');
+      }
     }
   }
 

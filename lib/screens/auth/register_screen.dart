@@ -743,9 +743,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
               errStr.contains('token-expired') ||
               errStr.contains('passToken'))) {
         if (mounted) setState(() => _passAuthResult = null);
-        ToastHelper.showError('PASS 인증 세션이 만료되었습니다.\n화면 상단의 PASS 인증을 다시 진행해주세요.');
+        if (mounted) ToastHelper.showError('PASS 인증 세션이 만료되었습니다.\n화면 상단의 PASS 인증을 다시 진행해주세요.');
       } else {
-        ToastHelper.showError('회원가입에 실패했습니다');
+        if (mounted) ToastHelper.showError('회원가입에 실패했습니다');
       }
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
@@ -919,7 +919,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
     } catch (e) {
       debugPrint('❌ 회원가입 실패: $e');
-      ToastHelper.showError('회원가입에 실패했습니다');
+      if (mounted) ToastHelper.showError('회원가입에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -961,10 +961,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
         _                      => '발송에 실패했습니다. 다시 시도해주세요',
       };
       _phoneVerifyStatus.value = _PhoneVerifyStatus(error: msg);
-      ToastHelper.showError(msg);
+      if (mounted) ToastHelper.showError(msg);
     } on Exception {
       _phoneVerifyStatus.value = const _PhoneVerifyStatus(error: '발송에 실패했습니다. 다시 시도해주세요');
-      ToastHelper.showError('발송에 실패했습니다. 다시 시도해주세요');
+      if (mounted) ToastHelper.showError('발송에 실패했습니다. 다시 시도해주세요');
     }
   }
 
@@ -993,6 +993,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             return;
           }
         }
+        if (!mounted) return;
         _phoneVerifyStatus.value = const _PhoneVerifyStatus(isVerified: true);
         ToastHelper.showSuccess('휴대폰 인증이 완료되었습니다');
       } else {
@@ -1002,7 +1003,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           _                   => '인증번호가 일치하지 않습니다',
         };
         _phoneVerifyStatus.value = _PhoneVerifyStatus(isSent: true, error: msg);
-        ToastHelper.showError(msg);
+        if (mounted) ToastHelper.showError(msg);
       }
     } on Exception {
       _phoneVerifyStatus.value = const _PhoneVerifyStatus(

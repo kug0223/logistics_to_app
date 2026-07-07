@@ -238,7 +238,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     } catch (e) {
       debugPrint('❌ 사업장 로드 실패: $e');
       if (mounted) setState(() => _isLoading = false);
-      ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+      if (mounted) ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
     }
   }
 
@@ -975,12 +975,14 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       }
     } catch (e) {
       debugPrint('❌ TO 생성 실패: $e');
-      if (e.toString().contains('MAX_ACTIVE_TO_LIMIT')) {
-        final parts = e.toString().split(':');
-        final limitStr = parts.length >= 2 ? parts.last : '4';
-        ToastHelper.showError('진행중인 공고가 최대 $limitStr개입니다.\n기존 공고를 마감 후 새 공고를 등록해주세요.');
-      } else {
-        ToastHelper.showError('공고 등록에 실패했습니다');
+      if (mounted) {
+        if (e.toString().contains('MAX_ACTIVE_TO_LIMIT')) {
+          final parts = e.toString().split(':');
+          final limitStr = parts.length >= 2 ? parts.last : '4';
+          ToastHelper.showError('진행중인 공고가 최대 $limitStr개입니다.\n기존 공고를 마감 후 새 공고를 등록해주세요.');
+        } else {
+          ToastHelper.showError('공고 등록에 실패했습니다');
+        }
       }
     } finally {
       if (mounted) setState(() => _isCreating = false);

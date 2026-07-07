@@ -1303,7 +1303,10 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   }
 
   Widget _buildRenewalBanner(BuildContext context, ApplicationModel app, UserModel? user) {
-    final endDate = app.workEndDate!;
+    // _isExpiringWithinDays()는 actualResignDate ?? workEndDate로 판단하므로
+    // workEndDate가 null이어도 true를 반환할 수 있음 → workEndDate! NPE 방지
+    final endDate = app.actualResignDate ?? app.workEndDate;
+    if (endDate == null) return const SizedBox.shrink();
     final today = DateTime.now();
     final todayOnly = DateTime(today.year, today.month, today.day);
     final endOnly = DateTime(endDate.year, endDate.month, endDate.day);
@@ -1611,10 +1614,13 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
     // 템플릿 선택
     final articles = await ContractTemplateSelectorDialog.show(context, businessId: businessId);
-    if (articles == null || !mounted) {
-      ToastHelper.showSuccess('계약이 연장되었습니다 (계약서는 나중에 작성할 수 있습니다)');
+    // [역전패턴 수정] 원래 "if (articles == null || !mounted)"였으나 !mounted 시에도 Toast 호출되는 버그.
+    // articles==null(사용자 취소)이면 Toast 후 리턴, unmount면 조용히 리턴.
+    if (articles == null) {
+      if (mounted) ToastHelper.showSuccess('계약이 연장되었습니다 (계약서는 나중에 작성할 수 있습니다)');
       return;
     }
+    if (!mounted) return;
 
     setLoading(true);
     try {
@@ -2161,7 +2167,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     );
 
     final reason = reasonController.text.trim();
-    reasonController.dispose();
+    WidgetsBinding.instance.addPostFrameCallback((_) => reasonController.dispose());
 
     if (confirmed != true || !mounted) return;
 
@@ -2327,7 +2333,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     );
 
     final noWorkReason = reasonController.text.trim();
-    reasonController.dispose();
+    WidgetsBinding.instance.addPostFrameCallback((_) => reasonController.dispose());
 
     if (confirmed != true || !mounted) return;
 

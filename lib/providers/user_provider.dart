@@ -120,17 +120,20 @@ class UserProvider with ChangeNotifier {
       if (_disposed) return; // dispose 후 결과를 반영하지 않음
 
       if (_currentUser != null) {
+        // 스냅샷: await 이후 signOut() 경쟁조건으로 _currentUser가 null이 될 수 있음
+        final user = _currentUser!;
+
         // 알림 Provider 초기화
-        _notificationProvider?.setUser(_currentUser!.uid);
+        _notificationProvider?.setUser(user.uid);
 
         // FCM 푸시 알림 초기화
-        await FCMService().initialize(_currentUser!.uid, isAdmin: _currentUser!.isAdmin);
+        await FCMService().initialize(user.uid, isAdmin: user.isAdmin);
         if (_disposed) return;
 
         // 하위 관리자이면 권한 로드
-        if (_currentUser!.isSubAdmin && _currentUser!.subAdminOf != null) {
+        if (user.isSubAdmin && user.subAdminOf != null) {
           _memberPermissions = await MemberService().getMemberPermissions(
-            _currentUser!.subAdminOf!,
+            user.subAdminOf!,
             uid,
           );
           if (_disposed) return;
@@ -258,7 +261,7 @@ class UserProvider with ChangeNotifier {
       if (user != null) {
         // _loadUserData로 FCM·NotificationProvider·권한 초기화까지 한번에 처리
         await _loadUserData(user.uid);
-        debugPrint('✅ 로그인 성공: ${user.email}');
+        if (kDebugMode) debugPrint('✅ 로그인 성공: ${user.email}');
         return true;
       }
       

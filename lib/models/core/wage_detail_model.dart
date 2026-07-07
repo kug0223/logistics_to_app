@@ -315,8 +315,18 @@ class WageDetailModel {
 
   /// 실수령액 (미확정 시 총액에서 공제액 차감)
   /// clamp(0): 8일차 소급 공제가 당일 세전 급여를 초과해도 음수가 되지 않도록 보호
-  int get effectiveNetWage =>
-      (isCalculated ? netWage : totalAmount - totalInsuranceDeduction).clamp(0, 999999999);
+  int get effectiveNetWage {
+    if (isCalculated) {
+      // [T-01 fix] netWage==0이지만 totalAmount>0이면 마이그레이션 전 레코드(netWage 필드 부재 → 기본값 0).
+      // 계산식으로 폴백하여 실수령액 0원 오표시 방지.
+      // 진짜로 실수령액이 0인 경우(totalAmount==0 또는 공제합계==totalAmount)도 계산식 결과가 0이므로 안전.
+      if (netWage == 0 && totalAmount > 0) {
+        return (totalAmount - totalInsuranceDeduction).clamp(0, 999999999);
+      }
+      return netWage.clamp(0, 999999999);
+    }
+    return (totalAmount - totalInsuranceDeduction).clamp(0, 999999999);
+  }
 
   /// 포맷팅된 실수령액
   String get formattedNetWage {

@@ -266,10 +266,12 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
     } finally {
-      nameController.dispose();
-      phoneController.dispose();
-      nameFocus.dispose();
-      phoneFocus.dispose();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        nameController.dispose();
+        phoneController.dispose();
+        nameFocus.dispose();
+        phoneFocus.dispose();
+      });
     }
   }
 
@@ -289,6 +291,8 @@ class _LoginScreenState extends State<LoginScreen> {
     bool obscureConfirm = true;
     String? customToken;
 
+    // _showFindUsernameDialog와 동일하게 try-finally로 dispose 보장
+    try {
     await showModalBottomSheet(
       context: context,
       useSafeArea: true,
@@ -540,13 +544,16 @@ class _LoginScreenState extends State<LoginScreen> {
         },
       ),
     );
-
-    usernameController.dispose();
-    newPasswordController.dispose();
-    confirmPasswordController.dispose();
-    usernameFocus.dispose();
-    newPasswordFocus.dispose();
-    confirmPasswordFocus.dispose();
+    } finally {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        usernameController.dispose();
+        newPasswordController.dispose();
+        confirmPasswordController.dispose();
+        usernameFocus.dispose();
+        newPasswordFocus.dispose();
+        confirmPasswordFocus.dispose();
+      });
+    }
   }
 
   @override

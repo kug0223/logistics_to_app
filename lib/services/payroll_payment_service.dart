@@ -542,6 +542,10 @@ class PayrollPaymentService {
         if (idsToTransfer.isEmpty) skipMarkTransferred = true;
       }
     }
+    // [I-01] skipMarkTransferred=true 시 이체 0건인데도 status=PROCESSED 마킹됨.
+    // 요청 생성 후 관리자가 모든 attendances를 wagePending으로 취소한 케이스가 해당.
+    // UI 레이어(payroll_worker_detail_screen)에서 settleableRecords 차단이 있으나
+    // 서비스 직접 호출 경로에서는 방어 없음. 운영상 발생 빈도 낮음.
 
     // 1단계: 출근기록 이체 처리 먼저 — attendance 성공 후 요청 상태 변경
     // (역순 시 실패 모드: attendance=미이체인데 status=processed → 미지급 상태 숨김)

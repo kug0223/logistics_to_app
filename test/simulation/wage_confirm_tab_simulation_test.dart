@@ -27,24 +27,33 @@ int classifyWageTab(String? wageStatus) {
   return -1;
 }
 
+DateTime? _parseTime(DateTime date, String? hhmm) {
+  if (hhmm == null) return null;
+  final parts = hhmm.split(':');
+  return DateTime(date.year, date.month, date.day,
+      int.parse(parts[0]), int.parse(parts[1]));
+}
+
 /// 최소 AttendanceModel 생성 헬퍼
 AttendanceModel _att({
   String wageStatus = 'pending',
   String? checkOut,
-}) =>
-    AttendanceModel(
-      id: 'test-id',
-      applicationId: 'app-id',
-      userId: 'user-id',
-      businessId: 'biz-id',
-      businessName: '테스트 사업장',
-      workDate: DateTime(2026, 6, 15),
-      workType: '서빙',
-      status: 'present',
-      createdAt: DateTime(2026, 6, 15, 9),
-      wageStatus: wageStatus,
-      checkOut: checkOut,
-    );
+}) {
+  final workDate = DateTime(2026, 6, 15);
+  return AttendanceModel(
+    id: 'test-id',
+    applicationId: 'app-id',
+    userId: 'user-id',
+    businessId: 'biz-id',
+    businessName: '테스트 사업장',
+    workDate: workDate,
+    workType: '서빙',
+    status: 'present',
+    createdAt: DateTime(2026, 6, 15, 9),
+    wageStatus: wageStatus,
+    checkOutAt: _parseTime(workDate, checkOut),
+  );
+}
 
 void main() {
   // ════════════════════════════════════════════════════════════════════

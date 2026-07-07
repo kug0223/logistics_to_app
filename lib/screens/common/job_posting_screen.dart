@@ -688,6 +688,18 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                       '업무시작 ${_to!.hoursBeforeStart ?? 2}시간 전',
                       _to!.isDeadlineSoon ? AppColors.error : AppColors.grey600,
                     ),
+
+                  // 출퇴근 반올림 규칙 요약
+                  if (_business != null) ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                    _buildTOInfoRow(
+                      context,
+                      Icons.access_time_outlined,
+                      '출퇴근 규칙',
+                      (_business!.attendanceRules ?? AttendanceRules.defaults()).summary,
+                      AppColors.info,
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -1967,7 +1979,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     try {
       await launchUrl(Uri.parse(url));
     } catch (e) {
-      ToastHelper.showError('전화를 걸 수 없습니다');
+      if (mounted) ToastHelper.showError('전화를 걸 수 없습니다');
     }
   }
 

@@ -40,8 +40,14 @@ class _SplashScreenState extends State<SplashScreen>
 
     Future.delayed(const Duration(milliseconds: 2000), () async {
       if (!mounted) return;
-      final canProceed = await _checkVersion();
-      if (mounted && canProceed) _navigateToHome();
+      try {
+        final canProceed = await _checkVersion();
+        if (mounted && canProceed) _navigateToHome();
+      } catch (e) {
+        // 버전 체크 실패 시 홈으로 진행 — 스플래시 무한 대기 방지
+        debugPrint('⚠️ [Splash] 버전 체크 실패, 홈으로 진행: $e');
+        if (mounted) _navigateToHome();
+      }
     });
   }
 

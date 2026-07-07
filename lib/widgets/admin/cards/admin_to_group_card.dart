@@ -1082,8 +1082,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
                 result['workStats'] as Map<String, Map<String, int>>,
               );
             } catch (e) {
-              if (mounted) Navigator.pop(this.context);
-              ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+              if (mounted) {
+                Navigator.pop(this.context);
+                ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+              }
               return;
             }
             if (mounted) Navigator.pop(this.context);
@@ -1248,9 +1250,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
           );
           widget.firestoreService.clearCache(toId: masterTO.id);
           widget.onChanged();
-          ToastHelper.showSuccess('${closeSlots.length}개 날짜가 마감되었습니다');
+          if (mounted) ToastHelper.showSuccess('${closeSlots.length}개 날짜가 마감되었습니다');
         } catch (e) {
-          ToastHelper.showError('마감 처리에 실패했습니다');
+          if (mounted) ToastHelper.showError('마감 처리에 실패했습니다');
         }
         break;
 
@@ -1292,9 +1294,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
           );
           widget.firestoreService.clearCache(toId: masterTO.id);
           widget.onChanged();
-          ToastHelper.showSuccess('${reopenSlots.length}개 날짜가 재오픈되었습니다');
+          if (mounted) ToastHelper.showSuccess('${reopenSlots.length}개 날짜가 재오픈되었습니다');
         } catch (e) {
-          ToastHelper.showError('재오픈 처리에 실패했습니다');
+          if (mounted) ToastHelper.showError('재오픈 처리에 실패했습니다');
         }
         break;
 
@@ -1345,11 +1347,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
             await widget.firestoreService.deleteTO(masterTO.id);
           } else {
             widget.firestoreService.clearCache(toId: masterTO.id);
-            ToastHelper.showSuccess('${deleteSlots.length}개 날짜가 삭제되었습니다');
+            if (mounted) ToastHelper.showSuccess('${deleteSlots.length}개 날짜가 삭제되었습니다');
           }
           widget.onChanged();
         } catch (e) {
-          ToastHelper.showError('삭제 처리에 실패했습니다');
+          if (mounted) ToastHelper.showError('삭제 처리에 실패했습니다');
         }
         break;
 
@@ -1418,8 +1420,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
               result['workStats'] as Map<String, Map<String, int>>,
             );
           } catch (e) {
-            if (mounted) Navigator.pop(this.context);
-            ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+            if (mounted) {
+              Navigator.pop(this.context);
+              ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+            }
             return;
           }
           if (mounted) Navigator.pop(this.context);
@@ -1466,16 +1470,16 @@ class _TOGroupCardState extends State<TOGroupCard> {
             ],
           ),
         );
-        controller.dispose();
+        WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
         if (newTitle == null || !mounted) return;
         try {
           await widget.firestoreService.updateTO(masterTO.id, {
             'groupTitle': newTitle.isNotEmpty ? newTitle : null,
           });
           widget.onChanged();
-          ToastHelper.showSuccess('카드 제목이 변경되었습니다');
+          if (mounted) ToastHelper.showSuccess('카드 제목이 변경되었습니다');
         } catch (e) {
-          ToastHelper.showError('제목 변경에 실패했습니다');
+          if (mounted) ToastHelper.showError('제목 변경에 실패했습니다');
         }
         break;
 
@@ -1500,8 +1504,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
               result['workStats'] as Map<String, Map<String, int>>,
             );
           } catch (e) {
-            if (mounted) Navigator.pop(this.context);
-            ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+            if (mounted) {
+              Navigator.pop(this.context);
+              ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+            }
             return;
           }
           if (mounted) Navigator.pop(this.context);

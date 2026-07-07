@@ -508,7 +508,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         try { await File(imagePath).delete(); } catch (_) {}
 
         if (newUrl == null) {
-          ToastHelper.showError('이미지 업로드에 실패했습니다');
+          if (mounted) ToastHelper.showError('이미지 업로드에 실패했습니다');
           if (mounted) setState(() => _isLoading = false);
           return;
         }
@@ -666,7 +666,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         try { await File(imagePath).delete(); } catch (_) {}
 
         if (downloadUrl == null) {
-          ToastHelper.showError('이미지 업로드에 실패했습니다');
+          if (mounted) ToastHelper.showError('이미지 업로드에 실패했습니다');
           if (mounted) setState(() => _isLoading = false);
           return;
         }
@@ -919,7 +919,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                   SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: _deleteIdCard,
+                      onPressed: _isLoading ? null : _deleteIdCard,
                       icon: const Icon(Icons.delete, size: 14),
                       label: Text('삭제',
                           style: ResponsiveHelper.smallStyle(context)),
@@ -1125,7 +1125,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                   SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: _deleteBankInfo,
+                      onPressed: _isLoading ? null : _deleteBankInfo,
                       icon: const Icon(Icons.delete, size: 14),
                       label: Text('삭제',
                           style: ResponsiveHelper.smallStyle(context)),
@@ -1320,7 +1320,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         try { await File(imagePath).delete(); } catch (_) {}
 
         if (newUrl == null) {
-          ToastHelper.showError('이미지 업로드에 실패했습니다');
+          if (mounted) ToastHelper.showError('이미지 업로드에 실패했습니다');
           if (mounted) setState(() => _isLoading = false);
           return;
         }

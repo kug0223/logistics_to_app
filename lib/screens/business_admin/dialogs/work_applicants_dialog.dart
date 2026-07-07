@@ -1281,19 +1281,24 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                           if (isPending) ...[
                             SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                             GestureDetector(
-                              onTap: () {
+                              onTap: () async {
                                 final nowStarred = !_starredIds.contains(app.id);
-                                setState(() {
-                                  if (nowStarred) {
-                                    _starredIds.add(app.id);
-                                  } else {
-                                    _starredIds.remove(app.id);
-                                  }
-                                });
-                                _firestoreService.updateApplicationFields(
-                                  app.id,
-                                  {'isStarred': nowStarred},
-                                );
+                                try {
+                                  await _firestoreService.updateApplicationFields(
+                                    app.id,
+                                    {'isStarred': nowStarred},
+                                  );
+                                  if (!mounted) return;
+                                  setState(() {
+                                    if (nowStarred) {
+                                      _starredIds.add(app.id);
+                                    } else {
+                                      _starredIds.remove(app.id);
+                                    }
+                                  });
+                                } catch (e) {
+                                  if (mounted) ToastHelper.showError('별 표시 저장에 실패했습니다');
+                                }
                               },
                               behavior: HitTestBehavior.opaque,
                               child: Padding(
@@ -2094,10 +2099,13 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       message: '${user?.name ?? '근무자'}님의 확정을 취소합니다.\n취소 사유를 선택해주세요.',
     );
 
-    if (reason == null || !mounted) {
-      setState(() => _isProcessing = false);
+    // [역전패턴 수정] 원래 "if (reason == null || !mounted)"였으나 !mounted 시에도 setState 호출되는 버그.
+    // reason==null(사용자 취소)이면 로딩 해제 후 리턴, unmount면 setState 생략하고 리턴.
+    if (reason == null) {
+      if (mounted) setState(() => _isProcessing = false);
       return;
     }
+    if (!mounted) return;
     try {
       final adminUID = userProvider.currentUser?.uid;
 
@@ -2333,7 +2341,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     try {
       final b = await _firestoreService.getBusinessById(businessId);
       if (b == null) {
-        ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+        if (mounted) ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
         return;
       }
       business = b;
@@ -2656,7 +2664,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     try {
       final b = await _firestoreService.getBusinessById(businessId);
       if (b == null) {
-        ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+        if (mounted) ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
         return;
       }
       business = b;
@@ -2826,7 +2834,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     try {
       final b = await _firestoreService.getBusinessById(businessId);
       if (b == null) {
-        ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+        if (mounted) ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
         return;
       }
       previewContract = await ContractService().buildPreviewContract(
@@ -2858,7 +2866,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     try {
       final b = await _firestoreService.getBusinessById(businessId);
       if (b == null) {
-        ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+        if (mounted) ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
         return;
       }
       final sealBytes = base64Decode(sealBase64);

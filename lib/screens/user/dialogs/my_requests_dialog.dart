@@ -126,7 +126,10 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       debugPrint('✅ 알림 로드 완료: ${notifications.length}건');
     } catch (e) {
       debugPrint('❌ 알림 로드 실패: $e');
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ToastHelper.showError('알림을 불러오는데 실패했습니다.');
+      }
     }
   }
 
@@ -577,7 +580,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
         ToastHelper.showError('거절 실패');
       }
     } finally {
-      reasonController.dispose();
+      WidgetsBinding.instance.addPostFrameCallback((_) => reasonController.dispose());
       if (mounted) setState(() => _isProcessing = false);
     }
   }
@@ -702,7 +705,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
         ToastHelper.showError('거절 실패');
       }
     } finally {
-      reasonController.dispose();
+      WidgetsBinding.instance.addPostFrameCallback((_) => reasonController.dispose());
       if (mounted) setState(() => _isProcessing = false);
     }
   }

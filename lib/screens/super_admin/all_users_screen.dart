@@ -13,6 +13,8 @@ import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../utils/loading_state_mixin.dart';
 import '../../services/badge_service.dart';
+import 'package:flutter/services.dart';
+import '../../widgets/dialogs/styled_dialog.dart';
 
 /// 모든 사용자 조회·관리 화면 (최고관리자 전용)
 class AllUsersScreen extends StatefulWidget {
@@ -29,6 +31,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
   List<UserModel> _users = [];
   String _roleFilter = 'ALL';
   String _searchQuery = '';
+  bool _isProcessing = false;
   final _searchController = TextEditingController();
 
   static const _roleLabels = {
@@ -105,6 +108,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
   // ── 관리 액션 ───────────────────────────────────────────────────
 
   Future<void> _toggleBlacklist(UserModel user) async {
+    if (_isProcessing) return;
     if (user.isBlacklisted) {
       final confirmed = await DialogHelper.showDangerConfirm(
         context,
@@ -113,6 +117,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
         confirmText: '해제',
       );
       if (!confirmed || !mounted) return;
+      setState(() => _isProcessing = true);
 
       try {
         await _firestore.collection('users').doc(user.uid).update({
@@ -124,6 +129,8 @@ class _AllUsersScreenState extends State<AllUsersScreen>
         await _loadAllUsers();
       } catch (e) {
         if (mounted) ToastHelper.showError('처리 실패: $e');
+      } finally {
+        if (mounted) setState(() => _isProcessing = false);
       }
     } else {
       // 등록: 사유 입력
@@ -134,6 +141,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
         confirmColor: AppColors.error,
       );
       if (reason == null || !mounted) return;
+      setState(() => _isProcessing = true);
 
       try {
         await _firestore.collection('users').doc(user.uid).update({
@@ -145,11 +153,14 @@ class _AllUsersScreenState extends State<AllUsersScreen>
         await _loadAllUsers();
       } catch (e) {
         if (mounted) ToastHelper.showError('처리 실패: $e');
+      } finally {
+        if (mounted) setState(() => _isProcessing = false);
       }
     }
   }
 
   Future<void> _clearRestriction(UserModel user) async {
+    if (_isProcessing) return;
     final restrictedUntil = user.restrictedUntil;
     if (restrictedUntil == null) return;
 
@@ -165,6 +176,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
       confirmText: '해제',
     );
     if (!confirmed || !mounted) return;
+    setState(() => _isProcessing = true);
 
     try {
       await _firestore.collection('users').doc(user.uid).update({
@@ -176,58 +188,19 @@ class _AllUsersScreenState extends State<AllUsersScreen>
       await _loadAllUsers();
     } catch (e) {
       if (mounted) ToastHelper.showError('처리 실패: $e');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
   Future<void> _adjustTrustScore(UserModel user) async {
-    final controller = TextEditingController(
-      text: user.trustScore.toString(),
-    );
     final result = await showDialog<int>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('신뢰도 점수 조정 — ${user.name}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '현재 점수: ${user.trustScore}점\n0~100 범위로 입력하세요.',
-              style: ResponsiveHelper.bodyStyle(ctx, color: AppColors.grey600),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controller,
-              keyboardType: TextInputType.number,
-              decoration: InputDecoration(
-                labelText: '신뢰도 점수',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                suffixText: '점',
-              ),
-              autofocus: true,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final v = int.tryParse(controller.text.trim());
-              if (v == null || v < 0 || v > 100) {
-                ToastHelper.showError('0~100 사이의 숫자를 입력하세요');
-                return;
-              }
-              Navigator.pop(ctx, v);
-            },
-            child: const Text('저장'),
-          ),
-        ],
+      builder: (ctx) => _TrustScoreDialog(
+        name: user.name,
+        currentScore: user.trustScore,
       ),
     );
-    controller.dispose();
     if (result == null || !mounted) return;
 
     try {
@@ -251,46 +224,16 @@ class _AllUsersScreenState extends State<AllUsersScreen>
     required String hint,
     required String confirmLabel,
     required Color confirmColor,
-  }) async {
-    final controller = TextEditingController();
-    final result = await showDialog<String>(
+  }) {
+    return showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          controller: controller,
-          maxLines: 3,
-          decoration: InputDecoration(
-            hintText: hint,
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-            contentPadding: const EdgeInsets.all(12),
-          ),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (controller.text.trim().isEmpty) {
-                ToastHelper.showError('사유를 입력하세요');
-                return;
-              }
-              Navigator.pop(ctx, controller.text.trim());
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: confirmColor,
-              foregroundColor: Colors.white,
-            ),
-            child: Text(confirmLabel),
-          ),
-        ],
+      builder: (ctx) => _ReasonDialog(
+        title: title,
+        hint: hint,
+        confirmLabel: confirmLabel,
+        confirmColor: confirmColor,
       ),
     );
-    controller.dispose();
-    return result;
   }
 
   // ── 사용자 상세 바텀시트 ────────────────────────────────────────
@@ -930,6 +873,147 @@ class _UserDetailSheet extends StatelessWidget {
                 elevation: 0,
               ),
             ),
+    );
+  }
+}
+
+// ── 신뢰도 점수 조정 다이얼로그 ─────────────────────────────────────────
+// StatefulWidget으로 컨트롤러 수명 관리 → showDialog Future 완료 후 즉시
+// dispose 되는 assertion 버그 방지
+class _TrustScoreDialog extends StatefulWidget {
+  final String name;
+  final int currentScore;
+
+  const _TrustScoreDialog({required this.name, required this.currentScore});
+
+  @override
+  State<_TrustScoreDialog> createState() => _TrustScoreDialogState();
+}
+
+class _TrustScoreDialogState extends State<_TrustScoreDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.currentScore.toString());
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final v = int.tryParse(_controller.text.trim());
+    if (v == null || v < 0 || v > 100) {
+      ToastHelper.showError('0~100 사이의 숫자를 입력하세요');
+      return;
+    }
+    Navigator.pop(context, v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StyledDialog(
+      title: '신뢰도 점수 조정',
+      subtitle: widget.name,
+      icon: Icons.star_outline,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '현재 점수: ${widget.currentScore}점\n0~100 범위로 입력하세요.',
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          StyledDialogTextField(
+            controller: _controller,
+            labelText: '신뢰도 점수',
+            prefixIcon: Icons.adjust,
+            suffixIcon: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Text('점', style: TextStyle(color: AppColors.grey600, fontWeight: FontWeight.w500)),
+            ),
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            autofocus: true,
+            onFieldSubmitted: (_) => _submit(),
+          ),
+        ],
+      ),
+      actions: [
+        StyledDialogButton.cancel(onPressed: () => Navigator.pop(context)),
+        StyledDialogButton.primary(text: '저장', onPressed: _submit),
+      ],
+    );
+  }
+}
+
+// ── 사유 입력 다이얼로그 (블랙리스트/제재) ──────────────────────────────
+class _ReasonDialog extends StatefulWidget {
+  final String title;
+  final String hint;
+  final String confirmLabel;
+  final Color confirmColor;
+
+  const _ReasonDialog({
+    required this.title,
+    required this.hint,
+    required this.confirmLabel,
+    required this.confirmColor,
+  });
+
+  @override
+  State<_ReasonDialog> createState() => _ReasonDialogState();
+}
+
+class _ReasonDialogState extends State<_ReasonDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StyledDialog(
+      title: widget.title,
+      icon: Icons.edit_note_outlined,
+      headerColor: widget.confirmColor,
+      content: StyledDialogTextField(
+        controller: _controller,
+        labelText: '사유',
+        hintText: widget.hint,
+        prefixIcon: Icons.notes_outlined,
+        maxLines: 3,
+        autofocus: true,
+      ),
+      actions: [
+        StyledDialogButton.cancel(onPressed: () => Navigator.pop(context)),
+        StyledDialogButton(
+          text: widget.confirmLabel,
+          onPressed: () {
+            if (_controller.text.trim().isEmpty) {
+              ToastHelper.showError('사유를 입력하세요');
+              return;
+            }
+            Navigator.pop(context, _controller.text.trim());
+          },
+          backgroundColor: widget.confirmColor,
+          foregroundColor: Colors.white,
+        ),
+      ],
     );
   }
 }

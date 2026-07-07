@@ -512,6 +512,8 @@ class ContractService {
 
     // Phase 1: applicationId 배치 조회 (businessId 서버 필터 포함 — 타사업장 계약서 클라이언트 전달 차단)
     // 인덱스: applicationId ASC + businessId ASC + createdAt DESC (firestore.indexes.json)
+    // 청크 10개 단위: 복합 whereIn+isEqualTo 조합 시 Firestore 인덱스 부하 고려한 보수적 크기.
+    // (Firestore 한계는 30이지만 이 쿼리는 compound index를 함께 사용하므로 여유 확보)
     for (var i = 0; i < applicationIds.length; i += 10) {
       final end = (i + 10).clamp(0, applicationIds.length);
       final chunk = applicationIds.sublist(i, end);
@@ -571,7 +573,8 @@ class ContractService {
     int pageSize = 20,
   }) async {
     try {
-      final callable = _fn.httpsCallable('getMyContracts');
+      final callable = _fn.httpsCallable('getMyContracts',
+          options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
       final result = await callable.call({
         if (statusFilter != null) 'statusFilter': statusFilter.value,
         if (startAfter != null) 'lastDocId': startAfter,
@@ -598,7 +601,8 @@ class ContractService {
   /// 근무자 uid로 계약서 목록 조회 (하위 호환 - 내부 캐시용) — CF 프록시
   Future<List<EmploymentContractModel>> getByWorker(String workerId) async {
     try {
-      final callable = _fn.httpsCallable('getMyContracts');
+      final callable = _fn.httpsCallable('getMyContracts',
+          options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
       final result = await callable.call({'pageSize': 200});
       final data = result.data as Map<dynamic, dynamic>;
       final rawItems = (data['items'] as List<dynamic>? ?? []);

@@ -7,6 +7,7 @@ import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../../widgets/dialogs/styled_dialog.dart';
 
 /// 연도별 4대보험·소득세 요율 관리 화면 (슈퍼관리자)
 ///
@@ -111,35 +112,13 @@ class _InsuranceRateSettingsScreenState
     });
   }
 
-  Future<int?> _showYearPickerDialog() async {
-    final ctrl = TextEditingController(text: '${DateTime.now().year + 1}');
-    final result = await showDialog<int>(
+  Future<int?> _showYearPickerDialog() {
+    return showDialog<int>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-        title: const Text('연도 추가'),
-        content: SingleChildScrollView(
-          child: TextField(
-            controller: ctrl,
-            keyboardType: TextInputType.number,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            decoration: const InputDecoration(hintText: '예: 2027'),
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('취소')),
-          ElevatedButton(
-            onPressed: () {
-              final v = int.tryParse(ctrl.text);
-              Navigator.pop(ctx, v);
-            },
-            child: const Text('추가'),
-          ),
-        ],
+      builder: (ctx) => _YearPickerDialog(
+        initialYear: DateTime.now().year + 1,
       ),
     );
-    ctrl.dispose();
-    return result;
   }
 
   @override
@@ -373,5 +352,59 @@ class _RateControllers {
     localTax.dispose();
     bizIncome.dispose();
     bizLocal.dispose();
+  }
+}
+
+// ── 연도 추가 다이얼로그 ──────────────────────────────────────────────
+class _YearPickerDialog extends StatefulWidget {
+  final int initialYear;
+
+  const _YearPickerDialog({required this.initialYear});
+
+  @override
+  State<_YearPickerDialog> createState() => _YearPickerDialogState();
+}
+
+class _YearPickerDialogState extends State<_YearPickerDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialYear.toString());
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final v = int.tryParse(_controller.text);
+    Navigator.pop(context, v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StyledDialog(
+      title: '연도 추가',
+      subtitle: '보험료율을 새 연도로 추가합니다',
+      icon: Icons.calendar_month_outlined,
+      content: StyledDialogTextField(
+        controller: _controller,
+        labelText: '연도',
+        hintText: '예: 2027',
+        prefixIcon: Icons.calendar_today_outlined,
+        keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+        autofocus: true,
+        onFieldSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        StyledDialogButton.cancel(onPressed: () => Navigator.pop(context)),
+        StyledDialogButton.primary(text: '추가', onPressed: _submit),
+      ],
+    );
   }
 }

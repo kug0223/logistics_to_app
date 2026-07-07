@@ -28,6 +28,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
 
   List<_BusinessWithOwner> _businesses = [];
   String _statusFilter = 'ALL'; // 'ALL' | 'ACTIVE' | 'DEACTIVATED'
+  bool _isProcessing = false;
 
   static const _statusLabels = {
     'ALL': '전체',
@@ -116,6 +117,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
   // ── 관리 액션 ──────────────────────────────────────────────────
 
   Future<void> _deactivateBusiness(_BusinessWithOwner item) async {
+    if (_isProcessing) return;
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
       title: '사업장 비활성화',
@@ -125,6 +127,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
       confirmText: '비활성화',
     );
     if (!confirmed || !mounted) return;
+    setState(() => _isProcessing = true);
 
     try {
       await _firestore.collection('businesses').doc(item.business.id).update({
@@ -135,10 +138,13 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
       await _loadAllBusinesses();
     } catch (e) {
       if (mounted) ToastHelper.showError('처리 실패: $e');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
   Future<void> _reactivateBusiness(_BusinessWithOwner item) async {
+    if (_isProcessing) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -159,6 +165,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
       ),
     );
     if (confirmed != true || !mounted) return;
+    setState(() => _isProcessing = true);
 
     try {
       await _firestore.collection('businesses').doc(item.business.id).update({
@@ -169,6 +176,8 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
       await _loadAllBusinesses();
     } catch (e) {
       if (mounted) ToastHelper.showError('처리 실패: $e');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 

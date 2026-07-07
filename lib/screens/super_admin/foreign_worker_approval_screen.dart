@@ -10,6 +10,7 @@ import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../utils/loading_state_mixin.dart';
+import '../../widgets/dialogs/styled_dialog.dart';
 
 /// 슈퍼관리자 전용 — 외국인 근로자 가입 승인/거절 화면
 class ForeignWorkerApprovalScreen extends StatefulWidget {
@@ -230,54 +231,11 @@ class _ForeignWorkerApprovalScreenState
   }
 
   // 거절 사유 입력 다이얼로그 — null: 취소
-  Future<String?> _showRejectDialog(String name) async {
-    final controller = TextEditingController();
-    final result = await showDialog<String>(
+  Future<String?> _showRejectDialog(String name) {
+    return showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('$name님 거절'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '거절 사유를 입력하세요.\n사유는 해당 사용자에게 전달됩니다.',
-              style: ResponsiveHelper.bodyStyle(ctx).copyWith(color: AppColors.grey600),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controller,
-              maxLines: 3,
-              decoration: InputDecoration(
-                hintText: '예: 제출 서류 미비, 외국인등록번호 불일치 등',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                contentPadding: const EdgeInsets.all(12),
-              ),
-              autofocus: true,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (controller.text.trim().isEmpty) return;
-              Navigator.pop(ctx, controller.text.trim());
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.error,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('거절'),
-          ),
-        ],
-      ),
+      builder: (ctx) => _RejectReasonDialog(name: name),
     );
-    controller.dispose();
-    return result;
   }
 
   @override
@@ -647,6 +605,60 @@ class _ForeignWorkerApprovalScreenState
           ],
         ),
       ),
+    );
+  }
+}
+
+// ── 거절 사유 입력 다이얼로그 ─────────────────────────────────────────
+class _RejectReasonDialog extends StatefulWidget {
+  final String name;
+
+  const _RejectReasonDialog({required this.name});
+
+  @override
+  State<_RejectReasonDialog> createState() => _RejectReasonDialogState();
+}
+
+class _RejectReasonDialogState extends State<_RejectReasonDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StyledDialog(
+      title: '${widget.name}님 거절',
+      subtitle: '거절 사유는 해당 사용자에게 전달됩니다',
+      icon: Icons.cancel_outlined,
+      headerColor: AppColors.error,
+      content: StyledDialogTextField(
+        controller: _controller,
+        labelText: '거절 사유',
+        hintText: '예: 제출 서류 미비, 외국인등록번호 불일치 등',
+        prefixIcon: Icons.notes_outlined,
+        maxLines: 3,
+        autofocus: true,
+      ),
+      actions: [
+        StyledDialogButton.cancel(onPressed: () => Navigator.pop(context)),
+        StyledDialogButton.danger(
+          text: '거절',
+          onPressed: () {
+            if (_controller.text.trim().isEmpty) return;
+            Navigator.pop(context, _controller.text.trim());
+          },
+        ),
+      ],
     );
   }
 }

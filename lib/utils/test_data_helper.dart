@@ -10,6 +10,19 @@ import '../models/core/work_detail_data.dart';
 import 'format_helper.dart';
 import 'toast_helper.dart';
 import 'encryption_helper.dart';
+import 'attendance_rounding_helper.dart';
+
+// ── 시나리오 유형 ────────────────────────────────────────────────────────────
+enum _Scenario {
+  onTime,            // 정시 출퇴근 (계약 시간 ±2분)
+  tardy,             // 지각 출근, 정시 퇴근
+  earlyLeave,        // 정시 출근, 조퇴
+  tardyEarlyLeave,   // 지각+조퇴
+  overtime,          // 정시 출근, 연장근무
+  earlyArrival,      // 조출(일찍 도착), 정시 퇴근
+  noCheckout,        // 출근만 (퇴근 미처리)
+  absent,            // 결근 (레코드 없음)
+}
 
 class TestDataHelper {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -552,6 +565,10 @@ class TestDataHelper {
 
       int checkedInCount = 0;
       int checkedOutCount = 0;
+      int skippedCount = 0;
+      final dateStr = '${date.year}'
+          '${date.month.toString().padLeft(2, '0')}'
+          '${date.day.toString().padLeft(2, '0')}';
 
       for (var appDoc in todayWorkers) {
         final appData = appDoc.data();
@@ -583,62 +600,61 @@ class TestDataHelper {
           (startMinute + _random.nextInt(21) - 10).clamp(0, 59),
         );
 
-        // 50% 확률로 퇴근
+        // 50% 확률로 퇴근 (야간 교대: contractEndAt이 +1일 자동 처리)
         DateTime? checkOutTime;
         if (_random.nextBool()) {
-          final endParts = endTime.split(':');
-          final endHour = int.parse(endParts[0]);
-          final endMinute = int.parse(endParts[1]);
+          final contractEnd = contractEndAt(dateStart, startTime, endTime);
+          checkOutTime = contractEnd.add(Duration(minutes: _random.nextInt(21) - 10));
+        }
 
-          checkOutTime = DateTime(
-            date.year,
-            date.month,
-            date.day,
-            endHour,
-            (endMinute + _random.nextInt(21) - 10).clamp(0, 59),
-          );
-          checkedOutCount++;
+        // 결정론적 docId — 반복 호출 시 중복 생성 방지
+        final docId = '${appId}_$dateStr';
+        final docRef = _firestore.collection('attendance').doc(docId);
+
+        final existing = await docRef.get();
+        if (existing.exists && existing.data()?['checkIn'] != null) {
+          debugPrint('  ⏩ $appId — 이미 기록 있음, 스킵');
+          skippedCount++;
+          continue;
         }
 
         // GPS 좌표 (랜덤)
         final latitude = 37.5 + _random.nextDouble() * 0.1;
         final longitude = 127.0 + _random.nextDouble() * 0.1;
 
-        // Firestore 저장
-        // 출근 시간 문자열 포맷
-        final checkInStr = '${checkInTime.hour.toString().padLeft(2, '0')}:${checkInTime.minute.toString().padLeft(2, '0')}:00';
-        final checkOutStr = checkOutTime != null 
-            ? '${checkOutTime.hour.toString().padLeft(2, '0')}:${checkOutTime.minute.toString().padLeft(2, '0')}:00'
-            : null;
-        
-        await _firestore.collection('attendance').add({
+        // workHours 계산
+        double? workHours;
+        if (checkOutTime != null) {
+          final workMins = checkOutTime.difference(checkInTime).inMinutes;
+          workHours = (workMins < 0 ? 0 : workMins) / 60.0;
+        }
+
+        await docRef.set({
           'applicationId': appId,
-          'userId': uid,                                    // ✅ uid → userId
+          'userId': uid,
           'businessId': businessId,
-          'businessName': appData['businessName'] ?? '',    // ✅ 추가
-          'workDate': Timestamp.fromDate(dateStart),        // ✅ date → workDate
-          'workType': appData['selectedWorkType'] ?? '',    // ✅ 추가
-          'checkIn': checkInStr,                            // ✅ 문자열 형식
-          'checkInTime': Timestamp.fromDate(checkInTime),
-          'checkInLat': latitude,                           // ✅ checkInLatitude → checkInLat
-          'checkInLng': longitude,                          // ✅ checkInLongitude → checkInLng
-          'checkInMethod': 'manual',                        // ✅ 추가
-          'checkOut': checkOutStr,                          // ✅ 문자열 형식
-          'checkOutTime': checkOutTime != null 
-              ? Timestamp.fromDate(checkOutTime) 
-              : null,
-          'checkOutLat': checkOutTime != null ? latitude : null,   // ✅ 수정
-          'checkOutLng': checkOutTime != null ? longitude : null,  // ✅ 수정
-          'checkOutMethod': checkOutTime != null ? 'manual' : null, // ✅ 추가
-          'status': 'present',                              // ✅ 추가
-          'isModified': false,                              // ✅ 추가
-          'modifyRequested': false,                         // ✅ 추가
-          'wageStatus': 'pending',                          // ✅ 추가
-          'createdAt': FieldValue.serverTimestamp(),        // ✅ 추가
+          'businessName': appData['businessName'] ?? '',
+          'workDate': Timestamp.fromDate(dateStart),
+          'workType': appData['selectedWorkType'] ?? '',
+          'checkIn': Timestamp.fromDate(checkInTime),
+          'checkInLat': latitude,
+          'checkInLng': longitude,
+          'checkInMethod': 'manual',
+          'checkOut': checkOutTime != null ? Timestamp.fromDate(checkOutTime) : null,
+          'checkOutLat': checkOutTime != null ? latitude : null,
+          'checkOutLng': checkOutTime != null ? longitude : null,
+          'checkOutMethod': checkOutTime != null ? 'manual' : null,
+          'workHours': workHours,
+          'status': 'present',
+          'isModified': false,
+          'modifyRequested': false,
+          'wageStatus': 'pending',
+          'createdAt': FieldValue.serverTimestamp(),
           'isDummy': true,
-        });
+        }, SetOptions(merge: true));
 
         checkedInCount++;
+        if (checkOutTime != null) checkedOutCount++;
       }
 
       debugPrint('');
@@ -647,7 +663,8 @@ class TestDataHelper {
       debugPrint('🎉 ═══════════════════════════════════════');
       debugPrint('   출근 완료: $checkedInCount명');
       debugPrint('   퇴근 완료: $checkedOutCount명');
-      debugPrint('   미출근: ${todayWorkers.length - checkedInCount}명');
+      debugPrint('   미출근: ${todayWorkers.length - checkedInCount - skippedCount}명');
+      if (skippedCount > 0) debugPrint('   이미 기록(스킵): $skippedCount명');
       debugPrint('');
       // ✅ 캐시 클리어
       _firestoreService.clearCache();
@@ -660,6 +677,296 @@ class TestDataHelper {
       debugPrint('에러: $e');
       debugPrint('스택 트레이스: $stackTrace');
       debugPrint('');
+      rethrow;
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 시나리오별 출퇴근 더미 데이터 생성
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// 가중치 기반으로 시나리오 하나를 선택한다.
+  ///
+  /// 기본 분포: 정시 35% / 지각 15% / 조퇴 10% / 지각+조퇴 5% /
+  ///            연장 15% / 조출 5% / 퇴근미처리 5% / 결근 10%
+  static _Scenario _pickScenario() {
+    const weights = {
+      _Scenario.onTime:          35,
+      _Scenario.tardy:           15,
+      _Scenario.earlyLeave:      10,
+      _Scenario.tardyEarlyLeave: 5,
+      _Scenario.overtime:        15,
+      _Scenario.earlyArrival:    5,
+      _Scenario.noCheckout:      5,
+      _Scenario.absent:          10,
+    };
+    var r = _random.nextInt(100);
+    for (final e in weights.entries) {
+      r -= e.value;
+      if (r < 0) return e.key;
+    }
+    return _Scenario.onTime;
+  }
+
+  /// 시나리오와 계약 시간으로부터 (checkIn, checkOut?, status)를 생성한다.
+  /// absent이면 null 반환.
+  static ({DateTime checkIn, DateTime? checkOut, String status})?
+      _generateScenarioTimes(
+    _Scenario scenario,
+    DateTime contractStart,
+    DateTime contractEnd,
+  ) {
+    int rnd(int min, int max) => min + _random.nextInt(max - min + 1);
+
+    switch (scenario) {
+      case _Scenario.onTime:
+        return (
+          checkIn: contractStart.add(Duration(minutes: rnd(-2, 2))),
+          checkOut: contractEnd.add(Duration(minutes: rnd(-2, 2))),
+          status: 'present',
+        );
+      case _Scenario.tardy:
+        return (
+          checkIn: contractStart.add(Duration(minutes: rnd(5, 30))),
+          checkOut: contractEnd.add(Duration(minutes: rnd(-2, 5))),
+          status: 'late',
+        );
+      case _Scenario.earlyLeave:
+        final elCheckIn = contractStart.add(Duration(minutes: rnd(-2, 2)));
+        var elCheckOut = contractEnd.subtract(Duration(minutes: rnd(15, 60)));
+        // 짧은 근무 시간(< 60분)의 경우 checkOut이 checkIn보다 이전일 수 있으므로 최소 1분 보장
+        if (!elCheckOut.isAfter(elCheckIn)) {
+          elCheckOut = elCheckIn.add(const Duration(minutes: 1));
+        }
+        return (
+          checkIn: elCheckIn,
+          checkOut: elCheckOut,
+          status: 'early_leave',
+        );
+      case _Scenario.tardyEarlyLeave:
+        final telCheckIn = contractStart.add(Duration(minutes: rnd(5, 20)));
+        var telCheckOut = contractEnd.subtract(Duration(minutes: rnd(15, 45)));
+        // 짧은 근무 시간의 경우 checkOut이 checkIn보다 이전일 수 있으므로 최소 1분 보장
+        if (!telCheckOut.isAfter(telCheckIn)) {
+          telCheckOut = telCheckIn.add(const Duration(minutes: 1));
+        }
+        return (
+          checkIn: telCheckIn,
+          checkOut: telCheckOut,
+          status: 'late',
+        );
+      case _Scenario.overtime:
+        return (
+          checkIn: contractStart.add(Duration(minutes: rnd(-2, 2))),
+          checkOut: contractEnd.add(Duration(minutes: rnd(15, 60))),
+          status: 'present',
+        );
+      case _Scenario.earlyArrival:
+        return (
+          checkIn: contractStart.subtract(Duration(minutes: rnd(15, 45))),
+          checkOut: contractEnd.add(Duration(minutes: rnd(-2, 2))),
+          status: 'present',
+        );
+      case _Scenario.noCheckout:
+        return (
+          checkIn: contractStart.add(Duration(minutes: rnd(-2, 8))),
+          checkOut: null,
+          status: 'present',
+        );
+      case _Scenario.absent:
+        return null;
+    }
+  }
+
+  static String _scenarioLabel(_Scenario s) => switch (s) {
+    _Scenario.onTime          => '정시',
+    _Scenario.tardy           => '지각',
+    _Scenario.earlyLeave      => '조퇴',
+    _Scenario.tardyEarlyLeave => '지각+조퇴',
+    _Scenario.overtime        => '연장근무',
+    _Scenario.earlyArrival    => '조출',
+    _Scenario.noCheckout      => '퇴근미처리',
+    _Scenario.absent          => '결근',
+  };
+
+  static String _fmtDt(DateTime dt) =>
+      '${dt.month.toString().padLeft(2, '0')}/${dt.day.toString().padLeft(2, '0')} '
+      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+
+  /// 시나리오별 출퇴근 더미 데이터 생성
+  ///
+  /// 각 근무자에게 8가지 시나리오(정시/지각/조퇴/지각+조퇴/연장/조출/퇴근미처리/결근) 중
+  /// 하나를 가중치 랜덤으로 배정하고, 계약 시간 기준 DateTime Timestamp로 저장한다.
+  /// 야간 교대(예: 22:00~06:00)는 contractEndAt이 자동으로 +1일 처리한다.
+  static Future<void> createDummyAttendanceScenarios({
+    required String businessId,
+    required DateTime date,
+  }) async {
+    debugPrint('');
+    debugPrint('📊 ═══════════════════════════════════════');
+    debugPrint('📊 시나리오별 출퇴근 데이터 생성 시작...');
+    debugPrint('📊 날짜: ${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}');
+    debugPrint('📊 사업장: $businessId');
+    debugPrint('');
+
+    try {
+      final dateStart = DateTime(date.year, date.month, date.day);
+
+      final confirmedSnapshot = await _firestore
+          .collection('applications')
+          .where('businessId', isEqualTo: businessId)
+          .where('status', isEqualTo: 'CONFIRMED')
+          .where('isDummy', isEqualTo: true)
+          .get();
+
+      debugPrint('📋 확정 지원서: ${confirmedSnapshot.docs.length}개');
+
+      // 오늘 근무 대상 필터링
+      final todayWorkers = confirmedSnapshot.docs.where((doc) {
+        final data = doc.data();
+        final workDate = (data['workDate'] as Timestamp).toDate().toLocal();
+        final isLongTerm = data['type'] == AppType.longTerm;
+
+        if (!isLongTerm) {
+          return dateStart.year == workDate.year &&
+              dateStart.month == workDate.month &&
+              dateStart.day == workDate.day;
+        }
+
+        final workEndDate = data['workEndDate'] as Timestamp?;
+        if (workEndDate == null) return false;
+        final endDate = workEndDate.toDate().toLocal();
+        final desiredStartTs = data['desiredStartDate'] as Timestamp?;
+        final effectiveStart = desiredStartTs != null
+            ? DateTime(
+                desiredStartTs.toDate().toLocal().year,
+                desiredStartTs.toDate().toLocal().month,
+                desiredStartTs.toDate().toLocal().day)
+            : DateTime(workDate.year, workDate.month, workDate.day);
+
+        if (dateStart.isBefore(effectiveStart) || dateStart.isAfter(endDate)) {
+          return false;
+        }
+        final workDays = data['workDays'] as List?;
+        if (workDays == null || workDays.isEmpty) return true;
+        return workDays.contains(FormatHelper.weekday(date));
+      }).toList();
+
+      debugPrint('📅 오늘 근무 대상: ${todayWorkers.length}명');
+      debugPrint('');
+
+      if (todayWorkers.isEmpty) {
+        debugPrint('⚠️  해당 날짜에 근무하는 확정 인원이 없습니다.');
+        return;
+      }
+
+      final dateStr = '${date.year}'
+          '${date.month.toString().padLeft(2, '0')}'
+          '${date.day.toString().padLeft(2, '0')}';
+
+      final counts = <_Scenario, int>{};
+      int createdCount = 0;
+
+      for (final appDoc in todayWorkers) {
+        final appData = appDoc.data();
+        final appId = appDoc.id;
+        final uid = appData['uid'] as String?;
+        final startTime = appData['startTime'] as String?;
+        final endTime = appData['endTime'] as String?;
+
+        if (uid == null ||
+            startTime == null ||
+            endTime == null ||
+            !startTime.contains(':') ||
+            !endTime.contains(':')) {
+          debugPrint('  ⚠️ $appId — startTime/endTime 누락, 스킵');
+          continue;
+        }
+
+        // 계약 기준 DateTime — 야간 교대(endTime <= startTime)는 +1일 자동 처리
+        final contractStart = contractStartAt(dateStart, startTime);
+        final contractEnd = contractEndAt(dateStart, startTime, endTime);
+
+        final scenario = _pickScenario();
+        counts[scenario] = (counts[scenario] ?? 0) + 1;
+
+        final times =
+            _generateScenarioTimes(scenario, contractStart, contractEnd);
+        if (times == null) {
+          // absent — Firestore 레코드 없음
+          debugPrint('  ⏭️  ${appData['selectedWorkType'] ?? ''} $appId → 결근');
+          continue;
+        }
+
+        final docId = '${appId}_$dateStr';
+        final docRef = _firestore.collection('attendance').doc(docId);
+
+        // 이미 출퇴근 기록이 있으면 건드리지 않는다
+        final existing = await docRef.get();
+        if (existing.exists && existing.data()?['checkIn'] != null) {
+          debugPrint('  ⏩ $appId — 이미 기록 있음, 스킵');
+          counts[scenario] = counts[scenario]! - 1;
+          if (counts[scenario]! <= 0) counts.remove(scenario);
+          continue;
+        }
+
+        final lat = 37.5 + _random.nextDouble() * 0.1;
+        final lng = 127.0 + _random.nextDouble() * 0.1;
+
+        final docData = <String, dynamic>{
+          'applicationId': appId,
+          'userId': uid,
+          'businessId': businessId,
+          'businessName': appData['businessName'] ?? '',
+          'workDate': Timestamp.fromDate(dateStart),
+          'workType': appData['selectedWorkType'] ?? '',
+          'checkIn': Timestamp.fromDate(times.checkIn),
+          'checkInLat': lat,
+          'checkInLng': lng,
+          'checkInMethod': 'dummy',
+          'status': times.status,
+          'isModified': false,
+          'modifyRequested': false,
+          'wageStatus': 'pending',
+          'isDummy': true,
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        };
+
+        if (times.checkOut != null) {
+          final workMins =
+              times.checkOut!.difference(times.checkIn).inMinutes;
+          docData['checkOut'] = Timestamp.fromDate(times.checkOut!);
+          docData['checkOutLat'] = lat;
+          docData['checkOutLng'] = lng;
+          docData['checkOutMethod'] = 'dummy';
+          docData['workHours'] = (workMins < 0 ? 0 : workMins) / 60.0;
+        }
+
+        await docRef.set(docData, SetOptions(merge: true));
+
+        debugPrint(
+          '  ✅ [${_scenarioLabel(scenario)}] $startTime~$endTime '
+          '→ 출근 ${_fmtDt(times.checkIn)}'
+          '${times.checkOut != null ? ' / 퇴근 ${_fmtDt(times.checkOut!)}' : ' / 미퇴근'}',
+        );
+        createdCount++;
+      }
+
+      debugPrint('');
+      debugPrint('📊 ═══════════════════════════════════════');
+      debugPrint('📊 시나리오별 집계:');
+      for (final s in _Scenario.values) {
+        final c = counts[s];
+        if (c != null) debugPrint('   ${_scenarioLabel(s).padRight(10)}: $c명');
+      }
+      debugPrint('📊 레코드 생성: $createdCount명 / 전체: ${todayWorkers.length}명');
+      debugPrint('📊 ═══════════════════════════════════════');
+      debugPrint('');
+
+      _firestoreService.clearCache();
+    } catch (e, st) {
+      debugPrint('❌ 시나리오별 출퇴근 데이터 생성 실패: $e\n$st');
       rethrow;
     }
   }

@@ -147,12 +147,17 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
 
                       SizedBox(height: ResponsiveHelper.spacing(context, 24)),
 
-                      // 6. 오시는 길
+                      // 6. 근태 반올림 규칙
+                      _buildAttendanceRules(context, theme),
+
+                      SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+
+                      // 7. 오시는 길
                       _buildLocation(context, theme),
 
                       SizedBox(height: ResponsiveHelper.spacing(context, 24)),
 
-                      // 7. 기본 정보 (맨 아래)
+                      // 8. 기본 정보 (맨 아래)
                       _buildBasicInfo(context, theme),
 
                       SizedBox(height: ResponsiveHelper.spacing(context, 32)),
@@ -502,6 +507,99 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
             },
           ),
         ),
+      ],
+    );
+  }
+
+  /// ⏱️ 근태 반올림 규칙
+  Widget _buildAttendanceRules(BuildContext context, ThemeData theme) {
+    final rules = _currentBusiness.attendanceRules ?? AttendanceRules.defaults();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        CommonWidgets.sectionHeader(
+          context: context,
+          title: '근태 반올림 규칙',
+          icon: Icons.tune_outlined,
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        Container(
+          decoration: CommonWidgets.cardDecoration(),
+          padding: ResponsiveHelper.listPadding(context),
+          child: Column(
+            children: [
+              _buildRulesGroup(context, '출근 규칙', [
+                ('조출 인정 범위', '${rules.earlyWindow}분'),
+                ('조출 반올림 단위', '${rules.earlyArrivalUnit}분'),
+                ('지각 유예 시간', '${rules.lateGrace}분'),
+                ('지각 반올림 단위', '${rules.lateUnit}분'),
+              ]),
+              Divider(height: ResponsiveHelper.spacing(context, 24)),
+              _buildRulesGroup(context, '퇴근 규칙', [
+                ('정시 퇴근 인정 범위', '${rules.lateWindow}분'),
+                ('연장 반올림 단위', '${rules.overtimeUnit}분'),
+                ('조퇴 반올림 단위', '${rules.earlyLeaveUnit}분'),
+              ]),
+            ],
+          ),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 12),
+            vertical: ResponsiveHelper.spacing(context, 10),
+          ),
+          decoration: BoxDecoration(
+            color: AppColors.infoBg,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.info.withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.info_outline,
+                  size: ResponsiveHelper.iconSize(context, 15), color: AppColors.infoDark),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              Expanded(
+                child: Text(
+                  rules.summary,
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRulesGroup(BuildContext context, String title, List<(String, String)> rows) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title,
+            style: ResponsiveHelper.smallStyle(context)
+                .copyWith(fontWeight: FontWeight.bold, color: AppColors.grey600)),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        ...rows.map((row) => Padding(
+              padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 4)),
+              child: Row(
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: Text(row.$1,
+                        style: ResponsiveHelper.smallStyle(context,
+                            color: AppColors.grey600)),
+                  ),
+                  Expanded(
+                    flex: 2,
+                    child: Text(row.$2,
+                        textAlign: TextAlign.right,
+                        style: ResponsiveHelper.smallStyle(context)
+                            .copyWith(fontWeight: FontWeight.w600)),
+                  ),
+                ],
+              ),
+            )),
       ],
     );
   }

@@ -286,9 +286,16 @@ class AggregatedPayslipData {
       totalRetroactiveDeduction:sumInt((r) => wd(r).retroactiveDeduction),
       totalInsuranceDeduction: sumInt((r) => wd(r).totalInsuranceDeduction),
       totalNetWage:            sumInt((r) => wd(r).effectiveNetWage),
-      taxDeductionTypeLabel: valid.isNotEmpty
-          ? (valid.first.wageDetail!.taxDeductionLabel)
-          : '세금 없음',
+      // [Q-03 fix] 기간 내 공제 유형이 혼재할 때 first 레코드 라벨만 사용하던 문제 수정.
+      // 유의미한(non-none) 라벨 집합을 구해 단일이면 그 라벨, 복수이면 '·' 구분 결합.
+      taxDeductionTypeLabel: () {
+        final meaningful = valid
+            .map((r) => r.wageDetail!.taxDeductionLabel)
+            .where((l) => l != '세금 없음')
+            .toSet();
+        if (meaningful.isEmpty) return '세금 없음';
+        return meaningful.join('·');
+      }(),
       // wageDetail 있는 레코드만 일별 상세에 포함 (빈 행 방지)
       dailyRecords: valid.map((r) => DailyRecord.fromAttendance(r)).toList()
         ..sort((a, b) => a.workDate.compareTo(b.workDate)),
@@ -354,8 +361,8 @@ class DailyRecord {
     final net = wd?.effectiveNetWage ?? 0;
     return DailyRecord(
       workDate: a.workDate,
-      checkIn: a.checkIn,
-      checkOut: a.checkOut,
+      checkIn: a.checkIn?.split(':').take(2).join(':'),
+      checkOut: a.checkOut?.split(':').take(2).join(':'),
       workMinutes: wd?.workMinutes ?? 0,
       overtimeMinutes: wd?.overtimeMinutes ?? 0,
       nightMinutes: wd?.nightMinutes ?? 0,

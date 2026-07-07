@@ -127,7 +127,7 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
         await _saveTags();
       }
     } finally {
-      controller.dispose();
+      WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
     }
   }
 

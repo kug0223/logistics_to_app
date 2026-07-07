@@ -77,7 +77,8 @@ class PassVerificationService {
     // [TODO-DANAL] 실제 CF 호출
     try {
       final result = await _fn
-          .httpsCallable('resetPasswordWithPass')
+          .httpsCallable('resetPasswordWithPass',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
           .call({'passToken': passToken, 'username': username});
       // result.data가 null이거나 키 없으면 예외 → 아래 catch에서 null 반환 처리
       return result.data['customToken'] as String?;
@@ -94,7 +95,9 @@ class PassVerificationService {
   static Future<void> finalizeRegistration(String passToken) async {
     if (kDebugMode || passToken.startsWith('mock-')) return;
     try {
-      await _fn.httpsCallable('finalizeRegistration').call({'passToken': passToken});
+      await _fn.httpsCallable('finalizeRegistration',
+          options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
+          .call({'passToken': passToken});
     } catch (e) {
       debugPrint('⚠️ [PassVerificationService] finalizeRegistration 실패: $e');
       // best-effort — 가입 완료를 막지 않음. passToken은 15분 후 TTL로 자동 만료됨.

@@ -419,7 +419,9 @@ class WageCalculator {
       final parts = time.split(':');
       if (parts.length < 2) return null;
       final hour = int.parse(parts[0]);
-      final minute = int.parse(parts[1].substring(0, 2));
+      final minuteStr = parts[1];
+      final minute = int.parse(
+          minuteStr.length >= 2 ? minuteStr.substring(0, 2) : minuteStr);
       if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
       return hour * 60 + minute;
     } catch (_) {
