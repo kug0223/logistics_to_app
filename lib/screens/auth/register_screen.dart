@@ -633,7 +633,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ? _ceoNameController.text.trim() : null,
       );
 
-      if (!success || !mounted) return;
+      if (!success) {
+        if (mounted) {
+          final err = userProvider.error;
+          ToastHelper.showError((err != null && err.isNotEmpty) ? err : '회원가입에 실패했습니다.');
+        }
+        return;
+      }
+      if (!mounted) return;
 
       // Step 2: 동의 일시·버전 Firestore 저장 (법적 근거 확보)
       final uid = userProvider.currentUser?.uid;
@@ -825,7 +832,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ? _ceoNameController.text.trim() : null,
       );
 
-      if (!success || !mounted) return;
+      if (!success) {
+        if (mounted) {
+          final err = userProvider.error;
+          ToastHelper.showError((err != null && err.isNotEmpty) ? err : '회원가입에 실패했습니다.');
+        }
+        return;
+      }
+      if (!mounted) return;
 
       // Step 2: 동의 일시·버전 Firestore 저장 (법적 근거 확보)
       final uid = userProvider.currentUser?.uid;
