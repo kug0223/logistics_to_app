@@ -1245,6 +1245,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
         try {
           await widget.firestoreService.batchCloseSlots(
             toId: masterTO.id,
+            businessId: masterTO.businessId,
             slotIds: closeSlots.map((s) => s.id).toList(),
             closedBy: closeUid,
           );

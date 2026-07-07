@@ -242,7 +242,7 @@ class AggregatedPayslipData {
     String workerBirthDate = '',
     DateTime? paymentDate,
   }) {
-    assert(records.isNotEmpty, 'records는 비어있을 수 없습니다');
+    if (records.isEmpty) throw ArgumentError('records는 비어있을 수 없습니다');
 
     // wageDetail이 있는 레코드만 집계
     final valid = records.where((r) => r.wageDetail != null).toList();

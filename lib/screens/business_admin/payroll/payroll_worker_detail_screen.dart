@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 import '../../../models/core/application_model.dart';
 import '../../../models/core/attendance_model.dart';
@@ -60,24 +61,26 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
       final monthEnd = DateTime(widget.year, widget.month + 1, 1);
 
       // confirmed + transferred 모두 표시 (송금 완료된 레코드도 포함)
-      // whereIn 제거: whereIn 복합쿼리에서 filters.businessId null 반환 → 클라이언트 필터로 대체
-      final snap = await FirebaseFirestore.instance
-          .collection('attendance')
-          .where('businessId', isEqualTo: widget.businessId)
-          .where('userId', isEqualTo: widget.workerId)
-          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
-          .where('workDate', isLessThan: Timestamp.fromDate(monthEnd))
-          .orderBy('workDate')
-          .limit(500) // 한 달 근무 레코드는 최대 수십 건, 500은 실질적 상한
-          .get();
-
+      // CF 경유: attendance allow list: if false 이후 서버사이드 권한 검증
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetAdminAttendances',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final cfResult = await callable.call<Map<String, dynamic>>({
+        'businessId': widget.businessId,
+        'startMs': monthStart.millisecondsSinceEpoch,
+        'endMs': monthEnd.millisecondsSinceEpoch,
+        'userId': widget.workerId,
+      });
+      final cfItems = (cfResult.data['items'] as List<dynamic>? ?? []);
       const allowedStatuses = {
         AttendanceModel.wageConfirmed,
         AttendanceModel.wageTransferred,
       };
-      final records = snap.docs
-          .map(AttendanceModel.tryFromFirestore)
-          .whereType<AttendanceModel>()
+      final records = cfItems.map((e) {
+        final m = Map<String, dynamic>.from(e as Map);
+        final id = m.remove('id') as String? ?? '';
+        return AttendanceModel.tryFromMap(m, id);
+      }).whereType<AttendanceModel>()
           .where((r) => allowedStatuses.contains(r.wageStatus))
           .toList();
 

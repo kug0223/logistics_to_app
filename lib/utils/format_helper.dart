@@ -613,10 +613,10 @@ class NumberInputFormatter extends TextInputFormatter {
     final cleanText = newValue.text.replaceAll(',', '');
     final number = int.tryParse(cleanText);
     
-    if (number == null) {
+    if (number == null || number < 0) {
       return oldValue;
     }
-    
+
     final formatted = FormatHelper.formatNumber(number);
     
     return TextEditingValue(

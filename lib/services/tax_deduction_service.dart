@@ -1,5 +1,6 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
+import '../models/core/attendance_model.dart';
 import '../models/core/insurance_rate_model.dart';
 import '../models/core/wage_detail_model.dart';
 import 'insurance_rate_service.dart';
@@ -278,39 +279,40 @@ class TaxDeductionService {
     String? excludeAttendanceId,
   }) async {
     try {
-      // whereIn 복합 쿼리 → PERMISSION_DENIED 방지를 위해 status별 병렬 쿼리로 대체
-      final snaps = await Future.wait(
-        ['calculated', 'confirmed', 'transferred'].map((ws) =>
-            FirebaseFirestore.instance
-                .collection('attendance')
-                .where('userId', isEqualTo: userId)
-                .where('businessId', isEqualTo: businessId)
-                .where('yearMonth', isEqualTo: yearMonth)
-                .where('wageStatus', isEqualTo: ws)
-                .get()),
-      );
-      final allDocs = snaps.expand((snap) => snap.docs).toList();
+      // CF 경유: callableGetAdminAttendances yearMonth 모드 (Admin SDK 서버사이드 검증)
+      // wageStatus 3종 병렬 쿼리 → 단일 CF 호출 후 클라이언트 필터로 단순화
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetAdminAttendances',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final cfResult = await callable.call<Map<String, dynamic>>({
+        'businessId': businessId,
+        'yearMonth': yearMonth,
+        'userId': userId,
+      });
+      final cfItems = (cfResult.data['items'] as List<dynamic>? ?? []);
+      final records = cfItems.map((e) {
+        final m = Map<String, dynamic>.from(e as Map);
+        final id = m.remove('id') as String? ?? '';
+        return AttendanceModel.tryFromMap(m, id);
+      }).whereType<AttendanceModel>()
+          .where((att) => att.id != excludeAttendanceId)
+          .where((att) => att.status != AttendanceModel.statusNoShow)
+          .where((att) => const {'calculated', 'confirmed', 'transferred'}
+              .contains(att.wageStatus))
+          .toList();
 
       // [TAX-01 수정] workDate 기준으로 날짜 중복 제거
       // 같은 날 오전·오후 등 복수 attendance 문서가 있으면 단순 length 카운트는
       // 실제 근무 일수보다 크게 집계되어 8일차 소급 공제가 오작동함.
-      // ISO 날짜 문자열(yyyy-MM-dd)로 정규화 후 Set으로 유니크화.
-      // 노쇼(NO_SHOW)는 실제 근무가 아니므로 8일차 판단 기준에서 제외
-      final uniqueDates = allDocs
-          .where((d) => d.id != excludeAttendanceId)
-          .where((d) => (d.data()['status'] as String?) != 'NO_SHOW')
-          .map((d) => (d.data()['workDate'] as Timestamp?)
-              ?.toDate()
-              .toIso8601String()
-              .substring(0, 10))
-          .whereType<String>()
+      final uniqueDates = records
+          .map((att) => att.workDate.toIso8601String().substring(0, 10))
           .toSet();
       return uniqueDates.length;
     } catch (e) {
       // 0 반환(silent fail): 조회 실패 시 8일차 소급이 누락되는 방향으로 처리.
       // _getPrevGrossTotal()은 소급 금액 계산에 필수이므로 rethrow(확정 전체 차단)하는 반면,
       // 여기서는 소급 미적용(근무자에게 유리한 방향)으로 처리해 확정 자체는 완료되도록 허용.
-      debugPrint('⚠️ 월별 근무일수 조회 실패: $e');
+      debugPrint('⚠️ 월별 근무일수 CF 조회 실패: $e');
       return 0;
     }
   }

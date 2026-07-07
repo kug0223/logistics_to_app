@@ -535,7 +535,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     try {
       final viewerId = context.read<UserProvider>().currentUser?.uid;
       if (viewerId == null) return;
-      final bizId = widget.businessId ?? widget.toItem?.to.businessId ?? '';
+      // [SEC-84] bizId 폴백: widget 파라미터가 모두 null일 경우 UserProvider에서 보완
+      //   isAdminOf('')==false → 로그 미기록 silently fail 방지
+      final bizId = widget.businessId ??
+          widget.toItem?.to.businessId ??
+          context.read<UserProvider>().currentUser?.businessId ??
+          '';
       await FirebaseFirestore.instance.collection('id_card_copy_logs').add({
         'viewerId': viewerId,
         'targetUserId': widget.user.uid,

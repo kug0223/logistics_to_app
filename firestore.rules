@@ -111,6 +111,27 @@ service cloud.firestore {
         inv.status == 'pending' &&
         inv.createdAt > request.time - duration.value(30, 'd');
     }
+
+    // ╔═══════════════════════════════════════════════════════════╗
+    // ║  [해결 완료] whereIn 폴백 패턴 근본 수정                       ║
+    // ╠═══════════════════════════════════════════════════════════╣
+    // ║                                                           ║
+    // ║  기존 문제: Firestore whereIn/복합 쿼리에서                    ║
+    // ║    request.query.filters.businessId → null 반환            ║
+    // ║    → isAdminOf(null) → PERMISSION_DENIED                  ║
+    // ║    → 우회를 위해 isAdminOf(user.businessId) 폴백 추가         ║
+    // ║    → 폴백이 타 사업장 쿼리에서도 통과하는 보안 허점              ║
+    // ║                                                           ║
+    // ║  수정 내용 (whereIn → 단건 병렬 쿼리 + businessId 필터):      ║
+    // ║    to_firestore.dart  attendance/scr/contracts cleanup     ║
+    // ║    to_firestore.dart  applications slotId 마감/삭제         ║
+    // ║    contract_service.dart  getContractStatusBatch           ║
+    // ║    close_management_dialog.dart  attendance 조회            ║
+    // ║                                                           ║
+    // ║  폴백 라인은 모든 컬렉션에서 제거됨.                           ║
+    // ║  각 list 규칙은 isAdminOf(filters.businessId) 단독으로 동작.  ║
+    // ╚═══════════════════════════════════════════════════════════╝
+
     // users 컬렉션
     // ═══════════════════════════════════════════════════════════
     match /users/{userId} {
@@ -180,17 +201,45 @@ service cloud.firestore {
       // 회원가입(본인) 또는 관리자 더미 데이터 생성
       // [RULE-01] 더미 생성 시 민감 필드 차단 — role/isBlacklisted/sealBase64 등 초기값으로 심으면
       //           후속 논리 오동작 및 권한 상승에 악용 가능
-      // [AUTH-H1/M6] isOwner 경로에도 민감 필드 차단 추가 — 회원가입 시 role=SUPER_ADMIN,
-      //   accountStatus=active, ciHash 등을 직접 설정해 권한 상승 또는 PASS 인증 우회 차단
+      // [AUTH-H1/M6 FIX] 보안 의도는 유지하되 접근 방식 수정:
+      //   이전: !hasAny([role, accountStatus, ...]) 로 키 자체를 차단
+      //         → UserModel.toMap()이 이 필드들을 기본값으로 항상 포함해 전송하므로
+      //           실제 회원가입이 전면 PERMISSION_DENIED 발생 (치명적 회귀)
+      //   현재: 진짜 서버 전용 필드만 키 자체를 차단,
+      //         나머지는 키 존재를 허용하되 초기 안전값으로만 제한
+      //         → 권한 상승·우회 차단 유지 + 정상 회원가입 허용
       allow create: if isLoggedIn() && (
                       (isOwner(userId) &&
+                       // 아예 키 존재 자체를 차단: 앱 로직에서도 사용하지 않는 서버 전용 필드
                        !request.resource.data.keys().hasAny([
-                         'role', 'isBlacklisted', 'subAdminOf', 'businessId',
-                         'accountStatus', 'ci', 'ciHash',
-                         'restrictedUntil', 'isAdmin', 'sealBase64',
-                         'approvedBy', 'approvedAt', 'rejectedBy', 'rejectedAt', 'rejectionReason',
-                         'trustScore', 'noShowCount', 'lateCount', 'totalWorkDays', 'lastRestartAt'
-                       ])) ||
+                         'isAdmin',
+                         'approvedBy', 'approvedAt', 'rejectedBy', 'rejectedAt',
+                       ]) &&
+                       // sealBase64: UserModel.toMap()이 항상 포함(null)하므로 키 차단 불가 → 값 제한
+                       request.resource.data.get('sealBase64', null) == null &&
+                       // 키 존재는 허용, 초기 안전값만 허용 — 권한 상승·우회 차단
+                       // role: SUPER_ADMIN 승격 차단 (USER/BUSINESS_ADMIN만 허용)
+                       request.resource.data.get('role', 'USER') in ['USER', 'BUSINESS_ADMIN'] &&
+                       // accountStatus: 슈퍼관리자 승인 우회 차단
+                       request.resource.data.get('accountStatus', 'active') in ['active', 'pending'] &&
+                       // isBlacklisted: 신규 계정은 false만 허용
+                       request.resource.data.get('isBlacklisted', false) == false &&
+                       // CI 비밀값: 클라이언트 직접 설정 불가 (CF Admin SDK 전용)
+                       request.resource.data.get('ci', null) == null &&
+                       request.resource.data.get('ciHash', null) == null &&
+                       // 사업장·하위관리자 소속: 가입 시 미배정만 허용 (CF trigger 전용)
+                       request.resource.data.get('subAdminOf', null) == null &&
+                       request.resource.data.get('businessId', null) == null &&
+                       // 제재·신뢰도: 초기 미설정만 허용 (CF Admin SDK 전용)
+                       request.resource.data.get('restrictedUntil', null) == null &&
+                       request.resource.data.get('lastRestartAt', null) == null &&
+                       request.resource.data.get('trustScore', null) == null &&
+                       request.resource.data.get('rejectionReason', null) == null &&
+                       // 통계 카운터: 초기값 0만 허용 (CF Admin SDK 전용)
+                       request.resource.data.get('noShowCount', 0) == 0 &&
+                       request.resource.data.get('lateCount', 0) == 0 &&
+                       request.resource.data.get('totalWorkDays', 0) == 0
+                      ) ||
                       (isAdmin() && request.resource.data.isDummy == true &&
                        !request.resource.data.keys().hasAny([
                          'role', 'isBlacklisted', 'restrictedUntil',
@@ -292,13 +341,9 @@ service cloud.firestore {
       allow list: if isLoggedIn() && (
         isSuperAdmin() ||
         (isBusinessAdmin() && (
-          isAdminOf(request.query.filters.businessId) ||
-          isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
-        )) ||
+          isAdminOf(request.query.filters.businessId)        )) ||
         (isSubAdmin() && (
-          isSubAdminOf(request.query.filters.businessId) ||
-          isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
-        )) ||
+          isSubAdminOf(request.query.filters.businessId)        )) ||
         // SEC-47: 비공개 TO 덤프 차단 — isPublished 필터 강제 + limit <= 50 제한
         // isPublished 단독 isEqualTo 쿼리에서 request.query.filters.isPublished 정상 반환됨
         // (whereIn 복합쿼리는 Firebase 버그로 filters 접근 불가 — 관리자 경로는 isAdminOf 분기 사용)
@@ -377,7 +422,14 @@ service cloud.firestore {
       }
 
       match /slots/{slotId} {
-        allow read: if isLoggedIn();
+        // SEC-83: 미발행 TO의 슬롯(임금정보 등) 노출 차단 — isPublished 상속 적용
+        //   관리자는 미발행 상태에서도 접근 허용 (TO 작성/검토 필요)
+        //   일반 사용자는 부모 TO가 isPublished==true인 경우에만 허용
+        allow read: if isLoggedIn() && (
+                      isToAdmin(toId) || isSuperAdmin() ||
+                      get(/databases/$(database)/documents/tos/$(toId))
+                        .data.get('isPublished', false) == true
+                    );
         allow write: if isLoggedIn() && (isToAdmin(toId) || isSuperAdmin());
 
 
@@ -426,13 +478,9 @@ service cloud.firestore {
       allow list: if isLoggedIn() && (
                    isSuperAdmin() ||
                    (isBusinessAdmin() && (
-                     isAdminOf(request.query.filters.businessId) ||
-                     isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
-                   )) ||
+                     isAdminOf(request.query.filters.businessId)                   )) ||
                    (isSubAdmin() && (
-                     isSubAdminOf(request.query.filters.businessId) ||
-                     isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
-                   )) ||
+                     isSubAdminOf(request.query.filters.businessId)                   )) ||
                    (isUser() && request.query.filters.uid == request.auth.uid)
                  );
       // 생성: 본인 uid, 관리자 더미 데이터, 또는 해당 사업장 관리자(계약 연장 등)
@@ -462,11 +510,13 @@ service cloud.firestore {
                        request.resource.data.status == 'AUTO_CANCELED' &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status', 'canceledAt', 'cancelReason'])) ||
-                      // 재지원 (본인: CANCELED/AUTO_CANCELED → PENDING, uid/businessId/toId 불변)
+                      // 재지원 (본인: CANCELED/AUTO_CANCELED/REJECTED → PENDING, uid/businessId/toId 불변)
                       // [035] AUTO_CANCELED 상태에서도 재지원 허용
+                      // [APP-036] REJECTED 상태에서도 재지원 허용 — 코드 설계 의도(application_firestore.dart:437)와 일치
                       (isOwner(resource.data.uid) &&
                        (resource.data.status == 'CANCELED' ||
-                        resource.data.status == 'AUTO_CANCELED') &&
+                        resource.data.status == 'AUTO_CANCELED' ||
+                        resource.data.status == 'REJECTED') &&
                        request.resource.data.status == 'PENDING' &&
                        !request.resource.data.diff(resource.data).affectedKeys()
                          .hasAny(['uid', 'businessId', 'toId'])) ||
@@ -530,21 +580,25 @@ service cloud.firestore {
                  );
 
 
-      // list: [크로스-사업장 방지]
-      //   · USER: CF getMyMonthlyAttendances 프록시로 이전 — 직접 list 불허
-      //   · BUSINESS_ADMIN: 쿼리 필터 businessId 우선, 없으면 user.businessId 폴백
-      //     whereIn 복합쿼리에서 request.query.filters.businessId가 null 반환될 수 있으므로
-      //     코드 레벨에서도 whereIn 제거 후 클라이언트 필터링 병행
+      // list: [CF 이전 완료] callableGetAdminAttendances로 전환된 호출부 목록:
+      //   attendance_firestore: getTodayAttendanceByBusiness · getAttendanceByDate · getWeeklyAttendanceByBusiness
+      //   payroll_overview_screen._loadYear · payroll_worker_detail_screen._loadRecords
+      //   admin_stats_service._queryAttendance
+      //   attendance_status_dialog._getAttendanceRecords
+      //   tax_deduction_service.getMonthlyWorkDays
+      //   admin_review_list_screen._openReviewFromRequest
+      //   notification_screen._openReviewDialogFromNotification (admin path)
+      //
+      //   [직접 Firestore 유지 — 의도적 결정] payroll_payment_service (3개 함수):
+      //     getPayrollRecords: startAfterDocument 커서 직렬화 불가 → CF 이전 구조적 불가
+      //     getTodayPayments / getTodayPaymentCount: paymentDueDate 범위필터 복합 조건
+      //   ※ 세 함수 모두 businessId isEqualTo 필터 포함 → request.query.filters.businessId
+      //     정상 평가 → 아래 allow list 규칙에서 이미 안전하게 보호됨
+      //   → allow list: if false 전환 불필요 (직접 읽기 허용 유지가 올바른 설계)
       allow list: if isLoggedIn() && (
                     isSuperAdmin() ||
-                    (isBusinessAdmin() && (
-                      isAdminOf(request.query.filters.businessId) ||
-                      isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
-                    )) ||
-                    (isSubAdmin() && (
-                      isSubAdminOf(request.query.filters.businessId) ||
-                      isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
-                    ))
+                    (isBusinessAdmin() && isAdminOf(request.query.filters.businessId)) ||
+                    (isSubAdmin() && isSubAdminOf(request.query.filters.businessId))
                   );
 
 
@@ -675,13 +729,9 @@ service cloud.firestore {
       allow list: if isLoggedIn() && (
         isSuperAdmin() ||
         (isBusinessAdmin() && (
-          isAdminOf(request.query.filters.businessId) ||
-          isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
-        )) ||
+          isAdminOf(request.query.filters.businessId)        )) ||
         (isSubAdmin() && (
-          isSubAdminOf(request.query.filters.businessId) ||
-          isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
-        )) ||
+          isSubAdminOf(request.query.filters.businessId)        )) ||
         (isUser() && (
           request.query.filters.reviewerId == request.auth.uid ||
           request.query.filters.targetUserId == request.auth.uid
@@ -705,6 +755,8 @@ service cloud.firestore {
                       (
                         isSuperAdmin() ||
                         (request.resource.data.reviewType == 'ADMIN_TO_USER' &&
+                         // SEC-81: reviewerId가 리뷰 작성자 본인임을 강제 — 타 관리자 명의 리뷰 생성 차단
+                         request.resource.data.reviewerId == request.auth.uid &&
                          (isAdminOf(request.resource.data.businessId) ||
                           isSubAdminOf(request.resource.data.businessId))) ||
                         (request.resource.data.reviewType == 'USER_TO_BUSINESS' &&
@@ -771,13 +823,9 @@ service cloud.firestore {
       allow list: if isLoggedIn() && (
         isSuperAdmin() ||
         (isBusinessAdmin() && (
-          isAdminOf(request.query.filters.businessId) ||
-          isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
-        )) ||
+          isAdminOf(request.query.filters.businessId)        )) ||
         (isSubAdmin() && (
-          isSubAdminOf(request.query.filters.businessId) ||
-          isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
-        ))
+          isSubAdminOf(request.query.filters.businessId)        ))
       );
 
       allow create: if isLoggedIn() && (
@@ -813,13 +861,9 @@ service cloud.firestore {
       allow list: if isLoggedIn() && (
         isSuperAdmin() ||
         (isBusinessAdmin() && (
-          isAdminOf(request.query.filters.businessId) ||
-          isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
-        )) ||
+          isAdminOf(request.query.filters.businessId)        )) ||
         (isSubAdmin() && (
-          isSubAdminOf(request.query.filters.businessId) ||
-          isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
-        ))
+          isSubAdminOf(request.query.filters.businessId)        ))
       );
 
       allow create: if isLoggedIn() && (
@@ -860,21 +904,21 @@ service cloud.firestore {
       allow list: if isLoggedIn() && (
                     isSuperAdmin() ||
                     (isBusinessAdmin() && (
-                      isAdminOf(request.query.filters.businessId) ||
-                      isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
-                    )) ||
+                      isAdminOf(request.query.filters.businessId)                    )) ||
                     (isSubAdmin() && (
-                      isSubAdminOf(request.query.filters.businessId) ||
-                      isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
-                    )) ||
+                      isSubAdminOf(request.query.filters.businessId)                    )) ||
                     (isUser() && request.query.filters.applicantUid == request.auth.uid)
                   );
 
       // 생성: 지원자 본인 또는 해당 사업장 관리자/하위관리자(추가근무/미출근 요청)
       // SEC-72: USER 경로 businessId 소속 검증 추가 — 타 사업장 ID로 노이즈 문서 삽입 차단
       //   payment_change_requests·interim_settlement_requests와 동일한 패턴 적용
+      // SEC-80: USER 경로 status=='PENDING' 강제 + requestedByUid==auth.uid 검증
+      //   — 클라이언트가 status='APPROVED'로 직접 생성하거나 requestedByUid를 위조하는 것을 차단
       allow create: if isLoggedIn() && (
                       (request.resource.data.applicantUid == request.auth.uid &&
+                       request.resource.data.status == 'PENDING' &&
+                       request.resource.data.requestedByUid == request.auth.uid &&
                        request.resource.data.businessId != '' &&
                        get(/databases/$(database)/documents/users/$(request.auth.uid))
                          .data.get('businessId', '') == request.resource.data.businessId) ||
@@ -969,13 +1013,9 @@ service cloud.firestore {
                     ((isBusinessAdmin() || isSubAdmin()) &&
                      request.query.filters.requesterId == request.auth.uid) ||
                     (isBusinessAdmin() && (
-                      isAdminOf(request.query.filters.requesterBusinessId) ||
-                      isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
-                    )) ||
+                      isAdminOf(request.query.filters.requesterBusinessId)                    )) ||
                     (isSubAdmin() && (
-                      isSubAdminOf(request.query.filters.requesterBusinessId) ||
-                      isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
-                    )) ||
+                      isSubAdminOf(request.query.filters.requesterBusinessId)                    )) ||
                     // [HIGH-FIX] isUser() 단독 허용으로 신분증 열람 감사로그 전체 노출 (개인정보보호법 위반 소지)
                     // → targetUserId == auth.uid 단일 equality 필터 강제로 본인 관련 요청만 조회 허용
                     (isUser() && request.query.filters.targetUserId == request.auth.uid)
@@ -1045,13 +1085,9 @@ service cloud.firestore {
       allow list: if isLoggedIn() && (
                     isSuperAdmin() ||
                     (isBusinessAdmin() && (
-                      isAdminOf(request.query.filters.businessId) ||
-                      isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
-                    )) ||
+                      isAdminOf(request.query.filters.businessId)                    )) ||
                     (isSubAdmin() && (
-                      isSubAdminOf(request.query.filters.businessId) ||
-                      isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
-                    )) ||
+                      isSubAdminOf(request.query.filters.businessId)                    )) ||
                     // USER: workerId == auth.uid 단일 isEqualTo 쿼리만 사용 → filters.workerId 정상 반환
                     // getPendingRequestsForWorker(workerId)에서 .where('workerId', isEqualTo: uid) 확인됨
                     (isUser() && request.query.filters.workerId == request.auth.uid)
@@ -1119,22 +1155,22 @@ service cloud.firestore {
       allow list: if isLoggedIn() && (
                     isSuperAdmin() ||
                     (isBusinessAdmin() && (
-                      isAdminOf(request.query.filters.businessId) ||
-                      isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
-                    )) ||
+                      isAdminOf(request.query.filters.businessId)                    )) ||
                     (isSubAdmin() && (
-                      isSubAdminOf(request.query.filters.businessId) ||
-                      isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
-                    ))
+                      isSubAdminOf(request.query.filters.businessId)                    ))
                   );
 
       // 생성·수정: 본인(userId == auth.uid) 또는 슈퍼어드민
       // SEC-34: businessId 소속 검증 추가 — 타 사업장에 위치 데이터 삽입 차단
+      // SEC-82: applicationId 소유권 검증 — 타인의 applicationId로 경로 선점(DoS) 차단
+      //   get()으로 applications/{applicationId}.uid == auth.uid 확인
       allow create: if isLoggedIn() && (
                       (request.resource.data.userId == request.auth.uid &&
                        request.resource.data.businessId ==
                          get(/databases/$(database)/documents/users/$(request.auth.uid))
-                           .data.get('businessId', '_NONE_')) ||
+                           .data.get('businessId', '_NONE_') &&
+                       get(/databases/$(database)/documents/applications/$(applicationId))
+                         .data.get('uid', '_NONE_') == request.auth.uid) ||
                       isSuperAdmin()
                     );
 
@@ -1173,13 +1209,9 @@ service cloud.firestore {
       allow list: if isLoggedIn() && (
                    isSuperAdmin() ||
                    (isBusinessAdmin() && (
-                     isAdminOf(request.query.filters.businessId) ||
-                     isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
-                   )) ||
+                     isAdminOf(request.query.filters.businessId)                   )) ||
                    (isSubAdmin() && (
-                     isSubAdminOf(request.query.filters.businessId) ||
-                     isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
-                   ))
+                     isSubAdminOf(request.query.filters.businessId)                   ))
                    // isUser() 제거: getScoreHistory는 B03 미완성(UI 진입점 없음)
                    // USER 직접 조회 필요 시 CF 프록시로 구현할 것
                  );
@@ -1233,13 +1265,9 @@ service cloud.firestore {
       allow list: if isLoggedIn() && (
                    isSuperAdmin() ||
                    (isBusinessAdmin() && (
-                     isAdminOf(request.query.filters.businessId) ||
-                     isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
-                   )) ||
+                     isAdminOf(request.query.filters.businessId)                   )) ||
                    (isSubAdmin() && (
-                     isSubAdminOf(request.query.filters.businessId) ||
-                     isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
-                   ))
+                     isSubAdminOf(request.query.filters.businessId)                   ))
                  );
 
       // 생성: 해당 사업장 관리자/하위관리자 또는 슈퍼어드민 (확정 시 자동 생성)
@@ -1329,13 +1357,9 @@ service cloud.firestore {
       allow list: if isLoggedIn() && (
                    isSuperAdmin() ||
                    (isBusinessAdmin() && (
-                     isAdminOf(request.query.filters.businessId) ||
-                     isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
-                   )) ||
+                     isAdminOf(request.query.filters.businessId)                   )) ||
                    (isSubAdmin() && (
-                     isSubAdminOf(request.query.filters.businessId) ||
-                     isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
-                   )) ||
+                     isSubAdminOf(request.query.filters.businessId)                   )) ||
                    (isUser() && request.query.filters.targetUid == request.auth.uid)
                    // [특이사항] isEqualTo 단독 쿼리 → filters.targetUid 정상 반환.
                    // whereIn 혼합 시 null 반환하므로 혼합 쿼리 사용 금지. CRIT-02 수정 패턴과 동일.
@@ -1433,21 +1457,10 @@ service cloud.firestore {
                    isSubAdminOf(resource.data.businessId) ||
                    isSuperAdmin()
                  );
-      // list: resource==null 이스케이프 없이 역할 검증 필수
-      // [CRITICAL-FIX] allow read 단일 규칙에 resource==null이 있으면 모든 로그인 유저가
-      //                payroll_summaries 전체를 list 할 수 있는 데이터 유출 취약점이 발생함.
-      //                get/list 분리 후 list는 역할 기반 필터만 허용.
-      allow list: if isLoggedIn() && (
-                   isSuperAdmin() ||
-                   (isBusinessAdmin() && (
-                     isAdminOf(request.query.filters.businessId) ||
-                     isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
-                   )) ||
-                   (isSubAdmin() && (
-                     isSubAdminOf(request.query.filters.businessId) ||
-                     isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
-                   ))
-                 );
+      // list: 클라이언트 직접 읽기 없음 — 쓰기/읽기 모두 CF Admin SDK 경유
+      // payroll_overview_screen은 attendance 직접 집계로 PayrollSummaryModel 로컬 생성
+      // → 클라이언트 list 영구 차단
+      allow list: if false;
 
       // 쓰기: Cloud Functions Admin SDK만 허용 (클라이언트 직접 쓰기 차단)
       // Admin SDK는 Firestore 규칙 우회 → 클라이언트는 항상 거부
@@ -1509,13 +1522,9 @@ service cloud.firestore {
       allow list: if isLoggedIn() && (
                     isSuperAdmin() ||
                     (isBusinessAdmin() && (
-                      isAdminOf(request.query.filters.businessId) ||
-                      isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
-                    )) ||
+                      isAdminOf(request.query.filters.businessId)                    )) ||
                     (isSubAdmin() && (
-                      isSubAdminOf(request.query.filters.businessId) ||
-                      isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
-                    ))
+                      isSubAdminOf(request.query.filters.businessId)                    ))
                   );
       // 생성: 본인 workerId이거나 해당 사업장 관리자/하위관리자 (타인 명의 위조 방지)
       // [HIGH-FIX] SubAdmin 누락: SubAdmin도 지급방식 변경 처리 가능 → isSubAdminOf 추가
@@ -1573,13 +1582,9 @@ service cloud.firestore {
       allow list: if isLoggedIn() && (
                     isSuperAdmin() ||
                     (isBusinessAdmin() && (
-                      isAdminOf(request.query.filters.businessId) ||
-                      isAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', ''))
-                    )) ||
+                      isAdminOf(request.query.filters.businessId)                    )) ||
                     (isSubAdmin() && (
-                      isSubAdminOf(request.query.filters.businessId) ||
-                      isSubAdminOf(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', ''))
-                    ))
+                      isSubAdminOf(request.query.filters.businessId)                    ))
                   );
       // 생성: 본인 workerId이거나 해당 사업장 관리자/하위관리자
       // [CRITICAL-FIX] SubAdmin 누락: createInterimSettlementRequest → PERMISSION_DENIED

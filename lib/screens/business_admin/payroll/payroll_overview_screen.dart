@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
 
@@ -89,31 +88,30 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
     setState(() { _isLoading = true; _loadError = null; });
 
     try {
-      // payroll_summaries(CF 집계)에 의존하지 않고 attendance 직접 집계
+      // payroll_summaries(CF 집계)에 의존하지 않고 attendance 직접 집계 (CF 경유)
       // → 급여마감 직후 CF 처리 전에도 즉시 데이터가 표시됨
       final yearStart = DateTime(year, 1, 1);
       final yearEnd   = DateTime(year + 1, 1, 1);
-      final snap = await FirebaseFirestore.instance
-          .collection('attendance')
-          .where('businessId', isEqualTo: bizId)
-          .where('workDate',
-              isGreaterThanOrEqualTo: Timestamp.fromDate(yearStart))
-          .where('workDate', isLessThan: Timestamp.fromDate(yearEnd))
-          .limit(10000) // [LIMIT-01] 150명×52주≈7800건; 5000은 대형 사업장에서 무음 누락 가능
-          .get();
-
-      // [LIMIT-01] 10000건 이상 사업장에서 데이터 누락 경고 — UI 토스트로 사용자에게 알림
-      if (snap.size >= 10000) {
+      final cfCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetAdminAttendances',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final cfResult = await cfCallable.call<Map<String, dynamic>>({
+        'businessId': bizId,
+        'startMs': yearStart.millisecondsSinceEpoch,
+        'endMs': yearEnd.millisecondsSinceEpoch,
+      });
+      final limitReached = cfResult.data['limitReached'] as bool? ?? false;
+      if (limitReached) {
         debugPrint('⚠️ payroll_overview: limit(10000) 도달 — 연간 데이터 누락 가능 (bizId=$bizId, year=$year)');
         if (mounted) ToastHelper.showWarning('데이터가 많아 일부 급여 내역이 표시되지 않을 수 있습니다.');
       }
 
       // 파싱 오류가 있는 문서는 무시
-      final allRecords = snap.docs.map((d) {
-        try { return AttendanceModel.fromFirestore(d); } catch (e) {
-          debugPrint('⚠️ payroll_overview: 문서 파싱 실패 (id=${d.id}): $e');
-          return null;
-        }
+      final cfItems = (cfResult.data['items'] as List<dynamic>? ?? []);
+      final allRecords = cfItems.map((e) {
+        final m = Map<String, dynamic>.from(e as Map);
+        final id = m.remove('id') as String? ?? '';
+        return AttendanceModel.tryFromMap(m, id);
       }).whereType<AttendanceModel>().toList();
 
       // confirmed/transferred 만 급여 집계 대상

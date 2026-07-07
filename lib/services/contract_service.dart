@@ -511,23 +511,27 @@ class ContractService {
     final result = <String, String?>{};
 
     // Phase 1: applicationId 배치 조회 (businessId 서버 필터 포함 — 타사업장 계약서 클라이언트 전달 차단)
-    // 인덱스: applicationId ASC + businessId ASC + createdAt DESC (firestore.indexes.json)
-    // 청크 10개 단위: 복합 whereIn+isEqualTo 조합 시 Firestore 인덱스 부하 고려한 보수적 크기.
-    // (Firestore 한계는 30이지만 이 쿼리는 compound index를 함께 사용하므로 여유 확보)
+    // [SEC] whereIn 제거 → 단건 병렬 쿼리 전환: whereIn + compound 쿼리에서
+    //   filters.businessId가 null 반환 → 보안 규칙 폴백 의존 제거.
+    // 청크 10개 단위: 병렬 쿼리 수 제한 (인덱스 부하 완화)
     for (var i = 0; i < applicationIds.length; i += 10) {
       final end = (i + 10).clamp(0, applicationIds.length);
       final chunk = applicationIds.sublist(i, end);
       try {
-        final snap = await _db
-            .collection('employment_contracts')
-            .where('applicationId', whereIn: chunk)
-            .where('businessId', isEqualTo: businessId)
-            .get();
-        for (final doc in snap.docs) {
-          final data = doc.data();
-          final appId = data['applicationId'] as String?;
-          if (appId != null && !result.containsKey(appId)) {
-            result[appId] = data['status'] as String?;
+        final snaps = await Future.wait(
+          chunk.map((appId) => _db
+              .collection('employment_contracts')
+              .where('applicationId', isEqualTo: appId)
+              .where('businessId', isEqualTo: businessId)
+              .get()),
+        );
+        for (final snap in snaps) {
+          for (final doc in snap.docs) {
+            final data = doc.data();
+            final appId = data['applicationId'] as String?;
+            if (appId != null && !result.containsKey(appId)) {
+              result[appId] = data['status'] as String?;
+            }
           }
         }
       } catch (_) {}

@@ -226,25 +226,32 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
             .toSet()
             .toList();
 
-        // whereIn 최대 30개 제한 → 배치 처리
+        // [SEC] whereIn 제거 → 단건 병렬 쿼리 + businessId 필터 추가
+        // whereIn에서 filters.businessId null 반환 → 보안 규칙 폴백 의존 제거.
+        // 30개 단위 청크: 동시 Firestore 연결 수 조절
         for (int i = 0; i < allAppIds.length; i += 30) {
           final batchIds = allAppIds.sublist(
             i,
             (i + 30).clamp(0, allAppIds.length),
           );
-          final snap = await FirebaseFirestore.instance
-              .collection('attendance')
-              .where('applicationId', whereIn: batchIds)
-              .get();
-          for (final doc in snap.docs) {
-            final att = AttendanceModel.tryFromFirestore(doc);
-            if (att == null) continue;
-            // 코드에서 월 범위 필터링 (monthEndExclusive의 하루 전 = 말일 23:59:59.999 이하)
-            if (att.workDate.isBefore(monthStart) || !att.workDate.isBefore(monthEndExclusive)) {
-              continue;
+          final snaps = await Future.wait(
+            batchIds.map((appId) => FirebaseFirestore.instance
+                .collection('attendance')
+                .where('applicationId', isEqualTo: appId)
+                .where('businessId', isEqualTo: businessId)
+                .get()),
+          );
+          for (final snap in snaps) {
+            for (final doc in snap.docs) {
+              final att = AttendanceModel.tryFromFirestore(doc);
+              if (att == null) continue;
+              // 코드에서 월 범위 필터링 (monthEndExclusive의 하루 전 = 말일 23:59:59.999 이하)
+              if (att.workDate.isBefore(monthStart) || !att.workDate.isBefore(monthEndExclusive)) {
+                continue;
+              }
+              final dateKey = DateFormat('yyyy-MM-dd').format(att.workDate);
+              attendanceByKey['${att.applicationId}_$dateKey'] = att;
             }
-            final dateKey = DateFormat('yyyy-MM-dd').format(att.workDate);
-            attendanceByKey['${att.applicationId}_$dateKey'] = att;
           }
         }
         debugPrint('  [attendance] 이번달 레코드: ${attendanceByKey.length}건');

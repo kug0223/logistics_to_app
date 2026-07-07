@@ -162,7 +162,9 @@ class AuthService {
     } catch (e) {
       // 그 외 예외 (Firestore 조회 실패, fromMap 파싱 오류 등)
       debugPrint('❌ [signIn] 알 수 없는 오류: $e');
-      if (e.toString().contains('사용자를 찾을 수 없습니다')) {
+      final errStr = e.toString();
+      // 내부에서 의도적으로 throw한 사용자 친화적 메시지 — 재래핑 없이 그대로 전파
+      if (errStr.contains('아이디 또는 비밀번호') || errStr.contains('사용자를 찾을 수 없습니다')) {
         rethrow;
       }
       ToastHelper.showError('로그인 중 오류가 발생했습니다');
@@ -259,11 +261,9 @@ class AuthService {
           } catch (deleteError) {
             debugPrint('⚠️ Auth 롤백 실패: $deleteError');
           }
-          ToastHelper.showError('회원가입 중 오류가 발생했습니다.\n다시 시도해주세요.');
           throw Exception('Firestore 저장 실패: $firestoreError');
         }
 
-        ToastHelper.showSuccess('회원가입이 완료되었습니다!');
         return newUser;
       }
       return null;

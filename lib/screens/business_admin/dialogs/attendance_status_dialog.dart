@@ -392,17 +392,22 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     // [BUG-수정] 전날 야간 단기근무자 포함: workDate 조회 범위를 전날부터 시작
     final queryRangeStart = dateStart.subtract(const Duration(days: 1));
 
-    final snapshot = await FirebaseFirestore.instance
-        .collection('attendance')
-        .where('businessId', isEqualTo: _selectedBusinessId)
-        .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(queryRangeStart))
-        .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
-        .get();
+    // CF 경유: callableGetAdminAttendances (Admin SDK 서버사이드 권한 검증)
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetAdminAttendances',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+    final cfResult = await callable.call<Map<String, dynamic>>({
+      'businessId': _selectedBusinessId,
+      'startMs': queryRangeStart.millisecondsSinceEpoch,
+      'endMs': dateEnd.millisecondsSinceEpoch,
+    });
+    final cfItems = (cfResult.data['items'] as List<dynamic>? ?? []);
 
     final Map<String, AttendanceModel> attendanceMap = {};
-
-    for (var doc in snapshot.docs) {
-      final attendance = AttendanceModel.tryFromFirestore(doc);
+    for (final e in cfItems) {
+      final m = Map<String, dynamic>.from(e as Map);
+      final id = m.remove('id') as String? ?? '';
+      final attendance = AttendanceModel.tryFromMap(m, id);
       if (attendance == null) continue;
       // applicationIds에 포함된 근무자만 맵에 저장 (전날 기록이 오늘 명단에 섞이지 않도록 필터)
       if (applicationIds.contains(attendance.applicationId)) {

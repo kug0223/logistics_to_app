@@ -319,7 +319,7 @@ extension AttendanceFirestore on FirestoreService {
     }
   }
 
-  /// 사업장별 오늘 출근 현황 조회 (관리자용)
+  /// 사업장별 오늘 출근 현황 조회 (관리자용 — CF 프록시)
   Future<List<AttendanceModel>> getTodayAttendanceByBusiness({
     required String businessId,
   }) async {
@@ -327,24 +327,12 @@ extension AttendanceFirestore on FirestoreService {
       final today = DateTime.now();
       final todayStart = DateTime(today.year, today.month, today.day);
       final todayEnd = todayStart.add(const Duration(days: 1));
-      
-      debugPrint('🔍 [getTodayAttendanceByBusiness] 조회 시작...');
-      debugPrint('   businessId: $businessId');
-      debugPrint('   todayStart: $todayStart');
-      
-      final snapshot = await _firestore
-          .collection('attendance')
-          .where('businessId', isEqualTo: businessId)
-          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(todayStart))
-          .where('workDate', isLessThan: Timestamp.fromDate(todayEnd))
-          .orderBy('workDate', descending: false)
-          .get(const GetOptions(source: Source.server));
-
-      final attendances = snapshot.docs
-          .map(AttendanceModel.tryFromFirestore)
-          .whereType<AttendanceModel>()
-          .toList();
-
+      debugPrint('🔍 [getTodayAttendanceByBusiness] CF 조회 시작... businessId=$businessId');
+      final attendances = await _callableGetAdminAttendances(
+        businessId: businessId,
+        startDate: todayStart,
+        endDate: todayEnd,
+      );
       debugPrint('✅ 오늘 출근 현황: ${attendances.length}명');
       return attendances;
     } catch (e) {
@@ -437,7 +425,7 @@ extension AttendanceFirestore on FirestoreService {
     }
   }
 
-  /// 특정 날짜 출근 기록 조회
+  /// 특정 날짜 출근 기록 조회 (관리자용 — CF 프록시)
   Future<List<AttendanceModel>> getAttendanceByDate({
     required String businessId,
     required DateTime date,
@@ -445,18 +433,11 @@ extension AttendanceFirestore on FirestoreService {
     try {
       final dateStart = DateTime(date.year, date.month, date.day);
       final dateEnd = dateStart.add(const Duration(days: 1));
-      
-      final snapshot = await _firestore
-          .collection('attendance')
-          .where('businessId', isEqualTo: businessId)
-          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
-          .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
-          .get(const GetOptions(source: Source.server));
-
-      return snapshot.docs
-          .map(AttendanceModel.tryFromFirestore)
-          .whereType<AttendanceModel>()
-          .toList();
+      return await _callableGetAdminAttendances(
+        businessId: businessId,
+        startDate: dateStart,
+        endDate: dateEnd,
+      );
     } catch (e) {
       debugPrint('❌ 출근 기록 조회 실패: $e');
       return [];
@@ -488,6 +469,39 @@ extension AttendanceFirestore on FirestoreService {
       return [];
     }
   }
+  /// 관리자용 출근 기록 목록 조회 (CF 프록시)
+  /// attendance allow list: if false 이후 이 CF 사용 — 서버사이드 권한 검증
+  Future<List<AttendanceModel>> _callableGetAdminAttendances({
+    required String businessId,
+    required DateTime startDate,
+    required DateTime endDate,
+    String? userId,
+  }) async {
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetAdminAttendances',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+    final params = <String, dynamic>{
+      'businessId': businessId,
+      'startMs': startDate.millisecondsSinceEpoch,
+      'endMs': endDate.millisecondsSinceEpoch,
+    };
+    if (userId != null) params['userId'] = userId;
+    final result = await callable.call<Map<String, dynamic>>(params);
+    final items = (result.data['items'] as List<dynamic>? ?? []);
+    final limitReached = result.data['limitReached'] as bool? ?? false;
+    if (limitReached) {
+      debugPrint('⚠️ callableGetAdminAttendances: limit(10000) 도달 — 데이터 누락 가능 (bizId=$businessId)');
+    }
+    return items
+        .map((e) {
+          final m = Map<String, dynamic>.from(e as Map);
+          final id = m.remove('id') as String? ?? '';
+          return AttendanceModel.tryFromMap(m, id);
+        })
+        .whereType<AttendanceModel>()
+        .toList();
+  }
+
   // ═══════════════════════════════════════════════════════════
   // 스케줄 변경 요청 관리 (Schedule Change Request Management)
   // ═══════════════════════════════════════════════════════════
@@ -991,8 +1005,7 @@ extension AttendanceFirestore on FirestoreService {
     }
   }
 
-  /// 사업장 주간 출근 기록 일괄 조회 (userId → AttendanceModel 리스트)
-  /// weekStart ~ weekEnd(inclusive) 범위 내 모든 근무자의 출근 기록 반환
+  /// 사업장 주간 출근 기록 일괄 조회 (userId → AttendanceModel 리스트, CF 프록시)
   Future<Map<String, List<AttendanceModel>>> getWeeklyAttendanceByBusiness({
     required String businessId,
     required DateTime weekStart,
@@ -1002,16 +1015,13 @@ extension AttendanceFirestore on FirestoreService {
       final start = DateTime(weekStart.year, weekStart.month, weekStart.day);
       final end = DateTime(weekEnd.year, weekEnd.month, weekEnd.day)
           .add(const Duration(days: 1));
-      final snapshot = await _firestore
-          .collection('attendance')
-          .where('businessId', isEqualTo: businessId)
-          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-          .where('workDate', isLessThan: Timestamp.fromDate(end))
-          .get(const GetOptions(source: Source.server));
+      final records = await _callableGetAdminAttendances(
+        businessId: businessId,
+        startDate: start,
+        endDate: end,
+      );
       final map = <String, List<AttendanceModel>>{};
-      for (final doc in snapshot.docs) {
-        final att = AttendanceModel.tryFromFirestore(doc);
-        if (att == null) continue;
+      for (final att in records) {
         map.putIfAbsent(att.userId, () => []).add(att);
       }
       return map;

@@ -847,24 +847,17 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
         '${req.reviewYear}-${req.reviewMonth.toString().padLeft(2, '0')}';
 
     try {
-      // [BUG-WHEREIN] wageStatus whereIn + 복합쿼리 → PERMISSION_DENIED 위험
-      //   isEqualTo 2개 병렬 쿼리 + user 조회 총 3개 병렬로 분리
+      // CF 경유: callableGetAdminAttendances yearMonth 모드 + user 조회 병렬 실행
+      final attendanceCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetAdminAttendances',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
       final results = await Future.wait([
         FirebaseFirestore.instance.collection('users').doc(req.workerId).get(),
-        FirebaseFirestore.instance
-            .collection('attendance')
-            .where('userId', isEqualTo: req.workerId)
-            .where('businessId', isEqualTo: req.businessId)
-            .where('yearMonth', isEqualTo: yearMonthStr)
-            .where('wageStatus', isEqualTo: 'confirmed')
-            .get(),
-        FirebaseFirestore.instance
-            .collection('attendance')
-            .where('userId', isEqualTo: req.workerId)
-            .where('businessId', isEqualTo: req.businessId)
-            .where('yearMonth', isEqualTo: yearMonthStr)
-            .where('wageStatus', isEqualTo: 'transferred')
-            .get(),
+        attendanceCallable.call<Map<String, dynamic>>({
+          'businessId': req.businessId,
+          'yearMonth': yearMonthStr,
+          'userId': req.workerId,
+        }),
       ]);
 
       final userSnap = results[0] as DocumentSnapshot<Map<String, dynamic>>;
@@ -874,9 +867,13 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
         workerAge = worker?.age;
       }
 
-      final confirmedSnap = results[1] as QuerySnapshot<Map<String, dynamic>>;
-      final transferredSnap = results[2] as QuerySnapshot<Map<String, dynamic>>;
-      workDaysInMonth = confirmedSnap.docs.length + transferredSnap.docs.length;
+      final cfResult = results[1] as HttpsCallableResult<Map<String, dynamic>>;
+      final cfItems = (cfResult.data['items'] as List<dynamic>? ?? []);
+      // wageStatus confirmed/transferred 인 건수만 근무일 수로 집계
+      workDaysInMonth = cfItems.where((e) {
+        final status = (e as Map)['wageStatus'] as String?;
+        return status == 'confirmed' || status == 'transferred';
+      }).length;
     } catch (e) {
       debugPrint('❌ 리뷰 요청 정보 로드 실패: $e');
     }

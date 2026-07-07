@@ -487,27 +487,33 @@ class AdminStatsService {
 
   // ── 내부 쿼리 ────────────────────────────────────────────────
 
-  // [D01 설계] limit() 없이 전체 조회: 관리자 통계 화면에서 연간/월별 집계를 위해
-  // 기간 내 모든 출근 기록이 필요하다. 사업장당 연간 최대 수천 건 수준으로 예상되므로
-  // 현재 규모에서는 허용된 트레이드오프다. 대규모 사업장(수만 건 이상)이 생기면
-  // 서버사이드 집계(Cloud Functions + 집계 문서)로 전환을 고려해야 한다.
-  // 20초 타임아웃으로 무한 대기 방지.
+  // [D01 → CF 이전] 관리자 통계용 출근 기록 조회 — callableGetAdminAttendances CF 경유.
+  // attendance allow list: if false 이후 Admin SDK 서버사이드 처리로 전환.
+  // 사업장별 병렬 CF 호출 (기존 병렬 Firestore 쿼리 패턴 유지).
   Future<List<AttendanceModel>> _queryAttendance(
       List<String> ids, DateTime start, DateTime end) async {
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetAdminAttendances',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
     final results = await Future.wait(ids.map((id) async {
       try {
-        final snap = await _db
-            .collection('attendance')
-            .where('businessId', isEqualTo: id)
-            .where('workDate',
-                isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-            .where('workDate', isLessThan: Timestamp.fromDate(end))
-            .limit(10000)
-            .get(const GetOptions(source: Source.server))
-            .timeout(const Duration(seconds: 20));
-        return snap.docs.map(AttendanceModel.tryFromFirestore).whereType<AttendanceModel>().toList();
+        final result = await callable.call<Map<String, dynamic>>({
+          'businessId': id,
+          'startMs': start.millisecondsSinceEpoch,
+          'endMs': end.millisecondsSinceEpoch,
+        });
+        final items = (result.data['items'] as List<dynamic>? ?? []);
+        final limitReached = result.data['limitReached'] as bool? ?? false;
+        if (limitReached) {
+          debugPrint('⚠️ admin_stats: limit(10000) 도달 — 데이터 누락 가능 (bizId=$id)');
+        }
+        return items.map((e) {
+          final m = Map<String, dynamic>.from(e as Map);
+          final docId = m.remove('id') as String? ?? '';
+          return AttendanceModel.tryFromMap(m, docId);
+        }).whereType<AttendanceModel>().toList();
       } catch (e) {
-        debugPrint('❌ 근태 조회 실패 ($id): $e');
+        debugPrint('❌ 근태 CF 조회 실패 ($id): $e');
         return <AttendanceModel>[];
       }
     }));

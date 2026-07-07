@@ -15,6 +15,7 @@ import '../user/dialogs/my_requests_dialog.dart';
 import '../business_admin/workforce_management/integrated_workforce_screen.dart';
 import '../contract/contract_sign_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../../models/core/to_model.dart';
 import '../../models/core/work_detail_model.dart';
 import '../../models/ui/admin_to_list_ui_models.dart';
@@ -749,18 +750,17 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       try {
         if (!isUser) {
-          // 관리자: worker 프로필 + attendance 병렬 조회
-          // [BUGFIX] whereIn + equality 복합쿼리에서 Firestore 보안 규칙의
-          //   filters.businessId가 null 반환 → PERMISSION_DENIED 방지를 위해
-          //   wageStatus whereIn 제거 후 클라이언트 필터링으로 전환.
+          // 관리자: worker 프로필 + attendance CF 경유 병렬 조회
+          final attendanceCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableGetAdminAttendances',
+                  options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
           final results = await Future.wait([
             FirebaseFirestore.instance.collection('users').doc(req.workerId).get(),
-            FirebaseFirestore.instance
-                .collection('attendance')
-                .where('userId', isEqualTo: req.workerId)
-                .where('businessId', isEqualTo: req.businessId)
-                .where('yearMonth', isEqualTo: yearMonthStr)
-                .get(),
+            attendanceCallable.call<Map<String, dynamic>>({
+              'businessId': req.businessId,
+              'yearMonth': yearMonthStr,
+              'userId': req.workerId,
+            }),
           ]);
           final userSnap = results[0] as DocumentSnapshot<Map<String, dynamic>>;
           if (userSnap.exists && userSnap.data() != null) {
@@ -768,14 +768,12 @@ class _NotificationScreenState extends State<NotificationScreen> {
             workerGender = worker.gender;
             workerAge = worker.age;
           }
-          // wageStatus 클라이언트 필터링 (whereIn 제거)
-          workDaysInMonth = (results[1] as QuerySnapshot<Map<String, dynamic>>)
-              .docs
-              .where((doc) {
-                final status = doc.data()['wageStatus'] as String?;
-                return status == 'confirmed' || status == 'transferred';
-              })
-              .length;
+          final cfResult = results[1] as HttpsCallableResult<Map<String, dynamic>>;
+          final cfItems = (cfResult.data['items'] as List<dynamic>? ?? []);
+          workDaysInMonth = cfItems.where((e) {
+            final status = (e as Map)['wageStatus'] as String?;
+            return status == 'confirmed' || status == 'transferred';
+          }).length;
         } else {
           // 근무자: CF 프록시로 조회 (직접 list 불허 — Firestore 규칙)
           final attendances = await FirestoreService().getMyMonthlyAttendances(

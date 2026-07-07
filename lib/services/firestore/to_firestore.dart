@@ -115,11 +115,12 @@ extension TOFirestore on FirestoreService {
     try {
       // [BUGFIX-WHEREIN] isPublished isEqualTo + status whereIn → PERMISSION_DENIED
       // status 서버 필터 제거, 클라이언트에서 active/full 필터링
+      // [SEC] tos list 규칙: USER에게 limit <= 50 강제 — limit(100)이면 PERMISSION_DENIED
       final snap = await _firestore
           .collection('tos')
           .where('isPublished', isEqualTo: true)
           .orderBy('createdAt', descending: true)
-          .limit(100)
+          .limit(50)
           .get(const GetOptions(source: Source.server));
 
       return snap.docs
@@ -183,25 +184,31 @@ extension TOFirestore on FirestoreService {
 
   /// ID 목록으로 공고 배치 조회 (Algolia 검색 결과 fetch용)
   /// 마감/비공개 TO는 클라이언트에서 필터링 (Algolia 인덱스와 Firestore 상태 불일치 방어)
+  ///
+  /// [TO-PERM-FIX] documentId whereIn LIST 쿼리 → 개별 doc GET 병렬 호출로 전환
+  /// LIST 규칙: isUser() && request.query.filters.isPublished==true 강제
+  /// → documentId whereIn 쿼리에 isPublished 서버 필터 없음 → PERMISSION_DENIED
+  /// GET 규칙: isLoggedIn() && isPublished==true (resource.data 기반) → 개별 GET으로 해결
+  /// 비공개 TO는 GET 규칙에서 자동 거부 → null로 처리하여 결과에서 제외
   Future<List<TOModel>> getTOsByIds(List<String> ids) async {
     if (ids.isEmpty) return [];
-    final results = <TOModel>[];
-    // Firestore whereIn 30개 제한 — 청크 처리
-    for (var i = 0; i < ids.length; i += 30) {
-      final chunk = ids.sublist(i, i + 30 > ids.length ? ids.length : i + 30);
-      final snap = await _firestore
+    final snaps = await Future.wait(
+      ids.map((id) => _firestore
           .collection('tos')
-          .where(FieldPath.documentId, whereIn: chunk)
-          .get(const GetOptions(source: Source.server));
-      // Firestore whereIn을 두 개 쓸 수 없으므로 클라이언트 필터링
-      results.addAll(
-        snap.docs
-            .map((d) => TOModel.tryFromMap(d.data(), d.id))
-            .whereType<TOModel>()
-            .where((to) => to.isPublished && !to.isClosed),
-      );
-    }
-    return results;
+          .doc(id)
+          .get(const GetOptions(source: Source.server))
+          .then<DocumentSnapshot<Map<String, dynamic>>?>(
+              (snap) => snap,
+              onError: (_) => null,
+          )),
+    );
+    return snaps
+        .whereType<DocumentSnapshot<Map<String, dynamic>>>()
+        .where((snap) => snap.exists)
+        .map((snap) => TOModel.tryFromMap(snap.data()!, snap.id))
+        .whereType<TOModel>()
+        .where((to) => to.isPublished && !to.isClosed)
+        .toList();
   }
 
   /// 최근 등록 공고 (기존 공고 연결용)
@@ -573,14 +580,19 @@ extension TOFirestore on FirestoreService {
         try {
           for (var i = 0; i < allAppIds.length; i += 30) {
             final chunk = allAppIds.sublist(i, (i + 30).clamp(0, allAppIds.length));
+            // [SEC] whereIn 제거 → 단건 병렬 쿼리 + businessId 필터: 보안 규칙 폴백 의존 제거
             // attendance 정리 (wageTransferred/wageConfirmed 보존)
-            final attSnap = await _firestore.collection('attendance')
-                .where('applicationId', whereIn: chunk)
-                .get(const GetOptions(source: Source.server));
-            if (attSnap.docs.isNotEmpty) {
+            final attSnaps = await Future.wait(
+              chunk.map((appId) => _firestore.collection('attendance')
+                  .where('applicationId', isEqualTo: appId)
+                  .where('businessId', isEqualTo: to.businessId)
+                  .get(const GetOptions(source: Source.server))),
+            );
+            final attDocs = attSnaps.expand((s) => s.docs).toList();
+            if (attDocs.isNotEmpty) {
               var attBatch = _firestore.batch();
               int attCount = 0;
-              for (final att in attSnap.docs) {
+              for (final att in attDocs) {
                 final wStatus = att.data()['wageStatus'] as String?;
                 if (wStatus == AttendanceModel.wageTransferred ||
                     wStatus == AttendanceModel.wageConfirmed) { continue; }
@@ -595,16 +607,17 @@ extension TOFirestore on FirestoreService {
               if (attCount > 0) await attBatch.commit();
             }
             // schedule_change_requests 정리
-            // [특이사항] whereIn 쿼리 — 보안 규칙의 filters.businessId를 채우지 못하지만
-            // isAdminOf(users/{uid}.businessId) 폴백 조건으로 통과 (관리자 본인 businessId 검증).
-            // whereIn + filters 문제: see memory/feedback_firestore_wherein_security_rule.md
-            final reqSnap = await _firestore.collection('schedule_change_requests')
-                .where('applicationId', whereIn: chunk)
-                .get(const GetOptions(source: Source.server));
-            if (reqSnap.docs.isNotEmpty) {
+            final reqSnaps = await Future.wait(
+              chunk.map((appId) => _firestore.collection('schedule_change_requests')
+                  .where('applicationId', isEqualTo: appId)
+                  .where('businessId', isEqualTo: to.businessId)
+                  .get(const GetOptions(source: Source.server))),
+            );
+            final reqDocs = reqSnaps.expand((s) => s.docs).toList();
+            if (reqDocs.isNotEmpty) {
               var reqBatch = _firestore.batch();
               int reqCount = 0;
-              for (final req in reqSnap.docs) {
+              for (final req in reqDocs) {
                 reqBatch.delete(req.reference);
                 reqCount++;
                 if (reqCount >= 499) {
@@ -617,13 +630,17 @@ extension TOFirestore on FirestoreService {
             }
             // employment_contracts 정리 — 서명 완료(completed) 계약서는 법적 기록이므로 보존
             // Phase 1: applicationId 필드로 단일 계약서 검색
-            final contractSnap = await _firestore.collection('employment_contracts')
-                .where('applicationId', whereIn: chunk)
-                .get(const GetOptions(source: Source.server));
+            final contractSnaps = await Future.wait(
+              chunk.map((appId) => _firestore.collection('employment_contracts')
+                  .where('applicationId', isEqualTo: appId)
+                  .where('businessId', isEqualTo: to.businessId)
+                  .get(const GetOptions(source: Source.server))),
+            );
             // Phase 2: applicationIds 배열로 번들 계약서 검색
             // arrayContainsAny 최대 10개 제한으로 서브청크 처리
-            final foundDocIds = contractSnap.docs.map((d) => d.id).toSet();
-            final allContractDocs = [...contractSnap.docs];
+            final contractDocs1 = contractSnaps.expand((s) => s.docs).toList();
+            final foundDocIds = contractDocs1.map((d) => d.id).toSet();
+            final allContractDocs = [...contractDocs1];
             for (int j = 0; j < chunk.length; j += 10) {
               final subChunk = chunk.sublist(j, (j + 10) < chunk.length ? j + 10 : chunk.length);
               final bundleSnap = await _firestore.collection('employment_contracts')
@@ -875,6 +892,7 @@ extension TOFirestore on FirestoreService {
   /// 선택한 슬롯들 일괄 마감 (직접 마감 — closedBy 설정)
   Future<void> batchCloseSlots({
     required String toId,
+    required String businessId,
     required List<String> slotIds,
     required String closedBy,
   }) async {
@@ -902,17 +920,19 @@ extension TOFirestore on FirestoreService {
     // 슬롯 마감 완료 후 PENDING 지원서 취소 + TO totalPending 카운터 감소
     // [A-001] try-catch per slot: 특정 슬롯 cancelBatch 실패 시 해당 슬롯 카운트 제외 후 계속 진행
     //
-    // [최적화] 쿼리를 whereIn(30개 청크)으로 묶어 N번→ceil(N/30)번으로 축소.
+    // [SEC] whereIn 제거 → slotId별 단건 병렬 쿼리 + businessId 필터 추가: 보안 규칙 폴백 의존 제거
     // 업데이트·알림은 슬롯별 try-catch 유지 (A-001 에러 격리 보존).
     final allPendingDocs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-    for (var i = 0; i < slotIds.length; i += 30) {
-      final chunk = slotIds.sublist(i, (i + 30).clamp(0, slotIds.length));
-      final snap = await _firestore
+    final pendingSnaps = await Future.wait(
+      slotIds.map((slotId) => _firestore
           .collection('applications')
           .where('toId', isEqualTo: toId)
-          .where('slotId', whereIn: chunk)
+          .where('businessId', isEqualTo: businessId)
+          .where('slotId', isEqualTo: slotId)
           .where('status', isEqualTo: AppStatus.pending)
-          .get(const GetOptions(source: Source.server));
+          .get(const GetOptions(source: Source.server))),
+    );
+    for (final snap in pendingSnaps) {
       allPendingDocs.addAll(snap.docs);
     }
 
@@ -1086,17 +1106,19 @@ extension TOFirestore on FirestoreService {
     }
 
     // 삭제 대상 슬롯에 연결된 활성 지원서 전체 취소 처리 (PENDING/CONFIRMED/CONTRACT_PENDING)
-    // [최적화] whereIn(slotId, 30개 청크)으로 N번→ceil(N/30)번 쿼리 축소.
-    // Firestore whereIn은 1개 필드만 허용 — status는 클라이언트에서 필터링.
+    // [SEC] whereIn 제거 → slotId별 단건 병렬 쿼리 + businessId 필터 추가: 보안 규칙 폴백 의존 제거
+    // status는 클라이언트에서 필터링 (Firestore whereIn은 1개 필드만 허용).
     const activeStatuses = {AppStatus.pending, AppStatus.confirmed, AppStatus.contractPending};
     final allActiveDocs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-    for (var i = 0; i < slotIds.length; i += 30) {
-      final chunk = slotIds.sublist(i, (i + 30).clamp(0, slotIds.length));
-      final snap = await _firestore
+    final activeSnaps = await Future.wait(
+      slotIds.map((slotId) => _firestore
           .collection('applications')
           .where('toId', isEqualTo: toId)
-          .where('slotId', whereIn: chunk)
-          .get(const GetOptions(source: Source.server));
+          .where('businessId', isEqualTo: toBusinessId)
+          .where('slotId', isEqualTo: slotId)
+          .get(const GetOptions(source: Source.server))),
+    );
+    for (final snap in activeSnaps) {
       allActiveDocs.addAll(
         snap.docs.where((d) => activeStatuses.contains(d.data()['status'] as String?)),
       );

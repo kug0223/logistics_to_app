@@ -247,11 +247,10 @@ class WageCalculator {
     }
     
     // deductionAmount(수동 공제)와 weeklyHolidayAmount(주휴수당)는 여기서 계산하지 않음.
-    // - deductionAmount: 관리자가 wage 수정 다이얼로그에서 직접 입력 후 copyWith(totalAmount)로 반영
+    // - deductionAmount: 관리자가 wage 수정 다이얼로그에서 양수 입력 → UI가 빼기 처리 후 copyWith(totalAmount)
     // - weeklyHolidayAmount: 주휴수당 자동계산 없음 정책(CLAUDE.md) — 관리자 수동 입력
-    // 두 필드는 이 calculate() 이후 UI 레이어에서 설정되므로 초기 totalAmount에는 미포함.
-    // additionalAmount는 추가 공제에 음수 입력이 가능하지만 UI에서 검증하지 않으므로,
-    // 극단적인 음수 입력 시 totalAmount가 음수가 될 수 있다. 호출 측에서 범위를 보장해야 한다.
+    // additionalAmount는 추가수당(인센티브 등, 양수) 필드이며 공제 필드가 아님.
+    // totalAmount는 UI에서 deductionAmount를 차감한 최종값으로 덮어쓰므로 여기서는 additionalAmount만 반영.
     final totalAmount = baseAmount + overtimeAmount + nightAmount + additionalAmount;
     
     return WageDetailModel(

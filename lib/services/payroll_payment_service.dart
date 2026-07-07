@@ -209,6 +209,13 @@ class PayrollPaymentService {
   /// - [cursor]: 직전 페이지의 마지막 문서 (최초 조회 시 null)
   /// - [pageSize]: 페이지당 레코드 수 (기본 200)
   /// - 반환된 [PayrollPage.hasMore]=true 이면 cursor를 넘겨 다음 페이지 조회 가능
+  ///
+  /// [직접 Firestore 유지 — 의도적 결정]
+  /// startAfterDocument(cursor)는 DocumentSnapshot을 커서로 사용하므로
+  /// CF 반환값(직렬화된 Map)으로 커서를 재구성할 수 없어 CF 이전 불가.
+  /// 단, businessId isEqualTo 단일 등호필터는 request.query.filters.businessId를
+  /// 정상 평가하므로 현재 Firestore 보안 규칙에서 이미 안전하다.
+  /// → allow list 규칙 유지 필요 (payroll_payment_service 3개 함수가 직접 읽기 사용)
   Future<PayrollPage<AttendanceModel>> getPayrollRecords({
     required String businessId,
     required int year,
@@ -259,6 +266,12 @@ class PayrollPaymentService {
   /// 오늘 지급 예정일이 도래한 미이체 출근기록 조회
   /// - paymentDueDate <= today AND wageStatus = 'confirmed'
   /// - 사업장 단위 (businessId 필수)
+  ///
+  /// [직접 Firestore 유지 — 의도적 결정]
+  /// businessId + wageStatus + paymentDueDate 복합필터를 사용하나,
+  /// businessId isEqualTo 단일 등호필터가 포함되어 있어
+  /// request.query.filters.businessId가 정상 평가되므로 현재 규칙에서 안전하다.
+  /// CF 이전 시 paymentDueDate 범위필터 파라미터 추가가 필요하여 현행 유지.
   Future<List<AttendanceModel>> getTodayPayments({
     required String businessId,
     DateTime? referenceDate,
@@ -283,6 +296,10 @@ class PayrollPaymentService {
   }
 
   /// 오늘 지급 예정 건수 (배지용 — count 쿼리)
+  ///
+  /// [직접 Firestore 유지 — 의도적 결정]
+  /// getTodayPayments와 동일 사유. businessId + wageStatus 등호필터 사용으로
+  /// request.query.filters.businessId 정상 평가 → 현재 규칙에서 안전하다.
   Future<int> getTodayPaymentCount({
     required String businessId,
     DateTime? referenceDate,

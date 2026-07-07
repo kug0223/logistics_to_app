@@ -4593,6 +4593,114 @@ export const getMyMonthlyAttendances = onCall(
   }
 );
 
+// ─── callableGetAdminAttendances ──────────────────────────────────────────────
+// 관리자용 출근 기록 목록 조회 — Admin SDK 서버사이드 권한 검증
+// 모드 A (날짜 범위): startMs + endMs 필수, yearMonth 불가
+// 모드 B (월 조회):  yearMonth("YYYY-MM") 필수, startMs/endMs 불가
+// 공통 선택 파라미터: userId (특정 근무자 필터)
+// [이전 완료 callers] getTodayAttendanceByBusiness · getAttendanceByDate ·
+//   getWeeklyAttendanceByBusiness · payroll_overview_screen · payroll_worker_detail ·
+//   admin_stats_service · attendance_status_dialog · tax_deduction_service ·
+//   admin_review_list_screen · notification_screen(관리자 경로)
+export const callableGetAdminAttendances = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {
+      businessId,
+      startMs,
+      endMs,
+      userId: filterUserId,
+      yearMonth: filterYearMonth,
+    } = (request.data ?? {}) as {
+      businessId?: string;
+      startMs?: number;
+      endMs?: number;
+      userId?: string;
+      yearMonth?: string;
+    };
+
+    if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+
+    const hasDateRange = Number.isFinite(startMs) && Number.isFinite(endMs);
+    const hasYearMonth = typeof filterYearMonth === "string" && /^\d{4}-\d{2}$/.test(filterYearMonth);
+
+    if (!hasDateRange && !hasYearMonth) {
+      throw new HttpsError("invalid-argument", "startMs/endMs 또는 yearMonth('YYYY-MM') 중 하나가 필요합니다.");
+    }
+    if (hasDateRange && hasYearMonth) {
+      throw new HttpsError("invalid-argument", "startMs/endMs와 yearMonth는 동시에 사용할 수 없습니다.");
+    }
+    if (hasDateRange) {
+      if (startMs! >= endMs!) {
+        throw new HttpsError("invalid-argument", "startMs < endMs이어야 합니다.");
+      }
+      const TWO_YEARS_MS = 2 * 365 * 24 * 60 * 60 * 1000;
+      if (endMs! - startMs! > TWO_YEARS_MS) {
+        throw new HttpsError("invalid-argument", "날짜 범위는 최대 2년까지 허용됩니다.");
+      }
+    }
+
+    // 권한 검증: 슈퍼어드민 OR 해당 사업장 관리자/하위관리자
+    const [callerSnap, bizSnap] = await Promise.all([
+      db.collection("users").doc(callerUid).get(),
+      db.collection("businesses").doc(businessId).get(),
+    ]);
+
+    const callerRole = callerSnap.data()?.role as string | undefined;
+    const isSuperAdmin = callerRole === "SUPER_ADMIN";
+
+    if (!isSuperAdmin) {
+      if (!bizSnap.exists) {
+        throw new HttpsError("not-found", "사업장을 찾을 수 없습니다.");
+      }
+      const adminIds = (bizSnap.data()?.adminIds as string[] | undefined) ?? [];
+      const ownerId = bizSnap.data()?.ownerId as string | undefined;
+      const callerSubAdminOf = callerSnap.data()?.subAdminOf as string | undefined;
+      const isAuthorized =
+        adminIds.includes(callerUid) ||
+        ownerId === callerUid ||
+        callerSubAdminOf === businessId;
+      if (!isAuthorized) {
+        throw new HttpsError("permission-denied", "해당 사업장에 대한 권한이 없습니다.");
+      }
+    }
+
+    // 쿼리 실행 (Admin SDK — Firestore 보안 규칙 미적용)
+    let q: admin.firestore.Query = db
+      .collection("attendance")
+      .where("businessId", "==", businessId);
+
+    if (hasYearMonth) {
+      q = q.where("yearMonth", "==", filterYearMonth);
+    } else {
+      q = q
+        .where("workDate", ">=", Timestamp.fromMillis(startMs!))
+        .where("workDate", "<", Timestamp.fromMillis(endMs!));
+    }
+
+    if (filterUserId && typeof filterUserId === "string" && filterUserId.trim().length > 0) {
+      q = q.where("userId", "==", filterUserId);
+    }
+
+    if (!hasYearMonth) q = q.orderBy("workDate", "asc");
+    q = q.limit(10001);
+    const snap = await q.get();
+
+    const limitReached = snap.size > 10000;
+    const docs = limitReached ? snap.docs.slice(0, 10000) : snap.docs;
+
+    return {
+      items: docs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
+      limitReached,
+    };
+  }
+);
+
 // ─── getMyContracts ──────────────────────────────────────────────────────────
 // USER 본인의 계약서 목록 조회 (커서 페이지네이션)
 // lastDocId: 이전 페이지 마지막 문서 ID, pageSize: 페이지 크기 (기본 20)

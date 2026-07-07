@@ -127,9 +127,9 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
 
   void _updateWage() {
     final additional =
-        int.tryParse(_additionalController.text.replaceAll(',', '')) ?? 0;
+        (int.tryParse(_additionalController.text.replaceAll(',', '')) ?? 0).abs();
     final deduction =
-        int.tryParse(_deductionController.text.replaceAll(',', '')) ?? 0;
+        (int.tryParse(_deductionController.text.replaceAll(',', '')) ?? 0).abs();
     final newTotal = _wage.baseAmount + _wage.overtimeAmount + _wage.nightAmount +
         additional - deduction + _wage.weeklyHolidayAmount;
     setState(() {
@@ -267,7 +267,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
     if (checkIn == null || checkOut == null) return;
 
     // 컨트롤러의 최신 공제 값 직접 파싱 (미반영 상태의 _wage.deductionAmount 사용 방지)
-    final currentDeduction = int.tryParse(_deductionController.text.replaceAll(',', '')) ?? 0;
+    final currentDeduction = (int.tryParse(_deductionController.text.replaceAll(',', '')) ?? 0).abs();
 
     final recalculated = WageCalculator.calculate(
       wageType: _wage.wageType,

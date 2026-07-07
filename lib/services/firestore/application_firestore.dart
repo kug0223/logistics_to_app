@@ -20,6 +20,12 @@ extension ApplicationFirestore on FirestoreService {
     String? uid,
     List<String>? statuses,
   }) async {
+    // [SEC] 관리자 컨텍스트(uid 없음)에서 businessId 미전달 시 크로스-사업장 누출 위험
+    // Firestore 규칙 폴백이 user.businessId로 평가되어 타 사업장 TO 지원서 조회 가능해짐
+    assert(
+      uid != null || (businessId != null && businessId.isNotEmpty),
+      'getApplicationsByTOId: admin 컨텍스트에서는 businessId 필수',
+    );
     try {
       Query query = _firestore
           .collection('applications')

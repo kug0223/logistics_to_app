@@ -522,57 +522,49 @@ class FirestoreService {
     try {
       if (businessIds != null && businessIds.isEmpty) return [];
 
-      // businessId가 2개 이상이면 whereIn 사용 → status whereIn 이중 불가 → 클라이언트 필터
-      // businessId가 1개이면 isEqualTo → status whereIn 단독 가능
-      // businessIds == null(슈퍼어드민 전체)이면 businessId 필터 없음 → status whereIn 단독 가능
-      final needClientStatusFilter = businessIds != null && businessIds.length > 1;
-
+      // [TO-PERM-FIX] tos list 규칙: isAdminOf(request.query.filters.businessId) 검사
+      // whereIn 사용 시 Firebase 버그로 filters.businessId가 null 반환 → PERMISSION_DENIED
+      // → businessIds >= 2인 경우 병렬 isEqualTo 쿼리로 전환 (청크 분할 방식 제거)
       List<TOGroupItem> allItems;
 
-      if (businessIds != null && businessIds.length > 30) {
-        // 30개 초과: 청크 분할 — businessId whereIn만, status는 클라이언트에서
-        final collected = <TOGroupItem>[];
-        for (int i = 0; i < businessIds.length; i += 30) {
-          final chunk = businessIds.skip(i).take(30).toList();
-          final chunkSnap = await _firestore.collection('tos')
-              .orderBy('createdAt', descending: true)
-              .where('businessId', whereIn: chunk)
-              .get(const GetOptions(source: Source.server));
-          collected.addAll(chunkSnap.docs.map((d) {
-            final to = TOModel.tryFromMap(d.data() as Map<String, dynamic>, d.id);
-            return to != null ? TOGroupItem(singleTO: to) : null;
-          }).whereType<TOGroupItem>());
-        }
-        collected.sort((a, b) => b.singleTO.createdAt.compareTo(a.singleTO.createdAt));
-        allItems = collected;
-      } else {
-        Query query = _firestore.collection('tos').orderBy('createdAt', descending: true);
-        if (businessIds != null && businessIds.length == 1) {
-          query = query.where('businessId', isEqualTo: businessIds.first);
-        } else if (businessIds != null) {
-          // 이 else 분기는 2 ≤ businessIds.length ≤ 30 보장 — 상위 if(length>30)가 먼저 처리.
-          query = query.where('businessId', whereIn: businessIds.toList());
-        }
-        // businessId whereIn이 없는 경우에만 status whereIn 서버 적용 (이중 whereIn 금지)
-        if (!needClientStatusFilter) {
-          if (activeOnly) {
-            query = query.where('status', whereIn: TOStatus.openStates);
-          } else if (closedOnly) {
-            query = query.where('status', whereIn: TOStatus.closedStates);
-          }
-        }
-        final snap = await query.get(const GetOptions(source: Source.server));
-        allItems = snap.docs.map((d) {
+      if (businessIds != null && businessIds.length >= 2) {
+        // 2개 이상 사업장: 사업장별 병렬 isEqualTo 쿼리
+        // status whereIn도 각 쿼리에 독립 적용 가능 (isEqualTo와 whereIn 충돌 없음)
+        final snaps = await Future.wait(
+          businessIds.map((bizId) {
+            Query q = _firestore
+                .collection('tos')
+                .orderBy('createdAt', descending: true)
+                .where('businessId', isEqualTo: bizId);
+            if (activeOnly) q = q.where('status', whereIn: TOStatus.openStates);
+            if (closedOnly) q = q.where('status', whereIn: TOStatus.closedStates);
+            return q.get(const GetOptions(source: Source.server));
+          }),
+        );
+        allItems = snaps
+            .expand((snap) => snap.docs)
+            .map((d) {
               final to = TOModel.tryFromMap(d.data() as Map<String, dynamic>, d.id);
               return to != null ? TOGroupItem(singleTO: to) : null;
-            }).whereType<TOGroupItem>().toList();
+            })
+            .whereType<TOGroupItem>()
+            .toList()
+          ..sort((a, b) => b.singleTO.createdAt.compareTo(a.singleTO.createdAt));
+      } else {
+        // 단일 사업장(isEqualTo) 또는 슈퍼어드민(businessId 필터 없음)
+        Query query = _firestore.collection('tos').orderBy('createdAt', descending: true);
+        if (businessIds != null) {
+          query = query.where('businessId', isEqualTo: businessIds.first);
+        }
+        if (activeOnly) query = query.where('status', whereIn: TOStatus.openStates);
+        if (closedOnly) query = query.where('status', whereIn: TOStatus.closedStates);
+        final snap = await query.get(const GetOptions(source: Source.server));
+        allItems = snap.docs.map((d) {
+          final to = TOModel.tryFromMap(d.data() as Map<String, dynamic>, d.id);
+          return to != null ? TOGroupItem(singleTO: to) : null;
+        }).whereType<TOGroupItem>().toList();
       }
 
-      // businessId whereIn 사용 시 status 클라이언트 필터 적용
-      if (needClientStatusFilter) {
-        if (activeOnly) return allItems.where((item) => TOStatus.openStates.contains(item.singleTO.status)).toList();
-        if (closedOnly) return allItems.where((item) => TOStatus.closedStates.contains(item.singleTO.status)).toList();
-      }
       return allItems;
     } catch (e) {
       debugPrint('❌ getTOGroupItemsLight 실패: $e');

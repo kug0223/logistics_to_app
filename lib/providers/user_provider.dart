@@ -275,7 +275,8 @@ class UserProvider with ChangeNotifier {
       final errStr = e.toString();
       if (errStr.contains('invalid-credential') ||
           errStr.contains('user-not-found') ||
-          errStr.contains('wrong-password')) {
+          errStr.contains('wrong-password') ||
+          errStr.contains('아이디 또는 비밀번호')) {
         _error = '아이디 또는 비밀번호가 올바르지 않습니다';
       } else if (errStr.contains('invalid-email')) {
         _error = '유효하지 않은 이메일 형식입니다';
