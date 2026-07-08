@@ -5686,18 +5686,55 @@ export const callableDecrementSlotConfirmed = onCall(
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
-    const {toId, slotId, workType} = request.data as {
+    const {applicationId, toId, slotId, workType} = request.data as {
+      applicationId: string;  // 소유권/관리자 검증에 사용 — 파라미터 불일치 차단
       toId: string;
       slotId: string | null;
       workType: string | null;
     };
+    if (!applicationId) throw new HttpsError("invalid-argument", "applicationId 필수");
     if (!toId) throw new HttpsError("invalid-argument", "toId 필수");
 
-    // 호출자가 해당 application 소유자 또는 해당 TO 관리자 또는 슈퍼어드민인지 검증
-    // (cancelConfirmedApplication이 application 소유자 또는 관리자에 의해 호출됨)
+    // 1. application 문서로 소유자·TO 일치 검증
+    //    — 임의 toId/slotId 전달해 타인 슬롯 confirmedCount 감소하는 공격 차단
+    const appSnap = await db.collection("applications").doc(applicationId).get();
+    if (!appSnap.exists) throw new HttpsError("not-found", "지원 정보를 찾을 수 없습니다.");
+    const appData = appSnap.data()!;
+
+    // 2. 상태 검증 — CANCELED 상태가 아니면 이미 취소된 것이 아님
+    if (appData.status !== "CANCELED") {
+      throw new HttpsError("failed-precondition", "취소된 지원서에 대해서만 호출 가능합니다.");
+    }
+
+    // 3. toId/slotId 일치 검증 — 파라미터 조작으로 다른 슬롯 감소 차단
+    const appToId = appData.toId as string | undefined;
+    const appSlotId = (appData.slotId as string | undefined) ?? null;
+    if (appToId !== toId) {
+      throw new HttpsError("permission-denied", "toId가 지원서와 일치하지 않습니다.");
+    }
+    if (appSlotId !== slotId) {
+      throw new HttpsError("permission-denied", "slotId가 지원서와 일치하지 않습니다.");
+    }
+
+    // 4. 호출자 권한 검증 — 소유자(USER 취소) 또는 해당 사업장 관리자 또는 슈퍼어드민
     const callerSnap = await db.collection("users").doc(callerUid).get();
     const callerRole = callerSnap.data()?.role as string | undefined;
-    if (!callerRole) throw new HttpsError("permission-denied", "사용자 정보를 찾을 수 없습니다.");
+    const isOwner = appData.uid === callerUid;
+    const isSuperAdminCaller = callerRole === "SUPER_ADMIN";
+    let isAdminOfBiz = false;
+    if (!isOwner && !isSuperAdminCaller) {
+      const appBusinessId = appData.businessId as string | undefined;
+      if (appBusinessId) {
+        const bizSnap = await db.collection("businesses").doc(appBusinessId).get();
+        const bizData = bizSnap.data();
+        const adminIds: string[] = Array.isArray(bizData?.adminIds) ? bizData!.adminIds as string[] : [];
+        const ownerId = bizData?.ownerId as string | undefined;
+        isAdminOfBiz = adminIds.includes(callerUid) || ownerId === callerUid;
+      }
+    }
+    if (!isOwner && !isSuperAdminCaller && !isAdminOfBiz) {
+      throw new HttpsError("permission-denied", "해당 지원서에 대한 권한이 없습니다.");
+    }
 
     const toRef = db.collection("tos").doc(toId);
     const toUpdate: Record<string, admin.firestore.FieldValue> = {
@@ -5723,7 +5760,196 @@ export const callableDecrementSlotConfirmed = onCall(
     }
 
     await batch.commit();
-    console.log(`✅ slot confirmedCount 감소 완료 — toId:${toId} slotId:${slotId ?? "none"} workType:${workType ?? "none"}`);
+    console.log(`✅ slot confirmedCount 감소 — appId:${applicationId} toId:${toId} slotId:${slotId ?? "none"}`);
+  },
+);
+
+// ═══════════════════════════════════════════════════════════
+// 🔄 AUTO_CANCEL — 확정 시 타사업장 포함 충돌 지원서 자동 취소
+// [SEC-FIX] Dart 클라이언트에서 uid 단독 LIST 쿼리 시 BUSINESS_ADMIN은
+//   isUser()=false → LIST 규칙 불충족 → PERMISSION_DENIED → 항상 [] 반환
+//   → 충돌 AUTO_CANCEL 전혀 미작동. Admin SDK로 이전해 타사업장 포함 처리.
+// ═══════════════════════════════════════════════════════════
+
+function _hasTimeOverlap(s1: string, e1: string, s2: string, e2: string): boolean {
+  if (!s1 || !e1 || !s2 || !e2) return false;
+  return s1 < e2 && s2 < e1;
+}
+
+const _WEEKDAY = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"] as const;
+
+function _isConflictShortTerm(
+  app: FirebaseFirestore.DocumentData,
+  workDateMs: number,
+  startTime: string,
+  endTime: string,
+): boolean {
+  if (!_hasTimeOverlap(startTime, endTime, app.startTime ?? "", app.endTime ?? "")) return false;
+  const appIsLong = app.applicationType === "longTerm" || (Array.isArray(app.workDays) && (app.workDays as string[]).length > 0);
+  const workDate = new Date(workDateMs);
+  if (appIsLong) {
+    const aStart: number = (app.desiredStartDate ?? app.workDate)?.toMillis?.() ?? 0;
+    const aEnd: number = (app.actualResignDate ?? app.workEndDate)?.toMillis?.() ?? Infinity;
+    const ms = workDate.getTime();
+    if (ms < aStart || ms > aEnd) return false;
+    const days: string[] = Array.isArray(app.workDays) ? (app.workDays as string[]) : [];
+    if (days.length > 0 && !days.includes(_WEEKDAY[workDate.getDay()])) return false;
+    return true;
+  } else {
+    const aMs: number = (app.workDate as FirebaseFirestore.Timestamp | undefined)?.toMillis?.() ?? 0;
+    const aDate = new Date(aMs);
+    return (
+      aDate.getFullYear() === workDate.getFullYear() &&
+      aDate.getMonth() === workDate.getMonth() &&
+      aDate.getDate() === workDate.getDate()
+    );
+  }
+}
+
+function _isConflictLongTerm(
+  app: FirebaseFirestore.DocumentData,
+  startDateMs: number,
+  endDateMs: number,
+  workDays: string[],
+  startTime: string,
+  endTime: string,
+): boolean {
+  if (!_hasTimeOverlap(startTime, endTime, app.startTime ?? "", app.endTime ?? "")) return false;
+  const appIsLong = app.applicationType === "longTerm" || (Array.isArray(app.workDays) && (app.workDays as string[]).length > 0);
+  const effectiveEnd = endDateMs >= 0 ? endDateMs : Infinity;
+  if (appIsLong) {
+    const aStart: number = (app.desiredStartDate ?? app.workDate)?.toMillis?.() ?? 0;
+    const aEnd: number = (app.actualResignDate ?? app.workEndDate)?.toMillis?.() ?? Infinity;
+    if (effectiveEnd < aStart || startDateMs > aEnd) return false;
+    const aWorkDays: string[] = Array.isArray(app.workDays) ? (app.workDays as string[]) : [];
+    return aWorkDays.length > 0 && workDays.some((d) => aWorkDays.includes(d));
+  } else {
+    const aMs: number = (app.workDate as FirebaseFirestore.Timestamp | undefined)?.toMillis?.() ?? 0;
+    if (aMs < startDateMs || aMs > effectiveEnd) return false;
+    const dayCode = _WEEKDAY[new Date(aMs).getDay()];
+    return workDays.includes(dayCode);
+  }
+}
+
+export const callableAutoConflictCancel = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {
+      confirmedAppId, targetUid, businessId, businessName,
+      startTime, endTime,
+      workDate,
+      isLongTerm,
+      startDate, endDate,
+      workDays,
+    } = request.data as {
+      confirmedAppId: string;
+      targetUid: string;
+      businessId: string;
+      businessName: string;
+      startTime: string;
+      endTime: string;
+      workDate?: number;
+      isLongTerm?: boolean;
+      startDate?: number;
+      endDate?: number;
+      workDays?: string[];
+    };
+    if (!confirmedAppId || !targetUid || !businessId) {
+      throw new HttpsError("invalid-argument", "필수 파라미터 누락 (confirmedAppId, targetUid, businessId)");
+    }
+
+    // 1. 권한 검증
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const callerRole = callerSnap.data()?.role as string | undefined;
+    if (!callerRole) throw new HttpsError("permission-denied", "사용자 정보를 찾을 수 없습니다.");
+    if (callerRole !== "SUPER_ADMIN") {
+      const bizSnap = await db.collection("businesses").doc(businessId).get();
+      const bizData = bizSnap.data();
+      const adminIds: string[] = Array.isArray(bizData?.adminIds) ? (bizData!.adminIds as string[]) : [];
+      const ownerId = bizData?.ownerId as string | undefined;
+      if (!adminIds.includes(callerUid) && ownerId !== callerUid) {
+        throw new HttpsError("permission-denied", "해당 사업장 관리자 권한이 필요합니다.");
+      }
+    }
+
+    // 2. 확정 지원서 상태 검증
+    const confirmedAppSnap = await db.collection("applications").doc(confirmedAppId).get();
+    if (!confirmedAppSnap.exists) throw new HttpsError("not-found", "확정 지원서를 찾을 수 없습니다.");
+    const confirmedAppData = confirmedAppSnap.data()!;
+    if (confirmedAppData.uid !== targetUid) {
+      throw new HttpsError("permission-denied", "targetUid가 지원서와 일치하지 않습니다.");
+    }
+    if (!["CONTRACT_PENDING", "CONFIRMED"].includes(confirmedAppData.status as string)) {
+      throw new HttpsError("failed-precondition", `확정/계약 대기 상태가 아닙니다: ${confirmedAppData.status}`);
+    }
+
+    // 3. uid로 충돌 가능 지원서 전체 조회 (Admin SDK — 타사업장 포함)
+    const allAppsSnap = await db.collection("applications")
+      .where("uid", "==", targetUid)
+      .where("status", "in", ["PENDING", "CONFIRMED", "CONTRACT_PENDING"])
+      .get();
+
+    // 4. 충돌 필터링
+    const conflicting = allAppsSnap.docs.filter((d) => {
+      if (d.id === confirmedAppId) return false;
+      const data = d.data();
+      if (isLongTerm && startDate !== undefined) {
+        return _isConflictLongTerm(data, startDate, endDate ?? -1, workDays ?? [], startTime, endTime);
+      } else if (workDate !== undefined) {
+        return _isConflictShortTerm(data, workDate, startTime, endTime);
+      }
+      return false;
+    });
+
+    if (conflicting.length === 0) {
+      return {canceledIds: []};
+    }
+
+    // 5. PENDING만 AUTO_CANCELED (CONFIRMED/CONTRACT_PENDING은 동시 확정 [186] — 수동 처리)
+    const pendingConflicts = conflicting.filter((d) => d.data().status === "PENDING");
+    const concurrent = conflicting.filter((d) =>
+      ["CONFIRMED", "CONTRACT_PENDING"].includes(d.data().status as string));
+    if (concurrent.length > 0) {
+      console.warn(`⚠️ [186] 동시 확정 감지 — 수동 확인: ${concurrent.map((d) => d.id).join(", ")}`);
+    }
+
+    const batch = db.batch();
+    const now = admin.firestore.Timestamp.now();
+    for (const conflict of pendingConflicts) {
+      batch.update(conflict.ref, {
+        status: "AUTO_CANCELED",
+        canceledAt: now,
+        cancelReason: "SCHEDULE_CONFLICT",
+        conflictingAppId: confirmedAppId,
+        conflictingBusiness: businessName,
+        conflictingTime: `${startTime}~${endTime}`,
+        statusHistory: admin.firestore.FieldValue.arrayUnion({
+          status: "AUTO_CANCELED",
+          at: now,
+          by: "SYSTEM",
+          action: "AUTO_CANCEL",
+          reason: "SCHEDULE_CONFLICT",
+        }),
+      });
+    }
+    await batch.commit();
+
+    const canceledIds = pendingConflicts.map((d) => d.id);
+    const canceledDetails = pendingConflicts.map((d) => {
+      const data = d.data();
+      return {
+        id: d.id,
+        uid: (data.uid as string) ?? "",
+        businessName: (data.businessName as string) ?? "",
+        businessId: (data.businessId as string) ?? "",
+        selectedWorkType: (data.selectedWorkType as string) ?? "",
+        workDateMs: (data.workDate as admin.firestore.Timestamp | undefined)?.toMillis() ?? null,
+      };
+    });
+    console.log(`✅ AUTO_CANCEL ${canceledIds.length}건 — appId:${confirmedAppId}`);
+    return {canceledIds, canceledDetails};
   },
 );
 

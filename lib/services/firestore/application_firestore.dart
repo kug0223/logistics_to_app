@@ -1106,6 +1106,7 @@ extension ApplicationFirestore on FirestoreService {
               .httpsCallable('callableDecrementSlotConfirmed',
                   options: HttpsCallableOptions(timeout: const Duration(seconds: 10)));
           await decrementCallable.call({
+            'applicationId': applicationId, // CF에서 소유권·toId/slotId 일치 검증에 사용
             'toId': toId,
             'slotId': slotId,
             'workType': selectedWorkType,
@@ -1877,30 +1878,7 @@ extension ApplicationFirestore on FirestoreService {
       }
     }
 
-    // 충돌 지원서 탐색 (타사 포함 전체 검색)
-    List<ApplicationModel> conflictingApps;
-    if (isLongTermApp && computedWorkEndDate != null && computedWorkDays != null && computedWorkDays.isNotEmpty) {
-      conflictingApps = await _findConflictingForLongTerm(
-        uid: app.uid,
-        startDate: app.desiredStartDate ?? app.workDate,
-        endDate: computedWorkEndDate,
-        workDays: computedWorkDays,
-        startTime: app.startTime,
-        endTime: app.endTime,
-        excludeId: applicationId,
-      );
-    } else {
-      conflictingApps = await findConflictingApplications(
-        uid: app.uid,
-        workDate: app.workDate,
-        startTime: app.startTime,
-        endTime: app.endTime,
-        excludeId: applicationId,
-      );
-    }
-
     final batch = _firestore.batch();
-    final now = FieldValue.serverTimestamp();
 
     // 확정 상태는 위 트랜잭션에서 이미 CONTRACT_PENDING으로 선점됨
     // 배치에서는 추가 필드(확인 메시지·기간·요일·statusHistory)만 보완
@@ -1921,47 +1899,6 @@ extension ApplicationFirestore on FirestoreService {
     // TO + Slot 통계 (PENDING→CONFIRMED)
     _incrementTOPending(batch, toId, slotId, delta: -1, workType: app.selectedWorkType);
     _incrementTOConfirmed(batch, toId, slotId, delta: 1, workType: app.selectedWorkType);
-
-    // [186] CONTRACT_PENDING 충돌: 다른 관리자가 동시에 선점한 지원서는 배치에서 건드리지 않음.
-    // 두 배치가 서로를 AUTO_CANCELED로 만들면 양쪽 모두 취소되는 버그 방지.
-    final pendingConflicts = conflictingApps
-        .where((c) => c.status == AppStatus.pending)
-        .toList();
-    final concurrentConflicts = conflictingApps
-        .where((c) => c.status == AppStatus.contractPending)
-        .toList();
-    if (concurrentConflicts.isNotEmpty) {
-      debugPrint('⚠️ [186] 동시 확정 감지 — 수동 확인 필요:\n'
-          '  확정 중인 충돌 지원서: ${concurrentConflicts.map((c) => c.id).join(', ')}');
-    }
-
-    // 충돌 지원서 자동 취소 (PENDING 상태만)
-    for (final conflict in pendingConflicts) {
-      batch.update(
-        _firestore.collection('applications').doc(conflict.id),
-        {
-          'status': 'AUTO_CANCELED',
-          'canceledAt': now,
-          'cancelReason': 'SCHEDULE_CONFLICT',
-          'conflictingAppId': applicationId,
-          'conflictingBusiness': app.businessName,
-          'conflictingTime': '${app.startTime}~${app.endTime}',
-          'statusHistory': FieldValue.arrayUnion([{
-            'status': 'AUTO_CANCELED',
-            'at': Timestamp.now(),
-            'by': 'SYSTEM',
-            'action': 'AUTO_CANCEL',
-            'reason': 'SCHEDULE_CONFLICT',
-          }]),
-        },
-      );
-      // [J-3 수정] AUTO_CANCELED 시 totalPending 즉시 감소 — CF syncTOStats가 뒤늦게
-      // 반영하기 전까지 낙관적 카운터가 양수로 잔류하는 타이밍 버그 방지
-      if (conflict.toId != null) {
-        _incrementTOPending(batch, conflict.toId!, conflict.slotId,
-            delta: -1, workType: conflict.selectedWorkType);
-      }
-    }
 
     try {
       await batch.commit();
@@ -1987,15 +1924,47 @@ extension ApplicationFirestore on FirestoreService {
       await _recalculateSlotStatus(toId, slotId);
     }
 
+    // [SEC-FIX] 충돌 AUTO_CANCEL → CF 이전 (callableAutoConflictCancel)
+    // 이유: BUSINESS_ADMIN이 uid 단독 LIST 쿼리 시 보안 규칙에서 PERMISSION_DENIED
+    //   → 클라이언트에서 타사업장 포함 전체 충돌 탐색 불가 → Admin SDK CF로 처리
+    // [186] CONTRACT_PENDING 충돌(동시 확정)도 CF 내부에서 감지해 warn 로깅
+    List<Map<String, dynamic>> canceledDetails = [];
+    try {
+      final autoConflictCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableAutoConflictCancel',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final autoConflictResult = await autoConflictCallable.call({
+        'confirmedAppId': applicationId,
+        'targetUid': app.uid,
+        'businessId': app.businessId,
+        'businessName': app.businessName,
+        'startTime': app.startTime,
+        'endTime': app.endTime,
+        if (!isLongTermApp) 'workDate': app.workDate.millisecondsSinceEpoch,
+        if (isLongTermApp) ...{
+          'isLongTerm': true,
+          'startDate': (app.desiredStartDate ?? app.workDate).millisecondsSinceEpoch,
+          if (computedWorkEndDate != null)
+            'endDate': computedWorkEndDate.millisecondsSinceEpoch,
+          if (computedWorkDays != null) 'workDays': computedWorkDays,
+        },
+      });
+      canceledDetails = ((autoConflictResult.data as Map?)?['canceledDetails'] as List? ?? [])
+          .cast<Map<String, dynamic>>();
+      debugPrint('✅ AUTO_CANCEL CF 완료 — ${canceledDetails.length}건 취소');
+    } catch (e) {
+      // CF 실패 시 syncTOStats가 카운터 복구 — 확정 자체는 성공했으므로 rethrow 안 함
+      debugPrint('⚠️ AUTO_CANCEL CF 실패 (확정은 완료됨): $e');
+    }
+
     // 자동 취소된 충돌 지원서의 TO 캐시 무효화
-    // 카운터 재계산은 CF syncTOStats 트리거가 각 지원서 상태 변경 시 자동 처리
     final Set<String> affectedTOIds = {};
-    for (final conflict in pendingConflicts) {
-      final cToId = conflict.toId;
-      if (cToId != null && cToId.isNotEmpty) {
-        affectedTOIds.add(cToId);
-        clearCache(toId: cToId);
-      }
+    for (final detail in canceledDetails) {
+      final cId = detail['id'] as String?;
+      if (cId != null) affectedTOIds.add(cId);
+    }
+    for (final tId in affectedTOIds) {
+      clearCache(toId: tId);
     }
 
     // [NOTIFY-FIX] CONTRACT_PENDING 진입 즉시 근무자에게 확정 알림 발송.
@@ -2017,99 +1986,24 @@ extension ApplicationFirestore on FirestoreService {
     }
 
     // 자동 취소된 충돌 지원서 알림
-    for (final conflict in pendingConflicts) {
+    for (final detail in canceledDetails) {
+      final workDateMs = detail['workDateMs'] as int?;
       _sendApplicationAutoCanceledNotification(
-        applicantUid: conflict.uid,
-        businessName: conflict.businessName,
-        businessId: conflict.businessId,
-        workType: conflict.selectedWorkType,
-        workDate: conflict.workDate,
-        applicationId: conflict.id,
+        applicantUid: detail['uid'] as String? ?? '',
+        businessName: detail['businessName'] as String? ?? '',
+        businessId: detail['businessId'] as String? ?? '',
+        workType: detail['selectedWorkType'] as String? ?? '',
+        workDate: workDateMs != null
+            ? DateTime.fromMillisecondsSinceEpoch(workDateMs)
+            : app.workDate,
+        applicationId: detail['id'] as String? ?? '',
         conflictingBusinessName: app.businessName,
         conflictingTime: '${app.startTime}~${app.endTime}',
       );
     }
 
-    debugPrint('✅ 확정 완료 + ${pendingConflicts.length}개 자동 취소'
-        '${concurrentConflicts.isNotEmpty ? " (동시 확정 ${concurrentConflicts.length}건 — 수동 확인 필요)" : ""}');
+    debugPrint('✅ 확정 완료 + ${canceledDetails.length}건 AUTO_CANCEL');
     return affectedTOIds.toList();
-  }
-
-  Future<List<ApplicationModel>> _findConflictingForLongTerm({
-    required String uid,
-    required DateTime startDate,
-    required DateTime endDate,
-    required List<String> workDays,
-    required String startTime,
-    required String endTime,
-    required String excludeId,
-  }) async {
-    try {
-      // 타사 포함 전체 PENDING·CONTRACT_PENDING·CONFIRMED 조회 — businessId 필터 없음
-      // CONFIRMED도 포함: 단기 확정 근무자와도 충돌 방지
-      // whereIn 복합 쿼리 → PERMISSION_DENIED 방지를 위해 병렬 isEqualTo 쿼리로 대체
-      final snapDocs = (await Future.wait(
-        [AppStatus.pending, AppStatus.contractPending, AppStatus.confirmed].map((s) =>
-            _firestore
-                .collection('applications')
-                .where('uid', isEqualTo: uid)
-                .where('status', isEqualTo: s)
-                .get(const GetOptions(source: Source.server))),
-      )).expand((snap) => snap.docs).toList();
-
-      final startOnly = DateTime(startDate.year, startDate.month, startDate.day);
-      final endOnly   = DateTime(endDate.year,   endDate.month,   endDate.day);
-
-      final result = <ApplicationModel>[];
-
-      for (final doc in snapDocs) {
-        if (doc.id == excludeId) continue;
-        final a = ApplicationModel.tryFromFirestore(doc);
-        if (a == null) continue;
-
-        // 시간 겹침 먼저 확인 (빠른 탈락)
-        if (!ApplicationModel.hasTimeOverlap(startTime, endTime, a.startTime, a.endTime)) {
-          continue;
-        }
-
-        if (a.isLongTermApplication) {
-          // 장기 지원 — 근무 기간 + 요일 겹침 확인
-          final aEndDate = a.actualResignDate ?? a.workEndDate;
-          // [J-1 수정] workEndDate=null → 무기한 계약으로 간주, 충돌 탐지 포함 (null continue 제거)
-
-          // [CONFLICT-FIX] 기존 장기 지원서의 실제 근무 시작일은 desiredStartDate 우선.
-          // 이전 코드는 workDate만 사용했기 때문에, 지원자가 desiredStartDate를 늦게
-          // 설정한 경우 실제로 겹치지 않는 기간을 충돌로 오탐하는 버그가 있었다.
-          // (getConfirmedWorkersByDateAndBusiness는 이미 desiredStartDate를 반영 중)
-          final effectiveAStart = a.desiredStartDate ?? a.workDate;
-          final aStart = DateTime(effectiveAStart.year, effectiveAStart.month, effectiveAStart.day);
-          final aEnd = aEndDate != null
-              ? DateTime(aEndDate.year, aEndDate.month, aEndDate.day)
-              : DateTime(9999, 12, 31);
-
-          // 기간 겹침
-          if (endOnly.isBefore(aStart) || startOnly.isAfter(aEnd)) continue;
-
-          // 근무 요일 겹침
-          final aWorkDays = a.workDays ?? [];
-          if (aWorkDays.isEmpty) continue;
-          if (!workDays.any((d) => aWorkDays.contains(d))) continue;
-
-          result.add(a);
-        } else {
-          // 단기 지원 — 날짜가 새 계약 범위 내 + 해당 요일 포함
-          final aDate = DateTime(a.workDate.year, a.workDate.month, a.workDate.day);
-          if (aDate.isBefore(startOnly) || aDate.isAfter(endOnly)) continue;
-          if (!workDays.contains(FormatHelper.weekday(a.workDate))) continue;
-
-          result.add(a);
-        }
-      }
-      return result;
-    } catch (e) {
-      debugPrint('❌ 장기공고 충돌 조회 실패: $e');
-      return [];
-    }
   }
 
   /// TO.totalPending 및 Slot.pendingCount 변경
