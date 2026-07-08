@@ -4845,8 +4845,11 @@ export const onBusinessDeactivated = onDocumentUpdated(
     const activeTos = [...activeSnap.docs, ...fullSnap.docs, ...scheduledSnap.docs];
     console.log(`📋 [사업장 비활성화] 활성 TO ${activeTos.length}건 발견: ${businessId}`);
 
-    if (activeTos.length === 0) return;
+    if (activeTos.length === 0) {
+      console.log(`ℹ️ [사업장 비활성화] 활성 TO 없음 — employment_contracts만 처리: ${businessId}`);
+    }
 
+    if (activeTos.length > 0) {
     // 2) TO별 처리: TO → CLOSED, 소속 PENDING 지원서 → REJECTED
     const BATCH_LIMIT = 400; // Firestore batch 500건 제한 안전 마진
     let totalRejected = 0;
@@ -4924,6 +4927,42 @@ export const onBusinessDeactivated = onDocumentUpdated(
     }
 
     console.log(`✅ [사업장 비활성화] 완료: ${businessId} — TO ${activeTos.length}건, 지원서 ${totalRejected}건 처리`);
+    } // if (activeTos.length > 0)
+
+    // [SEC-98] 3) employment_contracts 처리 — TO 유무와 무관하게 항상 실행
+    // pending_employer / pending_worker 상태 계약서가 좀비로 잔류하는 것 방지.
+    // Dart Step 11은 users 삭제 후 isBusinessAdmin() 실패로 TO LIST에서 막혀
+    // employment_contracts 블록에 도달하지 못함 → CF 위임.
+    // 근로기준법 제42조: 계약서 문서는 삭제 금지 — voided 상태로 표시.
+    const contractSnap = await db
+      .collection("employment_contracts")
+      .where("businessId", "==", businessId)
+      .where("status", "in", ["pending_employer", "pending_worker"])
+      .get();
+
+    if (contractSnap.size > 0) {
+      const CONTRACT_BATCH_LIMIT = 400;
+      for (let i = 0; i < contractSnap.docs.length; i += CONTRACT_BATCH_LIMIT) {
+        const chunk = contractSnap.docs.slice(i, i + CONTRACT_BATCH_LIMIT);
+        const batch = db.batch();
+        chunk.forEach((docRef) => batch.update(docRef.ref, {
+          status: "voided",
+          voidReason: "BUSINESS_DEACTIVATED",
+          contractVoidedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }));
+        try {
+          await batch.commit();
+        } catch (err) {
+          console.warn(`⚠️ [사업장 비활성화] employment_contracts 배치 실패 — 개별 처리:`, err);
+          await Promise.allSettled(chunk.map((docRef) => docRef.ref.update({
+            status: "voided",
+            voidReason: "BUSINESS_DEACTIVATED",
+            contractVoidedAt: admin.firestore.FieldValue.serverTimestamp(),
+          })));
+        }
+      }
+      console.log(`✅ [사업장 비활성화] employment_contracts ${contractSnap.size}건 → voided: ${businessId}`);
+    }
   }
 );
 

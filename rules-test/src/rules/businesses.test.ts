@@ -278,6 +278,46 @@ describe('BIZ-UPDATE: 사업장 수정', () => {
       }),
     );
   });
+
+  // [SEC-100] 공동 관리자 탈퇴: 본인 uid만 adminIds에서 제거 허용
+  test('BIZ-UPDATE-10 ✅ 공동 관리자가 본인 uid만 adminIds에서 제거 허용 (SEC-100)', async () => {
+    await seedDoc(env, 'businesses', 'biz-joint', {
+      ownerId: IDS.admin, adminIds: [IDS.admin, IDS.admin2], name: '공동관리', isApproved: true,
+    });
+    // admin이 자신의 uid를 adminIds에서 제거 (admin2만 남음)
+    const db = getAuth(env, IDS.admin, { businessId: 'biz-joint' });
+    await assertSucceeds(
+      updateDoc(doc(db, 'businesses', 'biz-joint'), {
+        adminIds: [IDS.admin2],  // 본인 uid 제거
+      }),
+    );
+  });
+
+  test('BIZ-UPDATE-11 ❌ 타인 uid를 adminIds에서 제거 차단 (SEC-100)', async () => {
+    await seedDoc(env, 'businesses', 'biz-joint-b', {
+      ownerId: IDS.admin, adminIds: [IDS.admin, IDS.admin2], name: '공동관리B', isApproved: true,
+    });
+    // admin이 타인(admin2)을 adminIds에서 제거 시도 — 차단
+    const db = getAuth(env, IDS.admin, { businessId: 'biz-joint-b' });
+    await assertFails(
+      updateDoc(doc(db, 'businesses', 'biz-joint-b'), {
+        adminIds: [IDS.admin],  // 타인(admin2) 제거, 자신은 유지 → 차단
+      }),
+    );
+  });
+
+  test('BIZ-UPDATE-12 ❌ adminIds 제거 + 다른 필드 동시 변경 차단 (SEC-100)', async () => {
+    await seedDoc(env, 'businesses', 'biz-joint-c', {
+      ownerId: IDS.admin, adminIds: [IDS.admin, IDS.admin2], name: '공동관리C', isApproved: true,
+    });
+    const db = getAuth(env, IDS.admin, { businessId: 'biz-joint-c' });
+    await assertFails(
+      updateDoc(doc(db, 'businesses', 'biz-joint-c'), {
+        adminIds: [IDS.admin2],
+        name: '변경시도',  // adminIds 외 필드 포함 → 차단
+      }),
+    );
+  });
 });
 
 // ─── BIZ-DELETE ──────────────────────────────────────────────────────

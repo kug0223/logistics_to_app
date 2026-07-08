@@ -596,4 +596,26 @@ describe('AT-LIST: 목록 쿼리', () => {
       limit(10),
     )));
   });
+
+  // [SEC-99] isUser() 경로: 탈퇴 처리 3-pre4에서 본인 userId+status 필터 LIST 허용
+  // 양수 케이스는 에뮬레이터에서 isUser()→myRole()→get(users) 버그로 xtest
+  xtest('AT-LIST-09 ✅ [에뮬레이터 제한] 본인이 userId+status 필터로 scheduled 레코드 LIST 허용 (SEC-99)', async () => {
+    const db = getAuth(env, IDS.user);
+    await assertSucceeds(getDocs(query(
+      collection(db, 'attendance'),
+      where('userId', '==', IDS.user),
+      where('status', '==', 'scheduled'),
+      limit(100),
+    )));
+  });
+
+  test('AT-LIST-10 ❌ userId 필터가 본인이 아닌 경우 차단 (SEC-99)', async () => {
+    const db = getAuth(env, IDS.user2);
+    await assertFails(getDocs(query(
+      collection(db, 'attendance'),
+      where('userId', '==', IDS.user),  // 타인의 userId
+      where('status', '==', 'scheduled'),
+      limit(10),
+    )));
+  });
 });

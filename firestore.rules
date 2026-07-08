@@ -328,6 +328,16 @@ service cloud.firestore {
                       (request.resource.data.diff(resource.data).affectedKeys()
                         .hasOnly(['deactivatedAt']) &&
                        resource.data.get('adminIds', []).size() <= 1)));
+      // [SEC-100] 공동 관리자 탈퇴: 본인 uid만 adminIds에서 제거 허용 (별도 규칙)
+      // 기존 update 규칙에서 adminIds 변경을 차단하므로 별도 경로 필요.
+      // 조건: adminIds 필드만 변경 + 결과에서 본인이 제거됨 + 정확히 1명만 제거
+      //   → 타인 uid 제거, 여러 명 일괄 제거, 관계없는 필드 동시 변경 모두 차단.
+      allow update: if isAdminOf(businessId) &&
+                    request.resource.data.diff(resource.data).affectedKeys()
+                      .hasOnly(['adminIds']) &&
+                    !(request.auth.uid in request.resource.data.get('adminIds', [])) &&
+                    resource.data.get('adminIds', []).size() ==
+                      request.resource.data.get('adminIds', []).size() + 1;
       allow delete: if isAdminOf(businessId) || isSuperAdmin();
 
       match /workTypes/{workTypeId} {
@@ -656,10 +666,13 @@ service cloud.firestore {
       //   ※ 세 함수 모두 businessId isEqualTo 필터 포함 → request.query.filters.businessId
       //     정상 평가 → 아래 allow list 규칙에서 이미 안전하게 보호됨
       //   → allow list: if false 전환 불필요 (직접 읽기 허용 유지가 올바른 설계)
+      // [SEC-99] isUser() 경로 추가: 탈퇴 처리 3-pre4에서 본인 scheduled 레코드 LIST 후 absent 처리
+      //   users 문서 삭제 전(3-pre4 실행 시점)에 isUser() 통과 보장됨.
       allow list: if isLoggedIn() && (
                     isSuperAdmin() ||
                     (isBusinessAdmin() && isAdminOf(request.query.filters.businessId)) ||
-                    (isSubAdmin() && isSubAdminOf(request.query.filters.businessId))
+                    (isSubAdmin() && isSubAdminOf(request.query.filters.businessId)) ||
+                    (isUser() && request.query.filters.userId == request.auth.uid)
                   );
 
 

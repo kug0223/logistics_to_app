@@ -572,25 +572,26 @@ class AuthService {
             });
           }
           await batch.commit();
-          for (final appId in confirmedAppIds) {
-            try {
-              final attSnap = await _firestore
-                  .collection('attendance')
-                  .where('applicationId', isEqualTo: appId)
-                  .where('status', isEqualTo: 'scheduled')
-                  .get();
-              if (attSnap.docs.isEmpty) continue;
-              final attBatch = _firestore.batch();
-              for (final attDoc in attSnap.docs) {
-                attBatch.update(attDoc.reference, {
-                  'status': 'absent',
-                  'absentReason': 'USER_DELETED',
-                  'updatedAt': FieldValue.serverTimestamp(),
-                });
-              }
-              await attBatch.commit();
-            } catch (_) {}
+        }
+
+        // [SEC-99] attendance scheduled → absent: applicationId 기반 루프 제거 →
+        // userId+status 단일 쿼리로 변경. attendance LIST 규칙에 isUser() 경로 추가됨.
+        // 이전 코드는 applicationId 기반 개별 쿼리로 PERMISSION_DENIED(무음 실패) 발생.
+        final attSnap = await _firestore
+            .collection('attendance')
+            .where('userId', isEqualTo: user.uid)
+            .where('status', isEqualTo: 'scheduled')
+            .get();
+        if (attSnap.docs.isNotEmpty) {
+          final attBatch = _firestore.batch();
+          for (final attDoc in attSnap.docs) {
+            attBatch.update(attDoc.reference, {
+              'status': 'absent',
+              'absentReason': 'USER_DELETED',
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
           }
+          await attBatch.commit();
         }
       } catch (_) {}
 
