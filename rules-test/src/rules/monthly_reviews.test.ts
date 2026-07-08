@@ -303,6 +303,69 @@ describe('MR-UPDATE: 리뷰 수정', () => {
       }),
     );
   });
+
+  // SEC-92: 탈퇴 익명화 — users 문서 삭제 전 처리하므로 isUser() 통과
+  test('MR-UPDATE-06 대상자 본인이 targetUserName·comment 익명화 허용 (SEC-92 9-A)', async () => {
+    await seedDoc(env, 'monthly_reviews', 'mr-anon-target', {
+      ...adminToUserBase,
+      targetUserId: IDS.user,
+      targetUserName: '유저1',
+      comment: '열심히 했습니다',
+    });
+    const db = getAuth(env, IDS.user);
+    await assertSucceeds(
+      updateDoc(doc(db, 'monthly_reviews', 'mr-anon-target'), {
+        targetUserName: '탈퇴한 회원',
+        targetUserId: null,   // FieldValue.delete() 대신 null 사용 (에뮬레이터 호환)
+        comment: null,
+      }),
+    );
+  });
+
+  test('MR-UPDATE-07 대상자가 targetUserName 외 다른 필드 포함 차단 (SEC-92)', async () => {
+    await seedDoc(env, 'monthly_reviews', 'mr-anon-plus', {
+      ...adminToUserBase,
+      targetUserId: IDS.user,
+      targetUserName: '유저1',
+    });
+    const db = getAuth(env, IDS.user);
+    await assertFails(
+      updateDoc(doc(db, 'monthly_reviews', 'mr-anon-plus'), {
+        targetUserName: '탈퇴한 회원',
+        rating: 5,  // 허용 필드 외 추가 → 차단
+      }),
+    );
+  });
+
+  test('MR-UPDATE-08 작성자 본인이 reviewerName·reviewerId 익명화 허용 (SEC-92 9-B)', async () => {
+    await seedDoc(env, 'monthly_reviews', 'mr-anon-reviewer', {
+      ...adminToUserBase,
+      reviewerId: IDS.admin,
+      reviewerName: '관리자',
+    });
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertSucceeds(
+      updateDoc(doc(db, 'monthly_reviews', 'mr-anon-reviewer'), {
+        reviewerName: '탈퇴한 회원',
+        reviewerId: null,
+      }),
+    );
+  });
+
+  test('MR-UPDATE-09 타인이 reviewerName 변경 차단 (SEC-92 보안)', async () => {
+    await seedDoc(env, 'monthly_reviews', 'mr-anon-other-hack', {
+      ...adminToUserBase,
+      reviewerId: IDS.admin,
+      reviewerName: '관리자',
+    });
+    const db = getAuth(env, IDS.user2);  // 관계없는 사용자
+    await assertFails(
+      updateDoc(doc(db, 'monthly_reviews', 'mr-anon-other-hack'), {
+        reviewerName: '해킹',
+        reviewerId: null,
+      }),
+    );
+  });
 });
 
 // ─── MR-DELETE ───────────────────────────────────────────────────

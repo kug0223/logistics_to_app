@@ -848,6 +848,17 @@ service cloud.firestore {
       // [FIX] isSubAdminOf 누락 — SubAdmin이 사업장 대표 답변 작성 시 PERMISSION_DENIED
       // [H-02] 기존 답변 덮어쓰기 차단 — businessResponse가 없을 때만 작성 허용
       allow update: if isSuperAdmin() ||
+                     // [SEC-92] 탈퇴 익명화 — 9-A: 대상자 본인이 자신의 리뷰 식별자 제거
+                     // auth_service.dart Step 9는 users 삭제 전에 실행됨 (SEC-92 순서 보장)
+                     (isLoggedIn() &&
+                      resource.data.targetUserId == request.auth.uid &&
+                      request.resource.data.diff(resource.data).affectedKeys()
+                        .hasOnly(['targetUserName', 'targetUserId', 'comment'])) ||
+                     // [SEC-92] 탈퇴 익명화 — 9-B: 작성자 본인이 reviewerId/reviewerName 제거
+                     (isLoggedIn() &&
+                      resource.data.get('reviewerId', '') == request.auth.uid &&
+                      request.resource.data.diff(resource.data).affectedKeys()
+                        .hasOnly(['reviewerName', 'reviewerId'])) ||
                      (isLoggedIn() &&
                       (isAdminOf(resource.data.businessId) ||
                        isSubAdminOf(resource.data.businessId)) &&

@@ -476,6 +476,57 @@ class AuthService {
         debugPrint('⚠️ 계정 삭제: review_requests 익명화 실패 (계속 진행): $e');
       }
 
+      // 3-pre2. monthly_reviews 익명화 — users 문서 삭제 전 처리 필수 (SEC-92)
+      // SEC-88 패턴과 동일: users 삭제 후엔 isUser() 체크 실패 → LIST PERMISSION_DENIED
+      // ─ 9-A. 대상자(지원자) 탈퇴: ADMIN_TO_USER 리뷰에서 식별자 제거
+      try {
+        bool hasMore = true;
+        while (hasMore) {
+          final snap = await _firestore
+              .collection('monthly_reviews')
+              .where('targetUserId', isEqualTo: user.uid)
+              .limit(100)
+              .get();
+          if (snap.docs.isEmpty) break;
+          hasMore = snap.docs.length == 100;
+          final batch = _firestore.batch();
+          for (final doc in snap.docs) {
+            batch.update(doc.reference, {
+              'targetUserName': '탈퇴한 회원',
+              'targetUserId': FieldValue.delete(),
+              'comment': FieldValue.delete(),
+            });
+          }
+          await batch.commit();
+        }
+      } catch (e) {
+        debugPrint('⚠️ 계정 삭제: monthly_reviews(대상자) 익명화 실패 (계속 진행): $e');
+      }
+
+      // ─ 9-B. 작성자(관리자) 탈퇴: reviewerId·reviewerName 제거
+      try {
+        bool hasMore = true;
+        while (hasMore) {
+          final snap = await _firestore
+              .collection('monthly_reviews')
+              .where('reviewerId', isEqualTo: user.uid)
+              .limit(100)
+              .get();
+          if (snap.docs.isEmpty) break;
+          hasMore = snap.docs.length == 100;
+          final batch = _firestore.batch();
+          for (final doc in snap.docs) {
+            batch.update(doc.reference, {
+              'reviewerName': '탈퇴한 회원',
+              'reviewerId': FieldValue.delete(),
+            });
+          }
+          await batch.commit();
+        }
+      } catch (e) {
+        debugPrint('⚠️ 계정 삭제: monthly_reviews(작성자) 익명화 실패 (계속 진행): $e');
+      }
+
       // 3. Firestore 사용자 문서 삭제 — 개인정보보호법 제21조
       // Storage URL 참조를 먼저 제거해야 broken URL 방지 (CLAUDE.md 삭제 순서 규칙)
       await _firestore.collection('users').doc(user.uid).delete();
@@ -556,63 +607,6 @@ class AuthService {
         }
       } catch (e) {
         debugPrint('⚠️ 계정 삭제: idCardAccessRequests 삭제 실패 (계속 진행): $e');
-      }
-
-      // 9. monthly_reviews 익명화 — 개인정보보호법 제21조
-      // ─ 9-A. 대상자(지원자) 탈퇴: ADMIN_TO_USER 리뷰에서 개인 식별자 제거
-      //   targetUserName·targetUserId: 직접 식별자 → 익명화
-      //   comment: 자유 입력이므로 이름 직접 언급 가능 → 파기
-      //   rating·tags: 통계 목적, 개인 식별 불가 → 보존
-      // ─ 9-B. 작성자(관리자) 탈퇴: ADMIN_TO_USER 리뷰에서 reviewerId·reviewerName 제거
-      //   USER_TO_BUSINESS는 설계상 reviewerId 미저장(익명) → 처리 불필요
-      try {
-        // 9-A: 내가 대상인 리뷰 (근무자 탈퇴 또는 사업주가 근무자로도 평가받은 경우)
-        bool hasMore = true;
-        while (hasMore) {
-          final snap = await _firestore
-              .collection('monthly_reviews')
-              .where('targetUserId', isEqualTo: user.uid)
-              .limit(100)
-              .get();
-          if (snap.docs.isEmpty) break;
-          hasMore = snap.docs.length == 100;
-          final batch = _firestore.batch();
-          for (final doc in snap.docs) {
-            batch.update(doc.reference, {
-              'targetUserName': '탈퇴한 회원',
-              'targetUserId': FieldValue.delete(),
-              'comment': FieldValue.delete(),
-            });
-          }
-          await batch.commit();
-        }
-      } catch (e) {
-        debugPrint('⚠️ 계정 삭제: monthly_reviews(대상자) 익명화 실패 (계속 진행): $e');
-      }
-
-      try {
-        // 9-B: 내가 작성한 리뷰 (BUSINESS_ADMIN 탈퇴 시 reviewerId·reviewerName 제거)
-        // comment는 관리자가 작성한 평가이므로 보존 (대상자 정보 포함 안 함)
-        bool hasMore = true;
-        while (hasMore) {
-          final snap = await _firestore
-              .collection('monthly_reviews')
-              .where('reviewerId', isEqualTo: user.uid)
-              .limit(100)
-              .get();
-          if (snap.docs.isEmpty) break;
-          hasMore = snap.docs.length == 100;
-          final batch = _firestore.batch();
-          for (final doc in snap.docs) {
-            batch.update(doc.reference, {
-              'reviewerName': '탈퇴한 회원',
-              'reviewerId': FieldValue.delete(),
-            });
-          }
-          await batch.commit();
-        }
-      } catch (e) {
-        debugPrint('⚠️ 계정 삭제: monthly_reviews(작성자) 익명화 실패 (계속 진행): $e');
       }
 
       // 10. applications 활성 상태 → CANCELED 처리 (orphan 방지)
