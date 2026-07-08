@@ -1190,6 +1190,11 @@ service cloud.firestore {
                       (isOwner(resource.data.workerId) &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['workerStatus', 'workerReviewId'])) ||
+                      // [SEC-88] 탈퇴 익명화: 계정 삭제 flow에서 workerName만 변경 허용
+                      // auth_service.dart step 3(users 삭제) 이전에 실행되므로 isUser() 체크 통과
+                      (isOwner(resource.data.workerId) &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['workerName'])) ||
                       // 관리자/하위관리자: 자신의 리뷰 제출 필드만
                       ((isAdminOf(resource.data.businessId) ||
                         isSubAdminOf(resource.data.businessId)) &&

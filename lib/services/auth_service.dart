@@ -453,6 +453,29 @@ class AuthService {
         preDeleteBusinessId = preDoc.data()?['businessId'] as String?;
       } catch (_) {}
 
+      // 3-pre. review_requests 익명화 — users 문서 삭제 전 처리 필수
+      // users 문서가 존재해야 isUser() / LIST 보안 규칙이 통과됨.
+      // 삭제 후 처리 시 Firestore PERMISSION_DENIED 발생 (SEC-88).
+      try {
+        bool hasMore = true;
+        while (hasMore) {
+          final snap = await _firestore
+              .collection('review_requests')
+              .where('workerId', isEqualTo: user.uid)
+              .limit(100)
+              .get();
+          if (snap.docs.isEmpty) break;
+          hasMore = snap.docs.length == 100;
+          final batch = _firestore.batch();
+          for (final doc in snap.docs) {
+            batch.update(doc.reference, {'workerName': '탈퇴한 회원'});
+          }
+          await batch.commit();
+        }
+      } catch (e) {
+        debugPrint('⚠️ 계정 삭제: review_requests 익명화 실패 (계속 진행): $e');
+      }
+
       // 3. Firestore 사용자 문서 삭제 — 개인정보보호법 제21조
       // Storage URL 참조를 먼저 제거해야 broken URL 방지 (CLAUDE.md 삭제 순서 규칙)
       await _firestore.collection('users').doc(user.uid).delete();
@@ -533,31 +556,6 @@ class AuthService {
         }
       } catch (e) {
         debugPrint('⚠️ 계정 삭제: idCardAccessRequests 삭제 실패 (계속 진행): $e');
-      }
-
-      // 8. review_requests 익명화 — 개인정보보호법 제21조 (식별자만 대체)
-      // review_requests는 사업주의 월별 리뷰 이력 구조(workerId 키 참조)를 유지하기 위해
-      // 삭제 대신 workerName만 "탈퇴한 회원"으로 대체한다.
-      // 카카오·당근마켓·크몽 등 플랫폼과 동일한 익명화 방식.
-      // [점검] workerId(uid) 자체는 users 문서가 삭제되므로 실질적으로 역추적 불가.
-      try {
-        bool hasMore = true;
-        while (hasMore) {
-          final snap = await _firestore
-              .collection('review_requests')
-              .where('workerId', isEqualTo: user.uid)
-              .limit(100)
-              .get();
-          if (snap.docs.isEmpty) break;
-          hasMore = snap.docs.length == 100;
-          final batch = _firestore.batch();
-          for (final doc in snap.docs) {
-            batch.update(doc.reference, {'workerName': '탈퇴한 회원'});
-          }
-          await batch.commit();
-        }
-      } catch (e) {
-        debugPrint('⚠️ 계정 삭제: review_requests 익명화 실패 (계속 진행): $e');
       }
 
       // 9. monthly_reviews 익명화 — 개인정보보호법 제21조
