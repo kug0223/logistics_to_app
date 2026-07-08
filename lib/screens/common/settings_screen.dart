@@ -729,6 +729,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!mounted || result == null) return;
 
     try {
+      // TODO(PASS-CF): 다날 계약 후 callableVerifyPass CF로 이전 필요.
+      // 현재는 보안 규칙에서 ci/ciHash 클라이언트 write가 차단됨 — CF 이전 전까지 동작 안 함.
+      // SEC-79b: 클라이언트 직접 ci 저장 시 타인 토큰 등록으로 중복 차단 우회 가능 → CF Admin SDK 전용
       await FirestoreService().updateUserDocument(user.uid, {
         'ci': EncryptionHelper.encrypt(result.passToken),
         'passVerifiedAt': Timestamp.fromDate(DateTime.now()),

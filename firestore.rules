@@ -169,6 +169,10 @@ service cloud.firestore {
       // SEC-79: sealBase64 추가 — 본인이 인감 이미지를 위조 URL로 교체해 계약서 위변조 차단
       // [HIGH-01] accountStatus 등 외국인 승인 관련 필드 추가 — 본인이 accountStatus를
       //   pending → active로 직접 변경해 슈퍼관리자 승인을 우회하는 취약점 차단
+      // SEC-79b: ci/ciHash/passVerifiedAt — create에서 null 강제(L238)이나 update는 미차단 상태였음.
+      //   USER가 타인의 CI 토큰을 본인 문서에 등록해 중복 가입 차단 우회 가능한 취약점 차단.
+      //   PASS 인증은 CF Admin SDK(callableVerifyPass 예정)에서만 ci를 저장.
+      //   settings_screen.dart의 클라이언트 직접 저장 코드는 다날 계약 후 CF 경로로 대체 필요.
       allow update: if isLoggedIn() &&
                        isOwner(userId) &&
                        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
@@ -176,7 +180,8 @@ service cloud.firestore {
                          'trustScore', 'noShowCount', 'lateCount', 'totalWorkDays', 'lastRestartAt',
                          'restrictedUntil', 'isAdmin', 'sealBase64',
                          'accountStatus', 'rejectionReason', 'approvedBy', 'approvedAt',
-                         'rejectedBy', 'rejectedAt'
+                         'rejectedBy', 'rejectedAt',
+                         'ci', 'ciHash', 'passVerifiedAt'
                        ]);
 
       // [SEC-03 완료] trustScore·noShowCount·lateCount·totalWorkDays·restrictedUntil·lastRestartAt
@@ -704,6 +709,14 @@ service cloud.firestore {
                         (request.resource.data.workHours is number &&
                          request.resource.data.workHours >= 0 &&
                          request.resource.data.workHours <= 24))) ||
+                      // [C-1] 확정 취소 시 wageStatus=pending 출근기록 무효화
+                      // cancelConfirmedApplication → _cleanupApplicationRelatedData(businessId=null)
+                      // 에서 USER 컨텍스트로 호출. calculated/confirmed/transferred는 이미 위에서 차단됨.
+                      // canceledWithApplication: false→true 단방향만 허용 (플래그 제거 차단)
+                      (resource.data.wageStatus == 'pending' &&
+                       isOwner(resource.data.userId) &&
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['canceledWithApplication']) &&
+                       request.resource.data.canceledWithApplication == true) ||
                       // [SEC-46] 관리자: 핵심 식별자 불변 조건 추가 — 출근 기록 재귀속 차단
                       // userId/businessId/applicationId/workDate는 생성 후 변경 불가 (슈퍼어드민 예외)
                       // wageDetail/finalWage/wageStatus 등 운영 필드는 wage_confirm_dialog 기능 유지

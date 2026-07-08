@@ -5613,12 +5613,14 @@ export const callableApplyNoShowPenalty = onCall(
       throw new HttpsError("permission-denied", "본인 지원만 처리할 수 있습니다.");
     }
 
-    // SEC-36: 확정된 지원서에만 노쇼 패널티 적용 — 취소된 지원서 반복 호출 차단
+    // [C-4 수정] CANCELED도 허용 — Dart 호출 순서: batch.commit(status=CANCELED) 후 CF 호출
+    // 따라서 CF 도달 시점에 이미 CANCELED 상태. 본인 확인(callerUid)은 위에서 완료.
+    // REJECTED/AUTO_CANCELED는 관리자/시스템 처리 — 본인이 직접 취소한 게 아니므로 패널티 미적용.
     const appStatus = appData.status as string;
-    if (!["CONFIRMED", "CONTRACT_PENDING"].includes(appStatus)) {
+    if (!["CONFIRMED", "CONTRACT_PENDING", "CANCELED"].includes(appStatus)) {
       throw new HttpsError(
         "failed-precondition",
-        `노쇼 패널티는 확정된 지원에만 적용 가능합니다 (현재: ${appStatus})`
+        `노쇼 패널티 적용 불가한 상태입니다 (현재: ${appStatus})`
       );
     }
 
@@ -5716,14 +5718,18 @@ export const callableDecrementSlotConfirmed = onCall(
       throw new HttpsError("permission-denied", "slotId가 지원서와 일치하지 않습니다.");
     }
 
-    // 4. 호출자 권한 검증 — 소유자(USER 취소) 또는 해당 사업장 관리자 또는 슈퍼어드민
+    // 4. 호출자 권한 검증 — 소유자(USER 취소) 또는 해당 사업장 관리자/서브관리자 또는 슈퍼어드민
     const callerSnap = await db.collection("users").doc(callerUid).get();
-    const callerRole = callerSnap.data()?.role as string | undefined;
+    const callerData = callerSnap.data();
+    const callerRole = callerData?.role as string | undefined;
     const isOwner = appData.uid === callerUid;
     const isSuperAdminCaller = callerRole === "SUPER_ADMIN";
+    const appBusinessId = appData.businessId as string | undefined;
+    // SubAdmin: role="USER" + subAdminOf===businessId (firestore.rules isSubAdminOf 패턴과 동일)
+    const callerSubAdminOf = callerData?.subAdminOf as string | undefined;
+    const isSubAdminOfBiz = callerSubAdminOf === appBusinessId;
     let isAdminOfBiz = false;
-    if (!isOwner && !isSuperAdminCaller) {
-      const appBusinessId = appData.businessId as string | undefined;
+    if (!isOwner && !isSuperAdminCaller && !isSubAdminOfBiz) {
       if (appBusinessId) {
         const bizSnap = await db.collection("businesses").doc(appBusinessId).get();
         const bizData = bizSnap.data();
@@ -5732,7 +5738,7 @@ export const callableDecrementSlotConfirmed = onCall(
         isAdminOfBiz = adminIds.includes(callerUid) || ownerId === callerUid;
       }
     }
-    if (!isOwner && !isSuperAdminCaller && !isAdminOfBiz) {
+    if (!isOwner && !isSuperAdminCaller && !isSubAdminOfBiz && !isAdminOfBiz) {
       throw new HttpsError("permission-denied", "해당 지원서에 대한 권한이 없습니다.");
     }
 
@@ -5860,11 +5866,15 @@ export const callableAutoConflictCancel = onCall(
       throw new HttpsError("invalid-argument", "필수 파라미터 누락 (confirmedAppId, targetUid, businessId)");
     }
 
-    // 1. 권한 검증
+    // 1. 권한 검증 — SUPER_ADMIN / 사업장 adminIds/ownerId / SubAdmin(subAdminOf===businessId)
     const callerSnap = await db.collection("users").doc(callerUid).get();
-    const callerRole = callerSnap.data()?.role as string | undefined;
+    const callerData = callerSnap.data();
+    const callerRole = callerData?.role as string | undefined;
     if (!callerRole) throw new HttpsError("permission-denied", "사용자 정보를 찾을 수 없습니다.");
-    if (callerRole !== "SUPER_ADMIN") {
+    // SubAdmin: role="USER" + subAdminOf===businessId (firestore.rules isSubAdminOf 패턴과 동일)
+    const callerSubAdminOf = callerData?.subAdminOf as string | undefined;
+    const isSubAdmin = callerSubAdminOf === businessId;
+    if (callerRole !== "SUPER_ADMIN" && !isSubAdmin) {
       const bizSnap = await db.collection("businesses").doc(businessId).get();
       const bizData = bizSnap.data();
       const adminIds: string[] = Array.isArray(bizData?.adminIds) ? (bizData!.adminIds as string[]) : [];
