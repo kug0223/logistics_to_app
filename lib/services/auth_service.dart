@@ -832,9 +832,13 @@ class AuthService {
                       hasMoreForStatus = contractSnap.docs.length == 100;
                       final batch = _firestore.batch();
                       for (final doc in contractSnap.docs) {
+                        // [SEC-101] CF(onBusinessDeactivated)와 일치하는 값으로 교정.
+                        // 이 블록은 현재 tos LIST PERMISSION_DENIED로 도달하지 않음
+                        // (users 삭제 후 isBusinessAdmin() 실패). CF Admin SDK가 처리.
                         batch.update(doc.reference, {
-                          'status': 'BUSINESS_DEACTIVATED',
-                          'deactivatedAt': FieldValue.serverTimestamp(),
+                          'status': 'voided',
+                          'voidReason': 'BUSINESS_DEACTIVATED',
+                          'contractVoidedAt': FieldValue.serverTimestamp(),
                         });
                       }
                       await batch.commit();
