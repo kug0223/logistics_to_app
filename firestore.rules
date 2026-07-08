@@ -816,8 +816,12 @@ service cloud.firestore {
       // [HIGH-FIX] SubAdmin 누락: 알림에서 리뷰 작성 요청 수락 시 SubAdmin이 리뷰 생성 → PERMISSION_DENIED
       // SEC-76: 생성 시 isPublished를 false로 강제 — 클라이언트가 isPublished:true 직접 설정 차단
       //   onReviewCreated CF가 shouldPublish 평가 후 isPublished를 서버에서 제어
+      // SEC-87: rating 범위 강제 (1~5) — 범위 외 rating=100 등으로 사용자/사업장 평균 오염 차단
+      //   CF onReviewCreated가 rating > 0인 모든 값을 통계에 포함하므로 규칙 레벨에서 선제 차단
       allow create: if isLoggedIn() &&
                       request.resource.data.get('isPublished', false) == false &&
+                      request.resource.data.get('rating', 0) >= 1 &&
+                      request.resource.data.get('rating', 0) <= 5 &&
                       (
                         isSuperAdmin() ||
                         (request.resource.data.reviewType == 'ADMIN_TO_USER' &&

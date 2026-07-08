@@ -221,6 +221,32 @@ describe('MR-CREATE: 리뷰 생성', () => {
       }),
     );
   });
+
+  test('MR-CREATE-09 rating=6 이상으로 생성 차단 (SEC-87 평균 오염 방지)', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      setDoc(doc(db, 'monthly_reviews', 'mr-fake-rating'), {
+        reviewType: 'ADMIN_TO_USER',
+        reviewerId: IDS.admin,
+        businessId: IDS.business,
+        isPublished: false,
+        rating: 100,  // 범위 외 rating으로 사용자 평균 오염 시도
+      }),
+    );
+  });
+
+  test('MR-CREATE-10 rating=0 이하로 생성 차단 (SEC-87)', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      setDoc(doc(db, 'monthly_reviews', 'mr-zero-rating'), {
+        reviewType: 'ADMIN_TO_USER',
+        reviewerId: IDS.admin,
+        businessId: IDS.business,
+        isPublished: false,
+        rating: 0,  // 0점은 통계 집계에서 제외되지만 서버 레벨 차단
+      }),
+    );
+  });
 });
 
 // ─── MR-UPDATE ───────────────────────────────────────────────────
