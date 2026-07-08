@@ -5671,6 +5671,63 @@ export const callableApplyNoShowPenalty = onCall(
 );
 
 // ═══════════════════════════════════════════════════════════
+// 🔒 슬롯 확정 인원 감소 — cancelConfirmedApplication 배치 이후 호출
+//
+// 설계 원칙:
+//   - USER가 클라이언트에서 직접 slots.confirmedCount를 write 불가
+//     (보안 취약점: 정원 초과 지원 허용 위험 — application 없이 slot만 단독 감소 가능)
+//   - 대신 application UPDATE(배치) 성공 후 이 CF를 Admin SDK로 호출
+//   - CF 실패 시 syncTOStats가 주기적으로 정합성 복구 → 치명적 오류 아님
+//   - cancelConfirmedApplication의 _decrementTOConfirmed 역할을 서버에서 담당
+//   - updateApplicationStatus(관리자 롤백)는 관리자 규칙으로 배치 처리 — 이 CF 미사용
+// ═══════════════════════════════════════════════════════════
+export const callableDecrementSlotConfirmed = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {toId, slotId, workType} = request.data as {
+      toId: string;
+      slotId: string | null;
+      workType: string | null;
+    };
+    if (!toId) throw new HttpsError("invalid-argument", "toId 필수");
+
+    // 호출자가 해당 application 소유자 또는 해당 TO 관리자 또는 슈퍼어드민인지 검증
+    // (cancelConfirmedApplication이 application 소유자 또는 관리자에 의해 호출됨)
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const callerRole = callerSnap.data()?.role as string | undefined;
+    if (!callerRole) throw new HttpsError("permission-denied", "사용자 정보를 찾을 수 없습니다.");
+
+    const toRef = db.collection("tos").doc(toId);
+    const toUpdate: Record<string, admin.firestore.FieldValue> = {
+      totalConfirmed: admin.firestore.FieldValue.increment(-1),
+    };
+    // 슬롯 없는 장기 TO: 업무유형별 확정인원 추적
+    if (!slotId && workType) {
+      toUpdate[`workTypeConfirmedCounts.${workType}`] = admin.firestore.FieldValue.increment(-1);
+    }
+
+    const batch = db.batch();
+    batch.update(toRef, toUpdate);
+
+    if (slotId) {
+      const slotRef = toRef.collection("slots").doc(slotId);
+      const slotUpdate: Record<string, admin.firestore.FieldValue> = {
+        confirmedCount: admin.firestore.FieldValue.increment(-1),
+      };
+      if (workType) {
+        slotUpdate[`workTypeCounts.${workType}.confirmedCount`] = admin.firestore.FieldValue.increment(-1);
+      }
+      batch.update(slotRef, slotUpdate);
+    }
+
+    await batch.commit();
+    console.log(`✅ slot confirmedCount 감소 완료 — toId:${toId} slotId:${slotId ?? "none"} workType:${workType ?? "none"}`);
+  },
+);
+
+// ═══════════════════════════════════════════════════════════
 // ⏰ 지각 신뢰도 처리 — 관리자/하위관리자 출근 처리 시 호출
 //
 // 설계 원칙:

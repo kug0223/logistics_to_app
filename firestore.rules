@@ -463,17 +463,11 @@ service cloud.firestore {
                          request.resource.data.pendingCount >= 0 &&
                          (request.resource.data.pendingCount == resource.data.pendingCount + 1 ||
                           request.resource.data.pendingCount == resource.data.pendingCount - 1);
-        // 지원자: 확정 취소 시 confirmedCount 감소만 허용 (음수 방지, +1 차단)
-        // [MED-04-FIX] +1도 허용하면 USER가 무한히 카운터를 올릴 수 있음 → -1만 허용
-        // [SEC-WARN] 알려진 취약점: USER가 application 변경 없이 이 규칙만 단독으로 호출 가능
-        //   → confirmedCount를 낮춰 FULL 슬롯을 OPEN으로 위장하는 정원 초과 지원 허용 가능
-        //   현재 완화 수단: confirmedCount >= 0 하한 / syncTOStats CF 주기적 정합성 복구
-        //   근본 해결: cancelConfirmedApplication을 CF로 이전(Admin SDK 처리) 시 이 규칙 제거 가능
-        allow update: if isLoggedIn() && isUser() &&
-                         request.resource.data.diff(resource.data).affectedKeys()
-                           .hasOnly(['confirmedCount', 'workTypeCounts']) &&
-                         request.resource.data.confirmedCount >= 0 &&
-                         request.resource.data.confirmedCount == resource.data.confirmedCount - 1;
+        // [SEC-FIX] USER confirmedCount 직접 감소 규칙 제거
+        // 이유: USER가 application 없이 slot만 단독 호출해 정원 초과 지원 가능한 취약점
+        // 해결: cancelConfirmedApplication의 _decrementTOConfirmed를 callableDecrementSlotConfirmed
+        //       CF로 이전 (Admin SDK) — application_firestore.dart L1097-L1115 참조
+        // 관리자의 confirmedCount 변경은 아래 allow write(isToAdmin || isSuperAdmin)로 처리됨
       }
     }
 

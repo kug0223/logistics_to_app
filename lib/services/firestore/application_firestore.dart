@@ -1094,11 +1094,27 @@ extension ApplicationFirestore on FirestoreService {
         }),
       });
 
-      if (toId != null) {
-        _decrementTOConfirmed(batch, toId, slotId, workType: selectedWorkType);
-      }
+      // [SEC-FIX] _decrementTOConfirmed를 배치에서 제거하고 CF로 이전
+      // 이유: USER가 application 없이 slots.confirmedCount를 단독 감소시키는 취약점 차단
+      //       → slots USER confirmedCount 규칙을 삭제하고 Admin SDK CF로 처리
+      // 관리자 경로(updateApplicationStatus L839)는 관리자 slots write 규칙으로 배치 유지
       await batch.commit();
-      if (toId != null) clearCache(toId: toId);
+      if (toId != null) {
+        clearCache(toId: toId);
+        try {
+          final decrementCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableDecrementSlotConfirmed',
+                  options: HttpsCallableOptions(timeout: const Duration(seconds: 10)));
+          await decrementCallable.call({
+            'toId': toId,
+            'slotId': slotId,
+            'workType': selectedWorkType,
+          });
+        } catch (e) {
+          // CF 실패 시 syncTOStats CF가 주기적으로 정합성 복구 — 치명적 오류 아님
+          debugPrint('⚠️ slot confirmedCount 감소 CF 실패 (syncTOStats 복구 예정): $e');
+        }
+      }
 
       // 노쇼 패널티: CF callableApplyNoShowPenalty — USER가 본인 noShowCount를 직접 write 불가
       if (applyNoShowPenalty) {
