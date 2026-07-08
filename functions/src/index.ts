@@ -2893,9 +2893,14 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       }
       if (!workerName) workerName = "근무자";
 
-      // 사업장 관리자 목록 (pre-fetched map 사용)
+      // 사업장 관리자 목록 (pre-fetched map 사용, ownerId fallback)
       const bizData = d15BizMap.get(app.businessId as string);
-      const adminIds: string[] = (bizData?.adminIds as string[]) ?? [];
+      const adminIds: string[] = (() => {
+        const ids = (bizData?.adminIds as string[] | undefined) ?? [];
+        if (ids.length > 0) return ids;
+        const fallback = bizData?.ownerId as string | undefined;
+        return fallback ? [fallback] : [];
+      })();
 
       // notifRef를 트랜잭션 외부에서 미리 생성 — 재시도 시 동일 ID 재사용으로 중복 알림 방지
       const notifRefs = adminIds.map((adminId) =>
@@ -3295,11 +3300,16 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           createdAt: now,
         });
 
-        // 관리자에게도 알림
+        // 관리자에게도 알림 (ownerId fallback)
         const bizDoc = await db.collection("businesses").doc(app.businessId).get();
-        const adminIds: string[] = bizDoc.exists ?
-          (bizDoc.data()?.adminIds as string[] ?? []) : [];
-        await Promise.all(adminIds.map((adminId) => db.collection("users").doc(adminId).collection("notifications").add({
+        const bizDocData = bizDoc.exists ? bizDoc.data() : undefined;
+        const resignAdminIds: string[] = (() => {
+          const ids = (bizDocData?.adminIds as string[] | undefined) ?? [];
+          if (ids.length > 0) return ids;
+          const fallback = bizDocData?.ownerId as string | undefined;
+          return fallback ? [fallback] : [];
+        })();
+        await Promise.all(resignAdminIds.map((adminId) => db.collection("users").doc(adminId).collection("notifications").add({
           userId: adminId,
           type: "resignApproved",
           title: "퇴사 요청 자동 승인됨",
@@ -3424,10 +3434,15 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           createdAt: now,
         });
 
-        // [BUG-CF-03 수정] 관리자에게도 계약해지 자동승인 알림 — 퇴사(resignApproved)와 일관성 유지
+        // [BUG-CF-03 수정] 관리자에게도 계약해지 자동승인 알림 — 퇴사(resignApproved)와 일관성 유지 (ownerId fallback)
         const terminationBizDoc = await db.collection("businesses").doc(app.businessId as string).get();
-        const terminationAdminIds: string[] = terminationBizDoc.exists ?
-          (terminationBizDoc.data()?.adminIds as string[] ?? []) : [];
+        const terminationBizData = terminationBizDoc.exists ? terminationBizDoc.data() : undefined;
+        const terminationAdminIds: string[] = (() => {
+          const ids = (terminationBizData?.adminIds as string[] | undefined) ?? [];
+          if (ids.length > 0) return ids;
+          const fallback = terminationBizData?.ownerId as string | undefined;
+          return fallback ? [fallback] : [];
+        })();
         await Promise.all(terminationAdminIds.map((adminId) =>
           db.collection("users").doc(adminId).collection("notifications").add({
             userId: adminId,
@@ -5690,8 +5705,10 @@ export const callableReportLate = onCall(
     let authorized = callerRole === "SUPER_ADMIN";
     if (!authorized && callerRole === "BUSINESS_ADMIN") {
       const bizSnap = await db.collection("businesses").doc(businessId).get();
-      const adminIds = (bizSnap.data()?.adminIds as string[]) ?? [];
-      authorized = adminIds.includes(callerUid);
+      const bizSnapData = bizSnap.data();
+      const adminIds = (bizSnapData?.adminIds as string[]) ?? [];
+      const ownerId = bizSnapData?.ownerId as string | undefined;
+      authorized = adminIds.includes(callerUid) || ownerId === callerUid;
     } else if (!authorized && callerRole === "USER" && callerSubAdminOf) {
       // SEC-26: SubAdmin은 role="USER" + subAdminOf 필드로 구별
       authorized = callerSubAdminOf === businessId;
@@ -6185,7 +6202,10 @@ export const callableCalculateAndConfirmWage = onCall(
     let authorized2 = callerRole2 === "SUPER_ADMIN";
     if (!authorized2 && callerRole2 === "BUSINESS_ADMIN") {
       const bizSnap2 = await db.collection("businesses").doc(businessId2).get();
-      authorized2 = ((bizSnap2.data()?.adminIds as string[]) ?? []).includes(callerUid);
+      const bizSnap2Data = bizSnap2.data();
+      const adminIds2 = (bizSnap2Data?.adminIds as string[]) ?? [];
+      const ownerId2 = bizSnap2Data?.ownerId as string | undefined;
+      authorized2 = adminIds2.includes(callerUid) || ownerId2 === callerUid;
     } else if (!authorized2 && callerRole2 === "USER" && callerSubAdminOf2) {
       // SEC-26: SubAdmin은 role="USER" + subAdminOf 필드로 구별
       authorized2 = callerSubAdminOf2 === businessId2;

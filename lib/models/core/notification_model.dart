@@ -813,8 +813,7 @@ class NotificationModel {
   }
 
   /// 계약서 작성 요청 알림 생성 (근무자→관리자)
-  /// 근무자가 CONTRACT_PENDING 상태에서 "계약서 요청하기" 버튼을 누를 때 사업장 오너에게 발송.
-  // 수신자(userId)가 근무자가 아닌 사업장 ownerId — 발송 전 businesses/{businessId}.ownerId 조회 필요.
+  /// 근무자가 CONTRACT_PENDING 상태에서 "계약서 요청하기" 버튼을 누를 때 adminIds 전체에 발송.
   // 클라이언트에서 24시간 쿨다운(SharedPreferences key: contract_req_{applicationId})을 강제하므로
   //           서버 중복 발송 방어는 없음. 관리자 UX 과부하 방지 목적의 소프트 제한이다.
   static NotificationModel createContractRequested({
