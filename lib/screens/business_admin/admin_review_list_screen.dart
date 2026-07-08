@@ -33,6 +33,7 @@ import '../../widgets/common/app_search_bar.dart';
 import '../../widgets/common/app_tab_label.dart';
 import '../../widgets/common/app_filter_chip.dart';
 import '../../widgets/common/app_empty_state.dart';
+import '../../utils/business_picker_helper.dart';
 
 /// 관리자용 리뷰 목록 화면
 class AdminReviewListScreen extends StatefulWidget {
@@ -135,7 +136,8 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     _searchCtrl.addListener(() {
       setState(() => _searchQuery = _searchCtrl.text.trim().toLowerCase());
     });
-    _loadReviews();
+    // addPostFrameCallback: 피커 등 UI 작업을 위해 첫 프레임 이후 로드
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadReviews());
   }
 
   @override
@@ -203,12 +205,21 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     _hasMoreReceived = false;
 
     final userProvider = context.read<UserProvider>();
-    final businessId = widget.businessId
-        ?? userProvider.effectiveBusinessId;
+    // C-07: widget.businessId → effectiveBusinessId → 캐시 → 피커 순으로 결정
+    String? businessId = widget.businessId
+        ?? userProvider.effectiveBusinessId
+        ?? _cachedBusinessId;
 
     if (businessId == null) {
-      setState(() => _isLoading = false);
-      return;
+      // BUSINESS_ADMIN N사업장: 피커로 선택 (캐시되지 않은 첫 번째 호출만)
+      if (!mounted) return;
+      final picked = await BusinessPickerHelper.pick(context);
+      if (!mounted) return;
+      if (picked == null) {
+        setState(() => _isLoading = false);
+        return;
+      }
+      businessId = picked.id;
     }
 
     _cachedBusinessId = businessId;

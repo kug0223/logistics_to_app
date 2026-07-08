@@ -153,8 +153,7 @@ service cloud.firestore {
       // [RESOLVED MED-02] whereIn(FieldPath.documentId) 대량 쿼리 →
       //   CF callableGetUsersBatch 이전 완료 — 관리자 직접 list 30건 권한 제거
       allow list: if request.query.limit <= 1 ||
-                   (isLoggedIn() && isSuperAdmin()) ||
-                   (isLoggedIn() && isAdmin() && request.query.limit <= 30);
+                   (isLoggedIn() && isSuperAdmin());
 
       // 슈퍼관리자: 민감 필드 포함 모든 필드 수정 가능 (최우선 — 운영 긴급 수정용)
       // [특이사항] Firestore Rules는 어느 allow 하나라도 true면 허용(OR)이므로 순서가 보안에는 영향 없음.
@@ -198,6 +197,17 @@ service cloud.firestore {
                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['subAdminOf']) &&
                        !('subAdminOf' in request.resource.data);
 
+      // [BIZ-CREATE-FIX] 사업장 등록 시 BUSINESS_ADMIN이 managedBusinessIds 업데이트 허용
+      // 조건: (1)본인 문서 (2)BUSINESS_ADMIN (3)managedBusinessIds만 변경
+      //       (4)H-06: 기존 배열보다 정확히 1개 증가만 허용 (제거·임의 교체 차단)
+      allow update: if isLoggedIn() &&
+                       isOwner(userId) &&
+                       isBusinessAdmin() &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['managedBusinessIds']) &&
+                       request.resource.data.managedBusinessIds.size() ==
+                         resource.data.get('managedBusinessIds', []).size() + 1;
+
       // 회원가입(본인) 또는 관리자 더미 데이터 생성
       // [RULE-01] 더미 생성 시 민감 필드 차단 — role/isBlacklisted/sealBase64 등 초기값으로 심으면
       //           후속 논리 오동작 및 권한 상승에 악용 가능
@@ -230,6 +240,8 @@ service cloud.firestore {
                        // 사업장·하위관리자 소속: 가입 시 미배정만 허용 (CF trigger 전용)
                        request.resource.data.get('subAdminOf', null) == null &&
                        request.resource.data.get('businessId', null) == null &&
+                       // managedBusinessIds: 가입 시 빈 배열만 허용 (사업장 등록은 별도 update 경로)
+                       request.resource.data.get('managedBusinessIds', []).size() == 0 &&
                        // 제재·신뢰도: 초기 미설정만 허용 (CF Admin SDK 전용)
                        request.resource.data.get('restrictedUntil', null) == null &&
                        request.resource.data.get('lastRestartAt', null) == null &&
@@ -1642,9 +1654,10 @@ service cloud.firestore {
 
     // ═══════════════════════════════════════════════════════════
     // 앱 설정 (약관 등) — 읽기: 로그인 사용자, 쓰기: 슈퍼관리자만
+    // legal_terms는 회원가입 화면에서 비인증 상태로 읽으므로 공개 허용
     // ═══════════════════════════════════════════════════════════
     match /app_settings/{docId} {
-      allow read: if isLoggedIn();
+      allow read: if docId == 'legal_terms' || isLoggedIn();
       allow write: if isSuperAdmin();
     }
 

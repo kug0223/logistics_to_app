@@ -33,6 +33,8 @@ import '../../theme/app_colors.dart';
 import '../../utils/test_data_helper.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
 import '../../models/core/to_model.dart';
+import '../../models/core/business_model.dart';
+import '../../utils/business_picker_helper.dart';
 
 /// 공고 등록 전 필수 요건 체크 — 미충족 시 안내 다이얼로그 후 설정 화면으로 이동
 /// 모든 요건을 충족하면 true 반환
@@ -52,6 +54,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
   final _firestoreService = FirestoreService();
   bool? _hasApprovedBusiness; // null = 미조회, false = 미승인, true = 승인됨
   bool _isNavigating = false;
+  // Firestore에 실제 존재하는 사업장 ID만 (managedBusinessIds 원시값 사용 금지 — 고아 문서 방어)
+  List<String> _verifiedBusinessIds = [];
 
   @override
   void initState() {
@@ -81,7 +85,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
         return;
       }
       final businesses = await _firestoreService.getMyBusiness(uid);
-      if (mounted) setState(() => _hasApprovedBusiness = businesses.any((b) => b.isApproved));
+      if (mounted) {
+        setState(() {
+          _hasApprovedBusiness = businesses.any((b) => b.isApproved);
+          _verifiedBusinessIds = businesses.map((b) => b.id).toList();
+        });
+      }
     } catch (e) {
       debugPrint('❌ 사업장 조회 실패: $e');
       if (mounted) setState(() => _hasApprovedBusiness = false);
@@ -385,13 +394,34 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                   if (!isSubAdmin) {
                                     final businesses = await _firestoreService
                                         .getMyBusiness(user.uid);
-                                    final hasApprovedBusiness =
-                                        businesses.any((b) => b.isApproved);
+                                    final approvedList =
+                                        businesses.where((b) => b.isApproved).toList();
+                                    final hasApprovedBusiness = approvedList.isNotEmpty;
+                                    // C-03: 전체 승인 사업장 병렬 체크 — .first 단독 참조 금지
+                                    BusinessModel? firstApprovedBiz;
+                                    bool hasWorkTypes = false;
+                                    if (approvedList.isNotEmpty) {
+                                      final results = await Future.wait(
+                                        approvedList.map((biz) => _firestoreService
+                                            .getBusinessWorkTypes(biz.id)),
+                                      );
+                                      final idx = results.indexWhere((wt) => wt.isNotEmpty);
+                                      if (idx >= 0) {
+                                        hasWorkTypes = true;
+                                        firstApprovedBiz = approvedList[idx];
+                                      } else {
+                                        firstApprovedBiz = approvedList.first;
+                                      }
+                                    }
                                     if (!context.mounted) return;
                                     final canProceed = await checkTOPrerequisites(
                                       context,
                                       hasApprovedBusiness: hasApprovedBusiness,
+                                      hasWorkTypes: hasWorkTypes,
+                                      hasSeal: user.sealBase64 != null &&
+                                          user.sealBase64!.isNotEmpty,
                                       hasLicense: user.businessLicenseImageUrl != null,
+                                      approvedBusiness: firstApprovedBiz,
                                     );
                                     if (!canProceed || !context.mounted) return;
 
@@ -442,7 +472,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                             // 3. 급여 관리: 오늘 지급 배지 포함
                             if (!isSubAdmin || userProvider.can((p) => p.canManageWage))
                               _TodayPaymentBadgeCard(
-                                businessId: userProvider.effectiveBusinessId,
+                                businessIds: userProvider.isSubAdmin
+                                    ? (userProvider.effectiveBusinessId != null
+                                        ? [userProvider.effectiveBusinessId!]
+                                        : [])
+                                    : _verifiedBusinessIds,
                                 onTap: (reload) => _safeNavigate(() => _requireApprovedBusiness(context, () async {
                                   await Navigator.push(
                                     context,
@@ -463,17 +497,14 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                 subtitle: '계약서 현황·서명',
                                 color: theme.primaryColor,
                                 onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
-                                  final bizId = userProvider.effectiveBusinessId;
-                                  if (bizId == null) {
-                                    ToastHelper.showWarning('사업장 정보를 먼저 등록해주세요');
-                                    return;
-                                  }
                                   if (!context.mounted) return;
+                                  final biz = await BusinessPickerHelper.pick(context);
+                                  if (biz == null || !context.mounted) return;
                                   await Navigator.push(
                                     context,
                                     MaterialPageRoute(
                                       builder: (_) => AdminContractManagementScreen(
-                                        businessId: bizId,
+                                        businessId: biz.id,
                                       ),
                                     ),
                                   );
@@ -505,6 +536,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                     builder: (context) => const SettingsScreen(),
                                   ),
                                 );
+                                // C-02: 설정 화면에서 사업장 등록 후 돌아올 때 상태 갱신
+                                if (mounted) _loadApprovedBusinessStatus();
                               }),
                             ),
 
@@ -592,11 +625,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
   }
 
   Future<void> _showDummyDataDialog() async {
-    final businessId = context.read<UserProvider>().effectiveBusinessId;
-    if (businessId == null) {
-      ToastHelper.showError('사업장이 선택되지 않았습니다.');
-      return;
-    }
+    final biz = await BusinessPickerHelper.pick(context);
+    if (biz == null || !mounted) return;
+    final businessId = biz.id;
 
     showDialog(
       context: context,
@@ -1199,12 +1230,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
 // ── 오늘 지급 배지가 있는 급여 관리 카드 ────────────────────────────────
 
 class _TodayPaymentBadgeCard extends StatefulWidget {
-  final String? businessId;
+  final List<String> businessIds;
   // reload 콜백을 전달받아 호출자가 복귀 후 카운트 갱신 가능
   final void Function(VoidCallback reload) onTap;
 
   const _TodayPaymentBadgeCard({
-    required this.businessId,
+    required this.businessIds,
     required this.onTap,
   });
 
@@ -1225,15 +1256,16 @@ class _TodayPaymentBadgeCardState extends State<_TodayPaymentBadgeCard> {
   @override
   void didUpdateWidget(_TodayPaymentBadgeCard old) {
     super.didUpdateWidget(old);
-    if (old.businessId != widget.businessId) _loadCount();
+    if (old.businessIds != widget.businessIds) _loadCount();
   }
 
   Future<void> _loadCount() async {
-    if (widget.businessId == null) return;
-    final count = await _payrollService.getTodayPaymentCount(
-      businessId: widget.businessId!,
-    );
-    if (mounted) setState(() => _count = count);
+    if (widget.businessIds.isEmpty) return;
+    int total = 0;
+    for (final id in widget.businessIds) {
+      total += await _payrollService.getTodayPaymentCount(businessId: id);
+    }
+    if (mounted) setState(() => _count = total);
   }
 
   @override

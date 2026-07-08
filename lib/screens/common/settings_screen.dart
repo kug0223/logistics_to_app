@@ -90,8 +90,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadBusinessSeal() async {
     final user = context.read<UserProvider>().currentUser;
 
-    // BUSINESS_ADMIN이 아니면 즉시 로딩 해제
-    if (user == null || user.role != UserRole.BUSINESS_ADMIN) {
+    // BUSINESS_ADMIN·SUB_ADMIN 외에는 즉시 로딩 해제
+    if (user == null || (!user.isBusinessAdmin && !user.isSubAdmin)) {
       if (mounted) setState(() => _isSealLoading = false);
       return;
     }
@@ -101,7 +101,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _businessSealBase64 = user.sealBase64;
       _sealType = user.sealType;
-      _resolvedBusinessId = user.businessId; // 모델에서 즉시 세팅
+      _resolvedBusinessId = user.isBusinessAdmin
+          ? (user.managedBusinessIds.isNotEmpty ? user.managedBusinessIds.first : null)
+          : user.subAdminOf; // SUB_ADMIN: subAdminOf 사용
       _isSealLoading = false;
     });
 
@@ -341,15 +343,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 icon: Icons.article_outlined,
                 iconColor: AppColors.infoDark,
                 title: '근로계약서 관리',
-                onTap: () {
-                  final businessId = user?.businessId ?? _resolvedBusinessId;
-                  if (businessId == null) {
-                    ToastHelper.showWarning('사업장 정보를 먼저 등록해주세요');
-                    return;
-                  }
-                  debugPrint('📋 [settings/contractTemplate] businessId=$businessId');
-                  Navigator.push(context, MaterialPageRoute(
-                      builder: (_) => ContractTemplateListScreen(businessId: businessId)));
+                onTap: () async {
+                  final nav = Navigator.of(context);
+                  final biz = await BusinessPickerHelper.pick(context);
+                  if (biz == null || !mounted) return;
+                  debugPrint('📋 [settings/contractTemplate] businessId=${biz.id}');
+                  nav.push(MaterialPageRoute(
+                      builder: (_) => ContractTemplateListScreen(businessId: biz.id)));
                 },
               ),
               if (!(user?.isSubAdmin ?? false))
@@ -1142,25 +1142,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
               return;
             }
 
-            // BUSINESS_ADMIN: 활성 TO/계약 사전 확인
+            // BUSINESS_ADMIN: 모든 사업장의 활성 TO 사전 확인
             final currentUser = userProvider.currentUser;
-            final currentBusinessId = currentUser?.businessId;
+            final currentBusinessIds = currentUser?.managedBusinessIds ?? [];
             if (currentUser?.isBusinessAdmin == true &&
-                currentBusinessId != null) {
+                currentBusinessIds.isNotEmpty) {
               setModal(() { isLoading = true; errorMsg = null; });
-              // [BUGFIX] whereIn + equality 복합쿼리에서 Firestore 보안 규칙의
-              //   filters.businessId가 null 반환 → PERMISSION_DENIED 방지를 위해
-              //   status whereIn 제거 후 클라이언트 필터링으로 전환.
-              final allToSnap = await FirebaseFirestore.instance
-                  .collection('tos')
-                  .where('businessId', isEqualTo: currentBusinessId)
-                  .get();
-              final hasActiveTo = allToSnap.docs.any((doc) {
-                final status = doc.data()['status'] as String?;
-                return status == TOStatus.active ||
-                    status == TOStatus.full ||
-                    status == TOStatus.scheduled;
-              });
+              // [BUGFIX] whereIn + equality 복합쿼리 PERMISSION_DENIED 방지를 위해
+              //   사업장별 단일 equality 쿼리 + 클라이언트 필터링으로 전환.
+              bool hasActiveTo = false;
+              for (final bizId in currentBusinessIds) {
+                final snap = await FirebaseFirestore.instance
+                    .collection('tos')
+                    .where('businessId', isEqualTo: bizId)
+                    .get();
+                if (snap.docs.any((doc) {
+                  final status = doc.data()['status'] as String?;
+                  return status == TOStatus.active ||
+                      status == TOStatus.full ||
+                      status == TOStatus.scheduled;
+                })) {
+                  hasActiveTo = true;
+                  break;
+                }
+              }
               setModal(() => isLoading = false);
               if (!ctx.mounted) return;
 

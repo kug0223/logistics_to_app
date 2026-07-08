@@ -53,6 +53,22 @@ class BusinessPickerHelper {
     return _showPickerSheet(context, businesses, title: dialogTitle);
   }
 
+  /// 이미 조회된 목록에서 선택 — Firestore 재쿼리 없음
+  /// 0개 → 경고 토스트 + null, 1개 → 즉시 반환, 2개+ → 피커
+  static Future<BusinessModel?> pickFromList(
+    BuildContext context,
+    List<BusinessModel> businesses, {
+    String dialogTitle = '사업장 선택',
+  }) async {
+    if (businesses.isEmpty) {
+      ToastHelper.showWarning('등록된 사업장이 없습니다');
+      return null;
+    }
+    if (businesses.length == 1) return businesses.first;
+    if (!context.mounted) return null;
+    return _showPickerSheet(context, businesses, title: dialogTitle);
+  }
+
   static Future<BusinessModel?> _showPickerSheet(
     BuildContext context,
     List<BusinessModel> businesses, {

@@ -1149,21 +1149,27 @@ extension ApplicationFirestore on FirestoreService {
           if (bId.isNotEmpty) {
             final bizDoc = await _firestore.collection('businesses').doc(bId)
                 .get(const GetOptions(source: Source.server));
-            final adminUid = bizDoc.data()?['ownerId'] as String?;
-            if (adminUid != null && adminUid.isNotEmpty) {
+            final adminIds = List<String>.from(bizDoc.data()?['adminIds'] as List? ?? []);
+            if (adminIds.isEmpty) {
+              final fallback = bizDoc.data()?['ownerId'] as String?;
+              if (fallback != null && fallback.isNotEmpty) adminIds.add(fallback);
+            }
+            if (adminIds.isNotEmpty) {
               final workerDoc = await _firestore.collection('users').doc(uid)
                   .get(const GetOptions(source: Source.server));
               final workerName = workerDoc.data()?['name'] as String? ?? '근무자';
-              await createNotification(NotificationModel.createConfirmationCanceledByWorker(
-                userId: adminUid,
-                workerName: workerName,
-                workType: appData['selectedWorkType'] as String? ?? '',
-                workDate: (appData['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
-                applicationId: applicationId,
-                businessId: bId,
-                toId: appData['toId'] as String? ?? '',
-                workDetailId: appData['workDetailId'] as String? ?? '',
-              ));
+              for (final adminUid in adminIds) {
+                await createNotification(NotificationModel.createConfirmationCanceledByWorker(
+                  userId: adminUid,
+                  workerName: workerName,
+                  workType: appData['selectedWorkType'] as String? ?? '',
+                  workDate: (appData['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
+                  applicationId: applicationId,
+                  businessId: bId,
+                  toId: appData['toId'] as String? ?? '',
+                  workDetailId: appData['workDetailId'] as String? ?? '',
+                ));
+              }
             }
           }
         } catch (e) {
@@ -2307,21 +2313,27 @@ extension ApplicationFirestore on FirestoreService {
       final businessDoc =
           await _firestore.collection('businesses').doc(businessId).get();
       if (!businessDoc.exists) return;
-      final adminUid = businessDoc.data()?['ownerId'] as String?;
-      if (adminUid == null || adminUid.isEmpty) return;
+      final adminIds = List<String>.from(businessDoc.data()?['adminIds'] as List? ?? []);
+      if (adminIds.isEmpty) {
+        final fallback = businessDoc.data()?['ownerId'] as String?;
+        if (fallback != null && fallback.isNotEmpty) adminIds.add(fallback);
+      }
+      if (adminIds.isEmpty) return;
       final userDoc =
           await _firestore.collection('users').doc(applicantUid).get();
       final applicantName = userDoc.data()?['name'] as String? ?? '지원자';
-      await createNotification(NotificationModel.createNewApplication(
-        userId: adminUid,
-        applicantName: applicantName,
-        workType: workType,
-        workDate: workDate,
-        applicationId: applicationId,
-        toId: toId,
-        businessId: businessId,
-        workDetailId: workDetailId,
-      ));
+      for (final adminUid in adminIds) {
+        await createNotification(NotificationModel.createNewApplication(
+          userId: adminUid,
+          applicantName: applicantName,
+          workType: workType,
+          workDate: workDate,
+          applicationId: applicationId,
+          toId: toId,
+          businessId: businessId,
+          workDetailId: workDetailId,
+        ));
+      }
     } catch (e) {
       debugPrint('⚠️ 신규 지원 알림 전송 실패: $e');
     }
@@ -2340,21 +2352,27 @@ extension ApplicationFirestore on FirestoreService {
       final businessDoc =
           await _firestore.collection('businesses').doc(businessId).get();
       if (!businessDoc.exists) return;
-      final adminUid = businessDoc.data()?['ownerId'] as String?;
-      if (adminUid == null || adminUid.isEmpty) return;
+      final adminIds = List<String>.from(businessDoc.data()?['adminIds'] as List? ?? []);
+      if (adminIds.isEmpty) {
+        final fallback = businessDoc.data()?['ownerId'] as String?;
+        if (fallback != null && fallback.isNotEmpty) adminIds.add(fallback);
+      }
+      if (adminIds.isEmpty) return;
       final userDoc =
           await _firestore.collection('users').doc(applicantUid).get();
       final applicantName = userDoc.data()?['name'] as String? ?? '지원자';
-      await createNotification(NotificationModel.createApplicationCanceled(
-        userId: adminUid,
-        applicantName: applicantName,
-        workType: workType,
-        workDate: workDate,
-        applicationId: applicationId,
-        businessId: businessId,
-        toId: toId,
-        workDetailId: workDetailId,
-      ));
+      for (final adminUid in adminIds) {
+        await createNotification(NotificationModel.createApplicationCanceled(
+          userId: adminUid,
+          applicantName: applicantName,
+          workType: workType,
+          workDate: workDate,
+          applicationId: applicationId,
+          businessId: businessId,
+          toId: toId,
+          workDetailId: workDetailId,
+        ));
+      }
     } catch (e) {
       debugPrint('⚠️ 지원 취소 알림 전송 실패: $e');
     }

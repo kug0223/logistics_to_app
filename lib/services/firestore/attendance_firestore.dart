@@ -839,22 +839,28 @@ extension AttendanceFirestore on FirestoreService {
       final businessDoc = await _firestore.collection('businesses').doc(businessId).get(const GetOptions(source: Source.server));
       if (!businessDoc.exists) return;
       
-      final adminUid = businessDoc.data()?['ownerId'] as String?;
-      if (adminUid == null || adminUid.isEmpty) return;
-      
-      await createNotification(
-        NotificationModel.createScheduleChangeRequested(
-          userId: adminUid,
-          requesterName: requesterName,
-          requestType: requestType,
-          targetDate: targetDate,
-          requestId: requestId,
-          businessId: businessId,
-          reason: reason,
-        ),
-      );
-      
-      debugPrint('🔔 스케줄 변경 요청 알림 전송 완료 → 관리자: $adminUid');
+      final adminIds = List<String>.from(businessDoc.data()?['adminIds'] as List? ?? []);
+      if (adminIds.isEmpty) {
+        final fallback = businessDoc.data()?['ownerId'] as String?;
+        if (fallback != null && fallback.isNotEmpty) adminIds.add(fallback);
+      }
+      if (adminIds.isEmpty) return;
+
+      for (final adminUid in adminIds) {
+        await createNotification(
+          NotificationModel.createScheduleChangeRequested(
+            userId: adminUid,
+            requesterName: requesterName,
+            requestType: requestType,
+            targetDate: targetDate,
+            requestId: requestId,
+            businessId: businessId,
+            reason: reason,
+          ),
+        );
+      }
+
+      debugPrint('🔔 스케줄 변경 요청 알림 전송 완료 → 관리자: ${adminIds.length}명');
     } catch (e) {
       debugPrint('⚠️ 스케줄 변경 요청 알림 전송 실패: $e');
     }

@@ -4012,6 +4012,22 @@ export const onBusinessDeleted = onDocumentDeleted(
       if (rrCount % 500 !== 0) await rrBatch.commit();
     }
 
+    // [BB-003] 모든 관리자의 managedBusinessIds에서 삭제된 사업장 ID 제거 (adminIds 기준)
+    const deletedData = event.data?.data();
+    const allAdminIds: string[] = deletedData
+      ? (Array.isArray(deletedData.adminIds) ? deletedData.adminIds
+        : (deletedData.ownerId ? [deletedData.ownerId as string] : []))
+      : [];
+    if (allAdminIds.length > 0) {
+      const adminBatch = db.batch();
+      for (const adminUid of allAdminIds) {
+        adminBatch.update(db.collection("users").doc(adminUid), {
+          managedBusinessIds: admin.firestore.FieldValue.arrayRemove(businessId),
+        });
+      }
+      await adminBatch.commit();
+    }
+
     console.log(`사업장 삭제 cascade 완료: ${businessId}`);
   }
 );
@@ -5138,11 +5154,19 @@ export const callableGetUsersBatch = onCall(
     }
 
     const callerRole = callerData.role as string | undefined;
-    const callerBusinessId = callerData.businessId as string | undefined;
     const callerSubAdminOf = callerData.subAdminOf as string | undefined;
 
     const isSuperAdmin = callerRole === "SUPER_ADMIN";
-    const isAdmin = callerRole === "BUSINESS_ADMIN" && callerBusinessId === businessId;
+    // H-07: users.managedBusinessIds 대신 businesses.adminIds 기준으로 검증 (단일 진실 소스)
+    let isAdmin = false;
+    if (callerRole === "BUSINESS_ADMIN") {
+      const bizSnap = await db.collection("businesses").doc(businessId).get();
+      const bizData = bizSnap.data();
+      const adminIds: string[] = bizData
+        ? (Array.isArray(bizData.adminIds) ? bizData.adminIds : (bizData.ownerId ? [bizData.ownerId as string] : []))
+        : [];
+      isAdmin = adminIds.includes(callerUid);
+    }
     // SEC-26: SubAdmin은 role="USER" + subAdminOf 필드로 구별 ("SUB_ADMIN" 문자열 없음)
     const isSubAdmin = callerRole === "USER" && !!callerSubAdminOf && callerSubAdminOf === businessId;
 

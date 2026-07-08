@@ -19,6 +19,7 @@ import '../../../widgets/common/gradient_scaffold.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/common/app_search_bar.dart';
 import '../../../widgets/common/app_empty_state.dart';
+import '../../../utils/business_picker_helper.dart';
 
 class PayrollOverviewScreen extends StatefulWidget {
   const PayrollOverviewScreen({super.key});
@@ -69,9 +70,16 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
         Navigator.pop(context);
         return;
       }
-      // effectiveBusinessId 우선: 홈화면 배지와 동일한 businessId 사용
-      // getMyBusiness().first.id는 adminIds 정렬 기준이라 effectiveBusinessId와 다를 수 있음
-      _businessId = userProvider.effectiveBusinessId ?? businesses.first.id;
+      // C-08: N사업장 지원 — BusinessPickerHelper로 선택 (1개면 자동 선택)
+      if (!mounted) return;
+      final picked = await BusinessPickerHelper.pickFromList(context, businesses);
+      if (!mounted) return;
+      if (picked == null) {
+        setState(() => _isLoading = false);
+        Navigator.pop(context);
+        return;
+      }
+      _businessId = picked.id;
       await Future.wait([
         _loadYear(_selectedYear),
         _loadTodayCount(),

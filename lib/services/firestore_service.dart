@@ -1331,16 +1331,20 @@ class FirestoreService {
 
       // 관리자에게 알림
       final bizDoc = await _firestore.collection('businesses').doc(app.businessId).get(const GetOptions(source: Source.server));
-      final ownerId = bizDoc.data()?['ownerId'] as String?;
+      final adminIds = List<String>.from(bizDoc.data()?['adminIds'] as List? ?? []);
+      if (adminIds.isEmpty) {
+        final fallback = bizDoc.data()?['ownerId'] as String?;
+        if (fallback != null && fallback.isNotEmpty) adminIds.add(fallback);
+      }
       // [R-M5-FIX] uid 파라미터 미전달 시 app.uid 폴백 — 알림에 '근무자' 대신 실명 표시
       final effectiveWorkerUid = uid?.isNotEmpty == true ? uid! : app.uid;
       final workerName = effectiveWorkerUid.isNotEmpty
           ? (await getUser(effectiveWorkerUid))?.name ?? '근무자'
           : '근무자';
 
-      if (ownerId != null && ownerId.isNotEmpty) {
+      for (final adminUid in adminIds) {
         final notification = NotificationModel.createResignRequested(
-          userId: ownerId,
+          userId: adminUid,
           workerName: workerName,
           businessName: app.businessName,
           businessId: app.businessId,
