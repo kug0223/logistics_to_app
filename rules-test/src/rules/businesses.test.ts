@@ -145,6 +145,31 @@ describe('BIZ-CREATE: 사업장 생성', () => {
       }),
     );
   });
+
+  test('BIZ-CREATE-06 isApproved=true로 직접 생성 차단 — 승인 절차 우회 방지 (SEC-89)', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      setDoc(doc(db, 'businesses', 'biz-approved-hack'), {
+        ownerId: IDS.admin,
+        adminIds: [IDS.admin],
+        isApproved: true,  // 서버 레벨 강제: false 또는 미포함만 허용
+        name: '무승인사업장',
+        status: 'pending',
+      }),
+    );
+  });
+
+  test('BIZ-CREATE-07 adminIds에 타인 UID 삽입 차단 — 비동의 관리자 부여 방지 (SEC-90)', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      setDoc(doc(db, 'businesses', 'biz-extra-admin'), {
+        ownerId: IDS.admin,
+        adminIds: [IDS.admin, IDS.user],  // 창설자 UID 외 추가 UID 차단
+        name: '사업장',
+        status: 'pending',
+      }),
+    );
+  });
 });
 
 // ─── BIZ-UPDATE ──────────────────────────────────────────────────────

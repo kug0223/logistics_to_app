@@ -302,12 +302,16 @@ service cloud.firestore {
       allow list: if isLoggedIn() && isSuperAdmin();
 
       // 슈퍼어드민은 ownerId/adminIds 조건 없이 사업장 생성 가능 (타 관리자 대신 등록 포함)
-      // 일반 관리자는 본인 ownerId이고 adminIds에 본인 uid가 있어야 함
+      // 일반 관리자는 본인 ownerId이고 adminIds에 본인 uid만 포함
+      // [SEC-89] isApproved 서버 강제: 클라이언트가 직접 isApproved=true로 생성해 승인 절차 건너뜀 차단
+      // [SEC-90] adminIds 초기값 제한: 창설자 UID 외 임의 UID 삽입 차단 (비동의 관리자 권한 부여 방지)
       allow create: if isLoggedIn() && (
                       isSuperAdmin() ||
                       (isBusinessAdmin() &&
                        request.resource.data.ownerId == request.auth.uid &&
-                       request.auth.uid in request.resource.data.adminIds)
+                       request.auth.uid in request.resource.data.adminIds &&
+                       request.resource.data.adminIds.hasOnly([request.auth.uid]) &&
+                       request.resource.data.get('isApproved', false) == false)
                     );
 
       // [특이사항] ownerId/adminIds 변경은 슈퍼어드민만 허용.
