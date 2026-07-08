@@ -2187,8 +2187,9 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         // C-05: 수정 모드에서 ownerId를 businessData에 포함하지 않음 — 공동 관리자가
         // 저장 시 소유권이 바뀌는 것 방지. 신규 등록 시에만 ownerId 설정.
         if (!_isEditMode) 'ownerId': ownerId,
-        // _isEditMode = (widget.business != null) — 이 블록 내 widget.business! 는 항상 안전
-        'isApproved': _isEditMode ? widget.business!.isApproved : false,
+        // isApproved는 관리자가 편집할 수 없는 서버 관리 필드 — update 맵 제외
+        // (포함 시 슈퍼어드민이 isApproved 변경 후 BUSINESS_ADMIN이 저장하면 diff에 포함돼 PERMISSION_DENIED 발생)
+        if (!_isEditMode) 'isApproved': false,
         'mainImageUrl': mainImageUrl,
         'imageUrls': additionalUrls,
         'oneLineIntro': _oneLineIntroController.text.trim().isEmpty ? null : _oneLineIntroController.text.trim(),

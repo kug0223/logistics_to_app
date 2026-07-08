@@ -222,6 +222,33 @@ describe('AT-CREATE: 출근 기록 생성', () => {
       }),
     );
   });
+
+  test('AT-CREATE-08 wageStatus=confirmed로 직접 생성 차단 (SEC-83)', async () => {
+    const db = getAuth(env, IDS.user);
+    await assertFails(
+      setDoc(doc(db, 'attendance', 'att-fake-confirmed'), {
+        userId: IDS.user,
+        businessId: IDS.business,
+        workDate: '2024-01-21',
+        status: 'WORKING',
+        wageStatus: 'confirmed',  // pending 이외의 상태로 직접 생성 시도
+      }),
+    );
+  });
+
+  test('AT-CREATE-09 finalWage>0으로 직접 생성 차단 (SEC-83)', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      setDoc(doc(db, 'attendance', 'att-fake-wage'), {
+        userId: IDS.user,
+        businessId: IDS.business,
+        workDate: '2024-01-22',
+        status: 'WORKING',
+        wageStatus: 'pending',
+        finalWage: 100000,  // CREATE 시 finalWage는 0이어야 함
+      }),
+    );
+  });
 });
 
 // ─── AT-UPDATE: 근무자 퇴근 수정 ────────────────────────────────────

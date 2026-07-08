@@ -234,6 +234,18 @@ describe('PAYMENT_CHANGE_REQUESTS: 지급방식 변경 요청', () => {
     );
   });
 
+  test('PCR-CREATE-04 USER가 status=APPROVED로 직접 생성 차단 (SEC-84)', async () => {
+    const db = getAuth(env, IDS.user);
+    await assertFails(
+      setDoc(doc(db, 'payment_change_requests', 'pcr-fake-approved'), {
+        workerId: IDS.user,
+        businessId: IDS.business,
+        status: 'APPROVED',  // PENDING이 아닌 상태로 직접 생성 시도
+        requestedAt: '2024-01-15T09:00:00Z',
+      }),
+    );
+  });
+
   test('PCR-UPDATE-01 관리자가 PENDING→APPROVED 처리 허용 (SEC-61)', async () => {
     const db = getAuth(env, IDS.admin, { businessId: IDS.business });
     await assertSucceeds(
@@ -313,6 +325,18 @@ describe('INTERIM_SETTLEMENT_REQUESTS: 중간정산 요청', () => {
         workerId: IDS.user,
         businessId: IDS.business2,
         status: 'PENDING',
+        requestedAt: '2024-01-15T09:00:00Z',
+      }),
+    );
+  });
+
+  test('ISR-CREATE-04 USER가 status=PROCESSED로 직접 생성 차단 (SEC-85)', async () => {
+    const db = getAuth(env, IDS.user);
+    await assertFails(
+      setDoc(doc(db, 'interim_settlement_requests', 'isr-fake-processed'), {
+        workerId: IDS.user,
+        businessId: IDS.business,
+        status: 'PROCESSED',  // PENDING이 아닌 상태로 직접 생성 시도
         requestedAt: '2024-01-15T09:00:00Z',
       }),
     );

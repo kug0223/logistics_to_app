@@ -551,6 +551,9 @@ service cloud.firestore {
                       // [035] AUTO_CANCELED 상태에서도 재지원 허용
                       // [APP-036] REJECTED 상태에서도 재지원 허용 — 코드 설계 의도(application_firestore.dart:437)와 일치
                       // [SEC-REA] 재지원 경로에도 블랙리스트·이용제한 체크 적용 (CREATE 우회 방지)
+                      // [SEC-86] !hasAny → hasOnly로 변경: 재지원 시 wage/startTime/endTime 등 핵심 계약 조건
+                      //   필드를 임의 변경하는 취약점 차단. Dart 재지원 코드(application_firestore.dart:529-568)가
+                      //   실제로 보내는 필드 목록과 정합.
                       (isOwner(resource.data.uid) &&
                        isNotBlacklisted() &&
                        isNotRestricted() &&
@@ -558,8 +561,15 @@ service cloud.firestore {
                         resource.data.status == 'AUTO_CANCELED' ||
                         resource.data.status == 'REJECTED') &&
                        request.resource.data.status == 'PENDING' &&
-                       !request.resource.data.diff(resource.data).affectedKeys()
-                         .hasAny(['uid', 'businessId', 'toId'])) ||
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                         'status', 'type', 'appliedAt', 'workDate', 'slotId', 'statusHistory',
+                         'canceledAt', 'cancelReason', 'rejectedAt', 'rejectedBy', 'rejectMessage',
+                         'confirmedAt', 'confirmedBy', 'conflictingAppId', 'conflictingBusiness',
+                         'conflictingTime', 'resignStatus', 'resignRequestedAt', 'resignRequestDate',
+                         'actualResignDate', 'terminationStatus', 'terminationRequestedAt',
+                         'terminationEffectiveDate', 'terminationRejectReason',
+                         'workDetailId', 'desiredStartDate', 'workEndDate', 'workDays'
+                       ])) ||
                       // 근로계약서 서명 완료 (본인: CONTRACT_PENDING → CONFIRMED)
                       (isOwner(resource.data.uid) &&
                        resource.data.status == 'CONTRACT_PENDING' &&
@@ -662,9 +672,15 @@ service cloud.firestore {
       // 노쇼 처리 시 관리자가 API 직접 호출로 finalWage를 임의 값으로 설정하는 것 차단.
       // onAttendanceWageStatusChanged CF 트리거와 함께 이중 방어.
       // [HIGH-02/HIGH-03] checkInSuspicious/checkInDistance는 CF Admin SDK 전용 — 클라이언트 생성 차단
+      // [SEC-83] wageStatus 강제: 클라이언트 CREATE 시 'pending' 이외의 wageStatus 설정 차단
+      //   wageStatus='confirmed'/'transferred' 직접 설정 시 onAttendanceWageStatusChanged CF가
+      //   totalWorkDays/trustScore를 조작하는 취약점 차단
+      // [SEC-83] finalWage 강제: CREATE 시 0 이외의 값 차단 (정산 전 출근 기록에 급여 조작 방지)
       allow create: if isLoggedIn() &&
                       !('checkInSuspicious' in request.resource.data) &&
                       !('checkInDistance' in request.resource.data) &&
+                      request.resource.data.get('wageStatus', 'pending') == 'pending' &&
+                      request.resource.data.get('finalWage', 0) == 0 &&
                       !(request.resource.data.get('status', '') == 'NO_SHOW' &&
                         request.resource.data.get('finalWage', 0) != 0) &&
                       (
@@ -1595,9 +1611,11 @@ service cloud.firestore {
       // [SEC-FIX] workerId == auth.uid 경로: businessId가 본인 소속 사업장인지 검증
       //   → 근무자가 타 사업장 ID를 businessId에 입력해 위조 요청 생성하는 것을 차단
       // [MED-BYPASS-FIX] businessId != '' 조건 추가 — 미소속(빈 문자열) 사용자의 '' == '' bypass 차단
+      // [SEC-84] USER 경로: status='PENDING' 강제 — 클라이언트가 status='APPROVED'로 직접 생성하는 취약점 차단
       allow create: if isLoggedIn() && (
                     (request.resource.data.workerId == request.auth.uid &&
                      request.resource.data.businessId != '' &&
+                     request.resource.data.get('status', '') == 'PENDING' &&
                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', '') ==
                      request.resource.data.businessId) ||
                     isAdminOf(request.resource.data.businessId) ||
@@ -1655,9 +1673,11 @@ service cloud.firestore {
       // [SEC-FIX] workerId == auth.uid 경로: businessId가 본인 소속 사업장인지 검증
       //   → 근무자가 타 사업장 ID를 businessId에 입력해 급여 관련 위조 요청 생성하는 것을 차단
       // [MED-BYPASS-FIX] businessId != '' 조건 추가 — 미소속(빈 문자열) 사용자의 '' == '' bypass 차단
+      // [SEC-85] USER 경로: status='PENDING' 강제 — 클라이언트가 status='PROCESSED'로 직접 생성하는 취약점 차단
       allow create: if isLoggedIn() && (
                     (request.resource.data.workerId == request.auth.uid &&
                      request.resource.data.businessId != '' &&
+                     request.resource.data.get('status', '') == 'PENDING' &&
                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', '') ==
                      request.resource.data.businessId) ||
                     isAdminOf(request.resource.data.businessId) ||

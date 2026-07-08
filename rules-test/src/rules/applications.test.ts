@@ -433,6 +433,16 @@ describe('APP-UPDATE: 상태 전이 및 필드 수정', () => {
       status: 'CANCELED',
     }));
   });
+
+  test('APP-UPDATE-19 ❌ 재지원 시 wage 필드 변경 차단 (SEC-86 hasOnly)', async () => {
+    await seedDoc(env, 'applications', APP_ID, { ...baseApp, status: 'CANCELED' });
+    const db = getAuth(env, IDS.user);
+    await assertFails(updateDoc(doc(db, 'applications', APP_ID), {
+      status: 'PENDING',
+      appliedAt: new Date(),
+      wage: 999999,  // 핵심 계약 조건 변조 시도 — hasOnly 목록 외 필드
+    }));
+  });
 });
 
 // ─────────────────────────────────────────────────────
