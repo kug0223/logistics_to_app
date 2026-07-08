@@ -181,7 +181,13 @@ service cloud.firestore {
                          'restrictedUntil', 'isAdmin', 'sealBase64',
                          'accountStatus', 'rejectionReason', 'approvedBy', 'approvedAt',
                          'rejectedBy', 'rejectedAt',
-                         'ci', 'ciHash', 'passVerifiedAt'
+                         'ci', 'ciHash', 'passVerifiedAt',
+                         // [SEC-107] CF onReviewCreated/updateUserReviewStats 전용 필드 차단
+                         //   클라이언트가 직접 위조 시 배지 자격 조건 우회·신뢰도 통계 오염 가능
+                         'averageRating', 'reviewCount', 'rehireRate', 'totalWorkHours',
+                         // [SEC-109] CF resetPasswordWithCode가 관리하는 비밀번호 이력
+                         //   클라이언트 직접 삭제 시 비밀번호 재사용 이력 무력화 가능
+                         'passwordHistory'
                        ]);
 
       // [SEC-03 완료] trustScore·noShowCount·lateCount·totalWorkDays·restrictedUntil·lastRestartAt
@@ -332,7 +338,10 @@ service cloud.firestore {
       allow update: if (isAdminOf(businessId) || isSuperAdmin()) &&
                     (isSuperAdmin() ||
                      (!request.resource.data.diff(resource.data).affectedKeys()
-                        .hasAny(['ownerId', 'adminIds', 'isApproved', 'deactivatedAt']) ||
+                        // [SEC-108] rating/reviewCount: CF updateBusinessReviewStats Admin SDK 전용
+                        //   관리자가 직접 평점 위조 시 USER들이 허위 평판 사업장을 신뢰하는 피해 발생
+                        .hasAny(['ownerId', 'adminIds', 'isApproved', 'deactivatedAt',
+                                 'rating', 'reviewCount']) ||
                       (request.resource.data.diff(resource.data).affectedKeys()
                         .hasOnly(['deactivatedAt']) &&
                        resource.data.get('adminIds', []).size() <= 1)));

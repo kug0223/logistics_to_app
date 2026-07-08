@@ -318,6 +318,21 @@ describe('BIZ-UPDATE: 사업장 수정', () => {
       }),
     );
   });
+
+  // SEC-108: CF updateBusinessReviewStats Admin SDK 전용 필드 — 관리자 직접 위조 차단
+  test('BIZ-UPDATE-13 ❌ 관리자가 rating을 직접 위조할 수 없다 (SEC-108)', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      updateDoc(doc(db, 'businesses', IDS.business), { rating: 5.0 }),
+    );
+  });
+
+  test('BIZ-UPDATE-14 ❌ 관리자가 reviewCount를 직접 위조할 수 없다 (SEC-108)', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      updateDoc(doc(db, 'businesses', IDS.business), { reviewCount: 9999 }),
+    );
+  });
 });
 
 // ─── BIZ-DELETE ──────────────────────────────────────────────────────

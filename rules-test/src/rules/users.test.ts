@@ -356,6 +356,28 @@ describe('U-UPDATE: users 문서 수정', () => {
       businessId: 'biz-other',
     }));
   });
+
+  // SEC-107: CF 전용 통계 필드 — 클라이언트 직접 위조 차단
+  test('U-UPDATE-19 ❌ 본인이 averageRating을 직접 위조할 수 없다 (SEC-107)', async () => {
+    const db = getAuth(env, IDS.user);
+    await assertFails(updateDoc(doc(db, 'users', IDS.user), { averageRating: 5.0 }));
+  });
+
+  test('U-UPDATE-20 ❌ 본인이 reviewCount를 직접 위조할 수 없다 (SEC-107)', async () => {
+    const db = getAuth(env, IDS.user);
+    await assertFails(updateDoc(doc(db, 'users', IDS.user), { reviewCount: 9999 }));
+  });
+
+  test('U-UPDATE-21 ❌ 본인이 rehireRate를 직접 위조할 수 없다 (SEC-107)', async () => {
+    const db = getAuth(env, IDS.user);
+    await assertFails(updateDoc(doc(db, 'users', IDS.user), { rehireRate: 1.0 }));
+  });
+
+  // SEC-109: CF resetPasswordWithCode 전용 비밀번호 이력 — 클라이언트 직접 삭제 차단
+  test('U-UPDATE-22 ❌ 본인이 passwordHistory를 직접 삭제해 재사용 이력 우회 불가 (SEC-109)', async () => {
+    const db = getAuth(env, IDS.user);
+    await assertFails(updateDoc(doc(db, 'users', IDS.user), { passwordHistory: [] }));
+  });
 });
 
 // ─────────────────────────────────────────────────────
