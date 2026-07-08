@@ -1,7 +1,7 @@
 // rules-test/src/rules/monthly_reviews.test.ts
 // monthly_reviews 컬렉션 보안 규칙 검증 (30개 시나리오)
 import { RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, deleteDoc, deleteField } from 'firebase/firestore';
 import {
   createTestEnv, getAuth, seedDoc, seedCommonFixtures,
   assertFails, assertSucceeds, IDS,
@@ -316,8 +316,8 @@ describe('MR-UPDATE: 리뷰 수정', () => {
     await assertSucceeds(
       updateDoc(doc(db, 'monthly_reviews', 'mr-anon-target'), {
         targetUserName: '탈퇴한 회원',
-        targetUserId: null,   // FieldValue.delete() 대신 null 사용 (에뮬레이터 호환)
-        comment: null,
+        targetUserId: deleteField(),
+        comment: deleteField(),
       }),
     );
   });
@@ -347,7 +347,7 @@ describe('MR-UPDATE: 리뷰 수정', () => {
     await assertSucceeds(
       updateDoc(doc(db, 'monthly_reviews', 'mr-anon-reviewer'), {
         reviewerName: '탈퇴한 회원',
-        reviewerId: null,
+        reviewerId: deleteField(),
       }),
     );
   });
@@ -362,7 +362,42 @@ describe('MR-UPDATE: 리뷰 수정', () => {
     await assertFails(
       updateDoc(doc(db, 'monthly_reviews', 'mr-anon-other-hack'), {
         reviewerName: '해킹',
-        reviewerId: null,
+        reviewerId: deleteField(),
+      }),
+    );
+  });
+
+  // SEC-103: 익명화 값 고정 — '탈퇴한 회원'/'' 외 임의값 차단
+  test('MR-UPDATE-10 ❌ 9-A 경로에서 targetUserName에 임의값 설정 차단 (SEC-103)', async () => {
+    await seedDoc(env, 'monthly_reviews', 'mr-sec103-a', {
+      ...adminToUserBase,
+      targetUserId: IDS.user,
+      targetUserName: '유저1',
+      comment: '성실해요',
+    });
+    const db = getAuth(env, IDS.user);
+    // '탈퇴한 회원' 외 임의값 → 차단
+    await assertFails(
+      updateDoc(doc(db, 'monthly_reviews', 'mr-sec103-a'), {
+        targetUserName: '익명',
+        targetUserId: deleteField(),
+        comment: deleteField(),
+      }),
+    );
+  });
+
+  test('MR-UPDATE-11 ❌ 9-B 경로에서 reviewerName에 임의값 설정 차단 (SEC-103)', async () => {
+    await seedDoc(env, 'monthly_reviews', 'mr-sec103-b', {
+      ...adminToUserBase,
+      reviewerId: IDS.admin,
+      reviewerName: '관리자',
+    });
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    // '탈퇴한 회원' 외 임의값 → 차단
+    await assertFails(
+      updateDoc(doc(db, 'monthly_reviews', 'mr-sec103-b'), {
+        reviewerName: '익명',
+        reviewerId: deleteField(),
       }),
     );
   });

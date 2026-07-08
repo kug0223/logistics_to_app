@@ -415,6 +415,32 @@ describe('EC-UPDATE: 근무자 계약해지 수락 (terminationStatus)', () => {
   });
 });
 
+// ─── EC-UPDATE: applicationIds 수정 제한 (SEC-104) ───────────────────
+
+describe('EC-UPDATE: applicationIds 수정 제한 (SEC-104)', () => {
+  test('EC-SEC104-01 ✅ pending_employer 상태에서 관리자가 applicationIds 수정 허용', async () => {
+    // CONTRACT는 status='pending_employer' — applicationIds 수정 가능
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertSucceeds(
+      updateDoc(doc(db, 'employment_contracts', CONTRACT), {
+        applicationIds: ['app-001', 'app-002'],
+        updatedAt: '2024-01-01T10:00:00Z',
+      }),
+    );
+  });
+
+  test('EC-SEC104-02 ❌ pending_worker 이후 상태에서 applicationIds 수정 차단 (SEC-104)', async () => {
+    // contract-signed: status='active' (근무자 서명 완료) — applicationIds 재귀속 공격 차단
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      updateDoc(doc(db, 'employment_contracts', 'contract-signed'), {
+        applicationIds: ['hijacked-app'],
+        updatedAt: '2024-01-01T10:00:00Z',
+      }),
+    );
+  });
+});
+
 // ─── EC-DELETE ────────────────────────────────────────────────────────
 
 describe('EC-DELETE: 계약서 삭제', () => {

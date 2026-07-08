@@ -237,6 +237,10 @@ service cloud.firestore {
                        request.resource.data.get('role', 'USER') in ['USER', 'BUSINESS_ADMIN'] &&
                        // accountStatus: 슈퍼관리자 승인 우회 차단
                        request.resource.data.get('accountStatus', 'active') in ['active', 'pending'] &&
+                       // [SEC-102] foreignIdNumber(외국인 등록번호)가 있으면 pending만 허용
+                       // 외국인 근로자는 신원 검증 전 active 설정으로 승인 절차 우회 차단
+                       (!('foreignIdNumber' in request.resource.data) ||
+                        request.resource.data.get('accountStatus', 'pending') == 'pending') &&
                        // isBlacklisted: 신규 계정은 false만 허용
                        request.resource.data.get('isBlacklisted', false) == false &&
                        // CI 비밀값: 클라이언트 직접 설정 불가 (CF Admin SDK 전용)
@@ -255,7 +259,11 @@ service cloud.firestore {
                        // 통계 카운터: 초기값 0만 허용 (CF Admin SDK 전용)
                        request.resource.data.get('noShowCount', 0) == 0 &&
                        request.resource.data.get('lateCount', 0) == 0 &&
-                       request.resource.data.get('totalWorkDays', 0) == 0
+                       request.resource.data.get('totalWorkDays', 0) == 0 &&
+                       // [SEC-105] isDummy: 일반 가입 경로에서 true 설정 차단
+                       // isDummy==true이면 isAdmin() 권한만으로 삭제 가능 (더미 삭제 규칙 L270)
+                       // 악의적 사용자가 isDummy를 심어 관리자에 의해 삭제될 위험 차단
+                       request.resource.data.get('isDummy', false) == false
                       ) ||
                       (isAdmin() && request.resource.data.isDummy == true &&
                        !request.resource.data.keys().hasAny([
@@ -346,7 +354,10 @@ service cloud.firestore {
       }
 
       match /contract_templates/{templateId} {
-        allow read: if isLoggedIn();
+        // [SEC-106] 소속 관리자/서브어드민/슈퍼어드민으로 제한
+        // 이전: isLoggedIn() — 타 사업장 관리자도 businessId만 알면 임금 구조·계약 조건 열람 가능
+        // 근무자는 employment_contracts 문서를 통해 계약 내용을 열람하므로 직접 접근 불필요
+        allow read: if isAdminOf(businessId) || isSubAdminOf(businessId) || isSuperAdmin();
         // SEC-78: write 단일 규칙 → create/update/delete 분리
         // update 시 수정 가능 필드 화이트리스트 — businessId·createdAt 불변 보장
         // (ContractTemplateModel.copyWith: name·templateType·articles·updatedAt만 편집 허용)
@@ -877,17 +888,23 @@ service cloud.firestore {
       // [FIX] isSubAdminOf 누락 — SubAdmin이 사업장 대표 답변 작성 시 PERMISSION_DENIED
       // [H-02] 기존 답변 덮어쓰기 차단 — businessResponse가 없을 때만 작성 허용
       allow update: if isSuperAdmin() ||
-                     // [SEC-92] 탈퇴 익명화 — 9-A: 대상자 본인이 자신의 리뷰 식별자 제거
-                     // auth_service.dart Step 9는 users 삭제 전에 실행됨 (SEC-92 순서 보장)
+                     // [SEC-92/103] 탈퇴 익명화 — 9-A: 대상자 본인이 자신의 리뷰 식별자 제거
+                     // [SEC-103] 설정 가능한 값을 '탈퇴한 회원'/''으로 고정해 임의 리뷰 변조 차단
+                     //   리뷰 내용(comment) 임의 삭제, 식별자 위변조는 이 제한으로 차단됨.
                      (isLoggedIn() &&
                       resource.data.targetUserId == request.auth.uid &&
                       request.resource.data.diff(resource.data).affectedKeys()
-                        .hasOnly(['targetUserName', 'targetUserId', 'comment'])) ||
-                     // [SEC-92] 탈퇴 익명화 — 9-B: 작성자 본인이 reviewerId/reviewerName 제거
+                        .hasOnly(['targetUserName', 'targetUserId', 'comment']) &&
+                      request.resource.data.get('targetUserName', '') == '탈퇴한 회원' &&
+                      request.resource.data.get('targetUserId', '') == '' &&
+                      request.resource.data.get('comment', '') == '') ||
+                     // [SEC-92/103] 탈퇴 익명화 — 9-B: 작성자 본인이 reviewerId/reviewerName 제거
                      (isLoggedIn() &&
                       resource.data.get('reviewerId', '') == request.auth.uid &&
                       request.resource.data.diff(resource.data).affectedKeys()
-                        .hasOnly(['reviewerName', 'reviewerId'])) ||
+                        .hasOnly(['reviewerName', 'reviewerId']) &&
+                      request.resource.data.get('reviewerName', '') == '탈퇴한 회원' &&
+                      request.resource.data.get('reviewerId', '') == '') ||
                      (isLoggedIn() &&
                       (isAdminOf(resource.data.businessId) ||
                        isSubAdminOf(resource.data.businessId)) &&
@@ -1461,7 +1478,9 @@ service cloud.firestore {
                            'employerSignedAt', 'updatedAt',
                            'articles', 'templateId', 'slots', 'applicationIds'
                          ]) &&
-                         (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['articles', 'templateId', 'slots']) ||
+                         // [SEC-104] applicationIds도 pending_employer 상태에서만 수정 허용
+                         //   근무자 서명 후 계약서에 다른 지원서로 재귀속하는 공격 차단
+                         (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['articles', 'templateId', 'slots', 'applicationIds']) ||
                           resource.data.status == 'pending_employer'))
                       );
 

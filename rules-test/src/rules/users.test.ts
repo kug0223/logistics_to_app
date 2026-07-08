@@ -191,6 +191,25 @@ describe('U-CREATE: users 문서 생성 (회원가입)', () => {
     const db = getAuth(env, newUid);
     await assertFails(setDoc(doc(db, 'users', newUid), { ...safeData, trustScore: 100 }));
   });
+
+  // SEC-102: foreignIdNumber(외국인 등록번호)가 있으면 accountStatus=pending만 허용
+  test('U-CREATE-13 ❌ foreignIdNumber + accountStatus=active 조합 차단 (SEC-102)', async () => {
+    const db = getAuth(env, newUid);
+    await assertFails(setDoc(doc(db, 'users', newUid), {
+      ...safeData,
+      foreignIdNumber: 'F123456',
+      accountStatus: 'active',  // pending만 허용 — 외국인 신원 검증 전 승인 우회 차단
+    }));
+  });
+
+  // SEC-105: isDummy=true는 관리자 경로로만 생성 가능 — 일반 가입 경로 차단
+  test('U-CREATE-14 ❌ isDummy=true 포함 생성 차단 (SEC-105)', async () => {
+    const db = getAuth(env, newUid);
+    await assertFails(setDoc(doc(db, 'users', newUid), {
+      ...safeData,
+      isDummy: true,  // CF Admin SDK 전용 — 일반 가입 경로에서 차단
+    }));
+  });
 });
 
 // ─────────────────────────────────────────────────────

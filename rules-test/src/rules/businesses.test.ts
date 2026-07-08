@@ -376,9 +376,21 @@ describe('WORK_TYPES: 근무 유형 서브컬렉션', () => {
 // ─── CONTRACT_TEMPLATES 서브컬렉션 ───────────────────────────────────
 
 describe('CONTRACT_TEMPLATES: 계약서 템플릿', () => {
-  test('CT-READ-01 로그인 유저는 템플릿을 읽을 수 있다', async () => {
-    const db = getAuth(env, IDS.user);
+  // [SEC-106] 이전 규칙: isLoggedIn() → 타 사업장 관리자도 임금 구조·계약 내용 열람 가능
+  // 변경: 소속 관리자/서브어드민/슈퍼어드민으로 제한 — 근무자는 employment_contracts를 통해 열람
+  test('CT-READ-01 ✅ 소속 관리자는 템플릿을 읽을 수 있다 (SEC-106)', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
     await assertSucceeds(getDoc(doc(db, `businesses/${IDS.business}/contract_templates`, 'tmpl-001')));
+  });
+
+  test('CT-READ-02 ❌ 일반 유저는 템플릿 읽기 차단 (SEC-106)', async () => {
+    const db = getAuth(env, IDS.user);
+    await assertFails(getDoc(doc(db, `businesses/${IDS.business}/contract_templates`, 'tmpl-001')));
+  });
+
+  test('CT-READ-03 ❌ 타 사업장 관리자는 템플릿 읽기 차단 (SEC-106)', async () => {
+    const db = getAuth(env, IDS.admin2, { businessId: IDS.business2 });
+    await assertFails(getDoc(doc(db, `businesses/${IDS.business}/contract_templates`, 'tmpl-001')));
   });
 
   test('CT-CREATE-01 관리자는 템플릿을 생성할 수 있다', async () => {
