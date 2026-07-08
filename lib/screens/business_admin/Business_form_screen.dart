@@ -2224,6 +2224,9 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           businessData,
         );
         // H-05: businesses.adminIds ↔ users.managedBusinessIds 양방향 동기화
+        // [RISK] adminIds arrayUnion: ownerId가 이미 adminIds에 포함된 경우 arrayUnion은 no-op →
+        //   affectedKeys()에 adminIds 없음 → 보안 규칙 통과. 미포함 시(레거시 데이터) 규칙 차단.
+        //   신규 사업장은 create 시 항상 adminIds=[ownerId]로 생성되므로 정상 플로우에서는 no-op.
         editBatch.update(
           FirebaseFirestore.instance.collection('users').doc(ownerId),
           {'managedBusinessIds': FieldValue.arrayUnion([widget.business!.id])},

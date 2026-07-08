@@ -313,10 +313,12 @@ service cloud.firestore {
       // [특이사항] ownerId/adminIds 변경은 슈퍼어드민만 허용.
       // BUSINESS_ADMIN이 ownerId를 자신으로 변경하거나 다른 관리자를 adminIds에서 제거해
       // 사업장 소유권을 탈취하는 권한 모독 공격 방지.
+      // isApproved: 슈퍼관리자 승인 절차 우회 차단 (직접 true 설정으로 미승인 사업장 활성화 방지)
+      // deactivatedAt: 슈퍼관리자 비활성화 조치를 해당 사업장 admin이 delete()로 복구하는 공격 차단
       allow update: if (isAdminOf(businessId) || isSuperAdmin()) &&
                     (isSuperAdmin() ||
                      !request.resource.data.diff(resource.data).affectedKeys()
-                       .hasAny(['ownerId', 'adminIds']));
+                       .hasAny(['ownerId', 'adminIds', 'isApproved', 'deactivatedAt']));
       allow delete: if isAdminOf(businessId) || isSuperAdmin();
 
       match /workTypes/{workTypeId} {
