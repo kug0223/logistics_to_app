@@ -54,6 +54,14 @@ beforeAll(async () => {
     role: 'SUB_ADMIN',
     joinedAt: '2024-01-01T00:00:00Z',
   });
+
+  // 단독 관리자 사업장 (SEC-95: 탈퇴 시 deactivatedAt 허용 테스트용)
+  await seedDoc(env, 'businesses', 'biz-sole', {
+    ownerId: IDS.admin,
+    adminIds: [IDS.admin],  // 단독 관리자 — size()==1
+    name: '단독관리자사업장',
+    isApproved: true,
+  });
 });
 
 afterAll(async () => {
@@ -232,6 +240,41 @@ describe('BIZ-UPDATE: 사업장 수정', () => {
     await assertFails(
       updateDoc(doc(db, 'businesses', IDS.business), {
         name: '유저수정',
+      }),
+    );
+  });
+
+  // [SEC-95] 단독 관리자 탈퇴 시 deactivatedAt 설정 허용
+  // adminIds.size() <= 1이고 deactivatedAt 필드만 변경하는 경우만 허용
+  test('BIZ-UPDATE-07 ✅ 단독 관리자가 deactivatedAt 필드만 설정 허용 (SEC-95)', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: 'biz-sole' });
+    await assertSucceeds(
+      updateDoc(doc(db, 'businesses', 'biz-sole'), {
+        deactivatedAt: '2024-01-15T18:00:00Z',
+      }),
+    );
+  });
+
+  test('BIZ-UPDATE-08 ❌ 이중 관리자 사업장에서 deactivatedAt 설정 차단 (SEC-95)', async () => {
+    // biz-001의 adminIds == [admin, subAdmin] → size()==2 → 차단
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      updateDoc(doc(db, 'businesses', IDS.business), {
+        deactivatedAt: '2024-01-15T18:00:00Z',
+      }),
+    );
+  });
+
+  test('BIZ-UPDATE-09 ❌ 단독 관리자도 deactivatedAt + 다른 필드 함께 변경 차단 (SEC-95)', async () => {
+    // deactivatedAt.hasOnly 조건: deactivatedAt 외 필드 포함 시 차단
+    await seedDoc(env, 'businesses', 'biz-sole-b', {
+      ownerId: IDS.admin, adminIds: [IDS.admin], name: '단독B', isApproved: true,
+    });
+    const db = getAuth(env, IDS.admin, { businessId: 'biz-sole-b' });
+    await assertFails(
+      updateDoc(doc(db, 'businesses', 'biz-sole-b'), {
+        deactivatedAt: '2024-01-15T18:00:00Z',
+        name: '비활성됨',  // deactivatedAt 외 필드 포함 → 차단
       }),
     );
   });

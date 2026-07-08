@@ -318,11 +318,16 @@ service cloud.firestore {
       // BUSINESS_ADMIN이 ownerId를 자신으로 변경하거나 다른 관리자를 adminIds에서 제거해
       // 사업장 소유권을 탈취하는 권한 모독 공격 방지.
       // isApproved: 슈퍼관리자 승인 절차 우회 차단 (직접 true 설정으로 미승인 사업장 활성화 방지)
-      // deactivatedAt: 슈퍼관리자 비활성화 조치를 해당 사업장 admin이 delete()로 복구하는 공격 차단
+      // deactivatedAt: 기본적으로 차단 — 단, 단독 관리자 탈퇴 시 예외 허용 (SEC-95)
+      //   단독 관리자(adminIds.size() <= 1)가 deactivatedAt 필드만 설정하는 경우 허용.
+      //   이중 관리자 이상인 경우 차단 유지 (외부 비활성화 공격 방어).
       allow update: if (isAdminOf(businessId) || isSuperAdmin()) &&
                     (isSuperAdmin() ||
-                     !request.resource.data.diff(resource.data).affectedKeys()
-                       .hasAny(['ownerId', 'adminIds', 'isApproved', 'deactivatedAt']));
+                     (!request.resource.data.diff(resource.data).affectedKeys()
+                        .hasAny(['ownerId', 'adminIds', 'isApproved', 'deactivatedAt']) ||
+                      (request.resource.data.diff(resource.data).affectedKeys()
+                        .hasOnly(['deactivatedAt']) &&
+                       resource.data.get('adminIds', []).size() <= 1)));
       allow delete: if isAdminOf(businessId) || isSuperAdmin();
 
       match /workTypes/{workTypeId} {
@@ -742,6 +747,17 @@ service cloud.firestore {
                        isOwner(resource.data.userId) &&
                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['canceledWithApplication']) &&
                        request.resource.data.canceledWithApplication == true) ||
+                      // [SEC-97] 탈퇴 처리: scheduled → absent 전이 + absentReason=USER_DELETED 허용
+                      // 3-pre4 블록에서 본인(userId==auth.uid) 컨텍스트로 실행 — isOwner() 필요.
+                      // wageStatus='pending' 상태의 예정 출근 기록만 허용(확정/정산된 기록 보호).
+                      // absentReason 값을 'USER_DELETED'로 고정해 다른 사유로 임의 absent 설정 차단.
+                      (resource.data.wageStatus == 'pending' &&
+                       isOwner(resource.data.userId) &&
+                       resource.data.get('status', '') == 'scheduled' &&
+                       request.resource.data.get('status', '') == 'absent' &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['status', 'absentReason', 'updatedAt']) &&
+                       request.resource.data.get('absentReason', '') == 'USER_DELETED') ||
                       // [SEC-46] 관리자: 핵심 식별자 불변 조건 추가 — 출근 기록 재귀속 차단
                       // userId/businessId/applicationId/workDate는 생성 후 변경 불가 (슈퍼어드민 예외)
                       // wageDetail/finalWage/wageStatus 등 운영 필드는 wage_confirm_dialog 기능 유지
@@ -1250,6 +1266,7 @@ service cloud.firestore {
       // list: [크로스-사업장 방지] 관리자는 소속 사업장 businessId 필터 필수
       //   · 위치정보는 개인정보보호법 상 민감 정보 — 엄격한 사업장 소속 검증 필수
       //   · USER(근무자) 본인 조회: get으로만 처리 (list 불필요, applicationId 문서 ID로 직접 접근)
+      //     단, [SEC-94] 탈퇴 처리 3-pre5에서 userId 필터로 LIST 후 삭제 — isUser() 경로 허용
       //   · BUSINESS_ADMIN: isAdminOf(businessId) 필터 필수
       //     - getActiveLocationsForBusiness: .where('businessId', isEqualTo: businessId)
       //     - getLocationsForApplications: .where('businessId', isEqualTo: businessId)
@@ -1261,7 +1278,8 @@ service cloud.firestore {
                     (isBusinessAdmin() && (
                       isAdminOf(request.query.filters.businessId)                    )) ||
                     (isSubAdmin() && (
-                      isSubAdminOf(request.query.filters.businessId)                    ))
+                      isSubAdminOf(request.query.filters.businessId)                    )) ||
+                    (isUser() && request.query.filters.userId == request.auth.uid)
                   );
 
       // 생성·수정: 본인(userId == auth.uid) 또는 슈퍼어드민

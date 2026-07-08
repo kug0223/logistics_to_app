@@ -2,9 +2,9 @@
 // worker_locations 컬렉션 보안 규칙 검증 (18개 시나리오)
 // 위치 정보는 개인정보보호법 상 민감 정보 — 엄격한 소속 검증
 import { RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where, limit, getDocs } from 'firebase/firestore';
 import {
-  createTestEnv, getAuth, seedDoc, seedCommonFixtures,
+  createTestEnv, getAuth, getAnonymous, seedDoc, seedCommonFixtures,
   assertFails, assertSucceeds, IDS,
 } from '../helpers/test-env';
 
@@ -184,6 +184,45 @@ describe('LOC-UPDATE: 위치 수정', () => {
         latitude: 37.0,
       }),
     );
+  });
+});
+
+// ─── LOC-LIST ───────────────────────────────────────────────────
+// [SEC-94] 탈퇴 처리 3-pre5: isUser()가 본인 userId 필터로 LIST 허용
+//
+// [에뮬레이터 제한] 양수 케이스(xtest):
+//   isUser() 내부의 myRole()이 get(users/{uid}).data.role을 사용.
+//   에뮬레이터에서 LIST 중 get()이 null 반환하는 알려진 버그로 PERMISSION_DENIED 오평가.
+//   실기기 테스트로만 검증 가능 (3-pre5 블록 실행 시 확인).
+//   부정 케이스는 에뮬레이터에서도 정상 차단.
+
+describe('LOC-LIST: 목록 쿼리 (SEC-94)', () => {
+  // 양수 케이스: isUser()가 에뮬레이터에서 get() 버그로 실패 → xtest
+  xtest('LOC-LIST-01 ✅ [에뮬레이터 제한] 본인이 userId 필터로 LIST 허용 (SEC-94)', async () => {
+    const db = getAuth(env, IDS.user);
+    await assertSucceeds(getDocs(query(
+      collection(db, 'worker_locations'),
+      where('userId', '==', IDS.user),
+      limit(100),
+    )));
+  });
+
+  test('LOC-LIST-02 ❌ userId 필터가 본인이 아닌 경우 차단', async () => {
+    // 일반 USER가 타인의 userId로 LIST → isUser() 통과하더라도 filters.userId != auth.uid
+    const db = getAuth(env, IDS.user2);
+    await assertFails(getDocs(query(
+      collection(db, 'worker_locations'),
+      where('userId', '==', IDS.user),  // 타인 userId
+      limit(100),
+    )));
+  });
+
+  test('LOC-LIST-03 ❌ 비로그인 사용자는 LIST 불가', async () => {
+    const db = getAnonymous(env);
+    await assertFails(getDocs(query(
+      collection(db, 'worker_locations'),
+      limit(1),
+    )));
   });
 });
 

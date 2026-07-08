@@ -79,6 +79,14 @@ beforeAll(async () => {
     finalWage: 0,
   });
 
+  // scheduled 상태 기록 (SEC-97: 탈퇴 처리 absent 전이 테스트용)
+  await seedDoc(env, 'attendance', 'att-scheduled', {
+    ...baseAtt,
+    status: 'scheduled',
+    wageStatus: 'pending',
+    finalWage: 0,
+  });
+
   // 타 사업장 출근 기록
   await seedDoc(env, 'attendance', 'att-biz2', {
     ...baseAtt,
@@ -411,6 +419,56 @@ describe('AT-UPDATE: 관리자 수정 제한', () => {
       updateDoc(doc(db, 'attendance', ATT), {
         wageStatus: 'confirmed',
         updatedAt: '2024-01-15T20:00:00Z',
+      }),
+    );
+  });
+});
+
+// ─── AT-UPDATE: 탈퇴 처리 (SEC-97) ─────────────────────────────────────
+// scheduled → absent 전이 + absentReason=USER_DELETED 허용
+// 이 경로는 auth_service.dart 3-pre4 블록에서 본인 컨텍스트로 실행됨.
+
+describe('AT-UPDATE: 탈퇴 처리 — scheduled→absent (SEC-97)', () => {
+  test('AT-UPDATE-16 ✅ 본인이 scheduled→absent + absentReason=USER_DELETED 허용', async () => {
+    const db = getAuth(env, IDS.user);
+    await assertSucceeds(
+      updateDoc(doc(db, 'attendance', 'att-scheduled'), {
+        status: 'absent',
+        absentReason: 'USER_DELETED',
+        updatedAt: '2024-01-15T18:00:00Z',
+      }),
+    );
+  });
+
+  test('AT-UPDATE-17 ❌ absentReason이 USER_DELETED가 아닌 경우 차단', async () => {
+    // absentReason 값을 USER_DELETED로 고정해 임의 사유로 absent 설정 차단
+    await seedDoc(env, 'attendance', 'att-scheduled-b', {
+      userId: IDS.user,
+      businessId: IDS.business,
+      applicationId: 'app-att-001',
+      workDate: '2024-01-25',
+      status: 'scheduled',
+      wageStatus: 'pending',
+      finalWage: 0,
+    });
+    const db = getAuth(env, IDS.user);
+    await assertFails(
+      updateDoc(doc(db, 'attendance', 'att-scheduled-b'), {
+        status: 'absent',
+        absentReason: 'OTHER_REASON',  // USER_DELETED만 허용
+        updatedAt: '2024-01-25T00:00:00Z',
+      }),
+    );
+  });
+
+  test('AT-UPDATE-18 ❌ WORKING 상태 기록은 absent 전이 차단 (scheduled만 허용)', async () => {
+    // baseAtt.status == 'WORKING' — scheduled가 아니면 차단
+    const db = getAuth(env, IDS.user);
+    await assertFails(
+      updateDoc(doc(db, 'attendance', ATT), {
+        status: 'absent',
+        absentReason: 'USER_DELETED',
+        updatedAt: '2024-01-15T18:00:00Z',
       }),
     );
   });

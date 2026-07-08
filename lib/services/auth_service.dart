@@ -594,6 +594,28 @@ class AuthService {
         }
       } catch (_) {}
 
+      // 3-pre5. worker_locations 전체 삭제 — users 문서 삭제 전 처리 필수 (SEC-94)
+      // worker_locations LIST 규칙이 isUser() + userId 필터를 사용하므로
+      // users 삭제 후엔 isUser() 체크 실패 → PERMISSION_DENIED.
+      // 위치정보: 개인정보보호법 제21조 (법령 보존 근거 없음 — 즉시 파기 대상)
+      try {
+        bool hasMore3pre5 = true;
+        while (hasMore3pre5) {
+          final snap = await _firestore
+              .collection('worker_locations')
+              .where('userId', isEqualTo: user.uid)
+              .limit(100)
+              .get();
+          if (snap.docs.isEmpty) break;
+          hasMore3pre5 = snap.docs.length == 100;
+          final batch = _firestore.batch();
+          for (final doc in snap.docs) { batch.delete(doc.reference); }
+          await batch.commit();
+        }
+      } catch (e) {
+        debugPrint('⚠️ 계정 삭제: worker_locations 삭제 실패 (계속 진행): $e');
+      }
+
       // 3. Firestore 사용자 문서 삭제 — 개인정보보호법 제21조
       // Storage URL 참조를 먼저 제거해야 broken URL 방지 (CLAUDE.md 삭제 순서 규칙)
       await _firestore.collection('users').doc(user.uid).delete();
@@ -631,25 +653,6 @@ class AuthService {
         }
       } catch (e) {
         debugPrint('⚠️ 계정 삭제: notifications 삭제 실패 (계속 진행): $e');
-      }
-
-      // 6. worker_locations 전체 삭제 — 개인정보보호법 제21조 (위치정보: 법령 보존 근거 없음)
-      try {
-        bool hasMore = true;
-        while (hasMore) {
-          final snap = await _firestore
-              .collection('worker_locations')
-              .where('userId', isEqualTo: user.uid)
-              .limit(100)
-              .get();
-          if (snap.docs.isEmpty) break;
-          hasMore = snap.docs.length == 100;
-          final batch = _firestore.batch();
-          for (final doc in snap.docs) { batch.delete(doc.reference); }
-          await batch.commit();
-        }
-      } catch (e) {
-        debugPrint('⚠️ 계정 삭제: worker_locations 삭제 실패 (계속 진행): $e');
       }
 
       // 11. BUSINESS_ADMIN 전용 사업장 데이터 정리
