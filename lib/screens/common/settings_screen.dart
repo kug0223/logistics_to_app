@@ -101,13 +101,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _businessSealBase64 = user.sealBase64;
       _sealType = user.sealType;
-      _resolvedBusinessId = user.isBusinessAdmin
-          ? (user.managedBusinessIds.isNotEmpty ? user.managedBusinessIds.first : null)
-          : user.subAdminOf; // SUB_ADMIN: subAdminOf 사용
+      _resolvedBusinessId = context.read<UserProvider>().effectiveBusinessId;
+      // BUSINESS_ADMIN: null → 아래 CF 조회 분기로 진입 / SUB_ADMIN: subAdminOf 바로 사용
       _isSealLoading = false;
     });
 
-    // user.businessId가 없을 때만 CF 조회 (내비게이션용, UI 블로킹 없음)
+    // effectiveBusinessId가 null(BUSINESS_ADMIN 멀티사업장)이면 CF로 사업장 조회 (UI 블로킹 없음)
     if (_resolvedBusinessId == null) {
       try {
         final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
