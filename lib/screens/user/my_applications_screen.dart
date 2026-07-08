@@ -333,26 +333,31 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       }
       final workerName = currentUser.name;
 
-      // FirebaseFirestore.instance 직접 사용 — firestoreService에 ownerId 단독 조회 메서드가 없어
-      //           businesses 컬렉션을 직접 읽는다. 추후 firestoreService.getBusinessOwnerId() 추가 시 교체.
       final bizDoc = await FirebaseFirestore.instance
           .collection('businesses')
           .doc(app.businessId)
           .get();
       if (!mounted) return;
-      final ownerId = bizDoc.data()?['ownerId'] as String?;
-      if (ownerId == null || ownerId.isEmpty) {
+      final bizData = bizDoc.data();
+      final adminIds = List<String>.from(bizData?['adminIds'] as List? ?? []);
+      if (adminIds.isEmpty) {
+        final fallback = bizData?['ownerId'] as String?;
+        if (fallback != null && fallback.isNotEmpty) adminIds.add(fallback);
+      }
+      if (adminIds.isEmpty) {
         ToastHelper.showError('사업주 정보를 찾을 수 없습니다.');
         return;
       }
 
-      final notification = NotificationModel.createContractRequested(
-        userId: ownerId,
-        workerName: workerName,
-        businessId: app.businessId,
-        applicationId: app.id,
-      );
-      await _firestoreService.createNotification(notification);
+      for (final adminUid in adminIds) {
+        final notification = NotificationModel.createContractRequested(
+          userId: adminUid,
+          workerName: workerName,
+          businessId: app.businessId,
+          applicationId: app.id,
+        );
+        await _firestoreService.createNotification(notification);
+      }
       if (!mounted) return;
 
       // 쿨다운 저장

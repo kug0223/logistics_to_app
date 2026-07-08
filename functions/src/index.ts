@@ -1551,18 +1551,34 @@ async function _sendReviewRequestNotification(
         `${counterpartName}님에 대한 ${year}년 ${month}월 리뷰를 작성해주세요.` :
         `${counterpartName}에 대한 ${year}년 ${month}월 리뷰를 작성해주세요.`;
 
-    // admin role: targetId = businessId → ownerId(사업주 UID)로 변환
-    let userId = targetId;
+    // admin role: targetId = businessId → adminIds 배열 전체에 발송 (ownerId fallback)
     if (role === "admin") {
       const bizDoc = await db.collection("businesses").doc(targetId).get();
-      const ownerId = bizDoc.data()?.ownerId as string | undefined;
-      if (!ownerId) {
-        console.log(`  ⚠️ 리뷰 알림 스킵 — ownerId 없음 (bizId=${targetId})`);
+      const bizData = bizDoc.data();
+      let adminIds: string[] = Array.isArray(bizData?.adminIds) ? (bizData!.adminIds as string[]) : [];
+      if (adminIds.length === 0 && bizData?.ownerId) {
+        adminIds = [bizData.ownerId as string];
+      }
+      if (adminIds.length === 0) {
+        console.log(`  ⚠️ 리뷰 알림 스킵 — adminIds 없음 (bizId=${targetId})`);
         return;
       }
-      userId = ownerId;
+      for (const adminUid of adminIds) {
+        await db.collection("users").doc(adminUid).collection("notifications").add({
+          userId: adminUid,
+          type: "REVIEW_REQUEST",
+          title,
+          body,
+          data: {requestKey, action: "writeReview", businessId},
+          isRead: false,
+          createdAt: Timestamp.now(),
+        });
+      }
+      return;
     }
 
+    // worker role: targetId = workerUid
+    const userId = targetId;
     await db.collection("users").doc(userId).collection("notifications").add({
       userId,
       type: "REVIEW_REQUEST",

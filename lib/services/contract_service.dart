@@ -345,22 +345,29 @@ class ContractService {
     // [알림 흐름]
     // 1차) 근무자 지원 → 관리자에게 newApplication 알림 (application_firestore.dart)
     // 2차) 관리자 확정 + 계약서 발송 → 근무자에게 contractSignRequested 알림 (saveEmployerSignature)
-    // 3차) 근무자 서명 완료 → 관리자(오너)에게 contractSigned 알림 (여기)
+    // 3차) 근무자 서명 완료 → 모든 관리자(adminIds)에게 contractSigned 알림 (여기)
     try {
       final bizSnap = await _db.collection('businesses').doc(contract.businessId).get();
-      final ownerId = bizSnap.data()?['ownerId'] as String?;
-      if (ownerId != null) {
-        await _firestoreService.createNotification(
-          NotificationModel.createContractSigned(
-            userId: ownerId,
-            workerName: contract.snapshot.workerName,
-            businessId: contract.businessId,
-            contractId: contract.id,
-            applicationId: contract.applicationId,
-          ),
-        );
+      final data = bizSnap.data();
+      final adminIds = List<String>.from(data?['adminIds'] as List? ?? []);
+      if (adminIds.isEmpty) {
+        final fallback = data?['ownerId'] as String?;
+        if (fallback != null && fallback.isNotEmpty) adminIds.add(fallback);
+      }
+      if (adminIds.isEmpty) {
+        debugPrint('⚠️ contractSigned: adminIds 없음 — businessId: ${contract.businessId}');
       } else {
-        debugPrint('⚠️ contractSigned: ownerId 없음 — businessId: ${contract.businessId}');
+        for (final adminUid in adminIds) {
+          await _firestoreService.createNotification(
+            NotificationModel.createContractSigned(
+              userId: adminUid,
+              workerName: contract.snapshot.workerName,
+              businessId: contract.businessId,
+              contractId: contract.id,
+              applicationId: contract.applicationId,
+            ),
+          );
+        }
       }
     } catch (e) {
       debugPrint('⚠️ contractSigned 알림 발송 실패 (비치명적): $e');
