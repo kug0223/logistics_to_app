@@ -54,12 +54,15 @@ class UserProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  /// 현재 유저의 유효한 businessId (BUSINESS_ADMIN은 자체, SUB_ADMIN은 subAdminOf)
+  /// 현재 유저의 유효한 단일 businessId
+  /// - USER(일반 직원): users.businessId (소속 사업장)
+  /// - SUB_ADMIN: users.subAdminOf (관리 위임 사업장)
+  /// - BUSINESS_ADMIN: null (단일값 없음 — managedBusinessIds 리스트 사용)
   String? get effectiveBusinessId {
     final user = _currentUser;
     if (user == null) return null;
-    if (user.isBusinessAdmin) return user.businessId;
     if (user.isSubAdmin) return user.subAdminOf;
+    if (user.isUser) return user.businessId;
     return null;
   }
 

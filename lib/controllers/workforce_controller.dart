@@ -26,7 +26,10 @@ class WorkforceController extends ChangeNotifier {
   bool isGroupLoading(String groupId) => _loadingGroupIds.contains(groupId);
 
   // ── 공고 카운트 ───────────────────────────────────────────────
-  static const int maxActiveTOs = 4;
+  // SUPER_ADMIN이 settings/app_config.maxActiveTOPerBusiness로 동적 설정.
+  // load() 시 Firestore에서 읽어온 값으로 갱신되며, 로드 전에는 기본값 4 사용.
+  int _maxActiveTOs = 4;
+  int get maxActiveTOs => _maxActiveTOs;
 
   /// 현재 진행중(active) 공고 수
   int get activeToCount => _items.where((g) => !g.isClosed).length;
@@ -95,11 +98,15 @@ class WorkforceController extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // context는 첫 번째 await 이전에 추출 — async gap 이후 재사용 금지
       final user = Provider.of<UserProvider>(context, listen: false).currentUser;
       if (user == null) {
         _items = [];
         return;
       }
+
+      // 관리자별 개별 한도 우선, 없으면 전역 기본값 (1시간 캐시)
+      _maxActiveTOs = await _service.getMaxActiveTOLimit(adminUID: user.uid);
       final List<String>? businessIds;
       if (user.isSuperAdmin) {
         businessIds = null;

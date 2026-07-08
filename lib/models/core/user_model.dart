@@ -84,6 +84,7 @@ class UserModel {
   final DateTime? restrictedUntil;       // 제재 만료 시각 (noShow 2회 이상 시 3일 제재)
   final Map<String, bool> notifPrefs;    // 알림 종류별 수신 설정 (기본 모두 true)
   final List<String> favoriteToIds;      // 즐겨찾기 TO ID 목록
+  final int? maxActiveTOs;               // 슈퍼관리자가 설정한 이 관리자의 공고 최대 등록 수 (null이면 전역 기본값)
 
   // 알림 카테고리 키 상수
   static const String notifWorkReminder    = 'workReminder';
@@ -161,6 +162,7 @@ class UserModel {
     this.restrictedUntil,
     Map<String, bool>? notifPrefs,
     List<String>? favoriteToIds,
+    this.maxActiveTOs,
   }) : notifPrefs = notifPrefs ?? defaultNotifPrefs,
        favoriteToIds = favoriteToIds ?? const [],
        managedBusinessIds = managedBusinessIds ??
@@ -340,6 +342,7 @@ class UserModel {
       favoriteToIds: map['favoriteToIds'] != null
           ? List<String>.from(map['favoriteToIds'])
           : null,
+      maxActiveTOs: (map['maxActiveTOs'] as num?)?.toInt(),
     );
   }
 
@@ -412,6 +415,7 @@ class UserModel {
           : null,
       'notifPrefs': notifPrefs,
       'favoriteToIds': favoriteToIds,
+      'maxActiveTOs': maxActiveTOs,
     };
   }
 
@@ -507,6 +511,8 @@ class UserModel {
     bool clearRestriction = false,
     Map<String, bool>? notifPrefs,
     List<String>? favoriteToIds,
+    int? maxActiveTOs,
+    bool clearMaxActiveTOs = false,
   }) {
     return UserModel(
       uid: uid ?? this.uid,
@@ -567,6 +573,7 @@ class UserModel {
       restrictedUntil: clearRestriction ? null : (restrictedUntil ?? this.restrictedUntil),
       notifPrefs: notifPrefs ?? this.notifPrefs,
       favoriteToIds: favoriteToIds ?? this.favoriteToIds,
+      maxActiveTOs: clearMaxActiveTOs ? null : (maxActiveTOs ?? this.maxActiveTOs),
     );
   }
   /// 안전한 DateTime 파싱

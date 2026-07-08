@@ -2110,6 +2110,11 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
 
       debugPrint('📍 [저장] 위도: $_latitude / 경도: $_longitude');
 
+      // 업로드 경로에 사용할 bizId: 수정=기존 ID, 신규=미리 생성 (Storage 규칙이 businesses/{bizId}/ 구조 요구)
+      final uploadBizId = _isEditMode
+          ? widget.business!.id
+          : FirebaseFirestore.instance.collection('businesses').doc().id;
+
       // CLAUDE.md 삭제 순서 규칙:
       // Storage 삭제는 Firestore 업데이트 성공 후에만 수행한다.
       // 이 시점에서는 새 이미지 업로드만 먼저 진행한다.
@@ -2120,10 +2125,10 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       List<String> transportUrls = List.from(_transportImageUrls);
 
       final uploadFutures = <Future<String?>>[];
-      if (_mainImage != null) uploadFutures.add(_uploadImage(_mainImage!, 'main'));
-      uploadFutures.addAll(_additionalImages.map((img) => _uploadImage(img, 'additional')));
+      if (_mainImage != null) uploadFutures.add(_uploadImage(_mainImage!, uploadBizId, 'main'));
+      uploadFutures.addAll(_additionalImages.map((img) => _uploadImage(img, uploadBizId, 'additional')));
       final transportUploadStart = uploadFutures.length;
-      uploadFutures.addAll(_transportImages.map((img) => _uploadImage(img, 'transport')));
+      uploadFutures.addAll(_transportImages.map((img) => _uploadImage(img, uploadBizId, 'transport')));
 
       if (uploadFutures.isNotEmpty) {
         final results = await Future.wait(uploadFutures);
@@ -2132,22 +2137,31 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           if (uploaded.isNotEmpty) await _storageService.deleteMultipleByUrls(uploaded);
           return;
         }
+
+        // 선택한 이미지 중 하나라도 업로드 실패 → 전체 등록 취소
+        // (App Check 실패, 네트워크 오류 등)
+        if (results.any((url) => url == null)) {
+          final uploaded = results.whereType<String>().toList();
+          if (uploaded.isNotEmpty) {
+            await _storageService.deleteMultipleByUrls(uploaded);
+          }
+          throw Exception('이미지 업로드에 실패했습니다. 인터넷 연결을 확인 후 다시 시도해주세요.');
+        }
+
         int i = 0;
         if (_mainImage != null) {
           mainImageUrl = results[i++];
-          if (mainImageUrl != null) newlyUploadedUrls.add(mainImageUrl);
-          if (mainImageUrl == null) {
-            debugPrint('⚠️ 대표 이미지 업로드 실패 — 이미지 없이 저장');
-            ToastHelper.showWarning('이미지 업로드에 실패했습니다. 이미지 없이 저장됩니다.');
-          }
+          newlyUploadedUrls.add(mainImageUrl!);
         }
         for (; i < transportUploadStart; i++) {
-          final url = results[i];
-          if (url != null) { newlyUploadedUrls.add(url); additionalUrls.add(url); }
+          final url = results[i]!;
+          newlyUploadedUrls.add(url);
+          additionalUrls.add(url);
         }
         for (; i < results.length; i++) {
-          final url = results[i];
-          if (url != null) { newlyUploadedUrls.add(url); transportUrls.add(url); }
+          final url = results[i]!;
+          newlyUploadedUrls.add(url);
+          transportUrls.add(url);
         }
       }
 
@@ -2170,7 +2184,9 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         'latitude': _latitude,
         'longitude': _longitude,
         'phone': _phoneController.text.trim().isEmpty ? null : _phoneController.text.trim(),
-        'ownerId': ownerId,
+        // C-05: 수정 모드에서 ownerId를 businessData에 포함하지 않음 — 공동 관리자가
+        // 저장 시 소유권이 바뀌는 것 방지. 신규 등록 시에만 ownerId 설정.
+        if (!_isEditMode) 'ownerId': ownerId,
         // _isEditMode = (widget.business != null) — 이 블록 내 widget.business! 는 항상 안전
         'isApproved': _isEditMode ? widget.business!.isApproved : false,
         'mainImageUrl': mainImageUrl,
@@ -2207,10 +2223,14 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           FirebaseFirestore.instance.collection('businesses').doc(widget.business!.id),
           businessData,
         );
-        // managedBusinessIds 누락 시 보정
+        // H-05: businesses.adminIds ↔ users.managedBusinessIds 양방향 동기화
         editBatch.update(
           FirebaseFirestore.instance.collection('users').doc(ownerId),
           {'managedBusinessIds': FieldValue.arrayUnion([widget.business!.id])},
+        );
+        editBatch.update(
+          FirebaseFirestore.instance.collection('businesses').doc(widget.business!.id),
+          {'adminIds': FieldValue.arrayUnion([ownerId])},
         );
         await editBatch.commit();
 
@@ -2245,16 +2265,15 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
 
         // 사업장 생성 + 유저 업데이트를 WriteBatch로 원자적 처리
         // (하나라도 실패하면 전체 롤백)
+        // uploadBizId: 이미지 업로드 경로와 동일한 ID 사용 (Storage 규칙 일관성 보장)
         final batch = FirebaseFirestore.instance.batch();
-        final bizRef = FirebaseFirestore.instance.collection('businesses').doc();
+        final bizRef = FirebaseFirestore.instance.collection('businesses').doc(uploadBizId);
         batch.set(bizRef, businessData);
 
-        final isFirstBusiness = userProvider.currentUser?.managedBusinessIds.isEmpty ?? true;
         batch.update(
           FirebaseFirestore.instance.collection('users').doc(ownerId),
           {
             'managedBusinessIds': FieldValue.arrayUnion([bizRef.id]),
-            if (isFirstBusiness) 'businessId': bizRef.id,
           },
         );
         await batch.commit();
@@ -2294,10 +2313,11 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     }
   }
 
-  Future<String?> _uploadImage(File imageFile, String type) async {
+  Future<String?> _uploadImage(File imageFile, String bizId, String type) async {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final fileName = '${type}_$timestamp.jpg';
-    final url = await _storageService.uploadImage(imageFile.path, 'businesses/$fileName');
+    final storagePath = 'businesses/$bizId/$fileName';
+    final url = await _storageService.uploadImage(imageFile.path, storagePath);
     // TMP-01: pickAndCompressImage()가 반환한 임시 파일(compressed_xxx.jpg)은
     // 업로드 후 반드시 삭제해야 한다. 업로드 성공/실패 무관하게 정리.
     try {

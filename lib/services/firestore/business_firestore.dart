@@ -70,14 +70,19 @@ extension BusinessFirestore on FirestoreService {
     }
   }
 
-  /// 사업장 생성
+  /// 사업장 생성 — businesses/{id}와 users/{ownerId}.managedBusinessIds를 원자적으로 처리
   Future<String?> createBusiness(BusinessModel business) async {
     NetworkChecker.instance.assertOnline('사업장 등록을 하려면 인터넷 연결이 필요합니다.');
     try {
-      DocumentReference docRef = await _firestore
-          .collection('businesses')
-          .add(business.toMap());
-      return docRef.id;
+      final batch = _firestore.batch();
+      final bizRef = _firestore.collection('businesses').doc();
+      batch.set(bizRef, business.toMap());
+      batch.update(
+        _firestore.collection('users').doc(business.ownerId),
+        {'managedBusinessIds': FieldValue.arrayUnion([bizRef.id])},
+      );
+      await batch.commit();
+      return bizRef.id;
     } catch (e) {
       debugPrint('사업장 생성 실패: $e');
       return null;

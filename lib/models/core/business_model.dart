@@ -1,6 +1,22 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
+/// Firestore 직접 읽기(Timestamp)와 Cloud Function 응답({_seconds, _nanoseconds} Map)
+/// 모두 처리하는 Timestamp 파싱 헬퍼.
+DateTime? _parseTimestamp(dynamic value) {
+  if (value == null) return null;
+  if (value is Timestamp) return value.toDate().toLocal();
+  if (value is Map) {
+    final s = value['_seconds'] ?? value['seconds'];
+    if (s == null) return null;
+    final ns = (value['_nanoseconds'] ?? value['nanoseconds'] ?? 0) as num;
+    return DateTime.fromMillisecondsSinceEpoch(
+      (s as num).toInt() * 1000 + ns.toInt() ~/ 1000000,
+    ).toLocal();
+  }
+  return null;
+}
+
 /// 사업장 근태 처리 규칙
 ///
 /// 출퇴근 펀치 시점에 자동 반올림 적용 기준.
@@ -48,9 +64,7 @@ class AttendanceRules {
       lateWindow:       (map['lateWindow']       as num?)?.toInt().clamp(0,  60)  ?? 30,
       overtimeUnit:     (map['overtimeUnit']     as num?)?.toInt().clamp(5,  30)  ?? 10,
       earlyLeaveUnit:   (map['earlyLeaveUnit']   as num?)?.toInt().clamp(5,  60)  ?? 30,
-      rulesUpdatedAt: map['rulesUpdatedAt'] != null
-          ? (map['rulesUpdatedAt'] as Timestamp).toDate().toLocal()
-          : null,
+      rulesUpdatedAt: _parseTimestamp(map['rulesUpdatedAt']),
       rulesUpdatedBy: map['rulesUpdatedBy'] as String?,
     );
   }
@@ -255,12 +269,9 @@ class BusinessModel {
       phone: map['phone'],
       description: map['description'],
       isApproved: map['isApproved'] ?? false,
-      createdAt: map['createdAt'] != null
-          ? (map['createdAt'] as Timestamp).toDate().toLocal()
-          : (throw ArgumentError('BusinessModel: createdAt 필드 누락 (id: $id)')),
-      updatedAt: map['updatedAt'] != null
-          ? (map['updatedAt'] as Timestamp).toDate().toLocal()
-          : null,
+      createdAt: _parseTimestamp(map['createdAt']) ??
+          (throw ArgumentError('BusinessModel: createdAt 필드 누락 (id: $id)')),
+      updatedAt: _parseTimestamp(map['updatedAt']),
       attendanceType: map['attendanceType'] ?? 'gps',
       gpsRadius: (map['gpsRadius'] as num?)?.toInt() ?? 100,
       beaconUUID: map['beaconUUID'],
@@ -300,9 +311,7 @@ class BusinessModel {
       ownerName: map['ownerName'],
       wagePaymentDay: (map['wagePaymentDay'] as num?)?.toInt(),
       sealType: map['sealType'] as String? ?? 'stamp',
-      deactivatedAt: map['deactivatedAt'] != null
-          ? (map['deactivatedAt'] as Timestamp).toDate().toLocal()
-          : null,
+      deactivatedAt: _parseTimestamp(map['deactivatedAt']),
       attendanceRules: map['attendanceRules'] != null
           ? AttendanceRules.fromMap(
               Map<String, dynamic>.from(map['attendanceRules'] as Map))

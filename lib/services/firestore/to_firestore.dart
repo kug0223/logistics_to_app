@@ -34,12 +34,36 @@ extension TOFirestore on FirestoreService {
   }
 
   /// settings/app_config.maxActiveTOPerBusiness 읽기, 미설정 시 기본값 4
-  /// 1시간 인메모리 캐시 — TO 등록마다 settings 읽기 비용 절감
+  /// adminUID가 있으면 users/{adminUID}.maxActiveTOs 개별 설정을 우선 사용
+  /// 개별 설정 없으면 전역값 폴백. 1시간 인메모리 캐시 적용
   static int? _cachedMaxActiveTO;
   static DateTime? _cachedMaxActiveTOAt;
+  static final Map<String, int> _cachedPerAdmin = {};
+  static final Map<String, DateTime> _cachedPerAdminAt = {};
 
-  Future<int> getMaxActiveTOLimit() async {
+  Future<int> getMaxActiveTOLimit({String? adminUID}) async {
     final now = DateTime.now();
+
+    // 관리자별 개별 한도 우선 조회
+    if (adminUID != null && adminUID.isNotEmpty) {
+      final cached = _cachedPerAdmin[adminUID];
+      final cachedAt = _cachedPerAdminAt[adminUID];
+      if (cached != null && cachedAt != null &&
+          now.difference(cachedAt).inHours < 1) {
+        return cached;
+      }
+      try {
+        final doc = await _firestore.collection('users').doc(adminUID).get();
+        final v = (doc.data()?['maxActiveTOs'] as num?)?.toInt();
+        if (v != null && v > 0) {
+          _cachedPerAdmin[adminUID] = v;
+          _cachedPerAdminAt[adminUID] = now;
+          return v;
+        }
+      } catch (_) {}
+    }
+
+    // 전역값 폴백
     if (_cachedMaxActiveTO != null &&
         _cachedMaxActiveTOAt != null &&
         now.difference(_cachedMaxActiveTOAt!).inHours < 1) {
@@ -57,6 +81,18 @@ extension TOFirestore on FirestoreService {
       }
     } catch (_) {}
     return 4;
+  }
+
+  /// 관리자별 개별 한도 캐시 무효화 (TOLimitSettingsScreen에서 저장 후 호출)
+  void invalidateAdminTOLimitCache(String adminUID) {
+    _cachedPerAdmin.remove(adminUID);
+    _cachedPerAdminAt.remove(adminUID);
+  }
+
+  /// 전역 기본값 캐시 무효화
+  void invalidateGlobalTOLimitCache() {
+    _cachedMaxActiveTO = null;
+    _cachedMaxActiveTOAt = null;
   }
 
   // ───────────────────────────────────────────────────────
@@ -272,7 +308,7 @@ extension TOFirestore on FirestoreService {
     // 진행중 공고 개수 제한 — 미공개(draft) 저장은 제한 없음
     // 사업장별이 아니라 관리자 전체 사업장 합산 총 개수로 제한
     if (publishMode != 'draft') {
-      final limit = await getMaxActiveTOLimit();
+      final limit = await getMaxActiveTOLimit(adminUID: creatorUID);
       final totalActive = await countAllActiveTO(creatorUID);
       if (totalActive >= limit) {
         throw Exception('MAX_ACTIVE_TO_LIMIT:$limit');
@@ -453,7 +489,7 @@ extension TOFirestore on FirestoreService {
   /// 관리자의 전체 사업장 합산 active TO 수가 제한 이상이면 예외를 던진다.
   /// draft TO를 즉시공개로 전환하기 직전에 호출한다.
   Future<void> assertActiveTOLimit(String uid) async {
-    final limit = await getMaxActiveTOLimit();
+    final limit = await getMaxActiveTOLimit(adminUID: uid);
     final totalActive = await countAllActiveTO(uid);
     if (totalActive >= limit) {
       throw Exception('MAX_ACTIVE_TO_LIMIT:$limit');

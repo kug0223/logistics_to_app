@@ -116,7 +116,7 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
   @override
   Widget build(BuildContext context) {
     return GradientScaffold(
-      title: '멤버 관리',
+      title: '멤버 관리 · ${widget.businessName}',
       onRefresh: _load,
       body: _loading
           ? const LoadingWidget()

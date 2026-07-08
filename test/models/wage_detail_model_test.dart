@@ -97,9 +97,20 @@ void main() {
       expect(m.effectiveNetWage, 80000);
     });
 
-    test('확정 시 netWage가 0이어도 0 반환 (totalAmount 폴백 없음)', () {
+    // [T-01 fix] 확정 상태 + netWage=0 + totalAmount>0 →
+    // 마이그레이션 전 레코드(netWage 필드 부재 → 기본값 0)로 간주, 계산식 폴백
+    test('확정 + netWage=0 + totalAmount>0 → T-01 폴백으로 totalAmount 반환', () {
       final m = _base(
         totalAmount: 100000,
+        netWage: 0,
+        calculatedAt: DateTime(2025, 6, 1),
+      );
+      expect(m.effectiveNetWage, 100000);
+    });
+
+    test('확정 + netWage=0 + totalAmount=0 → 진짜 0원 케이스, 0 반환', () {
+      final m = _base(
+        totalAmount: 0,
         netWage: 0,
         calculatedAt: DateTime(2025, 6, 1),
       );

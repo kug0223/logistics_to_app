@@ -280,9 +280,9 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     final controller = context.watch<WorkforceController>();
     final isActiveTab = tab == TOStatus.active;
     final activeCount = isActiveTab ? controller.activeToCount : null;
-    final isMaxed = isActiveTab && (activeCount ?? 0) >= WorkforceController.maxActiveTOs;
+    final isMaxed = isActiveTab && (activeCount ?? 0) >= controller.maxActiveTOs;
     final displayLabel = isActiveTab && activeCount != null
-        ? '$label ($activeCount/${WorkforceController.maxActiveTOs})'
+        ? '$label ($activeCount/${controller.maxActiveTOs})'
         : label;
 
     return GestureDetector(

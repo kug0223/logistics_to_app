@@ -274,6 +274,48 @@ class WageDetailModel {
     );
   }
 
+  /// 확정 정보 초기화 복사본 — 마감 취소 시 사용.
+  /// copyWith(confirmedBy: null)은 내부 ?? 패턴으로 null 초기화가 불가능하므로 별도 메서드 제공.
+  WageDetailModel clearConfirmInfo() {
+    return WageDetailModel(
+      wageType: wageType,
+      baseWage: baseWage,
+      scheduledMinutes: scheduledMinutes,
+      actualMinutes: actualMinutes,
+      breakMinutes: breakMinutes,
+      workMinutes: workMinutes,
+      overtimeMinutes: overtimeMinutes,
+      earlyArrivalMinutes: earlyArrivalMinutes,
+      nightMinutes: nightMinutes,
+      baseAmount: baseAmount,
+      overtimeAmount: overtimeAmount,
+      earlyArrivalAmount: earlyArrivalAmount,
+      nightAmount: nightAmount,
+      additionalAmount: additionalAmount,
+      deductionAmount: deductionAmount,
+      weeklyHolidayAmount: weeklyHolidayAmount,
+      totalAmount: totalAmount,
+      nightAllowanceApplied: nightAllowanceApplied,
+      memo: memo,
+      appliedMinimumWage: appliedMinimumWage,
+      appliedSupplementWage: appliedSupplementWage,
+      calculatedBy: calculatedBy,
+      calculatedAt: calculatedAt,
+      confirmedBy: null,
+      confirmedAt: null,
+      payScheduleType: payScheduleType,
+      payScheduleDay: payScheduleDay,
+      taxDeductionType: taxDeductionType,
+      employmentInsuranceDeduction: employmentInsuranceDeduction,
+      nationalPensionDeduction: nationalPensionDeduction,
+      healthInsuranceDeduction: healthInsuranceDeduction,
+      ltcInsuranceDeduction: ltcInsuranceDeduction,
+      incomeTaxDeduction: incomeTaxDeduction,
+      retroactiveDeduction: retroactiveDeduction,
+      netWage: netWage,
+    );
+  }
+
   // ── Getter ──
   
   /// 1차 확정 여부

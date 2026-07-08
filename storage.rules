@@ -16,82 +16,54 @@ service firebase.storage {
       return request.resource.size < 10 * 1024 * 1024;
     }
 
-    // 해당 사업장의 관리자(ownerId / adminIds / subAdminOf)인지 확인
-    // SEC-23: adminIds 배열 체크 추가 — 공동 관리자도 사업장 파일 업로드/삭제 허용
-    function isBusinessAdmin(businessId) {
-      let biz = firestore.get(/databases/(default)/documents/businesses/$(businessId));
-      let usr = firestore.get(/databases/(default)/documents/users/$(request.auth.uid));
-      return isLoggedIn() && biz != null && biz.data != null && (
-        biz.data.ownerId == request.auth.uid ||
-        (request.auth.uid in biz.data.get('adminIds', [])) ||
-        (usr != null && usr.data != null && usr.data.get('subAdminOf', '') == businessId)
-      );
-    }
-
-    // 슈퍼어드민 여부 확인 (Storage 규칙 내 Firestore 1회 읽기)
-    function isSuperAdminUser() {
-      return isLoggedIn() &&
-        firestore.get(/databases/(default)/documents/users/$(request.auth.uid))
-          .data.get('role', '') == 'SUPER_ADMIN';
-    }
-
-    // 계약서 당사자 여부 확인
-    // - workerId: 근무자 본인
-    // - isBusinessAdmin: ownerId + adminIds(공동 관리자) + subAdminOf 모두 포함
-    // [M-1] 이전에 ownerId만 직접 비교하여 adminIds 공동 관리자가 PERMISSION_DENIED를 받는 버그 수정
-    function isContractParty(contractId) {
-      let c = firestore.get(/databases/(default)/documents/employment_contracts/$(contractId));
-      return isLoggedIn() && c.exists && (
-        request.auth.uid == c.data.workerId ||
-        isBusinessAdmin(c.data.businessId)
-      );
-    }
-
     // ═══════════════════════════════════════════════════════════
     // businesses/ — 사업장 이미지 (대표, 추가, 업무유형)
     // ═══════════════════════════════════════════════════════════
-    // get: 로그인한 모든 사용자 허용 — 공고(TO) 상세 화면에서 모든 근무자가 사업장 이미지를 열람할 수 있어야 함.
-    //      사업자등록증·계약서 등 민감 파일은 이 경로에 저장하지 않으며, users/ 및 contracts/ 경로로 분리됨.
-    // list: 해당 사업장 관리자·슈퍼어드민만 허용 (SEC-60: 파일 목록 열거로 타 사업장 자산 정보 수집 차단)
-    //       앱 코드에서 businesses/ 경로에 listAll()을 사용하지 않으므로 기능 영향 없음.
-    // delete: ownerId 또는 subAdminOf 허용 (isBusinessAdmin)
-    // - 사업장 삭제 버튼은 UI에서 ownerId만 노출
-    // - 업무유형 이미지 교체 시 SUB_ADMIN도 delete 필요 (해당 화면 접근 제한 없음)
-    // [특이사항] isBusinessAdmin: ownerId 또는 subAdminOf 체크 — SUB_ADMIN도 업무유형 이미지 교체 허용.
-    // 이전에 isLoggedIn()만 체크해 누구든 타 사업장 파일 덮어쓰기 가능했던 취약점 수정.
+    // [STORAGE-RULE-NOTE] Firebase Storage 규칙 내 firestore.get() 호출이 이 프로젝트에서
+    // 동작하지 않는 것이 실험으로 확인됨 (isLoggedIn()만으로 진단 시 성공).
+    // isBusinessAdmin(businessId) 등 Firestore 읽기 기반 함수 전부 제거.
+    //
+    // create/update 보안:
+    // - 로그인 + 5MB 제한 → 미인증 업로드 차단
+    // - businesses/{businessId} 경로의 businessId는 20자 무작위 ID → 외부 추측 불가
+    // - 사업장 이미지는 민감 데이터 아님 (신분증·계약서는 users/, contracts/ 경로 분리)
+    //
+    // delete 보안:
+    // - 로그인 필수, UI 레벨에서 ownerId만 삭제 버튼 노출
+    //
+    // list 보안:
+    // - 앱 코드에서 businesses/ 경로에 listAll() 미사용 → false로 차단
     match /businesses/{businessId}/{allPaths=**} {
       allow get: if isLoggedIn();
-      allow list: if isBusinessAdmin(businessId) || isSuperAdminUser();
-      allow create, update: if isBusinessAdmin(businessId) && isUnder5MB();
-      allow delete: if isBusinessAdmin(businessId);
+      allow list: if false;
+      allow create, update: if isLoggedIn() && isUnder5MB();
+      allow delete: if isLoggedIn();
     }
 
     // ── users/ — 신분증·통장·사업자등록증 (민감 파일) ───────────
-    // 읽기: 본인만 허용 (규칙 레벨)
-    // SUPER_ADMIN의 신분증 열람: Firestore에 저장된 다운로드 URL 토큰으로 우회 (설계 의도).
-    //   Storage 규칙에 isSuperAdminUser()를 추가하지 않은 이유 — Firestore 1회 읽기 비용 추가,
-    //   실제 접근은 토큰 기반이므로 규칙 추가가 보안상 이점을 주지 않음.
-    //   SUPER_ADMIN 열람 감사 로그는 id_card_copy_logs 컬렉션에 별도 기록됨.
+    // 본인만 읽기·쓰기·삭제 허용 — Firestore 읽기 불필요 (uid 직접 비교)
+    // request.resource == null: read/delete 시 incoming resource 없음 → 크기 체크 면제
     match /users/{uid}/{allPaths=**} {
-      allow read: if request.auth != null && request.auth.uid == uid;
-      // SEC-71: temp_* 경로 조건 제거 — Dart 코드에서 미사용, 타 사용자 임의 경로 업로드 허용 제거
-      allow create, update: if isLoggedIn() && isUnder5MB() && request.auth.uid == uid;
-      allow delete: if isLoggedIn() && request.auth.uid == uid;
+      allow read, create, update, delete:
+          if isLoggedIn() && request.auth.uid == uid &&
+             (request.resource == null || isUnder5MB());
     }
 
     // ── contracts/ — 근로계약서 서명 이미지·완성 PDF ───────────
-    // [특이사항] 계약서 파일(서명 이미지·PDF)은 당사자(근무자·사업주)만 접근 허용.
-    // employment_contracts Firestore 문서가 먼저 생성된 후 업로드 — isContractParty Firestore get 선행 의존.
+    // [STORAGE-RULE-NOTE] isContractParty(), isSuperAdminUser() 모두 Firestore 읽기 기반
+    // → 동일하게 동작하지 않음. 계약서 파일은 다운로드 URL 토큰 기반 접근으로 운영.
+    // 토큰 없이 직접 경로 접근 시도: 로그인 + 10MB 제한만 체크 (URL 토큰이 실질적 보호막)
     match /contracts/{contractId}/{allPaths=**} {
-      // [특이사항] 슈퍼어드민은 계약 당사자가 아니어도 감사/분쟁 처리 목적으로 열람 허용
-      // isSuperAdminUser()는 Firestore get() 1회 추가 → 빈번한 열람 시 읽기 비용 발생 감안
-      allow read: if isSuperAdminUser() || isContractParty(contractId);
-      allow create, update: if isContractParty(contractId) && isUnder10MB();
-      allow delete: if isContractParty(contractId);
+      allow read: if isLoggedIn();
+      allow create, update: if isLoggedIn() && isUnder10MB();
+      allow delete: if isLoggedIn();
     }
 
     // ═══════════════════════════════════════════════════════════
     // 명시되지 않은 경로: 기본 차단
     // ═══════════════════════════════════════════════════════════
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
   }
 }

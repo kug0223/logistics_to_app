@@ -409,9 +409,11 @@ class _NotificationScreenState extends State<NotificationScreen> {
         {
           // 알림 data의 businessId 우선 — 다중 사업장 관리자가 다른 사업장 선택 중일 때 정확한 대화상자 표시
           final notifBusinessId = notification.data?['businessId']?.toString();
+          final managedIds = userProvider.currentUser?.managedBusinessIds;
           final businessId = (notifBusinessId != null && notifBusinessId.isNotEmpty)
               ? notifBusinessId
-              : userProvider.effectiveBusinessId;
+              : userProvider.effectiveBusinessId ??
+                  (managedIds != null && managedIds.isNotEmpty ? managedIds.first : null);
           if (businessId != null) {
             showDialog(
               context: context,

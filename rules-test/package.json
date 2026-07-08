@@ -1,0 +1,21 @@
+{
+  "name": "alfit-rules-test",
+  "version": "1.0.0",
+  "description": "AlFit Firestore Security Rules 자동화 테스트",
+  "private": true,
+  "scripts": {
+    "test": "jest --runInBand",
+    "test:watch": "jest --watch --runInBand",
+    "test:coverage": "jest --coverage --runInBand",
+    "emulator:start": "firebase emulators:start --only firestore --project alfit-89567"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^3.0.4",
+    "@types/jest": "^29.5.12",
+    "@types/node": "^22.0.0",
+    "firebase-admin": "^12.6.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.5",
+    "typescript": "^5.7.3"
+  }
+}

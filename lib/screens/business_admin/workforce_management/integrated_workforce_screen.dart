@@ -93,11 +93,11 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
 
       setState(() {
         _allBusinessIds = businesses.map((b) => b.id).toList();
-        // initialBusinessId(알림 딥링크) 우선 → effectiveBusinessId → 목록 첫 번째
+        // initialBusinessId(알림 딥링크) 우선 → 목록 첫 번째
         final preferred = widget.initialBusinessId;
         _selectedBusinessId = (preferred != null && _allBusinessIds.contains(preferred))
             ? preferred
-            : userProvider.effectiveBusinessId ?? _allBusinessIds.first;
+            : _allBusinessIds.first;
       });
 
       if (mounted) _controller.load(context);

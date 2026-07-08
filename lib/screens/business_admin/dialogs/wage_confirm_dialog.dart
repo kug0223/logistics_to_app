@@ -1479,10 +1479,14 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       _transferredSelectedIds.removeAll(processed);
       _isProcessing = false;
       // attendanceMap 로컬 상태 갱신 — 마감 취소 후 재마감 시 wageCalculated로 인식하도록
+      // wageDetail.confirmedBy/confirmedAt도 초기화 (copyWith는 ?? 패턴으로 null 초기화 불가)
       for (final id in processed) {
         final att = widget.attendanceMap[id];
         if (att != null) {
-          widget.attendanceMap[id] = att.copyWith(wageStatus: AttendanceModel.wageCalculated);
+          widget.attendanceMap[id] = att.copyWith(
+            wageStatus: AttendanceModel.wageCalculated,
+            wageDetail: att.wageDetail?.clearConfirmInfo(),
+          );
         }
       }
     });

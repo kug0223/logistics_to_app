@@ -525,11 +525,15 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
   Future<void> _handleCreateTO(BuildContext context, BusinessModel business) async {
     final user = Provider.of<UserProvider>(context, listen: false).currentUser;
     if (user != null) {
+      final workTypes = await _firestoreService.getBusinessWorkTypes(business.id);
       if (!context.mounted) return;
       final canProceed = await checkTOPrerequisites(
         context,
         hasApprovedBusiness: true,
+        hasWorkTypes: workTypes.isNotEmpty,
+        hasSeal: user.sealBase64 != null && user.sealBase64!.isNotEmpty,
         hasLicense: user.businessLicenseImageUrl != null,
+        approvedBusiness: business,
       );
       // checkTOPrerequisites 자체가 내부적으로 다이얼로그를 띄우므로
       //           완료 후 위젯이 dispose될 수 있음 — await 이후 mounted 체크 필수.
