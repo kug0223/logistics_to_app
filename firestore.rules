@@ -463,8 +463,12 @@ service cloud.firestore {
                          request.resource.data.pendingCount >= 0 &&
                          (request.resource.data.pendingCount == resource.data.pendingCount + 1 ||
                           request.resource.data.pendingCount == resource.data.pendingCount - 1);
-        // 지원자: 계약해지 수락 시 confirmedCount 감소만 허용 (음수 방지, +1 차단)
+        // 지원자: 확정 취소 시 confirmedCount 감소만 허용 (음수 방지, +1 차단)
         // [MED-04-FIX] +1도 허용하면 USER가 무한히 카운터를 올릴 수 있음 → -1만 허용
+        // [SEC-WARN] 알려진 취약점: USER가 application 변경 없이 이 규칙만 단독으로 호출 가능
+        //   → confirmedCount를 낮춰 FULL 슬롯을 OPEN으로 위장하는 정원 초과 지원 허용 가능
+        //   현재 완화 수단: confirmedCount >= 0 하한 / syncTOStats CF 주기적 정합성 복구
+        //   근본 해결: cancelConfirmedApplication을 CF로 이전(Admin SDK 처리) 시 이 규칙 제거 가능
         allow update: if isLoggedIn() && isUser() &&
                          request.resource.data.diff(resource.data).affectedKeys()
                            .hasOnly(['confirmedCount', 'workTypeCounts']) &&
@@ -523,6 +527,16 @@ service cloud.firestore {
                        request.resource.data.status == 'CANCELED' &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status', 'canceledAt', 'cancelReason', 'statusHistory'])) ||
+                      // 확정 취소 (본인: CONFIRMED/CONTRACT_PENDING → CANCELED)
+                      // [APP-CCANCEL] schedule_card(단기 전용, applyNoShowPenalty=false, canceledBy 없음)
+                      //              apply_work_dialog(단기/장기, 출퇴근 기록 없는 경우, 당일 취소 시 noShowPenalty CF 별도 호출)
+                      // cancelMessage·canceledBy는 관리자 취소에만 기록되므로 hasOnly에서 제외
+                      (isOwner(resource.data.uid) &&
+                       (resource.data.status == 'CONFIRMED' ||
+                        resource.data.status == 'CONTRACT_PENDING') &&
+                       request.resource.data.status == 'CANCELED' &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['status', 'canceledAt', 'cancelReason', 'statusHistory'])) ||
                       // 자동 만료 (본인: PENDING → AUTO_CANCELED)
                       (isOwner(resource.data.uid) &&
                        resource.data.status == 'PENDING' &&
@@ -568,13 +582,15 @@ service cloud.firestore {
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['terminationStatus', 'terminationRespondedAt',
                                    'actualResignDate', 'status'])) ||
-                      // 관리자: uid·businessId·toId·workDetailId 불변
-                      // slotId는 의도적으로 허용 — 파트 변경 기능 (근무자를 다른 슬롯으로 이동)
-                      // workDetailId는 차단 — TO 내 다른 workDetail로 이동은 실질적 재계약에 해당
+                      // 관리자: uid·businessId·toId 불변
+                      // slotId 허용 — 파트 변경 기능 (근무자를 다른 슬롯으로 이동)
+                      // workDetailId 허용 — changeApplicationWorkType(파트 변경) 시 TO 내 다른 workDetail로 이동 필요
+                      //   UI에서 현재 파트를 제외한 다른 파트만 선택 가능 (work_applicants_dialog.dart L1789)
+                      //   원본 파트·임금은 originalWorkType/originalWage에 보존됨
                       ((isAdminOf(resource.data.businessId) ||
                         isSubAdminOf(resource.data.businessId)) &&
                        !request.resource.data.diff(resource.data).affectedKeys()
-                         .hasAny(['uid', 'businessId', 'toId', 'workDetailId']) &&
+                         .hasAny(['uid', 'businessId', 'toId']) &&
                        // [S-M1-FIX] resignStatus 상태 전이 검증
                        // 관리자도 PENDING 없이 직접 APPROVED·REJECTED 설정 불가
                        (!request.resource.data.diff(resource.data).affectedKeys()

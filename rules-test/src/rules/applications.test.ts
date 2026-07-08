@@ -256,12 +256,37 @@ describe('APP-UPDATE: 상태 전이 및 필드 수정', () => {
     }));
   });
 
-  test('APP-UPDATE-02 ❌ 본인이 CONFIRMED 지원서를 직접 CANCELED로 취소 불가 (관리자 개입 필요)', async () => {
+  // [APP-CCANCEL] 설계 변경: USER가 CONFIRMED 확정 취소 가능
+  //   - schedule_card(단기 전용, noShowPenalty=false), apply_work_dialog(단기/장기, 출퇴근 기록 없는 경우)
+  //   - canceledBy 없음, cancelMessage 없음 — 허용 필드: status/canceledAt/cancelReason/statusHistory 만
+  test('APP-UPDATE-02 ✅ 본인이 CONFIRMED 지원서를 올바른 필드로 CANCELED로 취소 가능', async () => {
+    await seedDoc(env, 'applications', APP_ID, { ...baseApp, status: 'CONFIRMED' });
+    const db = getAuth(env, IDS.user);
+    await assertSucceeds(updateDoc(doc(db, 'applications', APP_ID), {
+      status: 'CANCELED',
+      canceledAt: new Date(),
+      cancelReason: 'USER_CANCELED',
+    }));
+  });
+
+  test('APP-UPDATE-02b ❌ CONFIRMED 취소 시 canceledBy(관리자 필드) 포함 불가', async () => {
     await seedDoc(env, 'applications', APP_ID, { ...baseApp, status: 'CONFIRMED' });
     const db = getAuth(env, IDS.user);
     await assertFails(updateDoc(doc(db, 'applications', APP_ID), {
       status: 'CANCELED',
       canceledAt: new Date(),
+      cancelReason: 'USER_CANCELED',
+      canceledBy: 'someAdminUid',  // USER 취소에는 없는 필드 → 차단
+    }));
+  });
+
+  test('APP-UPDATE-02c ✅ 본인이 CONTRACT_PENDING 지원서도 CANCELED로 취소 가능', async () => {
+    await seedDoc(env, 'applications', APP_ID, { ...baseApp, status: 'CONTRACT_PENDING' });
+    const db = getAuth(env, IDS.user);
+    await assertSucceeds(updateDoc(doc(db, 'applications', APP_ID), {
+      status: 'CANCELED',
+      canceledAt: new Date(),
+      cancelReason: 'USER_CANCELED',
     }));
   });
 
