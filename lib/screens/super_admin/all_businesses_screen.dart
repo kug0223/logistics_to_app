@@ -93,6 +93,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
           business: businesses[i],
           ownerName: ownerInfos[i].name,
           ownerEmail: ownerInfos[i].email,
+          adminCount: businesses[i].adminIds.length,
         );
       });
 
@@ -361,8 +362,8 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
 
             _buildInfoRow(
               icon: Icons.person,
-              label: '소유자',
-              value: '${item.ownerName}${item.ownerEmail.isNotEmpty ? " (${item.ownerEmail})" : ""}',
+              label: '관리자',
+              value: '${item.ownerName}${item.ownerEmail.isNotEmpty ? " (${item.ownerEmail})" : ""}${item.adminCount > 1 ? " 외 ${item.adminCount - 1}명" : ""}',
               color: AppColors.purple,
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -446,10 +447,12 @@ class _BusinessWithOwner {
   final BusinessModel business;
   final String ownerName;
   final String ownerEmail;
+  final int adminCount;
 
   _BusinessWithOwner({
     required this.business,
     required this.ownerName,
     required this.ownerEmail,
+    required this.adminCount,
   });
 }

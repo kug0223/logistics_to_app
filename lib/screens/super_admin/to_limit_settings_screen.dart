@@ -113,10 +113,13 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
         final data = doc.data();
         final custom =
             (data['maxActiveTOs'] as num?)?.toInt();
+        final managedBizCount =
+            (data['managedBusinessIds'] as List? ?? []).length;
         return _AdminItem(
           uid: doc.id,
           name: data['name'] as String? ?? '이름 없음',
           businessName: data['businessName'] as String?,
+          managedBizCount: managedBizCount,
           customLimit: custom,
           ctrl: TextEditingController(
               text: custom != null ? custom.toString() : ''),
@@ -342,7 +345,11 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
                     Text(admin.name,
                         style: ResponsiveHelper.bodyStyle(context)
                             .copyWith(fontWeight: FontWeight.bold)),
-                    if (admin.businessName != null)
+                    if (admin.managedBizCount > 1)
+                      Text('${admin.managedBizCount}개 사업장 관리 중',
+                          style: ResponsiveHelper.smallStyle(context,
+                              color: AppColors.textSecondary))
+                    else if (admin.businessName != null)
                       Text(admin.businessName!,
                           style: ResponsiveHelper.smallStyle(context,
                               color: AppColors.textSecondary)),
@@ -428,6 +435,7 @@ class _AdminItem {
   final String uid;
   final String name;
   final String? businessName;
+  final int managedBizCount;
   int? customLimit;
   final TextEditingController ctrl;
   bool isSaving = false;
@@ -436,6 +444,7 @@ class _AdminItem {
     required this.uid,
     required this.name,
     this.businessName,
+    this.managedBizCount = 0,
     this.customLimit,
     required this.ctrl,
   });
