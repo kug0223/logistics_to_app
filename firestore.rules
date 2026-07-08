@@ -424,7 +424,14 @@ service cloud.firestore {
                         isSuperAdmin());
 
       match /workDetails/{workDetailId} {
-        allow read: if isLoggedIn();
+        // SEC-WD: 미발행 TO의 workDetails(임금 등 상세) 노출 차단 — slots와 동일한 isPublished 가드 적용
+        //   관리자는 미발행 상태에서도 접근 허용 (TO 작성/검토 필요)
+        //   일반 사용자는 부모 TO가 isPublished==true인 경우에만 허용
+        allow read: if isLoggedIn() && (
+                      isToAdmin(toId) || isSuperAdmin() ||
+                      get(/databases/$(database)/documents/tos/$(toId))
+                        .data.get('isPublished', false) == true
+                    );
         allow write: if isLoggedIn() && (isToAdmin(toId) || isSuperAdmin());
 
 
@@ -525,7 +532,10 @@ service cloud.firestore {
                       // 재지원 (본인: CANCELED/AUTO_CANCELED/REJECTED → PENDING, uid/businessId/toId 불변)
                       // [035] AUTO_CANCELED 상태에서도 재지원 허용
                       // [APP-036] REJECTED 상태에서도 재지원 허용 — 코드 설계 의도(application_firestore.dart:437)와 일치
+                      // [SEC-REA] 재지원 경로에도 블랙리스트·이용제한 체크 적용 (CREATE 우회 방지)
                       (isOwner(resource.data.uid) &&
+                       isNotBlacklisted() &&
+                       isNotRestricted() &&
                        (resource.data.status == 'CANCELED' ||
                         resource.data.status == 'AUTO_CANCELED' ||
                         resource.data.status == 'REJECTED') &&
