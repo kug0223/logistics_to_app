@@ -242,6 +242,17 @@ describe('APP-CREATE: 지원서 생성', () => {
       status: 'CONTRACT_PENDING',
     }));
   });
+
+  test('APP-CREATE-08 ❌ USER가 status=CONFIRMED로 지원서 직접 생성 차단 (SEC-82)', async () => {
+    const db = getAuth(env, IDS.user);
+    await assertFails(setDoc(doc(db, 'applications', 'app-fake-confirmed'), {
+      uid: IDS.user,
+      businessId: IDS.business,
+      toId: TO_ID,
+      status: 'CONFIRMED',  // PENDING이 아닌 상태로 생성 시도
+      appliedAt: new Date(),
+    }));
+  });
 });
 
 // ─────────────────────────────────────────────────────

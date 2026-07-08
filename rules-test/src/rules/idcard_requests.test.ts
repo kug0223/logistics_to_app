@@ -144,6 +144,33 @@ describe('ICAR-CREATE: 신분증 열람 요청 생성', () => {
       }),
     );
   });
+
+  test('ICAR-CREATE-06 관리자가 status=approved로 직접 생성 차단 (SEC-81)', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      setDoc(doc(db, 'idCardAccessRequests', 'icar-fake-approved'), {
+        requesterId: IDS.admin,
+        requesterBusinessId: IDS.business,
+        targetUserId: IDS.user,
+        applicationId: 'app-001',
+        status: 'approved',  // pending이 아닌 상태로 직접 생성 시도
+      }),
+    );
+  });
+
+  test('ICAR-CREATE-07 관리자가 expiresAt 포함하여 직접 생성 차단 (SEC-81)', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      setDoc(doc(db, 'idCardAccessRequests', 'icar-fake-expires'), {
+        requesterId: IDS.admin,
+        requesterBusinessId: IDS.business,
+        targetUserId: IDS.user,
+        applicationId: 'app-001',
+        status: 'pending',
+        expiresAt: '2099-01-01T00:00:00Z',  // 만료일 직접 설정로 동의 없이 열람 시도
+      }),
+    );
+  });
 });
 
 // ─── ICAR-UPDATE: 근무자 승인/거절 ────────────────────────────────────
