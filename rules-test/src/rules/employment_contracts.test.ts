@@ -217,14 +217,47 @@ describe('EC-CREATE: 계약서 생성', () => {
 // ─── EC-UPDATE: 근무자 서명 필드 수정 ────────────────────────────────
 
 describe('EC-UPDATE: 근무자 서명 (pending 상태)', () => {
-  test('EC-UPDATE-01 근무자가 서명 관련 필드만 수정 허용', async () => {
+  // SEC-91: pending_worker → completed 전이만 허용 (이전: status 목표값 무제한)
+  test('EC-UPDATE-01 근무자가 pending_worker에서 completed로 서명 완료 허용 (SEC-91)', async () => {
+    await seedDoc(env, 'employment_contracts', 'contract-worker-sign', {
+      businessId: IDS.business,
+      workerId: IDS.user,
+      applicationId: APP_ID,
+      status: 'pending_worker',
+      employerSignatureUrl: 'https://sig.example.com/employer.png',
+      employerSignatureHash: 'employer-hash-abc',
+    });
     const db = getAuth(env, IDS.user);
     await assertSucceeds(
+      updateDoc(doc(db, 'employment_contracts', 'contract-worker-sign'), {
+        workerSignatureUrl: 'https://sig.example.com/worker.png',
+        workerSignatureHash: 'abc123',
+        workerSignedAt: '2024-01-01T09:00:00Z',
+        status: 'completed',
+        updatedAt: '2024-01-01T09:00:00Z',
+      }),
+    );
+  });
+
+  test('EC-UPDATE-01b pending_employer에서 근무자 completed 직접 전환 차단 (SEC-91)', async () => {
+    // pending_employer = 관리자 서명 전 — 근무자가 직접 completed로 점프 불가
+    const db = getAuth(env, IDS.user);
+    await assertFails(
       updateDoc(doc(db, 'employment_contracts', CONTRACT), {
         workerSignatureUrl: 'https://sig.example.com/worker.png',
         workerSignatureHash: 'abc123',
         workerSignedAt: '2024-01-01T09:00:00Z',
-        status: 'pending_employer',
+        status: 'completed',
+        updatedAt: '2024-01-01T09:00:00Z',
+      }),
+    );
+  });
+
+  test('EC-UPDATE-01c pending_employer에서 근무자 voided 직접 전환 차단 (SEC-91)', async () => {
+    const db = getAuth(env, IDS.user);
+    await assertFails(
+      updateDoc(doc(db, 'employment_contracts', CONTRACT), {
+        status: 'voided',
         updatedAt: '2024-01-01T09:00:00Z',
       }),
     );
