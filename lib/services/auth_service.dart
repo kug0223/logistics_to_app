@@ -527,6 +527,73 @@ class AuthService {
         debugPrint('⚠️ 계정 삭제: monthly_reviews(작성자) 익명화 실패 (계속 진행): $e');
       }
 
+      // 3-pre3. idCardAccessRequests 전체 삭제 — users 문서 삭제 전 처리 필수 (SEC-93)
+      // isUser() 체크가 users 문서를 get()하므로 삭제 후엔 LIST PERMISSION_DENIED 발생
+      try {
+        for (final field in ['targetUserId', 'requesterId']) {
+          bool hasMore = true;
+          while (hasMore) {
+            final snap = await _firestore
+                .collection('idCardAccessRequests')
+                .where(field, isEqualTo: user.uid)
+                .limit(100)
+                .get();
+            if (snap.docs.isEmpty) break;
+            hasMore = snap.docs.length == 100;
+            final batch = _firestore.batch();
+            for (final doc in snap.docs) { batch.delete(doc.reference); }
+            await batch.commit();
+          }
+        }
+      } catch (e) {
+        debugPrint('⚠️ 계정 삭제: idCardAccessRequests 삭제 실패 (계속 진행): $e');
+      }
+
+      // 3-pre4. applications 활성 상태 → CANCELED 처리 — users 문서 삭제 전 처리 필수 (SEC-93)
+      // applications LIST 규칙이 isUser() 조건을 포함하므로 삭제 후 PERMISSION_DENIED 발생
+      try {
+        final activeDocs = (await Future.wait(
+          ['PENDING', 'CONTRACT_PENDING', 'CONFIRMED'].map((s) =>
+              _firestore.collection('applications')
+                  .where('uid', isEqualTo: user.uid)
+                  .where('status', isEqualTo: s)
+                  .get()),
+        )).expand((snap) => snap.docs).toList();
+
+        if (activeDocs.isNotEmpty) {
+          final batch = _firestore.batch();
+          final List<String> confirmedAppIds = [];
+          for (final doc in activeDocs) {
+            if (doc.data()['status'] == 'CONFIRMED') confirmedAppIds.add(doc.id);
+            batch.update(doc.reference, {
+              'status': 'CANCELED',
+              'canceledAt': FieldValue.serverTimestamp(),
+              'cancelReason': 'USER_DELETED',
+            });
+          }
+          await batch.commit();
+          for (final appId in confirmedAppIds) {
+            try {
+              final attSnap = await _firestore
+                  .collection('attendance')
+                  .where('applicationId', isEqualTo: appId)
+                  .where('status', isEqualTo: 'scheduled')
+                  .get();
+              if (attSnap.docs.isEmpty) continue;
+              final attBatch = _firestore.batch();
+              for (final attDoc in attSnap.docs) {
+                attBatch.update(attDoc.reference, {
+                  'status': 'absent',
+                  'absentReason': 'USER_DELETED',
+                  'updatedAt': FieldValue.serverTimestamp(),
+                });
+              }
+              await attBatch.commit();
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
+
       // 3. Firestore 사용자 문서 삭제 — 개인정보보호법 제21조
       // Storage URL 참조를 먼저 제거해야 broken URL 방지 (CLAUDE.md 삭제 순서 규칙)
       await _firestore.collection('users').doc(user.uid).delete();
@@ -584,84 +651,6 @@ class AuthService {
       } catch (e) {
         debugPrint('⚠️ 계정 삭제: worker_locations 삭제 실패 (계속 진행): $e');
       }
-
-      // 7. idCardAccessRequests 전체 삭제 — 개인정보보호법 제21조
-      // 신분증 열람 요청에는 requesterId·targetUserId·reason이 포함되며,
-      // 법령상 보존 의무가 없으므로 탈퇴 즉시 파기한다.
-      // (targetUserId == uid: 본인에게 온 요청 / requesterId == uid: 본인이 보낸 요청)
-      try {
-        for (final field in ['targetUserId', 'requesterId']) {
-          bool hasMore = true;
-          while (hasMore) {
-            final snap = await _firestore
-                .collection('idCardAccessRequests')
-                .where(field, isEqualTo: user.uid)
-                .limit(100)
-                .get();
-            if (snap.docs.isEmpty) break;
-            hasMore = snap.docs.length == 100;
-            final batch = _firestore.batch();
-            for (final doc in snap.docs) { batch.delete(doc.reference); }
-            await batch.commit();
-          }
-        }
-      } catch (e) {
-        debugPrint('⚠️ 계정 삭제: idCardAccessRequests 삭제 실패 (계속 진행): $e');
-      }
-
-      // 10. applications 활성 상태 → CANCELED 처리 (orphan 방지)
-      // [보존 근거 — 근로기준법 제42조 + 국세기본법]
-      //   완료된 applications(CANCELED/REJECTED 포함)는 급여·출퇴근 데이터를 담고 있으므로
-      //   3~5년 보존 의무. uid/applicantName 등 개인 식별자는 법령 기간 중 그대로 유지하며,
-      //   기간 경과 후 Cloud Scheduler로 파기 예정 (미구현 — 점검 TODO 참조).
-      try {
-        // whereIn 복합 쿼리 → PERMISSION_DENIED 방지를 위해 병렬 isEqualTo 쿼리로 대체.
-        // 한 사용자의 활성 지원서는 소수이므로 페이지네이션 없이 한 번에 처리.
-        final activeDocs = (await Future.wait(
-          ['PENDING', 'CONTRACT_PENDING', 'CONFIRMED'].map((s) =>
-              _firestore.collection('applications')
-                  .where('uid', isEqualTo: user.uid)
-                  .where('status', isEqualTo: s)
-                  .get()),
-        )).expand((snap) => snap.docs).toList();
-
-        if (activeDocs.isNotEmpty) {
-          final batch = _firestore.batch();
-          final List<String> confirmedAppIds = [];
-          for (final doc in activeDocs) {
-            if (doc.data()['status'] == 'CONFIRMED') confirmedAppIds.add(doc.id);
-            batch.update(doc.reference, {
-              'status': 'CANCELED',
-              'canceledAt': FieldValue.serverTimestamp(),
-              'cancelReason': 'USER_DELETED',
-            });
-          }
-          await batch.commit();
-          // CONFIRMED 지원서의 scheduled 출근기록 → absent 처리 (orphan 방지)
-          // 완료된 attendance는 근로기준법 제42조에 따라 그대로 보존
-          for (final appId in confirmedAppIds) {
-            try {
-              final attSnap = await _firestore
-                  .collection('attendance')
-                  .where('applicationId', isEqualTo: appId)
-                  .where('status', isEqualTo: 'scheduled')
-                  .get();
-              if (attSnap.docs.isEmpty) continue;
-              final attBatch = _firestore.batch();
-              for (final attDoc in attSnap.docs) {
-                attBatch.update(attDoc.reference, {
-                  'status': 'absent',
-                  'absentReason': 'USER_DELETED',
-                  'updatedAt': FieldValue.serverTimestamp(),
-                });
-              }
-              await attBatch.commit();
-            // 출석 배치 실패 시 무시 — 계정 삭제는 계속 진행 (best-effort 정리)
-            } catch (_) {}
-          }
-        }
-      // 스텝 10 전체 실패 무시 — 계정 삭제는 계속 진행 (출석 정리 실패가 탈퇴를 막지 않음)
-      } catch (_) {}
 
       // 11. BUSINESS_ADMIN 전용 사업장 데이터 정리
       // ──────────────────────────────────────────────────────────────
