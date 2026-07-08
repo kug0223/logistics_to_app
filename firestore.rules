@@ -994,7 +994,16 @@ service cloud.firestore {
                        (request.resource.data.status == 'APPROVED' ||
                         request.resource.data.status == 'REJECTED') &&
                        request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['status', 'respondedByUid', 'respondedAt', 'rejectReason']))
+                         .hasOnly(['status', 'respondedByUid', 'respondedAt', 'rejectReason'])) ||
+                      // 관리자/하위관리자: APPROVED → CANCELED (승인 취소) 허용
+                      // Dart cancelScheduleChangeRequest()가 APPROVED 상태에서도 호출 가능
+                      ((isAdminOf(resource.data.businessId) ||
+                        isSubAdminOf(resource.data.businessId) ||
+                        isSuperAdmin()) &&
+                       resource.data.status == 'APPROVED' &&
+                       request.resource.data.status == 'CANCELED' &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['status', 'respondedByUid', 'respondedAt']))
                     );
 
       // 관리자/하위관리자: 소속 사업장 스케줄 변경 요청 삭제 허용 (TO 삭제 시 고아 데이터 정리)

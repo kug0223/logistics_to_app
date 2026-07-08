@@ -230,6 +230,34 @@ describe('SCR-UPDATE: 상태 전이', () => {
       }),
     );
   });
+
+  test('SCR-UPDATE-08 관리자는 APPROVED→CANCELED 허용 (승인 취소)', async () => {
+    await seedDoc(env, 'schedule_change_requests', 'scr-admin-cancel-approved', {
+      ...baseReq, status: 'APPROVED',
+    });
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertSucceeds(
+      updateDoc(doc(db, 'schedule_change_requests', 'scr-admin-cancel-approved'), {
+        status: 'CANCELED',
+        respondedByUid: IDS.admin,
+        respondedAt: '2024-01-15T10:00:00Z',
+      }),
+    );
+  });
+
+  test('SCR-UPDATE-09 서브어드민도 APPROVED→CANCELED 허용', async () => {
+    await seedDoc(env, 'schedule_change_requests', 'scr-sub-cancel-approved', {
+      ...baseReq, status: 'APPROVED',
+    });
+    const db = getAuth(env, IDS.subAdmin, { subAdminOf: IDS.business });
+    await assertSucceeds(
+      updateDoc(doc(db, 'schedule_change_requests', 'scr-sub-cancel-approved'), {
+        status: 'CANCELED',
+        respondedByUid: IDS.subAdmin,
+        respondedAt: '2024-01-15T10:00:00Z',
+      }),
+    );
+  });
 });
 
 // ─── SCR-DELETE ───────────────────────────────────────────────────────
