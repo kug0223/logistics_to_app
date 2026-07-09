@@ -50,6 +50,12 @@ service firebase.storage {
     // 본인만 읽기·쓰기·삭제 허용 — Firestore 읽기 불필요 (uid 직접 비교)
     // request.resource == null: read/delete 시 incoming resource 없음 → 크기 체크 면제
     // [SEC-ST01] 업로드 시 이미지 MIME 타입만 허용
+    //
+    // [SIGNED-URL-AUDIT] 신분증(idCardImageUrl) Signed URL → 이미 구현 완료
+    //   callableGetIdCardSignedUrl CF: idCardAccessRequests 승인 확인 후 1시간 만료 URL 반환.
+    //   통장/사업자등록증 URL은 callableGetUsersBatch에서 응답 필드 제거로 노출 차단.
+    //   Firestore rules도 users/{uid} 문서를 본인·소속 관리자·슈퍼어드민만 읽을 수 있도록 제한.
+    //   → 추가 Signed URL 불필요. 재탐색 금지.
     match /users/{uid}/{allPaths=**} {
       allow read, delete:
           if isLoggedIn() && request.auth.uid == uid;
@@ -65,6 +71,12 @@ service firebase.storage {
     // [CS-01] update: if false — 이미 업로드된 서명/PDF 덮어쓰기 완전 차단
     // 로그인된 사용자가 contractId를 알더라도 서명 이미지 오염 불가
     // delete는 Firestore 트랜잭션 실패 시 CF/클라이언트 롤백 흐름에서 필요
+    //
+    // [SIGNED-URL-AUDIT] 계약서 Signed URL 불필요 — 의도된 설계.
+    //   allow read: if false → Storage SDK 직접 경로 차단 (다운로드 URL 토큰만 유효).
+    //   계약서 URL은 근로자·고용주 당사자 모두 접근해야 하는 공유 데이터.
+    //   Firestore rules의 isContractParty() 가드가 URL 노출 경로를 제한.
+    //   → 추가 Signed URL 불필요. 재탐색 금지.
     match /contracts/{contractId}/{allPaths=**} {
       // [H-1] 다운로드 URL 토큰으로만 접근 — Storage SDK 직접 경로 차단
       // contract_service.dart에서 getDownloadURL() 반환 URL로만 접근하므로 기능 영향 없음

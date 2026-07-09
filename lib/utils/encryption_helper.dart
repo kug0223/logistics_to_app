@@ -4,6 +4,13 @@
 // 🔮 나중에: 이 파일만 교체하면 Cloud Functions로 전환 가능
 //
 // 키는 dart-define 환경변수로 주입 → GitHub에 절대 노출 안 됨
+// dart_defines.json / config/dev / config/prod 모두 .gitignore 제외 확인 완료 (2026-07-09)
+//
+// [AES-IV-AUDIT] 고정 IV → 랜덤 IV 전환 완료 — 재탐색 금지.
+//   encrypt(): enc.IV.fromSecureRandom(16)으로 매 호출마다 랜덤 IV 생성.
+//   저장 형식: base64(randomIV) + ":" + base64(ciphertext)
+//   decrypt(): ":" 포함 여부로 신규(랜덤 IV) / 레거시(고정 IV) 자동 구분.
+//   ENCRYPT_IV(_legacyIvString)는 이전 데이터 복호화 전용 — 신규 암호화에 미사용.
 
 import 'package:encrypt/encrypt.dart' as enc;
 import 'package:flutter/foundation.dart';

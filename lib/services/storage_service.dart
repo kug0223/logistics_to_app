@@ -4,6 +4,23 @@ import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart' show XFile;
 
 /// Firebase Storage 서비스
+///
+/// [SIGNED-URL-AUDIT] 파일 유형별 Signed URL 적용 현황 — 재탐색 금지.
+///
+/// ① 신분증(idCardImageUrl): callableGetIdCardSignedUrl CF로 1시간 만료 Signed URL 발급.
+///    idCardAccessRequests 승인 확인 후 반환. 이미 완전 구현됨.
+///
+/// ② 계약서(signature_*.png, contract.pdf): Storage rules allow read: if false
+///    → SDK 직접 경로 접근 차단. 다운로드 URL 토큰 방식이 실질 보호막.
+///    계약 당사자 공유 파일이므로 추가 Signed URL 불필요.
+///
+/// ③ 통장사본/사업자등록증(bankbookImageUrl 등): users/{uid}/... 경로,
+///    Storage rules에서 본인(uid)만 읽기 허용.
+///    callableGetUsersBatch CF가 배치 응답에서 bankbookImageUrl 필드 제거.
+///    Firestore rules도 users/{uid} 문서 접근을 본인·소속 관리자로 제한.
+///    → 추가 Signed URL 불필요.
+///
+/// ④ 프로필 사진/사업장 이미지: 민감 데이터 아님. 공개 URL 적합.
 class StorageService {
   final FirebaseStorage _storage = FirebaseStorage.instance;
 
