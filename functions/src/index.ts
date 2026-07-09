@@ -717,6 +717,32 @@ export const masterScheduler = onSchedule(
     }
 
     // ═══════════════════════════════════════════════════════
+    // ✅ 매 시간 실행 — pending_token_revocations 재처리 (세션 무효화 실패 retry)
+    // ═══════════════════════════════════════════════════════
+    try {
+      const pendingRevocations = await db.collection("pending_token_revocations").limit(50).get();
+      if (!pendingRevocations.empty) {
+        let revokeSuccessCount = 0;
+        for (const revDoc of pendingRevocations.docs) {
+          const data = revDoc.data();
+          const targetUid = data.uid as string | undefined;
+          if (!targetUid) { await revDoc.ref.delete(); continue; }
+          try {
+            await admin.auth().revokeRefreshTokens(targetUid);
+            await revDoc.ref.delete();
+            revokeSuccessCount++;
+          } catch (retryErr) {
+            // 재시도 실패 — 다음 실행까지 유지
+            console.warn(`[세션무효화-retry] 재시도 실패 uid=${targetUid}:`, retryErr);
+          }
+        }
+        if (revokeSuccessCount > 0) {
+          console.log(`✅ [세션무효화-retry] ${revokeSuccessCount}건 성공`);
+        }
+      }
+    } catch (e) { console.error("❌ [세션무효화-retry] 실패:", e); }
+
+    // ═══════════════════════════════════════════════════════
     // ✅ 저녁 8시에만 실행 (20:00 ~ 20:09)
     // ═══════════════════════════════════════════════════════
     if (hour === 20 && minute < 10) {
@@ -1201,7 +1227,9 @@ export const onReviewCreated = onDocumentCreated(
       const req = reqSnap.data()!;
 
       // 소유자 검증 (트랜잭션 안에서 수행 — 외부 읽기 제거)
-      if (reviewType === "USER_TO_BUSINESS" && req.workerId !== reviewerId) {
+      // USER_TO_BUSINESS: 익명 리뷰라 reviewerId 필드 없음 — Firestore rules에서 작성자 검증
+      // ADMIN_TO_USER: reviewerId가 review_request.workerId와 일치해야 함 (J-2 버그 수정)
+      if (reviewType !== "USER_TO_BUSINESS" && req.workerId !== reviewerId) {
         blocked = true;
         return;
       }
@@ -3204,6 +3232,12 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           await admin.auth().revokeRefreshTokens(app.uid as string);
         } catch (tokenErr) {
           console.warn(`[퇴직] revokeRefreshTokens 실패 uid=${app.uid}: ${tokenErr}`);
+          await db.collection("pending_token_revocations").doc(app.uid as string).set({
+            uid: app.uid,
+            reason: "RESIGNATION_AUTO_APPROVED",
+            applicationId: app.id,
+            failedAt: now,
+          }).catch(() => {/* 기록 실패는 무시 */});
         }
 
         // [R-H4/H5/H6-FIX] AUTO_APPROVED 수동 approveResignation()과 동일하게 3가지 정리 추가
@@ -3361,6 +3395,12 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           await admin.auth().revokeRefreshTokens(app.uid as string);
         } catch (tokenErr) {
           console.warn(`[퇴직] revokeRefreshTokens 실패 uid=${app.uid}: ${tokenErr}`);
+          await db.collection("pending_token_revocations").doc(app.uid as string).set({
+            uid: app.uid,
+            reason: "TERMINATION_AUTO_APPROVED",
+            applicationId: app.id,
+            failedAt: now,
+          }).catch(() => {/* 기록 실패는 무시 */});
         }
 
         // [R-H5/H6-FIX] AUTO_APPROVED 수동 approveTermination()과 동일하게 계약서+카운터 정리
@@ -3820,11 +3860,28 @@ export const onBusinessDeleted = onDocumentDeleted(
     console.log(`사업장 삭제 cascade 시작: ${businessId}`);
 
     // [STRUCT-07] limit 없는 get()은 수만 건 문서 시 CF 메모리 초과 위험 — 500건 단위 페이지네이션으로 안전 삭제
+    const PAGE = 499; // Firestore batch 500건 제한 안전 마진
     async function deleteSubcollection(collPath: string) {
-      const PAGE = 499; // Firestore batch 500건 제한 안전 마진
       let last: FirebaseFirestore.DocumentSnapshot | undefined;
       while (true) {
         let q: FirebaseFirestore.Query = db.collection(collPath).limit(PAGE);
+        if (last) q = q.startAfter(last);
+        const snap = await q.get();
+        if (snap.empty) break;
+        const batch = db.batch();
+        snap.docs.forEach((doc) => batch.delete(doc.ref));
+        await batch.commit();
+        if (snap.docs.length < PAGE) break;
+        last = snap.docs[snap.docs.length - 1];
+      }
+    }
+    // [M-3] businessId 필드 기준 페이지네이션 삭제 헬퍼
+    async function deleteByBusinessId(collectionPath: string) {
+      let last: FirebaseFirestore.DocumentSnapshot | undefined;
+      while (true) {
+        let q: FirebaseFirestore.Query = db.collection(collectionPath)
+          .where("businessId", "==", businessId)
+          .limit(PAGE);
         if (last) q = q.startAfter(last);
         const snap = await q.get();
         if (snap.empty) break;
@@ -3839,6 +3896,7 @@ export const onBusinessDeleted = onDocumentDeleted(
     // 서브컬렉션 삭제
     await deleteSubcollection(`businesses/${businessId}/workTypes`);
     await deleteSubcollection(`businesses/${businessId}/members`);
+    await deleteSubcollection(`businesses/${businessId}/contract_templates`); // [B-M1-FIX]
 
     // [BB-001] 수락된 멤버의 subAdminOf 초기화 + 초대 문서 삭제
     const acceptedInviteSnap = await db
@@ -4024,6 +4082,14 @@ export const onBusinessDeleted = onDocumentDeleted(
       if (idCardCount % 500 !== 0) await idCardBatch.commit();
     }
 
+    // [M-3] 고아 데이터 cascade — schedule_change_requests, employment_contracts,
+    //       monthly_reviews, payment_change_requests, interim_settlement_requests
+    await deleteByBusinessId("schedule_change_requests");
+    await deleteByBusinessId("employment_contracts");
+    await deleteByBusinessId("monthly_reviews");
+    await deleteByBusinessId("payment_change_requests");
+    await deleteByBusinessId("interim_settlement_requests");
+
     // [NEW-08] review_requests 정리 — 사업장 연관 리뷰 요청 삭제
     const reviewRequestsSnap = await db
       .collection("review_requests")
@@ -4097,6 +4163,90 @@ export const initiatePassAuth = onCall(
   }
 );
 
+// ── callableBlacklistUser ────────────────────────────────
+// 블랙리스트 등록 + Firebase Auth 세션 즉시 무효화 (슈퍼어드민 전용)
+// revokeRefreshTokens는 Admin SDK 필요 → CF 경유 필수
+// Input:  { targetUid: string, blacklistReason: string }
+// Output: { success: true }
+export const callableBlacklistUser = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    if (callerSnap.data()?.role !== "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "슈퍼어드민만 사용 가능합니다.");
+    }
+    const {targetUid, blacklistReason} = request.data as {targetUid: string; blacklistReason: string};
+    if (!targetUid || typeof targetUid !== "string") {
+      throw new HttpsError("invalid-argument", "targetUid가 올바르지 않습니다.");
+    }
+    if (!blacklistReason || typeof blacklistReason !== "string" || blacklistReason.length > 500) {
+      throw new HttpsError("invalid-argument", "사유가 올바르지 않습니다 (최대 500자).");
+    }
+    // targetUid 존재 여부 사전 확인 (없으면 update가 NOT_FOUND 에러 — 의미 있는 메시지로 대체)
+    const targetSnap = await db.collection("users").doc(targetUid).get();
+    if (!targetSnap.exists) {
+      throw new HttpsError("not-found", "대상 사용자를 찾을 수 없습니다.");
+    }
+    await db.collection("users").doc(targetUid).update({
+      isBlacklisted: true,
+      blacklistReason,
+      blacklistedBy: callerUid,
+      blacklistedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    try {
+      await admin.auth().revokeRefreshTokens(targetUid);
+    } catch (err) {
+      console.error(`[블랙리스트] revokeRefreshTokens 실패: ${targetUid}`, err);
+      await db.collection("pending_token_revocations").add({
+        uid: targetUid,
+        reason: "blacklist",
+        failedAt: admin.firestore.FieldValue.serverTimestamp(),
+        callerUid,
+      });
+    }
+    return {success: true};
+  }
+);
+
+// ── callableSaveSeal ─────────────────────────────────────
+// 인감/서명 등록·삭제 — Admin SDK 경유로 sealBase64 필드를 저장.
+// firestore.rules에서 클라이언트 직접 쓰기를 차단하므로 반드시 이 CF 경유 필요.
+// Input:  { sealBase64: string|null, sealType: 'stamp'|'signature' }
+// Output: { success: true }
+export const callableSaveSeal = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    const {sealBase64, sealType} = request.data as {sealBase64: string | null; sealType: string};
+
+    if (!["stamp", "signature"].includes(sealType)) {
+      throw new HttpsError("invalid-argument", "sealType이 올바르지 않습니다.");
+    }
+
+    // base64 500KB 원본 기준 → base64 문자열 최대 ~670KB
+    if (sealBase64 && sealBase64.length > 700000) {
+      throw new HttpsError("invalid-argument", "이미지 크기가 너무 큽니다 (최대 500KB).");
+    }
+    // base64 포맷 검증 — 임의 바이너리/스크립트 저장 방지 (data URI 접두어 포함 허용)
+    if (sealBase64) {
+      const b64Body = sealBase64.startsWith("data:") ? sealBase64.split(",")[1] : sealBase64;
+      if (!b64Body || !/^[A-Za-z0-9+/]+=*$/.test(b64Body)) {
+        throw new HttpsError("invalid-argument", "sealBase64가 유효한 Base64 형식이 아닙니다.");
+      }
+    }
+
+    await db.collection("users").doc(uid).update({
+      sealBase64: sealBase64 ?? null,
+      sealType: sealBase64 ? sealType : "stamp",
+    });
+
+    return {success: true};
+  }
+);
+
 // ── verifyPassAuth ───────────────────────────────────────
 // 다날 encData 복호화 → 연령/CI 중복/재가입 검증 → passToken(15분) 발급
 // Input:  { encData, txSeq, purpose, role? }
@@ -4113,6 +4263,10 @@ export const verifyPassAuth = onCall(
 
     if (!purpose || !["register", "resetPassword"].includes(purpose)) {
       throw new HttpsError("invalid-argument", "purpose가 올바르지 않습니다.");
+    }
+
+    if (!["USER", "BUSINESS_ADMIN"].includes(role)) {
+      throw new HttpsError("invalid-argument", "role이 올바르지 않습니다.");
     }
 
     const isMock = process.env.DANAL_MOCK_MODE === "true";
@@ -5179,6 +5333,150 @@ export const onTOStatusChanged = onDocumentUpdated(
 );
 
 // ═══════════════════════════════════════════════════════════
+// 🗑️ TO 삭제 cascade (H-10 서버 사이드 안전망)
+// ═══════════════════════════════════════════════════════════
+/**
+ * 클라이언트의 deleteTO()가 네트워크 단절 등으로 미완료됐을 때 고아 데이터 방지.
+ * 처리 순서: slots → applications → attendance → schedule_change_requests → notifications
+ * - wageTransferred / wageConfirmed 상태 attendance는 임금 정산 완료이므로 보존.
+ * - 이미 삭제된 문서에 대한 batch.delete()는 Firestore가 no-op 처리 → 멱등 보장.
+ */
+export const onTODeleted = onDocumentDeleted(
+  {
+    document: "tos/{toId}",
+    region: "asia-northeast3",
+    retry: true,
+  },
+  async (event) => {
+    const toId = event.params.toId;
+    const snap = event.data;
+    if (!snap) return;
+    const toData = snap.data();
+    const businessId = toData?.businessId as string | undefined;
+
+    console.log(`[onTODeleted] cascade 시작: toId=${toId}, businessId=${businessId}`);
+
+    const PAGE = 499;
+
+    // ── 1. slots 서브컬렉션 삭제 ──
+    {
+      const slotsRef = db.collection(`tos/${toId}/slots`);
+      let last: FirebaseFirestore.DocumentSnapshot | undefined;
+      while (true) {
+        let q: FirebaseFirestore.Query = slotsRef.limit(PAGE);
+        if (last) q = q.startAfter(last);
+        const snap2 = await q.get();
+        if (snap2.empty) break;
+        const batch = db.batch();
+        snap2.docs.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+        if (snap2.docs.length < PAGE) break;
+        last = snap2.docs[snap2.docs.length - 1];
+      }
+    }
+
+    // ── 2. applications 수집 ──
+    const appQuery = db.collection("applications").where("toId", "==", toId);
+    const appSnap = await appQuery.get();
+    const appIds: string[] = appSnap.docs.map((d) => d.id);
+
+    // applications 삭제
+    if (appSnap.docs.length > 0) {
+      let batch = db.batch();
+      let count = 0;
+      for (const d of appSnap.docs) {
+        batch.delete(d.ref);
+        count++;
+        if (count >= PAGE) {
+          await batch.commit();
+          batch = db.batch();
+          count = 0;
+        }
+      }
+      if (count > 0) await batch.commit();
+    }
+
+    // ── 3. attendance 삭제 (wageTransferred / wageConfirmed 보존) ──
+    const WAGE_DONE = ["wageTransferred", "wageConfirmed"];
+    for (let i = 0; i < appIds.length; i += 30) {
+      const chunk = appIds.slice(i, i + 30);
+      const attSnaps = await Promise.all(
+        chunk.map((appId) =>
+          db.collection("attendance")
+            .where("applicationId", "==", appId)
+            .get()
+        )
+      );
+      const attDocs = attSnaps.flatMap((s) => s.docs);
+      if (attDocs.length > 0) {
+        let batch = db.batch();
+        let count = 0;
+        for (const d of attDocs) {
+          const wageStatus = d.data().wageStatus as string | undefined;
+          if (wageStatus && WAGE_DONE.includes(wageStatus)) continue;
+          batch.delete(d.ref);
+          count++;
+          if (count >= PAGE) {
+            await batch.commit();
+            batch = db.batch();
+            count = 0;
+          }
+        }
+        if (count > 0) await batch.commit();
+      }
+    }
+
+    // ── 4. schedule_change_requests 삭제 ──
+    for (let i = 0; i < appIds.length; i += 30) {
+      const chunk = appIds.slice(i, i + 30);
+      const reqSnaps = await Promise.all(
+        chunk.map((appId) =>
+          db.collection("schedule_change_requests")
+            .where("applicationId", "==", appId)
+            .get()
+        )
+      );
+      const reqDocs = reqSnaps.flatMap((s) => s.docs);
+      if (reqDocs.length > 0) {
+        let batch = db.batch();
+        let count = 0;
+        for (const d of reqDocs) {
+          batch.delete(d.ref);
+          count++;
+          if (count >= PAGE) {
+            await batch.commit();
+            batch = db.batch();
+            count = 0;
+          }
+        }
+        if (count > 0) await batch.commit();
+      }
+    }
+
+    // ── 5. notifications 삭제 (toId 기준) ──
+    if (businessId) {
+      let last: FirebaseFirestore.DocumentSnapshot | undefined;
+      while (true) {
+        let q: FirebaseFirestore.Query = db.collection("notifications")
+          .where("toId", "==", toId)
+          .where("businessId", "==", businessId)
+          .limit(PAGE);
+        if (last) q = q.startAfter(last);
+        const notifSnap = await q.get();
+        if (notifSnap.empty) break;
+        const batch = db.batch();
+        notifSnap.docs.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+        if (notifSnap.docs.length < PAGE) break;
+        last = notifSnap.docs[notifSnap.docs.length - 1];
+      }
+    }
+
+    console.log(`[onTODeleted] cascade 완료: toId=${toId}, apps=${appIds.length}`);
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
 // 🪪 신분증 서명 URL 발급 (ID-1 보안: Firestore 평문 URL 직접 노출 차단)
 // ═══════════════════════════════════════════════════════════
 /**
@@ -5872,30 +6170,51 @@ export const callableDecrementSlotConfirmed = onCall(
       throw new HttpsError("permission-denied", "해당 지원서에 대한 권한이 없습니다.");
     }
 
+    // workType 교차검증 — 클라이언트 제공 값 대신 appData.selectedWorkType 사용
+    const appWorkType = (appData.selectedWorkType as string | undefined) ?? null;
+    if (workType && appWorkType && workType !== appWorkType) {
+      throw new HttpsError("permission-denied", "workType이 지원서와 일치하지 않습니다.");
+    }
+    const resolvedWorkType = appWorkType ?? workType;
+
     const toRef = db.collection("tos").doc(toId);
-    const toUpdate: Record<string, admin.firestore.FieldValue> = {
-      totalConfirmed: admin.firestore.FieldValue.increment(-1),
-    };
-    // 슬롯 없는 장기 TO: 업무유형별 확정인원 추적
-    if (!slotId && workType) {
-      toUpdate[`workTypeConfirmedCounts.${workType}`] = admin.firestore.FieldValue.increment(-1);
-    }
 
-    const batch = db.batch();
-    batch.update(toRef, toUpdate);
-
-    if (slotId) {
-      const slotRef = toRef.collection("slots").doc(slotId);
-      const slotUpdate: Record<string, admin.firestore.FieldValue> = {
-        confirmedCount: admin.firestore.FieldValue.increment(-1),
-      };
-      if (workType) {
-        slotUpdate[`workTypeCounts.${workType}.confirmedCount`] = admin.firestore.FieldValue.increment(-1);
+    // [MEDIUM-FIX] batch → transaction: 음수 방지(floor) + 멱등성 보장
+    // 동일 applicationId 중복 호출 시 totalConfirmed 음수화 → 정원 초과 지원 허용 취약점 차단
+    await db.runTransaction(async (tx) => {
+      const freshAppRef = db.collection("applications").doc(applicationId);
+      const freshAppSnap = await tx.get(freshAppRef);
+      const freshAppData = freshAppSnap.data()!;
+      // 멱등성: 이미 처리된 요청은 no-op
+      if (freshAppData.confirmedDecrementedAt) {
+        return;
       }
-      batch.update(slotRef, slotUpdate);
-    }
-
-    await batch.commit();
+      // 음수 방지: totalConfirmed가 이미 0 이하이면 중단
+      const toSnap = await tx.get(toRef);
+      const currentConfirmed = (toSnap.data()?.totalConfirmed as number) ?? 0;
+      if (currentConfirmed <= 0) {
+        tx.update(freshAppRef, {confirmedDecrementedAt: admin.firestore.FieldValue.serverTimestamp()});
+        return;
+      }
+      const toUpdate: Record<string, admin.firestore.FieldValue> = {
+        totalConfirmed: admin.firestore.FieldValue.increment(-1),
+      };
+      if (!slotId && resolvedWorkType) {
+        toUpdate[`workTypeConfirmedCounts.${resolvedWorkType}`] = admin.firestore.FieldValue.increment(-1);
+      }
+      tx.update(toRef, toUpdate);
+      if (slotId) {
+        const slotRef = toRef.collection("slots").doc(slotId);
+        const slotUpdate: Record<string, admin.firestore.FieldValue> = {
+          confirmedCount: admin.firestore.FieldValue.increment(-1),
+        };
+        if (resolvedWorkType) {
+          slotUpdate[`workTypeCounts.${resolvedWorkType}.confirmedCount`] = admin.firestore.FieldValue.increment(-1);
+        }
+        tx.update(slotRef, slotUpdate);
+      }
+      tx.update(freshAppRef, {confirmedDecrementedAt: admin.firestore.FieldValue.serverTimestamp()});
+    });
     console.log(`✅ slot confirmedCount 감소 — appId:${applicationId} toId:${toId} slotId:${slotId ?? "none"}`);
   },
 );
@@ -5995,6 +6314,16 @@ export const callableAutoConflictCancel = onCall(
     if (!confirmedAppId || !targetUid || !businessId) {
       throw new HttpsError("invalid-argument", "필수 파라미터 누락 (confirmedAppId, targetUid, businessId)");
     }
+    // 표시용 필드 길이 제한 (Firestore 문서에 그대로 저장됨)
+    if (businessName && typeof businessName === "string" && businessName.length > 100) {
+      throw new HttpsError("invalid-argument", "businessName은 100자를 초과할 수 없습니다.");
+    }
+    if (startTime && typeof startTime === "string" && startTime.length > 10) {
+      throw new HttpsError("invalid-argument", "startTime 형식이 올바르지 않습니다.");
+    }
+    if (endTime && typeof endTime === "string" && endTime.length > 10) {
+      throw new HttpsError("invalid-argument", "endTime 형식이 올바르지 않습니다.");
+    }
 
     // 1. 권한 검증 — SUPER_ADMIN / 사업장 adminIds/ownerId / SubAdmin(subAdminOf===businessId)
     const callerSnap = await db.collection("users").doc(callerUid).get();
@@ -6021,9 +6350,22 @@ export const callableAutoConflictCancel = onCall(
     if (confirmedAppData.uid !== targetUid) {
       throw new HttpsError("permission-denied", "targetUid가 지원서와 일치하지 않습니다.");
     }
+    // 호출자의 businessId와 확정 지원서의 businessId가 일치해야 함
+    if (confirmedAppData.businessId !== businessId) {
+      throw new HttpsError("permission-denied", "확정 지원서가 해당 사업장에 속하지 않습니다.");
+    }
     if (!["CONTRACT_PENDING", "CONFIRMED"].includes(confirmedAppData.status as string)) {
       throw new HttpsError("failed-precondition", `확정/계약 대기 상태가 아닙니다: ${confirmedAppData.status}`);
     }
+
+    // 스케줄 정보는 confirmedAppData에서 직접 읽어 클라이언트 파라미터 우회 방지
+    const confirmedIsLongTerm = (confirmedAppData.isLongTerm as boolean | undefined) ?? isLongTerm;
+    const confirmedStartDate = (confirmedAppData.startDate as number | undefined) ?? startDate;
+    const confirmedEndDate = (confirmedAppData.endDate as number | undefined) ?? endDate;
+    const confirmedWorkDays = (confirmedAppData.workDays as string[] | undefined) ?? workDays;
+    const confirmedStartTime = (confirmedAppData.startTime as string | undefined) ?? startTime;
+    const confirmedEndTime = (confirmedAppData.endTime as string | undefined) ?? endTime;
+    const confirmedWorkDate = (confirmedAppData.workDate as number | undefined) ?? workDate;
 
     // 3. uid로 충돌 가능 지원서 전체 조회 (Admin SDK — 타사업장 포함)
     const allAppsSnap = await db.collection("applications")
@@ -6031,14 +6373,14 @@ export const callableAutoConflictCancel = onCall(
       .where("status", "in", ["PENDING", "CONFIRMED", "CONTRACT_PENDING"])
       .get();
 
-    // 4. 충돌 필터링
+    // 4. 충돌 필터링 (서버측 confirmedAppData 값 우선 사용)
     const conflicting = allAppsSnap.docs.filter((d) => {
       if (d.id === confirmedAppId) return false;
       const data = d.data();
-      if (isLongTerm && startDate !== undefined) {
-        return _isConflictLongTerm(data, startDate, endDate ?? -1, workDays ?? [], startTime, endTime);
-      } else if (workDate !== undefined) {
-        return _isConflictShortTerm(data, workDate, startTime, endTime);
+      if (confirmedIsLongTerm && confirmedStartDate !== undefined) {
+        return _isConflictLongTerm(data, confirmedStartDate, confirmedEndDate ?? -1, confirmedWorkDays ?? [], confirmedStartTime, confirmedEndTime);
+      } else if (confirmedWorkDate !== undefined) {
+        return _isConflictShortTerm(data, confirmedWorkDate, confirmedStartTime, confirmedEndTime);
       }
       return false;
     });
@@ -6582,6 +6924,10 @@ export const callableCalculateAndConfirmWage = onCall(
     // SEC-16: 입력값 형식 검증
     if (d.wageType !== "hourly" && d.wageType !== "daily") {
       throw new HttpsError("invalid-argument", "wageType은 'hourly' 또는 'daily'여야 합니다.");
+    }
+    const VALID_TAX_TYPES = ["none", "freelancer_3_3", "daily_worker", "daily_auto_8", "four_insurance_fixed"];
+    if (!VALID_TAX_TYPES.includes(d.taxDeductionType)) {
+      throw new HttpsError("invalid-argument", "유효하지 않은 taxDeductionType입니다.");
     }
     if (!/^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$/.test(d.workDate)) {
       throw new HttpsError("invalid-argument", "workDate는 YYYY-MM-DD 형식이어야 합니다.");

@@ -23,6 +23,7 @@ import '../../widgets/auth/pass_auth_button.dart';
 import '../../widgets/auth/pass_result_display.dart';
 
 import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuthException;
+import 'package:cloud_firestore/cloud_firestore.dart' show FieldValue;
 import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
 import '../../theme/app_colors.dart';
 import '../../widgets/app_select_field.dart';
@@ -261,15 +262,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
         return;
       }
 
-      // 만 18세 이상 검사
+      // 만 19세 이상 검사 (CF verifyPassAuth와 동일 기준)
       final today = DateTime.now();
       int age = today.year - birthDate.year;
       if (today.month < birthDate.month ||
           (today.month == birthDate.month && today.day < birthDate.day)) {
         age--;
       }
-      if (age < 18) {
-        _residentResult.value = const _ResidentResult(error: '만 18세 이상만 가입 가능합니다');
+      if (age < 19) {
+        _residentResult.value = const _ResidentResult(error: '만 19세 이상만 가입 가능합니다');
         return;
       }
 
@@ -650,13 +651,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
           consentRecord[item.id] = {
             'agreed': _consentMap[item.id] ?? false,
             'version': item.version,
-            'agreedAt': DateTime.now().toIso8601String(),
+            'agreedAt': FieldValue.serverTimestamp(),
           };
         }
         try {
           await _firestoreService.updateUserDocument(uid, {
             'termsConsent': consentRecord,
-            'termsConsentAt': DateTime.now().toIso8601String(),
+            'termsConsentAt': FieldValue.serverTimestamp(),
           });
         } catch (_) {
           // 동의 기록 저장 실패는 가입을 막지 않음 (best-effort)
@@ -849,13 +850,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
           consentRecord[item.id] = {
             'agreed': _consentMap[item.id] ?? false,
             'version': item.version,
-            'agreedAt': DateTime.now().toIso8601String(),
+            'agreedAt': FieldValue.serverTimestamp(),
           };
         }
         try {
           await _firestoreService.updateUserDocument(uid, {
             'termsConsent': consentRecord,
-            'termsConsentAt': DateTime.now().toIso8601String(),
+            'termsConsentAt': FieldValue.serverTimestamp(),
           });
         } catch (_) {
           // 동의 기록 저장 실패는 가입을 막지 않음 (best-effort)
@@ -2763,6 +2764,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
             focusNode: _accountNumberFocus,
             textInputAction: TextInputAction.done,
             onFieldSubmitted: (_) => FocusScope.of(context).unfocus(),
+            inputFormatters: [
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(20),
+            ],
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 10)),
           
@@ -2928,6 +2933,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 focusNode: _businessNameFocus,
                 textInputAction: TextInputAction.next,
                 onFieldSubmitted: (_) => _ceoNameFocus.requestFocus(),
+                inputFormatters: [LengthLimitingTextInputFormatter(100)],
                 validator: (value) {
                   if (value != null && value.isNotEmpty && value.length < 2) {
                     return '2자 이상 입력해주세요';

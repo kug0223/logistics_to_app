@@ -311,11 +311,11 @@ describe('TO-UPDATE: 지원자 카운터 수정', () => {
     );
   });
 
-  test('TO-UPDATE-16 지원자가 totalConfirmed -1 허용 (계약해지 수락 시)', async () => {
-    // MED-04-FIX: -1만 허용, +1 차단
-    // totalConfirmed=2 → 1
+  test('TO-UPDATE-16 지원자가 totalConfirmed 직접 감소 차단 (C-HIGH-FIX: CF Admin SDK 전용)', async () => {
+    // [C-HIGH-FIX] USER가 totalConfirmed를 직접 감소시키는 것 차단
+    // callableDecrementSlotConfirmed CF(Admin SDK)가 유일한 감소 경로
     const db = getAuth(env, IDS.user);
-    await assertSucceeds(
+    await assertFails(
       updateDoc(doc(db, 'tos', TO_ID), {
         totalConfirmed: 1,
         workTypeConfirmedCounts: { 'wt-001': 1 },

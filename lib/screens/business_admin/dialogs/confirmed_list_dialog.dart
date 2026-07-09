@@ -1137,6 +1137,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
                           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                           TextField(
                             controller: customController,
+                            maxLength: 200,
                             decoration: InputDecoration(
                               hintText: '취소 사유를 입력하세요',
                               border: OutlineInputBorder(
@@ -1145,6 +1146,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
                                 horizontal: ResponsiveHelper.spacing(context, 12),
                                 vertical: ResponsiveHelper.spacing(context, 10),
                               ),
+                              counterText: '',
                             ),
                           ),
                         ],

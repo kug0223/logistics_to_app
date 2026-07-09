@@ -220,3 +220,40 @@ try {
   if (mounted) setState(() => _isLoading = false);  // await 이후 체크
 }
 ```
+
+---
+
+## Trust Boundary Charter — 새 기능 설계 전 필수 체크
+
+새 기능을 추가하기 전, 아래 기준으로 "CF(서버)냐 클라이언트냐"를 먼저 결정한다.
+
+### CF(서버)에서 반드시 처리해야 하는 것
+
+다음 중 하나라도 해당하면 CF 필수:
+
+1. **카운터 증감** — totalConfirmed, totalPending ±1 초과, TO 등록 개수 제한 강제
+2. **법적 상태 전이** — AUTO_CANCELED, AUTO_APPROVED, 계약 만료, 퇴직 자동 승인
+3. **세션/인증 조작** — revokeRefreshTokens, custom claim 부여, 토큰 발급
+4. **타인 데이터에 영향** — 블랙리스트, 강제 상태 변경, 타 사용자 필드 쓰기
+5. **감사 로그 필수 작업** — 블랙리스트 등록/해제, 신원 확인 결과, 계약 효력 상태
+6. **민감 필드 저장** — sealBase64(인감/서명), ci(CI 번호), passVerifiedAt, sealedAt
+7. **법적 타임스탬프** — termsConsentAt, 계약일자 등 법적 효력이 있는 시각
+8. **Rate limiting / 쿼터 강제** — CF에서 Firestore 읽기로 검증 후 허용·거부
+
+### 클라이언트에서 해도 되는 것
+
+- **읽기 전용 쿼리** (Firestore rules로 보호된 경우)
+- **UI/UX 상태 관리** — 로딩 상태, 탭 선택, 필터 값
+- **입력 유효성 검사** — 서버 재검증 전 UX용 로컬 체크 (서버 재검증 필수)
+- **Optimistic update** — 서버 응답 전 화면 선반영 (실패 시 롤백 필수)
+- **totalPending ±1** — rules에서 ±1 제한 강제, 음수 방지 검증 있음
+
+### 결정 규칙
+
+```
+새 기능 추가 전:
+  → "이 작업이 다른 사용자 데이터에 영향을 주는가?" → YES → CF
+  → "이 필드가 법적·감사 기록에 해당하는가?" → YES → CF
+  → "클라이언트가 이 값을 위조하면 실질적 피해가 발생하는가?" → YES → CF
+  → 위 모두 NO → 클라이언트 OK (rules로 2차 방어 추가)
+```

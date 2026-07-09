@@ -11,6 +11,11 @@ service firebase.storage {
       return request.resource.size < 5 * 1024 * 1024;
     }
 
+    // [SEC-ST01] 이미지 MIME 타입 제한 — HTML/JS 등 악성 파일 업로드 차단
+    function isImageType() {
+      return request.resource.contentType.matches('image/.*');
+    }
+
     // 계약서 PDF: 10MB 제한
     function isUnder10MB() {
       return request.resource.size < 10 * 1024 * 1024;
@@ -36,26 +41,36 @@ service firebase.storage {
     match /businesses/{businessId}/{allPaths=**} {
       allow get: if isLoggedIn();
       allow list: if false;
-      allow create, update: if isLoggedIn() && isUnder5MB();
+      // [SEC-ST01] isImageType(): MIME 타입 검증 — HTML/JS 업로드 차단
+      allow create, update: if isLoggedIn() && isUnder5MB() && isImageType();
       allow delete: if isLoggedIn();
     }
 
     // ── users/ — 신분증·통장·사업자등록증 (민감 파일) ───────────
     // 본인만 읽기·쓰기·삭제 허용 — Firestore 읽기 불필요 (uid 직접 비교)
     // request.resource == null: read/delete 시 incoming resource 없음 → 크기 체크 면제
+    // [SEC-ST01] 업로드 시 이미지 MIME 타입만 허용
     match /users/{uid}/{allPaths=**} {
-      allow read, create, update, delete:
+      allow read, delete:
+          if isLoggedIn() && request.auth.uid == uid;
+      allow create, update:
           if isLoggedIn() && request.auth.uid == uid &&
-             (request.resource == null || isUnder5MB());
+             isUnder5MB() && isImageType();
     }
 
     // ── contracts/ — 근로계약서 서명 이미지·완성 PDF ───────────
     // [STORAGE-RULE-NOTE] isContractParty(), isSuperAdminUser() 모두 Firestore 읽기 기반
     // → 동일하게 동작하지 않음. 계약서 파일은 다운로드 URL 토큰 기반 접근으로 운영.
     // 토큰 없이 직접 경로 접근 시도: 로그인 + 10MB 제한만 체크 (URL 토큰이 실질적 보호막)
+    // [CS-01] update: if false — 이미 업로드된 서명/PDF 덮어쓰기 완전 차단
+    // 로그인된 사용자가 contractId를 알더라도 서명 이미지 오염 불가
+    // delete는 Firestore 트랜잭션 실패 시 CF/클라이언트 롤백 흐름에서 필요
     match /contracts/{contractId}/{allPaths=**} {
-      allow read: if isLoggedIn();
-      allow create, update: if isLoggedIn() && isUnder10MB();
+      // [H-1] 다운로드 URL 토큰으로만 접근 — Storage SDK 직접 경로 차단
+      // contract_service.dart에서 getDownloadURL() 반환 URL로만 접근하므로 기능 영향 없음
+      allow read: if false;
+      allow create: if isLoggedIn() && isUnder10MB();
+      allow update: if false;
       allow delete: if isLoggedIn();
     }
 

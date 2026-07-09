@@ -9,7 +9,7 @@
 // - 계약해지 요청 (NEW)
 
 import 'dart:math' show min;
-import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
+import 'package:cloud_firestore/cloud_firestore.dart' show FieldValue;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
@@ -1717,7 +1717,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             // 이 필드가 없으면 "계약 종료 완료" 알림을 이중 발송하는 버그 방지
             await _firestoreService.updateApplicationFields(
               app.id,
-              {'terminationCompletionNotifiedAt': Timestamp.now()},
+              {'terminationCompletionNotifiedAt': FieldValue.serverTimestamp()},
             );
           }
         }
@@ -2146,9 +2146,11 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             TextField(
               controller: reasonController,
+              maxLength: 200,
               decoration: InputDecoration(
                 hintText: '추가 근무 요청 사유를 입력하세요',
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                counterText: '',
               ),
               maxLines: 2,
             ),
@@ -2312,9 +2314,11 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             TextField(
               controller: reasonController,
+              maxLength: 200,
               decoration: InputDecoration(
                 hintText: '미출근 요청 사유를 입력하세요',
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                counterText: '',
               ),
               maxLines: 2,
             ),
@@ -2532,6 +2536,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                           TextField(
                             controller: customReasonController,
+                            maxLength: 200,
                             decoration: InputDecoration(
                               hintText: '상세 사유를 입력하세요',
                               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
@@ -2539,6 +2544,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                                 horizontal: ResponsiveHelper.spacing(context, 12),
                                 vertical: ResponsiveHelper.spacing(context, 12),
                               ),
+                              counterText: '',
                             ),
                             style: ResponsiveHelper.bodyStyle(context),
                             maxLines: 2,

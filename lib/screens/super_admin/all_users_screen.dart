@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
 import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
@@ -123,6 +125,8 @@ class _AllUsersScreenState extends State<AllUsersScreen>
         await _firestore.collection('users').doc(user.uid).update({
           'isBlacklisted': false,
           'blacklistReason': FieldValue.delete(),
+          'unblacklistedBy': FirebaseAuth.instance.currentUser?.uid,
+          'unblacklistedAt': FieldValue.serverTimestamp(),
         });
         if (!mounted) return;
         ToastHelper.showSuccess('블랙리스트가 해제되었습니다');
@@ -144,10 +148,9 @@ class _AllUsersScreenState extends State<AllUsersScreen>
       setState(() => _isProcessing = true);
 
       try {
-        await _firestore.collection('users').doc(user.uid).update({
-          'isBlacklisted': true,
-          'blacklistReason': reason,
-        });
+        await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('callableBlacklistUser')
+            .call({'targetUid': user.uid, 'blacklistReason': reason});
         if (!mounted) return;
         ToastHelper.showSuccess('블랙리스트에 등록되었습니다');
         await _loadAllUsers();
@@ -182,6 +185,8 @@ class _AllUsersScreenState extends State<AllUsersScreen>
       await _firestore.collection('users').doc(user.uid).update({
         'restrictedUntil': FieldValue.delete(),
         'noShowCount': 0,
+        'restrictionReleasedBy': FirebaseAuth.instance.currentUser?.uid,
+        'restrictionReleasedAt': FieldValue.serverTimestamp(),
       });
       if (!mounted) return;
       ToastHelper.showSuccess('제재가 해제되었습니다');
@@ -206,6 +211,8 @@ class _AllUsersScreenState extends State<AllUsersScreen>
     try {
       await _firestore.collection('users').doc(user.uid).update({
         'trustScore': result,
+        'trustScoreAdjustedBy': FirebaseAuth.instance.currentUser?.uid,
+        'trustScoreAdjustedAt': FieldValue.serverTimestamp(),
       });
       // 신뢰도 수동 조정 직후 배지 재계산 — minScore 조건 충족 시 즉시 배지 부여.
       // fire-and-forget: 배지 계산 실패가 UI 플로우를 막지 않도록 await 없이 실행.
@@ -997,6 +1004,7 @@ class _ReasonDialogState extends State<_ReasonDialog> {
         hintText: widget.hint,
         prefixIcon: Icons.notes_outlined,
         maxLines: 3,
+        maxLength: 500,
         autofocus: true,
       ),
       actions: [

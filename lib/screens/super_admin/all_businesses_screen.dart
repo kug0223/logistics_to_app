@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/user_provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -133,6 +134,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
     try {
       await _firestore.collection('businesses').doc(item.business.id).update({
         'deactivatedAt': FieldValue.serverTimestamp(),
+        'deactivatedBy': FirebaseAuth.instance.currentUser?.uid,
       });
       if (!mounted) return;
       ToastHelper.showSuccess('사업장이 비활성화되었습니다');
@@ -171,6 +173,8 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
     try {
       await _firestore.collection('businesses').doc(item.business.id).update({
         'deactivatedAt': FieldValue.delete(),
+        'reactivatedBy': FirebaseAuth.instance.currentUser?.uid,
+        'reactivatedAt': FieldValue.serverTimestamp(),
       });
       if (!mounted) return;
       ToastHelper.showSuccess('사업장이 재활성화되었습니다');

@@ -101,7 +101,9 @@ class MemberService {
       status: InvitationStatus.pending,
       createdAt: DateTime.now(),
     );
-    await ref.set(invitation.toMap());
+    final invMap = Map<String, dynamic>.from(invitation.toMap());
+    invMap['createdAt'] = FieldValue.serverTimestamp();
+    await ref.set(invMap);
 
     // 초대받은 사람에게 알림
     try {
@@ -194,7 +196,7 @@ class MemberService {
     }
     await _invitations.doc(invitation.id).update({
       'status': 'rejected',
-      'respondedAt': Timestamp.fromDate(DateTime.now()),
+      'respondedAt': FieldValue.serverTimestamp(),
     });
 
     // 초대한 관리자에게 거절 알림
@@ -219,7 +221,7 @@ class MemberService {
     }
     await _invitations.doc(invitation.id).update({
       'status': 'cancelled',
-      'canceledAt': Timestamp.fromDate(DateTime.now()),
+      'canceledAt': FieldValue.serverTimestamp(),
     });
   }
 

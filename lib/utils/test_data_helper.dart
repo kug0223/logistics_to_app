@@ -118,6 +118,9 @@ class TestDataHelper {
 
   /// ⭐ 개선된 더미 지원자 생성 - 새로운 UserModel 필드 포함
   static Future<List<String>> createDummyApplicants(int count) async {
+    // [H-3] 릴리즈 빌드에서 운영 DB 오염 차단
+    assert(!kReleaseMode, 'createDummyApplicants는 릴리즈 빌드에서 호출 금지');
+    if (kReleaseMode) throw StateError('createDummyApplicants: 릴리즈 빌드 실행 불가');
     debugPrint('');
     debugPrint('👥 ═══════════════════════════════════════');
     debugPrint('👥 더미 지원자 $count명 생성 시작...');
@@ -301,6 +304,9 @@ class TestDataHelper {
     DateTime? slotDate, // flex TO 슬롯 선택 시 workDate 오버라이드
     String? slotId,     // flex TO 슬롯 ID (지원자 조회·슬롯 통계에 필수)
   }) async {
+    // [H-3] 릴리즈 빌드에서 운영 DB 오염 차단
+    assert(!kReleaseMode, 'createDummyApplications는 릴리즈 빌드에서 호출 금지');
+    if (kReleaseMode) throw StateError('createDummyApplications: 릴리즈 빌드 실행 불가');
     debugPrint('');
     debugPrint('📝 ═══════════════════════════════════════');
     debugPrint('📝 TO $toId에 지원서 생성 중...');
@@ -498,6 +504,9 @@ class TestDataHelper {
     required String businessId,
     required DateTime date,
   }) async {
+    // [H-3] 릴리즈 빌드에서 운영 DB 오염 차단
+    assert(!kReleaseMode, 'createDummyAttendance는 릴리즈 빌드에서 호출 금지');
+    if (kReleaseMode) throw StateError('createDummyAttendance: 릴리즈 빌드 실행 불가');
     debugPrint('');
     debugPrint('🕐 ═══════════════════════════════════════');
     debugPrint('🕐 더미 출근 데이터 생성 시작...');

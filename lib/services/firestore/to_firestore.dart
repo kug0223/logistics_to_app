@@ -11,7 +11,7 @@ extension TOFirestore on FirestoreService {
   // ───────────────────────────────────────────────────────
 
   /// 관리자 uid 기준 전체 사업장의 active TO 합산 개수 반환.
-  /// Firestore 오류 시 0 반환(fail-open) — 실제 제한은 서버 CF가 재확인
+  /// [H-9] Firestore 오류 시 999 반환(fail-closed) — 조회 실패 시 한도 초과 상태로 처리
   Future<int> countAllActiveTO(String uid) async {
     if (uid.isEmpty) return 0;
     try {
@@ -28,8 +28,9 @@ extension TOFirestore on FirestoreService {
       }));
       return counts.fold<int>(0, (acc, c) => acc + c);
     } catch (e) {
-      debugPrint('⚠️ [TOFirestore] active TO 개수 조회 실패, fail-open(0): $e');
-      return 0;
+      // [H-9] fail-closed: 조회 실패 시 한도 초과 상태로 처리해 TO 생성 차단
+      debugPrint('⚠️ [TOFirestore] active TO 개수 조회 실패, fail-closed: $e');
+      return 999;
     }
   }
 
@@ -1380,65 +1381,6 @@ extension TOFirestore on FirestoreService {
     } catch (e) {
       debugPrint('❌ [TO] 슬롯 visibleFrom 업데이트 실패: $e');
       rethrow;
-    }
-  }
-
-  /// 슬롯 통계 업데이트 (지원/확정/거절 시 호출)
-  /// [B-2] 데드코드 — 코드베이스 전체에서 호출처 없음. application_firestore.dart의
-  /// _decrementTOConfirmed/_incrementTOConfirmed/_incrementTOPending + _recalculateSlotStatus 조합으로 대체됨.
-  /// 삭제 전 안전 확인 후 제거 권장.
-  Future<void> updateSlotStats(
-    String toId,
-    String slotId, {
-    int confirmedDelta = 0,
-    int pendingDelta = 0,
-  }) async {
-    try {
-      final slotRef = _firestore
-          .collection('tos').doc(toId)
-          .collection('slots').doc(slotId);
-
-      final toRef = _firestore.collection('tos').doc(toId);
-
-      await _firestore.runTransaction((tx) async {
-        final slotSnap = await tx.get(slotRef);
-        final toSnap = await tx.get(toRef);
-
-        if (!slotSnap.exists || !toSnap.exists) return;
-
-        final slotData = slotSnap.data()!;
-        final newSlotConfirmed = ((slotData['confirmedCount'] as num?)?.toInt() ?? 0) + confirmedDelta;
-        final newSlotPending = ((slotData['pendingCount'] as num?)?.toInt() ?? 0) + pendingDelta;
-
-        // 슬롯 자체의 workDetails에서 requiredCount 합산 (TO 전체 합이 아님)
-        final rawWorkDetails = slotData['workDetails'] as List? ?? [];
-        final slotTotalRequired = rawWorkDetails.fold<int>(
-          0, (acc, d) => acc + (((d as Map<String, dynamic>)['requiredCount'] as num?)?.toInt() ?? 0));
-
-        // 수동 마감 슬롯은 상태 변경 금지 (closedBy가 설정된 경우)
-        final isManualClosed = slotData['isManualClosed'] == true;
-
-        final Map<String, dynamic> slotUpdates = {
-          'confirmedCount': newSlotConfirmed,
-          'pendingCount': newSlotPending,
-        };
-
-        if (!isManualClosed) {
-          slotUpdates['status'] = slotTotalRequired > 0 && newSlotConfirmed >= slotTotalRequired
-              ? SlotStatus.full
-              : SlotStatus.open;
-        }
-
-        tx.update(slotRef, slotUpdates);
-
-        // TO 집계 갱신
-        tx.update(toRef, {
-          'totalConfirmed': FieldValue.increment(confirmedDelta),
-          'totalPending': FieldValue.increment(pendingDelta),
-        });
-      });
-    } catch (e) {
-      debugPrint('❌ [TO] 슬롯 통계 업데이트 실패: $e');
     }
   }
 

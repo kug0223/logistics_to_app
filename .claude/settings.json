@@ -2,11 +2,8 @@
   "permissions": {
     "allow": [
       "Bash",
-      "PowerShell(firebase use *)",
-      "PowerShell(firebase --version *)",
-      "PowerShell(flutter pub outdated *)",
-      "PowerShell(flutter --version *)",
-      "PowerShell(flutter analyze *)"
-    ]
+      "PowerShell"
+    ],
+    "defaultMode": "dontAsk"
   }
 }

@@ -2482,7 +2482,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
             await _firestoreService.updateApplicationStatus(
               applicationId: appId,
               status: AppStatus.pending,
-              confirmedBy: adminUID,
             );
           } catch (rollbackErr) {
             debugPrint('⚠️ 롤백 실패 ($appId): $rollbackErr');

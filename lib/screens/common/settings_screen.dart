@@ -1550,6 +1550,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (uid == null) return;
 
     try {
+      // [SEC-SS01] 서명 이미지 크기 제한 — Firestore 문서 1MB 한계 방어
+      if (bytes.length > 500000) {
+        if (mounted) ToastHelper.showError('서명 이미지가 너무 큽니다. 더 작게 그려주세요.');
+        return;
+      }
       final b64 = base64Encode(bytes);
       await FirebaseFirestore.instance
           .collection('users')
@@ -1826,6 +1831,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Future<void> _callSaveSeal(String? b64, String sealType) async {
+    await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableSaveSeal')
+        .call({'sealBase64': b64, 'sealType': sealType});
+  }
+
   Future<void> _registerSeal(BuildContext context, UserModel? user) async {
     if (user == null) return;
 
@@ -1842,19 +1853,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     try {
       final bytes = await picked.readAsBytes();
-      final b64 = base64Encode(bytes);
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .update({'sealBase64': b64, 'sealType': 'stamp'});
-      await userProvider.refreshUserData();
-      if (mounted) {
-        setState(() {
-          _businessSealBase64 = b64;
-          _sealType = 'stamp';
-        });
-        ToastHelper.showSuccess('도장이 등록되었습니다');
+      if (bytes.length > 500000) {
+        if (mounted) ToastHelper.showError('이미지가 너무 큽니다. 더 작은 이미지를 선택해 주세요.');
+        return;
       }
+      final b64 = base64Encode(bytes);
+      await _callSaveSeal(b64, 'stamp');
+      await userProvider.refreshUserData();
+      if (!mounted) return;
+      setState(() {
+        _businessSealBase64 = b64;
+        _sealType = 'stamp';
+      });
+      ToastHelper.showSuccess('도장이 등록되었습니다');
     } catch (e) {
       if (mounted) ToastHelper.showError('도장 등록에 실패했습니다');
     }
@@ -1868,19 +1879,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (bytes == null || !mounted) return;
 
     try {
-      final b64 = base64Encode(bytes);
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .update({'sealBase64': b64, 'sealType': 'signature'});
-      await userProvider.refreshUserData();
-      if (mounted) {
-        setState(() {
-          _businessSealBase64 = b64;
-          _sealType = 'signature';
-        });
-        ToastHelper.showSuccess('서명이 등록되었습니다');
+      if (bytes.length > 500000) {
+        if (mounted) ToastHelper.showError('서명 이미지가 너무 큽니다. 더 작게 그려주세요.');
+        return;
       }
+      final b64 = base64Encode(bytes);
+      await _callSaveSeal(b64, 'signature');
+      await userProvider.refreshUserData();
+      if (!mounted) return;
+      setState(() {
+        _businessSealBase64 = b64;
+        _sealType = 'signature';
+      });
+      ToastHelper.showSuccess('서명이 등록되었습니다');
     } catch (e) {
       if (mounted) ToastHelper.showError('서명 등록에 실패했습니다');
     }
@@ -1900,18 +1911,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (confirm != true || !mounted) return;
 
     try {
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .update({'sealBase64': null, 'sealType': 'stamp'});
+      await _callSaveSeal(null, 'stamp');
       await userProvider.refreshUserData();
-      if (mounted) {
-        setState(() {
-          _businessSealBase64 = null;
-          _sealType = 'stamp';
-        });
-        ToastHelper.showSuccess('날인이 삭제되었습니다');
-      }
+      if (!mounted) return;
+      setState(() {
+        _businessSealBase64 = null;
+        _sealType = 'stamp';
+      });
+      ToastHelper.showSuccess('날인이 삭제되었습니다');
     } catch (e) {
       if (mounted) ToastHelper.showError('날인 삭제에 실패했습니다');
     }

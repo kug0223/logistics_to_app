@@ -91,9 +91,9 @@ class PassVerificationService {
   /// 가입 완료 후 passToken 소비 — [AUTH-H3] 15분 재사용 차단
   ///
   /// 가입 성공 직후 호출한다. 실패해도 가입 자체는 완료된 상태이므로 예외를 삼킨다.
-  /// mock 토큰(kDebugMode)은 CF 호출 없이 즉시 반환한다.
+  /// mock 토큰은 kDebugMode에서만 CF 호출 생략 — 릴리즈 빌드에서 'mock-' 접두어 우회 차단.
   static Future<void> finalizeRegistration(String passToken) async {
-    if (kDebugMode || passToken.startsWith('mock-')) return;
+    if (kDebugMode) return;
     try {
       await _fn.httpsCallable('finalizeRegistration',
           options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))

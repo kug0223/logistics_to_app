@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:provider/provider.dart';
+import '../../providers/user_provider.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
@@ -36,8 +38,15 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    _loadGlobal();
-    _loadAdmins();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!context.read<UserProvider>().isSuperAdmin) {
+        Navigator.pop(context);
+        return;
+      }
+      _loadGlobal();
+      _loadAdmins();
+    });
   }
 
   @override

@@ -752,8 +752,8 @@ class MonthlyReviewService {
     }
   }
 
-  /// 지원자 본인이 받은 모든 리뷰 (공개 여부 무관) — 페이지네이션
-  /// 인덱스: (targetUserId, reviewType, createdAt DESC) — firestore.indexes.json에 존재
+  /// 지원자 본인이 받은 공개 리뷰 — 페이지네이션 (M-2: isPublished 필터 추가)
+  /// 인덱스: (targetUserId, reviewType, isPublished, createdAt DESC) — firestore.indexes.json에 존재
   Future<ReviewPage<MonthlyReviewModel>> getAllReviewsForUserPaged({
     required String targetUserId,
     DocumentSnapshot? startAfter,
@@ -764,6 +764,7 @@ class MonthlyReviewService {
           .collection('monthly_reviews')
           .where('targetUserId', isEqualTo: targetUserId)
           .where('reviewType', isEqualTo: ReviewType.ADMIN_TO_USER.name)
+          .where('isPublished', isEqualTo: true)
           .orderBy('createdAt', descending: true)
           .limit(pageSize + 1);
       if (startAfter != null) q = q.startAfterDocument(startAfter);

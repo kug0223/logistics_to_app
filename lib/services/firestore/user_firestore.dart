@@ -10,8 +10,11 @@ extension UserFirestore on FirestoreService {
   Future<void> saveUser(UserModel user) async {
     try {
       // [M-3] role 제거 — 권한 상승 경로 차단 (role 변경은 CF/SUPER_ADMIN 전용)
+      // [SEC-UF01] merge: true — CF가 설정한 trustScore/noShowCount/isBlacklisted/badges/restrictedUntil
+      //   등 서버 전용 필드를 로컬 캐시 기본값으로 덮어쓰지 않도록 방어.
+      //   회원가입(신규 문서) 시에는 merge 여부와 무관하게 모든 필드 초기값 설정됨.
       final data = user.toMap()..remove('role');
-      await _firestore.collection('users').doc(user.uid).set(data);
+      await _firestore.collection('users').doc(user.uid).set(data, SetOptions(merge: true));
       _userCache.remove(user.uid);
       _userCacheTimestamps.remove(user.uid);
     } catch (e) {

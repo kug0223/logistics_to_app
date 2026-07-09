@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:crypto/crypto.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -168,13 +169,13 @@ class ContractService {
               throw Exception('이미 사업주 서명이 완료된 계약서입니다');
             }
           }
-          // SHA-256 해시로 서명 무결성 기록
+          // SHA-256 해시로 서명 무결성 기록 (서명 시각은 서버 타임스탬프로 위변조 방지)
           tx.update(ref, {
             'status': updated.status.value,
             'employerSignatureUrl': url,
             'employerSignatureHash': employerHash,
-            'employerSignedAt': Timestamp.fromDate(now),
-            'updatedAt': Timestamp.fromDate(now),
+            'employerSignedAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
           });
         });
       }
@@ -302,14 +303,14 @@ class ContractService {
           }
         }
 
-        // 쓰기: 계약서 완료 처리
+        // 쓰기: 계약서 완료 처리 (서명 시각은 서버 타임스탬프로 위변조 방지)
         tx.update(contractRef, {
           'status': updated.status.value,
           'workerSignatureUrl': sigUrl,
           'workerSignatureHash': workerHash,
-          'workerSignedAt': nowTs,
+          'workerSignedAt': FieldValue.serverTimestamp(),
           'pdfUrl': pdfUrl,
-          'updatedAt': nowTs,
+          'updatedAt': FieldValue.serverTimestamp(),
         });
         // 쓰기: application CONTRACT_PENDING → CONFIRMED (이미 CONFIRMED이면 스킵)
         for (var i = 0; i < appRefs.length; i++) {
@@ -383,11 +384,21 @@ class ContractService {
     required String uid,
     required String base64,
   }) async {
+    // [SEC-CS01] 본인 문서만 수정 허용 — Firestore 규칙 단일 방어선 보완
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUid == null || currentUid != uid) {
+      throw StateError('saveUserSignature: 본인 서명만 저장 가능합니다.');
+    }
     await _db.collection('users').doc(uid).update({'signatureBase64': base64});
   }
 
   /// 저장된 서명 삭제
   Future<void> clearUserSignature(String uid) async {
+    // [SEC-CS01] 본인 문서만 수정 허용
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUid == null || currentUid != uid) {
+      throw StateError('clearUserSignature: 본인 서명만 삭제 가능합니다.');
+    }
     await _db.collection('users').doc(uid).update({'signatureBase64': null});
   }
 

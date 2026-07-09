@@ -187,7 +187,10 @@ service cloud.firestore {
                          'averageRating', 'reviewCount', 'rehireRate', 'totalWorkHours',
                          // [SEC-109] CF resetPasswordWithCode가 관리하는 비밀번호 이력
                          //   클라이언트 직접 삭제 시 비밀번호 재사용 이력 무력화 가능
-                         'passwordHistory'
+                         'passwordHistory',
+                         // [M-1] badges — CF onReviewCreated/뱃지 자격 검증 전용
+                         //   클라이언트 직접 삽입 시 자격 조건 우회 가능
+                         'badges'
                        ]);
 
       // [SEC-03 완료] trustScore·noShowCount·lateCount·totalWorkDays·restrictedUntil·lastRestartAt
@@ -453,16 +456,8 @@ service cloud.firestore {
                        (request.resource.data.totalPending == resource.data.totalPending + 1 ||
                         request.resource.data.totalPending == resource.data.totalPending - 1);
 
-      // 지원자: 계약해지 수락 시 totalConfirmed 감소만 허용 (음수 방지, +1 차단)
-      // [MED-04-FIX] +1도 허용하면 USER가 무한히 카운터를 올릴 수 있음 → -1만 허용
-      // workTypeConfirmedCounts Map 내부 값 변화는 클라이언트 측에서 관리하며
-      //   어떤 workTypeId의 값이 얼마나 변했는지는 규칙에서 검증 불가 (설계 한계)
-      allow update: if isLoggedIn() && isUser() &&
-                       request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['totalConfirmed', 'workTypeConfirmedCounts']) &&
-                       request.resource.data.totalConfirmed is int &&  // SEC-15: 타입 검증
-                       request.resource.data.totalConfirmed >= 0 &&
-                       request.resource.data.totalConfirmed == resource.data.totalConfirmed - 1;
+      // [C-HIGH-FIX] USER의 totalConfirmed 직접 감소 규칙 제거
+      // CF callableDecrementSlotConfirmed(Admin SDK)가 유일한 감소 경로 — 클라이언트 직접 쓰기 차단
 
       // SubAdmin도 공고 삭제 허용 (update에 있으나 delete에 누락)
       allow delete: if isLoggedIn() &&
@@ -581,12 +576,7 @@ service cloud.firestore {
                        request.resource.data.status == 'CANCELED' &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status', 'canceledAt', 'cancelReason', 'statusHistory'])) ||
-                      // 자동 만료 (본인: PENDING → AUTO_CANCELED)
-                      (isOwner(resource.data.uid) &&
-                       resource.data.status == 'PENDING' &&
-                       request.resource.data.status == 'AUTO_CANCELED' &&
-                       request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['status', 'canceledAt', 'cancelReason'])) ||
+                      // [D-M2-FIX] AUTO_CANCELED 직접 전환 규칙 제거 — CF callableAutoConflictCancel(Admin SDK)만 허용
                       // 재지원 (본인: CANCELED/AUTO_CANCELED/REJECTED → PENDING, uid/businessId/toId 불변)
                       // [035] AUTO_CANCELED 상태에서도 재지원 허용
                       // [APP-036] REJECTED 상태에서도 재지원 허용 — 코드 설계 의도(application_firestore.dart:437)와 일치
@@ -722,7 +712,13 @@ service cloud.firestore {
       allow create: if isLoggedIn() &&
                       !('checkInSuspicious' in request.resource.data) &&
                       !('checkInDistance' in request.resource.data) &&
-                      request.resource.data.get('wageStatus', 'pending') == 'pending' &&
+                      // [E-H1-FIX] 노쇼 신규 생성 시 admin이 wageStatus='confirmed'+finalWage=0 허용
+                      (request.resource.data.get('wageStatus', 'pending') == 'pending' ||
+                       ((isAdminOf(request.resource.data.businessId) ||
+                         isSubAdminOf(request.resource.data.businessId) || isSuperAdmin()) &&
+                        request.resource.data.get('wageStatus', '') == 'confirmed' &&
+                        request.resource.data.get('status', '') == 'NO_SHOW' &&
+                        request.resource.data.get('finalWage', 0) == 0)) &&
                       request.resource.data.get('finalWage', 0) == 0 &&
                       !(request.resource.data.get('status', '') == 'NO_SHOW' &&
                         request.resource.data.get('finalWage', 0) != 0) &&
@@ -1056,6 +1052,8 @@ service cloud.firestore {
       //   payment_change_requests·interim_settlement_requests와 동일한 패턴 적용
       // SEC-80: USER 경로 status=='PENDING' 강제 + requestedByUid==auth.uid 검증
       //   — 클라이언트가 status='APPROVED'로 직접 생성하거나 requestedByUid를 위조하는 것을 차단
+      // [SCR-01 보류] 관리자 경로 applicantUid 소속 검증 — isAdminOf+get() 조합이
+      //   에뮬레이터에서 evaluation error 유발, LOW 영향(PENDING 레코드 1건 노출)으로 보류
       allow create: if isLoggedIn() && (
                       (request.resource.data.applicantUid == request.auth.uid &&
                        request.resource.data.status == 'PENDING' &&
@@ -1650,6 +1648,15 @@ service cloud.firestore {
 
       // 수정·삭제: 슈퍼어드민만
       allow update, delete: if isSuperAdmin();
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // pending_token_revocations 컬렉션 (세션 무효화 실패 재처리 큐 — CF 내부용)
+    // ═══════════════════════════════════════════════════════════
+    match /pending_token_revocations/{docId} {
+      // CF Admin SDK(masterScheduler retry)만 읽기·쓰기 — 클라이언트 접근 완전 차단
+      // uid, reason, callerUid 등 개인정보가 포함되므로 클라이언트 접근 차단 필수
+      allow read, write: if false;
     }
 
     // ═══════════════════════════════════════════════════════════

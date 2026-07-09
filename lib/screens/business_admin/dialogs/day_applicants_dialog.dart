@@ -2055,9 +2055,11 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         confirmText: '확정 취소',
       );
       if (!ok || !mounted) return;
+      final adminUID = FirebaseAuth.instance.currentUser?.uid;
       await _svc.updateApplicationStatus(
         applicationId: app.id,
         status: AppStatus.canceled,
+        canceledBy: adminUID,
       );
       _hasChanges = true;
       if (!mounted) return;

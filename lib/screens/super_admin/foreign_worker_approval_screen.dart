@@ -661,6 +661,7 @@ class _RejectReasonDialogState extends State<_RejectReasonDialog> {
         hintText: '예: 제출 서류 미비, 외국인등록번호 불일치 등',
         prefixIcon: Icons.notes_outlined,
         maxLines: 3,
+        maxLength: 500,
         autofocus: true,
       ),
       actions: [

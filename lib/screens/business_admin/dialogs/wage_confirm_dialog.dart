@@ -1238,7 +1238,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         message: '선택한 ${targetIds.length}명을 마감하시겠습니까?\n마감 후에는 급여 취소가 불가합니다.',
         confirmText: '마감',
       );
-      if (confirmed != true || !mounted) return;
+      if (confirmed != true || !mounted) {
+        // [BUG-04] 확인 다이얼로그 취소 시 _isProcessing 고착 방지
+        if (mounted) setState(() => _isProcessing = false);
+        return;
+      }
 
       final adminUid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
 
@@ -1395,7 +1399,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         message: '선택한 ${targetIds.length}명을 확정내역으로 되돌리시겠습니까?',
         confirmText: '마감 취소',
       );
-      if (confirmed != true || !mounted) return;
+      if (confirmed != true || !mounted) {
+        // [BUG-04] 확인 다이얼로그 취소 시 _isProcessing 고착 방지
+        if (mounted) setState(() => _isProcessing = false);
+        return;
+      }
 
       var batch = FirebaseFirestore.instance.batch();
       int batchCount = 0;

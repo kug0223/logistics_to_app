@@ -771,6 +771,7 @@ extension ApplicationFirestore on FirestoreService {
     required String status,
     String? confirmedBy,
     String? rejectedBy,
+    String? canceledBy,
     String? message,
   }) async {
     try {
@@ -819,6 +820,15 @@ extension ApplicationFirestore on FirestoreService {
           'by': rejectedBy,
           'action': 'REJECT',
           if (message != null) 'reason': message,
+        });
+      } else if (status == AppStatus.canceled) {
+        updates['canceledAt'] = FieldValue.serverTimestamp();
+        if (canceledBy != null) updates['canceledBy'] = canceledBy;
+        updates['statusHistory'] = _appendHistory(appData, {
+          'status': 'CANCELED',
+          'at': Timestamp.now(),
+          'by': canceledBy,
+          'action': 'ADMIN_CANCEL',
         });
       } else if (status == AppStatus.pending &&
           AppStatus.confirmedStatuses.contains(prevStatus)) {
