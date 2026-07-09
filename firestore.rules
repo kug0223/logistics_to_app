@@ -1460,6 +1460,7 @@ service cloud.firestore {
 
       // 근무자: 계약해지 수락 시 계약서 voided 전환 허용
       // terminationStatus == PENDING인 경우에만 허용 (일방 무효화 차단)
+      // requestTermination()이 APPLICATION과 CONTRACT 양쪽에 terminationStatus='PENDING' 기록
       allow update: if isLoggedIn() &&
                       isOwner(resource.data.workerId) &&
                       resource.data.get('terminationStatus', '') == 'PENDING' &&
@@ -1500,7 +1501,8 @@ service cloud.firestore {
                            'status', 'employerSignatureUrl', 'employerSignatureHash',
                            'employerSignedAt', 'updatedAt',
                            'articles', 'templateId', 'slots', 'applicationIds',
-                           'contractVoidedAt', 'voidReason'
+                           'contractVoidedAt', 'voidReason',
+                           'terminationStatus'
                          ]) &&
                          // [SEC-104] applicationIds도 pending_employer 상태에서만 수정 허용
                          //   근무자 서명 후 계약서에 다른 지원서로 재귀속하는 공격 차단

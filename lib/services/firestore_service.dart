@@ -1057,6 +1057,42 @@ class FirestoreService {
       final bId = businessId ?? app.businessId;
       final effectiveTerminationDate = terminationDate!;
 
+      // [MISMATCH-B-FIX] CONTRACT에도 terminationStatus='PENDING' 동기화
+      // rules: employment_contracts worker update 규칙이 CONTRACT.terminationStatus=='PENDING' 검증
+      // APPLICATION에만 쓰면 근무자 수락(approveTermination) 시 PERMISSION_DENIED 발생
+      if (bId.isNotEmpty) {
+        final pendingStatuses = {'pending_employer', 'pending_worker', 'active'};
+        final cq = await _firestore
+            .collection('employment_contracts')
+            .where('applicationId', isEqualTo: applicationId)
+            .where('businessId', isEqualTo: bId)
+            .limit(5)
+            .get(const GetOptions(source: Source.server));
+        final targets = cq.docs.where((d) => pendingStatuses.contains(d.data()['status']));
+        if (targets.isEmpty) {
+          final cq2 = await _firestore
+              .collection('employment_contracts')
+              .where('applicationIds', arrayContains: applicationId)
+              .where('businessId', isEqualTo: bId)
+              .limit(5)
+              .get(const GetOptions(source: Source.server));
+          final targets2 = cq2.docs.where((d) => pendingStatuses.contains(d.data()['status']));
+          if (targets2.isNotEmpty) {
+            final batch = _firestore.batch();
+            for (final d in targets2) {
+              batch.update(d.reference, {'terminationStatus': AppStatus.pending});
+            }
+            await batch.commit();
+          }
+        } else {
+          final batch = _firestore.batch();
+          for (final d in targets) {
+            batch.update(d.reference, {'terminationStatus': AppStatus.pending});
+          }
+          await batch.commit();
+        }
+      }
+
       String businessName = '';
       if (bId.isNotEmpty) {
         final bizDoc = await _firestore.collection('businesses').doc(bId).get(const GetOptions(source: Source.server));
@@ -1088,6 +1124,7 @@ class FirestoreService {
     try {
       // [R-H2-FIX] cancelResignRequest와 동일하게 트랜잭션으로 PENDING 상태 검증 후 취소
       // 트랜잭션 없이 update()만 하면 이미 APPROVED/AUTO_APPROVED된 해지 요청도 null로 덮어씌움
+      String canceledBId = '';
       await _firestore.runTransaction((tx) async {
         final snap = await tx.get(_firestore.collection('applications').doc(applicationId));
         if (!snap.exists) throw Exception('지원서 없음: $applicationId');
@@ -1095,6 +1132,7 @@ class FirestoreService {
         if (currentTerminationStatus != AppStatus.pending) {
           throw Exception('취소 불가 — 현재 계약해지 상태: $currentTerminationStatus');
         }
+        canceledBId = snap.data()?['businessId'] as String? ?? '';
         tx.update(snap.reference, {
           'terminationStatus': null,
           'terminationRequestedAt': null,
@@ -1103,6 +1141,40 @@ class FirestoreService {
           'terminationEffectiveDate': null,
         });
       });
+
+      // [MISMATCH-B-FIX] CONTRACT terminationStatus 클리어 — requestTermination과 대칭
+      if (canceledBId.isNotEmpty) {
+        final cq = await _firestore
+            .collection('employment_contracts')
+            .where('applicationId', isEqualTo: applicationId)
+            .where('businessId', isEqualTo: canceledBId)
+            .where('terminationStatus', isEqualTo: AppStatus.pending)
+            .limit(5)
+            .get(const GetOptions(source: Source.server));
+        if (cq.docs.isNotEmpty) {
+          final batch = _firestore.batch();
+          for (final d in cq.docs) {
+            batch.update(d.reference, {'terminationStatus': null});
+          }
+          await batch.commit();
+        } else {
+          final cq2 = await _firestore
+              .collection('employment_contracts')
+              .where('applicationIds', arrayContains: applicationId)
+              .where('businessId', isEqualTo: canceledBId)
+              .where('terminationStatus', isEqualTo: AppStatus.pending)
+              .limit(5)
+              .get(const GetOptions(source: Source.server));
+          if (cq2.docs.isNotEmpty) {
+            final batch = _firestore.batch();
+            for (final d in cq2.docs) {
+              batch.update(d.reference, {'terminationStatus': null});
+            }
+            await batch.commit();
+          }
+        }
+      }
+
       debugPrint('✅ 계약해지 요청 취소: $applicationId');
       return true;
     } catch (e) {

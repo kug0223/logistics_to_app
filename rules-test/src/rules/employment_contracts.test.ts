@@ -81,6 +81,7 @@ beforeAll(async () => {
   });
 
   // terminationStatus=PENDING 계약서
+  // requestTermination()이 APPLICATION과 CONTRACT 양쪽에 terminationStatus='PENDING' 기록
   await seedDoc(env, 'employment_contracts', 'contract-termination', {
     ...baseContract,
     status: 'active',
