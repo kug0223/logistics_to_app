@@ -9,6 +9,7 @@ import {
   setDoc,
   updateDoc,
   deleteDoc,
+  serverTimestamp,
 } from 'firebase/firestore';
 import {
   createTestEnv,
@@ -232,7 +233,7 @@ describe('EC-UPDATE: 근무자 서명 (pending 상태)', () => {
       updateDoc(doc(db, 'employment_contracts', 'contract-worker-sign'), {
         workerSignatureUrl: 'https://sig.example.com/worker.png',
         workerSignatureHash: 'abc123',
-        workerSignedAt: '2024-01-01T09:00:00Z',
+        workerSignedAt: serverTimestamp(),  // [CON-02] rules: workerSignedAt == request.time
         status: 'completed',
         updatedAt: '2024-01-01T09:00:00Z',
       }),

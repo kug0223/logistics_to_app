@@ -80,6 +80,16 @@ service cloud.firestore {
       return u != null && u.data != null && u.data.get('isBlacklisted', false) == false;
     }
 
+    // [SCR-BL] 블랙리스트 + businessId 소속 검증을 단일 get()으로 통합
+    // schedule_change_requests create 규칙에서 동일 경로 2회 get() 대신 사용
+    function isValidSCRCreator(businessId) {
+      let u = get(/databases/$(database)/documents/users/$(request.auth.uid));
+      return u != null && u.data != null &&
+        u.data.get('isBlacklisted', false) == false &&
+        businessId is string && businessId.size() > 0 &&
+        u.data.get('businessId', '') == businessId;
+    }
+
     // [SEC-05] 노쇼 누적 이용 제한(restrictedUntil) 서버 검증
     // 클라이언트 체크만 있으면 앱 조작으로 우회 가능 — Firestore 규칙 레벨에서 차단
     function isNotRestricted() {
@@ -1052,15 +1062,15 @@ service cloud.firestore {
       //   payment_change_requests·interim_settlement_requests와 동일한 패턴 적용
       // SEC-80: USER 경로 status=='PENDING' 강제 + requestedByUid==auth.uid 검증
       //   — 클라이언트가 status='APPROVED'로 직접 생성하거나 requestedByUid를 위조하는 것을 차단
+      // [SCR-BL] isNotBlacklisted() 와 businessId 소속 검증을 단일 get() 호출로 통합
+      //   — 동일 경로 2회 get() 시 Firebase 에뮬레이터 evaluation error 방지
       // [SCR-01 보류] 관리자 경로 applicantUid 소속 검증 — isAdminOf+get() 조합이
       //   에뮬레이터에서 evaluation error 유발, LOW 영향(PENDING 레코드 1건 노출)으로 보류
       allow create: if isLoggedIn() && (
                       (request.resource.data.applicantUid == request.auth.uid &&
+                       isValidSCRCreator(request.resource.data.businessId) &&
                        request.resource.data.status == 'PENDING' &&
-                       request.resource.data.requestedByUid == request.auth.uid &&
-                       request.resource.data.businessId != '' &&
-                       get(/databases/$(database)/documents/users/$(request.auth.uid))
-                         .data.get('businessId', '') == request.resource.data.businessId) ||
+                       request.resource.data.requestedByUid == request.auth.uid) ||
                       isAdminOf(request.resource.data.businessId) ||
                       isSubAdminOf(request.resource.data.businessId) ||
                       isSuperAdmin()
@@ -1465,11 +1475,15 @@ service cloud.firestore {
                       resource.data.status != 'voided' && (
                         // [SEC-91] 근무자: pending_worker → completed 전이만 허용 + 서명 필드 필수
                         // pending_employer 상태에서 completed 직접 설정, 또는 voided 무단 전환 차단
+                        // [CON-02] workerSignedAt == request.time 강제 — 클라이언트가 과거/미래 날짜를
+                        //   직접 설정하는 법적 타임스탬프 위조 차단
                         (isOwner(resource.data.workerId) &&
                          resource.data.status == 'pending_worker' &&
                          request.resource.data.status == 'completed' &&
                          'workerSignatureUrl' in request.resource.data &&
                          'workerSignatureHash' in request.resource.data &&
+                         'workerSignedAt' in request.resource.data &&
+                         request.resource.data.workerSignedAt == request.time &&
                          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                            'status', 'workerSignatureUrl', 'workerSignatureHash',
                            'workerSignedAt', 'pdfUrl', 'updatedAt'
@@ -1485,7 +1499,8 @@ service cloud.firestore {
                          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                            'status', 'employerSignatureUrl', 'employerSignatureHash',
                            'employerSignedAt', 'updatedAt',
-                           'articles', 'templateId', 'slots', 'applicationIds'
+                           'articles', 'templateId', 'slots', 'applicationIds',
+                           'contractVoidedAt', 'voidReason'
                          ]) &&
                          // [SEC-104] applicationIds도 pending_employer 상태에서만 수정 허용
                          //   근무자 서명 후 계약서에 다른 지원서로 재귀속하는 공격 차단

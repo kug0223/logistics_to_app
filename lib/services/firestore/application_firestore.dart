@@ -2199,9 +2199,10 @@ extension ApplicationFirestore on FirestoreService {
           .collection('attendance')
           .where('applicationId', isEqualTo: applicationId)
           .where('wageStatus', isEqualTo: 'pending');
+      // [MISMATCH-FIX] USER 경로: rules isUser() && filters.userId == auth.uid 충족을 위해 userId 필터 필수
       final attendanceRecords = await (businessId != null
               ? attendanceBaseQuery.where('businessId', isEqualTo: businessId)
-              : attendanceBaseQuery)
+              : attendanceBaseQuery.where('userId', isEqualTo: uid))
           .get(const GetOptions(source: Source.server));
       for (final doc in attendanceRecords.docs) {
         localBatch.update(doc.reference, {'canceledWithApplication': true});

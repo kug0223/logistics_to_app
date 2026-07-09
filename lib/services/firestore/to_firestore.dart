@@ -680,7 +680,9 @@ extension TOFirestore on FirestoreService {
             final allContractDocs = [...contractDocs1];
             for (int j = 0; j < chunk.length; j += 10) {
               final subChunk = chunk.sublist(j, (j + 10) < chunk.length ? j + 10 : chunk.length);
+              // [MISMATCH-FIX] businessId 필터 추가 — rules: isAdminOf(filters.businessId) 필수
               final bundleSnap = await _firestore.collection('employment_contracts')
+                  .where('businessId', isEqualTo: to.businessId)
                   .where('applicationIds', arrayContainsAny: subChunk)
                   .get(const GetOptions(source: Source.server));
               for (final doc in bundleSnap.docs) {

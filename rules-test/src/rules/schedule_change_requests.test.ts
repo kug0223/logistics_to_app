@@ -33,6 +33,13 @@ beforeAll(async () => {
 
   await seedDoc(env, 'schedule_change_requests', SCR, baseReq);
 
+  // 블랙리스트된 유저 (SCR-CREATE-06 검증용)
+  await seedDoc(env, 'users', 'uid-blacklisted', {
+    role: 'USER', username: 'blocked', name: '블랙리스트',
+    email: 'blocked@test.com', isBlacklisted: true,
+    businessId: IDS.business,
+  });
+
   // APPROVED 상태 (역변조 차단 검증)
   await seedDoc(env, 'schedule_change_requests', 'scr-approved', {
     ...baseReq, status: 'APPROVED',
@@ -136,6 +143,21 @@ describe('SCR-CREATE: 요청 생성', () => {
     await assertSucceeds(
       setDoc(doc(db, 'schedule_change_requests', 'scr-sub-new'), {
         applicantUid: IDS.user,
+        businessId: IDS.business,
+        applicationId: 'app-001',
+        type: 'ADDITIONAL_WORK',
+        status: 'PENDING',
+      }),
+    );
+  });
+
+  test('SCR-CREATE-06 블랙리스트 사용자는 요청을 생성할 수 없다', async () => {
+    // isNotBlacklisted() 검사 — isBlacklisted:true 인 사용자는 create 차단
+    const db = getAuth(env, 'uid-blacklisted');
+    await assertFails(
+      setDoc(doc(db, 'schedule_change_requests', 'scr-blacklisted-new'), {
+        applicantUid: 'uid-blacklisted',
+        requestedByUid: 'uid-blacklisted',
         businessId: IDS.business,
         applicationId: 'app-001',
         type: 'ADDITIONAL_WORK',
