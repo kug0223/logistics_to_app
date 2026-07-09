@@ -210,6 +210,26 @@ describe('U-CREATE: users 문서 생성 (회원가입)', () => {
       isDummy: true,  // CF Admin SDK 전용 — 일반 가입 경로에서 차단
     }));
   });
+
+  // SEC-102 회귀: Dart UserModel.toMap()은 한국인도 foreignIdNumber:null 키를 항상 포함
+  // !('foreignIdNumber' in data) 조건 대신 get('foreignIdNumber', null)==null 로 수정 검증
+  test('U-CREATE-15 ✅ 한국인 가입 시 foreignIdNumber:null 포함해도 생성 가능 (SEC-102 회귀)', async () => {
+    const db = getAuth(env, newUid);
+    await assertSucceeds(setDoc(doc(db, 'users', newUid), {
+      ...safeData,
+      foreignIdNumber: null,   // Dart toMap()이 항상 포함 — 한국인은 null
+      accountStatus: 'active', // 한국인은 active로 가입 가능
+    }));
+  });
+
+  test('U-CREATE-16 ❌ foreignIdNumber 실제 값 + accountStatus=active 차단 (SEC-102)', async () => {
+    const db = getAuth(env, newUid);
+    await assertFails(setDoc(doc(db, 'users', newUid), {
+      ...safeData,
+      foreignIdNumber: 'ENCRYPTED_VALUE',  // 실제 외국인 등록번호
+      accountStatus: 'active',             // 외국인은 pending만 허용
+    }));
+  });
 });
 
 // ─────────────────────────────────────────────────────

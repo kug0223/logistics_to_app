@@ -172,34 +172,8 @@ class PayrollPaymentService {
     }
   }
 
-  /// 이체 완료 취소 (confirmed 상태로 되돌림)
-  ///
-  /// 트랜잭션 내에서 wageTransferred 상태를 재확인하여 이미 취소되거나
-  /// 잘못된 상태의 레코드를 역전환하지 않도록 보호한다.
-  Future<void> cancelTransfer({
-    required String attendanceId,
-    required String processedBy,
-  }) async {
-    await _db.runTransaction((tx) async {
-      final ref = _db.collection('attendance').doc(attendanceId);
-      final snap = await tx.get(ref);
-      if (!snap.exists) throw Exception('출근기록을 찾을 수 없습니다');
-      final currentStatus = snap.data()?['wageStatus'];
-      if (currentStatus != AttendanceModel.wageTransferred) {
-        throw Exception('이체 완료 상태가 아닙니다 (현재: $currentStatus)');
-      }
-      tx.update(ref, {
-        'wageStatus':         AttendanceModel.wageConfirmed,
-        'transferDate':       FieldValue.delete(),
-        'transferNote':       FieldValue.delete(),
-        'transferredBy':      FieldValue.delete(),
-        'transferCanceledAt': FieldValue.serverTimestamp(),
-        'transferCanceledBy': processedBy,
-        'updatedAt':          FieldValue.serverTimestamp(),
-      });
-    });
-    debugPrint('✅ 이체 취소 완료: $attendanceId by $processedBy');
-  }
+  // cancelTransfer() 제거 — firestore.rules에서 transferred→confirmed 역전환을 전면 차단함
+  // (슈퍼어드민 포함 클라이언트 경로 불가, Admin SDK CF 경유만 가능)
 
   // ══════════════════════════════════════════════════════════
   // 급여 지급 현황 조회
@@ -461,44 +435,30 @@ class PayrollPaymentService {
     return ref.id;
   }
 
-  /// 사업장의 미처리 중간정산 요청 전체 조회 (내부 커서 페이지네이션으로 한도 제거)
+  /// 사업장의 미처리 중간정산 요청 전체 조회
+  /// whereIn + isEqualTo 복합 쿼리는 Firestore 보안 규칙에서 filters.businessId null 반환 버그 있음
+  /// → pending/approved 각각 단독 isEqualTo 쿼리로 병렬 실행 후 병합
   Future<List<InterimSettlementRequestModel>> getPendingSettlementRequests(
       String businessId) async {
-    final results = <InterimSettlementRequestModel>[];
-    DocumentSnapshot? cursor;
-    bool hasMore = true;
-    while (hasMore) {
-      final page = await _fetchSettlementRequestPage(businessId, cursor: cursor);
-      results.addAll(page.records);
-      hasMore = page.hasMore;
-      cursor = page.cursor;
-    }
-    return results;
-  }
-
-  Future<PayrollPage<InterimSettlementRequestModel>> _fetchSettlementRequestPage(
-      String businessId, {DocumentSnapshot? cursor, int pageSize = 30}) async {
     try {
-      Query query = _db
+      final base = _db
           .collection('interim_settlement_requests')
           .where('businessId', isEqualTo: businessId)
-          .where('status', whereIn: [
-            InterimSettlementRequestModel.statusPending,
-            InterimSettlementRequestModel.statusApproved,
-          ])
           .orderBy('createdAt', descending: true);
-      if (cursor != null) query = query.startAfterDocument(cursor);
-      final snap = await query.limit(pageSize + 1).get();
-      final hasMore = snap.docs.length > pageSize;
-      final docs = hasMore ? snap.docs.take(pageSize).toList() : snap.docs;
-      return PayrollPage(
-        records: docs.map(InterimSettlementRequestModel.tryFromFirestore).whereType<InterimSettlementRequestModel>().toList(),
-        cursor: docs.isNotEmpty ? docs.last : null,
-        hasMore: hasMore,
-      );
+      final results = await Future.wait([
+        base.where('status', isEqualTo: InterimSettlementRequestModel.statusPending).get(),
+        base.where('status', isEqualTo: InterimSettlementRequestModel.statusApproved).get(),
+      ]);
+      final all = results
+          .expand((snap) => snap.docs)
+          .map(InterimSettlementRequestModel.tryFromFirestore)
+          .whereType<InterimSettlementRequestModel>()
+          .toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return all;
     } catch (e) {
       debugPrint('❌ 중간정산 요청 조회 실패: $e');
-      return PayrollPage(records: [], hasMore: false);
+      return [];
     }
   }
 

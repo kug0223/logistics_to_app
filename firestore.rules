@@ -243,9 +243,10 @@ service cloud.firestore {
                        request.resource.data.get('role', 'USER') in ['USER', 'BUSINESS_ADMIN'] &&
                        // accountStatus: 슈퍼관리자 승인 우회 차단
                        request.resource.data.get('accountStatus', 'active') in ['active', 'pending'] &&
-                       // [SEC-102] foreignIdNumber(외국인 등록번호)가 있으면 pending만 허용
-                       // 외국인 근로자는 신원 검증 전 active 설정으로 승인 절차 우회 차단
-                       (!('foreignIdNumber' in request.resource.data) ||
+                       // [SEC-102] foreignIdNumber(외국인 등록번호)가 실제 값이 있으면 pending만 허용
+                       // UserModel.toMap()은 항상 foreignIdNumber 키를 포함(null 가능)하므로
+                       // 키 존재 여부가 아닌 값 null 여부로 판단
+                       (request.resource.data.get('foreignIdNumber', null) == null ||
                         request.resource.data.get('accountStatus', 'pending') == 'pending') &&
                        // isBlacklisted: 신규 계정은 false만 허용
                        request.resource.data.get('isBlacklisted', false) == false &&
@@ -1204,8 +1205,9 @@ service cloud.firestore {
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status', 'respondedAt', 'rejectionReason', 'expiresAt']) &&
                        // [H-1] expiresAt 서버 시각 + 7일 이내로 제한 — 임의 무기한 연장 차단
+                       // [ID-2] 클라이언트 시계 오차(clock skew) 5분 허용 — DateTime.now() 기반 expiresAt 설정 시 PERMISSION_DENIED 방지
                        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['expiresAt']) ||
-                        request.resource.data.expiresAt <= request.time + duration.value(7, 'd'))) ||
+                        request.resource.data.expiresAt <= request.time + duration.value(7, 'd') + duration.value(5, 'm'))) ||
                       ((isAdminOf(resource.data.requesterBusinessId) ||
                         isSubAdminOf(resource.data.requesterBusinessId)) &&
                        request.resource.data.diff(resource.data).affectedKeys()

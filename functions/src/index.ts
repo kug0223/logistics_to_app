@@ -5458,7 +5458,7 @@ export const onAttendanceCreated = onDocumentCreated(
 
     const applicationId = data.applicationId as string | undefined;
     const businessId = data.businessId as string | undefined;
-    const checkInTime = data.checkInTime as Timestamp | undefined;
+    const checkInTime = data.checkIn as Timestamp | undefined;  // Dart는 'checkIn' 키로 저장
     const checkInLat = data.checkInLat as number | undefined;
     const checkInLng = data.checkInLng as number | undefined;
     const checkInMethod = data.checkInMethod as string | undefined;
