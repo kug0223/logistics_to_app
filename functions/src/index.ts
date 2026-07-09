@@ -4149,6 +4149,10 @@ export const initiatePassAuth = onCall(
     }
 
     const isMock = process.env.DANAL_MOCK_MODE === "true";
+    // [SEC-MOCK] production에서 mock 모드 사용 차단 — GCLOUD_PROJECT로 prod 감지
+    if (isMock && process.env.GCLOUD_PROJECT === "alfit-prod") {
+      throw new HttpsError("unavailable", "DANAL_MOCK_MODE는 production에서 사용할 수 없습니다.");
+    }
     if (isMock) {
       return {
         txSeq: `MOCK-${Date.now()}`,
@@ -4270,6 +4274,10 @@ export const verifyPassAuth = onCall(
     }
 
     const isMock = process.env.DANAL_MOCK_MODE === "true";
+    // [SEC-MOCK] production에서 mock 모드 사용 차단
+    if (isMock && process.env.GCLOUD_PROJECT === "alfit-prod") {
+      throw new HttpsError("unavailable", "DANAL_MOCK_MODE는 production에서 사용할 수 없습니다.");
+    }
 
     let ci: string;
     let name: string;
@@ -5578,7 +5586,7 @@ export const callableGetIdCardSignedUrl = onCall(
  *   - 요청 UID 중 해당 businessId 소속 아닌 것 제외 (SUPER_ADMIN 예외)
  *   - ci, residentNumber, foreignIdNumber, idCardImageUrl,
  *     signatureBase64, sealBase64, bankbookImageUrl 필드 제거
- *   - accountNumber는 암호화 상태로 반환 (클라이언트에서 마스킹 처리)
+ *   - accountNumber는 민감 필드로 제거하여 반환하지 않음
  *
  * 입력: { uids: string[], businessId: string }  (uids 최대 30개)
  * 출력: { users: Record<uid, SafeUserData> }
