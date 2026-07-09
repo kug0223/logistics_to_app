@@ -146,6 +146,7 @@ extension AttendanceFirestore on FirestoreService {
           'businessId': businessId,
           'businessName': businessName,
           'workDate': Timestamp.fromDate(DateTime(workDate.year, workDate.month, workDate.day)),
+          'yearMonth': '${workDate.year}-${workDate.month.toString().padLeft(2, '0')}',
           'workType': workType,
           'checkIn': Timestamp.fromDate(effectiveCheckInAt),  // 반올림 적용 최종값 (Timestamp)
           'originalCheckIn': Timestamp.fromDate(now),         // GPS/비콘 원본 (절대 불변)

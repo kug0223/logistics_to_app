@@ -587,7 +587,7 @@ export const onNotificationCreated = onDocumentCreated(
         type: type || "general",
       };
 
-      // 추가 data 필드가 있으면 병합
+      // 추가 data 필드가 있으면 병합 — FCM data payload 4KB 한계 초과 방지
       if (notificationData.data) {
         const extraData = notificationData.data as Record<string, unknown>;
         for (const [key, value] of Object.entries(extraData)) {
@@ -596,6 +596,11 @@ export const onNotificationCreated = onDocumentCreated(
           } else if (value !== null && value !== undefined) {
             fcmData[key] = String(value);
           }
+        }
+        // FCM data payload 직렬화 크기가 3KB 초과 시 로그 (4KB 한계 접근 경고)
+        const payloadSize = Buffer.byteLength(JSON.stringify(fcmData), "utf8");
+        if (payloadSize > 3000) {
+          console.error(`⚠️ [FCM] data payload 크기 초과 위험: ${payloadSize}B (userId=${userId}, type=${type})`);
         }
       }
 
@@ -1392,7 +1397,9 @@ export const onWageConfirmed = onDocumentUpdated(
 // ═══════════════════════════════════════════════════════════
 
 /**
- * attendance.wageStatus 변경 시 payroll_summaries 문서를 트랜잭션으로 갱신.
+ * attendance.wageStatus 변경 시 payroll_summaries 집계를 트랜잭션으로 갱신.
+ * - 루트 문서: totalPayout, confirmedCount, workerCount (집계 필드만)
+ * - 서브컬렉션 workers/{userId}: 근무자별 상세 (1MB 문서 한계 회피)
  * - * → confirmed : finalWage 더하기, workDays +1
  * - confirmed → * : finalWage 빼기, workDays -1
  * - confirmed → confirmed (금액 수정) : delta 적용
@@ -1438,8 +1445,9 @@ export const onAttendanceWageChanged = onDocumentUpdated(
     const yearMonth = `${year}-${monthStr}`;
     const summaryId = `${businessId}_${yearMonth}`;
     const summaryRef = db.collection("payroll_summaries").doc(summaryId);
+    const workerRef = summaryRef.collection("workers").doc(userId);
 
-    // 근무자 이름 조회 (트랜잭션 외부)
+    // 근무자 이름 조회 (트랜잭션 외부 — Admin SDK read는 트랜잭션 밖에서 허용)
     let workerName = "";
     try {
       const userDoc = await db.collection("users").doc(userId).get();
@@ -1468,10 +1476,19 @@ export const onAttendanceWageChanged = onDocumentUpdated(
       }
 
       const summarySnap = await tx.get(summaryRef);
+      const workerSnap = await tx.get(workerRef);
       const now = Timestamp.now();
+
+      // 서브컬렉션에서 기존 근무자 데이터 조회
+      const existingWorker: WorkerEntry = workerSnap.exists
+        ? (workerSnap.data() as WorkerEntry)
+        : {name: workerName, totalPayout: 0, workDays: 0};
+      const newPayout = existingWorker.totalPayout + payoutDelta;
+      const newDays = existingWorker.workDays + confirmedCountDelta;
 
       if (!summarySnap.exists) {
         if (!isConfirmed) return;
+        // 루트 문서: 집계 필드만 (workers Map 없음)
         tx.set(summaryRef, {
           businessId,
           yearMonth,
@@ -1480,10 +1497,14 @@ export const onAttendanceWageChanged = onDocumentUpdated(
           totalPayout: afterWage,
           confirmedCount: 1,
           workerCount: 1,
-          workers: {
-            [userId]: {name: workerName, totalPayout: afterWage, workDays: 1},
-          },
           createdAt: now,
+          updatedAt: now,
+        });
+        // 서브컬렉션에 근무자 상세 기록
+        tx.set(workerRef, {
+          name: workerName,
+          totalPayout: afterWage,
+          workDays: 1,
           updatedAt: now,
         });
         tx.set(processedRef, {processedAt: now, attendanceId: event.params.attendanceId});
@@ -1491,33 +1512,34 @@ export const onAttendanceWageChanged = onDocumentUpdated(
       }
 
       const data = summarySnap.data() as Record<string, unknown>;
-      const rawWorkers = (data.workers ?? {}) as Record<string, WorkerEntry>;
-      const workers: Record<string, WorkerEntry> = {...rawWorkers};
-
-      const existing: WorkerEntry =
-        workers[userId] ?? {name: workerName, totalPayout: 0, workDays: 0};
-      const newPayout = existing.totalPayout + payoutDelta;
-      const newDays = existing.workDays + confirmedCountDelta;
-
-      if (newDays <= 0) {
-        delete workers[userId];
-      } else {
-        workers[userId] = {
-          name: workerName || existing.name,
-          totalPayout: Math.max(0, newPayout),
-          workDays: Math.max(0, newDays),
-        };
-      }
-
       const prevTotal = (data.totalPayout as number) ?? 0;
       const prevCount = (data.confirmedCount as number) ?? 0;
+      const prevWorkerCount = (data.workerCount as number) ?? 0;
+
+      // workerCount delta: 신규 근무자 +1, 마지막 근무 취소 -1, 기타 0
+      const wasPresent = workerSnap.exists;
+      const willPresent = newDays > 0;
+      const workerCountDelta = (willPresent ? 1 : 0) - (wasPresent ? 1 : 0);
+
       tx.update(summaryRef, {
         totalPayout: Math.max(0, prevTotal + payoutDelta),
         confirmedCount: Math.max(0, prevCount + confirmedCountDelta),
-        workerCount: Object.keys(workers).length,
-        workers,
+        workerCount: Math.max(0, prevWorkerCount + workerCountDelta),
         updatedAt: now,
       });
+
+      if (newDays <= 0) {
+        // 해당 월 근무 확정 0건 → 서브컬렉션 문서 삭제
+        if (wasPresent) tx.delete(workerRef);
+      } else {
+        tx.set(workerRef, {
+          name: workerName || existingWorker.name,
+          totalPayout: Math.max(0, newPayout),
+          workDays: Math.max(0, newDays),
+          updatedAt: now,
+        });
+      }
+
       // 처리 완료 표시 — TTL 정책으로 30일 후 자동 삭제 권장
       tx.set(processedRef, {processedAt: now, attendanceId: event.params.attendanceId});
     });
@@ -3941,15 +3963,20 @@ export const onBusinessDeleted = onDocumentDeleted(
       if (invCount % 500 !== 0) await invBatch.commit();
     }
 
-    // 해당 사업장의 TO 목록
-    // [STRUCT-07] TO 수가 매우 많은 사업장에서는 메모리 초과 가능 — 현재 retry:true로 실패 시 재처리되나, 대규모 사업장은 페이지네이션 필요 (3단계 개선)
-    const tosSnap = await db
-      .collection("tos")
-      .where("businessId", "==", businessId)
-      .get();
+    // 해당 사업장의 TO 목록 — [STRUCT-07 FIX] 200건씩 페이지네이션으로 OOM 방지
+    const TO_PAGE_SIZE = 200;
+    let lastToDoc: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+    const allGroupIds = new Set<string>();
 
-    if (!tosSnap.empty) {
-      const toIds = tosSnap.docs.map((d) => d.id);
+    while (true) {
+      const baseToQuery = db
+        .collection("tos")
+        .where("businessId", "==", businessId)
+        .limit(TO_PAGE_SIZE);
+      const tosPage = await (lastToDoc ? baseToQuery.startAfter(lastToDoc) : baseToQuery).get();
+      if (tosPage.empty) break;
+
+      const toIds = tosPage.docs.map((d) => d.id);
       const chunkSize = 30;
 
       for (let i = 0; i < toIds.length; i += chunkSize) {
@@ -4025,34 +4052,20 @@ export const onBusinessDeleted = onDocumentDeleted(
       }
 
       // [D-BIZ-05] TO 삭제 전 slots 서브컬렉션 orphan 방지 — 각 TO의 slots를 먼저 정리
-      for (const toDoc of tosSnap.docs) {
+      for (const toDoc of tosPage.docs) {
         await deleteSubcollection(`tos/${toDoc.id}/slots`);
       }
 
-      // [NEW-06] groups 컬렉션 정리 — TO에 연결된 그룹 문서 삭제
-      const groupIds = new Set<string>();
-      for (const toDoc of tosSnap.docs) {
+      // [NEW-06] groups 수집 (전체 페이지 완료 후 일괄 삭제)
+      for (const toDoc of tosPage.docs) {
         const gid = toDoc.data().groupId as string | undefined;
-        if (gid) groupIds.add(gid);
-      }
-      if (groupIds.size > 0) {
-        let groupBatch = db.batch();
-        let groupCount = 0;
-        for (const gid of groupIds) {
-          groupBatch.delete(db.collection("groups").doc(gid));
-          groupCount++;
-          if (groupCount % 500 === 0) {
-            await groupBatch.commit();
-            groupBatch = db.batch();
-          }
-        }
-        if (groupCount % 500 !== 0) await groupBatch.commit();
+        if (gid) allGroupIds.add(gid);
       }
 
       // TO 문서 삭제 (500건 분할)
       let tosBatch = db.batch();
       let tosCount = 0;
-      for (const doc of tosSnap.docs) {
+      for (const doc of tosPage.docs) {
         tosBatch.delete(doc.ref);
         tosCount++;
         if (tosCount % 500 === 0) {
@@ -4061,6 +4074,24 @@ export const onBusinessDeleted = onDocumentDeleted(
         }
       }
       if (tosCount % 500 !== 0) await tosBatch.commit();
+
+      if (tosPage.size < TO_PAGE_SIZE) break;
+      lastToDoc = tosPage.docs[tosPage.docs.length - 1];
+    }
+
+    // [NEW-06] groups 컬렉션 정리 — 모든 페이지에서 수집한 groupId 일괄 삭제
+    if (allGroupIds.size > 0) {
+      let groupBatch = db.batch();
+      let groupCount = 0;
+      for (const gid of allGroupIds) {
+        groupBatch.delete(db.collection("groups").doc(gid));
+        groupCount++;
+        if (groupCount % 500 === 0) {
+          await groupBatch.commit();
+          groupBatch = db.batch();
+        }
+      }
+      if (groupCount % 500 !== 0) await groupBatch.commit();
     }
 
     // [SEC-32] idCardAccessRequests 정리 — 신분증 열람 요청 기록 삭제
@@ -4397,8 +4428,11 @@ export const finalizeRegistration = onCall(
     if (!passToken || typeof passToken !== "string") {
       throw new HttpsError("invalid-argument", "passToken 필수");
     }
-    // mock 토큰(다날 미연동 환경)은 무시 — 실제 Firestore 문서가 없으므로 noop 처리
+    // mock 토큰은 개발 환경에서만 허용 — production에서는 차단
     if (passToken.startsWith("mock-")) {
+      if (process.env.GCLOUD_PROJECT === "alfit-prod") {
+        throw new HttpsError("unavailable", "mock 토큰은 production에서 사용할 수 없습니다.");
+      }
       return {success: true};
     }
 
@@ -4924,6 +4958,14 @@ export const getMyContracts = onCall(
       pageSize?: number;
     };
     const pageSize = Math.min(Math.max(1, rawPageSize ?? 20), 100); // SEC-21: 1~100 제한
+
+    const VALID_CONTRACT_STATUSES = new Set([
+      "pending_employer", "pending_worker", "active",
+      "completed", "voided", "expired",
+    ]);
+    if (statusFilter && !VALID_CONTRACT_STATUSES.has(statusFilter)) {
+      throw new HttpsError("invalid-argument", "유효하지 않은 statusFilter입니다.");
+    }
 
     let q: FirebaseFirestore.Query = db
       .collection("employment_contracts")
@@ -5864,6 +5906,12 @@ export const onAttendanceCreated = onDocumentCreated(
     if (!applicationId || !businessId || !checkInTime) return null;
 
     const updates: Record<string, unknown> = {};
+
+    // yearMonth 안전망 — Dart checkIn()이 누락했을 경우 CF에서 채움
+    if (!data.yearMonth && workDate) {
+      const d = workDate.toDate();
+      updates.yearMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    }
 
     // 1. Application 조회 → 예정 출근 시각
     let scheduledStart: string | undefined;

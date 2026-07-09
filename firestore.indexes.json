@@ -126,6 +126,23 @@
       "collectionGroup": "attendance",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "businessId", "order": "ASCENDING" },
+        { "fieldPath": "yearMonth", "order": "ASCENDING" },
+        { "fieldPath": "wageStatus", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "payroll_summaries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "businessId", "order": "ASCENDING" },
+        { "fieldPath": "year", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "attendance",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "applicationId", "order": "ASCENDING" },
         { "fieldPath": "workDate", "order": "ASCENDING" }
       ]

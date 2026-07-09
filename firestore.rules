@@ -1650,6 +1650,18 @@ service cloud.firestore {
       // 쓰기: Cloud Functions Admin SDK만 허용 (클라이언트 직접 쓰기 차단)
       // Admin SDK는 Firestore 규칙 우회 → 클라이언트는 항상 거부
       allow write: if false;
+
+      // workers 서브컬렉션 — 근무자별 월급 상세 (1MB 한계 회피 구조)
+      match /workers/{workerId} {
+        // 읽기: 해당 사업장 관리자·하위 관리자·슈퍼어드민
+        allow get, list: if isLoggedIn() && (
+          isAdminOf(get(/databases/$(database)/documents/payroll_summaries/$(summaryId)).data.businessId) ||
+          isSubAdminOf(get(/databases/$(database)/documents/payroll_summaries/$(summaryId)).data.businessId) ||
+          isSuperAdmin()
+        );
+        // 쓰기: CF Admin SDK 전담
+        allow write: if false;
+      }
     }
 
     // ═══════════════════════════════════════════════════════════

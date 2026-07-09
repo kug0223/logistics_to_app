@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_functions/cloud_functions.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 
-import '../../../models/core/attendance_model.dart';
 import '../../../models/core/business_model.dart';
 import '../../../models/core/payroll_summary_model.dart';
 import '../../../providers/user_provider.dart';
@@ -96,147 +95,92 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
     setState(() { _isLoading = true; _loadError = null; });
 
     try {
-      // payroll_summaries(CF 집계)에 의존하지 않고 attendance 직접 집계 (CF 경유)
-      // → 급여마감 직후 CF 처리 전에도 즉시 데이터가 표시됨
-      final yearStart = DateTime(year, 1, 1);
-      final yearEnd   = DateTime(year + 1, 1, 1);
-      final cfCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetAdminAttendances',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final cfResult = await cfCallable.call<Map<String, dynamic>>({
-        'businessId': bizId,
-        'startMs': yearStart.millisecondsSinceEpoch,
-        'endMs': yearEnd.millisecondsSinceEpoch,
-      });
-      final limitReached = cfResult.data['limitReached'] as bool? ?? false;
-      if (limitReached) {
-        debugPrint('⚠️ payroll_overview: limit(10000) 도달 — 연간 데이터 누락 가능 (bizId=$bizId, year=$year)');
-        if (mounted) ToastHelper.showWarning('데이터가 많아 일부 급여 내역이 표시되지 않을 수 있습니다.');
+      final db = FirebaseFirestore.instance;
+
+      // 1. payroll_summaries Firestore 직접 읽기 (CF 집계 결과)
+      final summarySnap = await db
+          .collection('payroll_summaries')
+          .where('businessId', isEqualTo: bizId)
+          .where('year', isEqualTo: year)
+          .get();
+
+      final summaryMap = <int, PayrollSummaryModel>{};
+      for (final doc in summarySnap.docs) {
+        final m = PayrollSummaryModel.tryFromFirestore(doc);
+        if (m != null) summaryMap[m.month] = m;
       }
 
-      // 파싱 오류가 있는 문서는 무시
-      final cfItems = (cfResult.data['items'] as List<dynamic>? ?? []);
-      final allRecords = cfItems.map((e) {
-        final m = Map<String, dynamic>.from(e as Map);
-        final id = m.remove('id') as String? ?? '';
-        return AttendanceModel.tryFromMap(m, id);
-      }).whereType<AttendanceModel>().toList();
-
-      // confirmed/transferred 만 급여 집계 대상
-      final confirmed = allRecords.where((r) =>
-          r.wageStatus == AttendanceModel.wageConfirmed ||
-          r.wageStatus == AttendanceModel.wageTransferred).toList();
-
-      // 미확정(pending/calculated) — pendingCount 표시용
-      final pending = allRecords.where((r) =>
-          r.wageStatus == AttendanceModel.wagePending ||
-          r.wageStatus == AttendanceModel.wageCalculated).toList();
-
-      // userId 목록 수집 → 이름 일괄 조회 (CF callableGetUsersBatch 경유 — 서버 소속 검증)
-      final userIds = confirmed.map((r) => r.userId).toSet().toList();
-      final nameMap = <String, String>{};
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetUsersBatch',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
-      for (var i = 0; i < userIds.length; i += 30) {
-        final end = (i + 30) < userIds.length ? i + 30 : userIds.length;
-        final chunk = userIds.sublist(i, end);
+      // 2. pendingCount + notTransferredCount — attendance count() 쿼리 24개 병렬
+      //    yearMonth 필드 기반 (인덱스: businessId ASC, yearMonth ASC, wageStatus ASC)
+      final pendingResults = await Future.wait(List.generate(12, (i) async {
+        final mm = (i + 1).toString().padLeft(2, '0');
         try {
-          final response = await callable.call<Map<String, dynamic>>({
-            'uids': chunk,
-            'businessId': _businessId ?? '',
-          });
-          final usersRaw = (response.data['users'] as Map?)?.cast<String, dynamic>() ?? {};
-          for (final entry in usersRaw.entries) {
-            nameMap[entry.key] = (entry.value as Map)['name'] as String? ?? '';
-          }
-        } catch (_) {}
-      }
+          final snap = await db
+              .collection('attendance')
+              .where('businessId', isEqualTo: bizId)
+              .where('yearMonth', isEqualTo: '$year-$mm')
+              .where('wageStatus', whereIn: ['pending', 'calculated'])
+              .count()
+              .get();
+          return snap.count ?? 0;
+        } catch (_) { return 0; }
+      }));
 
-      // 월별 집계 (confirmed/transferred)
-      final monthlyRecs = <int, List<AttendanceModel>>{};
-      for (final r in confirmed) {
-        // yearMonth 필드 우선, 없으면 workDate KST 기준
-        final int month;
-        final ym = r.yearMonth;
-        if (ym != null && ym.startsWith('$year-')) {
-          month = int.tryParse(ym.split('-')[1]) ??
-              r.workDate.toLocal().month;
-        } else {
-          month = r.workDate.toLocal().month;
-        }
-        (monthlyRecs[month] ??= []).add(r);
-      }
+      final notTransferredResults = await Future.wait(List.generate(12, (i) async {
+        final mm = (i + 1).toString().padLeft(2, '0');
+        try {
+          final snap = await db
+              .collection('attendance')
+              .where('businessId', isEqualTo: bizId)
+              .where('yearMonth', isEqualTo: '$year-$mm')
+              .where('wageStatus', isEqualTo: 'confirmed')
+              .count()
+              .get();
+          return snap.count ?? 0;
+        } catch (_) { return 0; }
+      }));
 
-      // 월별 미확정 카운트
-      final monthlyPending = <int, int>{};
-      for (final r in pending) {
-        final int month;
-        final ym = r.yearMonth;
-        if (ym != null && ym.startsWith('$year-')) {
-          month = int.tryParse(ym.split('-')[1]) ??
-              r.workDate.toLocal().month;
-        } else {
-          month = r.workDate.toLocal().month;
-        }
-        monthlyPending[month] = (monthlyPending[month] ?? 0) + 1;
-      }
-
+      // 3. 12개 PayrollSummaryModel 구성
       final summaries = List.generate(12, (i) {
         final month = i + 1;
-        final recs  = monthlyRecs[month] ?? [];
         final mm    = month.toString().padLeft(2, '0');
-        if (recs.isEmpty) {
-          // 미확정 레코드라도 있으면 pendingCount를 담아 반환 (grey 카드에 "미확정 N건" 표시)
-          final pCount = monthlyPending[month] ?? 0;
-          if (pCount == 0) {
-            return PayrollSummaryModel.empty(
-                businessId: bizId, year: year, month: month);
-          }
+        final pCount  = pendingResults[i];
+        final ntCount = notTransferredResults[i];
+        final existing = summaryMap[month];
+
+        if (existing != null) {
           return PayrollSummaryModel(
-            id: '${bizId}_$year-$mm',
-            businessId: bizId,
-            yearMonth: '$year-$mm',
-            year: year,
-            month: month,
-            totalPayout: 0,
-            confirmedCount: 0,
-            workerCount: 0,
+            id: existing.id,
+            businessId: existing.businessId,
+            yearMonth: existing.yearMonth,
+            year: existing.year,
+            month: existing.month,
+            totalPayout: existing.totalPayout,
+            confirmedCount: existing.confirmedCount,
+            workerCount: existing.workerCount,
             pendingCount: pCount,
-            notTransferredCount: 0,
-            workers: {},
-            updatedAt: DateTime.now(),
+            notTransferredCount: ntCount,
+            workers: existing.workers,
+            updatedAt: existing.updatedAt,
           );
         }
-        int totalPayout = 0;
-        int notTransferredCount = 0;
-        final workers = <String, PayrollWorkerSummary>{};
-        for (final r in recs) {
-          final wage = r.wageDetail?.effectiveNetWage ?? r.finalWage ?? 0;
-          totalPayout += wage;
-          if (r.wageStatus == AttendanceModel.wageConfirmed) {
-            notTransferredCount++;
-          }
-          final prev = workers[r.userId];
-          workers[r.userId] = PayrollWorkerSummary(
-            workerId: r.userId,
-            name: nameMap[r.userId] ?? '',
-            totalPayout: (prev?.totalPayout ?? 0) + wage,
-            workDays: (prev?.workDays ?? 0) + 1,
-          );
+
+        if (pCount == 0 && ntCount == 0) {
+          return PayrollSummaryModel.empty(businessId: bizId, year: year, month: month);
         }
+
         return PayrollSummaryModel(
           id: '${bizId}_$year-$mm',
           businessId: bizId,
           yearMonth: '$year-$mm',
           year: year,
           month: month,
-          totalPayout: totalPayout,
-          confirmedCount: recs.length,
-          workerCount: workers.length,
-          pendingCount: monthlyPending[month] ?? 0,
-          notTransferredCount: notTransferredCount,
-          workers: workers,
+          totalPayout: 0,
+          confirmedCount: 0,
+          workerCount: 0,
+          pendingCount: pCount,
+          notTransferredCount: ntCount,
+          workers: {},
           updatedAt: DateTime.now(),
         );
       });
@@ -493,9 +437,11 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
   final _searchCtrl = TextEditingController();
   String _searchQuery = '';
   _SortOrder _sortOrder = _SortOrder.amountDesc;
+  List<PayrollWorkerSummary> _workers = [];
+  bool _workersLoading = true;
 
   List<PayrollWorkerSummary> get _filteredWorkers {
-    final workers = List<PayrollWorkerSummary>.of(widget.summary.workers.values);
+    final workers = List<PayrollWorkerSummary>.of(_workers);
 
     switch (_sortOrder) {
       case _SortOrder.amountDesc:
@@ -519,6 +465,25 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
     _searchCtrl.addListener(() {
       setState(() => _searchQuery = _searchCtrl.text.trim());
     });
+    _loadWorkers();
+  }
+
+  Future<void> _loadWorkers() async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('payroll_summaries')
+          .doc(widget.summary.id)
+          .collection('workers')
+          .get();
+      final loaded = snap.docs.map((doc) {
+        return PayrollWorkerSummary.tryFromMap(doc.id, doc.data());
+      }).whereType<PayrollWorkerSummary>().toList();
+      if (!mounted) return;
+      setState(() { _workers = loaded; _workersLoading = false; });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _workersLoading = false);
+    }
   }
 
   @override
@@ -571,24 +536,26 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
             ],
           ),
           Expanded(
-            child: filtered.isEmpty
-                ? AppEmptyState(
-                    icon: _searchQuery.isNotEmpty
-                        ? Icons.search_off
-                        : Icons.inbox_outlined,
-                    title: _searchQuery.isNotEmpty
-                        ? '"$_searchQuery" 검색 결과 없음'
-                        : '확정된 급여가 없습니다',
-                  )
-                : ListView.separated(
-                    padding: EdgeInsets.all(
-                        ResponsiveHelper.spacing(context, 16)),
-                    itemCount: filtered.length,
-                    separatorBuilder: (_, __) =>
-                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                    itemBuilder: (context, i) =>
-                        _buildWorkerTile(context, theme, filtered[i]),
-                  ),
+            child: _workersLoading
+                ? const LoadingWidget()
+                : filtered.isEmpty
+                    ? AppEmptyState(
+                        icon: _searchQuery.isNotEmpty
+                            ? Icons.search_off
+                            : Icons.inbox_outlined,
+                        title: _searchQuery.isNotEmpty
+                            ? '"$_searchQuery" 검색 결과 없음'
+                            : '확정된 급여가 없습니다',
+                      )
+                    : ListView.separated(
+                        padding: EdgeInsets.all(
+                            ResponsiveHelper.spacing(context, 16)),
+                        itemCount: filtered.length,
+                        separatorBuilder: (_, __) =>
+                            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                        itemBuilder: (context, i) =>
+                            _buildWorkerTile(context, theme, filtered[i]),
+                      ),
           ),
         ],
       ),
