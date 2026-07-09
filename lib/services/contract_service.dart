@@ -146,6 +146,8 @@ class ContractService {
         data['createdAt'] = FieldValue.serverTimestamp();
         // [BUG-CS-01 수정] 신규 계약서 updatedAt도 서버 타임스탬프로 덮어쓰기 — copyWith의 클라이언트 시간 방지
         data['updatedAt'] = FieldValue.serverTimestamp();
+        // [CON-01] employerSignedAt도 서버 타임스탬프로 — 클라이언트 시계 조작으로 서명 날짜 위변조 방지
+        data['employerSignedAt'] = FieldValue.serverTimestamp();
         await _db.runTransaction((tx) async {
           final snap = await tx.get(ref);
           if (snap.exists) {

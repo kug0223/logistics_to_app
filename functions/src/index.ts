@@ -6962,6 +6962,9 @@ export const callableCalculateAndConfirmWage = onCall(
     const attData2 = attSnap2.data()!;
     const businessId2 = attData2.businessId as string;
     const userId2 = attData2.userId as string;
+    // [WAG-01] 교차검증에 사용할 서버 체크인/아웃 시간 추출
+    const attCheckIn = attData2.checkIn as admin.firestore.Timestamp | undefined;
+    const attCheckOut = attData2.checkOut as admin.firestore.Timestamp | undefined;
 
     // 2. 권한 확인
     const callerSnap2 = await db.collection("users").doc(callerUid).get();
@@ -6980,6 +6983,36 @@ export const callableCalculateAndConfirmWage = onCall(
       authorized2 = callerSubAdminOf2 === businessId2;
     }
     if (!authorized2) throw new HttpsError("permission-denied", "해당 사업장 관리 권한이 필요합니다.");
+
+    // [WAG-01] actualStart/actualEnd와 attendance 기록 교차검증
+    // 관리자 API 직접 호출로 실제 근무 시간과 크게 다른 값을 입력하는 것을 방지
+    // 허용 오차: ±120분 (반올림 처리·야간교대 정상 조정 허용)
+    {
+      const toMins = (hhmm: string) => {
+        const parts = hhmm.split(":").map(Number);
+        return parts[0] * 60 + parts[1];
+      };
+      const tsToMins = (ts: admin.firestore.Timestamp) => {
+        const d2 = ts.toDate();
+        const kst = new Date(d2.getTime() + 9 * 3600 * 1000);
+        return kst.getUTCHours() * 60 + kst.getUTCMinutes();
+      };
+      const cyclicDiff = (a: number, b: number) => Math.min(Math.abs(a - b), 1440 - Math.abs(a - b));
+      if (attCheckIn) {
+        const diff = cyclicDiff(toMins(d.actualStart), tsToMins(attCheckIn));
+        if (diff > 120) {
+          throw new HttpsError("invalid-argument",
+            `실제 시작 시간(${d.actualStart})이 체크인 기록과 2시간 이상 차이납니다.`);
+        }
+      }
+      if (attCheckOut) {
+        const diff = cyclicDiff(toMins(d.actualEnd), tsToMins(attCheckOut));
+        if (diff > 120) {
+          throw new HttpsError("invalid-argument",
+            `실제 종료 시간(${d.actualEnd})이 체크아웃 기록과 2시간 이상 차이납니다.`);
+        }
+      }
+    }
 
     // 3. 최저시급 + 보험료율 조회
     const cfgSnap = await db.collection("settings").doc("wage_config").get();
@@ -7002,6 +7035,11 @@ export const callableCalculateAndConfirmWage = onCall(
     // 4. 계산
     const workYear2 = parseInt(d.workDate.substring(0, 4), 10);
     const minimumWage2 = srvGetMinimumWage(workYear2, fsMinWages);
+    // [WAG-02] 시급제: baseWage가 해당 연도 법적 최저임금 미만이면 차단
+    if (d.wageType === "hourly" && minimumWage2 > 0 && d.baseWage < minimumWage2) {
+      throw new HttpsError("invalid-argument",
+        `시급(${d.baseWage}원)이 ${workYear2}년 최저임금(${minimumWage2}원) 미만입니다.`);
+    }
     const rates2 = srvGetRates(workYear2, fsRates);
     const breakMins = typeof d.breakMinutes === "number" ? d.breakMinutes : 0;
     const schedBreakMins = typeof d.scheduledBreakMinutes === "number" ? d.scheduledBreakMinutes : breakMins;
