@@ -326,6 +326,38 @@ extension IdCardFirestore on FirestoreService {
     }
   }
 
+  /// 신분증 이미지 서명 URL 발급 (ID-1 보안: 1시간 만료 Signed URL)
+  /// CF callableGetIdCardSignedUrl 경유 — 승인 확인 + Storage Signed URL 반환
+  Future<String?> getIdCardSignedUrl(String targetUserId) async {
+    try {
+      debugPrint('🪪 [getIdCardSignedUrl] 요청: $targetUserId');
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetIdCardSignedUrl');
+      final result = await callable.call<Map<String, dynamic>>(
+        {'targetUserId': targetUserId},
+      );
+      final signedUrl = result.data['signedUrl'] as String?;
+      if (signedUrl == null || signedUrl.isEmpty) {
+        debugPrint('❌ [getIdCardSignedUrl] signedUrl 없음');
+        return null;
+      }
+      debugPrint('✅ [getIdCardSignedUrl] 성공');
+      return signedUrl;
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('❌ [getIdCardSignedUrl] CF 오류: ${e.code} ${e.message}');
+      if (e.code == 'permission-denied') {
+        ToastHelper.showError('신분증 열람 권한이 없거나 만료되었습니다');
+      } else {
+        ToastHelper.showError('신분증 이미지 로드 실패');
+      }
+      return null;
+    } catch (e) {
+      debugPrint('❌ [getIdCardSignedUrl] 실패: $e');
+      ToastHelper.showError('신분증 이미지 로드 실패');
+      return null;
+    }
+  }
+
   // Helper methods for IdCardAccessReason
   String _reasonToString(IdCardAccessReason reason) {
     switch (reason) {

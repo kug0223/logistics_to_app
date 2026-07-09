@@ -5179,6 +5179,97 @@ export const onTOStatusChanged = onDocumentUpdated(
 );
 
 // ═══════════════════════════════════════════════════════════
+// 🪪 신분증 서명 URL 발급 (ID-1 보안: Firestore 평문 URL 직접 노출 차단)
+// ═══════════════════════════════════════════════════════════
+/**
+ * 승인된 idCardAccessRequests를 확인 후 1시간 만료 Storage Signed URL 반환.
+ * - SUPER_ADMIN: 항상 허용
+ * - BUSINESS_ADMIN / SUB_ADMIN: 유효한(approved + expiresAt > now) 요청 필수
+ * - idCardImageUrl에서 Storage 경로 파싱 (기존 데이터 호환)
+ * - 응답: { signedUrl: string } (1시간 만료)
+ */
+export const callableGetIdCardSignedUrl = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    }
+
+    const {targetUserId} = request.data as {targetUserId?: string};
+    if (!targetUserId) {
+      throw new HttpsError("invalid-argument", "targetUserId가 필요합니다.");
+    }
+
+    const callerDoc = await db.collection("users").doc(request.auth.uid).get();
+    const callerRole = (callerDoc.data()?.role as string | undefined) ?? "";
+    const isSuperAdmin = callerRole === "SUPER_ADMIN";
+
+    if (!isSuperAdmin) {
+      // 유효한 신분증 접근 승인 확인
+      const now = Timestamp.now();
+      const accessSnap = await db
+        .collection("idCardAccessRequests")
+        .where("requesterId", "==", request.auth.uid)
+        .where("targetUserId", "==", targetUserId)
+        .where("status", "==", "approved")
+        .where("expiresAt", ">", now)
+        .limit(1)
+        .get();
+
+      if (accessSnap.empty) {
+        throw new HttpsError(
+          "permission-denied",
+          "신분증 열람 권한이 없거나 만료되었습니다."
+        );
+      }
+    }
+
+    // 대상자 문서에서 Storage 경로 조회
+    const targetDoc = await db.collection("users").doc(targetUserId).get();
+    if (!targetDoc.exists) {
+      throw new HttpsError("not-found", "사용자를 찾을 수 없습니다.");
+    }
+    const targetData = targetDoc.data()!;
+
+    // idCardImagePath 우선, 없으면 idCardImageUrl에서 경로 파싱 (기존 데이터 호환)
+    let storagePath = targetData.idCardImagePath as string | undefined;
+    if (!storagePath) {
+      const downloadUrl = targetData.idCardImageUrl as string | undefined;
+      if (!downloadUrl) {
+        throw new HttpsError("not-found", "신분증 이미지가 등록되지 않았습니다.");
+      }
+      try {
+        const url = new URL(downloadUrl);
+        const match = url.pathname.match(/\/o\/(.+)$/);
+        if (!match) throw new Error("경로 파싱 실패");
+        storagePath = decodeURIComponent(match[1]);
+      } catch {
+        throw new HttpsError("internal", "신분증 Storage 경로를 파싱할 수 없습니다.");
+      }
+    }
+
+    // 1시간 만료 Signed URL 생성
+    const bucket = admin.storage().bucket();
+    const file = bucket.file(storagePath);
+    const [exists] = await file.exists();
+    if (!exists) {
+      throw new HttpsError("not-found", "신분증 파일이 Storage에 존재하지 않습니다.");
+    }
+
+    const [signedUrl] = await file.getSignedUrl({
+      action: "read",
+      expires: Date.now() + 60 * 60 * 1000, // 1시간
+    });
+
+    console.log(
+      `[callableGetIdCardSignedUrl] ${request.auth.uid} → ${targetUserId}` +
+      ` (superAdmin=${isSuperAdmin})`
+    );
+    return {signedUrl};
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
 // 👥 사용자 배치 조회 (서버 사이드 소속 검증)
 // ═══════════════════════════════════════════════════════════
 /**

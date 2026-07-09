@@ -545,22 +545,36 @@ class _ForeignWorkerApprovalScreenState
   }
 
   Future<void> _showIdCardImage(UserModel user) async {
-    // [특이사항] SUPER_ADMIN 신분증 열람 감사 로그 — 개인정보보호법 접근 기록.
-    // businessId == '' (빈 문자열): 슈퍼어드민은 특정 사업장에 귀속되지 않음.
-    // await로 로그 기록 완료 확인 후 이미지 표시 — 실패 시에도 UX 차단 없이 콘솔 기록만.
+    // ID-1 보안: CF callableGetIdCardSignedUrl 경유로 1시간 만료 Signed URL 발급
+    // SUPER_ADMIN은 CF 내부에서 role 확인 후 무조건 허용
+    // 감사 로그 병렬 처리 — 실패 시 UX 차단 없이 콘솔 기록만
     final viewerId = FirebaseAuth.instance.currentUser?.uid ?? '';
+    String? signedUrl;
+
     try {
-      await FirebaseFirestore.instance.collection('id_card_copy_logs').add({
-        'viewerId': viewerId,
-        'targetUserId': user.uid,
-        'businessId': '',
-        'action': 'view_id_card_image',
-        'timestamp': FieldValue.serverTimestamp(),
-      });
+      final results = await Future.wait([
+        // 감사 로그
+        FirebaseFirestore.instance.collection('id_card_copy_logs').add({
+          'viewerId': viewerId,
+          'targetUserId': user.uid,
+          'businessId': '',
+          'action': 'view_id_card_image',
+          'timestamp': FieldValue.serverTimestamp(),
+        }),
+        // Signed URL 발급
+        _fn.httpsCallable('callableGetIdCardSignedUrl').call<Map<String, dynamic>>(
+          {'targetUserId': user.uid},
+        ),
+      ]);
+      final fnResult = results[1] as HttpsCallableResult<Map<String, dynamic>>;
+      signedUrl = fnResult.data['signedUrl'] as String?;
     } catch (e) {
-      debugPrint('⚠️ [_showIdCardImage] 감사 로그 기록 실패: $e');
+      debugPrint('⚠️ [_showIdCardImage] Signed URL 발급 실패: $e');
+      if (mounted) ToastHelper.showError('신분증 이미지 로드 실패');
+      return;
     }
-    if (!mounted) return;
+
+    if (!mounted || signedUrl == null) return;
     showDialog(
       context: context,
       builder: (ctx) => Dialog(
@@ -579,7 +593,7 @@ class _ForeignWorkerApprovalScreenState
             ClipRRect(
               borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
               child: Image.network(
-                user.idCardImageUrl ?? '',
+                signedUrl!,
                 fit: BoxFit.contain,
                 loadingBuilder: (_, child, progress) => progress == null
                     ? child

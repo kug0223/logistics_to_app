@@ -108,6 +108,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   // 다이얼로그가 열린 상태에서 신분증 열람 권한이 만료/철회되어도 UI에 반영되지 않는 문제.
   // 60초마다 Firestore 재조회로 만료(시간 경과)·철회(상태 변경) 모두 감지한다.
   Timer? _accessRefreshTimer;
+  // ID-1 보안: 직접 URL 대신 CF 발급 1시간 만료 Signed URL 캐시
+  String? _idCardSignedUrl;
+  bool _idCardSignedUrlLoading = false;
   bool _hasAttendance = false;  // ✅ 출퇴근 기록 여부 (장기 확정자용)
   bool? _hasWrittenReview;     // 리뷰 작성 여부 (null=미확인)
   EmploymentContractModel? _contract;
@@ -179,7 +182,10 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       _hasWrittenReview = results[5] as bool?;
       _contract = results[6] as EmploymentContractModel?;
 
-      if (_idCardAccess?.isValidAccess == true) _startAccessRefreshTimer();
+      if (_idCardAccess?.isValidAccess == true) {
+        _startAccessRefreshTimer();
+        _loadIdCardSignedUrl();
+      }
 
       if (mounted) setState(() => _isLoading = false);
     } catch (e) {
@@ -189,6 +195,17 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
       }
     }
+  }
+
+  Future<void> _loadIdCardSignedUrl() async {
+    if (!mounted) return;
+    setState(() => _idCardSignedUrlLoading = true);
+    final url = await _firestoreService.getIdCardSignedUrl(widget.user.uid);
+    if (!mounted) return;
+    setState(() {
+      _idCardSignedUrl = url;
+      _idCardSignedUrlLoading = false;
+    });
   }
 
   void _startAccessRefreshTimer() {
@@ -1176,53 +1193,94 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           if (widget.user.idCardImageUrl != null)
-            GestureDetector(
-              onTap: () => ImageHelper.showFullScreenViewer(
-                context,
-                imageUrl: widget.user.idCardImageUrl,
-                title: '신분증',
-              ),
-              child: Stack(
-                children: [
-                  Container(
+            _idCardSignedUrlLoading
+                ? Container(
                     height: ResponsiveHelper.spacing(context, 150),
                     width: double.infinity,
                     decoration: BoxDecoration(
                       color: AppColors.grey100,
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: CachedNetworkImage(
-                        imageUrl: widget.user.idCardImageUrl!,
-                        fit: BoxFit.contain,  // ✅ 잘리지 않게 전체 표시
-                        placeholder: (context, url) => const LoadingWidget(),
-                        errorWidget: (context, url, error) => Center(
-                          child: Icon(Icons.image_not_supported, color: AppColors.grey400),
+                    child: const Center(child: LoadingWidget()),
+                  )
+                : _idCardSignedUrl != null
+                    ? GestureDetector(
+                        onTap: () => ImageHelper.showFullScreenViewer(
+                          context,
+                          imageUrl: _idCardSignedUrl,
+                          title: '신분증',
+                        ),
+                        child: Stack(
+                          children: [
+                            Container(
+                              height: ResponsiveHelper.spacing(context, 150),
+                              width: double.infinity,
+                              decoration: BoxDecoration(
+                                color: AppColors.grey100,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: CachedNetworkImage(
+                                  imageUrl: _idCardSignedUrl!,
+                                  fit: BoxFit.contain,
+                                  placeholder: (context, url) => const LoadingWidget(),
+                                  errorWidget: (context, url, error) => Center(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.image_not_supported, color: AppColors.grey400),
+                                        const SizedBox(height: 4),
+                                        TextButton(
+                                          onPressed: _loadIdCardSignedUrl,
+                                          child: const Text('다시 시도'),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            Positioned(
+                              right: 8,
+                              bottom: 8,
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.black54,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: const Icon(
+                                  Icons.zoom_in,
+                                  color: Colors.white,
+                                  size: 18,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : Container(
+                        height: ResponsiveHelper.spacing(context, 150),
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          color: AppColors.grey100,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.image_not_supported, color: AppColors.grey400),
+                              const SizedBox(height: 8),
+                              TextButton(
+                                onPressed: _loadIdCardSignedUrl,
+                                child: const Text('이미지 로드'),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                  ),
-                  // 확대 아이콘 힌트
-                  Positioned(
-                    right: 8,
-                    bottom: 8,
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: const Icon(
-                        Icons.zoom_in,
-                        color: Colors.white,
-                        size: 18,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
           // 주민번호 텍스트 표시 — 이미지만으로 확인이 어려운 경우 보조
           if (widget.user.residentNumber != null) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 10)),
