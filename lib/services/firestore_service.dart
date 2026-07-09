@@ -17,6 +17,7 @@ import '../models/core/business_work_type_model.dart';
 import '../models/core/attendance_model.dart';
 import '../models/core/schedule_change_request_model.dart';
 import '../models/core/review_model.dart';
+import '../models/core/monthly_review_model.dart';
 import '../models/core/id_card_access_request_model.dart';
 import '../models/core/notification_model.dart';
 import '../models/core/worker_location_model.dart';
@@ -1706,19 +1707,22 @@ class FirestoreService {
           .where((a) => AppStatus.confirmedStatuses.contains(a.status))
           .toList();
 
+      // [MISMATCH-3-FIX] 레거시 'reviews' → 'monthly_reviews' 컬렉션으로 전환
       final reviewSnapshot = await _firestore
-          .collection('reviews')
+          .collection('monthly_reviews')
           .where('targetUserId', isEqualTo: userId)
           .where('businessId', isEqualTo: businessId)
+          .where('reviewType', isEqualTo: 'ADMIN_TO_USER')
+          .where('isPublished', isEqualTo: true)
           .orderBy('createdAt', descending: true)
           .limit(5)
           .get(const GetOptions(source: Source.server));
-      
+
       final reviews = reviewSnapshot.docs
-          .map(ReviewModel.tryFromFirestore)
-          .whereType<ReviewModel>()
+          .map(MonthlyReviewModel.tryFromFirestore)
+          .whereType<MonthlyReviewModel>()
           .toList();
-      
+
       double? avgRating;
       if (reviews.isNotEmpty) {
         double total = 0;

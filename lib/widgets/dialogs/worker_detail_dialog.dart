@@ -11,7 +11,6 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../models/core/application_model.dart';
 import '../../models/core/user_model.dart';
 import '../../models/core/id_card_access_request_model.dart';
-import '../../models/core/review_model.dart';
 import '../../models/ui/admin_to_list_ui_models.dart';
 import '../../models/core/employment_contract_model.dart';
 import '../../models/core/work_detail_data.dart';
@@ -103,7 +102,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   // 추가 데이터
   Map<String, dynamic>? _businessHistory;
   String? _workTime;  // 🔥 근무 시간 (장기용)
-  List<ReviewModel> _recentReviews = [];
+  List<MonthlyReviewModel> _recentReviews = [];
   IdCardAccessRequestModel? _idCardAccess;
   // 다이얼로그가 열린 상태에서 신분증 열람 권한이 만료/철회되어도 UI에 반영되지 않는 문제.
   // 60초마다 Firestore 재조회로 만료(시간 경과)·철회(상태 변경) 모두 감지한다.
@@ -141,8 +140,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                 businessId: businessId, userId: widget.user.uid)
             : Future.value(null),
 
-        // 1: 최근 리뷰
-        _firestoreService.getUserReviews(widget.user.uid, limit: 5),
+        // 1: 최근 리뷰 (monthly_reviews 컬렉션)
+        MonthlyReviewService().getPublishedReviewsForUser(targetUserId: widget.user.uid, limit: 5),
 
         // 2: 신분증 열람 권한 (확정자만)
         widget.isConfirmed
@@ -175,7 +174,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       ]);
 
       _businessHistory = results[0] as Map<String, dynamic>?;
-      _recentReviews = (results[1] as List).cast<ReviewModel>();
+      _recentReviews = (results[1] as List).cast<MonthlyReviewModel>();
       _idCardAccess = results[2] as IdCardAccessRequestModel?;
       _hasAttendance = (results[3] as bool?) ?? false;
       _workTime = results[4] as String?;
@@ -901,7 +900,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     );
   }
 
-  Widget _buildReviewItem(BuildContext context, ReviewModel review) {
+  Widget _buildReviewItem(BuildContext context, MonthlyReviewModel review) {
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
       padding: ResponsiveHelper.cardPadding(context),
@@ -940,7 +939,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           ],
           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
           Text(
-            '${review.businessName} · ${review.workType}',
+            '${review.businessName} · ${review.reviewYear}년 ${review.reviewMonth}월',
             style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
           ),
         ],
