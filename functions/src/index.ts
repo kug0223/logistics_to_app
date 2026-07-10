@@ -4633,6 +4633,41 @@ export const revokeUserSession = onCall(
   }
 );
 
+// ── callableRecordTermsConsent ───────────────────────────
+// [D1] 법적 타임스탬프(termsConsentAt)를 서버에서 강제 발급 — Charter: 법적 타임스탬프 CF 필수
+// 클라이언트는 동의 여부(agreed)와 버전(version)만 전달, 시각은 Admin SDK serverTimestamp 사용
+// 호출 시점: 가입 완료 직후 (Auth UID 확보 후)
+export const callableRecordTermsConsent = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {consentRecord} = request.data as {
+      consentRecord: Record<string, {agreed: boolean; version: string}>;
+    };
+    if (!consentRecord || typeof consentRecord !== "object" || Array.isArray(consentRecord)) {
+      throw new HttpsError("invalid-argument", "consentRecord가 필요합니다.");
+    }
+
+    const serverTime = admin.firestore.FieldValue.serverTimestamp();
+    const consentWithTimestamps: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(consentRecord)) {
+      consentWithTimestamps[key] = {
+        agreed: !!value.agreed,
+        version: String(value.version ?? ""),
+        agreedAt: serverTime,  // 서버 타임스탬프 강제
+      };
+    }
+
+    await db.collection("users").doc(callerUid).update({
+      termsConsent: consentWithTimestamps,
+      termsConsentAt: serverTime,  // 법적 타임스탬프 — Admin SDK에서만 설정
+    });
+
+    return {success: true};
+  }
+);
+
 // ── resetPasswordWithPass ────────────────────────────────
 // passToken + username → CI 매칭 → Firebase Custom Token 발급
 // Input:  { passToken, username }
@@ -7627,6 +7662,8 @@ export const callableRequestTermination = onCall(
       throw new HttpsError("invalid-argument", "applicationId가 필요합니다.");
     }
     const reason = (data.reason as string | undefined) ?? null;
+    // [F1] reason 길이 제한 — 과도한 텍스트 저장/알림 본문 초과 방지
+    if (reason && reason.length > 500) throw new HttpsError("invalid-argument", "reason은 최대 500자까지 입력 가능합니다.");
 
     const appRef = db.collection("applications").doc(applicationId);
     const appSnap = await appRef.get();
@@ -8768,6 +8805,8 @@ export const callableRejectTermination = onCall(
       rejectReason?: string;
     };
     if (!applicationId) throw new HttpsError("invalid-argument", "applicationId 필수");
+    // [F1] rejectReason 길이 제한 — 과도한 텍스트 저장/알림 본문 초과 방지
+    if (rejectReason && rejectReason.length > 500) throw new HttpsError("invalid-argument", "rejectReason은 최대 500자까지 입력 가능합니다.");
 
     // 사전 조회: 권한 체크
     const appRef = db.collection("applications").doc(applicationId);
@@ -8958,6 +8997,8 @@ export const callableRejectResignation = onCall(
       rejectReason?: string;
     };
     if (!applicationId) throw new HttpsError("invalid-argument", "applicationId 필수");
+    // [F1] rejectReason 길이 제한 — 과도한 텍스트 저장/알림 본문 초과 방지
+    if (rejectReason && rejectReason.length > 500) throw new HttpsError("invalid-argument", "rejectReason은 최대 500자까지 입력 가능합니다.");
 
     const appRef = db.collection("applications").doc(applicationId);
     const preSnap = await appRef.get();
@@ -9227,6 +9268,8 @@ export const callableBatchCancelNoShow = onCall(
     for (const snap of snaps) {
       if (!snap.exists) continue;
       const data = snap.data()!;
+      // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
+      if (data.businessId !== businessId) { skipped.push(snap.id); continue; }
       if (data.wageStatus === "transferred") {
         skipped.push(snap.id);
         continue;
@@ -9277,6 +9320,8 @@ export const callableBatchResetAttendance = onCall(
     for (const snap of snaps) {
       if (!snap.exists) continue;
       const data = snap.data()!;
+      // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
+      if (data.businessId !== businessId) { skipped.push(snap.id); continue; }
       if (data.wageStatus === "calculated" ||
           data.wageStatus === "confirmed" ||
           data.wageStatus === "transferred") {
@@ -9335,6 +9380,8 @@ export const callableCancelFinalConfirmation = onCall(
           const snap = await tx.get(ref);
           if (!snap.exists) return false;
           const data = snap.data()!;
+          // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
+          if (data.businessId !== businessId) return false;
           if (data.wageStatus === "transferred" || data.wageStatus !== "confirmed") return false;
 
           const existingDetail = (data.wageDetail ?? {}) as Record<string, unknown>;
@@ -9417,7 +9464,10 @@ export const callableBatchCheckIn = onCall(
           // 서버 상태 확인 — confirmed/transferred 건은 출근 시간 수정 불가
           const snap = await db.collection("attendance").doc(attendanceId).get();
           if (snap.exists) {
-            const ws = snap.data()!.wageStatus as string | undefined;
+            const snapData = snap.data()!;
+            // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
+            if (snapData.businessId !== businessId) continue;
+            const ws = snapData.wageStatus as string | undefined;
             if (ws === "confirmed" || ws === "transferred") continue;
           }
           await db.collection("attendance").doc(attendanceId).update({
@@ -9504,7 +9554,10 @@ export const callableBatchCheckOut = onCall(
           await db.runTransaction(async (tx) => {
             const snap = await tx.get(ref);
             if (!snap.exists) { skipped.push(attendanceId); return; }
-            const ws = snap.data()!.wageStatus as string | undefined;
+            const snapData = snap.data()!;
+            // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
+            if (snapData.businessId !== businessId) { skipped.push(attendanceId); return; }
+            const ws = snapData.wageStatus as string | undefined;
             if (ws === "confirmed" || ws === "transferred") { skipped.push(attendanceId); return; }
             tx.update(ref, {
               checkOut: admin.firestore.Timestamp.fromMillis(checkOutMs),
@@ -9520,9 +9573,11 @@ export const callableBatchCheckOut = onCall(
         } else {
           // 단순 퇴근 기록 — transferred 건만 보호
           const snap = await ref.get();
-          if (snap.exists && snap.data()!.wageStatus === "transferred") {
-            skipped.push(attendanceId);
-            continue;
+          if (snap.exists) {
+            const snapData = snap.data()!;
+            // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
+            if (snapData.businessId !== businessId) { skipped.push(attendanceId); continue; }
+            if (snapData.wageStatus === "transferred") { skipped.push(attendanceId); continue; }
           }
           await ref.update({
             checkOut: admin.firestore.Timestamp.fromMillis(checkOutMs),
@@ -9589,7 +9644,13 @@ export const callableBatchAdjustAttendanceTime = onCall(
             skipped.push(attendanceId);
             return;
           }
-          const serverStatus = snap.data()!.wageStatus as string | undefined;
+          const snapData = snap.data()!;
+          // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
+          if (snapData.businessId !== businessId) {
+            skipped.push(attendanceId);
+            return;
+          }
+          const serverStatus = snapData.wageStatus as string | undefined;
           if (serverStatus === "confirmed" || serverStatus === "transferred") {
             skipped.push(attendanceId);
             return;
@@ -9655,11 +9716,18 @@ export const callableBatchAdminConfirm = onCall(
 
     const now = admin.firestore.FieldValue.serverTimestamp();
     const batch = db.batch();
-    for (const id of attendanceIds) {
-      batch.update(db.collection("attendance").doc(id), {adminConfirmed: confirmed, updatedAt: now});
+    const skipped: string[] = [];
+
+    // [SEC] businessId 교차검증을 위해 문서 조회 후 배치 구성
+    const snaps = await Promise.all(attendanceIds.map((id) => db.collection("attendance").doc(id).get()));
+    for (const snap of snaps) {
+      if (!snap.exists) continue;
+      // [SEC] 다른 사업장 근태에 adminConfirmed 플래그 설정 차단
+      if (snap.data()!.businessId !== businessId) { skipped.push(snap.id); continue; }
+      batch.update(snap.ref, {adminConfirmed: confirmed, updatedAt: now});
     }
     await batch.commit();
-    return {success: true, processed: attendanceIds.length};
+    return {success: true, processed: attendanceIds.length - skipped.length, skipped};
   }
 );
 

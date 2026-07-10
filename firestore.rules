@@ -212,7 +212,10 @@ service cloud.firestore {
                          'passwordHistory',
                          // [M-1] badges — CF onReviewCreated/뱃지 자격 검증 전용
                          //   클라이언트 직접 삽입 시 자격 조건 우회 가능
-                         'badges'
+                         'badges',
+                         // [D1] termsConsentAt/termsConsent — CF callableRecordTermsConsent 전용
+                         //   클라이언트 직접 설정 시 동의 일시 위조 가능 (법적 타임스탬프 Charter 위반)
+                         'termsConsentAt', 'termsConsent'
                        ]);
 
       // [SEC-03 완료] trustScore·noShowCount·lateCount·totalWorkDays·restrictedUntil·lastRestartAt

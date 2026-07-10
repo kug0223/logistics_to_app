@@ -23,7 +23,7 @@ import '../../widgets/auth/pass_auth_button.dart';
 import '../../widgets/auth/pass_result_display.dart';
 
 import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuthException;
-import 'package:cloud_firestore/cloud_firestore.dart' show FieldValue;
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
 import '../../theme/app_colors.dart';
 import '../../widgets/app_select_field.dart';
@@ -643,22 +643,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
       if (!mounted) return;
 
-      // Step 2: 동의 일시·버전 Firestore 저장 (법적 근거 확보)
+      // Step 2: 동의 일시·버전 CF로 저장 (법적 타임스탬프 서버 발급)
       final uid = userProvider.currentUser?.uid;
       if (uid != null && _legalTerms != null) {
         final consentRecord = <String, dynamic>{};
         for (final item in _legalTerms!.activeItems) {
+          // [D1] agreedAt/termsConsentAt은 서버에서 설정 — 클라이언트는 agreed+version만 전달
           consentRecord[item.id] = {
             'agreed': _consentMap[item.id] ?? false,
             'version': item.version,
-            'agreedAt': FieldValue.serverTimestamp(),
           };
         }
         try {
-          await _firestoreService.updateUserDocument(uid, {
-            'termsConsent': consentRecord,
-            'termsConsentAt': FieldValue.serverTimestamp(),
-          });
+          await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableRecordTermsConsent',
+                  options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
+              .call({'consentRecord': consentRecord});
         } catch (_) {
           // 동의 기록 저장 실패는 가입을 막지 않음 (best-effort)
           debugPrint('⚠️ 동의 기록 저장 실패');
@@ -842,22 +842,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
       if (!mounted) return;
 
-      // Step 2: 동의 일시·버전 Firestore 저장 (법적 근거 확보)
+      // Step 2: 동의 일시·버전 CF로 저장 (법적 타임스탬프 서버 발급)
       final uid = userProvider.currentUser?.uid;
       if (uid != null && _legalTerms != null) {
         final consentRecord = <String, dynamic>{};
         for (final item in _legalTerms!.activeItems) {
+          // [D1] agreedAt/termsConsentAt은 서버에서 설정 — 클라이언트는 agreed+version만 전달
           consentRecord[item.id] = {
             'agreed': _consentMap[item.id] ?? false,
             'version': item.version,
-            'agreedAt': FieldValue.serverTimestamp(),
           };
         }
         try {
-          await _firestoreService.updateUserDocument(uid, {
-            'termsConsent': consentRecord,
-            'termsConsentAt': FieldValue.serverTimestamp(),
-          });
+          await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableRecordTermsConsent',
+                  options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
+              .call({'consentRecord': consentRecord});
         } catch (_) {
           // 동의 기록 저장 실패는 가입을 막지 않음 (best-effort)
           debugPrint('⚠️ 동의 기록 저장 실패');
