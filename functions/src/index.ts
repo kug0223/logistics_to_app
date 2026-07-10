@@ -7669,14 +7669,9 @@ export const callableRequestTermination = onCall(
     const appSnap = await appRef.get();
     if (!appSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
     const appData = appSnap.data()!;
-    const bId =
-      (data.businessId as string | undefined) ||
-      (appData.businessId as string | undefined) ||
-      "";
-    const workerUid =
-      (data.uid as string | undefined) ||
-      (appData.uid as string | undefined) ||
-      "";
+    // [SEC] appData에서만 businessId/uid 취득 — 클라이언트 override 차단 (타 사업장 해지 강제 방지)
+    const bId = (appData.businessId as string | undefined) ?? "";
+    const workerUid = (appData.uid as string | undefined) ?? "";
 
     if (!bId) throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
 
@@ -9176,14 +9171,8 @@ export const callableBatchSetNoShow = onCall(
     }
 
     const callerUid = request.auth.uid;
-    const callerSnap = await db.collection("users").doc(callerUid).get();
-    const callerData = callerSnap.data();
-    const isAdmin = callerData?.role === "ADMIN" && callerData?.businessId === businessId;
-    const isSubAdmin = Array.isArray(callerData?.subAdminOf) && (callerData!.subAdminOf as string[]).includes(businessId);
-    const isSuperAdminUser = callerData?.role === "SUPER_ADMIN";
-    if (!isAdmin && !isSubAdmin && !isSuperAdminUser) {
-      throw new HttpsError("permission-denied", "해당 사업장 관리자만 사용 가능합니다.");
-    }
+    // [SEC-ROLE] assertBizAdmin: businesses.adminIds 기준 검증 — role="ADMIN" 오기재 수정
+    await assertBizAdmin(callerUid, businessId);
 
     const now = admin.firestore.FieldValue.serverTimestamp();
     const batch = db.batch();
@@ -9251,14 +9240,8 @@ export const callableBatchCancelNoShow = onCall(
     }
 
     const callerUid = request.auth.uid;
-    const callerSnap = await db.collection("users").doc(callerUid).get();
-    const callerData = callerSnap.data();
-    const isAdmin = callerData?.role === "ADMIN" && callerData?.businessId === businessId;
-    const isSubAdmin = Array.isArray(callerData?.subAdminOf) && (callerData!.subAdminOf as string[]).includes(businessId);
-    const isSuperAdminUser = callerData?.role === "SUPER_ADMIN";
-    if (!isAdmin && !isSubAdmin && !isSuperAdminUser) {
-      throw new HttpsError("permission-denied", "해당 사업장 관리자만 사용 가능합니다.");
-    }
+    // [SEC-ROLE] assertBizAdmin: businesses.adminIds 기준 검증 — role="ADMIN" 오기재 수정
+    await assertBizAdmin(callerUid, businessId);
 
     const now = admin.firestore.FieldValue.serverTimestamp();
     const batch = db.batch();
@@ -9303,14 +9286,8 @@ export const callableBatchResetAttendance = onCall(
     }
 
     const callerUid = request.auth.uid;
-    const callerSnap = await db.collection("users").doc(callerUid).get();
-    const callerData = callerSnap.data();
-    const isAdmin = callerData?.role === "ADMIN" && callerData?.businessId === businessId;
-    const isSubAdmin = Array.isArray(callerData?.subAdminOf) && (callerData!.subAdminOf as string[]).includes(businessId);
-    const isSuperAdminUser = callerData?.role === "SUPER_ADMIN";
-    if (!isAdmin && !isSubAdmin && !isSuperAdminUser) {
-      throw new HttpsError("permission-denied", "해당 사업장 관리자만 사용 가능합니다.");
-    }
+    // [SEC-ROLE] assertBizAdmin: businesses.adminIds 기준 검증 — role="ADMIN" 오기재 수정
+    await assertBizAdmin(callerUid, businessId);
 
     const now = admin.firestore.FieldValue.serverTimestamp();
     const batch = db.batch();
@@ -9359,14 +9336,8 @@ export const callableCancelFinalConfirmation = onCall(
     }
 
     const callerUid = request.auth.uid;
-    const callerSnap = await db.collection("users").doc(callerUid).get();
-    const callerData = callerSnap.data();
-    const isAdmin = callerData?.role === "ADMIN" && callerData?.businessId === businessId;
-    const isSubAdmin = Array.isArray(callerData?.subAdminOf) && (callerData!.subAdminOf as string[]).includes(businessId);
-    const isSuperAdminUser = callerData?.role === "SUPER_ADMIN";
-    if (!isAdmin && !isSubAdmin && !isSuperAdminUser) {
-      throw new HttpsError("permission-denied", "해당 사업장 관리자만 사용 가능합니다.");
-    }
+    // [SEC-ROLE] assertBizAdmin: businesses.adminIds 기준 검증 — role="ADMIN" 오기재 수정
+    await assertBizAdmin(callerUid, businessId);
 
     const now = admin.firestore.FieldValue.serverTimestamp();
     let successCount = 0;
@@ -9442,14 +9413,8 @@ export const callableBatchCheckIn = onCall(
     }
 
     const callerUid = request.auth.uid;
-    const callerSnap = await db.collection("users").doc(callerUid).get();
-    const callerData = callerSnap.data();
-    const isAdmin = callerData?.role === "ADMIN" && callerData?.businessId === businessId;
-    const isSubAdmin = Array.isArray(callerData?.subAdminOf) && (callerData!.subAdminOf as string[]).includes(businessId);
-    const isSuperAdminUser = callerData?.role === "SUPER_ADMIN";
-    if (!isAdmin && !isSubAdmin && !isSuperAdminUser) {
-      throw new HttpsError("permission-denied", "해당 사업장 관리자만 사용 가능합니다.");
-    }
+    // [SEC-ROLE] assertBizAdmin: businesses.adminIds 기준 검증 — role="ADMIN" 오기재 수정
+    await assertBizAdmin(callerUid, businessId);
 
     const now = admin.firestore.FieldValue.serverTimestamp();
     let successCount = 0;
@@ -9532,14 +9497,8 @@ export const callableBatchCheckOut = onCall(
     }
 
     const callerUid = request.auth.uid;
-    const callerSnap = await db.collection("users").doc(callerUid).get();
-    const callerData = callerSnap.data();
-    const isAdmin = callerData?.role === "ADMIN" && callerData?.businessId === businessId;
-    const isSubAdmin = Array.isArray(callerData?.subAdminOf) && (callerData!.subAdminOf as string[]).includes(businessId);
-    const isSuperAdminUser = callerData?.role === "SUPER_ADMIN";
-    if (!isAdmin && !isSubAdmin && !isSuperAdminUser) {
-      throw new HttpsError("permission-denied", "해당 사업장 관리자만 사용 가능합니다.");
-    }
+    // [SEC-ROLE] assertBizAdmin: businesses.adminIds 기준 검증 — role="ADMIN" 오기재 수정
+    await assertBizAdmin(callerUid, businessId);
 
     const now = admin.firestore.FieldValue.serverTimestamp();
     let successCount = 0;
@@ -9621,14 +9580,8 @@ export const callableBatchAdjustAttendanceTime = onCall(
     }
 
     const callerUid = request.auth.uid;
-    const callerSnap = await db.collection("users").doc(callerUid).get();
-    const callerData = callerSnap.data();
-    const isAdmin = callerData?.role === "ADMIN" && callerData?.businessId === businessId;
-    const isSubAdmin = Array.isArray(callerData?.subAdminOf) && (callerData!.subAdminOf as string[]).includes(businessId);
-    const isSuperAdminUser = callerData?.role === "SUPER_ADMIN";
-    if (!isAdmin && !isSubAdmin && !isSuperAdminUser) {
-      throw new HttpsError("permission-denied", "해당 사업장 관리자만 사용 가능합니다.");
-    }
+    // [SEC-ROLE] assertBizAdmin: businesses.adminIds 기준 검증 — role="ADMIN" 오기재 수정
+    await assertBizAdmin(callerUid, businessId);
 
     const now = admin.firestore.FieldValue.serverTimestamp();
     let successCount = 0;
@@ -9705,14 +9658,8 @@ export const callableBatchAdminConfirm = onCall(
     }
 
     const callerUid = request.auth.uid;
-    const callerSnap = await db.collection("users").doc(callerUid).get();
-    const callerData = callerSnap.data();
-    const isAdmin = callerData?.role === "ADMIN" && callerData?.businessId === businessId;
-    const isSubAdmin = Array.isArray(callerData?.subAdminOf) && (callerData!.subAdminOf as string[]).includes(businessId);
-    const isSuperAdminUser = callerData?.role === "SUPER_ADMIN";
-    if (!isAdmin && !isSubAdmin && !isSuperAdminUser) {
-      throw new HttpsError("permission-denied", "해당 사업장 관리자만 사용 가능합니다.");
-    }
+    // [SEC-ROLE] assertBizAdmin: businesses.adminIds 기준 검증 — role="ADMIN" 오기재 수정
+    await assertBizAdmin(callerUid, businessId);
 
     const now = admin.firestore.FieldValue.serverTimestamp();
     const batch = db.batch();
@@ -9771,15 +9718,8 @@ export const callableMarkTransferredBatch = onCall(
       throw new HttpsError("invalid-argument", "최대 200건까지 처리 가능합니다.");
     }
 
-    const callerSnap = await db.collection("users").doc(callerUid).get();
-    const callerData = callerSnap.data();
-    const isAdminOk = callerData?.role === "ADMIN" && callerData?.businessId === businessId;
-    const isSubAdminOk = Array.isArray(callerData?.subAdminOf) &&
-      (callerData!.subAdminOf as string[]).includes(businessId);
-    const isSuperAdminOk = callerData?.role === "SUPER_ADMIN";
-    if (!isAdminOk && !isSubAdminOk && !isSuperAdminOk) {
-      throw new HttpsError("permission-denied", "관리자 권한이 필요합니다.");
-    }
+    // [SEC-ROLE] assertBizAdmin: businesses.adminIds 기준 검증 — role="ADMIN" 오기재 수정
+    await assertBizAdmin(callerUid, businessId);
 
     const now = admin.firestore.FieldValue.serverTimestamp();
     const skipped: string[] = [];
