@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
 import '../../models/core/user_model.dart';
@@ -122,12 +121,9 @@ class _AllUsersScreenState extends State<AllUsersScreen>
       setState(() => _isProcessing = true);
 
       try {
-        await _firestore.collection('users').doc(user.uid).update({
-          'isBlacklisted': false,
-          'blacklistReason': FieldValue.delete(),
-          'unblacklistedBy': FirebaseAuth.instance.currentUser?.uid,
-          'unblacklistedAt': FieldValue.serverTimestamp(),
-        });
+        await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('callableUnblacklistUser')
+            .call({'targetUid': user.uid});
         if (!mounted) return;
         ToastHelper.showSuccess('블랙리스트가 해제되었습니다');
         await _loadAllUsers();
@@ -182,12 +178,9 @@ class _AllUsersScreenState extends State<AllUsersScreen>
     setState(() => _isProcessing = true);
 
     try {
-      await _firestore.collection('users').doc(user.uid).update({
-        'restrictedUntil': FieldValue.delete(),
-        'noShowCount': 0,
-        'restrictionReleasedBy': FirebaseAuth.instance.currentUser?.uid,
-        'restrictionReleasedAt': FieldValue.serverTimestamp(),
-      });
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableResetPenalty')
+          .call({'targetUid': user.uid});
       if (!mounted) return;
       ToastHelper.showSuccess('제재가 해제되었습니다');
       await _loadAllUsers();
@@ -209,11 +202,9 @@ class _AllUsersScreenState extends State<AllUsersScreen>
     if (result == null || !mounted) return;
 
     try {
-      await _firestore.collection('users').doc(user.uid).update({
-        'trustScore': result,
-        'trustScoreAdjustedBy': FirebaseAuth.instance.currentUser?.uid,
-        'trustScoreAdjustedAt': FieldValue.serverTimestamp(),
-      });
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableAdjustTrustScore')
+          .call({'targetUid': user.uid, 'score': result});
       // 신뢰도 수동 조정 직후 배지 재계산 — minScore 조건 충족 시 즉시 배지 부여.
       // fire-and-forget: 배지 계산 실패가 UI 플로우를 막지 않도록 await 없이 실행.
       BadgeService().evaluateAndUpdateBadgesForUser(user.uid)

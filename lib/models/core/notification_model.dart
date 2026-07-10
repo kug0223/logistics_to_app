@@ -931,31 +931,6 @@ class NotificationModel {
       createdAt: DateTime.now(),
     );
   }
-  /// 퇴사 요청 알림 생성 (관리자에게)
-  static NotificationModel createResignRequested({
-    required String userId,
-    required String workerName,
-    required String businessName,
-    required String businessId,
-    required DateTime resignDate,
-    required String applicationId,
-  }) {
-    return NotificationModel(
-      id: '',
-      userId: userId,
-      type: NotificationType.resignRequested,
-      title: '퇴사 요청',
-      body: '$workerName님이 ${resignDate.month}/${resignDate.day}자 퇴사를 요청했습니다.',
-      data: {
-        'applicationId': applicationId,
-        'businessId': businessId,
-        'action': 'resignRequest',
-        // [E-1c 정리] businessName은 CF allowedDataKeys에 없어 자동 제거됨 — 제거
-      },
-      createdAt: DateTime.now(),
-    );
-  }
-
   /// 퇴사 승인 알림 생성 (근무자에게)
   static NotificationModel createResignApproved({
     required String userId,
@@ -970,30 +945,6 @@ class NotificationModel {
       type: NotificationType.resignApproved,
       title: '퇴사 승인',
       body: '$businessName에서 퇴사 요청을 승인했습니다.\n퇴사일: ${actualResignDate.month}/${actualResignDate.day}',
-      data: {
-        'applicationId': applicationId,
-        'businessId': businessId,
-        'action': 'applicationDetail',
-      },
-      createdAt: DateTime.now(),
-    );
-  }
-
-  /// 계약해지 거절 알림 생성 (해지 요청자·관리자에게)
-  /// terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
-  static NotificationModel createTerminationRejected({
-    required String userId,
-    required String businessName,
-    required String businessId,
-    required String applicationId,
-    String? rejectReason,
-  }) {
-    return NotificationModel(
-      id: '',
-      userId: userId,
-      type: NotificationType.terminationRejected,
-      title: '계약해지 거절',
-      body: '$businessName의 계약해지 요청이 거절되었습니다.${rejectReason != null ? '\n사유: $rejectReason' : ''}',
       data: {
         'applicationId': applicationId,
         'businessId': businessId,

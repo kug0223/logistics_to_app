@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import '../../utils/firestore_helper.dart';
 
 /// 리뷰 요청 상태
 enum ReviewPartyStatus {
@@ -107,6 +108,34 @@ class ReviewRequestModel {
       return ReviewRequestModel.fromFirestore(doc);
     } catch (e, st) {
       debugPrint('[ReviewRequestModel] 역직렬화 실패 id=${doc.id}: $e\n$st');
+      return null;
+    }
+  }
+
+  /// CF callable 응답 데이터(serializeFirestoreData 직렬화)에서 변환.
+  /// Timestamp 필드는 {_seconds, _nanoseconds} Map으로 전달된다.
+  static ReviewRequestModel? tryFromMap(Map<String, dynamic> data, String docId) {
+    try {
+      return ReviewRequestModel(
+        id: docId,
+        requestKey: data['requestKey'] ?? docId,
+        businessId: data['businessId'] ?? '',
+        businessName: data['businessName'] ?? '',
+        workerId: data['workerId'] ?? '',
+        workerName: data['workerName'] ?? '',
+        reviewYear: (data['reviewYear'] as num?)?.toInt() ?? 0,
+        reviewMonth: (data['reviewMonth'] as num?)?.toInt() ?? 0,
+        deadline: parseTimestamp(data['deadline']),
+        adminStatus: _parseStatus(data['adminStatus']),
+        workerStatus: _parseStatus(data['workerStatus']),
+        adminReviewId: data['adminReviewId'],
+        workerReviewId: data['workerReviewId'],
+        isPublished: data['isPublished'] ?? false,
+        publishedAt: parseTimestampNullable(data['publishedAt']),
+        createdAt: parseTimestamp(data['createdAt']),
+      );
+    } catch (e, st) {
+      debugPrint('[ReviewRequestModel] tryFromMap 실패 id=$docId: $e\n$st');
       return null;
     }
   }

@@ -3351,7 +3351,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           type: "resignApproved",
           title: "퇴사 요청 자동 승인",
           body: `${app.businessName} 퇴사 요청이 자동 승인되었습니다.`,
-          data: {applicationId: doc.id, businessId: app.businessId, screen: "mySchedule"},
+          data: {applicationId: doc.id, businessId: app.businessId, action: "resignDetail"},
           isRead: false,
           createdAt: now,
         });
@@ -3372,6 +3372,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           body: `${app.applicantName ?? "근무자"}님의 퇴사 요청이 자동 승인되었습니다.`,
           // [E-1-B 수정] businessId 추가 — notification_screen resignApproved 케이스에서
           // initialBusinessId를 인자로 전달할 때 null이 되는 버그 방지
+          // [FCM-01] screen: "fixedWorker" — FCM background 딥링크로 관리자 IntegratedWorkforceScreen 직접 이동
           data: {applicationId: doc.id, businessId: app.businessId, screen: "fixedWorker"},
           isRead: false,
           createdAt: now,
@@ -3491,7 +3492,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           title: "계약해지 자동 승인",
           body: `${app.businessName} 계약해지 요청이 자동 승인되었습니다.`,
           // [E-1-A 수정] businessId 추가 — mySchedule 딥링크 라우팅 일관성 보장
-          data: {applicationId: doc.id, businessId: app.businessId, screen: "mySchedule"},
+          data: {applicationId: doc.id, businessId: app.businessId, action: "terminationDetail"},
           isRead: false,
           createdAt: now,
         });
@@ -3511,6 +3512,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
             type: "terminationApproved",
             title: "계약해지 자동 승인됨",
             body: `${app.applicantName ?? "근무자"}님의 계약해지 요청이 자동 승인되었습니다.`,
+            // [FCM-01] screen: "fixedWorker" — FCM background 딥링크로 관리자 IntegratedWorkforceScreen 직접 이동
             data: {applicationId: doc.id, businessId: app.businessId, screen: "fixedWorker"},
             isRead: false,
             createdAt: now,
@@ -4241,6 +4243,111 @@ export const callableBlacklistUser = onCall(
         callerUid,
       });
     }
+    return {success: true};
+  }
+);
+
+// ── callableUnblacklistUser ───────────────────────────────
+// 블랙리스트 해제 — callableBlacklistUser의 대칭 역방향 CF (슈퍼어드민 전용)
+// 등록은 revokeRefreshTokens 필요, 해제는 세션 유지 (재로그인 불필요)
+// Firestore rules의 클라이언트 직접 isBlacklisted write 차단을 우회하기 위해 Admin SDK 사용
+// Input:  { targetUid: string }
+// Output: { success: true }
+export const callableUnblacklistUser = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    if (callerSnap.data()?.role !== "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "슈퍼어드민만 사용 가능합니다.");
+    }
+    const {targetUid} = request.data as {targetUid: string};
+    if (!targetUid || typeof targetUid !== "string") {
+      throw new HttpsError("invalid-argument", "targetUid가 올바르지 않습니다.");
+    }
+    const targetSnap = await db.collection("users").doc(targetUid).get();
+    if (!targetSnap.exists) {
+      throw new HttpsError("not-found", "대상 사용자를 찾을 수 없습니다.");
+    }
+    if (!(targetSnap.data()?.isBlacklisted as boolean | undefined)) {
+      throw new HttpsError("failed-precondition", "블랙리스트 상태가 아닙니다.");
+    }
+    await db.collection("users").doc(targetUid).update({
+      isBlacklisted: false,
+      blacklistReason: admin.firestore.FieldValue.delete(),
+      unblacklistedBy: callerUid, // 서버 검증된 UID — 클라이언트 위조 불가
+      unblacklistedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return {success: true};
+  }
+);
+
+// ── callableResetPenalty ──────────────────────────────────
+// 노쇼 제재 해제 + noShowCount 초기화 (슈퍼어드민 전용)
+// noShowCount·restrictedUntil은 CF Admin SDK 전용 필드 (규칙에서 클라이언트 차단)
+// Input:  { targetUid: string }
+// Output: { success: true }
+export const callableResetPenalty = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    if (callerSnap.data()?.role !== "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "슈퍼어드민만 사용 가능합니다.");
+    }
+    const {targetUid} = request.data as {targetUid: string};
+    if (!targetUid || typeof targetUid !== "string") {
+      throw new HttpsError("invalid-argument", "targetUid가 올바르지 않습니다.");
+    }
+    const targetSnap = await db.collection("users").doc(targetUid).get();
+    if (!targetSnap.exists) {
+      throw new HttpsError("not-found", "대상 사용자를 찾을 수 없습니다.");
+    }
+    if (!targetSnap.data()?.restrictedUntil) {
+      throw new HttpsError("failed-precondition", "제재 상태가 아닙니다.");
+    }
+    await db.collection("users").doc(targetUid).update({
+      restrictedUntil: admin.firestore.FieldValue.delete(),
+      noShowCount: 0,
+      restrictionReleasedBy: callerUid, // 서버 검증된 UID
+      restrictionReleasedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return {success: true};
+  }
+);
+
+// ── callableAdjustTrustScore ──────────────────────────────
+// 신뢰도 점수 수동 조정 (슈퍼어드민 전용)
+// trustScore는 CF Admin SDK 전용 필드 (규칙에서 클라이언트 차단)
+// Input:  { targetUid: string, score: number (0~100) }
+// Output: { success: true }
+export const callableAdjustTrustScore = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    if (callerSnap.data()?.role !== "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "슈퍼어드민만 사용 가능합니다.");
+    }
+    const {targetUid, score} = request.data as {targetUid: string; score: number};
+    if (!targetUid || typeof targetUid !== "string") {
+      throw new HttpsError("invalid-argument", "targetUid가 올바르지 않습니다.");
+    }
+    if (typeof score !== "number" || !Number.isInteger(score) || score < 0 || score > 100) {
+      throw new HttpsError("invalid-argument", "score는 0~100 사이 정수여야 합니다.");
+    }
+    const targetSnap = await db.collection("users").doc(targetUid).get();
+    if (!targetSnap.exists) {
+      throw new HttpsError("not-found", "대상 사용자를 찾을 수 없습니다.");
+    }
+    await db.collection("users").doc(targetUid).update({
+      trustScore: score,
+      trustScoreAdjustedBy: callerUid, // 서버 검증된 UID
+      trustScoreAdjustedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
     return {success: true};
   }
 );
@@ -6011,6 +6118,45 @@ export const onAttendanceCreated = onDocumentCreated(
   }
 );
 
+// ═══════════════════════════════════════════════════════════
+// 🏢 사업장 생성 시 자동 승인 처리
+// ═══════════════════════════════════════════════════════════
+// Trust Boundary Charter: 법적 상태 전이(isApproved) → CF 처리 필수
+// settings/system.businessAutoApprove=true(기본)이면 즉시 isApproved:true
+// false이면 슈퍼관리자가 수동으로 승인해야 활성화됨
+export const onBusinessCreated = onDocumentCreated(
+  {document: "businesses/{businessId}", region: "asia-northeast3"},
+  async (event) => {
+    const data = event.data?.data();
+    if (!data) return null;
+
+    // 이미 승인됐거나 비활성 상태면 처리 불필요
+    if (data.isApproved === true) return null;
+
+    try {
+      const settingsDoc = await db.collection("settings").doc("system").get();
+      const autoApprove = settingsDoc.exists
+        ? (settingsDoc.data()?.businessAutoApprove as boolean | undefined) ?? true
+        : true;  // settings/system 문서 없으면 기본값 자동승인
+
+      if (autoApprove) {
+        await event.data!.ref.update({
+          isApproved: true,
+          approvedAt: Timestamp.now(),
+          approvedBy: "system_auto",
+        });
+        console.log(`[onBusinessCreated] 자동 승인 완료: ${event.params.businessId}`);
+      } else {
+        console.log(`[onBusinessCreated] 수동 승인 대기: ${event.params.businessId}`);
+      }
+    } catch (e) {
+      console.error("[onBusinessCreated] 승인 처리 실패:", e);
+    }
+
+    return null;
+  }
+);
+
 // Haversine 공식 — 두 좌표 간 거리 (미터)
 function haversineDistanceMeters(
   lat1: number, lng1: number, lat2: number, lng2: number
@@ -7173,4 +7319,2493 @@ export const callableCalculateAndConfirmWage = onCall(
 
     return {success: true, effectiveNetWage: effectiveNetWage2};
   },
+);
+
+// ═══════════════════════════════════════════════════════════
+// 🔒 공통 권한 헬퍼 — SUPER_ADMIN / adminIds / ownerId / subAdminOf
+// ═══════════════════════════════════════════════════════════
+
+async function assertBizAdmin(callerUid: string, businessId: string): Promise<void> {
+  const [callerSnap, bizSnap] = await Promise.all([
+    db.collection("users").doc(callerUid).get(),
+    db.collection("businesses").doc(businessId).get(),
+  ]);
+  const isSuperAdmin = (callerSnap.data()?.role as string | undefined) === "SUPER_ADMIN";
+  if (isSuperAdmin) return;
+  if (!bizSnap.exists) throw new HttpsError("not-found", "사업장을 찾을 수 없습니다.");
+  const adminIds = (bizSnap.data()?.adminIds as string[] | undefined) ?? [];
+  const ownerId = bizSnap.data()?.ownerId as string | undefined;
+  const subAdminOf = callerSnap.data()?.subAdminOf as string | undefined;
+  if (!adminIds.includes(callerUid) && ownerId !== callerUid && subAdminOf !== businessId) {
+    throw new HttpsError("permission-denied", "해당 사업장에 대한 권한이 없습니다.");
+  }
+}
+
+// ─── 1. callableGetApplicationsByBiz ────────────────────────────────────────
+export const callableGetApplicationsByBiz = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {
+      businessId, toId, slotId, status, type, uid,
+      resignStatus, toTitle, workDateGte, workDateLt,
+      workEndDateGte, workEndDateLt, limit: rawLimit,
+    } = (request.data ?? {}) as {
+      businessId?: string; toId?: string; slotId?: string;
+      status?: string; type?: string; uid?: string;
+      resignStatus?: string; toTitle?: string;
+      workDateGte?: string; workDateLt?: string;
+      workEndDateGte?: string; workEndDateLt?: string;
+      limit?: number;
+    };
+
+    if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+
+    await assertBizAdmin(callerUid, businessId);
+
+    const cap = Math.min(
+      typeof rawLimit === "number" && rawLimit > 0 ? rawLimit : 500,
+      1000
+    );
+
+    let q: admin.firestore.Query = db
+      .collection("applications")
+      .where("businessId", "==", businessId);
+
+    if (toId) q = q.where("toId", "==", toId);
+    if (slotId) q = q.where("slotId", "==", slotId);
+    if (status) q = q.where("status", "==", status);
+    if (type) q = q.where("type", "==", type);
+    if (uid) q = q.where("uid", "==", uid);
+    if (resignStatus) q = q.where("resignStatus", "==", resignStatus);
+    if (toTitle) q = q.where("toTitle", "==", toTitle);
+    if (workDateGte) q = q.where("workDate", ">=", workDateGte);
+    if (workDateLt) q = q.where("workDate", "<", workDateLt);
+    if (workEndDateGte) q = q.where("workEndDate", ">=", workEndDateGte);
+    if (workEndDateLt) q = q.where("workEndDate", "<", workEndDateLt);
+
+    q = q.limit(cap);
+    const snap = await q.get();
+
+    return {
+      applications: snap.docs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
+    };
+  }
+);
+
+// ─── 2. callableGetTOsByBiz ──────────────────────────────────────────────────
+export const callableGetTOsByBiz = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {
+      businessId, status, statuses, limit: rawLimit,
+    } = (request.data ?? {}) as {
+      businessId?: string; status?: string; statuses?: string[]; limit?: number;
+    };
+
+    if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+    if (statuses !== undefined && (!Array.isArray(statuses) || statuses.length === 0 || statuses.length > 10)) {
+      throw new HttpsError("invalid-argument", "statuses는 1~10개 사이여야 합니다.");
+    }
+
+    await assertBizAdmin(callerUid, businessId);
+
+    const cap = Math.min(
+      typeof rawLimit === "number" && rawLimit > 0 ? rawLimit : 200,
+      1000
+    );
+
+    let q: admin.firestore.Query = db
+      .collection("tos")
+      .where("businessId", "==", businessId);
+
+    if (status) {
+      q = q.where("status", "==", status);
+    } else if (statuses && statuses.length > 0) {
+      q = q.where("status", "in", statuses);
+    }
+
+    q = q.limit(cap);
+    const snap = await q.get();
+
+    return {
+      tos: snap.docs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
+    };
+  }
+);
+
+// ─── 3. callableGetContractsByBiz ────────────────────────────────────────────
+export const callableGetContractsByBiz = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {
+      businessId, applicationId, applicationIds, terminationStatus,
+      status, toId, workDetailId, workerId, isLongTerm, limit: rawLimit,
+      startAfterId,
+    } = (request.data ?? {}) as {
+      businessId?: string; applicationId?: string; applicationIds?: string[];
+      terminationStatus?: string; status?: string; toId?: string;
+      workDetailId?: string; workerId?: string; isLongTerm?: boolean; limit?: number;
+      startAfterId?: string;
+    };
+
+    if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+    if (applicationIds !== undefined && (!Array.isArray(applicationIds) || applicationIds.length === 0)) {
+      throw new HttpsError("invalid-argument", "applicationIds가 비어있습니다.");
+    }
+
+    await assertBizAdmin(callerUid, businessId);
+
+    const cap = Math.min(
+      typeof rawLimit === "number" && rawLimit > 0 ? rawLimit : 100,
+      1000
+    );
+
+    const buildBase = (): admin.firestore.Query => {
+      let q: admin.firestore.Query = db
+        .collection("employment_contracts")
+        .where("businessId", "==", businessId);
+      if (terminationStatus) q = q.where("terminationStatus", "==", terminationStatus);
+      if (status) q = q.where("status", "==", status);
+      if (toId) q = q.where("toId", "==", toId);
+      if (workDetailId) q = q.where("workDetailId", "==", workDetailId);
+      if (workerId) q = q.where("workerId", "==", workerId);
+      if (isLongTerm !== undefined) q = q.where("isLongTerm", "==", isLongTerm);
+      return q;
+    };
+
+    let docs: admin.firestore.QueryDocumentSnapshot[];
+
+    if (applicationIds && applicationIds.length > 0) {
+      const snaps = await Promise.all(
+        applicationIds.map((aid) =>
+          buildBase().where("applicationId", "==", aid).limit(cap).get()
+        )
+      );
+      const seen = new Set<string>();
+      docs = [];
+      for (const snap of snaps) {
+        for (const d of snap.docs) {
+          if (!seen.has(d.id)) {
+            seen.add(d.id);
+            docs.push(d);
+          }
+        }
+      }
+    } else {
+      let q = buildBase();
+      if (applicationId) q = q.where("applicationId", "==", applicationId);
+      if (startAfterId) {
+        const cursorSnap = await db.collection("employment_contracts").doc(startAfterId).get();
+        if (cursorSnap.exists) q = q.startAfter(cursorSnap);
+      }
+      q = q.limit(cap);
+      const snap = await q.get();
+      docs = snap.docs;
+    }
+
+    return {
+      contracts: docs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
+    };
+  }
+);
+
+// ─── 4. callableGetMonthlyReviewsByBiz ───────────────────────────────────────
+export const callableGetMonthlyReviewsByBiz = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {
+      businessId, reviewType, isPublished, reviewYear, reviewMonth,
+      targetUserId, limit: rawLimit, startAfterId,
+    } = (request.data ?? {}) as {
+      businessId?: string; reviewType?: string; isPublished?: boolean;
+      reviewYear?: number; reviewMonth?: number; targetUserId?: string;
+      limit?: number; startAfterId?: string;
+    };
+
+    if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+
+    await assertBizAdmin(callerUid, businessId);
+
+    const cap = Math.min(
+      typeof rawLimit === "number" && rawLimit > 0 ? rawLimit : 100,
+      1000
+    );
+
+    let q: admin.firestore.Query = db
+      .collection("monthly_reviews")
+      .where("businessId", "==", businessId);
+
+    if (reviewType) q = q.where("reviewType", "==", reviewType);
+    if (isPublished !== undefined) q = q.where("isPublished", "==", isPublished);
+    if (reviewYear !== undefined) q = q.where("reviewYear", "==", reviewYear);
+    if (reviewMonth !== undefined) q = q.where("reviewMonth", "==", reviewMonth);
+    if (targetUserId) q = q.where("targetUserId", "==", targetUserId);
+
+    if (startAfterId) {
+      const cursorSnap = await db.collection("monthly_reviews").doc(startAfterId).get();
+      if (cursorSnap.exists) q = q.startAfter(cursorSnap);
+    }
+
+    q = q.limit(cap);
+    const snap = await q.get();
+
+    return {
+      reviews: snap.docs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
+    };
+  }
+);
+
+// ─── 5. callableGetReviewRequestsByBiz ───────────────────────────────────────
+export const callableGetReviewRequestsByBiz = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {
+      businessId, adminStatus, isPublished, limit: rawLimit,
+    } = (request.data ?? {}) as {
+      businessId?: string; adminStatus?: string; isPublished?: boolean; limit?: number;
+    };
+
+    if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+
+    await assertBizAdmin(callerUid, businessId);
+
+    const cap = Math.min(
+      typeof rawLimit === "number" && rawLimit > 0 ? rawLimit : 200,
+      1000
+    );
+
+    let q: admin.firestore.Query = db
+      .collection("review_requests")
+      .where("businessId", "==", businessId);
+
+    if (adminStatus) q = q.where("adminStatus", "==", adminStatus);
+    if (isPublished !== undefined) q = q.where("isPublished", "==", isPublished);
+
+    q = q.limit(cap);
+    const snap = await q.get();
+
+    return {
+      reviewRequests: snap.docs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
+    };
+  }
+);
+
+// ─── 6. callableRequestTermination ───────────────────────────────────────────
+export const callableRequestTermination = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const data = request.data as Record<string, unknown>;
+    const applicationId = data.applicationId as string | undefined;
+    if (!applicationId || typeof applicationId !== "string") {
+      throw new HttpsError("invalid-argument", "applicationId가 필요합니다.");
+    }
+    const reason = (data.reason as string | undefined) ?? null;
+
+    const appRef = db.collection("applications").doc(applicationId);
+    const appSnap = await appRef.get();
+    if (!appSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const appData = appSnap.data()!;
+    const bId =
+      (data.businessId as string | undefined) ||
+      (appData.businessId as string | undefined) ||
+      "";
+    const workerUid =
+      (data.uid as string | undefined) ||
+      (appData.uid as string | undefined) ||
+      "";
+
+    if (!bId) throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+
+    let businessName = "";
+    {
+      const [bizSnap, callerSnap] = await Promise.all([
+        db.collection("businesses").doc(bId).get(),
+        db.collection("users").doc(callerUid).get(),
+      ]);
+      if (!bizSnap.exists) throw new HttpsError("not-found", "사업장을 찾을 수 없습니다.");
+      businessName = (bizSnap.data()?.name as string | undefined) ?? "";
+      const isSuperAdmin = (callerSnap.data()?.role as string | undefined) === "SUPER_ADMIN";
+      if (!isSuperAdmin) {
+        const ownerId = bizSnap.data()?.ownerId as string | undefined;
+        const adminIds = (bizSnap.data()?.adminIds as string[] | undefined) ?? [];
+        const callerSubAdminOf = callerSnap.data()?.subAdminOf as string | undefined;
+        const isAdmin =
+          ownerId === callerUid ||
+          adminIds.includes(callerUid) ||
+          callerSubAdminOf === bId;
+        if (!isAdmin) throw new HttpsError("permission-denied", "관리자 권한이 필요합니다.");
+      }
+    }
+
+    let terminationDate: admin.firestore.Timestamp;
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(appRef);
+      if (!snap.exists) throw new HttpsError("not-found", "지원서 없음");
+      if (snap.data()?.terminationStatus === "PENDING") {
+        throw new HttpsError("already-exists", "이미 계약해지 요청이 진행 중입니다.");
+      }
+      const workEndDate = snap.data()?.workEndDate as admin.firestore.Timestamp | undefined;
+      if (workEndDate) {
+        terminationDate = workEndDate;
+      } else {
+        const d = new Date();
+        d.setDate(d.getDate() + 30);
+        terminationDate = admin.firestore.Timestamp.fromDate(d);
+      }
+      tx.update(appRef, {
+        terminationStatus: "PENDING",
+        terminationRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+        terminationReason: reason,
+        terminationRequestedByUid: callerUid,
+        terminationEffectiveDate: terminationDate,
+      });
+    });
+
+    if (bId) {
+      const CONTRACT_ACTIVE_STATUSES = ["pending_employer", "pending_worker", "active"];
+      const cq = await db
+        .collection("employment_contracts")
+        .where("applicationId", "==", applicationId)
+        .where("businessId", "==", bId)
+        .limit(5)
+        .get();
+      const phase1 = cq.docs.filter((d) =>
+        CONTRACT_ACTIVE_STATUSES.includes(d.data().status as string)
+      );
+      if (phase1.length > 0) {
+        const batch = db.batch();
+        for (const d of phase1) batch.update(d.ref, {terminationStatus: "PENDING"});
+        await batch.commit();
+      } else {
+        const cq2 = await db
+          .collection("employment_contracts")
+          .where("applicationIds", "array-contains", applicationId)
+          .where("businessId", "==", bId)
+          .limit(5)
+          .get();
+        const phase2 = cq2.docs.filter((d) =>
+          CONTRACT_ACTIVE_STATUSES.includes(d.data().status as string)
+        );
+        if (phase2.length > 0) {
+          const batch = db.batch();
+          for (const d of phase2) batch.update(d.ref, {terminationStatus: "PENDING"});
+          await batch.commit();
+        }
+      }
+    }
+
+    if (workerUid) {
+      const td = terminationDate!.toDate();
+      const tdStr = `${td.getMonth() + 1}/${td.getDate()}`;
+      await db.collection("users").doc(workerUid).collection("notifications").add({
+        type: "terminationRequested",
+        userId: workerUid,
+        title: "계약해지 요청",
+        body: `${businessName}에서 계약해지를 요청했습니다.\n해지 예정일: ${tdStr}`,
+        data: {applicationId, businessId: bId, action: "terminationDetail"},
+        isRead: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+
+    return {success: true};
+  }
+);
+
+// ─── 7. callableCancelTermination ────────────────────────────────────────────
+export const callableCancelTermination = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const data = request.data as Record<string, unknown>;
+    const applicationId = data.applicationId as string | undefined;
+    if (!applicationId || typeof applicationId !== "string") {
+      throw new HttpsError("invalid-argument", "applicationId가 필요합니다.");
+    }
+
+    // 트랜잭션 전 프리리드 — businessId 확보 후 권한 체크
+    const appRef = db.collection("applications").doc(applicationId);
+    const preSnap = await appRef.get();
+    if (!preSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const bId = (preSnap.data()?.businessId as string | undefined) ?? "";
+    if (!bId) throw new HttpsError("invalid-argument", "지원서에 businessId가 없습니다.");
+
+    // 권한 체크 (트랜잭션 전)
+    await assertBizAdmin(callerUid, bId);
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(appRef);
+      if (!snap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+      if (snap.data()?.terminationStatus !== "PENDING") {
+        throw new HttpsError(
+          "failed-precondition",
+          `취소 불가 — 현재 계약해지 상태: ${snap.data()?.terminationStatus}`
+        );
+      }
+      tx.update(snap.ref, {
+        terminationStatus: null,
+        terminationRequestedAt: null,
+        terminationReason: null,
+        terminationRequestedByUid: null,
+        terminationEffectiveDate: null,
+      });
+    });
+
+    const cq = await db
+      .collection("employment_contracts")
+      .where("applicationId", "==", applicationId)
+      .where("businessId", "==", bId)
+      .where("terminationStatus", "==", "PENDING")
+      .limit(5)
+      .get();
+    if (cq.docs.length > 0) {
+      const batch = db.batch();
+      for (const d of cq.docs) batch.update(d.ref, {terminationStatus: null});
+      await batch.commit();
+    } else {
+      const cq2 = await db
+        .collection("employment_contracts")
+        .where("applicationIds", "array-contains", applicationId)
+        .where("businessId", "==", bId)
+        .where("terminationStatus", "==", "PENDING")
+        .limit(5)
+        .get();
+      if (cq2.docs.length > 0) {
+        const batch = db.batch();
+        for (const d of cq2.docs) batch.update(d.ref, {terminationStatus: null});
+        await batch.commit();
+      }
+    }
+
+    return {success: true};
+  }
+);
+
+// ─── 8. callableApproveTermination ───────────────────────────────────────────
+export const callableApproveTermination = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {applicationId} = request.data as {applicationId: string};
+    if (!applicationId) throw new HttpsError("invalid-argument", "applicationId 필수");
+
+    const appRef = db.collection("applications").doc(applicationId);
+    const preSnap = await appRef.get();
+    if (!preSnap.exists) throw new HttpsError("not-found", "지원 정보를 찾을 수 없습니다.");
+    const preData = preSnap.data()!;
+    const businessId = preData.businessId as string;
+    const workerUid = preData.uid as string;
+
+    // 권한 확인: 근무자 본인(피해지 당사자) 또는 관리자
+    const isWorker = callerUid === workerUid;
+    if (!isWorker) {
+      await assertBizAdmin(callerUid, businessId);
+    }
+
+    // 계약서 사전 쿼리 (트랜잭션 외부)
+    const pendingContractStatuses = ["pending_employer", "pending_worker"];
+    let contractRef: admin.firestore.DocumentReference | null = null;
+    const cq1 = await db.collection("employment_contracts")
+      .where("applicationId", "==", applicationId)
+      .where("businessId", "==", businessId)
+      .limit(5)
+      .get();
+    const cq1Match = cq1.docs.find((d) =>
+      pendingContractStatuses.includes(d.data().status as string)
+    );
+    if (cq1Match) {
+      contractRef = cq1Match.ref;
+    } else {
+      const cq2 = await db.collection("employment_contracts")
+        .where("applicationIds", "array-contains", applicationId)
+        .where("businessId", "==", businessId)
+        .limit(5)
+        .get();
+      const cq2Match = cq2.docs.find((d) =>
+        pendingContractStatuses.includes(d.data().status as string)
+      );
+      if (cq2Match) contractRef = cq2Match.ref;
+    }
+
+    type TerminationResolved = {
+      toId: string | null;
+      slotId: string | null;
+      uid: string;
+      businessName: string;
+      terminationEffectiveDate: admin.firestore.Timestamp | null;
+      terminationRequestedByUid: string | null;
+      originalStatus: string;
+    };
+    let resolvedData: TerminationResolved | null = null;
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(appRef);
+      if (!snap.exists) throw new HttpsError("not-found", "지원서 없음");
+      const d = snap.data()!;
+      if (d.terminationStatus !== "PENDING") {
+        throw new HttpsError(
+          "failed-precondition",
+          `수락 불가 — 현재 계약해지 상태: ${d.terminationStatus}`
+        );
+      }
+      const terminationEffectiveDate =
+        (d.terminationEffectiveDate as admin.firestore.Timestamp | null) ?? null;
+      resolvedData = {
+        toId: (d.toId as string | null) ?? null,
+        slotId: (d.slotId as string | null) ?? null,
+        uid: d.uid as string,
+        businessName: (d.businessName as string) ?? "",
+        terminationEffectiveDate,
+        terminationRequestedByUid:
+          (d.terminationRequestedByUid as string | null) ?? null,
+        originalStatus: d.status as string,
+      };
+      tx.update(appRef, {
+        terminationStatus: "APPROVED",
+        terminationRespondedAt: admin.firestore.FieldValue.serverTimestamp(),
+        actualResignDate:
+          terminationEffectiveDate ?? admin.firestore.FieldValue.serverTimestamp(),
+        status: "CANCELED",
+      });
+      if (contractRef) {
+        tx.update(contractRef, {
+          status: "voided",
+          contractVoidedAt: admin.firestore.FieldValue.serverTimestamp(),
+          voidReason: "TERMINATION",
+        });
+      }
+    });
+
+    if (!resolvedData) throw new HttpsError("internal", "트랜잭션 결과 없음");
+    const app = resolvedData as TerminationResolved;
+
+    // TO totalConfirmed 감소
+    if (app.toId && CONFIRMED_STATUSES.includes(app.originalStatus)) {
+      const batch = db.batch();
+      batch.update(db.collection("tos").doc(app.toId), {
+        totalConfirmed: admin.firestore.FieldValue.increment(-1),
+      });
+      if (app.slotId) {
+        batch.update(
+          db.collection("tos").doc(app.toId).collection("slots").doc(app.slotId),
+          {confirmedCount: admin.firestore.FieldValue.increment(-1)}
+        );
+      }
+      await batch.commit();
+    }
+
+    const terminationDateStr = app.terminationEffectiveDate
+      ? (() => { const d = app.terminationEffectiveDate!.toDate(); return `${d.getMonth()+1}/${d.getDate()}`; })()
+      : null;
+    // [FCM-01] 상호 해지 알림 분기:
+    //   관리자 요청(terminationRequestedByUid !== app.uid): 근무자 action:"terminationDetail" + 관리자 screen:"fixedWorker"
+    //   근무자 요청(terminationRequestedByUid === app.uid): 근무자에게만 1건 (중복 방지)
+    const adminRequested = !!app.terminationRequestedByUid &&
+                           app.terminationRequestedByUid !== app.uid;
+    const notifPromises: Promise<admin.firestore.DocumentReference>[] = [];
+    const terminationBody = `${app.businessName}과의 계약이 해지되었습니다.${terminationDateStr ? `\n해지일: ${terminationDateStr}` : ""}`;
+
+    // 근무자 알림 (항상 발송)
+    if (app.uid && app.uid.length > 0) {
+      notifPromises.push(
+        db.collection("users").doc(app.uid).collection("notifications").add({
+          userId: app.uid,
+          type: "terminationApproved",
+          title: "계약해지 완료",
+          body: terminationBody,
+          data: {applicationId, businessId, action: "terminationDetail"},
+          isRead: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        })
+      );
+    }
+    // 관리자 알림 (관리자가 해지 요청한 경우만 — 중복 방지)
+    if (adminRequested) {
+      notifPromises.push(
+        db.collection("users").doc(app.terminationRequestedByUid!).collection("notifications").add({
+          userId: app.terminationRequestedByUid,
+          type: "terminationApproved",
+          title: "계약해지 완료",
+          body: terminationBody,
+          // [FCM-01] screen:"fixedWorker" — FCM background에서 관리자 인력관리 화면 직접 이동
+          data: {applicationId, businessId, screen: "fixedWorker"},
+          isRead: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        })
+      );
+    }
+    // 알림은 상태 커밋 후 best-effort — 실패해도 APPROVED/CANCELED 상태는 유지
+    Promise.all(notifPromises).catch((e) =>
+      console.error("[callableApproveTermination] 알림 전송 실패:", e)
+    );
+
+    return {success: true};
+  }
+);
+
+// ─── 9. callableApproveResignation ───────────────────────────────────────────
+export const callableApproveResignation = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {applicationId} = request.data as {applicationId: string};
+    if (!applicationId) throw new HttpsError("invalid-argument", "applicationId 필수");
+
+    const appRef = db.collection("applications").doc(applicationId);
+    const preSnap = await appRef.get();
+    if (!preSnap.exists) throw new HttpsError("not-found", "지원 정보를 찾을 수 없습니다.");
+    const preData = preSnap.data()!;
+    const businessId = preData.businessId as string;
+
+    // 권한 확인: 관리자만 가능
+    await assertBizAdmin(callerUid, businessId);
+
+    // 계약서 사전 쿼리 (트랜잭션 외부)
+    const pendingContractStatuses = ["pending_employer", "pending_worker"];
+    let contractRef: admin.firestore.DocumentReference | null = null;
+    const cq1 = await db.collection("employment_contracts")
+      .where("applicationId", "==", applicationId)
+      .where("businessId", "==", businessId)
+      .limit(5)
+      .get();
+    const cq1Match = cq1.docs.find((d) =>
+      pendingContractStatuses.includes(d.data().status as string)
+    );
+    if (cq1Match) {
+      contractRef = cq1Match.ref;
+    } else {
+      const cq2 = await db.collection("employment_contracts")
+        .where("applicationIds", "array-contains", applicationId)
+        .where("businessId", "==", businessId)
+        .limit(5)
+        .get();
+      const cq2Match = cq2.docs.find((d) =>
+        pendingContractStatuses.includes(d.data().status as string)
+      );
+      if (cq2Match) contractRef = cq2Match.ref;
+    }
+
+    type ResignationResolved = {
+      toId: string | null;
+      slotId: string | null;
+      uid: string;
+      businessName: string;
+      resignRequestDate: admin.firestore.Timestamp | null;
+      originalStatus: string;
+    };
+    let resolvedData: ResignationResolved | null = null;
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(appRef);
+      if (!snap.exists) throw new HttpsError("not-found", "지원서 없음");
+      const d = snap.data()!;
+      if (d.resignStatus !== "PENDING") {
+        throw new HttpsError(
+          "failed-precondition",
+          `퇴사 요청 상태가 PENDING이 아님: ${d.resignStatus}`
+        );
+      }
+      const resignRequestDate =
+        (d.resignRequestDate as admin.firestore.Timestamp | null) ?? null;
+      resolvedData = {
+        toId: (d.toId as string | null) ?? null,
+        slotId: (d.slotId as string | null) ?? null,
+        uid: d.uid as string,
+        businessName: (d.businessName as string) ?? "",
+        resignRequestDate,
+        originalStatus: d.status as string,
+      };
+      tx.update(appRef, {
+        resignStatus: "APPROVED",
+        resignApprovedAt: admin.firestore.FieldValue.serverTimestamp(),
+        resignApprovedBy: callerUid,
+        actualResignDate:
+          resignRequestDate ?? admin.firestore.FieldValue.serverTimestamp(),
+        status: "CANCELED",
+      });
+      if (contractRef) {
+        tx.update(contractRef, {
+          status: "voided",
+          contractVoidedAt: admin.firestore.FieldValue.serverTimestamp(),
+          voidReason: "RESIGNATION",
+        });
+      }
+    });
+
+    if (!resolvedData) throw new HttpsError("internal", "트랜잭션 결과 없음");
+    const app = resolvedData as ResignationResolved;
+
+    // TO totalConfirmed 감소
+    if (app.toId && CONFIRMED_STATUSES.includes(app.originalStatus)) {
+      const batch = db.batch();
+      batch.update(db.collection("tos").doc(app.toId), {
+        totalConfirmed: admin.firestore.FieldValue.increment(-1),
+      });
+      if (app.slotId) {
+        batch.update(
+          db.collection("tos").doc(app.toId).collection("slots").doc(app.slotId),
+          {confirmedCount: admin.firestore.FieldValue.increment(-1)}
+        );
+      }
+      await batch.commit();
+    }
+
+    // 퇴사일 이후 scheduled attendance → absent 일괄 처리
+    const cutoffDate = app.resignRequestDate?.toDate() ?? new Date();
+    const scheduledSnap = await db.collection("attendance")
+      .where("applicationId", "==", applicationId)
+      .where("status", "==", "scheduled")
+      .get();
+    if (!scheduledSnap.empty) {
+      let cancelBatch = db.batch();
+      let count = 0;
+      for (const doc of scheduledSnap.docs) {
+        const workDate = doc.data().workDate as admin.firestore.Timestamp | null;
+        if (workDate && workDate.toDate() >= cutoffDate) {
+          cancelBatch.update(doc.ref, {
+            status: "absent",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          count++;
+          if (count >= 499) {
+            await cancelBatch.commit();
+            cancelBatch = db.batch();
+            count = 0;
+          }
+        }
+      }
+      if (count > 0) await cancelBatch.commit();
+    }
+
+    // 근무자에게 알림 (best-effort — 실패해도 APPROVED/CANCELED 상태는 유지)
+    if (app.uid && app.uid.length > 0) {
+      const rd = app.resignRequestDate;
+      const rdStr = rd ? (() => { const d = rd.toDate(); return `${d.getMonth()+1}/${d.getDate()}`; })() : null;
+      db.collection("users").doc(app.uid).collection("notifications").add({
+        type: "resignApproved",
+        userId: app.uid,
+        title: "퇴사 승인",
+        body: `${app.businessName}에서 퇴사 요청을 승인했습니다.${rdStr ? `\n퇴사일: ${rdStr}` : ""}`,
+        data: {applicationId, businessId, action: "resignDetail"},
+        isRead: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      }).catch((e) => console.error("[callableApproveResignation] 알림 전송 실패:", e));
+    }
+
+    return {success: true};
+  }
+);
+
+// ─── 10. callableRecalculateTOStats ──────────────────────────────────────────
+export const callableRecalculateTOStats = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const toId = request.data.toId as string | undefined;
+    if (!toId || typeof toId !== "string") {
+      throw new HttpsError("invalid-argument", "toId가 필요합니다.");
+    }
+
+    const toSnap = await db.collection("tos").doc(toId).get();
+    if (!toSnap.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
+    const toData = toSnap.data()!;
+    const businessId = toData.businessId as string;
+    const isFlexType = (toData.type as string | undefined) === "flex";
+    const totalRequired = (toData.totalRequired as number) ?? 0;
+    const toStatus = toData.status as string;
+
+    await assertBizAdmin(callerUid, businessId);
+
+    const appsSnap = await db
+      .collection("applications")
+      .where("toId", "==", toId)
+      .where("businessId", "==", businessId)
+      .get();
+
+    let totalPending = 0;
+    let totalConfirmed = 0;
+    for (const doc of appsSnap.docs) {
+      const status = doc.data().status as string | undefined;
+      if (status === "PENDING") totalPending++;
+      if (status && CONFIRMED_STATUSES.includes(status)) totalConfirmed++;
+    }
+
+    const toUpdate: Record<string, unknown> = {totalPending, totalConfirmed};
+    const notClosed = toStatus !== "CLOSED" && toStatus !== "EXPIRED";
+    if (notClosed) {
+      const shouldBeFull = totalRequired > 0 && totalConfirmed >= totalRequired;
+      toUpdate.status = shouldBeFull ? "FULL" : "ACTIVE";
+    }
+    await db.collection("tos").doc(toId).update(toUpdate);
+
+    if (isFlexType) {
+      const slotStats: Record<string, {pending: number; confirmed: number}> = {};
+      for (const doc of appsSnap.docs) {
+        const d = doc.data();
+        const status = d.status as string | undefined;
+        const slotId = d.slotId as string | undefined;
+        if (!slotId || !status) continue;
+        if (!["PENDING", ...CONFIRMED_STATUSES].includes(status)) continue;
+        if (!slotStats[slotId]) slotStats[slotId] = {pending: 0, confirmed: 0};
+        if (status === "PENDING") slotStats[slotId].pending++;
+        if (CONFIRMED_STATUSES.includes(status)) slotStats[slotId].confirmed++;
+      }
+      const slotsSnap = await db.collection("tos").doc(toId).collection("slots").get();
+      if (!slotsSnap.empty) {
+        let batch = db.batch();
+        let count = 0;
+        for (const slotDoc of slotsSnap.docs) {
+          const stats = slotStats[slotDoc.id] ?? {pending: 0, confirmed: 0};
+          batch.update(slotDoc.ref, {
+            pendingCount: stats.pending,
+            confirmedCount: stats.confirmed,
+          });
+          count++;
+          if (count >= 499) {
+            await batch.commit();
+            batch = db.batch();
+            count = 0;
+          }
+        }
+        if (count > 0) await batch.commit();
+      }
+    }
+
+    return {success: true, totalPending, totalConfirmed};
+  }
+);
+
+// ─── 11. callableDeleteTO ─────────────────────────────────────────────────────
+export const callableDeleteTO = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const toId = request.data.toId as string | undefined;
+    if (!toId || typeof toId !== "string") {
+      throw new HttpsError("invalid-argument", "toId가 필요합니다.");
+    }
+
+    const toSnap = await db.collection("tos").doc(toId).get();
+    if (!toSnap.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
+    const toData = toSnap.data()!;
+    const businessId = toData.businessId as string;
+    const isFlexType = (toData.type as string | undefined) === "flex";
+    const businessName = (toData.businessName as string) ?? "";
+    const toTitle = (toData.title as string) ?? "";
+
+    await assertBizAdmin(callerUid, businessId);
+
+    const ACTIVE_STATUSES = ["PENDING", "CONFIRMED", "CONTRACT_PENDING"];
+    const now = Timestamp.now();
+
+    // 1. slots 서브컬렉션 삭제 (flex TO)
+    if (isFlexType) {
+      const slotsSnap = await db.collection("tos").doc(toId).collection("slots").get();
+      if (!slotsSnap.empty) {
+        let batch = db.batch();
+        let count = 0;
+        for (const slotDoc of slotsSnap.docs) {
+          batch.delete(slotDoc.ref);
+          count++;
+          if (count >= 499) {
+            await batch.commit();
+            batch = db.batch();
+            count = 0;
+          }
+        }
+        if (count > 0) await batch.commit();
+      }
+    }
+
+    // 2. applications 처리: 활성 → AUTO_CANCELED, 나머지 → 삭제
+    const appsSnap = await db
+      .collection("applications")
+      .where("toId", "==", toId)
+      .where("businessId", "==", businessId)
+      .get();
+
+    const notifyTargets: Array<{
+      uid: string;
+      status: string;
+      workDate?: admin.firestore.Timestamp;
+    }> = [];
+
+    if (!appsSnap.empty) {
+      let batch = db.batch();
+      let count = 0;
+      for (const doc of appsSnap.docs) {
+        const d = doc.data();
+        const status = d.status as string | undefined;
+        if (status && ACTIVE_STATUSES.includes(status)) {
+          batch.update(doc.ref, {
+            status: "AUTO_CANCELED",
+            canceledAt: now,
+            cancelReason: "TO_DELETED",
+          });
+          const applicantUid = d.uid as string | undefined;
+          if (applicantUid) {
+            notifyTargets.push({
+              uid: applicantUid,
+              status,
+              workDate: d.workDate as admin.firestore.Timestamp | undefined,
+            });
+          }
+        } else {
+          batch.delete(doc.ref);
+        }
+        count++;
+        if (count >= 499) {
+          await batch.commit();
+          batch = db.batch();
+          count = 0;
+        }
+      }
+      if (count > 0) await batch.commit();
+    }
+
+    // 3. TO 문서 삭제
+    await db.collection("tos").doc(toId).delete();
+
+    // 4. 알림 발송 (fire-and-forget)
+    for (const target of notifyTargets) {
+      const statusText = CONFIRMED_STATUSES.includes(target.status) ? "확정된 근무" : "지원";
+      let dateStr = "";
+      if (target.workDate) {
+        const d = target.workDate.toDate();
+        dateStr = `\n근무일: ${d.getMonth() + 1}/${d.getDate()}`;
+      }
+      db.collection("users").doc(target.uid).collection("notifications")
+        .add({
+          userId: target.uid,
+          type: "workCanceled",
+          title: "공고 취소",
+          body: `${businessName}의 "${toTitle}" 공고가 취소되어 ${statusText}이(가) 무효화되었습니다.${dateStr}`,
+          data: {businessId, action: "toList", reason: "TO_DELETED"},
+          isRead: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        })
+        .catch((e) =>
+          console.error(`[callableDeleteTO] 알림 발송 실패 (uid=${target.uid}):`, e)
+        );
+    }
+
+    // 5. 고아 데이터 정리 (TO 삭제 완료 후 — 실패해도 무시)
+    const allAppIds = appsSnap.docs.map((d) => d.id);
+    if (allAppIds.length > 0) {
+      try {
+        const WAGE_DONE = ["wageTransferred", "wageConfirmed"];
+        for (let i = 0; i < allAppIds.length; i += 30) {
+          const chunk = allAppIds.slice(i, i + 30);
+
+          const attSnaps = await Promise.all(
+            chunk.map((appId) =>
+              db.collection("attendance")
+                .where("applicationId", "==", appId)
+                .where("businessId", "==", businessId)
+                .get()
+            )
+          );
+          const attDocs = attSnaps.flatMap((s) => s.docs);
+          if (attDocs.length > 0) {
+            let batch = db.batch();
+            let count = 0;
+            for (const d of attDocs) {
+              const wageStatus = d.data().wageStatus as string | undefined;
+              if (wageStatus && WAGE_DONE.includes(wageStatus)) continue;
+              batch.delete(d.ref);
+              count++;
+              if (count >= 499) {
+                await batch.commit();
+                batch = db.batch();
+                count = 0;
+              }
+            }
+            if (count > 0) await batch.commit();
+          }
+
+          const reqSnaps = await Promise.all(
+            chunk.map((appId) =>
+              db.collection("schedule_change_requests")
+                .where("applicationId", "==", appId)
+                .where("businessId", "==", businessId)
+                .get()
+            )
+          );
+          const reqDocs = reqSnaps.flatMap((s) => s.docs);
+          if (reqDocs.length > 0) {
+            let batch = db.batch();
+            let count = 0;
+            for (const d of reqDocs) {
+              batch.delete(d.ref);
+              count++;
+              if (count >= 499) {
+                await batch.commit();
+                batch = db.batch();
+                count = 0;
+              }
+            }
+            if (count > 0) await batch.commit();
+          }
+
+          const contractSnaps = await Promise.all(
+            chunk.map((appId) =>
+              db.collection("employment_contracts")
+                .where("applicationId", "==", appId)
+                .where("businessId", "==", businessId)
+                .get()
+            )
+          );
+          const contractDocs1 = contractSnaps.flatMap((s) => s.docs);
+          const foundDocIds = new Set(contractDocs1.map((d) => d.id));
+          const allContractDocs = [...contractDocs1];
+
+          for (let j = 0; j < chunk.length; j += 10) {
+            const subChunk = chunk.slice(j, j + 10);
+            const bundleSnap = await db.collection("employment_contracts")
+              .where("businessId", "==", businessId)
+              .where("applicationIds", "array-contains-any", subChunk)
+              .get();
+            for (const doc of bundleSnap.docs) {
+              if (!foundDocIds.has(doc.id)) {
+                foundDocIds.add(doc.id);
+                allContractDocs.push(doc);
+              }
+            }
+          }
+
+          if (allContractDocs.length > 0) {
+            let batch = db.batch();
+            let count = 0;
+            for (const c of allContractDocs) {
+              if ((c.data().status as string | undefined) === "completed") continue;
+              batch.delete(c.ref);
+              count++;
+              if (count >= 499) {
+                await batch.commit();
+                batch = db.batch();
+                count = 0;
+              }
+            }
+            if (count > 0) await batch.commit();
+          }
+        }
+      } catch (cleanupErr) {
+        console.error("[callableDeleteTO] 고아 데이터 정리 실패 (TO 삭제는 완료됨):", cleanupErr);
+      }
+    }
+
+    return {success: true};
+  }
+);
+
+// ─── 12. callableCloseSlots ───────────────────────────────────────────────────
+export const callableCloseSlots = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {toId, slotIds, businessId} = request.data as {
+      toId: string;
+      slotIds: string[];
+      businessId: string;
+    };
+    if (!toId) throw new HttpsError("invalid-argument", "toId 필수");
+    if (!Array.isArray(slotIds) || slotIds.length === 0)
+      throw new HttpsError("invalid-argument", "slotIds 필수");
+    if (slotIds.length > 100) throw new HttpsError("invalid-argument", "slotIds는 최대 100개");
+    if (!businessId) throw new HttpsError("invalid-argument", "businessId 필수");
+
+    await assertBizAdmin(callerUid, businessId);
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    // 1. 슬롯 closed 설정
+    let batch = db.batch();
+    let count = 0;
+    for (const slotId of slotIds) {
+      batch.update(
+        db.collection("tos").doc(toId).collection("slots").doc(slotId),
+        {isManualClosed: true, status: "closed", closedAt: now, closedBy: callerUid}
+      );
+      count++;
+      if (count >= 499) {
+        await batch.commit();
+        batch = db.batch();
+        count = 0;
+      }
+    }
+    if (count > 0) await batch.commit();
+
+    // 2. PENDING 지원서 조회 (slotId별 병렬)
+    const pendingSnaps = await Promise.all(
+      slotIds.map((slotId) =>
+        db.collection("applications")
+          .where("toId", "==", toId)
+          .where("businessId", "==", businessId)
+          .where("slotId", "==", slotId)
+          .where("status", "==", "PENDING")
+          .get()
+      )
+    );
+    const pendingBySlot = new Map<string, admin.firestore.QueryDocumentSnapshot[]>();
+    for (let i = 0; i < slotIds.length; i++) {
+      if (pendingSnaps[i].docs.length > 0)
+        pendingBySlot.set(slotIds[i], pendingSnaps[i].docs);
+    }
+
+    // 3. 슬롯별 PENDING → REJECTED + pendingCount 감소 + 알림
+    let totalCanceledPending = 0;
+    for (const slotId of slotIds) {
+      const docs = pendingBySlot.get(slotId);
+      if (!docs || docs.length === 0) continue;
+      let slotCanceled = 0;
+      try {
+        let cancelBatch = db.batch();
+        let cancelCount = 0;
+        for (const doc of docs) {
+          cancelBatch.update(doc.ref, {
+            status: "REJECTED",
+            rejectedAt: now,
+            rejectMessage: "공고 슬롯이 마감되었습니다",
+          });
+          cancelCount++;
+          slotCanceled++;
+          if (cancelCount >= 499) {
+            await cancelBatch.commit();
+            cancelBatch = db.batch();
+            cancelCount = 0;
+          }
+        }
+        if (cancelCount > 0) await cancelBatch.commit();
+        totalCanceledPending += slotCanceled;
+
+        const wtDeltas = new Map<string, number>();
+        for (const doc of docs) {
+          const wt = doc.data().selectedWorkType as string | undefined;
+          if (wt) wtDeltas.set(wt, (wtDeltas.get(wt) ?? 0) + 1);
+        }
+        const slotUpdate: Record<string, unknown> = {
+          pendingCount: admin.firestore.FieldValue.increment(-slotCanceled),
+        };
+        for (const [wt, delta] of wtDeltas.entries()) {
+          slotUpdate[`workTypeCounts.${wt}.pendingCount`] =
+            admin.firestore.FieldValue.increment(-delta);
+        }
+        await db.collection("tos").doc(toId).collection("slots").doc(slotId).update(slotUpdate);
+
+        // 알림: applicationRejected
+        for (const doc of docs) {
+          const d = doc.data();
+          const applicantUid = d.uid as string | undefined;
+          if (!applicantUid) continue;
+          const workDate = (d.workDate as Timestamp | undefined)?.toDate() ?? new Date();
+          const month = workDate.getMonth() + 1;
+          const day = workDate.getDate();
+          db.collection("users").doc(applicantUid).collection("notifications")
+            .add({
+              userId: applicantUid,
+              type: "applicationRejected",
+              title: "지원 거절",
+              body:
+                `${(d.businessName as string) ?? ""}의 ` +
+                `${(d.selectedWorkType as string) ?? ""} 지원이 거절되었습니다.\n` +
+                `사유: 공고 슬롯이 마감되었습니다\n근무일: ${month}/${day}`,
+              data: {
+                applicationId: doc.id,
+                businessId: (d.businessId as string) ?? businessId,
+                action: "applicationDetail",
+              },
+              isRead: false,
+              createdAt: now,
+            })
+            .catch(() => {});
+        }
+      } catch (e) {
+        console.error(`[CloseSlots] 슬롯 ${slotId} PENDING 취소 실패:`, e);
+      }
+    }
+
+    // 4. TO totalPending 감소
+    if (totalCanceledPending > 0) {
+      await db.collection("tos").doc(toId).update({
+        totalPending: admin.firestore.FieldValue.increment(-totalCanceledPending),
+      });
+    }
+
+    // 5. TO status 재계산
+    try {
+      const allSlotsSnap = await db.collection("tos").doc(toId).collection("slots").get();
+      const hasOpenSlot = allSlotsSnap.docs.some((d) => {
+        const s = d.data();
+        return !s.isManualClosed && (s.status === "open" || s.status === "full");
+      });
+      const toSnap2 = await db.collection("tos").doc(toId).get();
+      const currentTOStatus = toSnap2.data()?.status as string | undefined;
+      const openStates = ["ACTIVE", "FULL", "SCHEDULED"];
+      if (!hasOpenSlot && openStates.includes(currentTOStatus ?? "")) {
+        await db.collection("tos").doc(toId).update({status: "CLOSED", closedAt: now});
+      }
+    } catch (e) {
+      console.error(`[CloseSlots] TO status 재계산 실패 (${toId}):`, e);
+    }
+
+    return {success: true, canceledCount: totalCanceledPending};
+  }
+);
+
+// ─── 13. callableDeleteSlots ──────────────────────────────────────────────────
+export const callableDeleteSlots = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {toId, slotIds, businessId} = request.data as {
+      toId: string;
+      slotIds: string[];
+      businessId: string;
+    };
+    if (!toId) throw new HttpsError("invalid-argument", "toId 필수");
+    if (!Array.isArray(slotIds) || slotIds.length === 0)
+      throw new HttpsError("invalid-argument", "slotIds 필수");
+    if (slotIds.length > 100) throw new HttpsError("invalid-argument", "slotIds는 최대 100개");
+    if (!businessId) throw new HttpsError("invalid-argument", "businessId 필수");
+
+    await assertBizAdmin(callerUid, businessId);
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    // TO 정보 조회 (알림용)
+    const toDoc = await db.collection("tos").doc(toId).get();
+    const toData = toDoc.data() ?? {};
+    const toBusinessName = (toData.businessName as string) ?? "";
+    const toBusinessId = (toData.businessId as string) ?? businessId;
+    const toTitle = (toData.title as string) ?? "";
+
+    // 슬롯 카운터 직접 읽기
+    const slotSnaps = await Promise.all(
+      slotIds.map((id) =>
+        db.collection("tos").doc(toId).collection("slots").doc(id).get()
+      )
+    );
+    let removedRequired = 0;
+    let removedConfirmed = 0;
+    let removedPending = 0;
+    for (const snap of slotSnaps) {
+      if (!snap.exists) continue;
+      const d = snap.data()!;
+      const wds = Array.isArray(d.workDetails) ? (d.workDetails as Record<string, unknown>[]) : [];
+      removedRequired += wds.reduce(
+        (acc, wd) => acc + (Number(wd?.requiredCount) || 0),
+        0
+      );
+      removedConfirmed += Number(d.confirmedCount) || 0;
+      removedPending += Number(d.pendingCount) || 0;
+    }
+
+    // 활성 지원서 조회 (slotId별 병렬)
+    const activeStatuses = new Set(["PENDING", "CONFIRMED", "CONTRACT_PENDING"]);
+    const activeSnaps = await Promise.all(
+      slotIds.map((slotId) =>
+        db.collection("applications")
+          .where("toId", "==", toId)
+          .where("businessId", "==", toBusinessId)
+          .where("slotId", "==", slotId)
+          .get()
+      )
+    );
+    const allActiveDocs: admin.firestore.QueryDocumentSnapshot[] = [];
+    for (const snap of activeSnaps) {
+      for (const doc of snap.docs) {
+        if (activeStatuses.has((doc.data().status as string) ?? ""))
+          allActiveDocs.push(doc);
+      }
+    }
+
+    // 활성 지원서 REJECTED 처리
+    if (allActiveDocs.length > 0) {
+      let cancelBatch = db.batch();
+      let cancelCount = 0;
+      for (const doc of allActiveDocs) {
+        cancelBatch.update(doc.ref, {
+          status: "REJECTED",
+          rejectedAt: now,
+          rejectReason: "공고 슬롯이 삭제되었습니다",
+        });
+        cancelCount++;
+        if (cancelCount >= 499) {
+          await cancelBatch.commit();
+          cancelBatch = db.batch();
+          cancelCount = 0;
+        }
+      }
+      if (cancelCount > 0) await cancelBatch.commit();
+
+      // 알림: 상태별 분기
+      for (const doc of allActiveDocs) {
+        const d = doc.data();
+        const applicantUid = d.uid as string | undefined;
+        if (!applicantUid) continue;
+        const status = (d.status as string) ?? "";
+        const workDate = (d.workDate as Timestamp | undefined)?.toDate() ?? new Date();
+        const month = workDate.getMonth() + 1;
+        const day = workDate.getDate();
+
+        if (CONFIRMED_STATUSES.includes(status)) {
+          db.collection("users").doc(applicantUid).collection("notifications")
+            .add({
+              userId: applicantUid,
+              type: "workCanceled",
+              title: "공고 취소",
+              body:
+                `${toBusinessName}의 "${toTitle}" 공고가 취소되어 ` +
+                `확정된 근무이(가) 무효화되었습니다.\n근무일: ${month}/${day}`,
+              data: {businessId: toBusinessId, action: "toList", reason: "TO_DELETED"},
+              isRead: false,
+              createdAt: now,
+            })
+            .catch(() => {});
+        } else if (status === "PENDING") {
+          db.collection("users").doc(applicantUid).collection("notifications")
+            .add({
+              userId: applicantUid,
+              type: "applicationRejected",
+              title: "지원 거절",
+              body:
+                `${(d.businessName as string) ?? toBusinessName}의 ` +
+                `${(d.selectedWorkType as string) ?? ""} 지원이 거절되었습니다.\n` +
+                `사유: 공고 슬롯이 삭제되었습니다\n근무일: ${month}/${day}`,
+              data: {
+                applicationId: doc.id,
+                businessId: (d.businessId as string) ?? toBusinessId,
+                action: "applicationDetail",
+              },
+              isRead: false,
+              createdAt: now,
+            })
+            .catch(() => {});
+        }
+      }
+    }
+
+    // 슬롯 삭제 + TO 카운터 업데이트 (배치)
+    let deleteBatch = db.batch();
+    let deleteCount = 0;
+    for (const slotId of slotIds) {
+      deleteBatch.delete(db.collection("tos").doc(toId).collection("slots").doc(slotId));
+      deleteCount++;
+      if (deleteCount >= 498) {
+        await deleteBatch.commit();
+        deleteBatch = db.batch();
+        deleteCount = 0;
+      }
+    }
+    const toUpdate: Record<string, unknown> = {
+      totalSlots: admin.firestore.FieldValue.increment(-slotIds.length),
+    };
+    if (removedRequired > 0)
+      toUpdate.totalRequired = admin.firestore.FieldValue.increment(-removedRequired);
+    if (removedConfirmed > 0)
+      toUpdate.totalConfirmed = admin.firestore.FieldValue.increment(-removedConfirmed);
+    if (removedPending > 0)
+      toUpdate.totalPending = admin.firestore.FieldValue.increment(-removedPending);
+    deleteBatch.update(db.collection("tos").doc(toId), toUpdate);
+    await deleteBatch.commit();
+
+    return {success: true};
+  }
+);
+
+// ─── callableRejectTermination ─────────────────────────────────────────────
+// 계약해지 거절: 근무자(app.uid) 또는 관리자가 PENDING 상태 해지 요청을 거절
+// → terminationStatus: REJECTED + 알림은 해지 요청자(관리자)에게
+
+type TerminationRejected = {
+  businessName: string;
+  terminationRequestedByUid: string | null;
+};
+
+export const callableRejectTermination = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {applicationId, rejectReason} = request.data as {
+      applicationId: string;
+      rejectReason?: string;
+    };
+    if (!applicationId) throw new HttpsError("invalid-argument", "applicationId 필수");
+
+    // 사전 조회: 권한 체크
+    const appRef = db.collection("applications").doc(applicationId);
+    const preSnap = await appRef.get();
+    if (!preSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const preData = preSnap.data()!;
+    const businessId = preData.businessId as string;
+    const workerUid = preData.uid as string;
+
+    // 권한: 근무자 본인 또는 관리자
+    if (callerUid !== workerUid) {
+      await assertBizAdmin(callerUid, businessId);
+    }
+
+    // 트랜잭션: terminationStatus=PENDING 검증 + 거절 원자화
+    let resolvedData: TerminationRejected | null = null;
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(appRef);
+      if (!snap.exists) throw new HttpsError("not-found", "지원서 없음");
+      const data = snap.data()!;
+      if (data.terminationStatus !== "PENDING") {
+        throw new HttpsError(
+          "failed-precondition",
+          `거절 불가 — 현재 계약해지 상태: ${data.terminationStatus}`
+        );
+      }
+      resolvedData = {
+        businessName: (data.businessName as string) ?? "",
+        terminationRequestedByUid: (data.terminationRequestedByUid as string | null) ?? null,
+      } as TerminationRejected;
+      tx.update(appRef, {
+        terminationStatus: "REJECTED",
+        terminationRespondedAt: admin.firestore.FieldValue.serverTimestamp(),
+        terminationRejectReason: rejectReason ?? null,
+      });
+    });
+
+    if (!resolvedData) throw new HttpsError("internal", "트랜잭션 결과 없음");
+    const rd = resolvedData as TerminationRejected;
+
+    // 알림: 해지 요청자에게 거절 통보 (GCF v2 종료 전 완료 보장)
+    // [FCM-01] 관리자 요청(terminationRequestedByUid !== workerUid) → screen:"fixedWorker"
+    //          근무자 요청(terminationRequestedByUid === workerUid) → action:"terminationDetail"
+    if (rd.terminationRequestedByUid && rd.terminationRequestedByUid.length > 0) {
+      const adminRequested = rd.terminationRequestedByUid !== workerUid;
+      await db.collection("users")
+        .doc(rd.terminationRequestedByUid)
+        .collection("notifications")
+        .add({
+          userId: rd.terminationRequestedByUid,
+          type: "terminationRejected",
+          title: "계약해지 거절",
+          body: `${rd.businessName}의 계약해지 요청이 거절되었습니다.${rejectReason ? `\n사유: ${rejectReason}` : ""}`,
+          data: adminRequested
+            // [FCM-01] 관리자 요청 거절 → FCM background에서 인력관리 화면 직접 이동
+            ? {applicationId, businessId, screen: "fixedWorker"}
+            : {applicationId, businessId, action: "terminationDetail"},
+          isRead: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        })
+        .catch((e) => console.error("[callableRejectTermination] 알림 전송 실패:", e));
+    }
+
+    return {success: true};
+  }
+);
+
+// ─── callableRequestResignation ────────────────────────────────────────────
+// 퇴사 요청: 근무자 본인만 호출 가능
+// resignStatus: null 또는 REJECTED인 경우에만 PENDING으로 전환
+
+export const callableRequestResignation = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {applicationId, resignDateIso} = request.data as {
+      applicationId: string;
+      resignDateIso?: string; // ISO 8601 날짜 문자열
+    };
+    if (!applicationId) throw new HttpsError("invalid-argument", "applicationId 필수");
+
+    // 사전 조회
+    const appRef = db.collection("applications").doc(applicationId);
+    const preSnap = await appRef.get();
+    if (!preSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const preData = preSnap.data()!;
+    const businessId = preData.businessId as string;
+    const workerUid = preData.uid as string;
+
+    // 권한: 근무자 본인만 퇴사 요청 가능
+    if (callerUid !== workerUid) {
+      throw new HttpsError("permission-denied", "본인 퇴사 요청만 가능합니다.");
+    }
+
+    // 날짜 유효성 사전 검사 — 트랜잭션 전에 파싱 오류를 빠르게 차단
+    if (resignDateIso) {
+      const parsed = new Date(resignDateIso);
+      if (isNaN(parsed.getTime())) throw new HttpsError("invalid-argument", "유효하지 않은 날짜");
+    }
+
+    // 트랜잭션: 중복 퇴사 요청 방지 + effectiveDate를 트랜잭션 내에서 계산
+    // workEndDate를 pre-read에서 가져오면 race condition 발생 가능 → tx 내부로 이동
+    type ResignationRequested = {effectiveDate: FirebaseFirestore.Timestamp};
+    let resolvedData: ResignationRequested | null = null;
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(appRef);
+      if (!snap.exists) throw new HttpsError("not-found", "지원서 없음");
+      const data = snap.data()!;
+      const currentResignStatus = (data.resignStatus as string | null) ?? null;
+      if (currentResignStatus !== null && currentResignStatus !== "REJECTED") {
+        throw new HttpsError(
+          "failed-precondition",
+          `이미 진행 중인 퇴사 요청이 있습니다: ${currentResignStatus}`
+        );
+      }
+      let effectiveDate: FirebaseFirestore.Timestamp;
+      if (resignDateIso) {
+        effectiveDate = Timestamp.fromDate(new Date(resignDateIso));
+      } else {
+        const workEndDate = data.workEndDate as FirebaseFirestore.Timestamp | null;
+        effectiveDate = workEndDate ?? Timestamp.now();
+      }
+      resolvedData = {effectiveDate} as ResignationRequested;
+      tx.update(appRef, {
+        resignStatus: "PENDING",
+        resignRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+        resignRequestDate: effectiveDate,
+      });
+    });
+
+    if (!resolvedData) throw new HttpsError("internal", "트랜잭션 결과 없음");
+    const effectiveDate = (resolvedData as ResignationRequested).effectiveDate;
+
+    // 관리자 UIDs 조회 (알림 발송용)
+    const bizSnap = await db.collection("businesses").doc(businessId).get();
+    const bizData = bizSnap.data() ?? {};
+    const adminIds: string[] = Array.isArray(bizData.adminIds)
+      ? (bizData.adminIds as string[])
+      : [];
+    if (adminIds.length === 0 && bizData.ownerId) {
+      adminIds.push(bizData.ownerId as string);
+    }
+
+    // 근무자 이름 조회
+    const workerSnap = await db.collection("users").doc(workerUid).get();
+    const workerName = (workerSnap.data()?.name as string | undefined) ?? "근무자";
+
+    // 퇴사 예정일 포맷
+    const resignDateObj = effectiveDate.toDate();
+    const month = resignDateObj.getMonth() + 1;
+    const day = resignDateObj.getDate();
+    const businessName = (preData.businessName as string) ?? "";
+
+    // 관리자들에게 알림 발송 (GCF v2 종료 전 완료 보장)
+    await Promise.all(adminIds.map((adminUid) =>
+      db.collection("users")
+        .doc(adminUid)
+        .collection("notifications")
+        .add({
+          userId: adminUid,
+          type: "resignRequested",
+          title: "퇴사 요청",
+          body: `${workerName}님이 퇴사를 요청했습니다.\n사업장: ${businessName}\n퇴사 예정일: ${month}/${day}`,
+          data: {applicationId, businessId, action: "resignDetail"},
+          isRead: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        })
+        .catch((e) => console.error("[callableRequestResignation] 알림 전송 실패:", e))
+    ));
+
+    return {success: true};
+  }
+);
+
+// ─── callableRejectResignation ─────────────────────────────────────────────
+// 퇴사 거절: 관리자 전용
+// 기존 클라이언트 직접 쓰기(resignRejectedBy=adminUID)는 위조 가능 → CF에서 callerUid 사용
+export const callableRejectResignation = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {applicationId, rejectReason} = request.data as {
+      applicationId: string;
+      rejectReason?: string;
+    };
+    if (!applicationId) throw new HttpsError("invalid-argument", "applicationId 필수");
+
+    const appRef = db.collection("applications").doc(applicationId);
+    const preSnap = await appRef.get();
+    if (!preSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const preData = preSnap.data()!;
+    const businessId = preData.businessId as string;
+
+    // 권한: 관리자만 퇴사 거절 가능
+    await assertBizAdmin(callerUid, businessId);
+
+    type ResignationRejected = {
+      workerUid: string;
+      businessName: string;
+    };
+    let resolvedData: ResignationRejected | null = null;
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(appRef);
+      if (!snap.exists) throw new HttpsError("not-found", "지원서 없음");
+      const data = snap.data()!;
+      if (data.resignStatus !== "PENDING") {
+        throw new HttpsError(
+          "failed-precondition",
+          `거절 불가 — 현재 퇴사 요청 상태: ${data.resignStatus}`
+        );
+      }
+      resolvedData = {
+        workerUid: data.uid as string,
+        businessName: (data.businessName as string) ?? "",
+      } as ResignationRejected;
+      tx.update(appRef, {
+        resignStatus: "REJECTED",
+        resignRejectedAt: admin.firestore.FieldValue.serverTimestamp(),
+        resignRejectedBy: callerUid, // 서버 검증된 UID — 클라이언트 위조 불가
+        resignRejectReason: rejectReason ?? null,
+      });
+    });
+
+    if (!resolvedData) throw new HttpsError("internal", "트랜잭션 결과 없음");
+    const rd = resolvedData as ResignationRejected;
+
+    // 근무자에게 알림 (GCF v2 종료 전 완료 보장)
+    if (rd.workerUid && rd.workerUid.length > 0) {
+      await db.collection("users")
+        .doc(rd.workerUid)
+        .collection("notifications")
+        .add({
+          userId: rd.workerUid,
+          type: "resignRejected",
+          title: "퇴사 요청 거절",
+          body: `${rd.businessName}의 퇴사 요청이 거절되었습니다.${rejectReason ? `\n사유: ${rejectReason}` : ""}`,
+          data: {applicationId, businessId, action: "resignDetail"},
+          isRead: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        })
+        .catch((e) => console.error("[callableRejectResignation] 알림 전송 실패:", e));
+    }
+
+    return {success: true};
+  }
+);
+
+// ─── callableExpireApplications ────────────────────────────────────────────
+// workDate가 지난 PENDING 지원서를 AUTO_CANCELED로 일괄 처리
+// 클라이언트 직접 쓰기는 Firestore rules가 AUTO_CANCELED 전환을 차단 → CF 필수
+export const callableExpireApplications = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayTimestamp = Timestamp.fromDate(today);
+
+    const snapshot = await db.collection("applications")
+      .where("uid", "==", callerUid)
+      .where("status", "==", "PENDING")
+      .where("workDate", "<", todayTimestamp)
+      .get();
+
+    if (snapshot.empty) return {expired: 0};
+
+    let batch = db.batch();
+    let count = 0;
+    let total = 0;
+    for (const doc of snapshot.docs) {
+      batch.update(doc.ref, {
+        status: "AUTO_CANCELED",
+        canceledAt: admin.firestore.FieldValue.serverTimestamp(),
+        cancelReason: "AUTO_EXPIRED",
+      });
+      count++;
+      total++;
+      if (count >= 499) {
+        await batch.commit();
+        batch = db.batch();
+        count = 0;
+      }
+    }
+    if (count > 0) await batch.commit();
+
+    console.info(`[callableExpireApplications] uid=${callerUid} 만료=${total}건`);
+    return {expired: total};
+  }
+);
+
+// ─── callableCancelResignRequest ───────────────────────────────────────────
+// 퇴사 요청 취소: 근무자 본인 전용
+// cancelTerminationRequest는 이미 CF 전용이었으나 cancelResignRequest만 클라이언트 직접 쓰기였음
+// → 대칭성 확보 및 rules 클라이언트 경로 제거를 위해 CF 이전
+export const callableCancelResignRequest = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {applicationId} = request.data as {applicationId: string};
+    if (!applicationId) throw new HttpsError("invalid-argument", "applicationId 필수");
+
+    const appRef = db.collection("applications").doc(applicationId);
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(appRef);
+      if (!snap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+      const data = snap.data()!;
+
+      // 권한: 근무자 본인만 자신의 퇴사 요청 취소 가능
+      if ((data.uid as string) !== callerUid) {
+        throw new HttpsError("permission-denied", "본인 퇴사 요청만 취소할 수 있습니다.");
+      }
+
+      const currentResignStatus = (data.resignStatus as string | null) ?? null;
+      if (currentResignStatus !== "PENDING") {
+        throw new HttpsError(
+          "failed-precondition",
+          `취소 불가 — 현재 퇴사 요청 상태: ${currentResignStatus}`
+        );
+      }
+
+      tx.update(appRef, {
+        resignStatus: null,
+        resignRequestedAt: null,
+        resignRequestDate: null,
+      });
+    });
+
+    return {success: true};
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+// H-1: 출퇴근/노쇼/리셋/마감취소 CF 이전 (클라이언트 직접 쓰기 제거)
+// ═══════════════════════════════════════════════════════════
+
+interface NoShowEntry {
+  applicationId: string;
+  workDateMs: number;
+  userId: string;
+  businessName: string;
+  workType: string;
+  attendanceId?: string;
+}
+
+// 노쇼 배치 처리 — 관리자가 미출근 근무자를 일괄 노쇼로 표시
+export const callableBatchSetNoShow = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const {businessId, entries} = request.data as {businessId: string; entries: NoShowEntry[]};
+    if (!businessId || !Array.isArray(entries) || entries.length === 0) {
+      throw new HttpsError("invalid-argument", "businessId와 entries가 필요합니다.");
+    }
+    if (entries.length > 200) {
+      throw new HttpsError("invalid-argument", "한 번에 최대 200건까지 처리 가능합니다.");
+    }
+
+    const callerUid = request.auth.uid;
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const callerData = callerSnap.data();
+    const isAdmin = callerData?.role === "ADMIN" && callerData?.businessId === businessId;
+    const isSubAdmin = Array.isArray(callerData?.subAdminOf) && (callerData!.subAdminOf as string[]).includes(businessId);
+    const isSuperAdminUser = callerData?.role === "SUPER_ADMIN";
+    if (!isAdmin && !isSubAdmin && !isSuperAdminUser) {
+      throw new HttpsError("permission-denied", "해당 사업장 관리자만 사용 가능합니다.");
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const batch = db.batch();
+    const skipped: string[] = [];
+
+    // 서버 상태 사전 확인 — transferred 건 보호
+    await Promise.all(entries.map(async (entry) => {
+      const {applicationId, workDateMs, userId, businessName, workType, attendanceId} = entry;
+      const date = new Date(workDateMs);
+      const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`;
+      const resolvedId = attendanceId ?? `${applicationId}_${dateStr}`;
+      const ref = db.collection("attendance").doc(resolvedId);
+
+      const snap = await ref.get();
+      if (snap.exists && snap.data()!.wageStatus === "transferred") {
+        skipped.push(resolvedId);
+        return;
+      }
+
+      const yearMonth = date.toISOString().substring(0, 7);
+      if (attendanceId) {
+        batch.update(ref, {
+          status: "NO_SHOW",
+          yearMonth,
+          wageStatus: "confirmed",
+          finalWage: 0,
+          updatedAt: now,
+        });
+      } else {
+        batch.set(ref, {
+          applicationId,
+          userId,
+          businessId,
+          businessName,
+          workDate: admin.firestore.Timestamp.fromMillis(workDateMs),
+          yearMonth,
+          workType,
+          status: "NO_SHOW",
+          wageStatus: "confirmed",
+          finalWage: 0,
+          isModified: false,
+          modifyRequested: false,
+          createdAt: now,
+          updatedAt: now,
+        }, {merge: true});
+      }
+    }));
+
+    await batch.commit();
+    return {success: true, processed: entries.length - skipped.length, skipped};
+  }
+);
+
+// 노쇼 배치 취소 — wageTransferred 상태는 취소 불가
+export const callableBatchCancelNoShow = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const {businessId, attendanceIds} = request.data as {businessId: string; attendanceIds: string[]};
+    if (!businessId || !Array.isArray(attendanceIds) || attendanceIds.length === 0) {
+      throw new HttpsError("invalid-argument", "businessId와 attendanceIds가 필요합니다.");
+    }
+    if (attendanceIds.length > 200) {
+      throw new HttpsError("invalid-argument", "한 번에 최대 200건까지 처리 가능합니다.");
+    }
+
+    const callerUid = request.auth.uid;
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const callerData = callerSnap.data();
+    const isAdmin = callerData?.role === "ADMIN" && callerData?.businessId === businessId;
+    const isSubAdmin = Array.isArray(callerData?.subAdminOf) && (callerData!.subAdminOf as string[]).includes(businessId);
+    const isSuperAdminUser = callerData?.role === "SUPER_ADMIN";
+    if (!isAdmin && !isSubAdmin && !isSuperAdminUser) {
+      throw new HttpsError("permission-denied", "해당 사업장 관리자만 사용 가능합니다.");
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const batch = db.batch();
+    const skipped: string[] = [];
+
+    const snaps = await Promise.all(attendanceIds.map((id) => db.collection("attendance").doc(id).get()));
+    for (const snap of snaps) {
+      if (!snap.exists) continue;
+      const data = snap.data()!;
+      if (data.wageStatus === "transferred") {
+        skipped.push(snap.id);
+        continue;
+      }
+      batch.update(snap.ref, {
+        status: admin.firestore.FieldValue.delete(),
+        wageStatus: "pending",
+        wageDetail: admin.firestore.FieldValue.delete(),
+        finalWage: admin.firestore.FieldValue.delete(),
+        yearMonth: admin.firestore.FieldValue.delete(),
+        updatedAt: now,
+      });
+    }
+
+    await batch.commit();
+    return {success: true, processed: attendanceIds.length - skipped.length, skipped};
+  }
+);
+
+// 출퇴근 기록 배치 리셋 — wageCalculated/wageConfirmed/wageTransferred 건 서버에서 재차 제외
+export const callableBatchResetAttendance = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const {businessId, attendanceIds} = request.data as {businessId: string; attendanceIds: string[]};
+    if (!businessId || !Array.isArray(attendanceIds) || attendanceIds.length === 0) {
+      throw new HttpsError("invalid-argument", "businessId와 attendanceIds가 필요합니다.");
+    }
+    if (attendanceIds.length > 200) {
+      throw new HttpsError("invalid-argument", "한 번에 최대 200건까지 처리 가능합니다.");
+    }
+
+    const callerUid = request.auth.uid;
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const callerData = callerSnap.data();
+    const isAdmin = callerData?.role === "ADMIN" && callerData?.businessId === businessId;
+    const isSubAdmin = Array.isArray(callerData?.subAdminOf) && (callerData!.subAdminOf as string[]).includes(businessId);
+    const isSuperAdminUser = callerData?.role === "SUPER_ADMIN";
+    if (!isAdmin && !isSubAdmin && !isSuperAdminUser) {
+      throw new HttpsError("permission-denied", "해당 사업장 관리자만 사용 가능합니다.");
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const batch = db.batch();
+    const skipped: string[] = [];
+
+    const snaps = await Promise.all(attendanceIds.map((id) => db.collection("attendance").doc(id).get()));
+    for (const snap of snaps) {
+      if (!snap.exists) continue;
+      const data = snap.data()!;
+      if (data.wageStatus === "calculated" ||
+          data.wageStatus === "confirmed" ||
+          data.wageStatus === "transferred") {
+        skipped.push(snap.id);
+        continue;
+      }
+      batch.update(snap.ref, {
+        checkIn: admin.firestore.FieldValue.delete(),
+        checkOut: admin.firestore.FieldValue.delete(),
+        status: admin.firestore.FieldValue.delete(),
+        workHours: admin.firestore.FieldValue.delete(),
+        wageStatus: "pending",
+        wageDetail: admin.firestore.FieldValue.delete(),
+        yearMonth: admin.firestore.FieldValue.delete(),
+        updatedAt: now,
+      });
+    }
+
+    await batch.commit();
+    return {success: true, processed: attendanceIds.length - skipped.length, skipped};
+  }
+);
+
+// 마감 취소 — wageConfirmed → wageCalculated (트랜잭션으로 transferred 경합 방어)
+export const callableCancelFinalConfirmation = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const {businessId, attendanceIds} = request.data as {businessId: string; attendanceIds: string[]};
+    if (!businessId || !Array.isArray(attendanceIds) || attendanceIds.length === 0) {
+      throw new HttpsError("invalid-argument", "businessId와 attendanceIds가 필요합니다.");
+    }
+    if (attendanceIds.length > 200) {
+      throw new HttpsError("invalid-argument", "한 번에 최대 200건까지 처리 가능합니다.");
+    }
+
+    const callerUid = request.auth.uid;
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const callerData = callerSnap.data();
+    const isAdmin = callerData?.role === "ADMIN" && callerData?.businessId === businessId;
+    const isSubAdmin = Array.isArray(callerData?.subAdminOf) && (callerData!.subAdminOf as string[]).includes(businessId);
+    const isSuperAdminUser = callerData?.role === "SUPER_ADMIN";
+    if (!isAdmin && !isSubAdmin && !isSuperAdminUser) {
+      throw new HttpsError("permission-denied", "해당 사업장 관리자만 사용 가능합니다.");
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    let successCount = 0;
+    const skipped: string[] = [];
+
+    // runTransaction: 읽기-쓰기 원자성 보장 — 동시 transferred 전환 경합 방어
+    for (const id of attendanceIds) {
+      const ref = db.collection("attendance").doc(id);
+      try {
+        const didUpdate = await db.runTransaction(async (tx) => {
+          const snap = await tx.get(ref);
+          if (!snap.exists) return false;
+          const data = snap.data()!;
+          if (data.wageStatus === "transferred" || data.wageStatus !== "confirmed") return false;
+
+          const existingDetail = (data.wageDetail ?? {}) as Record<string, unknown>;
+          const updatedDetail: Record<string, unknown> = {...existingDetail};
+          delete updatedDetail.confirmedBy;
+          delete updatedDetail.confirmedAt;
+
+          tx.update(ref, {
+            wageStatus: "calculated",
+            wageDetail: Object.keys(updatedDetail).length > 0 ? updatedDetail : admin.firestore.FieldValue.delete(),
+            finalConfirmedAt: admin.firestore.FieldValue.delete(),
+            updatedAt: now,
+          });
+          return true;
+        });
+        if (didUpdate) {
+          successCount++;
+        } else {
+          skipped.push(id);
+        }
+      } catch (e) {
+        console.error(`마감 취소 실패 (${id}):`, e);
+        skipped.push(id);
+      }
+    }
+
+    return {success: true, processed: successCount, skipped};
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+// H-1 MEDIUM: 출근/퇴근/시간조정/adminConfirmed CF 이전
+// ═══════════════════════════════════════════════════════════
+
+interface CheckInEntry {
+  applicationId: string;
+  workDateMs: number;
+  userId: string;
+  businessId: string;
+  businessName: string;
+  workType: string;
+  status: string;
+  checkInMs: number; // checkIn DateTime 밀리초
+  attendanceId?: string; // 기존 레코드 업데이트 시
+}
+
+// 출근 배치 처리 — confirmed/transferred 건 서버 재검증 후 skip
+export const callableBatchCheckIn = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const {businessId, entries} = request.data as {businessId: string; entries: CheckInEntry[]};
+    if (!businessId || !Array.isArray(entries) || entries.length === 0) {
+      throw new HttpsError("invalid-argument", "businessId와 entries가 필요합니다.");
+    }
+    if (entries.length > 200) {
+      throw new HttpsError("invalid-argument", "한 번에 최대 200건까지 처리 가능합니다.");
+    }
+
+    const callerUid = request.auth.uid;
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const callerData = callerSnap.data();
+    const isAdmin = callerData?.role === "ADMIN" && callerData?.businessId === businessId;
+    const isSubAdmin = Array.isArray(callerData?.subAdminOf) && (callerData!.subAdminOf as string[]).includes(businessId);
+    const isSuperAdminUser = callerData?.role === "SUPER_ADMIN";
+    if (!isAdmin && !isSubAdmin && !isSuperAdminUser) {
+      throw new HttpsError("permission-denied", "해당 사업장 관리자만 사용 가능합니다.");
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    let successCount = 0;
+
+    for (const entry of entries) {
+      const {applicationId, workDateMs, userId, businessName, workType, status, checkInMs, attendanceId} = entry;
+      const workDate = new Date(workDateMs);
+      const checkInTs = admin.firestore.Timestamp.fromMillis(checkInMs);
+
+      try {
+        if (attendanceId) {
+          // 서버 상태 확인 — confirmed/transferred 건은 출근 시간 수정 불가
+          const snap = await db.collection("attendance").doc(attendanceId).get();
+          if (snap.exists) {
+            const ws = snap.data()!.wageStatus as string | undefined;
+            if (ws === "confirmed" || ws === "transferred") continue;
+          }
+          await db.collection("attendance").doc(attendanceId).update({
+            checkIn: checkInTs,
+            checkInMethod: "manual",
+            status,
+            isModified: true,
+            modifiedAt: now,
+            modifiedBy: callerUid,
+            updatedAt: now,
+          });
+        } else {
+          // 신규 출근 기록 — wageStatus='pending' 고정
+          const dateStr = `${workDate.getFullYear()}${String(workDate.getMonth() + 1).padStart(2, "0")}${String(workDate.getDate()).padStart(2, "0")}`;
+          const docId = `${applicationId}_${dateStr}`;
+          await db.collection("attendance").doc(docId).set({
+            applicationId,
+            userId,
+            businessId,
+            businessName,
+            workDate: admin.firestore.Timestamp.fromDate(workDate),
+            workType,
+            checkIn: checkInTs,
+            checkInMethod: "manual",
+            status,
+            isModified: false,
+            modifyRequested: false,
+            wageStatus: "pending",
+            createdAt: now,
+            updatedAt: now,
+          }, {merge: true});
+        }
+        successCount++;
+      } catch (e) {
+        console.error(`출근 처리 실패 (${applicationId}):`, e);
+      }
+    }
+
+    return {success: true, processed: successCount, total: entries.length};
+  }
+);
+
+interface CheckOutEntry {
+  attendanceId: string;
+  checkOutMs: number;
+  workHours: number;
+  status: string;
+  resetWageDetail: boolean;
+}
+
+// 퇴근 배치 처리 — transferred 건 서버 재검증, resetWageDetail 시 트랜잭션으로 TOCTOU 방어
+export const callableBatchCheckOut = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const {businessId, entries} = request.data as {businessId: string; entries: CheckOutEntry[]};
+    if (!businessId || !Array.isArray(entries) || entries.length === 0) {
+      throw new HttpsError("invalid-argument", "businessId와 entries가 필요합니다.");
+    }
+    if (entries.length > 200) {
+      throw new HttpsError("invalid-argument", "한 번에 최대 200건까지 처리 가능합니다.");
+    }
+
+    const callerUid = request.auth.uid;
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const callerData = callerSnap.data();
+    const isAdmin = callerData?.role === "ADMIN" && callerData?.businessId === businessId;
+    const isSubAdmin = Array.isArray(callerData?.subAdminOf) && (callerData!.subAdminOf as string[]).includes(businessId);
+    const isSuperAdminUser = callerData?.role === "SUPER_ADMIN";
+    if (!isAdmin && !isSubAdmin && !isSuperAdminUser) {
+      throw new HttpsError("permission-denied", "해당 사업장 관리자만 사용 가능합니다.");
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    let successCount = 0;
+    const skipped: string[] = [];
+
+    for (const entry of entries) {
+      const {attendanceId, checkOutMs, workHours, status, resetWageDetail} = entry;
+      const ref = db.collection("attendance").doc(attendanceId);
+      try {
+        if (resetWageDetail) {
+          // wageCalculated → pending 리셋 시 트랜잭션: 동시에 confirmed/transferred 전환 방어
+          await db.runTransaction(async (tx) => {
+            const snap = await tx.get(ref);
+            if (!snap.exists) { skipped.push(attendanceId); return; }
+            const ws = snap.data()!.wageStatus as string | undefined;
+            if (ws === "confirmed" || ws === "transferred") { skipped.push(attendanceId); return; }
+            tx.update(ref, {
+              checkOut: admin.firestore.Timestamp.fromMillis(checkOutMs),
+              checkOutMethod: "manual",
+              workHours,
+              status,
+              wageStatus: "pending",
+              wageDetail: admin.firestore.FieldValue.delete(),
+              yearMonth: admin.firestore.FieldValue.delete(),
+              updatedAt: now,
+            });
+          });
+        } else {
+          // 단순 퇴근 기록 — transferred 건만 보호
+          const snap = await ref.get();
+          if (snap.exists && snap.data()!.wageStatus === "transferred") {
+            skipped.push(attendanceId);
+            continue;
+          }
+          await ref.update({
+            checkOut: admin.firestore.Timestamp.fromMillis(checkOutMs),
+            checkOutMethod: "manual",
+            workHours,
+            status,
+            updatedAt: now,
+          });
+        }
+        if (!skipped.includes(attendanceId)) successCount++;
+      } catch (e) {
+        console.error(`퇴근 처리 실패 (${attendanceId}):`, e);
+        skipped.push(attendanceId);
+      }
+    }
+
+    return {success: true, processed: successCount, skipped};
+  }
+);
+
+interface AdjustEntry {
+  attendanceId: string;
+  checkInMs?: number;
+  checkOutMs?: number;
+  workHours?: number;
+  status: string;
+  resetWageDetail: boolean;
+}
+
+// 출퇴근 시간 일괄 조정 (트랜잭션: confirmed/transferred 건 서버 재검증 후 skip)
+export const callableBatchAdjustAttendanceTime = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const {businessId, entries} = request.data as {businessId: string; entries: AdjustEntry[]};
+    if (!businessId || !Array.isArray(entries) || entries.length === 0) {
+      throw new HttpsError("invalid-argument", "businessId와 entries가 필요합니다.");
+    }
+    if (entries.length > 200) {
+      throw new HttpsError("invalid-argument", "한 번에 최대 200건까지 처리 가능합니다.");
+    }
+
+    const callerUid = request.auth.uid;
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const callerData = callerSnap.data();
+    const isAdmin = callerData?.role === "ADMIN" && callerData?.businessId === businessId;
+    const isSubAdmin = Array.isArray(callerData?.subAdminOf) && (callerData!.subAdminOf as string[]).includes(businessId);
+    const isSuperAdminUser = callerData?.role === "SUPER_ADMIN";
+    if (!isAdmin && !isSubAdmin && !isSuperAdminUser) {
+      throw new HttpsError("permission-denied", "해당 사업장 관리자만 사용 가능합니다.");
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    let successCount = 0;
+    const skipped: string[] = [];
+
+    for (const entry of entries) {
+      const {attendanceId, checkInMs, checkOutMs, workHours, status, resetWageDetail} = entry;
+      const attRef = db.collection("attendance").doc(attendanceId);
+      try {
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(attRef);
+          if (!snap.exists) {
+            skipped.push(attendanceId);
+            return;
+          }
+          const serverStatus = snap.data()!.wageStatus as string | undefined;
+          if (serverStatus === "confirmed" || serverStatus === "transferred") {
+            skipped.push(attendanceId);
+            return;
+          }
+          const updates: Record<string, unknown> = {
+            isModified: true,
+            modifiedAt: now,
+            modifiedBy: callerUid,
+            updatedAt: now,
+            status,
+          };
+          if (checkInMs != null) {
+            updates["checkIn"] = admin.firestore.Timestamp.fromMillis(checkInMs);
+            updates["checkInMethod"] = "manual";
+          }
+          if (checkOutMs != null) {
+            updates["checkOut"] = admin.firestore.Timestamp.fromMillis(checkOutMs);
+            updates["checkOutMethod"] = "manual";
+          }
+          if (workHours != null) updates["workHours"] = workHours;
+          if (resetWageDetail) {
+            updates["wageStatus"] = "pending";
+            updates["wageDetail"] = admin.firestore.FieldValue.delete();
+            updates["yearMonth"] = admin.firestore.FieldValue.delete();
+          }
+          tx.update(attRef, updates);
+        });
+        successCount++;
+      } catch (e) {
+        console.error(`시간 조정 실패 (${attendanceId}):`, e);
+        skipped.push(attendanceId);
+      }
+    }
+
+    return {success: true, processed: successCount, skipped};
+  }
+);
+
+// adminConfirmed 배치 설정 — 관리자 내부 워크플로 플래그
+export const callableBatchAdminConfirm = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const {businessId, attendanceIds, confirmed} = request.data as {
+      businessId: string; attendanceIds: string[]; confirmed: boolean;
+    };
+    if (!businessId || !Array.isArray(attendanceIds) || attendanceIds.length === 0 || typeof confirmed !== "boolean") {
+      throw new HttpsError("invalid-argument", "businessId, attendanceIds, confirmed가 필요합니다.");
+    }
+    if (attendanceIds.length > 200) {
+      throw new HttpsError("invalid-argument", "한 번에 최대 200건까지 처리 가능합니다.");
+    }
+
+    const callerUid = request.auth.uid;
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const callerData = callerSnap.data();
+    const isAdmin = callerData?.role === "ADMIN" && callerData?.businessId === businessId;
+    const isSubAdmin = Array.isArray(callerData?.subAdminOf) && (callerData!.subAdminOf as string[]).includes(businessId);
+    const isSuperAdminUser = callerData?.role === "SUPER_ADMIN";
+    if (!isAdmin && !isSubAdmin && !isSuperAdminUser) {
+      throw new HttpsError("permission-denied", "해당 사업장 관리자만 사용 가능합니다.");
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const batch = db.batch();
+    for (const id of attendanceIds) {
+      batch.update(db.collection("attendance").doc(id), {adminConfirmed: confirmed, updatedAt: now});
+    }
+    await batch.commit();
+    return {success: true, processed: attendanceIds.length};
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+// 💸 급여 이체 완료 배치 처리 — confirmed→transferred 법적 상태 전이
+// Trust Boundary Charter: 법적 상태 전이 → CF Admin SDK 필수
+// 단건/복수 모두 이 CF로 처리 (attendanceIds에 단건만 전달 시 단건 처리)
+// ═══════════════════════════════════════════════════════════
+
+interface TransferNotificationPayload {
+  userId: string;
+  workerName: string;
+  businessName: string;
+  businessId: string;
+  finalWage: number;
+  applicationId?: string;
+  // [MEDIUM-3] 실제 처리된 attendanceId에만 알림 발송 — 미전달 시 하위호환(전체 발송)
+  attendanceId?: string;
+}
+
+export const callableMarkTransferredBatch = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {businessId, attendanceIds, transferNote, notifications} = request.data as {
+      businessId: string;
+      attendanceIds: string[];
+      transferNote?: string;
+      notifications?: TransferNotificationPayload[];
+    };
+
+    if (!businessId || typeof businessId !== "string") {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+    if (!Array.isArray(attendanceIds) || attendanceIds.length === 0) {
+      throw new HttpsError("invalid-argument", "attendanceIds가 필요합니다.");
+    }
+    if (attendanceIds.length > 200) {
+      throw new HttpsError("invalid-argument", "최대 200건까지 처리 가능합니다.");
+    }
+
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const callerData = callerSnap.data();
+    const isAdminOk = callerData?.role === "ADMIN" && callerData?.businessId === businessId;
+    const isSubAdminOk = Array.isArray(callerData?.subAdminOf) &&
+      (callerData!.subAdminOf as string[]).includes(businessId);
+    const isSuperAdminOk = callerData?.role === "SUPER_ADMIN";
+    if (!isAdminOk && !isSubAdminOk && !isSuperAdminOk) {
+      throw new HttpsError("permission-denied", "관리자 권한이 필요합니다.");
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const skipped: string[] = [];
+    let processed = 0;
+    // [MEDIUM-3] 실제로 transferred 상태로 전환된 attendanceId 추적 — 알림 필터링용
+    // 멱등 처리(already-transferred)는 포함하지 않아 중복 알림 방지
+    const processedAttendanceIds = new Set<string>();
+
+    // 서버에서 상태 재검증 후 confirmed인 것만 transferred로 변경
+    const snaps = await Promise.all(
+      attendanceIds.map(id => db.collection("attendance").doc(id).get())
+    );
+
+    const batch = db.batch();
+
+    for (let i = 0; i < attendanceIds.length; i++) {
+      const id = attendanceIds[i];
+      const snap = snaps[i];
+
+      if (!snap.exists) {
+        skipped.push(id);
+        continue;
+      }
+
+      const data = snap.data()!;
+
+      // businessId 교차 검증 — 타 사업장 기록 변조 방지
+      if (data.businessId !== businessId) {
+        skipped.push(id);
+        continue;
+      }
+
+      const ws = data.wageStatus as string | undefined;
+
+      // 이미 transferred: 멱등 처리 (성공으로 카운트)
+      if (ws === "transferred") {
+        processed++;
+        continue;
+      }
+
+      // confirmed 상태만 transferred로 전환 가능
+      if (ws !== "confirmed") {
+        skipped.push(id);
+        continue;
+      }
+
+      const updateData: Record<string, unknown> = {
+        wageStatus: "transferred",
+        transferDate: now,
+        transferredBy: callerUid,
+        updatedAt: now,
+      };
+      if (transferNote && transferNote.trim().length > 0) {
+        updateData.transferNote = transferNote.trim();
+      }
+
+      batch.update(snap.ref, updateData);
+      processedAttendanceIds.add(id); // 실제 전환된 ID 기록
+      processed++;
+    }
+
+    if (processed > 0) {
+      await batch.commit();
+    }
+
+    // 알림 발송 — 실패해도 메인 처리는 성공 유지
+    // [MEDIUM-3] attendanceId 제공 시 실제 처리된 건만 발송, 미제공 시 전체 발송(하위호환)
+    if (notifications && notifications.length > 0) {
+      await Promise.allSettled(
+        notifications
+          .filter(n =>
+            n.userId &&
+            n.businessId === businessId &&
+            (!n.attendanceId || processedAttendanceIds.has(n.attendanceId))
+          )
+          .map(n => {
+            const body = `[${n.businessName ?? ""}] ${n.workerName ?? ""}님의 급여가 송금 처리되었습니다. 앱에서 확인하세요.`;
+            return db.collection("users").doc(n.userId).collection("notifications").add({
+              userId: n.userId,
+              type: "wageTransferred",
+              title: "급여 송금 완료",
+              body,
+              isRead: false,
+              data: {
+                businessId: n.businessId,
+                screen: "wageTransferred",
+                ...(n.applicationId ? {applicationId: n.applicationId} : {}),
+              },
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          })
+      );
+    }
+
+    return {success: true, processed, skipped};
+  }
 );

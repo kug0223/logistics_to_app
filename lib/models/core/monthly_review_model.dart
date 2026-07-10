@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import '../../utils/firestore_helper.dart';
 
 enum ReviewType {
   ADMIN_TO_USER,    // 관리자 → 지원자
@@ -160,6 +161,55 @@ class MonthlyReviewModel {
       return MonthlyReviewModel.fromFirestore(doc);
     } catch (e, st) {
       debugPrint('[MonthlyReviewModel] 역직렬화 실패 id=${doc.id}: $e\n$st');
+      return null;
+    }
+  }
+
+  /// CF callable 응답 데이터(serializeFirestoreData 직렬화)에서 변환.
+  /// Timestamp 필드는 {_seconds, _nanoseconds} Map으로 전달된다.
+  static MonthlyReviewModel? tryFromMap(Map<String, dynamic> data, String docId) {
+    try {
+      final reviewYear = (data['reviewYear'] as num?)?.toInt();
+      if (reviewYear == null) throw ArgumentError('missing reviewYear (id: $docId)');
+      final reviewMonth = (data['reviewMonth'] as num?)?.toInt();
+      if (reviewMonth == null) throw ArgumentError('missing reviewMonth (id: $docId)');
+      final createdAt = data['createdAt'];
+      if (createdAt == null) throw ArgumentError('missing createdAt (id: $docId)');
+      return MonthlyReviewModel(
+        id: docId,
+        reviewKey: data['reviewKey'] as String? ?? docId,
+        reviewType: ReviewType.values.firstWhere(
+          (e) => e.name == data['reviewType'],
+          orElse: () => ReviewType.ADMIN_TO_USER,
+        ),
+        reviewerName: data['reviewerName'] as String? ?? '',
+        reviewerId: data['reviewerId'] as String?,
+        businessId: data['businessId'] as String? ?? '',
+        businessName: data['businessName'] as String? ?? '',
+        targetUserId: data['targetUserId'] as String?,
+        targetUserName: data['targetUserName'] as String?,
+        targetUserGender: data['targetUserGender'] as String?,
+        targetUserAge: (data['targetUserAge'] as num?)?.toInt(),
+        reviewYear: reviewYear,
+        reviewMonth: reviewMonth,
+        workDaysInMonth: (data['workDaysInMonth'] as num?)?.toInt() ?? 0,
+        normalAttendanceDays: (data['normalAttendanceDays'] as num?)?.toInt() ?? 0,
+        lateDays: (data['lateDays'] as num?)?.toInt() ?? 0,
+        rating: (data['rating'] as num?)?.toInt() ?? 0,
+        wouldRehire: data['wouldRehire'],
+        positiveTags: List<String>.from(data['positiveTags'] ?? []),
+        improvementTags: List<String>.from(data['improvementTags'] ?? []),
+        comment: data['comment'] as String?,
+        isPublished: data['isPublished'] as bool? ?? false,
+        publishAt: parseTimestampNullable(data['publishAt']),
+        publishedAt: parseTimestampNullable(data['publishedAt']),
+        requestId: data['requestId'] as String?,
+        businessResponse: data['businessResponse'] as String?,
+        businessRespondedAt: parseTimestampNullable(data['businessRespondedAt']),
+        createdAt: parseTimestamp(createdAt),
+      );
+    } catch (e, st) {
+      debugPrint('[MonthlyReviewModel] tryFromMap 실패 id=$docId: $e\n$st');
       return null;
     }
   }

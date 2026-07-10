@@ -162,6 +162,18 @@ class UserProvider with ChangeNotifier {
         return; // signOut()이 이미 notifyListeners() 처리함
       }
 
+      // permission-denied: 삭제된 계정의 기기 캐시일 수 있음.
+      // Firebase Auth reload()로 확인 — 실패하면 stale session → 자동 로그아웃.
+      if (e.toString().contains('permission-denied')) {
+        try {
+          await FirebaseAuth.instance.currentUser?.reload();
+        } catch (_) {
+          debugPrint('🔄 삭제된 계정 캐시 감지 - 자동 로그아웃');
+          await signOut();
+          return;
+        }
+      }
+
       notifyListeners();
     }
   }

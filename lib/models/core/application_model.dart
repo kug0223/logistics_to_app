@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/firestore_helper.dart';
 
 /// 지원서 모델 - 업무유형 선택 및 변경 이력 지원
 class ApplicationModel {
@@ -182,11 +183,9 @@ class ApplicationModel {
       toTitle: data['toTitle'] ?? '',
       // workDate는 DB 스키마 필수 필드 — 누락 시 의도적으로 ArgumentError throw (fast-fail)
       workDate: data['workDate'] != null
-          ? (data['workDate'] as Timestamp).toDate().toLocal()
+          ? parseTimestamp(data['workDate'])
           : (throw ArgumentError('ApplicationModel: workDate 필드 누락 (id: $documentId)')),
-      workEndDate: data['workEndDate'] != null
-          ? (data['workEndDate'] as Timestamp).toDate().toLocal()
-          : null,
+      workEndDate: parseTimestampNullable(data['workEndDate']),
       workDays: data['workDays'] != null
           ? List<String>.from(data['workDays'])
           : null,  // ⭐
@@ -206,22 +205,16 @@ class ApplicationModel {
       workTypeBackgroundColor: data['workTypeBackgroundColor'],
       originalWorkType: data['originalWorkType'],
       originalWage: (data['originalWage'] as num?)?.toInt(),
-      changedAt: data['changedAt'] != null
-          ? (data['changedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
-          : null,
+      changedAt: parseTimestampNullable(data['changedAt']),
       changedBy: data['changedBy'],
       status: data['status'] ?? 'PENDING',
       appliedAt: data['appliedAt'] != null
-          ? (data['appliedAt'] as Timestamp).toDate().toLocal()
+          ? parseTimestamp(data['appliedAt'])
           : (throw ArgumentError('ApplicationModel: appliedAt 필드 누락 (id: $documentId)')),
-      confirmedAt: data['confirmedAt'] != null
-          ? (data['confirmedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
-          : null,
+      confirmedAt: parseTimestampNullable(data['confirmedAt']),
       confirmedBy: data['confirmedBy'],
       // ⭐ Phase 2: 추가
-      canceledAt: data['canceledAt'] != null
-          ? (data['canceledAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
-          : null,
+      canceledAt: parseTimestampNullable(data['canceledAt']),
       cancelReason: data['cancelReason'],
       conflictingAppId: data['conflictingAppId'],
       conflictingBusiness: data['conflictingBusiness'],
@@ -231,60 +224,40 @@ class ApplicationModel {
       rejectMessage: data['rejectMessage'],
       cancelMessage: data['cancelMessage'],
       // 🔥 Phase A: 퇴사 관리
-      resignRequestedAt: data['resignRequestedAt'] != null
-          ? (data['resignRequestedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
-          : null,
-      resignRequestDate: data['resignRequestDate'] != null
-          ? (data['resignRequestDate'] as Timestamp).toDate().toLocal()
-          : null,
+      resignRequestedAt: parseTimestampNullable(data['resignRequestedAt']),
+      resignRequestDate: parseTimestampNullable(data['resignRequestDate']),
       resignStatus: data['resignStatus'],
-      resignApprovedAt: data['resignApprovedAt'] != null
-          ? (data['resignApprovedAt'] as Timestamp).toDate().toLocal()
-          : null,
+      resignApprovedAt: parseTimestampNullable(data['resignApprovedAt']),
       resignApprovedBy: data['resignApprovedBy'],
       // [BUG-수정] M-4: 퇴사 거절 전용 필드 파싱 추가
-      resignRejectedAt: data['resignRejectedAt'] != null
-          ? (data['resignRejectedAt'] as Timestamp).toDate().toLocal()
-          : null,
+      resignRejectedAt: parseTimestampNullable(data['resignRejectedAt']),
       resignRejectedBy: data['resignRejectedBy'],
       resignRejectReason: data['resignRejectReason'],
-      actualResignDate: data['actualResignDate'] != null
-          ? (data['actualResignDate'] as Timestamp).toDate().toLocal()
-          : null,
+      actualResignDate: parseTimestampNullable(data['actualResignDate']),
       // 🔥 Phase C: 계약해지 관리
       terminationStatus: data['terminationStatus'],
-      terminationRequestedAt: data['terminationRequestedAt'] != null
-          ? (data['terminationRequestedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
-          : null,
+      terminationRequestedAt: parseTimestampNullable(data['terminationRequestedAt']),
       terminationReason: data['terminationReason'],
-      terminationEffectiveDate: data['terminationEffectiveDate'] != null
-          ? (data['terminationEffectiveDate'] as Timestamp).toDate().toLocal()
-          : null,
+      terminationEffectiveDate: parseTimestampNullable(data['terminationEffectiveDate']),
       terminationRequestedByUid: data['terminationRequestedByUid'],
-      terminationRespondedAt: data['terminationRespondedAt'] != null
-          ? (data['terminationRespondedAt'] as Timestamp).toDate().toLocal()  // 🔥 .toLocal() 추가
-          : null,
+      terminationRespondedAt: parseTimestampNullable(data['terminationRespondedAt']),
       terminationRejectReason: data['terminationRejectReason'],
       // 🔄 계약 연장/종료 관리
       renewalDecision: data['renewalDecision'],
-      renewalNotifiedAt: data['renewalNotifiedAt'] != null
-          ? (data['renewalNotifiedAt'] as Timestamp).toDate().toLocal()
-          : null,
+      renewalNotifiedAt: parseTimestampNullable(data['renewalNotifiedAt']),
       renewedFromApplicationId: data['renewedFromApplicationId'],
       // ⭐ 장기공고 희망 시작일
-      desiredStartDate: data['desiredStartDate'] != null
-          ? (data['desiredStartDate'] as Timestamp).toDate().toLocal()
-          : null,
+      desiredStartDate: parseTimestampNullable(data['desiredStartDate']),
       leaveDates: data['leaveDates'] != null
           ? (data['leaveDates'] as List)
-              .whereType<Timestamp>()
-              .map((e) => e.toDate().toLocal())
+              .map((e) => parseTimestampNullable(e))
+              .whereType<DateTime>()
               .toList()
           : null,
       extraWorkDates: data['extraWorkDates'] != null
           ? (data['extraWorkDates'] as List)
-              .whereType<Timestamp>()
-              .map((e) => e.toDate().toLocal())
+              .map((e) => parseTimestampNullable(e))
+              .whereType<DateTime>()
               .toList()
           : null,
           // 🔥 상태 변경 이력

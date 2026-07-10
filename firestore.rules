@@ -165,10 +165,22 @@ service cloud.firestore {
       allow list: if request.query.limit <= 1 ||
                    (isLoggedIn() && isSuperAdmin());
 
-      // 슈퍼관리자: 민감 필드 포함 모든 필드 수정 가능 (최우선 — 운영 긴급 수정용)
+      // 슈퍼관리자: 일반 운영 필드 수정 가능 (최우선 — 운영 긴급 수정용)
       // [특이사항] Firestore Rules는 어느 allow 하나라도 true면 허용(OR)이므로 순서가 보안에는 영향 없음.
       // isSuperAdmin()을 최상단에 두어 다른 조건(isOwner 등)과 의도하지 않은 교차 해석을 방지.
-      allow update: if isSuperAdmin();
+      // [H-2~H-4] 블랙리스트·제재·신뢰도 필드는 감사 로그 무결성을 위해 CF Admin SDK 전용으로 차단.
+      //   callableUnblacklistUser / callableResetPenalty / callableAdjustTrustScore CF 경유 필수.
+      //   blacklistedBy·unblacklistedBy 등 audit trail 필드를 클라이언트가 직접 쓰면
+      //   수행자 UID 위조가 가능하므로 서버에서 callerUid(검증된 값)로만 기록.
+      allow update: if isSuperAdmin() &&
+                       !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+                         'isBlacklisted', 'blacklistReason',
+                         'blacklistedBy', 'blacklistedAt',
+                         'unblacklistedBy', 'unblacklistedAt',
+                         'noShowCount', 'restrictedUntil',
+                         'restrictionReleasedBy', 'restrictionReleasedAt',
+                         'trustScore', 'trustScoreAdjustedBy', 'trustScoreAdjustedAt'
+                       ]);
 
       // 본인 문서 수정 (role·isBlacklisted·subAdminOf·businessId·신뢰도 관련 필드 변경 차단)
       // subAdminOf는 CF trigger 전용, trustScore/noShowCount/lateCount/totalWorkDays는 관리자 또는 CF 전용
@@ -204,14 +216,16 @@ service cloud.firestore {
                        ]);
 
       // [SEC-03 완료] trustScore·noShowCount·lateCount·totalWorkDays·restrictedUntil·lastRestartAt
-      // 은 CF Admin SDK 전용 — 클라이언트(관리자 포함) 직접 write 차단.
+      // 은 CF Admin SDK 전용 — 클라이언트(슈퍼어드민 포함) 직접 write 차단 (위 isSuperAdmin 규칙에서도 차단).
       // 처리 경로:
       //   - totalWorkDays: onAttendanceWageStatusChanged CF 트리거 (wageConfirmed 전환)
       //   - noShowCount·restrictedUntil: callableApplyNoShowPenalty CF (당일 취소) 또는
       //                                  onAttendanceWageStatusChanged CF 트리거 (status=NO_SHOW)
+      //                                  또는 callableResetPenalty CF (슈퍼어드민 수동 해제)
       //   - lateCount·trustScore: callableReportLate CF (지각 처리)
+      //                           또는 callableAdjustTrustScore CF (슈퍼어드민 수동 조정)
       //   - lastRestartAt: applyRestartProgram CF
-      //   - 슈퍼어드민 긴급 수정: isSuperAdmin() 규칙(위)으로 허용
+      //   - isBlacklisted: callableBlacklistUser / callableUnblacklistUser CF (슈퍼어드민 전용)
 
       // BUSINESS_ADMIN이 자기 사업장 멤버 제거 시 subAdminOf 삭제만 허용 (설정은 CF trigger 전용)
       // subAdminOf 지정(CF Admin SDK)·전체 수정(isSuperAdmin)은 위 최상단 규칙에서 처리
@@ -354,8 +368,8 @@ service cloud.firestore {
                      (!request.resource.data.diff(resource.data).affectedKeys()
                         // [SEC-108] rating/reviewCount: CF updateBusinessReviewStats Admin SDK 전용
                         //   관리자가 직접 평점 위조 시 USER들이 허위 평판 사업장을 신뢰하는 피해 발생
-                        .hasAny(['ownerId', 'adminIds', 'isApproved', 'deactivatedAt',
-                                 'rating', 'reviewCount']) ||
+                        .hasAny(['ownerId', 'adminIds', 'isApproved', 'approvedAt', 'approvedBy',
+                                 'deactivatedAt', 'rating', 'reviewCount']) ||
                       (request.resource.data.diff(resource.data).affectedKeys()
                         .hasOnly(['deactivatedAt']) &&
                        resource.data.get('adminIds', []).size() <= 1)));
@@ -453,7 +467,20 @@ service cloud.firestore {
                           .hasAny(['totalRequired']) ||
                         request.resource.data.totalRequired == 0 ||
                         request.resource.data.totalRequired >=
-                          resource.data.get('totalConfirmed', 0));
+                          resource.data.get('totalConfirmed', 0)) &&
+                       // [SEC] totalConfirmed ±1 제한 — 관리자도 임의 값으로 카운터 조작 불가
+                       // CF(Admin SDK)는 rules 제외 — callableDecrementSlotConfirmed 소유권 검증 내장
+                       (isSuperAdmin() ||
+                        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['totalConfirmed']) ||
+                        (request.resource.data.totalConfirmed >= 0 &&
+                         (request.resource.data.totalConfirmed == resource.data.totalConfirmed - 1 ||
+                          request.resource.data.totalConfirmed == resource.data.totalConfirmed + 1))) &&
+                       // [SEC] totalPending ±1 제한 (관리자 경로) — 지원자 경로와 정책 일관성
+                       (isSuperAdmin() ||
+                        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['totalPending']) ||
+                        (request.resource.data.totalPending >= 0 &&
+                         (request.resource.data.totalPending == resource.data.totalPending - 1 ||
+                          request.resource.data.totalPending == resource.data.totalPending + 1)));
 
       // 지원자: 지원/취소 시 totalPending 카운터만 수정 허용 (음수 방지)
       // [MEDIUM-FIX] ±1 제한 없이 임의 양수값 설정 가능 → 통계 훼손 가능
@@ -484,10 +511,12 @@ service cloud.firestore {
                       get(/databases/$(database)/documents/tos/$(toId))
                         .data.get('isPublished', false) == true
                     );
-        allow write: if isLoggedIn() && (isToAdmin(toId) || isSuperAdmin());
-
-
-
+        allow create, delete: if isLoggedIn() && (isToAdmin(toId) || isSuperAdmin());
+        // [SEC-WD] businessId/toId 불변 — 부모-자식 관계 변조 차단 (슈퍼어드민 예외)
+        allow update: if isLoggedIn() && (isToAdmin(toId) || isSuperAdmin()) &&
+                        (isSuperAdmin() ||
+                         !request.resource.data.diff(resource.data).affectedKeys()
+                           .hasAny(['businessId', 'toId']));
 
 
       }
@@ -501,10 +530,14 @@ service cloud.firestore {
                       get(/databases/$(database)/documents/tos/$(toId))
                         .data.get('isPublished', false) == true
                     );
-        allow write: if isLoggedIn() && (isToAdmin(toId) || isSuperAdmin());
-
-
-
+        allow create, delete: if isLoggedIn() && (isToAdmin(toId) || isSuperAdmin());
+        // [SEC] confirmedCount ±1 제한 — 관리자도 임의 값으로 정원 조작 불가
+        // Admin SDK CF(callableDecrementSlotConfirmed)는 rules 제외 — 소유권 검증 내장
+        allow update: if isLoggedIn() && (isToAdmin(toId) || isSuperAdmin()) &&
+                        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['confirmedCount']) ||
+                         (request.resource.data.confirmedCount >= 0 &&
+                          (request.resource.data.confirmedCount == resource.data.confirmedCount - 1 ||
+                           request.resource.data.confirmedCount == resource.data.confirmedCount + 1)));
 
 
         // 지원자: 지원/취소 시 pendingCount·workTypeCounts 카운터만 수정 허용
@@ -519,7 +552,7 @@ service cloud.firestore {
         // 이유: USER가 application 없이 slot만 단독 호출해 정원 초과 지원 가능한 취약점
         // 해결: cancelConfirmedApplication의 _decrementTOConfirmed를 callableDecrementSlotConfirmed
         //       CF로 이전 (Admin SDK) — application_firestore.dart L1097-L1115 참조
-        // 관리자의 confirmedCount 변경은 아래 allow write(isToAdmin || isSuperAdmin)로 처리됨
+        // 관리자의 confirmedCount 변경은 위 allow update(isToAdmin || isSuperAdmin) ±1 제한 적용됨
       }
     }
 
@@ -586,7 +619,7 @@ service cloud.firestore {
                        request.resource.data.status == 'CANCELED' &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status', 'canceledAt', 'cancelReason', 'statusHistory'])) ||
-                      // [D-M2-FIX] AUTO_CANCELED 직접 전환 규칙 제거 — CF callableAutoConflictCancel(Admin SDK)만 허용
+                      // [D-M2-FIX] AUTO_CANCELED 직접 전환 규칙 제거 — CF callableAutoConflictCancel/callableExpireApplications(Admin SDK)만 허용
                       // 재지원 (본인: CANCELED/AUTO_CANCELED/REJECTED → PENDING, uid/businessId/toId 불변)
                       // [035] AUTO_CANCELED 상태에서도 재지원 허용
                       // [APP-036] REJECTED 상태에서도 재지원 허용 — 코드 설계 의도(application_firestore.dart:437)와 일치
@@ -616,26 +649,10 @@ service cloud.firestore {
                        request.resource.data.status == 'CONFIRMED' &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status', 'statusHistory'])) ||
-                      // 퇴사 요청 제출 (본인: CONFIRMED 상태, resignStatus→PENDING)
-                      (isOwner(resource.data.uid) &&
-                       resource.data.status == 'CONFIRMED' &&
-                       request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['resignStatus', 'resignRequestedAt', 'resignRequestDate']) &&
-                       request.resource.data.get('resignStatus', '') == 'PENDING') ||
-                      // 퇴사 요청 취소 (본인: PENDING 상태 요청 철회 → null)
-                      (isOwner(resource.data.uid) &&
-                       resource.data.get('resignStatus', '') == 'PENDING' &&
-                       request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['resignStatus', 'resignRequestedAt', 'resignRequestDate']) &&
-                       request.resource.data.resignStatus == null) ||
-                      // 계약해지 수락 (본인: terminationStatus PENDING → APPROVED, status → CANCELED)
-                      // 관리자가 요청한 해지를 근무자가 수락하는 흐름 — 관리자 수준 필드 변경 허용
-                      (isOwner(resource.data.uid) &&
-                       resource.data.get('terminationStatus', '') == 'PENDING' &&
-                       request.resource.data.get('terminationStatus', '') == 'APPROVED' &&
-                       request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['terminationStatus', 'terminationRespondedAt',
-                                   'actualResignDate', 'status'])) ||
+                      // [CF-ONLY] 퇴사 요청 제출 (resignStatus→PENDING) — callableRequestResignation(Admin SDK) 전용
+                      // 클라이언트 직접 경로 제거: CF 이전 완료, 규칙에서 이중 경로 제거
+                      // [CF-ONLY] 퇴사 요청 취소 (resignStatus→null) — callableCancelResignRequest(Admin SDK) 전용
+                      // [CF-ONLY] 계약해지 수락 (terminationStatus→APPROVED) — callableApproveTermination(Admin SDK) 전용
                       // 관리자: uid·businessId·toId 불변
                       // slotId 허용 — 파트 변경 기능 (근무자를 다른 슬롯으로 이동)
                       // workDetailId 허용 — changeApplicationWorkType(파트 변경) 시 TO 내 다른 workDetail로 이동 필요
@@ -643,13 +660,17 @@ service cloud.firestore {
                       //   원본 파트·임금은 originalWorkType/originalWage에 보존됨
                       ((isAdminOf(resource.data.businessId) ||
                         isSubAdminOf(resource.data.businessId)) &&
+                       // [CF-ONLY] 퇴사/계약해지 관련 필드 전체 차단 — 모든 상태 전이는 CF(Admin SDK)만 허용
+                       // resignRejectedBy 등 audit trail 필드를 클라이언트가 위조하는 취약점 방지
                        !request.resource.data.diff(resource.data).affectedKeys()
-                         .hasAny(['uid', 'businessId', 'toId']) &&
-                       // [S-M1-FIX] resignStatus 상태 전이 검증
-                       // 관리자도 PENDING 없이 직접 APPROVED·REJECTED 설정 불가
-                       (!request.resource.data.diff(resource.data).affectedKeys()
-                         .hasAny(['resignStatus']) ||
-                        resource.data.get('resignStatus', null) == 'PENDING')) ||
+                         .hasAny(['uid', 'businessId', 'toId',
+                                  'resignStatus', 'resignRequestedAt', 'resignRequestDate',
+                                  'resignApprovedAt', 'resignApprovedBy',
+                                  'resignRejectedAt', 'resignRejectedBy', 'resignRejectReason',
+                                  'actualResignDate',
+                                  'terminationStatus', 'terminationRequestedAt',
+                                  'terminationEffectiveDate', 'terminationRespondedAt',
+                                  'terminationRejectReason', 'terminationRequestedByUid'])) ||
                       isSuperAdmin()
                     );
 
@@ -683,9 +704,11 @@ service cloud.firestore {
       //
       //   [직접 Firestore 유지 — 의도적 결정] payroll_payment_service (3개 함수):
       //     getPayrollRecords: startAfterDocument 커서 직렬화 불가 → CF 이전 구조적 불가
-      //     getTodayPayments / getTodayPaymentCount: paymentDueDate 범위필터 복합 조건
-      //   ※ 세 함수 모두 businessId isEqualTo 필터 포함 → request.query.filters.businessId
-      //     정상 평가 → 아래 allow list 규칙에서 이미 안전하게 보호됨
+      //     getTodayPayments / getTodayPaymentCount:
+      //       [RULE-FIX 2026-07-10] 다중 equality 복합쿼리에서 request.query.filters.businessId
+      //       미평가 확인 → wageStatus 등호필터 제거, businessId 단일 필터만 유지.
+      //       wageStatus는 클라이언트 필터링으로 처리.
+      //   ※ 세 함수 모두 businessId isEqualTo 단일 등호필터 → 아래 allow list 규칙 통과
       //   → allow list: if false 전환 불필요 (직접 읽기 허용 유지가 올바른 설계)
       // [SEC-99] isUser() 경로 추가: 탈퇴 처리 3-pre4에서 본인 scheduled 레코드 LIST 후 absent 처리
       //   users 문서 삭제 전(3-pre4 실행 시점)에 isUser() 통과 보장됨.
@@ -699,46 +722,24 @@ service cloud.firestore {
 
 
 
-      // 생성: 본인 또는 해당 사업장 관리자/하위관리자(수동 출근·노쇼 처리) 또는 더미 데이터
-      // 슈퍼어드민은 isAdminOf() 없이도 모든 사업장 출근 기록 수동 생성 가능
-      // [HIGH-FIX] SubAdmin 누락: 노쇼 처리(attendance_status_dialog)에서 기록 없는 근무자에 대해
-      //            batch.set()으로 신규 생성 시 PERMISSION_DENIED 발생 → isSubAdminOf 추가
+      // 생성: 근무자 본인(정규 체크인) 또는 더미 데이터만 허용
+      // 관리자 직접 create(수동 출근·노쇼·배치 출근)는 CF Admin SDK 전용으로 이전 완료:
+      //   callableBatchCheckIn (수동 출근/배치 출근)
+      //   callableBatchSetNoShow (노쇼 신규 생성)
       //
       // [CROSS-BIZ-FIX] userId == auth.uid 경로에 businessId 소속 검증 추가
-      // 이전: USER가 임의 businessId로 타 사업장 출근 기록 생성 가능 (API 직접 호출 시)
-      // 수정: 발신 문서의 businessId가 본인 users.businessId와 일치해야 create 허용
-      //       → 타 사업장 노이즈 데이터 삽입 원천 차단
-      // [HIGH-02/03 현황] onAttendanceCreated CF + isMocked + 반경 체크 + serverTimestamp로 4단계 방어 구축됨.
-      // CF Callable 이전(직접 write 경로 제거)은 루팅 기기 방어 추가 효과가 있으나 ROI 낮아 보류.
-      //
-      // [NOSHOW-FIX] 노쇼 상태 레코드의 finalWage=0 서버 강제
-      // 노쇼 처리 시 관리자가 API 직접 호출로 finalWage를 임의 값으로 설정하는 것 차단.
-      // onAttendanceWageStatusChanged CF 트리거와 함께 이중 방어.
-      // [HIGH-02/HIGH-03] checkInSuspicious/checkInDistance는 CF Admin SDK 전용 — 클라이언트 생성 차단
-      // [SEC-83] wageStatus 강제: 클라이언트 CREATE 시 'pending' 이외의 wageStatus 설정 차단
-      //   wageStatus='confirmed'/'transferred' 직접 설정 시 onAttendanceWageStatusChanged CF가
-      //   totalWorkDays/trustScore를 조작하는 취약점 차단
-      // [SEC-83] finalWage 강제: CREATE 시 0 이외의 값 차단 (정산 전 출근 기록에 급여 조작 방지)
+      // [HIGH-02/03] checkInSuspicious/checkInDistance는 CF Admin SDK 전용 — 클라이언트 생성 차단
+      // [SEC-83] 클라이언트 CREATE 시 wageStatus='pending'+finalWage=0 강제
+      //   → onAttendanceWageStatusChanged CF 트리거 조작 차단
       allow create: if isLoggedIn() &&
                       !('checkInSuspicious' in request.resource.data) &&
                       !('checkInDistance' in request.resource.data) &&
-                      // [E-H1-FIX] 노쇼 신규 생성 시 admin이 wageStatus='confirmed'+finalWage=0 허용
-                      (request.resource.data.get('wageStatus', 'pending') == 'pending' ||
-                       ((isAdminOf(request.resource.data.businessId) ||
-                         isSubAdminOf(request.resource.data.businessId) || isSuperAdmin()) &&
-                        request.resource.data.get('wageStatus', '') == 'confirmed' &&
-                        request.resource.data.get('status', '') == 'NO_SHOW' &&
-                        request.resource.data.get('finalWage', 0) == 0)) &&
+                      request.resource.data.get('wageStatus', 'pending') == 'pending' &&
                       request.resource.data.get('finalWage', 0) == 0 &&
-                      !(request.resource.data.get('status', '') == 'NO_SHOW' &&
-                        request.resource.data.get('finalWage', 0) != 0) &&
                       (
                         (request.resource.data.userId == request.auth.uid &&
                          request.resource.data.businessId ==
                            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', '_NONE_')) ||
-                        isAdminOf(request.resource.data.businessId) ||
-                        isSubAdminOf(request.resource.data.businessId) ||
-                        isSuperAdmin() ||
                         (isAdmin() && request.resource.data.isDummy == true)
                       );
 
@@ -753,7 +754,11 @@ service cloud.firestore {
                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['transferredBy']) ||
                        request.resource.data.transferredBy == request.auth.uid) &&
                       !(resource.data.wageStatus == 'transferred' &&
-                        request.resource.data.wageStatus != 'transferred') && (
+                        request.resource.data.wageStatus != 'transferred') &&
+                      // [MEDIUM-1] transferred 직접 설정 차단 — SuperAdmin 포함 모든 클라이언트
+                      // CF Admin SDK(callableMarkTransferredBatch) 경유만 허용
+                      (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['wageStatus']) ||
+                       request.resource.data.get('wageStatus', '') != 'transferred') && (
                       // 근무자: wageStatus가 pending/unchecked 상태일 때만 퇴근 관련 필드 수정 허용
                       // SEC-74: NO_SHOW 상태에서 근무자의 status 역전환 차단
                       //   (노쇼 처리 시 wageStatus=confirmed가 함께 설정되어 중복 보호되지만
@@ -801,7 +806,8 @@ service cloud.firestore {
                       // [SEC-46] 관리자: 핵심 식별자 불변 조건 추가 — 출근 기록 재귀속 차단
                       // userId/businessId/applicationId/workDate는 생성 후 변경 불가 (슈퍼어드민 예외)
                       // wageDetail/finalWage/wageStatus 등 운영 필드는 wage_confirm_dialog 기능 유지
-                      // [M-2] wageTransferred 전환은 wageConfirmed 상태에서만 허용 (markTransferredBatch 2차 방어선)
+                      // [CF-이전] wageStatus: transferred 전환은 CF Admin SDK 전용 (callableMarkTransferredBatch)
+                      //   → 클라이언트(관리자 포함)에서 transferred 직접 설정 차단
                       // [임금H-1] finalWage 음수 저장 차단 — 관리자 직접 API 호출로 임의 음수 급여 기록 방지
                       ((isAdminOf(resource.data.businessId) ||
                         isSubAdminOf(resource.data.businessId)) &&
@@ -810,12 +816,9 @@ service cloud.firestore {
                                   'checkInSuspicious', 'checkInDistance',
                                   // GPS 원본 시각은 관리자도 덮어쓸 수 없음
                                   'originalCheckIn', 'originalCheckOut']) &&
-                       // [G-01 fix] 문자열 불일치 수정: 실제 저장값은 'transferred'/'confirmed'
-                       // (잘못된 'wageTransferred'/'wageConfirmed' 사용 시 이 조건이 항상 통과되어
-                       // wagePending→transferred 직접 전환이 관리자에게 허용되던 취약점)
+                       // confirmed→transferred 직접 전환 차단 — CF Admin SDK 경유만 허용
                        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['wageStatus']) ||
-                        request.resource.data.get('wageStatus', '') != 'transferred' ||
-                        resource.data.get('wageStatus', '') == 'confirmed') &&
+                        request.resource.data.get('wageStatus', '') != 'transferred') &&
                        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['finalWage']) ||
                         request.resource.data.get('finalWage', 0) >= 0)) ||
                       isSuperAdmin()

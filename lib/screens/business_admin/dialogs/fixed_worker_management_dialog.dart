@@ -2627,7 +2627,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       final success = await _firestoreService.requestTermination(
         applicationId: app.id,
         reason: reason,
-        requestedByUid: adminUid,
       );
 
       if (success && mounted) {

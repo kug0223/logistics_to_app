@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../models/core/employment_contract_model.dart';
 import '../../services/contract_service.dart';
@@ -55,7 +54,7 @@ class _AdminContractManagementScreenState
   bool _isLoadingMore = false;
   bool _hasMore = false;
   bool _isVoidingContract = false;
-  DocumentSnapshot? _lastDoc;
+  String? _lastDoc;
 
   String _searchQuery = '';
 
@@ -112,7 +111,7 @@ class _AdminContractManagementScreenState
       if (!mounted) return;
       setState(() {
         _items   = result.items;
-        _lastDoc = result.lastDoc;
+        _lastDoc = result.lastDocId;
         _hasMore = result.hasMore;
       });
     } catch (e) {
@@ -132,12 +131,12 @@ class _AdminContractManagementScreenState
       final result = await _contractService.getByBusinessPaged(
         widget.businessId,
         statusFilter: _currentFilter,
-        startAfter: _lastDoc,
+        startAfterId: _lastDoc,
       );
       if (!mounted) return;
       setState(() {
         _items.addAll(result.items);
-        _lastDoc = result.lastDoc;
+        _lastDoc = result.lastDocId;
         _hasMore = result.hasMore;
       });
     } catch (e) {

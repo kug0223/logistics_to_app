@@ -110,35 +110,38 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
         if (m != null) summaryMap[m.month] = m;
       }
 
-      // 2. pendingCount + notTransferredCount — attendance count() 쿼리 24개 병렬
-      //    yearMonth 필드 기반 (인덱스: businessId ASC, yearMonth ASC, wageStatus ASC)
-      final pendingResults = await Future.wait(List.generate(12, (i) async {
-        final mm = (i + 1).toString().padLeft(2, '0');
-        try {
-          final snap = await db
-              .collection('attendance')
-              .where('businessId', isEqualTo: bizId)
-              .where('yearMonth', isEqualTo: '$year-$mm')
-              .where('wageStatus', whereIn: ['pending', 'calculated'])
-              .count()
-              .get();
-          return snap.count ?? 0;
-        } catch (_) { return 0; }
-      }));
-
-      final notTransferredResults = await Future.wait(List.generate(12, (i) async {
-        final mm = (i + 1).toString().padLeft(2, '0');
-        try {
-          final snap = await db
-              .collection('attendance')
-              .where('businessId', isEqualTo: bizId)
-              .where('yearMonth', isEqualTo: '$year-$mm')
-              .where('wageStatus', isEqualTo: 'confirmed')
-              .count()
-              .get();
-          return snap.count ?? 0;
-        } catch (_) { return 0; }
-      }));
+      // 2. pendingCount + notTransferredCount
+      //    [RULE-FIX 2026-07-10] 다중 equality / whereIn 복합쿼리 → PERMISSION_DENIED
+      //    businessId 단일 등호필터 + yearMonth 범위필터로 전환 → 단건 쿼리로 12개월 커버
+      //    wageStatus·yearMonth 집계는 클라이언트에서 처리
+      final pendingByMonth   = List.filled(12, 0);
+      final confirmedByMonth = List.filled(12, 0);
+      try {
+        final attSnap = await db
+            .collection('attendance')
+            .where('businessId', isEqualTo: bizId)
+            .where('yearMonth', isGreaterThanOrEqualTo: '$year-01')
+            .where('yearMonth', isLessThanOrEqualTo: '$year-12')
+            .get();
+        for (final doc in attSnap.docs) {
+          final data = doc.data();
+          final ym = data['yearMonth'] as String?;
+          final ws = data['wageStatus'] as String?;
+          if (ym == null) continue;
+          final parts = ym.split('-');
+          if (parts.length != 2) continue;
+          final month = int.tryParse(parts[1]);
+          if (month == null || month < 1 || month > 12) continue;
+          final idx = month - 1;
+          if (ws == 'pending' || ws == 'calculated') {
+            pendingByMonth[idx]++;
+          } else if (ws == 'confirmed') {
+            confirmedByMonth[idx]++;
+          }
+        }
+      } catch (_) {}
+      final pendingResults     = pendingByMonth;
+      final notTransferredResults = confirmedByMonth;
 
       // 3. 12개 PayrollSummaryModel 구성
       final summaries = List.generate(12, (i) {

@@ -1,9 +1,7 @@
 ﻿import 'package:flutter/material.dart';
 import '../../../theme/app_colors.dart';
 import 'package:intl/intl.dart';
-import 'package:provider/provider.dart';
 import '../../../models/core/application_model.dart';
-import '../../../providers/user_provider.dart';
 import '../../../services/firestore_service.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
@@ -428,11 +426,8 @@ class _ResignRequestManagementDialogState
     if (!confirmed || !mounted) return;
 
     try {
-      final adminUID = context.read<UserProvider>().currentUser?.uid ?? 'UNKNOWN';
-
       final success = await _firestoreService.approveResignation(
         applicationId: item.application.id,
-        adminUID: adminUID,
       );
 
       if (success && mounted) {
@@ -475,11 +470,8 @@ class _ResignRequestManagementDialogState
     if (reason == null || reason.isEmpty || !mounted) return;
 
     try {
-      final adminUID = context.read<UserProvider>().currentUser?.uid ?? 'UNKNOWN';
-
       final success = await _firestoreService.rejectResignation(
         applicationId: item.application.id,
-        adminUID: adminUID,
         rejectReason: reason,
       );
 

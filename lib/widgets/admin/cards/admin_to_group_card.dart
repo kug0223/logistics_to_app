@@ -1340,6 +1340,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
         try {
           await widget.firestoreService.batchDeleteSlots(
             toId: masterTO.id,
+            businessId: masterTO.businessId,
             slotIds: deleteSlots.map((s) => s.id).toList(),
           );
           if (!mounted) return;

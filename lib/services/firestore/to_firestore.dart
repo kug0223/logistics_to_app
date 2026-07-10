@@ -1,4 +1,4 @@
-part of '../firestore_service.dart';
+﻿part of '../firestore_service.dart';
 
 // ═══════════════════════════════════════════════════════════
 // 공고(TO) 서비스 — slots 구조 기반
@@ -12,19 +12,23 @@ extension TOFirestore on FirestoreService {
 
   /// 관리자 uid 기준 전체 사업장의 active TO 합산 개수 반환.
   /// [H-9] Firestore 오류 시 999 반환(fail-closed) — 조회 실패 시 한도 초과 상태로 처리
+  /// CF callableGetTOsByBiz 경유 (Admin SDK로 보안 규칙 우회)
   Future<int> countAllActiveTO(String uid) async {
     if (uid.isEmpty) return 0;
     try {
       final myBusinesses = await getMyBusiness(uid);
       if (myBusinesses.isEmpty) return 0;
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetTOsByBiz');
       // Future.wait의 클로저에서 total += 직접 수정하면 race condition 발생 — fold로 안전하게 합산
       final counts = await Future.wait<int>(myBusinesses.map((biz) async {
-        final snap = await _firestore
-            .collection('tos')
-            .where('businessId', isEqualTo: biz.id)
-            .where('status', isEqualTo: TOStatus.active)
-            .get(const GetOptions(source: Source.server)); // 캐시 우회 — TO 등록 제한 정확도
-        return snap.docs.length;
+        final result = await callable.call({
+          'businessId': biz.id,
+          'statuses': [TOStatus.active, TOStatus.full, TOStatus.scheduled, TOStatus.closed],
+          'limit': 1000,
+        });
+        final tos = result.data['tos'] as List? ?? [];
+        return tos.length;
       }));
       return counts.fold<int>(0, (acc, c) => acc + c);
     } catch (e) {
@@ -535,182 +539,15 @@ extension TOFirestore on FirestoreService {
     }
   }
 
+  /// 공고 삭제 — CF callableDeleteTO 위임 (Admin SDK로 보안 규칙 우회)
+  /// 슬롯·지원서·고아 데이터 정리 및 알림 발송은 CF에서 처리
   Future<bool> deleteTO(String toId) async {
     try {
-      final to = await getTO(toId);
-      if (to == null) {
-        ToastHelper.showError('공고를 찾을 수 없습니다.');
-        return false;
-      }
-
-      // Firestore WriteBatch 한도(500 ops) 초과 방지: 청크 단위 처리
-      final ops = <Future<void> Function(WriteBatch)>[];
-
-      // 1. slots 서브컬렉션 삭제 (flex)
-      if (to.isFlexType) {
-        final slotsSnap = await _firestore
-            .collection('tos').doc(toId)
-            .collection('slots').get(const GetOptions(source: Source.server));
-        for (final s in slotsSnap.docs) {
-          final ref = s.reference;
-          ops.add((b) async => b.delete(ref));
-        }
-      }
-
-      // 2. applications 알림 후 취소/삭제
-      final appsSnap = await _firestore
-          .collection('applications')
-          .where('toId', isEqualTo: toId)
-          .where('businessId', isEqualTo: to.businessId)
-          .get(const GetOptions(source: Source.server));
-
-      for (final doc in appsSnap.docs) {
-        final data = doc.data();
-        final status = data['status'] as String?;
-        if (AppStatus.activeStates.contains(status)) {
-          final ref = doc.reference;
-          ops.add((b) async => b.update(ref, {
-            'status': AppStatus.autoCanceled,
-            'canceledAt': FieldValue.serverTimestamp(),
-            'cancelReason': 'TO_DELETED',
-          }));
-          final applicantUid = data['uid'] as String?;
-          if (applicantUid != null) {
-            _sendTOCanceledNotification(
-              applicantUid: applicantUid,
-              businessName: to.businessName,
-              businessId: to.businessId,
-              toTitle: to.title,
-              status: status!,
-              workDate: (data['workDate'] as Timestamp?)?.toDate().toLocal(),
-            );
-          }
-        } else {
-          final ref = doc.reference;
-          ops.add((b) async => b.delete(ref));
-        }
-      }
-
-      // 청크 단위(499 ops)로 나눠서 커밋 (슬롯·지원서 먼저)
-      // [004] TO 문서 삭제는 모든 서브 데이터 커밋 완료 후 별도 실행
-      // — 마지막 청크가 TO 삭제까지 포함하면 실패 시 TO가 빈 껍데기로 잔존
-      const chunkSize = 499;
-      for (var i = 0; i < ops.length; i += chunkSize) {
-        final chunk = ops.sublist(i, i + chunkSize > ops.length ? ops.length : i + chunkSize);
-        final batch = _firestore.batch();
-        for (final op in chunk) {
-          await op(batch);
-        }
-        await batch.commit();
-      }
-
-      // 모든 서브 데이터 삭제 완료 후 TO 문서 삭제
-      await _firestore.collection('tos').doc(toId).delete();
-
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableDeleteTO');
+      await callable.call({'toId': toId});
       clearCache(toId: toId);
       ToastHelper.showSuccess('공고가 삭제되었습니다.');
-
-      // M-4: attendance · schedule_change_requests 고아 데이터 정리
-      // TO 삭제가 이미 성공했으므로 cleanup 실패는 로그만 남기고 무시
-      final allAppIds = appsSnap.docs.map((d) => d.id).toList();
-      if (allAppIds.isNotEmpty) {
-        try {
-          for (var i = 0; i < allAppIds.length; i += 30) {
-            final chunk = allAppIds.sublist(i, (i + 30).clamp(0, allAppIds.length));
-            // [SEC] whereIn 제거 → 단건 병렬 쿼리 + businessId 필터: 보안 규칙 폴백 의존 제거
-            // attendance 정리 (wageTransferred/wageConfirmed 보존)
-            final attSnaps = await Future.wait(
-              chunk.map((appId) => _firestore.collection('attendance')
-                  .where('applicationId', isEqualTo: appId)
-                  .where('businessId', isEqualTo: to.businessId)
-                  .get(const GetOptions(source: Source.server))),
-            );
-            final attDocs = attSnaps.expand((s) => s.docs).toList();
-            if (attDocs.isNotEmpty) {
-              var attBatch = _firestore.batch();
-              int attCount = 0;
-              for (final att in attDocs) {
-                final wStatus = att.data()['wageStatus'] as String?;
-                if (wStatus == AttendanceModel.wageTransferred ||
-                    wStatus == AttendanceModel.wageConfirmed) { continue; }
-                attBatch.delete(att.reference);
-                attCount++;
-                if (attCount >= 499) {
-                  await attBatch.commit();
-                  attBatch = _firestore.batch();
-                  attCount = 0;
-                }
-              }
-              if (attCount > 0) await attBatch.commit();
-            }
-            // schedule_change_requests 정리
-            final reqSnaps = await Future.wait(
-              chunk.map((appId) => _firestore.collection('schedule_change_requests')
-                  .where('applicationId', isEqualTo: appId)
-                  .where('businessId', isEqualTo: to.businessId)
-                  .get(const GetOptions(source: Source.server))),
-            );
-            final reqDocs = reqSnaps.expand((s) => s.docs).toList();
-            if (reqDocs.isNotEmpty) {
-              var reqBatch = _firestore.batch();
-              int reqCount = 0;
-              for (final req in reqDocs) {
-                reqBatch.delete(req.reference);
-                reqCount++;
-                if (reqCount >= 499) {
-                  await reqBatch.commit();
-                  reqBatch = _firestore.batch();
-                  reqCount = 0;
-                }
-              }
-              if (reqCount > 0) await reqBatch.commit();
-            }
-            // employment_contracts 정리 — 서명 완료(completed) 계약서는 법적 기록이므로 보존
-            // Phase 1: applicationId 필드로 단일 계약서 검색
-            final contractSnaps = await Future.wait(
-              chunk.map((appId) => _firestore.collection('employment_contracts')
-                  .where('applicationId', isEqualTo: appId)
-                  .where('businessId', isEqualTo: to.businessId)
-                  .get(const GetOptions(source: Source.server))),
-            );
-            // Phase 2: applicationIds 배열로 번들 계약서 검색
-            // arrayContainsAny 최대 10개 제한으로 서브청크 처리
-            final contractDocs1 = contractSnaps.expand((s) => s.docs).toList();
-            final foundDocIds = contractDocs1.map((d) => d.id).toSet();
-            final allContractDocs = [...contractDocs1];
-            for (int j = 0; j < chunk.length; j += 10) {
-              final subChunk = chunk.sublist(j, (j + 10) < chunk.length ? j + 10 : chunk.length);
-              // [MISMATCH-FIX] businessId 필터 추가 — rules: isAdminOf(filters.businessId) 필수
-              final bundleSnap = await _firestore.collection('employment_contracts')
-                  .where('businessId', isEqualTo: to.businessId)
-                  .where('applicationIds', arrayContainsAny: subChunk)
-                  .get(const GetOptions(source: Source.server));
-              for (final doc in bundleSnap.docs) {
-                if (foundDocIds.add(doc.id)) allContractDocs.add(doc);
-              }
-            }
-            if (allContractDocs.isNotEmpty) {
-              var contractBatch = _firestore.batch();
-              int contractCount = 0;
-              for (final c in allContractDocs) {
-                final status = c.data()['status'] as String?;
-                if (status == 'completed') continue; // 서명 완료 계약서 보존
-                contractBatch.delete(c.reference);
-                contractCount++;
-                if (contractCount >= 499) {
-                  await contractBatch.commit();
-                  contractBatch = _firestore.batch();
-                  contractCount = 0;
-                }
-              }
-              if (contractCount > 0) await contractBatch.commit();
-            }
-          }
-        } catch (cleanupErr) {
-          debugPrint('⚠️ [TO] 고아 데이터 정리 실패 (TO 삭제는 완료됨): $cleanupErr');
-        }
-      }
-
       return true;
     } catch (e) {
       debugPrint('❌ [TO] 공고 삭제 실패: $e');
@@ -718,6 +555,7 @@ extension TOFirestore on FirestoreService {
       return false;
     }
   }
+
 
   // ───────────────────────────────────────────────────────
   // 슬롯 (flex 전용)
@@ -928,7 +766,9 @@ extension TOFirestore on FirestoreService {
     debugPrint('✅ [Slot] 슬롯 $slotId 전체 수정 완료');
   }
 
-  /// 선택한 슬롯들 일괄 마감 (직접 마감 — closedBy 설정)
+  /// 선택한 슬롯들 일괄 마감 — CF callableCloseSlots 위임 (Admin SDK로 보안 규칙 우회)
+  /// PENDING 취소·카운터 감소·알림 발송은 CF에서 처리.
+  /// [closedBy] 파라미터는 CF에서 callerUid로 대체되므로 무시됨 (하위 호환 유지)
   Future<void> batchCloseSlots({
     required String toId,
     required String businessId,
@@ -936,132 +776,14 @@ extension TOFirestore on FirestoreService {
     required String closedBy,
   }) async {
     if (slotIds.isEmpty) return;
-
-    // [003] 슬롯을 먼저 closed로 설정 → 신규 지원 차단 후 PENDING 취소
-    // (역순: PENDING 취소 후 슬롯 마감 시, 취소~마감 사이 신규 PENDING 지원이 잔류 가능)
-    var batch = _firestore.batch();
-    int count = 0;
-    for (final slotId in slotIds) {
-      final ref = _firestore
-          .collection('tos').doc(toId)
-          .collection('slots').doc(slotId);
-      batch.update(ref, {
-        'isManualClosed': true,
-        'status': SlotStatus.closed,
-        'closedAt': FieldValue.serverTimestamp(),
-        'closedBy': closedBy,
-      });
-      count++;
-      if (count >= 499) { await batch.commit(); batch = _firestore.batch(); count = 0; }
-    }
-    if (count > 0) await batch.commit();
-
-    // 슬롯 마감 완료 후 PENDING 지원서 취소 + TO totalPending 카운터 감소
-    // [A-001] try-catch per slot: 특정 슬롯 cancelBatch 실패 시 해당 슬롯 카운트 제외 후 계속 진행
-    //
-    // [SEC] whereIn 제거 → slotId별 단건 병렬 쿼리 + businessId 필터 추가: 보안 규칙 폴백 의존 제거
-    // 업데이트·알림은 슬롯별 try-catch 유지 (A-001 에러 격리 보존).
-    final allPendingDocs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-    final pendingSnaps = await Future.wait(
-      slotIds.map((slotId) => _firestore
-          .collection('applications')
-          .where('toId', isEqualTo: toId)
-          .where('businessId', isEqualTo: businessId)
-          .where('slotId', isEqualTo: slotId)
-          .where('status', isEqualTo: AppStatus.pending)
-          .get(const GetOptions(source: Source.server))),
-    );
-    for (final snap in pendingSnaps) {
-      allPendingDocs.addAll(snap.docs);
-    }
-
-    // slotId별 그룹화 — 슬롯별 try-catch 처리를 위해 분류
-    final pendingBySlot = <String, List<QueryDocumentSnapshot<Map<String, dynamic>>>>{};
-    for (final doc in allPendingDocs) {
-      final slotId = doc.data()['slotId'] as String? ?? '';
-      if (slotId.isNotEmpty) pendingBySlot.putIfAbsent(slotId, () => []).add(doc);
-    }
-
-    int totalCanceledPending = 0;
-    for (final slotId in slotIds) {
-      final docs = pendingBySlot[slotId] ?? [];
-      if (docs.isEmpty) continue;
-      int slotCanceled = 0;
-      try {
-        var cancelBatch = _firestore.batch();
-        int cancelCount = 0;
-        for (final doc in docs) {
-          cancelBatch.update(doc.reference, {
-            'status': AppStatus.rejected,
-            'rejectedAt': FieldValue.serverTimestamp(),
-            'rejectMessage': '공고 슬롯이 마감되었습니다',
-          });
-          cancelCount++;
-          slotCanceled++;
-          if (cancelCount >= 499) {
-            await cancelBatch.commit();
-            cancelBatch = _firestore.batch();
-            cancelCount = 0;
-          }
-        }
-        if (cancelCount > 0) await cancelBatch.commit();
-        totalCanceledPending += slotCanceled;
-
-        // [M-3 수정] 슬롯 pendingCount 감소 — TO totalPending과 별개로 슬롯 통계 정리 필요.
-        // 이전 코드: TO 문서의 totalPending만 감소, 슬롯의 pendingCount/workTypeCounts 미갱신.
-        // 결과: 슬롯이 closed 됐어도 pendingCount가 양수로 남아 통계 불일치 발생.
-        if (slotCanceled > 0) {
-          final wtDeltas = <String, int>{};
-          for (final doc in docs) {
-            final wt = doc.data()['selectedWorkType'] as String?;
-            if (wt != null && wt.isNotEmpty) {
-              wtDeltas[wt] = (wtDeltas[wt] ?? 0) + 1;
-            }
-          }
-          final slotUpdate = <String, dynamic>{
-            'pendingCount': FieldValue.increment(-slotCanceled),
-          };
-          for (final entry in wtDeltas.entries) {
-            slotUpdate['workTypeCounts.${entry.key}.pendingCount'] =
-                FieldValue.increment(-entry.value);
-          }
-          await _firestore
-              .collection('tos').doc(toId)
-              .collection('slots').doc(slotId)
-              .update(slotUpdate);
-        }
-
-        // [BUG-수정] T-L-1: PENDING→REJECTED 처리된 지원자에게 거절 알림 발송
-        // batchDeleteSlots의 _sendTOCanceledNotification 패턴과 달리, 여기서는
-        // applicationRejected 타입 알림을 사용해 지원 거절 사실을 개별 통지한다.
-        for (final doc in docs) {
-          final data = doc.data();
-          final applicantUid = data['uid'] as String?;
-          if (applicantUid == null) continue;
-          _sendApplicationRejectedNotification(
-            applicantUid: applicantUid,
-            applicationId: doc.id,
-            businessName: data['businessName'] as String? ?? '',
-            businessId: data['businessId'] as String? ?? '',
-            workType: data['selectedWorkType'] as String? ?? '',
-            workDate: (data['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
-            rejectReason: '공고 슬롯이 마감되었습니다',
-          );
-        }
-      } catch (e) {
-        debugPrint('❌ [SlotClose] 슬롯 $slotId PENDING 취소 실패 — TO 카운터 미감소: $e');
-      }
-    }
-
-    // 실제로 취소 처리된 건만큼만 TO totalPending 감소
-    if (totalCanceledPending > 0) {
-      await _firestore.collection('tos').doc(toId).update({
-        'totalPending': FieldValue.increment(-totalCanceledPending),
-      });
-    }
-    debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 마감 완료');
-
-    await _syncTOCascadeStatus(toId);
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableCloseSlots');
+    await callable.call({
+      'toId': toId,
+      'slotIds': slotIds,
+      'businessId': businessId,
+    });
+    debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 마감 완료 (CF)');
   }
 
   /// 선택한 슬롯들 일괄 재오픈 (직접 마감 해제 — closedBy 삭제)
@@ -1114,150 +836,23 @@ extension TOFirestore on FirestoreService {
     await _syncTOCascadeStatus(toId);
   }
 
-  /// 선택한 슬롯들 일괄 삭제
+  /// 선택한 슬롯들 일괄 삭제 — CF callableDeleteSlots 위임 (Admin SDK로 보안 규칙 우회)
+  /// 활성 지원서 REJECTED·카운터 감소·알림 발송·TO 자동 CLOSED 처리는 CF에서 수행.
   Future<void> batchDeleteSlots({
     required String toId,
+    required String businessId,
     required List<String> slotIds,
   }) async {
     if (slotIds.isEmpty) return;
-
-    // M-2: 알림 발송을 위해 TO 정보 미리 조회
-    final toDoc = await _firestore.collection('tos').doc(toId)
-        .get(const GetOptions(source: Source.server));
-    final toBusinessName = toDoc.data()?['businessName'] as String? ?? '';
-    final toBusinessId = toDoc.data()?['businessId'] as String? ?? '';
-    final toTitle = toDoc.data()?['title'] as String? ?? '';
-
-    // [007] 슬롯 카운터를 직접 읽어서 계산 — 호출자 제공 값 대신 서버 데이터 사용
-    final slotSnaps = await Future.wait(slotIds.map((id) => _firestore
-        .collection('tos').doc(toId)
-        .collection('slots').doc(id)
-        .get(const GetOptions(source: Source.server))));
-    int removedRequired = 0, removedConfirmed = 0, removedPending = 0;
-    for (final snap in slotSnaps) {
-      if (!snap.exists) continue;
-      final d = snap.data()!;
-      final wds = d['workDetails'] as List? ?? [];
-      removedRequired += wds.fold<int>(0, (acc, wd) =>
-          acc + ((wd as Map<String, dynamic>)['requiredCount'] as num? ?? 0).toInt());
-      removedConfirmed += (d['confirmedCount'] as num?)?.toInt() ?? 0;
-      removedPending += (d['pendingCount'] as num?)?.toInt() ?? 0;
-    }
-
-    // 삭제 대상 슬롯에 연결된 활성 지원서 전체 취소 처리 (PENDING/CONFIRMED/CONTRACT_PENDING)
-    // [SEC] whereIn 제거 → slotId별 단건 병렬 쿼리 + businessId 필터 추가: 보안 규칙 폴백 의존 제거
-    // status는 클라이언트에서 필터링 (Firestore whereIn은 1개 필드만 허용).
-    const activeStatuses = {AppStatus.pending, AppStatus.confirmed, AppStatus.contractPending};
-    final allActiveDocs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-    final activeSnaps = await Future.wait(
-      slotIds.map((slotId) => _firestore
-          .collection('applications')
-          .where('toId', isEqualTo: toId)
-          .where('businessId', isEqualTo: toBusinessId)
-          .where('slotId', isEqualTo: slotId)
-          .get(const GetOptions(source: Source.server))),
-    );
-    for (final snap in activeSnaps) {
-      allActiveDocs.addAll(
-        snap.docs.where((d) => activeStatuses.contains(d.data()['status'] as String?)),
-      );
-    }
-
-    if (allActiveDocs.isNotEmpty) {
-      var cancelBatch = _firestore.batch();
-      int cancelCount = 0;
-      for (final doc in allActiveDocs) {
-        cancelBatch.update(doc.reference, {
-          'status': AppStatus.rejected,
-          'rejectedAt': FieldValue.serverTimestamp(),
-          'rejectReason': '공고 슬롯이 삭제되었습니다',
-        });
-        cancelCount++;
-        if (cancelCount >= 499) {
-          await cancelBatch.commit();
-          cancelBatch = _firestore.batch();
-          cancelCount = 0;
-        }
-      }
-      if (cancelCount > 0) await cancelBatch.commit();
-
-      // M-2: 지원서 상태별 알림 발송
-      // 알림은 배치 커밋(지원서 REJECTED) 직후 fire-and-forget으로 발송됨.
-      for (final doc in allActiveDocs) {
-        final status = doc.data()['status'] as String?;
-        final applicantUid = doc.data()['uid'] as String?;
-        if (applicantUid == null) continue;
-
-        if (status == AppStatus.confirmed || status == AppStatus.contractPending) {
-          // 확정/계약대기 → TO 취소 알림
-          _sendTOCanceledNotification(
-            applicantUid: applicantUid,
-            businessName: toBusinessName,
-            businessId: toBusinessId,
-            toTitle: toTitle,
-            status: status!,
-            workDate: (doc.data()['workDate'] as Timestamp?)?.toDate().toLocal(),
-          );
-        } else if (status == AppStatus.pending) {
-          // [BUG-E-04 수정] PENDING 지원자에게도 거절 알림 발송
-          // batchCloseSlots와 동일한 패턴으로 일관성 유지
-          _sendApplicationRejectedNotification(
-            applicantUid: applicantUid,
-            applicationId: doc.id,
-            businessName: doc.data()['businessName'] as String? ?? '',
-            businessId: doc.data()['businessId'] as String? ?? '',
-            workType: doc.data()['selectedWorkType'] as String? ?? '',
-            workDate: (doc.data()['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
-            rejectReason: '공고 슬롯이 삭제되었습니다',
-          );
-        }
-      }
-    }
-
-    var batch = _firestore.batch();
-    int count = 0;
-    for (final slotId in slotIds) {
-      final ref = _firestore
-          .collection('tos').doc(toId)
-          .collection('slots').doc(slotId);
-      batch.delete(ref);
-      count++;
-      if (count >= 499) { await batch.commit(); batch = _firestore.batch(); count = 0; }
-    }
-    // TO 카운터 업데이트는 별도 commit
-    batch.update(_firestore.collection('tos').doc(toId), {
-      'totalSlots': FieldValue.increment(-slotIds.length),
-      if (removedRequired > 0) 'totalRequired': FieldValue.increment(-removedRequired),
-      if (removedConfirmed > 0) 'totalConfirmed': FieldValue.increment(-removedConfirmed),
-      if (removedPending > 0) 'totalPending': FieldValue.increment(-removedPending),
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableDeleteSlots');
+    await callable.call({
+      'toId': toId,
+      'slotIds': slotIds,
+      'businessId': businessId,
     });
-    await batch.commit();
-    debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 삭제 완료');
-
-    // 남은 슬롯의 날짜 범위로 rangeStart/rangeEnd 재계산
-    final remaining = await getSlots(toId);
-    if (remaining.isNotEmpty) {
-      final minDate = remaining.map((s) => s.date).reduce((a, b) => a.isBefore(b) ? a : b);
-      final maxDate = remaining.map((s) => s.date).reduce((a, b) => a.isAfter(b) ? a : b);
-      await _firestore.collection('tos').doc(toId).update({
-        'rangeStart': Timestamp.fromDate(DateTime(minDate.year, minDate.month, minDate.day)),
-        'rangeEnd': Timestamp.fromDate(DateTime(maxDate.year, maxDate.month, maxDate.day)),
-      });
-      await _syncTOCascadeStatus(toId);
-    } else {
-      // 슬롯이 전부 삭제됨 → TO 자동 CLOSED + 총 카운터 초기화
-      await _firestore.collection('tos').doc(toId).update({
-        'status': TOStatus.closed,
-        'isPublished': false,
-        'closedAt': FieldValue.serverTimestamp(),
-        'totalSlots': 0,
-        'totalRequired': 0,
-        'totalConfirmed': 0,
-        'totalPending': 0,
-      });
-      clearCache(toId: toId);
-      debugPrint('✅ [TO] 모든 슬롯 삭제 → 자동 CLOSED + 카운터 초기화 ($toId)');
-    }
+    clearCache(toId: toId);
+    debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 삭제 완료 (CF)');
   }
 
   /// 새 날짜 슬롯 추가
@@ -1511,34 +1106,6 @@ extension TOFirestore on FirestoreService {
       );
     } catch (e) {
       debugPrint('⚠️ TO 취소 알림 전송 실패: $e');
-    }
-  }
-
-  // [BUG-수정] T-L-1: PENDING→REJECTED 처리 시 지원자에게 거절 알림 발송
-  // batchCloseSlots에서 슬롯 마감으로 인한 지원 거절을 개별 통지한다.
-  Future<void> _sendApplicationRejectedNotification({
-    required String applicantUid,
-    required String applicationId,
-    required String businessName,
-    required String businessId,
-    required String workType,
-    required DateTime workDate,
-    String? rejectReason,
-  }) async {
-    try {
-      await createNotification(
-        NotificationModel.createApplicationRejected(
-          userId: applicantUid,
-          businessName: businessName,
-          businessId: businessId,
-          workType: workType,
-          workDate: workDate,
-          applicationId: applicationId,
-          rejectReason: rejectReason,
-        ),
-      );
-    } catch (e) {
-      debugPrint('⚠️ 지원 거절 알림 전송 실패 (applicationId=$applicationId): $e');
     }
   }
 

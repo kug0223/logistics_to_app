@@ -1,16 +1,21 @@
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../models/core/application_model.dart';
 import '../utils/format_helper.dart';
 import '../models/core/monthly_review_model.dart';
 import '../models/core/review_request_model.dart';
 import '../models/settings/trust_settings_model.dart';
+import '../utils/firestore_helper.dart';
 import '../utils/network_checker.dart';
 
 /// 리뷰 커서 기반 페이지네이션 결과
+///
+/// [CF 전환] cursor는 DocumentSnapshot 대신 문서 ID 문자열 사용.
+/// CF 응답에서 DocumentSnapshot을 반환할 수 없으므로 String? 타입으로 변경.
 class ReviewPage<T> {
   final List<T> records;
-  final DocumentSnapshot? cursor;
+  final String? cursor;
   final bool hasMore;
   const ReviewPage({required this.records, this.cursor, required this.hasMore});
 }
@@ -27,6 +32,7 @@ class ReviewPage<T> {
 ///   - 리뷰 작성 기한 14일 검증 (H-3)
 class MonthlyReviewService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  static final _fn = FirebaseFunctions.instanceFor(region: 'asia-northeast3');
 
   static const int _reviewWindowDays = 14;
 
@@ -64,17 +70,23 @@ class MonthlyReviewService {
   }
 
   /// 특정 businessId의 미작성 리뷰 요청 조회 (관리자용)
+  ///
+  /// [CF 전환] businessId + adminStatus + isPublished 복합 equality 필터 → PERMISSION_DENIED 우회.
   Future<List<ReviewRequestModel>> getPendingRequestsForBusiness(
       String businessId) async {
     try {
-      final snap = await _db
-          .collection('review_requests')
-          .where('businessId', isEqualTo: businessId)
-          .where('adminStatus', isEqualTo: 'pending')
-          .where('isPublished', isEqualTo: false)
-          .limit(200)
-          .get();
-      return snap.docs.map(ReviewRequestModel.tryFromFirestore).whereType<ReviewRequestModel>().toList();
+      final res = await _fn
+          .httpsCallable('callableGetReviewRequestsByBiz')
+          .call({'businessId': businessId, 'adminStatus': 'pending', 'limit': 200});
+      final raw = List<Map>.from(res.data['reviewRequests'] as List? ?? []);
+      return raw
+          .map((e) {
+            final m = Map<String, dynamic>.from(e);
+            final id = m['id'] as String? ?? '';
+            return ReviewRequestModel.tryFromMap(m, id);
+          })
+          .whereType<ReviewRequestModel>()
+          .toList();
     } catch (e) {
       debugPrint('❌ admin 리뷰 요청 조회 실패: $e');
       return [];
@@ -83,16 +95,23 @@ class MonthlyReviewService {
 
   /// 미공개 리뷰 요청 전체 조회 (deadline 맵 구성용)
   /// adminStatus 무관 — 작성완료 후 상대방 대기 중인 요청도 포함
+  ///
+  /// [CF 전환] businessId + isPublished 복합 equality 필터 → PERMISSION_DENIED 우회.
   Future<List<ReviewRequestModel>> getAllNonPublishedRequestsForBusiness(
       String businessId) async {
     try {
-      final snap = await _db
-          .collection('review_requests')
-          .where('businessId', isEqualTo: businessId)
-          .where('isPublished', isEqualTo: false)
-          .limit(500)
-          .get();
-      return snap.docs.map(ReviewRequestModel.tryFromFirestore).whereType<ReviewRequestModel>().toList();
+      final res = await _fn
+          .httpsCallable('callableGetReviewRequestsByBiz')
+          .call({'businessId': businessId, 'isPublished': false, 'limit': 500});
+      final raw = List<Map>.from(res.data['reviewRequests'] as List? ?? []);
+      return raw
+          .map((e) {
+            final m = Map<String, dynamic>.from(e);
+            final id = m['id'] as String? ?? '';
+            return ReviewRequestModel.tryFromMap(m, id);
+          })
+          .whereType<ReviewRequestModel>()
+          .toList();
     } catch (e) {
       debugPrint('❌ 미공개 리뷰 요청 조회 실패: $e');
       return [];
@@ -315,19 +334,25 @@ class MonthlyReviewService {
   /// 사업장이 작성한 리뷰 (관리자 → 지원자)
   ///
   /// ⚠️ G-020: UI에서 limit(100) 호출 — 100건 초과 시 오래된 리뷰 누락. 향후 페이지네이션 필요.
+  ///
+  /// [CF 전환] businessId + reviewType 복합 equality 필터 → PERMISSION_DENIED 우회.
   Future<List<MonthlyReviewModel>> getReviewsByBusiness({
     required String businessId,
     int limit = 50,
   }) async {
     try {
-      final snap = await _db
-          .collection('monthly_reviews')
-          .where('businessId', isEqualTo: businessId)
-          .where('reviewType', isEqualTo: ReviewType.ADMIN_TO_USER.name)
-          .orderBy('createdAt', descending: true)
-          .limit(limit)
-          .get();
-      return snap.docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList();
+      final res = await _fn
+          .httpsCallable('callableGetMonthlyReviewsByBiz')
+          .call({'businessId': businessId, 'reviewType': ReviewType.ADMIN_TO_USER.name, 'limit': limit});
+      final raw = List<Map>.from(res.data['reviews'] as List? ?? []);
+      return raw
+          .map((e) {
+            final m = Map<String, dynamic>.from(e);
+            final id = m['id'] as String? ?? '';
+            return MonthlyReviewModel.tryFromMap(m, id);
+          })
+          .whereType<MonthlyReviewModel>()
+          .toList();
     } catch (e) {
       debugPrint('❌ 사업장 작성 리뷰 조회 실패: $e');
       return [];
@@ -376,20 +401,30 @@ class MonthlyReviewService {
   }
 
   /// 사업장이 받은 공개 리뷰 (지원자 → 사업장)
+  ///
+  /// [CF 전환] businessId + reviewType + isPublished 복합 equality 필터 → PERMISSION_DENIED 우회.
   Future<List<MonthlyReviewModel>> getPublishedReviewsForBusiness({
     required String businessId,
     int limit = 20,
   }) async {
     try {
-      final snap = await _db
-          .collection('monthly_reviews')
-          .where('businessId', isEqualTo: businessId)
-          .where('reviewType', isEqualTo: ReviewType.USER_TO_BUSINESS.name)
-          .where('isPublished', isEqualTo: true)
-          .orderBy('createdAt', descending: true)
-          .limit(limit)
-          .get();
-      return snap.docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList();
+      final res = await _fn
+          .httpsCallable('callableGetMonthlyReviewsByBiz')
+          .call({
+            'businessId': businessId,
+            'reviewType': ReviewType.USER_TO_BUSINESS.name,
+            'isPublished': true,
+            'limit': limit,
+          });
+      final raw = List<Map>.from(res.data['reviews'] as List? ?? []);
+      return raw
+          .map((e) {
+            final m = Map<String, dynamic>.from(e);
+            final id = m['id'] as String? ?? '';
+            return MonthlyReviewModel.tryFromMap(m, id);
+          })
+          .whereType<MonthlyReviewModel>()
+          .toList();
     } catch (e) {
       debugPrint('❌ 사업장 리뷰 조회 실패: $e');
       return [];
@@ -404,8 +439,11 @@ class MonthlyReviewService {
   ///
   /// wageConfirmed 이후에만 리뷰를 허용하는 강제 조건이 없다 — 의도된 설계.
   /// 리뷰는 급여 확정과 무관하게 해당 월 근무(confirmed/contractPending) 기준으로 작성 가능.
-  /// 대신 getReviewableWorkers 조회 경로 자체가 confirmed 상태 지원서만 반환하므로
-  /// 근무 이력 없는 사람에게 리뷰가 생성될 위험은 없다.
+  ///
+  /// [CF 전환] businessId + status 복합 equality 필터 → PERMISSION_DENIED 우회.
+  ///   - applications: CF 호출 후 Dart에서 날짜 필터링 (CF 날짜 파라미터는 Timestamp 비교 불가)
+  ///   - monthly_reviews: CF 호출 (businessId + reviewType + year + month 복합 필터)
+  /// ⚠️ G-045: CF limit(500) — 초대형 사업장에서 status당 500명 초과 시 일부 누락. 현실적 위험 낮음.
   Future<List<Map<String, dynamic>>> getReviewableWorkers({
     required String businessId,
     required int year,
@@ -413,99 +451,95 @@ class MonthlyReviewService {
   }) async {
     try {
       final monthStart = DateTime(year, month, 1);
-      // [A06 수정] isLessThan 패턴: 말일 23:59:59가 아닌 다음 달 1일 자정을 사용.
-      // Timestamp 비교는 초 단위이므로 DateTime(y, m+1, 0, 23, 59, 59)를 isLessThan에 쓰면
-      // 말일 23:59:59 정확히 일치하는 문서가 제외된다.
-      // DateTime(year, month+1, 1)는 Dart가 13월을 자동 정규화(1월로 변환)하므로 12월도 안전.
       final monthEndExclusive = DateTime(year, month + 1, 1);
 
-      // whereIn 복합 쿼리 → PERMISSION_DENIED 방지를 위해 status별 병렬 쿼리로 분리
-      // 단기: workDate가 해당 월인 확정 지원서 (CONFIRMED + CONTRACT_PENDING 각각)
-      // 장기: workEndDate가 해당 월 이후 (CONFIRMED + CONTRACT_PENDING 각각)
-      // 해당 월 기존 리뷰 일괄 조회 (N+1 제거)
+      // 3종 CF 병렬 호출
       final allResults = await Future.wait([
-        _db.collection('applications')
-            .where('businessId', isEqualTo: businessId)
-            .where('status', isEqualTo: AppStatus.confirmed)
-            .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
-            .where('workDate', isLessThan: Timestamp.fromDate(monthEndExclusive))
-            .get(),
-        _db.collection('applications')
-            .where('businessId', isEqualTo: businessId)
-            .where('status', isEqualTo: AppStatus.contractPending)
-            .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
-            .where('workDate', isLessThan: Timestamp.fromDate(monthEndExclusive))
-            .get(),
-        // ⚠️ G-045: limit(500) 각각 — 초대형 사업장에서 status당 500명 초과 시 일부 누락. 현실적 위험 낮음.
-        _db.collection('applications')
-            .where('businessId', isEqualTo: businessId)
-            .where('status', isEqualTo: AppStatus.confirmed)
-            .where('workEndDate', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
-            .limit(500)
-            .get(),
-        _db.collection('applications')
-            .where('businessId', isEqualTo: businessId)
-            .where('status', isEqualTo: AppStatus.contractPending)
-            .where('workEndDate', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
-            .limit(500)
-            .get(),
-        _db.collection('monthly_reviews')
-            .where('businessId', isEqualTo: businessId)
-            .where('reviewType', isEqualTo: ReviewType.ADMIN_TO_USER.name)
-            .where('reviewYear', isEqualTo: year)
-            .where('reviewMonth', isEqualTo: month)
-            .get(),
+        _fn.httpsCallable('callableGetApplicationsByBiz')
+            .call({'businessId': businessId, 'status': AppStatus.confirmed, 'limit': 500}),
+        _fn.httpsCallable('callableGetApplicationsByBiz')
+            .call({'businessId': businessId, 'status': AppStatus.contractPending, 'limit': 500}),
+        _fn.httpsCallable('callableGetMonthlyReviewsByBiz')
+            .call({
+              'businessId': businessId,
+              'reviewType': ReviewType.ADMIN_TO_USER.name,
+              'reviewYear': year,
+              'reviewMonth': month,
+            }),
       ]);
 
-      final shortTermDocs = [...allResults[0].docs, ...allResults[1].docs];
-      final longTermDocs = [...allResults[2].docs, ...allResults[3].docs];
-      final existingReviewDocs = allResults[4].docs;
+      // 지원서 원시 맵 파싱 (parseTimestampNullable로 {_seconds,_nanoseconds} 처리)
+      final List<Map<String, dynamic>> allAppMaps = [];
+      for (final res in allResults.sublist(0, 2)) {
+        final list = List<Map>.from(res.data['applications'] as List? ?? []);
+        allAppMaps.addAll(list.map((e) => Map<String, dynamic>.from(e)));
+      }
 
       // 이미 리뷰된 targetUserId 집합
-      final reviewedUserIds = existingReviewDocs
-          .map((d) => d.data()['targetUserId'] as String?)
+      final rawReviews = List<Map>.from(allResults[2].data['reviews'] as List? ?? []);
+      final reviewedUserIds = rawReviews
+          .map((d) => d['targetUserId'] as String?)
           .whereType<String>()
           .toSet();
 
+      // 장기 지원서 ID 집합: workDays 있거나 workDate != workEndDate
+      final Set<String> longTermIds = {};
+      for (final data in allAppMaps) {
+        final docId = data['id'] as String? ?? '';
+        if (docId.isEmpty) continue;
+        final workDaysList = data['workDays'] as List?;
+        if (workDaysList != null && workDaysList.isNotEmpty) {
+          longTermIds.add(docId);
+          continue;
+        }
+        final workDate = parseTimestampNullable(data['workDate']);
+        final workEndDate = parseTimestampNullable(data['workEndDate']);
+        if (workDate != null && workEndDate != null) {
+          final sameDay = workDate.year == workEndDate.year &&
+              workDate.month == workEndDate.month &&
+              workDate.day == workEndDate.day;
+          if (!sameDay) longTermIds.add(docId);
+        }
+      }
+
       final Map<String, Map<String, dynamic>> workerMap = {};
 
-      // [F-001] 장기 지원서 ID 집합 — shortTermDocs 쿼리가 workDate 기준이라
-      // 당월 시작하는 장기 지원서도 잡힘. 중복 집계 방지를 위해 먼저 처리 후 단기에서 제외
-      final longTermDocIds = longTermDocs.map((d) => d.id).toSet();
-
-      // 단기 근무자 집계 (장기 지원서 제외)
-      for (final doc in shortTermDocs) {
-        if (longTermDocIds.contains(doc.id)) continue; // 장기 지원서 중복 방지
-        final data = doc.data();
+      // 단기 근무자 집계
+      for (final data in allAppMaps) {
+        final docId = data['id'] as String? ?? '';
+        if (longTermIds.contains(docId)) continue;
+        final workDate = parseTimestampNullable(data['workDate']);
+        if (workDate == null) continue;
+        if (workDate.isBefore(monthStart) || !workDate.isBefore(monthEndExclusive)) continue;
         final uid = data['uid'] as String? ?? '';
         if (uid.isEmpty || reviewedUserIds.contains(uid)) continue;
         workerMap.putIfAbsent(uid, () => {
-              'uid': uid,
-              'name': data['applicantName'] ?? '',
-              'workDays': 0,
-              'normalDays': 0,
-              'lateDays': 0,
-            });
-        // putIfAbsent 직후 접근 — workerMap[uid]와 'workDays' 키 모두 보장, ! 안전
-        workerMap[uid]!['workDays'] =
-            (workerMap[uid]!['workDays'] as int) + 1;
+          'uid': uid,
+          'name': data['applicantName'] ?? '',
+          'workDays': 0,
+          'normalDays': 0,
+          'lateDays': 0,
+        });
+        workerMap[uid]!['workDays'] = (workerMap[uid]!['workDays'] as int) + 1;
       }
 
       // 장기 근무자 집계 (해당 월에 실제 근무한 날 수 계산)
-      for (final doc in longTermDocs) {
-        final data = doc.data();
+      for (final data in allAppMaps) {
+        final docId = data['id'] as String? ?? '';
+        if (!longTermIds.contains(docId)) continue;
         final uid = data['uid'] as String? ?? '';
-        final workDays = data['workDays'] as List<dynamic>?;
-        if (uid.isEmpty || workDays == null || workDays.isEmpty) continue;
+        final workDaysList = data['workDays'] as List?;
+        if (uid.isEmpty || workDaysList == null || workDaysList.isEmpty) continue;
         if (reviewedUserIds.contains(uid)) continue;
 
-        final workDate = (data['workDate'] as Timestamp?)?.toDate().toLocal();
-        final workEndDate = (data['workEndDate'] as Timestamp?)?.toDate().toLocal();
+        final workDate = parseTimestampNullable(data['workDate']);
+        final workEndDate = parseTimestampNullable(data['workEndDate']);
         if (workDate == null || workEndDate == null) continue;
+        // 해당 월 이전에 종료된 장기 지원서 제외
+        if (workEndDate.isBefore(monthStart)) continue;
 
-        // 해당 월 근무 일수 추정 (요일 기반)
         final daysInMonth = _countWorkingDaysInMonth(
-          workDays.whereType<String>().toList(),
+          workDaysList.whereType<String>().toList(),
           year,
           month,
           workDate,
@@ -514,14 +548,13 @@ class MonthlyReviewService {
         if (daysInMonth == 0) continue;
 
         workerMap.putIfAbsent(uid, () => {
-              'uid': uid,
-              'name': data['applicantName'] ?? '',
-              'workDays': 0,
-              'normalDays': 0,
-              'lateDays': 0,
-            });
-        workerMap[uid]!['workDays'] =
-            (workerMap[uid]!['workDays'] as int) + daysInMonth;
+          'uid': uid,
+          'name': data['applicantName'] ?? '',
+          'workDays': 0,
+          'normalDays': 0,
+          'lateDays': 0,
+        });
+        workerMap[uid]!['workDays'] = (workerMap[uid]!['workDays'] as int) + daysInMonth;
       }
 
       return workerMap.values.toList();
@@ -667,27 +700,36 @@ class MonthlyReviewService {
   // ═══════════════════════════════════════════════════════════
 
   /// 사업장이 작성한 리뷰 (ADMIN_TO_USER) — 페이지네이션
+  ///
+  /// [CF 전환] businessId + reviewType 복합 equality 필터 → PERMISSION_DENIED 우회.
+  /// startAfterId: DocumentSnapshot 대신 문서 ID 문자열 사용.
   Future<ReviewPage<MonthlyReviewModel>> getReviewsByBusinessPaged({
     required String businessId,
-    DocumentSnapshot? startAfter,
+    String? startAfterId,
     int pageSize = 50,
   }) async {
     try {
-      Query<Map<String, dynamic>> q = _db
-          .collection('monthly_reviews')
-          .where('businessId', isEqualTo: businessId)
-          .where('reviewType', isEqualTo: ReviewType.ADMIN_TO_USER.name)
-          .orderBy('createdAt', descending: true)
-          .limit(pageSize + 1);
-      if (startAfter != null) q = q.startAfterDocument(startAfter);
-      final snap = await q.get();
-      final hasMore = snap.docs.length > pageSize;
-      final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
-      return ReviewPage(
-        records: docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList(),
-        cursor: docs.isNotEmpty ? docs.last : null,
-        hasMore: hasMore,
-      );
+      final res = await _fn
+          .httpsCallable('callableGetMonthlyReviewsByBiz')
+          .call({
+            'businessId': businessId,
+            'reviewType': ReviewType.ADMIN_TO_USER.name,
+            'limit': pageSize + 1,
+            if (startAfterId != null) 'startAfterId': startAfterId,
+          });
+      final raw = List<Map>.from(res.data['reviews'] as List? ?? []);
+      final hasMore = raw.length > pageSize;
+      final page = hasMore ? raw.sublist(0, pageSize) : raw;
+      final records = page
+          .map((e) {
+            final m = Map<String, dynamic>.from(e);
+            final id = m['id'] as String? ?? '';
+            return MonthlyReviewModel.tryFromMap(m, id);
+          })
+          .whereType<MonthlyReviewModel>()
+          .toList();
+      final cursor = page.isNotEmpty ? page.last['id'] as String? : null;
+      return ReviewPage(records: records, cursor: cursor, hasMore: hasMore);
     } catch (e) {
       debugPrint('❌ 사업장 작성 리뷰 페이지 조회 실패: $e');
       return const ReviewPage(records: [], cursor: null, hasMore: false);
@@ -695,28 +737,37 @@ class MonthlyReviewService {
   }
 
   /// 사업장이 받은 공개 리뷰 (USER_TO_BUSINESS) — 페이지네이션
+  ///
+  /// [CF 전환] businessId + reviewType + isPublished 복합 equality 필터 → PERMISSION_DENIED 우회.
+  /// startAfterId: DocumentSnapshot 대신 문서 ID 문자열 사용.
   Future<ReviewPage<MonthlyReviewModel>> getPublishedReviewsForBusinessPaged({
     required String businessId,
-    DocumentSnapshot? startAfter,
+    String? startAfterId,
     int pageSize = 50,
   }) async {
     try {
-      Query<Map<String, dynamic>> q = _db
-          .collection('monthly_reviews')
-          .where('businessId', isEqualTo: businessId)
-          .where('reviewType', isEqualTo: ReviewType.USER_TO_BUSINESS.name)
-          .where('isPublished', isEqualTo: true)
-          .orderBy('createdAt', descending: true)
-          .limit(pageSize + 1);
-      if (startAfter != null) q = q.startAfterDocument(startAfter);
-      final snap = await q.get();
-      final hasMore = snap.docs.length > pageSize;
-      final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
-      return ReviewPage(
-        records: docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList(),
-        cursor: docs.isNotEmpty ? docs.last : null,
-        hasMore: hasMore,
-      );
+      final res = await _fn
+          .httpsCallable('callableGetMonthlyReviewsByBiz')
+          .call({
+            'businessId': businessId,
+            'reviewType': ReviewType.USER_TO_BUSINESS.name,
+            'isPublished': true,
+            'limit': pageSize + 1,
+            if (startAfterId != null) 'startAfterId': startAfterId,
+          });
+      final raw = List<Map>.from(res.data['reviews'] as List? ?? []);
+      final hasMore = raw.length > pageSize;
+      final page = hasMore ? raw.sublist(0, pageSize) : raw;
+      final records = page
+          .map((e) {
+            final m = Map<String, dynamic>.from(e);
+            final id = m['id'] as String? ?? '';
+            return MonthlyReviewModel.tryFromMap(m, id);
+          })
+          .whereType<MonthlyReviewModel>()
+          .toList();
+      final cursor = page.isNotEmpty ? page.last['id'] as String? : null;
+      return ReviewPage(records: records, cursor: cursor, hasMore: hasMore);
     } catch (e) {
       debugPrint('❌ 사업장 받은 리뷰 페이지 조회 실패: $e');
       return const ReviewPage(records: [], cursor: null, hasMore: false);
@@ -724,9 +775,12 @@ class MonthlyReviewService {
   }
 
   /// 근무자가 받은 공개 리뷰 (ADMIN_TO_USER) — 페이지네이션
+  ///
+  /// targetUserId 단일 equality 필터 — 보안 규칙 버그 없이 직접 Firestore 사용 가능.
+  /// startAfterId: DocumentSnapshot 대신 문서 ID 문자열 사용 (ReviewPage.cursor 타입 통일).
   Future<ReviewPage<MonthlyReviewModel>> getPublishedReviewsForUserPaged({
     required String targetUserId,
-    DocumentSnapshot? startAfter,
+    String? startAfterId,
     int pageSize = 30,
   }) async {
     try {
@@ -737,13 +791,16 @@ class MonthlyReviewService {
           .where('isPublished', isEqualTo: true)
           .orderBy('createdAt', descending: true)
           .limit(pageSize + 1);
-      if (startAfter != null) q = q.startAfterDocument(startAfter);
+      if (startAfterId != null) {
+        final cursorSnap = await _db.collection('monthly_reviews').doc(startAfterId).get();
+        if (cursorSnap.exists) q = q.startAfterDocument(cursorSnap);
+      }
       final snap = await q.get();
       final hasMore = snap.docs.length > pageSize;
       final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
       return ReviewPage(
         records: docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList(),
-        cursor: docs.isNotEmpty ? docs.last : null,
+        cursor: docs.isNotEmpty ? docs.last.id : null,
         hasMore: hasMore,
       );
     } catch (e) {
@@ -754,9 +811,12 @@ class MonthlyReviewService {
 
   /// 지원자 본인이 받은 공개 리뷰 — 페이지네이션 (M-2: isPublished 필터 추가)
   /// 인덱스: (targetUserId, reviewType, isPublished, createdAt DESC) — firestore.indexes.json에 존재
+  ///
+  /// targetUserId 단일 equality 필터 — 보안 규칙 버그 없이 직접 Firestore 사용 가능.
+  /// startAfterId: DocumentSnapshot 대신 문서 ID 문자열 사용 (ReviewPage.cursor 타입 통일).
   Future<ReviewPage<MonthlyReviewModel>> getAllReviewsForUserPaged({
     required String targetUserId,
-    DocumentSnapshot? startAfter,
+    String? startAfterId,
     int pageSize = 30,
   }) async {
     try {
@@ -767,13 +827,16 @@ class MonthlyReviewService {
           .where('isPublished', isEqualTo: true)
           .orderBy('createdAt', descending: true)
           .limit(pageSize + 1);
-      if (startAfter != null) q = q.startAfterDocument(startAfter);
+      if (startAfterId != null) {
+        final cursorSnap = await _db.collection('monthly_reviews').doc(startAfterId).get();
+        if (cursorSnap.exists) q = q.startAfterDocument(cursorSnap);
+      }
       final snap = await q.get();
       final hasMore = snap.docs.length > pageSize;
       final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
       return ReviewPage(
         records: docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList(),
-        cursor: docs.isNotEmpty ? docs.last : null,
+        cursor: docs.isNotEmpty ? docs.last.id : null,
         hasMore: hasMore,
       );
     } catch (e) {

@@ -446,6 +446,17 @@ class EmploymentContractModel {
     }
   }
 
+  /// CF callable 응답 데이터(serializeFirestoreData 직렬화)에서 변환.
+  /// fromMap과 동일하나 예외를 null로 격리 — 손상 문서 1건이 목록 전체 크래시 방지
+  static EmploymentContractModel? tryFromMap(Map<String, dynamic> data, String docId) {
+    try {
+      return EmploymentContractModel.fromMap(data, docId);
+    } catch (e, st) {
+      debugPrint('[EmploymentContractModel] tryFromMap 실패 id=$docId: $e\n$st');
+      return null;
+    }
+  }
+
   factory EmploymentContractModel.fromMap(Map<String, dynamic> d, String id) {
     final rawSlots = d['slots'] as List<dynamic>?;
     final rawArticles = d['articles'] as List<dynamic>?;

@@ -28,11 +28,12 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
   final _firestore = FirebaseFirestore.instance;
 
   List<_BusinessWithOwner> _businesses = [];
-  String _statusFilter = 'ALL'; // 'ALL' | 'ACTIVE' | 'DEACTIVATED'
+  String _statusFilter = 'ALL'; // 'ALL' | 'PENDING' | 'ACTIVE' | 'DEACTIVATED'
   bool _isProcessing = false;
 
   static const _statusLabels = {
     'ALL': '전체',
+    'PENDING': '승인대기',
     'ACTIVE': '활성',
     'DEACTIVATED': '비활성',
   };
@@ -110,7 +111,12 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
 
   List<_BusinessWithOwner> get _filtered {
     return switch (_statusFilter) {
-      'ACTIVE' => _businesses.where((b) => !b.business.isDeactivated).toList(),
+      'PENDING' => _businesses
+          .where((b) => !b.business.isApproved && !b.business.isDeactivated)
+          .toList(),
+      'ACTIVE' => _businesses
+          .where((b) => b.business.isApproved && !b.business.isDeactivated)
+          .toList(),
       'DEACTIVATED' => _businesses.where((b) => b.business.isDeactivated).toList(),
       _ => _businesses,
     };
@@ -138,6 +144,46 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
       });
       if (!mounted) return;
       ToastHelper.showSuccess('사업장이 비활성화되었습니다');
+      await _loadAllBusinesses();
+    } catch (e) {
+      if (mounted) ToastHelper.showError('처리 실패: $e');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
+  }
+
+  Future<void> _approveBusiness(_BusinessWithOwner item) async {
+    if (_isProcessing) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('사업장 승인'),
+        content: Text('「${item.business.name}」을 승인하시겠습니까?\n'
+            '승인 후 관리자가 공고를 등록할 수 있습니다.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
+            child: const Text('승인', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _isProcessing = true);
+
+    try {
+      await _firestore.collection('businesses').doc(item.business.id).update({
+        'isApproved': true,
+        'approvedAt': FieldValue.serverTimestamp(),
+        'approvedBy': FirebaseAuth.instance.currentUser?.uid,
+      });
+      if (!mounted) return;
+      ToastHelper.showSuccess('사업장이 승인되었습니다');
       await _loadAllBusinesses();
     } catch (e) {
       if (mounted) ToastHelper.showError('처리 실패: $e');
@@ -190,7 +236,8 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
 
   @override
   Widget build(BuildContext context) {
-    final activeCount = _businesses.where((b) => !b.business.isDeactivated).length;
+    final pendingCount = _businesses.where((b) => !b.business.isApproved && !b.business.isDeactivated).length;
+    final activeCount = _businesses.where((b) => b.business.isApproved && !b.business.isDeactivated).length;
     final deactivatedCount = _businesses.where((b) => b.business.isDeactivated).length;
 
     return GradientScaffold(
@@ -202,15 +249,15 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
               ? _buildEmptyState()
               : Column(
                   children: [
-                    _buildFilterBar(activeCount, deactivatedCount),
+                    _buildFilterBar(pendingCount, activeCount, deactivatedCount),
                     Expanded(child: _buildBusinessList()),
                   ],
                 ),
     );
   }
 
-  Widget _buildFilterBar(int activeCount, int deactivatedCount) {
-    final counts = {'ALL': _businesses.length, 'ACTIVE': activeCount, 'DEACTIVATED': deactivatedCount};
+  Widget _buildFilterBar(int pendingCount, int activeCount, int deactivatedCount) {
+    final counts = {'ALL': _businesses.length, 'PENDING': pendingCount, 'ACTIVE': activeCount, 'DEACTIVATED': deactivatedCount};
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 16),
@@ -254,7 +301,11 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
     if (list.isEmpty) {
       return AppEmptyState(
         icon: Icons.business_outlined,
-        title: _statusFilter == 'DEACTIVATED' ? '비활성화된 사업장이 없습니다' : '활성 사업장이 없습니다',
+        title: switch (_statusFilter) {
+          'PENDING' => '승인 대기 중인 사업장이 없습니다',
+          'DEACTIVATED' => '비활성화된 사업장이 없습니다',
+          _ => '활성 사업장이 없습니다',
+        },
       );
     }
     return RefreshIndicator(
@@ -298,12 +349,19 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                // 상태 배지
+                // 상태 배지 — 비활성 / 승인대기 / 활성 3단계
                 if (isDeactivated)
                   StyledBadge(
                     label: '비활성',
                     backgroundColor: AppColors.grey200,
                     textColor: AppColors.grey500,
+                    fontSize: ResponsiveHelper.tinyStyle(context).fontSize!,
+                  )
+                else if (!business.isApproved)
+                  StyledBadge(
+                    label: '승인대기',
+                    backgroundColor: AppColors.warning.withValues(alpha: 0.12),
+                    textColor: AppColors.warning,
                     fontSize: ResponsiveHelper.tinyStyle(context).fontSize!,
                   )
                 else
@@ -322,10 +380,22 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
                     color: AppColors.grey500,
                   ),
                   onSelected: (value) {
+                    if (value == 'approve') _approveBusiness(item);
                     if (value == 'deactivate') _deactivateBusiness(item);
                     if (value == 'reactivate') _reactivateBusiness(item);
                   },
                   itemBuilder: (ctx) => [
+                    if (!isDeactivated && !business.isApproved)
+                      const PopupMenuItem(
+                        value: 'approve',
+                        child: Row(
+                          children: [
+                            Icon(Icons.check_circle_outline, color: AppColors.success),
+                            SizedBox(width: 8),
+                            Text('승인'),
+                          ],
+                        ),
+                      ),
                     if (!isDeactivated)
                       const PopupMenuItem(
                         value: 'deactivate',

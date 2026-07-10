@@ -14,7 +14,6 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 // Models
 import '../../../models/core/application_model.dart';
@@ -296,17 +295,21 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     
     debugPrint('📋 [당일명단] 단기 확정자: ${result.length}명');
 
-    // ✅ 2. 장기 공고: type='long_term' 필터로 서버 범위 축소 후 클라이언트 필터링
-    // status whereIn 복합쿼리 제거 — Firestore 보안 규칙 filters null 반환 버그 방지
-    final longTermSnapshot = await FirebaseFirestore.instance
-        .collection('applications')
-        .where('businessId', isEqualTo: _selectedBusinessId)
-        .where('type', isEqualTo: AppType.longTerm)
-        .get();
+    // ✅ 2. 장기 공고: CF callableGetApplicationsByBiz 호출 — Firestore 보안규칙 filters 버그 우회
+    final longTermCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetApplicationsByBiz');
+    final longTermCFResult = await longTermCallable.call({
+      'businessId': _selectedBusinessId,
+      'type': AppType.longTerm,
+    });
+    final longTermRaw = List.from(
+        longTermCFResult.data['applications'] as List? ?? []);
 
     int longTermCount = 0;
-    for (var doc in longTermSnapshot.docs) {
-      final app = ApplicationModel.tryFromFirestore(doc);
+    for (final e in longTermRaw) {
+      final m = Map<String, dynamic>.from(e as Map);
+      final docId = m.remove('id') as String? ?? '';
+      final app = ApplicationModel.tryFromMap(m, docId);
       if (app == null) continue;
       if (!confirmedStatuses.contains(app.status)) continue;
       
@@ -2251,10 +2254,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     final attendance = _attendanceMap[app.id];
     if (attendance == null) return;
     try {
-      await FirebaseFirestore.instance
-          .collection('attendance')
-          .doc(attendance.id)
-          .update({'adminConfirmed': true, 'updatedAt': FieldValue.serverTimestamp()});
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableBatchAdminConfirm')
+          .call({'businessId': _selectedBusinessId, 'attendanceIds': [attendance.id], 'confirmed': true});
       if (!mounted) return;
       setState(() {
         _attendanceMap[app.id] = attendance.copyWith(adminConfirmed: true);
@@ -2273,10 +2275,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     final attendance = _attendanceMap[app.id];
     if (attendance == null) return;
     try {
-      await FirebaseFirestore.instance
-          .collection('attendance')
-          .doc(attendance.id)
-          .update({'adminConfirmed': false, 'updatedAt': FieldValue.serverTimestamp()});
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableBatchAdminConfirm')
+          .call({'businessId': _selectedBusinessId, 'attendanceIds': [attendance.id], 'confirmed': false});
       if (!mounted) return;
       setState(() {
         _attendanceMap[app.id] = attendance.copyWith(adminConfirmed: false);
@@ -2392,16 +2393,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     if (!ok || !mounted) return;
     setState(() => _isLoading = true);
     try {
-      final batch = FirebaseFirestore.instance.batch();
-      for (final a in confirmable) {
-        final att = _attendanceMap[a.id];
-        if (att == null) continue;
-        batch.update(
-          FirebaseFirestore.instance.collection('attendance').doc(att.id),
-          {'adminConfirmed': true, 'updatedAt': FieldValue.serverTimestamp()},
-        );
-      }
-      await batch.commit();
+      final attendanceIds = confirmable
+          .map((a) => _attendanceMap[a.id]?.id)
+          .whereType<String>()
+          .toList();
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableBatchAdminConfirm')
+          .call({'businessId': _selectedBusinessId, 'attendanceIds': attendanceIds, 'confirmed': true});
       if (!mounted) return;
       setState(() {
         for (final a in confirmable) {
@@ -2435,16 +2433,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     if (!ok || !mounted) return;
     setState(() => _isLoading = true);
     try {
-      final batch = FirebaseFirestore.instance.batch();
-      for (final a in cancellable) {
-        final att = _attendanceMap[a.id];
-        if (att == null) continue;
-        batch.update(
-          FirebaseFirestore.instance.collection('attendance').doc(att.id),
-          {'adminConfirmed': false, 'updatedAt': FieldValue.serverTimestamp()},
-        );
-      }
-      await batch.commit();
+      final attendanceIds = cancellable
+          .map((a) => _attendanceMap[a.id]?.id)
+          .whereType<String>()
+          .toList();
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableBatchAdminConfirm')
+          .call({'businessId': _selectedBusinessId, 'attendanceIds': attendanceIds, 'confirmed': false});
       if (!mounted) return;
       setState(() {
         for (final a in cancellable) {
@@ -2885,94 +2880,28 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     if (!confirmed || !mounted) return;
     setState(() => _isLoading = true);
 
-    // [Bug A-NOSHOW-01 수정] 미출근자(pending 상태)는 attendance 레코드가 없을 수 있다.
-    // batch.update()는 기존 문서만 수정하므로, 레코드가 없는 경우 batch.set()으로 신규 생성한다.
-    // 노쇼 처리 대상은 checkIn이 없는 미출근자이므로, 신규 생성 레코드에는 checkIn/checkOut 없음.
-    final batch = FirebaseFirestore.instance.batch();
-    final now = FieldValue.serverTimestamp();
-    // 신규 생성된 attendance 참조를 로컬 상태 갱신에 쓰기 위해 보관
-    final Map<String, String> newAttendanceIds = {}; // appId → newDocId
-
-    for (final app in targets) {
+    // CF callableBatchSetNoShow 경유 — 서버에서 권한 재검증 후 배치 처리
+    final entries = targets.map((app) {
       final att = _attendanceMap[app.id];
-      if (att != null) {
-        // 기존 레코드 업데이트
-        // [BUG-수정] 노쇼 처리 시 wageStatus 영구 wagePending 문제:
-        //   노쇼는 실제 근무가 없으므로 급여 확정이 불필요. wageStatus를 wageConfirmed로 설정하여
-        //   급여 정산 화면 "미계산" 목록에 계속 표시되는 불편함을 제거함.
-        //   기존 레코드의 wageStatus가 아직 wagePending인 경우에만 wageConfirmed로 전환.
-        final Map<String, dynamic> updateFields = {
-          'status': AttendanceModel.statusNoShow,
-          'yearMonth': DateFormat('yyyy-MM').format(widget.date),
-          'updatedAt': now,
-        };
-        if (att.wageStatus == AttendanceModel.wagePending) {
-          updateFields['wageStatus'] = AttendanceModel.wageConfirmed;
-          updateFields['finalWage'] = 0;
-        }
-        batch.update(
-          FirebaseFirestore.instance.collection('attendance').doc(att.id),
-          updateFields,
-        );
-      } else {
-        // 레코드 없는 미출근자 → 신규 노쇼 레코드 생성
-        // [BUG-수정] 노쇼 신규 생성 시 wagePending 대신 wageConfirmed(finalWage:0)로 설정하여
-        //   급여 정산 화면 "미계산" 목록 누적 방지.
-        // 결정적 docId(applicationId_yyyyMMdd)로 중복 생성 방지 — checkIn()과 동일 패턴.
-        final noShowDateStr = DateFormat('yyyyMMdd').format(widget.date);
-        final noShowDocId = '${app.id}_$noShowDateStr';
-        final newRef = FirebaseFirestore.instance.collection('attendance').doc(noShowDocId);
-        newAttendanceIds[app.id] = newRef.id;
-        batch.set(newRef, {
-          'applicationId': app.id,
-          'userId': app.uid,
-          'businessId': app.businessId,
-          'businessName': app.businessName,
-          'workDate': Timestamp.fromDate(widget.date),
-          'yearMonth': DateFormat('yyyy-MM').format(widget.date),
-          'workType': app.selectedWorkType,
-          'status': AttendanceModel.statusNoShow,
-          'wageStatus': AttendanceModel.wageConfirmed,
-          'finalWage': 0,
-          'isModified': false,
-          'modifyRequested': false,
-          'createdAt': now,
-          'updatedAt': now,
-        });
-      }
-    }
+      return {
+        'applicationId': app.id,
+        'workDateMs': widget.date.millisecondsSinceEpoch,
+        'userId': app.uid,
+        'businessName': app.businessName,
+        'workType': app.selectedWorkType,
+        if (att != null) 'attendanceId': att.id,
+      };
+    }).toList();
+
     try {
-      await batch.commit();
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableBatchSetNoShow')
+          .call({'businessId': _selectedBusinessId, 'entries': entries});
       // TrustScore noShowCount/trustScore는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리
       if (!mounted) return;
-      setState(() {
-        for (final app in targets) {
-          final att = _attendanceMap[app.id];
-          if (att != null) {
-            _attendanceMap[app.id] = att.copyWith(status: AttendanceModel.statusNoShow);
-          } else if (newAttendanceIds.containsKey(app.id)) {
-            // 새로 생성된 attendance 로컬 반영 — 다음 _loadData() 전까지 상태 표시용
-            // [BUG-수정] 로컬 상태도 wageConfirmed/finalWage:0 으로 일치시킴
-            _attendanceMap[app.id] = AttendanceModel(
-              id: newAttendanceIds[app.id]!,
-              applicationId: app.id,
-              userId: app.uid,
-              businessId: app.businessId,
-              businessName: app.businessName,
-              workDate: widget.date,
-              workType: app.selectedWorkType,
-              status: AttendanceModel.statusNoShow,
-              wageStatus: AttendanceModel.wageConfirmed,
-              finalWage: 0,
-              createdAt: DateTime.now(),
-            );
-          }
-        }
-        _selectedIds.clear();
-        _hasChanges = true;
-        _rebuildStatusCache();
-      });
+      _hasChanges = true;
       ToastHelper.showSuccess('노쇼 처리 완료 (${targets.length}명)');
+      await _loadData();
     } catch (e) {
       debugPrint('❌ 배치 노쇼 실패: $e');
       if (!mounted) return;
@@ -2997,63 +2926,26 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     if (!confirmed || !mounted) return;
     setState(() => _isLoading = true);
 
-    final batch = FirebaseFirestore.instance.batch();
-    final now = FieldValue.serverTimestamp();
-    final List<String> skippedNames = [];
-    for (final app in targets) {
-      final att = _attendanceMap[app.id];
-      if (att == null) continue;
-      // 이체 완료(wageTransferred) 건은 해제 불가 — 회계 처리 후 상태
-      if (att.wageStatus == AttendanceModel.wageTransferred) {
-        skippedNames.add(_getDisplayName(app.uid));
-        continue;
-      }
-      // status 필드를 명시적으로 삭제한다.
-      // AttendanceModel.fromMap()에서 status가 없으면 'absent'로 폴백하는데,
-      // 이는 의도된 동작: 노쇼 취소 후 지원자가 실제로 출근했는지 여부는
-      // checkIn/checkOut 필드로 별도 판단하며, status 필드는 NO_SHOW 표시 용도로만 사용.
-      // 노쇼 취소 시 wageStatus·finalWage도 함께 초기화: noshow 판정 시
-      // 설정됐을 수 있는 확정값을 지워 임금 재계산 흐름이 정상 작동하도록 함
-      batch.update(
-        FirebaseFirestore.instance.collection('attendance').doc(att.id),
-        {
-          'status': FieldValue.delete(),
-          'wageStatus': AttendanceModel.wagePending,
-          'finalWage': FieldValue.delete(),
-          // S6-01: 노쇼 처리 시 기록된 yearMonth를 취소 시 함께 삭제
-          // wagePending 복귀 후 급여 재계산 시 CF가 다시 설정함
-          'yearMonth': FieldValue.delete(),
-          'updatedAt': now,
-        },
-      );
-    }
+    // CF callableBatchCancelNoShow 경유 — 서버에서 wageTransferred 건 재차 방어
+    final attendanceIds = targets
+        .map((app) => _attendanceMap[app.id]?.id)
+        .whereType<String>()
+        .toList();
+
     try {
-      await batch.commit();
+      final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableBatchCancelNoShow')
+          .call({'businessId': _selectedBusinessId, 'attendanceIds': attendanceIds});
       // TrustScore noShowCount/trustScore는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리
       if (!mounted) return;
-      setState(() {
-        for (final app in targets) {
-          final att = _attendanceMap[app.id];
-          if (att == null) continue;
-          // wageTransferred 건은 batch에서 제외됐으므로 로컬 상태도 유지
-          if (att.wageStatus == AttendanceModel.wageTransferred) continue;
-          // Firestore는 status 필드를 FieldValue.delete()로 제거 → fromMap 폴백: statusAbsent
-          // finalWage도 삭제되지만 copyWith는 null 리셋 불가(non-nullable)이므로
-          // 로컬 불일치는 다음 리프레시 시 자동 해소됨
-          _attendanceMap[app.id] = att.copyWith(
-            status: AttendanceModel.statusAbsent,
-            wageStatus: AttendanceModel.wagePending,
-          );
-        }
-        _selectedIds.clear();
-        _hasChanges = true;
-        _rebuildStatusCache();
-      });
-      final processedCount = targets.length - skippedNames.length;
-      if (processedCount > 0) ToastHelper.showSuccess('노쇼 취소 완료 ($processedCount명)');
-      if (skippedNames.isNotEmpty) {
-        ToastHelper.showWarning('이체 완료 건 제외 (${skippedNames.join(', ')}) — 급여 시스템에서 처리 필요');
+      final processed = result.data['processed'] as int? ?? 0;
+      final skippedCount = (result.data['skipped'] as List?)?.length ?? 0;
+      _hasChanges = true;
+      if (processed > 0) ToastHelper.showSuccess('노쇼 취소 완료 ($processed명)');
+      if (skippedCount > 0) {
+        ToastHelper.showWarning('이체 완료 건 $skippedCount명 제외 — 급여 시스템에서 처리 필요');
       }
+      await _loadData();
     } catch (e) {
       debugPrint('❌ 노쇼 취소 실패: $e');
       if (!mounted) return;
@@ -3114,40 +3006,21 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     );
     if (!confirmed || !mounted) return;
 
-    final batch = FirebaseFirestore.instance.batch();
-    final now = FieldValue.serverTimestamp();
-    for (final app in resetTargets) {
-      final att = _attendanceMap[app.id];
-      if (att == null) continue;
-      // H-4: wageStatus·wageDetail·workHours·yearMonth도 함께 초기화
-      batch.update(
-        FirebaseFirestore.instance.collection('attendance').doc(att.id),
-        {
-          'checkIn': FieldValue.delete(),
-          'checkOut': FieldValue.delete(),
-          'status': FieldValue.delete(),
-          'workHours': FieldValue.delete(),
-          'wageStatus': FieldValue.delete(),
-          'wageDetail': FieldValue.delete(),
-          'yearMonth': FieldValue.delete(),
-          'updatedAt': now,
-        },
-      );
-    }
+    // CF callableBatchResetAttendance 경유 — 서버에서 급여확정 건 재차 방어
+    final resetIds = resetTargets
+        .map((app) => _attendanceMap[app.id]?.id)
+        .whereType<String>()
+        .toList();
+
     try {
-      await batch.commit();
+      final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableBatchResetAttendance')
+          .call({'businessId': _selectedBusinessId, 'attendanceIds': resetIds});
       if (!mounted) return;
-      setState(() {
-        // copyWith가 null 전달 시 기존 값 유지 구조이므로,
-        // 리셋된 레코드는 맵에서 제거해 "미출근" 상태로 표시
-        for (final app in resetTargets) {
-          _attendanceMap.remove(app.id);
-        }
-        _selectedIds.clear();
-        _hasChanges = true;
-        _rebuildStatusCache();
-      });
-      ToastHelper.showSuccess('리셋 완료 (${resetTargets.length}명)');
+      final processed = result.data['processed'] as int? ?? 0;
+      _hasChanges = true;
+      ToastHelper.showSuccess('리셋 완료 ($processed명)');
+      await _loadData();
     } catch (e) {
       debugPrint('❌ 리셋 실패: $e');
       if (!mounted) return;
@@ -3500,7 +3373,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     );
   }
 
-  /// 일괄 시간 조정 처리
+  /// 일괄 시간 조정 처리 — CF callableBatchAdjustAttendanceTime 경유
   Future<void> _processBatchAdjustTime(
     List<ApplicationModel> targets,
     String? newCheckIn,
@@ -3508,132 +3381,103 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   ) async {
     if (_isLoading) return;
     try {
-      int successCount = 0;
-      int failCount = 0;
+      // 로컬 검증 후 CF에 전달할 entries 빌드
+      final entries = <Map<String, dynamic>>[];
+      final lateChanges = <({ApplicationModel app, String oldCheckIn, bool wasLate, bool isNowLate})>[];
+      int skipCount = 0;
 
       for (final app in targets) {
         final attendance = _attendanceMap[app.id];
         if (attendance == null) continue;
 
-        // [HIGH-01] 급여 마감(confirmed)·이체완료(transferred) 건 스킵
-        // confirmed 상태에서 시간 수정을 허용하면 확정된 급여와 실제 근태가 불일치함
+        // 클라이언트 사전 필터 (서버에서도 재검증)
         if (attendance.wageStatus == AttendanceModel.wageConfirmed ||
             attendance.wageStatus == AttendanceModel.wageTransferred) {
-          failCount++;
+          skipCount++;
           continue;
         }
 
-        try {
-          final effectiveCheckIn  = newCheckIn  ?? attendance.checkIn  ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
-          final effectiveCheckOut = newCheckOut ?? attendance.checkOut;
+        final effectiveCheckIn  = newCheckIn  ?? attendance.checkIn  ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
+        final effectiveCheckOut = newCheckOut ?? attendance.checkOut;
 
-          // 시간 역전 검사 (출퇴근 모두 있을 때만)
-          if (effectiveCheckOut != null &&
-              !AttendanceStatusHelper.isValidWorkPeriod(effectiveCheckIn, effectiveCheckOut)) {
-            failCount++;
-            continue;
+        // 시간 역전 검사 (출퇴근 모두 있을 때만)
+        if (effectiveCheckOut != null &&
+            !AttendanceStatusHelper.isValidWorkPeriod(effectiveCheckIn, effectiveCheckOut)) {
+          skipCount++;
+          continue;
+        }
+
+        final entry = <String, dynamic>{
+          'attendanceId': attendance.id,
+          'status': _deriveStatus(app, effectiveCheckIn, effectiveCheckOut),
+          'resetWageDetail': attendance.wageStatus == AttendanceModel.wageCalculated,
+        };
+        if (newCheckIn != null) {
+          entry['checkInMs'] = _hmToDateTime(widget.date, newCheckIn).millisecondsSinceEpoch;
+        }
+        if (newCheckOut != null) {
+          final checkInDtForOut = newCheckIn != null
+              ? _hmToDateTime(widget.date, newCheckIn)
+              : attendance.checkInAt ?? _hmToDateTime(widget.date, effectiveCheckIn);
+          entry['checkOutMs'] = _hmToDateTimeCheckout(widget.date, checkInDtForOut, newCheckOut).millisecondsSinceEpoch;
+        }
+        if (effectiveCheckOut != null) {
+          entry['workHours'] = _calcWorkHoursCompat(effectiveCheckIn, effectiveCheckOut);
+        }
+        entries.add(entry);
+
+        // 지각 변동 사전 계산 (CF 성공 후 처리)
+        if (newCheckIn != null) {
+          final expectedStartTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
+          final oldCheckIn = attendance.checkIn;
+          final wasLate = oldCheckIn != null &&
+              AttendanceStatusHelper.isLate(
+                oldCheckIn, expectedStartTime,
+                isNextDay: AttendanceStatusHelper.isNextDayCheckIn(oldCheckIn, expectedStartTime),
+              );
+          final isNowLate = AttendanceStatusHelper.isLate(
+            newCheckIn, expectedStartTime,
+            isNextDay: AttendanceStatusHelper.isNextDayCheckIn(newCheckIn, expectedStartTime),
+          );
+          if (wasLate != isNowLate) {
+            lateChanges.add((app: app, oldCheckIn: oldCheckIn ?? '', wasLate: wasLate, isNowLate: isNowLate));
           }
-
-          final updates = <String, dynamic>{
-            'isModified': true,
-            'modifiedAt': FieldValue.serverTimestamp(),
-            'modifiedBy': FirebaseAuth.instance.currentUser?.uid,
-            'updatedAt': FieldValue.serverTimestamp(),
-            'status': _deriveStatus(app, effectiveCheckIn, effectiveCheckOut),
-          };
-
-          if (newCheckIn != null) {
-            updates['checkIn'] = Timestamp.fromDate(_hmToDateTime(widget.date, newCheckIn));
-            updates['checkInMethod'] = 'manual';
-          }
-
-          if (newCheckOut != null) {
-            // 야간 자동 처리: 수정된 출근 또는 기존 저장된 DateTime 기준
-            final checkInDtForOut = newCheckIn != null
-                ? _hmToDateTime(widget.date, newCheckIn)
-                : attendance.checkInAt ?? _hmToDateTime(widget.date, effectiveCheckIn);
-            updates['checkOut'] = Timestamp.fromDate(
-                _hmToDateTimeCheckout(widget.date, checkInDtForOut, newCheckOut));
-            updates['checkOutMethod'] = 'manual';
-          }
-          if (effectiveCheckOut != null) {
-            updates['workHours'] = _calcWorkHoursCompat(effectiveCheckIn, effectiveCheckOut);
-          }
-
-          // [B02-FIX] 시간 수정 시 1차 확정(calculated) 상태이면 미계산(pending)으로 리셋.
-          // 트랜잭션으로 서버 측 wageStatus를 재확인하여 동시에 다른 관리자가
-          // wageConfirmed/wageTransferred로 전환한 경우 pending 덮어쓰기를 방지한다.
-          if (attendance.wageStatus == AttendanceModel.wageCalculated) {
-            updates['wageStatus'] = AttendanceModel.wagePending;
-            updates['wageDetail'] = FieldValue.delete();
-            updates['yearMonth'] = FieldValue.delete();
-            final attRef = FirebaseFirestore.instance
-                .collection('attendance')
-                .doc(attendance.id);
-            await FirebaseFirestore.instance.runTransaction((tx) async {
-              final snap = await tx.get(attRef);
-              final serverStatus = snap.data()?['wageStatus'] as String?;
-              // 이미 마감(wageConfirmed) 또는 송금완료(wageTransferred)이면 리셋 불가
-              if (serverStatus == AttendanceModel.wageConfirmed ||
-                  serverStatus == AttendanceModel.wageTransferred) {
-                throw Exception('이미 마감된 급여입니다. 시간 수정 전 마감을 취소해주세요.');
-              }
-              tx.update(attRef, updates);
-            });
-          } else {
-            // wagePending: 트랜잭션으로 서버 재확인 — 동시에 다른 관리자가
-            // wageConfirmed/wageTransferred로 전환한 경우 덮어쓰기 방지(TOCTOU 방어)
-            final attRef = FirebaseFirestore.instance
-                .collection('attendance')
-                .doc(attendance.id);
-            await FirebaseFirestore.instance.runTransaction((tx) async {
-              final snap = await tx.get(attRef);
-              final serverStatus = snap.data()?['wageStatus'] as String?;
-              if (serverStatus == AttendanceModel.wageConfirmed ||
-                  serverStatus == AttendanceModel.wageTransferred) {
-                throw Exception('이미 마감된 급여입니다. 시간 수정 전 마감을 취소해주세요.');
-              }
-              tx.update(attRef, updates);
-            });
-          }
-
-          // [LATE-CANCEL] 출근 시간 수정 시 지각 상태 변동 → 신뢰도 연동
-          if (newCheckIn != null) {
-            final expectedStartTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
-            final oldCheckIn = attendance.checkIn;
-            final wasLate = oldCheckIn != null &&
-                AttendanceStatusHelper.isLate(
-                  oldCheckIn, expectedStartTime,
-                  isNextDay: AttendanceStatusHelper.isNextDayCheckIn(oldCheckIn, expectedStartTime),
-                );
-            final isNowLate = AttendanceStatusHelper.isLate(
-              newCheckIn, expectedStartTime,
-              isNextDay: AttendanceStatusHelper.isNextDayCheckIn(newCheckIn, expectedStartTime),
-            );
-            final lateCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-                .httpsCallable('callableReportLate',
-                    options: HttpsCallableOptions(timeout: const Duration(seconds: 10)));
-            if (wasLate && !isNowLate) {
-              await lateCallable.call({
-                'userId': app.uid, 'businessId': app.businessId, 'mode': 'late_canceled',
-              });
-            } else if (!wasLate && isNowLate) {
-              await lateCallable.call({
-                'userId': app.uid, 'businessId': app.businessId, 'mode': 'late',
-              });
-            }
-          }
-
-          successCount++;
-        } catch (e) {
-          debugPrint('❌ 출결 시간 일괄 조정 실패 (${attendance.id}): $e');
-          failCount++;
         }
       }
 
+      if (entries.isEmpty) {
+        if (!mounted) return;
+        if (skipCount > 0) ToastHelper.showWarning('$skipCount명은 급여 확정/이체 완료로 수정 불가');
+        return;
+      }
+
+      final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableBatchAdjustAttendanceTime')
+          .call({'businessId': _selectedBusinessId, 'entries': entries});
+
+      final processed = result.data['processed'] as int? ?? 0;
+      final skipped = (result.data['skipped'] as List?)?.length ?? 0;
+      final totalSkip = skipCount + skipped;
+
       if (!mounted) return;
-      if (successCount > 0) ToastHelper.showSuccess('$successCount명 시간 조정 완료');
-      if (failCount > 0) ToastHelper.showWarning('$failCount명 처리 실패');
+      if (processed > 0) ToastHelper.showSuccess('$processed명 시간 조정 완료');
+      if (totalSkip > 0) ToastHelper.showWarning('$totalSkip명 처리 불가 (급여 확정/이체 완료)');
+
+      // [LATE-CANCEL] CF 성공 후 지각 신뢰도 연동
+      final lateCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableReportLate',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 10)));
+      for (final change in lateChanges) {
+        try {
+          await lateCallable.call({
+            'userId': change.app.uid,
+            'businessId': change.app.businessId,
+            'mode': change.wasLate && !change.isNowLate ? 'late_canceled' : 'late',
+          });
+        } catch (cfErr) {
+          debugPrint('⚠️ callableReportLate 실패 (무시): $cfErr');
+        }
+      }
 
       _hasChanges = true;
       await _loadData();
@@ -4077,59 +3921,75 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         effEnd:   WorkDetailHelper.effectiveEnd(app, _workDetailTimeMap),
       );
 
-  /// 일괄 출근 처리
+  /// 일괄 출근 처리 — CF callableBatchCheckIn 경유
   Future<void> _processBatchCheckIn(String time) async {
     if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
-      int successCount = 0;
-      int failCount = 0;
+      final entries = <Map<String, dynamic>>[];
+      final lateApps = <ApplicationModel>[];
 
       for (var appId in _selectedIds) {
-        // 실시간 리스너가 목록을 갱신한 경우 해당 항목이 사라질 수 있음 — 스킵
         final idx = _confirmedWorkers.indexWhere((a) => a.id == appId);
         if (idx == -1) continue;
         final app = _confirmedWorkers[idx];
         final status = _getAttendanceStatus(app);
-
-        // 이미 출근했거나 노쇼면 스킵
         if (status['status'] != 'pending') continue;
 
-        try {
-          await _createOrUpdateAttendance(
-            app: app,
-            checkIn: time,
-          );
-          successCount++;
+        final existing = _attendanceMap[app.id];
+        final checkInMs = _hmToDateTime(widget.date, time).millisecondsSinceEpoch;
+        final entry = <String, dynamic>{
+          'applicationId': app.id,
+          'workDateMs': widget.date.millisecondsSinceEpoch,
+          'userId': app.uid,
+          'businessId': app.businessId,
+          'businessName': app.businessName,
+          'workType': app.selectedWorkType,
+          'status': _deriveStatus(app, time, null),
+          'checkInMs': checkInMs,
+        };
+        if (existing != null) entry['attendanceId'] = existing.id;
+        entries.add(entry);
 
-          // 지각 여부 체크 및 신뢰도 반영 — CF callableReportLate 서버 처리
-          // 별도 try-catch: CF 실패는 출근 처리 성공/실패와 무관
-          final expectedStartTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
-          if (AttendanceStatusHelper.isLate(
-            time, expectedStartTime,
-            isNextDay: AttendanceStatusHelper.isNextDayCheckIn(time, expectedStartTime),
-          )) {
-            try {
-              await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-                  .httpsCallable('callableReportLate',
-                      options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
-                  .call({'userId': app.uid, 'businessId': app.businessId, 'mode': 'late'});
-            } catch (cfErr) {
-              debugPrint('⚠️ callableReportLate 실패 (무시): $cfErr');
-            }
-          }
-        } catch (e) {
-          failCount++;
+        final expectedStartTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
+        if (AttendanceStatusHelper.isLate(
+          time, expectedStartTime,
+          isNextDay: AttendanceStatusHelper.isNextDayCheckIn(time, expectedStartTime),
+        )) {
+          lateApps.add(app);
+        }
+      }
+
+      if (entries.isEmpty) {
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
+
+      final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableBatchCheckIn')
+          .call({'businessId': _selectedBusinessId, 'entries': entries});
+
+      final processed = result.data['processed'] as int? ?? 0;
+
+      // 지각 신뢰도 연동 — CF 성공 후, 단건 실패는 무시
+      for (final app in lateApps) {
+        try {
+          await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableReportLate',
+                  options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
+              .call({'userId': app.uid, 'businessId': app.businessId, 'mode': 'late'});
+        } catch (cfErr) {
+          debugPrint('⚠️ callableReportLate 실패 (무시): $cfErr');
         }
       }
 
       if (!mounted) return;
-      if (successCount > 0) {
-        ToastHelper.showSuccess('$successCount명 출근 처리 완료');
+      if (processed > 0) {
+        ToastHelper.showSuccess('$processed명 출근 처리 완료');
         _hasChanges = true;
       }
-      if (failCount > 0) {
-        ToastHelper.showWarning('$failCount명 처리 실패');
+      if (entries.length - processed > 0) {
+        ToastHelper.showWarning('${entries.length - processed}명 처리 실패');
       }
 
       await _loadData();
@@ -4142,75 +4002,66 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     }
   }
 
-  /// 일괄 퇴근 처리
+  /// 일괄 퇴근 처리 — CF callableBatchCheckOut 경유
   Future<void> _processBatchCheckOut(String time, List<String> targetIds) async {
     if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
-      int successCount = 0;
-      int failCount = 0;
+      final entries = <Map<String, dynamic>>[];
+      int skipCount = 0;
 
       for (var appId in targetIds) {
-        // 실시간 리스너가 목록을 갱신한 경우 해당 항목이 사라질 수 있음 — 스킵
         final idx = _confirmedWorkers.indexWhere((a) => a.id == appId);
         if (idx == -1) continue;
         final app = _confirmedWorkers[idx];
         final attendance = _attendanceMap[app.id];
         if (attendance == null) continue;
 
-        // [HIGH-01] 급여 마감(confirmed)·이체완료(transferred) 건 스킵 (일괄 퇴근 처리 동일 정책)
         if (attendance.wageStatus == AttendanceModel.wageConfirmed ||
             attendance.wageStatus == AttendanceModel.wageTransferred) {
-          failCount++;
+          skipCount++;
           continue;
         }
 
-        try {
-          final checkIn = attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
-
-          // 시간 역전 검사
-          if (!AttendanceStatusHelper.isValidWorkPeriod(checkIn, time)) {
-            failCount++;
-            continue;
-          }
-
-          final workHours = _calcWorkHoursCompat(checkIn, time);
-          final newStatus = _deriveStatus(app, checkIn, time);
-
-          final checkOutUpdates = <String, dynamic>{
-            'checkOut': Timestamp.fromDate(_hmToDateTimeCheckout(
-                widget.date,
-                attendance.checkInAt ?? _hmToDateTime(widget.date, checkIn),
-                time)),
-            'checkOutMethod': 'manual',
-            'workHours': workHours,
-            'status': newStatus,
-            'updatedAt': FieldValue.serverTimestamp(),
-          };
-
-          // wageCalculated 상태에서 퇴근 시간 변경 → stale wageDetail 방지를 위해 wagePending 리셋
-          if (attendance.wageStatus == AttendanceModel.wageCalculated) {
-            checkOutUpdates['wageStatus'] = AttendanceModel.wagePending;
-            checkOutUpdates['wageDetail'] = FieldValue.delete();
-            checkOutUpdates['yearMonth'] = FieldValue.delete();
-          }
-
-          await FirebaseFirestore.instance
-              .collection('attendance')
-              .doc(attendance.id)
-              .update(checkOutUpdates);
-          successCount++;
-        } catch (e) {
-          failCount++;
+        final checkIn = attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
+        final minutes = AttendanceStatusHelper.workMinutes(checkIn, time);
+        if (minutes <= 0) {
+          skipCount++;
+          continue;
         }
+        if (minutes > 16 * 60) {
+          skipCount++;
+          continue;
+        }
+
+        final checkInDtForOut = attendance.checkInAt ?? _hmToDateTime(widget.date, checkIn);
+        entries.add({
+          'attendanceId': attendance.id,
+          'checkOutMs': _hmToDateTimeCheckout(widget.date, checkInDtForOut, time).millisecondsSinceEpoch,
+          'workHours': _calcWorkHoursCompat(checkIn, time),
+          'status': _deriveStatus(app, checkIn, time),
+          'resetWageDetail': attendance.wageStatus == AttendanceModel.wageCalculated,
+        });
       }
+
+      if (entries.isEmpty) {
+        if (!mounted) return;
+        if (skipCount > 0) ToastHelper.showWarning('$skipCount명은 처리 불가 (시간 역전 또는 16시간 초과)');
+        return;
+      }
+
+      final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableBatchCheckOut')
+          .call({'businessId': _selectedBusinessId, 'entries': entries});
+
+      final processed = result.data['processed'] as int? ?? 0;
 
       if (!mounted) return;
-      if (successCount > 0) {
-        ToastHelper.showSuccess('$successCount명 퇴근 처리 완료');
+      if (processed > 0) {
+        ToastHelper.showSuccess('$processed명 퇴근 처리 완료');
         _hasChanges = true;
       }
-      if (failCount > 0) ToastHelper.showWarning('$failCount명 처리 실패');
+      if (skipCount > 0) ToastHelper.showWarning('$skipCount명 처리 불가 (급여 확정/이체 완료)');
 
       await _loadData();
     } catch (e) {
@@ -4222,16 +4073,15 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     }
   }
 
-  /// 파트별 일괄 출근 처리
+  /// 파트별 일괄 출근 처리 — CF callableBatchCheckIn 경유
   Future<void> _processBatchCheckInByGroup(Map<String, String> groupTimes) async {
-    if (_isLoading) return; // [BUG-01] 중복 실행 방어
+    if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
-      int successCount = 0;
-      int failCount = 0;
+      final entries = <Map<String, dynamic>>[];
+      final lateApps = <ApplicationModel>[];
 
       for (final appId in _selectedIds) {
-        // 실시간 리스너가 목록을 갱신한 경우 해당 항목이 사라질 수 있음 — 스킵
         final idx = _confirmedWorkers.indexWhere((a) => a.id == appId);
         if (idx == -1) continue;
         final app = _confirmedWorkers[idx];
@@ -4242,34 +4092,55 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         final status = _getAttendanceStatus(app);
         if (status['status'] != 'pending') continue;
 
-        try {
-          await _createOrUpdateAttendance(app: app, checkIn: time);
-          successCount++;
+        final existing = _attendanceMap[app.id];
+        final entry = <String, dynamic>{
+          'applicationId': app.id,
+          'workDateMs': widget.date.millisecondsSinceEpoch,
+          'userId': app.uid,
+          'businessId': app.businessId,
+          'businessName': app.businessName,
+          'workType': app.selectedWorkType,
+          'status': _deriveStatus(app, time, null),
+          'checkInMs': _hmToDateTime(widget.date, time).millisecondsSinceEpoch,
+        };
+        if (existing != null) entry['attendanceId'] = existing.id;
+        entries.add(entry);
 
-          final expectedStartTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
-          if (AttendanceStatusHelper.isLate(
-            time, expectedStartTime,
-            isNextDay: AttendanceStatusHelper.isNextDayCheckIn(time, expectedStartTime),
-          )) {
-            try {
-              await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-                  .httpsCallable('callableReportLate',
-                      options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
-                  .call({'userId': app.uid, 'businessId': app.businessId, 'mode': 'late'});
-            } catch (cfErr) {
-              debugPrint('⚠️ callableReportLate 실패 (무시): $cfErr');
-            }
-          }
-        } catch (e) {
-          failCount++;
+        final expectedStartTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
+        if (AttendanceStatusHelper.isLate(
+          time, expectedStartTime,
+          isNextDay: AttendanceStatusHelper.isNextDayCheckIn(time, expectedStartTime),
+        )) {
+          lateApps.add(app);
         }
       }
 
-      if (!mounted) return;
-      if (successCount > 0) ToastHelper.showSuccess('$successCount명 출근 처리 완료');
-      if (failCount > 0) ToastHelper.showWarning('$failCount명 처리 실패');
+      if (entries.isNotEmpty) {
+        final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('callableBatchCheckIn')
+            .call({'businessId': _selectedBusinessId, 'entries': entries});
 
-      _hasChanges = true;
+        final processed = result.data['processed'] as int? ?? 0;
+
+        for (final app in lateApps) {
+          try {
+            await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+                .httpsCallable('callableReportLate',
+                    options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
+                .call({'userId': app.uid, 'businessId': app.businessId, 'mode': 'late'});
+          } catch (cfErr) {
+            debugPrint('⚠️ callableReportLate 실패 (무시): $cfErr');
+          }
+        }
+
+        if (!mounted) return;
+        if (processed > 0) {
+          ToastHelper.showSuccess('$processed명 출근 처리 완료');
+          _hasChanges = true;
+        }
+        if (entries.length - processed > 0) ToastHelper.showWarning('${entries.length - processed}명 처리 실패');
+      }
+
       await _loadData();
     } catch (e) {
       debugPrint('❌ 파트별 일괄 출근 처리 실패: $e');
@@ -4279,19 +4150,17 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     }
   }
 
-  /// 파트별 일괄 퇴근 처리
+  /// 파트별 일괄 퇴근 처리 — CF callableBatchCheckOut 경유
   Future<void> _processBatchCheckOutByGroup(
       Map<String, String> groupTimes, List<String> targetIds) async {
-    if (_isLoading) return; // [BUG-01] 중복 실행 방어
+    if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
-      int successCount = 0;
-      // [W-3] 실패 이유를 이름과 함께 수집 — 단순 failCount만 표시하면 관리자가 원인 파악 불가
-      // 시간 역전과 16시간 초과(야간 장시간 근무 업종)를 구분하여 개별 안내
+      final entries = <Map<String, dynamic>>[];
+      // [W-3] 실패 이유를 이름과 함께 수집 — 시간 역전 vs 16시간 초과 구별
       final List<String> failMessages = [];
 
       for (final appId in targetIds) {
-        // 실시간 리스너가 목록을 갱신한 경우 해당 항목이 사라질 수 있음 — 스킵
         final idx = _confirmedWorkers.indexWhere((a) => a.id == appId);
         if (idx == -1) continue;
         final app = _confirmedWorkers[idx];
@@ -4302,8 +4171,6 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         final attendance = _attendanceMap[app.id];
         if (attendance == null) continue;
 
-        // [HIGH-01] 급여 마감(confirmed)·이체완료(transferred) 건 스킵 — 내부 가드
-        // _processBatchCheckOut과 동일 정책: UI 필터에만 의존하면 우회 가능
         final workerName = _userMap[app.uid]?.name ?? '근무자';
         if (attendance.wageStatus == AttendanceModel.wageConfirmed ||
             attendance.wageStatus == AttendanceModel.wageTransferred) {
@@ -4311,48 +4178,42 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           continue;
         }
 
-        try {
-          final checkIn = attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
+        final checkIn = attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
+        final minutes = AttendanceStatusHelper.workMinutes(checkIn, time);
+        if (minutes <= 0) {
+          failMessages.add('$workerName: 퇴근 시간이 출근 시간보다 앞서 있습니다');
+          continue;
+        }
+        if (minutes > 16 * 60) {
+          failMessages.add('$workerName: 16시간 초과 (${minutes ~/ 60}시간 ${minutes % 60}분)');
+          continue;
+        }
 
-          // [W-3] 실패 이유 구분 — workMinutes로 직접 계산하여 시간 역전 vs 16시간 초과 구별
-          final minutes = AttendanceStatusHelper.workMinutes(checkIn, time);
-          if (minutes <= 0) {
-            failMessages.add('$workerName: 퇴근 시간이 출근 시간보다 앞서 있습니다');
-            continue;
-          }
-          if (minutes > 16 * 60) {
-            failMessages.add('$workerName: 16시간 초과 (${minutes ~/ 60}시간 ${minutes % 60}분)');
-            continue;
-          }
+        final checkInDtForOut = attendance.checkInAt ?? _hmToDateTime(widget.date, checkIn);
+        entries.add({
+          'attendanceId': attendance.id,
+          'checkOutMs': _hmToDateTimeCheckout(widget.date, checkInDtForOut, time).millisecondsSinceEpoch,
+          'workHours': _calcWorkHoursCompat(checkIn, time),
+          'status': _deriveStatus(app, checkIn, time),
+          'resetWageDetail': attendance.wageStatus == AttendanceModel.wageCalculated,
+        });
+      }
 
-          final workHours = _calcWorkHoursCompat(checkIn, time);
-          final newStatus = _deriveStatus(app, checkIn, time);
+      if (entries.isNotEmpty) {
+        final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('callableBatchCheckOut')
+            .call({'businessId': _selectedBusinessId, 'entries': entries});
 
-          await FirebaseFirestore.instance
-              .collection('attendance')
-              .doc(attendance.id)
-              .update({
-            'checkOut': Timestamp.fromDate(_hmToDateTimeCheckout(
-                widget.date,
-                attendance.checkInAt ?? _hmToDateTime(widget.date, checkIn),
-                time)),
-            'checkOutMethod': 'manual',
-            'workHours': workHours,
-            'status': newStatus,
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-          successCount++;
-        } catch (e) {
-          final workerName = _userMap[app.uid]?.name ?? '근무자';
-          failMessages.add('$workerName: 처리 오류');
+        final processed = result.data['processed'] as int? ?? 0;
+
+        if (!mounted) return;
+        if (processed > 0) {
+          ToastHelper.showSuccess('$processed명 퇴근 처리 완료');
+          _hasChanges = true;
         }
       }
 
       if (!mounted) return;
-      if (successCount > 0) {
-        ToastHelper.showSuccess('$successCount명 퇴근 처리 완료');
-        _hasChanges = true;
-      }
       if (failMessages.isNotEmpty) {
         ToastHelper.showWarning('${failMessages.length}명 처리 실패\n${failMessages.join('\n')}');
       }
@@ -4370,63 +4231,6 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
 
 
-
-  /// Attendance 생성 또는 업데이트 (출근 처리)
-  ///
-  /// [D01-FIX] 두 관리자가 동시에 같은 근무자를 수동 출근 처리할 때
-  /// collection.add() 는 랜덤 ID를 생성하므로 두 개의 attendance 도큐먼트가 만들어진다.
-  /// attendance_firestore.dart의 정규 체크인 경로와 동일하게
-  /// '{applicationId}_{yyyyMMdd}' 결정적 ID + set(SetOptions(merge: true)) 로 변경한다.
-  /// merge: true 이면 제공된 필드를 upsert하고 명시하지 않은 필드는 보존한다.
-  /// 동시 실행 시 마지막 write 가 우선(last-write-wins)이므로 중복 문서는 없으나
-  /// 두 관리자가 다른 시간을 입력한 경우 하나는 유실된다 (허용된 트레이드오프).
-  Future<void> _createOrUpdateAttendance({
-    required ApplicationModel app,
-    required String checkIn,
-  }) async {
-    final existingAttendance = _attendanceMap[app.id];
-    final status = _deriveStatus(app, checkIn, null);
-
-    if (existingAttendance != null) {
-      await FirebaseFirestore.instance
-          .collection('attendance')
-          .doc(existingAttendance.id)
-          .update({
-        'checkIn': Timestamp.fromDate(_hmToDateTime(widget.date, checkIn)),
-        'checkInMethod': 'manual',
-        'status': status,
-        'isModified': true,
-        'modifiedAt': FieldValue.serverTimestamp(),
-        'modifiedBy': FirebaseAuth.instance.currentUser?.uid,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-    } else {
-      // 결정적 docId — attendance_firestore.dart checkIn() 와 동일 패턴
-      final dateStr = '${widget.date.year}'
-          '${widget.date.month.toString().padLeft(2, '0')}'
-          '${widget.date.day.toString().padLeft(2, '0')}';
-      final docId = '${app.id}_$dateStr';
-      await FirebaseFirestore.instance
-          .collection('attendance')
-          .doc(docId)
-          .set({
-        'applicationId': app.id,
-        'userId': app.uid,
-        'businessId': app.businessId,
-        'businessName': app.businessName,
-        'workDate': Timestamp.fromDate(widget.date),
-        'workType': app.selectedWorkType,
-        'checkIn': Timestamp.fromDate(_hmToDateTime(widget.date, checkIn)),
-        'checkInMethod': 'manual',
-        'status': status,
-        'isModified': false,
-        'modifyRequested': false,
-        'wageStatus': AttendanceModel.wagePending,
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-    }
-  }
 
   // ═══════════════════════════════════════════════════════════
   // 노쇼 처리
@@ -4458,64 +4262,50 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     if (!confirmed || !mounted) return;
     setState(() => _isLoading = true);
 
-    // 1단계: attendance + users를 batch로 원자 업데이트
-    final batch = FirebaseFirestore.instance.batch();
-    final now = FieldValue.serverTimestamp();
-    final processed = <({ApplicationModel app, AttendanceModel attendance})>[];
-
-    for (final app in targets) {
-      final attendance = _attendanceMap[app.id];
-      if (attendance == null) continue;
-      final wageDetail = attendance.wageDetail?.copyWith(
-        confirmedBy: null,
-        confirmedAt: null,
-      );
-      batch.update(
-        FirebaseFirestore.instance.collection('attendance').doc(attendance.id),
-        {
-          'wageStatus': AttendanceModel.wageCalculated,
-          'wageDetail': wageDetail?.toMap(),
-          'finalConfirmedAt': FieldValue.delete(),
-          'updatedAt': now,
-        },
-      );
-      processed.add((app: app, attendance: attendance));
-    }
+    // CF callableCancelFinalConfirmation 경유 — 서버에서 wageTransferred 건 재차 방어
+    final attendanceIds = targets
+        .map((app) => _attendanceMap[app.id]?.id)
+        .whereType<String>()
+        .toList();
 
     try {
-      await batch.commit();
+      final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableCancelFinalConfirmation')
+          .call({'businessId': _selectedBusinessId, 'attendanceIds': attendanceIds});
+      if (!mounted) return;
+      final processed = result.data['processed'] as int? ?? 0;
+
+      // 알림 (TrustScore는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리)
+      for (final app in targets) {
+        final attendance = _attendanceMap[app.id];
+        if (attendance == null) continue;
+        try {
+          final businessName = _businessNameMap[app.businessId] ?? '';
+          await _firestoreService.createNotification(
+            NotificationModel.createWageCancelConfirmed(
+              userId: app.uid,
+              businessName: businessName,
+              businessId: app.businessId,
+              workDate: app.workDate,
+              attendanceId: attendance.id,
+            ),
+          );
+        } catch (e) {
+          debugPrint('⚠️ 알림 발송 실패 (${app.uid}): $e');
+        }
+      }
+
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      _hasChanges = true;
+      ToastHelper.showSuccess('$processed명 마감취소 완료');
+      await _loadData();
     } catch (e) {
-      debugPrint('❌ 마감 취소 batch 실패: $e');
+      debugPrint('❌ 마감 취소 실패: $e');
       if (mounted) setState(() => _isLoading = false);
       if (!mounted) return;
       ToastHelper.showError('마감취소에 실패했습니다');
-      return;
     }
-
-    // 2단계: 알림 (TrustScore는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리)
-    for (final p in processed) {
-      if (!mounted) break;
-      try {
-        final businessName = _businessNameMap[p.app.businessId] ?? '';
-        await _firestoreService.createNotification(
-          NotificationModel.createWageCancelConfirmed(
-            userId: p.app.uid,
-            businessName: businessName,
-            businessId: p.app.businessId,
-            workDate: p.app.workDate,
-            attendanceId: p.attendance.id,
-          ),
-        );
-      } catch (e) {
-        debugPrint('⚠️ 알림 발송 실패 (${p.app.uid}): $e');
-      }
-    }
-
-    if (!mounted) return;
-    setState(() => _isLoading = false);
-    _hasChanges = true;
-    ToastHelper.showSuccess('${processed.length}명 마감취소 완료');
-    await _loadData();
   }
 
 

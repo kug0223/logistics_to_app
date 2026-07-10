@@ -65,9 +65,9 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
   // workerName 이 비어있는 경우 users 컬렉션에서 보완 조회한 이름 캐시
   Map<String, String> _resolvedWorkerNames = {};
 
-  // 페이지네이션 상태
-  DocumentSnapshot? _cursorWritten;
-  DocumentSnapshot? _cursorReceived;
+  // 페이지네이션 상태 — CF 전환으로 DocumentSnapshot 대신 문서 ID 문자열 사용
+  String? _cursorWritten;
+  String? _cursorReceived;
   bool _hasMoreWritten = false;
   bool _hasMoreReceived = false;
   bool _isLoadingMoreWritten = false;
@@ -301,7 +301,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     try {
       final page = await _reviewService.getReviewsByBusinessPaged(
         businessId: businessId,
-        startAfter: _cursorWritten,
+        startAfterId: _cursorWritten,
       );
       if (!mounted) return;
       setState(() {
@@ -326,7 +326,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     try {
       final page = await _reviewService.getPublishedReviewsForBusinessPaged(
         businessId: businessId,
-        startAfter: _cursorReceived,
+        startAfterId: _cursorReceived,
       );
       if (!mounted) return;
       setState(() {

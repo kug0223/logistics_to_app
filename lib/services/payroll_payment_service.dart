@@ -12,14 +12,13 @@
 //   - 상태 필터는 서버사이드 where()
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/core/attendance_model.dart';
-import '../models/core/notification_model.dart';
 import '../models/core/payment_change_request_model.dart';
 import '../models/core/interim_settlement_request_model.dart';
 import '../utils/format_helper.dart';
-import 'firestore_service.dart';
 
 /// 커서 기반 페이지네이션 결과
 class PayrollPage<T> {
@@ -38,137 +37,84 @@ class PayrollPaymentService {
   PayrollPaymentService._internal();
 
   final _db = FirebaseFirestore.instance;
-  final _firestoreService = FirestoreService();
+  final _cf = FirebaseFunctions.instanceFor(region: 'asia-northeast3');
 
   // ══════════════════════════════════════════════════════════
-  // 송금 처리 (이체 완료 처리)
+  // 송금 처리 (이체 완료 처리) — CF callableMarkTransferredBatch 경유
+  // confirmed→transferred 법적 상태 전이: Trust Boundary Charter 기준 CF 필수
   // ══════════════════════════════════════════════════════════
 
-  /// 단건 이체 완료 처리
-  // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
+  /// 단건 이체 완료 처리 — callableMarkTransferredBatch(attendanceIds 1건) 위임
   Future<void> markTransferred({
     required String attendanceId,
-    required String processedBy,
+    required String businessId,
     String? transferNote,
-    // 알림 발송용 — null이면 알림 생략
+    // 알림 발송용 — null이면 CF에서 알림 생략
     String? workerUserId,
     String? workerName,
     String? businessName,
-    String? businessId,   // nullable 유지 — 알림 생략 경로에서 null 허용
     int? finalWage,
     String? applicationId,
   }) async {
-    final attRef = _db.collection('attendance').doc(attendanceId);
-    await _db.runTransaction((tx) async {
-      final snap = await tx.get(attRef);
-      final currentStatus = snap.data()?['wageStatus'] as String?;
-      if (currentStatus != AttendanceModel.wageConfirmed) {
-        throw Exception('확정된 급여만 이체 처리할 수 있습니다. (현재 상태: $currentStatus)');
-      }
-      tx.update(attRef, {
-        'wageStatus':    AttendanceModel.wageTransferred,
-        'transferDate':  FieldValue.serverTimestamp(),
-        if (transferNote != null && transferNote.isNotEmpty)
-          'transferNote': transferNote,
-        'transferredBy': processedBy,
-        'updatedAt':     FieldValue.serverTimestamp(),
-      });
-    });
+    final notifications = (workerUserId != null &&
+            workerName != null &&
+            businessName != null &&
+            finalWage != null)
+        ? [
+            {
+              'userId': workerUserId,
+              'workerName': workerName,
+              'businessName': businessName,
+              'businessId': businessId,
+              'finalWage': finalWage,
+              'attendanceId': attendanceId,
+              if (applicationId != null && applicationId.isNotEmpty)
+                'applicationId': applicationId,
+            }
+          ]
+        : null;
 
-    // 트랜잭션 커밋 후 지원자에게 알림 발송
-    // [BUG-PAY-01 수정] businessId == null이면 알림 딥링크가 빈 문자열 → 탭 시 라우팅 실패.
-    // 알림 전체를 건너뛰는 것이 잘못된 딥링크를 발송하는 것보다 안전.
-    if (workerUserId != null &&
-        workerName != null &&
-        businessName != null &&
-        businessId != null &&
-        finalWage != null) {
-      try {
-        await _firestoreService.createNotification(
-          NotificationModel.createWageTransferred(
-            userId: workerUserId,
-            workerName: workerName,
-            businessName: businessName,
-            businessId: businessId,
-            finalWage: finalWage,
-            applicationId: applicationId,
-          ),
-        );
-      } catch (e) {
-        debugPrint('⚠️ 이체 완료 알림 발송 실패 (attendanceId: $attendanceId): $e');
-      }
-    } else {
-      // 필수 파라미터 누락으로 알림 스킵 — 잘못된 딥링크보다 안전 (BUG-PAY-01)
-      debugPrint('⚠️ 이체 완료 알림 스킵 (attendanceId: $attendanceId) — workerUserId=$workerUserId businessId=$businessId finalWage=$finalWage');
-    }
+    await _cf.httpsCallable('callableMarkTransferredBatch').call({
+      'businessId': businessId,
+      'attendanceIds': [attendanceId],
+      if (transferNote != null && transferNote.isNotEmpty) 'transferNote': transferNote,
+      if (notifications != null) 'notifications': notifications,
+    });
   }
 
-  /// 일괄 이체 완료 처리 (최대 500건, 초과 시 분할)
-  // 450건 단위 WriteBatch로 처리하므로, N번째 batch 성공 후 N+1번째 실패 시
-  // 앞서 처리된 건만 transferred 상태가 되는 부분 성공이 발생할 수 있다.
-  // Firestore는 다중 batch 간 원자성을 보장하지 않으며, 월간 450건 초과 사업장은
-  // 극히 드무므로 현재 규모에서는 허용된 트레이드오프다.
-  // 재시도 시: 이미 transferred된 건은 동일 상태로 덮어쓰여 멱등하게 처리된다.
-  // [설계 한계] markTransferredBatch는 트랜잭션 없이 batch.update를 수행하므로
-  //   개별 항목의 wageStatus를 사전 재검증하지 않는다.
-  //   호출부(payroll_payment_dashboard_screen)에서 wageConfirmed 상태만 필터링하여 전달하는 것이
-  //   상태 기계 무결성 보장의 1차 방어선이다. Firestore attendance.update 규칙이 2차 방어선.
-  // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
+  /// 일괄 이체 완료 처리 — callableMarkTransferredBatch(최대 200건/청크) 위임
+  // 재시도 시: 이미 transferred된 건은 CF에서 멱등 처리(processed++ 후 skip)
+  // 알림은 첫 번째 청크에만 포함 (알림은 attendanceIds 순서와 무관)
   Future<void> markTransferredBatch({
     required List<String> attendanceIds,
-    required String processedBy,
+    required String businessId,
     String? transferNote,
-    // 알림 발송용 — null이면 알림 생략. 각 항목은 workerUserId 등 자체 완결적이므로 attendanceIds 순서와 무관
     List<TransferNotificationInfo>? notificationInfos,
   }) async {
-    for (int i = 0; i < attendanceIds.length; i += 450) {
-      final chunkStart = i;
-      final chunk = attendanceIds.skip(chunkStart).take(450).toList();
-      final batch = _db.batch();
-      for (final id in chunk) {
-        batch.update(_db.collection('attendance').doc(id), {
-          'wageStatus':    AttendanceModel.wageTransferred,
-          'transferDate':  FieldValue.serverTimestamp(),
-          if (transferNote != null && transferNote.isNotEmpty)
-            'transferNote': transferNote,
-          'transferredBy': processedBy,
-          'updatedAt':     FieldValue.serverTimestamp(),
-        });
-      }
-      try {
-        await batch.commit();
-      } catch (e) {
-        final processed = chunkStart;
-        final remaining = attendanceIds.length - processed;
-        throw Exception(
-          '일괄 이체 중 오류가 발생했습니다.\n'
-          '처리 완료: $processed건 / 미처리: $remaining건\n'
-          '다시 시도하면 이미 처리된 건은 건너뛰고 안전하게 완료됩니다. ($e)',
-        );
-      }
-    }
+    final allNotifications = notificationInfos
+        ?.map((n) => {
+              'userId': n.workerUserId,
+              'workerName': n.workerName,
+              'businessName': n.businessName,
+              'businessId': n.businessId,
+              'finalWage': n.finalWage,
+              'attendanceId': n.attendanceId,
+              if (n.applicationId != null && n.applicationId!.isNotEmpty)
+                'applicationId': n.applicationId!,
+            })
+        .toList();
 
-    // 배치 커밋 후 각 항목별로 지원자에게 알림 발송 — Future.wait으로 병렬 처리
-    // 각 알림을 개별 try-catch로 감싸 하나 실패해도 나머지 발송이 보장됨
-    if (notificationInfos != null) {
-      await Future.wait(
-        notificationInfos.map((info) async {
-          try {
-            await _firestoreService.createNotification(
-              NotificationModel.createWageTransferred(
-                userId: info.workerUserId,
-                workerName: info.workerName,
-                businessName: info.businessName,
-                businessId: info.businessId,
-                finalWage: info.finalWage,
-                applicationId: info.applicationId,
-              ),
-            );
-          } catch (e) {
-            debugPrint('⚠️ 일괄 이체 완료 알림 발송 실패 (userId: ${info.workerUserId}): $e');
-          }
-        }),
-      );
+    bool notificationsSent = false;
+    for (int i = 0; i < attendanceIds.length; i += 200) {
+      final chunk = attendanceIds.skip(i).take(200).toList();
+      await _cf.httpsCallable('callableMarkTransferredBatch').call({
+        'businessId': businessId,
+        'attendanceIds': chunk,
+        if (transferNote != null && transferNote.isNotEmpty) 'transferNote': transferNote,
+        if (!notificationsSent && allNotifications != null)
+          'notifications': allNotifications,
+      });
+      notificationsSent = true;
     }
   }
 
@@ -253,16 +199,22 @@ class PayrollPaymentService {
     try {
       final ref = referenceDate ?? DateTime.now();
       final today = DateTime(ref.year, ref.month, ref.day, 23, 59, 59);
+      // [RULE-FIX] wageStatus 등호필터 제거 — 다중 equality 복합쿼리에서
+      // request.query.filters.businessId 미평가 → PERMISSION_DENIED 발생
+      // businessId 단일 등호필터 + paymentDueDate 범위필터로 유지, wageStatus 클라이언트 필터링
       final snap = await _db
           .collection('attendance')
           .where('businessId', isEqualTo: businessId)
-          .where('wageStatus', isEqualTo: AttendanceModel.wageConfirmed)
           .where('paymentDueDate',
               isLessThanOrEqualTo: Timestamp.fromDate(today))
           .orderBy('paymentDueDate')
           .orderBy('workDate')
           .get();
-      return snap.docs.map(AttendanceModel.tryFromFirestore).whereType<AttendanceModel>().toList();
+      return snap.docs
+          .map(AttendanceModel.tryFromFirestore)
+          .whereType<AttendanceModel>()
+          .where((a) => a.wageStatus == AttendanceModel.wageConfirmed)
+          .toList();
     } catch (e) {
       debugPrint('❌ 오늘 지급 조회 실패: $e');
       return [];
@@ -272,8 +224,9 @@ class PayrollPaymentService {
   /// 오늘 지급 예정 건수 (배지용 — count 쿼리)
   ///
   /// [직접 Firestore 유지 — 의도적 결정]
-  /// getTodayPayments와 동일 사유. businessId + wageStatus 등호필터 사용으로
-  /// request.query.filters.businessId 정상 평가 → 현재 규칙에서 안전하다.
+  /// [RULE-FIX] wageStatus 등호필터 제거 — 다중 equality 복합쿼리에서
+  /// request.query.filters.businessId가 null 평가 → PERMISSION_DENIED.
+  /// businessId 단일 등호필터만 사용, wageStatus·paymentDueDate는 클라이언트 필터링.
   Future<int> getTodayPaymentCount({
     required String businessId,
     DateTime? referenceDate,
@@ -281,18 +234,16 @@ class PayrollPaymentService {
     try {
       final ref = referenceDate ?? DateTime.now();
       final today = DateTime(ref.year, ref.month, ref.day, 23, 59, 59);
-      // paymentDueDate 범위필터 제거 — 등호+범위 복합쿼리에서 request.query.filters 미작동
-      // businessId + wageStatus 등호필터만 사용, 날짜 필터링은 클라이언트에서 처리
       // [PAY-LIMIT-01] limit(5000): 한 사업장의 연간 미이체 건수 한도 상향 (1000→5000)
-      // 대형 사업장(150명×연간)에서도 안전한 여유값
       final snap = await _db
           .collection('attendance')
           .where('businessId', isEqualTo: businessId)
-          .where('wageStatus', isEqualTo: AttendanceModel.wageConfirmed)
           .limit(5000)
           .get();
       return snap.docs.where((doc) {
-        final dueDate = doc.data()['paymentDueDate'];
+        final data = doc.data();
+        if (data['wageStatus'] != AttendanceModel.wageConfirmed) return false;
+        final dueDate = data['paymentDueDate'];
         if (dueDate == null) return false;
         return !(dueDate as Timestamp).toDate().isAfter(today);
       }).length;
@@ -532,7 +483,7 @@ class PayrollPaymentService {
     if (!skipMarkTransferred) {
       await markTransferredBatch(
         attendanceIds: idsToTransfer,
-        processedBy: processedBy,
+        businessId: req.businessId,
         transferNote: transferNote ?? '중간정산 처리',
       );
     }
@@ -590,6 +541,8 @@ class TransferNotificationInfo {
   final String businessId;
   final int finalWage;
   final String? applicationId;
+  // [MEDIUM-3] CF에서 실제 처리된 attendanceId에만 알림 발송하도록 필터링
+  final String attendanceId;
 
   const TransferNotificationInfo({
     required this.workerUserId,
@@ -597,6 +550,7 @@ class TransferNotificationInfo {
     required this.businessName,
     required this.businessId,
     required this.finalWage,
+    required this.attendanceId,
     this.applicationId,
   });
 }
@@ -618,6 +572,7 @@ List<TransferNotificationInfo> buildTransferNotificationInfos({
       businessName: r.businessName,
       businessId: r.businessId,
       finalWage: net,
+      attendanceId: r.id,
       applicationId: r.applicationId,
     );
   }).toList();

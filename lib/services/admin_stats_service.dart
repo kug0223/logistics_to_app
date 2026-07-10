@@ -522,16 +522,22 @@ class AdminStatsService {
 
   Future<List<MonthlyReviewModel>> _queryReviews(
       List<String> ids, int year) async {
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetMonthlyReviewsByBiz',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
     final results = await Future.wait(ids.map((id) async {
       try {
-        final snap = await _db
-            .collection('monthly_reviews')
-            .where('businessId', isEqualTo: id)
-            .where('reviewYear', isEqualTo: year)
-            .where('reviewType', isEqualTo: 'ADMIN_TO_USER')
-            .get()
-            .timeout(const Duration(seconds: 20));
-        return snap.docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList();
+        final result = await callable.call({
+          'businessId': id,
+          'reviewYear': year,
+          'reviewType': 'ADMIN_TO_USER',
+        });
+        final raw = List.from(result.data['reviews'] as List? ?? []);
+        return raw.map((e) {
+          final m = Map<String, dynamic>.from(e as Map);
+          final docId = m.remove('id') as String? ?? '';
+          return MonthlyReviewModel.tryFromMap(m, docId);
+        }).whereType<MonthlyReviewModel>().toList();
       } catch (e) {
         debugPrint('⚠️ 연간 리뷰 조회 실패 ($id): $e');
         return <MonthlyReviewModel>[];
@@ -542,17 +548,23 @@ class AdminStatsService {
 
   Future<List<MonthlyReviewModel>> _queryMonthReviews(
       List<String> ids, int year, int month) async {
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetMonthlyReviewsByBiz',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
     final results = await Future.wait(ids.map((id) async {
       try {
-        final snap = await _db
-            .collection('monthly_reviews')
-            .where('businessId', isEqualTo: id)
-            .where('reviewYear', isEqualTo: year)
-            .where('reviewMonth', isEqualTo: month)
-            .where('reviewType', isEqualTo: 'ADMIN_TO_USER')
-            .get()
-            .timeout(const Duration(seconds: 20));
-        return snap.docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList();
+        final result = await callable.call({
+          'businessId': id,
+          'reviewYear': year,
+          'reviewMonth': month,
+          'reviewType': 'ADMIN_TO_USER',
+        });
+        final raw = List.from(result.data['reviews'] as List? ?? []);
+        return raw.map((e) {
+          final m = Map<String, dynamic>.from(e as Map);
+          final docId = m.remove('id') as String? ?? '';
+          return MonthlyReviewModel.tryFromMap(m, docId);
+        }).whereType<MonthlyReviewModel>().toList();
       } catch (e) {
         debugPrint('⚠️ 월간 리뷰 조회 실패 ($id): $e');
         return <MonthlyReviewModel>[];

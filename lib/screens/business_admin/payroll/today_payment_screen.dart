@@ -342,15 +342,13 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
       final note = await _showNoteDialog();
       if (!mounted) return;
 
-      // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
       await _payService.markTransferred(
         attendanceId:  record.id,
-        processedBy:   uid,
+        businessId:    record.businessId,
         transferNote:  note,
         workerUserId:  record.userId,
         workerName:    name,
         businessName:  record.businessName,
-        businessId:    record.businessId,
         finalWage:     net,
         applicationId: record.applicationId,
       );
@@ -393,12 +391,12 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
       final note = await _showNoteDialog();
       if (!mounted) return;
 
-      // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송 — 선택된 레코드 목록 수집
       final selectedRecords = _records.where((r) => _selectedIds.contains(r.id)).toList();
+      final businessId = selectedRecords.isNotEmpty ? selectedRecords.first.businessId : '';
 
       await _payService.markTransferredBatch(
         attendanceIds:     _selectedIds.toList(),
-        processedBy:       uid,
+        businessId:        businessId,
         transferNote:      note,
         notificationInfos: buildTransferNotificationInfos(
           records:          selectedRecords,

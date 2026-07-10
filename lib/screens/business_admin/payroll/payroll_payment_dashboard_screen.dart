@@ -453,26 +453,23 @@ class _PayrollPaymentDashboardScreenState
         final r = recs.first;
         final wd = r.wageDetail;
         final net = wd?.effectiveNetWage ?? 0;
-        // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
         await _payService.markTransferred(
           attendanceId:  r.id,
-          processedBy:   uid,
+          businessId:    r.businessId,
           transferNote:  note,
           workerUserId:  r.userId,
           workerName:    workerName,
           businessName:  r.businessName,
-          businessId:    r.businessId,
           finalWage:     net,
           applicationId: r.applicationId,
         );
       } else {
-        // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송
         final nameByUid = Map.fromEntries(
           _userBankCache.entries.map((e) => MapEntry(e.key, e.value['name'] ?? e.key)),
         );
         await _payService.markTransferredBatch(
           attendanceIds:     recs.map((r) => r.id).toList(),
-          processedBy:       uid,
+          businessId:        recs.first.businessId,
           transferNote:      note,
           notificationInfos: buildTransferNotificationInfos(
             records:         recs,
@@ -512,7 +509,6 @@ class _PayrollPaymentDashboardScreenState
       }
       final note = await _showTransferNoteDialog();
       if (!mounted) return;
-      // [BUG-수정] 급여 이체 완료 후 지원자 알림 발송 — 선택된 레코드 목록 수집
       final selectedRecords =
           _pendingRecords.where((r) => _selectedIds.contains(r.id)).toList();
       final nameByUid = Map.fromEntries(
@@ -521,7 +517,7 @@ class _PayrollPaymentDashboardScreenState
 
       await _payService.markTransferredBatch(
         attendanceIds:     _selectedIds.toList(),
-        processedBy:       uid,
+        businessId:        selectedRecords.isNotEmpty ? selectedRecords.first.businessId : '',
         transferNote:      note,
         notificationInfos: buildTransferNotificationInfos(
           records:         selectedRecords,

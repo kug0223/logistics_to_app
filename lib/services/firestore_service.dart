@@ -368,82 +368,14 @@ class FirestoreService {
   // 통계 재계산
   // ═══════════════════════════════════════════════════════════
 
-  /// TO 통계 재계산 (applications에서 직접 집계)
+  /// TO 통계 재계산 — CF callableRecalculateTOStats 위임 (Admin SDK로 보안 규칙 우회)
   Future<bool> recalculateTOStats(String toId) async {
     try {
-      final to = await getTO(toId);
-      if (to == null) return false;
-
-      final appsSnap = await _firestore
-          .collection('applications')
-          .where('toId', isEqualTo: toId)
-          .where('businessId', isEqualTo: to.businessId)
-          .get(const GetOptions(source: Source.server));
-
-      int totalPending = 0;
-      int totalConfirmed = 0;
-      for (final doc in appsSnap.docs) {
-        final status = doc.data()['status'] as String?;
-        if (status == AppStatus.pending) totalPending++;
-        // CONTRACT_PENDING도 확정 인원으로 집계
-        if (AppStatus.confirmedStatuses.contains(status)) totalConfirmed++;
-      }
-
-      // totalRequired 초과 확정 시 TO status → full, 미만이면 active 복구
-      final toUpdate = <String, dynamic>{
-        'totalPending': totalPending,
-        'totalConfirmed': totalConfirmed,
-      };
-      final notClosed = to.status != TOStatus.closed &&
-          to.status != TOStatus.expired;
-      if (notClosed) {
-        final shouldBeFull = to.totalRequired > 0 && totalConfirmed >= to.totalRequired;
-        toUpdate['status'] = shouldBeFull ? TOStatus.full : TOStatus.active;
-      }
-
-      await _firestore.collection('tos').doc(toId).update(toUpdate);
-
-      // flex TO: 슬롯별 통계도 재계산
-      if (to.isFlexType) {
-        // slotId별 집계
-        final Map<String, Map<String, int>> slotStats = {};
-        for (final doc in appsSnap.docs) {
-          final data = doc.data();
-          final status = data['status'] as String?;
-          final sid = data['slotId'] as String?;
-          if (sid == null || !AppStatus.activeStates.contains(status)) continue;
-          slotStats[sid] ??= {'pending': 0, 'confirmed': 0};
-          // ??= 직후 접근 — slotStats[sid]와 내부 키 'pending'/'confirmed' 모두 보장, ! 안전
-          if (status == AppStatus.pending) slotStats[sid]!['pending'] = slotStats[sid]!['pending']! + 1;
-          if (AppStatus.confirmedStatuses.contains(status)) slotStats[sid]!['confirmed'] = slotStats[sid]!['confirmed']! + 1;
-        }
-
-        // 슬롯 전체 조회 후 일괄 업데이트
-        final slotsSnap = await _firestore
-            .collection('tos').doc(toId)
-            .collection('slots').get(const GetOptions(source: Source.server));
-        if (slotsSnap.docs.isNotEmpty) {
-          var batch = _firestore.batch();
-          int batchCount = 0;
-          for (final slotDoc in slotsSnap.docs) {
-            final stats = slotStats[slotDoc.id] ?? {'pending': 0, 'confirmed': 0};
-            batch.update(slotDoc.reference, {
-              'pendingCount': stats['pending'],
-              'confirmedCount': stats['confirmed'],
-            });
-            batchCount++;
-            if (batchCount >= 499) {
-              await batch.commit();
-              batch = _firestore.batch();
-              batchCount = 0;
-            }
-          }
-          if (batchCount > 0) await batch.commit();
-        }
-      }
-
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableRecalculateTOStats');
+      await callable.call({'toId': toId});
       clearCache(toId: toId);
-      debugPrint('✅ TO 통계 재계산 완료: $toId (대기 $totalPending, 확정 $totalConfirmed)');
+      debugPrint('✅ TO 통계 재계산 완료 (CF): $toId');
       return true;
     } catch (e) {
       debugPrint('❌ TO 통계 재계산 실패: $e');
@@ -640,25 +572,6 @@ class FirestoreService {
       return getTOsByBusiness(businessId, activeOnly: true);
     }
     return getPublishedTOs();
-  }
-
-  /// 구 getApplicationsByTO — businessId+title로 조회
-  Future<List<ApplicationModel>> getApplicationsByTO(
-    String businessId,
-    String toTitle,
-    DateTime workDate,
-  ) async {
-    try {
-      final snap = await _firestore
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('toTitle', isEqualTo: toTitle)
-          .get();
-      return snap.docs.map(ApplicationModel.tryFromFirestore).whereType<ApplicationModel>().toList();
-    } catch (e) {
-      debugPrint('❌ getApplicationsByTO 실패: $e');
-      return [];
-    }
   }
 
   /// 구 getApplicationsForTO — getApplicationsByTOId 위임
@@ -977,37 +890,13 @@ class FirestoreService {
   }
 
   /// workDate가 지난 PENDING 지원서를 AUTO_CANCELED로 일괄 처리
+  /// Firestore rules가 클라이언트의 AUTO_CANCELED 전환을 차단 → CF callableExpireApplications 경유
   Future<void> autoExpirePendingApplications(String uid) async {
     try {
-      final today = DateTime.now();
-      final todayStart = DateTime(today.year, today.month, today.day);
-
-      final snapshot = await _firestore
-          .collection('applications')
-          .where('uid', isEqualTo: uid)
-          .where('status', isEqualTo: AppStatus.pending)
-          .where('workDate', isLessThan: Timestamp.fromDate(todayStart))
-          .get();
-
-      if (snapshot.docs.isEmpty) return;
-
-      var batch = _firestore.batch();
-      int batchCount = 0;
-      for (final doc in snapshot.docs) {
-        batch.update(doc.reference, {
-          'status': AppStatus.autoCanceled,
-          'canceledAt': FieldValue.serverTimestamp(),
-          'cancelReason': 'AUTO_EXPIRED',
-        });
-        batchCount++;
-        if (batchCount >= 499) {
-          await batch.commit();
-          batch = _firestore.batch();
-          batchCount = 0;
-        }
-      }
-      if (batchCount > 0) await batch.commit();
-      debugPrint('✅ 만료 PENDING 지원서 ${snapshot.docs.length}개 자동 취소');
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableExpireApplications');
+      await callable.call({});
+      debugPrint('✅ 만료 PENDING 지원서 자동 취소 (CF)');
     } catch (e) {
       debugPrint('❌ 자동 만료 처리 실패: $e');
     }
@@ -1018,101 +907,23 @@ class FirestoreService {
       {'migrated': 0, 'skipped': 0, 'failed': 0};
   Future<int> migrateAllGroupMasterStats() async => 0;
 
-  /// 계약해지 요청 (관리자 → 근무자)
+  /// 계약해지 요청 (관리자 → 근무자) — CF callableRequestTermination 위임 (Admin SDK로 보안 규칙 우회)
   Future<bool> requestTermination({
     required String applicationId,
-    String? toId,
     String? uid,
     String? businessId,
     String? reason,
-    String? requestedByUid,
   }) async {
     try {
-      // [R-H1-FIX] requestTermination TOCTOU 방지 — 트랜잭션으로 terminationStatus 체크+업데이트 원자화
-      // requestResignation과 동일한 패턴: 동시 중복 요청이 둘 다 pending으로 저장되는 경쟁 상태 차단
-      ApplicationModel? resolvedApp;
-      DateTime? terminationDate;
-      final appRef = _firestore.collection('applications').doc(applicationId);
-      await _firestore.runTransaction((tx) async {
-        final snap = await tx.get(appRef);
-        if (!snap.exists) throw Exception('지원서 없음: $applicationId');
-        final currentTerminationStatus = snap.data()?['terminationStatus'];
-        if (currentTerminationStatus == AppStatus.pending) {
-          throw Exception('이미 계약해지 요청이 진행 중입니다: $currentTerminationStatus');
-        }
-        resolvedApp = ApplicationModel.fromMap(snap.data()!, snap.id);
-        terminationDate = resolvedApp!.workEndDate ?? DateTime.now().add(const Duration(days: 30));
-        tx.update(appRef, {
-          'terminationStatus': AppStatus.pending,
-          'terminationRequestedAt': FieldValue.serverTimestamp(),
-          'terminationReason': reason,
-          'terminationRequestedByUid': requestedByUid,
-          'terminationEffectiveDate': Timestamp.fromDate(terminationDate!),
-        });
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableRequestTermination');
+      await callable.call({
+        'applicationId': applicationId,
+        'businessId': businessId,
+        'uid': uid,
+        'reason': reason,
       });
-      if (resolvedApp == null) return false;
-      final app = resolvedApp!;
-
-      // [E02] 이미 해지 요청 중이면 중복 요청 차단 — 트랜잭션 예외로 처리됨 (위)
-      final workerUid = uid ?? app.uid;
-      final bId = businessId ?? app.businessId;
-      final effectiveTerminationDate = terminationDate!;
-
-      // [MISMATCH-B-FIX] CONTRACT에도 terminationStatus='PENDING' 동기화
-      // rules: employment_contracts worker update 규칙이 CONTRACT.terminationStatus=='PENDING' 검증
-      // APPLICATION에만 쓰면 근무자 수락(approveTermination) 시 PERMISSION_DENIED 발생
-      if (bId.isNotEmpty) {
-        final pendingStatuses = {'pending_employer', 'pending_worker', 'active'};
-        final cq = await _firestore
-            .collection('employment_contracts')
-            .where('applicationId', isEqualTo: applicationId)
-            .where('businessId', isEqualTo: bId)
-            .limit(5)
-            .get(const GetOptions(source: Source.server));
-        final targets = cq.docs.where((d) => pendingStatuses.contains(d.data()['status']));
-        if (targets.isEmpty) {
-          final cq2 = await _firestore
-              .collection('employment_contracts')
-              .where('applicationIds', arrayContains: applicationId)
-              .where('businessId', isEqualTo: bId)
-              .limit(5)
-              .get(const GetOptions(source: Source.server));
-          final targets2 = cq2.docs.where((d) => pendingStatuses.contains(d.data()['status']));
-          if (targets2.isNotEmpty) {
-            final batch = _firestore.batch();
-            for (final d in targets2) {
-              batch.update(d.reference, {'terminationStatus': AppStatus.pending});
-            }
-            await batch.commit();
-          }
-        } else {
-          final batch = _firestore.batch();
-          for (final d in targets) {
-            batch.update(d.reference, {'terminationStatus': AppStatus.pending});
-          }
-          await batch.commit();
-        }
-      }
-
-      String businessName = '';
-      if (bId.isNotEmpty) {
-        final bizDoc = await _firestore.collection('businesses').doc(bId).get(const GetOptions(source: Source.server));
-        businessName = bizDoc.data()?['name'] as String? ?? '';
-      }
-
-      if (workerUid.isNotEmpty) {
-        final notification = NotificationModel.createTerminationRequested(
-          userId: workerUid,
-          businessName: businessName,
-          businessId: bId,
-          terminationDate: effectiveTerminationDate,
-          applicationId: applicationId,
-          reason: reason,
-        );
-        await createNotification(notification);
-      }
-
-      debugPrint('✅ 계약해지 요청 전송: $applicationId → $workerUid');
+      debugPrint('✅ 계약해지 요청 전송 (CF): $applicationId');
       return true;
     } catch (e) {
       debugPrint('❌ requestTermination 실패: $e');
@@ -1120,63 +931,13 @@ class FirestoreService {
     }
   }
 
-  /// 계약해지 요청 취소
+  /// 계약해지 요청 취소 — CF callableCancelTermination 위임 (Admin SDK로 보안 규칙 우회)
   Future<bool> cancelTerminationRequest(String applicationId) async {
     try {
-      // [R-H2-FIX] cancelResignRequest와 동일하게 트랜잭션으로 PENDING 상태 검증 후 취소
-      // 트랜잭션 없이 update()만 하면 이미 APPROVED/AUTO_APPROVED된 해지 요청도 null로 덮어씌움
-      String canceledBId = '';
-      await _firestore.runTransaction((tx) async {
-        final snap = await tx.get(_firestore.collection('applications').doc(applicationId));
-        if (!snap.exists) throw Exception('지원서 없음: $applicationId');
-        final currentTerminationStatus = snap.data()?['terminationStatus'];
-        if (currentTerminationStatus != AppStatus.pending) {
-          throw Exception('취소 불가 — 현재 계약해지 상태: $currentTerminationStatus');
-        }
-        canceledBId = snap.data()?['businessId'] as String? ?? '';
-        tx.update(snap.reference, {
-          'terminationStatus': null,
-          'terminationRequestedAt': null,
-          'terminationReason': null,
-          'terminationRequestedByUid': null,
-          'terminationEffectiveDate': null,
-        });
-      });
-
-      // [MISMATCH-B-FIX] CONTRACT terminationStatus 클리어 — requestTermination과 대칭
-      if (canceledBId.isNotEmpty) {
-        final cq = await _firestore
-            .collection('employment_contracts')
-            .where('applicationId', isEqualTo: applicationId)
-            .where('businessId', isEqualTo: canceledBId)
-            .where('terminationStatus', isEqualTo: AppStatus.pending)
-            .limit(5)
-            .get(const GetOptions(source: Source.server));
-        if (cq.docs.isNotEmpty) {
-          final batch = _firestore.batch();
-          for (final d in cq.docs) {
-            batch.update(d.reference, {'terminationStatus': null});
-          }
-          await batch.commit();
-        } else {
-          final cq2 = await _firestore
-              .collection('employment_contracts')
-              .where('applicationIds', arrayContains: applicationId)
-              .where('businessId', isEqualTo: canceledBId)
-              .where('terminationStatus', isEqualTo: AppStatus.pending)
-              .limit(5)
-              .get(const GetOptions(source: Source.server));
-          if (cq2.docs.isNotEmpty) {
-            final batch = _firestore.batch();
-            for (final d in cq2.docs) {
-              batch.update(d.reference, {'terminationStatus': null});
-            }
-            await batch.commit();
-          }
-        }
-      }
-
-      debugPrint('✅ 계약해지 요청 취소: $applicationId');
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableCancelTermination');
+      await callable.call({'applicationId': applicationId});
+      debugPrint('✅ 계약해지 요청 취소 (CF): $applicationId');
       return true;
     } catch (e) {
       debugPrint('❌ cancelTerminationRequest 실패: $e');
@@ -1185,127 +946,13 @@ class FirestoreService {
   }
 
   /// 계약해지 승인 (근무자 → 관리자 요청 수락)
+  /// CF callableApproveTermination으로 위임 — 트랜잭션·TO 카운터·알림을 서버에서 원자적 처리
   Future<bool> approveTermination(String applicationId, {String? adminUID}) async {
     try {
-      final appRef = _firestore.collection('applications').doc(applicationId);
-
-      // [R-02 fix] 계약서 void를 runTransaction 내부로 이동 — app 상태 전이와 원자화.
-      // 트랜잭션 전에 businessId를 프리리드하여 계약서 쿼리에 사용.
-      // TO 카운터는 WriteBatch 전용 API(_decrementTOConfirmed)라 트랜잭션 통합 불가 →
-      // 별도 배치로 유지하되 CF syncTOStats가 다음 이벤트 시 자동 교정.
-      final preSnap = await appRef.get(const GetOptions(source: Source.server));
-      if (!preSnap.exists) return false;
-      final preBusinessId = preSnap.data()?['businessId'] as String? ?? '';
-
-      // 계약서 쿼리 (트랜잭션 전 — 결과를 tx.update에 전달)
-      const pendingContractStatuses = {'pending_employer', 'pending_worker'};
-      DocumentSnapshot<Map<String, dynamic>>? contractDoc;
-      final cq1 = await _firestore
-          .collection('employment_contracts')
-          .where('applicationId', isEqualTo: applicationId)
-          .where('businessId', isEqualTo: preBusinessId)
-          .limit(5)
-          .get(const GetOptions(source: Source.server));
-      final cq1Match = cq1.docs.where(
-          (d) => pendingContractStatuses.contains(d.data()['status']));
-      if (cq1Match.isNotEmpty) {
-        contractDoc = cq1Match.first;
-      } else {
-        final cq2 = await _firestore
-            .collection('employment_contracts')
-            .where('applicationIds', arrayContains: applicationId)
-            .where('businessId', isEqualTo: preBusinessId)
-            .limit(5)
-            .get(const GetOptions(source: Source.server));
-        final cq2Match = cq2.docs.where(
-            (d) => pendingContractStatuses.contains(d.data()['status']));
-        if (cq2Match.isNotEmpty) contractDoc = cq2Match.first;
-      }
-
-      // [R-M1-FIX] 트랜잭션으로 terminationStatus=PENDING 검증 + 상태 전이 원자화
-      // 근무자 수락·D+3 자동승인이 동시에 실행될 때 이중 처리 방지
-      // [R-02 fix] 계약서 void도 트랜잭션에 포함 — app CANCELED와 원자적 처리
-      ApplicationModel? resolvedApp;
-      await _firestore.runTransaction((tx) async {
-        final snap = await tx.get(appRef);
-        if (!snap.exists) throw Exception('지원서 없음: $applicationId');
-        final currentTermStatus = snap.data()?['terminationStatus'];
-        if (currentTermStatus != AppStatus.pending) {
-          throw Exception('수락 불가 — 현재 계약해지 상태: $currentTermStatus');
-        }
-        resolvedApp = ApplicationModel.fromMap(snap.data()!, snap.id);
-        final effectiveDate = resolvedApp!.terminationEffectiveDate ?? DateTime.now();
-        tx.update(appRef, {
-          'terminationStatus': AppStatus.approved,
-          'terminationRespondedAt': FieldValue.serverTimestamp(),
-          'actualResignDate': Timestamp.fromDate(effectiveDate),
-          'status': AppStatus.canceled,
-        });
-        // M-3: 계약서 void — app 상태 전이와 원자화 (R-02 fix)
-        if (contractDoc != null) {
-          tx.update(contractDoc.reference, {
-            'status': 'voided',
-            'contractVoidedAt': FieldValue.serverTimestamp(),
-            'voidReason': 'TERMINATION',
-          });
-        }
-      });
-      if (resolvedApp == null) return false;
-      final app = resolvedApp!;
-      final effectiveDate = app.terminationEffectiveDate ?? DateTime.now();
-
-      // [C04 설계 의도]
-      // · approveResignation과 달리 scheduled attendance를 absent로 처리하지 않음:
-      //   계약해지(terminationStatus)는 관리자가 먼저 요청하고 근무자가 수락하는 구조.
-      //   terminationEffectiveDate가 명시적으로 설정되어 있으므로
-      //   isWorkingOnDate()가 actualResignDate 이후를 자동으로 false 처리 → orphan 없음.
-      // · _cleanupApplicationRelatedData 미호출:
-      //   approveResignation과 동일 이유 — 예고된 종료이므로 pending 요청 정리는 관리자 위임.
-
-      // TO 카운터 감소 — _decrementTOConfirmed은 WriteBatch 전용, 트랜잭션 통합 불가.
-      // 실패 시 CF syncTOStats가 다음 이벤트에서 자동 교정.
-      final batch = _firestore.batch();
-      final toId = app.toId;
-      final slotId = app.slotId;
-      if (toId != null &&
-          AppStatus.confirmedStatuses.contains(app.status)) {
-        _decrementTOConfirmed(batch, toId, slotId, workType: app.selectedWorkType);
-        await batch.commit();
-      }
-
-      // [BUG-수정] M-3: 해지 승인 시 CONTRACT_PENDING 계약서 voided 전환 누락 수정
-      // (계약서 void는 위 runTransaction에서 원자적으로 처리됨)
-      if (toId != null) clearCache(toId: toId);
-
-      // [E16] 해지 승인 후 근무자의 캐시를 무효화하여 캘린더/스케줄 화면에서 즉시 반영
-      invalidateMyApplicationsCache(app.uid);
-
-      final requestedByUid = adminUID ?? app.terminationRequestedByUid;
-      if (requestedByUid != null && requestedByUid.isNotEmpty) {
-        final notification = NotificationModel.createTerminationApproved(
-          userId: requestedByUid,
-          businessName: app.businessName,
-          businessId: app.businessId,
-          applicationId: applicationId,
-          actualResignDate: effectiveDate,
-        );
-        await createNotification(notification);
-      }
-
-      // [BUG-수정] N-H-1: 계약해지 승인 시 근무자 본인에게 알림 미발송 버그 수정
-      // 관리자(requestedByUid)에게만 발송하고 실제 근무자(app.uid)에게는 발송하지 않던 문제 수정
-      if (app.uid.isNotEmpty) {
-        final workerNotification = NotificationModel.createTerminationApproved(
-          userId: app.uid,
-          businessName: app.businessName,
-          businessId: app.businessId,
-          applicationId: applicationId,
-          actualResignDate: effectiveDate,
-        );
-        await createNotification(workerNotification);
-      }
-
-      debugPrint('✅ 계약해지 승인: $applicationId');
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableApproveTermination');
+      await callable.call({'applicationId': applicationId});
+      debugPrint('✅ 계약해지 승인 (CF): $applicationId');
       return true;
     } catch (e) {
       debugPrint('❌ approveTermination 실패: $e');
@@ -1316,53 +963,16 @@ class FirestoreService {
   /// 계약해지 거절 (근무자 → 관리자 요청 거절)
   Future<bool> rejectTermination({
     required String applicationId,
-    String? adminUID,
     String? rejectReason,
   }) async {
     try {
-      // [R-M2-FIX] 트랜잭션으로 terminationStatus=PENDING 검증 + 거절 원자화
-      // D+3 자동승인과 근무자 거절이 동시에 실행될 때 이중 처리 방지
-      Map<String, dynamic>? resolvedAppData;
-      final appRef = _firestore.collection('applications').doc(applicationId);
-      await _firestore.runTransaction((tx) async {
-        final snap = await tx.get(appRef);
-        if (!snap.exists) throw Exception('지원서 없음: $applicationId');
-        final currentTermStatus = snap.data()?['terminationStatus'];
-        if (currentTermStatus != AppStatus.pending) {
-          throw Exception('거절 불가 — 현재 계약해지 상태: $currentTermStatus');
-        }
-        resolvedAppData = snap.data()!;
-        tx.update(appRef, {
-          'terminationStatus': AppStatus.rejected,
-          'terminationRespondedAt': FieldValue.serverTimestamp(),
-          'terminationRejectReason': rejectReason,
-        });
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableRejectTermination');
+      await callable.call({
+        'applicationId': applicationId,
+        if (rejectReason != null) 'rejectReason': rejectReason,
       });
-      if (resolvedAppData == null) return false;
-      final appData = resolvedAppData!;
-
-      // [C05 fix] 거절 후 근무자 캐시 무효화 — terminationStatus 변경을 즉시 반영
-      // 알림 수신자는 해지를 요청한 관리자(terminationRequestedByUid).
-      // 이전 코드(BUG-04)는 근무자(workerUid)에게 알림을 보냈는데,
-      // 근무자가 거절 주체이므로 자기 자신에게 알림을 보내는 오류가 있었다.
-      final workerUid = appData['uid'] as String?;
-      if (workerUid != null) {
-        invalidateMyApplicationsCache(workerUid);
-      }
-      // 해지 요청자(관리자)에게 거절 알림 전송
-      // terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
-      final requestedByUid = appData['terminationRequestedByUid'] as String?;
-      if (requestedByUid != null && requestedByUid.isNotEmpty) {
-        await createNotification(NotificationModel.createTerminationRejected(
-          userId: requestedByUid,
-          businessName: appData['businessName'] as String? ?? '',
-          businessId: appData['businessId'] as String? ?? '',
-          applicationId: applicationId,
-          rejectReason: rejectReason,
-        ));
-      }
-
-      debugPrint('✅ 계약해지 거절: $applicationId');
+      debugPrint('✅ 계약해지 거절 (CF): $applicationId');
       return true;
     } catch (e) {
       debugPrint('❌ rejectTermination 실패: $e');
@@ -1373,61 +983,16 @@ class FirestoreService {
   /// 퇴사 요청 (근무자 → 관리자)
   Future<bool> requestResignation({
     required String applicationId,
-    String? toId,
-    String? uid,
-    String? reason,
     DateTime? resignDate,
   }) async {
     try {
-      // [S2-1 수정] 중복 퇴사 요청 방지 — 트랜잭션으로 resignStatus=null 또는 rejected 상태만 허용
-      // UI에서 버튼 비활성화로 1차 방어하나, 서버 레벨 이중 방어 필수
-      ApplicationModel? resolvedApp;
-      final appRef = _firestore.collection('applications').doc(applicationId);
-      await _firestore.runTransaction((tx) async {
-        final snap = await tx.get(appRef);
-        if (!snap.exists) throw Exception('지원서 없음: $applicationId');
-        final currentResignStatus = snap.data()?['resignStatus'];
-        if (currentResignStatus != null && currentResignStatus != AppStatus.rejected) {
-          throw Exception('이미 진행 중인 퇴사 요청이 있습니다: $currentResignStatus');
-        }
-        resolvedApp = ApplicationModel.fromMap(snap.data()!, snap.id);
-        final effectiveDate = resignDate ?? resolvedApp!.workEndDate ?? DateTime.now();
-        tx.update(appRef, {
-          'resignStatus': AppStatus.pending,
-          'resignRequestedAt': FieldValue.serverTimestamp(),
-          'resignRequestDate': Timestamp.fromDate(effectiveDate),
-        });
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableRequestResignation');
+      await callable.call({
+        'applicationId': applicationId,
+        if (resignDate != null) 'resignDateIso': resignDate.toIso8601String(),
       });
-      if (resolvedApp == null) return false;
-      final app = resolvedApp!;
-      final effectiveResignDate = resignDate ?? app.workEndDate ?? DateTime.now();
-
-      // 관리자에게 알림
-      final bizDoc = await _firestore.collection('businesses').doc(app.businessId).get(const GetOptions(source: Source.server));
-      final adminIds = List<String>.from(bizDoc.data()?['adminIds'] as List? ?? []);
-      if (adminIds.isEmpty) {
-        final fallback = bizDoc.data()?['ownerId'] as String?;
-        if (fallback != null && fallback.isNotEmpty) adminIds.add(fallback);
-      }
-      // [R-M5-FIX] uid 파라미터 미전달 시 app.uid 폴백 — 알림에 '근무자' 대신 실명 표시
-      final effectiveWorkerUid = uid?.isNotEmpty == true ? uid! : app.uid;
-      final workerName = effectiveWorkerUid.isNotEmpty
-          ? (await getUser(effectiveWorkerUid))?.name ?? '근무자'
-          : '근무자';
-
-      for (final adminUid in adminIds) {
-        final notification = NotificationModel.createResignRequested(
-          userId: adminUid,
-          workerName: workerName,
-          businessName: app.businessName,
-          businessId: app.businessId,
-          resignDate: effectiveResignDate,
-          applicationId: applicationId,
-        );
-        await createNotification(notification);
-      }
-
-      debugPrint('✅ 퇴사 요청 전송: $applicationId');
+      debugPrint('✅ 퇴사 요청 (CF): $applicationId');
       return true;
     } catch (e) {
       debugPrint('❌ requestResignation 실패: $e');
@@ -1435,25 +1000,14 @@ class FirestoreService {
     }
   }
 
-  /// 퇴사 요청 취소 (근무자)
+  /// 퇴사 요청 취소 (근무자) — CF callableCancelResignRequest 위임
+  /// cancelTerminationRequest와 대칭성 확보, rules 클라이언트 경로 제거를 위해 CF 이전
   Future<bool> cancelResignRequest(String applicationId) async {
     try {
-      // [NEW-01 수정] APPROVED/AUTO_APPROVED 상태의 퇴사 요청을 취소하는 버그 방지
-      // 트랜잭션으로 resignStatus=PENDING 검증 후 취소 — 이미 승인된 퇴사 요청을 되돌리는 사고 방지
-      await _firestore.runTransaction((tx) async {
-        final snap = await tx.get(_firestore.collection('applications').doc(applicationId));
-        if (!snap.exists) throw Exception('지원서 없음: $applicationId');
-        final currentResignStatus = snap.data()?['resignStatus'];
-        if (currentResignStatus != AppStatus.pending) {
-          throw Exception('취소 불가 — 현재 퇴사 요청 상태: $currentResignStatus');
-        }
-        tx.update(snap.reference, {
-          'resignStatus': null,
-          'resignRequestedAt': null,
-          'resignRequestDate': null,
-        });
-      });
-      debugPrint('✅ 퇴사 요청 취소: $applicationId');
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableCancelResignRequest');
+      await callable.call({'applicationId': applicationId});
+      debugPrint('✅ 퇴사 요청 취소 (CF): $applicationId');
       return true;
     } catch (e) {
       debugPrint('❌ cancelResignRequest 실패: $e');
@@ -1462,144 +1016,15 @@ class FirestoreService {
   }
 
   /// 퇴사 승인 (관리자)
+  /// CF callableApproveResignation으로 위임 — 트랜잭션·TO 카운터·scheduled attendance·알림을 서버에서 원자적 처리
   Future<bool> approveResignation({
     required String applicationId,
-    required String adminUID,
   }) async {
     try {
-      final appRef = _firestore.collection('applications').doc(applicationId);
-
-      // [R-01 fix] 계약서 void를 runTransaction 내부로 이동 — app 상태 전이와 원자화.
-      // 트랜잭션 전에 businessId를 프리리드하여 계약서 쿼리에 사용.
-      // TO 카운터는 WriteBatch 전용 API(_decrementTOConfirmed)라 트랜잭션 통합 불가 →
-      // 별도 배치로 유지하되 CF syncTOStats가 다음 이벤트 시 자동 교정.
-      final preSnap = await appRef.get(const GetOptions(source: Source.server));
-      if (!preSnap.exists) return false;
-      final preBusinessId = preSnap.data()?['businessId'] as String? ?? '';
-
-      // 계약서 쿼리 (트랜잭션 전 — 결과를 tx.update에 전달)
-      // whereIn 제거: applicationId + businessId 필터 + status 클라이언트 필터링
-      const pendingContractStatuses = {'pending_employer', 'pending_worker'};
-      DocumentSnapshot<Map<String, dynamic>>? contractDoc;
-      final cq1 = await _firestore
-          .collection('employment_contracts')
-          .where('applicationId', isEqualTo: applicationId)
-          .where('businessId', isEqualTo: preBusinessId)
-          .limit(5)
-          .get(const GetOptions(source: Source.server));
-      final cq1Match = cq1.docs.where(
-          (d) => pendingContractStatuses.contains(d.data()['status']));
-      if (cq1Match.isNotEmpty) {
-        contractDoc = cq1Match.first;
-      } else {
-        final cq2 = await _firestore
-            .collection('employment_contracts')
-            .where('applicationIds', arrayContains: applicationId)
-            .where('businessId', isEqualTo: preBusinessId)
-            .limit(5)
-            .get(const GetOptions(source: Source.server));
-        final cq2Match = cq2.docs.where(
-            (d) => pendingContractStatuses.contains(d.data()['status']));
-        if (cq2Match.isNotEmpty) contractDoc = cq2Match.first;
-      }
-
-      // [M-004 수정] 취소-승인 TOCTOU 경쟁 상태 방지
-      // 트랜잭션으로 resignStatus=PENDING 검증 + 앱 상태 업데이트를 원자화.
-      // "사용자 취소 → 관리자 배치 커밋" 순서로 엇갈리면 취소된 퇴사 요청이 승인되는 버그 차단.
-      // [R-01 fix] 계약서 void도 트랜잭션에 포함 — app CANCELED와 원자적 처리
-      ApplicationModel? resolvedApp;
-      await _firestore.runTransaction((tx) async {
-        final snap = await tx.get(appRef);
-        if (!snap.exists) throw Exception('지원서 없음: $applicationId');
-        final currentResignStatus = snap.data()?['resignStatus'];
-        if (currentResignStatus != AppStatus.pending) {
-          throw Exception('퇴사 요청 상태가 PENDING이 아님: $currentResignStatus');
-        }
-        resolvedApp = ApplicationModel.fromMap(snap.data()!, snap.id);
-        final actualDate = resolvedApp!.resignRequestDate ?? DateTime.now();
-        tx.update(appRef, {
-          'resignStatus': AppStatus.approved,
-          'resignApprovedAt': FieldValue.serverTimestamp(),
-          'resignApprovedBy': adminUID,
-          'actualResignDate': Timestamp.fromDate(actualDate),
-          'status': AppStatus.canceled,
-        });
-        // M-3: 계약서 void — app 상태 전이와 원자화 (R-01 fix)
-        if (contractDoc != null) {
-          tx.update(contractDoc.reference, {
-            'status': 'voided',
-            'contractVoidedAt': FieldValue.serverTimestamp(),
-            'voidReason': 'RESIGNATION',
-          });
-        }
-      });
-      if (resolvedApp == null) return false;
-      final app = resolvedApp!;
-
-      final actualResignDate = app.resignRequestDate ?? DateTime.now();
-
-      // [BUG-수정] H-2: 퇴사 승인 시 TO totalConfirmed 미감소 버그 수정
-      // TO 카운터만 별도 배치 처리 — 실패 시 CF syncTOStats가 다음 이벤트에서 자동 교정.
-      // 계약서 void는 위 runTransaction에서 원자적으로 처리됨 (R-01 fix).
-      final approveBatch = _firestore.batch();
-      final resignToId = app.toId;
-      final resignSlotId = app.slotId;
-      if (resignToId != null &&
-          AppStatus.confirmedStatuses.contains(app.status)) {
-        _decrementTOConfirmed(approveBatch, resignToId, resignSlotId,
-            workType: app.selectedWorkType);
-        await approveBatch.commit();
-      }
-      if (resignToId != null) clearCache(toId: resignToId);
-
-      // 탈퇴일 이후 scheduled 출근기록 → absent 처리 (orphan 방지)
-      // [C03 설계 의도]
-      // · _cleanupApplicationRelatedData 미호출 — 의도된 설계:
-      //   퇴사 요청일(resignRequestDate)까지는 계속 근무 가능하므로
-      //   wageStatus='pending' attendance에 canceledWithApplication 플래그를 붙이지 않는다.
-      //   이미 근무한 기록은 유효하며 급여 정산은 wage_confirm_dialog에서 수행.
-      // · idCardAccessRequests / schedule_change_requests PENDING 정리 미수행:
-      //   퇴사 후 잔류하는 pending 요청은 관리자가 수동 처리하는 것으로 운영 정책 위임.
-      //   cancelConfirmedApplication(즉각 취소)과 달리 퇴사는 예고된 종료이므로 허용.
-      final scheduledAttendances = await _firestore
-          .collection('attendance')
-          .where('applicationId', isEqualTo: applicationId)
-          .where('status', isEqualTo: 'scheduled')
-          .get(const GetOptions(source: Source.server));
-      if (scheduledAttendances.docs.isNotEmpty) {
-        var cancelBatch = _firestore.batch();
-        int cancelBatchCount = 0;
-        for (final doc in scheduledAttendances.docs) {
-          final workDate = (doc.data()['workDate'] as Timestamp?)?.toDate();
-          if (workDate != null && !workDate.isBefore(actualResignDate)) {
-            cancelBatch.update(doc.reference, {
-              'status': AttendanceModel.statusAbsent,
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-            cancelBatchCount++;
-            if (cancelBatchCount >= 499) {
-              await cancelBatch.commit();
-              cancelBatch = _firestore.batch();
-              cancelBatchCount = 0;
-            }
-          }
-        }
-        if (cancelBatchCount > 0) await cancelBatch.commit();
-      }
-
-      // 근무자에게 알림
-      if (app.uid.isNotEmpty) {
-        final notification = NotificationModel.createResignApproved(
-          userId: app.uid,
-          businessName: app.businessName,
-          businessId: app.businessId,
-          actualResignDate: actualResignDate,
-          applicationId: applicationId,
-        );
-        await createNotification(notification);
-      }
-
-      debugPrint('✅ 퇴사 승인: $applicationId');
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableApproveResignation');
+      await callable.call({'applicationId': applicationId});
+      debugPrint('✅ 퇴사 승인 (CF): $applicationId');
       return true;
     } catch (e) {
       debugPrint('❌ approveResignation 실패: $e');
@@ -1607,50 +1032,20 @@ class FirestoreService {
     }
   }
 
-  /// 퇴사 거절 (관리자)
+  /// 퇴사 거절 (관리자) — CF callableRejectResignation 위임
+  /// resignRejectedBy를 서버 검증된 callerUid로 기록 — 클라이언트 adminUID 위조 차단
   Future<bool> rejectResignation({
     required String applicationId,
-    String? adminUID,
     String? rejectReason,
   }) async {
     try {
-      // [S2-2 수정] PENDING 상태 트랜잭션 검증 — 이미 취소·승인된 퇴사 요청을 거절하는 사고 방지
-      // approveResignation과 동일한 패턴으로 원자화
-      ApplicationModel? resolvedApp;
-      final appRef = _firestore.collection('applications').doc(applicationId);
-      await _firestore.runTransaction((tx) async {
-        final snap = await tx.get(appRef);
-        if (!snap.exists) throw Exception('지원서 없음: $applicationId');
-        final currentResignStatus = snap.data()?['resignStatus'];
-        if (currentResignStatus != AppStatus.pending) {
-          throw Exception('거절 불가 — 현재 퇴사 요청 상태: $currentResignStatus');
-        }
-        resolvedApp = ApplicationModel.fromMap(snap.data()!, snap.id);
-        // [BUG-수정] M-4: 퇴사 거절인데 승인 필드명(resignApprovedAt/By)을 사용하던 버그 수정
-        // 거절 전용 필드(resignRejectedAt/By)로 교체하여 승인·거절 이력을 독립적으로 추적
-        tx.update(appRef, {
-          'resignStatus': AppStatus.rejected,
-          'resignRejectedAt': FieldValue.serverTimestamp(),
-          'resignRejectedBy': adminUID,
-          'resignRejectReason': rejectReason,
-        });
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableRejectResignation');
+      await callable.call({
+        'applicationId': applicationId,
+        if (rejectReason != null) 'rejectReason': rejectReason,
       });
-      if (resolvedApp == null) return false;
-      final app = resolvedApp!;
-
-      // 근무자에게 알림
-      if (app.uid.isNotEmpty) {
-        final notification = NotificationModel.createResignRejected(
-          userId: app.uid,
-          businessName: app.businessName,
-          businessId: app.businessId,
-          applicationId: applicationId,
-          rejectReason: rejectReason,
-        );
-        await createNotification(notification);
-      }
-
-      debugPrint('✅ 퇴사 거절: $applicationId');
+      debugPrint('✅ 퇴사 거절 (CF): $applicationId');
       return true;
     } catch (e) {
       debugPrint('❌ rejectResignation 실패: $e');
@@ -1658,16 +1053,29 @@ class FirestoreService {
     }
   }
 
-  /// 퇴사 신청 목록 조회 (resignStatus == PENDING)
+  /// 퇴사 신청 목록 조회 (resignStatus == PENDING) — CF 경유, 보안 규칙 우회
   Future<List<ApplicationModel>> getResignRequests(String businessId) async {
-    final snap = await _firestore
-        .collection('applications')
-        .where('businessId', isEqualTo: businessId)
-        .where('resignStatus', isEqualTo: AppStatus.pending)
-        .orderBy('resignRequestedAt', descending: true)
-        .limit(200)
-        .get(const GetOptions(source: Source.server));
-    return snap.docs.map(ApplicationModel.tryFromFirestore).whereType<ApplicationModel>().toList();
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetApplicationsByBiz');
+      final result = await callable.call({
+        'businessId': businessId,
+        'resignStatus': AppStatus.pending,
+        'limit': 200,
+      });
+      final raw = List<Map>.from(result.data['applications'] as List? ?? []);
+      final apps = raw.map((e) => ApplicationModel.tryFromMap(
+        Map<String, dynamic>.from(e),
+        e['id'] as String? ?? '',
+      )).whereType<ApplicationModel>().toList();
+      // CF는 orderBy 미지원 — 클라이언트에서 resignRequestedAt 기준 정렬
+      apps.sort((a, b) =>
+          (b.resignRequestedAt ?? DateTime(0)).compareTo(a.resignRequestedAt ?? DateTime(0)));
+      return apps;
+    } catch (e) {
+      debugPrint('❌ getResignRequests 실패: $e');
+      return [];
+    }
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -1682,16 +1090,17 @@ class FirestoreService {
     try {
       debugPrint('🔍 [getBusinessWorkHistory] 조회: userId=$userId, businessId=$businessId');
       
-      // [BUGFIX-WHEREIN] uid + businessId isEqualTo + status whereIn → PERMISSION_DENIED
-      // status 서버 필터 제거, 클라이언트에서 confirmedStatuses 필터링
-      final snapshot = await _firestore
-          .collection('applications')
-          .where('uid', isEqualTo: userId)
-          .where('businessId', isEqualTo: businessId)
-          .orderBy('workDate', descending: true)
-          .get(const GetOptions(source: Source.server));
-      
-      if (snapshot.docs.isEmpty) {
+      // [CF-FIX] uid + businessId 다중 equality 쿼리 → PERMISSION_DENIED 우회
+      // callableGetApplicationsByBiz (Admin SDK)로 교체
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetApplicationsByBiz');
+      final cfResult = await callable.call({
+        'businessId': businessId,
+        'uid': userId,
+      });
+      final rawApps = List<Map>.from(cfResult.data['applications'] as List? ?? []);
+
+      if (rawApps.isEmpty) {
         return {
           'workCount': 0,
           'lastWorkDate': null,
@@ -1700,12 +1109,16 @@ class FirestoreService {
           'reviews': <ReviewModel>[],
         };
       }
-      
-      final applications = snapshot.docs
-          .map(ApplicationModel.tryFromFirestore)
-          .whereType<ApplicationModel>()
+
+      final allFetched = rawApps.map((e) => ApplicationModel.tryFromMap(
+        Map<String, dynamic>.from(e),
+        e['id'] as String? ?? '',
+      )).whereType<ApplicationModel>().toList();
+
+      final applications = allFetched
           .where((a) => AppStatus.confirmedStatuses.contains(a.status))
-          .toList();
+          .toList()
+          ..sort((a, b) => b.workDate.compareTo(a.workDate));
 
       // [MISMATCH-3-FIX] 레거시 'reviews' → 'monthly_reviews' 컬렉션으로 전환
       final reviewSnapshot = await _firestore
@@ -1732,10 +1145,19 @@ class FirestoreService {
         avgRating = total / reviews.length;
       }
       
+      if (applications.isEmpty) {
+        return {
+          'workCount': 0,
+          'lastWorkDate': null,
+          'lastWorkType': null,
+          'averageRating': avgRating,
+          'reviews': reviews,
+        };
+      }
       final lastApp = applications.first;
-      
+
       debugPrint('✅ [getBusinessWorkHistory] 조회 완료: ${applications.length}회 근무');
-      
+
       return {
         'workCount': applications.length,
         'lastWorkDate': lastApp.workDate,

@@ -10,6 +10,7 @@ import 'badge_settings_screen.dart';
 import 'minimum_wage_settings_screen.dart';
 import 'insurance_rate_settings_screen.dart';
 import 'to_limit_settings_screen.dart';
+import 'business_approval_settings_screen.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 
 /// 슈퍼관리자 시스템 설정 화면
@@ -133,6 +134,17 @@ class SystemSettingsScreen extends StatelessWidget {
                   context,
                   MaterialPageRoute(
                     builder: (context) => const TOLimitSettingsScreen(),
+                  ),
+                ),
+              ),
+              _SettingItem(
+                icon: Icons.domain_verification_outlined,
+                title: '사업장 승인 정책',
+                subtitle: '자동 승인 또는 슈퍼관리자 수동 승인 전환',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const BusinessApprovalSettingsScreen(),
                   ),
                 ),
               ),

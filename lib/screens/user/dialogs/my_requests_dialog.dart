@@ -698,6 +698,8 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       if (!mounted) return;
       if (success) {
         ToastHelper.showSuccess('거절되었습니다');
+        // 계약해지 거절 후 내 지원 목록 캐시 무효화 — terminationStatus=REJECTED 반영
+        _firestoreService.invalidateMyApplicationsCache(widget.applicantUid);
         await _loadAllNotifications();
         if (!mounted) return;
         widget.onChanged();

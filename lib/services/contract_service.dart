@@ -476,29 +476,36 @@ class ContractService {
       throw ArgumentError('getByApplication: workerId 또는 businessId 중 하나는 필수입니다');
     }
     try {
-      // 1) 기본 applicationId 매칭 (+ 소유권 앵커 필터)
+      if (businessId != null) {
+        // CF 호출: 복합 equality 쿼리 보안 규칙 버그 우회
+        // (businessId + applicationId 복합 필터에서 request.query.filters.businessId → null 문제)
+        final res = await _fn
+            .httpsCallable('callableGetContractsByBiz')
+            .call({'businessId': businessId, 'applicationId': applicationId, 'limit': 10});
+        final raw = List<Map>.from(res.data['contracts'] as List? ?? []);
+        if (raw.isNotEmpty) {
+          final m = Map<String, dynamic>.from(raw.first);
+          final id = m['id'] as String? ?? '';
+          return EmploymentContractModel.tryFromMap(m, id);
+        }
+        return null;
+      }
+      // workerId 경로: 근무자 본인 확인 (단건 조회)
       Query<Map<String, dynamic>> q = _db
           .collection('employment_contracts')
-          .where('applicationId', isEqualTo: applicationId);
-      if (businessId != null) {
-        q = q.where('businessId', isEqualTo: businessId);
-      } else if (workerId != null) {
-        q = q.where('workerId', isEqualTo: workerId);
-      }
+          .where('applicationId', isEqualTo: applicationId)
+          .where('workerId', isEqualTo: workerId);
       final snap = await q.orderBy('createdAt', descending: true).limit(1).get();
       if (snap.docs.isNotEmpty) {
         return EmploymentContractModel.fromFirestore(snap.docs.first);
       }
-      // 2) applicationIds 배열에 포함된 경우 (단기 번들 슬롯)
-      Query<Map<String, dynamic>> slotQ = _db
+      // applicationIds 배열 폴백 (번들 슬롯)
+      final slotSnap = await _db
           .collection('employment_contracts')
-          .where('applicationIds', arrayContains: applicationId);
-      if (businessId != null) {
-        slotQ = slotQ.where('businessId', isEqualTo: businessId);
-      } else if (workerId != null) {
-        slotQ = slotQ.where('workerId', isEqualTo: workerId);
-      }
-      final slotSnap = await slotQ.limit(1).get();
+          .where('applicationIds', arrayContains: applicationId)
+          .where('workerId', isEqualTo: workerId)
+          .limit(1)
+          .get();
       if (slotSnap.docs.isNotEmpty) {
         return EmploymentContractModel.fromFirestore(slotSnap.docs.first);
       }
@@ -520,9 +527,10 @@ class ContractService {
   /// applicationId 목록으로 계약서 상태 일괄 조회 (지원명단 배지용)
   /// 반환: applicationId → contractStatus 문자열 (계약서 없으면 null)
   ///
-  /// [최적화] whereIn 배치로 N+1 제거:
-  ///   Phase 1: applicationId whereIn [10개 단위] → ⌈N/10⌉ 쿼리
-  ///   Phase 2: 미매칭만 applicationIds array-contains 폴백 (번들계약)
+  /// [CF 전환] 복합 equality 쿼리 보안 규칙 버그 우회:
+  ///   applicationIds를 30개씩 청크로 나눠 callableGetContractsByBiz 병렬 호출.
+  ///   CF는 applicationId 필드 직접 매핑만 수행하므로 번들 슬롯 2차 applicationId는
+  ///   탐색 불가(null 처리). 배지 표시 전용 기능이므로 허용된 설계.
   Future<Map<String, String?>> getContractStatusBatch(
     List<String> applicationIds, {
     required String businessId,
@@ -530,56 +538,33 @@ class ContractService {
     if (applicationIds.isEmpty) return {};
     final result = <String, String?>{};
 
-    // Phase 1: applicationId 배치 조회 (businessId 서버 필터 포함 — 타사업장 계약서 클라이언트 전달 차단)
-    // [SEC] whereIn 제거 → 단건 병렬 쿼리 전환: whereIn + compound 쿼리에서
-    //   filters.businessId가 null 반환 → 보안 규칙 폴백 의존 제거.
-    // 청크 10개 단위: 병렬 쿼리 수 제한 (인덱스 부하 완화)
-    for (var i = 0; i < applicationIds.length; i += 10) {
-      final end = (i + 10).clamp(0, applicationIds.length);
-      final chunk = applicationIds.sublist(i, end);
-      try {
-        final snaps = await Future.wait(
-          chunk.map((appId) => _db
-              .collection('employment_contracts')
-              .where('applicationId', isEqualTo: appId)
-              .where('businessId', isEqualTo: businessId)
-              .get()),
-        );
-        for (final snap in snaps) {
-          for (final doc in snap.docs) {
-            final data = doc.data();
-            final appId = data['applicationId'] as String?;
+    // CF 병렬 호출: applicationIds 30개 단위 청크
+    const chunkSize = 30;
+    final futures = <Future<void>>[];
+    for (var i = 0; i < applicationIds.length; i += chunkSize) {
+      final chunk = applicationIds.sublist(
+          i, (i + chunkSize).clamp(0, applicationIds.length));
+      futures.add(() async {
+        try {
+          final res = await _fn
+              .httpsCallable('callableGetContractsByBiz')
+              .call({'businessId': businessId, 'applicationIds': chunk, 'limit': 200});
+          final raw = List<Map>.from(res.data['contracts'] as List? ?? []);
+          for (final c in raw) {
+            final appId = c['applicationId'] as String?;
+            final status = c['status'] as String?;
             if (appId != null && !result.containsKey(appId)) {
-              result[appId] = data['status'] as String?;
+              result[appId] = status;
             }
           }
-        }
-      } catch (_) {}
+        } catch (_) {}
+      }());
     }
+    await Future.wait(futures);
 
-    // Phase 2: 미매칭 앱 → applicationIds 배열 포함 폴백 (번들계약)
-    final missing = applicationIds.where((id) => !result.containsKey(id)).toList();
-    if (missing.isNotEmpty) {
-      const chunkSize = 10;
-      for (var i = 0; i < missing.length; i += chunkSize) {
-        final chunk = missing.skip(i).take(chunkSize).toList();
-        final futures = chunk.map((id) async {
-          try {
-            final snap = await _db
-                .collection('employment_contracts')
-                .where('applicationIds', arrayContains: id)
-                .where('businessId', isEqualTo: businessId)
-                .limit(1)
-                .get();
-            result[id] = snap.docs.isNotEmpty
-                ? snap.docs.first.data()['status'] as String?
-                : null;
-          } catch (_) {
-            result[id] = null;
-          }
-        });
-        await Future.wait(futures);
-      }
+    // 미매칭 항목 null 처리 (번들 슬롯 2차 applicationId 포함)
+    for (final id in applicationIds) {
+      result.putIfAbsent(id, () => null);
     }
 
     return result;
@@ -642,34 +627,42 @@ class ContractService {
   }
 
   /// 사업장 계약서 목록 조회 (페이지네이션 + 상태 필터)
-  Future<({List<EmploymentContractModel> items, DocumentSnapshot? lastDoc, bool hasMore})>
+  ///
+  /// [CF 전환] 복합 equality 쿼리 보안 규칙 버그 우회.
+  /// startAfterId: DocumentSnapshot 대신 문서 ID 문자열 사용 (CF 커서 방식).
+  Future<({List<EmploymentContractModel> items, String? lastDocId, bool hasMore})>
       getByBusinessPaged(
     String businessId, {
     ContractStatus? statusFilter,
-    DocumentSnapshot? startAfter,
+    String? startAfterId,
     int pageSize = 20,
   }) async {
     try {
-      Query<Map<String, dynamic>> q = _db
-          .collection('employment_contracts')
-          .where('businessId', isEqualTo: businessId);
-      if (statusFilter != null) {
-        q = q.where('status', isEqualTo: statusFilter.value);
-      }
-      // pageSize+1로 쿼리해 hasMore 정확도 보장 — 마지막 페이지에서 빈 호출 없앰 (E-047)
-      q = q.orderBy('createdAt', descending: true).limit(pageSize + 1);
-      if (startAfter != null) q = q.startAfterDocument(startAfter);
-      final snap = await q.get();
-      final hasMore = snap.docs.length > pageSize;
-      final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
-      return (
-        items: docs.map(EmploymentContractModel.tryFromFirestore).whereType<EmploymentContractModel>().toList(),
-        lastDoc: docs.isNotEmpty ? docs.last : null,
-        hasMore: hasMore,
-      );
+      // pageSize+1로 호출해 hasMore 정확도 보장 — 마지막 페이지에서 빈 호출 없앰 (E-047)
+      final res = await _fn
+          .httpsCallable('callableGetContractsByBiz')
+          .call({
+            'businessId': businessId,
+            if (statusFilter != null) 'status': statusFilter.value,
+            'limit': pageSize + 1,
+            if (startAfterId != null) 'startAfterId': startAfterId,
+          });
+      final raw = List<Map>.from(res.data['contracts'] as List? ?? []);
+      final hasMore = raw.length > pageSize;
+      final page = hasMore ? raw.sublist(0, pageSize) : raw;
+      final items = page
+          .map((e) {
+            final m = Map<String, dynamic>.from(e);
+            final id = m['id'] as String? ?? '';
+            return EmploymentContractModel.tryFromMap(m, id);
+          })
+          .whereType<EmploymentContractModel>()
+          .toList();
+      final lastDocId = page.isNotEmpty ? page.last['id'] as String? : null;
+      return (items: items, lastDocId: lastDocId, hasMore: hasMore);
     } catch (e) {
       debugPrint('❌ 사업장 계약서 조회 실패: $e');
-      return (items: <EmploymentContractModel>[], lastDoc: null, hasMore: false);
+      return (items: <EmploymentContractModel>[], lastDocId: null, hasMore: false);
     }
   }
 
@@ -832,8 +825,8 @@ class ContractService {
 
   /// 단기 번들 계약서 탐색 (toId + workDetailId + workerId 조합으로 기존 번들 찾기)
   ///
-  /// [businessId] 보안 규칙상 필수 — `isAdminOf(businessId)` 검증을 위해 반드시 전달.
-  /// businessId 없이 호출하면 Firestore 권한 오류 발생 (크로스-사업장 방지 규칙).
+  /// [CF 전환] 5중 equality 필터가 보안 규칙 버그를 확실히 유발하므로 CF 사용.
+  /// Admin SDK는 보안 규칙을 우회하여 복합 필터를 안전하게 실행한다.
   Future<EmploymentContractModel?> _findBundle({
     required String toId,
     required String workDetailId,
@@ -841,18 +834,21 @@ class ContractService {
     required String businessId,
   }) async {
     try {
-      final snap = await _db
-          .collection('employment_contracts')
-          .where('businessId', isEqualTo: businessId)
-          .where('toId', isEqualTo: toId)
-          .where('workDetailId', isEqualTo: workDetailId)
-          .where('workerId', isEqualTo: workerId)
-          .where('isLongTerm', isEqualTo: false)
-          .orderBy('createdAt', descending: true)
-          .limit(1)
-          .get();
-      if (snap.docs.isEmpty) return null;
-      return EmploymentContractModel.tryFromFirestore(snap.docs.first);
+      final res = await _fn
+          .httpsCallable('callableGetContractsByBiz')
+          .call({
+            'businessId': businessId,
+            'toId': toId,
+            'workDetailId': workDetailId,
+            'workerId': workerId,
+            'isLongTerm': false,
+            'limit': 1,
+          });
+      final raw = List<Map>.from(res.data['contracts'] as List? ?? []);
+      if (raw.isEmpty) return null;
+      final m = Map<String, dynamic>.from(raw.first);
+      final id = m['id'] as String? ?? '';
+      return EmploymentContractModel.tryFromMap(m, id);
     } catch (e) {
       debugPrint('❌ 번들 계약서 조회 실패: $e');
       return null;

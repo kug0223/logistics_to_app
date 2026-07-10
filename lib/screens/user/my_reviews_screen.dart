@@ -1,4 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -27,7 +26,7 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
   bool _isLoading = true;
   String? _loadError;
 
-  DocumentSnapshot? _cursor;
+  String? _cursor;
   bool _hasMore = false;
   bool _isLoadingMore = false;
 
@@ -78,7 +77,7 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
     try {
       final page = await _reviewService.getAllReviewsForUserPaged(
         targetUserId: uid,
-        startAfter: _cursor,
+        startAfterId: _cursor,
       );
       if (!mounted) return;
       final allReviews = [..._reviews, ...page.records];
