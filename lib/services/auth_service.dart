@@ -565,9 +565,12 @@ class AuthService {
         if (activeDocs.isNotEmpty) {
           // [M-5] TO 카운터 감소 정보 사전 수집 (배치 commit 전)
           // CONFIRMED/CONTRACT_PENDING → callableDecrementSlotConfirmed CF 경유
-          // PENDING → totalPending 배치에서 직접 -1 (rules: isUser() + hasOnly(['totalPending']) + ±1)
+          // PENDING → totalPending 트랜잭션으로 -1씩 처리
+          //   [M-5A 수정] flex TO에서 동일 TO에 다른 workType으로 PENDING 복수 지원 가능
+          //   → Map<toId, count> + increment(-N) 패턴은 rules ±1 제한 위반
+          //   → 각 지원에 대해 별도 트랜잭션으로 -1씩 처리
           final List<Map<String, dynamic>> confirmedApps = [];
-          final Map<String, int> pendingToIdCounts = {};
+          final List<String> pendingToIds = [];
           for (final doc in activeDocs) {
             final d = doc.data();
             final status = d['status'] as String?;
@@ -580,7 +583,7 @@ class AuthService {
                 'workType': d['selectedWorkType'] as String?,
               });
             } else if (status == 'PENDING' && toId != null) {
-              pendingToIdCounts[toId] = (pendingToIdCounts[toId] ?? 0) + 1;
+              pendingToIds.add(toId);
             }
           }
 
@@ -592,14 +595,21 @@ class AuthService {
               'cancelReason': 'USER_DELETED',
             });
           }
-          // PENDING 앱: totalPending -1 per TO (한 사용자·한 TO = 지원서 1개이므로 중복 없음)
-          for (final entry in pendingToIdCounts.entries) {
-            batch.update(
-              _firestore.collection('tos').doc(entry.key),
-              {'totalPending': FieldValue.increment(-entry.value)},
-            );
-          }
           await batch.commit();
+
+          // PENDING 앱: totalPending 개별 트랜잭션으로 -1씩 처리 (rules ±1 제한 준수)
+          if (pendingToIds.isNotEmpty) {
+            await Future.wait(pendingToIds.map((toId) async {
+              try {
+                await _firestore.runTransaction((tx) async {
+                  final ref = _firestore.collection('tos').doc(toId);
+                  tx.update(ref, {'totalPending': FieldValue.increment(-1)});
+                });
+              } catch (e) {
+                debugPrint('⚠️ totalPending 감소 실패 ($toId): $e');
+              }
+            }));
+          }
 
           // CONFIRMED/CONTRACT_PENDING: totalConfirmed -1 (CF Admin SDK 경유 — 클라이언트 직접 쓰기 차단)
           if (confirmedApps.isNotEmpty) {

@@ -453,6 +453,9 @@ export const createNotification = onCall(
     }
     // [A4-FIX] contractRequested 타입: applicationId 기반 24h 서버 쿨다운
     // SharedPreferences 기반 클라이언트 쿨다운은 재설치·타기기로 우회 가능 → 서버 강제로 전환
+    // [A4-LOOP-FIX] 다수 관리자 사업장에서 Dart가 adminIds 루프로 CF를 반복 호출 시:
+    //   1번째 호출이 lastContractRequestedAt을 설정하면 2번째 호출이 쿨다운에 걸림
+    //   → loopGraceMs(60초) 이내 호출은 동일 루프로 간주, 에러 없이 알림만 발송
     if (rawType === "contractRequested") {
       const appId = filteredData.applicationId as string | undefined;
       if (appId) {
@@ -463,12 +466,17 @@ export const createNotification = onCall(
           if (lastReq) {
             const diffMs = Date.now() - lastReq.toMillis();
             const cooldownMs = 24 * 60 * 60 * 1000;
-            if (diffMs < cooldownMs) {
+            const loopGraceMs = 60 * 1000; // 루프 내 연속 호출 허용 (다수 관리자 알림 발송)
+            if (diffMs >= loopGraceMs && diffMs < cooldownMs) {
+              // 1분 초과 + 24시간 미만 → 실제 재요청 쿨다운
               const remainHours = Math.ceil((cooldownMs - diffMs) / (60 * 60 * 1000));
               throw new HttpsError("resource-exhausted", `${remainHours}시간 후 재요청 가능합니다.`);
             }
+            // diffMs < loopGraceMs: 루프 내 호출 — 타임스탬프 업데이트 없이 알림만 발송
+          } else {
+            // 첫 번째 요청: lastContractRequestedAt 설정
+            await appRef.update({lastContractRequestedAt: admin.firestore.FieldValue.serverTimestamp()});
           }
-          await appRef.update({lastContractRequestedAt: admin.firestore.FieldValue.serverTimestamp()});
         }
       }
     }
