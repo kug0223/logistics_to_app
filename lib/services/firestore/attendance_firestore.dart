@@ -536,7 +536,9 @@ extension AttendanceFirestore on FirestoreService {
         }
       }
 
-      final docRef = await _firestore.collection('schedule_change_requests').add(request.toMap());
+      // [B6-FIX] requestedAt 서버 타임스탬프 오버라이드 — toMap()의 DateTime 값 조작 차단
+      final scrMap = request.toMap()..['requestedAt'] = FieldValue.serverTimestamp();
+      final docRef = await _firestore.collection('schedule_change_requests').add(scrMap);
       debugPrint('✅ 스케줄 변경 요청 생성 완료: ${docRef.id}');
       
       // 🔔 알림 생성 (관리자에게) - 지원자가 요청한 경우 (fire-and-forget)

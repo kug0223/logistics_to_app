@@ -905,11 +905,12 @@ class FirestoreService {
 
   /// workDate가 지난 PENDING 지원서를 AUTO_CANCELED로 일괄 처리
   /// Firestore rules가 클라이언트의 AUTO_CANCELED 전환을 차단 → CF callableExpireApplications 경유
+  /// [A7-FIX] uid 전달 — 전역 스캔 대신 해당 사용자의 지원서만 처리해 불필요한 Firestore 읽기 부하 차단
   Future<void> autoExpirePendingApplications(String uid) async {
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableExpireApplications');
-      await callable.call({});
+      await callable.call({'uid': uid});
       debugPrint('✅ 만료 PENDING 지원서 자동 취소 (CF)');
     } catch (e) {
       debugPrint('❌ 자동 만료 처리 실패: $e');
