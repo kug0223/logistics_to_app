@@ -1842,6 +1842,8 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
           .where("status", "in", ["ACTIVE", "FULL"])
           .count().get();
         bizActiveCounts.set(bizId, countSnap.data().count);
+        // [W-2] 스냅샷 시점 카운트 — 다른 CF/클라이언트가 동시에 공개하면 실제 값과 차이 가능
+        console.warn(`    ⚠️ [W-2] bizId=${bizId} active count 캐시=${countSnap.data().count} (TOCTOU — 동시 공개 시 한도 미초과 가능)`);
       }
       const currentActive = bizActiveCounts.get(bizId)!;
       if (currentActive >= maxActiveTOPerBusiness) {
@@ -10889,6 +10891,12 @@ export const callableIncrementSlotPending = onCall(
     const workType = appData.selectedWorkType as string | undefined;
 
     await db.runTransaction(async (tx) => {
+      // [M-1] 멱등성 가드 — 네트워크 재시도/이중 호출 차단
+      const appRef = db.collection("applications").doc(applicationId);
+      const freshApp = await tx.get(appRef);
+      const flagField = delta === 1 ? "pendingIncrementedAt" : "pendingDecrementedAt";
+      if (freshApp.data()?.[flagField]) return;
+
       const toRef = db.collection("tos").doc(toId);
       tx.update(toRef, {totalPending: admin.firestore.FieldValue.increment(delta)});
 
@@ -10899,7 +10907,10 @@ export const callableIncrementSlotPending = onCall(
 
         // 음수 방지 — Firestore increment는 음수도 허용하므로 CF에서 직접 차단
         const currentPending = (slotSnap.data()?.pendingCount as number) ?? 0;
-        if (delta === -1 && currentPending <= 0) return;
+        if (delta === -1 && currentPending <= 0) {
+          tx.update(appRef, {[flagField]: admin.firestore.FieldValue.serverTimestamp()});
+          return;
+        }
 
         const slotUpdate: Record<string, unknown> = {
           pendingCount: admin.firestore.FieldValue.increment(delta),
@@ -10910,6 +10921,8 @@ export const callableIncrementSlotPending = onCall(
         }
         tx.update(slotRef, slotUpdate);
       }
+
+      tx.update(appRef, {[flagField]: admin.firestore.FieldValue.serverTimestamp()});
     });
 
     return {success: true};
