@@ -2048,18 +2048,20 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     setState(() => _isProcessing = true);
     try {
       final user = _userMap[app.uid];
-      final ok = await DialogHelper.showConfirm(
+      // [BUG-FIX-2] 확정 취소 사유 수집 + cancelConfirmedApplication으로 교체
+      //   work_applicants_dialog과 동일 패턴 적용 (cancelReason 감사 이력 기록)
+      final reason = await DialogHelper.showRejectReasonPicker(
         context,
         title: '확정 취소',
-        message: '${user?.name ?? '근무자'}의 확정을 취소하시겠습니까?\n취소 후 해당 지원자는 목록에서 제거됩니다.',
-        confirmText: '확정 취소',
+        targetName: user?.name,
+        message: '취소 사유를 선택해 주세요.',
       );
-      if (!ok || !mounted) return;
+      if (reason == null || !mounted) return;
       final adminUID = FirebaseAuth.instance.currentUser?.uid;
-      await _svc.updateApplicationStatus(
-        applicationId: app.id,
-        status: AppStatus.canceled,
+      await _svc.cancelConfirmedApplication(
+        app.id,
         canceledBy: adminUID,
+        cancelReason: reason,
       );
       _hasChanges = true;
       if (!mounted) return;
@@ -2387,31 +2389,29 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       return;
     }
 
-    // M2: 모든 초과 TO를 수집 후 한 번에 경고 (업무 단위 정원 기준)
-    final selectedByTo = <String, int>{};
+    // [BUG-FIX-1] workDetail(업무) 단위 정원 초과 체크
+    //   이전 코드는 TO 전체 합산 정원으로 체크해 특정 업무 파트가 초과돼도 허용되는 버그 존재
+    final selectedByGroupKey = <String, int>{};
     for (final app in selectedApps) {
-      final toId = app.toId!;
-      selectedByTo[toId] = (selectedByTo[toId] ?? 0) + 1;
+      final wKey = app.workDetailId?.isNotEmpty == true
+          ? app.workDetailId!
+          : '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
+      final key = '${app.toId ?? app.toTitle}_$wKey';
+      selectedByGroupKey[key] = (selectedByGroupKey[key] ?? 0) + 1;
     }
-    final overflowToIds = <String>[];
-    for (final entry in selectedByTo.entries) {
-      final toId = entry.key;
-      // TO 전체 정원 = 해당 TO의 workDetail별 capacity 합산
-      final toGroups = _buildGroups().where((g) => g.toId == toId);
-      final totalCapacity = toGroups.fold(0, (s, g) => s + g.requiredCount);
-      if (totalCapacity > 0) {
-        final alreadyConfirmed = _confirmedApps.where((a) => a.toId == toId).length;
-        if (alreadyConfirmed + entry.value > totalCapacity) {
-          overflowToIds.add(toId);
-        }
+    final groups = _buildGroups();
+    final overflowLabels = <String>[];
+    for (final g in groups) {
+      final selectedCount = selectedByGroupKey[g.groupKey] ?? 0;
+      if (selectedCount == 0) continue;
+      if (g.requiredCount > 0 &&
+          g.confirmedApps.length + selectedCount > g.requiredCount) {
+        overflowLabels.add('${g.toTitle}(${g.workType})');
       }
     }
-    if (overflowToIds.isNotEmpty) {
-      final names = overflowToIds
-          .map((id) => selectedApps.firstWhere((a) => a.toId == id).toTitle)
-          .toSet()
-          .join(', ');
-      ToastHelper.showWarning('정원 초과 공고: $names\n해당 공고의 선택 인원을 줄여주세요.');
+    if (overflowLabels.isNotEmpty) {
+      final names = overflowLabels.toSet().join(', ');
+      ToastHelper.showWarning('업무별 정원 초과: $names\n해당 업무의 선택 인원을 줄여주세요.');
       return;
     }
 

@@ -10962,7 +10962,7 @@ function _processCheckin(
   const lateGrace = rules.lateGrace ?? 5;
   const lateUnit = rules.lateUnit ?? 30;
 
-  const offsetMinutes = (now.getTime() - contractStart.getTime()) / 60000;
+  const offsetMinutes = Math.trunc((now.getTime() - contractStart.getTime()) / 60000);
   let roundedOffset: number;
 
   if (offsetMinutes < -earlyWindow) {
@@ -10996,7 +10996,7 @@ function _processCheckout(
   const overtimeUnit = rules.overtimeUnit ?? 10;
   const earlyLeaveUnit = rules.earlyLeaveUnit ?? 30;
 
-  const offsetMinutes = (now.getTime() - contractEnd.getTime()) / 60000;
+  const offsetMinutes = Math.trunc((now.getTime() - contractEnd.getTime()) / 60000);
   let roundedOffset: number;
 
   if (offsetMinutes > lateWindow) {
@@ -11103,27 +11103,27 @@ export const callableCheckIn = onCall(
       if (isLeave) throw new HttpsError("permission-denied", "휴무일에는 출근할 수 없습니다.");
     }
 
-    // 3. 반올림 계산 (scheduledStartTime 없으면 서버 현재 시각 사용)
-    const now = new Date();
-    let effectiveCheckIn = now;
-    let isLate = false;
-
-    if (scheduledStartTime) {
-      const cStart = _contractStartAt(workDate, scheduledStartTime);
-      const result = _processCheckin(now, cStart, attendanceRules ?? {});
-      effectiveCheckIn = result.effectiveCheckIn;
-      isLate = result.isLate;
-    }
-
-    // 4. docId: {applicationId}_{yyyyMMdd}
+    // 3. docId: {applicationId}_{yyyyMMdd}
     const dateStr = `${workDate.getFullYear()}${String(workDate.getMonth() + 1).padStart(2, "0")}${String(workDate.getDate()).padStart(2, "0")}`;
     const docId = `${applicationId}_${dateStr}`;
     const ref = db.collection("attendance").doc(docId);
 
-    // 5. 트랜잭션: 중복 체크인 방지
+    // 4. 트랜잭션: 중복 체크인 방지 + 반올림 계산 (now 트랜잭션 내부 — 재시도 시 갱신)
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       if (snap.exists) throw new HttpsError("already-exists", "오늘 이미 출근하셨습니다.");
+
+      // [B1-FIX] now를 트랜잭션 내부에서 획득 — 재시도 시 시각 갱신
+      const now = new Date();
+      let effectiveCheckIn = now;
+      let isLate = false;
+
+      if (scheduledStartTime) {
+        const cStart = _contractStartAt(workDate, scheduledStartTime);
+        const result = _processCheckin(now, cStart, attendanceRules ?? {});
+        effectiveCheckIn = result.effectiveCheckIn;
+        isLate = result.isLate;
+      }
 
       const yearMonth = `${workDate.getFullYear()}-${String(workDate.getMonth() + 1).padStart(2, "0")}`;
       const docData: Record<string, unknown> = {
@@ -11352,11 +11352,12 @@ export const callableCreateContractRenewal = onCall(
         }
       }
 
-      // 5-3. 신규 application 생성 (confirmedAt/appliedAt: serverTimestamp)
+      // 5-3. 신규 application 생성 (confirmedAt/appliedAt/createdAt: serverTimestamp)
       const newData: Record<string, unknown> = {
         ...freshData,
         workDate: admin.firestore.Timestamp.fromMillis(newStartDateMs),
         workEndDate: admin.firestore.Timestamp.fromMillis(newEndDateMs),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
         confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
         appliedAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),

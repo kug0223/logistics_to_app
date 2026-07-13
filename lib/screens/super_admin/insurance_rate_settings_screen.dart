@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import '../../models/core/insurance_rate_model.dart';
+import '../../providers/user_provider.dart';
 import '../../services/insurance_rate_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
@@ -36,7 +38,14 @@ class _InsuranceRateSettingsScreenState
   void initState() {
     super.initState();
     _ctrl = _RateControllers();
-    _load();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!context.read<UserProvider>().isSuperAdmin) {
+        Navigator.pop(context);
+        return;
+      }
+      _load();
+    });
   }
 
   @override

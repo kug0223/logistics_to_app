@@ -2,7 +2,9 @@
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:provider/provider.dart';
 import '../../utils/responsive_helper.dart';
+import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../theme/app_colors.dart';
@@ -29,7 +31,14 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
   @override
   void initState() {
     super.initState();
-    _loadBadges();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!context.read<UserProvider>().isSuperAdmin) {
+        Navigator.pop(context);
+        return;
+      }
+      _loadBadges();
+    });
   }
 
   Future<void> _loadBadges() async {

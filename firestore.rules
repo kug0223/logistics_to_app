@@ -199,6 +199,9 @@ service cloud.firestore {
                        isOwner(userId) &&
                        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
                          'role', 'isBlacklisted', 'subAdminOf', 'businessId',
+                         // [RULE-FIX-M1] 블랙리스트 감사 필드 차단 추가 — 본인이 사유·집행자·일시 위조 차단
+                         'blacklistReason', 'blacklistedBy', 'blacklistedAt',
+                         'unblacklistedBy', 'unblacklistedAt',
                          'trustScore', 'noShowCount', 'lateCount', 'totalWorkDays', 'lastRestartAt',
                          'restrictedUntil', 'isAdmin', 'sealBase64',
                          'accountStatus', 'rejectionReason', 'approvedBy', 'approvedAt',
@@ -1140,13 +1143,14 @@ service cloud.firestore {
       //      → getPendingIdCardRequestsForUser (내게 온 요청 목록)
       //      → _cleanupApplicationRelatedData 사용자 취소 경로
       //        (applicationId + targetUserId + status 쿼리)
-      // [RULE-FIX 2026-07-13] 동일 filters 미평가 이슈 → 역할 기반으로 대체
-      // requesterBusinessId 교차검증 제거, USER 경로는 targetUserId 필터 유지
-      // [TODO-CF] idCardAccessRequests 관리자 목록 조회 CF 이전 시 admin path 제거 예정
+      // [RULE-FIX-H1 2026-07-13 회귀 수정] 역할 기반 전체 덤프 차단
+      // 관리자: requesterId == auth.uid 필터 강제 (본인 발신 요청만 조회 가능)
+      //   getMyIdCardRequests, checkIdCardAccess 모두 requesterId 필터 포함
+      // USER: targetUserId == auth.uid 필터 강제 (본인 수신 요청만 조회 가능)
       allow list: if isLoggedIn() && (
                     isSuperAdmin() ||
-                    isBusinessAdmin() ||
-                    isSubAdmin() ||
+                    ((isBusinessAdmin() || isSubAdmin()) &&
+                      request.query.filters.requesterId == request.auth.uid) ||
                     (isUser() && request.query.filters.targetUserId == request.auth.uid)
                   );
 
@@ -1214,12 +1218,11 @@ service cloud.firestore {
                    isSuperAdmin()
                  );
 
-      // list: [MEDIUM-004] USER는 본인 workerId 필터 필수, 관리자는 소속 사업장 businessId 필터 필수
-      // [RULE-FIX 2026-07-13] 동일 filters 미평가 이슈 → 역할 기반으로 대체
+      // list: USER는 본인 workerId 필터 필수
+      // [RULE-FIX-H2 2026-07-13 회귀 수정] 관리자 LIST 제거 — CF callableGetReviewRequestsByBiz 전용
+      // 관리자가 직접 LIST를 하면 크로스-사업장 덤프 가능 → if false로 차단
       allow list: if isLoggedIn() && (
                     isSuperAdmin() ||
-                    isBusinessAdmin() ||
-                    isSubAdmin() ||
                     (isUser() && request.query.filters.workerId == request.auth.uid)
                   );
 
@@ -1403,8 +1406,14 @@ service cloud.firestore {
                         request.resource.data.employerSignedAt == request.time))
                     );
 
-      // 슈퍼어드민: 계약 상태에 관계없이 수정 가능 (오기재 정정 등 운영 목적)
-      allow update: if isSuperAdmin();
+      // 슈퍼어드민: 오기재 정정 등 운영 목적 수정 허용
+      // [RULE-FIX-M5] 서명 증거 필드 불변 강제 — 근로기준법상 계약서 위변조 방지
+      //   서명 URL/해시/타임스탬프는 CF callableFinalizeWorkerSignature 전용
+      allow update: if isSuperAdmin() &&
+                      !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+                        'workerSignatureUrl', 'workerSignatureHash', 'workerSignedAt',
+                        'employerSignatureUrl', 'employerSignatureHash', 'employerSignedAt'
+                      ]);
 
       // 근무자: 계약해지 수락 시 계약서 voided 전환 허용
       // terminationStatus == PENDING인 경우에만 허용 (일방 무효화 차단)
@@ -1484,14 +1493,12 @@ service cloud.firestore {
                    isSuperAdmin()
                  );
 
-      // list: USER는 본인 targetUid 필터 필수, 관리자는 소속 사업장 businessId 필터 필수
-      // [크로스-사업장 방지] 타 사업장 초대 목록 덤프 차단
-      // [BUGFIX] 복합 equality 쿼리에서 request.query.filters 미노출 대비 user.businessId 폴백
+      // list: USER는 본인 targetUid 필터 필수
+      // [RULE-FIX-H3 2026-07-13 회귀 수정] 관리자 LIST 제거 — 단건 get으로만 접근
+      // 관리자 클라이언트 코드는 모두 _invitations.doc(id).get() 단건 조회 사용
+      // 크로스-사업장 덤프 가능성 → 관리자 LIST 전면 차단
       allow list: if isLoggedIn() && (
                    isSuperAdmin() ||
-                   // [RULE-FIX 2026-07-13] 동일 filters 미평가 이슈 → 역할 기반으로 대체
-                   isBusinessAdmin() ||
-                   isSubAdmin() ||
                    (isUser() && request.query.filters.targetUid == request.auth.uid)
                  );
 

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:provider/provider.dart';
 import '../../utils/responsive_helper.dart';
+import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/wage_calculator.dart';
@@ -27,7 +29,14 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
   @override
   void initState() {
     super.initState();
-    _load();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!context.read<UserProvider>().isSuperAdmin) {
+        Navigator.pop(context);
+        return;
+      }
+      _load();
+    });
   }
 
   Future<void> _load() async {
