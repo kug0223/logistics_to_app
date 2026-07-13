@@ -7583,11 +7583,14 @@ function srvApplyDay8Retroactive(base: SrvWageResult, prevGross: number, r: SrvI
   };
 }
 
-async function srvGetMonthlyWorkDays(userId: string, biz: string, ym: string, excl: string): Promise<number> {
+// [M-4] 트랜잭션 내 조회 버전 — TOCTOU 방어용
+async function srvGetMonthlyWorkDaysTx(
+  tx: FirebaseFirestore.Transaction, userId: string, biz: string, ym: string, excl: string
+): Promise<number> {
   const base = db.collection("attendance")
     .where("userId", "==", userId).where("businessId", "==", biz).where("yearMonth", "==", ym);
   const snaps = await Promise.all(
-    ["calculated", "confirmed", "transferred"].map((ws) => base.where("wageStatus", "==", ws).get())
+    ["calculated", "confirmed", "transferred"].map((ws) => tx.get(base.where("wageStatus", "==", ws)))
   );
   const dates = new Set<string>();
   for (const snap of snaps) {
@@ -7600,11 +7603,13 @@ async function srvGetMonthlyWorkDays(userId: string, biz: string, ym: string, ex
   return dates.size;
 }
 
-async function srvGetPrevGrossTotal(userId: string, biz: string, ym: string, excl: string): Promise<number> {
+async function srvGetPrevGrossTotalTx(
+  tx: FirebaseFirestore.Transaction, userId: string, biz: string, ym: string, excl: string
+): Promise<number> {
   const base = db.collection("attendance")
     .where("userId", "==", userId).where("businessId", "==", biz).where("yearMonth", "==", ym);
   const snaps = await Promise.all(
-    ["calculated", "confirmed", "transferred"].map((ws) => base.where("wageStatus", "==", ws).get())
+    ["calculated", "confirmed", "transferred"].map((ws) => tx.get(base.where("wageStatus", "==", ws)))
   );
   let total = 0;
   for (const snap of snaps) {
@@ -7784,28 +7789,31 @@ export const callableCalculateAndConfirmWage = onCall(
       baseHourlyWage: typeof d.baseHourlyWage === "number" ? d.baseHourlyWage : undefined,
     });
 
-    // 5. 공제 계산 (daily_auto_8 → 8일 소급 자동 처리)
-    let wageResult2: SrvWageResult;
-    if (d.taxDeductionType === "daily_auto_8") {
-      const prevDays = await srvGetMonthlyWorkDays(userId2, businessId2, d.yearMonth, d.attendanceId);
-      if (prevDays + 1 === 8) {
-        const prevGross = await srvGetPrevGrossTotal(userId2, businessId2, d.yearMonth, d.attendanceId);
-        wageResult2 = srvApplyDay8Retroactive(base2, prevGross, rates2);
-      } else if (prevDays + 1 > 8) {
-        wageResult2 = srvApplyFourInsurance(base2, rates2, "daily_auto_8");
-      } else {
-        wageResult2 = srvApplyEmpIncomeTax(base2, rates2);
-      }
-    } else {
-      wageResult2 = srvApplyDeduction(base2, d.taxDeductionType, rates2);
-    }
-    const effectiveNetWage2 = Math.max(0, wageResult2.netWage);
+    // 5. 공제 계산 (non-daily_auto_8 케이스는 트랜잭션 외부에서 미리 계산)
+    let wageResult2: SrvWageResult = d.taxDeductionType !== "daily_auto_8"
+      ? srvApplyDeduction(base2, d.taxDeductionType, rates2)
+      : srvApplyEmpIncomeTax(base2, rates2); // [M-4] daily_auto_8은 트랜잭션 내부에서 재계산
+    let effectiveNetWage2 = 0;
 
-    // 6. 트랜잭션: 상태 재확인 + 원자적 저장
+    // 6. 트랜잭션: 상태 재확인 + [M-4] daily_auto_8 TOCTOU 방어 + 원자적 저장
     await db.runTransaction(async (tx) => {
       const latestSnap = await tx.get(attRef2);
       const cur = (latestSnap.data()?.wageStatus as string) ?? "pending";
       if (cur !== "pending") throw new HttpsError("failed-precondition", `이미 처리된 급여입니다 (${cur})`);
+
+      // [M-4] daily_auto_8: prevDays/prevGross를 트랜잭션 내부에서 조회 — 동시 확정 경쟁 차단
+      if (d.taxDeductionType === "daily_auto_8") {
+        const prevDays = await srvGetMonthlyWorkDaysTx(tx, userId2, businessId2, d.yearMonth, d.attendanceId);
+        if (prevDays + 1 === 8) {
+          const prevGross = await srvGetPrevGrossTotalTx(tx, userId2, businessId2, d.yearMonth, d.attendanceId);
+          wageResult2 = srvApplyDay8Retroactive(base2, prevGross, rates2);
+        } else if (prevDays + 1 > 8) {
+          wageResult2 = srvApplyFourInsurance(base2, rates2, "daily_auto_8");
+        } else {
+          wageResult2 = srvApplyEmpIncomeTax(base2, rates2);
+        }
+      }
+      effectiveNetWage2 = Math.max(0, wageResult2.netWage);
 
       const wd: Record<string, unknown> = {
         wageType: wageResult2.wageType, baseWage: wageResult2.baseWage,
