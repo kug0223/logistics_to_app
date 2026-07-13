@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
@@ -676,7 +677,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
           user.uid,
           {
             'idCardImageUrl': downloadUrl,
-            'idCardVerifiedAt': DateTime.now().toIso8601String(),
+            'idCardVerifiedAt': FieldValue.serverTimestamp(),
             'isIdVerified': true,
           },
         );

@@ -771,7 +771,7 @@ class WorkDetailDialog {
                               onPressed: () => Navigator.pop(ctx, true),
                               child: Text(
                                 '저장',
-                                style: TextStyle(color: Colors.orange[700]),
+                                style: const TextStyle(color: AppColors.warningDark),
                               ),
                             ),
                           ],
@@ -820,7 +820,7 @@ class WorkDetailDialog {
                             ),
                             TextButton(
                               onPressed: () => Navigator.pop(ctx, true),
-                              child: Text('저장', style: TextStyle(color: Colors.red[700])),
+                              child: const Text('저장', style: TextStyle(color: AppColors.errorDark)),
                             ),
                           ],
                         ),

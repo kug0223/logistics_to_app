@@ -31,16 +31,7 @@ class AddWorkTypeSheet extends StatefulWidget {
 }
 
 class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
-  static const List<Color> _palette = [
-    Color(0xFF1565C0),
-    Color(0xFF00897B),
-    Color(0xFF2E7D32),
-    Color(0xFFF57F17),
-    Color(0xFFE53935),
-    Color(0xFF6A1B9A),
-    Color(0xFF37474F),
-    Color(0xFFD81B60),
-  ];
+  static const List<Color> _palette = AppColors.workTypePalette;
 
   static String _toHex(Color c) {
     final rgb = c.toARGB32() & 0xFFFFFF;

@@ -428,7 +428,7 @@ class _RestartProgramDialogState extends State<RestartProgramDialog> {
   }
 
   Color _getScoreColor(int score) {
-    if (score >= 90) return const Color(0xFFFFD700); // TODO: AppColors에 gold 색상 추가 후 교체
+    if (score >= 90) return AppColors.gold;
     if (score >= 70) return AppColors.success;
     if (score >= 50) return AppColors.grey600;
     if (score >= 30) return AppColors.warning;

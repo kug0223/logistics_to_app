@@ -254,7 +254,7 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.error_outline, size: 48, color: Colors.redAccent),
+            const Icon(Icons.error_outline, size: 48, color: AppColors.error),
             const SizedBox(height: 12),
             const Text('데이터를 불러오지 못했습니다.\n다시 시도해주세요.',
                 textAlign: TextAlign.center),

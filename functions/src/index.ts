@@ -1100,6 +1100,7 @@ async function processExpiredReviewRequests(now: Timestamp): Promise<void> {
       .collection("review_requests")
       .where("isPublished", "==", false)
       .where("deadline", "<=", now)
+      .limit(300)
       .get();
 
     if (snap.empty) {
@@ -1107,6 +1108,9 @@ async function processExpiredReviewRequests(now: Timestamp): Promise<void> {
       return;
     }
 
+    if (snap.size >= 300) {
+      console.warn("  ⚠️ [리뷰 공개] 300건 limit 도달 — 다음 자정 실행에서 잔여 처리");
+    }
     console.log(`  📋 [리뷰 공개] 만료 요청 ${snap.size}개 처리`);
 
     const userStatsToUpdate = new Set<string>();
@@ -1848,6 +1852,7 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
     .collection("tos")
     .where("status", "==", "ACTIVE")
     .where("type", "==", "contract")
+    .limit(500)
     .get();
 
   if (tosSnapshot.empty) {
@@ -1855,6 +1860,9 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
     return;
   }
 
+  if (tosSnapshot.size >= 500) {
+    console.warn("  ⚠️ [WorkDetail 마감] 500건 limit 도달 — 다음 실행에서 잔여 처리");
+  }
   console.log(`  📋 [WorkDetail 마감] 활성 TO: ${tosSnapshot.size}개 검사`);
 
   let totalClosed = 0;
@@ -2409,6 +2417,7 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
       db.collection("applications")
         .where("status", "in", CONFIRMED_STATUSES)
         .where("workEndDate", ">=", Timestamp.fromDate(tomorrow))
+        .limit(2000)
         .get(),
     ]);
 
@@ -2614,7 +2623,11 @@ async function runIntegrityCheck(now: Timestamp): Promise<void> {
     const masterTOs = await db
       .collection("tos")
       .where("isGroupMaster", "==", true)
+      .limit(500)
       .get();
+    if (masterTOs.size >= 500) {
+      console.warn("  ⚠️ [정합성 검사] 마스터 TO 500건 limit 도달 — 일부 누락 가능");
+    }
 
     const processedGroupIds = new Set<string>();
 
@@ -2782,6 +2795,7 @@ async function syncGroupMasterStatus(
     const groupSnapshot = await firestore
       .collection("tos")
       .where("groupId", "==", groupId)
+      .limit(100)
       .get();
 
     if (groupSnapshot.empty) return;
@@ -2995,7 +3009,11 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       .where("status", "in", CONFIRMED_STATUSES)
       .where("workEndDate", ">=", d0Start)
       .where("workEndDate", "<", d0End)
+      .limit(200)
       .get();
+    if (d0Snap.size >= 200) {
+      console.warn("  ⚠️ [D-0] 200건 limit 도달 — 잔여 건 다음 실행에서 처리");
+    }
 
     for (const doc of d0Snap.docs) {
       try { // [CF-TRY-01 수정] per-document 오류 격리 — 한 건 실패해도 나머지 계속 처리
@@ -3173,6 +3191,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       .where("renewalDecision", "==", "TERMINATE")
       .where("workEndDate", ">=", d0Start)
       .where("workEndDate", "<", d0End)
+      .limit(200)
       .get();
 
     for (const doc of d0TerminateSnap.docs) {
@@ -3218,6 +3237,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
     const pendingResignSnap = await db.collection("applications")
       .where("resignStatus", "==", "PENDING")
       .where("resignRequestedAt", "<=", threeDaysAgoUTC)
+      .limit(200)
       .get();
 
     for (const doc of pendingResignSnap.docs) {
@@ -3391,6 +3411,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
     const pendingTerminationSnap = await db.collection("applications")
       .where("terminationStatus", "==", "PENDING")
       .where("terminationRequestedAt", "<=", threeDaysAgoUTC)
+      .limit(200)
       .get();
 
     for (const doc of pendingTerminationSnap.docs) {
@@ -3821,6 +3842,11 @@ export const verifySmsCode = onCall(
       throw new HttpsError("invalid-argument", "전화번호와 인증번호를 입력해주세요.");
     }
 
+    // 한국 휴대폰 번호 형식 강제 — 브루트포스로 임의 문서 ID 접근 차단
+    if (!/^01[0-9]{8,9}$/.test(phone)) {
+      throw new HttpsError("invalid-argument", "유효하지 않은 전화번호 형식입니다.");
+    }
+
     const docRef = db.collection("sms_verifications").doc(phone);
 
     // 읽기+업데이트를 트랜잭션으로 묶어 병렬 요청에 의한 브루트포스 제한 우회 차단
@@ -3927,6 +3953,7 @@ export const onBusinessDeleted = onDocumentDeleted(
       .collection("member_invitations")
       .where("businessId", "==", businessId)
       .where("status", "==", "accepted")
+      .limit(2000)
       .get();
     if (!acceptedInviteSnap.empty) {
       let userBatch = db.batch();
@@ -3950,6 +3977,7 @@ export const onBusinessDeleted = onDocumentDeleted(
     const allInviteSnap = await db
       .collection("member_invitations")
       .where("businessId", "==", businessId)
+      .limit(2000)
       .get();
     if (!allInviteSnap.empty) {
       let invBatch = db.batch();
@@ -6633,6 +6661,7 @@ export const callableAutoConflictCancel = onCall(
     const allAppsSnap = await db.collection("applications")
       .where("uid", "==", targetUid)
       .where("status", "in", ["PENDING", "CONFIRMED", "CONTRACT_PENDING"])
+      .limit(500)
       .get();
 
     // 4. 충돌 필터링 (서버측 confirmedAppData 값 우선 사용)

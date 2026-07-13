@@ -116,24 +116,27 @@ extension NotificationFirestore on FirestoreService {
   /// 모든 알림 읽음 처리 (Firestore batch 500개 제한 대응: 청크 분할)
   Future<bool> markAllNotificationsAsRead(String userId) async {
     try {
-      final snapshot = await _notificationsFor(userId)
-          .where('isRead', isEqualTo: false)
-          .get();
+      int total = 0;
+      while (true) {
+        final snapshot = await _notificationsFor(userId)
+            .where('isRead', isEqualTo: false)
+            .limit(500)
+            .get();
+        if (snapshot.docs.isEmpty) break;
 
-      const chunkSize = 500;
-      for (int i = 0; i < snapshot.docs.length; i += chunkSize) {
         final batch = _firestore.batch();
-        final end = (i + chunkSize).clamp(0, snapshot.docs.length);
-        for (int j = i; j < end; j++) {
-          batch.update(snapshot.docs[j].reference, {
+        for (final doc in snapshot.docs) {
+          batch.update(doc.reference, {
             'isRead': true,
             'readAt': FieldValue.serverTimestamp(),
           });
         }
         await batch.commit();
+        total += snapshot.docs.length;
+        if (snapshot.docs.length < 500) break;
       }
 
-      debugPrint('✅ ${snapshot.docs.length}개 알림 읽음 처리');
+      debugPrint('✅ $total개 알림 읽음 처리');
       return true;
     } catch (e) {
       debugPrint('❌ 전체 읽음 처리 실패: $e');

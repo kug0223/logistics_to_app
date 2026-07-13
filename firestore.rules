@@ -856,10 +856,14 @@ service cloud.firestore {
         isSubAdminOf(resource.data.businessId) ||
         resource.data.isPublished == true
       );
-      // list: USER는 본인 필터 필수, 관리자 경로는 callableGetMonthlyReviewsForUser CF 경유
-      // [RULE-FIX-CF 2026-07-13] CF 이전 완료 — isBusinessAdmin/isSubAdmin 제거, USER 경로만 직접 허용
+      // list: USER는 본인 필터 필수
+      //   BUSINESS_ADMIN/SubAdmin: isPublished==true 필터 강제 — 공개 리뷰만 열람 가능
+      //     (worker_detail_dialog에서 근무자 공개 리뷰 조회, equality 필터 → filters 정상 평가)
+      //   USER 경로: 본인 reviewerId 또는 targetUserId 필터
       allow list: if isLoggedIn() && (
         isSuperAdmin() ||
+        ((isBusinessAdmin() || isSubAdmin()) &&
+         request.query.filters.get('isPublished', null) == true) ||
         (isUser() && (
           request.query.filters.reviewerId == request.auth.uid ||
           request.query.filters.targetUserId == request.auth.uid

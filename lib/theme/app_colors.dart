@@ -305,7 +305,22 @@ class AppColors {
   static const Color errorMedium    = Color(0xFFE53935);  // red[600]
   static const Color errorDeep      = Color(0xFFB71C1C);  // red[900]
 
+  // --- 근무 유형 색상 팔레트 (AddWorkTypeSheet 색상 선택기) ---
+  static const Color workTypeBlue      = Color(0xFF1565C0);  // blue[800]
+  static const Color workTypeTeal      = Color(0xFF00897B);  // teal[600]
+  static const Color workTypeGreen     = Color(0xFF2E7D32);  // green[800]
+  static const Color workTypeOrange    = Color(0xFFF57F17);  // orange[800]
+  static const Color workTypeRed       = Color(0xFFE53935);  // red[600]
+  static const Color workTypePurple    = Color(0xFF6A1B9A);  // purple[900]
+  static const Color workTypeSlate     = Color(0xFF37474F);  // blueGrey[800]
+  static const Color workTypePink      = Color(0xFFD81B60);  // pink[600]
+  static const List<Color> workTypePalette = [
+    workTypeBlue, workTypeTeal, workTypeGreen, workTypeOrange,
+    workTypeRed, workTypePurple, workTypeSlate, workTypePink,
+  ];
+
   // --- 황금/노랑 ---
+  static const Color gold           = Color(0xFFFFD700);  // 순금 (신뢰도 점수 최고등급)
   static const Color amberLight     = Color(0xFFFFD54F);  // amber[300]
   static const Color amber          = Color(0xFFFFC107);  // amber[500]
   static const Color amberMedium    = Color(0xFFFFB300);  // amber[600]
