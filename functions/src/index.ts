@@ -4431,7 +4431,7 @@ export const verifyPassAuth = onCall(
       role?: string;
     };
 
-    if (!purpose || !["register", "resetPassword"].includes(purpose)) {
+    if (!purpose || !["register", "resetPassword", "reauth"].includes(purpose)) {
       throw new HttpsError("invalid-argument", "purpose가 올바르지 않습니다.");
     }
 
@@ -4589,6 +4589,75 @@ export const finalizeRegistration = onCall(
     }
     // 토큰 즉시 삭제 (일회용)
     await tokenRef.delete();
+    return {success: true};
+  }
+);
+
+// ── finalizePassReauth ───────────────────────────────────
+// 재인증(설정 > 본인인증) 완료 후 passToken 소비 + ciHash/passVerifiedAt Admin SDK로 저장
+// [H-5] 클라이언트 직접 ci/passVerifiedAt write → CF Admin SDK 경유로 전환
+//   → passVerifiedAt에 serverTimestamp 강제 (법적 타임스탬프 위조 차단)
+//   → ciHash 교체 차단: 기존 ciHash 일치 여부 CF에서 검증
+// Input:  { passToken }
+// Output: { success: true }
+export const finalizePassReauth = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인 필요");
+    const uid = request.auth.uid;
+    const {passToken} = request.data as {passToken?: string};
+    if (!passToken || typeof passToken !== "string") {
+      throw new HttpsError("invalid-argument", "passToken 필수");
+    }
+
+    // mock 토큰 — 개발 환경 전용
+    if (passToken.startsWith("mock-")) {
+      if (process.env.GCLOUD_PROJECT === "alfit-prod") {
+        throw new HttpsError("unavailable", "mock 토큰은 production에서 사용할 수 없습니다.");
+      }
+      await db.collection("users").doc(uid).update({
+        passVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return {success: true};
+    }
+
+    const tokenRef = db.collection("passTokens").doc(passToken);
+    const tokenSnap = await tokenRef.get();
+    if (!tokenSnap.exists) {
+      throw new HttpsError("not-found", "유효하지 않거나 이미 소비된 인증 토큰입니다.");
+    }
+    const tokenData = tokenSnap.data() ?? {};
+
+    // 만료 체크
+    const expiresAt = (tokenData["expiresAt"] as Timestamp | undefined)?.toDate();
+    if (!expiresAt || new Date() > expiresAt) {
+      await tokenRef.delete();
+      throw new HttpsError("deadline-exceeded", "인증 토큰이 만료되었습니다. 다시 인증해주세요.");
+    }
+
+    const ciHash = tokenData["ciHash"] as string | undefined;
+    if (!ciHash) {
+      throw new HttpsError("internal", "인증 토큰에 ciHash 정보가 없습니다.");
+    }
+
+    // 기존 ciHash가 있으면 일치 여부 검증 — 타인 CI로 계정 乗っ取り 차단
+    const userSnap = await db.collection("users").doc(uid).get();
+    if (!userSnap.exists) {
+      throw new HttpsError("not-found", "사용자를 찾을 수 없습니다.");
+    }
+    const existingCiHash = (userSnap.data() ?? {})["ciHash"] as string | undefined;
+    if (existingCiHash && existingCiHash !== ciHash) {
+      throw new HttpsError("permission-denied", "본인 계정의 CI와 일치하지 않습니다.");
+    }
+
+    // Admin SDK로 ciHash, passVerifiedAt(서버 시각) 저장
+    await db.collection("users").doc(uid).update({
+      ciHash,
+      passVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    // passToken 일회용 소비
+    await tokenRef.delete();
+
     return {success: true};
   }
 );

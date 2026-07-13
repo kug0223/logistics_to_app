@@ -47,7 +47,6 @@ import 'tour_screen.dart';
 import '../../services/auth_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/pass_verification_service.dart';
-import '../../utils/encryption_helper.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../services/fcm_service.dart';
@@ -729,13 +728,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!mounted || result == null) return;
 
     try {
-      // TODO(PASS-CF): 다날 계약 후 callableVerifyPass CF로 이전 필요.
-      // 현재는 보안 규칙에서 ci/ciHash 클라이언트 write가 차단됨 — CF 이전 전까지 동작 안 함.
-      // SEC-79b: 클라이언트 직접 ci 저장 시 타인 토큰 등록으로 중복 차단 우회 가능 → CF Admin SDK 전용
-      await FirestoreService().updateUserDocument(user.uid, {
-        'ci': EncryptionHelper.encrypt(result.passToken),
-        'passVerifiedAt': Timestamp.fromDate(DateTime.now()),
-      });
+      // [H-5] CF Admin SDK 경유로 ciHash/passVerifiedAt 저장 — 클라이언트 직접 write 차단
+      // passVerifiedAt은 CF에서 serverTimestamp로 강제 (법적 타임스탬프 위조 불가)
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('finalizePassReauth',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
+          .call({'passToken': result.passToken});
       if (!mounted) return;
       await context.read<UserProvider>().refreshCurrentUser();
       if (!mounted) return;
