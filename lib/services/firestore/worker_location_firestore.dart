@@ -100,30 +100,6 @@ extension WorkerLocationFirestore on FirestoreService {
     }
   }
 
-  /// 사업장 + 근무일 기준 활성 위치 목록 조회 (관리자용)
-  Future<List<WorkerLocationModel>> getActiveLocationsForBusiness({
-    required String businessId,
-    required DateTime workDate,
-  }) async {
-    try {
-      final startOfDay = DateTime(workDate.year, workDate.month, workDate.day);
-      final endOfDay = startOfDay.add(const Duration(days: 1));
-
-      final snap = await _firestore
-          .collection(_workerLocationCol)
-          .where('businessId', isEqualTo: businessId)
-          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
-          .where('workDate', isLessThan: Timestamp.fromDate(endOfDay))
-          .where('isActive', isEqualTo: true)
-          .get();
-
-      return snap.docs.map(WorkerLocationModel.tryFromFirestore).whereType<WorkerLocationModel>().toList();
-    } catch (e) {
-      debugPrint('❌ [WorkerLocation] 목록 조회 실패: $e');
-      return [];
-    }
-  }
-
   /// applicationId 목록으로 위치 일괄 조회 (당일 명단 로드 시)
   /// [크로스-사업장 방지] CF Admin SDK 경유 — whereIn 쿼리 시 보안 규칙 filters null 반환 버그 우회
   /// CF callableGetLocationsForApplications에서 역할 검증 후 조회

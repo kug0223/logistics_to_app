@@ -1298,23 +1298,13 @@ service cloud.firestore {
                    isSuperAdmin()
                  );
 
-      // list: [크로스-사업장 방지] 관리자는 소속 사업장 businessId 필터 필수
-      //   · 위치정보는 개인정보보호법 상 민감 정보 — 엄격한 사업장 소속 검증 필수
-      //   · USER(근무자) 본인 조회: get으로만 처리 (list 불필요, applicationId 문서 ID로 직접 접근)
-      //     단, [SEC-94] 탈퇴 처리 3-pre5에서 userId 필터로 LIST 후 삭제 — isUser() 경로 허용
-      //   · BUSINESS_ADMIN: isAdminOf(businessId) 필터 필수
-      //     - getActiveLocationsForBusiness: .where('businessId', isEqualTo: businessId)
-      //     - getLocationsForApplications: .where('businessId', isEqualTo: businessId)
-      //       + .where(FieldPath.documentId, whereIn: chunk) — 복합 쿼리 (복합 인덱스 필요)
-      //   · SubAdmin: 동일 패턴
-      // [H-5 CF 이전 완료] getLocationsForApplications → callableGetLocationsForApplications CF로 이전.
-      // 관리자 조회는 CF Admin SDK 경유 — 이 list 규칙은 USER 탈퇴 삭제(3-pre5)와
-      // getActiveLocationsForBusiness(단순 equality)만 허용.
-      // isAdminOf(businessId)로 businessId 소속 검증 강제 — 크로스-사업장 차단.
+      // list: 탈퇴 처리(SEC-94) + 슈퍼어드민만 허용
+      //   · 위치정보는 개인정보보호법 상 민감 정보 — 관리자 조회는 CF 경유 강제
+      //   · BUSINESS_ADMIN/SUB_ADMIN: callableGetLocationsForApplications CF Admin SDK 경유
+      //     → 이 list 규칙에서 관리자 직접 list 경로 제거 (CF 이전 완료)
+      //   · USER 탈퇴 처리(SEC-94): userId 필터로 LIST 후 삭제 — isUser() 경로 유지
       allow list: if isLoggedIn() && (
                     isSuperAdmin() ||
-                    isAdminOf(request.query.filters.get('businessId', '')) ||
-                    isSubAdminOf(request.query.filters.get('businessId', '')) ||
                     (isUser() && request.query.filters.userId == request.auth.uid)
                   );
 
