@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import '../../utils/firestore_helper.dart';
 
@@ -287,8 +289,13 @@ class MonthlyReviewModel {
     required String reviewerId,
     required int year,
     required int month,
-  }) =>
-      '${businessId}_${reviewerId}_${year}_${month}_biz';
+  }) {
+    // reviewerId를 SHA-256 해시(16자)로 치환 — 문서 ID에서 작성자 역산 불가 (익명성 보장)
+    // 같은 reviewerId+기간이면 같은 해시 → 중복 방지 유지
+    final raw = utf8.encode('${businessId}_${reviewerId}_${year}_$month');
+    final hash = sha256.convert(raw).toString().substring(0, 16);
+    return 'biz_${businessId}_${year}_${month}_$hash';
+  }
 
   MonthlyReviewModel copyWith({
     String? id,

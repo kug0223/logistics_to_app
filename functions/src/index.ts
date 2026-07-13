@@ -6740,10 +6740,11 @@ export const callableReportLate = onCall(
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
-    const {userId, businessId, mode} = request.data as {
+    const {userId, businessId, mode, attendanceId} = request.data as {
       userId: string;
       businessId: string;
       mode: "late" | "late_canceled";
+      attendanceId?: string;
     };
 
     if (!userId || !businessId || !mode) {
@@ -6796,8 +6797,19 @@ export const callableReportLate = onCall(
     const lateChronicPoints = decreaseRules["late_chronic"] ?? -3;
 
     const userRef = db.collection("users").doc(userId);
+    const attRef = attendanceId ? db.collection("attendance").doc(attendanceId) : null;
 
     await db.runTransaction(async (tx) => {
+      // 멱등성 체크 — 같은 attendance에 중복 호출 방지
+      if (attRef) {
+        const attSnap = await tx.get(attRef);
+        if (attSnap.exists) {
+          const alreadyApplied = attSnap.data()?.latePenaltyApplied;
+          if (mode === "late" && alreadyApplied === true) return;
+          if (mode === "late_canceled" && alreadyApplied !== true) return;
+        }
+      }
+
       const userSnap = await tx.get(userRef);
       if (!userSnap.exists) return;
       const userData = userSnap.data()!;
@@ -6838,9 +6850,15 @@ export const callableReportLate = onCall(
 
       tx.update(userRef, {lateCount: newLateCount, trustScore: newScore});
 
+      // 멱등성 플래그 갱신
+      if (attRef) {
+        tx.update(attRef, {latePenaltyApplied: mode === "late"});
+      }
+
       const histRef = db.collection("trust_score_history").doc();
       tx.set(histRef, {
         userId, businessId,
+        ...(attendanceId && {attendanceId}),
         previousScore: currentScore,
         newScore,
         change: trustChange,

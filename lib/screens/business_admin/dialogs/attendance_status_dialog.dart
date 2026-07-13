@@ -3473,11 +3473,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           .httpsCallable('callableReportLate',
               options: HttpsCallableOptions(timeout: const Duration(seconds: 10)));
       for (final change in lateChanges) {
+        final attendanceId = _attendanceMap[change.app.id]?.id;
         try {
           await lateCallable.call({
             'userId': change.app.uid,
             'businessId': change.app.businessId,
             'mode': change.wasLate && !change.isNowLate ? 'late_canceled' : 'late',
+            if (attendanceId != null) 'attendanceId': attendanceId,
           });
         } catch (cfErr) {
           debugPrint('⚠️ callableReportLate 실패 (무시): $cfErr');
@@ -3978,11 +3980,17 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
       // 지각 신뢰도 연동 — CF 성공 후, 단건 실패는 무시
       for (final app in lateApps) {
+        final attendanceId = _attendanceMap[app.id]?.id;
         try {
           await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
               .httpsCallable('callableReportLate',
                   options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
-              .call({'userId': app.uid, 'businessId': app.businessId, 'mode': 'late'});
+              .call({
+                'userId': app.uid,
+                'businessId': app.businessId,
+                'mode': 'late',
+                if (attendanceId != null) 'attendanceId': attendanceId,
+              });
         } catch (cfErr) {
           debugPrint('⚠️ callableReportLate 실패 (무시): $cfErr');
         }
@@ -4128,11 +4136,17 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         final processed = result.data['processed'] as int? ?? 0;
 
         for (final app in lateApps) {
+          final attendanceId = _attendanceMap[app.id]?.id;
           try {
             await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
                 .httpsCallable('callableReportLate',
                     options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
-                .call({'userId': app.uid, 'businessId': app.businessId, 'mode': 'late'});
+                .call({
+                  'userId': app.uid,
+                  'businessId': app.businessId,
+                  'mode': 'late',
+                  if (attendanceId != null) 'attendanceId': attendanceId,
+                });
           } catch (cfErr) {
             debugPrint('⚠️ callableReportLate 실패 (무시): $cfErr');
           }
