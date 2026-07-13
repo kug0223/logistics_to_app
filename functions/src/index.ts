@@ -4673,19 +4673,42 @@ export const finalizePassReauth = onCall(
   }
 );
 
+// [SEC-CONTRACT-PDF-HASH] 계약서 Storage 파일 롤백 헬퍼
+// storage.rules contracts/ 경로: allow delete: if false → 클라이언트 삭제 불가.
+// CF 실패 시 Admin SDK로만 정리 가능. 파일별 실패는 경고만 — 전체 흐름 중단 않음.
+async function _cleanupContractFiles(contractId: string): Promise<void> {
+  const bkt = admin.storage().bucket();
+  for (const p of [
+    `contracts/${contractId}/signature_worker.png`,
+    `contracts/${contractId}/contract.pdf`,
+  ]) {
+    try {
+      await bkt.file(p).delete();
+    } catch (err) {
+      console.warn(`⚠️ [K-006] Storage 정리 실패 (고아 파일 주의) — ${p}:`, err);
+    }
+  }
+}
+
 // ── callableFinalizeWorkerSignature ─────────────────────
 // 근무자 서명 완료 + application CONTRACT_PENDING→CONFIRMED 원자 처리
 // [SEC-CONTRACT-H1] firestore.rules에서 클라이언트 직접 전이 차단 — CF Admin SDK 전용 경로.
-// Storage 업로드(sigUrl, pdfUrl)는 클라이언트에서 완료 후 이 CF를 호출한다.
-// Input:  { contractId, sigUrl, workerSignatureHash, pdfUrl }
-// Output: { success: true }
+// [SEC-CONTRACT-PDF-HASH] CF가 Storage에서 PDF를 직접 다운로드 → SHA-256(pdfHash) 계산 →
+//   pdfUrl + pdfHash를 Firestore에 저장. 클라이언트가 pdfUrl을 전달하지 않으므로
+//   조작된 URL·다른 파일로 교체 불가.
+//   한계: PDF 내용 자체는 클라이언트 ContractPdfBuilder 생성 — 서버 사이드 PDF 생성 시 완전 차단.
+//   현재 설계: pdfHash와 Firestore articles를 대조하면 향후 분쟁 시 불일치 감지 가능.
+// [NOTE-DELETE-RULES] storage.rules contracts/ 경로는 allow delete: if false.
+//   CF 실패 시 클라이언트 롤백 불가 → 이 함수 내부에서 Admin SDK로 직접 정리.
+// Input:  { contractId, sigUrl, workerSignatureHash }
+// Output: { success: true, pdfUrl: string }
 export const callableFinalizeWorkerSignature = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     const uid = request.auth?.uid;
     if (!uid) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
 
-    const {contractId, sigUrl, workerSignatureHash, pdfUrl} = request.data;
+    const {contractId, sigUrl, workerSignatureHash} = request.data;
     if (!contractId || typeof contractId !== "string") {
       throw new HttpsError("invalid-argument", "contractId가 필요합니다.");
     }
@@ -4695,71 +4718,113 @@ export const callableFinalizeWorkerSignature = onCall(
     if (!workerSignatureHash || typeof workerSignatureHash !== "string") {
       throw new HttpsError("invalid-argument", "workerSignatureHash가 필요합니다.");
     }
-    if (!pdfUrl || typeof pdfUrl !== "string") {
-      throw new HttpsError("invalid-argument", "pdfUrl이 필요합니다.");
+
+    const bucket = admin.storage().bucket();
+
+    // ── PDF 다운로드 + 해시 계산 (트랜잭션 외부 — Storage 읽기는 tx 불가)
+    // 클라이언트가 업로드한 contracts/{contractId}/contract.pdf를 Admin SDK로 직접 읽음.
+    // pdfUrl을 클라이언트에서 전달받지 않으므로 URL 위·변조 불가.
+    let pdfHash: string;
+    let computedPdfUrl: string;
+    try {
+      const pdfFile = bucket.file(`contracts/${contractId}/contract.pdf`);
+      const [exists] = await pdfFile.exists();
+      if (!exists) {
+        throw new HttpsError(
+          "not-found",
+          "PDF 파일을 찾을 수 없습니다. Storage 업로드 후 다시 시도하세요."
+        );
+      }
+
+      const [buffer] = await pdfFile.download();
+      pdfHash = crypto.createHash("sha256").update(buffer).digest("hex");
+
+      // Firebase Storage 다운로드 URL — 업로드 시 자동 발급된 토큰 기반
+      const [metadata] = await pdfFile.getMetadata();
+      const token = (metadata.metadata as Record<string, string>)
+        ?.firebaseStorageDownloadTokens;
+      if (!token) {
+        throw new HttpsError("internal", "PDF 다운로드 토큰을 가져올 수 없습니다.");
+      }
+      const encodedPath = encodeURIComponent(`contracts/${contractId}/contract.pdf`);
+      computedPdfUrl =
+        `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/` +
+        `${encodedPath}?alt=media&token=${token}`;
+    } catch (e) {
+      // PDF 다운로드/해시 실패 → Storage 파일 Admin SDK로 정리 (클라이언트 삭제는 rules 차단)
+      await _cleanupContractFiles(contractId);
+      throw e;
     }
 
     const contractRef = db.collection("employment_contracts").doc(contractId);
 
-    await db.runTransaction(async (tx) => {
-      const snap = await tx.get(contractRef);
-      if (!snap.exists) {
-        throw new HttpsError("not-found", "계약서를 찾을 수 없습니다.");
-      }
-      const data = snap.data()!;
-
-      // 본인 계약서 검증 (타인 계약서 서명 차단)
-      if (data["workerId"] !== uid) {
-        throw new HttpsError("permission-denied", "본인의 계약서만 서명할 수 있습니다.");
-      }
-
-      // 상태 검증 (race condition 방어 — Storage 업로드 후 상태 역전 대응)
-      const status = data["status"] as string;
-      if (status === "voided") {
-        throw new HttpsError("failed-precondition", "무효 처리된 계약서에는 서명할 수 없습니다.");
-      }
-      if (status === "completed") {
-        throw new HttpsError("failed-precondition", "이미 완료된 계약서입니다.");
-      }
-      if (status === "pending_employer") {
-        throw new HttpsError("failed-precondition", "사업주 서명이 완료되기 전에는 근무자가 서명할 수 없습니다.");
-      }
-      if (data["workerSignatureUrl"]) {
-        throw new HttpsError("failed-precondition", "이미 근무자 서명이 완료된 계약서입니다.");
-      }
-
-      // employment_contracts 완료 처리
-      tx.update(contractRef, {
-        status: "completed",
-        workerSignatureUrl: sigUrl,
-        workerSignatureHash: workerSignatureHash,
-        workerSignedAt: admin.firestore.FieldValue.serverTimestamp(),
-        pdfUrl: pdfUrl,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-
-      // applications CONTRACT_PENDING → CONFIRMED (Admin SDK 전용 경로)
-      const applicationIds: string[] = Array.isArray(data["applicationIds"])
-        ? (data["applicationIds"] as string[])
-        : [];
-      for (const appId of applicationIds) {
-        const appRef = db.collection("applications").doc(appId);
-        const appSnap = await tx.get(appRef);
-        if (appSnap.exists && appSnap.data()?.["status"] === "CONTRACT_PENDING") {
-          tx.update(appRef, {
-            status: "CONFIRMED",
-            statusHistory: admin.firestore.FieldValue.arrayUnion({
-              status: "CONFIRMED",
-              at: admin.firestore.Timestamp.now(),
-              by: "SYSTEM",
-              action: "CONTRACT_SIGNED",
-            }),
-          });
+    try {
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(contractRef);
+        if (!snap.exists) {
+          throw new HttpsError("not-found", "계약서를 찾을 수 없습니다.");
         }
-      }
-    });
+        const data = snap.data()!;
 
-    return {success: true};
+        // 본인 계약서 검증 (타인 계약서 서명 차단)
+        if (data["workerId"] !== uid) {
+          throw new HttpsError("permission-denied", "본인의 계약서만 서명할 수 있습니다.");
+        }
+
+        // 상태 검증 (race condition 방어 — Storage 업로드 후 상태 역전 대응)
+        const status = data["status"] as string;
+        if (status === "voided") {
+          throw new HttpsError("failed-precondition", "무효 처리된 계약서에는 서명할 수 없습니다.");
+        }
+        if (status === "completed") {
+          throw new HttpsError("failed-precondition", "이미 완료된 계약서입니다.");
+        }
+        if (status === "pending_employer") {
+          throw new HttpsError("failed-precondition", "사업주 서명이 완료되기 전에는 근무자가 서명할 수 없습니다.");
+        }
+        if (data["workerSignatureUrl"]) {
+          throw new HttpsError("failed-precondition", "이미 근무자 서명이 완료된 계약서입니다.");
+        }
+
+        // employment_contracts 완료 처리
+        tx.update(contractRef, {
+          status: "completed",
+          workerSignatureUrl: sigUrl,
+          workerSignatureHash: workerSignatureHash,
+          workerSignedAt: admin.firestore.FieldValue.serverTimestamp(),
+          pdfUrl: computedPdfUrl,
+          // [SEC-CONTRACT-PDF-HASH] CF가 직접 계산 — 클라이언트 전달 값 불사용
+          pdfHash: pdfHash,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+
+        // applications CONTRACT_PENDING → CONFIRMED (Admin SDK 전용 경로)
+        const applicationIds: string[] = Array.isArray(data["applicationIds"])
+          ? (data["applicationIds"] as string[])
+          : [];
+        for (const appId of applicationIds) {
+          const appRef = db.collection("applications").doc(appId);
+          const appSnap = await tx.get(appRef);
+          if (appSnap.exists && appSnap.data()?.["status"] === "CONTRACT_PENDING") {
+            tx.update(appRef, {
+              status: "CONFIRMED",
+              statusHistory: admin.firestore.FieldValue.arrayUnion({
+                status: "CONFIRMED",
+                at: admin.firestore.Timestamp.now(),
+                by: "SYSTEM",
+                action: "CONTRACT_SIGNED",
+              }),
+            });
+          }
+        }
+      });
+    } catch (e) {
+      // 트랜잭션 실패 → Storage 파일 Admin SDK로 정리 (클라이언트 삭제는 rules 차단)
+      await _cleanupContractFiles(contractId);
+      throw e;
+    }
+
+    return {success: true, pdfUrl: computedPdfUrl};
   }
 );
 

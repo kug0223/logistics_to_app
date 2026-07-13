@@ -239,10 +239,10 @@ class ContractService {
       bytes: signatureBytes,
     );
 
-    // PDF 업로드 — 실패 시 서명 이미지 롤백
-    String pdfUrl;
+    // PDF 업로드 — CF가 Admin SDK로 직접 읽으므로 반환 URL 불사용
+    // 실패 시 서명 이미지 롤백
     try {
-      pdfUrl = await _uploadPdf(contractId: contract.id, bytes: pdfBytes);
+      await _uploadPdf(contractId: contract.id, bytes: pdfBytes);
     } catch (e) {
       try {
         await _storage.ref()
@@ -255,45 +255,41 @@ class ContractService {
       rethrow;
     }
 
+    // [SEC-CONTRACT-H1] CF Admin SDK 경유로 전환 — 클라이언트 직접 Firestore 트랜잭션 제거.
+    // [SEC-CONTRACT-PDF-HASH] pdfUrl은 CF에서 직접 계산해 반환 — 클라이언트 전달 값 불사용.
+    //   CF가 Storage에서 PDF를 Admin SDK로 다운로드 → SHA-256(pdfHash) 계산 → Firestore 저장.
+    //   조작된 URL이나 다른 파일을 Firestore에 심는 공격 차단.
+    // [NOTE-DELETE-RULES] CF 실패 시 Storage 롤백은 CF 내부(_cleanupContractFiles)에서 처리.
+    //   storage.rules contracts/ allow delete: if false → 클라이언트 삭제 시도는 실패함.
+    final workerHash = sha256.convert(signatureBytes).toString();
+    final HttpsCallableResult cfResult;
+    try {
+      cfResult = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableFinalizeWorkerSignature',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)))
+          .call({
+            'contractId': contract.id,
+            'sigUrl': sigUrl,
+            'workerSignatureHash': workerHash,
+            // pdfUrl 미전달 — CF가 Storage에서 직접 읽어 계산
+          });
+    } catch (e) {
+      // CF 실패 → CF 내부에서 이미 Storage 정리 완료.
+      // storage.rules allow delete: if false이므로 클라이언트 삭제 시도하지 않음.
+      rethrow;
+    }
+
+    // CF 응답에서 pdfUrl 추출 (CF가 계산한 실제 Storage URL)
+    final cfPdfUrl = (cfResult.data as Map<Object?, Object?>?)?['pdfUrl'] as String? ?? '';
+
     final workerNow = DateTime.now(); // 로컬 변수 분리 — nullable ! 방지
     final updated = contract.copyWith(
       status: ContractStatus.completed,
       workerSignatureUrl: sigUrl,
       workerSignedAt: workerNow,
-      pdfUrl: pdfUrl,
+      pdfUrl: cfPdfUrl,
       updatedAt: workerNow,
     );
-
-    // [SEC-CONTRACT-H1] CF Admin SDK 경유로 전환 — 클라이언트 직접 Firestore 트랜잭션 제거.
-    // CF callableFinalizeWorkerSignature에서 workerId == uid 검증 + 상태 검증(race condition 방어) +
-    // employment_contracts/applications 원자 업데이트. 서명 우회(CONTRACT_PENDING→CONFIRMED) 차단.
-    // Storage에 업로드된 서명+PDF는 CF 실패 시 catch에서 즉시 삭제하여 고아 파일 방지.
-    final workerHash = sha256.convert(signatureBytes).toString();
-    try {
-      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableFinalizeWorkerSignature',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)))
-          .call({
-            'contractId': contract.id,
-            'sigUrl': sigUrl,
-            'workerSignatureHash': workerHash,
-            'pdfUrl': pdfUrl,
-          });
-    } catch (e) {
-      // CF 실패 → 서명 이미지 + PDF 삭제 (고아 파일 방지)
-      for (final path in [
-        'contracts/${contract.id}/signature_worker.png',
-        'contracts/${contract.id}/contract.pdf',
-      ]) {
-        try {
-          await _storage.ref().child(path).delete();
-        } catch (cleanupErr) {
-          // [K-006] Firestore 실패 후 Storage 롤백 실패 — 고아 파일 가능성, 수동 확인 필요
-          debugPrint('⚠️ [K-006] 근무자 서명/PDF 삭제 실패 (고아 파일 주의) — $path: $cleanupErr');
-        }
-      }
-      rethrow;
-    }
 
     // [알림 흐름]
     // 1차) 근무자 지원 → 관리자에게 newApplication 알림 (application_firestore.dart)
