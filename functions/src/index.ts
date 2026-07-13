@@ -9916,6 +9916,8 @@ export const callableCancelFinalConfirmation = onCall(
 // H-1 MEDIUM: 출근/퇴근/시간조정/adminConfirmed CF 이전
 // ═══════════════════════════════════════════════════════════
 
+const VALID_ATTENDANCE_STATUS = new Set(["present", "late", "early_leave", "absent", "noshow"]);
+
 interface CheckInEntry {
   applicationId: string;
   workDateMs: number;
@@ -9950,6 +9952,10 @@ export const callableBatchCheckIn = onCall(
 
     for (const entry of entries) {
       const {applicationId, workDateMs, userId, businessName, workType, status, checkInMs, attendanceId} = entry;
+      if (!VALID_ATTENDANCE_STATUS.has(status)) {
+        console.error(`출근 처리 건너뜀 — 유효하지 않은 status: ${status} (${applicationId})`);
+        continue;
+      }
       const workDate = new Date(workDateMs);
       const checkInTs = admin.firestore.Timestamp.fromMillis(checkInMs);
 
@@ -10046,6 +10052,11 @@ export const callableBatchCheckOut = onCall(
         skipped.push(attendanceId);
         continue;
       }
+      if (!VALID_ATTENDANCE_STATUS.has(status)) {
+        console.error(`퇴근 처리 건너뜀 — 유효하지 않은 status: ${status} (${attendanceId})`);
+        skipped.push(attendanceId);
+        continue;
+      }
       const ref = db.collection("attendance").doc(attendanceId);
       try {
         if (resetWageDetail) {
@@ -10128,6 +10139,11 @@ export const callableBatchAdjustAttendanceTime = onCall(
 
     for (const entry of entries) {
       const {attendanceId, checkInMs, checkOutMs, workHours, status, resetWageDetail} = entry;
+      if (!VALID_ATTENDANCE_STATUS.has(status)) {
+        console.error(`시간 조정 건너뜀 — 유효하지 않은 status: ${status} (${attendanceId})`);
+        skipped.push(attendanceId);
+        continue;
+      }
       const attRef = db.collection("attendance").doc(attendanceId);
       try {
         await db.runTransaction(async (tx) => {

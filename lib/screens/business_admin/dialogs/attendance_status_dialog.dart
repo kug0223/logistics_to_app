@@ -3977,7 +3977,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       }
 
       final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableBatchCheckIn')
+          .httpsCallable('callableBatchCheckIn',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 60)))
           .call({'businessId': _selectedBusinessId, 'entries': entries});
 
       final processed = result.data['processed'] as int? ?? 0;
@@ -4072,7 +4073,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       }
 
       final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableBatchCheckOut')
+          .httpsCallable('callableBatchCheckOut',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 60)))
           .call({'businessId': _selectedBusinessId, 'entries': entries});
 
       final processed = result.data['processed'] as int? ?? 0;
@@ -4138,7 +4140,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
       if (entries.isNotEmpty) {
         final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-            .httpsCallable('callableBatchCheckIn')
+            .httpsCallable('callableBatchCheckIn',
+                options: HttpsCallableOptions(timeout: const Duration(seconds: 60)))
             .call({'businessId': _selectedBusinessId, 'entries': entries});
 
         final processed = result.data['processed'] as int? ?? 0;
@@ -4232,7 +4235,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
       if (entries.isNotEmpty) {
         final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-            .httpsCallable('callableBatchCheckOut')
+            .httpsCallable('callableBatchCheckOut',
+                options: HttpsCallableOptions(timeout: const Duration(seconds: 60)))
             .call({'businessId': _selectedBusinessId, 'entries': entries});
 
         final processed = result.data['processed'] as int? ?? 0;
