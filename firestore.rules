@@ -218,7 +218,11 @@ service cloud.firestore {
                          'badges',
                          // [D1] termsConsentAt/termsConsent — CF callableRecordTermsConsent 전용
                          //   클라이언트 직접 설정 시 동의 일시 위조 가능 (법적 타임스탬프 Charter 위반)
-                         'termsConsentAt', 'termsConsent'
+                         'termsConsentAt', 'termsConsent',
+                         // [HIGH-01] isIdVerified/idCardVerifiedAt — CF callableMarkIdCardVerified/callableDeleteIdCard 전용
+                         //   클라이언트 직접 true 설정 시 OCR 없이 신분증 인증 우회 가능
+                         //   (신분증 인증 결과가 단기공고 지원 자격 기준으로 사용됨)
+                         'isIdVerified', 'idCardVerifiedAt'
                        ]);
 
       // [SEC-03 완료] trustScore·noShowCount·lateCount·totalWorkDays·restrictedUntil·lastRestartAt
@@ -619,8 +623,10 @@ service cloud.firestore {
                              .data.get('isManualClosed', false) == false) ||
                       (isAdmin() && request.resource.data.isDummy == true) ||
                       (isAdminOf(request.resource.data.businessId) &&
-                       // CONTRACT_PENDING: createRenewedApplication이 갱신 지원서를 이 상태로 생성 (M7 CF 이전 예정)
-                       request.resource.data.get('status', '') in ['PENDING', 'CONFIRMED', 'CONTRACT_PENDING'])
+                       // [SEC-L6] CONFIRMED 제거 — CF(callableConfirmApplication/callableCreateContractRenewal)가 Admin SDK로 생성
+                       //   클라이언트 직접 CONFIRMED 생성 시 totalConfirmed 미증가 → 정원 불일치 위험
+                       //   CONTRACT_PENDING: 레거시 경로 유지 (Admin SDK 사용 CF는 rules 우회이므로 이 규칙 불필요지만 명시)
+                       request.resource.data.get('status', '') in ['PENDING', 'CONTRACT_PENDING'])
                     );
 
       allow update: if isLoggedIn() && (
@@ -1606,10 +1612,12 @@ service cloud.firestore {
 
       // 수정: 해당 사업장 관리자만 (권한 변경)
       // [RULE-FIX-L6] isSubAdminOf 추가 — get/list/create/delete에는 있으나 update에만 누락됨
+      // [SEC-M7] permissions 필드만 허용 — 관리자가 name/phone/addedAt 등 식별 필드를 임의 수정하는 공격 차단
       allow update: if isLoggedIn() && (
-                      isAdminOf(businessId) ||
-                      isSubAdminOf(businessId) ||
-                      isSuperAdmin()
+                      isSuperAdmin() ||
+                      ((isAdminOf(businessId) || isSubAdminOf(businessId)) &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['permissions']))
                     );
 
       // 삭제: 해당 사업장 관리자 · 본인(자진 탈퇴) · 슈퍼어드민

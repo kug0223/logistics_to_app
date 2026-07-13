@@ -596,7 +596,7 @@ DateTime? _slotDeadlineFromDetails(List<_WorkDetail> details) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 void main() {
-  final _now = DateTime(2026, 7, 8, 12, 0);
+  final _now = DateTime.now();
 
   // ──────────────────────────────────────────────────────────────────────────
   // GROUP 1: TOStatus 상수 및 상태 그룹 검증

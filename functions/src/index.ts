@@ -5000,6 +5000,75 @@ export const callableRecordTermsConsent = onCall(
   }
 );
 
+// ── callableMarkIdCardVerified ───────────────────────────
+// [HIGH-01] isIdVerified/idCardVerifiedAt를 CF Admin SDK로만 설정 — 클라이언트 직접 쓰기 차단
+// 신분증 이미지 Storage 업로드 완료 후 호출 — 본인 경로 URL 검증 후 Firestore 업데이트
+// Input:  { imageUrl: string }  — Storage 다운로드 URL (본인 경로만 허용)
+// Output: { success: true }
+export const callableMarkIdCardVerified = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {imageUrl} = request.data as {imageUrl?: string};
+
+    if (!imageUrl || typeof imageUrl !== "string" || imageUrl.length > 2048) {
+      throw new HttpsError("invalid-argument", "imageUrl이 필요합니다.");
+    }
+    // Storage URL이 본인 경로인지 검증 — 타인 경로 이미지로 인증 취득 차단
+    if (!imageUrl.includes(`/users%2F${callerUid}%2F`) &&
+        !imageUrl.includes(`/users/${callerUid}/`)) {
+      throw new HttpsError("permission-denied", "본인 신분증 이미지만 등록 가능합니다.");
+    }
+
+    await db.collection("users").doc(callerUid).update({
+      idCardImageUrl: imageUrl,
+      isIdVerified: true,
+      idCardVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return {success: true};
+  }
+);
+
+// ── callableDeleteIdCard ─────────────────────────────────
+// 신분증 삭제 — Firestore 먼저 업데이트(Admin SDK), 이후 Storage best-effort 삭제
+// Input:  {}
+// Output: { success: true }
+export const callableDeleteIdCard = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    // 삭제 전 기존 URL 수집
+    const userSnap = await db.collection("users").doc(callerUid).get();
+    const oldImageUrl = userSnap.data()?.idCardImageUrl as string | undefined;
+
+    // 1. Firestore 먼저 업데이트 (실패 시 Storage 건드리지 않음 — 설계 원칙 준수)
+    await db.collection("users").doc(callerUid).update({
+      idCardImageUrl: admin.firestore.FieldValue.delete(),
+      isIdVerified: false,
+      idCardVerifiedAt: admin.firestore.FieldValue.delete(),
+    });
+
+    // 2. Storage 삭제 best-effort (Firestore 성공 후)
+    if (oldImageUrl) {
+      try {
+        const pathMatch = oldImageUrl.match(/\/o\/(.+?)(\?|$)/);
+        if (pathMatch) {
+          const filePath = decodeURIComponent(pathMatch[1]);
+          await admin.storage().bucket().file(filePath).delete();
+        }
+      } catch (e) {
+        console.warn(`[callableDeleteIdCard] Storage 삭제 실패 (무시): ${e}`);
+      }
+    }
+
+    return {success: true};
+  }
+);
+
 // ── resetPasswordWithPass ────────────────────────────────
 // passToken + username → CI 매칭 → Firebase Custom Token 발급
 // Input:  { passToken, username }

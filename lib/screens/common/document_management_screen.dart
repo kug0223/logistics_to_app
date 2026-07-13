@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
@@ -672,18 +672,13 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
           return;
         }
 
-        // 2. Firestore 업데이트
-        await _firestoreService.updateUserDocument(
-          user.uid,
-          {
-            'idCardImageUrl': downloadUrl,
-            'idCardVerifiedAt': FieldValue.serverTimestamp(),
-            'isIdVerified': true,
-          },
-        );
+        // 2. CF로 isIdVerified/idCardVerifiedAt 설정 — Admin SDK 경유로 직접 쓰기 차단 준수
+        await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('callableMarkIdCardVerified')
+            .call({'imageUrl': downloadUrl});
 
-        // 3. 기존 이미지 삭제 (best-effort)
-        if (oldUrl != null) {
+        // 3. 기존 이미지 삭제 (best-effort — CF callableDeleteIdCard가 새 URL 기준 처리)
+        if (oldUrl != null && oldUrl != downloadUrl) {
           try {
             await _storageService.deleteImageByUrl(oldUrl);
           } catch (e) {
@@ -762,26 +757,16 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // Firestore 먼저 업데이트 → 성공 후 Storage 삭제 (순서 역전 방지)
-      final oldUrl = user.idCardImageUrl;
-      await _firestoreService.updateUserDocument(
-        user.uid,
-        {
-          'idCardImageUrl': null,
-          'idCardVerifiedAt': null,
-          'isIdVerified': false,
-        },
-      );
-
-      if (oldUrl != null) {
-        await _storageService.deleteImageByUrl(oldUrl);
-      }
+      // [HIGH-01] CF callableDeleteIdCard — Firestore 먼저 업데이트 + Storage best-effort 삭제 CF 내부 처리
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableDeleteIdCard')
+          .call({});
 
       await userProvider.refreshCurrentUser();
       if (!mounted) return;
 
       ToastHelper.showSuccess('신분증이 삭제되었습니다');
-      _hasChanges = true;  // ✅ 추가
+      _hasChanges = true;
     } catch (e) {
       debugPrint('❌ 신분증 삭제 실패: $e');
       if (mounted) ToastHelper.showError('신분증 삭제에 실패했습니다');
