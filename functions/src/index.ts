@@ -10621,3 +10621,290 @@ export const callableCheckPendingInvitation = onCall(
     return {hasPending: !snap.empty};
   }
 );
+
+// ─── callableUpdateWageDetail ─────────────────────────────────────────────────
+// [M11-FIX] 급여 수정 CF 이전 — calculatedAt 서버 타임스탬프 강제 + wageConfirmed/transferred 차단
+// 클라이언트 wage_confirm_dialog._processWageUpdate의 Firestore 직접 write를 CF Admin SDK로 이전.
+// 이전 이유:
+//  1. calculatedAt을 DateTime.now()로 설정 → 클라이언트 시계 조작으로 계산 시각 위조 가능
+//  2. 트랜잭션 내 권한 검증 없이 businessId 기반 관리자 검증 → assertBizAdmin으로 강화
+export const callableUpdateWageDetail = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {attendanceId, wageDetailMap} = request.data as {
+      attendanceId: string;
+      wageDetailMap: Record<string, unknown>;
+    };
+
+    if (!attendanceId) throw new HttpsError("invalid-argument", "attendanceId 필수");
+    if (!wageDetailMap || typeof wageDetailMap !== "object") {
+      throw new HttpsError("invalid-argument", "wageDetailMap 필수");
+    }
+
+    // 음수 additionalAmount/deductionAmount 차단 (클라이언트 유효성 검사 서버 재검증)
+    const additionalAmount = Number(wageDetailMap.additionalAmount ?? 0);
+    const deductionAmount = Number(wageDetailMap.deductionAmount ?? 0);
+    if (additionalAmount < 0) throw new HttpsError("invalid-argument", "추가수당은 0 이상이어야 합니다.");
+    if (deductionAmount < 0) throw new HttpsError("invalid-argument", "추가공제는 0 이상이어야 합니다.");
+
+    // 1. attendance 사전 읽기 (businessId 추출 → assertBizAdmin)
+    const attRef = db.collection("attendance").doc(attendanceId);
+    const attSnap = await attRef.get();
+    if (!attSnap.exists) throw new HttpsError("not-found", "출근 기록을 찾을 수 없습니다.");
+    const attData = attSnap.data()!;
+
+    // 2. 관리자 권한 검증 (트랜잭션 외부 — assertBizAdmin은 Firestore 2회 read)
+    await assertBizAdmin(callerUid, attData.businessId as string);
+
+    // 3. 트랜잭션 (wageStatus 재확인 + 업데이트 — race condition 방어)
+    await db.runTransaction(async (tx) => {
+      const freshSnap = await tx.get(attRef);
+      if (!freshSnap.exists) throw new HttpsError("not-found", "출근 기록을 찾을 수 없습니다.");
+      const freshData = freshSnap.data()!;
+
+      const wageStatus = freshData.wageStatus as string;
+      if (wageStatus === "transferred") {
+        throw new HttpsError("failed-precondition", "이미 이체된 급여는 수정할 수 없습니다.");
+      }
+      if (wageStatus === "confirmed") {
+        throw new HttpsError("failed-precondition", "이미 확정된 급여는 수정할 수 없습니다.");
+      }
+
+      // effectiveNetWage 계산 (Dart WageDetailModel.effectiveNetWage getter 재구현)
+      // CF는 항상 calculatedAt=serverTimestamp 설정 → isCalculated=true → netWage 우선 사용
+      // T-01 마이그레이션 폴백: netWage==0 && totalAmount>0 → 수식으로 재계산
+      const totalAmount = Number(wageDetailMap.totalAmount ?? 0);
+      const totalInsuranceDeduction =
+        Number(wageDetailMap.employmentInsuranceDeduction ?? 0) +
+        Number(wageDetailMap.nationalPensionDeduction ?? 0) +
+        Number(wageDetailMap.healthInsuranceDeduction ?? 0) +
+        Number(wageDetailMap.ltcInsuranceDeduction ?? 0) +
+        Number(wageDetailMap.incomeTaxDeduction ?? 0) +
+        Number(wageDetailMap.retroactiveDeduction ?? 0);
+      const netWage = Number(wageDetailMap.netWage ?? 0);
+      let finalWage: number;
+      if (netWage === 0 && totalAmount > 0) {
+        finalWage = Math.max(0, Math.min(totalAmount - totalInsuranceDeduction, 999999999));
+      } else {
+        finalWage = Math.max(0, Math.min(netWage, 999999999));
+      }
+
+      // yearMonth 추출 (FormatHelper.formatYearMonthISO 재구현: YYYY-MM)
+      const workDate: Date = (freshData.workDate as admin.firestore.Timestamp)?.toDate?.() ?? new Date();
+      const yearMonth = `${workDate.getFullYear()}-${String(workDate.getMonth() + 1).padStart(2, "0")}`;
+
+      tx.update(attRef, {
+        finalWage,
+        wageDetail: {
+          ...wageDetailMap,
+          calculatedBy: callerUid,
+          // [M11-FIX] calculatedAt 서버 타임스탬프 강제 — 클라이언트 DateTime.now() 조작 차단
+          calculatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        yearMonth,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+
+    return {success: true};
+  }
+);
+
+// ─── callableIncrementSlotPending ────────────────────────────────────────────
+// [A1-FIX] slot pendingCount/workTypeCounts CF 이전 — applicationId 소유권 검증
+// 클라이언트가 WriteBatch로 workTypeCounts 맵 전체 교체 시 confirmedCount 조작 가능한 취약점 차단.
+// 이전 이유:
+//  1. rules isUser() 경로: workTypeCounts 전체 맵 교체로 confirmedCount를 임의 값으로 설정 → 정원 우회
+//  2. CF Admin SDK: applicationId 소유권 검증 + dot-notation으로 pendingCount만 정밀 업데이트
+// rules에서 isUser() slots update의 workTypeCounts 허용을 삭제하여 맵 전체 교체 차단 (이 CF와 동시 적용)
+export const callableIncrementSlotPending = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {applicationId, toId, slotId, delta} = request.data as {
+      applicationId: string;
+      toId: string;
+      slotId?: string;
+      delta: number;
+    };
+
+    if (!applicationId) throw new HttpsError("invalid-argument", "applicationId 필수");
+    if (!toId) throw new HttpsError("invalid-argument", "toId 필수");
+    if (delta !== 1 && delta !== -1) throw new HttpsError("invalid-argument", "delta는 ±1만 허용됩니다.");
+
+    // applicationId 소유권 + toId 교차검증 + workType 추출 (트랜잭션 외부 — 트랜잭션 내 read 최소화)
+    const appSnap = await db.collection("applications").doc(applicationId).get();
+    if (!appSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const appData = appSnap.data()!;
+
+    if ((appData.uid as string) !== callerUid) {
+      throw new HttpsError("permission-denied", "본인의 지원서만 처리할 수 있습니다.");
+    }
+    if ((appData.toId as string) !== toId) {
+      throw new HttpsError("invalid-argument", "toId 불일치 — 지원서의 toId와 다릅니다.");
+    }
+
+    const workType = appData.selectedWorkType as string | undefined;
+
+    await db.runTransaction(async (tx) => {
+      const toRef = db.collection("tos").doc(toId);
+      tx.update(toRef, {totalPending: admin.firestore.FieldValue.increment(delta)});
+
+      if (slotId) {
+        const slotRef = db.collection("tos").doc(toId).collection("slots").doc(slotId);
+        const slotSnap = await tx.get(slotRef);
+        if (!slotSnap.exists) throw new HttpsError("not-found", "슬롯을 찾을 수 없습니다.");
+
+        // 음수 방지 — Firestore increment는 음수도 허용하므로 CF에서 직접 차단
+        const currentPending = (slotSnap.data()?.pendingCount as number) ?? 0;
+        if (delta === -1 && currentPending <= 0) return;
+
+        const slotUpdate: Record<string, unknown> = {
+          pendingCount: admin.firestore.FieldValue.increment(delta),
+        };
+        if (workType) {
+          // dot-notation: 전체 맵 교체 없이 특정 필드만 업데이트 (confirmedCount 보호)
+          slotUpdate[`workTypeCounts.${workType}.pendingCount`] = admin.firestore.FieldValue.increment(delta);
+        }
+        tx.update(slotRef, slotUpdate);
+      }
+    });
+
+    return {success: true};
+  }
+);
+
+// ─── callableApproveScheduleChangeRequest ────────────────────────────────────
+// [H3-FIX] 스케줄 변경 요청 승인/거절 CF 이전 — respondedByUid 서버 기록 + 원자적 배열 처리
+// 클라이언트 approveScheduleChangeRequest/rejectScheduleChangeRequest의 Firestore 직접 write를 CF Admin SDK로 이전.
+// 이전 이유:
+//  1. respondedByUid를 클라이언트가 임의 설정 → 다른 관리자 UID 위조 가능 (M5 취약점)
+//     CF 이전으로 callerUid를 CF가 직접 기록 → 위조 차단
+//  2. 트랜잭션 내 businessId 권한 검증 없이 rules에만 의존 → CF assertBizAdmin으로 강화
+// rules에서 관리자 PENDING→APPROVED/REJECTED 직접 전환 브랜치 삭제 완료
+export const callableApproveScheduleChangeRequest = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {requestId, action, rejectReason} = request.data as {
+      requestId: string;
+      action: "APPROVED" | "REJECTED";
+      rejectReason?: string;
+    };
+
+    if (!requestId) throw new HttpsError("invalid-argument", "requestId 필수");
+    if (action !== "APPROVED" && action !== "REJECTED") {
+      throw new HttpsError("invalid-argument", "action은 APPROVED 또는 REJECTED만 허용됩니다.");
+    }
+
+    // 1. 요청 문서 사전 읽기 (businessId·applicationId·applicantUid·requestType·targetDate 추출)
+    const requestRef = db.collection("schedule_change_requests").doc(requestId);
+    const requestSnap = await requestRef.get();
+    if (!requestSnap.exists) throw new HttpsError("not-found", "요청을 찾을 수 없습니다.");
+    const scrData = requestSnap.data()!;
+
+    // 2. 관리자 권한 검증 (CF assertBizAdmin — businesses.adminIds 기준)
+    await assertBizAdmin(callerUid, scrData.businessId as string);
+
+    // 3. 사전 상태 확인 (트랜잭션 전 조기 차단)
+    if ((scrData.status as string) !== "PENDING") {
+      throw new HttpsError("failed-precondition", `이미 처리된 요청입니다 (${scrData.status as string}).`);
+    }
+
+    // 4. 트랜잭션 (상태 재확인 + 업데이트 + application 배열 처리 — race condition 방어)
+    await db.runTransaction(async (tx) => {
+      const freshSnap = await tx.get(requestRef);
+      if (!freshSnap.exists) throw new HttpsError("not-found", "요청을 찾을 수 없습니다.");
+      if ((freshSnap.data()!.status as string) !== "PENDING") {
+        throw new HttpsError("failed-precondition", "이미 처리된 요청입니다 (동시 처리 충돌).");
+      }
+
+      // 요청 상태 업데이트
+      const updateData: Record<string, unknown> = {
+        status: action,
+        // [H3-FIX] respondedByUid CF가 직접 기록 — 클라이언트 UID 위조 차단
+        respondedByUid: callerUid,
+        respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      if (action === "REJECTED" && rejectReason) {
+        updateData.rejectReason = rejectReason;
+      }
+      tx.update(requestRef, updateData);
+
+      // APPROVED 시 application 배열 원자적 업데이트
+      // requestType별 처리 (Dart approveScheduleChangeRequest 로직 재구현):
+      //   LEAVE/NO_WORK  → leaveDates 추가 (미출근 명단 등록)
+      //   EXTRA_WORK     → extraWorkDates 추가 (비근무일 출근 허용)
+      //   CANCEL_LEAVE   → leaveDates 제거 (출근 차단 해제, 미제거 시 근무자 출근 불가 상태 고착)
+      //   CANCEL_EXTRA   → extraWorkDates 제거 (비근무일 명단 제거)
+      if (action === "APPROVED") {
+        const appRef = db.collection("applications").doc(scrData.applicationId as string);
+        const appSnap = await tx.get(appRef);
+
+        if (appSnap.exists) {
+          const appData = appSnap.data()!;
+          const targetDate = (scrData.targetDate as admin.firestore.Timestamp).toDate();
+
+          const sameDay = (ts: admin.firestore.Timestamp): boolean => {
+            const d = ts.toDate();
+            return d.getFullYear() === targetDate.getFullYear() &&
+                   d.getMonth() === targetDate.getMonth() &&
+                   d.getDate() === targetDate.getDate();
+          };
+
+          const parseDates = (field: string): admin.firestore.Timestamp[] => {
+            const arr = appData[field];
+            return Array.isArray(arr) ? (arr as admin.firestore.Timestamp[]) : [];
+          };
+
+          const requestType = scrData.requestType as string;
+
+          if (requestType === "LEAVE" || requestType === "NO_WORK") {
+            const leaveDates = parseDates("leaveDates");
+            if (!leaveDates.some(sameDay)) leaveDates.push(scrData.targetDate as admin.firestore.Timestamp);
+            tx.update(appRef, {leaveDates});
+          } else if (requestType === "EXTRA_WORK") {
+            const extraWorkDates = parseDates("extraWorkDates");
+            if (!extraWorkDates.some(sameDay)) extraWorkDates.push(scrData.targetDate as admin.firestore.Timestamp);
+            tx.update(appRef, {extraWorkDates});
+          } else if (requestType === "CANCEL_LEAVE") {
+            const leaveDates = parseDates("leaveDates").filter((ts) => !sameDay(ts));
+            tx.update(appRef, {leaveDates});
+          } else if (requestType === "CANCEL_EXTRA") {
+            const extraWorkDates = parseDates("extraWorkDates").filter((ts) => !sameDay(ts));
+            tx.update(appRef, {extraWorkDates});
+          }
+        }
+      }
+    });
+
+    // 5. 알림 전송 (트랜잭션 외부 — 알림 실패가 승인을 롤백하지 않도록)
+    const applicantUid = scrData.applicantUid as string;
+    const businessId = scrData.businessId as string;
+    const targetDate = (scrData.targetDate as admin.firestore.Timestamp).toDate();
+    const dateStr = `${targetDate.getMonth() + 1}월 ${targetDate.getDate()}일`;
+    const notifTitle = action === "APPROVED" ? "스케줄 변경 승인" : "스케줄 변경 거절";
+    const notifBody = action === "APPROVED"
+      ? `${dateStr} 스케줄 변경 요청이 승인되었습니다.`
+      : `${dateStr} 스케줄 변경 요청이 거절되었습니다.${rejectReason ? ` 사유: ${rejectReason}` : ""}`;
+
+    db.collection("users").doc(applicantUid).collection("notifications").add({
+      userId: applicantUid,
+      type: action === "APPROVED" ? "scheduleChangeApproved" : "scheduleChangeRejected",
+      title: notifTitle,
+      body: notifBody,
+      data: {requestId, businessId, action: "scheduleChangeDetail"},
+      isRead: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    }).catch((e: unknown) => console.error("[callableApproveScheduleChangeRequest] 알림 전송 실패:", e));
+
+    return {success: true};
+  }
+);

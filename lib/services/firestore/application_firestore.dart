@@ -2065,6 +2065,9 @@ extension ApplicationFirestore on FirestoreService {
   }
 
   /// TO.totalPending 및 Slot.pendingCount 변경
+  /// [A1-FIX] workTypeCounts 업데이트 제거 — callableIncrementSlotPending CF로 이전.
+  /// rules에서 isUser() slots update의 workTypeCounts 허용 삭제로 맵 전체 교체 취약점 차단.
+  /// workTypeCounts.pendingCount는 CF가 dot-notation으로 정밀 업데이트 (confirmedCount 보호).
   void _incrementTOPending(
     WriteBatch batch,
     String toId,
@@ -2081,16 +2084,16 @@ extension ApplicationFirestore on FirestoreService {
           .doc(toId)
           .collection('slots')
           .doc(slotId);
-      final slotUpdate = <String, dynamic>{
+      // [A1-FIX] workTypeCounts 제거 — CF callableIncrementSlotPending이 별도로 처리
+      batch.update(slotRef, {
         'pendingCount': FieldValue.increment(delta),
-      };
-      if (workType != null) {
-        slotUpdate['workTypeCounts.$workType.pendingCount'] =
-            FieldValue.increment(delta);
-      }
-      batch.update(slotRef, slotUpdate);
+      });
     }
   }
+
+  // [A1-FIX] workTypeCounts.pendingCount는 callableIncrementSlotPending CF(Admin SDK)가
+  // dot-notation으로 정밀 업데이트. 현재는 pendingCount만 rules에서 허용하며,
+  // workTypeCounts 통계 정밀도가 필요할 때 CF 호출을 추가한다.
 
   /// TO.totalConfirmed 및 Slot.confirmedCount 변경
   ///

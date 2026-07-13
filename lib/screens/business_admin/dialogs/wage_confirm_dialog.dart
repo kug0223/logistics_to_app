@@ -1025,6 +1025,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   }
 
   /// 급여 수정
+  /// [M11-FIX] callableUpdateWageDetail CF로 이전 — calculatedAt serverTimestamp 강제 + assertBizAdmin 권한 검증
+  /// 이전 이유: calculatedAt을 DateTime.now()로 설정 → 클라이언트 시계 조작으로 계산 시각 위조 가능
   Future<void> _processWageUpdate(ApplicationModel app, AttendanceModel attendance, WageDetailModel wage) async {
     if (_isProcessing) return;
     if (!mounted) return;
@@ -1034,31 +1036,16 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       final adminUid = userProvider.currentUser?.uid;
       final user = widget.userMap[app.uid];
 
-      // [임금H-1] 음수 additionalAmount/deductionAmount 차단
-      // 관리자 REST API 직접 호출 경로는 Firestore 규칙 finalWage >= 0 조건으로 2차 차단
+      // [임금H-1] 음수 additionalAmount/deductionAmount 차단 (CF에서도 재검증)
       if (wage.additionalAmount < 0) throw Exception('추가수당은 0 이상이어야 합니다');
       if (wage.deductionAmount < 0) throw Exception('추가공제는 0 이상이어야 합니다');
 
-      final updatedWage = wage.copyWith(
-        calculatedBy: adminUid,
-        calculatedAt: DateTime.now(),
-      );
-
-      // 트랜잭션으로 서버 상태 재확인 — wageConfirmed/wageTransferred 덮어쓰기 방지
-      await FirebaseFirestore.instance.runTransaction((tx) async {
-        final ref = FirebaseFirestore.instance.collection('attendance').doc(attendance.id);
-        final snap = await tx.get(ref);
-        final status = snap.data()?['wageStatus'];
-        if (status == AttendanceModel.wageConfirmed || status == AttendanceModel.wageTransferred) {
-          throw Exception('이미 확정된 급여는 수정할 수 없습니다');
-        }
-        tx.update(ref, {
-          'finalWage':  updatedWage.effectiveNetWage,
-          'wageDetail': updatedWage.toMap(),
-          // [BUG-F-02 수정] 수정 시에도 yearMonth 유지 — 누락 시 _getPrevGrossTotal 8일 소급 쿼리 누락
-          'yearMonth':  FormatHelper.formatYearMonthISO(attendance.workDate),
-          'updatedAt':  FieldValue.serverTimestamp(),
-        });
+      // [M11-FIX] CF 호출 — calculatedAt은 CF가 serverTimestamp로 강제 설정
+      final callable = FirebaseFunctions.instance
+          .httpsCallable('callableUpdateWageDetail');
+      await callable.call({
+        'attendanceId': attendance.id,
+        'wageDetailMap': wage.toMap(),
       });
 
       _hasChanges = true;
@@ -1066,7 +1053,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
       if (mounted) {
         setState(() {
-          _calculatedWages[app.id] = updatedWage;
+          // UI 로컬 반영: calculatedAt은 CF 서버 타임스탬프와 약간 다를 수 있으나 UI 표시 목적
+          _calculatedWages[app.id] = wage.copyWith(
+            calculatedBy: adminUid,
+            calculatedAt: DateTime.now(),
+          );
         });
       }
 

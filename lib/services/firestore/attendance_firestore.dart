@@ -674,111 +674,25 @@ extension AttendanceFirestore on FirestoreService {
   ///
   /// ⚠️ CANCEL_LEAVE/CANCEL_EXTRA 분기를 수정할 때 removeWhere 누락 금지.
   ///    누락 시 근무자가 출근 불가 상태에 빠지거나 비근무일에 명단에 표시되는 문제 재발.
+  /// 스케줄 변경 요청 승인
+  /// [H3-FIX] callableApproveScheduleChangeRequest CF로 이전 — respondedByUid CF 직접 기록 + assertBizAdmin 권한 검증
+  /// 이전 이유:
+  ///  1. respondedByUid를 클라이언트가 설정 → 다른 관리자 UID 위조 가능 (M5 취약점)
+  ///  2. 트랜잭션 내 businessId 권한 검증 없이 rules에만 의존 → CF assertBizAdmin으로 강화
   Future<bool> approveScheduleChangeRequest({
     required String requestId,
     required String approverUid,
   }) async {
-    ScheduleChangeRequestModel? request;
     try {
-      final requestRef = _firestore.collection('schedule_change_requests').doc(requestId);
-
-      await _firestore.runTransaction((tx) async {
-        final requestDoc = await tx.get(requestRef);
-        if (!requestDoc.exists) throw Exception('요청을 찾을 수 없음');
-
-        request = ScheduleChangeRequestModel.fromMap(requestDoc.data()!, requestId);
-
-        // 이미 처리된 요청 중복 승인 방지 (트랜잭션 내 원자적 체크)
-        if (!request!.isPending) {
-          throw Exception('이미 처리된 요청 (${request!.status})');
-        }
-
-        tx.update(requestRef, {
-          'status': 'APPROVED',
-          'respondedByUid': approverUid,
-          'respondedAt': FieldValue.serverTimestamp(),
-        });
-
-        // ── Application leaveDates / extraWorkDates 원자적 업데이트 ──────────────
-        // 요청 타입별로 Application 문서의 배열 필드를 트랜잭션 내에서 갱신.
-        // 트랜잭션 외부에서 별도 업데이트하면 요청 상태(APPROVED)와 배열 변경 사이에
-        // 타이밍 불일치가 생길 수 있으므로 반드시 같은 tx 안에서 처리.
-        final appRef = _firestore.collection('applications').doc(request!.applicationId);
-        final appSnapshot = await tx.get(appRef);
-        // [K-01] appSnapshot.exists=false인 경우 application 배열 업데이트 없이
-        // request만 APPROVED 처리됨. 정상 플로우에서 미발생하지만 application이 먼저
-        // 삭제된 케이스에서 조용히 실패 → leaveDates/extraWorkDates 미반영.
-        if (appSnapshot.exists) {
-          final appData = appSnapshot.data()!;
-
-          bool sameDay(DateTime d) =>
-              d.year == request!.targetDate.year &&
-              d.month == request!.targetDate.month &&
-              d.day == request!.targetDate.day;
-
-          List<DateTime> parseDates(String field) =>
-              appData[field] is List
-                  ? (appData[field] as List)
-                      .map((e) => (e as Timestamp).toDate().toLocal())
-                      .toList()
-                  : [];
-
-          if (request!.isLeaveRequest || request!.isNoWorkRequest) {
-            // 휴무·미출근 승인: leaveDates에 날짜 추가
-            // → isLeaveDateOn(date)=true → isWorkingOnDate=false → 당일 명단·출근 체크 차단
-            final leaveDates = parseDates('leaveDates');
-            if (!leaveDates.any(sameDay)) leaveDates.add(request!.targetDate);
-            tx.update(appRef, {
-              'leaveDates': leaveDates.map((e) => Timestamp.fromDate(e)).toList(),
-            });
-          } else if (request!.isExtraWorkRequest) {
-            // 추가근무 승인: extraWorkDates에 날짜 추가
-            // → isExtraWorkDateOn(date)=true → isWorkingOnDate=true → 비근무 요일에도 출근 가능
-            final extraWorkDates = parseDates('extraWorkDates');
-            if (!extraWorkDates.any(sameDay)) extraWorkDates.add(request!.targetDate);
-            tx.update(appRef, {
-              'extraWorkDates': extraWorkDates.map((e) => Timestamp.fromDate(e)).toList(),
-            });
-          } else if (request!.requestType == RequestType.CANCEL_LEAVE) {
-            // 휴무 취소 승인: leaveDates에서 해당 날짜 제거
-            // 제거하지 않으면 isLeaveDateOn=true가 유지돼 checkIn 서비스에서
-            // "오늘은 승인된 휴무일" 예외가 발생해 근무자가 출근 불가 상태에 빠짐
-            final leaveDates = parseDates('leaveDates')..removeWhere(sameDay);
-            tx.update(appRef, {
-              'leaveDates': leaveDates.map((e) => Timestamp.fromDate(e)).toList(),
-            });
-          } else if (request!.requestType == RequestType.CANCEL_EXTRA) {
-            // 추가근무 취소 승인: extraWorkDates에서 해당 날짜 제거
-            // 제거하지 않으면 isExtraWorkDateOn=true가 유지돼 당일 명단에 계속 포함되고
-            // 해당 날짜 isWorkingOnDate=true 상태가 유지됨
-            final extraWorkDates = parseDates('extraWorkDates')..removeWhere(sameDay);
-            tx.update(appRef, {
-              'extraWorkDates': extraWorkDates.map((e) => Timestamp.fromDate(e)).toList(),
-            });
-          }
-        }
+      final callable = FirebaseFunctions.instance
+          .httpsCallable('callableApproveScheduleChangeRequest');
+      await callable.call({
+        'requestId': requestId,
+        'action': 'APPROVED',
       });
 
-      debugPrint('✅ 스케줄 변경 요청 승인 완료: $requestId');
-
-      // [BUG-수정 N-H-2] 배치 커밋 후 지원자 TTL 캐시 무효화.
-      // 트랜잭션에서 leaveDates/extraWorkDates가 변경됐지만 캐시가 살아 있으면
-      // 지원자 화면에서 최대 1분간 구 데이터가 표시되는 문제 수정.
-      if (request != null) {
-        invalidateMyApplicationsCache(request!.applicantUid);
-      }
-
-      // 🔔 알림 생성 (트랜잭션 외부 — 알림 실패가 승인을 롤백하지 않도록)
-      if (request != null) {
-        _sendScheduleChangeApprovedNotification(
-          applicantUid: request!.applicantUid,
-          businessId: request!.businessId,
-          requestType: request!.requestType.name,
-          targetDate: request!.targetDate,
-          requestId: requestId,
-        );
-      }
-
+      debugPrint('✅ 스케줄 변경 요청 승인 완료 (CF): $requestId');
+      // 캐시 무효화: 관리자 기기에는 근무자의 "내 지원 목록" 캐시가 없으므로 no-op
       return true;
     } catch (e) {
       if (e.toString().contains('이미 처리된 요청')) {
@@ -791,49 +705,22 @@ extension AttendanceFirestore on FirestoreService {
   }
 
   /// 스케줄 변경 요청 거절
+  /// [H3-FIX] callableApproveScheduleChangeRequest CF로 이전 (action=REJECTED)
   Future<bool> rejectScheduleChangeRequest({
     required String requestId,
     required String rejectorUid,
     String? rejectReason,
   }) async {
-    ScheduleChangeRequestModel? request;
     try {
-      final requestRef = _firestore.collection('schedule_change_requests').doc(requestId);
-
-      await _firestore.runTransaction((tx) async {
-        final requestDoc = await tx.get(requestRef);
-        if (!requestDoc.exists) throw Exception('요청 문서 없음');
-
-        request = ScheduleChangeRequestModel.fromMap(requestDoc.data()!, requestId);
-        if (!request!.isPending) throw Exception('이미 처리된 요청 (${request!.status})');
-
-        tx.update(requestRef, {
-          'status': 'REJECTED',
-          'respondedByUid': rejectorUid,
-          'respondedAt': FieldValue.serverTimestamp(),
-          'rejectReason': rejectReason,
-        });
+      final callable = FirebaseFunctions.instance
+          .httpsCallable('callableApproveScheduleChangeRequest');
+      await callable.call({
+        'requestId': requestId,
+        'action': 'REJECTED',
+        if (rejectReason != null) 'rejectReason': rejectReason,
       });
 
-      debugPrint('✅ 스케줄 변경 요청 거절 완료: $requestId');
-
-      // [BUG-수정 N-H-3] 거절 완료 후 지원자 TTL 캐시 무효화.
-      // 캐시가 만료되기 전까지 요청 상태가 여전히 PENDING으로 보이는 문제 수정.
-      if (request != null) {
-        invalidateMyApplicationsCache(request!.applicantUid);
-      }
-
-      if (request != null) {
-        _sendScheduleChangeRejectedNotification(
-          applicantUid: request!.applicantUid,
-          businessId: request!.businessId,
-          requestType: request!.requestType.name,
-          targetDate: request!.targetDate,
-          requestId: requestId,
-          rejectReason: rejectReason,
-        );
-      }
-
+      debugPrint('✅ 스케줄 변경 요청 거절 완료 (CF): $requestId');
       return true;
     } catch (e) {
       if (e.toString().contains('이미 처리된 요청')) {
@@ -885,68 +772,8 @@ extension AttendanceFirestore on FirestoreService {
     }
   }
 
-  /// 🔔 스케줄 변경 승인 알림 전송 (요청자에게)
-  Future<void> _sendScheduleChangeApprovedNotification({
-    required String applicantUid,
-    required String businessId,
-    required String requestType,
-    required DateTime targetDate,
-    required String requestId,
-  }) async {
-    try {
-      // 사업장 이름 조회
-      final businessDoc = await _firestore.collection('businesses').doc(businessId).get(const GetOptions(source: Source.server));
-      final businessName = businessDoc.data()?['name'] as String? ?? '';
-      
-      await createNotification(
-        NotificationModel.createScheduleChangeApproved(
-          userId: applicantUid,
-          requestType: requestType,
-          targetDate: targetDate,
-          requestId: requestId,
-          businessName: businessName,
-          businessId: businessId,
-        ),
-      );
-      
-      debugPrint('🔔 스케줄 변경 승인 알림 전송 완료 → 지원자: $applicantUid');
-    } catch (e) {
-      debugPrint('⚠️ 스케줄 변경 승인 알림 전송 실패: $e');
-    }
-  }
-
-  /// 🔔 스케줄 변경 거절 알림 전송 (요청자에게)
-  Future<void> _sendScheduleChangeRejectedNotification({
-    required String applicantUid,
-    required String businessId,
-    required String requestType,
-    required DateTime targetDate,
-    required String requestId,
-    String? rejectReason,
-  }) async {
-    try {
-      // 사업장 이름 조회
-      final businessDoc = await _firestore.collection('businesses').doc(businessId).get(const GetOptions(source: Source.server));
-      final businessName = businessDoc.data()?['name'] as String? ?? '';
-      
-      await createNotification(
-        NotificationModel.createScheduleChangeRejected(
-          userId: applicantUid,
-          requestType: requestType,
-          targetDate: targetDate,
-          requestId: requestId,
-          businessName: businessName,
-          businessId: businessId,
-          rejectReason: rejectReason,
-        ),
-      );
-      
-      debugPrint('🔔 스케줄 변경 거절 알림 전송 완료 → 지원자: $applicantUid');
-    } catch (e) {
-      debugPrint('⚠️ 스케줄 변경 거절 알림 전송 실패: $e');
-    }
-  }
-
+  // [H3-FIX] _sendScheduleChangeApprovedNotification, _sendScheduleChangeRejectedNotification 삭제
+  // callableApproveScheduleChangeRequest CF가 알림을 직접 전송하므로 클라이언트 알림 함수 불필요
 
   /// 스케줄 변경 요청 취소
   Future<bool> cancelScheduleChangeRequest({

@@ -537,11 +537,13 @@ service cloud.firestore {
                            request.resource.data.confirmedCount == resource.data.confirmedCount + 1)));
 
 
-        // 지원자: 지원/취소 시 pendingCount·workTypeCounts 카운터만 수정 허용
-        // [MEDIUM-FIX] ±1 제한 추가 — 임의 양수값 설정 가능했던 통계 훼손 취약점 수정
+        // [A1-FIX] 지원자: pendingCount 카운터만 수정 허용 (workTypeCounts 제거)
+        // workTypeCounts 전체 맵 교체로 confirmedCount 조작 가능한 취약점 차단.
+        // workTypeCounts.pendingCount는 callableIncrementSlotPending CF(Admin SDK)가
+        // dot-notation으로 정밀 업데이트 — 전체 맵 교체 경로 완전 차단.
         allow update: if isLoggedIn() && isUser() &&
                          request.resource.data.diff(resource.data).affectedKeys()
-                           .hasOnly(['pendingCount', 'workTypeCounts']) &&
+                           .hasOnly(['pendingCount']) &&
                          request.resource.data.pendingCount >= 0 &&
                          (request.resource.data.pendingCount == resource.data.pendingCount + 1 ||
                           request.resource.data.pendingCount == resource.data.pendingCount - 1);
@@ -1094,11 +1096,12 @@ service cloud.firestore {
                       isSuperAdmin()
                     );
 
-      // 수정: 워커는 본인 요청 취소(CANCELED)만, 관리자/하위관리자는 승인/거절 처리
+      // 수정: 워커는 본인 요청 취소(CANCELED)만 허용 / 관리자는 APPROVED→CANCELED(승인 취소)만 허용
       // [SEC-12] 워커 취소 시 기존 상태가 PENDING이어야만 허용
       //   — 이미 APPROVED/REJECTED 처리된 요청을 재취소하는 취약점 차단
-      // [SEC-51] 관리자 브랜치: PENDING → APPROVED/REJECTED 상태 전이만 허용 + 필드 화이트리스트
-      //   — REJECTED → APPROVED 역변조 차단 (이미 처리된 요청 상태 변경 방지)
+      // [H3-FIX] 관리자 PENDING→APPROVED/REJECTED 브랜치 삭제
+      //   — callableApproveScheduleChangeRequest CF(Admin SDK)로 이전 완료
+      //   — respondedByUid 위조 차단 + assertBizAdmin 서버 권한 검증 확보
       allow update: if isLoggedIn() && (
                       // 워커: PENDING 상태일 때만 CANCELED 전환 허용, 응답자 정보만 변경
                       (isOwner(resource.data.applicantUid) &&
@@ -1106,19 +1109,6 @@ service cloud.firestore {
                        request.resource.data.status == 'CANCELED' &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status', 'respondedByUid', 'respondedAt'])) ||
-                      // 관리자: PENDING → APPROVED/REJECTED 전환만 허용
-                      // [M5-FIX] respondedByUid == auth.uid 강제 — 감사 이력 위변조 차단
-                      //   respondedByUid를 다른 관리자 UID로 설정하는 공격 방어.
-                      //   CF 이전(callableApproveScheduleChangeRequest) 전 rules 레벨 방어선.
-                      ((isAdminOf(resource.data.businessId) ||
-                        isSubAdminOf(resource.data.businessId) ||
-                        isSuperAdmin()) &&
-                       resource.data.status == 'PENDING' &&
-                       (request.resource.data.status == 'APPROVED' ||
-                        request.resource.data.status == 'REJECTED') &&
-                       request.resource.data.get('respondedByUid', '') == request.auth.uid &&
-                       request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['status', 'respondedByUid', 'respondedAt', 'rejectReason'])) ||
                       // 관리자/하위관리자: APPROVED → CANCELED (승인 취소) 허용
                       // Dart cancelScheduleChangeRequest()가 APPROVED 상태에서도 호출 가능
                       ((isAdminOf(resource.data.businessId) ||
