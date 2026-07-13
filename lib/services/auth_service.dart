@@ -674,6 +674,70 @@ class AuthService {
         debugPrint('⚠️ 계정 삭제: worker_locations 삭제 실패 (계속 진행): $e');
       }
 
+      // 3-pre6. trust_score_history userId 익명화 — users 문서 삭제 전 처리 (WARN-AUTH-01)
+      // trust_score_history는 근로 내역 기록으로 법령 보존 가능성 있음 → 삭제 대신 userId 익명화
+      // isUser() 체크가 users 문서를 조회하므로 삭제 전 처리 필수
+      try {
+        bool hasMore3pre6 = true;
+        while (hasMore3pre6) {
+          final snap = await _firestore
+              .collection('trust_score_history')
+              .where('userId', isEqualTo: user.uid)
+              .limit(100)
+              .get();
+          if (snap.docs.isEmpty) break;
+          hasMore3pre6 = snap.docs.length == 100;
+          final batch = _firestore.batch();
+          for (final doc in snap.docs) {
+            batch.update(doc.reference, {'userId': '탈퇴한 회원'});
+          }
+          await batch.commit();
+        }
+      } catch (e) {
+        debugPrint('⚠️ 계정 삭제: trust_score_history 익명화 실패 (계속 진행): $e');
+      }
+
+      // 3-pre7. member_invitations 처리 — users 문서 삭제 전 처리 (WARN-AUTH-02)
+      // 탈퇴자가 초대 대상(targetUid)인 PENDING 초대 → 삭제 (더 이상 수락 불가)
+      // 탈퇴자가 초대자(invitedBy)인 미응답 초대 → targetPhone 등 개인정보 익명화
+      try {
+        // 탈퇴자가 초대 대상인 문서 삭제
+        bool hasMore3pre7a = true;
+        while (hasMore3pre7a) {
+          final snap = await _firestore
+              .collection('member_invitations')
+              .where('targetUid', isEqualTo: user.uid)
+              .limit(100)
+              .get();
+          if (snap.docs.isEmpty) break;
+          hasMore3pre7a = snap.docs.length == 100;
+          final batch = _firestore.batch();
+          for (final doc in snap.docs) { batch.delete(doc.reference); }
+          await batch.commit();
+        }
+        // 탈퇴자가 초대자(invitedBy)인 문서 익명화
+        bool hasMore3pre7b = true;
+        while (hasMore3pre7b) {
+          final snap = await _firestore
+              .collection('member_invitations')
+              .where('invitedBy', isEqualTo: user.uid)
+              .limit(100)
+              .get();
+          if (snap.docs.isEmpty) break;
+          hasMore3pre7b = snap.docs.length == 100;
+          final batch = _firestore.batch();
+          for (final doc in snap.docs) {
+            batch.update(doc.reference, {
+              'invitedByName': '탈퇴한 회원',
+              'invitedBy': FieldValue.delete(),
+            });
+          }
+          await batch.commit();
+        }
+      } catch (e) {
+        debugPrint('⚠️ 계정 삭제: member_invitations 처리 실패 (계속 진행): $e');
+      }
+
       // 3. Firestore 사용자 문서 삭제 — 개인정보보호법 제21조
       // Storage URL 참조를 먼저 제거해야 broken URL 방지 (CLAUDE.md 삭제 순서 규칙)
       await _firestore.collection('users').doc(user.uid).delete();

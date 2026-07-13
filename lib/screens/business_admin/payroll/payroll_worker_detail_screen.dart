@@ -577,6 +577,8 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
       await _loadRecords();
     } catch (e) {
       if (mounted) ToastHelper.showError('처리에 실패했습니다: $e');
+      // [WARN-PAY-01] 이체 성공 + 상태 업데이트 실패 시 화면 갱신 — 재시도 시 zombie PENDING 방지
+      if (mounted) await _loadRecords();
     } finally {
       if (mounted) setState(() => _isSettling = false);
     }

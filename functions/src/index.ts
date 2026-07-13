@@ -11590,8 +11590,10 @@ export const callableCloseTOManually = onCall(
         if (batchCount > 0) await batch.commit();
 
         // 4. 알림 발송 (배치 커밋 후 — 실패해도 TO 마감 유지)
+        // [CF-CLOSE-01] 499건 단위 분할: 500건 초과 시 Firestore batch 오류 방지
         try {
-          const notifBatch = db.batch();
+          let notifBatch = db.batch();
+          let notifCount = 0;
           for (const entry of notifEntries) {
             if (!entry.uid) continue;
             const typeLabel = entry.status === "CONFIRMED" ? "확정 취소" :
@@ -11608,8 +11610,14 @@ export const callableCloseTOManually = onCall(
                 createdAt: now,
               }
             );
+            notifCount++;
+            if (notifCount >= 499) {
+              await notifBatch.commit();
+              notifBatch = db.batch();
+              notifCount = 0;
+            }
           }
-          await notifBatch.commit();
+          if (notifCount > 0) await notifBatch.commit();
         } catch (notifErr) {
           console.error("⚠️ [closeTOManually] 알림 발송 실패 (TO 마감은 완료):", notifErr);
         }

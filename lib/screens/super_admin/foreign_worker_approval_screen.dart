@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:provider/provider.dart';
 import '../../models/core/user_model.dart';
+import '../../providers/user_provider.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
@@ -38,7 +40,14 @@ class _ForeignWorkerApprovalScreenState
   @override
   void initState() {
     super.initState();
-    _loadUsers();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!context.read<UserProvider>().isSuperAdmin) {
+        Navigator.pop(context);
+        return;
+      }
+      _loadUsers();
+    });
   }
 
   Future<void> _loadUsers() async {

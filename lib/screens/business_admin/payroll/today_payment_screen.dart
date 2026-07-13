@@ -392,7 +392,12 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
       if (!mounted) return;
 
       final selectedRecords = _records.where((r) => _selectedIds.contains(r.id)).toList();
-      final businessId = selectedRecords.isNotEmpty ? selectedRecords.first.businessId : '';
+      // [WARN-PAY-02] 백그라운드 새로고침으로 _records 교체 후 _selectedIds가 남은 경우 방어
+      if (selectedRecords.isEmpty) {
+        if (mounted) ToastHelper.showWarning('선택한 항목을 찾을 수 없습니다. 화면을 새로고침해 주세요.');
+        return;
+      }
+      final businessId = selectedRecords.first.businessId;
 
       await _payService.markTransferredBatch(
         attendanceIds:     _selectedIds.toList(),
