@@ -1085,18 +1085,22 @@ service cloud.firestore {
       //   — respondedByUid 위조 차단 + assertBizAdmin 서버 권한 검증 확보
       allow update: if isLoggedIn() && (
                       // 워커: PENDING 상태일 때만 CANCELED 전환 허용, 응답자 정보만 변경
+                      // [M2-FIX] respondedByUid == request.auth.uid 강제 — 타인 UID 위조로 감사 기록 변조 차단
                       (isOwner(resource.data.applicantUid) &&
                        resource.data.status == 'PENDING' &&
                        request.resource.data.status == 'CANCELED' &&
+                       request.resource.data.respondedByUid == request.auth.uid &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status', 'respondedByUid', 'respondedAt'])) ||
                       // 관리자/하위관리자: APPROVED → CANCELED (승인 취소) 허용
                       // Dart cancelScheduleChangeRequest()가 APPROVED 상태에서도 호출 가능
+                      // [M2-FIX] respondedByUid == request.auth.uid 강제 — 책임 회피용 UID 위조 차단
                       ((isAdminOf(resource.data.businessId) ||
                         isSubAdminOf(resource.data.businessId) ||
                         isSuperAdmin()) &&
                        resource.data.status == 'APPROVED' &&
                        request.resource.data.status == 'CANCELED' &&
+                       request.resource.data.respondedByUid == request.auth.uid &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status', 'respondedByUid', 'respondedAt']))
                     );

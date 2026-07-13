@@ -9641,6 +9641,16 @@ export const callableBatchSetNoShow = onCall(
         return;
       }
 
+      // [L3-FIX] 신규 노쇼 생성 시 applicationId → userId 교차검증
+      //   — 악의적 관리자가 타 근로자 userId를 지정해 TrustScore 조작하는 것을 차단
+      if (!attendanceId) {
+        const appSnap = await db.collection("applications").doc(applicationId).get();
+        if (!appSnap.exists || appSnap.data()!.uid !== userId) {
+          skipped.push(resolvedId);
+          return;
+        }
+      }
+
       const yearMonth = date.toISOString().substring(0, 7);
       if (attendanceId) {
         batch.update(ref, {
@@ -9895,6 +9905,12 @@ export const callableBatchCheckIn = onCall(
           });
         } else {
           // 신규 출근 기록 — wageStatus='pending' 고정
+          // [L3-FIX] applicationId → userId 교차검증 — 타 근로자 UID 지정으로 TrustScore 조작 차단
+          const appVerifySnap = await db.collection("applications").doc(applicationId).get();
+          if (!appVerifySnap.exists || appVerifySnap.data()!.uid !== userId) {
+            console.error(`출근 처리 건너뜀 — userId 불일치 (${applicationId})`);
+            continue;
+          }
           const dateStr = `${workDate.getFullYear()}${String(workDate.getMonth() + 1).padStart(2, "0")}${String(workDate.getDate()).padStart(2, "0")}`;
           const docId = `${applicationId}_${dateStr}`;
           await db.collection("attendance").doc(docId).set({
@@ -9955,6 +9971,11 @@ export const callableBatchCheckOut = onCall(
 
     for (const entry of entries) {
       const {attendanceId, checkOutMs, workHours, status, resetWageDetail} = entry;
+      // [L4-FIX] workHours 상한 검증 — 관리자가 24시간 초과 근무시간 입력으로 임금 부풀리기 차단
+      if (typeof workHours === "number" && workHours > 24) {
+        skipped.push(attendanceId);
+        continue;
+      }
       const ref = db.collection("attendance").doc(attendanceId);
       try {
         if (resetWageDetail) {
@@ -10896,6 +10917,15 @@ export const callableApproveScheduleChangeRequest = onCall(
 
         if (appSnap.exists) {
           const appData = appSnap.data()!;
+          // [M1-FIX] applicationId 소유권 + 사업장 교차검증
+          //   — 타 사업장 applicationId 지정으로 크로스-사업장 스케줄 조작 차단
+          //   — 타 근로자 applicationId 지정으로 타인 스케줄 조작 차단
+          if (appData.businessId !== (scrData.businessId as string)) {
+            throw new HttpsError("permission-denied", "애플리케이션이 해당 사업장에 속하지 않습니다.");
+          }
+          if (appData.uid !== (scrData.applicantUid as string)) {
+            throw new HttpsError("permission-denied", "애플리케이션 소유자가 요청자와 일치하지 않습니다.");
+          }
           const targetDate = (scrData.targetDate as admin.firestore.Timestamp).toDate();
 
           const sameDay = (ts: admin.firestore.Timestamp): boolean => {
