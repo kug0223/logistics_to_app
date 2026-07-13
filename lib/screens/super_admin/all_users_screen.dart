@@ -192,6 +192,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
   }
 
   Future<void> _adjustTrustScore(UserModel user) async {
+    if (_isProcessing) return;
     final result = await showDialog<int>(
       context: context,
       builder: (ctx) => _TrustScoreDialog(
@@ -201,6 +202,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
     );
     if (result == null || !mounted) return;
 
+    setState(() => _isProcessing = true);
     try {
       await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableAdjustTrustScore')
@@ -214,6 +216,8 @@ class _AllUsersScreenState extends State<AllUsersScreen>
       await _loadAllUsers();
     } catch (e) {
       if (mounted) ToastHelper.showError('처리 실패: $e');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 

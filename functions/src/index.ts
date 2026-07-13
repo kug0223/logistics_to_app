@@ -451,6 +451,19 @@ export const createNotification = onCall(
     if (!/^[A-Za-z_][A-Za-z0-9_]{0,49}$/.test(rawType)) {
       throw new HttpsError("invalid-argument", "알림 타입 형식이 올바르지 않습니다.");
     }
+    // [MEDIUM] 허용 목록 화이트리스트 — 임의 type 저장 차단
+    const ALLOWED_NOTIFICATION_TYPES = new Set([
+      "general", "contractRequested", "contractApproved", "contractRejected",
+      "applicationConfirmed", "applicationCanceled", "applicationReconfirmed",
+      "idCardAccessRequest", "idCardAccessApproved", "idCardAccessRejected",
+      "resignApproved", "resignRejected", "paymentTransferred",
+      "toPublished", "noShow", "latePenalty", "trustScoreChanged",
+      "scheduleChangeRequest", "scheduleChangeApproved", "scheduleChangeRejected",
+      "terminationApproved", "terminationRejected", "renewalReminder",
+    ]);
+    if (!ALLOWED_NOTIFICATION_TYPES.has(rawType)) {
+      throw new HttpsError("invalid-argument", "허용되지 않는 알림 타입입니다.");
+    }
     // [A4-FIX] contractRequested 타입: applicationId 기반 24h 서버 쿨다운
     // SharedPreferences 기반 클라이언트 쿨다운은 재설치·타기기로 우회 가능 → 서버 강제로 전환
     // [A4-LOOP-FIX] 다수 관리자 사업장에서 Dart가 adminIds 루프로 CF를 반복 호출 시:
@@ -5203,6 +5216,10 @@ export const adminResetForeignPassword = onCall(
     if (!targetDoc.exists) throw new HttpsError("not-found", "사용자를 찾을 수 없습니다.");
 
     const userData = targetDoc.data()!;
+    // [MEDIUM-3] USER 역할만 허용 — 데이터 이상으로 BUSINESS_ADMIN에 foreignIdNumber가 있어도 차단
+    if (userData.role !== "USER") {
+      throw new HttpsError("failed-precondition", "USER 역할 계정만 비밀번호 초기화가 가능합니다.");
+    }
     // [특이사항] 내국인은 PASS CI 기반 비밀번호 찾기 사용 — 이 CF는 외국인 전용
     if (!userData.foreignIdNumber) {
       throw new HttpsError("failed-precondition", "내국인 사용자는 이 기능을 사용할 수 없습니다.");
@@ -6715,6 +6732,10 @@ export const callableApplyNoShowPenalty = onCall(
     const businessId = (appData.businessId as string | undefined) ?? "";
 
     await db.runTransaction(async (tx) => {
+      // [HIGH] 멱등성 가드 — 네트워크 재시도로 noShowCount 중복 증가 차단
+      const freshAppSnap = await tx.get(db.collection("applications").doc(applicationId));
+      if (freshAppSnap.data()?.noShowPenaltyAppliedAt) return;
+
       const userSnap = await tx.get(userRef);
       if (!userSnap.exists) return;
       const userData = userSnap.data()!;
@@ -6735,6 +6756,10 @@ export const callableApplyNoShowPenalty = onCall(
         updates.restrictedUntil = admin.firestore.Timestamp.fromDate(restrictedUntil);
       }
       tx.update(userRef, updates);
+      // 멱등성 플래그 기록
+      tx.update(db.collection("applications").doc(applicationId), {
+        noShowPenaltyAppliedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
 
       const histRef = db.collection("trust_score_history").doc();
       tx.set(histRef, {
@@ -6857,13 +6882,18 @@ export const callableDecrementSlotConfirmed = onCall(
       tx.update(toRef, toUpdate);
       if (slotId) {
         const slotRef = toRef.collection("slots").doc(slotId);
-        const slotUpdate: Record<string, admin.firestore.FieldValue> = {
-          confirmedCount: admin.firestore.FieldValue.increment(-1),
-        };
-        if (resolvedWorkType) {
-          slotUpdate[`workTypeCounts.${resolvedWorkType}.confirmedCount`] = admin.firestore.FieldValue.increment(-1);
+        // [L-1] 슬롯 레벨 음수 방어 — TO 레벨 체크와 독립적으로 슬롯도 보호
+        const slotSnap = await tx.get(slotRef);
+        const slotConfirmedCount = (slotSnap.data()?.confirmedCount as number) ?? 0;
+        if (slotConfirmedCount > 0) {
+          const slotUpdate: Record<string, admin.firestore.FieldValue> = {
+            confirmedCount: admin.firestore.FieldValue.increment(-1),
+          };
+          if (resolvedWorkType) {
+            slotUpdate[`workTypeCounts.${resolvedWorkType}.confirmedCount`] = admin.firestore.FieldValue.increment(-1);
+          }
+          tx.update(slotRef, slotUpdate);
         }
-        tx.update(slotRef, slotUpdate);
       }
       tx.update(freshAppRef, {confirmedDecrementedAt: admin.firestore.FieldValue.serverTimestamp()});
     });
@@ -7026,6 +7056,10 @@ export const callableAutoConflictCancel = onCall(
       .limit(500)
       .get();
 
+    if (allAppsSnap.size >= 500) {
+      console.warn(`⚠️ [W-1] 충돌 지원서 500건 한도 도달 — 일부 취소 누락 가능: uid=${targetUid}`);
+    }
+
     // 4. 충돌 필터링 (서버측 confirmedAppData 값 우선 사용)
     const conflicting = allAppsSnap.docs.filter((d) => {
       if (d.id === confirmedAppId) return false;
@@ -7059,7 +7093,7 @@ export const callableAutoConflictCancel = onCall(
         cancelReason: "SCHEDULE_CONFLICT",
         conflictingAppId: confirmedAppId,
         conflictingBusiness: businessName,
-        conflictingTime: `${startTime}~${endTime}`,
+        conflictingTime: `${confirmedStartTime}~${confirmedEndTime}`,
         statusHistory: admin.firestore.FieldValue.arrayUnion({
           status: "AUTO_CANCELED",
           at: now,
@@ -9980,7 +10014,7 @@ export const callableBatchCheckOut = onCall(
     for (const entry of entries) {
       const {attendanceId, checkOutMs, workHours, status, resetWageDetail} = entry;
       // [L4-FIX] workHours 상한 검증 — 관리자가 24시간 초과 근무시간 입력으로 임금 부풀리기 차단
-      if (typeof workHours === "number" && workHours > 24) {
+      if (typeof workHours === "number" && (workHours < 0 || workHours > 24)) {
         skipped.push(attendanceId);
         continue;
       }
@@ -10003,7 +10037,6 @@ export const callableBatchCheckOut = onCall(
               status,
               wageStatus: "pending",
               wageDetail: admin.firestore.FieldValue.delete(),
-              yearMonth: admin.firestore.FieldValue.delete(),
               updatedAt: now,
             });
           });
@@ -10105,7 +10138,6 @@ export const callableBatchAdjustAttendanceTime = onCall(
           if (resetWageDetail) {
             updates["wageStatus"] = "pending";
             updates["wageDetail"] = admin.firestore.FieldValue.delete();
-            updates["yearMonth"] = admin.firestore.FieldValue.delete();
           }
           tx.update(attRef, updates);
         });
@@ -10823,6 +10855,10 @@ export const callableIncrementSlotPending = onCall(
     if ((appData.toId as string) !== toId) {
       throw new HttpsError("invalid-argument", "toId 불일치 — 지원서의 toId와 다릅니다.");
     }
+    // [M-2] slotId 교차검증 — 동일 TO의 다른 슬롯 카운터 조작 차단
+    if (slotId && (appData.slotId as string | undefined) !== slotId) {
+      throw new HttpsError("invalid-argument", "slotId 불일치 — 지원서의 slotId와 다릅니다.");
+    }
 
     const workType = appData.selectedWorkType as string | undefined;
 
@@ -11030,6 +11066,18 @@ function _contractEndAt(workDate: Date, startHHMM: string, endHHMM: string): Dat
   return endDate;
 }
 
+/** [MEDIUM] 클라이언트 제공 attendanceRules 극단값 클램핑 — lateGrace:9999 등으로 지각 판정 우회 차단 */
+function _clampAttendanceRules(rules: AttendanceRulesData): AttendanceRulesData {
+  return {
+    earlyWindow:      Math.min(rules.earlyWindow ?? 30, 120),
+    earlyArrivalUnit: Math.min(rules.earlyArrivalUnit ?? 30, 120),
+    lateGrace:        Math.min(rules.lateGrace ?? 5, 60),
+    lateUnit:         Math.min(rules.lateUnit ?? 30, 120),
+    lateWindow:       Math.min(rules.lateWindow ?? 30, 120),
+    overtimeUnit:     Math.min(rules.overtimeUnit ?? 10, 60),
+  };
+}
+
 /**
  * 출근 반올림
  * - 조출(earlyWindow 이상 일찍): Math.trunc = Dart ~/ — contractStart 방향
@@ -11204,7 +11252,7 @@ export const callableCheckIn = onCall(
 
       if (scheduledStartTime) {
         const cStart = _contractStartAt(workDate, scheduledStartTime);
-        const result = _processCheckin(now, cStart, attendanceRules ?? {});
+        const result = _processCheckin(now, cStart, _clampAttendanceRules(attendanceRules ?? {}));
         effectiveCheckIn = result.effectiveCheckIn;
         isLate = result.isLate;
       }
@@ -11298,7 +11346,7 @@ export const callableCheckOut = onCall(
 
       if (scheduledStartTime && scheduledEndTime) {
         const cEnd = _contractEndAt(workDate, scheduledStartTime, scheduledEndTime);
-        const result = _processCheckout(now, cEnd, attendanceRules ?? {});
+        const result = _processCheckout(now, cEnd, _clampAttendanceRules(attendanceRules ?? {}));
         effectiveCheckOut = result.effectiveCheckOut;
         isEarlyLeave = result.isEarlyLeave;
       }
@@ -11461,7 +11509,16 @@ export const callableCreateContractRenewal = onCall(
         terminationRejectReason: null,
         leaveDates: [],
         extraWorkDates: [],
+        // [HIGH-2] ...freshData 스프레드로 원본 임금 집계 필드가 복사되는 것을 방지 — 새 계약은 임금 0 상태에서 시작
+        wageStatus: "pending",
+        finalWage: null,
+        wageDetail: null,
+        wageConfirmedAt: null,
+        wageTransferredAt: null,
+        interimSettledAmount: 0,
       };
+      // yearMonth는 checkIn 기록 시 설정됨 — 원본 값 제거 (set()에서 FieldValue.delete() 불가)
+      delete newData.yearMonth;
       tx.set(newRef, newData);
 
       // 5-4. 원본 renewalDecision=EXTEND + renewedToApplicationId 기록
@@ -11471,35 +11528,10 @@ export const callableCreateContractRenewal = onCall(
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
-      // 5-5. TO 확정 카운터 증가 (CONTRACT_PENDING은 확정 인원으로 집계)
-      const toId = freshData.toId as string | undefined;
-      const slotId = freshData.slotId as string | undefined;
-      const selectedWorkType = freshData.selectedWorkType as string | undefined;
-
-      if (toId) {
-        const toUpdate: Record<string, unknown> = {
-          totalConfirmed: admin.firestore.FieldValue.increment(1),
-        };
-        if (!slotId && selectedWorkType) {
-          toUpdate[`workTypeConfirmedCounts.${selectedWorkType}`] =
-            admin.firestore.FieldValue.increment(1);
-        }
-        tx.update(db.collection("tos").doc(toId), toUpdate);
-
-        if (slotId) {
-          const slotUpdate: Record<string, unknown> = {
-            confirmedCount: admin.firestore.FieldValue.increment(1),
-          };
-          if (selectedWorkType) {
-            slotUpdate[`workTypeCounts.${selectedWorkType}.confirmedCount`] =
-              admin.firestore.FieldValue.increment(1);
-          }
-          tx.update(
-            db.collection("tos").doc(toId).collection("slots").doc(slotId),
-            slotUpdate
-          );
-        }
-      }
+      // [MEDIUM-3] totalConfirmed +1 제거 — 갱신은 기존 카운터 유지
+      //   원본 application이 CONFIRMED 상태로 이미 totalConfirmed에 포함됨.
+      //   D-0 자동 갱신(processContractRenewalChecks)도 동일하게 카운터 미조정.
+      //   갱신은 계약 기간 연장이며 확정 인원 변경이 아니므로 +1 불필요.
     });
 
     return {success: true, newApplicationId};

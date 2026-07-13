@@ -34,7 +34,14 @@ class _LegalTermsManagementScreenState
   @override
   void initState() {
     super.initState();
-    _loadTerms();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!context.read<UserProvider>().isSuperAdmin) {
+        Navigator.pop(context);
+        return;
+      }
+      _loadTerms();
+    });
   }
 
   Future<void> _loadTerms() async {

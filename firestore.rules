@@ -693,14 +693,21 @@ service cloud.firestore {
                        // [RULE-FIX-M2] CF-ONLY 전이 차단: CONTRACT_PENDING→CONFIRMED
                        //   callableFinalizeWorkerSignature 전용 — 관리자 직접 전이 시 서명 검증 우회 가능
                        !(resource.data.status == 'CONTRACT_PENDING' &&
+                         request.resource.data.status == 'CONFIRMED') &&
+                       // [MEDIUM-1] CANCELED/AUTO_CANCELED → CONFIRMED 직접 전이 차단
+                       //   취소된 지원서를 totalConfirmed CF 없이 직접 확정 상태로 변경 시 카운터 불일치
+                       !(resource.data.get('status', '') in ['CANCELED', 'AUTO_CANCELED', 'REJECTED'] &&
                          request.resource.data.status == 'CONFIRMED')) ||
                       isSuperAdmin()
                     );
 
-      // [RULE-FIX-L3] isSubAdminOf 추가 — SubAdmin TO 삭제 연쇄 처리 시 고아 데이터 정리 가능
-      allow delete: if isSuperAdmin() ||
-                       isAdminOf(resource.data.businessId) ||
-                       isSubAdminOf(resource.data.businessId);
+      // [HIGH-1] CONFIRMED/CONTRACT_PENDING 상태 지원서 삭제 차단
+      //   삭제 시 totalConfirmed가 감소하지 않아 정원 관리 불일치 발생
+      //   슈퍼어드민도 CF(callableDecrementSlotConfirmed)를 통해 처리해야 함
+      allow delete: if (isSuperAdmin() ||
+                        isAdminOf(resource.data.businessId) ||
+                        isSubAdminOf(resource.data.businessId)) &&
+                       !(resource.data.get('status', '') in ['CONFIRMED', 'CONTRACT_PENDING']);
     }
 
     // ═══════════════════════════════════════════════════════════
