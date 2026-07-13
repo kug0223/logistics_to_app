@@ -155,24 +155,28 @@ class MemberService {
     final now = DateTime.now();
 
     // 1. 초대 상태 업데이트 → trigger에서 subAdminOf 설정
+    // [M9-FIX] respondedAt serverTimestamp 사용 — 기기 시계 조작으로 수락 시각 위변조 차단
     batch.update(_invitations.doc(invitation.id), {
       'status': 'accepted',
-      'respondedAt': Timestamp.fromDate(now),
+      'respondedAt': FieldValue.serverTimestamp(),
     });
 
     // 2. members 서브컬렉션에 추가 (invitationId 포함 — 규칙에서 pending 초대 검증에 사용)
+    // [M9-FIX] addedAt serverTimestamp 사용 — 기기 시계 조작으로 가입 시각 위변조 차단
+    //   BusinessMemberModel(addedAt: now)의 DateTime은 toMap() 경유 → Timestamp 변환이라 조작 가능.
+    //   batch.set 시 map에 FieldValue.serverTimestamp()를 직접 오버라이드.
     final member = BusinessMemberModel(
       uid: invitation.targetUid,
       name: invitation.targetName,
       phone: invitation.targetPhone,
       permissions: invitation.permissions,
-      addedAt: now,
+      addedAt: now,          // UI 표시용 로컬 임시값, 실제 저장은 아래 serverTimestamp 사용
       addedBy: invitation.invitedBy,
       invitationId: invitation.id,
     );
     batch.set(
       _members(invitation.businessId).doc(invitation.targetUid),
-      member.toMap(),
+      {...member.toMap(), 'addedAt': FieldValue.serverTimestamp()},
     );
 
     await batch.commit();

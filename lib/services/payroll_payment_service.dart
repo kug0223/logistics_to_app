@@ -355,17 +355,29 @@ class PayrollPaymentService {
   }
 
   /// 변경 요청 거절
+  // [M2-FIX] approveChangeRequest와 동일하게 트랜잭션 래핑
+  //   approve(트랜잭션) vs reject(직접 update) 비대칭 → 동시 approve+reject 시 APPROVED 문서를 REJECTED로 덮어쓰는 race condition.
+  //   트랜잭션 내 status == PENDING 확인으로 방어.
   Future<void> rejectChangeRequest({
     required String requestId,
     required String processedBy,
     required String rejectReason,
   }) async {
-    await _db.collection('payment_change_requests').doc(requestId).update({
-      'status':       PaymentChangeRequestModel.statusRejected,
-      'processedBy':  processedBy,
-      'processedAt':  FieldValue.serverTimestamp(),
-      'rejectReason': rejectReason,
-      'updatedAt':    FieldValue.serverTimestamp(),
+    await _db.runTransaction((tx) async {
+      final ref = _db.collection('payment_change_requests').doc(requestId);
+      final snap = await tx.get(ref);
+      if (!snap.exists) throw Exception('변경 요청을 찾을 수 없습니다.');
+      final currentStatus = snap.data()?['status'] as String? ?? '';
+      if (currentStatus != PaymentChangeRequestModel.statusPending) {
+        throw Exception('이미 처리된 요청입니다. (현재 상태: $currentStatus)');
+      }
+      tx.update(ref, {
+        'status':       PaymentChangeRequestModel.statusRejected,
+        'processedBy':  processedBy,
+        'processedAt':  FieldValue.serverTimestamp(),
+        'rejectReason': rejectReason,
+        'updatedAt':    FieldValue.serverTimestamp(),
+      });
     });
   }
 

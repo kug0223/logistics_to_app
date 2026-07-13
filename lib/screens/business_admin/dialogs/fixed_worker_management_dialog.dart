@@ -1276,7 +1276,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         successCount += results.where((r) => r).length;
       }
     } finally {
-      setLoading(false);
+      // [L4-FIX] mounted 체크 — 배치 처리 도중 다이얼로그 닫힘 시 setState 크래시 방지
+      if (mounted) setLoading(false);
     }
     if (!mounted) return;
     if (successCount == expiring.length) {

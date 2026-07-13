@@ -1367,6 +1367,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   }
 
   /// 선택된 wageConfirmed 항목 → wageCalculated 마감 취소 처리
+  /// [H8/H9-FIX] WriteBatch → runTransaction 전환 — 서버 상태 재확인으로 transferred 경합 차단
   Future<void> _reverseCloseWages() async {
     if (_isProcessing) return;
     final targetIds = _transferredSelectedIds.where((id) {
@@ -1383,9 +1384,6 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
     int successCount = 0;
     int failCount = 0;
-    // [W-4] batch가 청크 단위(498 ops)로 커밋되므로 중간 실패 시 커밋된 appId만 추적
-    // TrustScore 롤백과 알림은 실제 batch에 포함된 항목에만 적용해야 데이터 불일치 방지
-    final List<String> pendingBatchIds = [];
     final List<String> committedAppIds = [];
     try {
       final confirmed = await DialogHelper.showConfirm(
@@ -1400,51 +1398,60 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         return;
       }
 
-      var batch = FirebaseFirestore.instance.batch();
-      int batchCount = 0;
-
       for (final appId in targetIds) {
         final attendance = widget.attendanceMap[appId];
         if (attendance == null) { failCount++; continue; }
-        // [MED-REV] 이체완료(wageTransferred) 건은 마감 취소 불가
+        // [MED-REV] 이체완료(wageTransferred) 건은 마감 취소 불가 — 로컬 빠른 체크
         if (attendance.wageStatus == AttendanceModel.wageTransferred) {
           debugPrint('⚠️ [REV-BLOCK] 이체완료 건 마감취소 차단 (${attendance.id})');
           failCount++;
           continue;
         }
-        batch.update(
-          FirebaseFirestore.instance.collection('attendance').doc(attendance.id),
-          {
-            'wageStatus': AttendanceModel.wageCalculated,
-            'finalConfirmedAt': FieldValue.delete(),
-            // wageDetail 내 confirm 정보도 삭제 — 재마감 시 이전 확정자 정보 잔류 방지
-            'wageDetail.confirmedBy': FieldValue.delete(),
-            'wageDetail.confirmedAt': FieldValue.delete(),
-            // [B02 fix] 마감 취소 시 paymentDueDate도 삭제.
-            // 잔류하면 재마감 시 기존 날짜가 그대로 남아 지급 예정일이 오표시됨.
-            'paymentDueDate': FieldValue.delete(),
-          },
-        );
-        // totalWorkDays -1은 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리
-        pendingBatchIds.add(appId); // [W-4] 이 청크에 포함된 appId 추적
-        batchCount += 1;
 
-        if (batchCount >= 499) {
-          await batch.commit();
-          committedAppIds.addAll(pendingBatchIds); // [W-4] 커밋 성공 시에만 확정
-          pendingBatchIds.clear();
-          successCount += batchCount;
-          batch = FirebaseFirestore.instance.batch();
-          batchCount = 0;
+        final attRef = FirebaseFirestore.instance.collection('attendance').doc(attendance.id);
+        bool alreadyReverted = false;
+        try {
+          // [H8/H9-FIX] 트랜잭션으로 서버 상태 재확인 — 동시 transferred 전환 경합 방어
+          await FirebaseFirestore.instance.runTransaction((tx) async {
+            final snap = await tx.get(attRef);
+            final serverStatus = snap.data()?['wageStatus'] as String?;
+            // 이체완료이면 취소 불가 차단
+            if (serverStatus == AttendanceModel.wageTransferred) {
+              alreadyReverted = true;
+              return;
+            }
+            // 이미 취소됐거나 예상 외 상태이면 skip
+            if (serverStatus != AttendanceModel.wageConfirmed) {
+              alreadyReverted = true;
+              return;
+            }
+            tx.update(attRef, {
+              'wageStatus': AttendanceModel.wageCalculated,
+              'finalConfirmedAt': FieldValue.delete(),
+              // wageDetail 내 confirm 정보도 삭제 — 재마감 시 이전 확정자 정보 잔류 방지
+              'wageDetail.confirmedBy': FieldValue.delete(),
+              'wageDetail.confirmedAt': FieldValue.delete(),
+              // [B02 fix] 마감 취소 시 paymentDueDate도 삭제.
+              // 잔류하면 재마감 시 기존 날짜가 그대로 남아 지급 예정일이 오표시됨.
+              'paymentDueDate': FieldValue.delete(),
+            });
+            // totalWorkDays -1은 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리
+          });
+
+          if (alreadyReverted) {
+            debugPrint('⚠️ [H8] 서버 상태 불일치로 마감취소 skip ($appId)');
+            failCount++;
+            continue;
+          }
+          committedAppIds.add(appId);
+          successCount++;
+        } catch (e) {
+          debugPrint('❌ 마감 취소 트랜잭션 실패 ($appId): $e');
+          failCount++;
         }
       }
-      if (batchCount > 0) {
-        await batch.commit();
-        committedAppIds.addAll(pendingBatchIds); // [W-4] 마지막 청크 커밋 성공
-        successCount += batchCount;
-      }
 
-      // 마감 취소 알림 발송 — 커밋 성공 항목에만 발송
+      // 마감 취소 알림 발송 — 트랜잭션 성공 항목에만 발송
       // (TrustScore는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리)
       for (final appId in committedAppIds) {
         final attendance = widget.attendanceMap[appId];
@@ -1473,7 +1480,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     _hasChanges = true;
     widget.onClose?.call();
 
-    // [BUG-수정] CS-L-1: targetIds 전체 대신 실제 커밋된 항목만 UI 이동
+    // 실제 트랜잭션 성공 항목만 UI 이동
     final processed = committedAppIds.toSet();
     setState(() {
       final moved = _transferredWorkers.where((a) => processed.contains(a.id)).toList();

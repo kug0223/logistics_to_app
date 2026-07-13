@@ -234,7 +234,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       if (!widget.isNewSlot && (_publishMode != 'draft' || isExistingSlotEdit)) {
         final proceed = await _showWageGuardWarning();
         if (!mounted) return;
-        if (!proceed) return;
+        if (!proceed) {
+          // [M1-FIX] WAGE-GUARD 취소 시 _hasChanges 복원 — finally가 _isSaving만 복원하므로
+          // _hasChanges = false가 유지되면 PopScope.canPop이 true가 되어 미저장 경고 없이 이탈.
+          setState(() => _hasChanges = true);
+          return;
+        }
       }
       // ── 슬롯 수정 모드 ──────────────────────────────────────
       if (widget.isNewSlot) {
@@ -477,7 +482,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
       // 공개 설정을 명시적으로 변경했을 때만 draft TO 자동 전환
       if (_slotPublishChanged && widget.to.publishMode == 'draft') {
-        await _applyTODraftTransition(visibleFrom);
+        if (!await _applyTODraftTransition(visibleFrom)) return;
       }
 
       await _firestoreService.updateSlotFull(
@@ -606,7 +611,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
       // 공개 설정을 명시적으로 변경했을 때만 draft TO 자동 전환
       if (_slotPublishChanged && widget.to.publishMode == 'draft') {
-        await _applyTODraftTransition(newSlotVisibleFrom);
+        if (!await _applyTODraftTransition(newSlotVisibleFrom)) return;
       }
       await _firestoreService.addSlot(
         to: widget.to,
@@ -641,7 +646,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         final earliestVisibleFrom = visibleFroms
             .whereType<DateTime>()
             .fold<DateTime?>(null, (e, vf) => e == null || vf.isBefore(e) ? vf : e);
-        await _applyTODraftTransition(anyImmediate ? null : earliestVisibleFrom);
+        if (!await _applyTODraftTransition(anyImmediate ? null : earliestVisibleFrom)) return;
       }
 
       final firestore = FirebaseFirestore.instance;
@@ -1082,9 +1087,26 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     return (vf, false);
   }
 
-  /// TO가 draft일 때 공개 설정에 따라 자동 전환
-  Future<void> _applyTODraftTransition(DateTime? visibleFrom) async {
+  /// TO가 draft일 때 공개 설정에 따라 자동 전환.
+  /// [H1-FIX] draft→active 한도 우회 차단 — _applyTODraftTransition 경로에서도 assertActiveTOLimit 체크
+  /// 반환값: true = 전환 성공(또는 예약 설정), false = 한도 초과로 차단됨
+  Future<bool> _applyTODraftTransition(DateTime? visibleFrom) async {
     if (visibleFrom == null) {
+      // draft → 즉시공개(active) 전환 시 active 4개 제한 체크 (전체 사업장 합산)
+      final adminUid = context.read<UserProvider>().currentUser?.uid ?? '';
+      try {
+        await _firestoreService.assertActiveTOLimit(adminUid);
+      } on Exception catch (e) {
+        if (e.toString().contains('MAX_ACTIVE_TO_LIMIT')) {
+          final parts = e.toString().split(':');
+          final limitStr = parts.length >= 2 ? parts.last : '4';
+          if (mounted) ToastHelper.showError('진행 중인 공고가 $limitStr개를 초과할 수 없습니다');
+        } else {
+          if (mounted) ToastHelper.showError('공고를 공개할 수 없습니다');
+        }
+        return false;
+      }
+      if (!mounted) return false;
       await _firestoreService.updateTO(widget.to.id, {
         'isPublished': true,
         'publishMode': 'immediate',
@@ -1106,6 +1128,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       });
       if (mounted) ToastHelper.showInfo('미공개 → 예약공개 전환 ($m/$d $h:$min 공개 예정)');
     }
+    return true;
   }
 
   Widget _buildDraftWarningBanner(BuildContext context) {
