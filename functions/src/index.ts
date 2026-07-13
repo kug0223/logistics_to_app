@@ -6071,6 +6071,19 @@ export const callableGetIdCardSignedUrl = onCall(
           "신분증 열람 권한이 없거나 만료되었습니다."
         );
       }
+
+      // [MEDIUM] 퇴직 관리자 stale access 방어 — 승인 당시 사업장에 여전히 소속인지 재검증
+      const approvedForBiz = accessSnap.docs[0].data().businessId as string | undefined;
+      if (approvedForBiz) {
+        const callerBizId = callerDoc.data()?.businessId as string | undefined;
+        const callerSubAdminOf = callerDoc.data()?.subAdminOf as string[] | undefined;
+        const stillMember =
+          callerBizId === approvedForBiz ||
+          (Array.isArray(callerSubAdminOf) && callerSubAdminOf.includes(approvedForBiz));
+        if (!stillMember) {
+          throw new HttpsError("permission-denied", "현재 해당 사업장 소속이 아닙니다.");
+        }
+      }
     }
 
     // 대상자 문서에서 Storage 경로 조회
@@ -7084,29 +7097,38 @@ export const callableAutoConflictCancel = onCall(
       console.warn(`⚠️ [186] 동시 확정 감지 — 수동 확인: ${concurrent.map((d) => d.id).join(", ")}`);
     }
 
-    const batch = db.batch();
+    // [M-3] 배치 → 개별 트랜잭션: batch.commit 직전 status 재확인으로 race condition 방어
+    //   race window: allAppsSnap.get() ~ commit 사이에 타 관리자가 PENDING→CONFIRMED 처리 가능
+    //   트랜잭션 내 status 재확인으로 이미 바뀐 문서는 skip
     const now = admin.firestore.Timestamp.now();
-    for (const conflict of pendingConflicts) {
-      batch.update(conflict.ref, {
-        status: "AUTO_CANCELED",
-        canceledAt: now,
-        cancelReason: "SCHEDULE_CONFLICT",
-        conflictingAppId: confirmedAppId,
-        conflictingBusiness: businessName,
-        conflictingTime: `${confirmedStartTime}~${confirmedEndTime}`,
-        statusHistory: admin.firestore.FieldValue.arrayUnion({
-          status: "AUTO_CANCELED",
-          at: now,
-          by: "SYSTEM",
-          action: "AUTO_CANCEL",
-          reason: "SCHEDULE_CONFLICT",
-        }),
-      });
-    }
-    await batch.commit();
+    const cancelResults = await Promise.all(
+      pendingConflicts.map((conflict) =>
+        db.runTransaction(async (tx) => {
+          const fresh = await tx.get(conflict.ref);
+          if (fresh.data()?.status !== "PENDING") return null; // race window에서 이미 처리됨
+          tx.update(conflict.ref, {
+            status: "AUTO_CANCELED",
+            canceledAt: now,
+            cancelReason: "SCHEDULE_CONFLICT",
+            conflictingAppId: confirmedAppId,
+            conflictingBusiness: businessName,
+            conflictingTime: `${confirmedStartTime}~${confirmedEndTime}`,
+            statusHistory: admin.firestore.FieldValue.arrayUnion({
+              status: "AUTO_CANCELED",
+              at: now,
+              by: "SYSTEM",
+              action: "AUTO_CANCEL",
+              reason: "SCHEDULE_CONFLICT",
+            }),
+          });
+          return conflict;
+        })
+      )
+    );
+    const actualCanceled = cancelResults.filter(Boolean) as typeof pendingConflicts;
 
-    const canceledIds = pendingConflicts.map((d) => d.id);
-    const canceledDetails = pendingConflicts.map((d) => {
+    const canceledIds = actualCanceled.map((d) => d.id);
+    const canceledDetails = actualCanceled.map((d) => {
       const data = d.data();
       return {
         id: d.id,
@@ -7148,6 +7170,10 @@ export const callableReportLate = onCall(
     }
     if (mode !== "late" && mode !== "late_canceled") {
       throw new HttpsError("invalid-argument", "mode는 late 또는 late_canceled");
+    }
+    // [MEDIUM] attendanceId 필수화 — null 경로에서 멱등성 체크 우회로 lateCount 중복 증가 가능
+    if (!attendanceId) {
+      throw new HttpsError("invalid-argument", "attendanceId 필수");
     }
 
     // 호출자 권한 검증 (해당 사업장 관리자/하위관리자/슈퍼어드민)
@@ -7193,17 +7219,15 @@ export const callableReportLate = onCall(
     const lateChronicPoints = decreaseRules["late_chronic"] ?? -3;
 
     const userRef = db.collection("users").doc(userId);
-    const attRef = attendanceId ? db.collection("attendance").doc(attendanceId) : null;
+    const attRef = db.collection("attendance").doc(attendanceId);
 
     await db.runTransaction(async (tx) => {
       // 멱등성 체크 — 같은 attendance에 중복 호출 방지
-      if (attRef) {
-        const attSnap = await tx.get(attRef);
-        if (attSnap.exists) {
-          const alreadyApplied = attSnap.data()?.latePenaltyApplied;
-          if (mode === "late" && alreadyApplied === true) return;
-          if (mode === "late_canceled" && alreadyApplied !== true) return;
-        }
+      const attSnap = await tx.get(attRef);
+      if (attSnap.exists) {
+        const alreadyApplied = attSnap.data()?.latePenaltyApplied;
+        if (mode === "late" && alreadyApplied === true) return;
+        if (mode === "late_canceled" && alreadyApplied !== true) return;
       }
 
       const userSnap = await tx.get(userRef);
@@ -7246,10 +7270,8 @@ export const callableReportLate = onCall(
 
       tx.update(userRef, {lateCount: newLateCount, trustScore: newScore});
 
-      // 멱등성 플래그 갱신
-      if (attRef) {
-        tx.update(attRef, {latePenaltyApplied: mode === "late"});
-      }
+      // 멱등성 플래그 갱신 (attendanceId 항상 존재 — 위에서 필수 체크 완료)
+      tx.update(attRef, {latePenaltyApplied: mode === "late"});
 
       const histRef = db.collection("trust_score_history").doc();
       tx.set(histRef, {
@@ -7790,7 +7812,11 @@ export const callableCalculateAndConfirmWage = onCall(
         overtimeMinutes: wageResult2.overtimeMinutes, nightMinutes: wageResult2.nightMinutes,
         baseAmount: wageResult2.baseAmount, overtimeAmount: wageResult2.overtimeAmount,
         nightAmount: wageResult2.nightAmount, additionalAmount: wageResult2.additionalAmount,
-        deductionAmount: 0, weeklyHolidayAmount: 0,
+        // [L-3] deductionAmount 집계 수정 — 하드코딩 0 → 실제 공제 합계
+        deductionAmount: wageResult2.nationalPensionDeduction + wageResult2.healthInsuranceDeduction +
+          wageResult2.ltcInsuranceDeduction + wageResult2.employmentInsuranceDeduction +
+          wageResult2.incomeTaxDeduction + wageResult2.retroactiveDeduction,
+        weeklyHolidayAmount: 0,
         totalAmount: wageResult2.totalAmount,
         nightAllowanceApplied: wageResult2.nightAllowanceApplied,
         appliedMinimumWage: wageResult2.appliedMinimumWage,
