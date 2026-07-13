@@ -23,7 +23,6 @@ extension WorkerLocationFirestore on FirestoreService {
     required DateTime workDate,
     required String scheduledStart,
   }) async {
-    final now = DateTime.now();
     final ref = _firestore.collection(_workerLocationCol).doc(applicationId);
     await ref.set(
       {
@@ -37,8 +36,8 @@ extension WorkerLocationFirestore on FirestoreService {
         'workDate': Timestamp.fromDate(workDate),
         'scheduledStart': scheduledStart,
         'consentGiven': true,
-        'updatedAt': Timestamp.fromDate(now),
-        'createdAt': Timestamp.fromDate(now),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'createdAt': FieldValue.serverTimestamp(),
       },
       SetOptions(merge: true),
     );
@@ -54,14 +53,13 @@ extension WorkerLocationFirestore on FirestoreService {
     double? distanceMeters,
   }) async {
     try {
-      final now = DateTime.now();
       await _firestore.collection(_workerLocationCol).doc(applicationId).update({
         'lat': lat,
         'lng': lng,
         'accuracy': accuracy,
         'distanceMeters': distanceMeters,
         'isActive': true,
-        'updatedAt': Timestamp.fromDate(now),
+        'updatedAt': FieldValue.serverTimestamp(),
       });
       debugPrint('📍 [WorkerLocation] 위치 갱신: $applicationId '
           '(${lat.toStringAsFixed(5)}, ${lng.toStringAsFixed(5)}) '
@@ -76,7 +74,7 @@ extension WorkerLocationFirestore on FirestoreService {
     try {
       await _firestore.collection(_workerLocationCol).doc(applicationId).update({
         'isActive': false,
-        'updatedAt': Timestamp.fromDate(DateTime.now()),
+        'updatedAt': FieldValue.serverTimestamp(),
       });
       debugPrint('🛑 [WorkerLocation] 추적 중지: $applicationId');
     } catch (e) {

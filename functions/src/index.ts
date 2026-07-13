@@ -1769,6 +1769,12 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
 
   console.log(`  📋 [예약공개] 대상 TO: ${snapshot.size}개`);
 
+  // [H-2] active TO 한도 — 예약 공개 시 사업장별 한도 초과 방지
+  // 각 사업장의 현재 ACTIVE/FULL TO 수를 캐시해 N번 중복 Firestore 조회 방지
+  const appConfigSnap = await db.collection("settings").doc("app_config").get();
+  const maxActiveTOPerBusiness: number = (appConfigSnap.data()?.maxActiveTOPerBusiness as number | undefined) ?? 4;
+  const bizActiveCounts = new Map<string, number>();
+
   let batch = db.batch();
   let batchCount = 0;
   const affectedGroupIds = new Set<string>();
@@ -1782,6 +1788,24 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
     if (data.closedBy != null) {
       console.log(`    ⏭ ${doc.id} 수동마감 상태 — 공개 건너뜀`);
       continue;
+    }
+
+    // [H-2] 사업장별 active TO 한도 체크
+    const bizId = data.businessId as string | undefined;
+    if (bizId) {
+      if (!bizActiveCounts.has(bizId)) {
+        const countSnap = await db.collection("tos")
+          .where("businessId", "==", bizId)
+          .where("status", "in", ["ACTIVE", "FULL"])
+          .count().get();
+        bizActiveCounts.set(bizId, countSnap.data().count);
+      }
+      const currentActive = bizActiveCounts.get(bizId)!;
+      if (currentActive >= maxActiveTOPerBusiness) {
+        console.log(`    ⚠️ ${doc.id} 한도 초과(${currentActive}/${maxActiveTOPerBusiness}) — 공개 건너뜀`);
+        continue;
+      }
+      bizActiveCounts.set(bizId, currentActive + 1);
     }
 
     batch.update(doc.ref, {

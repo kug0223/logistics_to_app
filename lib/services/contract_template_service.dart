@@ -38,16 +38,15 @@ class ContractTemplateService {
   }) async {
     debugPrint('💾 [createTemplate] businessId=$businessId name=$name');
     final ref = _col(businessId).doc();
-    final now = DateTime.now();
     final template = ContractTemplateModel(
       id: ref.id,
       businessId: businessId,
       name: name,
       templateType: templateType,
       articles: articles,
-      createdAt: now,
+      createdAt: DateTime.now(),
     );
-    await ref.set(template.toMap());
+    await ref.set(template.toMap()..['createdAt'] = FieldValue.serverTimestamp());
     return template;
   }
 
@@ -56,14 +55,13 @@ class ContractTemplateService {
       'name': template.name,
       'templateType': template.templateType,
       'articles': template.articles.map((a) => a.toMap()).toList(),
-      'updatedAt': Timestamp.fromDate(DateTime.now()),
+      'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
   Future<ContractTemplateModel> duplicateTemplate(
       ContractTemplateModel source) async {
     final ref = _col(source.businessId).doc();
-    final now = DateTime.now();
     final copy = ContractTemplateModel(
       id: ref.id,
       businessId: source.businessId,
@@ -72,9 +70,9 @@ class ContractTemplateService {
       articles: source.articles
           .map((a) => ContractArticle(title: a.title, content: a.content))
           .toList(),
-      createdAt: now,
+      createdAt: DateTime.now(),
     );
-    await ref.set(copy.toMap());
+    await ref.set(copy.toMap()..['createdAt'] = FieldValue.serverTimestamp());
     return copy;
   }
 

@@ -817,7 +817,6 @@ class ContractService {
       wageType: workDetail.wageType,
     );
 
-    final now = DateTime.now();
     final contractRef = _db.collection('employment_contracts').doc(contract.id);
 
     // 트랜잭션으로 동시 확정 시 슬롯 유실 방지 (last-write-wins 방지)
@@ -835,10 +834,11 @@ class ContractService {
 
       final updatedSlots = [...current.slots, newSlot];
       final updatedIds = [...current.applicationIds, application.id];
+      final now = DateTime.now(); // copyWith 용 로컬 변수 (Firestore는 serverTimestamp 사용)
       tx.update(contractRef, {
         'slots': updatedSlots.map((s) => s.toMap()).toList(),
         'applicationIds': updatedIds,
-        'updatedAt': Timestamp.fromDate(now),
+        'updatedAt': FieldValue.serverTimestamp(), // [M3-FIX] serverTimestamp 강제
       });
       return current.copyWith(
         slots: updatedSlots,

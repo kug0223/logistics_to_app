@@ -308,7 +308,11 @@ service cloud.firestore {
                       (isAdmin() && request.resource.data.isDummy == true &&
                        !request.resource.data.keys().hasAny([
                          'role', 'isBlacklisted', 'restrictedUntil',
-                         'isAdmin', 'sealBase64', 'subAdminOf'
+                         'isAdmin', 'sealBase64', 'subAdminOf',
+                         // [H-3] ci/ciHash/passVerifiedAt: 더미 생성 시 CI 번호 선점 공격 차단
+                         // [M-3] businessId/managedBusinessIds: 더미 생성 시 타 사업장 ID 주입 차단
+                         'ci', 'ciHash', 'passVerifiedAt',
+                         'businessId', 'managedBusinessIds'
                        ]))
                     );
 
@@ -680,12 +684,18 @@ service cloud.firestore {
                                   'actualResignDate',
                                   'terminationStatus', 'terminationRequestedAt',
                                   'terminationEffectiveDate', 'terminationRespondedAt',
-                                  'terminationRejectReason', 'terminationRequestedByUid'])) ||
+                                  'terminationRejectReason', 'terminationRequestedByUid']) &&
+                       // [RULE-FIX-M2] CF-ONLY 전이 차단: CONTRACT_PENDING→CONFIRMED
+                       //   callableFinalizeWorkerSignature 전용 — 관리자 직접 전이 시 서명 검증 우회 가능
+                       !(resource.data.status == 'CONTRACT_PENDING' &&
+                         request.resource.data.status == 'CONFIRMED')) ||
                       isSuperAdmin()
                     );
 
+      // [RULE-FIX-L3] isSubAdminOf 추가 — SubAdmin TO 삭제 연쇄 처리 시 고아 데이터 정리 가능
       allow delete: if isSuperAdmin() ||
-                       isAdminOf(resource.data.businessId);
+                       isAdminOf(resource.data.businessId) ||
+                       isSubAdminOf(resource.data.businessId);
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -1239,11 +1249,13 @@ service cloud.firestore {
                       (isOwner(resource.data.workerId) &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['workerStatus', 'workerReviewId'])) ||
-                      // [SEC-88] 탈퇴 익명화: 계정 삭제 flow에서 workerName만 변경 허용
+                      // [SEC-88] 탈퇴 익명화: 계정 삭제 flow에서 workerName만 '탈퇴한 회원'으로 변경 허용
                       // auth_service.dart step 3(users 삭제) 이전에 실행되므로 isUser() 체크 통과
+                      // [RULE-FIX-L1] workerName 값 제한 추가 — 활성 계정도 임의 문자열 변경 가능했던 취약점 차단
                       (isOwner(resource.data.workerId) &&
                        request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['workerName'])) ||
+                         .hasOnly(['workerName']) &&
+                       request.resource.data.get('workerName', '') == '탈퇴한 회원') ||
                       // 관리자/하위관리자: 자신의 리뷰 제출 필드만
                       ((isAdminOf(resource.data.businessId) ||
                         isSubAdminOf(resource.data.businessId)) &&
@@ -1536,8 +1548,10 @@ service cloud.firestore {
                     );
 
       // SEC-44: 관리자·발신자 삭제 허용 추가 (슈퍼어드민 단독 제한 완화)
+      // [RULE-FIX-L4] isSubAdminOf 추가 — SubAdmin이 소속 사업장 초대를 일괄 삭제 가능하도록
       allow delete: if isSuperAdmin() ||
                        isAdminOf(resource.data.businessId) ||
+                       isSubAdminOf(resource.data.businessId) ||
                        (isLoggedIn() && request.auth.uid == resource.data.invitedBy);
     }
 
@@ -1575,8 +1589,10 @@ service cloud.firestore {
                     );
 
       // 수정: 해당 사업장 관리자만 (권한 변경)
+      // [RULE-FIX-L6] isSubAdminOf 추가 — get/list/create/delete에는 있으나 update에만 누락됨
       allow update: if isLoggedIn() && (
                       isAdminOf(businessId) ||
+                      isSubAdminOf(businessId) ||
                       isSuperAdmin()
                     );
 
@@ -1697,9 +1713,11 @@ service cloud.firestore {
                      request.resource.data.get('status', '') == 'PENDING' &&
                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', '') ==
                      request.resource.data.businessId) ||
-                    isAdminOf(request.resource.data.businessId) ||
-                    isSubAdminOf(request.resource.data.businessId) ||
-                    isSuperAdmin()
+                    // [RULE-FIX-M3] 관리자 경로도 status='PENDING' 강제 — 승인 이력 우회 차단
+                    ((isAdminOf(request.resource.data.businessId) ||
+                      isSubAdminOf(request.resource.data.businessId) ||
+                      isSuperAdmin()) &&
+                     request.resource.data.get('status', '') == 'PENDING')
                   );
       // 수정: 해당 사업장 관리자/하위관리자 · 슈퍼어드민 (승인/거절)
       // SEC-61: 상태 전이 검증 (PENDING → APPROVED/REJECTED만), 필드 화이트리스트
@@ -1754,9 +1772,11 @@ service cloud.firestore {
                      request.resource.data.get('status', '') == 'PENDING' &&
                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', '') ==
                      request.resource.data.businessId) ||
-                    isAdminOf(request.resource.data.businessId) ||
-                    isSubAdminOf(request.resource.data.businessId) ||
-                    isSuperAdmin()
+                    // [RULE-FIX-M4] 관리자 경로도 status='PENDING' 강제 — 처리 이력 우회 차단
+                    ((isAdminOf(request.resource.data.businessId) ||
+                      isSubAdminOf(request.resource.data.businessId) ||
+                      isSuperAdmin()) &&
+                     request.resource.data.get('status', '') == 'PENDING')
                   );
       // [CRITICAL-FIX] SubAdmin 누락: approveInterimSettlement → PERMISSION_DENIED
       // [SEC-52] PENDING 상태에서만 처리 허용 + 허용 필드 화이트리스트

@@ -240,7 +240,9 @@ class AuthService {
           await _firestore
               .collection('users')
               .doc(result.user!.uid)
-              .set(newUser.toMap());
+              .set(newUser.toMap()
+                ..['createdAt'] = FieldValue.serverTimestamp()
+                ..['lastLoginAt'] = FieldValue.serverTimestamp());
         } catch (firestoreError) {
           // Firestore 저장 실패 시 Auth 계정 롤백 (고아 계정 방지)
           try {
