@@ -1410,18 +1410,23 @@ extension ApplicationFirestore on FirestoreService {
           if (newWageType != null) 'wageType': newWageType,
         };
 
-        // 단기 번들 슬롯: ContractSlot.applicationId 기준으로 해당 슬롯만 wage/wageType 업데이트
-        final rawSlots = contractData['slots'] as List? ?? [];
-        if (rawSlots.isNotEmpty) {
-          final updatedSlots = rawSlots.map((s) {
-            final slot = Map<String, dynamic>.from(s as Map);
-            if (slot['applicationId'] == applicationId) {
-              slot['wage'] = newWage;
-              if (newWageType != null) slot['wageType'] = newWageType;
-            }
-            return slot;
-          }).toList();
-          contractUpdate['slots'] = updatedSlots;
+        // 단기 번들 슬롯: pending_employer 상태에서만 slots 배열 업데이트 허용
+        // [M3-FIX] SEC-104 규칙: slots는 pending_employer 상태에서만 수정 가능
+        // pending_worker(근무자 서명 완료) 상태에서는 slots 제외하고 workType/wage/wageType만 업데이트
+        final contractStatus = contractData['status'] as String? ?? '';
+        if (contractStatus == 'pending_employer') {
+          final rawSlots = contractData['slots'] as List? ?? [];
+          if (rawSlots.isNotEmpty) {
+            final updatedSlots = rawSlots.map((s) {
+              final slot = Map<String, dynamic>.from(s as Map);
+              if (slot['applicationId'] == applicationId) {
+                slot['wage'] = newWage;
+                if (newWageType != null) slot['wageType'] = newWageType;
+              }
+              return slot;
+            }).toList();
+            contractUpdate['slots'] = updatedSlots;
+          }
         }
 
         batch.update(contractDoc.reference, contractUpdate);
@@ -2094,6 +2099,12 @@ extension ApplicationFirestore on FirestoreService {
   // [A1-FIX] workTypeCounts.pendingCount는 callableIncrementSlotPending CF(Admin SDK)가
   // dot-notation으로 정밀 업데이트. 현재는 pendingCount만 rules에서 허용하며,
   // workTypeCounts 통계 정밀도가 필요할 때 CF 호출을 추가한다.
+  //
+  // ⚠️ [이중 카운트 방지] CF 호출 추가 시 필수 확인:
+  // callableIncrementSlotPending은 totalPending + pendingCount + workTypeCounts.pendingCount를
+  // 모두 업데이트한다. CF 호출 코드가 추가되면 _incrementTOPending의 totalPending/pendingCount
+  // 업데이트(위 batch.update 두 곳)를 반드시 제거해야 한다. 제거 없이 CF까지 호출하면
+  // 같은 지원에서 totalPending/pendingCount가 2씩 증가하는 이중 카운트 버그 발생.
 
   /// TO.totalConfirmed 및 Slot.confirmedCount 변경
   ///
@@ -2423,90 +2434,38 @@ extension ApplicationFirestore on FirestoreService {
 
   /// 계약 연장: 기존 Application 기반으로 새 Application 생성
   ///
-  /// [설계 원칙] 신규 계약 생성 + 원본 renewalDecision=EXTEND 표시를 단일 배치로 처리.
-  /// 두 작업을 별도 호출로 분리하면:
-  ///   - 1번(신규 생성) 성공 후 2번(원본 표시) 실패 시 원본이 갱신 대상으로 재노출됨
-  ///   - TO 확정 카운터가 +1 증가된 채로 원본 계약이 미표시 상태로 남아 이중 계상
-  /// 따라서 호출 측에서 별도로 updateApplicationFields(renewalDecision) 를 호출해선 안 됨.
+  /// [M7-FIX] callableCreateContractRenewal CF 이전
+  /// - confirmedAt/appliedAt/contractVoidedAt: serverTimestamp() 강제
+  /// - TOCTOU 방지: 트랜잭션 내 원본 상태 재확인 (이중 연장 차단)
+  /// - 알림은 각 호출부(_executeExtend, _processRenewal)에서 발송
   Future<ApplicationModel> createRenewedApplication({
     required ApplicationModel original,
     required DateTime newStartDate,
     required DateTime newEndDate,
   }) async {
-    final newRef = _firestore.collection('applications').doc();
-    final originalRef = _firestore.collection('applications').doc(original.id);
-    final now = DateTime.now();
-
-    // [C-H1-FIX] 계약 연장 시 원본 지원서의 서명 대기 계약서를 voided 전환
-    // 갱신 전 pending_employer/pending_worker 상태로 남아있는 계약서는 신규 계약서와 충돌 방지
-    const pendingContractStatuses = ['pending_employer', 'pending_worker'];
-    final List<QueryDocumentSnapshot> oldPendingContracts = [];
-    final contractQ1 = await _firestore
-        .collection('employment_contracts')
-        .where('applicationId', isEqualTo: original.id)
-        .where('businessId', isEqualTo: original.businessId)
-        .limit(5).get();
-    oldPendingContracts.addAll(
-        contractQ1.docs.where((d) => pendingContractStatuses.contains(d.data()['status'])));
-    if (oldPendingContracts.isEmpty) {
-      final contractQ2 = await _firestore
-          .collection('employment_contracts')
-          .where('applicationIds', arrayContains: original.id)
-          .where('businessId', isEqualTo: original.businessId)
-          .limit(5).get();
-      oldPendingContracts.addAll(
-          contractQ2.docs.where((d) => pendingContractStatuses.contains(d.data()['status'])));
-    }
-    // copyWith으로 기본 필드 복사 후, null로 초기화해야 할 필드는
-    // map을 직접 수정 (copyWith null-coalescing 패턴 우회)
-    final base = original.copyWith(
-      workDate: newStartDate,
-      workEndDate: newEndDate,
-      confirmedAt: now,
-      appliedAt: now,
-      renewedFromApplicationId: original.id,
-    );
-    final data = base.toMap()
-      ..['status'] = AppStatus.contractPending   // 근무자 서명 완료 시 CONFIRMED로 전환
-      ..['renewalDecision'] = null
-      ..['renewalNotifiedAt'] = null
-      ..['desiredStartDate'] = null
-      ..['statusHistory'] = []
-      ..['resignStatus'] = null
-      ..['resignRequestedAt'] = null
-      ..['resignRequestDate'] = null
-      ..['actualResignDate'] = null
-      ..['terminationStatus'] = null
-      ..['terminationRequestedAt'] = null
-      ..['terminationEffectiveDate'] = null
-      ..['terminationRejectReason'] = null
-      // 이전 계약의 휴무·추가근무는 신규 계약 기간과 무관하므로 초기화
-      // 승계하면 이전 계약의 날짜가 신규 기간 내 동일 날짜와 겹칠 때 잘못 적용됨
-      ..['leaveDates'] = []
-      ..['extraWorkDates'] = [];
-    final batch = _firestore.batch();
-    batch.set(newRef, data);
-    // 원본 계약 renewalDecision=EXTEND 표시 — 호출 측에서 별도로 updateFields 하지 말 것
-    // (신규 계약 생성과 같은 배치여야 원자성 보장)
-    batch.update(originalRef, {'renewalDecision': AppStatus.renewalExtend});
-    // [C-H1-FIX] 원본 지원서의 서명 대기 계약서 voided 처리 (신규 계약과 같은 배치)
-    for (final c in oldPendingContracts) {
-      batch.update(c.reference, {
-        'status': 'voided',
-        'contractVoidedAt': now,
-        'voidReason': 'RENEWAL',
+    NetworkChecker.instance.assertOnline('계약 연장 중 네트워크 연결이 필요합니다.');
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableCreateContractRenewal',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call({
+        'originalApplicationId': original.id,
+        'newStartDateMs': newStartDate.millisecondsSinceEpoch,
+        'newEndDateMs': newEndDate.millisecondsSinceEpoch,
       });
+      final data = result.data as Map<dynamic, dynamic>;
+      final newApplicationId = data['newApplicationId'] as String;
+      // CF 완료 후 신규 application 문서 fetch
+      final newDoc = await _firestore
+          .collection('applications')
+          .doc(newApplicationId)
+          .get();
+      if (!newDoc.exists) throw Exception('계약 연장 후 지원서를 찾을 수 없습니다.');
+      if (original.toId != null) clearCache(toId: original.toId!);
+      return ApplicationModel.fromMap(newDoc.data()!, newApplicationId);
+    } on FirebaseFunctionsException catch (e) {
+      throw Exception(e.message ?? '계약 연장 중 오류가 발생했습니다.');
     }
-    // TO / 슬롯 확정 카운터 증가 — CONTRACT_PENDING은 확정 인원으로 집계됨
-    if (original.toId != null) {
-      _incrementTOConfirmed(batch, original.toId!, original.slotId,
-          delta: 1, workType: original.selectedWorkType);
-    }
-    await batch.commit();
-    if (original.toId != null) clearCache(toId: original.toId!);
-
-    // 알림은 각 호출부(_executeExtend, _processRenewal)에서 발송 — 여기서 발송하면 이중 수신
-    return ApplicationModel.fromMap(data, newRef.id);
   }
 
   /// statusHistory 배열에 새 항목 추가 후 최근 20개만 유지

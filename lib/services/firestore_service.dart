@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import '../utils/format_helper.dart';
 import '../models/core/user_model.dart';
@@ -25,7 +24,6 @@ import '../models/core/to_filter_state.dart';
 import '../utils/week_helper.dart';
 import '../utils/wage_calculator.dart';
 import '../utils/network_checker.dart';
-import '../utils/attendance_rounding_helper.dart';
 
 // ═══════════════════════════════════════════════════════════
 // Part 파일 선언

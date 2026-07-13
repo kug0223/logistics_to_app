@@ -1041,11 +1041,17 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       if (wage.deductionAmount < 0) throw Exception('추가공제는 0 이상이어야 합니다');
 
       // [M11-FIX] CF 호출 — calculatedAt은 CF가 serverTimestamp로 강제 설정
+      // Timestamp 필드(calculatedAt, confirmedAt)를 사전 제거:
+      // cloud_functions callable.call()은 Firestore Timestamp를 JSON 직렬화할 수 없어 TypeError 발생.
+      // CF가 calculatedAt=serverTimestamp()로 덮어쓰므로 클라이언트에서 전달할 필요 없음.
       final callable = FirebaseFunctions.instance
           .httpsCallable('callableUpdateWageDetail');
+      final wageMap = Map<String, dynamic>.from(wage.toMap())
+        ..remove('calculatedAt')
+        ..remove('confirmedAt');
       await callable.call({
         'attendanceId': attendance.id,
-        'wageDetailMap': wage.toMap(),
+        'wageDetailMap': wageMap,
       });
 
       _hasChanges = true;

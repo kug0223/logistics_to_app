@@ -10908,3 +10908,515 @@ export const callableApproveScheduleChangeRequest = onCall(
     return {success: true};
   }
 );
+
+// ─── 반올림 헬퍼 (B1-FIX 공용) ───────────────────────────────────────────────
+// Dart attendance_rounding_helper.dart 의 로직을 TypeScript로 재구현.
+// Dart `~/` 연산자 = zero-truncation → TypeScript Math.trunc() 로 대응.
+// Math.floor() 사용 시 음수 오프셋에서 반대 방향으로 반올림되므로 반드시 Math.trunc() 사용.
+
+interface AttendanceRulesData {
+  earlyWindow?: number;      // 조출 인정 구간(분), default: 30
+  earlyArrivalUnit?: number; // 조출 반올림 단위, default: 30
+  lateGrace?: number;        // 지각 유예(분), default: 5
+  lateUnit?: number;         // 지각 반올림 단위, default: 30
+  lateWindow?: number;       // 연장 인정 구간(분), default: 30
+  overtimeUnit?: number;     // 연장 반올림 단위, default: 10
+  earlyLeaveUnit?: number;   // 조퇴 반올림 단위, default: 30
+}
+
+/** 계약 출근 시각 계산 — workDate 기준 "HH:mm" 조합 */
+function _contractStartAt(workDate: Date, hhMM: string): Date {
+  const [h, m] = hhMM.split(":").map(Number);
+  return new Date(workDate.getFullYear(), workDate.getMonth(), workDate.getDate(), h, m, 0, 0);
+}
+
+/**
+ * 계약 퇴근 시각 계산 — end < start 면 야간교대(+1일) 자동 처리
+ * end == start(24시간) 케이스: 동일 → +1일 처리 없음 (Dart contractEndAt 동일)
+ */
+function _contractEndAt(workDate: Date, startHHMM: string, endHHMM: string): Date {
+  const [sh, sm] = startHHMM.split(":").map(Number);
+  const [eh, em] = endHHMM.split(":").map(Number);
+  const startMs = new Date(workDate.getFullYear(), workDate.getMonth(), workDate.getDate(), sh, sm, 0, 0).getTime();
+  let endDate = new Date(workDate.getFullYear(), workDate.getMonth(), workDate.getDate(), eh, em, 0, 0);
+  // end < start → 야간교대 +1일
+  if (endDate.getTime() < startMs) {
+    endDate = new Date(endDate.getTime() + 24 * 60 * 60 * 1000);
+  }
+  return endDate;
+}
+
+/**
+ * 출근 반올림
+ * - 조출(earlyWindow 이상 일찍): Math.trunc = Dart ~/ — contractStart 방향
+ * - 정시(lateGrace 이내): roundedOffset=0
+ * - 지각: Math.ceil — contractStart보다 더 늦게 반올림
+ */
+function _processCheckin(
+  now: Date,
+  contractStart: Date,
+  rules: AttendanceRulesData
+): {effectiveCheckIn: Date; isLate: boolean} {
+  const earlyWindow = rules.earlyWindow ?? 30;
+  const earlyArrivalUnit = rules.earlyArrivalUnit ?? 30;
+  const lateGrace = rules.lateGrace ?? 5;
+  const lateUnit = rules.lateUnit ?? 30;
+
+  const offsetMinutes = (now.getTime() - contractStart.getTime()) / 60000;
+  let roundedOffset: number;
+
+  if (offsetMinutes < -earlyWindow) {
+    // 조출: Math.trunc (= Dart ~/) — 음수 offsetMinutes를 0 방향으로 truncate
+    roundedOffset = Math.trunc(offsetMinutes / earlyArrivalUnit) * earlyArrivalUnit;
+  } else if (offsetMinutes <= lateGrace) {
+    roundedOffset = 0;
+  } else {
+    // 지각: ceil
+    roundedOffset = Math.ceil(offsetMinutes / lateUnit) * lateUnit;
+  }
+
+  return {
+    effectiveCheckIn: new Date(contractStart.getTime() + roundedOffset * 60000),
+    isLate: offsetMinutes > lateGrace,
+  };
+}
+
+/**
+ * 퇴근 반올림
+ * - 연장(lateWindow 초과): Math.floor (= Dart ~/, 양수이므로 동일)
+ * - 정시(0 이상 lateWindow 이내): roundedOffset=0
+ * - 조퇴(음수): earlyDiff = -offset, ceil
+ */
+function _processCheckout(
+  now: Date,
+  contractEnd: Date,
+  rules: AttendanceRulesData
+): {effectiveCheckOut: Date; isEarlyLeave: boolean} {
+  const lateWindow = rules.lateWindow ?? 30;
+  const overtimeUnit = rules.overtimeUnit ?? 10;
+  const earlyLeaveUnit = rules.earlyLeaveUnit ?? 30;
+
+  const offsetMinutes = (now.getTime() - contractEnd.getTime()) / 60000;
+  let roundedOffset: number;
+
+  if (offsetMinutes > lateWindow) {
+    // 연장: floor (양수 → Math.trunc와 동일)
+    roundedOffset = Math.floor(offsetMinutes / overtimeUnit) * overtimeUnit;
+  } else if (offsetMinutes >= 0) {
+    roundedOffset = 0;
+  } else {
+    // 조퇴: earlyDiff = -offsetMinutes, ceil
+    const earlyDiff = -offsetMinutes;
+    roundedOffset = -(Math.ceil(earlyDiff / earlyLeaveUnit) * earlyLeaveUnit);
+  }
+
+  return {
+    effectiveCheckOut: new Date(contractEnd.getTime() + roundedOffset * 60000),
+    isEarlyLeave: offsetMinutes < 0,
+  };
+}
+
+// ─── callableCheckIn ──────────────────────────────────────────────────────────
+// [B1-FIX] 근무자 개별 실시간 출근 CF 이전 — 반올림·중복체크·서버 기록 강제
+// 이전 이유:
+//   1. 클라이언트 DateTime.now() 조작으로 출근 시각 위조 가능
+//   2. 지원서 소유권·상태·휴무일 검증이 rules에만 의존 → CF에서 교차검증 강화
+//   3. 반올림 계산 클라이언트에서 우회 가능 → 서버에서 강제 재계산
+//   4. originalCheckIn(원본 시각) 불변 보장 — 서버에서만 기록
+export const callableCheckIn = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {
+      applicationId, businessId, businessName, workDateMs, workType,
+      latitude, longitude, method,
+      scheduledStartTime, attendanceRules,
+    } = request.data as {
+      applicationId: string; businessId: string; businessName: string;
+      workDateMs: number; workType: string;
+      latitude?: number; longitude?: number; method?: string;
+      scheduledStartTime?: string;
+      attendanceRules?: AttendanceRulesData;
+    };
+
+    if (!applicationId || !businessId || !businessName || !workType || !workDateMs) {
+      throw new HttpsError("invalid-argument", "applicationId, businessId, businessName, workType, workDateMs가 필요합니다.");
+    }
+
+    // 1. 사용자 상태 확인
+    const userSnap = await db.collection("users").doc(callerUid).get();
+    if (!userSnap.exists) throw new HttpsError("not-found", "사용자를 찾을 수 없습니다.");
+    const userData = userSnap.data()!;
+
+    if (userData.restrictedUntil) {
+      const restrictedUntil = (userData.restrictedUntil as admin.firestore.Timestamp).toDate();
+      if (restrictedUntil > new Date()) {
+        throw new HttpsError("permission-denied", "제재 중인 계정입니다. 제재 해제 후 이용 가능합니다.");
+      }
+    }
+    // 외국인: foreignIdNumber 있으면 accountStatus=active 필요
+    if (userData.foreignIdNumber != null && userData.accountStatus !== "active") {
+      throw new HttpsError("permission-denied", "계정이 활성화되지 않았습니다.");
+    }
+
+    // 2. 지원서 검증
+    const appSnap = await db.collection("applications").doc(applicationId).get();
+    if (!appSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const appData = appSnap.data()!;
+
+    // 소유권 + businessId 교차검증 — 타인 applicationId 주입 차단
+    if (appData.uid !== callerUid) {
+      throw new HttpsError("permission-denied", "본인의 지원서만 출근할 수 있습니다.");
+    }
+    if (appData.businessId !== businessId) {
+      throw new HttpsError("permission-denied", "사업장 정보가 일치하지 않습니다.");
+    }
+
+    // 확정 상태 확인 (CONFIRMED, CONTRACT_PENDING만 허용)
+    const confirmedStatuses = ["CONFIRMED", "CONTRACT_PENDING"];
+    if (!confirmedStatuses.includes(appData.status as string)) {
+      throw new HttpsError("permission-denied", "확정된 지원만 출근할 수 있습니다.");
+    }
+
+    const workDate = new Date(workDateMs);
+
+    // 퇴직 이후 출근 차단 (actualResignDate <= workDate)
+    if (appData.actualResignDate) {
+      const resignDate = (appData.actualResignDate as admin.firestore.Timestamp).toDate();
+      const workDateStart = new Date(workDate.getFullYear(), workDate.getMonth(), workDate.getDate());
+      const resignDateStart = new Date(resignDate.getFullYear(), resignDate.getMonth(), resignDate.getDate());
+      if (resignDateStart <= workDateStart) {
+        throw new HttpsError("permission-denied", "퇴직 이후 출근할 수 없습니다.");
+      }
+    }
+
+    // 휴무일 차단
+    if (Array.isArray(appData.leaveDates)) {
+      const isLeave = (appData.leaveDates as admin.firestore.Timestamp[]).some((d) => {
+        const ld = d.toDate();
+        return ld.getFullYear() === workDate.getFullYear() &&
+               ld.getMonth() === workDate.getMonth() &&
+               ld.getDate() === workDate.getDate();
+      });
+      if (isLeave) throw new HttpsError("permission-denied", "휴무일에는 출근할 수 없습니다.");
+    }
+
+    // 3. 반올림 계산 (scheduledStartTime 없으면 서버 현재 시각 사용)
+    const now = new Date();
+    let effectiveCheckIn = now;
+    let isLate = false;
+
+    if (scheduledStartTime) {
+      const cStart = _contractStartAt(workDate, scheduledStartTime);
+      const result = _processCheckin(now, cStart, attendanceRules ?? {});
+      effectiveCheckIn = result.effectiveCheckIn;
+      isLate = result.isLate;
+    }
+
+    // 4. docId: {applicationId}_{yyyyMMdd}
+    const dateStr = `${workDate.getFullYear()}${String(workDate.getMonth() + 1).padStart(2, "0")}${String(workDate.getDate()).padStart(2, "0")}`;
+    const docId = `${applicationId}_${dateStr}`;
+    const ref = db.collection("attendance").doc(docId);
+
+    // 5. 트랜잭션: 중복 체크인 방지
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (snap.exists) throw new HttpsError("already-exists", "오늘 이미 출근하셨습니다.");
+
+      const yearMonth = `${workDate.getFullYear()}-${String(workDate.getMonth() + 1).padStart(2, "0")}`;
+      const docData: Record<string, unknown> = {
+        applicationId,
+        userId: callerUid,
+        businessId,
+        businessName,
+        workDate: admin.firestore.Timestamp.fromDate(
+          new Date(workDate.getFullYear(), workDate.getMonth(), workDate.getDate())
+        ),
+        yearMonth,
+        workType,
+        checkIn: admin.firestore.Timestamp.fromDate(effectiveCheckIn),
+        originalCheckIn: admin.firestore.Timestamp.fromDate(now),
+        checkInMethod: method ?? "gps",
+        status: isLate ? "late" : "present",
+        isModified: false,
+        modifyRequested: false,
+        wageStatus: "pending",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      if (latitude != null) docData.checkInLat = latitude;
+      if (longitude != null) docData.checkInLng = longitude;
+
+      tx.set(ref, docData);
+    });
+
+    return {success: true, attendanceId: docId};
+  }
+);
+
+// ─── callableCheckOut ─────────────────────────────────────────────────────────
+// [B1-FIX] 근무자 개별 실시간 퇴근 CF 이전 — 반올림·근무시간 계산·서버 기록 강제
+// 이전 이유:
+//   1. 클라이언트 DateTime.now() 조작으로 퇴근 시각 위조 가능
+//   2. 근무시간(workHours) 계산이 클라이언트에서 조작 가능
+//   3. wageStatus 보호(calculated/confirmed/transferred) 서버 재검증
+//   4. originalCheckOut 불변 보장 — 서버에서만 최초 기록
+export const callableCheckOut = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {
+      attendanceId, workDateMs,
+      latitude, longitude, method,
+      scheduledStartTime, scheduledEndTime, attendanceRules,
+    } = request.data as {
+      attendanceId: string; workDateMs: number;
+      latitude?: number; longitude?: number; method?: string;
+      scheduledStartTime?: string; scheduledEndTime?: string;
+      attendanceRules?: AttendanceRulesData;
+    };
+
+    if (!attendanceId || !workDateMs) {
+      throw new HttpsError("invalid-argument", "attendanceId와 workDateMs가 필요합니다.");
+    }
+
+    const ref = db.collection("attendance").doc(attendanceId);
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new HttpsError("not-found", "출근 기록을 찾을 수 없습니다.");
+      const data = snap.data()!;
+
+      // 소유자 검증
+      if (data.userId !== callerUid) {
+        throw new HttpsError("permission-denied", "본인의 출근 기록만 퇴근할 수 있습니다.");
+      }
+
+      // 이미 퇴근 여부
+      if (data.checkOut != null) {
+        throw new HttpsError("already-exists", "이미 퇴근하셨습니다.");
+      }
+
+      // wageStatus 보호
+      const ws = data.wageStatus as string | undefined;
+      if (ws === "transferred" || ws === "confirmed" || ws === "calculated") {
+        throw new HttpsError("permission-denied", "임금이 확정된 기록은 수정할 수 없습니다.");
+      }
+
+      // 반올림 계산 (scheduledStartTime + scheduledEndTime 모두 있을 때만)
+      const workDate = new Date(workDateMs);
+      const now = new Date();
+      let effectiveCheckOut = now;
+      let isEarlyLeave = false;
+
+      if (scheduledStartTime && scheduledEndTime) {
+        const cEnd = _contractEndAt(workDate, scheduledStartTime, scheduledEndTime);
+        const result = _processCheckout(now, cEnd, attendanceRules ?? {});
+        effectiveCheckOut = result.effectiveCheckOut;
+        isEarlyLeave = result.isEarlyLeave;
+      }
+
+      // checkIn 파싱 (CF 기록은 항상 Timestamp)
+      let checkInAt = now;
+      if (data.checkIn) {
+        checkInAt = (data.checkIn as admin.firestore.Timestamp).toDate();
+      }
+
+      const workMins = Math.max(0, Math.floor((effectiveCheckOut.getTime() - checkInAt.getTime()) / 60000));
+      const workHours = workMins / 60;
+
+      // status: 조퇴이면 early_leave, 아니면 기존 status 유지
+      let status = data.status as string;
+      if (isEarlyLeave) status = "early_leave";
+
+      const update: Record<string, unknown> = {
+        checkOut: admin.firestore.Timestamp.fromDate(effectiveCheckOut),
+        checkOutMethod: method ?? "gps",
+        workHours,
+        status,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+
+      // originalCheckOut: 기존에 없을 때만 기록 (절대 불변)
+      if (data.originalCheckOut == null) {
+        update.originalCheckOut = admin.firestore.Timestamp.fromDate(now);
+      }
+
+      if (latitude != null) update.checkOutLat = latitude;
+      if (longitude != null) update.checkOutLng = longitude;
+      if (workMins <= 0) update.isZeroWork = true;
+
+      tx.update(ref, update);
+    });
+
+    return {success: true};
+  }
+);
+
+// ─── callableCreateContractRenewal ──────────────────────────────────────────
+// [M7-FIX] 계약 연장 CF 이전 — 법적 타임스탬프 서버 강제 + TOCTOU 방지
+// 이전 이유:
+//   1. confirmedAt/appliedAt: DateTime.now() 클라이언트 조작 → 계약일자 위변조
+//   2. contractVoidedAt: DateTime.now() → 무효화 일자 위조
+//   3. WriteBatch에 원본 상태 검증 없음 → 이미 연장된 계약 이중 연장 가능
+export const callableCreateContractRenewal = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {
+      originalApplicationId,
+      newStartDateMs,
+      newEndDateMs,
+    } = (request.data ?? {}) as {
+      originalApplicationId?: string;
+      newStartDateMs?: number;
+      newEndDateMs?: number;
+    };
+
+    if (!originalApplicationId || typeof originalApplicationId !== "string") {
+      throw new HttpsError("invalid-argument", "originalApplicationId가 필요합니다.");
+    }
+    if (typeof newStartDateMs !== "number" || typeof newEndDateMs !== "number") {
+      throw new HttpsError("invalid-argument", "날짜 파라미터가 누락되었습니다.");
+    }
+    if (newStartDateMs >= newEndDateMs) {
+      throw new HttpsError("invalid-argument", "종료일이 시작일보다 이후여야 합니다.");
+    }
+
+    // 1. 원본 application 조회 (businessId 추출 목적)
+    const originalRef = db.collection("applications").doc(originalApplicationId);
+    const originalSnap = await originalRef.get();
+    if (!originalSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const originalData = originalSnap.data()!;
+    const businessId = originalData.businessId as string;
+
+    // 2. 관리자 권한 검증
+    await assertBizAdmin(callerUid, businessId);
+
+    // 3. 서명 대기 계약서 사전 조회 (트랜잭션 외부)
+    const pendingStatuses = ["pending_employer", "pending_worker"];
+    const seenContractIds = new Set<string>();
+    const pendingContractRefs: admin.firestore.DocumentReference[] = [];
+
+    const [contractQ1, contractQ2] = await Promise.all([
+      db.collection("employment_contracts")
+        .where("applicationId", "==", originalApplicationId)
+        .where("businessId", "==", businessId)
+        .limit(5)
+        .get(),
+      db.collection("employment_contracts")
+        .where("applicationIds", "array-contains", originalApplicationId)
+        .where("businessId", "==", businessId)
+        .limit(5)
+        .get(),
+    ]);
+    for (const cDoc of [...contractQ1.docs, ...contractQ2.docs]) {
+      if (!seenContractIds.has(cDoc.id) && pendingStatuses.includes(cDoc.data().status as string)) {
+        seenContractIds.add(cDoc.id);
+        pendingContractRefs.push(cDoc.ref);
+      }
+    }
+
+    // 4. 신규 application docId 사전 생성
+    const newRef = db.collection("applications").doc();
+    const newApplicationId = newRef.id;
+
+    // 5. 트랜잭션 실행
+    await db.runTransaction(async (tx) => {
+      // 5-1. TOCTOU 방지: 원본 상태 트랜잭션 내 재확인
+      const freshSnap = await tx.get(originalRef);
+      if (!freshSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+      const freshData = freshSnap.data()!;
+
+      if (freshData.renewalDecision === "EXTEND") {
+        throw new HttpsError("already-exists", "이미 연장 처리된 계약입니다.");
+      }
+      if (freshData.status !== "CONFIRMED") {
+        throw new HttpsError("failed-precondition", "확정 상태의 계약만 연장할 수 있습니다.");
+      }
+
+      // 5-2. 서명 대기 계약서 재확인 후 voided 처리 (contractVoidedAt: serverTimestamp)
+      for (const cRef of pendingContractRefs) {
+        const cSnap = await tx.get(cRef);
+        if (cSnap.exists && pendingStatuses.includes(cSnap.data()!.status as string)) {
+          tx.update(cRef, {
+            status: "voided",
+            contractVoidedAt: admin.firestore.FieldValue.serverTimestamp(),
+            voidReason: "RENEWAL",
+          });
+        }
+      }
+
+      // 5-3. 신규 application 생성 (confirmedAt/appliedAt: serverTimestamp)
+      const newData: Record<string, unknown> = {
+        ...freshData,
+        workDate: admin.firestore.Timestamp.fromMillis(newStartDateMs),
+        workEndDate: admin.firestore.Timestamp.fromMillis(newEndDateMs),
+        confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
+        appliedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        renewedFromApplicationId: originalApplicationId,
+        status: "CONTRACT_PENDING",
+        renewalDecision: null,
+        renewalNotifiedAt: null,
+        desiredStartDate: null,
+        statusHistory: [],
+        resignStatus: null,
+        resignRequestedAt: null,
+        resignRequestDate: null,
+        actualResignDate: null,
+        terminationStatus: null,
+        terminationRequestedAt: null,
+        terminationEffectiveDate: null,
+        terminationRejectReason: null,
+        leaveDates: [],
+        extraWorkDates: [],
+      };
+      tx.set(newRef, newData);
+
+      // 5-4. 원본 renewalDecision=EXTEND + renewedToApplicationId 기록
+      tx.update(originalRef, {
+        renewalDecision: "EXTEND",
+        renewedToApplicationId: newApplicationId,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      // 5-5. TO 확정 카운터 증가 (CONTRACT_PENDING은 확정 인원으로 집계)
+      const toId = freshData.toId as string | undefined;
+      const slotId = freshData.slotId as string | undefined;
+      const selectedWorkType = freshData.selectedWorkType as string | undefined;
+
+      if (toId) {
+        const toUpdate: Record<string, unknown> = {
+          totalConfirmed: admin.firestore.FieldValue.increment(1),
+        };
+        if (!slotId && selectedWorkType) {
+          toUpdate[`workTypeConfirmedCounts.${selectedWorkType}`] =
+            admin.firestore.FieldValue.increment(1);
+        }
+        tx.update(db.collection("tos").doc(toId), toUpdate);
+
+        if (slotId) {
+          const slotUpdate: Record<string, unknown> = {
+            confirmedCount: admin.firestore.FieldValue.increment(1),
+          };
+          if (selectedWorkType) {
+            slotUpdate[`workTypeCounts.${selectedWorkType}.confirmedCount`] =
+              admin.firestore.FieldValue.increment(1);
+          }
+          tx.update(
+            db.collection("tos").doc(toId).collection("slots").doc(slotId),
+            slotUpdate
+          );
+        }
+      }
+    });
+
+    return {success: true, newApplicationId};
+  }
+);

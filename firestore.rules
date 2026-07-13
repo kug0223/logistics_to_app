@@ -737,39 +737,27 @@ service cloud.firestore {
 
 
 
-      // 생성: 근무자 본인(정규 체크인) 또는 더미 데이터만 허용
-      // 관리자 직접 create(수동 출근·노쇼·배치 출근)는 CF Admin SDK 전용으로 이전 완료:
-      //   callableBatchCheckIn (수동 출근/배치 출근)
-      //   callableBatchSetNoShow (노쇼 신규 생성)
+      // [B1-FIX] 근무자 본인 checkIn 클라이언트 직접 CREATE 경로 삭제
+      // callableCheckIn CF(Admin SDK)로 완전 이전 완료 — CF가 소유권·휴무일·반올림을 서버에서 강제.
+      // 이전 경로: request.resource.data.userId == request.auth.uid 기반 clients create
+      // 삭제 이유: 클라이언트 시각·businessId·applicationId를 위조한 출근 기록 생성 가능 취약점 차단.
       //
-      // [CROSS-BIZ-FIX] userId == auth.uid 경로에 businessId 소속 검증 추가
-      // [HIGH-02/03] checkInSuspicious/checkInDistance는 CF Admin SDK 전용 — 클라이언트 생성 차단
-      // [SEC-83] 클라이언트 CREATE 시 wageStatus='pending'+finalWage=0 강제
-      //   → onAttendanceWageStatusChanged CF 트리거 조작 차단
-      // [B2-FIX] applicationId 소유권 교차검증 추가 — 동일 사업장 근무자 A가 근무자 B의
-      //   applicationId로 docId ({appId}_{date})를 선점해 B의 체크인을 영구 차단하는 DoS 방어.
-      //   서비스 레이어(attendance_firestore.dart) 검증은 앱 경유 시에만 작동하므로 rules 레벨 추가.
-      //   applicationId 없는 더미/노쇼 케이스는 isAdmin() 경로로 분리.
+      // 유지 경로:
+      //   callableBatchCheckIn (관리자 수동 출근/배치 출근) — CF Admin SDK, rules 우회
+      //   callableBatchSetNoShow (노쇼 신규 생성) — CF Admin SDK, rules 우회
+      //   isAdmin() && isDummy==true: 관리자 더미 데이터 (테스트용)
       allow create: if isLoggedIn() &&
                       !('checkInSuspicious' in request.resource.data) &&
                       !('checkInDistance' in request.resource.data) &&
-                      request.resource.data.get('wageStatus', 'pending') == 'pending' &&
-                      request.resource.data.get('finalWage', 0) == 0 &&
-                      (
-                        (request.resource.data.userId == request.auth.uid &&
-                         request.resource.data.businessId ==
-                           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('businessId', '_NONE_') &&
-                         (!('applicationId' in request.resource.data) ||
-                          get(/databases/$(database)/documents/applications/$(request.resource.data.applicationId))
-                            .data.get('uid', '_NONE_') == request.auth.uid)) ||
-                        (isAdmin() && request.resource.data.isDummy == true)
-                      );
+                      (isAdmin() && request.resource.data.isDummy == true);
 
       // wageStatus 역전환 방지: transferred 상태는 관리자/슈퍼어드민도 되돌릴 수 없음
-      // 근무자: 퇴근 체크 전용 필드만 수정 허용 (checkIn/wageDetail 등 변조 불가)
-      // wageStatus가 confirmed/calculated 이상이면 근무자의 퇴근 수정도 차단
       // [143] transferredBy 필드 변경 시 본인 UID만 허용 — 감사 추적 위변조 방지
       // [NOSHOW-FIX] 노쇼 상태로 변경 시 finalWage 0 강제
+      // [B1-FIX] 근무자 checkOut 클라이언트 직접 UPDATE 경로 삭제
+      //   callableCheckOut CF(Admin SDK)로 완전 이전 완료 — CF가 반올림·workHours를 서버에서 강제.
+      //   이전 경로: isOwner + checkOut/workHours/status 필드 허용 블록
+      //   유지 경로(근무자): canceledWithApplication, absent 전이만 허용 (isOwner 경유 잔존)
       allow update: if isLoggedIn() &&
                       !(request.resource.data.get('status', '') == 'NO_SHOW' &&
                         request.resource.data.get('finalWage', 0) != 0) &&
@@ -781,31 +769,6 @@ service cloud.firestore {
                       // CF Admin SDK(callableMarkTransferredBatch) 경유만 허용
                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['wageStatus']) ||
                        request.resource.data.get('wageStatus', '') != 'transferred') && (
-                      // 근무자: wageStatus가 pending/unchecked 상태일 때만 퇴근 관련 필드 수정 허용
-                      // SEC-74: NO_SHOW 상태에서 근무자의 status 역전환 차단
-                      //   (노쇼 처리 시 wageStatus=confirmed가 함께 설정되어 중복 보호되지만
-                      //    예외 경로 대비 명시적 차단)
-                      (resource.data.wageStatus != 'transferred' &&
-                       resource.data.wageStatus != 'confirmed' &&
-                       resource.data.wageStatus != 'calculated' &&
-                       resource.data.get('status', '') != 'NO_SHOW' &&
-                       isOwner(resource.data.userId) &&
-                       request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                         'checkOut', 'checkOutLat', 'checkOutLng', 'checkOutMethod',
-                         'workHours', 'status', 'updatedAt', 'originalCheckOut',
-                         'isZeroWork'
-                       ]) &&
-                       // originalCheckOut 불변: 이미 설정된 경우 동일 값만 허용
-                       (!('originalCheckOut' in resource.data) ||
-                        request.resource.data.get('originalCheckOut', null) == resource.data.get('originalCheckOut', null)) &&
-                       // isZeroWork 는 false→true 단방향만 허용 (플래그 제거 차단)
-                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['isZeroWork']) ||
-                        request.resource.data.isZeroWork == true) &&
-                       // workHours 범위 검증
-                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['workHours']) ||
-                        (request.resource.data.workHours is number &&
-                         request.resource.data.workHours >= 0 &&
-                         request.resource.data.workHours <= 24))) ||
                       // [C-1] 확정 취소 시 wageStatus=pending 출근기록 무효화
                       // cancelConfirmedApplication → _cleanupApplicationRelatedData(businessId=null)
                       // 에서 USER 컨텍스트로 호출. calculated/confirmed/transferred는 이미 위에서 차단됨.
@@ -1481,7 +1444,9 @@ service cloud.firestore {
                            'status', 'employerSignatureUrl', 'employerSignatureHash',
                            'employerSignedAt', 'updatedAt',
                            'articles', 'templateId', 'slots', 'applicationIds',
-                           'contractVoidedAt', 'voidReason'
+                           'contractVoidedAt', 'voidReason',
+                           // [M3-FIX] 파트변경 시 계약서 workType/wage/wageType 동기화 허용
+                           'workType', 'wage', 'wageType'
                          ]) &&
                          // [CON-03] employerSignedAt == request.time 강제 — 사업주 서명 날짜 위변조 차단
                          //   workerSignedAt과 동일한 보호: 과거/미래 날짜 직접 설정 불가
