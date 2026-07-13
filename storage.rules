@@ -83,7 +83,9 @@ service firebase.storage {
       allow read: if false;
       allow create: if isLoggedIn() && isUnder10MB();
       allow update: if false;
-      allow delete: if isLoggedIn();
+      // [SEC-CONTRACT-MED] 임의 삭제 차단 — contractId를 아는 인증 사용자가 서명/PDF 삭제 불가.
+      // 롤백 삭제는 클라이언트 contract_service.dart catch 블록에서 Storage SDK 직접 처리(고아 파일 방지용).
+      allow delete: if false;
     }
 
     // ═══════════════════════════════════════════════════════════

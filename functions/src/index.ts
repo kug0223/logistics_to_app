@@ -4662,6 +4662,96 @@ export const finalizePassReauth = onCall(
   }
 );
 
+// ── callableFinalizeWorkerSignature ─────────────────────
+// 근무자 서명 완료 + application CONTRACT_PENDING→CONFIRMED 원자 처리
+// [SEC-CONTRACT-H1] firestore.rules에서 클라이언트 직접 전이 차단 — CF Admin SDK 전용 경로.
+// Storage 업로드(sigUrl, pdfUrl)는 클라이언트에서 완료 후 이 CF를 호출한다.
+// Input:  { contractId, sigUrl, workerSignatureHash, pdfUrl }
+// Output: { success: true }
+export const callableFinalizeWorkerSignature = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+
+    const {contractId, sigUrl, workerSignatureHash, pdfUrl} = request.data;
+    if (!contractId || typeof contractId !== "string") {
+      throw new HttpsError("invalid-argument", "contractId가 필요합니다.");
+    }
+    if (!sigUrl || typeof sigUrl !== "string") {
+      throw new HttpsError("invalid-argument", "sigUrl이 필요합니다.");
+    }
+    if (!workerSignatureHash || typeof workerSignatureHash !== "string") {
+      throw new HttpsError("invalid-argument", "workerSignatureHash가 필요합니다.");
+    }
+    if (!pdfUrl || typeof pdfUrl !== "string") {
+      throw new HttpsError("invalid-argument", "pdfUrl이 필요합니다.");
+    }
+
+    const contractRef = db.collection("employment_contracts").doc(contractId);
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(contractRef);
+      if (!snap.exists) {
+        throw new HttpsError("not-found", "계약서를 찾을 수 없습니다.");
+      }
+      const data = snap.data()!;
+
+      // 본인 계약서 검증 (타인 계약서 서명 차단)
+      if (data["workerId"] !== uid) {
+        throw new HttpsError("permission-denied", "본인의 계약서만 서명할 수 있습니다.");
+      }
+
+      // 상태 검증 (race condition 방어 — Storage 업로드 후 상태 역전 대응)
+      const status = data["status"] as string;
+      if (status === "voided") {
+        throw new HttpsError("failed-precondition", "무효 처리된 계약서에는 서명할 수 없습니다.");
+      }
+      if (status === "completed") {
+        throw new HttpsError("failed-precondition", "이미 완료된 계약서입니다.");
+      }
+      if (status === "pending_employer") {
+        throw new HttpsError("failed-precondition", "사업주 서명이 완료되기 전에는 근무자가 서명할 수 없습니다.");
+      }
+      if (data["workerSignatureUrl"]) {
+        throw new HttpsError("failed-precondition", "이미 근무자 서명이 완료된 계약서입니다.");
+      }
+
+      // employment_contracts 완료 처리
+      tx.update(contractRef, {
+        status: "completed",
+        workerSignatureUrl: sigUrl,
+        workerSignatureHash: workerSignatureHash,
+        workerSignedAt: admin.firestore.FieldValue.serverTimestamp(),
+        pdfUrl: pdfUrl,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      // applications CONTRACT_PENDING → CONFIRMED (Admin SDK 전용 경로)
+      const applicationIds: string[] = Array.isArray(data["applicationIds"])
+        ? (data["applicationIds"] as string[])
+        : [];
+      for (const appId of applicationIds) {
+        const appRef = db.collection("applications").doc(appId);
+        const appSnap = await tx.get(appRef);
+        if (appSnap.exists && appSnap.data()?.["status"] === "CONTRACT_PENDING") {
+          tx.update(appRef, {
+            status: "CONFIRMED",
+            statusHistory: admin.firestore.FieldValue.arrayUnion({
+              status: "CONFIRMED",
+              at: admin.firestore.Timestamp.now(),
+              by: "SYSTEM",
+              action: "CONTRACT_SIGNED",
+            }),
+          });
+        }
+      }
+    });
+
+    return {success: true};
+  }
+);
+
 // ── recordDeletedAccount ────────────────────────────────
 // 탈퇴 기록을 deleted_accounts에 Admin SDK로 저장
 // [AUTH-H2] 클라이언트가 deleted_accounts에 직접 쓰면 탈퇴 안 한 상태에서 임의 문서를

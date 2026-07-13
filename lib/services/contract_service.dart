@@ -264,73 +264,23 @@ class ContractService {
       updatedAt: workerNow,
     );
 
-    // [C04 동시성 방어] 계약서 무효화(voided)와 근무자 서명의 race condition:
-    // 트랜잭션 내에서 currentStatus를 재확인하여 voided이면 예외 발생 → 서명 실패.
-    // Storage에 업로드된 서명+PDF는 아래 catch에서 즉시 삭제하여 고아 파일 방지.
-    //
-    // [C02] 사업주와 근무자가 동시에 서명 시도:
-    // saveEmployerSignature: employerSignatureUrl 존재 여부 체크 후 set/update.
-    // saveWorkerSignature: workerSignatureUrl 존재 여부 체크 — 둘 다 트랜잭션으로 원자 처리.
-    // 중복 서명 시 두 번째 트랜잭션은 예외 발생 → 안전.
+    // [SEC-CONTRACT-H1] CF Admin SDK 경유로 전환 — 클라이언트 직접 Firestore 트랜잭션 제거.
+    // CF callableFinalizeWorkerSignature에서 workerId == uid 검증 + 상태 검증(race condition 방어) +
+    // employment_contracts/applications 원자 업데이트. 서명 우회(CONTRACT_PENDING→CONFIRMED) 차단.
+    // Storage에 업로드된 서명+PDF는 CF 실패 시 catch에서 즉시 삭제하여 고아 파일 방지.
+    final workerHash = sha256.convert(signatureBytes).toString();
     try {
-      final nowTs = Timestamp.fromDate(workerNow);
-      // 동시 서명 방지 + application 상태 원자적 업데이트
-      final contractRef = _db.collection('employment_contracts').doc(contract.id);
-      final workerHash = sha256.convert(signatureBytes).toString();
-      await _db.runTransaction((tx) async {
-        // [Firestore 트랜잭션 규칙] 모든 읽기를 쓰기보다 먼저 수행해야 함
-        final snap = await tx.get(contractRef);
-        final appRefs = contract.applicationIds
-            .map((id) => _db.collection('applications').doc(id))
-            .toList();
-        final appSnaps = [
-          for (final ref in appRefs) await tx.get(ref),
-        ];
-
-        // 계약서 상태 검증 (트랜잭션 내 재확인 — race condition 방어)
-        if (snap.exists) {
-          final currentStatus = snap.data()?['status'] as String?;
-          if (currentStatus == ContractStatus.voided.value) {
-            throw Exception('무효 처리된 계약서에는 서명할 수 없습니다');
-          }
-          if (currentStatus == ContractStatus.completed.value) {
-            throw Exception('이미 완료된 계약서입니다');
-          }
-          // WARN-2: pendingEmployer 상태 재확인 (사전 체크 통과 후 상태 역전 방어)
-          if (currentStatus == ContractStatus.pendingEmployer.value) {
-            throw Exception('사업주 서명이 완료되기 전에는 근무자가 서명할 수 없습니다.');
-          }
-          if (snap.data()?['workerSignatureUrl'] != null) {
-            throw Exception('이미 근무자 서명이 완료된 계약서입니다');
-          }
-        }
-
-        // 쓰기: 계약서 완료 처리 (서명 시각은 서버 타임스탬프로 위변조 방지)
-        tx.update(contractRef, {
-          'status': updated.status.value,
-          'workerSignatureUrl': sigUrl,
-          'workerSignatureHash': workerHash,
-          'workerSignedAt': FieldValue.serverTimestamp(),
-          'pdfUrl': pdfUrl,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-        // 쓰기: application CONTRACT_PENDING → CONFIRMED (이미 CONFIRMED이면 스킵)
-        for (var i = 0; i < appRefs.length; i++) {
-          if (appSnaps[i].data()?['status'] == 'CONTRACT_PENDING') {
-            tx.update(appRefs[i], {
-              'status': 'CONFIRMED',
-              'statusHistory': FieldValue.arrayUnion([{
-                'status': 'CONFIRMED',
-                'at': nowTs,
-                'by': 'SYSTEM',
-                'action': 'CONTRACT_SIGNED',
-              }]),
-            });
-          }
-        }
-      });
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableFinalizeWorkerSignature',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)))
+          .call({
+            'contractId': contract.id,
+            'sigUrl': sigUrl,
+            'workerSignatureHash': workerHash,
+            'pdfUrl': pdfUrl,
+          });
     } catch (e) {
-      // Firestore 실패 → 서명 이미지 + PDF 삭제 (고아 파일 방지)
+      // CF 실패 → 서명 이미지 + PDF 삭제 (고아 파일 방지)
       for (final path in [
         'contracts/${contract.id}/signature_worker.png',
         'contracts/${contract.id}/contract.pdf',

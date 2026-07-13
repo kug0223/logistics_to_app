@@ -640,12 +640,9 @@ service cloud.firestore {
                          'terminationEffectiveDate', 'terminationRejectReason',
                          'workDetailId', 'desiredStartDate', 'workEndDate', 'workDays'
                        ])) ||
-                      // 근로계약서 서명 완료 (본인: CONTRACT_PENDING → CONFIRMED)
-                      (isOwner(resource.data.uid) &&
-                       resource.data.status == 'CONTRACT_PENDING' &&
-                       request.resource.data.status == 'CONFIRMED' &&
-                       request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['status', 'statusHistory'])) ||
+                      // [CF-ONLY] 근로계약서 서명 완료 (CONTRACT_PENDING → CONFIRMED)
+                      //   — callableFinalizeWorkerSignature(Admin SDK) 전용.
+                      //   클라이언트 직접 전이 제거: CF에서 workerId 검증 + 계약서 서명 완료 확인 후 처리.
                       // [CF-ONLY] 퇴사 요청 제출 (resignStatus→PENDING) — callableRequestResignation(Admin SDK) 전용
                       // 클라이언트 직접 경로 제거: CF 이전 완료, 규칙에서 이중 경로 제거
                       // [CF-ONLY] 퇴사 요청 취소 (resignStatus→null) — callableCancelResignRequest(Admin SDK) 전용
@@ -1437,21 +1434,9 @@ service cloud.firestore {
       allow update: if isLoggedIn() &&
                       resource.data.status != 'completed' &&
                       resource.data.status != 'voided' && (
-                        // [SEC-91] 근무자: pending_worker → completed 전이만 허용 + 서명 필드 필수
-                        // pending_employer 상태에서 completed 직접 설정, 또는 voided 무단 전환 차단
-                        // [CON-02] workerSignedAt == request.time 강제 — 클라이언트가 과거/미래 날짜를
-                        //   직접 설정하는 법적 타임스탬프 위조 차단
-                        (isOwner(resource.data.workerId) &&
-                         resource.data.status == 'pending_worker' &&
-                         request.resource.data.status == 'completed' &&
-                         'workerSignatureUrl' in request.resource.data &&
-                         'workerSignatureHash' in request.resource.data &&
-                         'workerSignedAt' in request.resource.data &&
-                         request.resource.data.workerSignedAt == request.time &&
-                         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                           'status', 'workerSignatureUrl', 'workerSignatureHash',
-                           'workerSignedAt', 'pdfUrl', 'updatedAt'
-                         ])) ||
+                        // [CF-ONLY] 근무자 서명 완료 (pending_worker → completed)
+                        //   — callableFinalizeWorkerSignature(Admin SDK) 전용.
+                        //   클라이언트 직접 write 제거: 서명 우회 차단 + applications 원자 처리.
                         // 관리자/하위관리자: 사업주 서명 + 계약 관리 필드만
                         // [H-003] articles/templateId는 근무자 서명 전에만 수정 가능
                         // [HIGH-FIX] SubAdmin 누락: day_applicants_dialog 계약서 서명·수정 시
@@ -1467,6 +1452,10 @@ service cloud.firestore {
                            'contractVoidedAt', 'voidReason',
                            'terminationStatus'
                          ]) &&
+                         // [CON-03] employerSignedAt == request.time 강제 — 사업주 서명 날짜 위변조 차단
+                         //   workerSignedAt과 동일한 보호: 과거/미래 날짜 직접 설정 불가
+                         (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['employerSignedAt']) ||
+                          request.resource.data.employerSignedAt == request.time) &&
                          // [SEC-104] applicationIds도 pending_employer 상태에서만 수정 허용
                          //   근무자 서명 후 계약서에 다른 지원서로 재귀속하는 공격 차단
                          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['articles', 'templateId', 'slots', 'applicationIds']) ||
