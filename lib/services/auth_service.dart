@@ -563,17 +563,62 @@ class AuthService {
         )).expand((snap) => snap.docs).toList();
 
         if (activeDocs.isNotEmpty) {
-          final batch = _firestore.batch();
-          final List<String> confirmedAppIds = [];
+          // [M-5] TO 카운터 감소 정보 사전 수집 (배치 commit 전)
+          // CONFIRMED/CONTRACT_PENDING → callableDecrementSlotConfirmed CF 경유
+          // PENDING → totalPending 배치에서 직접 -1 (rules: isUser() + hasOnly(['totalPending']) + ±1)
+          final List<Map<String, dynamic>> confirmedApps = [];
+          final Map<String, int> pendingToIdCounts = {};
           for (final doc in activeDocs) {
-            if (doc.data()['status'] == 'CONFIRMED') confirmedAppIds.add(doc.id);
+            final d = doc.data();
+            final status = d['status'] as String?;
+            final toId = d['toId'] as String?;
+            if (status == 'CONFIRMED' || status == 'CONTRACT_PENDING') {
+              confirmedApps.add({
+                'id': doc.id,
+                'toId': toId,
+                'slotId': d['slotId'] as String?,
+                'workType': d['selectedWorkType'] as String?,
+              });
+            } else if (status == 'PENDING' && toId != null) {
+              pendingToIdCounts[toId] = (pendingToIdCounts[toId] ?? 0) + 1;
+            }
+          }
+
+          final batch = _firestore.batch();
+          for (final doc in activeDocs) {
             batch.update(doc.reference, {
               'status': 'CANCELED',
               'canceledAt': FieldValue.serverTimestamp(),
               'cancelReason': 'USER_DELETED',
             });
           }
+          // PENDING 앱: totalPending -1 per TO (한 사용자·한 TO = 지원서 1개이므로 중복 없음)
+          for (final entry in pendingToIdCounts.entries) {
+            batch.update(
+              _firestore.collection('tos').doc(entry.key),
+              {'totalPending': FieldValue.increment(-entry.value)},
+            );
+          }
           await batch.commit();
+
+          // CONFIRMED/CONTRACT_PENDING: totalConfirmed -1 (CF Admin SDK 경유 — 클라이언트 직접 쓰기 차단)
+          if (confirmedApps.isNotEmpty) {
+            final decrementCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+                .httpsCallable('callableDecrementSlotConfirmed',
+                    options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+            await Future.wait(confirmedApps.map((app) async {
+              try {
+                await decrementCallable.call<Map<String, dynamic>>({
+                  'applicationId': app['id'],
+                  'toId': app['toId'],
+                  'slotId': app['slotId'],
+                  'workType': app['workType'],
+                });
+              } catch (e) {
+                debugPrint('⚠️ totalConfirmed 감소 실패 (${app['id']}): $e');
+              }
+            }));
+          }
         }
 
         // [SEC-99] attendance scheduled → absent: applicationId 기반 루프 제거 →
