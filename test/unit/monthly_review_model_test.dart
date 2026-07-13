@@ -136,14 +136,15 @@ void main() {
   // generateKeyForBusiness (static)
   // ══════════════════════════════════════════════════════
   group('MonthlyReviewModel.generateKeyForBusiness', () {
-    test('형식: businessId_reviewerId_year_month_biz', () {
+    test('형식: biz_<businessId>_<year>_<month>_<sha256_16>', () {
       final key = MonthlyReviewModel.generateKeyForBusiness(
         businessId: 'biz-001',
         reviewerId: 'uid-reviewer',
         year: 2026,
         month: 6,
       );
-      expect(key, equals('biz-001_uid-reviewer_2026_6_biz'));
+      // SHA-256('biz-001_uid-reviewer_2026_6').substring(0,16) = 5574aee539be5c7a
+      expect(key, equals('biz_biz-001_2026_6_5574aee539be5c7a'));
     });
 
     test('12월 포함', () {
@@ -153,7 +154,8 @@ void main() {
         year: 2025,
         month: 12,
       );
-      expect(key, equals('biz-001_uid-reviewer_2025_12_biz'));
+      // SHA-256('biz-001_uid-reviewer_2025_12').substring(0,16) = f3e525e5e1636c63
+      expect(key, equals('biz_biz-001_2025_12_f3e525e5e1636c63'));
     });
   });
 

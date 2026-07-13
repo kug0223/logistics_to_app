@@ -3457,7 +3457,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       }
 
       final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableBatchAdjustAttendanceTime')
+          .httpsCallable('callableBatchAdjustAttendanceTime',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 60)))
           .call({'businessId': _selectedBusinessId, 'entries': entries});
 
       final processed = result.data['processed'] as int? ?? 0;

@@ -10193,7 +10193,8 @@ export const callableBatchAdjustAttendanceTime = onCall(
           }
           tx.update(attRef, updates);
         });
-        successCount++;
+        // [QA-FIX] skipped 처리된 건(snap 미존재·businessId 불일치·confirmed) 제외
+        if (!skipped.includes(attendanceId)) successCount++;
       } catch (e) {
         console.error(`시간 조정 실패 (${attendanceId}):`, e);
         skipped.push(attendanceId);
@@ -10922,7 +10923,7 @@ export const callableIncrementSlotPending = onCall(
       if (freshApp.data()?.[flagField]) return;
 
       const toRef = db.collection("tos").doc(toId);
-      tx.update(toRef, {totalPending: admin.firestore.FieldValue.increment(delta)});
+      // [M-1-FIX] totalPending 업데이트를 슬롯 zero-check 이후로 이동 — zero-protection 발동 시 음수 방지 보장
 
       if (slotId) {
         const slotRef = db.collection("tos").doc(toId).collection("slots").doc(slotId);
@@ -10933,7 +10934,7 @@ export const callableIncrementSlotPending = onCall(
         const currentPending = (slotSnap.data()?.pendingCount as number) ?? 0;
         if (delta === -1 && currentPending <= 0) {
           tx.update(appRef, {[flagField]: admin.firestore.FieldValue.serverTimestamp()});
-          return;
+          return;  // totalPending 미감소 — zero-check 발동 시 TO 카운터 음수 방지
         }
 
         const slotUpdate: Record<string, unknown> = {
@@ -10946,6 +10947,7 @@ export const callableIncrementSlotPending = onCall(
         tx.update(slotRef, slotUpdate);
       }
 
+      tx.update(toRef, {totalPending: admin.firestore.FieldValue.increment(delta)});
       tx.update(appRef, {[flagField]: admin.firestore.FieldValue.serverTimestamp()});
     });
 
