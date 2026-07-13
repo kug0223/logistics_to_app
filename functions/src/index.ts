@@ -877,11 +877,13 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
         .where("status", "in", CONFIRMED_STATUSES)
         .where("workDate", ">=", Timestamp.fromDate(windowStart))
         .where("workDate", "<=", Timestamp.fromDate(windowEnd))
+        .limit(500)
         .get(),
       db.collection("applications")
         .where("status", "in", CONFIRMED_STATUSES)
         .where("workEndDate", ">=", Timestamp.fromDate(windowStart))
         .where("workEndDate", "<=", Timestamp.fromDate(windowEnd))
+        .limit(500)
         .get(),
     ]);
 
@@ -1754,7 +1756,11 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
     .where("publishMode", "==", "scheduled")
     .where("isPublished", "==", false)
     .where("publishAt", "<=", now)
+    .limit(500)
     .get();
+  if (snapshot.size >= 500) {
+    console.warn("  ⚠️ [예약공개] 500건 limit 도달 — 다음 실행에서 잔여 처리");
+  }
 
   if (snapshot.empty) {
     console.log("  ✅ [예약공개] 공개할 TO 없음");
@@ -2239,7 +2245,11 @@ async function processTOExpiry(now: Timestamp): Promise<void> {
     .collection("tos")
     .where("status", "==", "ACTIVE")
     .where("applicationDeadline", "<=", now)
+    .limit(500)
     .get();
+  if (snapshot.size >= 500) {
+    console.warn("  ⚠️ [TO 마감] 500건 limit 도달 — 다음 실행에서 잔여 처리");
+  }
 
   if (snapshot.empty) {
     console.log("  ✅ [TO 마감] 처리할 TO 없음");
@@ -2411,6 +2421,7 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
         .where("status", "in", CONFIRMED_STATUSES)
         .where("workDate", ">=", Timestamp.fromDate(tomorrow))
         .where("workDate", "<=", Timestamp.fromDate(tomorrowEnd))
+        .limit(500)
         .get(),
       // 장기 근무자: workEndDate >= 내일 (만료되지 않은 계약)
       // [특이사항] workEndDate=null 무기한 계약은 이 쿼리에서 제외됨 (Firestore null 필터 불가)
@@ -5395,9 +5406,9 @@ export const onBusinessDeactivated = onDocumentUpdated(
 
     // 1) 활성 TO 조회 — whereIn 미사용(보안 규칙 충돌), 상태별 3개 병렬 쿼리
     const [activeSnap, fullSnap, scheduledSnap] = await Promise.all([
-      db.collection("tos").where("businessId", "==", businessId).where("status", "==", "ACTIVE").get(),
-      db.collection("tos").where("businessId", "==", businessId).where("status", "==", "FULL").get(),
-      db.collection("tos").where("businessId", "==", businessId).where("status", "==", "SCHEDULED").get(),
+      db.collection("tos").where("businessId", "==", businessId).where("status", "==", "ACTIVE").limit(500).get(),
+      db.collection("tos").where("businessId", "==", businessId).where("status", "==", "FULL").limit(500).get(),
+      db.collection("tos").where("businessId", "==", businessId).where("status", "==", "SCHEDULED").limit(500).get(),
     ]);
 
     const activeTos = [...activeSnap.docs, ...fullSnap.docs, ...scheduledSnap.docs];
@@ -5417,9 +5428,9 @@ export const onBusinessDeactivated = onDocumentUpdated(
 
       // PENDING + CONTRACT_PENDING + CONFIRMED 지원서 병렬 조회
       const [pendingAppsSnap, contractPendingSnap, confirmedSnap] = await Promise.all([
-        db.collection("applications").where("toId", "==", toId).where("status", "==", "PENDING").get(),
-        db.collection("applications").where("toId", "==", toId).where("status", "==", "CONTRACT_PENDING").get(),
-        db.collection("applications").where("toId", "==", toId).where("status", "==", "CONFIRMED").get(),
+        db.collection("applications").where("toId", "==", toId).where("status", "==", "PENDING").limit(500).get(),
+        db.collection("applications").where("toId", "==", toId).where("status", "==", "CONTRACT_PENDING").limit(500).get(),
+        db.collection("applications").where("toId", "==", toId).where("status", "==", "CONFIRMED").limit(500).get(),
       ]);
 
       // batch에 TO 업데이트 + 전체 지원서 처리
