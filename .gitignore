@@ -81,3 +81,5 @@ config/prod/
 # Firebase 서비스 계정 키 (절대 커밋 금지)
 functions/*-adminsdk-*.json
 functions/service-account-key.json
+# 슈퍼관리자 생성 스크립트 (평문 비밀번호 포함 — 로컬 전용)
+functions/create_super_admin.js

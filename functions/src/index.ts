@@ -451,6 +451,28 @@ export const createNotification = onCall(
     if (!/^[A-Za-z_][A-Za-z0-9_]{0,49}$/.test(rawType)) {
       throw new HttpsError("invalid-argument", "알림 타입 형식이 올바르지 않습니다.");
     }
+    // [A4-FIX] contractRequested 타입: applicationId 기반 24h 서버 쿨다운
+    // SharedPreferences 기반 클라이언트 쿨다운은 재설치·타기기로 우회 가능 → 서버 강제로 전환
+    if (rawType === "contractRequested") {
+      const appId = filteredData.applicationId as string | undefined;
+      if (appId) {
+        const appRef = db.collection("applications").doc(appId);
+        const appSnap = await appRef.get();
+        if (appSnap.exists) {
+          const lastReq = appSnap.data()?.lastContractRequestedAt as FirebaseFirestore.Timestamp | undefined;
+          if (lastReq) {
+            const diffMs = Date.now() - lastReq.toMillis();
+            const cooldownMs = 24 * 60 * 60 * 1000;
+            if (diffMs < cooldownMs) {
+              const remainHours = Math.ceil((cooldownMs - diffMs) / (60 * 60 * 1000));
+              throw new HttpsError("resource-exhausted", `${remainHours}시간 후 재요청 가능합니다.`);
+            }
+          }
+          await appRef.update({lastContractRequestedAt: admin.firestore.FieldValue.serverTimestamp()});
+        }
+      }
+    }
+
     const payload: Record<string, unknown> = {
       userId,
       title: rawTitle,

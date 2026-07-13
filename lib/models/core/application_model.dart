@@ -93,6 +93,9 @@ class ApplicationModel {
   /// 관리자 관심표시 여부
   final bool isStarred;
 
+  /// [A4] 계약서 요청 마지막 시각 — CF 서버 타임스탬프 (24h 쿨다운 서버 강제)
+  final DateTime? lastContractRequestedAt;
+
   ApplicationModel({
     required this.id,
     required this.businessId,
@@ -164,6 +167,7 @@ class ApplicationModel {
     this.statusHistory,
     this.applicationType,
     this.isStarred = false,
+    this.lastContractRequestedAt,
   });
 
   static ApplicationModel? tryFromMap(Map<String, dynamic> data, String documentId) {
@@ -268,6 +272,7 @@ class ApplicationModel {
           : null,
       applicationType: data['type'] as String?,
       isStarred: data['isStarred'] as bool? ?? false,
+      lastContractRequestedAt: parseTimestampNullable(data['lastContractRequestedAt']),
     );
   }
   

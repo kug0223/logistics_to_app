@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -57,7 +56,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   int _autoLoadCount = 0;
   static const int _maxAutoLoad = 5;
 
-  // 계약서 요청 쿨다운 (앱ID → 마지막 요청 시각)
+  // 계약서 요청 쿨다운 (앱ID → 마지막 요청 시각, 세션 내 낙관 업데이트용)
+  // 서버 쿨다운 강제: CF createNotification에서 lastContractRequestedAt 24h 체크
   final Map<String, DateTime> _lastContractRequestMap = {};
   final Map<String, bool> _isRequestingContract = {};
   final Set<String> _cancellingIds = {};
@@ -128,7 +128,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           _hasMore = page['hasMore'] as bool;
           _isLoading = false;
         });
-        _loadContractRequestTimes(appWithTOs.map((a) => a.application.id).toList());
+        _loadContractRequestTimes(appWithTOs.map((a) => a.application).toList());
       }
     } catch (e) {
       debugPrint('❌ 지원 내역 로드 실패: $e');
@@ -305,14 +305,13 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
   // ── 계약서 요청 쿨다운 ──
 
-  Future<void> _loadContractRequestTimes(List<String> appIds) async {
-    final prefs = await SharedPreferences.getInstance();
+  // [A4-FIX] SharedPreferences 기반 → 서버 필드(app.lastContractRequestedAt) 기반으로 전환
+  // 재설치·타기기에서 우회 불가 (서버 쿨다운은 CF에서 강제)
+  void _loadContractRequestTimes(List<ApplicationModel> apps) {
     final Map<String, DateTime> map = {};
-    for (final id in appIds) {
-      final ts = prefs.getInt('contract_req_$id');
-      if (ts != null) {
-        map[id] = DateTime.fromMillisecondsSinceEpoch(ts);
-      }
+    for (final app in apps) {
+      final lastReq = app.lastContractRequestedAt;
+      if (lastReq != null) map[app.id] = lastReq;
     }
     if (mounted) setState(() => _lastContractRequestMap.addAll(map));
   }
@@ -360,12 +359,9 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       }
       if (!mounted) return;
 
-      // 쿨다운 저장
+      // 세션 내 낙관 업데이트 — 서버 lastContractRequestedAt은 CF가 설정
       final now = DateTime.now();
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setInt('contract_req_${app.id}', now.millisecondsSinceEpoch);
       if (!mounted) return;
-
       setState(() => _lastContractRequestMap[app.id] = now);
       ToastHelper.showSuccess('계약서 발송을 요청했습니다.');
     } catch (e) {
