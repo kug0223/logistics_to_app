@@ -11541,10 +11541,6 @@ export const callableCloseTOManually = onCall(
       throw new HttpsError("already-exists", "이미 수동 마감된 공고입니다.");
     }
 
-    const now = admin.firestore.Timestamp.now();
-    const businessName = toData.businessName as string ?? "";
-    const toTitle = toData.title as string ?? "";
-
     // 2. TO 상태 업데이트 — closedBy 서버 UID 사용 [M-2]
     await db.collection("tos").doc(toId).update({
       isManualClosed: true,
@@ -11554,79 +11550,12 @@ export const callableCloseTOManually = onCall(
       statusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // 3. 활성 지원서(PENDING/CONTRACT_PENDING/CONFIRMED) AUTO_CANCELED 배치 처리
-    const activeStatuses = ["PENDING", "CONTRACT_PENDING", "CONFIRMED"];
-    let canceledCount = 0;
-    try {
-      const appsSnap = await db.collection("applications")
-        .where("toId", "==", toId)
-        .where("status", "in", activeStatuses)
-        .get();
+    // 3. 기존 지원서는 변경하지 않음 — 마감은 신규 지원만 차단
+    // CONFIRMED(확정) 근로자는 출퇴근 진행 중이므로 절대 취소 불가.
+    // PENDING/CONTRACT_PENDING도 유지 — 관리자가 직접 처리.
+    // TO.isManualClosed=true → 클라이언트에서 새 지원 버튼 비활성화로 신규 차단.
 
-      if (!appsSnap.empty) {
-        let batch = db.batch();
-        let batchCount = 0;
-        const notifEntries: Array<{uid: string; status: string}> = [];
-
-        for (const doc of appsSnap.docs) {
-          batch.update(doc.ref, {
-            status: "AUTO_CANCELED",
-            canceledAt: now,
-            cancelReason: "TO_MANUALLY_CLOSED",
-          });
-          notifEntries.push({
-            uid: doc.data().uid as string ?? "",
-            status: doc.data().status as string ?? "",
-          });
-          batchCount++;
-          canceledCount++;
-
-          if (batchCount >= 499) {
-            await batch.commit();
-            batch = db.batch();
-            batchCount = 0;
-          }
-        }
-        if (batchCount > 0) await batch.commit();
-
-        // 4. 알림 발송 (배치 커밋 후 — 실패해도 TO 마감 유지)
-        // [CF-CLOSE-01] 499건 단위 분할: 500건 초과 시 Firestore batch 오류 방지
-        try {
-          let notifBatch = db.batch();
-          let notifCount = 0;
-          for (const entry of notifEntries) {
-            if (!entry.uid) continue;
-            const typeLabel = entry.status === "CONFIRMED" ? "확정 취소" :
-                              entry.status === "CONTRACT_PENDING" ? "계약 취소" : "지원 취소";
-            notifBatch.set(
-              db.collection("users").doc(entry.uid).collection("notifications").doc(),
-              {
-                userId: entry.uid,
-                type: "confirmationCanceled",
-                title: `${typeLabel} 안내`,
-                body: `${businessName} "${toTitle}" 공고가 마감되어 ${typeLabel}되었습니다.`,
-                data: {toId, businessId, screen: "mySchedule", reason: "TO_MANUALLY_CLOSED"},
-                isRead: false,
-                createdAt: now,
-              }
-            );
-            notifCount++;
-            if (notifCount >= 499) {
-              await notifBatch.commit();
-              notifBatch = db.batch();
-              notifCount = 0;
-            }
-          }
-          if (notifCount > 0) await notifBatch.commit();
-        } catch (notifErr) {
-          console.error("⚠️ [closeTOManually] 알림 발송 실패 (TO 마감은 완료):", notifErr);
-        }
-      }
-    } catch (appErr) {
-      console.error("⚠️ [closeTOManually] 지원서 AUTO_CANCELED 처리 실패 (TO는 마감됨):", appErr);
-    }
-
-    console.log(`✅ [closeTOManually] TO ${toId} 마감 완료, ${canceledCount}건 AUTO_CANCELED`);
-    return {success: true, canceledCount};
+    console.log(`✅ [closeTOManually] TO ${toId} 마감 완료 (기존 지원서 유지)`);
+    return {success: true};
   }
 );
