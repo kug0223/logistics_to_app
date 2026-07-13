@@ -5069,6 +5069,158 @@ export const callableDeleteIdCard = onCall(
   }
 );
 
+// ── callableDeleteBusinessImage ──────────────────────────
+// [LOW-STORAGE] businesses/ 경로 삭제 소속 검증 — 로그인 사용자 누구나 삭제 가능한 취약점 차단
+// Storage rules에서 Firestore 읽기 불가(프로젝트 특이사항)이므로 CF Admin SDK로 소속 검증 후 삭제
+// Input:  { imageUrl: string }  — Firebase Storage download URL
+// Output: { success: true }
+export const callableDeleteBusinessImage = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {imageUrl} = request.data as {imageUrl?: string};
+
+    if (!imageUrl || typeof imageUrl !== "string" || imageUrl.length > 2048) {
+      throw new HttpsError("invalid-argument", "imageUrl이 필요합니다.");
+    }
+
+    // Storage 다운로드 URL에서 경로 추출
+    const pathMatch = imageUrl.match(/\/o\/(.+?)(\?|$)/);
+    if (!pathMatch) {
+      // 다운로드 URL이 아닌 경우 이미 없거나 잘못된 URL — 무시
+      return {success: true};
+    }
+    const filePath = decodeURIComponent(pathMatch[1]);
+
+    // businesses/ 경로만 허용
+    if (!filePath.startsWith("businesses/")) {
+      throw new HttpsError("permission-denied", "businesses 이미지 경로만 삭제 가능합니다.");
+    }
+
+    // businessId 추출: businesses/{businessId}/...
+    const parts = filePath.split("/");
+    if (parts.length < 3) {
+      throw new HttpsError("invalid-argument", "유효하지 않은 Storage 경로입니다.");
+    }
+    const businessId = parts[1];
+
+    // 소속 검증 — 슈퍼어드민 또는 해당 사업장 관리자만 삭제 허용
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const callerData = callerSnap.data();
+    const role = callerData?.role as string | undefined;
+    if (role !== "SUPER_ADMIN") {
+      const managedIds = (callerData?.managedBusinessIds as string[] | undefined) ?? [];
+      if (!managedIds.includes(businessId)) {
+        throw new HttpsError("permission-denied", "소속 사업장의 이미지만 삭제 가능합니다.");
+      }
+    }
+
+    // Admin SDK로 삭제 — 404는 이미 없으므로 성공 처리
+    try {
+      await admin.storage().bucket().file(filePath).delete();
+    } catch (e: any) {
+      if (e.code === 404 || e.message?.includes("No such object")) {
+        return {success: true};
+      }
+      throw new HttpsError("internal", `Storage 삭제 실패: ${e.message}`);
+    }
+
+    return {success: true};
+  }
+);
+
+// ── callableCreateTO ─────────────────────────────────────
+// [HIGH-02] TO 생성 개수 제한 서버 강제 — 클라이언트 Firestore.add() 직접 호출 우회 차단
+// 1) 관리자·소속 사업장 교차검증  2) draft 아닌 경우 개수 제한 체크  3) TO 문서 생성(serverTimestamp 강제)
+// 슬롯 생성은 클라이언트가 반환된 toId로 직접 처리 (flex TO의 복잡한 배치 커밋 유지)
+// Input:  { toData: object }  — TOModel.toMap() 결과 (createdAt/statusUpdatedAt 제외)
+// Output: { toId: string }
+export const callableCreateTO = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {toData} = request.data as {toData: Record<string, unknown>};
+
+    if (!toData || typeof toData !== "object" || Array.isArray(toData)) {
+      throw new HttpsError("invalid-argument", "toData가 필요합니다.");
+    }
+
+    const businessId = String(toData.businessId ?? "");
+    const creatorUID = String(toData.creatorUID ?? "");
+    const publishMode = String(toData.publishMode ?? "immediate");
+
+    if (!businessId) throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    // 호출자와 creatorUID 일치 검증 — 타인 명의 TO 생성 차단
+    if (callerUid !== creatorUID) {
+      throw new HttpsError("permission-denied", "creatorUID 불일치.");
+    }
+
+    // 관리자 검증
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const callerData = callerSnap.data();
+    const role = callerData?.role as string;
+    if (role !== "BUSINESS_ADMIN" && role !== "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "관리자만 공고를 생성할 수 있습니다.");
+    }
+
+    // 소속 사업장 교차검증 (슈퍼어드민 예외)
+    if (role !== "SUPER_ADMIN") {
+      const managedIds = (callerData?.managedBusinessIds as string[] | undefined) ?? [];
+      if (!managedIds.includes(businessId)) {
+        throw new HttpsError("permission-denied", "소속 사업장만 공고를 생성할 수 있습니다.");
+      }
+    }
+
+    // 개수 제한 체크 (draft 제외)
+    if (publishMode !== "draft") {
+      const managedIds: string[] = role === "SUPER_ADMIN"
+        ? [businessId]
+        : ((callerData?.managedBusinessIds as string[] | undefined) ?? []);
+
+      let totalActive = 0;
+      for (const bizId of managedIds) {
+        const snap = await db.collection("tos")
+          .where("businessId", "==", bizId)
+          .where("isPublished", "==", true)
+          .get();
+        totalActive += snap.size;
+      }
+
+      // 한도: users.maxActiveTOs 우선, settings/app_config.maxActiveTOPerBusiness 폴백, 기본 4
+      let limit = 4;
+      const perAdminLimit = callerData?.maxActiveTOs as number | undefined;
+      if (perAdminLimit && perAdminLimit > 0) {
+        limit = perAdminLimit;
+      } else {
+        try {
+          const configSnap = await db.collection("settings").doc("app_config").get();
+          const v = configSnap.data()?.maxActiveTOPerBusiness as number | undefined;
+          if (v && v > 0) limit = v;
+        } catch (_) { /* 조회 실패 시 기본값 유지 */ }
+      }
+
+      if (totalActive >= limit) {
+        throw new HttpsError("resource-exhausted", `MAX_ACTIVE_TO_LIMIT:${limit}`);
+      }
+    }
+
+    // TO 문서 생성 — serverTimestamp 강제, 클라이언트 전달 timestamp 필드 사용
+    const serverTime = admin.firestore.FieldValue.serverTimestamp();
+    const finalData: Record<string, unknown> = {
+      ...toData,
+      createdAt: serverTime,         // 클라이언트 전달값 오버라이드
+      statusUpdatedAt: serverTime,   // 클라이언트 전달값 오버라이드
+    };
+    // creatorUID 재확인 (callerUid 기준으로 고정)
+    finalData.creatorUID = callerUid;
+
+    const toRef = await db.collection("tos").add(finalData);
+    return {toId: toRef.id};
+  }
+);
+
 // ── resetPasswordWithPass ────────────────────────────────
 // passToken + username → CI 매칭 → Firebase Custom Token 발급
 // Input:  { passToken, username }

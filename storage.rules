@@ -43,7 +43,9 @@ service firebase.storage {
       allow list: if false;
       // [SEC-ST01] isImageType(): MIME 타입 검증 — HTML/JS 업로드 차단
       allow create, update: if isLoggedIn() && isUnder5MB() && isImageType();
-      allow delete: if isLoggedIn();
+      // [LOW-STORAGE] 클라이언트 직접 삭제 차단 — callableDeleteBusinessImage CF(Admin SDK)로만 허용
+      // Storage rules에서 Firestore 읽기 불가(프로젝트 특이사항)이므로 소속 검증을 CF에서 처리
+      allow delete: if false;
     }
 
     // ── users/ — 신분증·통장·사업자등록증 (민감 파일) ───────────

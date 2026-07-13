@@ -1,4 +1,5 @@
 ﻿import 'dart:io';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart' show XFile;
@@ -136,6 +137,9 @@ class StorageService {
   }
 
   /// URL로 이미지 삭제 (다운로드 URL → Storage Path 변환)
+  ///
+  /// [LOW-STORAGE] businesses/ 경로는 Storage rules에서 직접 삭제 차단.
+  /// callableDeleteBusinessImage CF를 통해 소속 검증 후 Admin SDK로 삭제.
   Future<bool> deleteImageByUrl(String downloadUrl) async {
     try {
       // 1. Firebase Storage URL인지 확인
@@ -144,10 +148,23 @@ class StorageService {
         return true;
       }
 
-      // 2. URL에서 Storage Reference 생성
+      // 2. businesses/ 경로는 CF 경유 — rules에서 클라이언트 직접 삭제 차단
+      final pathMatch = RegExp(r'/o/(.+?)(\?|$)').firstMatch(downloadUrl);
+      if (pathMatch != null) {
+        final decoded = Uri.decodeComponent(pathMatch.group(1)!);
+        if (decoded.startsWith('businesses/')) {
+          await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableDeleteBusinessImage')
+              .call({'imageUrl': downloadUrl});
+          debugPrint('✅ Storage 삭제 성공 (CF): $decoded');
+          return true;
+        }
+      }
+
+      // 3. URL에서 Storage Reference 생성
       final ref = _storage.refFromURL(downloadUrl);
 
-      // 3. 파일 존재 여부 확인
+      // 4. 파일 존재 여부 확인
       try {
         await ref.getMetadata();
       } on FirebaseException catch (e) {
@@ -158,7 +175,7 @@ class StorageService {
         rethrow;
       }
 
-      // 4. 파일 삭제
+      // 5. 파일 삭제
       await ref.delete();
       debugPrint('✅ Storage 삭제 성공 (URL): ${ref.fullPath}');
       return true;

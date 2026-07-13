@@ -445,11 +445,9 @@ service cloud.firestore {
          request.query.filters.get('isPublished', false) == true)
       );
 
-      // SubAdmin도 공고 생성·삭제 권한 부여 — create에서 누락되어 PERMISSION_DENIED 발생
-      allow create: if isLoggedIn() &&
-                       (isAdminOf(request.resource.data.businessId) ||
-                        isSubAdminOf(request.resource.data.businessId) ||
-                        isSuperAdmin());
+      // [HIGH-02] TO 생성은 callableCreateTO CF(Admin SDK)로만 허용 — 클라이언트 직접 create 차단
+      // CF에서 개수 제한 검증 + serverTimestamp 강제. 클라이언트가 개수 제한을 우회할 수 없도록 함.
+      allow create: if false;
 
       // [특이사항] CLOSED·EXPIRED TO에서 핵심 운영 필드 변경 차단.
       // 마감 후 workDetailId·totalRequired 등을 변경하면 기존 applications 데이터와

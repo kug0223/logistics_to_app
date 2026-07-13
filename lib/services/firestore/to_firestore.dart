@@ -324,15 +324,7 @@ extension TOFirestore on FirestoreService {
   }) async {
     NetworkChecker.instance.assertOnline('공고 등록을 하려면 인터넷 연결이 필요합니다.');
 
-    // 진행중 공고 개수 제한 — 미공개(draft) 저장은 제한 없음
-    // 사업장별이 아니라 관리자 전체 사업장 합산 총 개수로 제한
-    if (publishMode != 'draft') {
-      final limit = await getMaxActiveTOLimit(adminUID: creatorUID);
-      final totalActive = await countAllActiveTO(creatorUID);
-      if (totalActive >= limit) {
-        throw Exception('MAX_ACTIVE_TO_LIMIT:$limit');
-      }
-    }
+    // [HIGH-02] 개수 제한은 callableCreateTO CF에서 서버 측 강제 — 클라이언트 체크 제거
 
     try {
       // 사업장 주소 조회
@@ -395,7 +387,7 @@ extension TOFirestore on FirestoreService {
               ? TOStatus.active
               : TOStatus.scheduled;
 
-      // TO 문서 생성
+      // TO 문서 데이터 — createdAt/statusUpdatedAt은 CF에서 serverTimestamp 강제
       final toData = TOModel(
         id: '',
         businessId: businessId,
@@ -428,11 +420,11 @@ extension TOFirestore on FirestoreService {
         publishDaysBefore: publishDaysBefore,
         publishTime: publishTime,
         creatorUID: creatorUID,
-        createdAt: DateTime.now(),
+        createdAt: DateTime.now(), // CF에서 serverTimestamp로 덮어씀
         status: toStatus,
       ).toMap()
-        ..['createdAt'] = FieldValue.serverTimestamp()
-        ..['statusUpdatedAt'] = FieldValue.serverTimestamp();
+        ..remove('createdAt')       // CF에서 serverTimestamp 강제
+        ..remove('statusUpdatedAt'); // CF에서 serverTimestamp 강제
 
       // flex + 즉시공개: 슬롯 생성 완료 전까지 비공개로 생성 → 슬롯 없는 TO 노출 방지
       final deferPublish = type == TOType.flex &&
@@ -444,14 +436,19 @@ extension TOFirestore on FirestoreService {
           ? {...toData, 'isPublished': false, 'status': TOStatus.scheduled}
           : toData;
 
-      final toDoc = await _firestore.collection('tos').add(initialData);
-      debugPrint('✅ [TO] 공고 생성: ${toDoc.id}');
+      // [HIGH-02] CF callableCreateTO — 개수 제한 서버 강제 + serverTimestamp 설정
+      final cfResult = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableCreateTO')
+          .call({'toData': initialData});
+      final toId = cfResult.data['toId'] as String;
+      final toRef = _firestore.collection('tos').doc(toId);
+      debugPrint('✅ [TO] 공고 생성: $toId');
 
       // flex: slots 생성 — 실패 시 부분 생성된 슬롯 + TO 문서 모두 롤백 삭제
       if (type == TOType.flex && dates != null && dates.isNotEmpty) {
         try {
           await _createSlots(
-            toId: toDoc.id,
+            toId: toId,
             dates: dates,
             workDetails: workDetails,
             deadlineType: deadlineType,
@@ -462,11 +459,10 @@ extension TOFirestore on FirestoreService {
             publishTime: publishTime,
           );
         } catch (e) {
-          debugPrint('⚠️ [TO] 슬롯 생성 실패 — 부분 슬롯 및 TO 롤백: ${toDoc.id}');
+          debugPrint('⚠️ [TO] 슬롯 생성 실패 — 부분 슬롯 및 TO 롤백: $toId');
           // 부분 커밋된 슬롯 정리 (배치 분할 커밋 중 실패 시 고아 슬롯 방지)
           try {
-            final partialSlots = await _firestore
-                .collection('tos').doc(toDoc.id).collection('slots').get();
+            final partialSlots = await toRef.collection('slots').get();
             if (partialSlots.docs.isNotEmpty) {
               var cleanupBatch = _firestore.batch();
               int cleanupCount = 0;
@@ -484,13 +480,13 @@ extension TOFirestore on FirestoreService {
           } catch (cleanupError) {
             debugPrint('❌ 부분 슬롯 정리 실패 (수동 삭제 필요): $cleanupError');
           }
-          await toDoc.delete();
+          await toRef.delete();
           rethrow;
         }
 
         // 슬롯 생성 완료 후 즉시공개 상태로 전환 (노출 창 최소화)
         if (deferPublish) {
-          await toDoc.update({
+          await toRef.update({
             'isPublished': true,
             'status': toStatus,
             'statusUpdatedAt': FieldValue.serverTimestamp(),
@@ -498,7 +494,7 @@ extension TOFirestore on FirestoreService {
         }
       }
 
-      return toDoc.id;
+      return toId;
     } catch (e) {
       debugPrint('❌ [TO] 공고 생성 실패: $e');
       return null;
