@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
 
 import '../../../models/core/business_model.dart';
@@ -95,36 +96,41 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
     setState(() { _isLoading = true; _loadError = null; });
 
     try {
-      final db = FirebaseFirestore.instance;
-
-      // 1. payroll_summaries Firestore 직접 읽기 (CF 집계 결과)
-      final summarySnap = await db
-          .collection('payroll_summaries')
-          .where('businessId', isEqualTo: bizId)
-          .where('year', isEqualTo: year)
-          .get();
+      // 1. payroll_summaries — callableGetPayrollSummaries CF 경유 (server-side 권한 검증)
+      // [RULE-FIX-CF 2026-07-13] 직접 Firestore → CF 이전, year 서버 필터링으로 전환
+      final psCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetPayrollSummaries',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final psResult = await psCallable.call<Map<String, dynamic>>({
+        'businessId': bizId,
+        'year': year,
+      });
+      final psItems = (psResult.data['items'] as List<dynamic>?) ?? [];
 
       final summaryMap = <int, PayrollSummaryModel>{};
-      for (final doc in summarySnap.docs) {
-        final m = PayrollSummaryModel.tryFromFirestore(doc);
+      for (final e in psItems) {
+        final raw = Map<String, dynamic>.from(e as Map);
+        final id = raw.remove('id') as String? ?? '';
+        final m = PayrollSummaryModel.tryFromMap(raw, id);
         if (m != null) summaryMap[m.month] = m;
       }
 
       // 2. pendingCount + notTransferredCount
-      //    [RULE-FIX 2026-07-10] 다중 equality / whereIn 복합쿼리 → PERMISSION_DENIED
-      //    businessId 단일 등호필터 + yearMonth 범위필터로 전환 → 단건 쿼리로 12개월 커버
+      //    [CF 이전 2026-07-13] callableGetAdminAttendances (yearMonthGte/Lte)
       //    wageStatus·yearMonth 집계는 클라이언트에서 처리
       final pendingByMonth   = List.filled(12, 0);
       final confirmedByMonth = List.filled(12, 0);
       try {
-        final attSnap = await db
-            .collection('attendance')
-            .where('businessId', isEqualTo: bizId)
-            .where('yearMonth', isGreaterThanOrEqualTo: '$year-01')
-            .where('yearMonth', isLessThanOrEqualTo: '$year-12')
-            .get();
-        for (final doc in attSnap.docs) {
-          final data = doc.data();
+        final attCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('callableGetAdminAttendances',
+                options: HttpsCallableOptions(timeout: const Duration(seconds: 60)));
+        final attResult = await attCallable.call<Map<String, dynamic>>({
+          'businessId': bizId,
+          'yearMonthGte': '$year-01',
+          'yearMonthLte': '$year-12',
+        });
+        for (final raw in (attResult.data['items'] as List? ?? [])) {
+          final data = raw as Map? ?? {};
           final ym = data['yearMonth'] as String?;
           final ws = data['wageStatus'] as String?;
           if (ym == null) continue;

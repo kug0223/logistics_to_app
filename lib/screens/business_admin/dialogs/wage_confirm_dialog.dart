@@ -685,10 +685,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   }
 
   /// 이전 근무일 세전 총액 합계 조회 (8일 소급 계산용)
-  ///
-  /// [BUG-AID-02 수정] whereIn 복합 쿼리(yearMonth + wageStatus whereIn)에서
-  /// Firestore 보안 규칙이 request.query.filters.businessId를 null로 반환 → PERMISSION_DENIED.
-  /// 동일 패턴을 getMonthlyWorkDays와 동일하게 wageStatus별 3개 병렬 isEqualTo 쿼리로 분리.
+  /// [CF 이전 2026-07-13] callableGetAdminAttendances (yearMonth + userId)
   Future<int> _getPrevGrossTotal(
     String userId,
     String businessId,
@@ -696,25 +693,23 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     String excludeId,
   ) async {
     try {
-      final base = FirebaseFirestore.instance
-          .collection('attendance')
-          .where('userId', isEqualTo: userId)
-          .where('businessId', isEqualTo: businessId)
-          .where('yearMonth', isEqualTo: yearMonth);
-      final snapshots = await Future.wait([
-        base.where('wageStatus', isEqualTo: 'calculated').get(),
-        base.where('wageStatus', isEqualTo: 'confirmed').get(),
-        base.where('wageStatus', isEqualTo: 'transferred').get(),
-      ]);
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetAdminAttendances',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessId': businessId,
+        'yearMonth': yearMonth,
+        'userId': userId,
+      });
       int total = 0;
-      for (final snapshot in snapshots) {
-        for (final doc in snapshot.docs) {
-          if (doc.id == excludeId) continue;
-          // [BUG-TAX-03 fix] getMonthlyWorkDays와 일관성: NO_SHOW 레코드 제외.
-          // NO_SHOW가 wageStatus='calculated'로 저장되고 totalAmount>0이면 소급 기준 금액이
-          // 부풀려져 보험료 소급 공제액이 과다 계산됨.
-          if ((doc.data()['status'] as String?) == 'NO_SHOW') continue;
-          final wageDetail = doc.data()['wageDetail'] as Map<String, dynamic>?;
+      for (final raw in (result.data['items'] as List? ?? [])) {
+        final m = raw as Map? ?? {};
+        if ((m['id'] as String?) == excludeId) continue;
+        // NO_SHOW 레코드 제외 (소급 기준 금액 부풀림 방지)
+        if ((m['status'] as String?) == 'NO_SHOW') continue;
+        final ws = m['wageStatus'] as String?;
+        if (ws == 'calculated' || ws == 'confirmed' || ws == 'transferred') {
+          final wageDetail = m['wageDetail'] as Map?;
           total += (wageDetail?['totalAmount'] as num?)?.toInt() ?? 0;
         }
       }

@@ -84,6 +84,16 @@ class InterimSettlementRequestModel {
     }
   }
 
+  // CF 응답(_cfHydrate 처리 후) 파싱용
+  static InterimSettlementRequestModel? tryFromMap(Map<String, dynamic> d, String id) {
+    try {
+      return InterimSettlementRequestModel.fromMap(d, id);
+    } catch (e, st) {
+      debugPrint('[InterimSettlementRequestModel] CF 역직렬화 실패 id=$id: $e\n$st');
+      return null;
+    }
+  }
+
   factory InterimSettlementRequestModel.fromMap(Map<String, dynamic> d, String id) {
     return InterimSettlementRequestModel(
       id: id,

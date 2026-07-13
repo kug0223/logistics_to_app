@@ -371,7 +371,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       // ✅ 장기공고: 확정된 application의 출퇴근 기록 확인
       if (_isLongTerm) {
         for (final app in applications.where((a) => AppStatus.confirmedStatuses.contains(a.status))) {
-          final hasRecord = await _firestoreService.hasAttendanceRecord(app.id);
+          final hasRecord = await _firestoreService.hasAttendanceRecord(app.id, businessId: app.businessId);
           if (hasRecord) {
             _hasAttendanceIds.add(app.id);
           }

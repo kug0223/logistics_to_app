@@ -745,108 +745,13 @@ class AuthService {
                   debugPrint('⚠️ 사업장 Storage 정리 실패 (계속 진행): $e');
                 }
 
-                // ── 활성 TO 종료 + 하위 PENDING 지원서 REJECTED ─────────
-                // status 필터는 클라이언트에서 적용 (whereIn + isEqualTo 복합쿼리 방지)
-                final allToSnap = await _firestore
-                    .collection('tos')
-                    .where('businessId', isEqualTo: businessId)
-                    .get();
-                const activeStatuses = ['ACTIVE', 'FULL', 'SCHEDULED'];
-
-                for (final toDoc in allToSnap.docs.where((d) =>
-                    activeStatuses.contains(d.data()['status'] as String?))) {
-                  try {
-                    await toDoc.reference.update({
-                      'status': 'CLOSED',
-                      'closedAt': FieldValue.serverTimestamp(),
-                      'closedReason': 'BUSINESS_DEACTIVATED',
-                    });
-
-                    // 해당 TO의 PENDING 지원서 → REJECTED
-                    final pendingSnap = await _firestore
-                        .collection('applications')
-                        .where('toId', isEqualTo: toDoc.id)
-                        .where('status', isEqualTo: 'PENDING')
-                        .get();
-                    if (pendingSnap.docs.isNotEmpty) {
-                      final batch = _firestore.batch();
-                      for (final appDoc in pendingSnap.docs) {
-                        batch.update(appDoc.reference, {
-                          'status': 'REJECTED',
-                          'rejectedAt': FieldValue.serverTimestamp(),
-                          'rejectionReason': 'BUSINESS_DEACTIVATED',
-                        });
-                      }
-                      await batch.commit();
-                    }
-                  } catch (e) {
-                    debugPrint('⚠️ TO ${toDoc.id} 정리 실패 (계속 진행): $e');
-                  }
-                }
-
-                // ── CONFIRMED/CONTRACT_PENDING 지원서 → CANCELED ────────
-                // 급여·출퇴근 데이터 포함 — 근로기준법 제42조 3년 보존 (삭제 금지)
-                // whereIn 복합 쿼리 → PERMISSION_DENIED 방지를 위해 status별 루프로 분리
-                for (final statusToCancel in ['CONFIRMED', 'CONTRACT_PENDING']) {
-                  bool hasMoreForStatus = true;
-                  while (hasMoreForStatus) {
-                    final snap = await _firestore
-                        .collection('applications')
-                        .where('businessId', isEqualTo: businessId)
-                        .where('status', isEqualTo: statusToCancel)
-                        .limit(100)
-                        .get();
-                    if (snap.docs.isEmpty) break;
-                    hasMoreForStatus = snap.docs.length == 100;
-                    final batch = _firestore.batch();
-                    for (final doc in snap.docs) {
-                      batch.update(doc.reference, {
-                        'status': 'CANCELED',
-                        'canceledAt': FieldValue.serverTimestamp(),
-                        'cancelReason': 'BUSINESS_DEACTIVATED',
-                      });
-                    }
-                    await batch.commit();
-                  }
-                }
-
-                // ── employment_contracts → BUSINESS_DEACTIVATED ──────────
-                // 계약서는 근로기준법 제42조 3년 보존 의무 — 삭제 금지.
-                // 삭제 대신 status를 'BUSINESS_DEACTIVATED'로 표시해 비활성 사업장임을 명시.
-                // 실수령액·서명 이미지 등 급여 데이터는 그대로 유지됨.
-                // 이전 코드는 'active', 'pending_business'를 사용했으나
-                // ContractStatus 실제 값은 'pending_employer', 'pending_worker', 'completed', 'voided'.
-                // 'active'/'pending_business'는 존재하지 않는 값 → pending_employer 계약서가
-                // 비활성화 처리 대상에서 누락되는 버그 수정.
-                try {
-                  for (final contractStatus in ['pending_employer', 'pending_worker']) {
-                    bool hasMoreForStatus = true;
-                    while (hasMoreForStatus) {
-                      final contractSnap = await _firestore
-                          .collection('employment_contracts')
-                          .where('businessId', isEqualTo: businessId)
-                          .where('status', isEqualTo: contractStatus)
-                          .limit(100)
-                          .get();
-                      if (contractSnap.docs.isEmpty) break;
-                      hasMoreForStatus = contractSnap.docs.length == 100;
-                      final batch = _firestore.batch();
-                      for (final doc in contractSnap.docs) {
-                        // [SEC-101] CF(onBusinessDeactivated)와 일치하는 값으로 교정.
-                        // 이 블록은 현재 tos LIST PERMISSION_DENIED로 도달하지 않음
-                        // (users 삭제 후 isBusinessAdmin() 실패). CF Admin SDK가 처리.
-                        batch.update(doc.reference, {
-                          'status': 'voided',
-                          'voidReason': 'BUSINESS_DEACTIVATED',
-                          'contractVoidedAt': FieldValue.serverTimestamp(),
-                        });
-                      }
-                      await batch.commit();
-                    }
-                  }
-                } catch (e) {
-                  debugPrint('⚠️ employment_contracts 상태 업데이트 실패 (계속 진행): $e');
-                }
+                // ── TO·지원서·계약서 정리 → onBusinessDeactivated CF 위임 ─
+                // [CF 이전 2026-07-13] 클라이언트 직접 쿼리 전량 제거.
+                // onBusinessDeactivated 트리거(Admin SDK)가 1~5초 내 자동 처리:
+                //   ACTIVE/FULL/SCHEDULED TO → CLOSED
+                //   PENDING 지원서 → REJECTED
+                //   CONFIRMED/CONTRACT_PENDING 지원서 → CANCELED
+                //   employment_contracts (pending_*) → voided
               } else {
                 // 공동 관리자 있음 → adminIds에서 본인 uid만 제거
                 await bizRef.update({

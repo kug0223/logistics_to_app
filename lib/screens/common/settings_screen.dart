@@ -1150,20 +1150,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
             if (currentUser?.isBusinessAdmin == true &&
                 currentBusinessIds.isNotEmpty) {
               setModal(() { isLoading = true; errorMsg = null; });
-              // [BUGFIX] whereIn + equality 복합쿼리 PERMISSION_DENIED 방지를 위해
-              //   사업장별 단일 equality 쿼리 + 클라이언트 필터링으로 전환.
+              // [CF 이전 2026-07-13] callableGetTOsByBiz — tos 직접 쿼리 대체
               bool hasActiveTo = false;
+              final toCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+                  .httpsCallable('callableGetTOsByBiz',
+                      options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
               for (final bizId in currentBusinessIds) {
-                final snap = await FirebaseFirestore.instance
-                    .collection('tos')
-                    .where('businessId', isEqualTo: bizId)
-                    .get();
-                if (snap.docs.any((doc) {
-                  final status = doc.data()['status'] as String?;
-                  return status == TOStatus.active ||
-                      status == TOStatus.full ||
-                      status == TOStatus.scheduled;
-                })) {
+                final result = await toCallable.call<Map<String, dynamic>>({
+                  'businessId': bizId,
+                  'statuses': [TOStatus.active, TOStatus.full, TOStatus.scheduled],
+                  'limit': 1,
+                });
+                final tosRaw = result.data['tos'] as List? ?? [];
+                if (tosRaw.isNotEmpty) {
                   hasActiveTo = true;
                   break;
                 }

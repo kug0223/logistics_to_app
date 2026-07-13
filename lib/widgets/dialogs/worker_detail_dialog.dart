@@ -154,7 +154,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                 widget.isConfirmed &&
                 (app.isLongTermApplication ||
                     widget.toItem?.to.isLongTerm == true))
-            ? _firestoreService.hasAttendanceRecord(app.id)
+            ? _firestoreService.hasAttendanceRecord(app.id, businessId: app.businessId)
             : Future.value(false),
 
         // 4: 근무 시간 (toItem 없을 때)

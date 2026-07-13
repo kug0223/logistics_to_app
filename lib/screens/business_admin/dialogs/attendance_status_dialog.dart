@@ -273,19 +273,22 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     final result = <ApplicationModel>[];
     final seenIds = <String>{};  // 단기/장기 중복 entry 방어
 
-    // ✅ 1. 단기 공고: 서버에서 workDate 필터링 (빠름!)
-    // status whereIn 복합쿼리 제거 — Firestore 보안 규칙 filters null 반환 버그 방지
-    final shortTermSnapshot = await FirebaseFirestore.instance
-        .collection('applications')
-        .where('businessId', isEqualTo: _selectedBusinessId)
-        .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
-        .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
-        .get();
-
-    // 단기만 필터 (workDays가 없는 것) + 확정 상태 클라이언트 필터
+    // ✅ 1. 단기 공고: CF callableGetApplicationsByBiz — workDateGteMs/LtMs 필터
+    // [CF 이전 2026-07-13] Firestore 보안규칙 PERMISSION_DENIED 근본 해결
+    final shortTermCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetApplicationsByBiz',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+    final shortTermCFResult = await shortTermCallable.call<Map<String, dynamic>>({
+      'businessId': _selectedBusinessId,
+      'workDateGteMs': dateStart.millisecondsSinceEpoch,
+      'workDateLtMs': dateEnd.millisecondsSinceEpoch,
+      'limit': 2000,
+    });
     const confirmedStatuses = {AppStatus.confirmed, AppStatus.contractPending};
-    for (var doc in shortTermSnapshot.docs) {
-      final app = ApplicationModel.tryFromFirestore(doc);
+    for (final e in (shortTermCFResult.data['applications'] as List? ?? [])) {
+      final m = Map<String, dynamic>.from(e as Map);
+      final docId = m.remove('id') as String? ?? '';
+      final app = ApplicationModel.tryFromMap(m, docId);
       if (app == null) continue;
       if (!confirmedStatuses.contains(app.status)) continue;
       if (app.workDays == null || app.workDays!.isEmpty) {
@@ -295,12 +298,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     
     debugPrint('📋 [당일명단] 단기 확정자: ${result.length}명');
 
-    // ✅ 2. 장기 공고: CF callableGetApplicationsByBiz 호출 — Firestore 보안규칙 filters 버그 우회
+    // ✅ 2. 장기 공고: CF callableGetApplicationsByBiz (장기 전체 조회 후 날짜 필터)
     final longTermCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-        .httpsCallable('callableGetApplicationsByBiz');
-    final longTermCFResult = await longTermCallable.call({
+        .httpsCallable('callableGetApplicationsByBiz',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+    final longTermCFResult = await longTermCallable.call<Map<String, dynamic>>({
       'businessId': _selectedBusinessId,
       'type': AppType.longTerm,
+      'limit': 2000,
     });
     final longTermRaw = List.from(
         longTermCFResult.data['applications'] as List? ?? []);

@@ -94,6 +94,30 @@ class BatchResult {
 //   A16~A25  optimistic update → 낙관적 잠금 미사용, 실패 시 UI 리프레시로 복구
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// CF onCall 응답의 {_seconds, _nanoseconds} 맵을 Firestore Timestamp로 재수화
+/// serializeFirestoreData(CF index.ts)가 직렬화한 형식을 되돌린다.
+Map<String, dynamic> _cfHydrate(Map<String, dynamic> m) {
+  return m.map((k, v) {
+    if (v is Map) {
+      final vm = Map<String, dynamic>.from(v);
+      if (vm.containsKey('_seconds')) {
+        try {
+          return MapEntry(k, Timestamp(
+            (vm['_seconds'] as num).toInt(),
+            (vm['_nanoseconds'] as num? ?? 0).toInt(),
+          ));
+        } catch (_) {}
+      }
+      return MapEntry(k, _cfHydrate(vm));
+    } else if (v is List) {
+      return MapEntry(k, v.map((e) =>
+        e is Map ? _cfHydrate(Map<String, dynamic>.from(e)) : e
+      ).toList());
+    }
+    return MapEntry(k, v);
+  });
+}
+
 class FirestoreService {
   // 싱글톤: 앱 전체에서 인스턴스 하나만 사용 → 캐시 공유, Firestore 읽기 절감
   static final FirestoreService _instance = FirestoreService._internal();
@@ -236,15 +260,22 @@ class FirestoreService {
 
       // 3단계: 활성 지원서 AUTO_CANCELED 처리 + 지원자 알림
       try {
-        // [BUGFIX-WHEREIN] toId isEqualTo + status whereIn → PERMISSION_DENIED
-        // status 서버 필터 제거, 클라이언트에서 activeStates 필터링
-        final appsSnap = await _firestore
-            .collection('applications')
-            .where('toId', isEqualTo: toId)
-            .get(const GetOptions(source: Source.server));
+        // [CF 이전 2026-07-13] callableGetApplicationsByBiz (Admin SDK, businessId+toId 필터)
+        final appCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('callableGetApplicationsByBiz',
+                options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+        final appResult = await appCallable.call<Map<String, dynamic>>({
+          'businessId': businessId,
+          'toId': toId,
+          'limit': 2000,
+        });
+        final allAppsRaw = (appResult.data['applications'] as List? ?? [])
+            .whereType<Map>()
+            .map((m) => Map<String, dynamic>.from(m))
+            .toList();
 
-        final activeDocs = appsSnap.docs.where((d) {
-          final s = (d.data())['status'] as String?;
+        final activeDocs = allAppsRaw.where((data) {
+          final s = data['status'] as String?;
           return AppStatus.activeStates.contains(s);
         }).toList();
 
@@ -253,8 +284,10 @@ class FirestoreService {
           for (var offset = 0; offset < activeDocs.length; offset += 499) {
             final batch = _firestore.batch();
             final slice = activeDocs.skip(offset).take(499);
-            for (final doc in slice) {
-              batch.update(doc.reference, {
+            for (final data in slice) {
+              final appId = data['id'] as String?;
+              if (appId == null) continue;
+              batch.update(_firestore.collection('applications').doc(appId), {
                 'status': AppStatus.autoCanceled,
                 'canceledAt': FieldValue.serverTimestamp(),
                 'cancelReason': 'TO_MANUALLY_CLOSED',
@@ -264,8 +297,7 @@ class FirestoreService {
           }
 
           // 알림은 배치 커밋 후 개별 발송 (실패해도 TO 상태 변경은 유지)
-          for (final doc in activeDocs) {
-            final data = doc.data();
+          for (final data in activeDocs) {
             _sendTOCanceledNotification(
               applicantUid: data['uid'] as String? ?? '',
               businessName: businessName,
@@ -445,8 +477,9 @@ class FirestoreService {
     return {'workDetails': workDetails, 'workStats': workStats};
   }
 
-  /// 구 getTOGroupItemsLight — TO 목록을 TOGroupItem으로 래핑
-  /// [businessIds] null이면 슈퍼관리자 전체 조회, 비어있으면 빈 결과 반환
+  /// TO 목록 조회 — callableGetAdminTOs CF를 경유하여 server-side 교차검증
+  /// [RULE-FIX-CF 2026-07-13] 직접 Firestore → CF 이전 (businessId 교차검증 강화)
+  /// [businessIds] null이면 슈퍼관리자 전체 조회, 빈 리스트이면 빈 결과 반환
   Future<List<TOGroupItem>> getTOGroupItemsLight({
     bool activeOnly = false,
     bool closedOnly = false,
@@ -455,50 +488,27 @@ class FirestoreService {
     try {
       if (businessIds != null && businessIds.isEmpty) return [];
 
-      // [TO-PERM-FIX] tos list 규칙: isAdminOf(request.query.filters.businessId) 검사
-      // whereIn 사용 시 Firebase 버그로 filters.businessId가 null 반환 → PERMISSION_DENIED
-      // → businessIds >= 2인 경우 병렬 isEqualTo 쿼리로 전환 (청크 분할 방식 제거)
-      List<TOGroupItem> allItems;
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetAdminTOs',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
 
-      if (businessIds != null && businessIds.length >= 2) {
-        // 2개 이상 사업장: 사업장별 병렬 isEqualTo 쿼리
-        // status whereIn도 각 쿼리에 독립 적용 가능 (isEqualTo와 whereIn 충돌 없음)
-        final snaps = await Future.wait(
-          businessIds.map((bizId) {
-            Query q = _firestore
-                .collection('tos')
-                .orderBy('createdAt', descending: true)
-                .where('businessId', isEqualTo: bizId);
-            if (activeOnly) q = q.where('status', whereIn: TOStatus.openStates);
-            if (closedOnly) q = q.where('status', whereIn: TOStatus.closedStates);
-            return q.get(const GetOptions(source: Source.server));
-          }),
-        );
-        allItems = snaps
-            .expand((snap) => snap.docs)
-            .map((d) {
-              final to = TOModel.tryFromMap(d.data() as Map<String, dynamic>, d.id);
-              return to != null ? TOGroupItem(singleTO: to) : null;
-            })
-            .whereType<TOGroupItem>()
-            .toList()
-          ..sort((a, b) => b.singleTO.createdAt.compareTo(a.singleTO.createdAt));
-      } else {
-        // 단일 사업장(isEqualTo) 또는 슈퍼어드민(businessId 필터 없음)
-        Query query = _firestore.collection('tos').orderBy('createdAt', descending: true);
-        if (businessIds != null) {
-          query = query.where('businessId', isEqualTo: businessIds.first);
-        }
-        if (activeOnly) query = query.where('status', whereIn: TOStatus.openStates);
-        if (closedOnly) query = query.where('status', whereIn: TOStatus.closedStates);
-        final snap = await query.get(const GetOptions(source: Source.server));
-        allItems = snap.docs.map((d) {
-          final to = TOModel.tryFromMap(d.data() as Map<String, dynamic>, d.id);
-          return to != null ? TOGroupItem(singleTO: to) : null;
-        }).whereType<TOGroupItem>().toList();
-      }
+      final params = <String, dynamic>{
+        'activeOnly': activeOnly,
+        'closedOnly': closedOnly,
+      };
+      if (businessIds != null) params['businessIds'] = businessIds;
 
-      return allItems;
+      final result = await callable.call<Map<String, dynamic>>(params);
+      final items = (result.data['items'] as List<dynamic>?) ?? [];
+
+      return items.map((e) {
+        final m = Map<String, dynamic>.from(e as Map);
+        final id = m.remove('id') as String? ?? '';
+        final hydrated = _cfHydrate(m);
+        final to = TOModel.tryFromMap(hydrated, id);
+        return to != null ? TOGroupItem(singleTO: to) : null;
+      }).whereType<TOGroupItem>().toList()
+        ..sort((a, b) => b.singleTO.createdAt.compareTo(a.singleTO.createdAt));
     } catch (e) {
       debugPrint('❌ getTOGroupItemsLight 실패: $e');
       return [];
@@ -875,13 +885,17 @@ class FirestoreService {
   }
 
   /// 해당 지원서에 출근 기록이 1개 이상 있는지 확인
-  Future<bool> hasAttendanceRecord(String applicationId) async {
+  /// [businessId] 관리자 경로에서 반드시 전달 — attendance list 규칙의 businessId 필터 요건 충족
+  Future<bool> hasAttendanceRecord(String applicationId,
+      {String? businessId}) async {
     try {
-      final snap = await _firestore
+      Query<Map<String, dynamic>> q = _firestore
           .collection('attendance')
-          .where('applicationId', isEqualTo: applicationId)
-          .limit(1)
-          .get();
+          .where('applicationId', isEqualTo: applicationId);
+      if (businessId != null && businessId.isNotEmpty) {
+        q = q.where('businessId', isEqualTo: businessId);
+      }
+      final snap = await q.limit(1).get();
       return snap.docs.isNotEmpty;
     } catch (e) {
       debugPrint('⚠️ hasAttendanceRecord 조회 실패 ($applicationId): $e');
@@ -1120,19 +1134,26 @@ class FirestoreService {
           .toList()
           ..sort((a, b) => b.workDate.compareTo(a.workDate));
 
-      // [MISMATCH-3-FIX] 레거시 'reviews' → 'monthly_reviews' 컬렉션으로 전환
-      final reviewSnapshot = await _firestore
-          .collection('monthly_reviews')
-          .where('targetUserId', isEqualTo: userId)
-          .where('businessId', isEqualTo: businessId)
-          .where('reviewType', isEqualTo: 'ADMIN_TO_USER')
-          .where('isPublished', isEqualTo: true)
-          .orderBy('createdAt', descending: true)
-          .limit(5)
-          .get(const GetOptions(source: Source.server));
-
-      final reviews = reviewSnapshot.docs
-          .map(MonthlyReviewModel.tryFromFirestore)
+      // [RULE-FIX-CF 2026-07-13] monthly_reviews admin path → CF 이전
+      // 다중 where 필터 + limitType=LIMIT_TO_FIRST → filters 평가 실패 방지
+      final reviewCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetMonthlyReviewsForUser',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final reviewResult = await reviewCallable.call<Map<String, dynamic>>({
+        'targetUserId': userId,
+        'businessId': businessId,
+        'reviewType': 'ADMIN_TO_USER',
+        'publishedOnly': true,
+        'limit': 5,
+      });
+      final rawReviewItems = (reviewResult.data['items'] as List? ?? []);
+      final reviews = rawReviewItems
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return MonthlyReviewModel.tryFromMap(raw, id);
+          })
           .whereType<MonthlyReviewModel>()
           .toList();
 

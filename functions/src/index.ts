@@ -4999,12 +4999,20 @@ export const callableGetAdminAttendances = onCall(
       endMs,
       userId: filterUserId,
       yearMonth: filterYearMonth,
+      yearMonthGte: filterYearMonthGte,
+      yearMonthLte: filterYearMonthLte,
+      wageStatus: filterWageStatus,
+      paymentDueDateLteMs,
     } = (request.data ?? {}) as {
       businessId?: string;
       startMs?: number;
       endMs?: number;
       userId?: string;
       yearMonth?: string;
+      yearMonthGte?: string;
+      yearMonthLte?: string;
+      wageStatus?: string;
+      paymentDueDateLteMs?: number;
     };
 
     if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
@@ -5013,12 +5021,17 @@ export const callableGetAdminAttendances = onCall(
 
     const hasDateRange = Number.isFinite(startMs) && Number.isFinite(endMs);
     const hasYearMonth = typeof filterYearMonth === "string" && /^\d{4}-\d{2}$/.test(filterYearMonth);
+    const hasYearMonthRange =
+      typeof filterYearMonthGte === "string" && /^\d{4}-\d{2}$/.test(filterYearMonthGte) &&
+      typeof filterYearMonthLte === "string" && /^\d{4}-\d{2}$/.test(filterYearMonthLte);
+    const hasPaymentDueFilter = Number.isFinite(paymentDueDateLteMs);
 
-    if (!hasDateRange && !hasYearMonth) {
-      throw new HttpsError("invalid-argument", "startMs/endMs 또는 yearMonth('YYYY-MM') 중 하나가 필요합니다.");
+    const dateModesCount = [hasDateRange, hasYearMonth, hasYearMonthRange].filter(Boolean).length;
+    if (dateModesCount > 1) {
+      throw new HttpsError("invalid-argument", "날짜 필터 모드는 하나만 사용할 수 있습니다.");
     }
-    if (hasDateRange && hasYearMonth) {
-      throw new HttpsError("invalid-argument", "startMs/endMs와 yearMonth는 동시에 사용할 수 없습니다.");
+    if (!hasDateRange && !hasYearMonth && !hasYearMonthRange && !hasPaymentDueFilter) {
+      throw new HttpsError("invalid-argument", "startMs/endMs, yearMonth, yearMonthGte+Lte, paymentDueDateLteMs 중 하나가 필요합니다.");
     }
     if (hasDateRange) {
       if (startMs! >= endMs!) {
@@ -5062,17 +5075,29 @@ export const callableGetAdminAttendances = onCall(
 
     if (hasYearMonth) {
       q = q.where("yearMonth", "==", filterYearMonth);
-    } else {
+    } else if (hasYearMonthRange) {
+      q = q.where("yearMonth", ">=", filterYearMonthGte!).where("yearMonth", "<=", filterYearMonthLte!);
+    } else if (hasDateRange) {
       q = q
         .where("workDate", ">=", Timestamp.fromMillis(startMs!))
         .where("workDate", "<", Timestamp.fromMillis(endMs!));
     }
 
+    if (filterWageStatus && typeof filterWageStatus === "string" && filterWageStatus.trim().length > 0) {
+      q = q.where("wageStatus", "==", filterWageStatus);
+    }
+    if (hasPaymentDueFilter) {
+      q = q.where("paymentDueDate", "<=", Timestamp.fromMillis(paymentDueDateLteMs!));
+    }
     if (filterUserId && typeof filterUserId === "string" && filterUserId.trim().length > 0) {
       q = q.where("userId", "==", filterUserId);
     }
 
-    if (!hasYearMonth) q = q.orderBy("workDate", "asc");
+    if (hasPaymentDueFilter) {
+      q = q.orderBy("paymentDueDate", "asc").orderBy("workDate", "asc");
+    } else if (!hasYearMonth && !hasYearMonthRange) {
+      q = q.orderBy("workDate", "asc");
+    }
     q = q.limit(10001);
     const snap = await q.get();
 
@@ -7385,14 +7410,18 @@ export const callableGetApplicationsByBiz = onCall(
 
     const {
       businessId, toId, slotId, status, type, uid,
-      resignStatus, toTitle, workDateGte, workDateLt,
-      workEndDateGte, workEndDateLt, limit: rawLimit,
+      resignStatus, toTitle,
+      workDateGteMs, workDateLtMs, workDateEqMs,
+      workEndDateGteMs, workEndDateLtMs,
+      orderByAppliedAtDesc,
+      limit: rawLimit,
     } = (request.data ?? {}) as {
       businessId?: string; toId?: string; slotId?: string;
       status?: string; type?: string; uid?: string;
       resignStatus?: string; toTitle?: string;
-      workDateGte?: string; workDateLt?: string;
-      workEndDateGte?: string; workEndDateLt?: string;
+      workDateGteMs?: number; workDateLtMs?: number; workDateEqMs?: number;
+      workEndDateGteMs?: number; workEndDateLtMs?: number;
+      orderByAppliedAtDesc?: boolean;
       limit?: number;
     };
 
@@ -7404,7 +7433,7 @@ export const callableGetApplicationsByBiz = onCall(
 
     const cap = Math.min(
       typeof rawLimit === "number" && rawLimit > 0 ? rawLimit : 500,
-      1000
+      2000
     );
 
     let q: admin.firestore.Query = db
@@ -7418,10 +7447,21 @@ export const callableGetApplicationsByBiz = onCall(
     if (uid) q = q.where("uid", "==", uid);
     if (resignStatus) q = q.where("resignStatus", "==", resignStatus);
     if (toTitle) q = q.where("toTitle", "==", toTitle);
-    if (workDateGte) q = q.where("workDate", ">=", workDateGte);
-    if (workDateLt) q = q.where("workDate", "<", workDateLt);
-    if (workEndDateGte) q = q.where("workEndDate", ">=", workEndDateGte);
-    if (workEndDateLt) q = q.where("workEndDate", "<", workEndDateLt);
+    // workDate: Timestamp 기반 비교 (문자열 비교 버그 수정 2026-07-13)
+    if (workDateEqMs && Number.isFinite(workDateEqMs))
+      q = q.where("workDate", "==", admin.firestore.Timestamp.fromMillis(workDateEqMs));
+    else {
+      if (workDateGteMs && Number.isFinite(workDateGteMs))
+        q = q.where("workDate", ">=", admin.firestore.Timestamp.fromMillis(workDateGteMs));
+      if (workDateLtMs && Number.isFinite(workDateLtMs))
+        q = q.where("workDate", "<", admin.firestore.Timestamp.fromMillis(workDateLtMs));
+    }
+    if (workEndDateGteMs && Number.isFinite(workEndDateGteMs))
+      q = q.where("workEndDate", ">=", admin.firestore.Timestamp.fromMillis(workEndDateGteMs));
+    if (workEndDateLtMs && Number.isFinite(workEndDateLtMs))
+      q = q.where("workEndDate", "<", admin.firestore.Timestamp.fromMillis(workEndDateLtMs));
+    if (orderByAppliedAtDesc === true)
+      q = q.orderBy("appliedAt", "desc");
 
     q = q.limit(cap);
     const snap = await q.get();
@@ -7440,9 +7480,13 @@ export const callableGetTOsByBiz = onCall(
     const callerUid = request.auth.uid;
 
     const {
-      businessId, status, statuses, limit: rawLimit,
+      businessId, status, statuses,
+      createdAtGteMs, orderByCreatedAtDesc,
+      limit: rawLimit,
     } = (request.data ?? {}) as {
-      businessId?: string; status?: string; statuses?: string[]; limit?: number;
+      businessId?: string; status?: string; statuses?: string[];
+      createdAtGteMs?: number; orderByCreatedAtDesc?: boolean;
+      limit?: number;
     };
 
     if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
@@ -7468,6 +7512,10 @@ export const callableGetTOsByBiz = onCall(
     } else if (statuses && statuses.length > 0) {
       q = q.where("status", "in", statuses);
     }
+    if (createdAtGteMs && Number.isFinite(createdAtGteMs))
+      q = q.where("createdAt", ">=", admin.firestore.Timestamp.fromMillis(createdAtGteMs));
+    if (orderByCreatedAtDesc === true)
+      q = q.orderBy("createdAt", "desc");
 
     q = q.limit(cap);
     const snap = await q.get();
@@ -9815,5 +9863,406 @@ export const callableMarkTransferredBatch = onCall(
     }
 
     return {success: true, processed, skipped};
+  }
+);
+
+// ─── callableGetAdminTOs ──────────────────────────────────────────────────────
+// tos 공고 목록 조회 — Admin SDK server-side businessId 교차검증
+// [RULE-FIX-CF 2026-07-13] request.query.filters.businessId null 반환 문제를
+//   CF로 근본 해결. assertBizAdmin으로 권한 검증 후 Admin SDK로 Firestore 쿼리.
+// Input : businessId (단일) OR businessIds (복수), activeOnly?, closedOnly?
+// Output: { items: [{id: string, ...toFields}] }
+export const callableGetAdminTOs = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {businessId, businessIds: rawIds, activeOnly, closedOnly} =
+      (request.data ?? {}) as {
+        businessId?: string;
+        businessIds?: string[];
+        activeOnly?: boolean;
+        closedOnly?: boolean;
+      };
+
+    // 슈퍼어드민 여부 확인
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const isSuperAdmin = (callerSnap.data()?.role as string | undefined) === "SUPER_ADMIN";
+
+    // businessId 목록 구성
+    const ids: string[] = rawIds?.length
+      ? rawIds
+      : businessId ? [businessId] : [];
+
+    if (!isSuperAdmin && ids.length === 0) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+
+    // 비슈퍼어드민: 각 businessId에 대해 권한 검증
+    if (!isSuperAdmin) {
+      await Promise.all(ids.map(id => assertBizAdmin(callerUid, id)));
+    }
+
+    const openStates   = ["ACTIVE", "FULL", "SCHEDULED"];
+    const closedStates = ["CLOSED", "EXPIRED"];
+
+    // 슈퍼어드민 + businessId 미지정 → 전체 조회
+    if (isSuperAdmin && ids.length === 0) {
+      let q: admin.firestore.Query = db.collection("tos").orderBy("createdAt", "desc");
+      if (activeOnly) q = q.where("status", "in", openStates);
+      else if (closedOnly) q = q.where("status", "in", closedStates);
+      const snap = await q.get();
+      return {items: snap.docs.map(d => ({id: d.id, ...serializeFirestoreData(d.data())}))};
+    }
+
+    // 사업장별 병렬 쿼리
+    const snaps = await Promise.all(
+      ids.map(bizId => {
+        let q: admin.firestore.Query = db
+          .collection("tos")
+          .where("businessId", "==", bizId)
+          .orderBy("createdAt", "desc");
+        if (activeOnly) q = q.where("status", "in", openStates);
+        else if (closedOnly) q = q.where("status", "in", closedStates);
+        return q.get();
+      })
+    );
+
+    const items = snaps.flatMap(s =>
+      s.docs.map(d => ({id: d.id, ...serializeFirestoreData(d.data())}))
+    );
+    return {items};
+  }
+);
+
+// ─── callableGetPayrollSummaries ──────────────────────────────────────────────
+// payroll_summaries 조회 — Admin SDK server-side 권한 검증
+// [RULE-FIX-CF 2026-07-13] payroll_summaries list 규칙 우회 근본 해결
+// Input : businessId (필수), year? (선택 — 미지정 시 전체 연도)
+// Output: { items: [{id: string, ...summaryFields}] }
+export const callableGetPayrollSummaries = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {businessId, year} =
+      (request.data ?? {}) as {businessId?: string; year?: number};
+
+    if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+
+    await assertBizAdmin(callerUid, businessId);
+
+    let q: admin.firestore.Query = db
+      .collection("payroll_summaries")
+      .where("businessId", "==", businessId);
+
+    if (typeof year === "number" && Number.isInteger(year)) {
+      q = q.where("year", "==", year);
+    }
+
+    const snap = await q.get();
+    const items = snap.docs.map(d => ({id: d.id, ...serializeFirestoreData(d.data())}));
+    return {items};
+  }
+);
+
+// ─── callableGetScheduleChangeRequests ───────────────────────────────────────
+// 스케줄 변경 요청 목록 조회 — Admin SDK server-side 권한 검증
+// [RULE-FIX-CF 2026-07-13] schedule_change_requests admin list 규칙 근본 해결
+// Input : businessId (필수), pendingOnly? (기본 false), limit? (기본 2000, 최대 5000)
+// Output: { items: [{id: string, ...requestFields}], count: number }
+export const callableGetScheduleChangeRequests = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {businessId, pendingOnly, limit: rawLimit} =
+      (request.data ?? {}) as {
+        businessId?: string;
+        pendingOnly?: boolean;
+        limit?: number;
+      };
+
+    if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+
+    await assertBizAdmin(callerUid, businessId);
+
+    const cap = Math.min(
+      typeof rawLimit === "number" && rawLimit > 0 ? rawLimit : 2000,
+      5000
+    );
+
+    let q: admin.firestore.Query = db
+      .collection("schedule_change_requests")
+      .where("businessId", "==", businessId);
+
+    if (pendingOnly === true) q = q.where("status", "==", "PENDING");
+
+    q = q.orderBy("requestedAt", "desc").limit(cap);
+
+    const snap = await q.get();
+    const items = snap.docs.map(d => ({id: d.id, ...serializeFirestoreData(d.data())}));
+    return {items, count: items.length};
+  }
+);
+
+// ─── callableGetPaymentChangeRequests ────────────────────────────────────────
+// 임금 변경 요청 목록 조회 — Admin SDK server-side 권한 검증
+// [RULE-FIX-CF 2026-07-13] payment_change_requests admin list 규칙 근본 해결
+// Input : businessId (필수), status? (기본 "PENDING"), limit? (기본 1000, 최대 2000)
+// Output: { items: [{id: string, ...fields}] }
+export const callableGetPaymentChangeRequests = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {businessId, status, limit: rawLimit} =
+      (request.data ?? {}) as {
+        businessId?: string;
+        status?: string;
+        limit?: number;
+      };
+
+    if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+
+    await assertBizAdmin(callerUid, businessId);
+
+    const targetStatus = (typeof status === "string" && status.length > 0) ? status : "PENDING";
+    const cap = Math.min(
+      typeof rawLimit === "number" && rawLimit > 0 ? rawLimit : 1000,
+      2000
+    );
+
+    const snap = await db
+      .collection("payment_change_requests")
+      .where("businessId", "==", businessId)
+      .where("status", "==", targetStatus)
+      .orderBy("createdAt", "desc")
+      .limit(cap)
+      .get();
+
+    const items = snap.docs.map(d => ({id: d.id, ...serializeFirestoreData(d.data())}));
+    return {items};
+  }
+);
+
+// ─── callableGetInterimSettlements ───────────────────────────────────────────
+// 중도정산 요청 목록 조회 (PENDING + APPROVED 병렬 쿼리) — Admin SDK 권한 검증
+// [RULE-FIX-CF 2026-07-13] interim_settlement_requests admin list 규칙 근본 해결
+// Input : businessId (필수), limit? (각 상태당 기본 500, 최대 1000)
+// Output: { items: [{id: string, ...fields}] } — createdAt desc 정렬
+export const callableGetInterimSettlements = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {businessId, limit: rawLimit} =
+      (request.data ?? {}) as {businessId?: string; limit?: number};
+
+    if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+
+    await assertBizAdmin(callerUid, businessId);
+
+    const cap = Math.min(
+      typeof rawLimit === "number" && rawLimit > 0 ? rawLimit : 500,
+      1000
+    );
+
+    const baseQuery = db
+      .collection("interim_settlement_requests")
+      .where("businessId", "==", businessId);
+
+    const [pendingSnap, approvedSnap] = await Promise.all([
+      baseQuery.where("status", "==", "PENDING").orderBy("createdAt", "desc").limit(cap).get(),
+      baseQuery.where("status", "==", "APPROVED").orderBy("createdAt", "desc").limit(cap).get(),
+    ]);
+
+    const allDocs = [
+      ...pendingSnap.docs.map(d => ({id: d.id, ...serializeFirestoreData(d.data())})),
+      ...approvedSnap.docs.map(d => ({id: d.id, ...serializeFirestoreData(d.data())})),
+    ];
+
+    // createdAt desc 정렬 — _seconds 필드 기준
+    allDocs.sort((a, b) => {
+      const aTs = ((a as Record<string, unknown>).createdAt as {_seconds?: number} | null)?._seconds ?? 0;
+      const bTs = ((b as Record<string, unknown>).createdAt as {_seconds?: number} | null)?._seconds ?? 0;
+      return bTs - aTs;
+    });
+
+    return {items: allDocs};
+  }
+);
+
+// ─── callableGetMonthlyReviewsForUser ────────────────────────────────────────
+// 특정 사용자의 월별 리뷰 목록 조회 — Admin SDK 권한 검증
+// [RULE-FIX-CF 2026-07-13] monthly_reviews admin path 규칙 근본 해결
+// Input : targetUserId (필수), businessId? (슈퍼어드민 아니면 필수), reviewType?,
+//         publishedOnly? (기본 false), limit? (기본 5, 최대 50)
+// Output: { items: [{id: string, ...fields}] }
+export const callableGetMonthlyReviewsForUser = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {targetUserId, businessId, reviewType, publishedOnly, limit: rawLimit} =
+      (request.data ?? {}) as {
+        targetUserId?: string;
+        businessId?: string;
+        reviewType?: string;
+        publishedOnly?: boolean;
+        limit?: number;
+      };
+
+    if (!targetUserId || typeof targetUserId !== "string" || targetUserId.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "targetUserId가 필요합니다.");
+    }
+
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const isSuperAdmin = callerSnap.data()?.role === "SUPER_ADMIN";
+
+    if (!isSuperAdmin) {
+      if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
+        throw new HttpsError("invalid-argument", "슈퍼어드민이 아닌 경우 businessId가 필요합니다.");
+      }
+      await assertBizAdmin(callerUid, businessId);
+    }
+
+    const cap = Math.min(
+      typeof rawLimit === "number" && rawLimit > 0 ? rawLimit : 5,
+      50
+    );
+
+    let q: admin.firestore.Query = db
+      .collection("monthly_reviews")
+      .where("targetUserId", "==", targetUserId);
+
+    if (businessId) q = q.where("businessId", "==", businessId);
+    if (reviewType) q = q.where("reviewType", "==", reviewType);
+    if (publishedOnly === true) q = q.where("isPublished", "==", true);
+
+    q = q.orderBy("createdAt", "desc").limit(cap);
+
+    const snap = await q.get();
+    const items = snap.docs.map(d => ({id: d.id, ...serializeFirestoreData(d.data())}));
+    return {items};
+  }
+);
+
+// ─── callableGetScheduleChangeRequestsForDate ────────────────────────────────
+// 여러 사업장의 특정 날짜 스케줄 변경 요청 조회 (CF 이전 2026-07-13)
+// 기존: Flutter에서 사업장별 isEqualTo 쿼리를 병렬 실행 → Security Rules PERMISSION_DENIED
+// 수정: CF에서 Admin SDK로 쿼리 → 규칙 우회, 서버측 권한 검증
+export const callableGetScheduleChangeRequestsForDate = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {businessIds, dateMs} = (request.data ?? {}) as {
+      businessIds?: string[];
+      dateMs?: number;
+    };
+
+    if (!Array.isArray(businessIds) || businessIds.length === 0 || businessIds.length > 20) {
+      throw new HttpsError("invalid-argument", "businessIds는 1~20개 사이여야 합니다.");
+    }
+    if (!Number.isFinite(dateMs)) {
+      throw new HttpsError("invalid-argument", "dateMs(날짜 Unix ms)가 필요합니다.");
+    }
+
+    // 권한 검증: 슈퍼어드민 OR 모든 businessId에 대한 관리 권한
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const callerRole = callerSnap.data()?.role as string | undefined;
+    const isSuperAdmin = callerRole === "SUPER_ADMIN";
+    const callerSubAdminOf = callerSnap.data()?.subAdminOf as string | undefined;
+
+    if (!isSuperAdmin) {
+      const bizSnaps = await Promise.all(
+        businessIds.map((bid) => db.collection("businesses").doc(bid).get())
+      );
+      for (let i = 0; i < businessIds.length; i++) {
+        const biz = bizSnaps[i];
+        if (!biz.exists) throw new HttpsError("not-found", `사업장 ${businessIds[i]}를 찾을 수 없습니다.`);
+        const adminIds = (biz.data()?.adminIds as string[] | undefined) ?? [];
+        const ownerId = biz.data()?.ownerId as string | undefined;
+        const ok = adminIds.includes(callerUid) || ownerId === callerUid || callerSubAdminOf === businessIds[i];
+        if (!ok) throw new HttpsError("permission-denied", `사업장 ${businessIds[i]}에 대한 권한이 없습니다.`);
+      }
+    }
+
+    // 사업장별 병렬 쿼리
+    const date = new Date(dateMs!);
+    const snaps = await Promise.all(
+      businessIds.map((bid) =>
+        db.collection("schedule_change_requests")
+          .where("businessId", "==", bid)
+          .where("status", "==", "PENDING")
+          .get()
+      )
+    );
+
+    const items: Record<string, unknown>[] = [];
+    for (const snap of snaps) {
+      for (const doc of snap.docs) {
+        const data = doc.data();
+        // targetDate 날짜 매칭 (CF쪽에서 필터)
+        const td = data["targetDate"] as admin.firestore.Timestamp | null | undefined;
+        if (!td) continue;
+        const d = td.toDate();
+        if (d.getFullYear() === date.getFullYear() &&
+            d.getMonth() === date.getMonth() &&
+            d.getDate() === date.getDate()) {
+          items.push({id: doc.id, ...serializeFirestoreData(data)});
+        }
+      }
+    }
+
+    return {items};
+  }
+);
+
+// ─── callableCheckPendingInvitation ─────────────────────────────────────────
+// 특정 사용자에게 유효한 초대(30일 이내 PENDING)가 있는지 확인 (CF 이전 2026-07-13)
+// 기존: Flutter에서 다중 등호필터 쿼리 → Security Rules PERMISSION_DENIED
+// 수정: CF에서 Admin SDK로 쿼리 → 규칙 우회, 서버측 권한 검증
+export const callableCheckPendingInvitation = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {businessId, targetUid} = (request.data ?? {}) as {
+      businessId?: string;
+      targetUid?: string;
+    };
+
+    if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+    if (!targetUid || typeof targetUid !== "string" || targetUid.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "targetUid가 필요합니다.");
+    }
+
+    await assertBizAdmin(callerUid, businessId);
+
+    // 30일 이내 발송된 PENDING 초대 확인
+    const expiryMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const snap = await db.collection("member_invitations")
+      .where("businessId", "==", businessId)
+      .where("targetUid", "==", targetUid)
+      .where("status", "==", "pending")
+      .where("createdAt", ">", admin.firestore.Timestamp.fromMillis(expiryMs))
+      .limit(1)
+      .get();
+
+    return {hasPending: !snap.empty};
   }
 );

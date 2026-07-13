@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
 import '../../models/core/business_work_type_model.dart';
 import '../../providers/user_provider.dart';
@@ -159,35 +160,24 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     if (_isDeleting) return;
     setState(() => _isDeleting = true);
     try {
-      // [BUG-WHEREIN] status whereIn + businessId 복합쿼리 → PERMISSION_DENIED 위험
-      //   active/full/scheduled 3개 isEqualTo 병렬 쿼리로 분리
-      final snaps = await Future.wait([
-        FirebaseFirestore.instance
-            .collection('tos')
-            .where('businessId', isEqualTo: widget.businessId)
-            .where('status', isEqualTo: TOStatus.active)
-            .get(),
-        FirebaseFirestore.instance
-            .collection('tos')
-            .where('businessId', isEqualTo: widget.businessId)
-            .where('status', isEqualTo: TOStatus.full)
-            .get(),
-        FirebaseFirestore.instance
-            .collection('tos')
-            .where('businessId', isEqualTo: widget.businessId)
-            .where('status', isEqualTo: TOStatus.scheduled)
-            .get(),
-      ]);
-      final activeTODocs = [
-        ...(snaps[0] as QuerySnapshot<Map<String, dynamic>>).docs,
-        ...(snaps[1] as QuerySnapshot<Map<String, dynamic>>).docs,
-        ...(snaps[2] as QuerySnapshot<Map<String, dynamic>>).docs,
-      ];
+      // [CF 이전 2026-07-13] callableGetTOsByBiz — statuses 배열로 서버 whereIn 처리
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetTOsByBiz',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessId': widget.businessId,
+        'statuses': [TOStatus.active, TOStatus.full, TOStatus.scheduled],
+      });
+      final activeTOsRaw = (result.data['tos'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) => Map<String, dynamic>.from(m))
+          .toList();
 
-      final affectedCount = activeTODocs.where((doc) {
-        final details = doc.data()['workDetails'] as List<dynamic>? ?? [];
-        return details.any(
-            (d) => (d as Map<String, dynamic>)['workType'] == workType.name);
+      final affectedCount = activeTOsRaw.where((data) {
+        final details = (data['workDetails'] as List?)
+            ?.whereType<Map>()
+            .toList() ?? [];
+        return details.any((d) => d['workType'] == workType.name);
       }).length;
 
       if (!mounted) return;

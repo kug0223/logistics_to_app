@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/core/business_member_model.dart';
@@ -59,18 +60,21 @@ class MemberService {
   }
 
   /// 이미 유효한 pending 초대가 있는지 확인 (30일 이내 발송된 것만)
+  /// [CF 이전 2026-07-13] callableCheckPendingInvitation
   Future<bool> hasPendingInvitation(String businessId, String targetUid) async {
-    final expiry = Timestamp.fromDate(
-      DateTime.now().subtract(const Duration(days: 30)),
-    );
-    final snap = await _invitations
-        .where('businessId', isEqualTo: businessId)
-        .where('targetUid', isEqualTo: targetUid)
-        .where('status', isEqualTo: 'pending')
-        .where('createdAt', isGreaterThan: expiry)
-        .limit(1)
-        .get();
-    return snap.docs.isNotEmpty;
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableCheckPendingInvitation',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessId': businessId,
+        'targetUid': targetUid,
+      });
+      return result.data['hasPending'] as bool? ?? false;
+    } catch (e) {
+      debugPrint('⚠️ hasPendingInvitation CF 오류, 폴백: $e');
+      return false;
+    }
   }
 
   /// 초대 발송

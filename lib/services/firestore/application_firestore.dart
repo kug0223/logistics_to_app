@@ -20,39 +20,58 @@ extension ApplicationFirestore on FirestoreService {
     String? uid,
     List<String>? statuses,
   }) async {
-    // [SEC] 관리자 컨텍스트(uid 없음)에서 businessId 미전달 시 크로스-사업장 누출 위험
-    // Firestore 규칙 폴백이 user.businessId로 평가되어 타 사업장 TO 지원서 조회 가능해짐
     assert(
       uid != null || (businessId != null && businessId.isNotEmpty),
       'getApplicationsByTOId: admin 컨텍스트에서는 businessId 필수',
     );
+    // USER 컨텍스트(uid 제공): 직접 Firestore (본인 데이터, 보안규칙 uid 필터 충족)
+    if (uid != null && uid.isNotEmpty) {
+      try {
+        final snap = await _firestore
+            .collection('applications')
+            .where('toId', isEqualTo: toId)
+            .where('uid', isEqualTo: uid)
+            .limit(2000)
+            .get(const GetOptions(source: Source.server));
+        final statusSet = statuses != null ? Set<String>.from(statuses) : null;
+        return snap.docs
+            .map(ApplicationModel.tryFromFirestore)
+            .whereType<ApplicationModel>()
+            .where((a) => statusSet == null || statusSet.contains(a.status))
+            .toList();
+      } catch (e) {
+        debugPrint('❌ 지원자 목록 조회 실패(user): $e');
+        return [];
+      }
+    }
+    // 관리자 컨텍스트 — [CF 이전 2026-07-13] callableGetApplicationsByBiz
     try {
-      Query query = _firestore
-          .collection('applications')
-          .where('toId', isEqualTo: toId);
-      if (businessId != null && businessId.isNotEmpty) {
-        query = query.where('businessId', isEqualTo: businessId);
-      }
-      // USER 컨텍스트: uid 필터 추가 (보안 규칙 list 조건 충족)
-      if (uid != null && uid.isNotEmpty) {
-        query = query.where('uid', isEqualTo: uid);
-      }
-      // [BUG-WHEREIN] status whereIn + 복합쿼리 → PERMISSION_DENIED 위험
-      //   서버 필터 제거, 클라이언트 필터링으로 대체 (limit 2000 범위 내 충분)
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetApplicationsByBiz',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessId': businessId,
+        'toId': toId,
+        'limit': 2000,
+      });
       final statusSet = statuses != null ? Set<String>.from(statuses) : null;
-      final snap = await query.limit(2000).get(const GetOptions(source: Source.server));
-      return snap.docs
-          .map(ApplicationModel.tryFromFirestore)
+      return (result.data['applications'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return ApplicationModel.tryFromMap(raw, id);
+          })
           .whereType<ApplicationModel>()
           .where((a) => statusSet == null || statusSet.contains(a.status))
           .toList();
     } catch (e) {
-      debugPrint('❌ 지원자 목록 조회 실패: $e');
+      debugPrint('❌ 지원자 목록 조회 실패(admin): $e');
       return [];
     }
   }
 
-  /// 슬롯별 지원서 조회 (flex 타입)
+  /// 슬롯별 지원서 조회 (flex 타입) — [CF 이전 2026-07-13] callableGetApplicationsByBiz
   /// [statuses] 지정 시 해당 상태만 조회 (미지정 시 전체)
   Future<List<ApplicationModel>> getApplicationsBySlotId(
     String toId,
@@ -60,20 +79,25 @@ extension ApplicationFirestore on FirestoreService {
     String? businessId,
     List<String>? statuses,
   }) async {
+    assert(businessId != null && businessId.isNotEmpty, 'getApplicationsBySlotId: businessId 필수');
     try {
-      Query query = _firestore
-          .collection('applications')
-          .where('toId', isEqualTo: toId)
-          .where('slotId', isEqualTo: slotId);
-      if (businessId != null && businessId.isNotEmpty) {
-        query = query.where('businessId', isEqualTo: businessId);
-      }
-      // [BUG-WHEREIN] status whereIn + 복합쿼리 → PERMISSION_DENIED 위험
-      //   서버 필터 제거, 클라이언트 필터링으로 대체
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetApplicationsByBiz',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessId': businessId ?? '',
+        'toId': toId,
+        'slotId': slotId,
+        'limit': 2000,
+      });
       final statusSet = statuses != null ? Set<String>.from(statuses) : null;
-      final snap = await query.limit(2000).get(const GetOptions(source: Source.server));
-      return snap.docs
-          .map(ApplicationModel.tryFromFirestore)
+      return (result.data['applications'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return ApplicationModel.tryFromMap(raw, id);
+          })
           .whereType<ApplicationModel>()
           .where((a) => statusSet == null || statusSet.contains(a.status))
           .toList();
@@ -104,19 +128,26 @@ extension ApplicationFirestore on FirestoreService {
     }
   }
 
-  /// 사업장별 전체 지원서 조회 (관리자용)
+  /// 사업장별 전체 지원서 조회 (관리자용) — [CF 이전 2026-07-13] callableGetApplicationsByBiz
   Future<List<ApplicationModel>> getApplicationsByBusinessId(
     String businessId,
   ) async {
     try {
-      final snap = await _firestore
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .orderBy('appliedAt', descending: true)
-          .limit(1000)
-          .get(const GetOptions(source: Source.server));
-      return snap.docs
-          .map((d) => ApplicationModel.tryFromMap(d.data(), d.id))
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetApplicationsByBiz',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessId': businessId,
+        'orderByAppliedAtDesc': true,
+        'limit': 1000,
+      });
+      return (result.data['applications'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return ApplicationModel.tryFromMap(raw, id);
+          })
           .whereType<ApplicationModel>()
           .toList();
     } catch (e) {
@@ -1520,6 +1551,7 @@ extension ApplicationFirestore on FirestoreService {
   }
 
   /// 특정 날짜 × 사업장의 단기 PENDING 지원자 조회 (지원명단용)
+  /// [CF 이전 2026-07-13] callableGetApplicationsByBiz (workDateGteMs/LtMs)
   Future<List<ApplicationModel>> getPendingApplicationsByDateAndBusiness({
     required DateTime date,
     required String businessId,
@@ -1527,18 +1559,25 @@ extension ApplicationFirestore on FirestoreService {
     final dateStart = DateTime(date.year, date.month, date.day);
     final dateEnd = dateStart.add(const Duration(days: 1));
     try {
-      final snap = await _firestore
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
-          .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
-          .get(const GetOptions(source: Source.server));
-      final apps = snap.docs
-          .map(ApplicationModel.tryFromFirestore)
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetApplicationsByBiz',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessId': businessId,
+        'workDateGteMs': dateStart.millisecondsSinceEpoch,
+        'workDateLtMs': dateEnd.millisecondsSinceEpoch,
+        'limit': 2000,
+      });
+      return (result.data['applications'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return ApplicationModel.tryFromMap(raw, id);
+          })
           .whereType<ApplicationModel>()
           .where((app) => app.status == AppStatus.pending && !app.isLongTermApplication)
           .toList();
-      return apps;
     } catch (e) {
       debugPrint('❌ 지원자 조회 실패: $e');
       return [];
@@ -1571,6 +1610,7 @@ extension ApplicationFirestore on FirestoreService {
   }
 
   /// 특정 날짜 × 사업장의 확정 근무자 조회 (단기 + 장기 병합)
+  /// [CF 이전 2026-07-13] callableGetApplicationsByBiz (workDateGteMs/LtMs, workEndDateGteMs)
   Future<List<ApplicationModel>> getConfirmedWorkersByDateAndBusiness({
     required DateTime date,
     required String businessId,
@@ -1579,37 +1619,45 @@ extension ApplicationFirestore on FirestoreService {
     final dateEnd = dateStart.add(const Duration(days: 1));
 
     try {
-      // [BUGFIX] whereIn + equality 복합쿼리 시 Firestore 보안 규칙
-      //   request.query.filters.businessId가 null 반환 → PERMISSION_DENIED.
-      //   whereIn 제거 후 클라이언트 필터링으로 전환.
-      final shortTermFuture = _firestore
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
-          .where('workDate', isLessThan: Timestamp.fromDate(dateEnd))
-          .get(const GetOptions(source: Source.server));
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetApplicationsByBiz',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final futures = await Future.wait([
+        callable.call<Map<String, dynamic>>({
+          'businessId': businessId,
+          'workDateGteMs': dateStart.millisecondsSinceEpoch,
+          'workDateLtMs': dateEnd.millisecondsSinceEpoch,
+          'limit': 2000,
+        }),
+        callable.call<Map<String, dynamic>>({
+          'businessId': businessId,
+          'workEndDateGteMs': dateStart.millisecondsSinceEpoch,
+          'limit': 2000,
+        }),
+      ]);
 
-      final longTermFuture = _firestore
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('workEndDate', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
-          .get(const GetOptions(source: Source.server));
+      List<ApplicationModel> parseApps(HttpsCallableResult<Map<String, dynamic>> r) =>
+          (r.data['applications'] as List? ?? [])
+              .whereType<Map>()
+              .map((m) {
+                final raw = _cfHydrate(Map<String, dynamic>.from(m));
+                final id = raw.remove('id') as String? ?? '';
+                return ApplicationModel.tryFromMap(raw, id);
+              })
+              .whereType<ApplicationModel>()
+              .toList();
 
-      final results = await Future.wait([shortTermFuture, longTermFuture]);
+      final results = futures.map(parseApps).toList();
 
       // [B01-FIX] 단기 쿼리 결과에 type 필터가 없어 장기 지원서(type=long_term)가
       // workDate == 오늘인 경우 shortTermApps에도 포함될 수 있는 중복 버그 수정.
       // isLongTermApplication getter로 클라이언트 필터링하여 단기만 남긴다.
       const confirmedStatuses = {AppStatus.confirmed, AppStatus.contractPending};
-      final shortTermApps = results[0].docs
-          .map(ApplicationModel.tryFromFirestore)
-          .whereType<ApplicationModel>()
+      final shortTermApps = results[0]
           .where((app) => confirmedStatuses.contains(app.status) && !app.isLongTermApplication)
           .toList();
 
-      final longTermCandidates = results[1].docs
-          .map(ApplicationModel.tryFromFirestore)
-          .whereType<ApplicationModel>()
+      final longTermCandidates = results[1]
           .where((app) => confirmedStatuses.contains(app.status) && app.workDays != null && app.workDays!.isNotEmpty)
           .toList();
 

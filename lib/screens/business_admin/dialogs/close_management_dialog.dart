@@ -9,6 +9,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:intl/intl.dart';
 
 // Models
@@ -120,22 +121,25 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
     for (final businessId in widget.businessIds) {
       final List<DateCloseStatus> dateStatuses = [];
 
-      // 1. 단기 확정자: 해당 월의 workDate 범위로 조회 (CONTRACT_PENDING 포함)
-      // [BUGFIX] whereIn + equality 복합쿼리 시 Firestore 보안 규칙
-      //   request.query.filters.businessId가 null 반환 → PERMISSION_DENIED.
-      //   whereIn 제거 후 클라이언트 필터링으로 전환.
-      final shortTermSnapshot = await FirebaseFirestore.instance
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .where('workDate', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
-          .where('workDate', isLessThan: Timestamp.fromDate(monthEndExclusive))
-          .get();
+      // [CF 이전 2026-07-13] callableGetApplicationsByBiz — PERMISSION_DENIED 근본 해결
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetApplicationsByBiz',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
 
-      debugPrint('  [단기] businessId=$businessId → ${shortTermSnapshot.docs.length}건');
+      // 1. 단기 확정자: 해당 월의 workDate 범위로 조회
+      final shortTermResult = await callable.call<Map<String, dynamic>>({
+        'businessId': businessId,
+        'workDateGteMs': monthStart.millisecondsSinceEpoch,
+        'workDateLtMs': monthEndExclusive.millisecondsSinceEpoch,
+        'limit': 2000,
+      });
+      debugPrint('  [단기] businessId=$businessId → ${(shortTermResult.data['applications'] as List? ?? []).length}건');
 
       final Map<String, List<ApplicationModel>> appsByDate = {};
-      for (final doc in shortTermSnapshot.docs) {
-        final app = ApplicationModel.tryFromFirestore(doc);
+      for (final e in (shortTermResult.data['applications'] as List? ?? [])) {
+        final m = Map<String, dynamic>.from(e as Map);
+        final docId = m.remove('id') as String? ?? '';
+        final app = ApplicationModel.tryFromMap(m, docId);
         if (app == null) continue;
         if (!AppStatus.confirmedStatuses.contains(app.status)) continue;
         debugPrint('    단기 app: id=${app.id}, workDate=${app.workDate}, '
@@ -149,17 +153,18 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
         }
       }
 
-      // 2. 장기 확정자: 전체 조회 후 해당 월의 활성 날짜로 확장 (CONTRACT_PENDING 포함)
-      // [BUGFIX] whereIn 제거 후 클라이언트 필터링으로 전환 (단기 쿼리와 동일한 이유)
-      final longTermSnapshot = await FirebaseFirestore.instance
-          .collection('applications')
-          .where('businessId', isEqualTo: businessId)
-          .get();
+      // 2. 장기 확정자: 전체 조회 후 해당 월의 활성 날짜로 확장
+      final longTermResult = await callable.call<Map<String, dynamic>>({
+        'businessId': businessId,
+        'type': AppType.longTerm,
+        'limit': 2000,
+      });
+      debugPrint('  [장기 전체] businessId=$businessId → ${(longTermResult.data['applications'] as List? ?? []).length}건');
 
-      debugPrint('  [장기 전체] businessId=$businessId → ${longTermSnapshot.docs.length}건');
-
-      for (final doc in longTermSnapshot.docs) {
-        final app = ApplicationModel.tryFromFirestore(doc);
+      for (final e in (longTermResult.data['applications'] as List? ?? [])) {
+        final m = Map<String, dynamic>.from(e as Map);
+        final docId = m.remove('id') as String? ?? '';
+        final app = ApplicationModel.tryFromMap(m, docId);
         if (app == null) continue;
         if (!AppStatus.confirmedStatuses.contains(app.status)) continue;
         if (app.workDays == null || app.workDays!.isEmpty) continue;

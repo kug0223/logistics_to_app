@@ -1795,20 +1795,21 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     }
 
     // [C-1] 파트변경 전 확정된 급여 건 체크 — 있으면 미확정 처리됨을 사전 경고
-    // [BUG-WHEREIN] wageStatus whereIn + applicationId 복합쿼리 → PERMISSION_DENIED 위험
-    //   calculated/confirmed 2개 isEqualTo .count() 병렬 쿼리로 분리
+    // businessId 필터 추가 — attendance list 규칙의 businessId 요건 충족
     final int confirmedWageCount;
     try {
       final wageCountResults = await Future.wait([
         FirebaseFirestore.instance
             .collection('attendance')
             .where('applicationId', isEqualTo: app.id)
+            .where('businessId', isEqualTo: app.businessId)
             .where('wageStatus', isEqualTo: 'calculated')
             .count()
             .get(),
         FirebaseFirestore.instance
             .collection('attendance')
             .where('applicationId', isEqualTo: app.id)
+            .where('businessId', isEqualTo: app.businessId)
             .where('wageStatus', isEqualTo: 'confirmed')
             .count()
             .get(),

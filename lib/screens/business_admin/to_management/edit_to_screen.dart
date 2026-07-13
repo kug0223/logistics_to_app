@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 // Models
 import '../../../models/core/to_model.dart';
@@ -551,23 +552,21 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   // wageType·breakMinutes·야간설정은 저장 시점 TO값 재참조 — 확정 전 근무자 급여에 영향
   Future<bool> _showWageGuardWarning() async {
     try {
-      // [BUG-WHEREIN] status whereIn + toId 복합쿼리 → PERMISSION_DENIED 위험
-      //   confirmedStatuses = [confirmed, contractPending] 를 isEqualTo 2개 병렬로 분리
-      final snaps = await Future.wait([
-        FirebaseFirestore.instance
-            .collection('applications')
-            .where('toId', isEqualTo: widget.to.id)
-            .where('status', isEqualTo: AppStatus.confirmed)
-            .limit(1)
-            .get(),
-        FirebaseFirestore.instance
-            .collection('applications')
-            .where('toId', isEqualTo: widget.to.id)
-            .where('status', isEqualTo: AppStatus.contractPending)
-            .limit(1)
-            .get(),
-      ]);
-      final hasConfirmed = snaps.any((s) => (s as QuerySnapshot).docs.isNotEmpty);
+      // [CF 이전 2026-07-13] callableGetApplicationsByBiz (Admin SDK, businessId+toId)
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetApplicationsByBiz',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessId': widget.to.businessId,
+        'toId': widget.to.id,
+        'limit': 2000,
+      });
+      final appsRaw = (result.data['applications'] as List? ?? [])
+          .whereType<Map>()
+          .toList();
+      const confirmedStatuses = [AppStatus.confirmed, AppStatus.contractPending];
+      final hasConfirmed = appsRaw.any(
+          (m) => confirmedStatuses.contains(m['status']));
       if (!hasConfirmed) return true; // 미확정 근무자 없음 — 경고 불필요
     } catch (e) {
       debugPrint('⚠️ WAGE-GUARD 쿼리 실패 (진행 허용): $e');

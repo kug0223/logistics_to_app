@@ -89,6 +89,16 @@ class PaymentChangeRequestModel {
     }
   }
 
+  // CF 응답(_cfHydrate 처리 후) 파싱용
+  static PaymentChangeRequestModel? tryFromMap(Map<String, dynamic> d, String id) {
+    try {
+      return PaymentChangeRequestModel.fromMap(d, id);
+    } catch (e, st) {
+      debugPrint('[PaymentChangeRequestModel] CF 역직렬화 실패 id=$id: $e\n$st');
+      return null;
+    }
+  }
+
   factory PaymentChangeRequestModel.fromMap(Map<String, dynamic> d, String id) {
     final createdAt = (d['createdAt'] as Timestamp?)?.toDate().toLocal();
     if (createdAt == null) {

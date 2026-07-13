@@ -63,14 +63,8 @@ class PayrollSummaryModel {
     required this.updatedAt,
   });
 
-  factory PayrollSummaryModel.fromFirestore(DocumentSnapshot doc) {
-    final raw = doc.data();
-    if (raw == null) {
-      throw ArgumentError('PayrollSummaryModel: document ${doc.id} has no data');
-    }
-    final data = raw as Map<String, dynamic>;
-    // [MED-SAFE] 오프라인 쓰기 직후 읽기 시 updatedAt에 FieldValue.serverTimestamp()가 null로 반환될 수 있음.
-    // ArgumentError 대신 DateTime.now() 폴백으로 crash 방지
+  factory PayrollSummaryModel.fromMap(Map<String, dynamic> data, String id) {
+    // [MED-SAFE] 오프라인 쓰기 직후 updatedAt이 null일 수 있음 + CF 응답은 Timestamp로 복원 후 전달
     final updatedAt = (data['updatedAt'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now();
     final workersRaw = data['workers'] as Map<String, dynamic>? ?? {};
     // [SAFETY] Firestore 내부 타입(_JsonMap)은 직접 as Map<String, dynamic> 캐스팅 실패 가능 — from()으로 안전 변환
@@ -81,7 +75,7 @@ class PayrollSummaryModel {
       }).whereType<MapEntry<String, PayrollWorkerSummary>>(),
     );
     return PayrollSummaryModel(
-      id: doc.id,
+      id: id,
       businessId: data['businessId'] as String? ?? '',
       yearMonth: data['yearMonth'] as String? ?? '',
       year: (data['year'] as num?)?.toInt() ?? 0,
@@ -96,12 +90,30 @@ class PayrollSummaryModel {
     );
   }
 
+  factory PayrollSummaryModel.fromFirestore(DocumentSnapshot doc) {
+    final raw = doc.data();
+    if (raw == null) {
+      throw ArgumentError('PayrollSummaryModel: document ${doc.id} has no data');
+    }
+    return PayrollSummaryModel.fromMap(raw as Map<String, dynamic>, doc.id);
+  }
+
   // [SCHEMA-09] 역직렬화 실패 격리 — workers 맵 손상 시 급여 조회 화면 전체 크래시 방지
   static PayrollSummaryModel? tryFromFirestore(DocumentSnapshot doc) {
     try {
       return PayrollSummaryModel.fromFirestore(doc);
     } catch (e, st) {
       debugPrint('[PayrollSummaryModel] 역직렬화 실패 id=${doc.id}: $e\n$st');
+      return null;
+    }
+  }
+
+  // CF onCall 응답용 — {_seconds, _nanoseconds}로 복원된 Timestamp 맵에서 파싱
+  static PayrollSummaryModel? tryFromMap(Map<String, dynamic> data, String id) {
+    try {
+      return PayrollSummaryModel.fromMap(data, id);
+    } catch (e, st) {
+      debugPrint('[PayrollSummaryModel] 역직렬화 실패 id=$id: $e\n$st');
       return null;
     }
   }

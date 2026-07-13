@@ -20,6 +20,29 @@ import '../models/core/payment_change_request_model.dart';
 import '../models/core/interim_settlement_request_model.dart';
 import '../utils/format_helper.dart';
 
+// CF 응답에서 {_seconds, _nanoseconds} 맵을 Timestamp로 재수화
+Map<String, dynamic> _cfHydrate(Map<String, dynamic> m) {
+  return m.map((k, v) {
+    if (v is Map) {
+      final vm = Map<String, dynamic>.from(v);
+      if (vm.containsKey('_seconds')) {
+        try {
+          return MapEntry(k, Timestamp(
+            (vm['_seconds'] as num).toInt(),
+            (vm['_nanoseconds'] as num? ?? 0).toInt(),
+          ));
+        } catch (_) {}
+      }
+      return MapEntry(k, _cfHydrate(vm));
+    } else if (v is List) {
+      return MapEntry(k, v.map((e) =>
+        e is Map ? _cfHydrate(Map<String, dynamic>.from(e)) : e
+      ).toList());
+    }
+    return MapEntry(k, v);
+  });
+}
+
 /// 커서 기반 페이지네이션 결과
 class PayrollPage<T> {
   final List<T> records;
@@ -134,45 +157,48 @@ class PayrollPaymentService {
   /// startAfterDocument(cursor)는 DocumentSnapshot을 커서로 사용하므로
   /// CF 반환값(직렬화된 Map)으로 커서를 재구성할 수 없어 CF 이전 불가.
   /// 단, businessId isEqualTo 단일 등호필터는 request.query.filters.businessId를
-  /// 정상 평가하므로 현재 Firestore 보안 규칙에서 이미 안전하다.
-  /// → allow list 규칙 유지 필요 (payroll_payment_service 3개 함수가 직접 읽기 사용)
+  /// [CF 이전 2026-07-13] callableGetAdminAttendances (startMs/endMs + wageStatus)
+  /// cursor 기반 페이지네이션은 CF에서 미지원 → pageSize 단위 전체 조회 후 클라이언트 슬라이싱
   Future<PayrollPage<AttendanceModel>> getPayrollRecords({
     required String businessId,
     required int year,
     required int month,
     String? wageStatus,
     int pageSize = 200,
-    DocumentSnapshot? cursor,
+    DocumentSnapshot? cursor,  // CF 이전 후 미사용 (하위 호환 유지)
   }) async {
     try {
       final monthStart = DateTime(year, month, 1);
       final monthEnd   = DateTime(year, month + 1, 1);
 
-      Query query = _db
-          .collection('attendance')
-          .where('businessId', isEqualTo: businessId)
-          .where('workDate',
-              isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
-          .where('workDate', isLessThan: Timestamp.fromDate(monthEnd));
+      final result = await _cf.httpsCallable('callableGetAdminAttendances',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)))
+          .call<Map<String, dynamic>>({
+        'businessId': businessId,
+        'startMs': monthStart.millisecondsSinceEpoch,
+        'endMs': monthEnd.millisecondsSinceEpoch,
+        if (wageStatus != null) 'wageStatus': wageStatus,
+      });
 
-      if (wageStatus != null) {
-        query = query.where('wageStatus', isEqualTo: wageStatus);
+      final rawItems = (result.data['items'] as List? ?? []);
+      final allRecords = rawItems.whereType<Map>().map((m) {
+        final raw = _cfHydrate(Map<String, dynamic>.from(m));
+        final id = raw.remove('id') as String? ?? '';
+        return AttendanceModel.tryFromMap(raw, id);
+      }).whereType<AttendanceModel>().toList();
+
+      // cursor 기반 페이지네이션: cursor 이후 pageSize건 슬라이싱
+      final List<AttendanceModel> page;
+      if (cursor == null) {
+        page = allRecords.take(pageSize + 1).toList();
+      } else {
+        // cursor 지원 불가 — 전체 반환 (호출부는 cursor==null 로만 호출해야 함)
+        page = allRecords.take(pageSize + 1).toList();
       }
-      // wageStatus null: 필터 없이 전체 조회 (호출부는 항상 wageStatus 명시 — whereIn 제거)
+      final hasMore = page.length > pageSize;
+      final records = hasMore ? page.take(pageSize).toList() : page;
 
-      query = query.orderBy('workDate');
-      if (cursor != null) query = query.startAfterDocument(cursor);
-
-      // pageSize+1 건 조회하여 다음 페이지 존재 여부 확인 (실제 반환은 pageSize건)
-      final snap = await query.limit(pageSize + 1).get();
-      final hasMore = snap.docs.length > pageSize;
-      final docs = hasMore ? snap.docs.take(pageSize).toList() : snap.docs;
-
-      return PayrollPage(
-        records: docs.map(AttendanceModel.tryFromFirestore).whereType<AttendanceModel>().toList(),
-        cursor: docs.isNotEmpty ? docs.last : null,
-        hasMore: hasMore,
-      );
+      return PayrollPage(records: records, cursor: null, hasMore: hasMore);
     } catch (e) {
       debugPrint('❌ 급여 현황 조회 실패: $e');
       return PayrollPage(records: [], hasMore: false);
@@ -184,36 +210,29 @@ class PayrollPaymentService {
   // ══════════════════════════════════════════════════════════
 
   /// 오늘 지급 예정일이 도래한 미이체 출근기록 조회
-  /// - paymentDueDate <= today AND wageStatus = 'confirmed'
-  /// - 사업장 단위 (businessId 필수)
-  ///
-  /// [직접 Firestore 유지 — 의도적 결정]
-  /// businessId + wageStatus + paymentDueDate 복합필터를 사용하나,
-  /// businessId isEqualTo 단일 등호필터가 포함되어 있어
-  /// request.query.filters.businessId가 정상 평가되므로 현재 규칙에서 안전하다.
-  /// CF 이전 시 paymentDueDate 범위필터 파라미터 추가가 필요하여 현행 유지.
+  /// [CF 이전 2026-07-13] callableGetAdminAttendances (paymentDueDateLteMs + wageStatus)
   Future<List<AttendanceModel>> getTodayPayments({
     required String businessId,
     DateTime? referenceDate,
   }) async {
     try {
       final ref = referenceDate ?? DateTime.now();
-      final today = DateTime(ref.year, ref.month, ref.day, 23, 59, 59);
-      // [RULE-FIX] wageStatus 등호필터 제거 — 다중 equality 복합쿼리에서
-      // request.query.filters.businessId 미평가 → PERMISSION_DENIED 발생
-      // businessId 단일 등호필터 + paymentDueDate 범위필터로 유지, wageStatus 클라이언트 필터링
-      final snap = await _db
-          .collection('attendance')
-          .where('businessId', isEqualTo: businessId)
-          .where('paymentDueDate',
-              isLessThanOrEqualTo: Timestamp.fromDate(today))
-          .orderBy('paymentDueDate')
-          .orderBy('workDate')
-          .get();
-      return snap.docs
-          .map(AttendanceModel.tryFromFirestore)
+      final todayEnd = DateTime(ref.year, ref.month, ref.day, 23, 59, 59);
+      final result = await _cf.httpsCallable('callableGetAdminAttendances',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)))
+          .call<Map<String, dynamic>>({
+        'businessId': businessId,
+        'paymentDueDateLteMs': todayEnd.millisecondsSinceEpoch,
+        'wageStatus': AttendanceModel.wageConfirmed,
+      });
+      return (result.data['items'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return AttendanceModel.tryFromMap(raw, id);
+          })
           .whereType<AttendanceModel>()
-          .where((a) => a.wageStatus == AttendanceModel.wageConfirmed)
           .toList();
     } catch (e) {
       debugPrint('❌ 오늘 지급 조회 실패: $e');
@@ -221,32 +240,23 @@ class PayrollPaymentService {
     }
   }
 
-  /// 오늘 지급 예정 건수 (배지용 — count 쿼리)
-  ///
-  /// [직접 Firestore 유지 — 의도적 결정]
-  /// [RULE-FIX] wageStatus 등호필터 제거 — 다중 equality 복합쿼리에서
-  /// request.query.filters.businessId가 null 평가 → PERMISSION_DENIED.
-  /// businessId 단일 등호필터만 사용, wageStatus·paymentDueDate는 클라이언트 필터링.
+  /// 오늘 지급 예정 건수 (배지용)
+  /// [CF 이전 2026-07-13] callableGetAdminAttendances (paymentDueDateLteMs + wageStatus)
   Future<int> getTodayPaymentCount({
     required String businessId,
     DateTime? referenceDate,
   }) async {
     try {
       final ref = referenceDate ?? DateTime.now();
-      final today = DateTime(ref.year, ref.month, ref.day, 23, 59, 59);
-      // [PAY-LIMIT-01] limit(5000): 한 사업장의 연간 미이체 건수 한도 상향 (1000→5000)
-      final snap = await _db
-          .collection('attendance')
-          .where('businessId', isEqualTo: businessId)
-          .limit(5000)
-          .get();
-      return snap.docs.where((doc) {
-        final data = doc.data();
-        if (data['wageStatus'] != AttendanceModel.wageConfirmed) return false;
-        final dueDate = data['paymentDueDate'];
-        if (dueDate == null) return false;
-        return !(dueDate as Timestamp).toDate().isAfter(today);
-      }).length;
+      final todayEnd = DateTime(ref.year, ref.month, ref.day, 23, 59, 59);
+      final result = await _cf.httpsCallable('callableGetAdminAttendances',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)))
+          .call<Map<String, dynamic>>({
+        'businessId': businessId,
+        'paymentDueDateLteMs': todayEnd.millisecondsSinceEpoch,
+        'wageStatus': AttendanceModel.wageConfirmed,
+      });
+      return (result.data['items'] as List? ?? []).length;
     } catch (e) {
       debugPrint('❌ 오늘 지급 건수 조회 실패: $e');
       return 0;
@@ -292,41 +302,32 @@ class PayrollPaymentService {
     return ref.id;
   }
 
-  /// 사업장의 미처리 변경 요청 전체 조회 (내부 커서 페이지네이션으로 한도 제거)
+  // [RULE-FIX-CF 2026-07-13] Firestore 직접 쿼리 → CF 이전
+  // filters.businessId null 반환 PERMISSION_DENIED 방지
   Future<List<PaymentChangeRequestModel>> getPendingChangeRequests(
       String businessId) async {
-    final results = <PaymentChangeRequestModel>[];
-    DocumentSnapshot? cursor;
-    bool hasMore = true;
-    while (hasMore) {
-      final page = await _fetchChangeRequestPage(businessId, cursor: cursor);
-      results.addAll(page.records);
-      hasMore = page.hasMore;
-      cursor = page.cursor;
-    }
-    return results;
-  }
-
-  Future<PayrollPage<PaymentChangeRequestModel>> _fetchChangeRequestPage(
-      String businessId, {DocumentSnapshot? cursor, int pageSize = 30}) async {
     try {
-      Query query = _db
-          .collection('payment_change_requests')
-          .where('businessId', isEqualTo: businessId)
-          .where('status', isEqualTo: PaymentChangeRequestModel.statusPending)
-          .orderBy('createdAt', descending: true);
-      if (cursor != null) query = query.startAfterDocument(cursor);
-      final snap = await query.limit(pageSize + 1).get();
-      final hasMore = snap.docs.length > pageSize;
-      final docs = hasMore ? snap.docs.take(pageSize).toList() : snap.docs;
-      return PayrollPage(
-        records: docs.map(PaymentChangeRequestModel.tryFromFirestore).whereType<PaymentChangeRequestModel>().toList(),
-        cursor: docs.isNotEmpty ? docs.last : null,
-        hasMore: hasMore,
+      final callable = _cf.httpsCallable(
+        'callableGetPaymentChangeRequests',
+        options: HttpsCallableOptions(timeout: const Duration(seconds: 30)),
       );
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessId': businessId,
+        'status': PaymentChangeRequestModel.statusPending,
+      });
+      final rawItems = (result.data['items'] as List? ?? []);
+      return rawItems
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return PaymentChangeRequestModel.tryFromMap(raw, id);
+          })
+          .whereType<PaymentChangeRequestModel>()
+          .toList();
     } catch (e) {
       debugPrint('❌ 변경 요청 조회 실패: $e');
-      return PayrollPage(records: [], hasMore: false);
+      return [];
     }
   }
 
@@ -386,27 +387,26 @@ class PayrollPaymentService {
     return ref.id;
   }
 
-  /// 사업장의 미처리 중간정산 요청 전체 조회
-  /// whereIn + isEqualTo 복합 쿼리는 Firestore 보안 규칙에서 filters.businessId null 반환 버그 있음
-  /// → pending/approved 각각 단독 isEqualTo 쿼리로 병렬 실행 후 병합
+  // [RULE-FIX-CF 2026-07-13] Firestore 직접 쿼리 → CF 이전
+  // PENDING+APPROVED 병렬 쿼리 → CF 서버사이드 병합으로 교체
   Future<List<InterimSettlementRequestModel>> getPendingSettlementRequests(
       String businessId) async {
     try {
-      final base = _db
-          .collection('interim_settlement_requests')
-          .where('businessId', isEqualTo: businessId)
-          .orderBy('createdAt', descending: true);
-      final results = await Future.wait([
-        base.where('status', isEqualTo: InterimSettlementRequestModel.statusPending).get(),
-        base.where('status', isEqualTo: InterimSettlementRequestModel.statusApproved).get(),
-      ]);
-      final all = results
-          .expand((snap) => snap.docs)
-          .map(InterimSettlementRequestModel.tryFromFirestore)
+      final callable = _cf.httpsCallable(
+        'callableGetInterimSettlements',
+        options: HttpsCallableOptions(timeout: const Duration(seconds: 30)),
+      );
+      final result = await callable.call<Map<String, dynamic>>({'businessId': businessId});
+      final rawItems = (result.data['items'] as List? ?? []);
+      return rawItems
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return InterimSettlementRequestModel.tryFromMap(raw, id);
+          })
           .whereType<InterimSettlementRequestModel>()
-          .toList()
-        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-      return all;
+          .toList();
     } catch (e) {
       debugPrint('❌ 중간정산 요청 조회 실패: $e');
       return [];

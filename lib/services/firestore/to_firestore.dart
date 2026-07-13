@@ -120,7 +120,7 @@ extension TOFirestore on FirestoreService {
   // 목록 조회
   // ───────────────────────────────────────────────────────
 
-  /// 사업장 공고 목록 (관리자용)
+  /// 사업장 공고 목록 (관리자용) — [CF 이전 2026-07-13] callableGetTOsByBiz
   Future<List<TOModel>> getTOsByBusiness(
     String businessId, {
     bool activeOnly = false,
@@ -128,17 +128,22 @@ extension TOFirestore on FirestoreService {
     int? limit,
   }) async {
     try {
-      Query query = _firestore
-          .collection('tos')
-          .where('businessId', isEqualTo: businessId)
-          .orderBy('createdAt', descending: true);
-
-      // [BUGFIX-WHEREIN] businessId isEqualTo + status whereIn → PERMISSION_DENIED
-      // status 서버 필터 제거, 클라이언트에서 필터링으로 전환
-      if (limit != null) query = query.limit(limit);
-
-      final snap = await query.get(const GetOptions(source: Source.server));
-      var models = snap.docs.map((d) => TOModel.tryFromMap(d.data() as Map<String, dynamic>, d.id)).whereType<TOModel>().toList();
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetTOsByBiz',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessId': businessId,
+        if (limit != null) 'limit': limit,
+      });
+      var models = (result.data['tos'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return TOModel.tryFromMap(raw, id);
+          })
+          .whereType<TOModel>()
+          .toList();
       if (activeOnly) {
         models = models.where((t) => TOStatus.openStates.contains(t.status)).toList();
       } else if (closedOnly) {
@@ -252,22 +257,31 @@ extension TOFirestore on FirestoreService {
         .toList();
   }
 
-  /// 최근 등록 공고 (기존 공고 연결용)
+  /// 최근 등록 공고 (기존 공고 연결용) — [CF 이전 2026-07-13] callableGetTOsByBiz
   Future<List<TOModel>> getRecentTOsByBusiness(
     String businessId, {
     int days = 60,
   }) async {
     try {
       final cutoff = DateTime.now().subtract(Duration(days: days));
-      final snap = await _firestore
-          .collection('tos')
-          .where('businessId', isEqualTo: businessId)
-          .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(cutoff))
-          .orderBy('createdAt', descending: true)
-          .limit(20)
-          .get(const GetOptions(source: Source.server));
-
-      return snap.docs.map((d) => TOModel.tryFromMap(d.data(), d.id)).whereType<TOModel>().toList();
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetTOsByBiz',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessId': businessId,
+        'createdAtGteMs': cutoff.millisecondsSinceEpoch,
+        'orderByCreatedAtDesc': true,
+        'limit': 20,
+      });
+      return (result.data['tos'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return TOModel.tryFromMap(raw, id);
+          })
+          .whereType<TOModel>()
+          .toList();
     } catch (e) {
       debugPrint('❌ [TO] 최근 공고 조회 실패: $e');
       return [];

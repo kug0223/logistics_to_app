@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 // Providers
 import '../../providers/user_provider.dart';
@@ -711,22 +712,28 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
   /// 더미 지원서 생성 흐름 — 공고 선택 → (단기) 슬롯 선택 → 생성
   Future<void> _createDummyApplicationsFlow(String businessId) async {
     try {
-    final snap = await FirebaseFirestore.instance
-        .collection('tos')
-        .where('businessId', isEqualTo: businessId)
-        .orderBy('createdAt', descending: true)
-        .limit(50)
-        .get(const GetOptions(source: Source.server));
+    // [CF 이전 2026-07-13] callableGetTOsByBiz — tos 직접 쿼리 대체
+    final toCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableGetTOsByBiz',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+    final toResult = await toCallable.call<Map<String, dynamic>>({
+      'businessId': businessId,
+      'orderByCreatedAtDesc': true,
+      'limit': 50,
+    });
+    final tosRaw = (toResult.data['tos'] as List? ?? [])
+        .whereType<Map>()
+        .map((m) => Map<String, dynamic>.from(m))
+        .toList();
 
-    if (snap.docs.isEmpty) {
+    if (tosRaw.isEmpty) {
       if (mounted) ToastHelper.showWarning('등록된 공고가 없습니다. 먼저 공고를 생성하세요.');
       return;
     }
 
     // 활성·비활성 포함 전체 공고 표시 — 상태를 라벨에 표기
-    final toDocs = snap.docs.map((d) {
-      final data = d.data();
-      final title = data['title'] as String? ?? d.id;
+    final toDocs = tosRaw.map((data) {
+      final title = data['title'] as String? ?? data['id'] as String? ?? '';
       final type = data['type'] as String? ?? TOType.flex;
       final status = data['status'] as String? ?? TOStatus.active;
       final typeLabel = type == TOType.contract ? '[장기]' : '[단기]';
@@ -734,7 +741,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
       final bizSuffix = bizName.isNotEmpty ? ' ($bizName)' : '';
       final isActive = status == TOStatus.active;
       final statusSuffix = isActive ? '' : ' [$status]';
-      return (id: d.id, label: '$typeLabel $title$bizSuffix$statusSuffix',
+      return (id: data['id'] as String? ?? '', label: '$typeLabel $title$bizSuffix$statusSuffix',
               type: type, isActive: isActive);
     }).toList();
 

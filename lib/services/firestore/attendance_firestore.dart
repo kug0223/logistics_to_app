@@ -343,56 +343,64 @@ extension AttendanceFirestore on FirestoreService {
   }
 
   /// 오늘 확정된 근무자 목록 조회 (출근 대상자)
+  /// [CF 이전 2026-07-13] callableGetApplicationsByBiz (workDateEqMs + longTerm 병렬)
   Future<List<ApplicationModel>> getTodayConfirmedWorkers({
     required String businessId,
   }) async {
     try {
       final today = DateTime.now();
       final todayStart = DateTime(today.year, today.month, today.day);
-      
+      final todayEnd = todayStart.add(const Duration(days: 1));
+
       debugPrint('🔍 [getTodayConfirmedWorkers] 조회 시작...');
 
-      // 단기·장기 쿼리 병렬 실행 (독립적이므로 Future.wait 가능)
-      // [BUGFIX] whereIn + equality 복합쿼리에서 Firestore 보안 규칙이
-      //   request.query.filters.businessId를 null 반환 → PERMISSION_DENIED.
-      //   status whereIn 제거 후 클라이언트 필터링으로 전환.
-      final confirmedSet = Set<String>.from(AppStatus.confirmedStatuses);
-      final snapshots = await Future.wait([
-        // 1. 오늘 단기 근무 전체 조회 → status 클라이언트 필터
-        _firestore
-            .collection('applications')
-            .where('businessId', isEqualTo: businessId)
-            .where('workDate', isEqualTo: Timestamp.fromDate(todayStart))
-            .get(const GetOptions(source: Source.server)),
-        // 2. 장기 근무자 전체 조회 → status·isWorkingOnDate 클라이언트 필터
-        _firestore
-            .collection('applications')
-            .where('businessId', isEqualTo: businessId)
-            .where('type', isEqualTo: AppType.longTerm)
-            .get(const GetOptions(source: Source.server)),
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetApplicationsByBiz',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+
+      final results = await Future.wait([
+        // 1. 오늘 단기 근무 (workDate == today)
+        callable.call<Map<String, dynamic>>({
+          'businessId': businessId,
+          'workDateGteMs': todayStart.millisecondsSinceEpoch,
+          'workDateLtMs': todayEnd.millisecondsSinceEpoch,
+          'limit': 2000,
+        }),
+        // 2. 장기 근무자 (workEndDate >= todayStart, 클라이언트에서 isWorkingOnDate 필터)
+        callable.call<Map<String, dynamic>>({
+          'businessId': businessId,
+          'workEndDateGteMs': todayStart.millisecondsSinceEpoch,
+          'limit': 2000,
+        }),
       ]);
 
-      final shortTerm = snapshots[0].docs
-          .map(ApplicationModel.tryFromFirestore)
-          .whereType<ApplicationModel>()
-          .where((app) => confirmedSet.contains(app.status))
-          .toList();
+      List<ApplicationModel> parseApps(HttpsCallableResult<Map<String, dynamic>> r) =>
+          (r.data['applications'] as List? ?? [])
+              .whereType<Map>()
+              .map((m) {
+                final raw = _cfHydrate(Map<String, dynamic>.from(m));
+                final id = raw.remove('id') as String? ?? '';
+                return ApplicationModel.tryFromMap(raw, id);
+              })
+              .whereType<ApplicationModel>()
+              .toList();
 
+      final confirmedSet = Set<String>.from(AppStatus.confirmedStatuses);
+
+      final shortTerm = parseApps(results[0])
+          .where((app) => confirmedSet.contains(app.status) && !app.isLongTermApplication)
+          .toList();
       debugPrint('   단기 근무자: ${shortTerm.length}명');
 
-      final longTerm = snapshots[1].docs
-          .map(ApplicationModel.tryFromFirestore)
-          .whereType<ApplicationModel>()
-          .where((app) => confirmedSet.contains(app.status))
+      final longTerm = parseApps(results[1])
+          .where((app) => confirmedSet.contains(app.status) && app.isLongTermApplication)
           // isWorkingOnDate: actualResignDate·leaveDates·extraWorkDates·workDays 모두 반영
           .where((app) => app.isWorkingOnDate(todayStart))
           .toList();
-
       debugPrint('   장기 근무자: ${longTerm.length}명');
-      
+
       final allWorkers = [...shortTerm, ...longTerm];
       debugPrint('✅ 총 출근 대상: ${allWorkers.length}명');
-      
       return allWorkers;
     } catch (e) {
       debugPrint('❌ 출근 대상자 조회 실패: $e');
@@ -552,19 +560,22 @@ extension AttendanceFirestore on FirestoreService {
   }
 
   /// 사업장의 대기중인 스케줄 변경 요청 조회
+  /// [RULE-FIX-CF 2026-07-13] 직접 Firestore → callableGetScheduleChangeRequests CF 이전
   Future<List<ScheduleChangeRequestModel>> getPendingScheduleChangeRequests(String businessId) async {
     try {
-      final snapshot = await _firestore
-          .collection('schedule_change_requests')
-          .where('businessId', isEqualTo: businessId)
-          .where('status', isEqualTo: 'PENDING')
-          .orderBy('requestedAt', descending: true)
-          .get(const GetOptions(source: Source.server));
-
-      return snapshot.docs
-          .map((doc) => ScheduleChangeRequestModel.tryFromMap(doc.data(), doc.id))
-          .whereType<ScheduleChangeRequestModel>()
-          .toList();
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetScheduleChangeRequests',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessId': businessId,
+        'pendingOnly': true,
+      });
+      final items = (result.data['items'] as List<dynamic>?) ?? [];
+      return items.map((e) {
+        final m = Map<String, dynamic>.from(e as Map);
+        final id = m.remove('id') as String? ?? '';
+        return ScheduleChangeRequestModel.tryFromMap(_cfHydrate(m), id);
+      }).whereType<ScheduleChangeRequestModel>().toList();
     } catch (e) {
       debugPrint('❌ 대기중인 스케줄 변경 요청 조회 실패: $e');
       return [];
@@ -572,19 +583,23 @@ extension AttendanceFirestore on FirestoreService {
   }
 
   /// 사업장의 모든 스케줄 변경 요청 조회
+  /// [RULE-FIX-CF 2026-07-13] 직접 Firestore → callableGetScheduleChangeRequests CF 이전
   Future<List<ScheduleChangeRequestModel>> getAllScheduleChangeRequests(String businessId) async {
     try {
-      final snapshot = await _firestore
-          .collection('schedule_change_requests')
-          .where('businessId', isEqualTo: businessId)
-          .orderBy('requestedAt', descending: true)
-          .limit(2000)
-          .get(const GetOptions(source: Source.server));
-
-      return snapshot.docs
-          .map((doc) => ScheduleChangeRequestModel.tryFromMap(doc.data(), doc.id))
-          .whereType<ScheduleChangeRequestModel>()
-          .toList();
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetScheduleChangeRequests',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessId': businessId,
+        'pendingOnly': false,
+        'limit': 2000,
+      });
+      final items = (result.data['items'] as List<dynamic>?) ?? [];
+      return items.map((e) {
+        final m = Map<String, dynamic>.from(e as Map);
+        final id = m.remove('id') as String? ?? '';
+        return ScheduleChangeRequestModel.tryFromMap(_cfHydrate(m), id);
+      }).whereType<ScheduleChangeRequestModel>().toList();
     } catch (e) {
       debugPrint('❌ 스케줄 변경 요청 조회 실패: $e');
       return [];
@@ -618,27 +633,28 @@ extension AttendanceFirestore on FirestoreService {
   /// whereIn은 보안 규칙 request.query.filters.businessId를 채우지 못해
   /// isAdminOf 검증 실패 → PERMISSION_DENIED 발생.
   /// 사업장별 개별 isEqualTo 쿼리로 분리하여 보안 규칙 충족.
+  /// [CF 이전 2026-07-13] callableGetScheduleChangeRequestsForDate
   Future<List<ScheduleChangeRequestModel>> getScheduleChangeRequestsForDate({
     required DateTime date,
     required List<String> businessIds,
   }) async {
     if (businessIds.isEmpty) return [];
     try {
-      // 사업장별 개별 쿼리를 병렬로 실행 (whereIn은 보안 규칙 위반으로 사용 불가)
-      final snaps = await Future.wait(
-        businessIds.map((businessId) => _firestore
-            .collection('schedule_change_requests')
-            .where('businessId', isEqualTo: businessId)
-            .where('status', isEqualTo: 'PENDING')
-            .get(const GetOptions(source: Source.server))),
-      );
-      return snaps
-          .expand((snap) => snap.docs
-              .map((d) => ScheduleChangeRequestModel.tryFromMap(d.data(), d.id)).whereType<ScheduleChangeRequestModel>()
-              .where((r) =>
-                  r.targetDate.year == date.year &&
-                  r.targetDate.month == date.month &&
-                  r.targetDate.day == date.day))
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetScheduleChangeRequestsForDate',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessIds': businessIds,
+        'dateMs': date.millisecondsSinceEpoch,
+      });
+      return (result.data['items'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return ScheduleChangeRequestModel.tryFromMap(raw, id);
+          })
+          .whereType<ScheduleChangeRequestModel>()
           .toList();
     } catch (e) {
       debugPrint('❌ 날짜별 스케줄 변경 요청 조회 실패: $e');
