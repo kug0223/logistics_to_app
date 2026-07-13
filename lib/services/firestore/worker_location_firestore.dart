@@ -125,33 +125,31 @@ extension WorkerLocationFirestore on FirestoreService {
   }
 
   /// applicationId 목록으로 위치 일괄 조회 (당일 명단 로드 시)
-  /// [크로스-사업장 방지] businessId 필터 필수 — 보안 규칙에서 isAdminOf(businessId) 강제
+  /// [크로스-사업장 방지] CF Admin SDK 경유 — whereIn 쿼리 시 보안 규칙 filters null 반환 버그 우회
+  /// CF callableGetLocationsForApplications에서 역할 검증 후 조회
   Future<Map<String, WorkerLocationModel>> getLocationsForApplications(
     List<String> applicationIds, {
     required String businessId,
   }) async {
     if (applicationIds.isEmpty) return {};
     try {
-      // Firestore whereIn 최대 30개 제한 처리
+      final resp = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetLocationsForApplications',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
+          .call({'applicationIds': applicationIds, 'businessId': businessId});
+      final raw = ((resp.data as Map<dynamic, dynamic>)['locations']
+              as Map<dynamic, dynamic>?) ??
+          {};
       final result = <String, WorkerLocationModel>{};
-      for (int i = 0; i < applicationIds.length; i += 30) {
-        final chunk = applicationIds.sublist(
-          i,
-          (i + 30) < applicationIds.length ? i + 30 : applicationIds.length,
-        );
-        final snap = await _firestore
-            .collection(_workerLocationCol)
-            .where('businessId', isEqualTo: businessId)
-            .where(FieldPath.documentId, whereIn: chunk)
-            .get();
-        for (final doc in snap.docs) {
-          final model = WorkerLocationModel.tryFromFirestore(doc);
-          if (model != null) result[doc.id] = model;
-        }
+      for (final entry in raw.entries) {
+        final id = entry.key as String;
+        final data = (entry.value as Map<dynamic, dynamic>).cast<String, dynamic>();
+        final model = WorkerLocationModel.tryFromMap(data, id);
+        if (model != null) result[id] = model;
       }
       return result;
     } catch (e) {
-      debugPrint('❌ [WorkerLocation] 일괄 조회 실패: $e');
+      debugPrint('❌ [WorkerLocation] CF 일괄 조회 실패: $e');
       return {};
     }
   }

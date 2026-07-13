@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import '../../utils/firestore_helper.dart';
 
 /// 근로자 실시간 위치 모델
 /// Firestore 컬렉션: worker_locations/{applicationId}
@@ -57,6 +58,30 @@ class WorkerLocationModel {
       return WorkerLocationModel.fromFirestore(doc);
     } catch (e, st) {
       debugPrint('[WorkerLocationModel] 역직렬화 실패 id=${doc.id}: $e\n$st');
+      return null;
+    }
+  }
+
+  /// CF callable 응답 파싱용 — Timestamp가 {_seconds, _nanoseconds} Map으로 전달됨
+  static WorkerLocationModel? tryFromMap(Map<String, dynamic> map, String id) {
+    try {
+      return WorkerLocationModel(
+        applicationId: id,
+        userId: map['userId'] as String? ?? '',
+        businessId: map['businessId'] as String? ?? '',
+        lat: (map['lat'] as num?)?.toDouble() ?? 0.0,
+        lng: (map['lng'] as num?)?.toDouble() ?? 0.0,
+        accuracy: (map['accuracy'] as num?)?.toDouble() ?? 0.0,
+        distanceMeters: (map['distanceMeters'] as num?)?.toDouble(),
+        isActive: map['isActive'] as bool? ?? false,
+        workDate: parseTimestamp(map['workDate']),
+        scheduledStart: map['scheduledStart'] as String? ?? '',
+        consentGiven: map['consentGiven'] as bool? ?? false,
+        updatedAt: parseTimestamp(map['updatedAt']),
+        createdAt: parseTimestamp(map['createdAt']),
+      );
+    } catch (e, st) {
+      debugPrint('[WorkerLocationModel] tryFromMap 실패 id=$id: $e\n$st');
       return null;
     }
   }

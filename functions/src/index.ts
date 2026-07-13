@@ -5882,6 +5882,79 @@ export const callableGetIdCardSignedUrl = onCall(
 );
 
 // ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+// 📍 근로자 위치 일괄 조회 (크로스-사업장 방지)
+// ═══════════════════════════════════════════════════════════
+/**
+ * applicationId 목록으로 worker_locations를 Admin SDK로 일괄 조회.
+ *
+ * 배경: 클라이언트 whereIn + FieldPath.documentId() 복합쿼리 시 Firestore 보안 규칙의
+ *   request.query.filters가 null을 반환하여 businessId 필터 강제 불가.
+ *   CF Admin SDK 경유로 전환하여 서버 사이드에서 businessId 소속 검증 후 조회.
+ *
+ * Input:  { applicationIds: string[], businessId: string }
+ * Output: { locations: Record<applicationId, WorkerLocationData> }
+ */
+export const callableGetLocationsForApplications = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인 필요");
+    const uid = request.auth.uid;
+    const {applicationIds, businessId} = request.data as {
+      applicationIds?: unknown;
+      businessId?: unknown;
+    };
+
+    if (!businessId || typeof businessId !== "string" || businessId.length === 0) {
+      throw new HttpsError("invalid-argument", "businessId 필수");
+    }
+    if (!Array.isArray(applicationIds)) {
+      throw new HttpsError("invalid-argument", "applicationIds는 배열이어야 합니다");
+    }
+    if (applicationIds.length === 0) return {locations: {}};
+    if (applicationIds.length > 500) {
+      throw new HttpsError("invalid-argument", "applicationIds 최대 500개");
+    }
+
+    // 역할 검증: 해당 businessId의 BUSINESS_ADMIN 또는 SUB_ADMIN인지 확인
+    const bizSnap = await db.collection("businesses").doc(businessId).get();
+    if (!bizSnap.exists) throw new HttpsError("not-found", "사업장을 찾을 수 없습니다.");
+    const bizData = bizSnap.data() ?? {};
+    const isAdmin =
+      bizData["ownerId"] === uid ||
+      (Array.isArray(bizData["adminIds"]) && (bizData["adminIds"] as string[]).includes(uid));
+
+    if (!isAdmin) {
+      const userSnap = await db.collection("users").doc(uid).get();
+      const userData = userSnap.data() ?? {};
+      const isSuperAdmin = userData["role"] === "SUPER_ADMIN";
+      const isSub = userData["subAdminOf"] === businessId;
+      if (!isSuperAdmin && !isSub) {
+        throw new HttpsError("permission-denied", "해당 사업장의 관리자 권한이 없습니다.");
+      }
+    }
+
+    // Admin SDK로 개별 get() — whereIn+FieldPath.documentId() 대신 병렬 조회
+    const validIds = applicationIds.filter((id): id is string => typeof id === "string");
+    const snaps = await Promise.all(
+      validIds.map((id) => db.collection("worker_locations").doc(id).get())
+    );
+
+    const locations: Record<string, unknown> = {};
+    for (const snap of snaps) {
+      if (snap.exists) {
+        const data = snap.data() ?? {};
+        // businessId 불일치 문서 필터링 — 다른 사업장 데이터 유출 차단
+        if (data["businessId"] === businessId) {
+          locations[snap.id] = serializeFirestoreData(data);
+        }
+      }
+    }
+
+    return {locations};
+  }
+);
+
 // 👥 사용자 배치 조회 (서버 사이드 소속 검증)
 // ═══════════════════════════════════════════════════════════
 /**

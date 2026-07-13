@@ -1307,13 +1307,14 @@ service cloud.firestore {
       //     - getLocationsForApplications: .where('businessId', isEqualTo: businessId)
       //       + .where(FieldPath.documentId, whereIn: chunk) — 복합 쿼리 (복합 인덱스 필요)
       //   · SubAdmin: 동일 패턴
-      // [BUGFIX] 복합 equality 쿼리에서 request.query.filters 미노출 대비 user.businessId 폴백
-      // [RULE-FIX 2026-07-13] request.query.filters.businessId null 반환 → 역할 기반 대체
-      // TODO: callableGetWorkerLocations CF 이전 후 isBusinessAdmin()/isSubAdmin() 제거
+      // [H-5 CF 이전 완료] getLocationsForApplications → callableGetLocationsForApplications CF로 이전.
+      // 관리자 조회는 CF Admin SDK 경유 — 이 list 규칙은 USER 탈퇴 삭제(3-pre5)와
+      // getActiveLocationsForBusiness(단순 equality)만 허용.
+      // isAdminOf(businessId)로 businessId 소속 검증 강제 — 크로스-사업장 차단.
       allow list: if isLoggedIn() && (
                     isSuperAdmin() ||
-                    isBusinessAdmin() ||
-                    isSubAdmin() ||
+                    isAdminOf(request.query.filters.get('businessId', '')) ||
+                    isSubAdminOf(request.query.filters.get('businessId', '')) ||
                     (isUser() && request.query.filters.userId == request.auth.uid)
                   );
 
