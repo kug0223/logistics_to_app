@@ -484,7 +484,12 @@ service cloud.firestore {
                         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['totalPending']) ||
                         (request.resource.data.totalPending >= 0 &&
                          (request.resource.data.totalPending == resource.data.totalPending - 1 ||
-                          request.resource.data.totalPending == resource.data.totalPending + 1)));
+                          request.resource.data.totalPending == resource.data.totalPending + 1))) &&
+                       // [M-2] closedBy 감사 필드: 본인 UID만 기록 허용 — 다른 관리자 UID 위조 차단
+                       // Trust Boundary Charter: 감사 로그 필수 작업 (closeTOManually closedBy)
+                       (isSuperAdmin() ||
+                        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['closedBy']) ||
+                        request.resource.data.get('closedBy', null) == request.auth.uid);
 
       // 지원자: 지원/취소 시 totalPending 카운터만 수정 허용 (음수 방지)
       // [MEDIUM-FIX] ±1 제한 없이 임의 양수값 설정 가능 → 통계 훼손 가능

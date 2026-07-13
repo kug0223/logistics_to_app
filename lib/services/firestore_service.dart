@@ -228,90 +228,17 @@ class FirestoreService {
   // TO 마감 관리
   // ═══════════════════════════════════════════════════════════
 
-  /// TO 수동 마감
-  // 수동 마감 시 활성 지원서(PENDING/CONTRACT_PENDING/CONFIRMED)를
-  // AUTO_CANCELED로 전환하고 각 지원자에게 TO 취소 알림을 발송한다.
-  // TO 상태 업데이트가 먼저 성공해야 지원서 처리를 진행 — 실패 시 지원서는 건드리지 않음.
-  // 지원서 처리 중 부분 실패는 로그만 남기고 전체 흐름은 계속 진행한다.
+  /// TO 수동 마감 — CF callableCloseTOManually 위임
+  // [M-2] closedBy 서버 UID 강제: CF에서 request.auth.uid 사용 → 클라이언트 위조 불가
+  // [Charter] AUTO_CANCELED 법적 상태 전이: CF Admin SDK 전용으로 이전
   Future<bool> closeTOManually(String toId, String adminUID) async {
     try {
-      // 1단계: TO 데이터 조회 (알림에 필요한 businessName, businessId, title)
-      final toDoc = await _firestore.collection('tos').doc(toId).get();
-      if (!toDoc.exists) {
-        debugPrint('❌ TO 수동 마감 실패: 문서 없음 ($toId)');
-        return false;
-      }
-      final toData = toDoc.data()!;
-      final businessName = toData['businessName'] as String? ?? '';
-      final businessId = toData['businessId'] as String? ?? '';
-      final toTitle = toData['title'] as String? ?? '';
-
-      // 2단계: TO 상태 업데이트 (실패 시 아래 처리 전부 건너뜀)
-      await _firestore.collection('tos').doc(toId).update({
-        'isManualClosed': true,
-        'closedAt': FieldValue.serverTimestamp(),
-        'closedBy': adminUID,
-        'status': TOStatus.closed,
-        'statusUpdatedAt': FieldValue.serverTimestamp(),
-      });
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableCloseTOManually',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 60)));
+      await callable.call<Map<String, dynamic>>({'toId': toId});
       clearCache(toId: toId);
-
-      // 3단계: 활성 지원서 AUTO_CANCELED 처리 + 지원자 알림
-      try {
-        // [CF 이전 2026-07-13] callableGetApplicationsByBiz (Admin SDK, businessId+toId 필터)
-        final appCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-            .httpsCallable('callableGetApplicationsByBiz',
-                options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-        final appResult = await appCallable.call<Map<String, dynamic>>({
-          'businessId': businessId,
-          'toId': toId,
-          'limit': 2000,
-        });
-        final allAppsRaw = (appResult.data['applications'] as List? ?? [])
-            .whereType<Map>()
-            .map((m) => Map<String, dynamic>.from(m))
-            .toList();
-
-        final activeDocs = allAppsRaw.where((data) {
-          final s = data['status'] as String?;
-          return AppStatus.activeStates.contains(s);
-        }).toList();
-
-        if (activeDocs.isNotEmpty) {
-          // 인기 TO의 경우 활성 지원서가 500건 초과 가능 — 499건 단위 분할 커밋
-          for (var offset = 0; offset < activeDocs.length; offset += 499) {
-            final batch = _firestore.batch();
-            final slice = activeDocs.skip(offset).take(499);
-            for (final data in slice) {
-              final appId = data['id'] as String?;
-              if (appId == null) continue;
-              batch.update(_firestore.collection('applications').doc(appId), {
-                'status': AppStatus.autoCanceled,
-                'canceledAt': FieldValue.serverTimestamp(),
-                'cancelReason': 'TO_MANUALLY_CLOSED',
-              });
-            }
-            await batch.commit();
-          }
-
-          // 알림은 배치 커밋 후 개별 발송 (실패해도 TO 상태 변경은 유지)
-          for (final data in activeDocs) {
-            _sendTOCanceledNotification(
-              applicantUid: data['uid'] as String? ?? '',
-              businessName: businessName,
-              businessId: businessId,
-              toTitle: toTitle,
-              status: data['status'] as String? ?? '',
-            );
-          }
-        }
-      } catch (e) {
-        // 지원서 배치 실패는 TO 마감과 분리된 의도적 설계 — TO는 이미 마감됐으므로 롤백 없음
-        // 배치 중간 실패 시 일부 지원서가 AUTO_CANCELED 미처리될 수 있으나, 마감 TO의 신규 지원은 차단됨
-        debugPrint('⚠️ TO 마감 후 지원서 처리 실패 (TO는 마감됨): $e');
-      }
-
-      debugPrint('✅ TO 수동 마감 완료: $toId');
+      debugPrint('✅ TO 수동 마감 완료 (CF): $toId');
       return true;
     } catch (e) {
       debugPrint('❌ TO 수동 마감 실패: $e');

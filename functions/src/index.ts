@@ -11445,3 +11445,120 @@ export const callableCreateContractRenewal = onCall(
     return {success: true, newApplicationId};
   }
 );
+
+// ═══════════════════════════════════════════════════════════
+// 🔒 callableCloseTOManually — TO 수동 마감 CF
+// ═══════════════════════════════════════════════════════════
+/**
+ * Trust Boundary Charter:
+ *   - closedBy: 서버에서 request.auth.uid 사용 → 클라이언트 위조 불가 [M-2]
+ *   - AUTO_CANCELED 법적 상태 전이: CF Admin SDK 전용 (rules bypass) [Charter]
+ *
+ * Input:  { toId: string }
+ * Output: { success: true, canceledCount: number }
+ */
+export const callableCloseTOManually = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {toId} = request.data as {toId?: string};
+    if (!toId || typeof toId !== "string" || toId.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "toId가 필요합니다.");
+    }
+
+    // 1. TO 조회 및 권한 검증
+    const toSnap = await db.collection("tos").doc(toId).get();
+    if (!toSnap.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
+    const toData = toSnap.data()!;
+    const businessId = toData.businessId as string | undefined;
+    if (!businessId) throw new HttpsError("internal", "businessId 누락");
+
+    await assertBizAdmin(callerUid, businessId);
+
+    if (toData.isManualClosed === true) {
+      throw new HttpsError("already-exists", "이미 수동 마감된 공고입니다.");
+    }
+
+    const now = admin.firestore.Timestamp.now();
+    const businessName = toData.businessName as string ?? "";
+    const toTitle = toData.title as string ?? "";
+
+    // 2. TO 상태 업데이트 — closedBy 서버 UID 사용 [M-2]
+    await db.collection("tos").doc(toId).update({
+      isManualClosed: true,
+      closedAt: admin.firestore.FieldValue.serverTimestamp(),
+      closedBy: callerUid,
+      status: "CLOSED",
+      statusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // 3. 활성 지원서(PENDING/CONTRACT_PENDING/CONFIRMED) AUTO_CANCELED 배치 처리
+    const activeStatuses = ["PENDING", "CONTRACT_PENDING", "CONFIRMED"];
+    let canceledCount = 0;
+    try {
+      const appsSnap = await db.collection("applications")
+        .where("toId", "==", toId)
+        .where("status", "in", activeStatuses)
+        .get();
+
+      if (!appsSnap.empty) {
+        let batch = db.batch();
+        let batchCount = 0;
+        const notifEntries: Array<{uid: string; status: string}> = [];
+
+        for (const doc of appsSnap.docs) {
+          batch.update(doc.ref, {
+            status: "AUTO_CANCELED",
+            canceledAt: now,
+            cancelReason: "TO_MANUALLY_CLOSED",
+          });
+          notifEntries.push({
+            uid: doc.data().uid as string ?? "",
+            status: doc.data().status as string ?? "",
+          });
+          batchCount++;
+          canceledCount++;
+
+          if (batchCount >= 499) {
+            await batch.commit();
+            batch = db.batch();
+            batchCount = 0;
+          }
+        }
+        if (batchCount > 0) await batch.commit();
+
+        // 4. 알림 발송 (배치 커밋 후 — 실패해도 TO 마감 유지)
+        try {
+          const notifBatch = db.batch();
+          for (const entry of notifEntries) {
+            if (!entry.uid) continue;
+            const typeLabel = entry.status === "CONFIRMED" ? "확정 취소" :
+                              entry.status === "CONTRACT_PENDING" ? "계약 취소" : "지원 취소";
+            notifBatch.set(
+              db.collection("users").doc(entry.uid).collection("notifications").doc(),
+              {
+                userId: entry.uid,
+                type: "confirmationCanceled",
+                title: `${typeLabel} 안내`,
+                body: `${businessName} "${toTitle}" 공고가 마감되어 ${typeLabel}되었습니다.`,
+                data: {toId, businessId, screen: "mySchedule", reason: "TO_MANUALLY_CLOSED"},
+                isRead: false,
+                createdAt: now,
+              }
+            );
+          }
+          await notifBatch.commit();
+        } catch (notifErr) {
+          console.error("⚠️ [closeTOManually] 알림 발송 실패 (TO 마감은 완료):", notifErr);
+        }
+      }
+    } catch (appErr) {
+      console.error("⚠️ [closeTOManually] 지원서 AUTO_CANCELED 처리 실패 (TO는 마감됨):", appErr);
+    }
+
+    console.log(`✅ [closeTOManually] TO ${toId} 마감 완료, ${canceledCount}건 AUTO_CANCELED`);
+    return {success: true, canceledCount};
+  }
+);

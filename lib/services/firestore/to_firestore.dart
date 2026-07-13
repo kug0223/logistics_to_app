@@ -1099,30 +1099,6 @@ extension TOFirestore on FirestoreService {
     debugPrint('✅ [TO] 슬롯 ${dates.length}개 생성 완료');
   }
 
-  Future<void> _sendTOCanceledNotification({
-    required String applicantUid,
-    required String businessName,
-    required String businessId,
-    required String toTitle,
-    required String status,
-    DateTime? workDate,  // L-1: 실제 근무일 전달 — null이면 현재 시각 사용
-  }) async {
-    try {
-      await createNotification(
-        NotificationModel.createTOCanceled(
-          userId: applicantUid,
-          businessName: businessName,
-          businessId: businessId,
-          toTitle: toTitle,
-          workDate: workDate ?? DateTime.now(),
-          status: status,
-        ),
-      );
-    } catch (e) {
-      debugPrint('⚠️ TO 취소 알림 전송 실패: $e');
-    }
-  }
-
   /// 슬롯 일괄 변경(마감/재오픈) 후 TO 상태를 동기화한다.
   /// - 모집 가능 슬롯(open/full)이 없으면 TO를 자동 CLOSED
   /// - 모집 가능 슬롯이 생기고 TO가 CLOSED이면 ACTIVE로 복구
