@@ -4781,8 +4781,18 @@ export const callableFinalizeWorkerSignature = onCall(
     if (!contractId || typeof contractId !== "string") {
       throw new HttpsError("invalid-argument", "contractId가 필요합니다.");
     }
-    if (!sigUrl || typeof sigUrl !== "string") {
+    if (!sigUrl || typeof sigUrl !== "string" || sigUrl.length > 2048) {
       throw new HttpsError("invalid-argument", "sigUrl이 필요합니다.");
+    }
+    // [M-03-FIX] sigUrl이 해당 contractId 경로인지 검증
+    //   → 타인 서명 URL 주입으로 타인 서명이 계약서에 등록되는 공격 차단
+    const sigPathMatch = sigUrl.match(/\/o\/([^?#]+)/);
+    if (!sigPathMatch) {
+      throw new HttpsError("invalid-argument", "유효하지 않은 서명 이미지 URL 형식입니다.");
+    }
+    const sigStoragePath = decodeURIComponent(sigPathMatch[1]);
+    if (!sigStoragePath.startsWith(`contracts/${contractId}/`)) {
+      throw new HttpsError("permission-denied", "해당 계약서의 서명 이미지만 등록 가능합니다.");
     }
     if (!workerSignatureHash || typeof workerSignatureHash !== "string") {
       throw new HttpsError("invalid-argument", "workerSignatureHash가 필요합니다.");
@@ -4980,13 +4990,19 @@ export const callableRecordTermsConsent = onCall(
     if (!consentRecord || typeof consentRecord !== "object" || Array.isArray(consentRecord)) {
       throw new HttpsError("invalid-argument", "consentRecord가 필요합니다.");
     }
+    // [M-04-FIX] 항목 수·키 길이 제한 — 무제한 입력으로 Firestore 문서 크기 초과 방지
+    const entries = Object.entries(consentRecord);
+    if (entries.length > 20) {
+      throw new HttpsError("invalid-argument", "consentRecord 항목이 너무 많습니다.");
+    }
 
     const serverTime = admin.firestore.FieldValue.serverTimestamp();
     const consentWithTimestamps: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(consentRecord)) {
+    for (const [key, value] of entries) {
+      if (typeof key !== "string" || key.length > 100) continue; // 비정상 키 skip
       consentWithTimestamps[key] = {
         agreed: !!value.agreed,
-        version: String(value.version ?? ""),
+        version: String(value.version ?? "").slice(0, 50),
         agreedAt: serverTime,  // 서버 타임스탬프 강제
       };
     }
@@ -5015,9 +5031,14 @@ export const callableMarkIdCardVerified = onCall(
     if (!imageUrl || typeof imageUrl !== "string" || imageUrl.length > 2048) {
       throw new HttpsError("invalid-argument", "imageUrl이 필요합니다.");
     }
-    // Storage URL이 본인 경로인지 검증 — 타인 경로 이미지로 인증 취득 차단
-    if (!imageUrl.includes(`/users%2F${callerUid}%2F`) &&
-        !imageUrl.includes(`/users/${callerUid}/`)) {
+    // [M-01-FIX] includes()는 쿼리 파라미터/프래그먼트에도 매칭 → 경로 우회 가능
+    //   → /o/{encoded_path} 부분만 추출 후 startsWith로 정확히 검증
+    const pathMatch = imageUrl.match(/\/o\/([^?#]+)/);
+    if (!pathMatch) {
+      throw new HttpsError("invalid-argument", "유효하지 않은 Storage URL 형식입니다.");
+    }
+    const storagePath = decodeURIComponent(pathMatch[1]);
+    if (!storagePath.startsWith(`users/${callerUid}/`)) {
       throw new HttpsError("permission-denied", "본인 신분증 이미지만 등록 가능합니다.");
     }
 
@@ -6954,6 +6975,18 @@ export const callableApplyNoShowPenalty = onCall(
         "failed-precondition",
         `노쇼 패널티 적용 불가한 상태입니다 (현재: ${appStatus})`
       );
+    }
+
+    // [M-08-FIX] workDate 서버 재검증 — 클라이언트 shouldApplyPenalty 우회 차단
+    //   당일 취소(24시간 이내) 여부를 서버 Firestore 데이터 기준으로 재확인
+    const workDateTs = appData.workDate as admin.firestore.Timestamp | undefined;
+    if (!workDateTs) {
+      throw new HttpsError("failed-precondition", "근무 날짜 정보를 찾을 수 없습니다.");
+    }
+    const diffMs = Math.abs(Date.now() - workDateTs.toMillis());
+    if (diffMs > 48 * 60 * 60 * 1000) {
+      // 48시간 허용 — 자정 전후 네트워크 지연 + 야간근무(익일 종료) 케이스 포함
+      throw new HttpsError("failed-precondition", "당일 취소에만 노쇼 패널티가 적용됩니다.");
     }
 
     const userRef = db.collection("users").doc(userId);
@@ -11847,6 +11880,13 @@ export const callableCheckIn = onCall(
     if (!applicationId || !businessId || !businessName || !workType || !workDateMs) {
       throw new HttpsError("invalid-argument", "applicationId, businessId, businessName, workType, workDateMs가 필요합니다.");
     }
+    // [M-07-FIX] scheduledStartTime HH:MM 형식 검증 — 비정상 형식으로 NaN 날짜 생성 방지
+    if (scheduledStartTime !== undefined) {
+      const [sh, sm] = scheduledStartTime.split(":").map(Number);
+      if (!/^\d{2}:\d{2}$/.test(scheduledStartTime) || sh > 23 || sm > 59 || isNaN(sh) || isNaN(sm)) {
+        throw new HttpsError("invalid-argument", "scheduledStartTime은 HH:MM 형식이어야 합니다.");
+      }
+    }
 
     // 1. 사용자 상태 확인
     const userSnap = await db.collection("users").doc(callerUid).get();
@@ -11989,6 +12029,16 @@ export const callableCheckOut = onCall(
     if (!attendanceId || !workDateMs) {
       throw new HttpsError("invalid-argument", "attendanceId와 workDateMs가 필요합니다.");
     }
+    // [M-07-FIX] scheduledStartTime/scheduledEndTime HH:MM 형식 검증
+    const _checkTimeFormat = (t: string | undefined, label: string) => {
+      if (t === undefined) return;
+      const [h, m] = t.split(":").map(Number);
+      if (!/^\d{2}:\d{2}$/.test(t) || h > 23 || m > 59 || isNaN(h) || isNaN(m)) {
+        throw new HttpsError("invalid-argument", `${label}은 HH:MM 형식이어야 합니다.`);
+      }
+    };
+    _checkTimeFormat(scheduledStartTime, "scheduledStartTime");
+    _checkTimeFormat(scheduledEndTime, "scheduledEndTime");
 
     const ref = db.collection("attendance").doc(attendanceId);
 
