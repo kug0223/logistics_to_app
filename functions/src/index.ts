@@ -8542,6 +8542,11 @@ export const callableGetContractsByBiz = onCall(
     if (applicationIds !== undefined && (!Array.isArray(applicationIds) || applicationIds.length === 0)) {
       throw new HttpsError("invalid-argument", "applicationIds가 비어있습니다.");
     }
+    // [CONTRACT-DOS-FIX] applicationIds 배열 50개 초과 시 거부
+    //   초과 시 병렬 Firestore 쿼리 폭발 → CF 메모리/타임아웃 소진 및 과금 급증
+    if (Array.isArray(applicationIds) && applicationIds.length > 50) {
+      throw new HttpsError("invalid-argument", "applicationIds는 최대 50개까지 허용됩니다.");
+    }
 
     await assertBizAdmin(callerUid, businessId);
 
@@ -8586,7 +8591,10 @@ export const callableGetContractsByBiz = onCall(
       if (applicationId) q = q.where("applicationId", "==", applicationId);
       if (startAfterId) {
         const cursorSnap = await db.collection("employment_contracts").doc(startAfterId).get();
-        if (cursorSnap.exists) q = q.startAfter(cursorSnap);
+        // [CONTRACT-CURSOR-FIX] 커서 문서가 요청 사업장 소속인지 검증 — 타 사업장 커서로 페이지네이션 오동작 차단
+        if (cursorSnap.exists && cursorSnap.data()?.businessId === businessId) {
+          q = q.startAfter(cursorSnap);
+        }
       }
       q = q.limit(cap);
       const snap = await q.get();
@@ -8995,6 +9003,19 @@ export const callableApproveTermination = onCall(
       await batch.commit();
     }
 
+    // 퇴직 확정 → Auth 토큰 즉시 무효화 (수동 해지 경로 — D+3 자동 승인과 동일 패턴)
+    try {
+      await admin.auth().revokeRefreshTokens(workerUid);
+    } catch (tokenErr) {
+      console.warn(`[해지승인] revokeRefreshTokens 실패 uid=${workerUid}: ${tokenErr}`);
+      await db.collection("pending_token_revocations").doc(workerUid).set({
+        uid: workerUid,
+        reason: "TERMINATION_MANUALLY_APPROVED",
+        applicationId,
+        failedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }).catch(() => {/* 기록 실패는 무시 */});
+    }
+
     const terminationDateStr = app.terminationEffectiveDate
       ? (() => { const d = app.terminationEffectiveDate!.toDate(); return `${d.getMonth()+1}/${d.getDate()}`; })()
       : null;
@@ -9150,6 +9171,19 @@ export const callableApproveResignation = onCall(
         );
       }
       await batch.commit();
+    }
+
+    // 퇴직 확정 → Auth 토큰 즉시 무효화 (수동 퇴사 승인 경로 — D+3 자동 승인과 동일 패턴)
+    try {
+      await admin.auth().revokeRefreshTokens(app.uid);
+    } catch (tokenErr) {
+      console.warn(`[퇴사승인] revokeRefreshTokens 실패 uid=${app.uid}: ${tokenErr}`);
+      await db.collection("pending_token_revocations").doc(app.uid).set({
+        uid: app.uid,
+        reason: "RESIGNATION_MANUALLY_APPROVED",
+        applicationId,
+        failedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }).catch(() => {/* 기록 실패는 무시 */});
     }
 
     // 퇴사일 이후 scheduled attendance → absent 일괄 처리
