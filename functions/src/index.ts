@@ -535,8 +535,17 @@ export const onMemberInvitationAccepted = onDocumentUpdated(
       return;
     }
 
-    await db.collection("users").doc(targetUid).update({subAdminOf: businessId});
-    console.log(`✅ [초대수락 트리거] subAdminOf 설정 완료: uid=${targetUid}, bizId=${businessId}`);
+    try {
+      await db.collection("users").doc(targetUid).update({subAdminOf: businessId});
+      console.log(`✅ [초대수락 트리거] subAdminOf 설정 완료: uid=${targetUid}, bizId=${businessId}`);
+    } catch (e: any) {
+      // [INVITE-RETRY-FIX] NOT_FOUND(code 5): 탈퇴 사용자 — 재시도해도 동일하게 실패하므로 중단
+      if ((e as any)?.code === 5) {
+        console.error(`⚠️ [초대수락 트리거] 사용자 없음 — 재시도 없음: uid=${targetUid}`, e);
+        return;
+      }
+      throw e; // 그 외(네트워크 오류 등)는 재전파 → CF 재시도
+    }
   }
 );
 
@@ -1249,7 +1258,9 @@ export const onReviewCreated = onDocumentCreated(
     // [특이사항] requestId 없는 리뷰는 Firestore 규칙이 근무 이력을 검증하지 못해
     // 가짜 리뷰가 Firestore에 잔류할 수 있음. 공개는 안 되지만 데이터 오염 방지 위해 삭제.
     if (!requestId) {
-      try { await event.data?.ref.delete(); } catch (_) {}
+      try { await event.data?.ref.delete(); } catch (e) {
+        console.error(`[가짜 리뷰 차단] requestId 없음 삭제 실패 (reviewId=${reviewId}):`, e);
+      }
       console.log(`❌ [가짜 리뷰 차단] requestId 없음 → 삭제: ${reviewId}`);
       return;
     }
@@ -1303,7 +1314,9 @@ export const onReviewCreated = onDocumentCreated(
     });
 
     if (blocked) {
-      try { await event.data?.ref.delete(); } catch (_) {}
+      try { await event.data?.ref.delete(); } catch (e) {
+        console.error(`[가짜 리뷰 차단] workerId 불일치 삭제 실패 (reviewId=${reviewId}):`, e);
+      }
       console.log(`❌ [가짜 리뷰 차단] review_request 미존재 또는 workerId 불일치 → 삭제: ${reviewId}`);
       return;
     }
@@ -1434,8 +1447,11 @@ export const onWageConfirmed = onDocumentUpdated(
         requestKey, year, month, "worker", businessId
       );
       console.log(`✅ [임금 확정] 리뷰 요청 생성: ${requestKey}`);
-    } catch {
-      // 이미 존재 — 무시 (동일 월 중복 마감 처리 등)
+    } catch (e: any) {
+      // [WAGE-1-FIX] AlreadyExists(code 6) 외 오류는 재전파 → CF 런타임 재시도
+      //   기존: catch {} 로 모든 오류 소거 → 네트워크 오류도 무시됨
+      if ((e as any)?.code !== 6) throw e;
+      // 이미 존재 (동일 월 중복 마감 처리 또는 CF 재시도)
       console.log(`  ℹ️ [임금 확정] 리뷰 요청 이미 존재: ${requestKey}`);
     }
   }
@@ -2667,7 +2683,11 @@ async function runIntegrityCheck(now: Timestamp): Promise<void> {
       .collection("tos")
       .where("status", "==", "ACTIVE")
       .where("applicationDeadline", "<=", now)
+      .limit(500)
       .get();
+    if (activeTOs.size >= 500) {
+      console.warn("  ⚠️ [정합성 검사] ACTIVE→CLOSED 대상 500건 limit 도달 — 다음 실행에서 나머지 처리");
+    }
 
     let integrityBatch = db.batch();
     let integrityBatchCount = 0;
@@ -10114,6 +10134,17 @@ export const callableRequestResignation = onCall(
     if (resignDateIso) {
       const parsed = new Date(resignDateIso);
       if (isNaN(parsed.getTime())) throw new HttpsError("invalid-argument", "유효하지 않은 날짜");
+      // [RESIGN-DATE-FIX] 과거 소급 및 극미래 날짜 차단
+      //   과거 퇴사일 허용 시 callableApproveResignation이 이미 완료된 attendance를 absent로 변경
+      const nowMs = Date.now();
+      const thirtyDaysAgoMs = nowMs - 30 * 24 * 60 * 60 * 1000;
+      const twoYearsMs = nowMs + 2 * 365 * 24 * 60 * 60 * 1000;
+      if (parsed.getTime() < thirtyDaysAgoMs) {
+        throw new HttpsError("invalid-argument", "퇴사일은 30일 이전으로 소급할 수 없습니다.");
+      }
+      if (parsed.getTime() > twoYearsMs) {
+        throw new HttpsError("invalid-argument", "퇴사일은 2년 이내여야 합니다.");
+      }
     }
 
     // 트랜잭션: 중복 퇴사 요청 방지 + effectiveDate를 트랜잭션 내에서 계산
