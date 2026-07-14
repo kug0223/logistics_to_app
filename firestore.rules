@@ -44,17 +44,15 @@ service cloud.firestore {
     // [BUGFIX] null/빈 businessId 전달 시 get() 오류 방지 — whereIn 복합쿼리에서
     //          request.query.filters.businessId가 null 반환 시 isAdminOf(null) 오류로
     //          PERMISSION_DENIED가 발생하던 문제를 early-return으로 차단
+    // [W49:90 FIX] null 타입 경고 제거 — let biz = ... : null 대신 exists() 분리 패턴.
+    //              isLoggedIn()을 exists() 앞으로 이동해 미인증 요청 시 Firestore 읽기 생략.
     function isAdminOf(businessId) {
       let valid = businessId is string && businessId.size() > 0;
-      let biz = valid ? get(/databases/$(database)/documents/businesses/$(businessId)) : null;
-      // [특이사항] Firebase Rules는 단일 return만 허용 — if 문 사용 불가.
-      // isLoggedIn()을 biz null 체크 뒤로 이동해 biz가 없을 때 불필요한 auth 평가 회피.
       return valid &&
-        biz != null &&
-        biz.data != null &&
-        isLoggedIn() && (
-          biz.data.get('ownerId', '') == request.auth.uid ||
-          ('adminIds' in biz.data && request.auth.uid in biz.data.adminIds)
+        isLoggedIn() &&
+        exists(/databases/$(database)/documents/businesses/$(businessId)) && (
+          get(/databases/$(database)/documents/businesses/$(businessId)).data.get('ownerId', '') == request.auth.uid ||
+          request.auth.uid in get(/databases/$(database)/documents/businesses/$(businessId)).data.get('adminIds', {})
         );
     }
     function isSubAdminOf(businessId) {
@@ -697,6 +695,10 @@ service cloud.firestore {
                        // [RULE-FIX-M2] CF-ONLY 전이 차단: CONTRACT_PENDING→CONFIRMED
                        //   callableFinalizeWorkerSignature 전용 — 관리자 직접 전이 시 서명 검증 우회 가능
                        !(resource.data.status == 'CONTRACT_PENDING' &&
+                         request.resource.data.status == 'CONFIRMED') &&
+                       // [S6-FIX] PENDING→CONFIRMED 직접 전이 차단 — callableConfirmApplication CF(Admin SDK)만 허용
+                       //   클라이언트 직접 전이 시 totalConfirmed 카운터 증가 없이 확정 상태 진입 가능
+                       !(resource.data.status == 'PENDING' &&
                          request.resource.data.status == 'CONFIRMED') &&
                        // [MEDIUM-1] CANCELED/AUTO_CANCELED → CONFIRMED 직접 전이 차단
                        //   취소된 지원서를 totalConfirmed CF 없이 직접 확정 상태로 변경 시 카운터 불일치

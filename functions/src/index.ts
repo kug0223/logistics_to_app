@@ -5215,6 +5215,9 @@ export const callableCreateTO = onCall(
     };
     // creatorUID 재확인 (callerUid 기준으로 고정)
     finalData.creatorUID = callerUid;
+    // [S5-FIX] 서버 전용 집계 카운터 — 클라이언트 주입 값 무시하고 0으로 강제
+    finalData.totalConfirmed = 0;
+    finalData.totalPending = 0;
 
     const toRef = await db.collection("tos").add(finalData);
     return {toId: toRef.id};
@@ -6719,8 +6722,10 @@ export const onAttendanceCreated = onDocumentCreated(
 
     // yearMonth 안전망 — Dart checkIn()이 누락했을 경우 CF에서 채움
     if (!data.yearMonth && workDate) {
-      const d = workDate.toDate();
-      updates.yearMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      // [KST-FIX] workDate.toDate().getFullYear() = UTC 기준 → KST 날짜 1일 오차
+      const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+      const dKST = new Date(workDate.toDate().getTime() + KST_OFFSET_MS);
+      updates.yearMonth = `${dKST.getUTCFullYear()}-${String(dKST.getUTCMonth() + 1).padStart(2, "0")}`;
     }
 
     // 1. Application 조회 → 예정 출근 시각
@@ -6752,25 +6757,11 @@ export const onAttendanceCreated = onDocumentCreated(
     if (scheduledStart && workDate) {
       try {
         const checkInDate = checkInTime.toDate();
-        const workDateObj = workDate.toDate();
-        // 야간 근무: checkInTime 날짜가 workDate와 다르면 다음 날 기준으로 예정 시각 계산
-        const isNextDay =
-          checkInDate.getFullYear() !== workDateObj.getFullYear() ||
-          checkInDate.getMonth() !== workDateObj.getMonth() ||
-          checkInDate.getDate() !== workDateObj.getDate();
-
+        // [KST-FIX] workDate.toMillis() = KST 자정(UTC ms). KST h:m 시각 = workDate.toMillis() + h:m ms.
+        // 당일·야간교대 모두 단일 공식으로 처리 — isNextDay 분기 불필요.
         const [schedHour, schedMin] = scheduledStart.split(":").map(Number);
-        let isLate: boolean;
-        if (isNextDay) {
-          const schedDate = new Date(workDateObj);
-          schedDate.setDate(schedDate.getDate() + 1);
-          schedDate.setHours(schedHour, schedMin, 0, 0);
-          isLate = checkInDate > schedDate;
-        } else {
-          isLate =
-            checkInDate.getHours() > schedHour ||
-            (checkInDate.getHours() === schedHour && checkInDate.getMinutes() > schedMin);
-        }
+        const scheduledStartMs = workDate.toMillis() + (schedHour * 60 + schedMin) * 60000;
+        const isLate = checkInDate.getTime() > scheduledStartMs;
 
         const serverStatus = isLate ? "late" : "present";
         if ((data.status as string) !== serverStatus) {
@@ -8068,11 +8059,13 @@ export const callableCalculateAndConfirmWage = onCall(
       if (d.payScheduleType != null) wd.payScheduleType = d.payScheduleType;
       if (d.payScheduleDay != null) wd.payScheduleDay = d.payScheduleDay;
 
+      // [S3-FIX] attendance.yearMonth 필드는 YYYY-MM 형식으로 통일. d.yearMonth는 YYYYMM(입력 검증)이므로 변환.
+      const yearMonthForDoc = `${d.yearMonth.substring(0, 4)}-${d.yearMonth.substring(4, 6)}`;
       tx.update(attRef2, {
         wageStatus: "calculated",
         finalWage: effectiveNetWage2,
         wageDetail: wd,
-        yearMonth: d.yearMonth,
+        yearMonth: yearMonthForDoc,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
     });
@@ -9231,6 +9224,13 @@ export const callableCloseSlots = onCall(
 
     await assertBizAdmin(callerUid, businessId);
 
+    // [S4-FIX] toId ↔ businessId 교차검증 — 다른 사업장 TO 슬롯 조작 차단
+    const toDocSnap = await db.collection("tos").doc(toId).get();
+    if (!toDocSnap.exists) throw new HttpsError("not-found", "TO를 찾을 수 없습니다.");
+    if ((toDocSnap.data()?.businessId as string) !== businessId) {
+      throw new HttpsError("permission-denied", "해당 TO가 요청한 사업장에 속하지 않습니다.");
+    }
+
     const now = admin.firestore.FieldValue.serverTimestamp();
 
     // 1. 슬롯 closed 설정
@@ -9394,6 +9394,11 @@ export const callableDeleteSlots = onCall(
     const toBusinessName = (toData.businessName as string) ?? "";
     const toBusinessId = (toData.businessId as string) ?? businessId;
     const toTitle = (toData.title as string) ?? "";
+
+    // [S4-FIX] toId ↔ businessId 교차검증 — 다른 사업장 TO 슬롯 삭제 차단
+    if (toBusinessId !== businessId) {
+      throw new HttpsError("permission-denied", "해당 TO가 요청한 사업장에 속하지 않습니다.");
+    }
 
     // 슬롯 카운터 직접 읽기
     const slotSnaps = await Promise.all(
@@ -11446,9 +11451,11 @@ export const callableUpdateWageDetail = onCall(
         finalWage = Math.max(0, Math.min(netWage, 999999999));
       }
 
-      // yearMonth 추출 (FormatHelper.formatYearMonthISO 재구현: YYYY-MM)
-      const workDate: Date = (freshData.workDate as admin.firestore.Timestamp)?.toDate?.() ?? new Date();
-      const yearMonth = `${workDate.getFullYear()}-${String(workDate.getMonth() + 1).padStart(2, "0")}`;
+      // yearMonth 추출 (YYYY-MM 형식 통일). [KST-FIX] workDate = KST 자정 UTC ms → getFullYear() UTC 오차
+      const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+      const wdTimestamp = freshData.workDate as admin.firestore.Timestamp | undefined;
+      const wdKST = new Date((wdTimestamp?.toMillis() ?? Date.now()) + KST_OFFSET_MS);
+      const yearMonth = `${wdKST.getUTCFullYear()}-${String(wdKST.getUTCMonth() + 1).padStart(2, "0")}`;
 
       // [V4-FIX] 민감 필드 주입 차단 — spread 전 삭제
       // confirmedBy/confirmedAt을 클라이언트가 주입해도 저장 안 됨; calculatedBy/calculatedAt은 CF가 강제 덮어씀
@@ -11709,27 +11716,6 @@ interface AttendanceRulesData {
   earlyLeaveUnit?: number;   // 조퇴 반올림 단위, default: 30
 }
 
-/** 계약 출근 시각 계산 — workDate 기준 "HH:mm" 조합 */
-function _contractStartAt(workDate: Date, hhMM: string): Date {
-  const [h, m] = hhMM.split(":").map(Number);
-  return new Date(workDate.getFullYear(), workDate.getMonth(), workDate.getDate(), h, m, 0, 0);
-}
-
-/**
- * 계약 퇴근 시각 계산 — end < start 면 야간교대(+1일) 자동 처리
- * end == start(24시간) 케이스: 동일 → +1일 처리 없음 (Dart contractEndAt 동일)
- */
-function _contractEndAt(workDate: Date, startHHMM: string, endHHMM: string): Date {
-  const [sh, sm] = startHHMM.split(":").map(Number);
-  const [eh, em] = endHHMM.split(":").map(Number);
-  const startMs = new Date(workDate.getFullYear(), workDate.getMonth(), workDate.getDate(), sh, sm, 0, 0).getTime();
-  let endDate = new Date(workDate.getFullYear(), workDate.getMonth(), workDate.getDate(), eh, em, 0, 0);
-  // end < start → 야간교대 +1일
-  if (endDate.getTime() < startMs) {
-    endDate = new Date(endDate.getTime() + 24 * 60 * 60 * 1000);
-  }
-  return endDate;
-}
 
 /** [MEDIUM] 클라이언트 제공 attendanceRules 극단값 클램핑 — lateGrace:9999 등으로 지각 판정 우회 차단 */
 function _clampAttendanceRules(rules: AttendanceRulesData): AttendanceRulesData {
@@ -11740,6 +11726,7 @@ function _clampAttendanceRules(rules: AttendanceRulesData): AttendanceRulesData 
     lateUnit:         Math.min(rules.lateUnit ?? 30, 120),
     lateWindow:       Math.min(rules.lateWindow ?? 30, 120),
     overtimeUnit:     Math.min(rules.overtimeUnit ?? 10, 60),
+    earlyLeaveUnit:   Math.min(rules.earlyLeaveUnit ?? 30, 60),  // [S7-FIX] 클램핑 누락 수정
   };
 }
 
@@ -11877,14 +11864,18 @@ export const callableCheckIn = onCall(
       throw new HttpsError("permission-denied", "확정된 지원만 출근할 수 있습니다.");
     }
 
-    const workDate = new Date(workDateMs);
+    // [KST-FIX] Firebase 서버는 UTC. workDateMs = Dart KST 자정 ms → new Date()는 KST 전날.
+    // workDateMs + 9h 를 UTC로 해석하면 KST 날짜와 일치 → getUTC*()로 KST 날짜 구성.
+    const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+    const workDateKST = new Date(workDateMs + KST_OFFSET_MS);
 
     // 퇴직 이후 출근 차단 (actualResignDate <= workDate)
     if (appData.actualResignDate) {
       const resignDate = (appData.actualResignDate as admin.firestore.Timestamp).toDate();
-      const workDateStart = new Date(workDate.getFullYear(), workDate.getMonth(), workDate.getDate());
-      const resignDateStart = new Date(resignDate.getFullYear(), resignDate.getMonth(), resignDate.getDate());
-      if (resignDateStart <= workDateStart) {
+      const resignDateKST = new Date(resignDate.getTime() + KST_OFFSET_MS);
+      const workDateKSTDay = Date.UTC(workDateKST.getUTCFullYear(), workDateKST.getUTCMonth(), workDateKST.getUTCDate());
+      const resignDateKSTDay = Date.UTC(resignDateKST.getUTCFullYear(), resignDateKST.getUTCMonth(), resignDateKST.getUTCDate());
+      if (resignDateKSTDay <= workDateKSTDay) {
         throw new HttpsError("permission-denied", "퇴직 이후 출근할 수 없습니다.");
       }
     }
@@ -11892,16 +11883,16 @@ export const callableCheckIn = onCall(
     // 휴무일 차단
     if (Array.isArray(appData.leaveDates)) {
       const isLeave = (appData.leaveDates as admin.firestore.Timestamp[]).some((d) => {
-        const ld = d.toDate();
-        return ld.getFullYear() === workDate.getFullYear() &&
-               ld.getMonth() === workDate.getMonth() &&
-               ld.getDate() === workDate.getDate();
+        const ldKST = new Date(d.toDate().getTime() + KST_OFFSET_MS);
+        return ldKST.getUTCFullYear() === workDateKST.getUTCFullYear() &&
+               ldKST.getUTCMonth() === workDateKST.getUTCMonth() &&
+               ldKST.getUTCDate() === workDateKST.getUTCDate();
       });
       if (isLeave) throw new HttpsError("permission-denied", "휴무일에는 출근할 수 없습니다.");
     }
 
     // 3. docId: {applicationId}_{yyyyMMdd}
-    const dateStr = `${workDate.getFullYear()}${String(workDate.getMonth() + 1).padStart(2, "0")}${String(workDate.getDate()).padStart(2, "0")}`;
+    const dateStr = `${workDateKST.getUTCFullYear()}${String(workDateKST.getUTCMonth() + 1).padStart(2, "0")}${String(workDateKST.getUTCDate()).padStart(2, "0")}`;
     const docId = `${applicationId}_${dateStr}`;
     const ref = db.collection("attendance").doc(docId);
 
@@ -11916,21 +11907,21 @@ export const callableCheckIn = onCall(
       let isLate = false;
 
       if (scheduledStartTime) {
-        const cStart = _contractStartAt(workDate, scheduledStartTime);
+        // [KST-FIX] workDateMs(KST 자정 UTC ms) + h:m ms = 해당 KST 계약 시작 시각(UTC ms)
+        const [sh, sm] = scheduledStartTime.split(":").map(Number);
+        const cStart = new Date(workDateMs + (sh * 60 + sm) * 60000);
         const result = _processCheckin(now, cStart, _clampAttendanceRules(attendanceRules ?? {}));
         effectiveCheckIn = result.effectiveCheckIn;
         isLate = result.isLate;
       }
 
-      const yearMonth = `${workDate.getFullYear()}-${String(workDate.getMonth() + 1).padStart(2, "0")}`;
+      const yearMonth = `${workDateKST.getUTCFullYear()}-${String(workDateKST.getUTCMonth() + 1).padStart(2, "0")}`;
       const docData: Record<string, unknown> = {
         applicationId,
         userId: callerUid,
         businessId,
         businessName,
-        workDate: admin.firestore.Timestamp.fromDate(
-          new Date(workDate.getFullYear(), workDate.getMonth(), workDate.getDate())
-        ),
+        workDate: admin.firestore.Timestamp.fromMillis(workDateMs),  // [KST-FIX] KST 자정 ms 그대로 저장
         yearMonth,
         workType,
         checkIn: admin.firestore.Timestamp.fromDate(effectiveCheckIn),
@@ -12004,13 +11995,18 @@ export const callableCheckOut = onCall(
       }
 
       // 반올림 계산 (scheduledStartTime + scheduledEndTime 모두 있을 때만)
-      const workDate = new Date(workDateMs);
       const now = new Date();
       let effectiveCheckOut = now;
       let isEarlyLeave = false;
 
       if (scheduledStartTime && scheduledEndTime) {
-        const cEnd = _contractEndAt(workDate, scheduledStartTime, scheduledEndTime);
+        // [KST-FIX] workDateMs(KST 자정 UTC ms) + h:m ms = KST 계약 시각(UTC ms). 야간교대: end < start → +24h
+        const [sh, sm] = scheduledStartTime.split(":").map(Number);
+        const [eh, em] = scheduledEndTime.split(":").map(Number);
+        const cStartMs = workDateMs + (sh * 60 + sm) * 60000;
+        let cEndMs = workDateMs + (eh * 60 + em) * 60000;
+        if (cEndMs < cStartMs) cEndMs += 24 * 60 * 60 * 1000;  // 야간교대 +1일
+        const cEnd = new Date(cEndMs);
         const result = _processCheckout(now, cEnd, _clampAttendanceRules(attendanceRules ?? {}));
         effectiveCheckOut = result.effectiveCheckOut;
         isEarlyLeave = result.isEarlyLeave;

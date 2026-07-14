@@ -415,7 +415,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (_selectedRole == null) return;
     if (_isSubmitting) return; // _isStepTransitioning 해제(300ms) 후 연타 방지
 
-    // Step 3 사업장 관리자: 입력한 경우에만 유효성 검사 (선택사항)
+    // Step 3 사업장 관리자: 입력한 경우에만 형식 검사 (선택사항)
+    // [DESIGN] 동일 사업자등록번호로 복수 관리자 계정 허용 — 중복 체크 미수행 의도적 설계.
+    //          예: 같은 사업장에 대표와 부관리자가 각자 BUSINESS_ADMIN으로 가입 가능.
     if (_selectedRole == UserRole.BUSINESS_ADMIN) {
       final bizNum = _businessNumberController.text.replaceAll('-', '');
       if (bizNum.isNotEmpty) {
