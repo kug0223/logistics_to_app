@@ -10661,34 +10661,39 @@ export const callableBatchResetAttendance = onCall(
     await assertBizAdmin(callerUid, businessId);
 
     const now = admin.firestore.FieldValue.serverTimestamp();
-    const batch = db.batch();
     const skipped: string[] = [];
 
-    const snaps = await Promise.all(attendanceIds.map((id) => db.collection("attendance").doc(id).get()));
-    for (const snap of snaps) {
-      if (!snap.exists) continue;
-      const data = snap.data()!;
-      // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
-      if (data.businessId !== businessId) { skipped.push(snap.id); continue; }
-      if (data.wageStatus === "calculated" ||
-          data.wageStatus === "confirmed" ||
-          data.wageStatus === "transferred") {
-        skipped.push(snap.id);
-        continue;
+    // [BATCH-RACE-FIX] 비트랜잭션 batch → 단일 트랜잭션으로 전환
+    // 기존: Promise.all(reads) → batch.commit() — read-commit 사이 wageStatus 변경 시 임금 확정 기록 초기화 가능
+    // 수정: 200 reads + N writes 단일 트랜잭션 (ops 최대 400, Firestore 한도 500 이내)
+    await db.runTransaction(async (tx) => {
+      const snaps = await Promise.all(
+        attendanceIds.map((id) => tx.get(db.collection("attendance").doc(id)))
+      );
+      for (const snap of snaps) {
+        if (!snap.exists) continue;
+        const data = snap.data()!;
+        // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
+        if (data.businessId !== businessId) { skipped.push(snap.id); continue; }
+        if (data.wageStatus === "calculated" ||
+            data.wageStatus === "confirmed" ||
+            data.wageStatus === "transferred") {
+          skipped.push(snap.id);
+          continue;
+        }
+        tx.update(snap.ref, {
+          checkIn: admin.firestore.FieldValue.delete(),
+          checkOut: admin.firestore.FieldValue.delete(),
+          status: admin.firestore.FieldValue.delete(),
+          workHours: admin.firestore.FieldValue.delete(),
+          wageStatus: "pending",
+          wageDetail: admin.firestore.FieldValue.delete(),
+          yearMonth: admin.firestore.FieldValue.delete(),
+          updatedAt: now,
+        });
       }
-      batch.update(snap.ref, {
-        checkIn: admin.firestore.FieldValue.delete(),
-        checkOut: admin.firestore.FieldValue.delete(),
-        status: admin.firestore.FieldValue.delete(),
-        workHours: admin.firestore.FieldValue.delete(),
-        wageStatus: "pending",
-        wageDetail: admin.firestore.FieldValue.delete(),
-        yearMonth: admin.firestore.FieldValue.delete(),
-        updatedAt: now,
-      });
-    }
+    });
 
-    await batch.commit();
     return {success: true, processed: attendanceIds.length - skipped.length, skipped};
   }
 );
