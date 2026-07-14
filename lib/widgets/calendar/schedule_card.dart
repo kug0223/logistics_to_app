@@ -275,13 +275,15 @@ class ScheduleCard extends StatelessWidget {
   }
 
   Future<void> _showMenuSheet(BuildContext context) async {
-    // 장기 확정 지원건만 대기 요청 체크
-    final hasPendingRequest = selectedDay != null &&
-            application.isLongTermApplication &&
-            (application.status == AppStatus.confirmed ||
-             application.status == AppStatus.contractPending)
-        ? await _hasPendingRequest(selectedDay!)
-        : false;
+    // 장기 확정 지원건만 대기 요청 체크 (취소 메뉴에 request 객체 필요하므로 직접 조회)
+    ScheduleChangeRequestModel? pendingRequest;
+    if (selectedDay != null &&
+        application.isLongTermApplication &&
+        (application.status == AppStatus.confirmed ||
+         application.status == AppStatus.contractPending)) {
+      pendingRequest = await _getPendingRequest(selectedDay!);
+    }
+    final hasPendingRequest = pendingRequest != null;
 
     if (!context.mounted) return;
 
@@ -356,6 +358,19 @@ class ScheduleCard extends StatelessWidget {
       );
     }
 
+    // [FAIL-SCR-01] 대기중인 요청 취소 항목 — hasPendingRequest일 때 표시
+    AppMenuSheetItem? pendingCancelItem;
+    if (pendingRequest != null) {
+      final req = pendingRequest;
+      pendingCancelItem = AppMenuSheetItem(
+        icon: Icons.undo,
+        label: '요청 취소',
+        color: AppColors.error,
+        isDanger: true,
+        onTap: () => _cancelPendingRequest(context, req),
+      );
+    }
+
     AppMenuSheet.show(
       context: context,
       // [BUG-수정] M-5: 대기 요청이 있으면 headerSubtitle로 안내 표시 (메뉴 자체는 열림)
@@ -390,9 +405,28 @@ class ScheduleCard extends StatelessWidget {
               onTap: () => _handleMenuAction(context, 'write_review'),
             ),
         ],
+        if (pendingCancelItem != null) [pendingCancelItem],
         if (cancelItem != null) [cancelItem],
       ],
     );
+  }
+
+  /// [FAIL-SCR-01] 대기중인 요청 취소
+  Future<void> _cancelPendingRequest(
+    BuildContext context,
+    ScheduleChangeRequestModel request,
+  ) async {
+    final success = await FirestoreService().cancelScheduleChangeRequest(
+      requestId: request.id,
+      canceledByUid: application.uid,
+    );
+    if (!context.mounted) return;
+    if (success) {
+      ToastHelper.showSuccess('요청이 취소되었습니다');
+      onChanged?.call();
+    } else {
+      ToastHelper.showError('요청 취소에 실패했습니다');
+    }
   }
 
   /// ✅ 메뉴 액션 처리
@@ -1148,12 +1182,6 @@ class ScheduleCard extends StatelessWidget {
     }
   }
 
-  /// ⭐ 해당 날짜에 대기중인 요청이 있는지 확인
-  Future<bool> _hasPendingRequest(DateTime date) async {
-    final request = await _getPendingRequest(date);
-    return request != null;
-  }
-  
   /// ⭐ 해당 날짜의 대기중인 요청 가져오기
   Future<ScheduleChangeRequestModel?> _getPendingRequest(DateTime date) async {
     final firestoreService = FirestoreService();

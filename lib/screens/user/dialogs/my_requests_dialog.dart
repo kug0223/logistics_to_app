@@ -82,10 +82,11 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
 
       // 1. 스케줄 변경 요청 (PENDING 기준 필터)
       // EXTRA_WORK는 requesterType과 무관하게 지원자에게 항상 표시 (관리자→지원자 방향이지만 혼용 기록 방어)
-      // 그 외 타입은 관리자가 보낸(isAdminRequest) 경우만 표시
+      // 그 외 타입은 관리자가 보낸(isAdminRequest) 또는 근무자 본인이 보낸(isApplicantRequest) 경우 표시
+      // [FAIL-SCR-01] isApplicantRequest 추가 — 근무자 발신 LEAVE/CANCEL_LEAVE/CANCEL_EXTRA 요청도 목록에 포함
       for (final req in scheduleRequests) {
         if (req.isPending &&
-            (req.isExtraWorkRequest || req.isAdminRequest)) {
+            (req.isExtraWorkRequest || req.isAdminRequest || req.isApplicantRequest)) {
           notifications.add(_NotificationItem(
             type: NotificationItemType.scheduleChange,
             data: req,
@@ -295,9 +296,40 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
             _buildStatusChip('대기중', AppColors.warning),
           ],
         ),
-        trailing: null,
+        trailing: request.isApplicantRequest
+            ? IconButton(
+                icon: const Icon(Icons.close),
+                color: AppColors.error,
+                tooltip: '요청 취소',
+                onPressed: _isProcessing ? null : () => _cancelScheduleRequest(request),
+              )
+            : null,
       ),
     );
+  }
+
+  /// [FAIL-SCR-01] 근무자 발신 스케줄 변경 요청 취소
+  Future<void> _cancelScheduleRequest(ScheduleChangeRequestModel request) async {
+    if (_isProcessing) return;
+    setState(() => _isProcessing = true);
+    try {
+      final success = await _firestoreService.cancelScheduleChangeRequest(
+        requestId: request.id,
+        canceledByUid: widget.applicantUid,
+      );
+      if (!mounted) return;
+      if (success) {
+        ToastHelper.showSuccess('요청이 취소되었습니다');
+        widget.onChanged();
+        await _loadAllNotifications();
+      } else {
+        ToastHelper.showError('요청 취소에 실패했습니다');
+      }
+    } catch (e) {
+      if (mounted) ToastHelper.showError('요청 취소에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
   }
 
   // ═══════════════════════════════════════════════════════════
