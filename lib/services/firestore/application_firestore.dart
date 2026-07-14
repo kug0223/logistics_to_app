@@ -255,6 +255,10 @@ extension ApplicationFirestore on FirestoreService {
   // ───────────────────────────────────────────────────────
 
   /// 공고 지원 (flex: slotId 필수, contract: slotId null)
+  /// [CF 이전 2026-07-14] callableApplyToTO — 검증+쓰기+카운터 증감 원자화
+  ///   이전 이유: 클라이언트 runTransaction(검증)과 batch(쓰기) 분리로 TOCTOU 가능
+  ///             서류/블랙리스트/제재/시간충돌 검증이 클라이언트에서만 이루어져 위조 가능
+  /// [A02-FIX] 복합 docId: CF에서 동일하게 계산 — 동시 지원 시 트랜잭션 충돌로 하나만 성공
   Future<bool> applyToTO({
     required String toId,
     String? slotId,
@@ -279,498 +283,59 @@ extension ApplicationFirestore on FirestoreService {
   }) async {
     NetworkChecker.instance.assertOnline('지원하려면 인터넷 연결이 필요합니다.');
     try {
-      // ── 1. 사용자 서류 체크 ──
-      final userDoc = await _firestore.collection('users').doc(uid).get(const GetOptions(source: Source.server));
-      if (!userDoc.exists) {
-        ToastHelper.showError('사용자 정보를 찾을 수 없습니다.');
-        return false;
-      }
-      final userData = userDoc.data()!;
-      if (userData['idCardImageUrl'] == null) {
-        ToastHelper.showError('신분증 등록이 필요합니다.');
-        return false;
-      }
-      if (userData['bankName'] == null || userData['accountNumber'] == null) {
-        ToastHelper.showError('통장 정보 등록이 필요합니다.');
-        return false;
-      }
-      if (userData['bankbookImageUrl'] == null) {
-        ToastHelper.showError('통장사본 등록이 필요합니다.');
-        return false;
-      }
-
-      // ── 1.1. 블랙리스트 체크 ──
-      if (userData['isBlacklisted'] == true) {
-        final reason = userData['blacklistReason'] as String? ?? '이용 정책 위반';
-        ToastHelper.showError('이용 제한된 계정입니다.\n사유: $reason\n고객센터에 문의해주세요.');
-        return false;
-      }
-
-      // ── 1.2. 본인인증 체크 (PASS 인증만, 이메일 인증 제거됨) ──
-      final passVerified = userData['ci'] != null && userData['passVerifiedAt'] != null;
-      if (!passVerified) {
-        ToastHelper.showError('본인인증이 필요합니다.\n설정 > 본인인증에서 완료해주세요.');
-        return false;
-      }
-
-      // ── 1.3. 신분증 인증 체크 (단기 공고 지원 시 필수) ──
-      // 장기공고(contract type, slotId==null)는 계약서 서명 시 신분증 확인하므로 단기만 체크
-      // [SAFE] isIdVerified는 OCR(이름+생년월일 일치) 통과 시 자동으로 true 세팅됨.
-      // 수동 관리자 승인 없음 — "심사 중 상태"가 존재하지 않으므로 별도 심사상태 체크 불필요.
-      if (slotId != null && userData['isIdVerified'] != true) {
-        ToastHelper.showError('신분증 인증 후 지원할 수 있습니다.\n설정 > 서류 관리에서 신분증을 등록해주세요.');
-        return false;
-      }
-
-      // ── 1.4. 제재 상태 체크 ──
-      final restrictedUntilTs = userData['restrictedUntil'] as Timestamp?;
-      if (restrictedUntilTs != null && restrictedUntilTs.toDate().isAfter(DateTime.now())) {
-        final restrictedDate = restrictedUntilTs.toDate().toLocal();
-        final remainDays = restrictedDate.difference(DateTime.now()).inDays + 1;
-        ToastHelper.showError('무단 결근 페널티로 $remainDays일 동안 지원이 제한됩니다.\n(해제일: ${restrictedDate.month}/${restrictedDate.day})');
-        return false;
-      }
-
-      // ── 1.5. TO / 슬롯 상태 · 마감 · 정원 체크 ──
-      final toDoc = await _firestore.collection('tos').doc(toId).get(const GetOptions(source: Source.server));
-      if (!toDoc.exists) {
-        ToastHelper.showError('공고를 찾을 수 없습니다.');
-        return false;
-      }
-      final toData = toDoc.data()!;
-      if (toData['status'] == TOStatus.draft) {
-        ToastHelper.showError('비공개 공고에는 지원할 수 없습니다.');
-        return false;
-      }
-      if (toData['isManualClosed'] == true ||
-          toData['status'] == TOStatus.closed ||
-          toData['status'] == TOStatus.full) {
-        ToastHelper.showError('마감된 공고입니다.');
-        return false;
-      }
-      // 게시 기간 만료 또는 지원 마감일 경과 체크 (contract 타입)
-      final toModel = TOModel.tryFromMap(toData, toId);
-      if (toModel == null) {
-        ToastHelper.showError('공고 데이터가 손상되었습니다.');
-        return false;
-      }
-      if (toModel.isPostingExpired || toModel.isDeadlinePassed) {
-        ToastHelper.showError('지원 마감된 공고입니다.');
-        return false;
-      }
-
-      if (slotId != null) {
-        final slotDoc = await _firestore
-            .collection('tos')
-            .doc(toId)
-            .collection('slots')
-            .doc(slotId)
-            .get(const GetOptions(source: Source.server));
-        if (!slotDoc.exists) {
-          ToastHelper.showError('해당 날짜 정보를 찾을 수 없습니다.');
-          return false;
-        }
-        final slotData = slotDoc.data()!;
-        if (slotData['isManualClosed'] == true || slotData['status'] == SlotStatus.closed) {
-          ToastHelper.showError('해당 날짜는 마감되었습니다.');
-          return false;
-        }
-        // 업무유형별 정원·마감 체크 — 슬롯의 workDetails 기준
-        final rawWorkDetails = slotData['workDetails'] as List<dynamic>? ?? [];
-        final workDetailMap = rawWorkDetails
-            .cast<Map<String, dynamic>>()
-            .firstWhere(
-              (d) => d['workType'] == selectedWorkType,
-              orElse: () => {},
-            );
-
-        // 해당 업무의 마감 시각 체크
-        final workDeadlineTs = workDetailMap['applicationDeadline'] as Timestamp?;
-        if (workDeadlineTs != null && workDeadlineTs.toDate().isBefore(DateTime.now())) {
-          ToastHelper.showError('해당 업무의 지원 마감 시간이 지났습니다.');
-          return false;
-        }
-
-        final requiredCount = (workDetailMap['requiredCount'] as num?)?.toInt() ?? 0;
-
-        final rawCounts = slotData['workTypeCounts'] as Map<String, dynamic>?;
-        final workTypeCount = rawCounts?[selectedWorkType] as Map<String, dynamic>?;
-        final confirmedCount = (workTypeCount?['confirmedCount'] as num?)?.toInt() ?? 0;
-
-        if (requiredCount > 0 && confirmedCount >= requiredCount) {
-          ToastHelper.showError('해당 업무의 모집 인원이 마감되었습니다.');
-          return false;
-        }
-      } else {
-        final toDeadline = toData['applicationDeadline'] as Timestamp?;
-        if (toDeadline != null && toDeadline.toDate().isBefore(DateTime.now())) {
-          ToastHelper.showError('지원 마감 시간이 지났습니다.');
-          return false;
-        }
-        final confirmedCount = (toData['totalConfirmed'] as num?)?.toInt() ?? 0;
-        final totalRequired = (toData['totalRequired'] as num?)?.toInt() ?? 0;
-        if (totalRequired > 0 && confirmedCount >= totalRequired) {
-          ToastHelper.showError('모집 인원이 마감되었습니다.');
-          return false;
-        }
-        // 업무유형별 정원 초과 체크 (contract TO)
-        final rawWorkDetails = toData['workDetails'] as List<dynamic>? ?? [];
-        final workTypeConfirmed = ((toData['workTypeConfirmedCounts'] as Map<String, dynamic>? ?? {})[selectedWorkType] as num?)?.toInt() ?? 0;
-        for (final wd in rawWorkDetails.cast<Map<String, dynamic>>()) {
-          if (wd['workType'] == selectedWorkType) {
-            final workTypeRequired = (wd['requiredCount'] as num?)?.toInt() ?? 0;
-            if (workTypeRequired > 0 && workTypeConfirmed >= workTypeRequired) {
-              ToastHelper.showError('해당 업무의 모집 인원이 마감되었습니다.');
-              return false;
-            }
-            break;
-          }
-        }
-      }
-
-      // ── 2. 복합 docId 계산 + 중복 체크 ──
-      // [A02-FIX] 동일 (toId + slotId + workDetailId/workType + uid) 조합은 항상 같은 docId 생성.
-      // Firestore 원자적 create로 동시 지원 시 하나만 성공하고 나머지는 PERMISSION_DENIED.
-      // workDetailId 없는 경우 selectedWorkType으로 대체 — 같은 슬롯의 다른 업무는 별개 docId 보장.
-      // 갱신 계약(processContractRenewalChecks, callableCreateContractRenewal)은 CF Admin SDK 경로라
-      // rules 우회 + auto-id 유지 — 같은 TO에 복수 계약 기간이 필요하므로 복합 ID 충돌 없음.
-      final discriminator = (workDetailId != null && workDetailId.isNotEmpty)
-          ? workDetailId
-          : selectedWorkType;
-      final complexId = slotId != null
-          ? '${toId}_${slotId}_${discriminator}_$uid'
-          : '${toId}_${discriminator}_$uid';
-
-      final existingSnap = await _firestore
-          .collection('applications')
-          .doc(complexId)
-          .get(const GetOptions(source: Source.server));
-
-      DocumentSnapshot? activeApp;
-      DocumentSnapshot? reactivatableApp;
-
-      if (existingSnap.exists) {
-        final exData = existingSnap.data()!;
-        final exStatus = exData['status'] as String?;
-        final isResignDone = exData['resignStatus'] == AppStatus.approved ||
-            exData['resignStatus'] == AppStatus.autoApproved;
-        final isTermDone = exData['terminationStatus'] == AppStatus.approved ||
-            exData['terminationStatus'] == AppStatus.autoApproved;
-        if (!isResignDone && !isTermDone) {
-          if (AppStatus.activeStates.contains(exStatus)) {
-            activeApp = existingSnap;
-          } else if (AppStatus.inactiveStates.contains(exStatus)) {
-            reactivatableApp = existingSnap;
-          }
-        }
-      }
-
-      if (activeApp != null) {
-        ToastHelper.showWarning('이미 지원한 업무입니다.');
-        return false;
-      }
-
-      // ── 3. 시간 충돌 체크 ──
-      final toType = toData['type'] as String? ?? TOType.flex;
-      final isContract = toType == TOType.contract || (workDays != null && workDays.isNotEmpty);
-      // whereIn 복합 쿼리는 Firestore 보안 규칙에서 필터가 누락될 수 있어 PERMISSION_DENIED 유발.
-      // 각 status를 별도 isEqualTo 쿼리로 병렬 실행 후 병합.
-      final allConfirmed = (await Future.wait(
-        AppStatus.confirmedStatuses.map((s) => _firestore
-            .collection('applications')
-            .where('uid', isEqualTo: uid)
-            .where('status', isEqualTo: s)
-            .get(const GetOptions(source: Source.server))),
-      )).expand((snap) => snap.docs)
-          .map(ApplicationModel.tryFromFirestore)
-          .whereType<ApplicationModel>()
-          .toList();
-
-      if (isContract && workEndDate != null && workDays != null && workDays.isNotEmpty) {
-        // 장기 충돌 체크: 날짜 루프 대신 기존 확정 지원서 레벨 검사 O(confirmedApps)
-        final newStart = DateTime.fromMillisecondsSinceEpoch(
-            (desiredStartDate ?? workDate).millisecondsSinceEpoch);
-        final newStartOnly = DateTime(newStart.year, newStart.month, newStart.day);
-        final newEndOnly   = DateTime(workEndDate.year, workEndDate.month, workEndDate.day);
-
-        for (final s in allConfirmed) {
-          if (!ApplicationModel.hasTimeOverlap(startTime, endTime, s.startTime, s.endTime)) {
-            continue;
-          }
-          if (s.isLongTermApplication) {
-            final sEnd = s.actualResignDate ?? s.workEndDate;
-            // [J-1 수정] workEndDate=null → 무기한 계약으로 간주, 충돌로 처리
-            final sStartOnly = DateTime(s.workDate.year, s.workDate.month, s.workDate.day);
-            final sEndOnly = sEnd != null
-                ? DateTime(sEnd.year, sEnd.month, sEnd.day)
-                : DateTime(9999, 12, 31);
-            if (newEndOnly.isBefore(sStartOnly) || newStartOnly.isAfter(sEndOnly)) continue;
-            final sWorkDays = s.workDays ?? [];
-            if (!workDays.any((d) => sWorkDays.contains(d))) continue;
-            final conflictDay = workDays.firstWhere((d) => sWorkDays.contains(d));
-            ToastHelper.showError(
-              '매주 $conflictDay에\n'
-              '${s.startTime}~${s.endTime} (${s.businessName})\n'
-              '확정된 근무가 있어 지원할 수 없습니다.',
-            );
-            return false;
-          } else {
-            // 단기 확정 지원서
-            final sDate = DateTime(s.workDate.year, s.workDate.month, s.workDate.day);
-            if (sDate.isBefore(newStartOnly) || sDate.isAfter(newEndOnly)) continue;
-            if (!workDays.contains(FormatHelper.weekday(s.workDate))) continue;
-            ToastHelper.showError(
-              '${s.workDate.month}/${s.workDate.day}에\n'
-              '${s.startTime}~${s.endTime} (${s.businessName})\n'
-              '확정된 근무가 있어 지원할 수 없습니다.',
-            );
-            return false;
-          }
-        }
-      } else {
-        for (final s in allConfirmed) {
-          if (s.isWorkingOnDate(workDate) &&
-              ApplicationModel.hasTimeOverlap(startTime, endTime, s.startTime, s.endTime)) {
-            ToastHelper.showError(
-              '이미 ${s.startTime}~${s.endTime}에\n'
-              '${s.businessName}에서 확정된 근무가 있습니다.',
-            );
-            return false;
-          }
-        }
-      }
-
-      // ── 4. 지원서 생성 / 재활성화 ──
-      final batch = _firestore.batch();
-
-      if (reactivatableApp != null) {
-        batch.update(reactivatableApp.reference, {
-          'status': 'PENDING',
-          'type': isContract ? AppType.longTerm : AppType.shortTerm,
-          'appliedAt': FieldValue.serverTimestamp(),
-          // 재지원 날짜·슬롯 정보 갱신 (다른 날짜/슬롯으로 재지원 시 정합성 보장)
-          'workDate': Timestamp.fromDate(workDate),
-          if (slotId != null) 'slotId': slotId,
-          'statusHistory': FieldValue.arrayUnion([{
-            'status': 'PENDING',
-            'at': Timestamp.now(),
-            'by': null,
-            'action': 'REAPPLY',
-          }]),
-          'canceledAt': null,
-          'cancelReason': null,
-          'rejectedAt': null,
-          'rejectedBy': null,
-          'rejectMessage': null,
-          'confirmedAt': null,
-          'confirmedBy': null,
-          // 이전 자동취소 충돌 정보 초기화
-          'conflictingAppId': null,
-          'conflictingBusiness': null,
-          'conflictingTime': null,
-          // 이전 퇴사/해지 이력 초기화
-          'resignStatus': null,
-          'resignRequestedAt': null,
-          'resignRequestDate': null,
-          'actualResignDate': null,
-          'terminationStatus': null,
-          'terminationRequestedAt': null,
-          'terminationEffectiveDate': null,
-          'terminationRejectReason': null,
-          if (workDetailId != null && workDetailId.isNotEmpty) 'workDetailId': workDetailId,
-          if (desiredStartDate != null)
-            'desiredStartDate': Timestamp.fromDate(desiredStartDate),
-          if (workEndDate != null)
-            'workEndDate': Timestamp.fromDate(workEndDate),
-          if (workDays != null) 'workDays': workDays,
-        });
-        _incrementTOPending(batch, toId, slotId, delta: 1, workType: selectedWorkType);
-        // 재지원 경로에도 동일하게 최종 정원/마감 재검증 (TOCTOU 방지)
-        if (slotId != null) {
-          final slotRef = _firestore.collection('tos').doc(toId).collection('slots').doc(slotId);
-          await _firestore.runTransaction((tx) async {
-            final snap = await tx.get(slotRef);
-            if (!snap.exists) throw Exception('해당 날짜 정보를 찾을 수 없습니다.');
-            final d = snap.data()!;
-            if (d['isManualClosed'] == true || d['status'] == SlotStatus.closed) {
-              throw Exception('방금 마감된 날짜입니다.');
-            }
-            final rawWD = d['workDetails'] as List<dynamic>? ?? [];
-            final wd = rawWD.cast<Map<String, dynamic>>()
-                .firstWhere((x) => x['workType'] == selectedWorkType, orElse: () => {});
-            final deadlineTs = wd['applicationDeadline'] as Timestamp?;
-            if (deadlineTs != null && deadlineTs.toDate().isBefore(DateTime.now())) {
-              throw Exception('방금 마감된 업무입니다.');
-            }
-            final req = (wd['requiredCount'] as num?)?.toInt() ?? 0;
-            final rawCounts = d['workTypeCounts'] as Map<String, dynamic>?;
-            final cnt = ((rawCounts?[selectedWorkType] as Map<String, dynamic>?)?['confirmedCount'] as num?)?.toInt() ?? 0;
-            if (req > 0 && cnt >= req) throw Exception('방금 마감된 업무입니다. (정원 초과)');
-          });
-        } else {
-          final toRef = _firestore.collection('tos').doc(toId);
-          await _firestore.runTransaction((tx) async {
-            final snap = await tx.get(toRef);
-            if (!snap.exists) throw Exception('공고를 찾을 수 없습니다.');
-            final d = snap.data()!;
-            if (d['isManualClosed'] == true || d['status'] == TOStatus.closed) {
-              throw Exception('방금 마감된 공고입니다.');
-            }
-            final deadlineTs = d['applicationDeadline'] as Timestamp?;
-            if (deadlineTs != null && deadlineTs.toDate().isBefore(DateTime.now())) {
-              throw Exception('지원 마감 시간이 지났습니다.');
-            }
-            final confirmedCount = (d['totalConfirmed'] as num?)?.toInt() ?? 0;
-            final totalRequired = (d['totalRequired'] as num?)?.toInt() ?? 0;
-            if (totalRequired > 0 && confirmedCount >= totalRequired) {
-              throw Exception('방금 마감된 공고입니다. (정원 초과)');
-            }
-            final rawWorkDetails = d['workDetails'] as List<dynamic>? ?? [];
-            final confirmedCounts = d['workTypeConfirmedCounts'] as Map<String, dynamic>?;
-            final workTypeConfirmed = (confirmedCounts?[selectedWorkType] as num?)?.toInt() ?? 0;
-            for (final wd in rawWorkDetails.cast<Map<String, dynamic>>()) {
-              if (wd['workType'] == selectedWorkType) {
-                final workTypeRequired = (wd['requiredCount'] as num?)?.toInt() ?? 0;
-                if (workTypeRequired > 0 && workTypeConfirmed >= workTypeRequired) {
-                  throw Exception('방금 마감된 업무입니다. (정원 초과)');
-                }
-                break;
-              }
-            }
-          });
-        }
-        await batch.commit();
-        clearCache(toId: toId);
-        invalidateMyApplicationsCache(uid);
-        try {
-          _sendNewApplicationNotification(
-            businessId: businessId,
-            applicantUid: uid,
-            workType: selectedWorkType,
-            workDate: workDate,
-            applicationId: reactivatableApp.id,
-            toId: toId,
-            workDetailId: workDetailId ?? '',
-          );
-        } catch (notifErr) {
-          debugPrint('⚠️ 재지원 알림 전송 실패 (지원은 완료됨): $notifErr');
-        }
-        debugPrint('✅ 재지원 완료: $toId');
-        return true;
-      }
-
-      final appRef = _firestore.collection('applications').doc(complexId);
-      batch.set(appRef, {
-        'uid': uid,
-        'businessId': businessId,
-        'businessName': businessName,
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableApplyToTO',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({
         'toId': toId,
         if (slotId != null) 'slotId': slotId,
+        'businessId': businessId,
+        'businessName': businessName,
         'toTitle': toTitle,
+        'workDateMs': workDate.millisecondsSinceEpoch,
         'selectedWorkType': selectedWorkType,
         if (workDetailId != null && workDetailId.isNotEmpty) 'workDetailId': workDetailId,
-        'wage': wage,
-        'wageType': wageType,
-        'workTypeIcon': workTypeIcon,
-        'workTypeColor': workTypeColor,
-        'workTypeBackgroundColor': workTypeBackgroundColor,
-        'workDate': Timestamp.fromDate(workDate),
         'startTime': startTime,
         'endTime': endTime,
-        'status': 'PENDING',
-        'type': isContract ? 'long_term' : 'short',
-        'appliedAt': FieldValue.serverTimestamp(),
-        'statusHistory': [{
-          'status': 'PENDING',
-          'at': Timestamp.now(),
-          'by': null,
-          'action': 'APPLY',
-        }],
-        if (isContract) ...{
-          'workEndDate': workEndDate != null
-              ? Timestamp.fromDate(workEndDate)
-              : null,
-          'workDays': workDays,
-          'desiredStartDate': desiredStartDate != null
-              ? Timestamp.fromDate(desiredStartDate)
-              : null,
-        },
+        'wage': wage,
+        'wageType': wageType,
+        if (workTypeIcon != null) 'workTypeIcon': workTypeIcon,
+        if (workTypeColor != null) 'workTypeColor': workTypeColor,
+        if (workTypeBackgroundColor != null) 'workTypeBackgroundColor': workTypeBackgroundColor,
+        if (workEndDate != null) 'workEndDateMs': workEndDate.millisecondsSinceEpoch,
+        if (workDays != null) 'workDays': workDays,
+        if (desiredStartDate != null) 'desiredStartDateMs': desiredStartDate.millisecondsSinceEpoch,
       });
-      // 최종 정원/마감 재검증 — TOCTOU 방지 (read-check 이후 상태가 변경됐을 수 있음)
-      if (slotId != null) {
-        final slotRef = _firestore.collection('tos').doc(toId).collection('slots').doc(slotId);
-        await _firestore.runTransaction((tx) async {
-          final snap = await tx.get(slotRef);
-          if (!snap.exists) throw Exception('해당 날짜 정보를 찾을 수 없습니다.');
-          final d = snap.data()!;
-          if (d['isManualClosed'] == true || d['status'] == SlotStatus.closed) {
-            throw Exception('방금 마감된 날짜입니다.');
-          }
-          final rawWD = d['workDetails'] as List<dynamic>? ?? [];
-          final wd = rawWD.cast<Map<String, dynamic>>()
-              .firstWhere((x) => x['workType'] == selectedWorkType, orElse: () => {});
-          final deadlineTs = wd['applicationDeadline'] as Timestamp?;
-          if (deadlineTs != null && deadlineTs.toDate().isBefore(DateTime.now())) {
-            throw Exception('방금 마감된 업무입니다.');
-          }
-          final req = (wd['requiredCount'] as num?)?.toInt() ?? 0;
-          final rawCounts = d['workTypeCounts'] as Map<String, dynamic>?;
-          final cnt = ((rawCounts?[selectedWorkType] as Map<String, dynamic>?)?['confirmedCount'] as num?)?.toInt() ?? 0;
-          if (req > 0 && cnt >= req) throw Exception('방금 마감된 업무입니다. (정원 초과)');
-        });
-      } else {
-        // Contract TO (슬롯 없음): TO 문서 기준 최종 정원·마감 재검증
-        final toRef = _firestore.collection('tos').doc(toId);
-        await _firestore.runTransaction((tx) async {
-          final snap = await tx.get(toRef);
-          if (!snap.exists) throw Exception('공고를 찾을 수 없습니다.');
-          final d = snap.data()!;
-          if (d['isManualClosed'] == true || d['status'] == TOStatus.closed) {
-            throw Exception('방금 마감된 공고입니다.');
-          }
-          final deadlineTs = d['applicationDeadline'] as Timestamp?;
-          if (deadlineTs != null && deadlineTs.toDate().isBefore(DateTime.now())) {
-            throw Exception('지원 마감 시간이 지났습니다.');
-          }
-          final confirmedCount = (d['totalConfirmed'] as num?)?.toInt() ?? 0;
-          final totalRequired = (d['totalRequired'] as num?)?.toInt() ?? 0;
-          if (totalRequired > 0 && confirmedCount >= totalRequired) {
-            throw Exception('방금 마감된 공고입니다. (정원 초과)');
-          }
-          final rawWorkDetails = d['workDetails'] as List<dynamic>? ?? [];
-          final confirmedCounts = d['workTypeConfirmedCounts'] as Map<String, dynamic>?;
-          final workTypeConfirmed = (confirmedCounts?[selectedWorkType] as num?)?.toInt() ?? 0;
-          for (final wd in rawWorkDetails.cast<Map<String, dynamic>>()) {
-            if (wd['workType'] == selectedWorkType) {
-              final workTypeRequired = (wd['requiredCount'] as num?)?.toInt() ?? 0;
-              if (workTypeRequired > 0 && workTypeConfirmed >= workTypeRequired) {
-                throw Exception('방금 마감된 업무입니다. (정원 초과)');
-              }
-              break;
-            }
-          }
-        });
-      }
+      final data = result.data;
+      final applicationId = data['applicationId'] as String? ?? '';
+      final isReactivation = data['isReactivation'] as bool? ?? false;
 
-      _incrementTOPending(batch, toId, slotId, delta: 1, workType: selectedWorkType);
-      await batch.commit();
       clearCache(toId: toId);
-      invalidateMyApplicationsCache(uid); // 내 지원 목록 캐시 무효화
+      invalidateMyApplicationsCache(uid);
       try {
         _sendNewApplicationNotification(
           businessId: businessId,
           applicantUid: uid,
           workType: selectedWorkType,
           workDate: workDate,
-          applicationId: appRef.id,
+          applicationId: applicationId,
           toId: toId,
           workDetailId: workDetailId ?? '',
         );
       } catch (notifErr) {
-        debugPrint('⚠️ 지원 알림 전송 실패 (지원은 완료됨): $notifErr');
+        debugPrint('⚠️ ${isReactivation ? "재지원" : "지원"} 알림 전송 실패 (지원은 완료됨): $notifErr');
       }
-      debugPrint('✅ 지원 완료: $toTitle / $selectedWorkType');
+      debugPrint('✅ ${isReactivation ? "재지원" : "지원"} 완료: $toTitle / $selectedWorkType');
       return true;
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('❌ 지원 CF 오류: ${e.code} / ${e.message}');
+      final msg = e.message ?? '지원 중 오류가 발생했습니다.';
+      if (e.code == 'already-exists') {
+        ToastHelper.showWarning(msg);
+      } else {
+        ToastHelper.showError(msg);
+      }
+      return false;
     } catch (e) {
       debugPrint('❌ 지원 실패: $e');
       ToastHelper.showError('지원 중 오류가 발생했습니다.');

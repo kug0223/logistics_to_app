@@ -12702,3 +12702,451 @@ export const callableCloseTOManually = onCall(
     return {success: true};
   }
 );
+
+// ─────────────────────────────────────────────────────────
+// callableApplyToTO — 공고 지원 (신규/재지원 통합, 서버 원자화)
+//
+// 이전 이유:
+//   1. TOCTOU: 클라이언트에서 runTransaction(검증)과 batch(쓰기)가 분리되어 레이스 가능
+//   2. 서류/블랙리스트/제재 검증이 클라이언트에서만 이루어져 위조 가능
+//   3. 시간 충돌 체크가 클라이언트에서만 이루어져 동시 지원 시 무력화 가능
+//
+// 트랜잭션 내에서 최종 재검증 + 지원서 set/update + pendingCount 증감을 원자화.
+// 알림 전송은 클라이언트에서 applicationId를 받아 별도 처리.
+//
+// 반환값: { success: true, applicationId: string, isReactivation: boolean }
+// ─────────────────────────────────────────────────────────
+export const callableApplyToTO = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+
+    const data = request.data as {
+      toId?: string;
+      slotId?: string | null;
+      businessId?: string;
+      businessName?: string;
+      toTitle?: string;
+      workDateMs?: number;
+      selectedWorkType?: string;
+      workDetailId?: string | null;
+      startTime?: string;
+      endTime?: string;
+      wage?: number;
+      wageType?: string;
+      workTypeIcon?: string | null;
+      workTypeColor?: string | null;
+      workTypeBackgroundColor?: string | null;
+      workEndDateMs?: number | null;
+      workDays?: string[] | null;
+      desiredStartDateMs?: number | null;
+    };
+
+    // ── 1. 입력값 검증 ──
+    const toId = data.toId;
+    const slotId = data.slotId ?? null;
+    const businessId = data.businessId;
+    const businessName = data.businessName ?? "";
+    const toTitle = data.toTitle ?? "";
+    const workDateMs = data.workDateMs;
+    const selectedWorkType = data.selectedWorkType;
+    const workDetailId = data.workDetailId ?? null;
+    const startTime = data.startTime ?? "";
+    const endTime = data.endTime ?? "";
+    const wage = data.wage;
+    const wageType = data.wageType ?? "hourly";
+    const workTypeIcon = data.workTypeIcon ?? null;
+    const workTypeColor = data.workTypeColor ?? null;
+    const workTypeBackgroundColor = data.workTypeBackgroundColor ?? null;
+    const workEndDateMs = data.workEndDateMs ?? null;
+    const workDays = Array.isArray(data.workDays) ? data.workDays : null;
+    const desiredStartDateMs = data.desiredStartDateMs ?? null;
+
+    if (!toId || typeof toId !== "string" || toId.trim() === "") {
+      throw new HttpsError("invalid-argument", "toId가 필요합니다.");
+    }
+    if (!businessId || typeof businessId !== "string") {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+    if (!workDateMs || typeof workDateMs !== "number") {
+      throw new HttpsError("invalid-argument", "workDateMs가 필요합니다.");
+    }
+    if (!selectedWorkType || typeof selectedWorkType !== "string") {
+      throw new HttpsError("invalid-argument", "selectedWorkType이 필요합니다.");
+    }
+    if (!startTime || !endTime) {
+      throw new HttpsError("invalid-argument", "startTime/endTime이 필요합니다.");
+    }
+    if (wage === undefined || typeof wage !== "number") {
+      throw new HttpsError("invalid-argument", "wage가 필요합니다.");
+    }
+
+    const workDate = admin.firestore.Timestamp.fromMillis(workDateMs);
+    const workEndDate = workEndDateMs ? admin.firestore.Timestamp.fromMillis(workEndDateMs) : null;
+    const desiredStartDate = desiredStartDateMs ? admin.firestore.Timestamp.fromMillis(desiredStartDateMs) : null;
+    // isContract: slotId 없거나 workDays 있으면 장기계약
+    const isContract = !slotId || (workDays !== null && workDays.length > 0);
+
+    // ── 2. 사용자 서류/블랙리스트/PASS/신분증/제재 체크 ──
+    const userSnap = await db.collection("users").doc(uid).get();
+    if (!userSnap.exists) throw new HttpsError("not-found", "사용자 정보를 찾을 수 없습니다.");
+    const userData = userSnap.data()!;
+
+    if (!userData["idCardImageUrl"]) {
+      throw new HttpsError("failed-precondition", "신분증 등록이 필요합니다.");
+    }
+    if (!userData["bankName"] || !userData["accountNumber"]) {
+      throw new HttpsError("failed-precondition", "통장 정보 등록이 필요합니다.");
+    }
+    if (!userData["bankbookImageUrl"]) {
+      throw new HttpsError("failed-precondition", "통장사본 등록이 필요합니다.");
+    }
+    if (userData["isBlacklisted"] === true) {
+      const reason = (userData["blacklistReason"] as string | undefined) ?? "이용 정책 위반";
+      throw new HttpsError("permission-denied", `이용 제한된 계정입니다.\n사유: ${reason}`);
+    }
+    if (!userData["ci"] || !userData["passVerifiedAt"]) {
+      throw new HttpsError("failed-precondition", "본인인증이 필요합니다.");
+    }
+    // 단기(슬롯 있는) 공고는 신분증 인증 필수
+    if (slotId && userData["isIdVerified"] !== true) {
+      throw new HttpsError("failed-precondition", "신분증 인증 후 지원할 수 있습니다.");
+    }
+    const restrictedUntilTs = userData["restrictedUntil"] as admin.firestore.Timestamp | undefined;
+    if (restrictedUntilTs && restrictedUntilTs.toDate() > new Date()) {
+      const remainDays = Math.ceil(
+        (restrictedUntilTs.toDate().getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+      );
+      throw new HttpsError(
+        "permission-denied",
+        `무단 결근 페널티로 ${remainDays}일 동안 지원이 제한됩니다.`
+      );
+    }
+
+    // ── 3. TO 상태 체크 ──
+    const toSnap = await db.collection("tos").doc(toId).get();
+    if (!toSnap.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
+    const toData = toSnap.data()!;
+
+    if ((toData["businessId"] as string | undefined) !== businessId) {
+      throw new HttpsError("invalid-argument", "businessId 불일치.");
+    }
+    if (toData["status"] === "DRAFT") {
+      throw new HttpsError("permission-denied", "비공개 공고에는 지원할 수 없습니다.");
+    }
+    if (
+      toData["isManualClosed"] === true ||
+      toData["status"] === "CLOSED" ||
+      toData["status"] === "FULL"
+    ) {
+      throw new HttpsError("permission-denied", "마감된 공고입니다.");
+    }
+    const publishEndDateTs = toData["publishEndDate"] as admin.firestore.Timestamp | undefined;
+    if (publishEndDateTs && publishEndDateTs.toDate() < new Date()) {
+      throw new HttpsError("permission-denied", "게시 기간이 만료된 공고입니다.");
+    }
+    const toDeadlineTs = toData["applicationDeadline"] as admin.firestore.Timestamp | undefined;
+    if (toDeadlineTs && toDeadlineTs.toDate() < new Date()) {
+      throw new HttpsError("permission-denied", "지원 마감된 공고입니다.");
+    }
+
+    // ── 4. 슬롯 또는 TO 단위 정원 사전 체크 ──
+    if (slotId) {
+      const slotSnap = await db
+        .collection("tos").doc(toId).collection("slots").doc(slotId).get();
+      if (!slotSnap.exists) throw new HttpsError("not-found", "해당 날짜 정보를 찾을 수 없습니다.");
+      const sd = slotSnap.data()!;
+      if (sd["isManualClosed"] === true || sd["status"] === "closed") {
+        throw new HttpsError("permission-denied", "해당 날짜는 마감되었습니다.");
+      }
+      const rawWD = (sd["workDetails"] as unknown[]) ?? [];
+      const wd = (rawWD as Record<string, unknown>[]).find(
+        (d) => d["workType"] === selectedWorkType
+      ) ?? {};
+      const wdDeadlineTs = wd["applicationDeadline"] as admin.firestore.Timestamp | undefined;
+      if (wdDeadlineTs && wdDeadlineTs.toDate() < new Date()) {
+        throw new HttpsError("permission-denied", "해당 업무의 지원 마감 시간이 지났습니다.");
+      }
+      const req = (wd["requiredCount"] as number | undefined) ?? 0;
+      const rawCounts = sd["workTypeCounts"] as Record<string, Record<string, number>> | undefined;
+      const cnt = rawCounts?.[selectedWorkType]?.["confirmedCount"] ?? 0;
+      if (req > 0 && cnt >= req) {
+        throw new HttpsError("permission-denied", "해당 업무의 모집 인원이 마감되었습니다.");
+      }
+    } else {
+      const confirmedCount = (toData["totalConfirmed"] as number | undefined) ?? 0;
+      const totalRequired = (toData["totalRequired"] as number | undefined) ?? 0;
+      if (totalRequired > 0 && confirmedCount >= totalRequired) {
+        throw new HttpsError("permission-denied", "모집 인원이 마감되었습니다.");
+      }
+      const rawWDList = (toData["workDetails"] as unknown[]) ?? [];
+      const workTypeConfirmed =
+        ((toData["workTypeConfirmedCounts"] as Record<string, number> | undefined)
+          ?.[selectedWorkType]) ?? 0;
+      for (const wd of rawWDList as Record<string, unknown>[]) {
+        if (wd["workType"] === selectedWorkType) {
+          const wtr = (wd["requiredCount"] as number | undefined) ?? 0;
+          if (wtr > 0 && workTypeConfirmed >= wtr) {
+            throw new HttpsError("permission-denied", "해당 업무의 모집 인원이 마감되었습니다.");
+          }
+          break;
+        }
+      }
+    }
+
+    // ── 5. 복합 docId 계산 + 기존 지원서 중복/재활성화 판단 ──
+    const discriminator = (workDetailId && workDetailId.length > 0) ? workDetailId : selectedWorkType;
+    const complexId = slotId
+      ? `${toId}_${slotId}_${discriminator}_${uid}`
+      : `${toId}_${discriminator}_${uid}`;
+
+    const existingSnap = await db.collection("applications").doc(complexId).get();
+    let isReactivation = false;
+
+    if (existingSnap.exists) {
+      const exData = existingSnap.data()!;
+      const exStatus = (exData["status"] as string | undefined) ?? "";
+      const isResignDone =
+        exData["resignStatus"] === "APPROVED" || exData["resignStatus"] === "AUTO_APPROVED";
+      const isTermDone =
+        exData["terminationStatus"] === "APPROVED" || exData["terminationStatus"] === "AUTO_APPROVED";
+      if (!isResignDone && !isTermDone) {
+        const activeStates = ["CONFIRMED", "CONTRACT_PENDING", "PENDING"];
+        if (activeStates.includes(exStatus)) {
+          throw new HttpsError("already-exists", "이미 지원한 업무입니다.");
+        }
+        const inactiveStates = ["CANCELED", "AUTO_CANCELED", "REJECTED"];
+        if (inactiveStates.includes(exStatus)) {
+          isReactivation = true;
+        }
+      }
+    }
+
+    // ── 6. 시간 충돌 체크 (확정 지원서 조회) ──
+    const confirmedStatuses = ["CONFIRMED", "CONTRACT_PENDING"];
+    const confirmedSnaps = await Promise.all(
+      confirmedStatuses.map((s) =>
+        db.collection("applications")
+          .where("uid", "==", uid)
+          .where("status", "==", s)
+          .get()
+      )
+    );
+    const confirmedApps: Array<Record<string, unknown>> = confirmedSnaps.flatMap((snap) =>
+      snap.docs.map((d) => ({id: d.id, ...(d.data() as Record<string, unknown>)}))
+    );
+
+    function hasTimeOverlap(s1: string, e1: string, s2: string, e2: string): boolean {
+      return s1 < e2 && e1 > s2;
+    }
+    const weekdayNames = ["일", "월", "화", "수", "목", "금", "토"];
+
+    const workDateDate = workDate.toDate();
+    const newWorkDays = workDays ?? [];
+    const newWorkEndDate = workEndDate ? workEndDate.toDate() : null;
+    const effectiveStartDate = desiredStartDate ? desiredStartDate.toDate() : workDateDate;
+
+    for (const app of confirmedApps) {
+      const appStartTime = (app["startTime"] as string | undefined) ?? "";
+      const appEndTime = (app["endTime"] as string | undefined) ?? "";
+      if (!hasTimeOverlap(startTime, endTime, appStartTime, appEndTime)) continue;
+
+      const appWorkDateTs = app["workDate"] as admin.firestore.Timestamp | undefined;
+      if (!appWorkDateTs) continue;
+      const appWorkDate = appWorkDateTs.toDate();
+
+      const isLongTermApp =
+        app["type"] === "long_term" ||
+        (Array.isArray(app["workDays"]) && (app["workDays"] as string[]).length > 0);
+
+      const toDateOnly = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+
+      if (isContract && newWorkEndDate && newWorkDays.length > 0) {
+        // 신규 장기 지원 → 기존 확정과 충돌 체크
+        const newStartOnly = toDateOnly(effectiveStartDate);
+        const newEndOnly = toDateOnly(newWorkEndDate);
+
+        if (isLongTermApp) {
+          const appWorkEndDateTs = app["workEndDate"] as admin.firestore.Timestamp | undefined;
+          const appActualResignDateTs = app["actualResignDate"] as admin.firestore.Timestamp | undefined;
+          const sEnd = appActualResignDateTs?.toDate() ?? appWorkEndDateTs?.toDate() ?? new Date(9999, 11, 31);
+          const sStartOnly = toDateOnly(appWorkDate);
+          const sEndOnly = toDateOnly(sEnd);
+
+          if (newEndOnly < sStartOnly || newStartOnly > sEndOnly) continue;
+
+          const appWorkDays = (app["workDays"] as string[] | undefined) ?? [];
+          const conflictDay = newWorkDays.find((d) => appWorkDays.includes(d));
+          if (!conflictDay) continue;
+
+          throw new HttpsError(
+            "permission-denied",
+            `매주 ${conflictDay}에 ${appStartTime}~${appEndTime} 확정된 근무가 있어 지원할 수 없습니다.`
+          );
+        } else {
+          // 기존 단기 vs 신규 장기
+          const sDateOnly = toDateOnly(appWorkDate);
+          if (sDateOnly < newStartOnly || sDateOnly > newEndOnly) continue;
+          const weekday = weekdayNames[appWorkDate.getDay()];
+          if (!newWorkDays.includes(weekday)) continue;
+          throw new HttpsError(
+            "permission-denied",
+            `${appWorkDate.getMonth() + 1}/${appWorkDate.getDate()}에 ${appStartTime}~${appEndTime} 확정된 근무가 있어 지원할 수 없습니다.`
+          );
+        }
+      } else {
+        // 신규 단기 지원 → 해당 날짜 충돌만 체크
+        const workDateOnly = toDateOnly(workDateDate);
+        const appDateOnly = toDateOnly(appWorkDate);
+
+        if (isLongTermApp) {
+          const appWorkEndDateTs = app["workEndDate"] as admin.firestore.Timestamp | undefined;
+          const appActualResignDateTs = app["actualResignDate"] as admin.firestore.Timestamp | undefined;
+          const sEnd = appActualResignDateTs?.toDate() ?? appWorkEndDateTs?.toDate() ?? new Date(9999, 11, 31);
+          const sStartOnly = toDateOnly(appWorkDate);
+          const sEndOnly = toDateOnly(sEnd);
+          if (workDateOnly < sStartOnly || workDateOnly > sEndOnly) continue;
+          const appWorkDays = (app["workDays"] as string[] | undefined) ?? [];
+          const weekday = weekdayNames[workDateDate.getDay()];
+          if (!appWorkDays.includes(weekday)) continue;
+          throw new HttpsError(
+            "permission-denied",
+            `이미 ${appStartTime}~${appEndTime}에 확정된 근무가 있습니다.`
+          );
+        } else {
+          if (appDateOnly.getTime() !== workDateOnly.getTime()) continue;
+          throw new HttpsError(
+            "permission-denied",
+            `이미 ${appStartTime}~${appEndTime}에 확정된 근무가 있습니다.`
+          );
+        }
+      }
+    }
+
+    // ── 7. 트랜잭션: 최종 재검증 + 지원서 set/update + 카운터 원자화 ──
+    const appRef = db.collection("applications").doc(complexId);
+    const toRef = db.collection("tos").doc(toId);
+    const slotRef = slotId
+      ? db.collection("tos").doc(toId).collection("slots").doc(slotId)
+      : null;
+
+    await db.runTransaction(async (tx) => {
+      // TOCTOU 방지: 트랜잭션 내 최종 마감·정원 재검증
+      if (slotRef) {
+        const latestSlot = await tx.get(slotRef);
+        if (!latestSlot.exists) throw new HttpsError("not-found", "해당 날짜 정보를 찾을 수 없습니다.");
+        const ld = latestSlot.data()!;
+        if (ld["isManualClosed"] === true || ld["status"] === "closed") {
+          throw new HttpsError("permission-denied", "방금 마감된 날짜입니다.");
+        }
+        const rawWD = (ld["workDetails"] as unknown[]) ?? [];
+        const wd = (rawWD as Record<string, unknown>[]).find(
+          (x) => x["workType"] === selectedWorkType
+        ) ?? {};
+        const dtTs = wd["applicationDeadline"] as admin.firestore.Timestamp | undefined;
+        if (dtTs && dtTs.toDate() < new Date()) {
+          throw new HttpsError("permission-denied", "방금 마감된 업무입니다.");
+        }
+        const req = (wd["requiredCount"] as number | undefined) ?? 0;
+        const rawCounts = ld["workTypeCounts"] as Record<string, Record<string, number>> | undefined;
+        const cnt = rawCounts?.[selectedWorkType]?.["confirmedCount"] ?? 0;
+        if (req > 0 && cnt >= req) {
+          throw new HttpsError("permission-denied", "방금 마감된 업무입니다. (정원 초과)");
+        }
+      } else {
+        const latestTO = await tx.get(toRef);
+        if (!latestTO.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
+        const ld = latestTO.data()!;
+        if (ld["isManualClosed"] === true || ld["status"] === "CLOSED") {
+          throw new HttpsError("permission-denied", "방금 마감된 공고입니다.");
+        }
+        const dtTs = ld["applicationDeadline"] as admin.firestore.Timestamp | undefined;
+        if (dtTs && dtTs.toDate() < new Date()) {
+          throw new HttpsError("permission-denied", "지원 마감 시간이 지났습니다.");
+        }
+        const confirmedCount = (ld["totalConfirmed"] as number | undefined) ?? 0;
+        const totalRequired = (ld["totalRequired"] as number | undefined) ?? 0;
+        if (totalRequired > 0 && confirmedCount >= totalRequired) {
+          throw new HttpsError("permission-denied", "방금 마감된 공고입니다. (정원 초과)");
+        }
+        const rawWDList = (ld["workDetails"] as unknown[]) ?? [];
+        const workTypeConfirmed =
+          ((ld["workTypeConfirmedCounts"] as Record<string, number> | undefined)
+            ?.[selectedWorkType]) ?? 0;
+        for (const wd of rawWDList as Record<string, unknown>[]) {
+          if (wd["workType"] === selectedWorkType) {
+            const wtr = (wd["requiredCount"] as number | undefined) ?? 0;
+            if (wtr > 0 && workTypeConfirmed >= wtr) {
+              throw new HttpsError("permission-denied", "방금 마감된 업무입니다. (정원 초과)");
+            }
+            break;
+          }
+        }
+      }
+
+      const now = admin.firestore.Timestamp.now();
+      const historyEntry = {
+        status: "PENDING",
+        at: now,
+        by: null,
+        action: isReactivation ? "REAPPLY" : "APPLY",
+      };
+
+      if (isReactivation) {
+        const reactivateData: Record<string, unknown> = {
+          status: "PENDING",
+          type: isContract ? "long_term" : "short",
+          appliedAt: admin.firestore.FieldValue.serverTimestamp(),
+          workDate,
+          statusHistory: admin.firestore.FieldValue.arrayUnion(historyEntry),
+          canceledAt: null, cancelReason: null,
+          rejectedAt: null, rejectedBy: null, rejectMessage: null,
+          confirmedAt: null, confirmedBy: null,
+          conflictingAppId: null, conflictingBusiness: null, conflictingTime: null,
+          resignStatus: null, resignRequestedAt: null, resignRequestDate: null,
+          actualResignDate: null,
+          terminationStatus: null, terminationRequestedAt: null,
+          terminationEffectiveDate: null, terminationRejectReason: null,
+        };
+        if (slotId) reactivateData["slotId"] = slotId;
+        if (workDetailId && workDetailId.length > 0) reactivateData["workDetailId"] = workDetailId;
+        if (desiredStartDate) reactivateData["desiredStartDate"] = desiredStartDate;
+        if (workEndDate) reactivateData["workEndDate"] = workEndDate;
+        if (workDays) reactivateData["workDays"] = workDays;
+        tx.update(appRef, reactivateData);
+      } else {
+        const setData: Record<string, unknown> = {
+          uid, businessId, businessName, toId, toTitle,
+          selectedWorkType, wage, wageType,
+          startTime, endTime,
+          status: "PENDING",
+          type: isContract ? "long_term" : "short",
+          appliedAt: admin.firestore.FieldValue.serverTimestamp(),
+          workDate,
+          statusHistory: [historyEntry],
+        };
+        if (slotId) setData["slotId"] = slotId;
+        if (workDetailId && workDetailId.length > 0) setData["workDetailId"] = workDetailId;
+        if (workTypeIcon) setData["workTypeIcon"] = workTypeIcon;
+        if (workTypeColor) setData["workTypeColor"] = workTypeColor;
+        if (workTypeBackgroundColor) setData["workTypeBackgroundColor"] = workTypeBackgroundColor;
+        if (isContract) {
+          if (workEndDate) setData["workEndDate"] = workEndDate;
+          if (workDays) setData["workDays"] = workDays;
+          if (desiredStartDate) setData["desiredStartDate"] = desiredStartDate;
+        }
+        tx.set(appRef, setData);
+      }
+
+      // totalPending / pendingCount 원자 증감 (기존 _incrementTOPending와 동일)
+      tx.update(toRef, {totalPending: admin.firestore.FieldValue.increment(1)});
+      if (slotRef) {
+        tx.update(slotRef, {pendingCount: admin.firestore.FieldValue.increment(1)});
+      }
+    });
+
+    console.log(`✅ [applyToTO] ${isReactivation ? "재지원" : "신규 지원"} 완료: ${complexId}`);
+    return {success: true, applicationId: complexId, isReactivation};
+  }
+);
