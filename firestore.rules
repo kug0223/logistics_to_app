@@ -317,7 +317,24 @@ service cloud.firestore {
                        // [SEC-105] isDummy: 일반 가입 경로에서 true 설정 차단
                        // isDummy==true이면 isAdmin() 권한만으로 삭제 가능 (더미 삭제 규칙 L270)
                        // 악의적 사용자가 isDummy를 심어 관리자에 의해 삭제될 위험 차단
-                       request.resource.data.get('isDummy', false) == false
+                       request.resource.data.get('isDummy', false) == false &&
+                       // [HIGH-U1] passVerifiedAt: CF callableVerifyPass 전용 (PASS 인증 위조 차단)
+                       request.resource.data.get('passVerifiedAt', null) == null &&
+                       // [HIGH-U2] isIdVerified/idCardVerifiedAt: CF callableMarkIdCardVerified 전용
+                       //   CREATE 시 true 설정으로 신분증 인증 OCR 우회 차단
+                       request.resource.data.get('isIdVerified', false) == false &&
+                       request.resource.data.get('idCardVerifiedAt', null) == null &&
+                       // [HIGH-U3] termsConsentAt/termsConsent: CF callableRecordTermsConsent 전용
+                       //   법적 타임스탬프 위조 차단 (Trust Boundary Charter)
+                       request.resource.data.get('termsConsentAt', null) == null &&
+                       request.resource.data.get('termsConsent', null) == null &&
+                       // [MEDIUM-U4] 리뷰 통계: CF onReviewCreated/updateUserReviewStats Admin SDK 전용
+                       request.resource.data.get('averageRating', null) == null &&
+                       request.resource.data.get('reviewCount', 0) == 0 &&
+                       request.resource.data.get('rehireRate', null) == null &&
+                       request.resource.data.get('totalWorkHours', 0) == 0 &&
+                       // [MEDIUM-U5] badges: CF onReviewCreated 자격 검증 전용
+                       request.resource.data.get('badges', []).size() == 0
                       ) ||
                       (isAdmin() && request.resource.data.isDummy == true &&
                        !request.resource.data.keys().hasAny([
@@ -381,6 +398,10 @@ service cloud.firestore {
                        request.auth.uid in request.resource.data.adminIds &&
                        request.resource.data.adminIds.hasOnly([request.auth.uid]) &&
                        request.resource.data.get('isApproved', false) == false &&
+                       // [HIGH-B1] rating/reviewCount: CF updateBusinessReviewStats Admin SDK 전용
+                       //   CREATE 시 허위 평점 초기값 설정으로 구직자 기만 차단
+                       request.resource.data.get('rating', 0) == 0 &&
+                       request.resource.data.get('reviewCount', 0) == 0 &&
                        get(/databases/$(database)/documents/users/$(request.auth.uid))
                          .data.get('managedBusinessIds', []).size() < 5)
                     );
@@ -1463,6 +1484,10 @@ service cloud.firestore {
                        'applicationId' in request.resource.data &&
                        get(/databases/$(database)/documents/applications/$(request.resource.data.applicationId))
                          .data.get('uid', '_NONE_') == request.resource.data.workerId &&
+                       // [BUG-1] applicationId 소속 사업장 교차검증 — A사업장 관리자가 B사업장 지원서로
+                       //   A사업장 명의 계약서 생성하는 크로스-사업장 계약 위조 차단
+                       get(/databases/$(database)/documents/applications/$(request.resource.data.applicationId))
+                         .data.get('businessId', '_NONE_') == request.resource.data.businessId &&
                        (!request.resource.data.keys().hasAny(['employerSignedAt']) ||
                         request.resource.data.employerSignedAt == request.time))
                     );

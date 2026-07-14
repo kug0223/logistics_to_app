@@ -4985,6 +4985,11 @@ export const callableFinalizeWorkerSignature = onCall(
         if (data["workerSignatureUrl"]) {
           throw new HttpsError("failed-precondition", "이미 근무자 서명이 완료된 계약서입니다.");
         }
+        // [BUG-3] pending_worker 상태가 employer 서명 완료를 묵시적으로 보장하지만,
+        // 단일 방어선 — 명시적으로 검증해 향후 상태 전이 변경에도 안전하게 방어
+        if (!data["employerSignatureUrl"]) {
+          throw new HttpsError("failed-precondition", "사업주 서명이 완료되지 않은 계약서입니다.");
+        }
 
         // employment_contracts 완료 처리
         tx.update(contractRef, {
@@ -12817,16 +12822,16 @@ interface AttendanceRulesData {
 }
 
 
-/** [MEDIUM] 클라이언트 제공 attendanceRules 극단값 클램핑 — lateGrace:9999 등으로 지각 판정 우회 차단 */
+/** [MEDIUM-1] 클램핑 — 상한(극단값 DoS) + 하한(음수로 즉시 overtime·late 판정 조작) 모두 적용 */
 function _clampAttendanceRules(rules: AttendanceRulesData): AttendanceRulesData {
-  // *Unit 필드는 반올림 제수(除數) — 0 입력 시 division-by-zero → Invalid Date 저장 방지로 하한 1 강제
-  // *Window/*Grace는 비교 값만 사용되므로 0 허용
+  // *Unit 필드: 0 입력 시 division-by-zero → Invalid Date 저장 방지로 하한 1 강제
+  // *Window/*Grace: 음수 허용 시 즉시 overtime / 어떤 도착도 late 로 판정 오작동 → 하한 0 강제
   return {
-    earlyWindow:      Math.min(rules.earlyWindow ?? 30, 120),
+    earlyWindow:      Math.max(0, Math.min(rules.earlyWindow ?? 30, 120)),
     earlyArrivalUnit: Math.max(1, Math.min(rules.earlyArrivalUnit ?? 30, 120)),  // [M-06-FIX]
-    lateGrace:        Math.min(rules.lateGrace ?? 5, 60),
+    lateGrace:        Math.max(0, Math.min(rules.lateGrace ?? 5, 60)),
     lateUnit:         Math.max(1, Math.min(rules.lateUnit ?? 30, 120)),           // [M-06-FIX]
-    lateWindow:       Math.min(rules.lateWindow ?? 30, 120),
+    lateWindow:       Math.max(0, Math.min(rules.lateWindow ?? 30, 120)),
     overtimeUnit:     Math.max(1, Math.min(rules.overtimeUnit ?? 10, 60)),        // [M-06-FIX]
     earlyLeaveUnit:   Math.max(1, Math.min(rules.earlyLeaveUnit ?? 30, 60)),      // [S7-FIX]+[M-06-FIX]
   };
@@ -12918,13 +12923,13 @@ export const callableCheckIn = onCall(
     const {
       applicationId, businessId, businessName, workDateMs, workType,
       latitude, longitude, method,
-      scheduledStartTime, attendanceRules,
+      scheduledStartTime,
+      // attendanceRules: 클라이언트 전달값은 신뢰하지 않음 — 서버에서 businesses/{businessId} 직접 조회
     } = request.data as {
       applicationId: string; businessId: string; businessName: string;
       workDateMs: number; workType: string;
       latitude?: number; longitude?: number; method?: string;
       scheduledStartTime?: string;
-      attendanceRules?: AttendanceRulesData;
     };
 
     if (!applicationId || !businessId || !businessName || !workType || !workDateMs) {
@@ -13013,6 +13018,14 @@ export const callableCheckIn = onCall(
       if (isLeave) throw new HttpsError("permission-denied", "휴무일에는 출근할 수 없습니다.");
     }
 
+    // [HIGH-1/HIGH-2 FIX] Trust Boundary Charter: 클라이언트 attendanceRules·scheduledStartTime 신뢰 금지
+    // 서버에서 사업장 attendanceRules와 지원서 startTime 직접 조회
+    const bizSnap = await db.collection("businesses").doc(businessId).get();
+    // attendanceRules가 없는 사업장은 기본값(default) 사용 — 클라이언트 값 fallback 금지
+    const serverRules = (bizSnap.data()?.attendanceRules ?? {}) as AttendanceRulesData;
+    // appData.startTime이 서버 권위 소스 — 없으면 클라이언트값 fallback (하위호환, HH:MM 이미 검증됨)
+    const serverStartTime = (appData.startTime as string | undefined) || scheduledStartTime;
+
     // 3. docId: {applicationId}_{yyyyMMdd}
     const dateStr = `${workDateKST.getUTCFullYear()}${String(workDateKST.getUTCMonth() + 1).padStart(2, "0")}${String(workDateKST.getUTCDate()).padStart(2, "0")}`;
     const docId = `${applicationId}_${dateStr}`;
@@ -13028,11 +13041,12 @@ export const callableCheckIn = onCall(
       let effectiveCheckIn = now;
       let isLate = false;
 
-      if (scheduledStartTime) {
+      if (serverStartTime) {
         // [KST-FIX] workDateMs(KST 자정 UTC ms) + h:m ms = 해당 KST 계약 시작 시각(UTC ms)
-        const [sh, sm] = scheduledStartTime.split(":").map(Number);
+        const [sh, sm] = serverStartTime.split(":").map(Number);
         const cStart = new Date(workDateMs + (sh * 60 + sm) * 60000);
-        const result = _processCheckin(now, cStart, _clampAttendanceRules(attendanceRules ?? {}));
+        // [HIGH-1-FIX] 서버 attendanceRules 사용 — 클라이언트 조작 차단
+        const result = _processCheckin(now, cStart, _clampAttendanceRules(serverRules));
         effectiveCheckIn = result.effectiveCheckIn;
         isLate = result.isLate;
       }
@@ -13082,12 +13096,12 @@ export const callableCheckOut = onCall(
     const {
       attendanceId, workDateMs,
       latitude, longitude, method,
-      scheduledStartTime, scheduledEndTime, attendanceRules,
+      scheduledStartTime, scheduledEndTime,
+      // attendanceRules: 클라이언트 전달값은 신뢰하지 않음 — 트랜잭션 내 businesses 직접 조회
     } = request.data as {
       attendanceId: string; workDateMs: number;
       latitude?: number; longitude?: number; method?: string;
       scheduledStartTime?: string; scheduledEndTime?: string;
-      attendanceRules?: AttendanceRulesData;
     };
 
     if (!attendanceId || !workDateMs) {
@@ -13107,6 +13121,7 @@ export const callableCheckOut = onCall(
     const ref = db.collection("attendance").doc(attendanceId);
 
     await db.runTransaction(async (tx) => {
+      // [HIGH-1/MEDIUM-2 FIX] 모든 read를 write 이전에 수행 + 서버 권위 데이터 조회
       const snap = await tx.get(ref);
       if (!snap.exists) throw new HttpsError("not-found", "출근 기록을 찾을 수 없습니다.");
       const data = snap.data()!;
@@ -13127,20 +13142,44 @@ export const callableCheckOut = onCall(
         throw new HttpsError("permission-denied", "임금이 확정된 기록은 수정할 수 없습니다.");
       }
 
-      // 반올림 계산 (scheduledStartTime + scheduledEndTime 모두 있을 때만)
+      // [HIGH-1/MEDIUM-2 FIX] 서버 attendanceRules·계약 시각 조회 (클라이언트 값 신뢰 금지)
+      const attBizId = data.businessId as string | undefined;
+      const attAppId = data.applicationId as string | undefined;
+      let serverCheckoutRules: AttendanceRulesData = {};
+      let serverAppStartTime: string | undefined;
+      let serverAppEndTime: string | undefined;
+      if (attBizId || attAppId) {
+        const reads = await Promise.all([
+          attBizId ? tx.get(db.collection("businesses").doc(attBizId)) : Promise.resolve(null),
+          attAppId ? tx.get(db.collection("applications").doc(attAppId)) : Promise.resolve(null),
+        ]);
+        if (reads[0]?.exists) {
+          serverCheckoutRules = (reads[0].data()?.attendanceRules ?? {}) as AttendanceRulesData;
+        }
+        if (reads[1]?.exists) {
+          serverAppStartTime = reads[1].data()?.startTime as string | undefined;
+          serverAppEndTime = reads[1].data()?.endTime as string | undefined;
+        }
+      }
+      // 서버값 우선, 없으면 클라이언트 fallback (하위호환, HH:MM 이미 검증됨)
+      const effCheckoutStartTime = serverAppStartTime ?? scheduledStartTime;
+      const effCheckoutEndTime = serverAppEndTime ?? scheduledEndTime;
+
+      // 반올림 계산 (effCheckoutStartTime + effCheckoutEndTime 모두 있을 때만)
       const now = new Date();
       let effectiveCheckOut = now;
       let isEarlyLeave = false;
 
-      if (scheduledStartTime && scheduledEndTime) {
+      if (effCheckoutStartTime && effCheckoutEndTime) {
         // [KST-FIX] workDateMs(KST 자정 UTC ms) + h:m ms = KST 계약 시각(UTC ms). 야간교대: end < start → +24h
-        const [sh, sm] = scheduledStartTime.split(":").map(Number);
-        const [eh, em] = scheduledEndTime.split(":").map(Number);
+        const [sh, sm] = effCheckoutStartTime.split(":").map(Number);
+        const [eh, em] = effCheckoutEndTime.split(":").map(Number);
         const cStartMs = workDateMs + (sh * 60 + sm) * 60000;
         let cEndMs = workDateMs + (eh * 60 + em) * 60000;
         if (cEndMs < cStartMs) cEndMs += 24 * 60 * 60 * 1000;  // 야간교대 +1일
         const cEnd = new Date(cEndMs);
-        const result = _processCheckout(now, cEnd, _clampAttendanceRules(attendanceRules ?? {}));
+        // [HIGH-1-FIX] 서버 attendanceRules 사용 — 클라이언트 조작 차단
+        const result = _processCheckout(now, cEnd, _clampAttendanceRules(serverCheckoutRules));
         effectiveCheckOut = result.effectiveCheckOut;
         isEarlyLeave = result.isEarlyLeave;
       }
