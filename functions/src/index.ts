@@ -12743,8 +12743,12 @@ export const callableCancelScheduleChangeRequest = onCall(
       try {
         await assertBizAdmin(callerUid, businessId);
         isAdmin = true;
-      } catch (_) {
-        // 관리자 아님 — isRequester 경로로 진행
+      } catch (e) {
+        if (e instanceof HttpsError) {
+          // permission-denied / not-found → 관리자 아님, isRequester 경로로 진행
+        } else {
+          throw e; // Firestore 타임아웃·네트워크 오류는 재throw
+        }
       }
     }
 
@@ -12943,9 +12947,8 @@ export const callableApplyToTO = onCall(
       const reason = (userData["blacklistReason"] as string | undefined) ?? "이용 정책 위반";
       throw new HttpsError("permission-denied", `이용 제한된 계정입니다.\n사유: ${reason}`);
     }
-    if (!userData["ci"] || !userData["passVerifiedAt"]) {
-      throw new HttpsError("failed-precondition", "본인인증이 필요합니다.");
-    }
+    // [PASS-PENDING] ci/passVerifiedAt 게이트는 다날 계약 + finalizeRegistration CF 배포 후 활성화
+    //   현재 모든 기존 사용자에게 필드가 없어 전면 차단됨 → project_pass_pending_issues.md ISSUE-01
     // 단기(슬롯 있는) 공고는 신분증 인증 필수
     if (slotId && userData["isIdVerified"] !== true) {
       throw new HttpsError("failed-precondition", "신분증 인증 후 지원할 수 있습니다.");
@@ -12972,6 +12975,13 @@ export const callableApplyToTO = onCall(
     if (toData["status"] === "DRAFT") {
       throw new HttpsError("permission-denied", "비공개 공고에는 지원할 수 없습니다.");
     }
+    if (toData["status"] === "EXPIRED") {
+      throw new HttpsError("permission-denied", "만료된 공고입니다.");
+    }
+    // [B1-FIX] isPublished=false 미게시 공고(SCHEDULED 포함) 차단 — 구 rules의 isPublished 조건 CF 재확립
+    if (!toData["isPublished"]) {
+      throw new HttpsError("permission-denied", "아직 공개되지 않은 공고입니다.");
+    }
     if (
       toData["isManualClosed"] === true ||
       toData["status"] === "CLOSED" ||
@@ -12988,7 +12998,10 @@ export const callableApplyToTO = onCall(
       throw new HttpsError("permission-denied", "지원 마감된 공고입니다.");
     }
 
-    // ── 4. 슬롯 또는 TO 단위 정원 사전 체크 ──
+    // ── 4. 슬롯 또는 TO 단위 정원 사전 체크 + 서버 임금 추출 ──
+    // [V7-FIX] wage/wageType을 클라이언트 값 대신 서버 TO/슬롯 문서에서 추출 (임금 위조 차단)
+    let serverWage: number | undefined;
+    let serverWageType: string | undefined;
     if (slotId) {
       const slotSnap = await db
         .collection("tos").doc(toId).collection("slots").doc(slotId).get();
@@ -13001,6 +13014,8 @@ export const callableApplyToTO = onCall(
       const wd = (rawWD as Record<string, unknown>[]).find(
         (d) => d["workType"] === selectedWorkType
       ) ?? {};
+      serverWage = wd["wage"] as number | undefined;
+      serverWageType = wd["wageType"] as string | undefined;
       const wdDeadlineTs = wd["applicationDeadline"] as admin.firestore.Timestamp | undefined;
       if (wdDeadlineTs && wdDeadlineTs.toDate() < new Date()) {
         throw new HttpsError("permission-denied", "해당 업무의 지원 마감 시간이 지났습니다.");
@@ -13023,6 +13038,8 @@ export const callableApplyToTO = onCall(
           ?.[selectedWorkType]) ?? 0;
       for (const wd of rawWDList as Record<string, unknown>[]) {
         if (wd["workType"] === selectedWorkType) {
+          serverWage = wd["wage"] as number | undefined;
+          serverWageType = wd["wageType"] as string | undefined;
           const wtr = (wd["requiredCount"] as number | undefined) ?? 0;
           if (wtr > 0 && workTypeConfirmed >= wtr) {
             throw new HttpsError("permission-denied", "해당 업무의 모집 인원이 마감되었습니다.");
@@ -13031,6 +13048,8 @@ export const callableApplyToTO = onCall(
         }
       }
     }
+    const effectiveWage = serverWage ?? wage;
+    const effectiveWageType = serverWageType ?? wageType;
 
     // ── 5. 복합 docId 계산 + 기존 지원서 중복/재활성화 판단 ──
     const discriminator = (workDetailId && workDetailId.length > 0) ? workDetailId : selectedWorkType;
@@ -13075,6 +13094,7 @@ export const callableApplyToTO = onCall(
     );
 
     function hasTimeOverlap(s1: string, e1: string, s2: string, e2: string): boolean {
+      if (!s1 || !e1 || !s2 || !e2) return false; // 빈문자열 오탐 방지 — _hasTimeOverlap과 동일
       return s1 < e2 && e1 > s2;
     }
     const weekdayNames = ["일", "월", "화", "수", "목", "금", "토"];
@@ -13169,6 +13189,25 @@ export const callableApplyToTO = onCall(
       : null;
 
     await db.runTransaction(async (tx) => {
+      // [V3-FIX] TOCTOU: appRef 트랜잭션 내 재확인 — 동시 이중 제출 시 pendingCount +2 방지
+      const existingInTx = await tx.get(appRef);
+      let txIsReactivation = false;
+      if (existingInTx.exists) {
+        const exD = existingInTx.data()!;
+        const exS = (exD["status"] as string | undefined) ?? "";
+        const isResignDone = exD["resignStatus"] === "APPROVED" || exD["resignStatus"] === "AUTO_APPROVED";
+        const isTermDone = exD["terminationStatus"] === "APPROVED" || exD["terminationStatus"] === "AUTO_APPROVED";
+        if (!isResignDone && !isTermDone) {
+          if (["CONFIRMED", "CONTRACT_PENDING", "PENDING"].includes(exS)) {
+            throw new HttpsError("already-exists", "이미 지원한 업무입니다.");
+          }
+          if (["CANCELED", "AUTO_CANCELED", "REJECTED"].includes(exS)) {
+            txIsReactivation = true;
+          }
+        }
+      }
+      isReactivation = txIsReactivation; // 트랜잭션 성공 후 반환값에 반영
+
       // TOCTOU 방지: 트랜잭션 내 최종 마감·정원 재검증
       if (slotRef) {
         const latestSlot = await tx.get(slotRef);
@@ -13227,15 +13266,18 @@ export const callableApplyToTO = onCall(
         status: "PENDING",
         at: now,
         by: null,
-        action: isReactivation ? "REAPPLY" : "APPLY",
+        action: txIsReactivation ? "REAPPLY" : "APPLY",
       };
 
-      if (isReactivation) {
+      if (txIsReactivation) {
         const reactivateData: Record<string, unknown> = {
           status: "PENDING",
           type: isContract ? "long_term" : "short",
           appliedAt: admin.firestore.FieldValue.serverTimestamp(),
           workDate,
+          // [V5-FIX] 재지원 시 임금·시간 갱신 — TO 임금 변경 후 재지원 시 구버전 잔류 방지
+          wage: effectiveWage, wageType: effectiveWageType,
+          startTime, endTime,
           statusHistory: admin.firestore.FieldValue.arrayUnion(historyEntry),
           canceledAt: null, cancelReason: null,
           rejectedAt: null, rejectedBy: null, rejectMessage: null,
@@ -13255,7 +13297,9 @@ export const callableApplyToTO = onCall(
       } else {
         const setData: Record<string, unknown> = {
           uid, businessId, businessName, toId, toTitle,
-          selectedWorkType, wage, wageType,
+          selectedWorkType,
+          // [V7-FIX] 서버 TO 문서 임금 사용 (클라이언트 제공값 폴백)
+          wage: effectiveWage, wageType: effectiveWageType,
           startTime, endTime,
           status: "PENDING",
           type: isContract ? "long_term" : "short",
