@@ -1388,7 +1388,9 @@ service cloud.firestore {
       // callableReportLate·onAttendanceWageStatusChanged CF 트리거에서 Admin SDK로 기록
       // 슈퍼어드민 긴급 수정만 허용
       allow create: if isSuperAdmin();
-      allow update, delete: if isSuperAdmin();
+      // [LOW-FIX] 감사 로그 불변 — update 차단 (Admin SDK는 rules 우회하여 긴급 수정 가능)
+      allow update: if false;
+      allow delete: if isSuperAdmin();
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -1747,6 +1749,14 @@ service cloud.firestore {
       // [MED-BYPASS-FIX] businessId != '' 조건 추가 — 미소속(빈 문자열) 사용자의 '' == '' bypass 차단
       // [SEC-84] USER 경로: status='PENDING' 강제 — 클라이언트가 status='APPROVED'로 직접 생성하는 취약점 차단
       allow create: if isLoggedIn() && (
+                    // [LOW-FIX] 필드 화이트리스트 — processedBy/processedAt/rejectReason create 차단
+                    request.resource.data.keys().hasOnly([
+                      'applicationId', 'businessId', 'businessName', 'workerId', 'workerName',
+                      'currentPayScheduleType', 'currentPayScheduleDay',
+                      'requestedPayScheduleType', 'requestedPayScheduleDay',
+                      'requestReason', 'effectiveFrom', 'status', 'createdAt', 'updatedAt'
+                    ])
+                  ) && (
                     (request.resource.data.workerId == request.auth.uid &&
                      request.resource.data.businessId != '' &&
                      request.resource.data.get('status', '') == 'PENDING' &&
@@ -1806,6 +1816,14 @@ service cloud.firestore {
       // [MED-BYPASS-FIX] businessId != '' 조건 추가 — 미소속(빈 문자열) 사용자의 '' == '' bypass 차단
       // [SEC-85] USER 경로: status='PENDING' 강제 — 클라이언트가 status='PROCESSED'로 직접 생성하는 취약점 차단
       allow create: if isLoggedIn() && (
+                    // [LOW-FIX] 필드 화이트리스트 — processedBy/processedAt/transferNote/rejectReason create 차단
+                    request.resource.data.keys().hasOnly([
+                      'applicationId', 'businessId', 'businessName', 'workerId', 'workerName',
+                      'periodStart', 'periodEnd', 'attendanceIds',
+                      'requestedAmount', 'netAmount', 'requestReason',
+                      'status', 'createdAt', 'updatedAt'
+                    ])
+                  ) && (
                     (request.resource.data.workerId == request.auth.uid &&
                      request.resource.data.businessId != '' &&
                      request.resource.data.get('status', '') == 'PENDING' &&
