@@ -3306,6 +3306,80 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
     }
     console.log(`  ✅ [D-0 종료알림] ${terminateD0Count}건 처리`);
 
+    // ── D+1 퇴사 대기 알림 (관리자에게 2일 남은 경고) ────────
+    {
+      const d1Start = new Date(todayKST.getTime() - 2 * 24 * 60 * 60 * 1000);
+      const d1End   = new Date(todayKST.getTime() - 1 * 24 * 60 * 60 * 1000);
+      const d1Snap = await db.collection("applications")
+        .where("resignStatus", "==", "PENDING")
+        .where("resignRequestedAt", ">=", Timestamp.fromDate(new Date(d1Start.getTime() - KST_OFFSET_MS)))
+        .where("resignRequestedAt", "<",  Timestamp.fromDate(new Date(d1End.getTime()   - KST_OFFSET_MS)))
+        .limit(200).get();
+      await Promise.all(d1Snap.docs.map(async (d1Doc) => {
+        try {
+          const app = d1Doc.data();
+          const bizSnap = await db.collection("businesses").doc(app.businessId).get();
+          const bizData = bizSnap.exists ? bizSnap.data() : undefined;
+          const adminIds: string[] = (() => {
+            const ids = (bizData?.adminIds as string[] | undefined) ?? [];
+            if (ids.length > 0) return ids;
+            const fb = bizData?.ownerId as string | undefined;
+            return fb ? [fb] : [];
+          })();
+          await Promise.all(adminIds.map((aid) =>
+            db.collection("users").doc(aid).collection("notifications").add({
+              userId: aid,
+              type: "resignReminder",
+              title: "⏰ 퇴사 요청 미처리 알림",
+              body: `${app.applicantName ?? "근무자"}님의 퇴사 요청 후 1일이 지났습니다. 2일 내 미처리 시 자동 승인됩니다.`,
+              data: {applicationId: d1Doc.id, businessId: app.businessId, screen: "fixedWorker"},
+              isRead: false,
+              createdAt: now,
+            })
+          ));
+        } catch (e) {
+          console.error(`[D+1 퇴사 알림] 실패 ${d1Doc.id}:`, e);
+        }
+      }));
+    }
+
+    // ── D+2 퇴사 긴급 알림 (내일 자동 승인 경고) ─────────────
+    {
+      const d2Start = new Date(todayKST.getTime() - 3 * 24 * 60 * 60 * 1000);
+      const d2End   = new Date(todayKST.getTime() - 2 * 24 * 60 * 60 * 1000);
+      const d2Snap = await db.collection("applications")
+        .where("resignStatus", "==", "PENDING")
+        .where("resignRequestedAt", ">=", Timestamp.fromDate(new Date(d2Start.getTime() - KST_OFFSET_MS)))
+        .where("resignRequestedAt", "<",  Timestamp.fromDate(new Date(d2End.getTime()   - KST_OFFSET_MS)))
+        .limit(200).get();
+      await Promise.all(d2Snap.docs.map(async (d2Doc) => {
+        try {
+          const app = d2Doc.data();
+          const bizSnap = await db.collection("businesses").doc(app.businessId).get();
+          const bizData = bizSnap.exists ? bizSnap.data() : undefined;
+          const adminIds: string[] = (() => {
+            const ids = (bizData?.adminIds as string[] | undefined) ?? [];
+            if (ids.length > 0) return ids;
+            const fb = bizData?.ownerId as string | undefined;
+            return fb ? [fb] : [];
+          })();
+          await Promise.all(adminIds.map((aid) =>
+            db.collection("users").doc(aid).collection("notifications").add({
+              userId: aid,
+              type: "resignReminder",
+              title: "⚠️ 퇴사 요청 긴급 처리 필요",
+              body: `${app.applicantName ?? "근무자"}님의 퇴사 요청이 내일 자동 승인됩니다. 지금 바로 처리해 주세요.`,
+              data: {applicationId: d2Doc.id, businessId: app.businessId, screen: "fixedWorker"},
+              isRead: false,
+              createdAt: now,
+            })
+          ));
+        } catch (e) {
+          console.error(`[D+2 퇴사 알림] 실패 ${d2Doc.id}:`, e);
+        }
+      }));
+    }
+
     // ── D+3 퇴사 요청 자동 승인 ──────────────────────────────
     const threeDaysAgo = new Date(todayKST.getTime() - 3 * 24 * 60 * 60 * 1000);
     const threeDaysAgoUTC = Timestamp.fromDate(
@@ -7991,10 +8065,6 @@ export const callableCalculateAndConfirmWage = onCall(
     const attData2 = attSnap2.data()!;
     const businessId2 = attData2.businessId as string;
     const userId2 = attData2.userId as string;
-    // [WAG-01] 교차검증에 사용할 서버 체크인/아웃 시간 추출
-    const attCheckIn = attData2.checkIn as admin.firestore.Timestamp | undefined;
-    const attCheckOut = attData2.checkOut as admin.firestore.Timestamp | undefined;
-
     // 2. 권한 확인
     const callerSnap2 = await db.collection("users").doc(callerUid).get();
     const callerData2 = callerSnap2.data() ?? {};
@@ -8012,36 +8082,6 @@ export const callableCalculateAndConfirmWage = onCall(
       authorized2 = callerSubAdminOf2 === businessId2;
     }
     if (!authorized2) throw new HttpsError("permission-denied", "해당 사업장 관리 권한이 필요합니다.");
-
-    // [WAG-01] actualStart/actualEnd와 attendance 기록 교차검증
-    // 관리자 API 직접 호출로 실제 근무 시간과 크게 다른 값을 입력하는 것을 방지
-    // 허용 오차: ±120분 (반올림 처리·야간교대 정상 조정 허용)
-    {
-      const toMins = (hhmm: string) => {
-        const parts = hhmm.split(":").map(Number);
-        return parts[0] * 60 + parts[1];
-      };
-      const tsToMins = (ts: admin.firestore.Timestamp) => {
-        const d2 = ts.toDate();
-        const kst = new Date(d2.getTime() + 9 * 3600 * 1000);
-        return kst.getUTCHours() * 60 + kst.getUTCMinutes();
-      };
-      const cyclicDiff = (a: number, b: number) => Math.min(Math.abs(a - b), 1440 - Math.abs(a - b));
-      if (attCheckIn) {
-        const diff = cyclicDiff(toMins(d.actualStart), tsToMins(attCheckIn));
-        if (diff > 120) {
-          throw new HttpsError("invalid-argument",
-            `실제 시작 시간(${d.actualStart})이 체크인 기록과 2시간 이상 차이납니다.`);
-        }
-      }
-      if (attCheckOut) {
-        const diff = cyclicDiff(toMins(d.actualEnd), tsToMins(attCheckOut));
-        if (diff > 120) {
-          throw new HttpsError("invalid-argument",
-            `실제 종료 시간(${d.actualEnd})이 체크아웃 기록과 2시간 이상 차이납니다.`);
-        }
-      }
-    }
 
     // 3. 최저시급 + 보험료율 조회
     const cfgSnap = await db.collection("settings").doc("wage_config").get();
@@ -10848,6 +10888,14 @@ export const callableBatchAdjustAttendanceTime = onCall(
           }
           const serverStatus = snapData.wageStatus as string | undefined;
           if (serverStatus === "confirmed" || serverStatus === "transferred") {
+            skipped.push(attendanceId);
+            return;
+          }
+          // [DESIGN-A-M3] 소급 수정 기간 제한: 90일 이내 기록만 수정 가능
+          const recordTs = (snapData.workDate ?? snapData.checkIn) as admin.firestore.Timestamp | undefined;
+          const recordDate = recordTs?.toDate();
+          const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+          if (recordDate && recordDate < ninetyDaysAgo) {
             skipped.push(attendanceId);
             return;
           }
