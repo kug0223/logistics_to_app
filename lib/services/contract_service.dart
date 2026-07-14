@@ -1,12 +1,9 @@
-import 'dart:io';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../models/core/application_model.dart';
 import '../models/core/business_model.dart';
@@ -1026,21 +1023,6 @@ class ContractService {
       debugPrint('❌ 계약서 PDF 업로드 실패: $e');
       throw Exception('계약서 저장에 실패했습니다. 네트워크 연결을 확인해주세요.');
     }
-  }
-
-  // ── PDF 로컬 저장 (공유용) ────────────────────────────────────
-
-  // 반환된 File은 호출자가 Share 후 delete() 책임.
-  // 현재 외부 호출자 없음 — Printing.sharePdf(bytes:) 방식으로 대체되어 있어
-  // 메모리에서 직접 공유하므로 이 함수는 미사용 상태.
-  Future<File> savePdfLocally({
-    required String contractId,
-    required Uint8List bytes,
-  }) async {
-    final dir = await getTemporaryDirectory();
-    final file = File('${dir.path}/contract_$contractId.pdf');
-    await file.writeAsBytes(bytes);
-    return file;
   }
 
   // ── 유틸 ─────────────────────────────────────────────────────
