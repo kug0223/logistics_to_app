@@ -8748,8 +8748,12 @@ export const callableRequestTermination = onCall(
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(appRef);
       if (!snap.exists) throw new HttpsError("not-found", "지원서 없음");
-      if (snap.data()?.terminationStatus === "PENDING") {
-        throw new HttpsError("already-exists", "이미 계약해지 요청이 진행 중입니다.");
+      // [TERM-GUARD-FIX] null/"REJECTED" 외 상태에서 재요청 차단
+      //   APPROVED/AUTO_APPROVED에서 재요청 허용 시 callableApproveTermination 재실행으로
+      //   totalConfirmed 이중 감소 + revokeRefreshTokens 중복 호출 가능
+      const currentTermStatus = snap.data()?.terminationStatus as string | null | undefined;
+      if (currentTermStatus != null && currentTermStatus !== "REJECTED") {
+        throw new HttpsError("failed-precondition", `계약해지 재요청 불가 — 현재 상태: ${currentTermStatus}`);
       }
       const workEndDate = snap.data()?.workEndDate as admin.firestore.Timestamp | undefined;
       if (workEndDate) {
@@ -10021,6 +10025,35 @@ export const callableRejectTermination = onCall(
 
     if (!resolvedData) throw new HttpsError("internal", "트랜잭션 결과 없음");
     const rd = resolvedData as TerminationRejected;
+
+    // [TERM-REJECT-CONTRACT-FIX] 거절 시 contracts.terminationStatus 복원
+    //   callableRequestTermination이 설정한 PENDING을 null로 롤백
+    //   (callableCancelTermination과 동일 패턴)
+    const cqReject = await db
+      .collection("employment_contracts")
+      .where("applicationId", "==", applicationId)
+      .where("businessId", "==", businessId)
+      .where("terminationStatus", "==", "PENDING")
+      .limit(5)
+      .get();
+    if (cqReject.docs.length > 0) {
+      const batch = db.batch();
+      for (const d of cqReject.docs) batch.update(d.ref, {terminationStatus: null});
+      await batch.commit();
+    } else {
+      const cqReject2 = await db
+        .collection("employment_contracts")
+        .where("applicationIds", "array-contains", applicationId)
+        .where("businessId", "==", businessId)
+        .where("terminationStatus", "==", "PENDING")
+        .limit(5)
+        .get();
+      if (cqReject2.docs.length > 0) {
+        const batch = db.batch();
+        for (const d of cqReject2.docs) batch.update(d.ref, {terminationStatus: null});
+        await batch.commit();
+      }
+    }
 
     // 알림: 해지 요청자에게 거절 통보 (GCF v2 종료 전 완료 보장)
     // [FCM-01] 관리자 요청(terminationRequestedByUid !== workerUid) → screen:"fixedWorker"
