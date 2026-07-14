@@ -67,28 +67,36 @@ service firebase.storage {
     }
 
     // ── contracts/ — 근로계약서 서명 이미지·완성 PDF ───────────
-    // [STORAGE-RULE-NOTE] isContractParty(), isSuperAdminUser() 모두 Firestore 읽기 기반
-    // → 동일하게 동작하지 않음. 계약서 파일은 다운로드 URL 토큰 기반 접근으로 운영.
-    // 토큰 없이 직접 경로 접근 시도: 로그인 + 10MB 제한만 체크 (URL 토큰이 실질적 보호막)
-    // [CS-01] update: if false — 이미 업로드된 서명/PDF 덮어쓰기 완전 차단
-    // 로그인된 사용자가 contractId를 알더라도 서명 이미지 오염 불가
-    // delete는 Firestore 트랜잭션 실패 시 CF/클라이언트 롤백 흐름에서 필요
-    //
     // [SIGNED-URL-AUDIT] 계약서 Signed URL 불필요 — 의도된 설계.
     //   allow read: if false → Storage SDK 직접 경로 차단 (다운로드 URL 토큰만 유효).
-    //   계약서 URL은 근로자·고용주 당사자 모두 접근해야 하는 공유 데이터.
     //   Firestore rules의 isContractParty() 가드가 URL 노출 경로를 제한.
     //   → 추가 Signed URL 불필요. 재탐색 금지.
+    //
+    // [MED-FIX] 파일별 업로드 당사자 검증:
+    // - signature_employer.png: 신규 계약서 초안 케이스에서 Firestore 문서 미존재 가능
+    //   → contractId 무작위성 + update: if false(덮어쓰기 차단)에 의존
+    // - signature_worker.png / contract.pdf: employer 서명 완료 후 Firestore 문서 존재 보장
+    //   → firestore.get()으로 workerId 교차검증, 명시되지 않은 파일 업로드 차단
     match /contracts/{contractId}/{allPaths=**} {
-      // [H-1] 다운로드 URL 토큰으로만 접근 — Storage SDK 직접 경로 차단
-      // contract_service.dart에서 getDownloadURL() 반환 URL로만 접근하므로 기능 영향 없음
       allow read: if false;
-      allow create: if isLoggedIn() && isUnder10MB();
+      // create는 아래 파일별 규칙에서 처리 — 명시되지 않은 경로 업로드 자동 차단
       allow update: if false;
-      // [SEC-CONTRACT-MED] 임의 삭제 차단 — 로그인된 사용자도 계약서 파일 삭제 불가.
-      // CF 실패 시 롤백은 callableFinalizeWorkerSignature 내부 _cleanupContractFiles(Admin SDK)에서 전담.
-      // 클라이언트 삭제 시도는 이 규칙에 의해 항상 차단됨.
+      // [SEC-CONTRACT-MED] 임의 삭제 차단.
+      // CF 실패 시 롤백은 callableFinalizeWorkerSignature 내부 _cleanupContractFiles(Admin SDK) 전담.
       allow delete: if false;
+    }
+    // employer 서명: 신규 계약서 초안은 Firestore 미존재 가능 → 소속 검증 생략
+    match /contracts/{contractId}/signature_employer.png {
+      allow create: if isLoggedIn() && isUnder10MB();
+    }
+    // worker 서명·PDF: employer 서명 완료 후 Firestore 문서 보장 → workerId 교차검증
+    match /contracts/{contractId}/signature_worker.png {
+      allow create: if isLoggedIn() && isUnder10MB() &&
+        firestore.get(/databases/(default)/documents/employment_contracts/$(contractId)).data.workerId == request.auth.uid;
+    }
+    match /contracts/{contractId}/contract.pdf {
+      allow create: if isLoggedIn() && isUnder10MB() &&
+        firestore.get(/databases/(default)/documents/employment_contracts/$(contractId)).data.workerId == request.auth.uid;
     }
 
     // ═══════════════════════════════════════════════════════════
