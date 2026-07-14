@@ -5367,22 +5367,21 @@ export const callablePublishTO = onCall(
     // 권한 검증 (사업장 관리자 또는 SUPER_ADMIN)
     await assertBizAdmin(callerUid, businessId);
 
-    // 이미 공개된 경우 멱등 응답
+    // 이미 공개된 경우 멱등 응답 (빠른 early-return)
     if (toData.isPublished === true) {
       return {success: true, alreadyPublished: true};
     }
 
-    // [HIGH-TO-PUB] maxActiveTOs 서버 강제 — callableCreateTO와 동일 로직
-    const [callerSnap, quotaSnap] = await Promise.all([
-      db.collection("users").doc(callerUid).get(),
-      db.collection("tos")
-        .where("businessId", "==", businessId)
-        .where("isPublished", "==", true)
-        .get(),
-    ]);
-    const callerData = callerSnap.data() ?? {};
-    const totalActive = quotaSnap.size;
+    // [MEDIUM-4-FIX] status 화이트리스트 — CLOSED/EXPIRED TO의 ACTIVE 전환 차단
+    const PUBLISHABLE_STATUSES = ["DRAFT", "SCHEDULED"];
+    const toStatusNow = toData.status as string | undefined;
+    if (toStatusNow && !PUBLISHABLE_STATUSES.includes(toStatusNow)) {
+      throw new HttpsError("failed-precondition", `공개 전환 불가 상태입니다: ${toStatusNow}`);
+    }
 
+    // 한도 계산 (트랜잭션 외부 — 사용자/설정 조회는 읽기 전용)
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const callerData = callerSnap.data() ?? {};
     let limit = 4;
     const perAdminLimit = callerData.maxActiveTOs as number | undefined;
     if (perAdminLimit && perAdminLimit > 0) {
@@ -5395,17 +5394,29 @@ export const callablePublishTO = onCall(
       } catch (_) { /* 조회 실패 시 기본값 유지 */ }
     }
 
-    if (totalActive >= limit) {
-      throw new HttpsError("resource-exhausted", `MAX_ACTIVE_TO_LIMIT:${limit}`);
-    }
+    // [HIGH-TO-PUB-FIX] 쿼터 확인 + update를 트랜잭션으로 묶어 동시 공개 TOCTOU 차단
+    let alreadyPublished = false;
+    await db.runTransaction(async (tx) => {
+      const freshTo = await tx.get(toRef);
+      if (!freshTo.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
+      if (freshTo.data()!.isPublished === true) { alreadyPublished = true; return; }
 
-    await toRef.update({
-      isPublished: true,
-      publishMode: "immediate",
-      status: "ACTIVE",
-      statusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      const quotaSnap = await tx.get(
+        db.collection("tos").where("businessId", "==", businessId).where("isPublished", "==", true)
+      );
+      if (quotaSnap.size >= limit) {
+        throw new HttpsError("resource-exhausted", `MAX_ACTIVE_TO_LIMIT:${limit}`);
+      }
+
+      tx.update(toRef, {
+        isPublished: true,
+        publishMode: "immediate",
+        status: "ACTIVE",
+        statusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
     });
 
+    if (alreadyPublished) return {success: true, alreadyPublished: true};
     console.log(`✅ [publishTO] TO ${toId} 공개 전환 완료 (businessId: ${businessId})`);
     return {success: true};
   }
@@ -12352,6 +12363,18 @@ export const callableUpdateWageDetail = onCall(
     if (!Number.isInteger(clientNetWage) || clientNetWage < 0 || clientNetWage > clientTotalAmount) {
       throw new HttpsError("invalid-argument", "netWage 값이 유효 범위(0~totalAmount)를 벗어났습니다.");
     }
+    // [DEDUCTION-RANGE-FIX] 보험료 공제 필드 음수·비수치 차단 — 음수 전달 시 finalWage 무제한 증폭 가능
+    const INS_FIELDS = [
+      "employmentInsuranceDeduction", "nationalPensionDeduction",
+      "healthInsuranceDeduction", "ltcInsuranceDeduction",
+      "incomeTaxDeduction", "retroactiveDeduction",
+    ];
+    for (const insField of INS_FIELDS) {
+      const v = Number((wageDetailMap as Record<string, unknown>)[insField] ?? 0);
+      if (!isFinite(v) || v < 0 || v > 999_999_999) {
+        throw new HttpsError("invalid-argument", `${insField}은 0 이상 유효 범위 내여야 합니다.`);
+      }
+    }
 
     // 1. attendance 사전 읽기 (businessId 추출 → assertBizAdmin)
     const attRef = db.collection("attendance").doc(attendanceId);
@@ -12401,11 +12424,25 @@ export const callableUpdateWageDetail = onCall(
       const wdKST = new Date((wdTimestamp?.toMillis() ?? Date.now()) + KST_OFFSET_MS);
       const yearMonth = `${wdKST.getUTCFullYear()}-${String(wdKST.getUTCMonth() + 1).padStart(2, "0")}`;
 
-      // [V4-FIX] 민감 필드 주입 차단 — spread 전 삭제
-      // confirmedBy/confirmedAt을 클라이언트가 주입해도 저장 안 됨; calculatedBy/calculatedAt은 CF가 강제 덮어씀
-      const WAGE_DETAIL_DENY_FIELDS = ["calculatedBy", "calculatedAt", "confirmedBy", "confirmedAt"];
-      const safeWageDetailMap: Record<string, unknown> = {...wageDetailMap};
-      for (const f of WAGE_DETAIL_DENY_FIELDS) delete safeWageDetailMap[f];
+      // [WAGE-DETAIL-WHITELIST-FIX] 허용 필드 화이트리스트 — deny-list는 신규 민감 필드 추가 시 자동 노출 위험
+      // calculatedBy/calculatedAt은 아래에서 CF가 강제 덮어씀
+      const WAGE_DETAIL_ALLOW_FIELDS = [
+        "wageType", "baseWage", "scheduledMinutes", "actualMinutes",
+        "breakMinutes", "workMinutes", "overtimeMinutes", "nightMinutes",
+        "baseAmount", "overtimeAmount", "nightAmount", "additionalAmount",
+        "deductionAmount", "weeklyHolidayAmount", "totalAmount",
+        "nightAllowanceApplied", "appliedMinimumWage", "taxDeductionType",
+        "netWage", "earlyArrivalMinutes", "earlyArrivalAmount",
+        "appliedSupplementWage", "employmentInsuranceDeduction",
+        "nationalPensionDeduction", "healthInsuranceDeduction",
+        "ltcInsuranceDeduction", "incomeTaxDeduction", "retroactiveDeduction",
+        "payScheduleType", "payScheduleDay",
+      ];
+      const safeWageDetailMap: Record<string, unknown> = {};
+      const rawWDMap = wageDetailMap as Record<string, unknown>;
+      for (const f of WAGE_DETAIL_ALLOW_FIELDS) {
+        if (f in rawWDMap) safeWageDetailMap[f] = rawWDMap[f];
+      }
 
       tx.update(attRef, {
         finalWage,
@@ -13208,17 +13245,30 @@ export const callableCloseTOManually = onCall(
 
     await assertBizAdmin(callerUid, businessId);
 
-    if (toData.isManualClosed === true) {
-      throw new HttpsError("already-exists", "이미 수동 마감된 공고입니다.");
-    }
+    // [CLOSETO-FIX] 트랜잭션 + status 화이트리스트 + isPublished 해제
+    // MEDIUM-5: TOCTOU 방지, MEDIUM-6: DRAFT/CLOSED 상태 마감 차단, MEDIUM-7: 쿼터 점유 해제
+    const CLOSABLE_STATUSES = ["ACTIVE", "FULL", "SCHEDULED"];
+    await db.runTransaction(async (tx) => {
+      const freshSnap = await tx.get(db.collection("tos").doc(toId));
+      if (!freshSnap.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
+      const freshData = freshSnap.data()!;
 
-    // 2. TO 상태 업데이트 — closedBy 서버 UID 사용 [M-2]
-    await db.collection("tos").doc(toId).update({
-      isManualClosed: true,
-      closedAt: admin.firestore.FieldValue.serverTimestamp(),
-      closedBy: callerUid,
-      status: "CLOSED",
-      statusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      if (freshData.isManualClosed === true) {
+        throw new HttpsError("already-exists", "이미 수동 마감된 공고입니다.");
+      }
+      const freshStatus = freshData.status as string | undefined;
+      if (freshStatus && !CLOSABLE_STATUSES.includes(freshStatus)) {
+        throw new HttpsError("failed-precondition", `마감 불가 상태입니다: ${freshStatus}`);
+      }
+
+      tx.update(db.collection("tos").doc(toId), {
+        isManualClosed: true,
+        closedAt: admin.firestore.FieldValue.serverTimestamp(),
+        closedBy: callerUid,
+        status: "CLOSED",
+        isPublished: false,
+        statusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
     });
 
     // 3. 기존 지원서는 변경하지 않음 — 마감은 신규 지원만 차단
