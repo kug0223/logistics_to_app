@@ -292,8 +292,8 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (ctx) => SafeArea(
-        child: SingleChildScrollView(
+      // [BUG-L1 수정 2026-07-15] useSafeArea: true 와 내부 SafeArea 이중 래핑 제거 (CLAUDE.md 규칙)
+      builder: (ctx) => SingleChildScrollView(
           padding: EdgeInsets.fromLTRB(
             ResponsiveHelper.spacing(ctx, 24),
             ResponsiveHelper.spacing(ctx, 20),
@@ -354,7 +354,6 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
             ],
           ),
         ),
-      ),
     );
     if (!mounted) return;
     if (choice == null) {

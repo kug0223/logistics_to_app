@@ -2464,7 +2464,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
               .get(const GetOptions(source: Source.server));
           // 승인 처리 직후 문서가 삭제된 경쟁 상태 방어 (catch(itemErr)로 롤백됨)
           if (!freshAppDoc.exists) throw Exception('지원서를 찾을 수 없습니다');
-          final freshApp = ApplicationModel.fromMap(freshAppDoc.data()!, freshAppDoc.id);
+          // [BUG-H1-P2 수정 2026-07-15] fromMap → tryFromFirestore: 파싱 실패 시 크래시 대신 명시적 예외
+          final freshApp = ApplicationModel.tryFromFirestore(freshAppDoc) ??
+              (throw Exception('승인 후 지원서 파싱 실패'));
           final contract = await ContractService().findOrCreateContract(
             application: freshApp,
             business: business,

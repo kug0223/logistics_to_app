@@ -712,6 +712,8 @@ extension AttendanceFirestore on FirestoreService {
   }
 
   /// 대기중인 요청 개수 조회
+  // [BUG-M2 검토 2026-07-15] 직접 Firestore 쿼리 — Trust Boundary Charter 기준 읽기 전용 OK
+  //   schedule_change_requests 규칙: isAdminOf(businessId) LIST 허용, 타 사업장 접근 차단
   Future<int> getPendingScheduleChangeRequestCount(String businessId) async {
     try {
       final snapshot = await _firestore

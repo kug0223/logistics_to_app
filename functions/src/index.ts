@@ -1299,6 +1299,11 @@ export const onReviewCreated = onDocumentCreated(
 
     // 트랜잭션: 가짜 리뷰 차단 검증 + 상태 원자적 업데이트 + 동시 공개 여부 확인
     await db.runTransaction(async (tx) => {
+      // [M-3 수정 2026-07-15] retry 시 클로저 변수 초기화 — 1차 시도 이후 isPublished=true로 early return 시
+      //   shouldPublish=true 오염 방지 → 이중 batch publish + publishedAt 덮어쓰기 차단
+      shouldPublish = false;
+      otherReviewId = null;
+      blocked = false;
       const reqSnap = await tx.get(reqRef);
       if (!reqSnap.exists) {
         blocked = true;
@@ -2757,6 +2762,9 @@ async function runIntegrityCheck(now: Timestamp): Promise<void> {
     // [IC-01 수정] _processedWageEvents 오래된 레코드 정리 (TTL 대용)
     // Firestore Native TTL은 콘솔 설정 필요 — 그 전까지 자정 작업에서 7일 이상 된 레코드를 삭제.
     // onAttendanceWageChanged 멱등성 보장용 컬렉션이므로 7일이면 재시도 윈도우를 충분히 커버.
+    // [L-03 특이사항 2026-07-14] runIntegrityCheck(자정)가 실패하거나 하루 500건 초과 이벤트 시
+    //   컬렉션 지속 누적. 근본 해결: Firebase 콘솔 → Firestore → 데이터 → TTL 정책 설정 필요
+    //   (_processedWageEvents 컬렉션, processedAt 필드, 30일 TTL)
     try {
       const sevenDaysAgo = Timestamp.fromMillis(now.toMillis() - 7 * 24 * 60 * 60 * 1000);
       const oldEvents = await db
@@ -5498,11 +5506,147 @@ export const callablePublishTO = onCall(
         publishMode: "immediate",
         status: "ACTIVE",
         statusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        // [LOW-PUB-01 수정 2026-07-15] 예약 공개(scheduled) → 즉시 공개 전환 시 publishAt 잔류 방지
+        //   publishAt이 남아있으면 scheduled TO 목록 쿼리에서 오탐 가능
+        publishAt: admin.firestore.FieldValue.delete(),
       });
     });
 
     if (alreadyPublished) return {success: true, alreadyPublished: true};
     console.log(`✅ [publishTO] TO ${toId} 공개 전환 완료 (businessId: ${businessId})`);
+    return {success: true};
+  }
+);
+
+// ── callableUpdateTO ─────────────────────────────────────
+// TO 내용 수정 — assertBizAdmin 검증 + 위험 필드 서버 차단 + 감사 로그(updatedBy/updatedAt) 강제
+// 이전 이유:
+//   - 클라이언트 직접 write 시 businessId/totalConfirmed/totalPending 임의 조작 가능
+//   - reopenedBy/reopenedAt을 클라이언트 UID로 위조하는 감사 추적 우회
+//   - updatedBy 감사 로그 없음
+// Input:  { toId: string, updates: object }
+//   - null 값: FieldValue.delete()로 변환 (필드 삭제)
+//   - publishAt: ms epoch 정수 → Firestore Timestamp로 변환
+//   - statusUpdatedAt, reopenedAt, updatedAt: 서버 강제 (클라이언트 전달값 무시)
+//   - reopenedBy, updatedBy: 서버에서 callerUid로 강제
+// Output: { success: true }
+export const callableUpdateTO = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {toId, updates} = request.data as {toId?: string; updates?: Record<string, unknown>};
+
+    if (!toId || typeof toId !== "string" || toId.trim() === "") {
+      throw new HttpsError("invalid-argument", "toId가 필요합니다.");
+    }
+    if (!updates || typeof updates !== "object" || Array.isArray(updates)) {
+      throw new HttpsError("invalid-argument", "updates 객체가 필요합니다.");
+    }
+
+    const toRef = db.collection("tos").doc(toId);
+    const toSnap = await toRef.get();
+    if (!toSnap.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
+    const toData = toSnap.data()!;
+    const businessId = toData.businessId as string | undefined;
+    if (!businessId) throw new HttpsError("invalid-argument", "공고에 businessId가 없습니다.");
+
+    await assertBizAdmin(callerUid, businessId);
+
+    // 위험 필드 차단 — 클라이언트 전달값 무시
+    const BLOCKED_FIELDS = [
+      "businessId", "creatorUID",
+      "totalConfirmed", "totalPending",
+      "closedAt", "closedBy",         // closeTOManually CF 전용
+      "isManualClosed",               // 아래에서 false만 허용 처리
+      "updatedAt", "updatedBy",       // 서버 강제
+      "reopenedAt", "reopenedBy",     // 서버 강제
+      "statusUpdatedAt",              // 서버 강제
+    ];
+
+    // status 화이트리스트
+    const VALID_STATUSES = ["ACTIVE", "FULL", "CLOSED", "EXPIRED", "DRAFT", "SCHEDULED"];
+    if ("status" in updates && !VALID_STATUSES.includes(updates.status as string)) {
+      throw new HttpsError("invalid-argument", `status는 ${VALID_STATUSES.join("/")} 중 하나여야 합니다.`);
+    }
+
+    // isPublished: true 직접 전환 차단 — callablePublishTO 전용
+    if (updates.isPublished === true && toData.isPublished !== true) {
+      throw new HttpsError("permission-denied", "공고 공개는 callablePublishTO를 사용하세요.");
+    }
+
+    // workDetails 수정: totalConfirmed > 0 차단 (슈퍼어드민 예외)
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const isSuperAdmin = (callerSnap.data()?.role as string | undefined) === "SUPER_ADMIN";
+    const totalConfirmed = (toData.totalConfirmed as number | undefined) ?? 0;
+    if (!isSuperAdmin && "workDetails" in updates && totalConfirmed > 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        "확정된 지원자가 있는 공고의 근무 조건은 수정할 수 없습니다."
+      );
+    }
+
+    // CLOSED/EXPIRED TO: 핵심 운영 필드 변경 차단 (슈퍼어드민 예외)
+    const currentStatus = toData.status as string | undefined;
+    if (!isSuperAdmin && (currentStatus === "CLOSED" || currentStatus === "EXPIRED")) {
+      const LOCKED_FIELDS = ["workDetailId", "totalRequired", "startDate", "endDate", "workDays", "workTypeIds"];
+      const lockedChanged = LOCKED_FIELDS.some((f) => f in updates);
+      if (lockedChanged) {
+        throw new HttpsError("failed-precondition", "마감/만료된 공고의 핵심 필드는 수정할 수 없습니다.");
+      }
+    }
+
+    // totalRequired: totalConfirmed 이상이어야 함 (0은 무제한)
+    if (!isSuperAdmin && "totalRequired" in updates) {
+      const newRequired = updates.totalRequired as number;
+      if (newRequired !== 0 && newRequired < totalConfirmed) {
+        throw new HttpsError(
+          "failed-precondition",
+          `totalRequired(${newRequired})는 확정 인원(${totalConfirmed}) 이상이어야 합니다.`
+        );
+      }
+    }
+
+    // isManualClosed 처리: false만 허용 (true → closeTOManually CF 전용)
+    const wantsReopen = updates.isManualClosed === false && toData.isManualClosed === true;
+    if (updates.isManualClosed === true) {
+      throw new HttpsError("permission-denied", "공고 수동 마감은 closeTOManually CF를 사용하세요.");
+    }
+
+    // 최종 업데이트 맵 구성
+    const finalUpdates: Record<string, unknown> = {};
+
+    for (const [key, value] of Object.entries(updates)) {
+      if (BLOCKED_FIELDS.includes(key)) continue;  // 위험 필드 스킵
+      if (value === null) {
+        finalUpdates[key] = admin.firestore.FieldValue.delete();  // null → 삭제
+      } else if (key === "publishAt" && typeof value === "number") {
+        finalUpdates[key] = admin.firestore.Timestamp.fromMillis(value);  // ms → Timestamp
+      } else {
+        finalUpdates[key] = value;
+      }
+    }
+
+    // isManualClosed false 처리 — 재개 관련 필드 서버 강제
+    if (wantsReopen) {
+      finalUpdates.isManualClosed = false;
+      finalUpdates.reopenedBy = callerUid;
+      finalUpdates.reopenedAt = admin.firestore.FieldValue.serverTimestamp();
+      finalUpdates.closedAt = admin.firestore.FieldValue.delete();
+      finalUpdates.closedBy = admin.firestore.FieldValue.delete();
+    }
+
+    // status 변경 시 statusUpdatedAt 서버 강제
+    if ("status" in updates) {
+      finalUpdates.statusUpdatedAt = admin.firestore.FieldValue.serverTimestamp();
+    }
+
+    // 감사 로그 강제
+    finalUpdates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+    finalUpdates.updatedBy = callerUid;
+
+    await toRef.update(finalUpdates);
+    console.log(`✅ [callableUpdateTO] TO ${toId} 수정 완료 (by: ${callerUid})`);
     return {success: true};
   }
 );
@@ -6182,6 +6326,41 @@ export const onBusinessDeactivated = onDocumentUpdated(
 
     console.log(`✅ [사업장 비활성화] 완료: ${businessId} — TO ${activeTos.length}건, 지원서 ${totalRejected}건 처리`);
     } // if (activeTos.length > 0)
+
+    // [M-2 수정 2026-07-15] CLOSED 상태 TO의 CONFIRMED 지원서 미처리 보완
+    // ACTIVE/FULL/SCHEDULED TO 루프에서 toId 단위로 처리하지만 CLOSED TO는 제외됨
+    // 사업장 비활성화 시 businessId 단위 전수 조회로 잔여 CONFIRMED 처리
+    {
+      const closedConfirmedSnap = await db
+        .collection("applications")
+        .where("businessId", "==", businessId)
+        .where("status", "==", "CONFIRMED")
+        .limit(500)
+        .get();
+      if (closedConfirmedSnap.size > 0) {
+        const CLOSED_BATCH_LIMIT = 400;
+        for (let i = 0; i < closedConfirmedSnap.docs.length; i += CLOSED_BATCH_LIMIT) {
+          const chunk = closedConfirmedSnap.docs.slice(i, i + CLOSED_BATCH_LIMIT);
+          const batch = db.batch();
+          chunk.forEach((appDoc) => batch.update(appDoc.ref, {
+            status: "CANCELED",
+            cancelReason: "BUSINESS_DEACTIVATED",
+            canceledAt: admin.firestore.FieldValue.serverTimestamp(),
+          }));
+          try {
+            await batch.commit();
+          } catch (err) {
+            console.warn(`⚠️ [사업장 비활성화] 잔여 CONFIRMED 배치 실패 — 개별 처리:`, err);
+            await Promise.allSettled(chunk.map((appDoc) => appDoc.ref.update({
+              status: "CANCELED",
+              cancelReason: "BUSINESS_DEACTIVATED",
+              canceledAt: admin.firestore.FieldValue.serverTimestamp(),
+            })));
+          }
+        }
+        console.log(`✅ [사업장 비활성화] 잔여 CONFIRMED ${closedConfirmedSnap.size}건 → CANCELED: ${businessId}`);
+      }
+    }
 
     // [SEC-98] 3) employment_contracts 처리 — TO 유무와 무관하게 항상 실행
     // pending_employer / pending_worker 상태 계약서가 좀비로 잔류하는 것 방지.
@@ -7282,9 +7461,11 @@ export const callableApplyNoShowPenalty = onCall(
     if (!workDateTs) {
       throw new HttpsError("failed-precondition", "근무 날짜 정보를 찾을 수 없습니다.");
     }
-    const diffMs = Math.abs(Date.now() - workDateTs.toMillis());
-    if (diffMs > 48 * 60 * 60 * 1000) {
-      // 48시간 허용 — 자정 전후 네트워크 지연 + 야간근무(익일 종료) 케이스 포함
+    // [M-02 수정 2026-07-14] Math.abs() 제거 — 미래 근무일에도 패널티 허용하는 방향성 버그 수정
+    // 기존 Math.abs(): workDate 이전 48시간(이틀 후 근무)도 조건 통과 → 아직 시작 안 한 근무에 TrustScore 패널티
+    // 상한 +48h: 야간근무 익일 종료 네트워크 지연 허용 / 하한 -24h: 당일 취소 판정 여유
+    const diffMs = Date.now() - workDateTs.toMillis();
+    if (diffMs < -(24 * 60 * 60 * 1000) || diffMs > 48 * 60 * 60 * 1000) {
       throw new HttpsError("failed-precondition", "당일 취소에만 노쇼 패널티가 적용됩니다.");
     }
 
@@ -7556,7 +7737,12 @@ export const callableDecrementSlotConfirmed = onCall(
         totalConfirmed: admin.firestore.FieldValue.increment(-1),
       };
       if (!slotId && resolvedWorkType) {
-        toUpdate[`workTypeConfirmedCounts.${resolvedWorkType}`] = admin.firestore.FieldValue.increment(-1);
+        // [MEDIUM-SLOT-02 수정 2026-07-14] workTypeConfirmedCounts 서브카운터 음수 방지
+        // 기존: totalConfirmed > 0 체크만 있고 서브카운터 개별 체크 없음 → 부정합 시 서브카운터 음수 가능
+        const currentWorkTypeCount = ((toSnap.data()?.workTypeConfirmedCounts as Record<string, number> | undefined)?.[resolvedWorkType] ?? 0);
+        if (currentWorkTypeCount > 0) {
+          toUpdate[`workTypeConfirmedCounts.${resolvedWorkType}`] = admin.firestore.FieldValue.increment(-1);
+        }
       }
       tx.update(toRef, toUpdate);
       if (slotId) {
@@ -7592,7 +7778,9 @@ function _hasTimeOverlap(s1: string, e1: string, s2: string, e2: string): boolea
   return s1 < e2 && s2 < e1;
 }
 
-const _WEEKDAY = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"] as const;
+// [H-1 수정 2026-07-15] Firestore workDays는 한글 저장 (callableApplyToTO weekdayNames 기준)
+// 이전: _WEEKDAY 영문 배열 사용 → includes() 항상 false → 장단기 혼합 충돌 미감지
+const _KO_WEEKDAY = ["일", "월", "화", "수", "목", "금", "토"] as const;
 
 function _isConflictShortTerm(
   app: FirebaseFirestore.DocumentData,
@@ -7609,7 +7797,7 @@ function _isConflictShortTerm(
     const ms = workDate.getTime();
     if (ms < aStart || ms > aEnd) return false;
     const days: string[] = Array.isArray(app.workDays) ? (app.workDays as string[]) : [];
-    if (days.length > 0 && !days.includes(_WEEKDAY[workDate.getDay()])) return false;
+    if (days.length > 0 && !days.includes(_KO_WEEKDAY[workDate.getDay()])) return false;
     return true;
   } else {
     const aMs: number = (app.workDate as FirebaseFirestore.Timestamp | undefined)?.toMillis?.() ?? 0;
@@ -7642,7 +7830,7 @@ function _isConflictLongTerm(
   } else {
     const aMs: number = (app.workDate as FirebaseFirestore.Timestamp | undefined)?.toMillis?.() ?? 0;
     if (aMs < startDateMs || aMs > effectiveEnd) return false;
-    const dayCode = _WEEKDAY[new Date(aMs).getDay()];
+    const dayCode = _KO_WEEKDAY[new Date(aMs).getDay()];
     return workDays.includes(dayCode);
   }
 }
@@ -9095,6 +9283,19 @@ export const callableApproveTermination = onCall(
           `수락 불가 — 현재 계약해지 상태: ${d.terminationStatus}`
         );
       }
+      // [BUG-4 수정 2026-07-14] 해지 요청자 자기승인 차단
+      // 관리자가 termination 요청(terminationRequestedByUid=A) 후 즉시 approve(callerUid=A) 가능했음
+      // D+3 유예 기간 설계 의도 및 근로자 응답 기회 무력화 방지
+      // isWorker=true(근로자 본인의 수락)는 예외 — 피해지 당사자의 정상 승낙
+      if (!isWorker) {
+        const requestedBy = d.terminationRequestedByUid as string | null | undefined;
+        if (requestedBy && requestedBy === callerUid) {
+          throw new HttpsError(
+            "permission-denied",
+            "해지 요청자는 직접 승인할 수 없습니다. 근로자 동의 또는 다른 관리자가 처리해야 합니다."
+          );
+        }
+      }
 
       // [VOID-01] contractRef tx 내 재읽기 — 외부 쿼리 이후 completed 전환 방어
       let freshContractStatus: string | null = null;
@@ -9349,6 +9550,8 @@ export const callableApproveResignation = onCall(
 
     // 퇴사일 이후 scheduled attendance → absent 일괄 처리
     const cutoffDate = app.resignRequestDate?.toDate() ?? new Date();
+    // [WARN-1 특이사항] limit() 없음 — 장기 근무자의 scheduled 레코드 수천 건 시 CF 타임아웃 위험
+    // 근본 수정: limit(500) + while 루프 패턴 전환 권장 (현재는 단일 고용계약 기준 현실적 위험 낮음)
     const scheduledSnap = await db.collection("attendance")
       .where("applicationId", "==", applicationId)
       .where("status", "==", "scheduled")
@@ -10598,6 +10801,11 @@ export const callableBatchSetNoShow = onCall(
           }
 
           // [L3-FIX] 신규 노쇼 생성 시 applicationId → userId 교차검증 (트랜잭션 내 원자적 검증)
+          // [L-01 특이사항 2026-07-14] applicationId.businessId 미검증:
+          //   appSnap.data().businessId !== businessId 체크 없음
+          //   악의적 관리자가 타 사업장 applicationId + 자신의 businessId 조합 시 자신의 businessId로 귀속된
+          //   허위 NO_SHOW 레코드 생성 가능. 단, 해당 레코드가 공격자 사업장에만 귀속되므로 직접 피해 제한적.
+          //   수정: appSnap.data()!.businessId !== businessId 검증 추가 권장
           if (!attendanceId) {
             const appSnap = await tx.get(db.collection("applications").doc(applicationId));
             if (!appSnap.exists || appSnap.data()!.uid !== userId) {
@@ -10607,9 +10815,24 @@ export const callableBatchSetNoShow = onCall(
           }
 
           if (attendanceId) {
+            // [H-01 수정 2026-07-14] businessId 교차검증 — attendanceId 경로에서 타 사업장 레코드 접근 차단
+            // 호출자가 bizA 관리자여도 bizB의 attendanceId를 알면 해당 레코드 finalWage를 0으로 덮어쓸 수 있었음
+            if (!snap.exists || snap.data()!.businessId !== businessId) {
+              skippedSet.add(resolvedId);
+              return;
+            }
+            // [M-01 수정 2026-07-14] yearMonth를 서버 workDate에서 재파생 — 클라이언트 workDateMs 오염 방지
+            // 기존: 클라이언트 workDateMs 기반 yearMonth → daily_auto_8 계산 오판 가능
+            const serverWorkDate = snap.data()!.workDate as admin.firestore.Timestamp | undefined;
+            const serverYearMonth = serverWorkDate
+              ? (() => {
+                  const d = new Date(serverWorkDate.toMillis() + KST_OFFSET_MS);
+                  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+                })()
+              : yearMonth; // workDate 없는 레코드(비정상 데이터) 폴백
             tx.update(ref, {
               status: "NO_SHOW",
-              yearMonth,
+              yearMonth: serverYearMonth,
               wageStatus: "confirmed",
               finalWage: 0,
               updatedAt: now,
@@ -11678,7 +11901,12 @@ export const callableConfirmApplication = onCall(
               });
             }
             await rb4.commit();
-          } catch (_) { /* 롤백 실패 무시 */ }
+          } catch (rollbackErr) {
+            // [H-2 수정 2026-07-15] 롤백 실패 무시 → 로깅으로 전환
+            // 실패 시 APPLICATION=CONTRACT_PENDING 상태 고착 + confirmedCount 부풀림 잔류
+            // 운영자가 로그에서 확인해 수동 복구할 수 있도록 명시적 기록
+            console.error(`[callableConfirmApplication] 슬롯 closed 롤백 배치 실패 (appId=${appRef.id}):`, rollbackErr);
+          }
           throw new HttpsError("failed-precondition", "이미 마감된 슬롯입니다. 슬롯을 재오픈 후 확정해주세요.");
         }
         if (selectedWorkType) {
@@ -11996,6 +12224,15 @@ export const callableMarkTransferredBatch = onCall(
     if (attendanceIds.length > 200) {
       throw new HttpsError("invalid-argument", "최대 200건까지 처리 가능합니다.");
     }
+    // [BUG-1 수정 2026-07-14] notifications 검증을 트랜잭션 이전으로 이동
+    // 기존 위치(트랜잭션 후): 출퇴근 200건 커밋 완료 후 에러 반환 → 클라이언트 재시도 시 혼란
+    if (notifications && notifications.length > 200) {
+      throw new HttpsError("invalid-argument", "알림은 최대 200개까지 전송할 수 있습니다.");
+    }
+    // [BUG-2] transferNote 길이 제한 — Firestore 문서 크기 낭비 방지 (타 길이 제한과 일관성)
+    if (transferNote && transferNote.length > 500) {
+      throw new HttpsError("invalid-argument", "transferNote는 500자 이내여야 합니다.");
+    }
 
     // [SEC-ROLE] assertBizAdmin: businesses.adminIds 기준 검증 — role="ADMIN" 오기재 수정
     await assertBizAdmin(callerUid, businessId);
@@ -12068,10 +12305,7 @@ export const callableMarkTransferredBatch = onCall(
 
     // 알림 발송 — 실패해도 메인 처리는 성공 유지
     // [MEDIUM-3] attendanceId 제공 시 실제 처리된 건만 발송, 미제공 시 전체 발송(하위호환)
-    // [MT-1] notifications 배열 크기 제한 (DoS 방지)
-    if (notifications && notifications.length > 200) {
-      throw new HttpsError("invalid-argument", "알림은 최대 200개까지 전송할 수 있습니다.");
-    }
+    // [BUG-1] notifications 크기 검증은 트랜잭션 이전으로 이동 완료 (12131 근방)
     if (notifications && notifications.length > 0) {
       await Promise.allSettled(
         notifications
@@ -12197,6 +12431,8 @@ export const callableGetPayrollSummaries = onCall(
       .where("businessId", "==", businessId);
 
     if (typeof year === "number" && Number.isInteger(year)) {
+      // [L-02 특이사항 2026-07-14] year 범위 검증 없음 — 1900, 9999 등 극단값 전달 시 Firestore 읽기 낭비
+      // 수정: year >= 2000 && year <= 2100 범위 검증 추가 권장
       q = q.where("year", "==", year);
     }
 
@@ -12712,6 +12948,14 @@ export const callableIncrementSlotPending = onCall(
           slotUpdate[`workTypeCounts.${workType}.pendingCount`] = admin.firestore.FieldValue.increment(delta);
         }
         tx.update(slotRef, slotUpdate);
+      } else if (delta === -1) {
+        // [MEDIUM-SLOT-01 수정 2026-07-14] slotId 없는 TO에서 totalPending 음수 방지
+        // 기존: slotId 없는 경우 zero-check 없이 decrement → totalPending 음수 저장 가능
+        const toSnap = await tx.get(toRef);
+        if (((toSnap.data()?.totalPending as number) ?? 0) <= 0) {
+          tx.update(appRef, {[flagField]: admin.firestore.FieldValue.serverTimestamp()});
+          return;
+        }
       }
 
       tx.update(toRef, {totalPending: admin.firestore.FieldValue.increment(delta)});
@@ -12745,6 +12989,11 @@ export const callableApproveScheduleChangeRequest = onCall(
     if (!requestId) throw new HttpsError("invalid-argument", "requestId 필수");
     if (action !== "APPROVED" && action !== "REJECTED") {
       throw new HttpsError("invalid-argument", "action은 APPROVED 또는 REJECTED만 허용됩니다.");
+    }
+    // [BUG-3 수정 2026-07-14] rejectReason 길이 제한 — callableRequestTermination(500자)과 일관성
+    // 미적용 시 무제한 텍스트가 Firestore 저장 + FCM 알림 본문에 그대로 노출
+    if (rejectReason && rejectReason.length > 500) {
+      throw new HttpsError("invalid-argument", "rejectReason은 최대 500자까지 입력 가능합니다.");
     }
 
     // 1. 요청 문서 사전 읽기 (businessId·applicationId·applicantUid·requestType·targetDate 추출)
@@ -13077,6 +13326,50 @@ export const callableCheckIn = onCall(
                ldKST.getUTCDate() === workDateKST.getUTCDate();
       });
       if (isLeave) throw new HttpsError("permission-denied", "휴무일에는 출근할 수 없습니다.");
+    }
+
+    // [HIGH-CHECKIN-01 수정 2026-07-14] 단기 지원서 workDate ↔ workDateMs 교차검증
+    // 기존: 검증 없음 → 7일 범위 내 임의 날짜에 출근 기록 생성 후 임금 이중 청구 가능
+    if ((appData.applicationType as string) === "shortTerm") {
+      const appWorkDate = appData.workDate as admin.firestore.Timestamp | undefined;
+      if (appWorkDate) {
+        const appWorkKST = new Date(appWorkDate.toMillis() + KST_OFFSET_MS);
+        const workKSTDay = Date.UTC(workDateKST.getUTCFullYear(), workDateKST.getUTCMonth(), workDateKST.getUTCDate());
+        const appKSTDay = Date.UTC(appWorkKST.getUTCFullYear(), appWorkKST.getUTCMonth(), appWorkKST.getUTCDate());
+        if (workKSTDay !== appKSTDay) {
+          throw new HttpsError("permission-denied", "지원서에 지정된 날짜에만 출근할 수 있습니다.");
+        }
+      }
+    }
+
+    // [HIGH-CHECKIN-02 수정 2026-07-14] 장기 지원서 계약 시작일·근무 요일 교차검증
+    // 기존: 검증 없음 → 계약 시작 전/비근무일에 출근 기록 생성 후 초과 임금 청구 가능
+    if ((appData.applicationType as string) === "longTerm") {
+      const desiredStartDate = appData.desiredStartDate as admin.firestore.Timestamp | undefined;
+      if (desiredStartDate) {
+        const startKST = new Date(desiredStartDate.toMillis() + KST_OFFSET_MS);
+        const workKSTDay = Date.UTC(workDateKST.getUTCFullYear(), workDateKST.getUTCMonth(), workDateKST.getUTCDate());
+        const startKSTDay = Date.UTC(startKST.getUTCFullYear(), startKST.getUTCMonth(), startKST.getUTCDate());
+        if (workKSTDay < startKSTDay) {
+          throw new HttpsError("permission-denied", "계약 시작일 이전에는 출근할 수 없습니다.");
+        }
+      }
+      const workDays = appData.workDays as string[] | undefined;
+      if (workDays && workDays.length > 0) {
+        // [HIGH-CHECKIN-02-FIXUP 2026-07-15] Firestore workDays는 한글 저장 — 영문 DOW 배열 한글로 수정
+        const WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];
+        const dayOfWeek = WEEKDAY_KO[workDateKST.getUTCDay()];
+        if (!workDays.includes(dayOfWeek)) {
+          throw new HttpsError("permission-denied", `오늘(${dayOfWeek})은 근무 요일이 아닙니다.`);
+        }
+      }
+    }
+
+    // [MEDIUM-CHECKIN-03 수정 2026-07-15] workType 교차검증 — 지원서 selectedWorkType과 일치 확인
+    // 클라이언트가 임의 workType 전송 시 근무 유형 위조·임금 단가 회피 차단
+    const serverSelectedWorkType = appData.selectedWorkType as string | undefined;
+    if (serverSelectedWorkType && serverSelectedWorkType !== workType) {
+      throw new HttpsError("invalid-argument", "지원서에 등록된 근무 유형과 일치하지 않습니다.");
     }
 
     // [HIGH-1/HIGH-2 FIX] Trust Boundary Charter: 클라이언트 attendanceRules·scheduledStartTime 신뢰 금지
@@ -13417,6 +13710,9 @@ export const callableCreateContractRenewal = onCall(
         wageConfirmedAt: null,
         wageTransferredAt: null,
         interimSettledAmount: 0,
+        // [M-1 수정 2026-07-15] lastContractRequestedAt 복사 차단 — 계약 재발송 24h 쿨다운 오작동 방지
+        //   ...freshData 스프레드로 원본 시각이 복사되면 새 계약 첫 발송이 24h 이후에야 가능
+        lastContractRequestedAt: null,
       };
       // yearMonth는 checkIn 기록 시 설정됨 — 원본 값 제거 (set()에서 FieldValue.delete() 불가)
       delete newData.yearMonth;
