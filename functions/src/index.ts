@@ -7133,9 +7133,6 @@ export const onBusinessCreated = onDocumentCreated(
     const data = event.data?.data();
     if (!data) return null;
 
-    // 이미 승인됐거나 비활성 상태면 처리 불필요
-    if (data.isApproved === true) return null;
-
     try {
       const settingsDoc = await db.collection("settings").doc("system").get();
       const autoApprove = settingsDoc.exists
@@ -7143,10 +7140,16 @@ export const onBusinessCreated = onDocumentCreated(
         : true;  // settings/system 문서 없으면 기본값 자동승인
 
       if (autoApprove) {
-        await event.data!.ref.update({
-          isApproved: true,
-          approvedAt: Timestamp.now(),
-          approvedBy: "system_auto",
+        // [MEDIUM-02-FIX] at-least-once 재시도로 approvedAt 타임스탬프 중복 기록 방지
+        // 트랜잭션으로 isApproved 상태를 원자적으로 확인 후 갱신
+        await db.runTransaction(async (tx) => {
+          const fresh = await tx.get(event.data!.ref);
+          if (fresh.data()?.isApproved === true) return;  // 이미 승인됨 — 중복 실행 차단
+          tx.update(event.data!.ref, {
+            isApproved: true,
+            approvedAt: Timestamp.now(),
+            approvedBy: "system_auto",
+          });
         });
         console.log(`[onBusinessCreated] 자동 승인 완료: ${event.params.businessId}`);
       } else {
@@ -12172,7 +12175,8 @@ export const callableGetPayrollSummaries = onCall(
       q = q.where("year", "==", year);
     }
 
-    const snap = await q.get();
+    // [LOW-01-FIX] limit 120(10년 분) 상한 — year 미지정 시 무제한 조회 방어
+    const snap = await q.limit(120).get();
     const items = snap.docs.map(d => ({id: d.id, ...serializeFirestoreData(d.data())}));
     return {items};
   }
@@ -13055,6 +13059,8 @@ export const callableCheckIn = onCall(
     const bizSnap = await db.collection("businesses").doc(businessId).get();
     // attendanceRules가 없는 사업장은 기본값(default) 사용 — 클라이언트 값 fallback 금지
     const serverRules = (bizSnap.data()?.attendanceRules ?? {}) as AttendanceRulesData;
+    // [LOW-03-FIX] businessName 서버 조회 — 클라이언트 전달값 허위 사업장명 심기 차단
+    const serverBusinessName = (bizSnap.data()?.name as string | undefined) ?? businessName;
     // appData.startTime이 서버 권위 소스 — 없으면 클라이언트값 fallback (하위호환, HH:MM 이미 검증됨)
     const serverStartTime = (appData.startTime as string | undefined) || scheduledStartTime;
 
@@ -13088,7 +13094,7 @@ export const callableCheckIn = onCall(
         applicationId,
         userId: callerUid,
         businessId,
-        businessName,
+        businessName: serverBusinessName,
         workDate: admin.firestore.Timestamp.fromMillis(workDateMs),  // [KST-FIX] KST 자정 ms 그대로 저장
         yearMonth,
         workType,
@@ -13231,7 +13237,7 @@ export const callableCheckOut = onCall(
 
       const update: Record<string, unknown> = {
         checkOut: admin.firestore.Timestamp.fromDate(effectiveCheckOut),
-        checkOutMethod: method ?? "gps",
+        checkOutMethod: (method === "qr") ? "qr" : "gps",  // [CHECK-METHOD-FIX] callableCheckIn과 동일 패턴
         workHours,
         status,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
