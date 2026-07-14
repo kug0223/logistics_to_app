@@ -618,6 +618,12 @@ service cloud.firestore {
                         && isNotBlacklisted()
                         && isNotRestricted()
                         && request.resource.data.get('status', '') == 'PENDING'
+                        // [A02-FIX] 복합 docId 강제: applicationId가 반드시 auth.uid로 끝나야 함.
+                        // 형식: toId_discriminator_uid (slotId 없음) 또는 toId_slotId_discriminator_uid
+                        // discriminator = workDetailId 또는 selectedWorkType.
+                        // 다른 uid를 사칭하거나 임의 ID로 지원서를 삽입하는 공격 차단.
+                        // 갱신 계약(CF Admin SDK)은 auto-id 사용 → CF가 rules 우회하므로 이 검증 무관.
+                        && applicationId.matches('.+_' + request.auth.uid)
                         && get(/databases/$(database)/documents/tos/$(request.resource.data.toId))
                              .data.get('businessId', '_NONE_') == request.resource.data.businessId
                         && get(/databases/$(database)/documents/tos/$(request.resource.data.toId))

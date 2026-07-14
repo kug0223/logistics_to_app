@@ -428,53 +428,40 @@ extension ApplicationFirestore on FirestoreService {
         }
       }
 
-      // ── 2. 중복 지원 체크 (서버 방어 2차선) ──
-      // apply_dialog.dart의 1차 체크 후 이곳에서 Source.server로 재확인.
-      //
-      // [A02 동시성 한계] 더블클릭/동시 두 세션에 의한 중복 지원:
-      // 이 dupQ.get과 이후 batch.commit 사이(async gap)에 동일 사용자가
-      // 동일 슬롯에 중복 지원을 실행하면 두 지원서가 동시에 생성될 수 있다 (TOCTOU).
-      // 완전한 방어는 (toId_uid_slotId_workType) 복합 ID로 doc을 set하거나
-      // Firestore Security Rules에서 'allow create: if !existingActiveApplication' 조건을 추가해야 한다.
-      // 현재는 1) UI 버튼 disabled 처리(1차), 2) Source.server 재조회(2차),
-      // 3) 정원 초과 시 TOCTOU 방어 트랜잭션(3차)으로 실용적 수준에서 방어한다.
-      // 중복 지원서가 생겨도 관리자 확정 시 충돌 체크가 있으므로 실사용 피해는 제한적.
-      // [A02 수정] workDetailId 포함: 같은 슬롯의 다른 업무(workDetailId 다름)는
-      // 동일 workType이어도 별개 지원이므로 중복으로 처리하지 않는다.
-      Query<Map<String, dynamic>> dupQ = _firestore
+      // ── 2. 복합 docId 계산 + 중복 체크 ──
+      // [A02-FIX] 동일 (toId + slotId + workDetailId/workType + uid) 조합은 항상 같은 docId 생성.
+      // Firestore 원자적 create로 동시 지원 시 하나만 성공하고 나머지는 PERMISSION_DENIED.
+      // workDetailId 없는 경우 selectedWorkType으로 대체 — 같은 슬롯의 다른 업무는 별개 docId 보장.
+      // 갱신 계약(processContractRenewalChecks, callableCreateContractRenewal)은 CF Admin SDK 경로라
+      // rules 우회 + auto-id 유지 — 같은 TO에 복수 계약 기간이 필요하므로 복합 ID 충돌 없음.
+      final discriminator = (workDetailId != null && workDetailId.isNotEmpty)
+          ? workDetailId
+          : selectedWorkType;
+      final complexId = slotId != null
+          ? '${toId}_${slotId}_${discriminator}_$uid'
+          : '${toId}_${discriminator}_$uid';
+
+      final existingSnap = await _firestore
           .collection('applications')
-          .where('toId', isEqualTo: toId)
-          .where('uid', isEqualTo: uid)
-          .where('selectedWorkType', isEqualTo: selectedWorkType);
-      if (slotId != null) {
-        dupQ = dupQ.where('slotId', isEqualTo: slotId);
-      }
-      if (workDetailId != null && workDetailId.isNotEmpty) {
-        dupQ = dupQ.where('workDetailId', isEqualTo: workDetailId);
-      }
-      final dupQuery = await dupQ.get(const GetOptions(source: Source.server));
+          .doc(complexId)
+          .get(const GetOptions(source: Source.server));
 
       DocumentSnapshot? activeApp;
       DocumentSnapshot? reactivatableApp;
 
-      for (final doc in dupQuery.docs) {
-        if (slotId != null && doc.data()['slotId'] != slotId) continue;
-        final data = doc.data();
-        final status = data['status'] as String?;
-        final isResignDone = data['resignStatus'] == AppStatus.approved ||
-            data['resignStatus'] == AppStatus.autoApproved;
-        final isTermDone = data['terminationStatus'] == AppStatus.approved ||
-            data['terminationStatus'] == AppStatus.autoApproved;
-        if (isResignDone || isTermDone) continue;
-        if (AppStatus.activeStates.contains(status)) {
-          activeApp = doc;
-          break;
-        }
-        // [SAFE] inactiveStates = [REJECTED, CANCELED, AUTO_CANCELED]
-        // REJECTED 포함이 의도된 설계 — 관리자가 거절해도 지원자는 재지원 가능(대규모 운영 특성).
-        // 관리자가 직접 REJECTED → PENDING 복원은 B-001 규칙으로 차단됨.
-        if (AppStatus.inactiveStates.contains(status)) {
-          reactivatableApp = doc;
+      if (existingSnap.exists) {
+        final exData = existingSnap.data()!;
+        final exStatus = exData['status'] as String?;
+        final isResignDone = exData['resignStatus'] == AppStatus.approved ||
+            exData['resignStatus'] == AppStatus.autoApproved;
+        final isTermDone = exData['terminationStatus'] == AppStatus.approved ||
+            exData['terminationStatus'] == AppStatus.autoApproved;
+        if (!isResignDone && !isTermDone) {
+          if (AppStatus.activeStates.contains(exStatus)) {
+            activeApp = existingSnap;
+          } else if (AppStatus.inactiveStates.contains(exStatus)) {
+            reactivatableApp = existingSnap;
+          }
         }
       }
 
@@ -672,7 +659,7 @@ extension ApplicationFirestore on FirestoreService {
         return true;
       }
 
-      final appRef = _firestore.collection('applications').doc();
+      final appRef = _firestore.collection('applications').doc(complexId);
       batch.set(appRef, {
         'uid': uid,
         'businessId': businessId,
