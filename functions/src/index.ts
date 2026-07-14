@@ -9039,6 +9039,7 @@ export const callableApproveTermination = onCall(
     let resolvedData: TerminationResolved | null = null;
 
     await db.runTransaction(async (tx) => {
+      // [VOID-01] read-before-write: 모든 read를 write 이전에 수행
       const snap = await tx.get(appRef);
       if (!snap.exists) throw new HttpsError("not-found", "지원서 없음");
       const d = snap.data()!;
@@ -9048,6 +9049,16 @@ export const callableApproveTermination = onCall(
           `수락 불가 — 현재 계약해지 상태: ${d.terminationStatus}`
         );
       }
+
+      // [VOID-01] contractRef tx 내 재읽기 — 외부 쿼리 이후 completed 전환 방어
+      let freshContractStatus: string | null = null;
+      if (contractRef) {
+        const freshContract = await tx.get(contractRef);
+        freshContractStatus = freshContract.exists
+          ? ((freshContract.data()?.status as string | undefined) ?? null)
+          : null;
+      }
+
       const terminationEffectiveDate =
         (d.terminationEffectiveDate as admin.firestore.Timestamp | null) ?? null;
       resolvedData = {
@@ -9067,7 +9078,8 @@ export const callableApproveTermination = onCall(
           terminationEffectiveDate ?? admin.firestore.FieldValue.serverTimestamp(),
         status: "CANCELED",
       });
-      if (contractRef) {
+      // [VOID-01] pending 상태일 때만 voiding — completed 계약서는 법적 증거 보전
+      if (contractRef && freshContractStatus && pendingContractStatuses.includes(freshContractStatus)) {
         tx.update(contractRef, {
           status: "voided",
           contractVoidedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -9210,6 +9222,7 @@ export const callableApproveResignation = onCall(
     let resolvedData: ResignationResolved | null = null;
 
     await db.runTransaction(async (tx) => {
+      // [VOID-01] read-before-write: 모든 read를 write 이전에 수행
       const snap = await tx.get(appRef);
       if (!snap.exists) throw new HttpsError("not-found", "지원서 없음");
       const d = snap.data()!;
@@ -9219,6 +9232,16 @@ export const callableApproveResignation = onCall(
           `퇴사 요청 상태가 PENDING이 아님: ${d.resignStatus}`
         );
       }
+
+      // [VOID-01] contractRef tx 내 재읽기 — 외부 쿼리 이후 completed 전환 방어
+      let freshContractStatus: string | null = null;
+      if (contractRef) {
+        const freshContract = await tx.get(contractRef);
+        freshContractStatus = freshContract.exists
+          ? ((freshContract.data()?.status as string | undefined) ?? null)
+          : null;
+      }
+
       const resignRequestDate =
         (d.resignRequestDate as admin.firestore.Timestamp | null) ?? null;
       resolvedData = {
@@ -9237,7 +9260,8 @@ export const callableApproveResignation = onCall(
           resignRequestDate ?? admin.firestore.FieldValue.serverTimestamp(),
         status: "CANCELED",
       });
-      if (contractRef) {
+      // [VOID-01] pending 상태일 때만 voiding — completed 계약서는 법적 증거 보전
+      if (contractRef && freshContractStatus && pendingContractStatuses.includes(freshContractStatus)) {
         tx.update(contractRef, {
           status: "voided",
           contractVoidedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -11917,6 +11941,8 @@ export const callableMarkTransferredBatch = onCall(
     // [MEDIUM-3] 실제로 transferred 상태로 전환된 attendanceId 추적 — 알림 필터링용
     // 멱등 처리(already-transferred)는 포함하지 않아 중복 알림 방지
     const processedAttendanceIds = new Set<string>();
+    // [MT-2] 실제 처리된 근로자 userId 집합 — 임의 userId 알림 차단용
+    const validWorkerUserIds = new Set<string>();
 
     // [E-M2] 단일 트랜잭션으로 read-then-write 원자화 — TOCTOU 방지
     // 200건 × 2 ops = 400 < Firestore 한도(500)
@@ -11968,18 +11994,26 @@ export const callableMarkTransferredBatch = onCall(
 
         tx.update(snap.ref, updateData);
         processedAttendanceIds.add(id); // 실제 전환된 ID 기록
+        if (data.userId && typeof data.userId === "string") {
+          validWorkerUserIds.add(data.userId); // [MT-2] 소속 근로자 userId 수집
+        }
         processed++;
       }
     });
 
     // 알림 발송 — 실패해도 메인 처리는 성공 유지
     // [MEDIUM-3] attendanceId 제공 시 실제 처리된 건만 발송, 미제공 시 전체 발송(하위호환)
+    // [MT-1] notifications 배열 크기 제한 (DoS 방지)
+    if (notifications && notifications.length > 200) {
+      throw new HttpsError("invalid-argument", "알림은 최대 200개까지 전송할 수 있습니다.");
+    }
     if (notifications && notifications.length > 0) {
       await Promise.allSettled(
         notifications
           .filter(n =>
             n.userId &&
             n.businessId === businessId &&
+            validWorkerUserIds.has(n.userId) && // [MT-2] 소속 근로자만 알림 허용
             (!n.attendanceId || processedAttendanceIds.has(n.attendanceId))
           )
           .map(n => {
@@ -12663,13 +12697,33 @@ export const callableApproveScheduleChangeRequest = onCall(
 
     // 4. 트랜잭션 (상태 재확인 + 업데이트 + application 배열 처리 — race condition 방어)
     await db.runTransaction(async (tx) => {
+      // [SCR-FIX] Firestore 트랜잭션 규칙: 모든 read를 write 이전에 수행
       const freshSnap = await tx.get(requestRef);
       if (!freshSnap.exists) throw new HttpsError("not-found", "요청을 찾을 수 없습니다.");
       if ((freshSnap.data()!.status as string) !== "PENDING") {
         throw new HttpsError("failed-precondition", "이미 처리된 요청입니다 (동시 처리 충돌).");
       }
 
-      // 요청 상태 업데이트
+      let appRef: admin.firestore.DocumentReference | undefined;
+      let appSnap: admin.firestore.DocumentSnapshot | undefined;
+      if (action === "APPROVED") {
+        appRef = db.collection("applications").doc(scrData.applicationId as string);
+        appSnap = await tx.get(appRef); // read-before-write: write 이전에 read
+        // [SCR-02] application 미존재 시 throw — SCR만 APPROVED되고 날짜 미갱신 silent fail 방지
+        if (!appSnap.exists) {
+          throw new HttpsError("not-found", "연결된 지원서를 찾을 수 없습니다. 스케줄 변경을 적용할 수 없습니다.");
+        }
+        // [M1-FIX] 교차검증도 write 이전에 수행
+        const appDataPre = appSnap.data()!;
+        if (appDataPre.businessId !== (scrData.businessId as string)) {
+          throw new HttpsError("permission-denied", "애플리케이션이 해당 사업장에 속하지 않습니다.");
+        }
+        if (appDataPre.uid !== (scrData.applicantUid as string)) {
+          throw new HttpsError("permission-denied", "애플리케이션 소유자가 요청자와 일치하지 않습니다.");
+        }
+      }
+
+      // 요청 상태 업데이트 (write 시작)
       const updateData: Record<string, unknown> = {
         status: action,
         // [H3-FIX] respondedByUid CF가 직접 기록 — 클라이언트 UID 위조 차단
@@ -12687,52 +12741,38 @@ export const callableApproveScheduleChangeRequest = onCall(
       //   EXTRA_WORK     → extraWorkDates 추가 (비근무일 출근 허용)
       //   CANCEL_LEAVE   → leaveDates 제거 (출근 차단 해제, 미제거 시 근무자 출근 불가 상태 고착)
       //   CANCEL_EXTRA   → extraWorkDates 제거 (비근무일 명단 제거)
-      if (action === "APPROVED") {
-        const appRef = db.collection("applications").doc(scrData.applicationId as string);
-        const appSnap = await tx.get(appRef);
+      if (action === "APPROVED" && appSnap && appRef) {
+        const appData = appSnap.data()!;
+        const targetDate = (scrData.targetDate as admin.firestore.Timestamp).toDate();
 
-        if (appSnap.exists) {
-          const appData = appSnap.data()!;
-          // [M1-FIX] applicationId 소유권 + 사업장 교차검증
-          //   — 타 사업장 applicationId 지정으로 크로스-사업장 스케줄 조작 차단
-          //   — 타 근로자 applicationId 지정으로 타인 스케줄 조작 차단
-          if (appData.businessId !== (scrData.businessId as string)) {
-            throw new HttpsError("permission-denied", "애플리케이션이 해당 사업장에 속하지 않습니다.");
-          }
-          if (appData.uid !== (scrData.applicantUid as string)) {
-            throw new HttpsError("permission-denied", "애플리케이션 소유자가 요청자와 일치하지 않습니다.");
-          }
-          const targetDate = (scrData.targetDate as admin.firestore.Timestamp).toDate();
+        const sameDay = (ts: admin.firestore.Timestamp): boolean => {
+          const d = ts.toDate();
+          return d.getFullYear() === targetDate.getFullYear() &&
+                 d.getMonth() === targetDate.getMonth() &&
+                 d.getDate() === targetDate.getDate();
+        };
 
-          const sameDay = (ts: admin.firestore.Timestamp): boolean => {
-            const d = ts.toDate();
-            return d.getFullYear() === targetDate.getFullYear() &&
-                   d.getMonth() === targetDate.getMonth() &&
-                   d.getDate() === targetDate.getDate();
-          };
+        const parseDates = (field: string): admin.firestore.Timestamp[] => {
+          const arr = appData[field];
+          return Array.isArray(arr) ? (arr as admin.firestore.Timestamp[]) : [];
+        };
 
-          const parseDates = (field: string): admin.firestore.Timestamp[] => {
-            const arr = appData[field];
-            return Array.isArray(arr) ? (arr as admin.firestore.Timestamp[]) : [];
-          };
+        const requestType = scrData.requestType as string;
 
-          const requestType = scrData.requestType as string;
-
-          if (requestType === "LEAVE" || requestType === "NO_WORK") {
-            const leaveDates = parseDates("leaveDates");
-            if (!leaveDates.some(sameDay)) leaveDates.push(scrData.targetDate as admin.firestore.Timestamp);
-            tx.update(appRef, {leaveDates});
-          } else if (requestType === "EXTRA_WORK") {
-            const extraWorkDates = parseDates("extraWorkDates");
-            if (!extraWorkDates.some(sameDay)) extraWorkDates.push(scrData.targetDate as admin.firestore.Timestamp);
-            tx.update(appRef, {extraWorkDates});
-          } else if (requestType === "CANCEL_LEAVE") {
-            const leaveDates = parseDates("leaveDates").filter((ts) => !sameDay(ts));
-            tx.update(appRef, {leaveDates});
-          } else if (requestType === "CANCEL_EXTRA") {
-            const extraWorkDates = parseDates("extraWorkDates").filter((ts) => !sameDay(ts));
-            tx.update(appRef, {extraWorkDates});
-          }
+        if (requestType === "LEAVE" || requestType === "NO_WORK") {
+          const leaveDates = parseDates("leaveDates");
+          if (!leaveDates.some(sameDay)) leaveDates.push(scrData.targetDate as admin.firestore.Timestamp);
+          tx.update(appRef, {leaveDates});
+        } else if (requestType === "EXTRA_WORK") {
+          const extraWorkDates = parseDates("extraWorkDates");
+          if (!extraWorkDates.some(sameDay)) extraWorkDates.push(scrData.targetDate as admin.firestore.Timestamp);
+          tx.update(appRef, {extraWorkDates});
+        } else if (requestType === "CANCEL_LEAVE") {
+          const leaveDates = parseDates("leaveDates").filter((ts) => !sameDay(ts));
+          tx.update(appRef, {leaveDates});
+        } else if (requestType === "CANCEL_EXTRA") {
+          const extraWorkDates = parseDates("extraWorkDates").filter((ts) => !sameDay(ts));
+          tx.update(appRef, {extraWorkDates});
         }
       }
     });
