@@ -4420,19 +4420,34 @@ export const callableBlacklistUser = onCall(
     if (!targetUid || typeof targetUid !== "string") {
       throw new HttpsError("invalid-argument", "targetUid가 올바르지 않습니다.");
     }
-    if (!blacklistReason || typeof blacklistReason !== "string" || blacklistReason.length > 500) {
-      throw new HttpsError("invalid-argument", "사유가 올바르지 않습니다 (최대 500자).");
+    // [BL-3-FIX] 공백 문자열 사유 차단
+    if (!blacklistReason || typeof blacklistReason !== "string" ||
+        blacklistReason.trim().length === 0 || blacklistReason.length > 500) {
+      throw new HttpsError("invalid-argument", "사유가 올바르지 않습니다 (1자 이상 500자 이하).");
     }
-    // targetUid 존재 여부 사전 확인 (없으면 update가 NOT_FOUND 에러 — 의미 있는 메시지로 대체)
     const targetSnap = await db.collection("users").doc(targetUid).get();
     if (!targetSnap.exists) {
       throw new HttpsError("not-found", "대상 사용자를 찾을 수 없습니다.");
     }
+    // [BL-2-FIX] 이중 등록 차단 — 원래 등록 이력 덮어쓰기 방지
+    if (targetSnap.data()?.isBlacklisted === true) {
+      throw new HttpsError("already-exists", "이미 블랙리스트 처리된 사용자입니다.");
+    }
+    const targetDataForAudit = targetSnap.data() ?? {};
     await db.collection("users").doc(targetUid).update({
       isBlacklisted: true,
       blacklistReason,
       blacklistedBy: callerUid,
       blacklistedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    // [BL-1-FIX] Trust Boundary Charter 감사 로그 — 블랙리스트 등록 이력 영구 보존
+    await db.collection("blacklist_audit_log").add({
+      action: "BLACKLIST",
+      targetUid,
+      callerUid,
+      blacklistReason,
+      prevIsBlacklisted: targetDataForAudit.isBlacklisted ?? false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     try {
       await admin.auth().revokeRefreshTokens(targetUid);
@@ -4468,6 +4483,10 @@ export const callableUnblacklistUser = onCall(
     if (!targetUid || typeof targetUid !== "string") {
       throw new HttpsError("invalid-argument", "targetUid가 올바르지 않습니다.");
     }
+    // [UBL-2-FIX] 자기 자신 블랙리스트 해제 차단 — revokeRefreshTokens 실패 시 자가 복원 방지
+    if (callerUid === targetUid) {
+      throw new HttpsError("permission-denied", "자기 자신의 블랙리스트를 해제할 수 없습니다.");
+    }
     const targetSnap = await db.collection("users").doc(targetUid).get();
     if (!targetSnap.exists) {
       throw new HttpsError("not-found", "대상 사용자를 찾을 수 없습니다.");
@@ -4475,10 +4494,21 @@ export const callableUnblacklistUser = onCall(
     if (!(targetSnap.data()?.isBlacklisted as boolean | undefined)) {
       throw new HttpsError("failed-precondition", "블랙리스트 상태가 아닙니다.");
     }
+    const prevData = targetSnap.data() ?? {};
+    // [UBL-1-FIX] Trust Boundary Charter 감사 로그 — 해제 이력 + 해제 당시 사유 영구 보존
+    await db.collection("blacklist_audit_log").add({
+      action: "UNBLACKLIST",
+      targetUid,
+      callerUid,
+      originalBlacklistReason: prevData.blacklistReason ?? null,
+      originalBlacklistedBy: prevData.blacklistedBy ?? null,
+      originalBlacklistedAt: prevData.blacklistedAt ?? null,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
     await db.collection("users").doc(targetUid).update({
       isBlacklisted: false,
       blacklistReason: admin.firestore.FieldValue.delete(),
-      unblacklistedBy: callerUid, // 서버 검증된 UID — 클라이언트 위조 불가
+      unblacklistedBy: callerUid,
       unblacklistedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     return {success: true};
@@ -5260,6 +5290,10 @@ export const callableCreateTO = onCall(
     const businessId = String(toData.businessId ?? "");
     const creatorUID = String(toData.creatorUID ?? "");
     const publishMode = String(toData.publishMode ?? "immediate");
+    // [M-1-FIX] publishMode 화이트리스트 — 임의 값으로 isPublished 강제화 우회 차단
+    if (!["draft", "scheduled", "immediate"].includes(publishMode)) {
+      throw new HttpsError("invalid-argument", "publishMode는 draft/scheduled/immediate 중 하나여야 합니다.");
+    }
 
     if (!businessId) throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
     // 호출자와 creatorUID 일치 검증 — 타인 명의 TO 생성 차단
@@ -5330,10 +5364,24 @@ export const callableCreateTO = onCall(
     // [S5-FIX] 서버 전용 집계 카운터 — 클라이언트 주입 값 무시하고 0으로 강제
     finalData.totalConfirmed = 0;
     finalData.totalPending = 0;
-    // [HIGH-03-FIX] draft 모드에서 isPublished:true 전송 시 쿼터 우회 가능 → 반드시 false 강제
-    if (publishMode === "draft") {
-      finalData.isPublished = false;
+    // [H-2-FIX] 보안 민감 필드 서버 강제 덮어쓰기 — toData spread로 status/isPublished 주입 차단
+    switch (publishMode) {
+      case "draft":
+        finalData.status = "DRAFT";
+        finalData.isPublished = false;
+        break;
+      case "scheduled":
+        finalData.status = "SCHEDULED";
+        finalData.isPublished = false;
+        break;
+      default: // "immediate"
+        finalData.status = "ACTIVE";
+        finalData.isPublished = true;
+        break;
     }
+    finalData.isManualClosed = false;
+    delete finalData.closedAt;
+    delete finalData.closedBy;
 
     const toRef = await db.collection("tos").add(finalData);
     return {toId: toRef.id};
@@ -9366,6 +9414,23 @@ export const callableDeleteTO = onCall(
 
     await assertBizAdmin(callerUid, businessId);
 
+    // [M-3-FIX] CONFIRMED 근로자 있는 ACTIVE/FULL TO 삭제 차단 — 실근무 중 계약 강제 취소 방지
+    const toStatus = toData.status as string | undefined;
+    if (toStatus === "ACTIVE" || toStatus === "FULL") {
+      const confirmedCheckSnap = await db.collection("applications")
+        .where("toId", "==", toId)
+        .where("businessId", "==", businessId)
+        .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
+        .limit(1)
+        .get();
+      if (!confirmedCheckSnap.empty) {
+        throw new HttpsError(
+          "failed-precondition",
+          "확정된 근로자가 있는 공고는 삭제할 수 없습니다. 먼저 계약 해지 처리 후 삭제하세요."
+        );
+      }
+    }
+
     const ACTIVE_STATUSES = ["PENDING", "CONFIRMED", "CONTRACT_PENDING"];
     const now = Timestamp.now();
 
@@ -9548,7 +9613,9 @@ export const callableDeleteTO = onCall(
             let batch = db.batch();
             let count = 0;
             for (const c of allContractDocs) {
-              if ((c.data().status as string | undefined) === "completed") continue;
+              // [H-3-FIX] "active"(양방 서명 완료) 계약도 보존 — 법적 증거 파기 방지
+              const cStatus = c.data().status as string | undefined;
+              if (cStatus === "completed" || cStatus === "active") continue;
               batch.delete(c.ref);
               count++;
               if (count >= 499) {
@@ -13093,6 +13160,11 @@ export const callableCreateContractRenewal = onCall(
     }
     if (newStartDateMs >= newEndDateMs) {
       throw new HttpsError("invalid-argument", "종료일이 시작일보다 이후여야 합니다.");
+    }
+    // [CRN-01-FIX] 시작일 하한 검증 — 소급 계약 생성으로 법적 모순 계약 방지 (30일 이전 불가)
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+    if (newStartDateMs < Date.now() - THIRTY_DAYS_MS) {
+      throw new HttpsError("invalid-argument", "계약 시작일은 30일 이전으로 소급할 수 없습니다.");
     }
 
     // 1. 원본 application 조회 (businessId 추출 목적)
