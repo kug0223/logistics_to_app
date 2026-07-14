@@ -70,15 +70,34 @@ extension UserFirestore on FirestoreService {
     }
   }
 
+  // CF/보안 규칙이 차단해야 하는 민감 필드 목록 (코드 레벨 2차 방어)
+  // Firestore rules owner-update denylist와 반드시 동기화 유지
+  static const _protectedUserFields = {
+    'role', 'isBlacklisted', 'subAdminOf', 'businessId',
+    'blacklistReason', 'blacklistedBy', 'blacklistedAt',
+    'unblacklistedBy', 'unblacklistedAt',
+    'trustScore', 'noShowCount', 'lateCount', 'totalWorkDays', 'lastRestartAt',
+    'restrictedUntil', 'isAdmin', 'sealBase64',
+    'accountStatus', 'rejectionReason', 'approvedBy', 'approvedAt',
+    'rejectedBy', 'rejectedAt',
+    'ci', 'ciHash', 'passVerifiedAt',
+    'averageRating', 'reviewCount', 'rehireRate', 'totalWorkHours',
+    'passwordHistory', 'badges',
+    'termsConsentAt', 'termsConsent',
+    'isIdVerified', 'idCardVerifiedAt',
+    'isDummy', // [RULE-FIX-H2] 계정 영구 삭제 유도 방지
+  };
+
   Future<void> updateUserDocument(String uid, Map<String, dynamic> data) async {
     NetworkChecker.instance.assertOnline('프로필 수정을 하려면 인터넷 연결이 필요합니다.');
+    // 민감 필드 방어적 제거 (Firestore 규칙이 1차 차단, 코드에서 2차 차단)
+    final sanitized = Map<String, dynamic>.from(data)
+      ..removeWhere((k, _) => _protectedUserFields.contains(k));
+    if (sanitized.isEmpty) return;
     try {
-      await _firestore.collection('users').doc(uid).update(data);
-      
-      // 캐시 무효화
+      await _firestore.collection('users').doc(uid).update(sanitized);
       _userCache.remove(uid);
       _userCacheTimestamps.remove(uid);
-      
       debugPrint('✅ 사용자 정보 업데이트 완료: $uid');
     } catch (e) {
       debugPrint('❌ 사용자 정보 업데이트 실패: $e');

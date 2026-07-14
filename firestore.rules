@@ -220,7 +220,12 @@ service cloud.firestore {
                          // [HIGH-01] isIdVerified/idCardVerifiedAt — CF callableMarkIdCardVerified/callableDeleteIdCard 전용
                          //   클라이언트 직접 true 설정 시 OCR 없이 신분증 인증 우회 가능
                          //   (신분증 인증 결과가 단기공고 지원 자격 기준으로 사용됨)
-                         'isIdVerified', 'idCardVerifiedAt'
+                         'isIdVerified', 'idCardVerifiedAt',
+                         // [RULE-FIX-H2] isDummy — owner update denylist 누락 버그 수정
+                         //   isDummy:true 설정 후 BUSINESS_ADMIN delete 규칙(L327-328) 악용 가능:
+                         //   사용자가 자신의 문서를 isDummy:true 로 설정 → 관리자가 "더미 삭제" 로 계정 영구 삭제
+                         //   → 재가입 후 블랙리스트·제재 이력 초기화 가능. isDummy는 CF Admin SDK 전용.
+                         'isDummy'
                        ]);
 
       // [SEC-03 완료] trustScore·noShowCount·lateCount·totalWorkDays·restrictedUntil·lastRestartAt
@@ -493,7 +498,12 @@ service cloud.firestore {
                        // Trust Boundary Charter: 감사 로그 필수 작업 (closeTOManually closedBy)
                        (isSuperAdmin() ||
                         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['closedBy']) ||
-                        request.resource.data.get('closedBy', null) == request.auth.uid);
+                        request.resource.data.get('closedBy', null) == request.auth.uid) &&
+                       // [RULE-FIX-M1] status 화이트리스트 — 임의 문자열 삽입 차단
+                       //   관리자가 EXPIRED TO를 ACTIVE로 역전시키거나 정의되지 않은 상태값 삽입 가능했음
+                       (isSuperAdmin() ||
+                        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
+                        request.resource.data.status in ['ACTIVE', 'FULL', 'CLOSED', 'EXPIRED', 'DRAFT', 'SCHEDULED']);
 
       // 지원자: 지원/취소 시 totalPending 카운터만 수정 허용 (음수 방지)
       // [MEDIUM-FIX] ±1 제한 없이 임의 양수값 설정 가능 → 통계 훼손 가능
@@ -547,10 +557,22 @@ service cloud.firestore {
         // [SEC] confirmedCount ±1 제한 — 관리자도 임의 값으로 정원 조작 불가
         // Admin SDK CF(callableDecrementSlotConfirmed)는 rules 제외 — 소유권 검증 내장
         allow update: if isLoggedIn() && (isToAdmin(toId) || isSuperAdmin()) &&
+                        // confirmedCount ±1 제한
                         (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['confirmedCount']) ||
                          (request.resource.data.confirmedCount >= 0 &&
                           (request.resource.data.confirmedCount == resource.data.confirmedCount - 1 ||
-                           request.resource.data.confirmedCount == resource.data.confirmedCount + 1)));
+                           request.resource.data.confirmedCount == resource.data.confirmedCount + 1))) &&
+                        // [RULE-FIX-M2] pendingCount ±1 제한 — 관리자 경로 누락 보완
+                        //   USER 경로는 ±1 제한 있었으나 isToAdmin 경로는 제한 없어 임의 값 삽입 가능했음
+                        (isSuperAdmin() ||
+                         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['pendingCount']) ||
+                         (request.resource.data.pendingCount >= 0 &&
+                          (request.resource.data.pendingCount == resource.data.pendingCount - 1 ||
+                           request.resource.data.pendingCount == resource.data.pendingCount + 1))) &&
+                        // [RULE-FIX-M2] status 화이트리스트 — 임의 문자열 삽입 차단
+                        (isSuperAdmin() ||
+                         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
+                         request.resource.data.status in ['open', 'full', 'closed']);
 
 
         // [A1-FIX] 지원자: pendingCount 카운터만 수정 허용 (workTypeCounts 제거)
@@ -1114,9 +1136,14 @@ service cloud.firestore {
                        request.resource.data.requestedByUid == request.auth.uid &&
                        (!('requestedAt' in request.resource.data) ||
                         request.resource.data.requestedAt == request.time)) ||
-                      isAdminOf(request.resource.data.businessId) ||
-                      isSubAdminOf(request.resource.data.businessId) ||
-                      isSuperAdmin()
+                      // [RULE-FIX-M3] 관리자 create 경로 status/requestedByUid 제한 추가
+                      //   기존: 관리자면 status:'APPROVED' 직접 생성, requestedByUid 위조 등 제한 없음
+                      //   수정: PENDING 강제 + requestedByUid 본인 검증
+                      ((isAdminOf(request.resource.data.businessId) ||
+                        isSubAdminOf(request.resource.data.businessId) ||
+                        isSuperAdmin()) &&
+                       request.resource.data.status == 'PENDING' &&
+                       request.resource.data.requestedByUid == request.auth.uid)
                     );
 
       // 수정: 워커는 본인 요청 취소(CANCELED)만 허용 / 관리자는 APPROVED→CANCELED(승인 취소)만 허용
@@ -1256,8 +1283,10 @@ service cloud.firestore {
                          .hasOnly(['status', 'respondedAt', 'rejectionReason', 'expiresAt']) &&
                        // [H-1] expiresAt 서버 시각 + 7일 이내로 제한 — 임의 무기한 연장 차단
                        // [ID-2] 클라이언트 시계 오차(clock skew) 5분 허용 — DateTime.now() 기반 expiresAt 설정 시 PERMISSION_DENIED 방지
+                       // [RULE-FIX-L1] expiresAt 최솟값 추가 — 과거 시각으로 설정해 즉시 만료 조작 차단
                        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['expiresAt']) ||
-                        request.resource.data.expiresAt <= request.time + duration.value(7, 'd') + duration.value(5, 'm'))) ||
+                        (request.resource.data.expiresAt <= request.time + duration.value(7, 'd') + duration.value(5, 'm') &&
+                         request.resource.data.expiresAt >= request.time - duration.value(5, 'm')))) ||
                       ((isAdminOf(resource.data.requesterBusinessId) ||
                         isSubAdminOf(resource.data.requesterBusinessId)) &&
                        request.resource.data.diff(resource.data).affectedKeys()
