@@ -621,10 +621,10 @@ service cloud.firestore {
                              .data.get('isManualClosed', false) == false) ||
                       (isAdmin() && request.resource.data.isDummy == true) ||
                       (isAdminOf(request.resource.data.businessId) &&
-                       // [SEC-L6] CONFIRMED 제거 — CF(callableConfirmApplication/callableCreateContractRenewal)가 Admin SDK로 생성
-                       //   클라이언트 직접 CONFIRMED 생성 시 totalConfirmed 미증가 → 정원 불일치 위험
-                       //   CONTRACT_PENDING: 레거시 경로 유지 (Admin SDK 사용 CF는 rules 우회이므로 이 규칙 불필요지만 명시)
-                       request.resource.data.get('status', '') in ['PENDING', 'CONTRACT_PENDING'])
+                       // [SEC-L6] CONFIRMED 제거 — CF(callableConfirmApplication)가 Admin SDK로 생성
+                       // [A3-SEC-FIX 2026-07-14] CONTRACT_PENDING 제거 — callableCreateContractRenewal CF가 Admin SDK로 우회,
+                       //   클라이언트 이 경로에 uid 검증 없어 임의 UID로 CONTRACT_PENDING 강제 생성 가능 → 계약 서명 강제 공격 차단
+                       request.resource.data.get('status', '') == 'PENDING')
                     );
 
       allow update: if isLoggedIn() && (
@@ -792,12 +792,21 @@ service cloud.firestore {
                         request.resource.data.get('finalWage', 0) != 0) &&
                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['transferredBy']) ||
                        request.resource.data.transferredBy == request.auth.uid) &&
+                      // [V1-FIX] confirmedBy 필드 변경 시 본인 UID만 허용 — transferredBy와 동일 패턴
+                      (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['confirmedBy']) ||
+                       request.resource.data.confirmedBy == request.auth.uid) &&
                       !(resource.data.wageStatus == 'transferred' &&
                         request.resource.data.wageStatus != 'transferred') &&
                       // [MEDIUM-1] transferred 직접 설정 차단 — SuperAdmin 포함 모든 클라이언트
                       // CF Admin SDK(callableMarkTransferredBatch) 경유만 허용
+                      // [V5-FIX] confirmed 직접 설정 차단 — callableConfirmFinalWage CF(Admin SDK)로만 허용
+                      // [V5-REV-FIX] calculated 직접 설정 차단 — callableCancelFinalConfirmation CF(Admin SDK)로만 허용
+                      // [WORK-TYPE-CF] pending 직접 설정 차단 — callableWageCancel/callableChangeApplicationWorkType CF 전용
                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['wageStatus']) ||
-                       request.resource.data.get('wageStatus', '') != 'transferred') && (
+                       (request.resource.data.get('wageStatus', '') != 'transferred' &&
+                        request.resource.data.get('wageStatus', '') != 'confirmed' &&
+                        request.resource.data.get('wageStatus', '') != 'calculated' &&
+                        request.resource.data.get('wageStatus', '') != 'pending')) && (
                       // [C-1] 확정 취소 시 wageStatus=pending 출근기록 무효화
                       // cancelConfirmedApplication → _cleanupApplicationRelatedData(businessId=null)
                       // 에서 USER 컨텍스트로 호출. calculated/confirmed/transferred는 이미 위에서 차단됨.
@@ -870,13 +879,12 @@ service cloud.firestore {
         resource.data.isPublished == true
       );
       // list: USER는 본인 필터 필수
-      //   BUSINESS_ADMIN/SubAdmin: isPublished==true 필터 강제 — 공개 리뷰만 열람 가능
-      //     (worker_detail_dialog에서 근무자 공개 리뷰 조회, equality 필터 → filters 정상 평가)
+      //   BUSINESS_ADMIN/SubAdmin: callableGetMonthlyReviewsByBiz CF 경유 — 클라이언트 직접 list 차단
+      //     [SEC-MR-LIST 2026-07-14] 관리자 isPublished==true 필터만으로 전체 공개 리뷰 덤프 가능 → 제거
+      //     앱 코드 모든 관리자 경로가 CF 전환 완료이므로 규칙 제거해도 기능 영향 없음
       //   USER 경로: 본인 reviewerId 또는 targetUserId 필터
       allow list: if isLoggedIn() && (
         isSuperAdmin() ||
-        ((isBusinessAdmin() || isSubAdmin()) &&
-         request.query.filters.get('isPublished', null) == true) ||
         (isUser() && (
           request.query.filters.reviewerId == request.auth.uid ||
           request.query.filters.targetUserId == request.auth.uid
@@ -1173,14 +1181,20 @@ service cloud.firestore {
       //      → getPendingIdCardRequestsForUser (내게 온 요청 목록)
       //      → _cleanupApplicationRelatedData 사용자 취소 경로
       //        (applicationId + targetUserId + status 쿼리)
-      // [RULE-FIX-H1 2026-07-13 회귀 수정] 역할 기반 전체 덤프 차단
-      // 관리자: requesterId == auth.uid 필터 강제 (본인 발신 요청만 조회 가능)
-      //   getMyIdCardRequests, checkIdCardAccess 모두 requesterId 필터 포함
+      // [RULE-FIX-H1 2026-07-13] 역할 기반 전체 덤프 차단
+      // 관리자 경로 A: requesterId == auth.uid (본인 발신 요청만)
+      //   → getMyIdCardRequests, checkIdCardAccess 경로
+      // 관리자 경로 B: isAdminOf/isSubAdminOf(requesterBusinessId) 필터 강제
+      //   → _cleanupApplicationRelatedData 관리자 취소 경로 (applicationId+requesterBusinessId+status 쿼리)
+      //   [RULE-FIX-H1-REGRESSION-FIX 2026-07-14] 경로 B를 RULE-FIX-H1에서 제거했으나
+      //   _cleanupApplicationRelatedData가 requesterBusinessId 필터로 쿼리하여 PERMISSION_DENIED 발생 →  복원
       // USER: targetUserId == auth.uid 필터 강제 (본인 수신 요청만 조회 가능)
       allow list: if isLoggedIn() && (
                     isSuperAdmin() ||
                     ((isBusinessAdmin() || isSubAdmin()) &&
-                      request.query.filters.requesterId == request.auth.uid) ||
+                      (request.query.filters.requesterId == request.auth.uid ||
+                       isAdminOf(request.query.filters.requesterBusinessId) ||
+                       isSubAdminOf(request.query.filters.requesterBusinessId))) ||
                     (isUser() && request.query.filters.targetUserId == request.auth.uid)
                   );
 
@@ -1545,7 +1559,9 @@ service cloud.firestore {
                       ((isAdminOf(request.resource.data.businessId) ||
                         isSubAdminOf(request.resource.data.businessId)) &&
                        request.resource.data.invitedBy == request.auth.uid &&
-                       request.resource.data.get('status', '') == 'pending') ||
+                       request.resource.data.get('status', '') == 'pending' &&
+                       // [LOW-FIX 2026-07-14] createdAt 서버 타임스탬프 강제 — 미래 날짜 주입으로 30일 유효기간 우회 차단
+                       request.resource.data.createdAt == request.time) ||
                       isSuperAdmin()
                     );
 
@@ -1559,7 +1575,8 @@ service cloud.firestore {
                        resource.data.status == 'pending' &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status', 'respondedAt'])) ||
-                      (isAdminOf(resource.data.businessId) &&
+                      // [LOW-FIX 2026-07-14] isSubAdminOf 추가 — SubAdmin이 본인 발송 초대를 취소할 경로 없었음 (delete만 가능)
+                      ((isAdminOf(resource.data.businessId) || isSubAdminOf(resource.data.businessId)) &&
                        resource.data.status == 'pending' &&
                        request.resource.data.status == 'cancelled' &&
                        request.resource.data.diff(resource.data).affectedKeys()

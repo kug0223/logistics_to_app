@@ -10080,6 +10080,123 @@ export const callableBatchResetAttendance = onCall(
   }
 );
 
+// ─── 지급 예정일 계산 헬퍼 (PaymentDueDateCalculator Dart → TS 포팅) ─────────
+function srvNextWeekday(from: Date, targetWeekday: number): Date {
+  // Dart weekday: 1=월...7=일. JS getDay(): 0=일,1=월...6=토 → 1=월...7=일로 변환
+  const jsDay = from.getDay() === 0 ? 7 : from.getDay();
+  const diff = ((targetWeekday - jsDay) + 7) % 7;
+  const d = new Date(from);
+  d.setDate(d.getDate() + diff);
+  return d;
+}
+function srvNextMonthlyDay(from: Date, targetDay: number): Date {
+  const lastOfMonth = new Date(from.getFullYear(), from.getMonth() + 1, 0).getDate();
+  const clampedDay = Math.min(targetDay, lastOfMonth);
+  const thisMonthDue = new Date(from.getFullYear(), from.getMonth(), clampedDay);
+  if (thisMonthDue >= from) return thisMonthDue;
+  const nextMonth = new Date(from.getFullYear(), from.getMonth() + 1, 1);
+  const lastOfNext = new Date(nextMonth.getFullYear(), nextMonth.getMonth() + 1, 0).getDate();
+  return new Date(nextMonth.getFullYear(), nextMonth.getMonth(), Math.min(targetDay, lastOfNext));
+}
+function srvCalculatePaymentDueDate(
+  payScheduleType: string | undefined,
+  payScheduleDay: number | undefined,
+  workDate: Date
+): Date | null {
+  const base = new Date(workDate.getFullYear(), workDate.getMonth(), workDate.getDate());
+  switch (payScheduleType) {
+    case "same_day": return base;
+    case "next_day": { const d = new Date(base); d.setDate(d.getDate() + 1); return d; }
+    case "weekly": return srvNextWeekday(base, Math.max(1, Math.min(7, payScheduleDay ?? 5)));
+    case "monthly": return srvNextMonthlyDay(base, Math.max(1, Math.min(31, payScheduleDay ?? 25)));
+    default: return null;
+  }
+}
+
+// ─── callableConfirmFinalWage ─────────────────────────────────────────────────
+// [V5-FIX] 급여 마감 CF 이전 — confirmedAt serverTimestamp 강제, confirmedBy 서버 강제
+// 클라이언트 _closeWages 트랜잭션에서 confirmedAt: DateTime.now() 클라이언트 시계 위조 가능 차단.
+// paymentDueDate 계산도 서버에서 처리 (클라이언트 시각 기반 계산 제거).
+export const callableConfirmFinalWage = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const {businessId, attendanceIds} = request.data as {businessId: string; attendanceIds: string[]};
+    if (!businessId || !Array.isArray(attendanceIds) || attendanceIds.length === 0) {
+      throw new HttpsError("invalid-argument", "businessId와 attendanceIds가 필요합니다.");
+    }
+    if (attendanceIds.length > 100) {
+      throw new HttpsError("invalid-argument", "한 번에 최대 100건까지 처리 가능합니다.");
+    }
+
+    const callerUid = request.auth.uid;
+    // [SEC-ROLE] assertBizAdmin: businesses.adminIds 기준 검증
+    await assertBizAdmin(callerUid, businessId);
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    let successCount = 0;
+    const skipped: string[] = [];
+
+    for (const id of attendanceIds) {
+      const ref = db.collection("attendance").doc(id);
+      try {
+        const result = await db.runTransaction(async (tx) => {
+          const snap = await tx.get(ref);
+          if (!snap.exists) return "skip";
+          const data = snap.data()!;
+          // [SEC] businessId 교차검증
+          if (data.businessId !== businessId) return "skip";
+          // 이미 마감됐거나 송금완료이면 멱등 skip (클라이언트와 동일 동작)
+          if (data.wageStatus === "confirmed" || data.wageStatus === "transferred") return "already_closed";
+          // wageCalculated 상태만 마감 가능
+          if (data.wageStatus !== "calculated") return "skip";
+
+          const existingWd = (data.wageDetail ?? {}) as Record<string, unknown>;
+          const confirmedWageDetail = {
+            ...existingWd,
+            confirmedBy: callerUid,
+            // serverTimestamp는 wageDetail 맵 내부에 사용할 수 없어 ISO 문자열로 저장
+            // (Firestore: 배열·맵 내부 serverTimestamp 미지원 — D-M1 주석 참고)
+            // CF 서버 시각(admin SDK)으로 고정 → 클라이언트 시계 위조 차단
+            confirmedAt: admin.firestore.Timestamp.now(),
+          };
+
+          // paymentDueDate 서버 계산 (Dart PaymentDueDateCalculator 재구현)
+          const workDate = (data.workDate as admin.firestore.Timestamp)?.toDate?.() ?? new Date();
+          const payScheduleType = existingWd.payScheduleType as string | undefined;
+          const payScheduleDay = existingWd.payScheduleDay as number | undefined;
+          const paymentDueDate = srvCalculatePaymentDueDate(payScheduleType, payScheduleDay, workDate);
+
+          const updateData: Record<string, unknown> = {
+            wageStatus: "confirmed",
+            finalConfirmedAt: now,
+            confirmedBy: callerUid,
+            wageDetail: confirmedWageDetail,
+            updatedAt: now,
+          };
+          if (paymentDueDate !== null) {
+            updateData["paymentDueDate"] = admin.firestore.Timestamp.fromDate(paymentDueDate);
+          }
+
+          tx.update(ref, updateData);
+          return "ok";
+        });
+
+        if (result === "ok") {
+          successCount++;
+        } else {
+          skipped.push(id);
+        }
+      } catch (e) {
+        console.error(`마감 실패 (${id}):`, e);
+        skipped.push(id);
+      }
+    }
+
+    return {success: true, processed: successCount, skipped};
+  }
+);
+
 // 마감 취소 — wageConfirmed → wageCalculated (트랜잭션으로 transferred 경합 방어)
 export const callableCancelFinalConfirmation = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
@@ -10122,6 +10239,8 @@ export const callableCancelFinalConfirmation = onCall(
             wageStatus: "calculated",
             wageDetail: Object.keys(updatedDetail).length > 0 ? updatedDetail : admin.firestore.FieldValue.delete(),
             finalConfirmedAt: admin.firestore.FieldValue.delete(),
+            // [V3-FIX] paymentDueDate 삭제 — 클라이언트 _reverseCloseWages와 불일치 해소
+            paymentDueDate: admin.firestore.FieldValue.delete(),
             updatedAt: now,
           });
           return true;
@@ -10138,6 +10257,251 @@ export const callableCancelFinalConfirmation = onCall(
     }
 
     return {success: true, processed: successCount, skipped};
+  }
+);
+
+// ─── callableWageCancel ──────────────────────────────────────────────────────
+// [WAGE-CANCEL-FIX] 급여 확정 취소 CF — wageCalculated → wagePending
+// 클라이언트 _processWageCancel 트랜잭션을 CF Admin SDK로 이전.
+// 이전 이유:
+//  1. 클라이언트 트랜잭션에 assertBizAdmin 없음 — rules만으로 사업장 교차검증
+//  2. wageStatus: pending 직접 write → CF 이전으로 서버 강제 가능
+export const callableWageCancel = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const {businessId, attendanceId} = request.data as {businessId: string; attendanceId: string};
+    if (!businessId || !attendanceId) {
+      throw new HttpsError("invalid-argument", "businessId와 attendanceId가 필요합니다.");
+    }
+
+    const callerUid = request.auth.uid;
+    // [SEC-ROLE] assertBizAdmin: businesses.adminIds 기준 검증
+    await assertBizAdmin(callerUid, businessId);
+
+    const attRef = db.collection("attendance").doc(attendanceId);
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(attRef);
+      if (!snap.exists) throw new HttpsError("not-found", "출근 기록을 찾을 수 없습니다.");
+      const data = snap.data()!;
+      // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
+      if (data.businessId !== businessId) {
+        throw new HttpsError("permission-denied", "접근 권한이 없습니다.");
+      }
+      // wageConfirmed/wageTransferred 상태는 취소 불가
+      if (data.wageStatus === "confirmed" || data.wageStatus === "transferred") {
+        throw new HttpsError("failed-precondition", "이미 마감된 급여입니다. 마감 취소 기능을 사용하세요.");
+      }
+      if (data.wageStatus !== "calculated") {
+        throw new HttpsError("failed-precondition", `현재 상태(${data.wageStatus})에서는 취소할 수 없습니다.`);
+      }
+
+      tx.update(attRef, {
+        wageStatus: "pending",
+        finalWage: admin.firestore.FieldValue.delete(),
+        wageDetail: admin.firestore.FieldValue.delete(),
+        // yearMonth 삭제 — pending 복귀 시 _getPrevGrossTotal 집계 제외, stale 필드 방지
+        yearMonth: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+
+    return {success: true};
+  }
+);
+
+// ─── callableChangeApplicationWorkType ──────────────────────────────────────
+// [WORK-TYPE-CF] 파트(업무유형) 변경 CF — Trust Boundary Charter 카운터 증감 필수
+// 클라이언트 changeApplicationWorkType() 교체 대상:
+//  1. workTypeCounts/workTypeConfirmedCounts FieldValue.increment → CF 서버 강제
+//  2. attendance wageStatus: pending 직접 write → BulkWriter로 교체
+//  3. assertBizAdmin 교차검증 추가
+export const callableChangeApplicationWorkType = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const {
+      applicationId, businessId, newWorkType, newWage,
+      newWorkDetailId, newWageType, newWorkTypeIcon, newWorkTypeColor, newWorkTypeBackgroundColor,
+    } = request.data as {
+      applicationId: string;
+      businessId: string;
+      newWorkType: string;
+      newWage: number;
+      newWorkDetailId?: string;
+      newWageType?: string;
+      newWorkTypeIcon?: string;
+      newWorkTypeColor?: string;
+      newWorkTypeBackgroundColor?: string;
+    };
+
+    if (!applicationId || !businessId || !newWorkType || typeof newWage !== "number") {
+      throw new HttpsError("invalid-argument", "필수 파라미터가 누락됐습니다.");
+    }
+    if (newWage < 0 || !Number.isInteger(newWage) || newWage > 100_000_000) {
+      throw new HttpsError("invalid-argument", "임금 값이 유효하지 않습니다.");
+    }
+
+    const callerUid = request.auth.uid;
+    await assertBizAdmin(callerUid, businessId);
+
+    // 1. application 조회 + businessId 교차검증
+    const appRef = db.collection("applications").doc(applicationId);
+    const appSnap = await appRef.get();
+    if (!appSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const appData = appSnap.data()!;
+    if (appData.businessId !== businessId) {
+      throw new HttpsError("permission-denied", "해당 사업장의 지원서가 아닙니다.");
+    }
+
+    const currentWorkType = (appData.selectedWorkType as string) ?? "";
+    const currentWage = (appData.wage as number) ?? 0;
+    const currentStatus = (appData.status as string) ?? "";
+    const toId = appData.toId as string | undefined;
+    const slotId = appData.slotId as string | undefined;
+    const uid = (appData.uid as string) ?? "";
+    const bizName = (appData.businessName as string) ?? "";
+    const workDateTs = appData.workDate as admin.firestore.Timestamp | undefined;
+
+    if (currentWorkType === newWorkType) {
+      throw new HttpsError("failed-precondition", "동일한 업무유형입니다.");
+    }
+
+    // 2. attendance 쿼리 (calculated + confirmed 병렬)
+    const [calcSnap, confSnap] = await Promise.all([
+      db.collection("attendance")
+        .where("applicationId", "==", applicationId)
+        .where("businessId", "==", businessId)
+        .where("wageStatus", "==", "calculated")
+        .get(),
+      db.collection("attendance")
+        .where("applicationId", "==", applicationId)
+        .where("businessId", "==", businessId)
+        .where("wageStatus", "==", "confirmed")
+        .get(),
+    ]);
+    const attDocs = [...calcSnap.docs, ...confSnap.docs];
+
+    // 3. employment_contracts 쿼리 (장기 직접 → 단기 번들 fallback)
+    let contractSnap: admin.firestore.QueryDocumentSnapshot | null = null;
+    const contractQ1 = await db.collection("employment_contracts")
+      .where("applicationId", "==", applicationId)
+      .where("businessId", "==", businessId)
+      .limit(1)
+      .get();
+    if (contractQ1.docs.length > 0) {
+      contractSnap = contractQ1.docs[0];
+    } else {
+      const contractQ2 = await db.collection("employment_contracts")
+        .where("applicationIds", "array-contains", applicationId)
+        .where("businessId", "==", businessId)
+        .limit(1)
+        .get();
+      if (contractQ2.docs.length > 0) contractSnap = contractQ2.docs[0];
+    }
+
+    // 4. 1차 WriteBatch: application + slot/TO 카운터 + contract
+    const batch = db.batch();
+
+    const appUpdate: Record<string, unknown> = {
+      selectedWorkType: newWorkType,
+      wage: newWage,
+      originalWorkType: appData.originalWorkType ?? currentWorkType,
+      originalWage: appData.originalWage ?? currentWage,
+      changedAt: admin.firestore.FieldValue.serverTimestamp(),
+      changedBy: callerUid,
+    };
+    if (newWorkDetailId !== undefined) appUpdate.workDetailId = newWorkDetailId;
+    if (newWageType !== undefined) appUpdate.wageType = newWageType;
+    if (newWorkTypeIcon !== undefined) appUpdate.workTypeIcon = newWorkTypeIcon;
+    if (newWorkTypeColor !== undefined) appUpdate.workTypeColor = newWorkTypeColor;
+    if (newWorkTypeBackgroundColor !== undefined) appUpdate.workTypeBackgroundColor = newWorkTypeBackgroundColor;
+    batch.update(appRef, appUpdate);
+
+    // slot 카운터 (단기TO — slotId 있음)
+    const CONFIRMED_STATUSES = new Set(["CONFIRMED", "CONTRACT_PENDING"]);
+    if (toId && slotId) {
+      const slotRef = db.collection("tos").doc(toId).collection("slots").doc(slotId);
+      if (CONFIRMED_STATUSES.has(currentStatus)) {
+        batch.update(slotRef, {
+          [`workTypeCounts.${currentWorkType}.confirmedCount`]: admin.firestore.FieldValue.increment(-1),
+          [`workTypeCounts.${newWorkType}.confirmedCount`]: admin.firestore.FieldValue.increment(1),
+        });
+      } else if (currentStatus === "PENDING") {
+        batch.update(slotRef, {
+          [`workTypeCounts.${currentWorkType}.pendingCount`]: admin.firestore.FieldValue.increment(-1),
+          [`workTypeCounts.${newWorkType}.pendingCount`]: admin.firestore.FieldValue.increment(1),
+        });
+      }
+    }
+
+    // TO 카운터 (장기TO — slotId 없음, confirmed 상태)
+    if (toId && !slotId && CONFIRMED_STATUSES.has(currentStatus)) {
+      const toRef = db.collection("tos").doc(toId);
+      batch.update(toRef, {
+        [`workTypeConfirmedCounts.${currentWorkType}`]: admin.firestore.FieldValue.increment(-1),
+        [`workTypeConfirmedCounts.${newWorkType}`]: admin.firestore.FieldValue.increment(1),
+      });
+    }
+
+    // contract 업데이트
+    if (contractSnap) {
+      const contractData = contractSnap.data();
+      const contractUpdate: Record<string, unknown> = {workType: newWorkType, wage: newWage};
+      if (newWageType !== undefined) contractUpdate.wageType = newWageType;
+
+      // pending_employer 상태에서만 slots 배열 내 wage/wageType 수정
+      if (contractData.status === "pending_employer") {
+        const rawSlots = (contractData.slots as unknown[]) ?? [];
+        if (rawSlots.length > 0) {
+          contractUpdate.slots = rawSlots.map((s) => {
+            const slot = {...(s as Record<string, unknown>)};
+            if (slot.applicationId === applicationId) {
+              slot.wage = newWage;
+              if (newWageType !== undefined) slot.wageType = newWageType;
+            }
+            return slot;
+          });
+        }
+      }
+      batch.update(contractSnap.ref, contractUpdate);
+    }
+
+    await batch.commit();
+
+    // 5. 2차 attendance BulkWriter — wagePending 초기화 (500+건 대응)
+    if (attDocs.length > 0) {
+      const bw = db.bulkWriter();
+      for (const attDoc of attDocs) {
+        bw.update(attDoc.ref, {
+          wageStatus: "pending",
+          finalWage: admin.firestore.FieldValue.delete(),
+          wageDetail: admin.firestore.FieldValue.delete(),
+          yearMonth: admin.firestore.FieldValue.delete(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+      await bw.close();
+    }
+
+    // 6. 알림 — 지원자에게 파트 변경 알림 (비동기, 실패 허용)
+    if (uid && workDateTs) {
+      const workDate = workDateTs.toDate();
+      const formattedWage = newWage.toString().replace(/(\d{1,3})(?=(\d{3})+(?!\d))/g, "$1,");
+      const dateStr = `${workDate.getMonth() + 1}/${workDate.getDate()}`;
+      db.collection("notifications").add({
+        userId: uid,
+        type: "workTypeChanged",
+        title: "파트 변경",
+        body: `${bizName}에서 귀하의 파트가 변경되었습니다.\n${currentWorkType} → ${newWorkType} (${formattedWage}원)\n근무일: ${dateStr}`,
+        data: {applicationId, businessId, action: "applicationDetail"},
+        isRead: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        readAt: null,
+      }).catch((err) => console.error("[callableChangeApplicationWorkType] 알림 실패:", err));
+    }
+
+    return {success: true, attendanceResetCount: attDocs.length};
   }
 );
 
@@ -11030,6 +11394,15 @@ export const callableUpdateWageDetail = onCall(
     const deductionAmount = Number(wageDetailMap.deductionAmount ?? 0);
     if (additionalAmount < 0) throw new HttpsError("invalid-argument", "추가수당은 0 이상이어야 합니다.");
     if (deductionAmount < 0) throw new HttpsError("invalid-argument", "추가공제는 0 이상이어야 합니다.");
+    // [V4-FIX] totalAmount/netWage 정수 범위 검증 — 클라이언트 임의 주입 방어
+    const clientTotalAmount = Number(wageDetailMap.totalAmount ?? 0);
+    const clientNetWage = Number(wageDetailMap.netWage ?? 0);
+    if (!Number.isInteger(clientTotalAmount) || clientTotalAmount < 0 || clientTotalAmount > 999_999_999) {
+      throw new HttpsError("invalid-argument", "totalAmount 값이 유효 범위(0~999,999,999)를 벗어났습니다.");
+    }
+    if (!Number.isInteger(clientNetWage) || clientNetWage < 0 || clientNetWage > clientTotalAmount) {
+      throw new HttpsError("invalid-argument", "netWage 값이 유효 범위(0~totalAmount)를 벗어났습니다.");
+    }
 
     // 1. attendance 사전 읽기 (businessId 추출 → assertBizAdmin)
     const attRef = db.collection("attendance").doc(attendanceId);
@@ -11077,10 +11450,16 @@ export const callableUpdateWageDetail = onCall(
       const workDate: Date = (freshData.workDate as admin.firestore.Timestamp)?.toDate?.() ?? new Date();
       const yearMonth = `${workDate.getFullYear()}-${String(workDate.getMonth() + 1).padStart(2, "0")}`;
 
+      // [V4-FIX] 민감 필드 주입 차단 — spread 전 삭제
+      // confirmedBy/confirmedAt을 클라이언트가 주입해도 저장 안 됨; calculatedBy/calculatedAt은 CF가 강제 덮어씀
+      const WAGE_DETAIL_DENY_FIELDS = ["calculatedBy", "calculatedAt", "confirmedBy", "confirmedAt"];
+      const safeWageDetailMap: Record<string, unknown> = {...wageDetailMap};
+      for (const f of WAGE_DETAIL_DENY_FIELDS) delete safeWageDetailMap[f];
+
       tx.update(attRef, {
         finalWage,
         wageDetail: {
-          ...wageDetailMap,
+          ...safeWageDetailMap,
           calculatedBy: callerUid,
           // [M11-FIX] calculatedAt 서버 타임스탬프 강제 — 클라이언트 DateTime.now() 조작 차단
           calculatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -11833,7 +12212,8 @@ export const callableCreateContractRenewal = onCall(
  *   - AUTO_CANCELED 법적 상태 전이: CF Admin SDK 전용 (rules bypass) [Charter]
  *
  * Input:  { toId: string }
- * Output: { success: true, canceledCount: number }
+ * Output: { success: true }
+ *   기존 지원서(CONFIRMED/PENDING/CONTRACT_PENDING)는 변경하지 않음 — 신규 지원만 차단
  */
 export const callableCloseTOManually = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},

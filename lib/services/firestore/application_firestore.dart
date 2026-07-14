@@ -1249,6 +1249,8 @@ extension ApplicationFirestore on FirestoreService {
   }
 
   /// 지원자 업무유형 변경 (관리자용)
+  // [WORK-TYPE-CF] callableChangeApplicationWorkType CF 호출 — 카운터 증감·attendance wagePending 서버 강제.
+  // assertBizAdmin + businessId 교차검증은 CF 내부에서 처리.
   Future<bool> changeApplicationWorkType({
     required String applicationId,
     required String newWorkType,
@@ -1272,14 +1274,9 @@ extension ApplicationFirestore on FirestoreService {
       }
       final appData = appDoc.data()!;
       final currentWorkType = appData['selectedWorkType'] as String? ?? '';
-      final currentWage = (appData['wage'] as num?)?.toInt() ?? 0;
-      final uid = appData['uid'] as String? ?? '';
-      final businessName = appData['businessName'] as String? ?? '';
       final businessId = appData['businessId'] as String? ?? '';
-      final workDate = (appData['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now();
       final toId = appData['toId'] as String?;
       final slotId = appData['slotId'] as String?;
-      final currentStatus = appData['status'] as String? ?? '';
 
       if (currentWorkType == newWorkType) {
         ToastHelper.showError('동일한 업무유형입니다.');
@@ -1324,153 +1321,29 @@ extension ApplicationFirestore on FirestoreService {
         }
       }
 
-      // [C-1] 확정된 급여 attendance 조회 — 파트변경 시 wagePending으로 초기화
-      // wageTransferred(송금완료)는 이미 지급된 건이므로 초기화 제외
-      // whereIn 복합 쿼리 → 보안 규칙 필터 누락 방지를 위해 병렬 isEqualTo + businessId 추가
-      final calculatedAttDocs = (await Future.wait([
-        AttendanceModel.wageCalculated,
-        AttendanceModel.wageConfirmed,
-      ].map((ws) => _firestore
-          .collection('attendance')
-          .where('applicationId', isEqualTo: applicationId)
-          .where('businessId', isEqualTo: businessId)
-          .where('wageStatus', isEqualTo: ws)
-          .get(const GetOptions(source: Source.server)))))
-          .expand((snap) => snap.docs)
-          .toList();
-
-      // [C-2] 계약서 조회 — 배치 커밋 전 미리 조회하여 원자적 업데이트 보장
-      // applicationId 직접 매칭(장기) → applicationIds 배열(단기 번들) 순서로 탐색
-      DocumentSnapshot<Map<String, dynamic>>? contractDoc;
-      final contractQ1 = await _firestore
-          .collection('employment_contracts')
-          .where('applicationId', isEqualTo: applicationId)
-          .where('businessId', isEqualTo: businessId)
-          .limit(1)
-          .get(const GetOptions(source: Source.server));
-      if (contractQ1.docs.isNotEmpty) {
-        contractDoc = contractQ1.docs.first;
-      } else {
-        final contractQ2 = await _firestore
-            .collection('employment_contracts')
-            .where('applicationIds', arrayContains: applicationId)
-            .where('businessId', isEqualTo: businessId)
-            .limit(1)
-            .get(const GetOptions(source: Source.server));
-        if (contractQ2.docs.isNotEmpty) contractDoc = contractQ2.docs.first;
-      }
-
-      final batch = _firestore.batch();
-
-      // 지원서 업데이트
-      batch.update(_firestore.collection('applications').doc(applicationId), {
-        'selectedWorkType': newWorkType,
-        'wage': newWage,
-        'originalWorkType': appData['originalWorkType'] ?? currentWorkType,
-        'originalWage': appData['originalWage'] ?? currentWage,
-        'changedAt': FieldValue.serverTimestamp(),
-        'changedBy': adminUID,
-        if (newWorkDetailId != null) 'workDetailId': newWorkDetailId,
-        if (newWageType != null) 'wageType': newWageType,
-        if (newWorkTypeIcon != null) 'workTypeIcon': newWorkTypeIcon,
-        if (newWorkTypeColor != null) 'workTypeColor': newWorkTypeColor,
-        if (newWorkTypeBackgroundColor != null) 'workTypeBackgroundColor': newWorkTypeBackgroundColor,
+      final cfCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableChangeApplicationWorkType',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 60)));
+      await cfCallable.call({
+        'applicationId': applicationId,
+        'businessId': businessId,
+        'newWorkType': newWorkType,
+        'newWage': newWage,
+        if (newWorkDetailId != null) 'newWorkDetailId': newWorkDetailId,
+        if (newWageType != null) 'newWageType': newWageType,
+        if (newWorkTypeIcon != null) 'newWorkTypeIcon': newWorkTypeIcon,
+        if (newWorkTypeColor != null) 'newWorkTypeColor': newWorkTypeColor,
+        if (newWorkTypeBackgroundColor != null) 'newWorkTypeBackgroundColor': newWorkTypeBackgroundColor,
       });
 
-      // workTypeCounts 카운터 동기화 (슬롯 기반 단기TO)
-      if (toId != null && slotId != null) {
-        final slotRef = _firestore.collection('tos').doc(toId).collection('slots').doc(slotId);
-        if (AppStatus.confirmedStatuses.contains(currentStatus)) {
-          batch.update(slotRef, {
-            'workTypeCounts.$currentWorkType.confirmedCount': FieldValue.increment(-1),
-            'workTypeCounts.$newWorkType.confirmedCount': FieldValue.increment(1),
-          });
-        } else if (currentStatus == AppStatus.pending) {
-          batch.update(slotRef, {
-            'workTypeCounts.$currentWorkType.pendingCount': FieldValue.increment(-1),
-            'workTypeCounts.$newWorkType.pendingCount': FieldValue.increment(1),
-          });
-        }
-      }
-
-      // workTypeConfirmedCounts 카운터 동기화 (슬롯 없는 장기TO)
-      if (toId != null && slotId == null && AppStatus.confirmedStatuses.contains(currentStatus)) {
-        batch.update(_firestore.collection('tos').doc(toId), {
-          'workTypeConfirmedCounts.$currentWorkType': FieldValue.increment(-1),
-          'workTypeConfirmedCounts.$newWorkType': FieldValue.increment(1),
-        });
-      }
-
-      // [C-2] 계약서 workType/wage/wageType 동기화 — 당사자 협의 후 변경이므로 기존 계약서 직접 수정
-      if (contractDoc != null) {
-        final contractData = contractDoc.data()!;
-        final Map<String, dynamic> contractUpdate = {
-          'workType': newWorkType,
-          'wage': newWage,
-          if (newWageType != null) 'wageType': newWageType,
-        };
-
-        // 단기 번들 슬롯: pending_employer 상태에서만 slots 배열 업데이트 허용
-        // [M3-FIX] SEC-104 규칙: slots는 pending_employer 상태에서만 수정 가능
-        // pending_worker(근무자 서명 완료) 상태에서는 slots 제외하고 workType/wage/wageType만 업데이트
-        final contractStatus = contractData['status'] as String? ?? '';
-        if (contractStatus == 'pending_employer') {
-          final rawSlots = contractData['slots'] as List? ?? [];
-          if (rawSlots.isNotEmpty) {
-            final updatedSlots = rawSlots.map((s) {
-              final slot = Map<String, dynamic>.from(s as Map);
-              if (slot['applicationId'] == applicationId) {
-                slot['wage'] = newWage;
-                if (newWageType != null) slot['wageType'] = newWageType;
-              }
-              return slot;
-            }).toList();
-            contractUpdate['slots'] = updatedSlots;
-          }
-        }
-
-        batch.update(contractDoc.reference, contractUpdate);
-      }
-
-      // [C-1] 확정된 급여 → wagePending 초기화 (파트변경으로 wage/wageType 변경되므로 재계산 필요)
-      // [V-01 fix] Firestore 배치 500-op 한계 초과 방지:
-      // application/slot/TO/contract 고정 ops(최대 4개)는 첫 번째 배치에,
-      // attendance 초기화는 450개 단위 청크 배치로 분리.
-      // 장기 근무자(1.5년 이상 미이체)의 attendance 500+건 초과 케이스 대응.
-      await batch.commit();
-
-      // attendance 청크 커밋 (450-op 단위)
-      for (var i = 0; i < calculatedAttDocs.length; i += 450) {
-        final end = (i + 450 < calculatedAttDocs.length)
-            ? i + 450
-            : calculatedAttDocs.length;
-        final attBatch = _firestore.batch();
-        for (final attDoc in calculatedAttDocs.sublist(i, end)) {
-          attBatch.update(attDoc.reference, {
-            'wageStatus': AttendanceModel.wagePending,
-            'finalWage': FieldValue.delete(),
-            'wageDetail': FieldValue.delete(),
-            'yearMonth': FieldValue.delete(),
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-        }
-        await attBatch.commit();
-      }
       if (toId != null) clearCache(toId: toId);
-
-      _sendWorkTypeChangedNotification(
-        applicantUid: uid,
-        businessName: businessName,
-        businessId: businessId,
-        workDate: workDate,
-        originalWorkType: currentWorkType,
-        newWorkType: newWorkType,
-        newWage: newWage,
-        applicationId: applicationId,
-      );
 
       // Toast는 호출부(work_applicants_dialog)에서 표시 — 중복 방지
       return true;
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('❌ 업무유형 변경 CF 실패: ${e.code} ${e.message}');
+      ToastHelper.showError(e.message ?? '업무유형 변경에 실패했습니다.');
+      return false;
     } catch (e) {
       debugPrint('❌ 업무유형 변경 실패: $e');
       ToastHelper.showError('업무유형 변경에 실패했습니다.');
@@ -2384,32 +2257,6 @@ extension ApplicationFirestore on FirestoreService {
       ));
     } catch (e) {
       debugPrint('⚠️ 자동 취소 알림 전송 실패: $e');
-    }
-  }
-
-  Future<void> _sendWorkTypeChangedNotification({
-    required String applicantUid,
-    required String businessName,
-    required String businessId,
-    required DateTime workDate,
-    required String originalWorkType,
-    required String newWorkType,
-    required int newWage,
-    required String applicationId,
-  }) async {
-    try {
-      await createNotification(NotificationModel.createWorkTypeChanged(
-        userId: applicantUid,
-        businessName: businessName,
-        businessId: businessId,
-        workDate: workDate,
-        originalWorkType: originalWorkType,
-        newWorkType: newWorkType,
-        newWage: newWage,
-        applicationId: applicationId,
-      ));
-    } catch (e) {
-      debugPrint('⚠️ 파트 변경 알림 전송 실패: $e');
     }
   }
 
