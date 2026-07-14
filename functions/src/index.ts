@@ -5123,19 +5123,33 @@ export const callableRecordTermsConsent = onCall(
     }
 
     const serverTime = admin.firestore.FieldValue.serverTimestamp();
-    const consentWithTimestamps: Record<string, unknown> = {};
-    for (const [key, value] of entries) {
-      if (typeof key !== "string" || key.length > 100) continue; // 비정상 키 skip
-      consentWithTimestamps[key] = {
-        agreed: !!value.agreed,
-        version: String(value.version ?? "").slice(0, 50),
-        agreedAt: serverTime,  // 서버 타임스탬프 강제
-      };
-    }
+    const userRef = db.collection("users").doc(callerUid);
 
-    await db.collection("users").doc(callerUid).update({
-      termsConsent: consentWithTimestamps,
-      termsConsentAt: serverTime,  // 법적 타임스탬프 — Admin SDK에서만 설정
+    // [TERMS-FIX] 재호출 보호 — 트랜잭션으로 전환:
+    // (1) 이미 agreed=true인 항목을 agreed=false로 역설적 취소 차단
+    // (2) termsConsentAt은 최초 동의 시에만 기록 — 재호출로 법적 타임스탬프 갱신 불가
+    await db.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      const existing = (userSnap.data()?.termsConsent ?? {}) as Record<string, {agreed?: boolean}>;
+      const existingConsentAt = userSnap.data()?.termsConsentAt;
+
+      const consentWithTimestamps: Record<string, unknown> = {};
+      for (const [key, value] of entries) {
+        if (typeof key !== "string" || key.length > 100) continue;
+        // 이미 동의한 항목(agreed=true)을 false로 변경 시도 시 skip
+        if (existing[key]?.agreed === true && !value.agreed) continue;
+        consentWithTimestamps[key] = {
+          agreed: !!value.agreed,
+          version: String(value.version ?? "").slice(0, 50),
+          agreedAt: serverTime,
+        };
+      }
+
+      const updateData: Record<string, unknown> = {termsConsent: consentWithTimestamps};
+      // 최초 동의 시에만 termsConsentAt 기록 — 재호출로 덮어쓰기 불가
+      if (!existingConsentAt) updateData.termsConsentAt = serverTime;
+
+      tx.update(userRef, updateData);
     });
 
     return {success: true};
@@ -7859,8 +7873,16 @@ export const callableReportLate = onCall(
     await db.runTransaction(async (tx) => {
       // 멱등성 체크 — 같은 attendance에 중복 호출 방지
       const attSnap = await tx.get(attRef);
+      // [MEDIUM-3-FIX] attendanceId → userId/businessId 소속 교차검증
+      // 미검증 시: 관리자가 attendanceId=다른 근무자 A, userId=근무자 B 로 호출하면
+      // 멱등성 플래그는 A의 attendance에 기록되지만 lateCount는 B에 누적 →
+      // A의 attendance로 재호출 시 플래그가 없어 B에 중복 lateCount 가능
       if (attSnap.exists) {
-        const alreadyApplied = attSnap.data()?.latePenaltyApplied;
+        const attData = attSnap.data()!;
+        if (attData.userId !== userId || attData.businessId !== businessId) {
+          throw new HttpsError("permission-denied", "attendance 소유권 검증 실패");
+        }
+        const alreadyApplied = attData.latePenaltyApplied;
         if (mode === "late" && alreadyApplied === true) return;
         if (mode === "late_canceled" && alreadyApplied !== true) return;
       }
@@ -10533,66 +10555,71 @@ export const callableBatchSetNoShow = onCall(
     await assertBizAdmin(callerUid, businessId);
 
     const now = admin.firestore.FieldValue.serverTimestamp();
-    const batch = db.batch();
-    const skipped: string[] = [];
+    const skippedSet = new Set<string>();
 
-    // 서버 상태 사전 확인 — transferred 건 보호
-    await Promise.all(entries.map(async (entry) => {
+    // [BATCH-RACE-FIX] Promise.all(reads)+batch.commit() → 항목별 개별 트랜잭션으로 전환
+    // 이유: Promise.all read - batch.commit 사이 wageStatus 변경 시 transferred 기록에 finalWage=0 덮어쓰기 가능
+    // 신규 생성 항목은 appRef 포함 2 reads/tx → 단일 트랜잭션으로 합치면 200×2 reads+200 writes=600 ops(한도 초과)
+    // → callableConfirmFinalWage와 동일 패턴으로 항목별 순차 트랜잭션 사용
+    for (const entry of entries) {
       const {applicationId, workDateMs, userId, businessName, workType, attendanceId} = entry;
-      // [HIGH-02-FIX] workDateMs = Dart KST 자정 UTC ms → getFullYear()는 UTC 기준 → 전날 날짜
-      // callableCheckIn/onAttendanceCreated와 동일한 KST 오프셋 패턴 적용
       const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
       const dateKST = new Date(workDateMs + KST_OFFSET_MS);
       const dateStr = `${dateKST.getUTCFullYear()}${String(dateKST.getUTCMonth() + 1).padStart(2, "0")}${String(dateKST.getUTCDate()).padStart(2, "0")}`;
       const resolvedId = attendanceId ?? `${applicationId}_${dateStr}`;
       const ref = db.collection("attendance").doc(resolvedId);
-
-      const snap = await ref.get();
-      if (snap.exists && snap.data()!.wageStatus === "transferred") {
-        skipped.push(resolvedId);
-        return;
-      }
-
-      // [L3-FIX] 신규 노쇼 생성 시 applicationId → userId 교차검증
-      //   — 악의적 관리자가 타 근로자 userId를 지정해 TrustScore 조작하는 것을 차단
-      if (!attendanceId) {
-        const appSnap = await db.collection("applications").doc(applicationId).get();
-        if (!appSnap.exists || appSnap.data()!.uid !== userId) {
-          skipped.push(resolvedId);
-          return;
-        }
-      }
-
       const yearMonth = `${dateKST.getUTCFullYear()}-${String(dateKST.getUTCMonth() + 1).padStart(2, "0")}`;
-      if (attendanceId) {
-        batch.update(ref, {
-          status: "NO_SHOW",
-          yearMonth,
-          wageStatus: "confirmed",
-          finalWage: 0,
-          updatedAt: now,
-        });
-      } else {
-        batch.set(ref, {
-          applicationId,
-          userId,
-          businessId,
-          businessName,
-          workDate: admin.firestore.Timestamp.fromMillis(workDateMs),
-          yearMonth,
-          workType,
-          status: "NO_SHOW",
-          wageStatus: "confirmed",
-          finalWage: 0,
-          isModified: false,
-          modifyRequested: false,
-          createdAt: now,
-          updatedAt: now,
-        }, {merge: true});
-      }
-    }));
 
-    await batch.commit();
+      try {
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(ref);
+          if (snap.exists && snap.data()!.wageStatus === "transferred") {
+            skippedSet.add(resolvedId);
+            return;
+          }
+
+          // [L3-FIX] 신규 노쇼 생성 시 applicationId → userId 교차검증 (트랜잭션 내 원자적 검증)
+          if (!attendanceId) {
+            const appSnap = await tx.get(db.collection("applications").doc(applicationId));
+            if (!appSnap.exists || appSnap.data()!.uid !== userId) {
+              skippedSet.add(resolvedId);
+              return;
+            }
+          }
+
+          if (attendanceId) {
+            tx.update(ref, {
+              status: "NO_SHOW",
+              yearMonth,
+              wageStatus: "confirmed",
+              finalWage: 0,
+              updatedAt: now,
+            });
+          } else {
+            tx.set(ref, {
+              applicationId,
+              userId,
+              businessId,
+              businessName,
+              workDate: admin.firestore.Timestamp.fromMillis(workDateMs),
+              yearMonth,
+              workType,
+              status: "NO_SHOW",
+              wageStatus: "confirmed",
+              finalWage: 0,
+              isModified: false,
+              modifyRequested: false,
+              createdAt: now,
+              updatedAt: now,
+            }, {merge: true});
+          }
+        });
+      } catch (e) {
+        skippedSet.add(resolvedId);
+      }
+    }
+
+    const skipped = Array.from(skippedSet);
     return {success: true, processed: entries.length - skipped.length, skipped};
   }
 );
@@ -10615,30 +10642,30 @@ export const callableBatchCancelNoShow = onCall(
     await assertBizAdmin(callerUid, businessId);
 
     const now = admin.firestore.FieldValue.serverTimestamp();
-    const batch = db.batch();
     const skipped: string[] = [];
 
-    const snaps = await Promise.all(attendanceIds.map((id) => db.collection("attendance").doc(id).get()));
-    for (const snap of snaps) {
-      if (!snap.exists) continue;
-      const data = snap.data()!;
-      // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
-      if (data.businessId !== businessId) { skipped.push(snap.id); continue; }
-      if (data.wageStatus === "transferred") {
-        skipped.push(snap.id);
-        continue;
+    // [BATCH-RACE-FIX] Promise.all(reads)+batch.commit() → 단일 트랜잭션으로 전환
+    // 이유: Promise.all read와 batch.commit 사이 wageStatus가 "transferred"로 변경될 경우
+    //       transferred 기록의 상태/임금 정보가 삭제되는 TOCTOU 레이스 차단
+    await db.runTransaction(async (tx) => {
+      const snaps = await Promise.all(
+        attendanceIds.map((id) => tx.get(db.collection("attendance").doc(id)))
+      );
+      for (const snap of snaps) {
+        if (!snap.exists) continue;
+        const data = snap.data()!;
+        if (data.businessId !== businessId) { skipped.push(snap.id); continue; }
+        if (data.wageStatus === "transferred") { skipped.push(snap.id); continue; }
+        tx.update(snap.ref, {
+          status: admin.firestore.FieldValue.delete(),
+          wageStatus: "pending",
+          wageDetail: admin.firestore.FieldValue.delete(),
+          finalWage: admin.firestore.FieldValue.delete(),
+          yearMonth: admin.firestore.FieldValue.delete(),
+          updatedAt: now,
+        });
       }
-      batch.update(snap.ref, {
-        status: admin.firestore.FieldValue.delete(),
-        wageStatus: "pending",
-        wageDetail: admin.firestore.FieldValue.delete(),
-        finalWage: admin.firestore.FieldValue.delete(),
-        yearMonth: admin.firestore.FieldValue.delete(),
-        updatedAt: now,
-      });
-    }
-
-    await batch.commit();
+    });
     return {success: true, processed: attendanceIds.length - skipped.length, skipped};
   }
 );

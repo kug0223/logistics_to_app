@@ -536,7 +536,13 @@ service cloud.firestore {
                        //   관리자가 EXPIRED TO를 ACTIVE로 역전시키거나 정의되지 않은 상태값 삽입 가능했음
                        (isSuperAdmin() ||
                         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
-                        request.resource.data.status in ['ACTIVE', 'FULL', 'CLOSED', 'EXPIRED', 'DRAFT', 'SCHEDULED']);
+                        request.resource.data.status in ['ACTIVE', 'FULL', 'CLOSED', 'EXPIRED', 'DRAFT', 'SCHEDULED']) &&
+                       // [HIGH-TO-FIX] workDetails(임금·근무시간) 수정: totalConfirmed>0이면 차단
+                       // CLAUDE.md: "시급/일급 TO 레벨에서 고정(변경 불가)" 원칙 서버 강제
+                       // 확정 지원자가 있는 상태에서 임금을 소급 변경하면 급여 분쟁 발생 가능
+                       (isSuperAdmin() ||
+                        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['workDetails']) ||
+                        resource.data.get('totalConfirmed', 0) == 0);
 
       // 지원자: 지원/취소 시 totalPending 카운터만 수정 허용 (음수 방지)
       // [MEDIUM-FIX] ±1 제한 없이 임의 양수값 설정 가능 → 통계 훼손 가능
