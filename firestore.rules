@@ -726,6 +726,8 @@ service cloud.firestore {
                         isSubAdminOf(resource.data.businessId)) &&
                        // [CF-ONLY] 퇴사/계약해지 관련 필드 전체 차단 — 모든 상태 전이는 CF(Admin SDK)만 허용
                        // resignRejectedBy 등 audit trail 필드를 클라이언트가 위조하는 취약점 방지
+                       // [RULE-FIX-M4] leaveDates/extraWorkDates CF-ONLY — callableCancelScheduleChangeRequest 이전 완료
+                       //   관리자가 직접 임의 날짜 배열로 덮어쓰는 취약점 차단
                        !request.resource.data.diff(resource.data).affectedKeys()
                          .hasAny(['uid', 'businessId', 'toId',
                                   'resignStatus', 'resignRequestedAt', 'resignRequestDate',
@@ -734,7 +736,8 @@ service cloud.firestore {
                                   'actualResignDate',
                                   'terminationStatus', 'terminationRequestedAt',
                                   'terminationEffectiveDate', 'terminationRespondedAt',
-                                  'terminationRejectReason', 'terminationRequestedByUid']) &&
+                                  'terminationRejectReason', 'terminationRequestedByUid',
+                                  'leaveDates', 'extraWorkDates']) &&
                        // [RULE-FIX-M2] CF-ONLY 전이 차단: CONTRACT_PENDING→CONFIRMED
                        //   callableFinalizeWorkerSignature 전용 — 관리자 직접 전이 시 서명 검증 우회 가능
                        !(resource.data.status == 'CONTRACT_PENDING' &&

@@ -12704,6 +12704,143 @@ export const callableCloseTOManually = onCall(
 );
 
 // ─────────────────────────────────────────────────────────
+// callableCancelScheduleChangeRequest — 스케줄 변경 요청 취소 (서버 원자화)
+//
+// 이전 이유:
+//   - applications 문서의 leaveDates/extraWorkDates 업데이트가 rules에서 명시적으로
+//     보호되지 않아 관리자가 임의 배열로 덮어쓸 수 있음 (MEDIUM 위험)
+//   - CF Admin SDK로 이전 후 rules에서 이 필드를 denylist에 추가 가능
+//
+// 호출자: 근로자(본인 PENDING 취소) 또는 관리자(APPROVED 승인 취소)
+// 반환값: { success: true }
+// ─────────────────────────────────────────────────────────
+export const callableCancelScheduleChangeRequest = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {requestId} = request.data as {requestId?: string};
+    if (!requestId || typeof requestId !== "string" || requestId.trim() === "") {
+      throw new HttpsError("invalid-argument", "requestId가 필요합니다.");
+    }
+
+    // 1. 요청 문서 사전 읽기
+    const requestRef = db.collection("schedule_change_requests").doc(requestId);
+    const requestSnap = await requestRef.get();
+    if (!requestSnap.exists) throw new HttpsError("not-found", "요청을 찾을 수 없습니다.");
+    const scrData = requestSnap.data()!;
+    const scrStatus = scrData.status as string;
+    const requestedByUid = scrData.requestedByUid as string | undefined;
+    const businessId = scrData.businessId as string | undefined;
+
+    // 2. 권한 검증
+    //    - 근로자 본인: requestedByUid == callerUid && status == PENDING만 허용
+    //    - 관리자: assertBizAdmin 통과 && (PENDING 또는 APPROVED) 허용
+    const isRequester = callerUid === requestedByUid;
+    let isAdmin = false;
+    if (businessId) {
+      try {
+        await assertBizAdmin(callerUid, businessId);
+        isAdmin = true;
+      } catch (_) {
+        // 관리자 아님 — isRequester 경로로 진행
+      }
+    }
+
+    if (!isRequester && !isAdmin) {
+      throw new HttpsError("permission-denied", "취소 권한이 없습니다.");
+    }
+    if (isRequester && !isAdmin) {
+      // 본인은 PENDING만 취소 가능
+      if (scrStatus !== "PENDING") {
+        throw new HttpsError("failed-precondition", "이미 처리된 요청은 취소할 수 없습니다.");
+      }
+    } else {
+      // 관리자는 PENDING 또는 APPROVED만 취소 가능
+      if (scrStatus !== "PENDING" && scrStatus !== "APPROVED") {
+        throw new HttpsError("failed-precondition", `취소 불가 상태입니다: ${scrStatus}`);
+      }
+    }
+
+    const requestType = scrData.requestType as string | undefined;
+    const applicationId = scrData.applicationId as string | undefined;
+    const targetDateTs = scrData.targetDate as admin.firestore.Timestamp | undefined;
+    const targetDate = targetDateTs?.toDate();
+
+    // 3. 트랜잭션: 최종 상태 재확인 + applications 역산 + SCR 상태 업데이트
+    await db.runTransaction(async (tx) => {
+      const freshSnap = await tx.get(requestRef);
+      if (!freshSnap.exists) throw new HttpsError("not-found", "요청을 찾을 수 없습니다.");
+      const freshStatus = freshSnap.data()!.status as string;
+
+      if (freshStatus !== "PENDING" && freshStatus !== "APPROVED") {
+        throw new HttpsError("failed-precondition", `이미 처리된 요청입니다 (${freshStatus}).`);
+      }
+      if (isRequester && !isAdmin && freshStatus !== "PENDING") {
+        throw new HttpsError("failed-precondition", "이미 처리된 요청은 취소할 수 없습니다.");
+      }
+
+      // APPROVED 상태 취소: applications 문서에서 날짜 역산
+      if (freshStatus === "APPROVED" && applicationId && targetDate) {
+        const appRef = db.collection("applications").doc(applicationId);
+        const appSnap = await tx.get(appRef);
+
+        if (appSnap.exists) {
+          const appData = appSnap.data()!;
+          const toDateOnly = (ts: admin.firestore.Timestamp) => {
+            const d = ts.toDate();
+            return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+          };
+          const targetMs = new Date(
+            targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate()
+          ).getTime();
+
+          if (requestType === "LEAVE" || requestType === "NO_WORK") {
+            // LEAVE/NO_WORK 승인 취소 → leaveDates에서 해당 날짜 제거
+            const rawLeave = (appData["leaveDates"] as admin.firestore.Timestamp[] | undefined) ?? [];
+            const filtered = rawLeave.filter((ts) => toDateOnly(ts) !== targetMs);
+            tx.update(appRef, {leaveDates: filtered});
+          } else if (requestType === "EXTRA_WORK") {
+            // EXTRA_WORK 승인 취소 → extraWorkDates에서 해당 날짜 제거
+            const rawExtra = (appData["extraWorkDates"] as admin.firestore.Timestamp[] | undefined) ?? [];
+            const filtered = rawExtra.filter((ts) => toDateOnly(ts) !== targetMs);
+            tx.update(appRef, {extraWorkDates: filtered});
+          } else if (requestType === "CANCEL_LEAVE") {
+            // CANCEL_LEAVE 승인 취소 → leaveDates에 날짜 복원
+            const rawLeave = (appData["leaveDates"] as admin.firestore.Timestamp[] | undefined) ?? [];
+            const alreadyExists = rawLeave.some((ts) => toDateOnly(ts) === targetMs);
+            if (!alreadyExists) {
+              rawLeave.push(admin.firestore.Timestamp.fromDate(targetDate));
+            }
+            tx.update(appRef, {leaveDates: rawLeave});
+          } else if (requestType === "CANCEL_EXTRA") {
+            // CANCEL_EXTRA 승인 취소 → extraWorkDates에 날짜 복원
+            const rawExtra = (appData["extraWorkDates"] as admin.firestore.Timestamp[] | undefined) ?? [];
+            const alreadyExists = rawExtra.some((ts) => toDateOnly(ts) === targetMs);
+            if (!alreadyExists) {
+              rawExtra.push(admin.firestore.Timestamp.fromDate(targetDate));
+            }
+            tx.update(appRef, {extraWorkDates: rawExtra});
+          }
+        }
+      }
+
+      // SCR 상태 업데이트
+      tx.update(requestRef, {
+        status: "CANCELED",
+        // [H3-FIX] respondedByUid CF가 직접 기록 — 클라이언트 UID 위조 차단
+        respondedByUid: callerUid,
+        respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+
+    console.log(`✅ [cancelScheduleChangeRequest] 취소 완료: ${requestId}`);
+    return {success: true};
+  }
+);
+
+// ─────────────────────────────────────────────────────────
 // callableApplyToTO — 공고 지원 (신규/재지원 통합, 서버 원자화)
 //
 // 이전 이유:

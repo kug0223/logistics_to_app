@@ -627,118 +627,23 @@ extension AttendanceFirestore on FirestoreService {
   // callableApproveScheduleChangeRequest CF가 알림을 직접 전송하므로 클라이언트 알림 함수 불필요
 
   /// 스케줄 변경 요청 취소
+  /// [CF 이전 2026-07-14] callableCancelScheduleChangeRequest
+  ///   이전 이유: applications leaveDates/extraWorkDates가 rules에서 명시적으로 보호되지 않아
+  ///             관리자가 임의 배열로 덮어쓸 수 있었음. CF Admin SDK로 이전 후 차단 가능.
   Future<bool> cancelScheduleChangeRequest({
     required String requestId,
     required String canceledByUid,
   }) async {
     try {
-      // [MEDIUM-03] batch → runTransaction 전환으로 TOCTOU 경쟁 상태 방지.
-      // 조회와 쓰기 사이에 다른 관리자/근로자가 상태를 바꾸는 경우를 원자적으로 처리.
-      bool canceled = false;
-      await _firestore.runTransaction((tx) async {
-        // 1. 트랜잭션 내 요청 문서 읽기
-        final requestRef = _firestore.collection('schedule_change_requests').doc(requestId);
-        final requestSnap = await tx.get(requestRef);
-
-        if (!requestSnap.exists) return;
-
-        final request = ScheduleChangeRequestModel.fromMap(requestSnap.data()!, requestId);
-
-        // 취소 가능 상태: PENDING(미처리) 또는 APPROVED(적용 취소)
-        // REJECTED/CANCELED 요청은 재취소 불가 — 상태 이력 왜곡 방지
-        if (!request.isPending && !request.isApproved) {
-          debugPrint('⚠️ 취소 불가 상태: ${request.status}');
-          return;
-        }
-
-        // 2. 승인된 요청이면 applications 문서도 트랜잭션 내에서 읽고 업데이트
-        if (request.isApproved) {
-          final appRef = _firestore.collection('applications').doc(request.applicationId);
-          final appSnap = await tx.get(appRef);
-
-          if (appSnap.exists) {
-            final appData = appSnap.data()!;
-
-            if (request.isLeaveRequest || request.isNoWorkRequest) {
-              // LEAVE/NO_WORK 승인 취소 → leaveDates에서 날짜 제거 (승인 시 추가됐던 날짜 역산)
-              List<DateTime> leaveDates = [];
-              if (appData['leaveDates'] is List) {
-                leaveDates = (appData['leaveDates'] as List)
-                    .map((e) => (e as Timestamp).toDate().toLocal())
-                    .toList();
-              }
-              leaveDates.removeWhere((d) =>
-                  d.year == request.targetDate.year &&
-                  d.month == request.targetDate.month &&
-                  d.day == request.targetDate.day);
-              tx.update(appRef, {
-                'leaveDates': leaveDates.map((e) => Timestamp.fromDate(e)).toList(),
-              });
-            } else if (request.isExtraWorkRequest) {
-              // EXTRA_WORK 승인 취소 → extraWorkDates에서 날짜 제거 (승인 시 추가됐던 날짜 역산)
-              List<DateTime> extraWorkDates = [];
-              if (appData['extraWorkDates'] is List) {
-                extraWorkDates = (appData['extraWorkDates'] as List)
-                    .map((e) => (e as Timestamp).toDate().toLocal())
-                    .toList();
-              }
-              extraWorkDates.removeWhere((d) =>
-                  d.year == request.targetDate.year &&
-                  d.month == request.targetDate.month &&
-                  d.day == request.targetDate.day);
-              tx.update(appRef, {
-                'extraWorkDates': extraWorkDates.map((e) => Timestamp.fromDate(e)).toList(),
-              });
-            } else if (request.requestType == RequestType.CANCEL_LEAVE) {
-              // [H3-역산-FIX] CANCEL_LEAVE 승인 취소 → leaveDates에 날짜 복원
-              // CANCEL_LEAVE 승인 시 CF가 leaveDates에서 날짜를 제거했으므로, 취소 시 반드시 재추가해야 함
-              // 복원 없으면 근로자가 다시 휴무 취소를 요청해도 이미 제거된 휴무일이 사라진 상태로 남음
-              List<DateTime> leaveDates = [];
-              if (appData['leaveDates'] is List) {
-                leaveDates = (appData['leaveDates'] as List)
-                    .map((e) => (e as Timestamp).toDate().toLocal())
-                    .toList();
-              }
-              final alreadyExists = leaveDates.any((d) =>
-                  d.year == request.targetDate.year &&
-                  d.month == request.targetDate.month &&
-                  d.day == request.targetDate.day);
-              if (!alreadyExists) leaveDates.add(request.targetDate);
-              tx.update(appRef, {
-                'leaveDates': leaveDates.map((e) => Timestamp.fromDate(e)).toList(),
-              });
-            } else if (request.requestType == RequestType.CANCEL_EXTRA) {
-              // [H3-역산-FIX] CANCEL_EXTRA 승인 취소 → extraWorkDates에 날짜 복원
-              // CANCEL_EXTRA 승인 시 CF가 extraWorkDates에서 날짜를 제거했으므로, 취소 시 반드시 재추가해야 함
-              List<DateTime> extraWorkDates = [];
-              if (appData['extraWorkDates'] is List) {
-                extraWorkDates = (appData['extraWorkDates'] as List)
-                    .map((e) => (e as Timestamp).toDate().toLocal())
-                    .toList();
-              }
-              final alreadyExists = extraWorkDates.any((d) =>
-                  d.year == request.targetDate.year &&
-                  d.month == request.targetDate.month &&
-                  d.day == request.targetDate.day);
-              if (!alreadyExists) extraWorkDates.add(request.targetDate);
-              tx.update(appRef, {
-                'extraWorkDates': extraWorkDates.map((e) => Timestamp.fromDate(e)).toList(),
-              });
-            }
-          }
-        }
-
-        // 3. 요청 상태 업데이트 (트랜잭션 내 — 원자적 처리)
-        tx.update(requestRef, {
-          'status': 'CANCELED',
-          'respondedByUid': canceledByUid,
-          'respondedAt': FieldValue.serverTimestamp(),
-        });
-        canceled = true;
-      });
-
-      if (canceled) debugPrint('✅ 스케줄 변경 요청 취소 완료: $requestId');
-      return canceled;
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableCancelScheduleChangeRequest',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      await callable.call<Map<String, dynamic>>({'requestId': requestId});
+      debugPrint('✅ 스케줄 변경 요청 취소 완료: $requestId');
+      return true;
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('❌ 스케줄 변경 요청 취소 CF 오류: ${e.code} / ${e.message}');
+      return false;
     } catch (e) {
       debugPrint('❌ 스케줄 변경 요청 취소 실패: $e');
       return false;
