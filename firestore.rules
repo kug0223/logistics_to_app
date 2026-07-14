@@ -246,13 +246,17 @@ service cloud.firestore {
       // [BIZ-CREATE-FIX] 사업장 등록 시 BUSINESS_ADMIN이 managedBusinessIds 업데이트 허용
       // 조건: (1)본인 문서 (2)BUSINESS_ADMIN (3)managedBusinessIds만 변경
       //       (4)H-06: 기존 배열보다 정확히 1개 증가만 허용 (제거·임의 교체 차단)
+      //       (5)[HIGH-10-FIX] 추가된 businessId가 실제 본인 소유/관리 사업장인지 isAdminOf 검증
+      //          → 타사 businessId 주입으로 managedBusinessIds 오염 공격 차단
       allow update: if isLoggedIn() &&
                        isOwner(userId) &&
                        isBusinessAdmin() &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['managedBusinessIds']) &&
                        request.resource.data.managedBusinessIds.size() ==
-                         resource.data.get('managedBusinessIds', []).size() + 1;
+                         resource.data.get('managedBusinessIds', []).size() + 1 &&
+                       isAdminOf(request.resource.data.managedBusinessIds
+                         .removeAll(resource.data.get('managedBusinessIds', []))[0]);
 
       // 회원가입(본인) 또는 관리자 더미 데이터 생성
       // [RULE-01] 더미 생성 시 민감 필드 차단 — role/isBlacklisted/sealBase64 등 초기값으로 심으면

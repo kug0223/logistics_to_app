@@ -5166,27 +5166,29 @@ export const callableCreateTO = onCall(
     }
 
     // 소속 사업장 교차검증 (슈퍼어드민 예외)
+    // [HIGH-04-FIX] managedBusinessIds는 클라이언트가 arrayUnion으로 임의 businessId 추가 가능
+    //   → 타 사업장 TO 생성 권한 탈취 위험. businesses 문서의 adminIds/ownerId로 서버 검증 교체.
     if (role !== "SUPER_ADMIN") {
-      const managedIds = (callerData?.managedBusinessIds as string[] | undefined) ?? [];
-      if (!managedIds.includes(businessId)) {
+      const bizAuthSnap = await db.collection("businesses").doc(businessId).get();
+      if (!bizAuthSnap.exists) {
+        throw new HttpsError("not-found", "사업장을 찾을 수 없습니다.");
+      }
+      const bizAdminIds = (bizAuthSnap.data()?.adminIds as string[] | undefined) ?? [];
+      const bizOwnerId = bizAuthSnap.data()?.ownerId as string | undefined;
+      if (!bizAdminIds.includes(callerUid) && bizOwnerId !== callerUid) {
         throw new HttpsError("permission-denied", "소속 사업장만 공고를 생성할 수 있습니다.");
       }
     }
 
     // 개수 제한 체크 (draft 제외)
+    // [HIGH-05-MITIGATE] TOCTOU 완전 방어는 카운터 문서 필요 — 현재는 businessId 직접 쿼리로
+    //   managedBusinessIds 의존성 제거 + 단일 사업장 기준으로 단순화
     if (publishMode !== "draft") {
-      const managedIds: string[] = role === "SUPER_ADMIN"
-        ? [businessId]
-        : ((callerData?.managedBusinessIds as string[] | undefined) ?? []);
-
-      let totalActive = 0;
-      for (const bizId of managedIds) {
-        const snap = await db.collection("tos")
-          .where("businessId", "==", bizId)
-          .where("isPublished", "==", true)
-          .get();
-        totalActive += snap.size;
-      }
+      const quotaSnap = await db.collection("tos")
+        .where("businessId", "==", businessId)
+        .where("isPublished", "==", true)
+        .get();
+      const totalActive = quotaSnap.size;
 
       // 한도: users.maxActiveTOs 우선, settings/app_config.maxActiveTOPerBusiness 폴백, 기본 4
       let limit = 4;
@@ -5218,6 +5220,10 @@ export const callableCreateTO = onCall(
     // [S5-FIX] 서버 전용 집계 카운터 — 클라이언트 주입 값 무시하고 0으로 강제
     finalData.totalConfirmed = 0;
     finalData.totalPending = 0;
+    // [HIGH-03-FIX] draft 모드에서 isPublished:true 전송 시 쿼터 우회 가능 → 반드시 false 강제
+    if (publishMode === "draft") {
+      finalData.isPublished = false;
+    }
 
     const toRef = await db.collection("tos").add(finalData);
     return {toId: toRef.id};
