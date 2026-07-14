@@ -419,19 +419,10 @@ extension ApplicationFirestore on FirestoreService {
         return [];
       }
 
+      // [DEAD-CODE-REMOVED] REJECTED 분기는 line 391에서 CF 호출 후 이미 return됨
+      // → rejectedBy 클라이언트 직접 쓰기 취약점이 활성화되지 않으나 코드 명확성을 위해 제거
       final updates = <String, dynamic>{'status': status};
-      if (status == AppStatus.rejected) {
-        updates['rejectedAt'] = FieldValue.serverTimestamp();
-        if (rejectedBy != null) updates['rejectedBy'] = rejectedBy;
-        if (message != null) updates['rejectMessage'] = message;
-        updates['statusHistory'] = _appendHistory(appData, {
-          'status': 'REJECTED',
-          'at': Timestamp.now(),
-          'by': rejectedBy,
-          'action': 'REJECT',
-          if (message != null) 'reason': message,
-        });
-      } else if (status == AppStatus.canceled) {
+      if (status == AppStatus.canceled) {
         updates['canceledAt'] = FieldValue.serverTimestamp();
         if (canceledBy != null) updates['canceledBy'] = canceledBy;
         updates['statusHistory'] = _appendHistory(appData, {
@@ -661,64 +652,44 @@ extension ApplicationFirestore on FirestoreService {
   }
 
   /// 확정된 지원 취소 (노쇼 패널티 포함, 관리자/사용자 공용)
+  // [CF-ONLY] application 상태 업데이트는 callableCancelConfirmedApplication CF로 이전
+  //   canceledBy 위조 차단: 관리자 A가 관리자 B UID를 전달해 책임 전가하는 공격 차단
+  //   statusHistory.at 위조 차단: 클라이언트 Timestamp.now() → CF 서버 시간
+  // canceledBy 파라미터는 하위 호환 유지 — CF 내부에서 callerUid로 대체됨
   Future<bool> cancelConfirmedApplication(
     String applicationId, {
     bool applyNoShowPenalty = false,
-    String? canceledBy,   // 관리자 UID (관리자가 취소할 때)
+    String? canceledBy,   // 하위 호환 — CF가 callerUid로 대체, 이 값은 무시됨
     String? cancelReason, // 관리자 취소 사유
   }) async {
     NetworkChecker.instance.assertOnline('확정 취소를 하려면 인터넷 연결이 필요합니다.');
     try {
-      final appDoc = await _firestore
-          .collection('applications')
-          .doc(applicationId)
-          .get(const GetOptions(source: Source.server));
-      if (!appDoc.exists) {
-        ToastHelper.showError('지원서를 찾을 수 없습니다');
-        return false;
-      }
-      final appData = appDoc.data()!;
-      final uid = appData['uid'] as String? ?? '';
-      if (uid.isEmpty) return false;
-      if (!AppStatus.confirmedStatuses.contains(appData['status'])) {
-        ToastHelper.showError('확정된 지원만 취소할 수 있습니다');
-        return false;
-      }
-
-      final toId = appData['toId'] as String?;
-      final slotId = appData['slotId'] as String?;
-      final selectedWorkType = appData['selectedWorkType'] as String?;
-      final isAdminCancel = canceledBy != null;
-      final batch = _firestore.batch();
-
-      // 관리자 취소: ADMIN_CANCEL / 사용자 취소: USER_CANCELED / 노쇼: SAME_DAY_CANCEL
-      final String reason = isAdminCancel
-          ? 'ADMIN_CANCELED'
-          : (applyNoShowPenalty ? 'SAME_DAY_CANCEL' : 'USER_CANCELED');
-      final String action = isAdminCancel
-          ? 'ADMIN_CANCEL_CONFIRMED'
-          : 'CONFIRM_CANCEL';
-
-      batch.update(appDoc.reference, {
-        'status': 'CANCELED',
-        'canceledAt': FieldValue.serverTimestamp(),
-        'cancelReason': reason,
-        if (isAdminCancel && cancelReason != null) 'cancelMessage': cancelReason,
-        if (canceledBy != null) 'canceledBy': canceledBy,
-        'statusHistory': _appendHistory(appData, {
-          'status': 'CANCELED',
-          'at': Timestamp.now(),
-          'by': canceledBy ?? uid,
-          'action': action,
-          'reason': cancelReason ?? reason,
-        }),
+      // 1. CF로 application 상태 업데이트 (canceledBy·at 서버 강제)
+      final cancelCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableCancelConfirmedApplication',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+      final cfResult = await cancelCallable.call<Map<String, dynamic>>({
+        'applicationId': applicationId,
+        if (cancelReason != null) 'cancelReason': cancelReason,
+        if (applyNoShowPenalty) 'applyNoShowPenalty': true,
       });
+      final cfData = Map<String, dynamic>.from(cfResult.data as Map);
+      final uid = cfData['workerUid'] as String? ?? '';
+      if (uid.isEmpty) return false;
 
-      // [SEC-FIX] _decrementTOConfirmed를 배치에서 제거하고 CF로 이전
-      // 이유: USER가 application 없이 slots.confirmedCount를 단독 감소시키는 취약점 차단
-      //       → slots USER confirmedCount 규칙을 삭제하고 Admin SDK CF로 처리
-      // 관리자 경로(updateApplicationStatus L839)는 관리자 slots write 규칙으로 배치 유지
-      await batch.commit();
+      final toId = cfData['toId'] as String?;
+      final slotId = cfData['slotId'] as String?;
+      final selectedWorkType = cfData['selectedWorkType'] as String?;
+      final businessId = cfData['businessId'] as String?;
+      final businessName = cfData['businessName'] as String? ?? '';
+      final isAdminCancel = cfData['isAdminCancel'] as bool? ?? false;
+      final workDateMs = cfData['workDateMs'] as int?;
+      final workDetailId = cfData['workDetailId'] as String? ?? '';
+      final workDate = workDateMs != null
+          ? DateTime.fromMillisecondsSinceEpoch(workDateMs).toLocal()
+          : DateTime.now();
+
+      // 2. 슬롯 확정 인원 감소 (CF)
       if (toId != null) {
         clearCache(toId: toId);
         try {
@@ -726,41 +697,36 @@ extension ApplicationFirestore on FirestoreService {
               .httpsCallable('callableDecrementSlotConfirmed',
                   options: HttpsCallableOptions(timeout: const Duration(seconds: 10)));
           await decrementCallable.call({
-            'applicationId': applicationId, // CF에서 소유권·toId/slotId 일치 검증에 사용
+            'applicationId': applicationId,
             'toId': toId,
             'slotId': slotId,
             'workType': selectedWorkType,
           });
         } catch (e) {
-          // CF 실패 시 syncTOStats CF가 주기적으로 정합성 복구 — 치명적 오류 아님
           debugPrint('⚠️ slot confirmedCount 감소 CF 실패 (syncTOStats 복구 예정): $e');
         }
       }
 
-      // 노쇼 패널티: CF callableApplyNoShowPenalty — USER가 본인 noShowCount를 직접 write 불가
+      // 3. 노쇼 패널티 (CF)
       if (applyNoShowPenalty) {
         try {
-          final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          final penaltyCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
               .httpsCallable('callableApplyNoShowPenalty',
                   options: HttpsCallableOptions(timeout: const Duration(seconds: 10)));
-          await callable.call({'applicationId': applicationId});
+          await penaltyCallable.call({'applicationId': applicationId});
         } catch (e) {
           debugPrint('⚠️ 노쇼 패널티 CF 실패 ($uid): $e');
         }
       }
 
-      // 취소 후 슬롯 상태('full'→'open') 재계산
+      // 4. 취소 후 슬롯 상태('full'→'open') 재계산
       if (toId != null && slotId != null) {
         await _recalculateSlotStatus(toId, slotId);
       }
 
-      // 관리자 취소: requesterBusinessId 경로 (Firestore 규칙 isAdminOf(requesterBusinessId))
-      // USER 퇴사: targetUserId 경로 (Firestore 규칙 isUser() && targetUserId == auth.uid)
-      // businessId가 null/빈값이면 관리자 경로 사용 불가 → targetUserId fallback
+      // 5. 관련 데이터 정리
       final cleanupBusinessId = isAdminCancel
-          ? (appData['businessId'] as String? ?? '').isEmpty
-              ? null
-              : appData['businessId'] as String
+          ? (businessId?.isEmpty ?? true) ? null : businessId
           : null;
       await _cleanupApplicationRelatedData(
         applicationId: applicationId,
@@ -768,21 +734,21 @@ extension ApplicationFirestore on FirestoreService {
         businessId: cleanupBusinessId,
       );
 
+      // 6. 알림 발송
       if (isAdminCancel) {
-        // 관리자 취소: 근무자에게 확정취소 알림
         await createNotification(NotificationModel.createConfirmationCanceled(
           userId: uid,
-          businessName: appData['businessName'] as String? ?? '',
-          businessId: appData['businessId'] as String? ?? '',
-          workType: appData['selectedWorkType'] as String? ?? '',
-          workDate: (appData['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
+          businessName: businessName,
+          businessId: businessId ?? '',
+          workType: selectedWorkType ?? '',
+          workDate: workDate,
           applicationId: applicationId,
           cancelReason: cancelReason,
         ));
       } else {
         // M-1: 근무자 자기 취소 시 관리자에게 확정취소 알림
         try {
-          final bId = appData['businessId'] as String? ?? '';
+          final bId = businessId ?? '';
           if (bId.isNotEmpty) {
             final bizDoc = await _firestore.collection('businesses').doc(bId)
                 .get(const GetOptions(source: Source.server));
@@ -799,12 +765,12 @@ extension ApplicationFirestore on FirestoreService {
                 await createNotification(NotificationModel.createConfirmationCanceledByWorker(
                   userId: adminUid,
                   workerName: workerName,
-                  workType: appData['selectedWorkType'] as String? ?? '',
-                  workDate: (appData['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
+                  workType: selectedWorkType ?? '',
+                  workDate: workDate,
                   applicationId: applicationId,
                   businessId: bId,
-                  toId: appData['toId'] as String? ?? '',
-                  workDetailId: appData['workDetailId'] as String? ?? '',
+                  toId: toId ?? '',
+                  workDetailId: workDetailId,
                 ));
               }
             }
@@ -814,12 +780,20 @@ extension ApplicationFirestore on FirestoreService {
         }
       }
 
-      // 확정 취소 후에도 연결된 employment_contracts completed 상태는 갱신하지 않는다.
-      // Firestore 규칙상 completed 계약서는 서버 수정 불가 (법적 증거 보존 정책).
-      // 고용 종료 여부는 application.status(CANCELED/AUTO_CANCELED/TERMINATED 등)로 UI에서 판단.
-
       debugPrint('✅ 확정 취소 완료 (관리자: $isAdminCancel, 패널티: $applyNoShowPenalty)');
       return true;
+    } on FirebaseFunctionsException catch (e) {
+      if (e.code == 'not-found') {
+        ToastHelper.showError('지원서를 찾을 수 없습니다');
+        return false;
+      }
+      if (e.code == 'failed-precondition') {
+        ToastHelper.showError(e.message ?? '확정된 지원만 취소할 수 있습니다');
+        return false;
+      }
+      debugPrint('❌ 확정 취소 CF 오류: ${e.code} ${e.message}');
+      ToastHelper.showError('확정 취소에 실패했습니다');
+      return false;
     } catch (e) {
       debugPrint('❌ 확정 취소 실패: $e');
       ToastHelper.showError('확정 취소에 실패했습니다');

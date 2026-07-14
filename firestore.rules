@@ -177,7 +177,10 @@ service cloud.firestore {
                          'unblacklistedBy', 'unblacklistedAt',
                          'noShowCount', 'restrictedUntil',
                          'restrictionReleasedBy', 'restrictionReleasedAt',
-                         'trustScore', 'trustScoreAdjustedBy', 'trustScoreAdjustedAt'
+                         'trustScore', 'trustScoreAdjustedBy', 'trustScoreAdjustedAt',
+                         // [V11-FIX] badges — CF onReviewCreated/callableAdjustTrustScore 전용
+                         //   슈퍼어드민이 직접 write 시 리뷰 기반 자격 조건 검증 없이 임의 배지 부여 가능
+                         'badges'
                        ]);
 
       // 본인 문서 수정 (role·isBlacklisted·subAdminOf·businessId·신뢰도 관련 필드 변경 차단)
@@ -648,16 +651,10 @@ service cloud.firestore {
                        request.resource.data.status == 'CANCELED' &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status', 'canceledAt', 'cancelReason', 'statusHistory'])) ||
-                      // 확정 취소 (본인: CONFIRMED/CONTRACT_PENDING → CANCELED)
-                      // [APP-CCANCEL] schedule_card(단기 전용, applyNoShowPenalty=false, canceledBy 없음)
-                      //              apply_work_dialog(단기/장기, 출퇴근 기록 없는 경우, 당일 취소 시 noShowPenalty CF 별도 호출)
-                      // cancelMessage·canceledBy는 관리자 취소에만 기록되므로 hasOnly에서 제외
-                      (isOwner(resource.data.uid) &&
-                       (resource.data.status == 'CONFIRMED' ||
-                        resource.data.status == 'CONTRACT_PENDING') &&
-                       request.resource.data.status == 'CANCELED' &&
-                       request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['status', 'canceledAt', 'cancelReason', 'statusHistory'])) ||
+                      // [CF-ONLY] 확정 취소 (본인: CONFIRMED/CONTRACT_PENDING → CANCELED) — callableCancelConfirmedApplication CF(Admin SDK) 전용
+                      // canceledBy 서버 강제(클라이언트 위조 차단) + statusHistory.at CF 서버 시간 강제
+                      // 클라이언트 직접 전이 허용 규칙 삭제: schedule_card / apply_work_dialog 모두 CF로 전환됨
+
                       // [CF-ONLY] 재지원 (CANCELED/AUTO_CANCELED/REJECTED → PENDING) — callableApplyToTO(Admin SDK) 전용
                       //   클라이언트 직접 재지원 경로 차단: wage/startTime/endTime 등 핵심 계약 조건 임의 변경 위험
                       //   (기존: isOwner + isNotBlacklisted + hasOnly 목록 → false로 전환)
@@ -689,7 +686,11 @@ service cloud.firestore {
                                   'terminationStatus', 'terminationRequestedAt',
                                   'terminationEffectiveDate', 'terminationRespondedAt',
                                   'terminationRejectReason', 'terminationRequestedByUid',
-                                  'leaveDates', 'extraWorkDates']) &&
+                                  'leaveDates', 'extraWorkDates',
+                                  // [H-2-FIX] 감사 추적 필드 — CF(Admin SDK) 전용
+                                  //   rejectedBy: callableRejectApplication CF가 callerUid로 강제
+                                  //   canceledBy: callableCancelConfirmedApplication CF가 callerUid로 강제
+                                  'rejectedBy', 'rejectedAt', 'canceledBy']) &&
                        // [RULE-FIX-M2] CF-ONLY 전이 차단: CONTRACT_PENDING→CONFIRMED
                        //   callableFinalizeWorkerSignature 전용 — 관리자 직접 전이 시 서명 검증 우회 가능
                        !(resource.data.status == 'CONTRACT_PENDING' &&
@@ -703,6 +704,14 @@ service cloud.firestore {
                        //   statusHistory.at 클라이언트 기기 시간 조작도 동시 차단
                        !(resource.data.status == 'PENDING' &&
                          request.resource.data.status == 'REJECTED') &&
+                       // [H-1-FIX] CONFIRMED/CONTRACT_PENDING → REJECTED 차단 — callableRejectApplication CF 전용
+                       //   확정 상태 지원서를 직접 REJECTED로 전이 시 rejectedBy/statusHistory.at 위조 가능
+                       !(resource.data.get('status', '') in ['CONFIRMED', 'CONTRACT_PENDING'] &&
+                         request.resource.data.status == 'REJECTED') &&
+                       // [CF-ONLY] CONFIRMED/CONTRACT_PENDING → CANCELED 차단 — callableCancelConfirmedApplication CF 전용
+                       //   canceledBy 서버 강제 + statusHistory.at CF 서버 시간 + slot decrement 원자성
+                       !(resource.data.get('status', '') in ['CONFIRMED', 'CONTRACT_PENDING'] &&
+                         request.resource.data.status == 'CANCELED') &&
                        // [MEDIUM-1] CANCELED/AUTO_CANCELED → CONFIRMED 직접 전이 차단
                        //   취소된 지원서를 totalConfirmed CF 없이 직접 확정 상태로 변경 시 카운터 불일치
                        !(resource.data.get('status', '') in ['CANCELED', 'AUTO_CANCELED', 'REJECTED'] &&

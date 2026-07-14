@@ -7231,6 +7231,108 @@ export const callableApplyNoShowPenalty = onCall(
 );
 
 // ═══════════════════════════════════════════════════════════
+// 🔒 확정 지원 취소 — canceledBy 서버 강제, statusHistory.at CF 서버 시간
+//
+// 보안 목적:
+//   - canceledBy를 클라이언트가 위조해 다른 관리자에게 책임 전가하는 공격 차단
+//   - Timestamp.now() 클라이언트 기기 시간 조작 차단 (statusHistory.at)
+//   - 확정 상태가 아닌 지원서에 대한 취소 시도 차단
+//
+// 호출자: 지원자 본인(USER_CANCELED/SAME_DAY_CANCEL) 또는 사업장 관리자(ADMIN_CANCELED)
+// 반환값: slot decrement · 패널티 · 알림에 필요한 지원서 필드 일체
+// ═══════════════════════════════════════════════════════════
+export const callableCancelConfirmedApplication = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {applicationId, cancelReason, applyNoShowPenalty = false} = request.data as {
+      applicationId: string;
+      cancelReason?: string;
+      applyNoShowPenalty?: boolean;
+    };
+    if (!applicationId) throw new HttpsError("invalid-argument", "applicationId 필수");
+
+    // 1. 지원서 조회
+    const appRef = db.collection("applications").doc(applicationId);
+    const appSnap = await appRef.get();
+    if (!appSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const appData = appSnap.data()!;
+
+    // 2. 확정 상태 검증
+    const currentStatus = appData.status as string;
+    if (!CONFIRMED_STATUSES.includes(currentStatus)) {
+      throw new HttpsError("failed-precondition", "확정된 지원만 취소할 수 있습니다.");
+    }
+
+    // 3. 호출자 권한 검증 — 지원자 본인 또는 사업장 관리자/서브관리자/SUPER_ADMIN
+    const workerUid = appData.uid as string;
+    const appBusinessId = appData.businessId as string | undefined;
+    const isOwner = workerUid === callerUid;
+
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const callerData = callerSnap.data();
+    const callerRole = callerData?.role as string | undefined;
+    const isSuperAdminCaller = callerRole === "SUPER_ADMIN";
+    const callerSubAdminOf = callerData?.subAdminOf as string | undefined;
+    const isSubAdminOfBiz = callerSubAdminOf === appBusinessId;
+
+    let isAdminOfBiz = false;
+    if (!isOwner && !isSuperAdminCaller && !isSubAdminOfBiz && appBusinessId) {
+      const bizSnap = await db.collection("businesses").doc(appBusinessId).get();
+      const bizData = bizSnap.data();
+      const adminIds: string[] = Array.isArray(bizData?.adminIds) ? bizData!.adminIds as string[] : [];
+      const ownerId = bizData?.ownerId as string | undefined;
+      isAdminOfBiz = adminIds.includes(callerUid) || ownerId === callerUid;
+    }
+
+    if (!isOwner && !isSuperAdminCaller && !isSubAdminOfBiz && !isAdminOfBiz) {
+      throw new HttpsError("permission-denied", "해당 지원서에 대한 취소 권한이 없습니다.");
+    }
+
+    // 4. 취소 유형 결정
+    const isAdminCancel = !isOwner;
+    const cancelReasonCode = isAdminCancel
+      ? "ADMIN_CANCELED"
+      : (applyNoShowPenalty ? "SAME_DAY_CANCEL" : "USER_CANCELED");
+    const action = isAdminCancel ? "ADMIN_CANCEL_CONFIRMED" : "CONFIRM_CANCEL";
+
+    // 5. application 상태 업데이트 (Admin SDK — canceledBy 서버 강제)
+    const updateData: Record<string, unknown> = {
+      status: "CANCELED",
+      canceledAt: admin.firestore.FieldValue.serverTimestamp(),
+      cancelReason: cancelReasonCode,
+      statusHistory: admin.firestore.FieldValue.arrayUnion({
+        status: "CANCELED",
+        at: admin.firestore.Timestamp.now(), // CF 서버 시간 — 클라이언트 위조 불가
+        by: callerUid,                        // 서버 강제 — 다른 관리자 UID 위조 차단
+        action,
+        reason: cancelReason ?? cancelReasonCode,
+      }),
+    };
+    if (isAdminCancel && cancelReason) updateData.cancelMessage = cancelReason;
+    if (isAdminCancel) updateData.canceledBy = callerUid; // 서버 강제
+
+    await appRef.update(updateData);
+
+    // 6. 클라이언트 후속 처리(slot decrement, 패널티, 알림)에 필요한 값 반환
+    return {
+      success: true,
+      workerUid,
+      toId: (appData.toId as string | undefined) ?? null,
+      slotId: (appData.slotId as string | undefined) ?? null,
+      selectedWorkType: (appData.selectedWorkType as string | undefined) ?? null,
+      businessId: (appData.businessId as string | undefined) ?? null,
+      businessName: (appData.businessName as string | undefined) ?? null,
+      workDateMs: (appData.workDate as admin.firestore.Timestamp | undefined)?.toMillis() ?? null,
+      workDetailId: (appData.workDetailId as string | undefined) ?? null,
+      isAdminCancel,
+      cancelReasonCode,
+    };
+  },
+);
+
+// ═══════════════════════════════════════════════════════════
 // 🔒 슬롯 확정 인원 감소 — cancelConfirmedApplication 배치 이후 호출
 //
 // 설계 원칙:
@@ -9603,9 +9705,10 @@ export const callableReopenSlots = onCall(
     for (const slotId of slotIds) {
       const slotRef = db.collection("tos").doc(toId).collection("slots").doc(slotId);
       try {
-        await db.runTransaction(async (tx) => {
+        // [L-1-FIX] 트랜잭션 반환값으로 실제 업데이트 여부 확인 — 미존재 슬롯 오증가 방지
+        const updated = await db.runTransaction(async (tx) => {
           const slotSnap = await tx.get(slotRef);
-          if (!slotSnap.exists) return;
+          if (!slotSnap.exists) return false;
 
           const d = slotSnap.data()!;
           const confirmed = (d.confirmedCount as number | undefined) ?? 0;
@@ -9624,8 +9727,9 @@ export const callableReopenSlots = onCall(
             closedAt: admin.firestore.FieldValue.delete(),
             closedBy: admin.firestore.FieldValue.delete(),
           });
+          return true;
         });
-        reopenedCount++;
+        if (updated) reopenedCount++;
       } catch (e) {
         console.error(`[ReopenSlots] 슬롯 ${slotId} 재오픈 실패:`, e);
       }
