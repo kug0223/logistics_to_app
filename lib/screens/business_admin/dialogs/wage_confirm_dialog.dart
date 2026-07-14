@@ -38,7 +38,6 @@ import '../../../services/firestore_service.dart';
 
 // Providers
 import '../../../providers/user_provider.dart';
-import '../../../utils/payment_due_date_calculator.dart';
 
 /// 급여 확정 다이얼로그
 class WageConfirmDialog extends StatefulWidget {
@@ -1083,15 +1082,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
   /// 급여 취소 (calculated → pending)
   ///
-  /// [B03/B04 동시성 설계] 트랜잭션 없이 단순 update 사용.
-  /// 대상이 wageCalculated(1차 확정)인 경우: 동시에 다른 관리자가 마감(wageConfirmed)으로
-  /// 전환해도 wagePending으로 덮어쓸 수 있는 race가 이론상 존재한다.
-  /// 단, 마감(_closeWages)은 이제 트랜잭션으로 서버 상태를 재확인하여 wageConfirmed를
-  /// 먼저 기록하므로, 그 이후에 들어온 _processWageCancel의 update는 덮어쓰게 되는 문제가 남는다.
-  /// 실용적 판단: 단일 사업장에서 두 관리자가 동일 근무자 급여를 동시에 마감하면서
-  /// 한쪽이 취소하는 시나리오는 업무 프로세스상 극히 드물며,
-  /// wageConfirmed 상태를 wagePending으로 되돌리는 것은 현재 _reverseCloseWages로 별도 처리.
-  /// 완전한 방어를 원하면 wageCalculated 상태 확인 트랜잭션을 추가해야 하나 현 단계에서 허용.
+  /// [WAGE-CANCEL-FIX] callableWageCancel CF 호출 — assertBizAdmin + Admin SDK 트랜잭션.
+  /// CF 내부에서 wageStatus === "calculated" 확인 후에만 pending 복귀.
+  /// wageConfirmed/wageTransferred 상태는 CF에서 failed-precondition throw.
   // [B-8] showToast: 개별 취소 시 true, 일괄 취소(_cancelSelectedWages) 시 false — 중복 토스트 방지
   Future<void> _processWageCancel(ApplicationModel app, AttendanceModel attendance, {bool showToast = true}) async {
     // [U-01 fix] _confirmWages 루프 진행 중 다른 경로로 취소 요청이 들어오면 UI 상태 불일치 발생
@@ -1101,25 +1094,13 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     try {
       final user = widget.userMap[app.uid];
 
-      // M-5: 트랜잭션으로 wageConfirmed 상태 재확인 — 동시 마감과의 race condition 방어
-      await FirebaseFirestore.instance.runTransaction((tx) async {
-        final ref = FirebaseFirestore.instance.collection('attendance').doc(attendance.id);
-        final snap = await tx.get(ref);
-        if (!snap.exists) throw Exception('근무 기록을 찾을 수 없습니다.');
-        final currentStatus = snap.data()?['wageStatus'] as String?;
-        if (currentStatus == AttendanceModel.wageConfirmed ||
-            currentStatus == AttendanceModel.wageTransferred) {
-          throw StateError('이미 마감된 급여입니다. 급여 마감 취소 버튼을 사용하세요.');
-        }
-        tx.update(ref, {
-          'wageStatus': AttendanceModel.wagePending,
-          'finalWage': FieldValue.delete(),
-          'wageDetail': FieldValue.delete(),
-          // yearMonth도 함께 삭제 — pending 복귀 시 _getPrevGrossTotal 집계에서 제외되지만,
-          // 재확정 전까지 stale 필드가 남아있으면 DB 정합성이 어긋나므로 명시적으로 삭제
-          'yearMonth': FieldValue.delete(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
+      // [WAGE-CANCEL-FIX] callableWageCancel CF 호출 — assertBizAdmin + wageStatus: pending CF 이전
+      // 기존 클라이언트 트랜잭션에 assertBizAdmin 없었음 → CF Admin SDK로 서버 강제
+      final cfCancel = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableWageCancel');
+      await cfCancel.call({
+        'businessId': widget.businessId,
+        'attendanceId': attendance.id,
       });
 
       if (!mounted) return;
@@ -1153,10 +1134,12 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       }
       
       if (showToast && mounted) ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 확정 취소');
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('❌ 급여 취소 CF 실패: ${e.code} ${e.message}');
+      if (mounted) ToastHelper.showError(e.message ?? '급여 취소에 실패했습니다');
     } catch (e) {
       debugPrint('❌ 급여 취소 실패: $e');
-      // StateError: 이미 마감된 급여 — 안내 메시지 그대로 표시
-      if (mounted) ToastHelper.showError(e is StateError ? e.message : '급여 취소에 실패했습니다');
+      if (mounted) ToastHelper.showError('급여 취소에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -1236,72 +1219,25 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         return;
       }
 
-      final adminUid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
-
+      // [V5-FIX] callableConfirmFinalWage CF 호출 — confirmedAt serverTimestamp·confirmedBy 서버 강제
+      // 클라이언트 트랜잭션에서 DateTime.now() 기반 confirmedAt 위조 가능 → CF Admin SDK로 이전.
+      // paymentDueDate 계산도 서버에서 처리 (PaymentDueDateCalculator 클라이언트 계산 제거).
+      final cfConfirm = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableConfirmFinalWage');
+      final cfResult = await cfConfirm.call({
+        'businessId': widget.businessId,
+        'attendanceIds': targetIds,
+      });
+      successCount = (cfResult.data['processed'] as num?)?.toInt() ?? 0;
+      final skippedIds = ((cfResult.data['skipped'] as List?) ?? [])
+          .map((e) => e as String)
+          .toSet();
+      failCount = skippedIds.length;
+      // totalWorkDays는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리
       for (final appId in targetIds) {
-        final attendance = widget.attendanceMap[appId];
-        if (attendance == null) { failCount++; continue; }
-        ApplicationModel? app;
-        try {
-          app = _calculatedWorkers.firstWhere((a) => a.id == appId);
-        } catch (_) { failCount++; continue; }
-
-        // [SERVER-REREAD] wageDetail·paymentDueDate는 트랜잭션 내 서버 재읽기로 결정
-        // 로컬 캐시(_calculatedWages/attendance.wageDetail)는 폴백용으로만 사용
-
-        try {
-          final attRef = FirebaseFirestore.instance.collection('attendance').doc(attendance.id);
-
-          bool alreadyClosed = false;
-          await FirebaseFirestore.instance.runTransaction((tx) async {
-            final snap = await tx.get(attRef);
-            final serverStatus = snap.data()?['wageStatus'] as String?;
-            // 이미 마감됐거나 송금완료이면 skip
-            if (serverStatus == AttendanceModel.wageConfirmed ||
-                serverStatus == AttendanceModel.wageTransferred) {
-              alreadyClosed = true;
-              return;
-            }
-            // [race condition] 마감 직전 다른 관리자가 취소해 pending으로 돌아간 경우 차단
-            if (serverStatus != AttendanceModel.wageCalculated) {
-              alreadyClosed = true;
-              return;
-            }
-
-            // [SERVER-REREAD] 서버의 최신 wageDetail 사용 — 로컬 캐시 덮어쓰기 방지
-            final serverWdRaw = snap.data()?['wageDetail'];
-            final effectiveWd = serverWdRaw != null
-                ? WageDetailModel.tryFromMap(Map<String, dynamic>.from(serverWdRaw as Map))
-                : (attendance.wageDetail ?? _calculatedWages[appId]);
-            final confirmedWageDetail = effectiveWd?.copyWith(
-              confirmedBy: adminUid,
-              confirmedAt: DateTime.now(),
-            );
-            final paymentDueDate = PaymentDueDateCalculator.calculate(
-              payScheduleType: effectiveWd?.payScheduleType,
-              payScheduleDay:  effectiveWd?.payScheduleDay,
-              workDate: attendance.workDate,
-            );
-
-            tx.update(attRef, {
-              'wageStatus': AttendanceModel.wageConfirmed,
-              'finalConfirmedAt': FieldValue.serverTimestamp(),
-              if (adminUid != null) 'confirmedBy': adminUid,
-              if (confirmedWageDetail != null) 'wageDetail': confirmedWageDetail.toMap(),
-              if (paymentDueDate != null) 'paymentDueDate': Timestamp.fromDate(paymentDueDate),
-            });
-            // totalWorkDays는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리
-          });
-
-          if (alreadyClosed) {
-            debugPrint('⚠️ [B01] 이미 마감된 근무 ($appId) — 동시 마감 감지, skip');
-            continue;
-          }
-          successCount++;
-          processedApps.add(app);
-        } catch (e) {
-          debugPrint('❌ 마감 트랜잭션 실패 ($appId): $e');
-          failCount++;
+        if (!skippedIds.contains(appId)) {
+          final app = _calculatedWorkers.where((a) => a.id == appId).firstOrNull;
+          if (app != null) processedApps.add(app);
         }
       }
 
@@ -1395,57 +1331,35 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         return;
       }
 
+      // [V5-REV-FIX] callableCancelFinalConfirmation CF 호출 — 클라이언트 트랜잭션 루프 제거
+      // businessId 교차검증·transferred 경합 방어는 CF Admin SDK에서 처리.
+      // wageStatus: calculated 클라이언트 직접 write 차단 (firestore.rules 참고).
+      // appId → attendanceId 매핑 (CF는 attendance 문서 ID를 입력으로 받음)
+      final attIdToAppId = <String, String>{};
       for (final appId in targetIds) {
-        final attendance = widget.attendanceMap[appId];
-        if (attendance == null) { failCount++; continue; }
-        // [MED-REV] 이체완료(wageTransferred) 건은 마감 취소 불가 — 로컬 빠른 체크
-        if (attendance.wageStatus == AttendanceModel.wageTransferred) {
-          debugPrint('⚠️ [REV-BLOCK] 이체완료 건 마감취소 차단 (${attendance.id})');
-          failCount++;
-          continue;
-        }
-
-        final attRef = FirebaseFirestore.instance.collection('attendance').doc(attendance.id);
-        bool alreadyReverted = false;
-        try {
-          // [H8/H9-FIX] 트랜잭션으로 서버 상태 재확인 — 동시 transferred 전환 경합 방어
-          await FirebaseFirestore.instance.runTransaction((tx) async {
-            final snap = await tx.get(attRef);
-            final serverStatus = snap.data()?['wageStatus'] as String?;
-            // 이체완료이면 취소 불가 차단
-            if (serverStatus == AttendanceModel.wageTransferred) {
-              alreadyReverted = true;
-              return;
-            }
-            // 이미 취소됐거나 예상 외 상태이면 skip
-            if (serverStatus != AttendanceModel.wageConfirmed) {
-              alreadyReverted = true;
-              return;
-            }
-            tx.update(attRef, {
-              'wageStatus': AttendanceModel.wageCalculated,
-              'finalConfirmedAt': FieldValue.delete(),
-              // wageDetail 내 confirm 정보도 삭제 — 재마감 시 이전 확정자 정보 잔류 방지
-              'wageDetail.confirmedBy': FieldValue.delete(),
-              'wageDetail.confirmedAt': FieldValue.delete(),
-              // [B02 fix] 마감 취소 시 paymentDueDate도 삭제.
-              // 잔류하면 재마감 시 기존 날짜가 그대로 남아 지급 예정일이 오표시됨.
-              'paymentDueDate': FieldValue.delete(),
-            });
-            // totalWorkDays -1은 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리
-          });
-
-          if (alreadyReverted) {
-            debugPrint('⚠️ [H8] 서버 상태 불일치로 마감취소 skip ($appId)');
-            failCount++;
-            continue;
-          }
-          committedAppIds.add(appId);
-          successCount++;
-        } catch (e) {
-          debugPrint('❌ 마감 취소 트랜잭션 실패 ($appId): $e');
+        final attId = widget.attendanceMap[appId]?.id;
+        if (attId != null) {
+          attIdToAppId[attId] = appId;
+        } else {
           failCount++;
         }
+      }
+      if (attIdToAppId.isNotEmpty) {
+        final cfReverse = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('callableCancelFinalConfirmation');
+        final cfResult = await cfReverse.call({
+          'businessId': widget.businessId,
+          'attendanceIds': attIdToAppId.keys.toList(),
+        });
+        successCount = (cfResult.data['processed'] as num?)?.toInt() ?? 0;
+        final skippedAttIds = ((cfResult.data['skipped'] as List?) ?? [])
+            .map((e) => e as String)
+            .toSet();
+        failCount += skippedAttIds.length;
+        for (final entry in attIdToAppId.entries) {
+          if (!skippedAttIds.contains(entry.key)) committedAppIds.add(entry.value);
+        }
+        // totalWorkDays -1은 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리
       }
 
       // 마감 취소 알림 발송 — 트랜잭션 성공 항목에만 발송
