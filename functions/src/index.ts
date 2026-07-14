@@ -5325,6 +5325,77 @@ export const callableCreateTO = onCall(
   }
 );
 
+// ── callablePublishTO ─────────────────────────────────────
+// draft/scheduled TO를 즉시공개로 전환 — maxActiveTOs 서버 강제
+// 이전 이유:
+//   - 클라이언트 assertActiveTOLimit() 우회 시 TO 개수 제한 무력화
+//   - updateTO() 직접 호출로 isPublished:true 주입 가능 (REST API)
+// Input:  { toId: string }
+// Output: { success: true, alreadyPublished?: true }
+export const callablePublishTO = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {toId} = request.data as {toId?: string};
+    if (!toId || typeof toId !== "string" || toId.trim() === "") {
+      throw new HttpsError("invalid-argument", "toId가 필요합니다.");
+    }
+
+    const toRef = db.collection("tos").doc(toId);
+    const toSnap = await toRef.get();
+    if (!toSnap.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
+    const toData = toSnap.data()!;
+    const businessId = toData.businessId as string | undefined;
+    if (!businessId) throw new HttpsError("invalid-argument", "공고에 businessId가 없습니다.");
+
+    // 권한 검증 (사업장 관리자 또는 SUPER_ADMIN)
+    await assertBizAdmin(callerUid, businessId);
+
+    // 이미 공개된 경우 멱등 응답
+    if (toData.isPublished === true) {
+      return {success: true, alreadyPublished: true};
+    }
+
+    // [HIGH-TO-PUB] maxActiveTOs 서버 강제 — callableCreateTO와 동일 로직
+    const [callerSnap, quotaSnap] = await Promise.all([
+      db.collection("users").doc(callerUid).get(),
+      db.collection("tos")
+        .where("businessId", "==", businessId)
+        .where("isPublished", "==", true)
+        .get(),
+    ]);
+    const callerData = callerSnap.data() ?? {};
+    const totalActive = quotaSnap.size;
+
+    let limit = 4;
+    const perAdminLimit = callerData.maxActiveTOs as number | undefined;
+    if (perAdminLimit && perAdminLimit > 0) {
+      limit = perAdminLimit;
+    } else {
+      try {
+        const configSnap = await db.collection("settings").doc("app_config").get();
+        const v = configSnap.data()?.maxActiveTOPerBusiness as number | undefined;
+        if (v && v > 0) limit = v;
+      } catch (_) { /* 조회 실패 시 기본값 유지 */ }
+    }
+
+    if (totalActive >= limit) {
+      throw new HttpsError("resource-exhausted", `MAX_ACTIVE_TO_LIMIT:${limit}`);
+    }
+
+    await toRef.update({
+      isPublished: true,
+      publishMode: "immediate",
+      status: "ACTIVE",
+      statusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    console.log(`✅ [publishTO] TO ${toId} 공개 전환 완료 (businessId: ${businessId})`);
+    return {success: true};
+  }
+);
+
 // ── resetPasswordWithPass ────────────────────────────────
 // passToken + username → CI 매칭 → Firebase Custom Token 발급
 // Input:  { passToken, username }

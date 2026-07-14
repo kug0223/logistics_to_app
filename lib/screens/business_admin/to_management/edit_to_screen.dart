@@ -318,25 +318,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         }
       }
 
-      // draft → 즉시공개 전환 시 active 4개 제한 체크 (전체 사업장 합산)
-      if (shouldPublishImmediately && !widget.to.isPublished) {
-        final adminUid = context.read<UserProvider>().currentUser?.uid ?? '';
-        try {
-          await _firestoreService.assertActiveTOLimit(adminUid);
-        } on Exception catch (e) {
-          if (e.toString().contains('MAX_ACTIVE_TO_LIMIT')) {
-            final parts = e.toString().split(':');
-            final limitStr = parts.length >= 2 ? parts.last : '4';
-            if (mounted) ToastHelper.showError('진행 중인 공고가 $limitStr개를 초과할 수 없습니다');
-          } else {
-            if (mounted) ToastHelper.showError('공고를 공개할 수 없습니다');
-          }
-          if (mounted) setState(() => _isSaving = false);
-          return;
-        }
-        if (!mounted) return;
-      }
-
       // flex TO는 슬롯 수 × 슬롯당 요구인원; contract TO는 슬롯 1개 구조이므로 합산만
       final perSlotRequired =
           _workDetails.fold<int>(0, (s, d) => s + d.requiredCount);
@@ -346,6 +327,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
       // isManualClosed가 아닌 isClosed 기준 — CF 자동마감(isManualClosed=false) 포함
       final wasClosed = widget.to.isClosed;
+      // [PUB-CF] 첫 공개 전환은 callablePublishTO CF로 처리 (maxActiveTOs 서버 강제)
+      final shouldPublish = shouldPublishImmediately && !widget.to.isPublished;
 
       // workDetails(임금 포함)를 통째로 덮어씀 → 이미 확정된 지원자가 있어도
       // 슬롯의 wage 수정이 가능하다. CLAUDE.md "시급/일급 TO 레벨에서 고정" 원칙은
@@ -361,16 +344,13 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         'publishAt': publishAt != null
             ? Timestamp.fromDate(publishAt)
             : FieldValue.delete(),
-        'isPublished': shouldPublishImmediately,
+        // 첫 공개(shouldPublish=true)는 CF가 처리하므로 updateTO에서 제외
+        if (!shouldPublish) 'isPublished': shouldPublishImmediately,
         'publishDaysBefore':
             _publishMode == 'scheduled' ? _publishDaysBefore : null,
         'publishTime': _publishMode == 'scheduled' ? _publishTime : null,
         'postingDurationDays': _postingDurationDays,
-        // SCHEDULED → 즉시공개 전환 시 status도 함께 ACTIVE로 갱신
-        if (shouldPublishImmediately && !widget.to.isPublished) ...{
-          'status': TOStatus.active,
-          'statusUpdatedAt': FieldValue.serverTimestamp(),
-        },
+        // 재개(wasClosed)는 이미 isPublished=true이므로 status만 갱신
         if (wasClosed) ...{
           'isManualClosed': false,
           'closedAt': FieldValue.delete(),
@@ -392,6 +372,24 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       }
 
       await _firestoreService.updateTO(widget.to.id, updates);
+
+      // [PUB-CF] 첫 공개: CF callablePublishTO (maxActiveTOs 서버 강제)
+      if (shouldPublish) {
+        try {
+          await _firestoreService.publishTO(widget.to.id);
+        } on Exception catch (e) {
+          if (e.toString().contains('MAX_ACTIVE_TO_LIMIT')) {
+            final parts = e.toString().split(':');
+            final limitStr = parts.length >= 2 ? parts.last : '4';
+            if (mounted) ToastHelper.showError('진행 중인 공고가 $limitStr개를 초과할 수 없습니다');
+          } else {
+            if (mounted) ToastHelper.showError('공개 전환에 실패했습니다. 잠시 후 다시 시도해주세요');
+          }
+          if (mounted) setState(() => _isSaving = false);
+          return;
+        }
+        if (!mounted) return;
+      }
 
       // ── 단기 TO: 슬롯 일괄 갱신 ──────────────────────────────
       // updateTO가 이미 커밋됐으므로 슬롯 동기화 실패는 별도 처리
@@ -1092,10 +1090,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   /// 반환값: true = 전환 성공(또는 예약 설정), false = 한도 초과로 차단됨
   Future<bool> _applyTODraftTransition(DateTime? visibleFrom) async {
     if (visibleFrom == null) {
-      // draft → 즉시공개(active) 전환 시 active 4개 제한 체크 (전체 사업장 합산)
-      final adminUid = context.read<UserProvider>().currentUser?.uid ?? '';
+      // [PUB-CF] draft → 즉시공개(active) 전환: CF callablePublishTO (maxActiveTOs 서버 강제)
       try {
-        await _firestoreService.assertActiveTOLimit(adminUid);
+        await _firestoreService.publishTO(widget.to.id);
+      } on FirebaseFunctionsException catch (fe) {
+        if (mounted) ToastHelper.showError('공고를 공개할 수 없습니다: ${fe.message ?? ''}');
+        return false;
       } on Exception catch (e) {
         if (e.toString().contains('MAX_ACTIVE_TO_LIMIT')) {
           final parts = e.toString().split(':');
@@ -1107,12 +1107,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         return false;
       }
       if (!mounted) return false;
-      await _firestoreService.updateTO(widget.to.id, {
-        'isPublished': true,
-        'publishMode': 'immediate',
-        'status': TOStatus.active,
-        'statusUpdatedAt': FieldValue.serverTimestamp(),
-      });
       if (mounted) ToastHelper.showInfo('미공개 공고가 즉시 공개로 전환되었습니다');
     } else {
       final m = visibleFrom.month;

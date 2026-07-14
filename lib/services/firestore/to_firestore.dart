@@ -525,6 +525,31 @@ extension TOFirestore on FirestoreService {
     }
   }
 
+  /// draft/scheduled TO를 즉시공개로 전환 — CF callablePublishTO 위임 (maxActiveTOs 서버 강제)
+  /// 반환값: true=성공, false=한도 초과 또는 실패
+  Future<bool> publishTO(String toId) async {
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callablePublishTO',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+      await callable.call<Map<String, dynamic>>({'toId': toId});
+      clearCache(toId: toId);
+      return true;
+    } on FirebaseFunctionsException catch (e) {
+      if (e.code == 'resource-exhausted' &&
+          (e.message ?? '').contains('MAX_ACTIVE_TO_LIMIT')) {
+        final parts = (e.message ?? '').split(':');
+        final limitStr = parts.length >= 2 ? parts.last : '4';
+        throw Exception('MAX_ACTIVE_TO_LIMIT:$limitStr');
+      }
+      debugPrint('❌ [TO] 공개 전환 실패: ${e.code} — ${e.message}');
+      rethrow;
+    } catch (e) {
+      debugPrint('❌ [TO] 공개 전환 실패: $e');
+      rethrow;
+    }
+  }
+
   // ───────────────────────────────────────────────────────
   // 삭제
   // ───────────────────────────────────────────────────────
