@@ -161,6 +161,33 @@ class _ForeignWorkerApprovalScreenState
     }
   }
 
+  Future<void> _resetToReview(UserModel user) async {
+    if (_isProcessing) return;
+    setState(() => _isProcessing = true);
+    try {
+      final confirmed = await _showConfirmDialog(
+        title: '재검토 전환',
+        message: '${user.name}님을 재검토 대기 상태로 되돌립니다.\n다시 승인 또는 거절하실 수 있습니다.',
+        confirmLabel: '재검토',
+        confirmColor: AppColors.info,
+      );
+      if (!confirmed || !mounted) return;
+
+      await _fn.httpsCallable('callableResetAccountStatus').call({'userId': user.uid});
+      if (!mounted) return;
+      ToastHelper.showSuccess('${user.name}님이 재검토 대기 상태로 전환되었습니다');
+      await _loadUsers();
+    } on FirebaseFunctionsException catch (e) {
+      if (!mounted) return;
+      ToastHelper.showError(e.message ?? '재검토 전환에 실패했습니다');
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showError('오류가 발생했습니다. 다시 시도해주세요');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
+  }
+
   Future<void> _showTempPasswordDialog(String name, String tempPassword) async {
     await showDialog<void>(
       context: context,
@@ -438,18 +465,56 @@ class _ForeignWorkerApprovalScreenState
               ),
             ],
 
-            // 비밀번호 초기화 버튼 (active 상태 외국인 전용 — ISSUE-03)
+            // active 상태: 비밀번호 초기화 + 재검토 전환 (ISSUE-03, ISSUE-05)
             if (user.accountStatus == 'active') ...[
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _resetToReview(user),
+                      icon: const Icon(Icons.refresh, size: 16),
+                      label: const Text('재검토'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.info,
+                        side: const BorderSide(color: AppColors.info),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _resetPassword(user),
+                      icon: const Icon(Icons.lock_reset, size: 16),
+                      label: const Text('비밀번호 초기화'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.warning,
+                        side: const BorderSide(color: AppColors.warning),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+
+            // rejected 상태: 재검토 전환 (ISSUE-05)
+            if (user.accountStatus == 'rejected') ...[
               const SizedBox(height: 14),
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  onPressed: () => _resetPassword(user),
-                  icon: const Icon(Icons.lock_reset, size: 18),
-                  label: const Text('비밀번호 초기화'),
+                  onPressed: () => _resetToReview(user),
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('재검토'),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.warning,
-                    side: const BorderSide(color: AppColors.warning),
+                    foregroundColor: AppColors.info,
+                    side: const BorderSide(color: AppColors.info),
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10)),

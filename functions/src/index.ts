@@ -5444,6 +5444,46 @@ export const rejectForeignWorker = onCall(
   }
 );
 
+// ── callableResetAccountStatus ───────────────────────────────────────────────
+// 슈퍼관리자 전용 — active/rejected 외국인 계정을 pending(재검토 대기)으로 되돌림 (ISSUE-05)
+// Input:  { userId: string }
+// Output: { success: true }
+export const callableResetAccountStatus = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    const callerUid = request.auth?.uid;
+    if (!callerUid) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+
+    const callerDoc = await db.collection("users").doc(callerUid).get();
+    if (callerDoc.data()?.role !== "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "슈퍼관리자만 사용할 수 있습니다.");
+    }
+
+    const {userId} = request.data as {userId?: string};
+    if (!userId) throw new HttpsError("invalid-argument", "userId 필수입니다.");
+
+    const userRef = db.collection("users").doc(userId);
+    const userDoc = await userRef.get();
+    if (!userDoc.exists) throw new HttpsError("not-found", "사용자를 찾을 수 없습니다.");
+
+    const currentStatus = userDoc.data()?.accountStatus as string | undefined;
+    if (currentStatus !== "active" && currentStatus !== "rejected") {
+      throw new HttpsError(
+        "failed-precondition",
+        "active 또는 rejected 상태에서만 재검토 전환이 가능합니다."
+      );
+    }
+
+    await userRef.update({
+      accountStatus: "pending",
+      resetAt: Timestamp.now(),
+      resetBy: callerUid,
+    });
+
+    return {success: true};
+  }
+);
+
 // cleanExpiredPassTokens 제거 — Firestore TTL 정책으로 대체
 // 설정: Firebase 콘솔 → Firestore → TTL → passTokens 컬렉션, expiresAt 필드
 
