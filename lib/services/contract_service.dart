@@ -635,7 +635,7 @@ class ContractService {
   /// 계약서는 pendingWorker로 남는 Scenario A(상태 불일치)가 있었음.
   /// 순서 역전으로 Scenario A를 원천 차단: 계약서 voided update 실패 시 아무것도 변경되지 않아
   /// 관리자가 재시도 가능. 앱 취소 실패 시에는 계약서가 이미 voided이므로 근무자가 서명 불가.
-  Future<void> voidContract(String contractId) async {
+  Future<void> voidContract(String contractId, {required String voidedBy}) async {
     // [M-4] 1단계: 상태 확인 + voided 업데이트를 트랜잭션으로 원자화.
     // 두 관리자가 동시에 voidContract를 호출할 경우 한 쪽만 실제 update를 수행하고
     // 나머지는 조기 반환 — 중복 application 취소 시도 방지.
@@ -657,6 +657,7 @@ class ContractService {
 
       tx.update(contractRef, {
         'status': ContractStatus.voided.value,
+        'voidedBy': voidedBy,
         'updatedAt': FieldValue.serverTimestamp(),
       });
       contract = parsed;
