@@ -53,6 +53,9 @@ functions/node_modules/
 /android/app/profile
 /android/app/release
 
+# Firebase App Check debug secret (공개 저장소 노출 방지)
+/android/app/src/debug/res/
+
 # 릴리즈 서명 키 (절대 커밋 금지)
 /android/key.properties
 /android/app/*.jks
