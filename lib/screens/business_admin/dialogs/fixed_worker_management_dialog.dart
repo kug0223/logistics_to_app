@@ -723,7 +723,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     try {
       final ok = await _firestoreService.approveScheduleChangeRequest(
         requestId: request.id,
-        approverUid: approverUid,
       );
       if (ok && mounted) {
         ToastHelper.showSuccess('요청을 승인했습니다');
@@ -745,7 +744,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     try {
       final ok = await _firestoreService.rejectScheduleChangeRequest(
         requestId: request.id,
-        rejectorUid: approverUid,
       );
       if (ok && mounted) {
         ToastHelper.showSuccess('요청을 거절했습니다');

@@ -315,7 +315,6 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
     try {
       final success = await _firestoreService.cancelScheduleChangeRequest(
         requestId: request.id,
-        canceledByUid: widget.applicantUid,
       );
       if (!mounted) return;
       if (success) {

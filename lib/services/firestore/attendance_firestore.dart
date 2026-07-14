@@ -532,7 +532,6 @@ extension AttendanceFirestore on FirestoreService {
   ///  2. 트랜잭션 내 businessId 권한 검증 없이 rules에만 의존 → CF assertBizAdmin으로 강화
   Future<bool> approveScheduleChangeRequest({
     required String requestId,
-    required String approverUid,
   }) async {
     try {
       final callable = FirebaseFunctions.instance
@@ -559,7 +558,6 @@ extension AttendanceFirestore on FirestoreService {
   /// [H3-FIX] callableApproveScheduleChangeRequest CF로 이전 (action=REJECTED)
   Future<bool> rejectScheduleChangeRequest({
     required String requestId,
-    required String rejectorUid,
     String? rejectReason,
   }) async {
     try {
@@ -632,7 +630,6 @@ extension AttendanceFirestore on FirestoreService {
   ///             관리자가 임의 배열로 덮어쓸 수 있었음. CF Admin SDK로 이전 후 차단 가능.
   Future<bool> cancelScheduleChangeRequest({
     required String requestId,
-    required String canceledByUid,
   }) async {
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')

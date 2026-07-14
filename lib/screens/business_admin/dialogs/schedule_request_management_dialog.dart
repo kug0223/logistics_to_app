@@ -645,7 +645,6 @@ class _ScheduleRequestManagementDialogState
 
       final success = await _firestoreService.approveScheduleChangeRequest(
         requestId: item.request.id,
-        approverUid: uid,
       );
 
       if (success && mounted) {
@@ -742,7 +741,6 @@ class _ScheduleRequestManagementDialogState
 
       final success = await _firestoreService.rejectScheduleChangeRequest(
         requestId: item.request.id,
-        rejectorUid: uid,
         rejectReason: rejectReason,
       );
 

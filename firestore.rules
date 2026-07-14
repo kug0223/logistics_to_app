@@ -1125,33 +1125,13 @@ service cloud.firestore {
                        request.resource.data.requestedByUid == request.auth.uid)
                     );
 
-      // 수정: 워커는 본인 요청 취소(CANCELED)만 허용 / 관리자는 APPROVED→CANCELED(승인 취소)만 허용
-      // [SEC-12] 워커 취소 시 기존 상태가 PENDING이어야만 허용
-      //   — 이미 APPROVED/REJECTED 처리된 요청을 재취소하는 취약점 차단
-      // [H3-FIX] 관리자 PENDING→APPROVED/REJECTED 브랜치 삭제
-      //   — callableApproveScheduleChangeRequest CF(Admin SDK)로 이전 완료
-      //   — respondedByUid 위조 차단 + assertBizAdmin 서버 권한 검증 확보
-      allow update: if isLoggedIn() && (
-                      // 워커: PENDING 상태일 때만 CANCELED 전환 허용, 응답자 정보만 변경
-                      // [M2-FIX] respondedByUid == request.auth.uid 강제 — 타인 UID 위조로 감사 기록 변조 차단
-                      (isOwner(resource.data.applicantUid) &&
-                       resource.data.status == 'PENDING' &&
-                       request.resource.data.status == 'CANCELED' &&
-                       request.resource.data.respondedByUid == request.auth.uid &&
-                       request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['status', 'respondedByUid', 'respondedAt'])) ||
-                      // 관리자/하위관리자: APPROVED → CANCELED (승인 취소) 허용
-                      // Dart cancelScheduleChangeRequest()가 APPROVED 상태에서도 호출 가능
-                      // [M2-FIX] respondedByUid == request.auth.uid 강제 — 책임 회피용 UID 위조 차단
-                      ((isAdminOf(resource.data.businessId) ||
-                        isSubAdminOf(resource.data.businessId) ||
-                        isSuperAdmin()) &&
-                       resource.data.status == 'APPROVED' &&
-                       request.resource.data.status == 'CANCELED' &&
-                       request.resource.data.respondedByUid == request.auth.uid &&
-                       request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['status', 'respondedByUid', 'respondedAt']))
-                    );
+      // [CF-ONLY] 모든 상태 업데이트는 CF Admin SDK 전용 — 직접 클라이언트 쓰기 차단
+      //   - 승인/거절: callableApproveScheduleChangeRequest
+      //   - 취소: callableCancelScheduleChangeRequest (APPROVED 취소 시 applications 날짜 역산 필수)
+      // [SCR-S1-FIX] APPROVED→CANCELED 직접 write 브랜치 삭제
+      //   — 클라이언트 직접 CANCELED 전환 시 applications.leaveDates/extraWorkDates 역산 로직 미실행
+      //   — CF 이전 완료(2026-07-14)로 이 브랜치는 완전 데드코드. CF Admin SDK는 rules 우회.
+      allow update: if false;
 
       // 관리자/하위관리자: 소속 사업장 스케줄 변경 요청 삭제 허용 (TO 삭제 시 고아 데이터 정리)
       // [FIX] isSubAdminOf 누락 — SubAdmin이 TO 연계 정리 시 고아 데이터 발생

@@ -418,7 +418,6 @@ class ScheduleCard extends StatelessWidget {
   ) async {
     final success = await FirestoreService().cancelScheduleChangeRequest(
       requestId: request.id,
-      canceledByUid: application.uid,
     );
     if (!context.mounted) return;
     if (success) {
