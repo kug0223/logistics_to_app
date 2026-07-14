@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 
@@ -10,9 +9,8 @@ import '../../../models/core/work_detail_data.dart';
 import '../../../models/core/business_work_type_model.dart';
 import '../../../models/core/application_model.dart';
 
-// Services & Providers
+// Services
 import '../../../services/firestore_service.dart';
-import '../../../providers/user_provider.dart';
 
 // Utils
 import '../../../utils/toast_helper.dart';
@@ -269,8 +267,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           'publishMode': 'draft',
           'isPublished': false,
           'status': TOStatus.draft,
-          'statusUpdatedAt': FieldValue.serverTimestamp(),
-          'publishAt': FieldValue.delete(),
+          'publishAt': null,  // null → CF가 FieldValue.delete() 처리
           'title': _titleController.text.trim(),
           'description': _descriptionController.text.trim(),
           'workDetails': WorkDetailData.listToFirestore(_workDetails),
@@ -341,34 +338,24 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         'totalRequired': totalRequired,
         'hoursBeforeStart': _hoursBeforeStart,
         'publishMode': _publishMode,
-        'publishAt': publishAt != null
-            ? Timestamp.fromDate(publishAt)
-            : FieldValue.delete(),
-        // 첫 공개(shouldPublish=true)는 CF가 처리하므로 updateTO에서 제외
+        // null → CF가 FieldValue.delete() 처리; ms epoch → CF가 Timestamp 변환
+        'publishAt': publishAt?.toUtc().millisecondsSinceEpoch,
+        // 첫 공개(shouldPublish=true)는 callablePublishTO CF가 처리 — 여기선 제외
         if (!shouldPublish) 'isPublished': shouldPublishImmediately,
         'publishDaysBefore':
             _publishMode == 'scheduled' ? _publishDaysBefore : null,
         'publishTime': _publishMode == 'scheduled' ? _publishTime : null,
         'postingDurationDays': _postingDurationDays,
-        // 재개(wasClosed)는 이미 isPublished=true이므로 status만 갱신
+        // 재개: isManualClosed=false 전달 → CF가 reopenedBy/reopenedAt/closedAt/closedBy 처리
         if (wasClosed) ...{
           'isManualClosed': false,
-          'closedAt': FieldValue.delete(),
-          'closedBy': FieldValue.delete(),
           'status': TOStatus.active,
-          'statusUpdatedAt': FieldValue.serverTimestamp(),
         },
       };
 
       if (widget.to.isContractType) {
-        // 고정근무는 지원마감 없음 — 기존 값이 있었다면 제거
-        updates['applicationDeadline'] = FieldValue.delete();
-      }
-
-      if (wasClosed) {
-        final userProvider = Provider.of<UserProvider>(context, listen: false);
-        updates['reopenedBy'] = userProvider.currentUser?.uid;
-        updates['reopenedAt'] = FieldValue.serverTimestamp();
+        // 고정근무는 지원마감 없음 — null → CF가 FieldValue.delete() 처리
+        updates['applicationDeadline'] = null;
       }
 
       await _firestoreService.updateTO(widget.to.id, updates);
@@ -1133,10 +1120,9 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       final min = visibleFrom.minute.toString().padLeft(2, '0');
       await _firestoreService.updateTO(widget.to.id, {
         'publishMode': 'scheduled',
-        'publishAt': Timestamp.fromDate(visibleFrom.toUtc()),
+        'publishAt': visibleFrom.toUtc().millisecondsSinceEpoch,  // ms → CF가 Timestamp 변환
         'isPublished': false,
         'status': TOStatus.scheduled,
-        'statusUpdatedAt': FieldValue.serverTimestamp(),
       });
       if (mounted) ToastHelper.showInfo('미공개 → 예약공개 전환 ($m/$d $h:$min 공개 예정)');
     }

@@ -515,9 +515,14 @@ extension TOFirestore on FirestoreService {
   // 수정
   // ───────────────────────────────────────────────────────
 
+  // [CF-이전 2026-07-14] callableUpdateTO — assertBizAdmin 교차검증 + updatedBy 감사 로그 강제
+  // null 값 = 필드 삭제, publishAt = ms epoch 정수로 전달 (Timestamp/FieldValue 직렬화 불가)
   Future<void> updateTO(String toId, Map<String, dynamic> updates) async {
     try {
-      await _firestore.collection('tos').doc(toId).update(updates);
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableUpdateTO',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+      await callable.call<Map<String, dynamic>>({'toId': toId, 'updates': updates});
       clearCache(toId: toId);
     } catch (e) {
       debugPrint('❌ [TO] 공고 수정 실패: $e');
@@ -938,7 +943,7 @@ extension TOFirestore on FirestoreService {
     int? publishDaysBefore,
     String? publishTime,
   }) async {
-    await _firestore.collection('tos').doc(toId).update({
+    await updateTO(toId, {
       'publishMode': publishMode,
       'publishDaysBefore': publishDaysBefore,
       'publishTime': publishTime,

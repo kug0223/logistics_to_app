@@ -236,6 +236,12 @@ HH:MM 포맷 검증만 유지.
 ### [DESIGN-A-M4] 퇴사 D+3 자동 승인 + D+1/D+2 알림
 D+3 자동 승인 유지 (민법상 1개월 기준보다 관대). 관리자에게 D+1(2일 경고), D+2(긴급) FCM 알림.
 
+### [DESIGN-A-M5] callableApplyNoShowPenalty 2단계 구조 — 클라이언트 자발적 호출
+당일 취소 후 노쇼 패널티는 클라이언트가 `callableCancelConfirmedApplication` → `callableApplyNoShowPenalty` 순으로 별도 호출하는 2단계 구조.
+클라이언트가 2번째 호출을 건너뛰면 TrustScore 패널티 없이 취소 가능하나, CF 내부에서 workDate 서버 재검증(48시간 이내)이 있어 시간 우회 불가.
+불리한 것은 근로자 TrustScore이므로 사용자가 자신에게 패널티 미부과하는 것이 경미한 이슈.
+관리자 물리 노쇼(`callableBatchSetNoShow`)는 별도 경로로 status=NO_SHOW + finalWage=0만 처리 — TrustScore 연동은 의도적 미구현.
+
 ### [DESIGN-STORAGE-EMPLOYER] contracts/signature_employer.png 소속 검증 없음
 Storage rules에서 동적 경로 체이닝 불가(employment_contracts→businessId→businesses).
 보완: contractId = Firebase auto-id(무작위), update: if false 덮어쓰기 차단. 실질 위험 낮음.

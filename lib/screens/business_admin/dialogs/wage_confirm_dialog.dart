@@ -490,6 +490,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       int failCount = 0;
       final confirmedIds = <String>{};
 
+      // [특이사항 2026-07-14] 루프 내부 await(CF call) 후 per-iteration mounted 체크 없음
+      // 현재는 루프 내부에서 setState 호출이 없고 로컬 변수/Map만 갱신하므로 실제 크래시 없음
+      // 루프 완료 후 line ~600에서 mounted 체크 + setState — 안전한 구조
       for (var appId in _pendingSelectedIds) {
         // 사전 계산된 8일 소급 결과 재사용, 없으면 원본 사용
         var wage = day8Previews[appId] ?? _calculatedWages[appId];

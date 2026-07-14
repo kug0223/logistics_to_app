@@ -1320,6 +1320,13 @@ export const onReviewCreated = onDocumentCreated(
         return;
       }
 
+      // [MEDIUM-4 수정 2026-07-15] 14일 제출 기한 서버 재검증 — 클라이언트 우회(기기 시각 조작) 방어
+      const deadline = req.deadline as admin.firestore.Timestamp | undefined;
+      if (deadline && admin.firestore.Timestamp.now().toMillis() > deadline.toMillis()) {
+        blocked = true;
+        return;
+      }
+
       if (req.isPublished) return;
 
       tx.update(reqRef, {
@@ -4601,11 +4608,26 @@ export const callableAdjustTrustScore = onCall(
     if (!targetSnap.exists) {
       throw new HttpsError("not-found", "대상 사용자를 찾을 수 없습니다.");
     }
-    await db.collection("users").doc(targetUid).update({
-      trustScore: score,
-      trustScoreAdjustedBy: callerUid, // 서버 검증된 UID
-      trustScoreAdjustedAt: admin.firestore.FieldValue.serverTimestamp(),
+    const previousScore = (targetSnap.data()!.trustScore ?? 50) as number;
+    const newScore = score;
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const batch = db.batch();
+    batch.update(db.collection("users").doc(targetUid), {
+      trustScore: newScore,
+      trustScoreAdjustedBy: callerUid,
+      trustScoreAdjustedAt: now,
     });
+    // [MEDIUM-2 수정 2026-07-15] 슈퍼어드민 수동 조정도 trust_score_history에 기록 — 감사 이력 완결성
+    batch.set(db.collection("trust_score_history").doc(), {
+      userId: targetUid,
+      previousScore,
+      newScore,
+      change: newScore - previousScore,
+      reason: "manual_admin_adjustment",
+      adjustedBy: callerUid,
+      createdAt: now,
+    });
+    await batch.commit();
     return {success: true};
   }
 );
@@ -8084,6 +8106,13 @@ export const callableReportLate = onCall(
       // 미검증 시: 관리자가 attendanceId=다른 근무자 A, userId=근무자 B 로 호출하면
       // 멱등성 플래그는 A의 attendance에 기록되지만 lateCount는 B에 누적 →
       // A의 attendance로 재호출 시 플래그가 없어 B에 중복 lateCount 가능
+      // [LOW-3 수정 2026-07-15] 비존재 attendanceId → 명확한 not-found 에러 반환 (기존: tx.update NOT_FOUND 오류)
+      if (!attSnap.exists) {
+        throw new HttpsError("not-found", "attendance 문서를 찾을 수 없습니다.");
+      }
+      // [MEDIUM-1 수정 2026-07-15] storedLatePoints: 패널티 적용 시점 포인트를 attendance에 저장하여
+      //   late_canceled 시 tier 역산이 아닌 실제 적용값으로 정확히 복원 (tier 불일치 인플레이션 방지)
+      let storedLatePoints: number | undefined;
       if (attSnap.exists) {
         const attData = attSnap.data()!;
         if (attData.userId !== userId || attData.businessId !== businessId) {
@@ -8092,6 +8121,7 @@ export const callableReportLate = onCall(
         const alreadyApplied = attData.latePenaltyApplied;
         if (mode === "late" && alreadyApplied === true) return;
         if (mode === "late_canceled" && alreadyApplied !== true) return;
+        storedLatePoints = attData.latePenaltyPoints as number | undefined;
       }
 
       const userSnap = await tx.get(userRef);
@@ -8116,9 +8146,12 @@ export const callableReportLate = onCall(
         }
         trustReason = "late";
       } else {
-        // 취소 시 적용됐던 감점 계산 (currentLateCount 기준)
+        // [MEDIUM-1 수정 2026-07-15] 저장된 패널티 포인트 우선 사용 → tier mismatch 인플레이션 차단
+        // 구버전 호환: storedLatePoints 없으면 currentLateCount 기준 역산 (하위호환)
         let applied: number;
-        if (currentLateCount >= 6) {
+        if (storedLatePoints != null) {
+          applied = storedLatePoints;
+        } else if (currentLateCount >= 6) {
           applied = lateChronicPoints;
         } else if (currentLateCount >= 3) {
           applied = lateRepeatPoints;
@@ -8134,8 +8167,11 @@ export const callableReportLate = onCall(
 
       tx.update(userRef, {lateCount: newLateCount, trustScore: newScore});
 
-      // 멱등성 플래그 갱신 (attendanceId 항상 존재 — 위에서 필수 체크 완료)
-      tx.update(attRef, {latePenaltyApplied: mode === "late"});
+      // 멱등성 플래그 갱신 + [MEDIUM-1] 적용 포인트 저장 (취소 시 정확한 복원 근거)
+      tx.update(attRef, {
+        latePenaltyApplied: mode === "late",
+        ...(mode === "late" ? {latePenaltyPoints: trustChange} : {}),
+      });
 
       const histRef = db.collection("trust_score_history").doc();
       tx.set(histRef, {
@@ -11250,6 +11286,12 @@ export const callableChangeApplicationWorkType = onCall(
     const bizName = (appData.businessName as string) ?? "";
     const workDateTs = appData.workDate as admin.firestore.Timestamp | undefined;
 
+    // [M-5 수정 2026-07-15] 종료 상태 지원서 변경 차단 — REJECTED/CANCELED 등은 근무가 종료된 상태
+    const TERMINAL_APP_STATUSES = new Set(["REJECTED", "CANCELED", "AUTO_CANCELED", "COMPLETED", "NO_SHOW"]);
+    if (TERMINAL_APP_STATUSES.has(currentStatus)) {
+      throw new HttpsError("failed-precondition", "이미 종료된 지원서는 업무유형을 변경할 수 없습니다.");
+    }
+
     if (currentWorkType === newWorkType) {
       throw new HttpsError("failed-precondition", "동일한 업무유형입니다.");
     }
@@ -11357,8 +11399,16 @@ export const callableChangeApplicationWorkType = onCall(
     await batch.commit();
 
     // 5. 2차 attendance BulkWriter — wagePending 초기화 (500+건 대응)
+    // [M-6 수정 2026-07-15] 1차 batch 커밋 성공 후 BulkWriter 실패 시 부분 커밋 발생.
+    // 완전한 원자성은 불가(Admin SDK 한계)이므로 실패 시 명확한 오류 + 대상 ID 반환으로 재처리 가능하게.
     if (attDocs.length > 0) {
       const bw = db.bulkWriter();
+      const bwFailedIds: string[] = [];
+      bw.onWriteError((err) => {
+        bwFailedIds.push(err.documentRef.id);
+        console.error(`[M-6] BulkWriter 근태 초기화 실패: ${err.documentRef.id}`, err.code);
+        return false; // 재시도 없이 계속 진행
+      });
       for (const attDoc of attDocs) {
         bw.update(attDoc.ref, {
           wageStatus: "pending",
@@ -11369,6 +11419,10 @@ export const callableChangeApplicationWorkType = onCall(
         });
       }
       await bw.close();
+      if (bwFailedIds.length > 0) {
+        console.error(`[M-6] 근태 임금 초기화 부분 실패 — applicationId: ${applicationId}, 실패 건수: ${bwFailedIds.length}`);
+        throw new HttpsError("internal", `업무유형 변경은 완료됐으나 근태 임금 초기화가 일부 실패했습니다. 영향 근태 수: ${bwFailedIds.length}`);
+      }
     }
 
     // 6. 알림 — 지원자에게 파트 변경 알림 (비동기, 실패 허용)
@@ -12079,40 +12133,51 @@ export const callableBatchAdjustAttendanceTime = onCall(
 
     const now = admin.firestore.FieldValue.serverTimestamp();
     let successCount = 0;
+    // [L-5 수정 2026-07-15] O(n²) includes → O(1) Set.has 전환 (200건 루프 내 반복 탐색)
+    const skippedSet = new Set<string>();
     const skipped: string[] = [];
 
     for (const entry of entries) {
       const {attendanceId, checkInMs, checkOutMs, workHours, status, resetWageDetail} = entry;
       if (!VALID_ATTENDANCE_STATUS.has(status)) {
         console.error(`시간 조정 건너뜀 — 유효하지 않은 status: ${status} (${attendanceId})`);
-        skipped.push(attendanceId);
+        skippedSet.add(attendanceId); skipped.push(attendanceId);
         continue;
+      }
+      // [M-2 수정 2026-07-15] 시간 역전·음수·24시간 초과 검증 — 트랜잭션 진입 전 fail-fast
+      if (checkInMs != null && checkOutMs != null && checkInMs >= checkOutMs) {
+        throw new HttpsError("invalid-argument", `checkIn(${checkInMs})이 checkOut(${checkOutMs}) 이후입니다. (${attendanceId})`);
+      }
+      if (workHours != null && (workHours < 0 || workHours > 24)) {
+        throw new HttpsError("invalid-argument", `workHours(${workHours})는 0~24 범위여야 합니다. (${attendanceId})`);
       }
       const attRef = db.collection("attendance").doc(attendanceId);
       try {
         await db.runTransaction(async (tx) => {
           const snap = await tx.get(attRef);
           if (!snap.exists) {
-            skipped.push(attendanceId);
+            skippedSet.add(attendanceId); skipped.push(attendanceId);
             return;
           }
           const snapData = snap.data()!;
           // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
           if (snapData.businessId !== businessId) {
-            skipped.push(attendanceId);
+            skippedSet.add(attendanceId); skipped.push(attendanceId);
             return;
           }
           const serverStatus = snapData.wageStatus as string | undefined;
           if (serverStatus === "confirmed" || serverStatus === "transferred") {
-            skipped.push(attendanceId);
+            skippedSet.add(attendanceId); skipped.push(attendanceId);
             return;
           }
+          // [M-3 수정 2026-07-15] calculated 상태 강제 초기화 — 시간 변경 시 기존 임금 계산값이 무효화됨
+          const effectiveResetWageDetail = resetWageDetail || serverStatus === "calculated";
           // [DESIGN-A-M3] 소급 수정 기간 제한: 90일 이내 기록만 수정 가능
           const recordTs = (snapData.workDate ?? snapData.checkIn) as admin.firestore.Timestamp | undefined;
           const recordDate = recordTs?.toDate();
           const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
           if (recordDate && recordDate < ninetyDaysAgo) {
-            skipped.push(attendanceId);
+            skippedSet.add(attendanceId); skipped.push(attendanceId);
             return;
           }
           const updates: Record<string, unknown> = {
@@ -12131,17 +12196,19 @@ export const callableBatchAdjustAttendanceTime = onCall(
             updates["checkOutMethod"] = "manual";
           }
           if (workHours != null) updates["workHours"] = workHours;
-          if (resetWageDetail) {
+          if (effectiveResetWageDetail) {
             updates["wageStatus"] = "pending";
             updates["wageDetail"] = admin.firestore.FieldValue.delete();
+            // [M-1 수정 2026-07-15] finalWage도 함께 삭제 — wageDetail 리셋 시 확정 임금도 무효화
+            updates["finalWage"] = admin.firestore.FieldValue.delete();
           }
           tx.update(attRef, updates);
         });
-        // [QA-FIX] skipped 처리된 건(snap 미존재·businessId 불일치·confirmed) 제외
-        if (!skipped.includes(attendanceId)) successCount++;
+        // [QA-FIX][L-5] skippedSet.has — O(1) 조회로 최적화
+        if (!skippedSet.has(attendanceId)) successCount++;
       } catch (e) {
         console.error(`시간 조정 실패 (${attendanceId}):`, e);
-        skipped.push(attendanceId);
+        skippedSet.add(attendanceId); skipped.push(attendanceId);
       }
     }
 
@@ -12431,8 +12498,10 @@ export const callableGetPayrollSummaries = onCall(
       .where("businessId", "==", businessId);
 
     if (typeof year === "number" && Number.isInteger(year)) {
-      // [L-02 특이사항 2026-07-14] year 범위 검증 없음 — 1900, 9999 등 극단값 전달 시 Firestore 읽기 낭비
-      // 수정: year >= 2000 && year <= 2100 범위 검증 추가 권장
+      // [L-1 수정 2026-07-15] year 범위 검증 — 극단값(1900, 9999) 전달 시 Firestore 읽기 낭비 방지
+      if (year < 2000 || year > 2100) {
+        throw new HttpsError("invalid-argument", "year는 2000~2100 범위여야 합니다.");
+      }
       q = q.where("year", "==", year);
     }
 

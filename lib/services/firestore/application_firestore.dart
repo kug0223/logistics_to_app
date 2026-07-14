@@ -1663,7 +1663,11 @@ extension ApplicationFirestore on FirestoreService {
           .get();
       if (!newDoc.exists) throw Exception('계약 연장 후 지원서를 찾을 수 없습니다.');
       if (original.toId != null) clearCache(toId: original.toId!);
-      return ApplicationModel.fromMap(newDoc.data()!, newApplicationId);
+      // [BUG-H1 수정 2026-07-14] fromMap → tryFromFirestore (CLAUDE.md tryFromFirestore 패턴 적용)
+      // 기존: fromMap 직접 호출 → 필드 누락/타입 불일치 시 Exception → 계약 연장 기능 중단
+      final parsed = ApplicationModel.tryFromFirestore(newDoc);
+      if (parsed == null) throw Exception('계약 연장 후 지원서 파싱에 실패했습니다.');
+      return parsed;
     } on FirebaseFunctionsException catch (e) {
       throw Exception(e.message ?? '계약 연장 중 오류가 발생했습니다.');
     }

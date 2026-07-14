@@ -1637,11 +1637,13 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     if (bizIdx < 0) return;
     final business = widget.businesses[bizIdx];
 
-    // 선택된 사용자 정보 수집 (전체 앱에서)
+    // 선택된 사용자 정보 수집 — 확정 앱 우선, uid 중복 스킵
     final targets = <Map<String, String>>[];
-    for (final app in [..._pendingApps, ..._confirmedApps]) {
+    final seenUids = <String>{};
+    for (final app in [..._confirmedApps, ..._pendingApps]) {
       final user = _userMap[app.uid];
       if (user == null || !_selectedIdCardUserIds.contains(user.uid)) continue;
+      if (!seenUids.add(user.uid)) continue;
       targets.add({
         'uid': user.uid,
         'name': user.name,
@@ -1792,16 +1794,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       if (g.toId != null) {
         final to = await _svc.getTO(g.toId!);
         if (to != null && to.workDetails.isNotEmpty) {
-          try {
-            workDetail = to.workDetails.firstWhere(
-              (w) =>
+          workDetail = to.workDetails
+              .where((w) =>
                   w.workType == g.workType &&
                   w.startTime == g.startTime &&
-                  w.endTime == g.endTime,
-            );
-          } catch (_) {
-            workDetail = to.workDetails.first;
-          }
+                  w.endTime == g.endTime)
+              .firstOrNull;
         }
       }
     } finally {
@@ -1810,7 +1808,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     if (!mounted) return;
 
     if (workDetail == null) {
-      ToastHelper.showError('근무 정보를 찾을 수 없습니다');
+      ToastHelper.showError('근무 유형 정보를 찾을 수 없습니다. TO를 확인해 주세요.');
       return;
     }
 
@@ -2133,16 +2131,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       try {
         final to = await _svc.getTO(toId);
         if (to != null && to.workDetails.isNotEmpty) {
-          try {
-            workDetail = to.workDetails.firstWhere(
-              (w) =>
+          workDetail = to.workDetails
+              .where((w) =>
                   w.workType == groupWorkType &&
                   w.startTime == groupStartTime &&
-                  w.endTime == groupEndTime,
-            );
-          } catch (_) {
-            workDetail = to.workDetails.first;
-          }
+                  w.endTime == groupEndTime)
+              .firstOrNull;
         }
       } finally {
         if (mounted) setState(() => _isProcessing = false);
