@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/user_provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -26,6 +26,9 @@ class AllBusinessesScreen extends StatefulWidget {
 class _AllBusinessesScreenState extends State<AllBusinessesScreen>
     with LoadingStateMixin {
   final _firestore = FirebaseFirestore.instance;
+  final _bizCF = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+      .httpsCallable('callableManageBusiness',
+          options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
 
   List<_BusinessWithOwner> _businesses = [];
   String _statusFilter = 'ALL'; // 'ALL' | 'PENDING' | 'ACTIVE' | 'DEACTIVATED'
@@ -138,13 +141,16 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
     setState(() => _isProcessing = true);
 
     try {
-      await _firestore.collection('businesses').doc(item.business.id).update({
-        'deactivatedAt': FieldValue.serverTimestamp(),
-        'deactivatedBy': FirebaseAuth.instance.currentUser?.uid,
+      // [V9-FIX] CF 이전 — deactivatedBy 감사 추적 서버 강제
+      await _bizCF.call<Map<String, dynamic>>({
+        'action': 'deactivate',
+        'businessId': item.business.id,
       });
       if (!mounted) return;
       ToastHelper.showSuccess('사업장이 비활성화되었습니다');
       await _loadAllBusinesses();
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) ToastHelper.showError('처리 실패: ${e.message}');
     } catch (e) {
       if (mounted) ToastHelper.showError('처리 실패: $e');
     } finally {
@@ -177,14 +183,16 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
     setState(() => _isProcessing = true);
 
     try {
-      await _firestore.collection('businesses').doc(item.business.id).update({
-        'isApproved': true,
-        'approvedAt': FieldValue.serverTimestamp(),
-        'approvedBy': FirebaseAuth.instance.currentUser?.uid,
+      // [V9-FIX] CF 이전 — isApproved 법적 상태 전이 + approvedBy 서버 강제
+      await _bizCF.call<Map<String, dynamic>>({
+        'action': 'approve',
+        'businessId': item.business.id,
       });
       if (!mounted) return;
       ToastHelper.showSuccess('사업장이 승인되었습니다');
       await _loadAllBusinesses();
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) ToastHelper.showError('처리 실패: ${e.message}');
     } catch (e) {
       if (mounted) ToastHelper.showError('처리 실패: $e');
     } finally {
@@ -217,14 +225,16 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
     setState(() => _isProcessing = true);
 
     try {
-      await _firestore.collection('businesses').doc(item.business.id).update({
-        'deactivatedAt': FieldValue.delete(),
-        'reactivatedBy': FirebaseAuth.instance.currentUser?.uid,
-        'reactivatedAt': FieldValue.serverTimestamp(),
+      // [V9-FIX] CF 이전 — reactivatedBy 감사 추적 서버 강제
+      await _bizCF.call<Map<String, dynamic>>({
+        'action': 'reactivate',
+        'businessId': item.business.id,
       });
       if (!mounted) return;
       ToastHelper.showSuccess('사업장이 재활성화되었습니다');
       await _loadAllBusinesses();
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) ToastHelper.showError('처리 실패: ${e.message}');
     } catch (e) {
       if (mounted) ToastHelper.showError('처리 실패: $e');
     } finally {

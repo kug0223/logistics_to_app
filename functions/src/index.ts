@@ -13710,3 +13710,62 @@ export const callableApplyToTO = onCall(
     return {success: true, applicationId: complexId, isReactivation};
   }
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [V9-FIX] callableManageBusiness
+//   슈퍼어드민 전용 사업장 상태 관리 (승인/비활성화/재활성화)
+//   Trust Boundary Charter: 법적 상태 전이(isApproved) + 감사 추적 필드(*By) CF 전용
+// ─────────────────────────────────────────────────────────────────────────────
+export const callableManageBusiness = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {action, businessId} = request.data as {action: string; businessId: string};
+
+    if (!businessId || typeof businessId !== "string" || businessId.trim() === "") {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+    if (!["approve", "deactivate", "reactivate"].includes(action)) {
+      throw new HttpsError("invalid-argument", "유효하지 않은 action입니다. (approve|deactivate|reactivate)");
+    }
+
+    // 슈퍼어드민 권한 검증
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    if (!callerSnap.exists) throw new HttpsError("not-found", "호출자 정보를 찾을 수 없습니다.");
+    const callerRole = (callerSnap.data() as Record<string, unknown>)?.role as string | undefined;
+    if (callerRole !== "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "슈퍼어드민만 사용할 수 있습니다.");
+    }
+
+    const bizRef = db.collection("businesses").doc(businessId);
+    const bizSnap = await bizRef.get();
+    if (!bizSnap.exists) throw new HttpsError("not-found", "사업장을 찾을 수 없습니다.");
+
+    let updateData: Record<string, unknown>;
+    if (action === "approve") {
+      updateData = {
+        isApproved: true,
+        approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+        approvedBy: callerUid,
+      };
+    } else if (action === "deactivate") {
+      updateData = {
+        deactivatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        deactivatedBy: callerUid,
+      };
+    } else {
+      // reactivate
+      updateData = {
+        deactivatedAt: admin.firestore.FieldValue.delete(),
+        reactivatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        reactivatedBy: callerUid,
+      };
+    }
+
+    await bizRef.update(updateData);
+    console.log(`✅ [callableManageBusiness] action=${action} businessId=${businessId} by=${callerUid}`);
+    return {success: true};
+  }
+);

@@ -651,6 +651,23 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       final batch = firestore.batch();
       int totalRequiredDelta = 0;
 
+      // [V7-FIX] 동시 편집 방지: 슬롯 workDetails를 Firestore에서 신선 조회해 정확한 delta 계산
+      //   스크린 로드 이후 다른 관리자가 같은 슬롯을 수정하면 로컬 totalRequired가 스테일해짐.
+      final freshSnaps = await Future.wait(
+        slots.map((s) => firestore
+            .collection('tos').doc(widget.to.id)
+            .collection('slots').doc(s.id)
+            .get(const GetOptions(source: Source.server))),
+      );
+      final freshSlotRequired = <String, int>{};
+      for (final snap in freshSnaps) {
+        if (snap.exists) {
+          final details = (snap.data()?['workDetails'] as List? ?? []);
+          freshSlotRequired[snap.id] = details.fold<int>(
+            0, (acc, d) => acc + ((d as Map)['requiredCount'] as int? ?? 0));
+        }
+      }
+
       for (final slot in slots) {
         final updatedWorkDetails = _workDetails.map((work) {
           final parts = work.startTime.split(':');
@@ -686,8 +703,9 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           else if (visibleFrom != null) 'visibleFrom': Timestamp.fromDate(visibleFrom.toUtc()),
         });
 
-        if (slot.totalRequired != newTotalRequired) {
-          totalRequiredDelta += newTotalRequired - slot.totalRequired;
+        final currentRequired = freshSlotRequired[slot.id] ?? slot.totalRequired;
+        if (currentRequired != newTotalRequired) {
+          totalRequiredDelta += newTotalRequired - currentRequired;
         }
       }
 

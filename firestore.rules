@@ -393,12 +393,16 @@ service cloud.firestore {
       //   단독 관리자(adminIds.size() <= 1)가 deactivatedAt 필드만 설정하는 경우 허용.
       //   이중 관리자 이상인 경우 차단 유지 (외부 비활성화 공격 방어).
       allow update: if (isAdminOf(businessId) || isSuperAdmin()) &&
+                    // [V9-FIX] 법적 상태·감사 추적 — callableManageBusiness CF 전용
+                    //   슈퍼어드민 직접 쓰기도 차단 (CF Admin SDK가 우회하여 씀)
+                    !request.resource.data.diff(resource.data).affectedKeys()
+                      .hasAny(['isApproved', 'approvedBy', 'deactivatedBy', 'reactivatedBy']) &&
                     (isSuperAdmin() ||
                      (!request.resource.data.diff(resource.data).affectedKeys()
                         // [SEC-108] rating/reviewCount: CF updateBusinessReviewStats Admin SDK 전용
                         //   관리자가 직접 평점 위조 시 USER들이 허위 평판 사업장을 신뢰하는 피해 발생
-                        .hasAny(['ownerId', 'adminIds', 'isApproved', 'approvedAt', 'approvedBy',
-                                 'deactivatedAt', 'rating', 'reviewCount']) ||
+                        .hasAny(['ownerId', 'adminIds', 'approvedAt',
+                                 'deactivatedAt', 'reactivatedAt', 'rating', 'reviewCount']) ||
                       (request.resource.data.diff(resource.data).affectedKeys()
                         .hasOnly(['deactivatedAt']) &&
                        resource.data.get('adminIds', []).size() <= 1)));
@@ -1800,18 +1804,20 @@ service cloud.firestore {
       // 수정: 해당 사업장 관리자/하위관리자 · 슈퍼어드민 (승인/거절)
       // SEC-61: 상태 전이 검증 (PENDING → APPROVED/REJECTED만), 필드 화이트리스트
       //   → 이미 처리된 요청 재처리 차단, 임의 필드 덮어쓰기 차단
+      // [V10-FIX] processedBy 호출자 UID 검증 — 슈퍼어드민도 동일 제약 적용
+      //   isSuperAdmin() bypass 제거: 감사 추적 필드 위조 차단
       allow update: if isLoggedIn() && (
                     isAdminOf(resource.data.businessId) ||
                     isSubAdminOf(resource.data.businessId) ||
                     isSuperAdmin()
                   ) && (
-                    isSuperAdmin() ||
-                    (resource.data.status == 'PENDING' &&
-                     (request.resource.data.status == 'APPROVED' ||
-                      request.resource.data.status == 'REJECTED') &&
-                     request.resource.data.diff(resource.data).affectedKeys()
-                       .hasOnly(['status', 'processedBy', 'processedAt',
-                                 'rejectReason', 'updatedAt']))
+                    resource.data.status == 'PENDING' &&
+                    (request.resource.data.status == 'APPROVED' ||
+                     request.resource.data.status == 'REJECTED') &&
+                    request.resource.data.processedBy == request.auth.uid &&
+                    request.resource.data.diff(resource.data).affectedKeys()
+                      .hasOnly(['status', 'processedBy', 'processedAt',
+                                'rejectReason', 'updatedAt'])
                   );
       allow delete: if isSuperAdmin();
     }
@@ -1867,6 +1873,7 @@ service cloud.firestore {
       // [CRITICAL-FIX] SubAdmin 누락: approveInterimSettlement → PERMISSION_DENIED
       // [SEC-52] PENDING 상태에서만 처리 허용 + 허용 필드 화이트리스트
       //   — REJECTED → APPROVED 역변조 차단 (상태 전이 무결성 보장)
+      // [V10-FIX] processedBy 호출자 UID 검증 추가
       allow update: if isLoggedIn() &&
                     (isAdminOf(resource.data.businessId) ||
                      isSubAdminOf(resource.data.businessId) ||
@@ -1875,6 +1882,7 @@ service cloud.firestore {
                     (request.resource.data.status == 'PROCESSED' ||
                      request.resource.data.status == 'APPROVED' ||
                      request.resource.data.status == 'REJECTED') &&
+                    request.resource.data.processedBy == request.auth.uid &&
                     request.resource.data.diff(resource.data).affectedKeys()
                       .hasOnly(['status', 'processedBy', 'processedAt',
                                 'rejectReason', 'transferNote', 'updatedAt']);
