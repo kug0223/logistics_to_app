@@ -3451,7 +3451,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           await db.collection("pending_token_revocations").doc(app.uid as string).set({
             uid: app.uid,
             reason: "RESIGNATION_AUTO_APPROVED",
-            applicationId: app.id,
+            applicationId: doc.id, // [APP-ID-FIX] app = doc.data() → app.id = undefined
             failedAt: now,
           }).catch(() => {/* 기록 실패는 무시 */});
         }
@@ -3600,11 +3600,13 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         await db.runTransaction(async (tx) => {
           const snap = await tx.get(doc.ref);
           if (snap.data()?.terminationStatus !== "PENDING") return;
+          // [D3-CANCELREASON-FIX] cancelReason 명시 — 퇴사와 구분 가능하도록
           tx.update(doc.ref, {
             terminationStatus: "AUTO_APPROVED",
             terminationRespondedAt: now,
             terminationEffectiveDate: Timestamp.fromDate(effectiveDate),
             status: "CANCELED",
+            cancelReason: "TERMINATION_APPROVED",
           });
         });
 
@@ -3616,7 +3618,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           await db.collection("pending_token_revocations").doc(app.uid as string).set({
             uid: app.uid,
             reason: "TERMINATION_AUTO_APPROVED",
-            applicationId: app.id,
+            applicationId: doc.id, // [APP-ID-FIX] app = doc.data() → app.id = undefined
             failedAt: now,
           }).catch(() => {/* 기록 실패는 무시 */});
         }
@@ -7326,6 +7328,10 @@ export const callableCancelConfirmedApplication = onCall(
       applyNoShowPenalty?: boolean;
     };
     if (!applicationId) throw new HttpsError("invalid-argument", "applicationId 필수");
+    // [CANCEL-REASON-LEN-FIX] cancelReason 길이 제한 — Firestore 문서 오염 방지
+    if (cancelReason !== undefined && cancelReason.length > 500) {
+      throw new HttpsError("invalid-argument", "취소 사유는 500자 이하여야 합니다.");
+    }
 
     // 1. 지원서 조회
     const appRef = db.collection("applications").doc(applicationId);
@@ -7387,7 +7393,13 @@ export const callableCancelConfirmedApplication = onCall(
     if (isAdminCancel && cancelReason) updateData.cancelMessage = cancelReason;
     if (isAdminCancel) updateData.canceledBy = callerUid; // 서버 강제
 
-    await appRef.update(updateData);
+    // [TOCTOU-FIX] 상태 재확인 + update 트랜잭션 — 동시 취소 경쟁으로 이중 CANCELED 방지
+    await db.runTransaction(async (tx) => {
+      const freshSnap = await tx.get(appRef);
+      const freshStatus = (freshSnap.data()?.status as string | undefined) ?? "";
+      if (!CONFIRMED_STATUSES.includes(freshStatus)) return; // 이미 취소됨 — 멱등
+      tx.update(appRef, updateData);
+    });
 
     // 6. 클라이언트 후속 처리(slot decrement, 패널티, 알림)에 필요한 값 반환
     return {
