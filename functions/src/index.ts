@@ -6302,10 +6302,12 @@ export const callableGetIdCardSignedUrl = onCall(
       const approvedForBiz = accessSnap.docs[0].data().businessId as string | undefined;
       if (approvedForBiz) {
         const callerBizId = callerDoc.data()?.businessId as string | undefined;
-        const callerSubAdminOf = callerDoc.data()?.subAdminOf as string[] | undefined;
+        // [M-02-FIX] subAdminOf는 단일 businessId 문자열 — string[]로 잘못 캐스팅 시
+        //   Array.isArray(string) = false → SubAdmin 신분증 열람 전면 차단 버그 수정
+        const callerSubAdminOf = callerDoc.data()?.subAdminOf as string | undefined;
         const stillMember =
           callerBizId === approvedForBiz ||
-          (Array.isArray(callerSubAdminOf) && callerSubAdminOf.includes(approvedForBiz));
+          callerSubAdminOf === approvedForBiz;
         if (!stillMember) {
           throw new HttpsError("permission-denied", "현재 해당 사업장 소속이 아닙니다.");
         }
@@ -7274,7 +7276,9 @@ export const callableAutoConflictCancel = onCall(
     const confirmedWorkDays = (confirmedAppData.workDays as string[] | undefined) ?? workDays;
     const confirmedStartTime = (confirmedAppData.startTime as string | undefined) ?? startTime;
     const confirmedEndTime = (confirmedAppData.endTime as string | undefined) ?? endTime;
-    const confirmedWorkDate = (confirmedAppData.workDate as number | undefined) ?? workDate;
+    // [HIGH-01-FIX] workDate는 런타임에 Timestamp 객체 — `as number`는 타입 단언만이고 변환 없음.
+    // Timestamp는 truthy이므로 ?? 폴백 미발생 → new Date(Timestamp_obj) = Invalid Date → 충돌 감지 0건.
+    const confirmedWorkDate = (confirmedAppData.workDate as admin.firestore.Timestamp | undefined)?.toMillis() ?? workDate;
 
     // 3. uid로 충돌 가능 지원서 전체 조회 (Admin SDK — 타사업장 포함)
     const allAppsSnap = await db.collection("applications")
@@ -9934,8 +9938,11 @@ export const callableBatchSetNoShow = onCall(
     // 서버 상태 사전 확인 — transferred 건 보호
     await Promise.all(entries.map(async (entry) => {
       const {applicationId, workDateMs, userId, businessName, workType, attendanceId} = entry;
-      const date = new Date(workDateMs);
-      const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`;
+      // [HIGH-02-FIX] workDateMs = Dart KST 자정 UTC ms → getFullYear()는 UTC 기준 → 전날 날짜
+      // callableCheckIn/onAttendanceCreated와 동일한 KST 오프셋 패턴 적용
+      const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+      const dateKST = new Date(workDateMs + KST_OFFSET_MS);
+      const dateStr = `${dateKST.getUTCFullYear()}${String(dateKST.getUTCMonth() + 1).padStart(2, "0")}${String(dateKST.getUTCDate()).padStart(2, "0")}`;
       const resolvedId = attendanceId ?? `${applicationId}_${dateStr}`;
       const ref = db.collection("attendance").doc(resolvedId);
 
@@ -9955,7 +9962,7 @@ export const callableBatchSetNoShow = onCall(
         }
       }
 
-      const yearMonth = date.toISOString().substring(0, 7);
+      const yearMonth = `${dateKST.getUTCFullYear()}-${String(dateKST.getUTCMonth() + 1).padStart(2, "0")}`;
       if (attendanceId) {
         batch.update(ref, {
           status: "NO_SHOW",
@@ -10554,6 +10561,10 @@ export const callableBatchCheckIn = onCall(
         console.error(`출근 처리 건너뜀 — 유효하지 않은 status: ${status} (${applicationId})`);
         continue;
       }
+      // [HIGH-02-FIX] workDateMs = Dart KST 자정 UTC ms → getFullYear()는 UTC 기준 → 전날 날짜
+      // callableCheckIn과 동일한 KST 오프셋 패턴으로 docId 날짜 통일
+      const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+      const workDateKST = new Date(workDateMs + KST_OFFSET_MS);
       const workDate = new Date(workDateMs);
       const checkInTs = admin.firestore.Timestamp.fromMillis(checkInMs);
 
@@ -10585,7 +10596,7 @@ export const callableBatchCheckIn = onCall(
             console.error(`출근 처리 건너뜀 — userId 불일치 (${applicationId})`);
             continue;
           }
-          const dateStr = `${workDate.getFullYear()}${String(workDate.getMonth() + 1).padStart(2, "0")}${String(workDate.getDate()).padStart(2, "0")}`;
+          const dateStr = `${workDateKST.getUTCFullYear()}${String(workDateKST.getUTCMonth() + 1).padStart(2, "0")}${String(workDateKST.getUTCDate()).padStart(2, "0")}`;
           const docId = `${applicationId}_${dateStr}`;
           await db.collection("attendance").doc(docId).set({
             applicationId,
@@ -11719,14 +11730,16 @@ interface AttendanceRulesData {
 
 /** [MEDIUM] 클라이언트 제공 attendanceRules 극단값 클램핑 — lateGrace:9999 등으로 지각 판정 우회 차단 */
 function _clampAttendanceRules(rules: AttendanceRulesData): AttendanceRulesData {
+  // *Unit 필드는 반올림 제수(除數) — 0 입력 시 division-by-zero → Invalid Date 저장 방지로 하한 1 강제
+  // *Window/*Grace는 비교 값만 사용되므로 0 허용
   return {
     earlyWindow:      Math.min(rules.earlyWindow ?? 30, 120),
-    earlyArrivalUnit: Math.min(rules.earlyArrivalUnit ?? 30, 120),
+    earlyArrivalUnit: Math.max(1, Math.min(rules.earlyArrivalUnit ?? 30, 120)),  // [M-06-FIX]
     lateGrace:        Math.min(rules.lateGrace ?? 5, 60),
-    lateUnit:         Math.min(rules.lateUnit ?? 30, 120),
+    lateUnit:         Math.max(1, Math.min(rules.lateUnit ?? 30, 120)),           // [M-06-FIX]
     lateWindow:       Math.min(rules.lateWindow ?? 30, 120),
-    overtimeUnit:     Math.min(rules.overtimeUnit ?? 10, 60),
-    earlyLeaveUnit:   Math.min(rules.earlyLeaveUnit ?? 30, 60),  // [S7-FIX] 클램핑 누락 수정
+    overtimeUnit:     Math.max(1, Math.min(rules.overtimeUnit ?? 10, 60)),        // [M-06-FIX]
+    earlyLeaveUnit:   Math.max(1, Math.min(rules.earlyLeaveUnit ?? 30, 60)),      // [S7-FIX]+[M-06-FIX]
   };
 }
 
