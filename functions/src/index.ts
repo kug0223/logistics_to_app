@@ -11019,62 +11019,59 @@ export const callableMarkTransferredBatch = onCall(
     // 멱등 처리(already-transferred)는 포함하지 않아 중복 알림 방지
     const processedAttendanceIds = new Set<string>();
 
-    // 서버에서 상태 재검증 후 confirmed인 것만 transferred로 변경
-    const snaps = await Promise.all(
-      attendanceIds.map(id => db.collection("attendance").doc(id).get())
-    );
+    // [E-M2] 단일 트랜잭션으로 read-then-write 원자화 — TOCTOU 방지
+    // 200건 × 2 ops = 400 < Firestore 한도(500)
+    await db.runTransaction(async (tx) => {
+      const snaps = await Promise.all(
+        attendanceIds.map(id => tx.get(db.collection("attendance").doc(id)))
+      );
 
-    const batch = db.batch();
+      for (let i = 0; i < attendanceIds.length; i++) {
+        const id = attendanceIds[i];
+        const snap = snaps[i];
 
-    for (let i = 0; i < attendanceIds.length; i++) {
-      const id = attendanceIds[i];
-      const snap = snaps[i];
+        if (!snap.exists) {
+          skipped.push(id);
+          continue;
+        }
 
-      if (!snap.exists) {
-        skipped.push(id);
-        continue;
-      }
+        const data = snap.data()!;
 
-      const data = snap.data()!;
+        // businessId 교차 검증 — 타 사업장 기록 변조 방지
+        if (data.businessId !== businessId) {
+          skipped.push(id);
+          continue;
+        }
 
-      // businessId 교차 검증 — 타 사업장 기록 변조 방지
-      if (data.businessId !== businessId) {
-        skipped.push(id);
-        continue;
-      }
+        const ws = data.wageStatus as string | undefined;
 
-      const ws = data.wageStatus as string | undefined;
+        // 이미 transferred: 멱등 처리 (성공으로 카운트)
+        if (ws === "transferred") {
+          processed++;
+          continue;
+        }
 
-      // 이미 transferred: 멱등 처리 (성공으로 카운트)
-      if (ws === "transferred") {
+        // confirmed 상태만 transferred로 전환 가능
+        if (ws !== "confirmed") {
+          skipped.push(id);
+          continue;
+        }
+
+        const updateData: Record<string, unknown> = {
+          wageStatus: "transferred",
+          transferDate: now,
+          transferredBy: callerUid,
+          updatedAt: now,
+        };
+        if (transferNote && transferNote.trim().length > 0) {
+          updateData.transferNote = transferNote.trim();
+        }
+
+        tx.update(snap.ref, updateData);
+        processedAttendanceIds.add(id); // 실제 전환된 ID 기록
         processed++;
-        continue;
       }
-
-      // confirmed 상태만 transferred로 전환 가능
-      if (ws !== "confirmed") {
-        skipped.push(id);
-        continue;
-      }
-
-      const updateData: Record<string, unknown> = {
-        wageStatus: "transferred",
-        transferDate: now,
-        transferredBy: callerUid,
-        updatedAt: now,
-      };
-      if (transferNote && transferNote.trim().length > 0) {
-        updateData.transferNote = transferNote.trim();
-      }
-
-      batch.update(snap.ref, updateData);
-      processedAttendanceIds.add(id); // 실제 전환된 ID 기록
-      processed++;
-    }
-
-    if (processed > 0) {
-      await batch.commit();
-    }
+    });
 
     // 알림 발송 — 실패해도 메인 처리는 성공 유지
     // [MEDIUM-3] attendanceId 제공 시 실제 처리된 건만 발송, 미제공 시 전체 발송(하위호환)
