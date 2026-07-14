@@ -1516,8 +1516,13 @@ service cloud.firestore {
                            'articles', 'templateId', 'slots', 'applicationIds',
                            'contractVoidedAt', 'voidReason',
                            // [M3-FIX] 파트변경 시 계약서 workType/wage/wageType 동기화 허용
-                           'workType', 'wage', 'wageType'
+                           'workType', 'wage', 'wageType',
+                           // [CONTRACT-L1-FIX] voidedBy — 감사 기록 허용, 본인 UID 강제 조건 아래 추가
+                           'voidedBy'
                          ]) &&
+                         // [CONTRACT-L1-FIX] voidedBy 본인 UID 강제 — 타 관리자 명의 무효화 위조 차단
+                         (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['voidedBy']) ||
+                          request.resource.data.voidedBy == request.auth.uid) &&
                          // [CON-03] employerSignedAt == request.time 강제 — 사업주 서명 날짜 위변조 차단
                          //   workerSignedAt과 동일한 보호: 과거/미래 날짜 직접 설정 불가
                          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['employerSignedAt']) ||
