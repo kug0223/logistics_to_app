@@ -1694,6 +1694,16 @@ extension ApplicationFirestore on FirestoreService {
                 break;
               }
             }
+            // [CRIT-02-FIX] slotRef를 트랜잭션 내에서 WRITE → Firestore 낙관적 잠금 활성화
+            // 수정 전: tx.get(slotRef)만 하고 write 없음 → 두 트랜잭션이 서로 다른 appRef를
+            //   write하므로 충돌 감지 불가 → 동시 확정 시 정원 초과 허용됨
+            // 수정 후: tx.update(slotRef) 포함 → 두 트랜잭션이 동일 slotRef write 시도 →
+            //   Tx2 충돌 감지 후 retry → 재조회 시 confirmedCount=1 → 정원 초과 예외 발생
+            // 배치의 _incrementTOConfirmed에서 workTypeCounts 중복 증가 방지 위해
+            //   skipWorkTypeCounts:true 플래그 사용 (아래 batch call 참조)
+            tx.update(slotRef, {
+              'workTypeCounts.$selectedWorkType.confirmedCount': FieldValue.increment(1),
+            });
           }
         } else {
           // 정기 TO: TO 문서의 workTypeConfirmedCounts 를 사용
@@ -1712,6 +1722,10 @@ extension ApplicationFirestore on FirestoreService {
                 break;
               }
             }
+            // [CRIT-02-FIX] 정기 TO도 동일: toRef write → 충돌 감지 활성화
+            tx.update(toRef, {
+              'workTypeConfirmedCounts.$selectedWorkType': FieldValue.increment(1),
+            });
           }
         }
       }
@@ -1834,7 +1848,10 @@ extension ApplicationFirestore on FirestoreService {
 
     // TO + Slot 통계 (PENDING→CONFIRMED)
     _incrementTOPending(batch, toId, slotId, delta: -1, workType: app.selectedWorkType);
-    _incrementTOConfirmed(batch, toId, slotId, delta: 1, workType: app.selectedWorkType);
+    // [CRIT-02-FIX] skipWorkTypeCounts: true — workTypeCounts/workTypeConfirmedCounts는
+    //   위 트랜잭션 내에서 이미 increment됨 → 배치에서 중복 증가 차단
+    _incrementTOConfirmed(batch, toId, slotId, delta: 1, workType: app.selectedWorkType,
+        skipWorkTypeCounts: true);
 
     try {
       await batch.commit();
@@ -1981,23 +1998,26 @@ extension ApplicationFirestore on FirestoreService {
 
   /// TO.totalConfirmed 및 Slot.confirmedCount 변경
   ///
-  /// [F01/F02/F03 동시성 설계]
-  /// FieldValue.increment()는 Firestore 서버 측 원자 연산이다.
-  /// 두 관리자가 동시에 다른 지원자를 확정해도 각 increment가 독립적으로 적용되므로
-  /// confirmedCount가 정확히 2 증가한다 — 클라이언트 계산(read-modify-write)이 아니므로
-  /// race condition이 발생하지 않는다. 의도된 올바른 설계.
+  /// [skipWorkTypeCounts] CONFIRM 경로에서 true — workTypeCounts/workTypeConfirmedCounts는
+  /// 트랜잭션(_confirmWithConflictCheck) 내에서 이미 increment됨. 배치에서 재증가 시 이중 카운트.
+  /// CANCEL/DECREMENT 경로(delta=-1)는 false(기본값) — 트랜잭션 없음, 배치에서 직접 감소.
+  ///
+  /// [F01/F02/F03 동시성] FieldValue.increment()는 서버 측 원자 연산 → count 정확도 보장.
+  /// [CRIT-02-FIX] 정원 초과 방지: 정원 검증 필드를 트랜잭션 내 write로 이동해
+  ///   Firestore 낙관적 잠금 활성화. 두 트랜잭션이 같은 slotRef write 시 충돌 감지 → retry.
   void _incrementTOConfirmed(
     WriteBatch batch,
     String toId,
     String? slotId, {
     required int delta,
     String? workType,
+    bool skipWorkTypeCounts = false,
   }) {
     final toUpdate = <String, dynamic>{
       'totalConfirmed': FieldValue.increment(delta),
     };
-    // contract TO: 업무유형별 확정인원 추적 (슬롯 없는 경우)
-    if (slotId == null && workType != null && workType.isNotEmpty) {
+    // contract TO: workTypeConfirmedCounts — CONFIRM 경로에서 트랜잭션이 처리, 배치에서 skip
+    if (!skipWorkTypeCounts && slotId == null && workType != null && workType.isNotEmpty) {
       toUpdate['workTypeConfirmedCounts.$workType'] = FieldValue.increment(delta);
     }
     batch.update(_firestore.collection('tos').doc(toId), toUpdate);
@@ -2010,7 +2030,8 @@ extension ApplicationFirestore on FirestoreService {
       final slotUpdate = <String, dynamic>{
         'confirmedCount': FieldValue.increment(delta),
       };
-      if (workType != null) {
+      // flex TO: workTypeCounts.$workType.confirmedCount — CONFIRM 경로에서 트랜잭션이 처리
+      if (!skipWorkTypeCounts && workType != null) {
         slotUpdate['workTypeCounts.$workType.confirmedCount'] =
             FieldValue.increment(delta);
       }
