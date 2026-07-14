@@ -4944,16 +4944,11 @@ export const callableFinalizeWorkerSignature = onCall(
           throw new HttpsError("permission-denied", "본인의 계약서만 서명할 수 있습니다.");
         }
 
-        // 상태 검증 (race condition 방어 — Storage 업로드 후 상태 역전 대응)
+        // [STATUS-WHITELIST-FIX] 화이트리스트 방식 — pending_worker 상태에서만 서명 허용
+        // 블랙리스트(voided/completed/pending_employer)는 신규 status 추가 시 누락 위험
         const status = data["status"] as string;
-        if (status === "voided") {
-          throw new HttpsError("failed-precondition", "무효 처리된 계약서에는 서명할 수 없습니다.");
-        }
-        if (status === "completed") {
-          throw new HttpsError("failed-precondition", "이미 완료된 계약서입니다.");
-        }
-        if (status === "pending_employer") {
-          throw new HttpsError("failed-precondition", "사업주 서명이 완료되기 전에는 근무자가 서명할 수 없습니다.");
+        if (status !== "pending_worker") {
+          throw new HttpsError("failed-precondition", `서명할 수 없는 계약서 상태입니다: ${status}`);
         }
         if (data["workerSignatureUrl"]) {
           throw new HttpsError("failed-precondition", "이미 근무자 서명이 완료된 계약서입니다.");
@@ -8332,11 +8327,14 @@ export const callableCalculateAndConfirmWage = onCall(
       const cur = (latestSnap.data()?.wageStatus as string) ?? "pending";
       if (cur !== "pending") throw new HttpsError("failed-precondition", `이미 처리된 급여입니다 (${cur})`);
 
+      // [S3-FIX][YEARMONTH-QUERY-FIX] Firestore 저장 포맷 YYYY-MM — 쿼리도 동일 포맷 사용해야 함
+      // d.yearMonth 입력 포맷 YYYYMM을 그대로 전달하면 항상 0건 반환 → daily_auto_8 소급공제 영구 불발
+      const yearMonthForDoc = `${d.yearMonth.substring(0, 4)}-${d.yearMonth.substring(4, 6)}`;
       // [M-4] daily_auto_8: prevDays/prevGross를 트랜잭션 내부에서 조회 — 동시 확정 경쟁 차단
       if (d.taxDeductionType === "daily_auto_8") {
-        const prevDays = await srvGetMonthlyWorkDaysTx(tx, userId2, businessId2, d.yearMonth, d.attendanceId);
+        const prevDays = await srvGetMonthlyWorkDaysTx(tx, userId2, businessId2, yearMonthForDoc, d.attendanceId);
         if (prevDays + 1 === 8) {
-          const prevGross = await srvGetPrevGrossTotalTx(tx, userId2, businessId2, d.yearMonth, d.attendanceId);
+          const prevGross = await srvGetPrevGrossTotalTx(tx, userId2, businessId2, yearMonthForDoc, d.attendanceId);
           wageResult2 = srvApplyDay8Retroactive(base2, prevGross, rates2);
         } else if (prevDays + 1 > 8) {
           wageResult2 = srvApplyFourInsurance(base2, rates2, "daily_auto_8");
@@ -8378,8 +8376,6 @@ export const callableCalculateAndConfirmWage = onCall(
       if (d.payScheduleType != null) wd.payScheduleType = d.payScheduleType;
       if (d.payScheduleDay != null) wd.payScheduleDay = d.payScheduleDay;
 
-      // [S3-FIX] attendance.yearMonth 필드는 YYYY-MM 형식으로 통일. d.yearMonth는 YYYYMM(입력 검증)이므로 변환.
-      const yearMonthForDoc = `${d.yearMonth.substring(0, 4)}-${d.yearMonth.substring(4, 6)}`;
       tx.update(attRef2, {
         wageStatus: "calculated",
         finalWage: effectiveNetWage2,
@@ -11078,12 +11074,24 @@ export const callableBatchCheckIn = onCall(
           // 신규 출근 기록 — wageStatus='pending' 고정
           // [L3-FIX] applicationId → userId 교차검증 — 타 근로자 UID 지정으로 TrustScore 조작 차단
           const appVerifySnap = await db.collection("applications").doc(applicationId).get();
-          if (!appVerifySnap.exists || appVerifySnap.data()!.uid !== userId) {
-            console.error(`출근 처리 건너뜀 — userId 불일치 (${applicationId})`);
+          // [BATCH-CHECKIN-BIZ-FIX] businessId 교차검증 추가 — 타 사업장 근무자 명의로 출근 기록 생성 차단
+          if (!appVerifySnap.exists || appVerifySnap.data()!.uid !== userId ||
+              appVerifySnap.data()!.businessId !== businessId) {
+            console.error(`출근 처리 건너뜀 — userId 또는 businessId 불일치 (${applicationId})`);
             continue;
           }
           const dateStr = `${workDateKST.getUTCFullYear()}${String(workDateKST.getUTCMonth() + 1).padStart(2, "0")}${String(workDateKST.getUTCDate()).padStart(2, "0")}`;
           const docId = `${applicationId}_${dateStr}`;
+          // [BATCH-CHECKIN-WAGE-FIX] 신규 생성 경로에서도 confirmed/transferred 덮어쓰기 차단
+          //   set({...wageStatus:"pending"},{merge:true})는 기존 confirmed 문서를 초기화할 수 있음
+          const existingSnap = await db.collection("attendance").doc(docId).get();
+          if (existingSnap.exists) {
+            const existWs = existingSnap.data()?.wageStatus as string | undefined;
+            if (existWs === "confirmed" || existWs === "transferred") {
+              console.error(`출근 처리 건너뜀 — 이미 임금 확정/이체 완료 (${docId})`);
+              continue;
+            }
+          }
           await db.collection("attendance").doc(docId).set({
             applicationId,
             userId,
@@ -11181,7 +11189,10 @@ export const callableBatchCheckOut = onCall(
             const snapData = snap.data()!;
             // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
             if (snapData.businessId !== businessId) { skipped.push(attendanceId); continue; }
-            if (snapData.wageStatus === "transferred") { skipped.push(attendanceId); continue; }
+            // [BATCH-CHECKOUT-WAGE-FIX] confirmed도 차단 — callableCheckOut과 일치
+            if (snapData.wageStatus === "transferred" || snapData.wageStatus === "confirmed") {
+              skipped.push(attendanceId); continue;
+            }
           }
           await ref.update({
             checkOut: admin.firestore.Timestamp.fromMillis(checkOutMs),
@@ -11243,6 +11254,10 @@ export const callableRejectApplication = onCall(
     // 확정 상태는 거절 불가 — 취소 처리 사용
     if (CONFIRMED_STATUSES.includes(prevStatus)) {
       throw new HttpsError("failed-precondition", "확정된 지원서는 거절할 수 없습니다. 취소 처리를 이용해주세요.");
+    }
+    // [REJECT-STATE-FIX] 취소/자동취소 상태 → REJECTED 전이 차단 (상태 이력 오염 방지)
+    if (prevStatus === "CANCELED" || prevStatus === "AUTO_CANCELED") {
+      throw new HttpsError("failed-precondition", "취소/자동취소된 지원서는 거절 상태로 변경할 수 없습니다.");
     }
     // 이미 거절된 경우 멱등 처리
     if (prevStatus === "REJECTED") {
@@ -11471,11 +11486,19 @@ export const callableConfirmApplication = onCall(
       if (slotSnap.exists) {
         if (slotSnap.data()!.status === "closed") {
           try {
-            await appRef.update({
+            // [WORKTYPECOUNTS-ROLLBACK-FIX] 트랜잭션(step1)에서 +1한 confirmedCount도 함께 복원
+            const rb4 = db.batch();
+            rb4.update(appRef, {
               status: "PENDING",
               confirmedAt: admin.firestore.FieldValue.delete(),
               confirmedBy: admin.firestore.FieldValue.delete(),
             });
+            if (selectedWorkType) {
+              rb4.update(db.collection("tos").doc(toId).collection("slots").doc(slotId), {
+                [`workTypeCounts.${selectedWorkType}.confirmedCount`]: admin.firestore.FieldValue.increment(-1),
+              });
+            }
+            await rb4.commit();
           } catch (_) { /* 롤백 실패 무시 */ }
           throw new HttpsError("failed-precondition", "이미 마감된 슬롯입니다. 슬롯을 재오픈 후 확정해주세요.");
         }
@@ -11539,14 +11562,28 @@ export const callableConfirmApplication = onCall(
       await batch2.commit();
     } catch (batchErr) {
       try {
-        await appRef.update({
+        // [WORKTYPECOUNTS-ROLLBACK-FIX] 배치 실패 시 트랜잭션(step1) confirmedCount +1도 함께 복원
+        const rbBatch = db.batch();
+        rbBatch.update(appRef, {
           status: "PENDING",
           confirmedAt: admin.firestore.FieldValue.delete(),
           confirmedBy: admin.firestore.FieldValue.delete(),
         });
-        console.warn("[confirmApplication] 배치 실패 → CONTRACT_PENDING 롤백 완료");
+        if (selectedWorkType) {
+          if (slotId) {
+            rbBatch.update(db.collection("tos").doc(toId).collection("slots").doc(slotId), {
+              [`workTypeCounts.${selectedWorkType}.confirmedCount`]: admin.firestore.FieldValue.increment(-1),
+            });
+          } else {
+            rbBatch.update(db.collection("tos").doc(toId), {
+              [`workTypeConfirmedCounts.${selectedWorkType}`]: admin.firestore.FieldValue.increment(-1),
+            });
+          }
+        }
+        await rbBatch.commit();
+        console.warn("[confirmApplication] 배치 실패 → CONTRACT_PENDING + workTypeCounts 롤백 완료");
       } catch (rollbackErr) {
-        console.error("[confirmApplication] CONTRACT_PENDING 롤백 실패 — 수동 해제 필요:", rollbackErr);
+        console.error("[confirmApplication] 롤백 실패 — 수동 해제 필요:", rollbackErr);
       }
       throw batchErr;
     }
@@ -12737,6 +12774,19 @@ export const callableCheckIn = onCall(
     if (!applicationId || !businessId || !businessName || !workType || !workDateMs) {
       throw new HttpsError("invalid-argument", "applicationId, businessId, businessName, workType, workDateMs가 필요합니다.");
     }
+    // [CHECKIN-DATE-FIX] workDateMs 날짜 범위 검증 — 미래·과도한 소급 차단
+    //   야간교대 고려 전일 허용, 3일 이후 미래 또는 7일 초과 소급 차단
+    {
+      const KST_MS = 9 * 60 * 60 * 1000;
+      const nowKSTDay = Math.floor((Date.now() + KST_MS) / 86400000);
+      const workKSTDay = Math.floor((workDateMs + KST_MS) / 86400000);
+      if (workKSTDay > nowKSTDay + 1) {
+        throw new HttpsError("invalid-argument", "미래 날짜로 출근 기록을 생성할 수 없습니다.");
+      }
+      if (workKSTDay < nowKSTDay - 7) {
+        throw new HttpsError("invalid-argument", "7일 이전 날짜로 출근 기록을 생성할 수 없습니다.");
+      }
+    }
     // [M-07-FIX] scheduledStartTime HH:MM 형식 검증 — 비정상 형식으로 NaN 날짜 생성 방지
     if (scheduledStartTime !== undefined) {
       const [sh, sm] = scheduledStartTime.split(":").map(Number);
@@ -12842,7 +12892,8 @@ export const callableCheckIn = onCall(
         workType,
         checkIn: admin.firestore.Timestamp.fromDate(effectiveCheckIn),
         originalCheckIn: admin.firestore.Timestamp.fromDate(now),
-        checkInMethod: method ?? "gps",
+        // [CHECK-METHOD-FIX] 화이트리스트 — "manual" 전달 시 onAttendanceCreated GPS 검증 우회 차단
+        checkInMethod: (method === "qr") ? "qr" : "gps",
         status: isLate ? "late" : "present",
         isModified: false,
         modifyRequested: false,
@@ -13525,7 +13576,11 @@ export const callableApplyToTO = onCall(
         }
       }
     }
-    const effectiveWage = serverWage ?? wage;
+    // [SERVER-WAGE-FIX] 서버 임금 미발견 시 예외 — 클라이언트 wage 폴백 차단 (임금 위조 가능)
+    if (serverWage === undefined || serverWage === null) {
+      throw new HttpsError("failed-precondition", "해당 업무 유형의 임금 정보를 서버에서 찾을 수 없습니다.");
+    }
+    const effectiveWage = serverWage;
     const effectiveWageType = serverWageType ?? wageType;
 
     // ── 5. 복합 docId 계산 + 기존 지원서 중복/재활성화 판단 ──
