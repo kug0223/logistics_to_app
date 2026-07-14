@@ -368,13 +368,18 @@ service cloud.firestore {
       // 일반 관리자는 본인 ownerId이고 adminIds에 본인 uid만 포함
       // [SEC-89] isApproved 서버 강제: 클라이언트가 직접 isApproved=true로 생성해 승인 절차 건너뜀 차단
       // [SEC-90] adminIds 초기값 제한: 창설자 UID 외 임의 UID 삽입 차단 (비동의 관리자 권한 부여 방지)
+      // [RATE-01] 사업장 생성 개수 제한: managedBusinessIds 5개 초과 시 차단
+      //   미승인 더미 사업장 남발로 Firestore 스토리지·관리자 검토 부담 방지
+      //   배치 내 users 문서 업데이트 전 현재 배열 길이 기준으로 평가됨 (원자 카운팅)
       allow create: if isLoggedIn() && (
                       isSuperAdmin() ||
                       (isBusinessAdmin() &&
                        request.resource.data.ownerId == request.auth.uid &&
                        request.auth.uid in request.resource.data.adminIds &&
                        request.resource.data.adminIds.hasOnly([request.auth.uid]) &&
-                       request.resource.data.get('isApproved', false) == false)
+                       request.resource.data.get('isApproved', false) == false &&
+                       get(/databases/$(database)/documents/users/$(request.auth.uid))
+                         .data.get('managedBusinessIds', []).size() < 5)
                     );
 
       // [특이사항] ownerId/adminIds 변경은 슈퍼어드민만 허용.
