@@ -270,6 +270,22 @@ export const applyRestartProgram = onCall(
 
       const userData = userDoc.data()!;
 
+      // [M4-FIX] 블랙리스트/제재 중 재시작 프로그램 차단 (callableApplyToTO와 동일 패턴)
+      if (userData.isBlacklisted === true) {
+        const reason = (userData.blacklistReason as string | undefined) ?? "이용 정책 위반";
+        throw new HttpsError("permission-denied", `이용 제한된 계정입니다.\n사유: ${reason}`);
+      }
+      const restrictedUntilTs = userData.restrictedUntil as Timestamp | undefined;
+      if (restrictedUntilTs && restrictedUntilTs.toDate() > new Date()) {
+        const remainDays = Math.ceil(
+          (restrictedUntilTs.toDate().getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+        );
+        throw new HttpsError(
+          "permission-denied",
+          `무단 결근 페널티로 ${remainDays}일 동안 재시작 프로그램 신청이 제한됩니다.`
+        );
+      }
+
       // 쿨타임 체크
       const lastRestartAt = userData.lastRestartAt as Timestamp | undefined;
       if (lastRestartAt) {
@@ -11392,6 +11408,10 @@ export const callableRejectApplication = onCall(
     if (!applicationId || typeof applicationId !== "string" || applicationId.trim() === "") {
       throw new HttpsError("invalid-argument", "applicationId가 필요합니다.");
     }
+    // [L2-FIX] 거절 사유 길이 제한 — Firestore 1MB 문서 한도 방어, 관리자 입력이라도 제한 필요
+    if (message !== undefined && (typeof message !== "string" || message.length > 500)) {
+      throw new HttpsError("invalid-argument", "거절 사유는 500자 이내로 입력해주세요.");
+    }
 
     const appRef = db.collection("applications").doc(applicationId);
     const appSnap = await appRef.get();
@@ -11508,6 +11528,10 @@ export const callableConfirmApplication = onCall(
     if (!applicationId || typeof applicationId !== "string") {
       throw new HttpsError("invalid-argument", "applicationId가 필요합니다.");
     }
+    // [L2-FIX] 확정 메시지 길이 제한
+    if (message !== undefined && (typeof message !== "string" || message.length > 500)) {
+      throw new HttpsError("invalid-argument", "메시지는 500자 이내로 입력해주세요.");
+    }
 
     const appRef = db.collection("applications").doc(applicationId);
     const appSnap = await appRef.get();
@@ -11613,7 +11637,8 @@ export const callableConfirmApplication = onCall(
     let computedWorkEndDate: admin.firestore.Timestamp | undefined;
     let computedWorkDays: string[] | undefined;
 
-    if (isLongTermApp && !latestData.workEndDate && toData) {
+    // [M2-FIX] !latestData.workEndDate 조건 제거 — 클라이언트 조작값 무시, 항상 서버 TO 기준 계산
+    if (isLongTermApp && toData) {
       const startTs = (latestData.desiredStartDate ?? latestData.workDate) as admin.firestore.Timestamp;
       const periodType = toData.contractPeriodType as string | undefined;
       if (periodType && periodType !== "custom") {
@@ -11628,8 +11653,8 @@ export const callableConfirmApplication = onCall(
         computedWorkEndDate = toData.rangeEnd as admin.firestore.Timestamp;
       }
     }
-    if ((!latestData.workDays || (latestData.workDays as string[]).length === 0) &&
-        Array.isArray(toData?.workDays) && (toData!.workDays as string[]).length > 0) {
+    // [M2-FIX] 클라이언트 workDays 비어있는지 조건 제거 — TO.workDays 있으면 항상 서버값 사용
+    if (Array.isArray(toData?.workDays) && (toData!.workDays as string[]).length > 0) {
       computedWorkDays = toData!.workDays as string[];
     }
 
@@ -14078,8 +14103,11 @@ export const callableApplyToTO = onCall(
         if (workDays) reactivateData["workDays"] = workDays;
         tx.update(appRef, reactivateData);
       } else {
+        // [L1-FIX] businessName/toTitle: 클라이언트 제출값 대신 서버 TO 문서값 우선 사용 (텍스트 주입 차단)
+        const serverBusinessName = (toData["businessName"] as string | undefined) ?? businessName;
+        const serverToTitle = (toData["title"] as string | undefined) ?? toTitle;
         const setData: Record<string, unknown> = {
-          uid, businessId, businessName, toId, toTitle,
+          uid, businessId, businessName: serverBusinessName, toId, toTitle: serverToTitle,
           selectedWorkType,
           // [V7-FIX] 서버 TO 문서 임금 사용 (클라이언트 제공값 폴백)
           wage: effectiveWage, wageType: effectiveWageType,
