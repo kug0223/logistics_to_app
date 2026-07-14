@@ -9564,6 +9564,97 @@ export const callableCloseSlots = onCall(
   }
 );
 
+// ─── 12.5. callableReopenSlots ───────────────────────────────────────────────
+// 슬롯 일괄 재오픈 — reopenedBy 서버 강제, open/full 서버 원자적 판단
+// TOCTOU 방지: 각 슬롯 confirmedCount/requiredCount를 트랜잭션 내에서 읽어 status 결정
+// [CF-ONLY] batchReopenSlots 클라이언트 직접 쓰기에서 전환 (reopenedBy 위조 차단)
+// Input : { toId, slotIds, businessId }
+// Output: { success, reopenedCount }
+export const callableReopenSlots = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {toId, slotIds, businessId} = request.data as {
+      toId?: string;
+      slotIds?: string[];
+      businessId?: string;
+    };
+    if (!toId) throw new HttpsError("invalid-argument", "toId 필수");
+    if (!Array.isArray(slotIds) || slotIds.length === 0)
+      throw new HttpsError("invalid-argument", "slotIds 필수");
+    if (slotIds.length > 100) throw new HttpsError("invalid-argument", "slotIds는 최대 100개");
+    if (!businessId) throw new HttpsError("invalid-argument", "businessId 필수");
+
+    await assertBizAdmin(callerUid, businessId);
+
+    // toId ↔ businessId 교차검증 — 다른 사업장 TO 슬롯 조작 차단
+    const toDocSnap = await db.collection("tos").doc(toId).get();
+    if (!toDocSnap.exists) throw new HttpsError("not-found", "TO를 찾을 수 없습니다.");
+    if ((toDocSnap.data()?.businessId as string) !== businessId) {
+      throw new HttpsError("permission-denied", "해당 TO가 요청한 사업장에 속하지 않습니다.");
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    // 각 슬롯 트랜잭션: TOCTOU 방지 — confirmedCount 읽기 + open/full 결정 + 쓰기 원자화
+    let reopenedCount = 0;
+    for (const slotId of slotIds) {
+      const slotRef = db.collection("tos").doc(toId).collection("slots").doc(slotId);
+      try {
+        await db.runTransaction(async (tx) => {
+          const slotSnap = await tx.get(slotRef);
+          if (!slotSnap.exists) return;
+
+          const d = slotSnap.data()!;
+          const confirmed = (d.confirmedCount as number | undefined) ?? 0;
+          const rawWDs = (d.workDetails as Record<string, unknown>[] | undefined) ?? [];
+          const required = rawWDs.reduce(
+            (acc, wd) => acc + ((wd.requiredCount as number | undefined) ?? 0), 0
+          );
+          // 정원이 찬 슬롯은 full 유지 — open으로 강제 시 초과 지원 허용됨
+          const newStatus = required > 0 && confirmed >= required ? "full" : "open";
+
+          tx.update(slotRef, {
+            isManualClosed: false,
+            status: newStatus,
+            reopenedAt: now,
+            reopenedBy: callerUid, // 서버 강제 — 클라이언트 위조 불가
+            closedAt: admin.firestore.FieldValue.delete(),
+            closedBy: admin.firestore.FieldValue.delete(),
+          });
+        });
+        reopenedCount++;
+      } catch (e) {
+        console.error(`[ReopenSlots] 슬롯 ${slotId} 재오픈 실패:`, e);
+      }
+    }
+
+    // TO cascade status 동기화 — open/full 슬롯이 생기면 CLOSED → ACTIVE 복구
+    try {
+      const allSlotsSnap = await db.collection("tos").doc(toId).collection("slots").get();
+      const hasOpenSlot = allSlotsSnap.docs.some((d) => {
+        const s = d.data();
+        return !s.isManualClosed && (s.status === "open" || s.status === "full");
+      });
+      const toSnap2 = await db.collection("tos").doc(toId).get();
+      const currentTOStatus = toSnap2.data()?.status as string | undefined;
+      if (hasOpenSlot && currentTOStatus === "CLOSED") {
+        await db.collection("tos").doc(toId).update({
+          status: "ACTIVE",
+          closedAt: admin.firestore.FieldValue.delete(),
+          isManualClosed: false,
+        });
+      }
+    } catch (e) {
+      console.error(`[ReopenSlots] TO cascade status 재계산 실패 (${toId}):`, e);
+    }
+
+    return {success: true, reopenedCount};
+  }
+);
+
 // ─── 13. callableDeleteSlots ──────────────────────────────────────────────────
 export const callableDeleteSlots = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
@@ -10917,6 +11008,119 @@ interface AdjustEntry {
   status: string;
   resetWageDetail: boolean;
 }
+
+// ── callableRejectApplication ─────────────────────────────────
+// 지원서 거절 (PENDING → REJECTED) — rejectedBy 서버 강제, statusHistory.at 서버 타임스탬프
+// 클라이언트가 rejectedBy에 다른 관리자 UID를 위조해 책임 전가하는 취약점 차단
+// [CF-ONLY] PENDING → REJECTED 전이: callableRejectApplication(Admin SDK) 전용
+// Input : { applicationId, message? }
+// Output: { success, alreadyRejected? }
+export const callableRejectApplication = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {applicationId, message} = request.data as {applicationId?: string; message?: string};
+    if (!applicationId || typeof applicationId !== "string" || applicationId.trim() === "") {
+      throw new HttpsError("invalid-argument", "applicationId가 필요합니다.");
+    }
+
+    const appRef = db.collection("applications").doc(applicationId);
+    const appSnap = await appRef.get();
+    if (!appSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const appData = appSnap.data()!;
+
+    const businessId = appData.businessId as string | undefined;
+    if (!businessId) throw new HttpsError("invalid-argument", "businessId가 없는 지원서입니다.");
+
+    await assertBizAdmin(callerUid, businessId);
+
+    const prevStatus = (appData.status as string | undefined) ?? "";
+
+    // 확정 상태는 거절 불가 — 취소 처리 사용
+    if (CONFIRMED_STATUSES.includes(prevStatus)) {
+      throw new HttpsError("failed-precondition", "확정된 지원서는 거절할 수 없습니다. 취소 처리를 이용해주세요.");
+    }
+    // 이미 거절된 경우 멱등 처리
+    if (prevStatus === "REJECTED") {
+      return {success: true, alreadyRejected: true};
+    }
+
+    const toId = appData.toId as string | undefined;
+    const slotId = appData.slotId as string | undefined;
+    const uid = appData.uid as string | undefined;
+    const businessName = appData.businessName as string | undefined;
+    const selectedWorkType = appData.selectedWorkType as string | undefined;
+    const workDateTs = appData.workDate as admin.firestore.Timestamp | undefined;
+
+    // 트랜잭션: TOCTOU 방지 + 원자적 상태 전이 + pendingCount 보정
+    await db.runTransaction(async (tx) => {
+      const freshSnap = await tx.get(appRef);
+      if (!freshSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+      const freshStatus = (freshSnap.data()!.status as string | undefined) ?? "";
+
+      if (CONFIRMED_STATUSES.includes(freshStatus)) {
+        throw new HttpsError("failed-precondition", "확정된 지원서는 거절할 수 없습니다. 취소 처리를 이용해주세요.");
+      }
+      if (freshStatus === "REJECTED") return; // 이미 처리됨 — 멱등
+
+      const historyEntry: Record<string, unknown> = {
+        status: "REJECTED",
+        at: Timestamp.now(), // CF 서버 시간 — 클라이언트 기기 시간 위조 불가
+        by: callerUid,       // 서버 강제 — 위조 불가
+        action: "REJECT",
+        ...(message ? {reason: message} : {}),
+      };
+
+      const updates: Record<string, unknown> = {
+        status: "REJECTED",
+        rejectedAt: admin.firestore.FieldValue.serverTimestamp(),
+        rejectedBy: callerUid, // 서버 강제 — 클라이언트 위조 불가
+        statusHistory: admin.firestore.FieldValue.arrayUnion(historyEntry),
+        ...(message ? {rejectMessage: message} : {}),
+      };
+      tx.update(appRef, updates);
+
+      // PENDING → REJECTED: pendingCount 보정
+      if (freshStatus === "PENDING" && toId) {
+        tx.update(db.collection("tos").doc(toId), {
+          totalPending: admin.firestore.FieldValue.increment(-1),
+        });
+        if (slotId) {
+          tx.update(db.collection("tos").doc(toId).collection("slots").doc(slotId), {
+            pendingCount: admin.firestore.FieldValue.increment(-1),
+          });
+        }
+      }
+    });
+
+    // 알림 발송 (fire-and-forget — 알림 실패가 거절 처리를 막지 않음)
+    if (uid) {
+      const month = workDateTs ? workDateTs.toDate().getMonth() + 1 : 0;
+      const day = workDateTs ? workDateTs.toDate().getDate() : 0;
+      const rejectReasonSuffix = message ? `\n사유: ${message}` : "";
+      const dateSuffix = workDateTs ? `\n근무일: ${month}/${day}` : "";
+      const body = `${businessName ?? ""}의 ${selectedWorkType ?? ""} 지원이 거절되었습니다.${rejectReasonSuffix}${dateSuffix}`;
+
+      db.collection("users").doc(uid).collection("notifications").add({
+        userId: uid,
+        type: "applicationRejected",
+        title: "지원 거절",
+        body,
+        data: {
+          applicationId,
+          businessId,
+          action: "applicationDetail",
+        },
+        isRead: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      }).catch((e) => console.error("[callableRejectApplication] 알림 발송 실패:", e));
+    }
+
+    return {success: true};
+  }
+);
 
 // ── callableConfirmApplication ───────────────────────────────
 // 지원서 확정 (PENDING → CONTRACT_PENDING) — 서버 사이드 원자적 처리

@@ -347,6 +347,27 @@ extension ApplicationFirestore on FirestoreService {
   // 상태 변경
   // ───────────────────────────────────────────────────────
 
+  /// 지원서 거절 — callableRejectApplication CF 호출
+  /// rejectedBy는 CF에서 callerUid로 서버 강제 (클라이언트 위조 불가)
+  /// statusHistory.at도 CF 서버 타임스탬프로 기록
+  Future<void> rejectApplication(String applicationId, {String? message}) async {
+    NetworkChecker.instance.assertOnline('거절 처리를 하려면 인터넷 연결이 필요합니다.');
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableRejectApplication',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+      await callable.call<Map<String, dynamic>>({
+        'applicationId': applicationId,
+        if (message != null) 'message': message,
+      });
+    } on FirebaseFunctionsException {
+      rethrow;
+    } catch (e) {
+      debugPrint('❌ [Application] 거절 실패: $e');
+      rethrow;
+    }
+  }
+
   /// 지원자 확정 (충돌 지원서 자동 취소 포함)
   /// 반환: 충돌로 취소된 TO ID 목록
   Future<List<String>> updateApplicationStatus({
@@ -364,6 +385,12 @@ extension ApplicationFirestore on FirestoreService {
           confirmedBy: confirmedBy,
           message: message,
         );
+      }
+
+      // [CF-ONLY] REJECTED → callableRejectApplication (rejectedBy 서버 강제)
+      if (status == AppStatus.rejected) {
+        await rejectApplication(applicationId, message: message);
+        return [];
       }
 
       final appDoc = await _firestore

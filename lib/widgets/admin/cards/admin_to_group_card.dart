@@ -1258,7 +1258,6 @@ class _TOGroupCardState extends State<TOGroupCard> {
         break;
 
       case 'batchReopen':
-        final reopenUid = context.read<UserProvider>().currentUser?.uid ?? 'UNKNOWN';
         final reopenSlots = await SlotBatchSelectDialog.show(
           context: context,
           to: masterTO,
@@ -1291,7 +1290,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           await widget.firestoreService.batchReopenSlots(
             toId: masterTO.id,
             slotIds: reopenSlots.map((s) => s.id).toList(),
-            reopenedBy: reopenUid,
+            businessId: masterTO.businessId,
           );
           widget.firestoreService.clearCache(toId: masterTO.id);
           widget.onChanged();

@@ -693,6 +693,11 @@ service cloud.firestore {
                        //   클라이언트 직접 전이 시 totalConfirmed 카운터 증가 없이 확정 상태 진입 가능
                        !(resource.data.status == 'PENDING' &&
                          request.resource.data.status == 'CONFIRMED') &&
+                       // [CF-ONLY] PENDING→REJECTED 직접 전이 차단 — callableRejectApplication CF(Admin SDK) 전용
+                       //   클라이언트가 rejectedBy에 다른 관리자 UID를 위조해 책임 전가하는 취약점 차단
+                       //   statusHistory.at 클라이언트 기기 시간 조작도 동시 차단
+                       !(resource.data.status == 'PENDING' &&
+                         request.resource.data.status == 'REJECTED') &&
                        // [MEDIUM-1] CANCELED/AUTO_CANCELED → CONFIRMED 직접 전이 차단
                        //   취소된 지원서를 totalConfirmed CF 없이 직접 확정 상태로 변경 시 카운터 불일치
                        !(resource.data.get('status', '') in ['CANCELED', 'AUTO_CANCELED', 'REJECTED'] &&

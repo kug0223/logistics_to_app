@@ -759,13 +759,16 @@ extension TOFirestore on FirestoreService {
   }
 
   /// 특정 슬롯 전체 수정 (업무 구성·금액·인원·마감시간)
+  /// [TOCTOU-FIX] totalRequired delta를 트랜잭션 내에서 서버 현재 값 기준으로 계산
+  ///   이전: oldTotalRequired를 호출자(UI)가 제공 → 동시 편집 시 delta 오계산
+  ///   현재: 트랜잭션에서 슬롯 현재 workDetails를 읽어 delta 계산 → 원자적 보장
   Future<void> updateSlotFull({
     required String toId,
     required String slotId,
     required List<WorkDetailData> workDetails,
     DateTime? applicationDeadline,
     String? title,
-    int? oldTotalRequired,
+    int? oldTotalRequired, // 더 이상 사용 안 함 — 하위 호환 파라미터 유지
     DateTime? visibleFrom,
     bool clearVisibleFrom = false,
   }) async {
@@ -775,10 +778,10 @@ extension TOFirestore on FirestoreService {
     final slotRef = _firestore
         .collection('tos').doc(toId)
         .collection('slots').doc(slotId);
+    final toRef = _firestore.collection('tos').doc(toId);
     final newTotalRequired = workDetails.fold<int>(0, (s, d) => s + d.requiredCount);
 
-    final batch = _firestore.batch();
-    batch.update(slotRef, {
+    final slotUpdate = <String, dynamic>{
       'workDetails': WorkDetailData.listToFirestore(workDetails),
       'applicationDeadline': applicationDeadline != null
           ? Timestamp.fromDate(applicationDeadline.toUtc())
@@ -787,16 +790,25 @@ extension TOFirestore on FirestoreService {
       else 'title': FieldValue.delete(),
       if (clearVisibleFrom) 'visibleFrom': FieldValue.delete()
       else if (visibleFrom != null) 'visibleFrom': Timestamp.fromDate(visibleFrom.toUtc()),
+    };
+
+    await _firestore.runTransaction((tx) async {
+      // 슬롯 현재 totalRequired를 서버에서 읽어 delta 계산 (클라이언트 스테일 값 배제)
+      final currentSlot = await tx.get(slotRef);
+      int currentRequired = 0;
+      if (currentSlot.exists) {
+        final wds = currentSlot.data()!['workDetails'] as List? ?? [];
+        currentRequired = wds.fold<int>(0, (s, wd) =>
+            s + (((wd as Map<String, dynamic>)['requiredCount'] as num?)?.toInt() ?? 0));
+      }
+      final delta = newTotalRequired - currentRequired;
+
+      tx.update(slotRef, slotUpdate);
+      if (delta != 0) {
+        tx.update(toRef, {'totalRequired': FieldValue.increment(delta)});
+      }
     });
 
-    // 요구인원 변경 시 마스터 TO의 totalRequired 동기화
-    if (oldTotalRequired != null && oldTotalRequired != newTotalRequired) {
-      batch.update(_firestore.collection('tos').doc(toId), {
-        'totalRequired': FieldValue.increment(newTotalRequired - oldTotalRequired),
-      });
-    }
-
-    await batch.commit();
     clearCache(toId: toId);
     debugPrint('✅ [Slot] 슬롯 $slotId 전체 수정 완료');
   }
@@ -821,54 +833,25 @@ extension TOFirestore on FirestoreService {
     debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 마감 완료 (CF)');
   }
 
-  /// 선택한 슬롯들 일괄 재오픈 (직접 마감 해제 — closedBy 삭제)
+  /// 선택한 슬롯들 일괄 재오픈 — callableReopenSlots CF 위임
+  /// reopenedBy 서버 강제 (callerUid), open/full TOCTOU 제거 (트랜잭션 원자화)
   Future<void> batchReopenSlots({
     required String toId,
     required List<String> slotIds,
-    required String reopenedBy,
+    required String businessId,
+    String? reopenedBy, // CF에서 callerUid로 대체 — 하위 호환 유지
   }) async {
     if (slotIds.isEmpty) return;
-
-    // 재오픈 전 각 슬롯의 확정/요구 인원을 읽어 full 여부 판단
-    // — 이미 정원이 찬 슬롯을 open으로 강제하면 초과 지원이 허용되므로 full 상태를 유지
-    final slotSnaps = await Future.wait(slotIds.map((id) => _firestore
-        .collection('tos').doc(toId)
-        .collection('slots').doc(id)
-        .get(const GetOptions(source: Source.server))));
-
-    var batch = _firestore.batch();
-    int count = 0;
-    for (int i = 0; i < slotIds.length; i++) {
-      final slotId = slotIds[i];
-      final ref = _firestore
-          .collection('tos').doc(toId)
-          .collection('slots').doc(slotId);
-
-      String reopenedStatus = SlotStatus.open;
-      if (slotSnaps[i].exists) {
-        final d = slotSnaps[i].data()!;
-        final confirmed = (d['confirmedCount'] as num?)?.toInt() ?? 0;
-        final wds = d['workDetails'] as List? ?? [];
-        final required = wds.fold<int>(0, (acc, wd) =>
-            acc + (((wd as Map<String, dynamic>)['requiredCount'] as num?)?.toInt() ?? 0));
-        if (required > 0 && confirmed >= required) reopenedStatus = SlotStatus.full;
-      }
-
-      batch.update(ref, {
-        'isManualClosed': false,
-        'status': reopenedStatus,
-        'reopenedAt': FieldValue.serverTimestamp(),
-        'reopenedBy': reopenedBy,
-        'closedAt': FieldValue.delete(),
-        'closedBy': FieldValue.delete(),
-      });
-      count++;
-      if (count >= 499) { await batch.commit(); batch = _firestore.batch(); count = 0; }
-    }
-    if (count > 0) await batch.commit();
-    debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 재오픈 완료');
-
-    await _syncTOCascadeStatus(toId);
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableReopenSlots',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+    await callable.call({
+      'toId': toId,
+      'slotIds': slotIds,
+      'businessId': businessId,
+    });
+    clearCache(toId: toId);
+    debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 재오픈 완료 (CF)');
   }
 
   /// 선택한 슬롯들 일괄 삭제 — CF callableDeleteSlots 위임 (Admin SDK로 보안 규칙 우회)
@@ -1120,42 +1103,4 @@ extension TOFirestore on FirestoreService {
     debugPrint('✅ [TO] 슬롯 ${dates.length}개 생성 완료');
   }
 
-  /// 슬롯 일괄 변경(마감/재오픈) 후 TO 상태를 동기화한다.
-  /// - 모집 가능 슬롯(open/full)이 없으면 TO를 자동 CLOSED
-  /// - 모집 가능 슬롯이 생기고 TO가 CLOSED이면 ACTIVE로 복구
-  /// full 슬롯은 확정 완료 상태이므로 closed 처리하지 않음 — batchReopenSlots 후에도 TO ACTIVE 유지
-  Future<void> _syncTOCascadeStatus(String toId) async {
-    try {
-      final slots = await getSlots(toId);
-      if (slots.isEmpty) return;
-
-      final toDoc = await _firestore.collection('tos').doc(toId).get(const GetOptions(source: Source.server));
-      if (!toDoc.exists) return;
-
-      final currentStatus = toDoc.data()?['status'] as String? ?? '';
-      // open 또는 full 슬롯이 있으면 "모집 가능" — full만 남은 경우도 명시적 closed 아님
-      final hasOpenSlot = slots.any((s) =>
-          s.status == SlotStatus.open || s.status == SlotStatus.full);
-
-      if (!hasOpenSlot && TOStatus.openStates.contains(currentStatus)) {
-        await _firestore.collection('tos').doc(toId).update({
-          'status': TOStatus.closed,
-          'closedAt': FieldValue.serverTimestamp(),
-        });
-        debugPrint('✅ [TO] 모든 슬롯 마감(open/full 없음) → 자동 CLOSED ($toId)');
-      } else if (hasOpenSlot && currentStatus == TOStatus.closed) {
-        // isManualClosed도 함께 초기화 — TOModel.effectiveStatus 게터가
-        // isManualClosed=true이면 status 값과 무관하게 CLOSED를 반환하므로,
-        // cascade 재오픈 시 남겨두면 TO가 ACTIVE로 세팅됐어도 사용자에게 여전히 CLOSED로 보임.
-        await _firestore.collection('tos').doc(toId).update({
-          'status': TOStatus.active,
-          'closedAt': FieldValue.delete(),
-          'isManualClosed': false,
-        });
-        debugPrint('✅ [TO] 슬롯 재오픈 → ACTIVE 복구 ($toId)');
-      }
-    } catch (e) {
-      debugPrint('⚠️ TO 상태 동기화 실패: $e');
-    }
-  }
 }
