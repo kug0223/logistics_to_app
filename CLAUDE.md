@@ -223,6 +223,25 @@ try {
 
 ---
 
+## 설계 결정 완료 항목 — 재탐색 금지
+
+### [DESIGN-F-M1] callableCalculateAndConfirmWage 시간 교차검증 없음
+actualStart/actualEnd ↔ checkIn/checkOut 교차검증 의도적 미구현. 관리자 재량 허용 설계.
+이유: 반올림·야간교대·기기 오류 등으로 체크인 시간과 크게 다른 값을 입력할 정당한 이유 존재.
+HH:MM 포맷 검증만 유지.
+
+### [DESIGN-A-M3] callableBatchAdjustAttendanceTime 90일 제한
+소급 수정 기간 90일 제한 적용. 90일 이전 기록은 workDate/checkIn 기준으로 skip.
+
+### [DESIGN-A-M4] 퇴사 D+3 자동 승인 + D+1/D+2 알림
+D+3 자동 승인 유지 (민법상 1개월 기준보다 관대). 관리자에게 D+1(2일 경고), D+2(긴급) FCM 알림.
+
+### [DESIGN-STORAGE-EMPLOYER] contracts/signature_employer.png 소속 검증 없음
+Storage rules에서 동적 경로 체이닝 불가(employment_contracts→businessId→businesses).
+보완: contractId = Firebase auto-id(무작위), update: if false 덮어쓰기 차단. 실질 위험 낮음.
+
+---
+
 ## Trust Boundary Charter — 새 기능 설계 전 필수 체크
 
 새 기능을 추가하기 전, 아래 기준으로 "CF(서버)냐 클라이언트냐"를 먼저 결정한다.

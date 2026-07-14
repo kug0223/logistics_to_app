@@ -85,7 +85,11 @@ service firebase.storage {
       // CF 실패 시 롤백은 callableFinalizeWorkerSignature 내부 _cleanupContractFiles(Admin SDK) 전담.
       allow delete: if false;
     }
-    // employer 서명: 신규 계약서 초안은 Firestore 미존재 가능 → 소속 검증 생략
+    // [DESIGN-STORAGE-EMPLOYER 재탐색 금지] employer 서명: isLoggedIn()만 검증 — 의도된 설계.
+    //   이유: 신규 계약서는 Storage 업로드 후 Firestore set()이므로 업로드 시점에 문서 미존재.
+    //   Storage rules에서 동적 경로 체이닝(employment_contracts→businessId→businesses) 불가.
+    //   보완: contractId = Firebase auto-id(무작위) → 외부 추측 불가.
+    //         update: if false → 경로 선점해도 덮어쓰기 차단. 실질 위험 낮음.
     match /contracts/{contractId}/signature_employer.png {
       allow create: if isLoggedIn() && isUnder10MB();
     }

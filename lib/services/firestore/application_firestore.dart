@@ -1620,254 +1620,51 @@ extension ApplicationFirestore on FirestoreService {
   // 내부 헬퍼
   // ───────────────────────────────────────────────────────
 
-  /// 확정 처리 (충돌 자동 취소 포함)
+  /// 확정 처리 (충돌 자동 취소 포함) — [MED-3] callableConfirmApplication CF 이전
+  /// 트랜잭션·CAPACITY-GUARD·배치·슬롯 재계산·확정 알림을 서버에서 원자적으로 처리
   Future<List<String>> _confirmWithConflictCheck({
     required String applicationId,
     String? confirmedBy,
     String? message,
   }) async {
     NetworkChecker.instance.assertOnline('지원자 확정을 하려면 인터넷 연결이 필요합니다.');
-    final appRef = _firestore.collection('applications').doc(applicationId);
 
-    // 트랜잭션으로 상태 체크 + CONTRACT_PENDING 선점 — 동시 확정 요청 방지
-    // [CAPACITY-GUARD] TO 문서를 트랜잭션 내에서 함께 읽어 정원 초과 서버 측 차단
-    // 클라이언트 캐시 기반 체크만으로는 동시 요청·병렬 일괄승인 시 초과 허용됨
-    bool alreadyConfirmed = false;
-    await _firestore.runTransaction((tx) async {
-      final fresh = await tx.get(appRef);
-      if (!fresh.exists) throw Exception('지원서를 찾을 수 없습니다');
-      final status = fresh.data()?['status'] as String?;
-      if (AppStatus.confirmedStatuses.contains(status)) {
-        alreadyConfirmed = true;
-        return;
-      }
-      if (status == AppStatus.canceled) {
-        throw Exception('취소된 지원서는 확정할 수 없습니다');
-      }
-      if (status == AppStatus.autoCanceled) {
-        throw Exception('자동 취소된 지원서는 확정할 수 없습니다');
-      }
-      if (status == AppStatus.rejected) {
-        throw Exception('거절된 지원서는 확정할 수 없습니다');
-      }
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableConfirmApplication',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
 
-      // [CAPACITY-GUARD] 정원 서버 측 검증
-      // [BUG-수정] T-H-1: flex(단기) TO는 슬롯별 workTypeCounts를 관리하므로
-      // slotId가 있을 때는 슬롯 문서를 읽어 confirmedCount를 비교해야 함.
-      // TO 문서의 workTypeConfirmedCounts는 flex TO에서 갱신되지 않아 항상 0으로 읽혀
-      // 병렬 일괄승인 시 정원 초과가 차단되지 않는 버그를 수정.
-      final freshData = fresh.data()!;
-      final toIdFresh = freshData['toId'] as String?;
-      final slotIdFresh = freshData['slotId'] as String?;
-      final selectedWorkType = freshData['selectedWorkType'] as String?;
-      if (toIdFresh != null && selectedWorkType != null) {
-        if (slotIdFresh != null) {
-          // flex TO: 슬롯 문서의 workTypeCounts.$workType.confirmedCount 를 사용
-          final slotRef = _firestore
-              .collection('tos').doc(toIdFresh)
-              .collection('slots').doc(slotIdFresh);
-          final slotFresh = await tx.get(slotRef);
-          if (slotFresh.exists) {
-            final rawWorkDetails = slotFresh.data()?['workDetails'] as List<dynamic>? ?? [];
-            for (final wd in rawWorkDetails.cast<Map<String, dynamic>>()) {
-              if (wd['workType'] == selectedWorkType) {
-                final workTypeRequired = (wd['requiredCount'] as num?)?.toInt() ?? 0;
-                final rawCounts = slotFresh.data()?['workTypeCounts'] as Map<String, dynamic>?;
-                final workTypeConfirmed =
-                    ((rawCounts?[selectedWorkType] as Map<String, dynamic>?)?['confirmedCount'] as num?)?.toInt() ?? 0;
-                if (workTypeRequired > 0 && workTypeConfirmed >= workTypeRequired) {
-                  throw Exception('정원이 초과되었습니다. (필요: $workTypeRequired명, 현재: $workTypeConfirmed명 확정)');
-                }
-                break;
-              }
-            }
-            // [CRIT-02-FIX] slotRef를 트랜잭션 내에서 WRITE → Firestore 낙관적 잠금 활성화
-            // 수정 전: tx.get(slotRef)만 하고 write 없음 → 두 트랜잭션이 서로 다른 appRef를
-            //   write하므로 충돌 감지 불가 → 동시 확정 시 정원 초과 허용됨
-            // 수정 후: tx.update(slotRef) 포함 → 두 트랜잭션이 동일 slotRef write 시도 →
-            //   Tx2 충돌 감지 후 retry → 재조회 시 confirmedCount=1 → 정원 초과 예외 발생
-            // 배치의 _incrementTOConfirmed에서 workTypeCounts 중복 증가 방지 위해
-            //   skipWorkTypeCounts:true 플래그 사용 (아래 batch call 참조)
-            tx.update(slotRef, {
-              'workTypeCounts.$selectedWorkType.confirmedCount': FieldValue.increment(1),
-            });
-          }
-        } else {
-          // 정기 TO: TO 문서의 workTypeConfirmedCounts 를 사용
-          final toRef = _firestore.collection('tos').doc(toIdFresh);
-          final toFresh = await tx.get(toRef);
-          if (toFresh.exists) {
-            final confirmedCounts = toFresh.data()?['workTypeConfirmedCounts'] as Map<String, dynamic>?;
-            final workTypeConfirmed = (confirmedCounts?[selectedWorkType] as num?)?.toInt() ?? 0;
-            final rawWorkDetails = toFresh.data()?['workDetails'] as List<dynamic>? ?? [];
-            for (final wd in rawWorkDetails.cast<Map<String, dynamic>>()) {
-              if (wd['workType'] == selectedWorkType) {
-                final workTypeRequired = (wd['requiredCount'] as num?)?.toInt() ?? 0;
-                if (workTypeRequired > 0 && workTypeConfirmed >= workTypeRequired) {
-                  throw Exception('정원이 초과되었습니다. (필요: $workTypeRequired명, 현재: $workTypeConfirmed명 확정)');
-                }
-                break;
-              }
-            }
-            // [CRIT-02-FIX] 정기 TO도 동일: toRef write → 충돌 감지 활성화
-            tx.update(toRef, {
-              'workTypeConfirmedCounts.$selectedWorkType': FieldValue.increment(1),
-            });
-          }
-        }
-      }
-
-      // 상태를 CONTRACT_PENDING으로 선점 → 두 번째 요청은 alreadyConfirmed=true 반환
-      tx.update(appRef, {
-        'status': 'CONTRACT_PENDING',
-        'confirmedAt': FieldValue.serverTimestamp(),
-        if (confirmedBy != null) 'confirmedBy': confirmedBy,
-      });
-    });
-    if (alreadyConfirmed) return [];
-
-    // 선점 후 최신 문서 재조회 (workDays, workEndDate 등 필요)
-    final appDoc = await appRef.get(const GetOptions(source: Source.server));
-    if (!appDoc.exists) throw Exception('지원서를 찾을 수 없습니다');
-    final appData = appDoc.data()!;
-
-    final app = ApplicationModel.fromMap(appData, appDoc.id);
-    final toId = appData['toId'] as String?;
-    final slotId = appData['slotId'] as String?;
-
-    if (toId == null) throw Exception('toId가 없는 지원서입니다');
-
-    // ── TO 로드 (계약기간 계산 + 충돌 탐색에 사용) ──
-    // [SAFE] TO status(CLOSED/FULL) 체크 없음 — 의도된 설계.
-    // 관리자가 공고를 수동 마감한 후에도 기존 PENDING 지원자는 계속 심사 가능.
-    // 새 지원은 applyToTO()에서 CLOSED/FULL 차단, 기존 심사는 정원 CAPACITY-GUARD로만 제한.
-    final toDoc = await _firestore.collection('tos').doc(toId).get(const GetOptions(source: Source.server));
-    final toModel = toDoc.exists ? TOModel.tryFromMap(toDoc.data()!, toDoc.id) : null;
-
-    // ── 장기공고 확정 시 workEndDate 자동 계산 ──
-    // (지원 시 workEndDate가 null인 경우: apply_dialog 경유 or preset period TO)
-    DateTime? computedWorkEndDate = app.workEndDate;
-    List<String>? computedWorkDays = app.workDays;
-    final isLongTermApp = app.applicationType == AppType.longTerm ||
-        (app.workDays != null && app.workDays!.isNotEmpty);
-    if (isLongTermApp && computedWorkEndDate == null && toModel != null) {
-      final startDate = app.desiredStartDate ?? app.workDate;
-      if (toModel.contractPeriodType != null && toModel.contractPeriodType != 'custom') {
-        computedWorkEndDate = toModel.computeContractEndDate(startDate);
-      } else if (toModel.rangeEnd != null) {
-        computedWorkEndDate = toModel.rangeEnd;
-      }
-    }
-    // workDays 미설정 시 TO에서 보완
-    if ((computedWorkDays == null || computedWorkDays.isEmpty) &&
-        toModel != null && toModel.workDays.isNotEmpty) {
-      computedWorkDays = toModel.workDays;
-    }
-
-    // ── 슬롯 상태 확인 + 모집 인원 초과 여부 경고 ──
-    if (slotId != null) {
-      final slotSnap = await _firestore
-          .collection('tos').doc(toId)
-          .collection('slots').doc(slotId).get(const GetOptions(source: Source.server));
-      if (slotSnap.exists) {
-        final slotData = slotSnap.data()!;
-
-        // [029] 마감된 슬롯에는 확정 불가 — CONTRACT_PENDING 롤백 후 예외 발생
-        if (slotData['status'] == 'closed') {
-          try {
-            await appRef.update({
-              'status': 'PENDING',
-              'confirmedAt': FieldValue.delete(),
-              if (confirmedBy != null) 'confirmedBy': FieldValue.delete(),
-            });
-          // 롤백 실패 무시 — 어차피 아래 Exception을 던지므로 호출자가 에러 처리함
-          } catch (_) {}
-          throw Exception('이미 마감된 슬롯입니다. 슬롯을 재오픈 후 확정해주세요.');
-        }
-
-        final workType = app.selectedWorkType;
-        final workDetails = (slotData['workDetails'] as List? ?? [])
-            .cast<Map<String, dynamic>>();
-        final wd = workDetails.firstWhere(
-          (d) => d['workType'] == workType, orElse: () => {});
-        final required = (wd['requiredCount'] as num?)?.toInt() ?? 0;
-        final counts = slotData['workTypeCounts'] as Map<String, dynamic>?;
-        final confirmed = (counts?[workType]?['confirmedCount'] as num?)?.toInt() ?? 0;
-        if (required > 0 && confirmed >= required) {
-          ToastHelper.showWarning(
-            '[$workType] 모집인원($required명)이 이미 찼습니다. 초과 확정됩니다.');
-        }
-      }
-    } else if (toModel != null) {
-      // 장기 TO (슬롯 없음) — workTypeConfirmedCounts 확인
-      final workType = app.selectedWorkType;
-      final workDetails = (toModel.workDetails)
-          .where((d) => d.workType == workType);
-      if (workDetails.isNotEmpty) {
-        final required = workDetails.first.requiredCount;
-        final confirmedCounts = toDoc.data()?['workTypeConfirmedCounts']
-            as Map<String, dynamic>?;
-        final confirmed = (confirmedCounts?[workType] as num?)?.toInt() ?? 0;
-        if (required > 0 && confirmed >= required) {
-          ToastHelper.showWarning(
-            '[$workType] 모집인원($required명)이 이미 찼습니다. 초과 확정됩니다.');
-        }
-      }
-    }
-
-    final batch = _firestore.batch();
-
-    // 확정 상태는 위 트랜잭션에서 이미 CONTRACT_PENDING으로 선점됨
-    // 배치에서는 추가 필드(확인 메시지·기간·요일·statusHistory)만 보완
-    batch.update(appDoc.reference, {
-      if (message != null) 'confirmMessage': message,
-      if (computedWorkEndDate != null)
-        'workEndDate': Timestamp.fromDate(computedWorkEndDate),
-      if (computedWorkDays != null && (app.workDays == null || app.workDays!.isEmpty))
-        'workDays': computedWorkDays,
-      'statusHistory': FieldValue.arrayUnion([{
-        'status': 'CONTRACT_PENDING',
-        'at': Timestamp.now(),
-        'by': confirmedBy,
-        'action': 'CONFIRM',
-      }]),
+    final result = await callable.call<Map<String, dynamic>>({
+      'applicationId': applicationId,
+      if (message != null) 'message': message,
     });
 
-    // TO + Slot 통계 (PENDING→CONFIRMED)
-    _incrementTOPending(batch, toId, slotId, delta: -1, workType: app.selectedWorkType);
-    // [CRIT-02-FIX] skipWorkTypeCounts: true — workTypeCounts/workTypeConfirmedCounts는
-    //   위 트랜잭션 내에서 이미 increment됨 → 배치에서 중복 증가 차단
-    _incrementTOConfirmed(batch, toId, slotId, delta: 1, workType: app.selectedWorkType,
-        skipWorkTypeCounts: true);
+    final data = result.data;
+    if (data['alreadyConfirmed'] == true) return [];
 
-    try {
-      await batch.commit();
-    } catch (e) {
-      // 배치 커밋 실패 → 트랜잭션으로 선점한 CONTRACT_PENDING을 PENDING으로 롤백
-      // (실패 시 지원서가 영구 limbo 상태에 빠지는 것을 방지)
-      try {
-        await appRef.update({
-          'status': 'PENDING',
-          'confirmedAt': FieldValue.delete(),
-          if (confirmedBy != null) 'confirmedBy': FieldValue.delete(),
-        });
-        debugPrint('⚠️ 배치 커밋 실패 → CONTRACT_PENDING 롤백 완료');
-      } catch (rollbackError) {
-        debugPrint('❌ CONTRACT_PENDING 롤백 실패 — 수동 해제 필요: $rollbackError');
-      }
-      rethrow;
+    final capacityWarning = data['capacityWarning'] as Map<String, dynamic>?;
+    if (capacityWarning != null) {
+      ToastHelper.showWarning(
+        '[${capacityWarning['workType']}] 모집인원(${capacityWarning['required']}명)이 이미 찼습니다. 초과 확정됩니다.');
     }
-    clearCache(toId: toId);
 
-    // 확정 후 슬롯 상태('open'↔'full') 재계산
-    if (slotId != null) {
-      await _recalculateSlotStatus(toId, slotId);
-    }
+    final appInfo = (data['appInfo'] as Map?)?.cast<String, dynamic>() ?? {};
+    final toId = appInfo['toId'] as String?;
+    final uid = appInfo['uid'] as String? ?? '';
+    final businessId = appInfo['businessId'] as String? ?? '';
+    final businessName = appInfo['businessName'] as String? ?? '';
+    final startTime = appInfo['startTime'] as String? ?? '';
+    final endTime = appInfo['endTime'] as String? ?? '';
+    final isLongTerm = appInfo['isLongTerm'] as bool? ?? false;
+    final workDateMs = appInfo['workDateMs'] as int? ?? 0;
+    final startDateMs = appInfo['startDateMs'] as int?;
+    final workEndDateMs = appInfo['workEndDateMs'] as int?;
+    final workDays = (appInfo['workDays'] as List?)?.cast<String>();
+
+    if (toId != null) clearCache(toId: toId);
 
     // [SEC-FIX] 충돌 AUTO_CANCEL → CF 이전 (callableAutoConflictCancel)
     // 이유: BUSINESS_ADMIN이 uid 단독 LIST 쿼리 시 보안 규칙에서 PERMISSION_DENIED
     //   → 클라이언트에서 타사업장 포함 전체 충돌 탐색 불가 → Admin SDK CF로 처리
-    // [186] CONTRACT_PENDING 충돌(동시 확정)도 CF 내부에서 감지해 warn 로깅
     List<Map<String, dynamic>> canceledDetails = [];
     try {
       final autoConflictCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
@@ -1875,25 +1672,23 @@ extension ApplicationFirestore on FirestoreService {
               options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
       final autoConflictResult = await autoConflictCallable.call({
         'confirmedAppId': applicationId,
-        'targetUid': app.uid,
-        'businessId': app.businessId,
-        'businessName': app.businessName,
-        'startTime': app.startTime,
-        'endTime': app.endTime,
-        if (!isLongTermApp) 'workDate': app.workDate.millisecondsSinceEpoch,
-        if (isLongTermApp) ...{
+        'targetUid': uid,
+        'businessId': businessId,
+        'businessName': businessName,
+        'startTime': startTime,
+        'endTime': endTime,
+        if (!isLongTerm) 'workDate': workDateMs,
+        if (isLongTerm) ...{
           'isLongTerm': true,
-          'startDate': (app.desiredStartDate ?? app.workDate).millisecondsSinceEpoch,
-          if (computedWorkEndDate != null)
-            'endDate': computedWorkEndDate.millisecondsSinceEpoch,
-          if (computedWorkDays != null) 'workDays': computedWorkDays,
+          'startDate': startDateMs ?? workDateMs,
+          if (workEndDateMs != null) 'endDate': workEndDateMs,
+          if (workDays != null) 'workDays': workDays,
         },
       });
       canceledDetails = ((autoConflictResult.data as Map?)?['canceledDetails'] as List? ?? [])
           .cast<Map<String, dynamic>>();
       debugPrint('✅ AUTO_CANCEL CF 완료 — ${canceledDetails.length}건 취소');
     } catch (e) {
-      // CF 실패 시 syncTOStats가 카운터 복구 — 확정 자체는 성공했으므로 rethrow 안 함
       debugPrint('⚠️ AUTO_CANCEL CF 실패 (확정은 완료됨): $e');
     }
 
@@ -1907,38 +1702,23 @@ extension ApplicationFirestore on FirestoreService {
       clearCache(toId: tId);
     }
 
-    // [NOTIFY-FIX] CONTRACT_PENDING 진입 즉시 근무자에게 확정 알림 발송.
-    // 이전 코드는 saveEmployerSignature() 호출(계약서 서명 요청) 시점까지 알림이 없어
-    // 관리자가 서명을 미루면 근무자가 확정 여부를 알 수 없는 UX 문제가 있었다.
-    // 계약서 서명 요청 알림은 saveEmployerSignature()에서 별도로 발송됨.
-    try {
-      await createNotification(NotificationModel.createApplicationConfirmed(
-        userId: app.uid,
-        businessName: app.businessName,
-        businessId: app.businessId,
-        workType: app.selectedWorkType,
-        workDate: app.workDate,
-        applicationId: applicationId,
-      ));
-    } catch (notifErr) {
-      // 알림 실패가 확정 결과에 영향을 주면 안 됨
-      debugPrint('⚠️ 확정 알림 전송 실패 (확정은 완료됨): $notifErr');
-    }
-
     // 자동 취소된 충돌 지원서 알림
+    final fallbackDate = workDateMs > 0
+        ? DateTime.fromMillisecondsSinceEpoch(workDateMs)
+        : DateTime.now();
     for (final detail in canceledDetails) {
-      final workDateMs = detail['workDateMs'] as int?;
+      final detailWorkDateMs = detail['workDateMs'] as int?;
       _sendApplicationAutoCanceledNotification(
         applicantUid: detail['uid'] as String? ?? '',
         businessName: detail['businessName'] as String? ?? '',
         businessId: detail['businessId'] as String? ?? '',
         workType: detail['selectedWorkType'] as String? ?? '',
-        workDate: workDateMs != null
-            ? DateTime.fromMillisecondsSinceEpoch(workDateMs)
-            : app.workDate,
+        workDate: detailWorkDateMs != null
+            ? DateTime.fromMillisecondsSinceEpoch(detailWorkDateMs)
+            : fallbackDate,
         applicationId: detail['id'] as String? ?? '',
-        conflictingBusinessName: app.businessName,
-        conflictingTime: '${app.startTime}~${app.endTime}',
+        conflictingBusinessName: businessName,
+        conflictingTime: '$startTime~$endTime',
       );
     }
 

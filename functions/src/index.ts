@@ -7993,6 +7993,9 @@ async function srvGetPrevGrossTotalTx(
 
 // ── callableCalculateAndConfirmWage ──────────────────────────
 // [Phase 2] 급여 계산 + 확정 (pending → calculated) 서버 사이드 처리
+// [DESIGN-F-M1 재탐색 금지] actualStart/actualEnd ↔ checkIn/checkOut 교차검증 의도적 미구현.
+//   이유: 반올림 처리·야간교대·기기 오류 등으로 관리자가 실제 체크인 시간과 크게 다른 값을 입력할
+//   정당한 이유가 존재함. 관리자 재량 허용이 설계 결정. HH:MM 포맷 검증만 유지.
 // 파라미터를 서버에서 재계산 → 8일 소급 자동 처리 → 원자적 저장
 // Input:  { attendanceId, wageType, baseWage, workDate, scheduledStart, scheduledEnd,
 //           actualStart, actualEnd, breakMinutes, scheduledBreakMinutes?,
@@ -10843,6 +10846,298 @@ interface AdjustEntry {
   status: string;
   resetWageDetail: boolean;
 }
+
+// ── callableConfirmApplication ───────────────────────────────
+// 지원서 확정 (PENDING → CONTRACT_PENDING) — 서버 사이드 원자적 처리
+// [MED-3 해결] workTypeConfirmedCounts 위조 완전 차단 — 클라이언트 트랜잭션 제거
+// Input : { applicationId, message? }
+// Output: { success, alreadyConfirmed, capacityWarning?, workEndDate?, workDays? }
+export const callableConfirmApplication = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {applicationId, message} = request.data as {applicationId: string; message?: string};
+    if (!applicationId || typeof applicationId !== "string") {
+      throw new HttpsError("invalid-argument", "applicationId가 필요합니다.");
+    }
+
+    const appRef = db.collection("applications").doc(applicationId);
+    const appSnap = await appRef.get();
+    if (!appSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const appDataPre = appSnap.data()!;
+    const businessId = appDataPre.businessId as string;
+
+    // [SEC-ROLE] 사업장 관리자 권한 검증
+    await assertBizAdmin(callerUid, businessId);
+
+    let alreadyConfirmed = false;
+
+    // ── 1. 트랜잭션: 상태 체크 + CAPACITY-GUARD + CONTRACT_PENDING 선점 ──
+    await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(appRef);
+      if (!fresh.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+      const status = fresh.data()!.status as string;
+
+      if (status === "CONFIRMED" || status === "CONTRACT_PENDING") {
+        alreadyConfirmed = true;
+        return;
+      }
+      if (status === "CANCELED") throw new HttpsError("failed-precondition", "취소된 지원서는 확정할 수 없습니다.");
+      if (status === "AUTO_CANCELED") throw new HttpsError("failed-precondition", "자동 취소된 지원서는 확정할 수 없습니다.");
+      if (status === "REJECTED") throw new HttpsError("failed-precondition", "거절된 지원서는 확정할 수 없습니다.");
+
+      const fd = fresh.data()!;
+      const toIdFresh = fd.toId as string | undefined;
+      const slotIdFresh = fd.slotId as string | undefined;
+      const selectedWorkType = fd.selectedWorkType as string | undefined;
+
+      // [CAPACITY-GUARD] 정원 서버 검증 + 낙관적 잠금
+      if (toIdFresh && selectedWorkType) {
+        if (slotIdFresh) {
+          const slotRef = db.collection("tos").doc(toIdFresh).collection("slots").doc(slotIdFresh);
+          const slotFresh = await tx.get(slotRef);
+          if (slotFresh.exists) {
+            const rawWDs = (slotFresh.data()!.workDetails as Record<string, unknown>[] | undefined) ?? [];
+            for (const wd of rawWDs) {
+              if (wd.workType === selectedWorkType) {
+                const req = (wd.requiredCount as number | undefined) ?? 0;
+                const counts = slotFresh.data()!.workTypeCounts as Record<string, Record<string, number>> | undefined;
+                const conf = (counts?.[selectedWorkType]?.confirmedCount) ?? 0;
+                if (req > 0 && conf >= req) {
+                  throw new HttpsError("failed-precondition", `정원이 초과되었습니다. (필요: ${req}명, 현재: ${conf}명 확정)`);
+                }
+                break;
+              }
+            }
+            // 낙관적 잠금 — 동시 확정 충돌 감지
+            tx.update(slotRef, {[`workTypeCounts.${selectedWorkType}.confirmedCount`]: admin.firestore.FieldValue.increment(1)});
+          }
+        } else {
+          const toRef = db.collection("tos").doc(toIdFresh);
+          const toFresh = await tx.get(toRef);
+          if (toFresh.exists) {
+            const confCounts = toFresh.data()!.workTypeConfirmedCounts as Record<string, number> | undefined;
+            const conf = (confCounts?.[selectedWorkType]) ?? 0;
+            const rawWDs = (toFresh.data()!.workDetails as Record<string, unknown>[] | undefined) ?? [];
+            for (const wd of rawWDs) {
+              if (wd.workType === selectedWorkType) {
+                const req = (wd.requiredCount as number | undefined) ?? 0;
+                if (req > 0 && conf >= req) {
+                  throw new HttpsError("failed-precondition", `정원이 초과되었습니다. (필요: ${req}명, 현재: ${conf}명 확정)`);
+                }
+                break;
+              }
+            }
+            tx.update(toRef, {[`workTypeConfirmedCounts.${selectedWorkType}`]: admin.firestore.FieldValue.increment(1)});
+          }
+        }
+      }
+
+      tx.update(appRef, {
+        status: "CONTRACT_PENDING",
+        confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
+        confirmedBy: callerUid,
+      });
+    });
+
+    if (alreadyConfirmed) return {success: true, alreadyConfirmed: true};
+
+    // ── 2. 선점 후 최신 문서 재조회 ──
+    const latestSnap = await appRef.get();
+    if (!latestSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const latestData = latestSnap.data()!;
+
+    const toId = latestData.toId as string | undefined;
+    const slotId = latestData.slotId as string | undefined;
+    const selectedWorkType = latestData.selectedWorkType as string | undefined;
+    const uid = latestData.uid as string;
+    const businessName = latestData.businessName as string;
+
+    if (!toId) throw new HttpsError("invalid-argument", "toId가 없는 지원서입니다.");
+
+    // ── 3. TO 로드 + workEndDate/workDays 계산 ──
+    const toDoc = await db.collection("tos").doc(toId).get();
+    const toData = toDoc.exists ? toDoc.data()! : undefined;
+
+    const isLongTermApp = latestData.applicationType === "longTerm" ||
+      (Array.isArray(latestData.workDays) && (latestData.workDays as string[]).length > 0);
+
+    let computedWorkEndDate: admin.firestore.Timestamp | undefined;
+    let computedWorkDays: string[] | undefined;
+
+    if (isLongTermApp && !latestData.workEndDate && toData) {
+      const startTs = (latestData.desiredStartDate ?? latestData.workDate) as admin.firestore.Timestamp;
+      const periodType = toData.contractPeriodType as string | undefined;
+      if (periodType && periodType !== "custom") {
+        const d = new Date(startTs.toDate().getTime());
+        if (periodType === "15days") d.setDate(d.getDate() + 15);
+        else if (periodType === "1month") d.setMonth(d.getMonth() + 1);
+        else if (periodType === "3months") d.setMonth(d.getMonth() + 3);
+        else if (periodType === "6months") d.setMonth(d.getMonth() + 6);
+        else if (periodType === "1year") d.setFullYear(d.getFullYear() + 1);
+        computedWorkEndDate = admin.firestore.Timestamp.fromDate(d);
+      } else if (toData.rangeEnd) {
+        computedWorkEndDate = toData.rangeEnd as admin.firestore.Timestamp;
+      }
+    }
+    if ((!latestData.workDays || (latestData.workDays as string[]).length === 0) &&
+        Array.isArray(toData?.workDays) && (toData!.workDays as string[]).length > 0) {
+      computedWorkDays = toData!.workDays as string[];
+    }
+
+    // ── 4. 슬롯 closed 체크 ──
+    let capacityWarning: {workType: string; required: number; confirmed: number} | undefined;
+    if (slotId) {
+      const slotSnap = await db.collection("tos").doc(toId).collection("slots").doc(slotId).get();
+      if (slotSnap.exists) {
+        if (slotSnap.data()!.status === "closed") {
+          try {
+            await appRef.update({
+              status: "PENDING",
+              confirmedAt: admin.firestore.FieldValue.delete(),
+              confirmedBy: admin.firestore.FieldValue.delete(),
+            });
+          } catch (_) { /* 롤백 실패 무시 */ }
+          throw new HttpsError("failed-precondition", "이미 마감된 슬롯입니다. 슬롯을 재오픈 후 확정해주세요.");
+        }
+        if (selectedWorkType) {
+          const rawWDs = (slotSnap.data()!.workDetails as Record<string, unknown>[] | undefined) ?? [];
+          for (const wd of rawWDs) {
+            if (wd.workType === selectedWorkType) {
+              const req = (wd.requiredCount as number | undefined) ?? 0;
+              const counts = slotSnap.data()!.workTypeCounts as Record<string, Record<string, number>> | undefined;
+              const conf = (counts?.[selectedWorkType]?.confirmedCount) ?? 0;
+              if (req > 0 && conf >= req) capacityWarning = {workType: selectedWorkType, required: req, confirmed: conf};
+              break;
+            }
+          }
+        }
+      }
+    } else if (toData && selectedWorkType) {
+      const confCounts = toData.workTypeConfirmedCounts as Record<string, number> | undefined;
+      const conf = (confCounts?.[selectedWorkType]) ?? 0;
+      const rawWDs = (toData.workDetails as Record<string, unknown>[] | undefined) ?? [];
+      for (const wd of rawWDs) {
+        if (wd.workType === selectedWorkType) {
+          const req = (wd.requiredCount as number | undefined) ?? 0;
+          if (req > 0 && conf >= req) capacityWarning = {workType: selectedWorkType, required: req, confirmed: conf};
+          break;
+        }
+      }
+    }
+
+    // ── 5. 배치: statusHistory + 카운터 업데이트 ──
+    const batch2 = db.batch();
+
+    const historyEntry: Record<string, unknown> = {
+      status: "CONTRACT_PENDING",
+      at: Timestamp.now(),
+      by: callerUid,
+      action: "CONFIRM",
+    };
+    const batchUpdate: Record<string, unknown> = {
+      statusHistory: admin.firestore.FieldValue.arrayUnion(historyEntry),
+    };
+    if (message) batchUpdate.confirmMessage = message;
+    if (computedWorkEndDate) batchUpdate.workEndDate = computedWorkEndDate;
+    if (computedWorkDays) batchUpdate.workDays = computedWorkDays;
+    batch2.update(appRef, batchUpdate);
+
+    // TO 카운터: totalPending -1, totalConfirmed +1 (하나의 update로 합산)
+    // [CRIT-02-FIX] workTypeConfirmedCounts는 트랜잭션에서 이미 처리됨 — 중복 증가 차단
+    batch2.update(db.collection("tos").doc(toId), {
+      totalPending: admin.firestore.FieldValue.increment(-1),
+      totalConfirmed: admin.firestore.FieldValue.increment(1),
+    });
+    if (slotId) {
+      batch2.update(db.collection("tos").doc(toId).collection("slots").doc(slotId), {
+        pendingCount: admin.firestore.FieldValue.increment(-1),
+        confirmedCount: admin.firestore.FieldValue.increment(1),
+      });
+    }
+
+    try {
+      await batch2.commit();
+    } catch (batchErr) {
+      try {
+        await appRef.update({
+          status: "PENDING",
+          confirmedAt: admin.firestore.FieldValue.delete(),
+          confirmedBy: admin.firestore.FieldValue.delete(),
+        });
+        console.warn("[confirmApplication] 배치 실패 → CONTRACT_PENDING 롤백 완료");
+      } catch (rollbackErr) {
+        console.error("[confirmApplication] CONTRACT_PENDING 롤백 실패 — 수동 해제 필요:", rollbackErr);
+      }
+      throw batchErr;
+    }
+
+    // ── 6. 슬롯 상태 재계산 (open ↔ full) ──
+    if (slotId) {
+      try {
+        const slotRef2 = db.collection("tos").doc(toId).collection("slots").doc(slotId);
+        await db.runTransaction(async (tx2) => {
+          const s = await tx2.get(slotRef2);
+          if (!s.exists || s.data()!.status === "closed" || s.data()!.isManualClosed === true) return;
+          const confirmedNow = (s.data()!.confirmedCount as number | undefined) ?? 0;
+          const wds = (s.data()!.workDetails as Record<string, unknown>[] | undefined) ?? [];
+          const totalReq = wds.reduce((acc, d) => acc + ((d.requiredCount as number | undefined) ?? 0), 0);
+          if (totalReq <= 0) return;
+          const newStatus = confirmedNow >= totalReq ? "full" : "open";
+          if (s.data()!.status !== newStatus) tx2.update(slotRef2, {status: newStatus});
+        });
+      } catch (e) {
+        console.warn(`[confirmApplication] 슬롯 상태 재계산 실패 (${slotId}):`, e);
+      }
+    }
+
+    // ── 7. 확정 알림 발송 (근무자) ──
+    try {
+      const workDateTs = latestData.workDate as admin.firestore.Timestamp | undefined;
+      await db.collection("users").doc(uid).collection("notifications").add({
+        userId: uid,
+        type: "applicationConfirmed",
+        title: "지원 확정",
+        body: `[${businessName}] ${selectedWorkType ?? ""} 지원이 확정되었습니다.`,
+        data: {
+          applicationId,
+          businessId,
+          screen: "applicationDetail",
+          ...(workDateTs ? {workDateMs: workDateTs.toMillis()} : {}),
+        },
+        isRead: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      console.warn("[confirmApplication] 확정 알림 발송 실패 (확정은 완료됨):", e);
+    }
+
+    const workDateTsForReturn = latestData.workDate as admin.firestore.Timestamp | undefined;
+    const desiredStartTs = latestData.desiredStartDate as admin.firestore.Timestamp | undefined;
+    return {
+      success: true,
+      alreadyConfirmed: false,
+      capacityWarning: capacityWarning ?? null,
+      appInfo: {
+        toId,
+        uid,
+        businessId,
+        businessName: businessName ?? "",
+        startTime: (latestData.startTime as string | undefined) ?? "",
+        endTime: (latestData.endTime as string | undefined) ?? "",
+        workDateMs: workDateTsForReturn?.toMillis() ?? 0,
+        isLongTerm: isLongTermApp,
+        startDateMs: isLongTermApp
+          ? ((desiredStartTs ?? workDateTsForReturn)?.toMillis() ?? 0)
+          : null,
+        workEndDateMs: computedWorkEndDate ? computedWorkEndDate.toMillis() : null,
+        workDays: computedWorkDays ?? null,
+      },
+    };
+  }
+);
 
 // 출퇴근 시간 일괄 조정 (트랜잭션: confirmed/transferred 건 서버 재검증 후 skip)
 export const callableBatchAdjustAttendanceTime = onCall(
