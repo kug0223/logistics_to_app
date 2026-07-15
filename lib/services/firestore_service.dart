@@ -300,20 +300,26 @@ class FirestoreService {
     }
   }
 
-  /// TO 재오픈 (마감 취소)
+  /// TO 재오픈 (마감 취소) — CF callableUpdateTO 위임
+  /// [BUG-REOPEN-FIX 2026-07-15] 클라이언트 직접 쓰기 → CF 이전
+  ///   rules에서 관리자/하위관리자 TO update 차단(callableUpdateTO CF 이전, 2026-07-14)됨에 따라
+  ///   reopenTO 클라이언트 직접 쓰기는 PERMISSION_DENIED로 실패함.
+  ///   callableUpdateTO가 isManualClosed:false 재오픈 로직을 서버에서 처리:
+  ///   reopenedBy=callerUid·reopenedAt/closedAt/closedBy=serverTimestamp()/delete() 강제.
   Future<bool> reopenTO(String toId, String adminUID) async {
     try {
-      await _firestore.collection('tos').doc(toId).update({
-        'isManualClosed': false,
-        'reopenedAt': FieldValue.serverTimestamp(),
-        'reopenedBy': adminUID,
-        'status': TOStatus.active,
-        'statusUpdatedAt': FieldValue.serverTimestamp(),
-        'closedBy': FieldValue.delete(),
-        'closedAt': FieldValue.delete(), // [B-9] 재오픈 시 closedAt 잔존 방지
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableUpdateTO',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+      await callable.call<Map<String, dynamic>>({
+        'toId': toId,
+        'updates': {
+          'isManualClosed': false,
+          'status': TOStatus.active,
+        },
       });
       clearCache(toId: toId);
-      debugPrint('✅ TO 재오픈 완료: $toId');
+      debugPrint('✅ TO 재오픈 완료 (CF): $toId');
       return true;
     } catch (e) {
       debugPrint('❌ TO 재오픈 실패: $e');
