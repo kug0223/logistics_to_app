@@ -3037,11 +3037,16 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
 
   try {
     // ── D-15: 만료 15일 전 알림 ──────────────────────────────
+    // [M-8 수정 2026-07-15] limit 없음 → limit(200) 추가 (D-0와 동일 패턴)
     const d15Snap = await db.collection("applications")
       .where("status", "in", CONFIRMED_STATUSES)
       .where("workEndDate", ">=", d15Start)
       .where("workEndDate", "<=", d15End)
+      .limit(200)
       .get();
+    if (d15Snap.size >= 200) {
+      console.warn("  ⚠️ [D-15] 200건 limit 도달 — 잔여 건 다음 실행에서 처리");
+    }
 
     // [특이사항] 루프 안에서 users/businesses를 개별 순차 조회하면 N×2 I/O → 타임아웃 위험.
     // 처리 대상을 먼저 필터링한 뒤 고유 uid/businessId를 병렬 pre-fetch로 해결한다.
@@ -4329,23 +4334,22 @@ export const onBusinessDeleted = onDocumentDeleted(
       if (groupCount % 500 !== 0) await groupBatch.commit();
     }
 
-    // [SEC-32] idCardAccessRequests 정리 — 신분증 열람 요청 기록 삭제
-    const idCardSnap = await db
-      .collection("idCardAccessRequests")
-      .where("requesterBusinessId", "==", businessId)
-      .get();
-    if (!idCardSnap.empty) {
-      let idCardBatch = db.batch();
-      let idCardCount = 0;
-      for (const doc of idCardSnap.docs) {
-        idCardBatch.delete(doc.ref);
-        idCardCount++;
-        if (idCardCount % 500 === 0) {
-          await idCardBatch.commit();
-          idCardBatch = db.batch();
-        }
+    // [SEC-32] idCardAccessRequests 정리 — [M-9b 수정 2026-07-15] 무제한 .get() → deleteByBusinessId 헬퍼 교체
+    // 주의: 필드명이 requesterBusinessId라 커스텀 쿼리 사용
+    {
+      let lastId: FirebaseFirestore.DocumentSnapshot | undefined;
+      while (true) {
+        let q: FirebaseFirestore.Query = db.collection("idCardAccessRequests")
+          .where("requesterBusinessId", "==", businessId).limit(PAGE);
+        if (lastId) q = q.startAfter(lastId);
+        const snap = await q.get();
+        if (snap.empty) break;
+        const batch = db.batch();
+        snap.docs.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+        if (snap.docs.length < PAGE) break;
+        lastId = snap.docs[snap.docs.length - 1];
       }
-      if (idCardCount % 500 !== 0) await idCardBatch.commit();
     }
 
     // [M-3] 고아 데이터 cascade — schedule_change_requests, employment_contracts,
@@ -4356,24 +4360,8 @@ export const onBusinessDeleted = onDocumentDeleted(
     await deleteByBusinessId("payment_change_requests");
     await deleteByBusinessId("interim_settlement_requests");
 
-    // [NEW-08] review_requests 정리 — 사업장 연관 리뷰 요청 삭제
-    const reviewRequestsSnap = await db
-      .collection("review_requests")
-      .where("businessId", "==", businessId)
-      .get();
-    if (!reviewRequestsSnap.empty) {
-      let rrBatch = db.batch();
-      let rrCount = 0;
-      for (const doc of reviewRequestsSnap.docs) {
-        rrBatch.delete(doc.ref);
-        rrCount++;
-        if (rrCount % 500 === 0) {
-          await rrBatch.commit();
-          rrBatch = db.batch();
-        }
-      }
-      if (rrCount % 500 !== 0) await rrBatch.commit();
-    }
+    // [NEW-08] review_requests 정리 — [M-9c 수정 2026-07-15] 무제한 .get() → deleteByBusinessId 헬퍼 교체
+    await deleteByBusinessId("review_requests");
 
     // [BB-003] 모든 관리자의 managedBusinessIds에서 삭제된 사업장 ID 제거 (adminIds 기준)
     const deletedData = event.data?.data();
@@ -6146,7 +6134,12 @@ export const callableGetAdminAttendances = onCall(
         .where("workDate", "<", Timestamp.fromMillis(endMs!));
     }
 
+    // [#10 수정 2026-07-15] filterWageStatus 화이트리스트 추가 — 임의 값으로 내부 상태 탐색 방지
+    const VALID_WAGE_STATUSES = new Set(["pending", "calculated", "confirmed", "transferred", "wageConfirmed", "wageTransferred"]);
     if (filterWageStatus && typeof filterWageStatus === "string" && filterWageStatus.trim().length > 0) {
+      if (!VALID_WAGE_STATUSES.has(filterWageStatus)) {
+        throw new HttpsError("invalid-argument", `허용되지 않는 wageStatus 값입니다: ${filterWageStatus}`);
+      }
       q = q.where("wageStatus", "==", filterWageStatus);
     }
     if (hasPaymentDueFilter) {
@@ -6400,37 +6393,42 @@ export const onBusinessDeactivated = onDocumentUpdated(
 
     // [SEC-98] 3) employment_contracts 처리 — TO 유무와 무관하게 항상 실행
     // pending_employer / pending_worker 상태 계약서가 좀비로 잔류하는 것 방지.
-    // Dart Step 11은 users 삭제 후 isBusinessAdmin() 실패로 TO LIST에서 막혀
-    // employment_contracts 블록에 도달하지 못함 → CF 위임.
     // 근로기준법 제42조: 계약서 문서는 삭제 금지 — voided 상태로 표시.
-    const contractSnap = await db
-      .collection("employment_contracts")
-      .where("businessId", "==", businessId)
-      .where("status", "in", ["pending_employer", "pending_worker"])
-      .get();
-
-    if (contractSnap.size > 0) {
-      const CONTRACT_BATCH_LIMIT = 400;
-      for (let i = 0; i < contractSnap.docs.length; i += CONTRACT_BATCH_LIMIT) {
-        const chunk = contractSnap.docs.slice(i, i + CONTRACT_BATCH_LIMIT);
+    // [M-10 수정 2026-07-15] 무제한 .get() → while 루프 페이지네이션으로 교체
+    {
+      let lastContract: FirebaseFirestore.DocumentSnapshot | undefined;
+      let totalVoided = 0;
+      while (true) {
+        let q: FirebaseFirestore.Query = db.collection("employment_contracts")
+          .where("businessId", "==", businessId)
+          .where("status", "in", ["pending_employer", "pending_worker"])
+          .limit(400);
+        if (lastContract) q = q.startAfter(lastContract);
+        const contractSnap = await q.get();
+        if (contractSnap.empty) break;
         const batch = db.batch();
-        chunk.forEach((docRef) => batch.update(docRef.ref, {
+        contractSnap.docs.forEach((docRef) => batch.update(docRef.ref, {
           status: "voided",
           voidReason: "BUSINESS_DEACTIVATED",
           contractVoidedAt: admin.firestore.FieldValue.serverTimestamp(),
         }));
         try {
           await batch.commit();
+          totalVoided += contractSnap.size;
         } catch (err) {
           console.warn(`⚠️ [사업장 비활성화] employment_contracts 배치 실패 — 개별 처리:`, err);
-          await Promise.allSettled(chunk.map((docRef) => docRef.ref.update({
+          await Promise.allSettled(contractSnap.docs.map((docRef) => docRef.ref.update({
             status: "voided",
             voidReason: "BUSINESS_DEACTIVATED",
             contractVoidedAt: admin.firestore.FieldValue.serverTimestamp(),
           })));
         }
+        if (contractSnap.docs.length < 400) break;
+        lastContract = contractSnap.docs[contractSnap.docs.length - 1];
       }
-      console.log(`✅ [사업장 비활성화] employment_contracts ${contractSnap.size}건 → voided: ${businessId}`);
+      if (totalVoided > 0) {
+        console.log(`✅ [사업장 비활성화] employment_contracts ${totalVoided}건 → voided: ${businessId}`);
+      }
     }
   }
 );
@@ -7422,6 +7420,7 @@ export const callableGetMyBusiness = onCall(
       .collection("businesses")
       .where("adminIds", "array-contains", callerUid)
       .orderBy("createdAt", "desc")
+      .limit(50)  // 한 관리자가 50개 초과 사업장을 보유하는 경우 없음 (RATE-01 정원제한)
       .get();
 
     // adminIds/ownerId 제거 — 다른 관리자 UID 노출 방지 (SEC-20)
