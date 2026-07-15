@@ -509,7 +509,14 @@ service cloud.firestore {
                        !request.resource.data.diff(resource.data).affectedKeys()
                          .hasAny(['businessId']) &&
                        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
-                        request.resource.data.status in ['ACTIVE', 'FULL', 'CLOSED', 'EXPIRED', 'DRAFT', 'SCHEDULED']);
+                        request.resource.data.status in ['ACTIVE', 'FULL', 'CLOSED', 'EXPIRED', 'DRAFT', 'SCHEDULED'])
+                    // [SLOT-SYNC 2026-07-15] 슬롯 수정 시 totalRequired 집계 동기화 예외
+                    //   CF 이전 이유(감사 필드 위조·updatedBy 로그)와 무관한 순수 집계 파생 필드.
+                    //   updateSlotFull/saveBatchSlotChanges에서 slots update와 함께 tos.totalRequired를
+                    //   클라이언트 SDK 트랜잭션/배치로 increment할 때 PERMISSION_DENIED 발생 차단.
+                    //   totalRequired만 변경하는 경우에 한해 isToAdmin 허용.
+                    || (isLoggedIn() && (isToAdmin(toId) || isSuperAdmin()) &&
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['totalRequired']));
 
       // 지원자: 지원/취소 시 totalPending 카운터만 수정 허용 (음수 방지)
       // [MEDIUM-FIX] ±1 제한 없이 임의 양수값 설정 가능 → 통계 훼손 가능
