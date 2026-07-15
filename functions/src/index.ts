@@ -5132,8 +5132,15 @@ export const callableFinalizeEmployerSignature = onCall(
         await db.runTransaction(async (tx) => {
           const snap = await tx.get(contractRef);
           if (snap.exists) throw new HttpsError("already-exists", "이미 계약서가 생성되었습니다.");
+          // [SEC-CONTRACT-DATA] 클라이언트 contractData에서 서버 전용 필드 제거 — worker 서명 위조 방지
+          const cleanData: Record<string, unknown> = {...contractData};
+          for (const f of [
+            "status", "employerSignatureUrl", "employerSignatureHash", "employerSignedAt",
+            "workerSignatureUrl", "workerSignatureHash", "workerSignedAt",
+            "createdAt", "updatedAt",
+          ]) { delete cleanData[f]; }
           const data: Record<string, unknown> = {
-            ...contractData,
+            ...cleanData,
             status: "pending_worker",
             employerSignatureUrl: url,
             employerSignatureHash: employerHash,
@@ -8895,6 +8902,19 @@ export const callableGetApplicationsByBiz = onCall(
     if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
       throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
     }
+    // [APP-WHITELIST] status/type/resignStatus 허용 목록 — 임의 값 Firestore 쿼리 조작 차단
+    const VALID_APP_STATUSES = new Set(["PENDING", "CONTRACT_PENDING", "CONFIRMED", "REJECTED", "CANCELED", "AUTO_CANCELED"]);
+    const VALID_APP_TYPES = new Set(["contract", "flex"]);
+    const VALID_RESIGN_STATUSES = new Set(["PENDING", "APPROVED", "REJECTED", "AUTO_APPROVED"]);
+    if (status !== undefined && !VALID_APP_STATUSES.has(status)) {
+      throw new HttpsError("invalid-argument", `허용되지 않는 status 값입니다: ${status}`);
+    }
+    if (type !== undefined && !VALID_APP_TYPES.has(type)) {
+      throw new HttpsError("invalid-argument", `허용되지 않는 type 값입니다: ${type}`);
+    }
+    if (resignStatus !== undefined && !VALID_RESIGN_STATUSES.has(resignStatus)) {
+      throw new HttpsError("invalid-argument", `허용되지 않는 resignStatus 값입니다: ${resignStatus}`);
+    }
 
     await assertBizAdmin(callerUid, businessId);
 
@@ -8963,7 +8983,7 @@ export const callableGetTOsByBiz = onCall(
       throw new HttpsError("invalid-argument", "statuses는 1~10개 사이여야 합니다.");
     }
     // [L-2 수정 2026-07-15] status/statuses 화이트리스트 — 임의 값으로 Firestore 쿼리 조작 방지
-    const VALID_TO_STATUSES = new Set(["ACTIVE", "FULL", "CLOSED", "EXPIRED", "DRAFT"]);
+    const VALID_TO_STATUSES = new Set(["ACTIVE", "FULL", "CLOSED", "EXPIRED", "DRAFT", "SCHEDULED"]);
     if (status !== undefined && !VALID_TO_STATUSES.has(status)) {
       throw new HttpsError("invalid-argument", `허용되지 않는 status 값입니다: ${status}`);
     }
@@ -9029,6 +9049,15 @@ export const callableGetContractsByBiz = onCall(
     //   초과 시 병렬 Firestore 쿼리 폭발 → CF 메모리/타임아웃 소진 및 과금 급증
     if (Array.isArray(applicationIds) && applicationIds.length > 50) {
       throw new HttpsError("invalid-argument", "applicationIds는 최대 50개까지 허용됩니다.");
+    }
+    // [CONTRACT-WHITELIST] status/terminationStatus 허용 목록 — 임의 값 Firestore 쿼리 조작 차단
+    const VALID_CONTRACT_STATUSES_SET = new Set(["pending_employer", "pending_worker", "active", "completed", "voided", "expired"]);
+    const VALID_TERMINATION_STATUSES = new Set(["PENDING", "APPROVED", "REJECTED", "AUTO_APPROVED"]);
+    if (status !== undefined && !VALID_CONTRACT_STATUSES_SET.has(status)) {
+      throw new HttpsError("invalid-argument", `허용되지 않는 status 값입니다: ${status}`);
+    }
+    if (terminationStatus !== undefined && !VALID_TERMINATION_STATUSES.has(terminationStatus)) {
+      throw new HttpsError("invalid-argument", `허용되지 않는 terminationStatus 값입니다: ${terminationStatus}`);
     }
 
     await assertBizAdmin(callerUid, businessId);
