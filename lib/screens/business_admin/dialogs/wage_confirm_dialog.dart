@@ -1046,7 +1046,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       // Timestamp 필드(calculatedAt, confirmedAt)를 사전 제거:
       // cloud_functions callable.call()은 Firestore Timestamp를 JSON 직렬화할 수 없어 TypeError 발생.
       // CF가 calculatedAt=serverTimestamp()로 덮어쓰므로 클라이언트에서 전달할 필요 없음.
-      final callable = FirebaseFunctions.instance
+      // [BUG-REGION-FIX 2026-07-15] instance(us-central1 기본값) → instanceFor(asia-northeast3)
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableUpdateWageDetail');
       final wageMap = Map<String, dynamic>.from(wage.toMap())
         ..remove('calculatedAt')

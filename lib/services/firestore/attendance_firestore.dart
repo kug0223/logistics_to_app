@@ -534,7 +534,8 @@ extension AttendanceFirestore on FirestoreService {
     required String requestId,
   }) async {
     try {
-      final callable = FirebaseFunctions.instance
+      // [BUG-REGION-FIX 2026-07-15] instance(us-central1 기본값) → instanceFor(asia-northeast3)
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableApproveScheduleChangeRequest');
       await callable.call({
         'requestId': requestId,
@@ -561,7 +562,8 @@ extension AttendanceFirestore on FirestoreService {
     String? rejectReason,
   }) async {
     try {
-      final callable = FirebaseFunctions.instance
+      // [BUG-REGION-FIX 2026-07-15] instance(us-central1 기본값) → instanceFor(asia-northeast3)
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableApproveScheduleChangeRequest');
       await callable.call({
         'requestId': requestId,

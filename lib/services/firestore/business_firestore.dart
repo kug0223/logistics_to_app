@@ -125,7 +125,7 @@ extension BusinessFirestore on FirestoreService {
           .get();
       
       if (doc.exists) {
-        return WorkTypeModel.fromFirestore(doc);
+        return WorkTypeModel.tryFromFirestore(doc);
       }
       return null;
     } catch (e) {

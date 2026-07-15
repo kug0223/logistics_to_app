@@ -650,7 +650,9 @@ class AuthService {
           }
           await attBatch.commit();
         }
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('⚠️ 계정 삭제: applications/attendance 정리 실패 (계속 진행): $e');
+      }
 
       // 3-pre5. worker_locations 전체 삭제 — users 문서 삭제 전 처리 필수 (SEC-94)
       // worker_locations LIST 규칙이 isUser() + userId 필터를 사용하므로

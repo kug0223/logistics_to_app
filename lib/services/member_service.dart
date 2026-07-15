@@ -260,7 +260,7 @@ class MemberService {
     try {
       final doc = await _invitations.doc(invitationId).get();
       if (!doc.exists) return null;
-      return MemberInvitationModel.fromFirestore(doc);
+      return MemberInvitationModel.tryFromFirestore(doc);
     } catch (e) {
       debugPrint('초대 조회 실패: $e');
       return null;

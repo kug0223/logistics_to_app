@@ -109,7 +109,7 @@ extension TOFirestore on FirestoreService {
     try {
       final doc = await _firestore.collection('tos').doc(toId).get(const GetOptions(source: Source.server));
       if (!doc.exists) return null;
-      return TOModel.fromMap(doc.data()!, doc.id);
+      return TOModel.tryFromMap(doc.data()!, doc.id);
     } catch (e) {
       debugPrint('❌ [TO] 공고 조회 실패: $e');
       return null;
