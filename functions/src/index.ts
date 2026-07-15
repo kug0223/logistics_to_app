@@ -10744,13 +10744,20 @@ export const callableExpireApplications = onCall(
     today.setHours(0, 0, 0, 0);
     const todayTimestamp = Timestamp.fromDate(today);
 
+    // [M-11 수정 2026-07-15] limit() 추가 — 무제한 .get() 방어
+    // 사용자 1명의 과거 PENDING 지원서가 500건 이상일 가능성은 낮지만, CF 타임아웃 방어
+    const EXPIRE_LIMIT = 500;
     const snapshot = await db.collection("applications")
       .where("uid", "==", callerUid)
       .where("status", "==", "PENDING")
       .where("workDate", "<", todayTimestamp)
+      .limit(EXPIRE_LIMIT)
       .get();
 
     if (snapshot.empty) return {expired: 0};
+    if (snapshot.size >= EXPIRE_LIMIT) {
+      console.warn(`[callableExpireApplications] uid=${callerUid} — ${EXPIRE_LIMIT}건 limit 도달, 잔여 건 다음 호출에서 처리`);
+    }
 
     let batch = db.batch();
     let count = 0;
@@ -11469,7 +11476,10 @@ export const callableChangeApplicationWorkType = onCall(
       const workDate = workDateTs.toDate();
       const formattedWage = newWage.toString().replace(/(\d{1,3})(?=(\d{3})+(?!\d))/g, "$1,");
       const dateStr = `${workDate.getMonth() + 1}/${workDate.getDate()}`;
-      db.collection("notifications").add({
+      // [NOTIF-PATH-FIX] 루트 notifications → users/{uid}/notifications 서브컬렉션으로 수정
+      // 기존: db.collection("notifications")  ← Flutter가 읽지 않는 경로
+      // 수정: db.collection("users").doc(uid).collection("notifications")
+      db.collection("users").doc(uid).collection("notifications").add({
         userId: uid,
         type: "workTypeChanged",
         title: "파트 변경",
@@ -12495,12 +12505,15 @@ export const callableGetAdminTOs = onCall(
     }
 
     // 사업장별 병렬 쿼리
+    // [M-12 수정 2026-07-15] per-businessId 쿼리 limit 추가 — 사업장당 TO가 무제한 증가 시 CF 타임아웃 방어
+    const PER_BIZ_LIMIT = 500;
     const snaps = await Promise.all(
       ids.map(bizId => {
         let q: admin.firestore.Query = db
           .collection("tos")
           .where("businessId", "==", bizId)
-          .orderBy("createdAt", "desc");
+          .orderBy("createdAt", "desc")
+          .limit(PER_BIZ_LIMIT);
         if (activeOnly) q = q.where("status", "in", openStates);
         else if (closedOnly) q = q.where("status", "in", closedStates);
         return q.get();
