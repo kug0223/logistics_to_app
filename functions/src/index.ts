@@ -9811,49 +9811,52 @@ export const callableDeleteTO = onCall(
     }
 
     // 2. applications 처리: 활성 → AUTO_CANCELED, 나머지 → 삭제
-    const appsSnap = await db
-      .collection("applications")
-      .where("toId", "==", toId)
-      .where("businessId", "==", businessId)
-      .get();
-
+    // [M-7 수정 2026-07-15] 무제한 .get() → while 루프 페이지네이션으로 교체
     const notifyTargets: Array<{
       uid: string;
       status: string;
       workDate?: admin.firestore.Timestamp;
     }> = [];
-
-    if (!appsSnap.empty) {
-      let batch = db.batch();
-      let count = 0;
-      for (const doc of appsSnap.docs) {
-        const d = doc.data();
-        const status = d.status as string | undefined;
-        if (status && ACTIVE_STATUSES.includes(status)) {
-          batch.update(doc.ref, {
-            status: "AUTO_CANCELED",
-            canceledAt: now,
-            cancelReason: "TO_DELETED",
-          });
-          const applicantUid = d.uid as string | undefined;
-          if (applicantUid) {
-            notifyTargets.push({
-              uid: applicantUid,
-              status,
-              workDate: d.workDate as admin.firestore.Timestamp | undefined,
+    const allAppIds: string[] = [];
+    {
+      let lastDelApp: FirebaseFirestore.DocumentSnapshot | undefined;
+      while (true) {
+        let q: FirebaseFirestore.Query = db.collection("applications")
+          .where("toId", "==", toId)
+          .where("businessId", "==", businessId)
+          .limit(499);
+        if (lastDelApp) q = q.startAfter(lastDelApp);
+        const pageSnap = await q.get();
+        if (pageSnap.empty) break;
+        let batch = db.batch();
+        let count = 0;
+        for (const doc of pageSnap.docs) {
+          allAppIds.push(doc.id);
+          const d = doc.data();
+          const status = d.status as string | undefined;
+          if (status && ACTIVE_STATUSES.includes(status)) {
+            batch.update(doc.ref, {
+              status: "AUTO_CANCELED",
+              canceledAt: now,
+              cancelReason: "TO_DELETED",
             });
+            const applicantUid = d.uid as string | undefined;
+            if (applicantUid) {
+              notifyTargets.push({
+                uid: applicantUid,
+                status,
+                workDate: d.workDate as admin.firestore.Timestamp | undefined,
+              });
+            }
+          } else {
+            batch.delete(doc.ref);
           }
-        } else {
-          batch.delete(doc.ref);
+          count++;
         }
-        count++;
-        if (count >= 499) {
-          await batch.commit();
-          batch = db.batch();
-          count = 0;
-        }
+        if (count > 0) await batch.commit();
+        if (pageSnap.docs.length < 499) break;
+        lastDelApp = pageSnap.docs[pageSnap.docs.length - 1];
       }
-      if (count > 0) await batch.commit();
     }
 
     // 3. TO 문서 삭제
@@ -9883,7 +9886,6 @@ export const callableDeleteTO = onCall(
     }
 
     // 5. 고아 데이터 정리 (TO 삭제 완료 후 — 실패해도 무시)
-    const allAppIds = appsSnap.docs.map((d) => d.id);
     if (allAppIds.length > 0) {
       try {
         const WAGE_DONE = ["wageTransferred", "wageConfirmed"];
