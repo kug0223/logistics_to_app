@@ -4155,49 +4155,47 @@ export const onBusinessDeleted = onDocumentDeleted(
     await deleteSubcollection(`businesses/${businessId}/members`);
     await deleteSubcollection(`businesses/${businessId}/contract_templates`); // [B-M1-FIX]
 
-    // [BB-001] 수락된 멤버의 subAdminOf 초기화 + 초대 문서 삭제
-    const acceptedInviteSnap = await db
-      .collection("member_invitations")
-      .where("businessId", "==", businessId)
-      .where("status", "==", "accepted")
-      .limit(2000)
-      .get();
-    if (!acceptedInviteSnap.empty) {
-      let userBatch = db.batch();
-      let userCount = 0;
-      for (const doc of acceptedInviteSnap.docs) {
-        const targetUid = doc.data().targetUid as string | undefined;
-        if (targetUid) {
-          userBatch.update(db.collection("users").doc(targetUid), {
-            subAdminOf: admin.firestore.FieldValue.delete(),
-          });
-          userCount++;
-          if (userCount % 500 === 0) {
-            await userBatch.commit();
-            userBatch = db.batch();
+    // [BB-001] 수락된 멤버의 subAdminOf 초기화 — [M-9 수정 2026-07-15] limit(2000) → 페이지네이션
+    {
+      let lastAccepted: FirebaseFirestore.DocumentSnapshot | undefined;
+      while (true) {
+        let q: FirebaseFirestore.Query = db.collection("member_invitations")
+          .where("businessId", "==", businessId)
+          .where("status", "==", "accepted")
+          .limit(499);
+        if (lastAccepted) q = q.startAfter(lastAccepted);
+        const snap2 = await q.get();
+        if (snap2.empty) break;
+        let userBatch = db.batch();
+        let cnt = 0;
+        for (const doc of snap2.docs) {
+          const targetUid = doc.data().targetUid as string | undefined;
+          if (targetUid) {
+            userBatch.update(db.collection("users").doc(targetUid), {subAdminOf: admin.firestore.FieldValue.delete()});
+            cnt++;
+            if (cnt % 499 === 0) { await userBatch.commit(); userBatch = db.batch(); cnt = 0; }
           }
         }
+        if (cnt > 0) await userBatch.commit();
+        if (snap2.docs.length < 499) break;
+        lastAccepted = snap2.docs[snap2.docs.length - 1];
       }
-      if (userCount % 500 !== 0) await userBatch.commit();
     }
-    // [BB-002] member_invitations 전체 삭제 (pending 포함)
-    const allInviteSnap = await db
-      .collection("member_invitations")
-      .where("businessId", "==", businessId)
-      .limit(2000)
-      .get();
-    if (!allInviteSnap.empty) {
-      let invBatch = db.batch();
-      let invCount = 0;
-      for (const doc of allInviteSnap.docs) {
-        invBatch.delete(doc.ref);
-        invCount++;
-        if (invCount % 500 === 0) {
-          await invBatch.commit();
-          invBatch = db.batch();
-        }
+    // [BB-002] member_invitations 전체 삭제 (pending 포함) — [M-9 수정 2026-07-15] limit(2000) → 페이지네이션
+    {
+      let lastInv: FirebaseFirestore.DocumentSnapshot | undefined;
+      while (true) {
+        let q: FirebaseFirestore.Query = db.collection("member_invitations")
+          .where("businessId", "==", businessId).limit(499);
+        if (lastInv) q = q.startAfter(lastInv);
+        const snap2 = await q.get();
+        if (snap2.empty) break;
+        const batch = db.batch();
+        snap2.docs.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+        if (snap2.docs.length < 499) break;
+        lastInv = snap2.docs[snap2.docs.length - 1];
       }
-      if (invCount % 500 !== 0) await invBatch.commit();
     }
 
     // 해당 사업장의 TO 목록 — [STRUCT-07 FIX] 200건씩 페이지네이션으로 OOM 방지
@@ -4573,12 +4571,23 @@ export const callableResetPenalty = onCall(
     if (!targetSnap.data()?.restrictedUntil) {
       throw new HttpsError("failed-precondition", "제재 상태가 아닙니다.");
     }
-    await db.collection("users").doc(targetUid).update({
+    const previousNoShowCount = (targetSnap.data()!.noShowCount ?? 0) as number;
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const batch = db.batch();
+    batch.update(db.collection("users").doc(targetUid), {
       restrictedUntil: admin.firestore.FieldValue.delete(),
       noShowCount: 0,
-      restrictionReleasedBy: callerUid, // 서버 검증된 UID
-      restrictionReleasedAt: admin.firestore.FieldValue.serverTimestamp(),
+      restrictionReleasedBy: callerUid,
+      restrictionReleasedAt: now,
     });
+    // [M-3 수정 2026-07-15] 패널티 초기화 감사 로그 — Trust Boundary Charter: 타인 데이터 영향 시 감사 필수
+    batch.set(db.collection("penalty_reset_audit_log").doc(), {
+      targetUid,
+      callerUid,
+      previousNoShowCount,
+      resetAt: now,
+    });
+    await batch.commit();
     return {success: true};
   }
 );
@@ -5312,13 +5321,18 @@ export const callableDeleteBusinessImage = onCall(
     }
     const businessId = parts[1];
 
-    // 소속 검증 — 슈퍼어드민 또는 해당 사업장 관리자만 삭제 허용
-    const callerSnap = await db.collection("users").doc(callerUid).get();
-    const callerData = callerSnap.data();
-    const role = callerData?.role as string | undefined;
+    // [H-1 수정 2026-07-15] managedBusinessIds 클라이언트 오염 취약 → businesses.adminIds 기반 검증
+    // callableCreateTO HIGH-04-FIX와 동일 패턴: managedBusinessIds는 arrayUnion으로 임의 businessId 추가 가능
+    const [callerSnap, bizSnap] = await Promise.all([
+      db.collection("users").doc(callerUid).get(),
+      db.collection("businesses").doc(businessId).get(),
+    ]);
+    const role = callerSnap.data()?.role as string | undefined;
     if (role !== "SUPER_ADMIN") {
-      const managedIds = (callerData?.managedBusinessIds as string[] | undefined) ?? [];
-      if (!managedIds.includes(businessId)) {
+      if (!bizSnap.exists) throw new HttpsError("not-found", "사업장을 찾을 수 없습니다.");
+      const bizData = bizSnap.data()!;
+      const adminIds = (bizData.adminIds as string[] | undefined) ?? [];
+      if (!adminIds.includes(callerUid)) {
         throw new HttpsError("permission-denied", "소속 사업장의 이미지만 삭제 가능합니다.");
       }
     }
@@ -6676,25 +6690,23 @@ export const onTODeleted = onDocumentDeleted(
       }
     }
 
-    // ── 2. applications 수집 ──
-    const appQuery = db.collection("applications").where("toId", "==", toId);
-    const appSnap = await appQuery.get();
-    const appIds: string[] = appSnap.docs.map((d) => d.id);
-
-    // applications 삭제
-    if (appSnap.docs.length > 0) {
-      let batch = db.batch();
-      let count = 0;
-      for (const d of appSnap.docs) {
-        batch.delete(d.ref);
-        count++;
-        if (count >= PAGE) {
-          await batch.commit();
-          batch = db.batch();
-          count = 0;
-        }
+    // ── 2. applications 수집 + 삭제 (페이지네이션) ──
+    // [M-4 수정 2026-07-15] 무제한 .get() → while 루프로 교체, CF 타임아웃 방지
+    const appIds: string[] = [];
+    {
+      let lastApp: FirebaseFirestore.DocumentSnapshot | undefined;
+      while (true) {
+        let q: FirebaseFirestore.Query = db.collection("applications")
+          .where("toId", "==", toId).limit(PAGE);
+        if (lastApp) q = q.startAfter(lastApp);
+        const pageSnap = await q.get();
+        if (pageSnap.empty) break;
+        const batch = db.batch();
+        pageSnap.docs.forEach((d) => { appIds.push(d.id); batch.delete(d.ref); });
+        await batch.commit();
+        if (pageSnap.docs.length < PAGE) break;
+        lastApp = pageSnap.docs[pageSnap.docs.length - 1];
       }
-      if (count > 0) await batch.commit();
     }
 
     // ── 3. attendance 삭제 (wageTransferred / wageConfirmed 보존) ──
@@ -8844,6 +8856,14 @@ export const callableGetTOsByBiz = onCall(
     if (statuses !== undefined && (!Array.isArray(statuses) || statuses.length === 0 || statuses.length > 10)) {
       throw new HttpsError("invalid-argument", "statuses는 1~10개 사이여야 합니다.");
     }
+    // [L-2 수정 2026-07-15] status/statuses 화이트리스트 — 임의 값으로 Firestore 쿼리 조작 방지
+    const VALID_TO_STATUSES = new Set(["ACTIVE", "FULL", "CLOSED", "EXPIRED", "DRAFT"]);
+    if (status !== undefined && !VALID_TO_STATUSES.has(status)) {
+      throw new HttpsError("invalid-argument", `허용되지 않는 status 값입니다: ${status}`);
+    }
+    if (statuses !== undefined && statuses.some((s: string) => !VALID_TO_STATUSES.has(s))) {
+      throw new HttpsError("invalid-argument", "statuses에 허용되지 않는 값이 포함되어 있습니다.");
+    }
 
     await assertBizAdmin(callerUid, businessId);
 
@@ -9003,7 +9023,13 @@ export const callableGetMonthlyReviewsByBiz = onCall(
 
     if (startAfterId) {
       const cursorSnap = await db.collection("monthly_reviews").doc(startAfterId).get();
-      if (cursorSnap.exists) q = q.startAfter(cursorSnap);
+      if (cursorSnap.exists) {
+        // [L-1 수정 2026-07-15] 커서 businessId 교차검증 — 타 사업장 ID로 커서 조작 방지
+        if (cursorSnap.data()?.businessId !== businessId) {
+          throw new HttpsError("permission-denied", "커서 문서가 해당 사업장 소속이 아닙니다.");
+        }
+        q = q.startAfter(cursorSnap);
+      }
     }
 
     q = q.limit(cap);
@@ -9585,32 +9611,34 @@ export const callableApproveResignation = onCall(
     }
 
     // 퇴사일 이후 scheduled attendance → absent 일괄 처리
+    // [M-5 수정 2026-07-15] limit() 없음 → while 루프 페이지네이션으로 교체
     const cutoffDate = app.resignRequestDate?.toDate() ?? new Date();
-    // [WARN-1 특이사항] limit() 없음 — 장기 근무자의 scheduled 레코드 수천 건 시 CF 타임아웃 위험
-    // 근본 수정: limit(500) + while 루프 패턴 전환 권장 (현재는 단일 고용계약 기준 현실적 위험 낮음)
-    const scheduledSnap = await db.collection("attendance")
-      .where("applicationId", "==", applicationId)
-      .where("status", "==", "scheduled")
-      .get();
-    if (!scheduledSnap.empty) {
-      let cancelBatch = db.batch();
-      let count = 0;
-      for (const doc of scheduledSnap.docs) {
-        const workDate = doc.data().workDate as admin.firestore.Timestamp | null;
-        if (workDate && workDate.toDate() >= cutoffDate) {
-          cancelBatch.update(doc.ref, {
-            status: "absent",
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-          count++;
-          if (count >= 499) {
-            await cancelBatch.commit();
-            cancelBatch = db.batch();
-            count = 0;
+    {
+      let lastAtt: FirebaseFirestore.DocumentSnapshot | undefined;
+      while (true) {
+        let q: FirebaseFirestore.Query = db.collection("attendance")
+          .where("applicationId", "==", applicationId)
+          .where("status", "==", "scheduled")
+          .limit(499);
+        if (lastAtt) q = q.startAfter(lastAtt);
+        const scheduledSnap = await q.get();
+        if (scheduledSnap.empty) break;
+        const cancelBatch = db.batch();
+        let updated = 0;
+        for (const doc of scheduledSnap.docs) {
+          const workDate = doc.data().workDate as admin.firestore.Timestamp | null;
+          if (workDate && workDate.toDate() >= cutoffDate) {
+            cancelBatch.update(doc.ref, {
+              status: "absent",
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            updated++;
           }
         }
+        if (updated > 0) await cancelBatch.commit();
+        if (scheduledSnap.docs.length < 499) break;
+        lastAtt = scheduledSnap.docs[scheduledSnap.docs.length - 1];
       }
-      if (count > 0) await cancelBatch.commit();
     }
 
     // 근무자에게 알림 (best-effort — 실패해도 APPROVED/CANCELED 상태는 유지)
@@ -9654,18 +9682,37 @@ export const callableRecalculateTOStats = onCall(
 
     await assertBizAdmin(callerUid, businessId);
 
-    const appsSnap = await db
-      .collection("applications")
-      .where("toId", "==", toId)
-      .where("businessId", "==", businessId)
-      .get();
-
+    // [M-6 수정 2026-07-15] 무제한 .get() → while 루프 페이지네이션으로 교체
     let totalPending = 0;
     let totalConfirmed = 0;
-    for (const doc of appsSnap.docs) {
-      const status = doc.data().status as string | undefined;
-      if (status === "PENDING") totalPending++;
-      if (status && CONFIRMED_STATUSES.includes(status)) totalConfirmed++;
+    const slotStats: Record<string, {pending: number; confirmed: number}> = {};
+    {
+      let lastApp2: FirebaseFirestore.DocumentSnapshot | undefined;
+      while (true) {
+        let q: FirebaseFirestore.Query = db.collection("applications")
+          .where("toId", "==", toId)
+          .where("businessId", "==", businessId)
+          .limit(499);
+        if (lastApp2) q = q.startAfter(lastApp2);
+        const pageSnap = await q.get();
+        if (pageSnap.empty) break;
+        for (const doc of pageSnap.docs) {
+          const d = doc.data();
+          const status = d.status as string | undefined;
+          if (status === "PENDING") totalPending++;
+          if (status && CONFIRMED_STATUSES.includes(status)) totalConfirmed++;
+          if (isFlexType) {
+            const slotId = d.slotId as string | undefined;
+            if (slotId && status && ["PENDING", ...CONFIRMED_STATUSES].includes(status)) {
+              if (!slotStats[slotId]) slotStats[slotId] = {pending: 0, confirmed: 0};
+              if (status === "PENDING") slotStats[slotId].pending++;
+              if (CONFIRMED_STATUSES.includes(status)) slotStats[slotId].confirmed++;
+            }
+          }
+        }
+        if (pageSnap.docs.length < 499) break;
+        lastApp2 = pageSnap.docs[pageSnap.docs.length - 1];
+      }
     }
 
     const toUpdate: Record<string, unknown> = {totalPending, totalConfirmed};
@@ -9677,17 +9724,6 @@ export const callableRecalculateTOStats = onCall(
     await db.collection("tos").doc(toId).update(toUpdate);
 
     if (isFlexType) {
-      const slotStats: Record<string, {pending: number; confirmed: number}> = {};
-      for (const doc of appsSnap.docs) {
-        const d = doc.data();
-        const status = d.status as string | undefined;
-        const slotId = d.slotId as string | undefined;
-        if (!slotId || !status) continue;
-        if (!["PENDING", ...CONFIRMED_STATUSES].includes(status)) continue;
-        if (!slotStats[slotId]) slotStats[slotId] = {pending: 0, confirmed: 0};
-        if (status === "PENDING") slotStats[slotId].pending++;
-        if (CONFIRMED_STATUSES.includes(status)) slotStats[slotId].confirmed++;
-      }
       const slotsSnap = await db.collection("tos").doc(toId).collection("slots").get();
       if (!slotsSnap.empty) {
         let batch = db.batch();
@@ -10837,14 +10873,16 @@ export const callableBatchSetNoShow = onCall(
           }
 
           // [L3-FIX] 신규 노쇼 생성 시 applicationId → userId 교차검증 (트랜잭션 내 원자적 검증)
-          // [L-01 특이사항 2026-07-14] applicationId.businessId 미검증:
-          //   appSnap.data().businessId !== businessId 체크 없음
-          //   악의적 관리자가 타 사업장 applicationId + 자신의 businessId 조합 시 자신의 businessId로 귀속된
-          //   허위 NO_SHOW 레코드 생성 가능. 단, 해당 레코드가 공격자 사업장에만 귀속되므로 직접 피해 제한적.
-          //   수정: appSnap.data()!.businessId !== businessId 검증 추가 권장
+          // [M-1 수정 2026-07-15] applicationId.businessId 교차검증 추가
+          //   기존 [L-01 특이사항]: 악의적 관리자(A)가 타 사업장 applicationId + 자신의 businessId 조합 시
+          //   허위 NO_SHOW 레코드 생성 가능 → onAttendanceWageStatusChanged가 해당 근로자 trustScore 패널티 부과
           if (!attendanceId) {
             const appSnap = await tx.get(db.collection("applications").doc(applicationId));
             if (!appSnap.exists || appSnap.data()!.uid !== userId) {
+              skippedSet.add(resolvedId);
+              return;
+            }
+            if (appSnap.data()!.businessId !== businessId) {
               skippedSet.add(resolvedId);
               return;
             }
@@ -12447,7 +12485,8 @@ export const callableGetAdminTOs = onCall(
 
     // 슈퍼어드민 + businessId 미지정 → 전체 조회
     if (isSuperAdmin && ids.length === 0) {
-      let q: admin.firestore.Query = db.collection("tos").orderBy("createdAt", "desc");
+      // [M-7 수정 2026-07-15] limit(1000) 상한 — 전체 조회 시 OOM 방지
+      let q: admin.firestore.Query = db.collection("tos").orderBy("createdAt", "desc").limit(1000);
       if (activeOnly) q = q.where("status", "in", openStates);
       else if (closedOnly) q = q.where("status", "in", closedStates);
       const snap = await q.get();
@@ -12742,13 +12781,24 @@ export const callableGetScheduleChangeRequestsForDate = onCall(
       }
     }
 
-    // 사업장별 병렬 쿼리
+    // [M-8 수정 2026-07-15] targetDate 날짜 범위 필터를 Firestore 쿼리에 추가 — 전체 PENDING 조회 방지
+    // KST 기준 하루 범위 계산 (UTC = KST - 9h)
+    const KST_OFFSET_MS_SCR = 9 * 60 * 60 * 1000;
+    const kstDay = new Date(dateMs! + KST_OFFSET_MS_SCR);
+    const startOfDayUTC = new Date(Date.UTC(kstDay.getUTCFullYear(), kstDay.getUTCMonth(), kstDay.getUTCDate()) - KST_OFFSET_MS_SCR);
+    const endOfDayUTC = new Date(startOfDayUTC.getTime() + 86400000);
+    const startTs = admin.firestore.Timestamp.fromDate(startOfDayUTC);
+    const endTs = admin.firestore.Timestamp.fromDate(endOfDayUTC);
+
+    // 사업장별 병렬 쿼리 (복합 인덱스: businessId + targetDate + status)
     const date = new Date(dateMs!);
     const snaps = await Promise.all(
       businessIds.map((bid) =>
         db.collection("schedule_change_requests")
           .where("businessId", "==", bid)
           .where("status", "==", "PENDING")
+          .where("targetDate", ">=", startTs)
+          .where("targetDate", "<", endTs)
           .get()
       )
     );
@@ -12757,7 +12807,7 @@ export const callableGetScheduleChangeRequestsForDate = onCall(
     for (const snap of snaps) {
       for (const doc of snap.docs) {
         const data = doc.data();
-        // targetDate 날짜 매칭 (CF쪽에서 필터)
+        // targetDate 날짜 매칭 (Firestore 쿼리에서 필터됐으나 KST 경계 이중 확인)
         const td = data["targetDate"] as admin.firestore.Timestamp | null | undefined;
         if (!td) continue;
         const d = td.toDate();
@@ -14088,6 +14138,14 @@ export const callableApplyToTO = onCall(
     if (!startTime || !endTime) {
       throw new HttpsError("invalid-argument", "startTime/endTime이 필요합니다.");
     }
+    // [M-2 수정 2026-07-15] startTime/endTime HH:MM 포맷 검증 — 임의 시간 제출 시 충돌 체크 오작동 방지
+    const HH_MM_REGEX = /^\d{2}:\d{2}$/;
+    if (!HH_MM_REGEX.test(startTime) || !HH_MM_REGEX.test(endTime)) {
+      throw new HttpsError("invalid-argument", "startTime/endTime은 HH:MM 형식이어야 합니다.");
+    }
+    // [M-2 수정 2026-07-15] workDays 배열 요소 한글 요일 검증 (L-3 병합)
+    const VALID_KO_WEEKDAYS = new Set(["일", "월", "화", "수", "목", "금", "토"]);
+    const validatedWorkDays = workDays ? workDays.filter((d: unknown) => typeof d === "string" && VALID_KO_WEEKDAYS.has(d)) : null;
     if (wage === undefined || typeof wage !== "number") {
       throw new HttpsError("invalid-argument", "wage가 필요합니다.");
     }
@@ -14095,8 +14153,8 @@ export const callableApplyToTO = onCall(
     const workDate = admin.firestore.Timestamp.fromMillis(workDateMs);
     const workEndDate = workEndDateMs ? admin.firestore.Timestamp.fromMillis(workEndDateMs) : null;
     const desiredStartDate = desiredStartDateMs ? admin.firestore.Timestamp.fromMillis(desiredStartDateMs) : null;
-    // isContract: slotId 없거나 workDays 있으면 장기계약
-    const isContract = !slotId || (workDays !== null && workDays.length > 0);
+    // isContract: slotId 없거나 workDays 있으면 장기계약 (validatedWorkDays 사용 — L-3/M-2)
+    const isContract = !slotId || (validatedWorkDays !== null && validatedWorkDays.length > 0);
 
     // ── 2. 사용자 서류/블랙리스트/PASS/신분증/제재 체크 ──
     const userSnap = await db.collection("users").doc(uid).get();
@@ -14273,7 +14331,7 @@ export const callableApplyToTO = onCall(
     const weekdayNames = ["일", "월", "화", "수", "목", "금", "토"];
 
     const workDateDate = workDate.toDate();
-    const newWorkDays = workDays ?? [];
+    const newWorkDays = validatedWorkDays ?? [];
     const newWorkEndDate = workEndDate ? workEndDate.toDate() : null;
     const effectiveStartDate = desiredStartDate ? desiredStartDate.toDate() : workDateDate;
 
@@ -14465,7 +14523,7 @@ export const callableApplyToTO = onCall(
         if (workDetailId && workDetailId.length > 0) reactivateData["workDetailId"] = workDetailId;
         if (desiredStartDate) reactivateData["desiredStartDate"] = desiredStartDate;
         if (workEndDate) reactivateData["workEndDate"] = workEndDate;
-        if (workDays) reactivateData["workDays"] = workDays;
+        if (validatedWorkDays) reactivateData["workDays"] = validatedWorkDays;
         tx.update(appRef, reactivateData);
       } else {
         // [L1-FIX] businessName/toTitle: 클라이언트 제출값 대신 서버 TO 문서값 우선 사용 (텍스트 주입 차단)
