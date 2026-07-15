@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:crypto/crypto.dart';
@@ -105,10 +107,14 @@ class ContractService {
   // ── 서명 저장 ────────────────────────────────────────────────
 
   /// 사업주 서명 → 근무자 서명 대기로 전환
+  /// [SEC-EMPLOYER-SIG] callableFinalizeEmployerSignature CF 경유:
+  ///   Storage Admin SDK 업로드 + 소속 검증 서버 강제.
+  ///   storage.rules signature_employer.png → if false (클라이언트 직접 업로드 차단).
   Future<EmploymentContractModel> saveEmployerSignature({
     required EmploymentContractModel contract,
     required Uint8List signatureBytes,
   }) async {
+    // 클라이언트 사전 가드 (UX용) — CF에서 재검증
     if (contract.status == ContractStatus.voided) {
       throw Exception('무효 처리된 계약서에는 서명할 수 없습니다');
     }
@@ -119,77 +125,36 @@ class ContractService {
       throw Exception('이미 사업주 서명이 완료된 계약서입니다');
     }
 
-    final url = await _uploadSignature(
-      contractId: contract.id,
-      role: 'employer',
-      bytes: signatureBytes,
-    );
+    final signatureBase64 = base64Encode(signatureBytes);
+    final Map<String, dynamic> cfData = {
+      'contractId': contract.id,
+      'signatureBase64': signatureBase64,
+    };
 
-    final now = DateTime.now(); // 로컬 변수로 분리 — nullable ! 방지
+    if (contract.isNewUnsaved) {
+      // 신규 계약서: 계약서 데이터를 CF에 전달 (타임스탬프·서명 필드는 CF가 서버 강제)
+      final contractMap = contract.toMap();
+      for (final key in ['employerSignatureUrl', 'employerSignatureHash',
+          'employerSignedAt', 'createdAt', 'updatedAt']) {
+        contractMap.remove(key);
+      }
+      cfData['isNewUnsaved'] = true;
+      cfData['contractData'] = contractMap;
+    }
+
+    final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableFinalizeEmployerSignature',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)))
+        .call(cfData);
+
+    final url = (result.data as Map<dynamic, dynamic>)['employerSignatureUrl'] as String;
+    final now = DateTime.now();
     final updated = contract.copyWith(
       status: ContractStatus.pendingWorker,
       employerSignatureUrl: url,
       employerSignedAt: now,
       updatedAt: now,
     );
-
-    // Firestore 저장 — 동시 서명·중복 생성 방지를 위해 항상 트랜잭션 사용
-    try {
-      final ref = _db.collection('employment_contracts').doc(contract.id);
-      final employerHash = sha256.convert(signatureBytes).toString();
-      if (contract.isNewUnsaved) {
-        // 신규 계약서: 동시 이중 제출 시 문서 중복 생성 방지
-        final data = updated.toMap();
-        data['createdAt'] = FieldValue.serverTimestamp();
-        // [BUG-CS-01 수정] 신규 계약서 updatedAt도 서버 타임스탬프로 덮어쓰기 — copyWith의 클라이언트 시간 방지
-        data['updatedAt'] = FieldValue.serverTimestamp();
-        // [CON-01] employerSignedAt도 서버 타임스탬프로 — 클라이언트 시계 조작으로 서명 날짜 위변조 방지
-        data['employerSignedAt'] = FieldValue.serverTimestamp();
-        await _db.runTransaction((tx) async {
-          final snap = await tx.get(ref);
-          if (snap.exists) {
-            throw Exception('이미 계약서가 생성되었습니다');
-          }
-          data['employerSignatureHash'] = employerHash;
-          tx.set(ref, data);
-        });
-      } else {
-        await _db.runTransaction((tx) async {
-          final snap = await tx.get(ref);
-          if (snap.exists) {
-            final currentStatus = snap.data()?['status'] as String?;
-            if (currentStatus == ContractStatus.voided.value) {
-              throw Exception('무효 처리된 계약서에는 서명할 수 없습니다');
-            }
-            if (currentStatus == ContractStatus.completed.value) {
-              throw Exception('이미 완료된 계약서입니다');
-            }
-            if (snap.data()?['employerSignatureUrl'] != null) {
-              throw Exception('이미 사업주 서명이 완료된 계약서입니다');
-            }
-          }
-          // SHA-256 해시로 서명 무결성 기록 (서명 시각은 서버 타임스탬프로 위변조 방지)
-          tx.update(ref, {
-            'status': updated.status.value,
-            'employerSignatureUrl': url,
-            'employerSignatureHash': employerHash,
-            'employerSignedAt': FieldValue.serverTimestamp(),
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-        });
-      }
-    } catch (e) {
-      // Firestore 실패 → 업로드된 서명 파일 삭제 (고아 파일 방지)
-      try {
-        await _storage.ref()
-            .child('contracts/${contract.id}/signature_employer.png')
-            .delete();
-      } catch (cleanupErr) {
-        // [K-004] 서명 파일 삭제 실패 — 고아 파일 가능성, 수동 확인 필요
-        debugPrint('⚠️ [K-004] 사업주 서명 파일 삭제 실패 (고아 파일 주의) — ${contract.id}: $cleanupErr');
-      }
-      rethrow;
-    }
 
     // 근무자에게 서명 요청 알림
     try {

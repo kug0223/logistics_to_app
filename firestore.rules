@@ -1498,9 +1498,12 @@ service cloud.firestore {
                          .data.get('businessId', '_NONE_') == request.resource.data.businessId &&
                        // [MEDIUM-2 수정 2026-07-15] 계약 create 시 근무자 서명 필드 사전 삽입 차단
                        //   callableFinalizeWorkerSignature CF(Admin SDK) 전용 — 서명 없이 서명 완료 위조 차단
-                       !request.resource.data.keys().hasAny(['workerSignatureUrl', 'workerSignatureHash', 'workerSignedAt']) &&
-                       (!request.resource.data.keys().hasAny(['employerSignedAt']) ||
-                        request.resource.data.employerSignedAt == request.time))
+                       // [SEC-EMPLOYER-SIG 2026-07-15] employer 서명 필드도 차단 —
+                       //   callableFinalizeEmployerSignature CF(Admin SDK) 전용 (storage.rules if false 병행)
+                       !request.resource.data.keys().hasAny([
+                         'workerSignatureUrl', 'workerSignatureHash', 'workerSignedAt',
+                         'employerSignatureUrl', 'employerSignatureHash', 'employerSignedAt'
+                       ]))
                     );
 
       // 슈퍼어드민: 오기재 정정 등 운영 목적 수정 허용
@@ -1546,9 +1549,11 @@ service cloud.firestore {
                          // [H7-FIX] terminationStatus 제거 — 관리자 직접 조작으로 계약 임의 무효화 차단.
                          //   공격: REST API로 terminationStatus='PENDING' 설정 → 근무자 UI에서 계약서 voided 전환.
                          //   terminationStatus 설정은 CF Admin SDK 전용(callableRequestTermination).
+                         // [SEC-EMPLOYER-SIG 2026-07-15] employerSignatureUrl/Hash/At 제거 —
+                         //   callableFinalizeEmployerSignature CF(Admin SDK) 전용 경로.
+                         //   클라이언트 직접 write 차단으로 타 계약서 서명 URL 복사 공격 차단.
                          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                           'status', 'employerSignatureUrl', 'employerSignatureHash',
-                           'employerSignedAt', 'updatedAt',
+                           'status', 'updatedAt',
                            'articles', 'templateId', 'slots', 'applicationIds',
                            'contractVoidedAt', 'voidReason',
                            // [M3-FIX] 파트변경 시 계약서 workType/wage/wageType 동기화 허용
@@ -1559,10 +1564,6 @@ service cloud.firestore {
                          // [CONTRACT-L1-FIX] voidedBy 본인 UID 강제 — 타 관리자 명의 무효화 위조 차단
                          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['voidedBy']) ||
                           request.resource.data.voidedBy == request.auth.uid) &&
-                         // [CON-03] employerSignedAt == request.time 강제 — 사업주 서명 날짜 위변조 차단
-                         //   workerSignedAt과 동일한 보호: 과거/미래 날짜 직접 설정 불가
-                         (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['employerSignedAt']) ||
-                          request.resource.data.employerSignedAt == request.time) &&
                          // [CONTRACT-M1-FIX] completed 직접 전이 차단 — callableFinalizeWorkerSignature CF 전용
                          //   관리자가 pending_* → completed 직접 write 시 workerSignatureUrl 누락 + applications 미처리
                          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||

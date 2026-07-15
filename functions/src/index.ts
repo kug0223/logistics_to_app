@@ -5076,6 +5076,113 @@ export const callableFinalizeWorkerSignature = onCall(
   }
 );
 
+// ── callableFinalizeEmployerSignature ────────────────────
+// 사업주 서명 Storage 업로드 + Firestore 업데이트 원자 처리
+// [SEC-EMPLOYER-SIG] Storage rules에서 signature_employer.png → if false.
+//   Admin SDK로만 업로드하여 소속 검증 없는 제3자 경로 선점 공격 차단.
+// Input (기존 계약서): { contractId, signatureBase64 }
+// Input (신규 계약서): { contractId, signatureBase64, isNewUnsaved: true, contractData: object }
+// Output: { success: true, employerSignatureUrl: string }
+export const callableFinalizeEmployerSignature = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {contractId, signatureBase64, isNewUnsaved, contractData} = request.data ?? {};
+
+    if (!contractId || typeof contractId !== "string") {
+      throw new HttpsError("invalid-argument", "contractId가 필요합니다.");
+    }
+    if (!signatureBase64 || typeof signatureBase64 !== "string" || signatureBase64.length > 500_000) {
+      throw new HttpsError("invalid-argument", "signatureBase64가 필요하거나 너무 큽니다 (최대 375KB).");
+    }
+
+    const bucket = admin.storage().bucket();
+    const signatureBytes = Buffer.from(signatureBase64, "base64");
+    const employerHash = crypto.createHash("sha256").update(signatureBytes).digest("hex");
+    const storagePath = `contracts/${contractId}/signature_employer.png`;
+    const sigFile = bucket.file(storagePath);
+
+    // Storage 업로드 (Admin SDK) — 다운로드 토큰 수동 생성
+    const downloadToken = crypto.randomBytes(16).toString("hex");
+    try {
+      await sigFile.save(signatureBytes, {
+        contentType: "image/png",
+        metadata: {metadata: {firebaseStorageDownloadTokens: downloadToken}},
+      });
+    } catch (e) {
+      throw new HttpsError("internal", "서명 이미지 업로드에 실패했습니다.");
+    }
+    const encodedPath = encodeURIComponent(storagePath);
+    const url = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${downloadToken}`;
+
+    const contractRef = db.collection("employment_contracts").doc(contractId);
+
+    try {
+      if (isNewUnsaved === true) {
+        // ── 신규 계약서: 소속 검증 후 문서 생성
+        if (!contractData || typeof contractData !== "object") {
+          throw new HttpsError("invalid-argument", "신규 계약서에는 contractData가 필요합니다.");
+        }
+        const bizId = contractData["businessId"] as string | undefined;
+        if (!bizId) throw new HttpsError("invalid-argument", "contractData.businessId가 필요합니다.");
+        await assertBizAdmin(callerUid, bizId);
+
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(contractRef);
+          if (snap.exists) throw new HttpsError("already-exists", "이미 계약서가 생성되었습니다.");
+          const data: Record<string, unknown> = {
+            ...contractData,
+            status: "pending_worker",
+            employerSignatureUrl: url,
+            employerSignatureHash: employerHash,
+            employerSignedAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          };
+          tx.set(contractRef, data);
+        });
+      } else {
+        // ── 기존 계약서: 소속 검증(트랜잭션 외부) + 상태 검증/업데이트(트랜잭션 내부)
+        // assertBizAdmin을 트랜잭션 외부에서 먼저 수행 — 트랜잭션 내 비트랜잭션 읽기 방지.
+        // businessId는 불변 필드이므로 TOCTOU 위험 없음.
+        const preSnap = await contractRef.get();
+        if (!preSnap.exists) throw new HttpsError("not-found", "계약서를 찾을 수 없습니다.");
+        await assertBizAdmin(callerUid, preSnap.data()!["businessId"] as string);
+
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(contractRef);
+          if (!snap.exists) throw new HttpsError("not-found", "계약서를 찾을 수 없습니다.");
+          const data = snap.data()!;
+
+          const status = data["status"] as string;
+          if (status !== "pending_employer") {
+            throw new HttpsError("failed-precondition", `서명할 수 없는 계약서 상태입니다: ${status}`);
+          }
+          if (data["employerSignatureUrl"]) {
+            throw new HttpsError("failed-precondition", "이미 사업주 서명이 완료된 계약서입니다.");
+          }
+
+          tx.update(contractRef, {
+            status: "pending_worker",
+            employerSignatureUrl: url,
+            employerSignatureHash: employerHash,
+            employerSignedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        });
+      }
+    } catch (e) {
+      // Firestore 실패 → Storage 파일 Admin SDK로 정리 (rules에서 클라이언트 삭제 차단)
+      try { await sigFile.delete(); } catch (_) {}
+      throw e;
+    }
+
+    return {success: true, employerSignatureUrl: url};
+  }
+);
+
 // ── recordDeletedAccount ────────────────────────────────
 // 탈퇴 기록을 deleted_accounts에 Admin SDK로 저장
 // [AUTH-H2] 클라이언트가 deleted_accounts에 직접 쓰면 탈퇴 안 한 상태에서 임의 문서를
