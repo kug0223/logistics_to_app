@@ -6165,6 +6165,78 @@ export const callableResetAccountStatus = onCall(
   }
 );
 
+// ── callableCheckUsername ────────────────────────────────────
+// 회원가입 전 아이디 중복 체크 — 비인증 가능, App Check 필수
+// [M-3] 클라이언트 직접 쿼리 대체 — users 문서 PII 노출 차단
+// Input:  { username: string }
+// Output: { exists: boolean }
+export const callableCheckUsername = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    const {username} = request.data as {username?: string};
+    if (!username || typeof username !== "string" || username.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "username이 필요합니다.");
+    }
+    const snapshot = await db
+      .collection("users")
+      .where("username", "==", username.trim())
+      .limit(1)
+      .get();
+    return {exists: !snapshot.empty};
+  }
+);
+
+// ── callableCheckForeignIdExists ─────────────────────────────
+// 회원가입 전 외국인등록번호 중복 체크 — 비인증 가능, App Check 필수
+// [M-3] 클라이언트 직접 쿼리 대체 — users 문서 PII 노출 차단
+// Input:  { foreignIdNumber: string (암호화됨), role: "USER" | "BUSINESS_ADMIN" }
+// Output: { exists: boolean }
+export const callableCheckForeignIdExists = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    const {foreignIdNumber, role} = request.data as {
+      foreignIdNumber?: string;
+      role?: string;
+    };
+    if (!foreignIdNumber || typeof foreignIdNumber !== "string") {
+      throw new HttpsError("invalid-argument", "foreignIdNumber가 필요합니다.");
+    }
+    if (!role || !["USER", "BUSINESS_ADMIN"].includes(role)) {
+      throw new HttpsError("invalid-argument", "유효하지 않은 role입니다.");
+    }
+    const snapshot = await db
+      .collection("users")
+      .where("foreignIdNumber", "==", foreignIdNumber)
+      .where("role", "==", role)
+      .limit(1)
+      .get();
+    return {exists: !snapshot.empty};
+  }
+);
+
+// ── callableFindUsername ──────────────────────────────────────
+// 아이디 찾기 (이름 + 전화번호) — 비인증 가능, App Check 필수
+// [M-3] 클라이언트 직접 쿼리 대체 — users 문서 PII 노출 차단
+// Input:  { name: string, phone: string }
+// Output: { username: string } | { username: null }
+export const callableFindUsername = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    const {name, phone} = request.data as {name?: string; phone?: string};
+    if (!name || !phone) {
+      throw new HttpsError("invalid-argument", "name과 phone이 필요합니다.");
+    }
+    const snapshot = await db
+      .collection("users")
+      .where("name", "==", name.trim())
+      .where("phone", "==", phone.trim())
+      .limit(1)
+      .get();
+    if (snapshot.empty) return {username: null};
+    return {username: snapshot.docs[0].data()["username"] as string ?? null};
+  }
+);
+
 // cleanExpiredPassTokens 제거 — Firestore TTL 정책으로 대체
 // 설정: Firebase 콘솔 → Firestore → TTL → passTokens 컬렉션, expiresAt 필드
 

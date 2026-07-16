@@ -796,64 +796,50 @@ class AuthService {
     }
   }
 
-  // 아이디 중복 체크
+  // [M-3] 아이디 중복 체크 — callableCheckUsername CF 경유 (PII 노출 차단)
   Future<bool> checkUsernameExists(String username) async {
     try {
-      final snapshot = await _firestore
-          .collection('users')
-          .where('username', isEqualTo: username)
-          .limit(1)
-          .get();
-
-      return snapshot.docs.isNotEmpty;
+      final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableCheckUsername')
+          .call({'username': username});
+      return (result.data as Map)['exists'] == true;
     } catch (e) {
       debugPrint('❌ 아이디 중복 체크 실패: $e');
       return true; // 에러 시 중복으로 간주
     }
   }
 
-  // 외국인등록번호 중복 체크 (암호화된 값으로 쿼리)
-  // 동일 IV + AES 고정 암호화이므로 같은 입력 → 같은 암호문 → Firestore 쿼리 가능
-  /// 외국인등록번호 중복 체크 — 동일 역할로 이미 가입된 경우 true
-  ///
-  /// ciHash 기반의 내국인 CF 중복 체크와 동일하게 role 단위로 체크:
-  /// 같은 사람이 지원자(USER) 1개 + 관리자(BUSINESS_ADMIN) 1개는 허용.
+  // [M-3] 외국인등록번호 중복 체크 — callableCheckForeignIdExists CF 경유 (PII 노출 차단)
+  // 동일 IV + AES 고정 암호화이므로 같은 입력 → 같은 암호문 → 서버 쿼리 가능
   Future<bool> checkForeignIdExists(String foreignIdNumber, UserRole role) async {
     try {
       final encrypted = EncryptionHelper.encrypt(foreignIdNumber);
       if (encrypted == null) return false;
-      final snapshot = await _firestore
-          .collection('users')
-          .where('foreignIdNumber', isEqualTo: encrypted)
-          .where('role', isEqualTo: _roleToString(role))
-          .limit(1)
-          .get();
-      return snapshot.docs.isNotEmpty;
+      final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableCheckForeignIdExists')
+          .call({'foreignIdNumber': encrypted, 'role': _roleToString(role)});
+      return (result.data as Map)['exists'] == true;
     } catch (e) {
       debugPrint('❌ 외국인등록번호 중복 체크 실패: $e');
       return true; // 에러 시 중복으로 간주
     }
   }
-  // 🔍 아이디 찾기 (이름 + 전화번호)
+
+  // [M-3] 아이디 찾기 (이름 + 전화번호) — callableFindUsername CF 경유 (PII 노출 차단)
   Future<String?> findUsername({
     required String name,
     required String phone,
   }) async {
     try {
-      final snapshot = await _firestore
-          .collection('users')
-          .where('name', isEqualTo: name)
-          .where('phone', isEqualTo: phone)
-          .limit(1)
-          .get();
-
-      if (snapshot.docs.isEmpty) {
+      final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableFindUsername')
+          .call({'name': name, 'phone': phone});
+      final username = (result.data as Map)['username'] as String?;
+      if (username == null) {
         ToastHelper.showError('일치하는 사용자를 찾을 수 없습니다.');
         return null;
       }
-
-      final userData = snapshot.docs.first.data();
-      return userData['username'] as String?;
+      return username;
     } catch (e) {
       debugPrint('❌ 아이디 찾기 실패: $e');
       ToastHelper.showError('아이디 찾기 중 오류가 발생했습니다.');

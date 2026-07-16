@@ -172,9 +172,9 @@ service cloud.firestore {
       //     - 아이디 찾기, 비밀번호 재설정
       //   SUPER_ADMIN: 무제한 (운영 도구)
       // [RESOLVED MED-02] whereIn(FieldPath.documentId) 대량 쿼리 →
-      //   CF callableGetUsersBatch 이전 완료 — 관리자 직접 list 30건 권한 제거
-      allow list: if request.query.limit <= 1 ||
-                   (isLoggedIn() && isSuperAdmin());
+      // [M-3] limit<=1 비인증 예외 제거 — callableCheckUsername/callableCheckForeignIdExists/callableFindUsername CF 이전 완료
+      //   비인증 클라이언트가 limit<=1 쿼리로 users 전체 문서(PII) 접근 가능하던 취약점 차단.
+      allow list: if isLoggedIn() && isSuperAdmin();
 
       // 슈퍼관리자: 일반 운영 필드 수정 가능 (최우선 — 운영 긴급 수정용)
       // [특이사항] Firestore Rules는 어느 allow 하나라도 true면 허용(OR)이므로 순서가 보안에는 영향 없음.
