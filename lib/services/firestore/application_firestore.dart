@@ -470,6 +470,7 @@ extension ApplicationFirestore on FirestoreService {
               .call({'applicationId': applicationId, 'businessId': contractBusinessId});
         } catch (e) {
           debugPrint('⚠️ [H-CF-2] 계약서 무효화 CF 실패 (복구 가능): $e');
+          ToastHelper.showWarning('계약서 무효화 처리 중 오류가 발생했습니다. 계약서를 직접 확인해 주세요.');
         }
       }
 

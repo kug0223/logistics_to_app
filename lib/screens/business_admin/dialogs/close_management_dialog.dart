@@ -231,27 +231,31 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
             .toSet()
             .toList();
         try {
-          final attResult = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          // 500개 청크 분할 — CF의 applicationIds 상한 제한 대응
+          final attCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
               .httpsCallable('callableGetAttendanceForClosing',
-                  options: HttpsCallableOptions(timeout: const Duration(seconds: 60)))
-              .call({
-                'businessId': businessId,
-                'applicationIds': allAppIds,
-                'monthStartMs': monthStart.millisecondsSinceEpoch,
-                'monthEndExclusiveMs': monthEndExclusive.millisecondsSinceEpoch,
-              });
-          for (final rec in (attResult.data['records'] as List? ?? [])) {
-            final m = Map<String, dynamic>.from(rec as Map);
-            final appId = m['applicationId'] as String? ?? '';
-            final wdRaw = m['workDate'] as Map?;
-            if (wdRaw == null || appId.isEmpty) continue;
-            final seconds = (wdRaw['_seconds'] as num?)?.toInt() ?? 0;
-            final workDate = DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
-            final dateKey = DateFormat('yyyy-MM-dd').format(workDate);
-            attendanceByKey['${appId}_$dateKey'] = {
-              'status': m['status'] as String? ?? '',
-              'wageStatus': m['wageStatus'] as String?,
-            };
+                  options: HttpsCallableOptions(timeout: const Duration(seconds: 60)));
+          for (int i = 0; i < allAppIds.length; i += 500) {
+            final chunk = allAppIds.sublist(i, (i + 500).clamp(0, allAppIds.length));
+            final attResult = await attCallable.call({
+              'businessId': businessId,
+              'applicationIds': chunk,
+              'monthStartMs': monthStart.millisecondsSinceEpoch,
+              'monthEndExclusiveMs': monthEndExclusive.millisecondsSinceEpoch,
+            });
+            for (final rec in (attResult.data['records'] as List? ?? [])) {
+              final m = Map<String, dynamic>.from(rec as Map);
+              final appId = m['applicationId'] as String? ?? '';
+              final wdRaw = m['workDate'] as Map?;
+              if (wdRaw == null || appId.isEmpty) continue;
+              final seconds = (wdRaw['_seconds'] as num?)?.toInt() ?? 0;
+              final workDate = DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
+              final dateKey = DateFormat('yyyy-MM-dd').format(workDate);
+              attendanceByKey['${appId}_$dateKey'] = {
+                'status': m['status'] as String? ?? '',
+                'wageStatus': m['wageStatus'] as String?,
+              };
+            }
           }
           debugPrint('  [attendance] 이번달 레코드(CF): ${attendanceByKey.length}건');
         } catch (e) {
