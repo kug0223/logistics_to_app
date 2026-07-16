@@ -6168,6 +6168,9 @@ export const callableResetAccountStatus = onCall(
 // ── callableCheckUsername ────────────────────────────────────
 // 회원가입 전 아이디 중복 체크 — 비인증 가능, App Check 필수
 // [M-3] 클라이언트 직접 쿼리 대체 — users 문서 PII 노출 차단
+// [특이사항] 비인증(unauthenticated) 호출 가능 — 회원가입 전에 중복 여부를 알아야 하는 UX 설계상 불가피.
+//   보완: App Check enforceAppCheck: true (위변조 앱 차단), boolean만 반환 (문서 PII 미노출).
+//   cf. callableRegisterUser: 최종 등록도 CF 내부에서 username 재검증하므로 레이스 컨디션 없음.
 // Input:  { username: string }
 // Output: { exists: boolean }
 export const callableCheckUsername = onCall(
@@ -6189,6 +6192,9 @@ export const callableCheckUsername = onCall(
 // ── callableCheckForeignIdExists ─────────────────────────────
 // 회원가입 전 외국인등록번호 중복 체크 — 비인증 가능, App Check 필수
 // [M-3] 클라이언트 직접 쿼리 대체 — users 문서 PII 노출 차단
+// [특이사항] 비인증 가능 — callableCheckUsername과 동일 이유.
+//   foreignIdNumber는 클라이언트 AES 암호화 후 전달 — 서버는 암호문만 비교, 평문 복호화 없음.
+//   암호화 키(ENCRYPT_KEY)가 노출되면 열거 공격 가능하지만, App Check로 실용적 공격 제한.
 // Input:  { foreignIdNumber: string (암호화됨), role: "USER" | "BUSINESS_ADMIN" }
 // Output: { exists: boolean }
 export const callableCheckForeignIdExists = onCall(
@@ -6217,6 +6223,9 @@ export const callableCheckForeignIdExists = onCall(
 // ── callableFindUsername ──────────────────────────────────────
 // 아이디 찾기 (이름 + 전화번호) — 비인증 가능, App Check 필수
 // [M-3] 클라이언트 직접 쿼리 대체 — users 문서 PII 노출 차단
+// [특이사항] 비인증 가능 — 아이디를 분실한 사용자는 로그인 불가이므로 비인증 경로 필수.
+//   이름+전화번호 조합이 있어야 호출 가능 → 전화번호 열거 공격은 이름까지 알아야 해 실용성 낮음.
+//   반환값은 username만 — 개인정보(phone, address 등) 미포함. App Check로 자동화 공격 차단.
 // Input:  { name: string, phone: string }
 // Output: { username: string } | { username: null }
 export const callableFindUsername = onCall(

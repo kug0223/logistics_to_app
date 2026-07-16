@@ -1252,7 +1252,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                     children: [
                                       Flexible(
                                         child: Text(
-                                          user?.name ?? '이름 없음',
+                                          user?.name ?? app.applicantName ?? '이름 없음',
                                           style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w700),
                                           overflow: TextOverflow.ellipsis,
                                         ),
@@ -1796,6 +1796,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
     // [C-1] 파트변경 전 확정된 급여 건 체크 — 있으면 미확정 처리됨을 사전 경고
     // businessId 필터 추가 — attendance list 규칙의 businessId 요건 충족
+    // [H-CF-1 특이사항] count() 쿼리는 문서 내용(PII)이 아닌 건수만 반환 — 실질적 PII 노출 없음.
+    //   서버 businessId 교차검증은 없으나 count()의 PII 노출 위험이 낮아 TODO-CF 수준으로 유지.
     final int confirmedWageCount;
     try {
       final wageCountResults = await Future.wait([
@@ -2324,16 +2326,21 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       }
     }
 
+    // 첫 번째 await 전에 가드 설정 — 템플릿 선택 다이얼로그가 열려 있는 동안 중복 탭 차단
+    setState(() => _isProcessing = true);
+
     // 1. 계약서 템플릿 선택
     final businessId = widget.toItem.to.businessId;
     final articles = await ContractTemplateSelectorDialog.show(context, businessId: businessId);
-    if (articles == null || !mounted) return;
+    if (articles == null) {
+      if (mounted) setState(() => _isProcessing = false);
+      return;
+    }
+    if (!mounted) return;
 
     // 2. 사업장 정보 + 인감 로드
     final currentUserSeal = context.read<UserProvider>().currentUser?.sealBase64;
     final currentUserSealType = context.read<UserProvider>().currentUser?.sealType ?? 'stamp';
-
-    setState(() => _isProcessing = true);
     late BusinessModel business;
     late String sealBase64;
     String sealType = 'stamp';

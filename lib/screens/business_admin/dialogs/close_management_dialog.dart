@@ -234,6 +234,10 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
         // [SEC] whereIn 제거 → 단건 병렬 쿼리 + businessId 필터 추가
         // whereIn에서 filters.businessId null 반환 → 보안 규칙 폴백 의존 제거.
         // 30개 단위 청크: 동시 Firestore 연결 수 조절
+        // [H-CF-1 특이사항] attendance list 규칙: isAdmin()/isSubAdmin() 전체 허용, 서버 businessId 교차검증 없음.
+        //   클라이언트 businessId 필터 의존 — 관리자가 앱 수정 시 타 사업장 기록 접근 가능(내부자 위협 수준).
+        //   [TODO-CF] CF 이전 시 비용: applicationIds 다수 + 월 범위 필터링을 서버에서 처리해야 하므로
+        //   단건 parallel get과 비교해 구조적 이점이 없음. businessId 검증은 isAdmin() 로그인 단계 보장.
         for (int i = 0; i < allAppIds.length; i += 30) {
           final batchIds = allAppIds.sublist(
             i,
@@ -646,17 +650,47 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
 
   /// 컨텐츠 (사업장별 목록)
   Widget _buildContent(ThemeData theme) {
-    return ListView.builder(
+    final hasClosed = _closeStatusByBusiness.values
+        .any((statuses) => statuses.any((s) => s.statusType == CloseStatusType.closed));
+
+    return ListView(
       padding: ResponsiveHelper.cardPadding(context),
-      shrinkWrap: true,
-      itemCount: _closeStatusByBusiness.length,
-      itemBuilder: (context, index) {
-        final businessId = _closeStatusByBusiness.keys.elementAt(index);
-        final statuses = _closeStatusByBusiness[businessId]!;
-        final businessName = _businessNameMap[businessId] ?? '알 수 없음';
-        
-        return _buildBusinessSection(theme, businessId, businessName, statuses);
-      },
+      children: [
+        // 마감완료 날짜 탭 안내 — 마감완료 행이 하나라도 있을 때만 표시
+        if (hasClosed)
+          Container(
+            margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 12),
+              vertical: ResponsiveHelper.spacing(context, 10),
+            ),
+            decoration: BoxDecoration(
+              color: AppColors.success.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.success.withValues(alpha: 0.2)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline,
+                    size: ResponsiveHelper.iconSize(context, 16),
+                    color: AppColors.success),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Expanded(
+                  child: Text(
+                    '마감완료 날짜를 탭하면 당일명단에서 마감을 취소할 수 있습니다.',
+                    style: ResponsiveHelper.smallStyle(context).copyWith(
+                      color: AppColors.success,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+        for (final entry in _closeStatusByBusiness.entries)
+          _buildBusinessSection(theme, entry.key,
+              _businessNameMap[entry.key] ?? '알 수 없음', entry.value),
+      ],
     );
   }
 
@@ -766,11 +800,16 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
   /// 날짜별 행
   Widget _buildDateRow(ThemeData theme, String businessId, DateCloseStatus status) {
     final dateStr = DateFormat('M/d(E)', 'ko_KR').format(status.date);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final isFuture = status.date.isAfter(today);
     final isClosed = status.statusType == CloseStatusType.closed;
-    final indicatorColor = isClosed ? AppColors.success : AppColors.error;
+    final indicatorColor = isFuture
+        ? AppColors.grey300
+        : (isClosed ? AppColors.success : AppColors.error);
 
     return InkWell(
-      onTap: () => _openAttendanceDialog(businessId, status.date),
+      onTap: isFuture ? null : () => _openAttendanceDialog(businessId, status.date),
       child: Row(
         children: [
           // 왼쪽 상태 인디케이터 바
@@ -791,6 +830,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
                     dateStr,
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
                       fontWeight: FontWeight.w500,
+                      color: isFuture ? AppColors.grey400 : null,
                     ),
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -798,11 +838,13 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
                     '${status.closedCount}/${status.totalConfirmed}명',
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
                       fontWeight: FontWeight.w600,
-                      color: isClosed ? AppColors.success : AppColors.grey600,
+                      color: isFuture
+                          ? AppColors.grey400
+                          : (isClosed ? AppColors.success : AppColors.grey600),
                     ),
                   ),
                   const Spacer(),
-                  _buildStatusBadge(status),
+                  _buildStatusBadge(status, isFuture: isFuture),
                 ],
               ),
             ),
@@ -813,7 +855,35 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
   }
 
   /// 상태 배지
-  Widget _buildStatusBadge(DateCloseStatus status) {
+  Widget _buildStatusBadge(DateCloseStatus status, {bool isFuture = false}) {
+    // 미래 날짜: 회색 "예정" 배지 (아직 근무 전이므로 미마감 처리 부적절)
+    if (isFuture) {
+      return Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 10),
+          vertical: ResponsiveHelper.spacing(context, 6),
+        ),
+        decoration: BoxDecoration(
+          color: AppColors.grey100,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.schedule, size: ResponsiveHelper.iconSize(context, 14), color: AppColors.grey400),
+            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+            Text(
+              '예정',
+              style: ResponsiveHelper.smallStyle(context).copyWith(
+                fontWeight: FontWeight.w600,
+                color: AppColors.grey400,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     final isClosed = status.statusType == CloseStatusType.closed;
     final unclosedCount = status.totalConfirmed - status.closedCount;
 
@@ -822,8 +892,16 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
         : AppColors.error.withValues(alpha: 0.1);
     final textColor = isClosed ? AppColors.success : AppColors.error;
     final icon = isClosed ? Icons.lock : Icons.lock_open;
-
     final text = isClosed ? '마감완료' : '미마감 $unclosedCount명';
+
+    // 미마감 원인 세부 텍스트: 출퇴근 미기록 / 급여 미확정 분류
+    String? subText;
+    if (!isClosed && (status.noAttendanceCount > 0 || status.wagePendingCount > 0)) {
+      final parts = <String>[];
+      if (status.noAttendanceCount > 0) parts.add('미기록 ${status.noAttendanceCount}');
+      if (status.wagePendingCount > 0) parts.add('급여미확정 ${status.wagePendingCount}');
+      subText = parts.join(' · ');
+    }
 
     return Container(
       padding: EdgeInsets.symmetric(
@@ -834,20 +912,36 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
         color: bgColor,
         borderRadius: BorderRadius.circular(8),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: ResponsiveHelper.iconSize(context, 14), color: textColor),
-          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-          Text(
-            text,
-            style: ResponsiveHelper.smallStyle(context).copyWith(
-              fontWeight: FontWeight.w600,
-              color: textColor,
-            ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: ResponsiveHelper.iconSize(context, 14), color: textColor),
+              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+              Text(
+                text,
+                style: ResponsiveHelper.smallStyle(context).copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: textColor,
+                ),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+              Icon(Icons.chevron_right, size: ResponsiveHelper.iconSize(context, 16), color: textColor),
+            ],
           ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-          Icon(Icons.chevron_right, size: ResponsiveHelper.iconSize(context, 16), color: textColor),
+          if (subText != null) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+            Text(
+              subText,
+              style: ResponsiveHelper.smallStyle(context).copyWith(
+                fontSize: 10,
+                color: AppColors.grey500,
+              ),
+            ),
+          ],
         ],
       ),
     );

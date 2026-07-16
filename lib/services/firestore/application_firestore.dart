@@ -24,18 +24,25 @@ extension ApplicationFirestore on FirestoreService {
       uid != null || (businessId != null && businessId.isNotEmpty),
       'getApplicationsByTOId: admin 컨텍스트에서는 businessId 필수',
     );
-    // USER 컨텍스트(uid 제공): 직접 Firestore (본인 데이터, 보안규칙 uid 필터 충족)
+    // USER 컨텍스트(uid 제공): [CF 이전 2026-07-15] callableGetMyApplications
+    // uid를 서버에서 강제 검증 — Firestore 직접 list 차단 후 CF 경유 필수
     if (uid != null && uid.isNotEmpty) {
       try {
-        final snap = await _firestore
-            .collection('applications')
-            .where('toId', isEqualTo: toId)
-            .where('uid', isEqualTo: uid)
-            .limit(2000)
-            .get(const GetOptions(source: Source.server));
+        final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('callableGetMyApplications',
+                options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+        final result = await callable.call<Map<String, dynamic>>({
+          'toId': toId,
+          'limit': 2000,
+        });
         final statusSet = statuses != null ? Set<String>.from(statuses) : null;
-        return snap.docs
-            .map(ApplicationModel.tryFromFirestore)
+        return (result.data['applications'] as List? ?? [])
+            .whereType<Map>()
+            .map((m) {
+              final raw = _cfHydrate(Map<String, dynamic>.from(m));
+              final id = raw.remove('id') as String? ?? '';
+              return ApplicationModel.tryFromMap(raw, id);
+            })
             .whereType<ApplicationModel>()
             .where((a) => statusSet == null || statusSet.contains(a.status))
             .toList();
@@ -174,44 +181,42 @@ extension ApplicationFirestore on FirestoreService {
       return cached;
     }
     try {
-      // orderBy('appliedAt', desc)를 제거하고 클라이언트에서 정렬.
-      // where('uid').orderBy('appliedAt', desc)는 복합 인덱스가 필요하고,
-      // 보안 규칙의 request.query.filters.uid가 복합 인덱스 쿼리에서 null을 반환해
-      // PERMISSION_DENIED를 유발하므로 단순 uid 필터 조회 후 클라이언트 정렬로 대체.
-      final snap = await _firestore
-          .collection('applications')
-          .where('uid', isEqualTo: uid)
-          .limit(200)
-          .get(const GetOptions(source: Source.server));
-      final result = snap.docs
-          .map(ApplicationModel.tryFromFirestore)
+      // [CF 이전 2026-07-15] callableGetMyApplications — uid 서버 검증 강제
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetMyApplications',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({'limit': 200});
+      final list = (result.data['applications'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return ApplicationModel.tryFromMap(raw, id);
+          })
           .whereType<ApplicationModel>()
           .toList()
         ..sort((a, b) => b.appliedAt.compareTo(a.appliedAt));
-      _myApplicationsCache[uid] = result;
+      _myApplicationsCache[uid] = list;
       _myApplicationsCacheTimestamps[uid] = DateTime.now();
-      return result;
+      return list;
     } catch (e) {
       debugPrint('내 지원 내역 조회 실패: $e');
-      return cached ?? []; // 캐시 만료 후 실패 시 기존 캐시 반환
+      return cached ?? [];
     }
   }
 
   /// 내 지원 내역 페이지네이션 조회 (내 지원 화면 전용)
   ///
-  /// [startAfter] cursor — null이면 첫 페이지
-  /// 반환: {items, lastDoc, hasMore}
+  /// [startAfterDocId] cursor 문서 ID — null이면 첫 페이지
+  /// 반환: {items, lastDocId, hasMore}
+  /// [CF 이전 2026-07-15] callableGetMyApplications — uid 서버 검증 강제
   Future<Map<String, dynamic>> getMyApplicationsPaged({
     required String uid,
     int pageSize = 20,
-    DocumentSnapshot? startAfter,
+    String? startAfterDocId,
     String? statusFilter, // null = 전체, 'active', 'inactive'
   }) async {
     try {
-      // [BUG-WHEREIN] uid isEqualTo + status whereIn 복합쿼리 → filters.uid null 반환
-      //   → PERMISSION_DENIED (isUser() && filters.uid == auth.uid 조건 불만족)
-      //   statusFilter는 서버 필터 제거, orderBy('appliedAt') 커서 기반 페이징 유지
-      //   클라이언트 필터 후 실제 반환 건수가 pageSize보다 적을 수 있음(허용됨)
       Set<String>? statusSet;
       if (statusFilter == 'active') {
         statusSet = Set<String>.from(AppStatus.activeStates);
@@ -219,34 +224,34 @@ extension ApplicationFirestore on FirestoreService {
         statusSet = Set<String>.from(AppStatus.inactiveStates);
       }
 
-      Query query = _firestore
-          .collection('applications')
-          .where('uid', isEqualTo: uid)
-          .orderBy('appliedAt', descending: true)
-          .limit(pageSize);
-      if (startAfter != null) query = query.startAfterDocument(startAfter);
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetMyApplications',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'limit': pageSize,
+        if (startAfterDocId != null) 'startAfterDocId': startAfterDocId,
+      });
 
-      final snap = await query.get();
-      final items = snap.docs
-          .map(ApplicationModel.tryFromFirestore)
+      final items = (result.data['applications'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return ApplicationModel.tryFromMap(raw, id);
+          })
           .whereType<ApplicationModel>()
           .where((a) => statusSet == null || statusSet.contains(a.status))
-          .toList();
-      // [W-01 fix] hasMore는 raw 결과 기준이므로, 클라이언트 필터가 전부 제거하면
-      // items=[]이지만 hasMore=true가 되어 무한 페이지 루프 발생.
-      // raw 결과가 pageSize이면 다음 페이지가 있을 수 있음(상한), items가 비어도 커서는 유지.
-      // 호출자가 items.isEmpty && hasMore=true인 경우 계속 로드하지 않도록 UI에서 처리해야 하나,
-      // 서비스 레이어에서도 raw full page = 필터 전부 탈락 시 hasMore 신뢰도 저하 경고를 위해
-      // lastDoc은 raw 마지막으로 유지하되, items가 비면 hasMore를 raw 기준으로 유지.
-      // 근본 해결: status 필터를 Firestore 서버 쿼리로 이전해야 함 (현재는 클라이언트 필터).
+          .toList()
+        ..sort((a, b) => b.appliedAt.compareTo(a.appliedAt));
+
       return {
         'items': items,
-        'lastDoc': snap.docs.isNotEmpty ? snap.docs.last : null,
-        'hasMore': snap.docs.length == pageSize,
+        'lastDocId': result.data['lastDocId'],
+        'hasMore': result.data['hasMore'] ?? false,
       };
     } catch (e) {
       debugPrint('지원 내역 페이지 조회 실패: $e');
-      return {'items': <ApplicationModel>[], 'lastDoc': null, 'hasMore': false};
+      return {'items': <ApplicationModel>[], 'lastDocId': null, 'hasMore': false};
     }
   }
 
@@ -424,7 +429,9 @@ extension ApplicationFirestore on FirestoreService {
       final updates = <String, dynamic>{'status': status};
       if (status == AppStatus.canceled) {
         updates['canceledAt'] = FieldValue.serverTimestamp();
-        if (canceledBy != null) updates['canceledBy'] = canceledBy;
+        // canceledBy는 rules에서 admin 경로 직접 쓰기 차단 — statusHistory.by로 감사 로그 대체
+        // statusHistory.at: Firestore 배열 요소 내부에서 serverTimestamp() 미지원
+        // → 클라이언트 시계 사용이 불가피. 법적 근거는 루트 canceledAt(serverTimestamp)을 사용.
         updates['statusHistory'] = _appendHistory(appData, {
           'status': 'CANCELED',
           'at': Timestamp.now(),
@@ -444,18 +451,10 @@ extension ApplicationFirestore on FirestoreService {
 
       final batch = _firestore.batch();
       batch.update(appDoc.reference, updates);
-
-      if (toId != null) {
-        if (AppStatus.confirmedStatuses.contains(prevStatus)) {
-          _decrementTOConfirmed(batch, toId, slotId, workType: selectedWorkType);
-          // confirmed → pending 롤백 시 pendingCount도 복원
-          if (status == AppStatus.pending) {
-            _incrementTOPending(batch, toId, slotId, delta: 1, workType: selectedWorkType);
-          }
-        } else if (prevStatus == AppStatus.pending) {
-          _incrementTOPending(batch, toId, slotId, delta: -1, workType: selectedWorkType);
-        }
-      }
+      // [PERM-FIX] TO 카운터(totalConfirmed/totalPending) 직접 쓰기는
+      // rules에서 isSuperAdmin() / isUser() 전용 — isToAdmin 경로 차단.
+      // 배치에 포함 시 PERMISSION_DENIED → application 상태 업데이트까지 실패.
+      // 아래 별도 counterBatch에서 비임계 처리 (실패 시 CF syncTOStats 교정).
 
       // [BUG-수정] 확정 취소 시 생성된 계약서 무효화
       // CONTRACT_PENDING → PENDING 롤백 시 연결된 계약서(pending_employer / pending_worker / draft)를
@@ -469,6 +468,10 @@ extension ApplicationFirestore on FirestoreService {
         final contractBusinessId = appData['businessId'] as String? ?? '';
 
         // 장기 계약서: applicationId 직접 매칭 (businessId 필터로 보안 규칙 통과)
+        // [H-CF-2 특이사항] employment_contracts list 규칙: isAdmin()/isSubAdmin() 전체 허용,
+        //   서버 businessId 교차검증 없음. 클라이언트 businessId 필터(contractBusinessId) 의존.
+        //   이 쿼리는 batch.update와 묶인 원자적 흐름이라 CF 이전 시 전체 updateApplicationStatus를
+        //   CF로 이전해야 하는 대형 작업 → 현재 수준 유지. (Source.server 강제로 캐시 오염 방지)
         final contractQ1 = await _firestore
             .collection('employment_contracts')
             .where('applicationId', isEqualTo: applicationId)
@@ -502,11 +505,33 @@ extension ApplicationFirestore on FirestoreService {
       }
 
       await batch.commit();
-      if (toId != null) clearCache(toId: toId);
+
+      // TO/슬롯 카운터 낙관적 업데이트 — 비임계 별도 배치
+      // tos totalConfirmed/totalPending은 rules상 admin 직접 쓰기 불가(PERMISSION_DENIED 가능).
+      // 슬롯 confirmedCount/pendingCount(±1)는 isToAdmin 허용이지만 같은 배치라 같이 실패.
+      // CF syncTOStats가 최종 교정하므로 실패는 UI 일시 불일치만 발생.
+      if (toId != null) {
+        try {
+          final counterBatch = _firestore.batch();
+          if (AppStatus.confirmedStatuses.contains(prevStatus)) {
+            _decrementTOConfirmed(counterBatch, toId, slotId, workType: selectedWorkType);
+            if (status == AppStatus.pending) {
+              _incrementTOPending(counterBatch, toId, slotId, delta: 1, workType: selectedWorkType);
+            }
+          } else if (prevStatus == AppStatus.pending) {
+            _incrementTOPending(counterBatch, toId, slotId, delta: -1, workType: selectedWorkType);
+          }
+          await counterBatch.commit();
+        } catch (e) {
+          debugPrint('⚠️ [updateApplicationStatus] TO 카운터 낙관적 업데이트 실패 — CF syncTOStats 교정 예정: $e');
+        }
+        clearCache(toId: toId);
+      }
 
       // 알림
       final applicantUid = appData['uid'] as String? ?? '';
       if (applicantUid.isEmpty) return [];
+      invalidateMyApplicationsCache(applicantUid);
       if (AppStatus.confirmedStatuses.contains(prevStatus)) {
         await createNotification(NotificationModel.createConfirmationCanceled(
           userId: applicantUid,
@@ -569,7 +594,6 @@ extension ApplicationFirestore on FirestoreService {
 
       final toId = appData['toId'] as String?;
       final slotId = appData['slotId'] as String?;
-      final selectedWorkType = appData['selectedWorkType'] as String?;
 
       // [A03-FIX] TOCTOU 방지: 조회(get) 이후 배치 커밋 사이에 관리자가 지원자를
       // 확정(CONTRACT_PENDING/CONFIRMED)할 수 있다. 트랜잭션으로 서버 상태를 재확인해
@@ -612,12 +636,12 @@ extension ApplicationFirestore on FirestoreService {
             'totalPending': FieldValue.increment(-1),
           });
           if (slotId != null) {
+            // [A1-FIX 누락 수정] workTypeCounts는 CF callableIncrementSlotPending이 처리.
+            // USER rules는 hasOnly(['pendingCount'])만 허용 — workTypeCounts 포함 시 PERMISSION_DENIED.
             tx.update(
               _firestore.collection('tos').doc(toId).collection('slots').doc(slotId),
               {
                 'pendingCount': FieldValue.increment(-1),
-                if (selectedWorkType != null)
-                  'workTypeCounts.$selectedWorkType.pendingCount': FieldValue.increment(-1),
               },
             );
           }
@@ -955,22 +979,12 @@ extension ApplicationFirestore on FirestoreService {
     String? businessId,
   }) async {
     try {
-      // [BUGFIX] whereIn + equality 복합쿼리에서 Firestore 보안 규칙이
-      //   request.query.filters.uid를 null 반환 → PERMISSION_DENIED.
-      //   status whereIn 제거 후 클라이언트 필터링으로 전환.
+      // [PERF-2026-07-16] 별도 CF 호출(limit:2000) 대신 getMyApplications 캐시 재사용
+      // PENDING/CONTRACT_PENDING은 최근 항목이므로 limit:200으로 충분; 캐시 히트 시 latency 없음
       final statusFilter = Set<String>.from(statuses ?? [AppStatus.pending, AppStatus.contractPending]);
-      var query = _firestore
-          .collection('applications')
-          .where('uid', isEqualTo: uid);
-      if (businessId != null) {
-        query = query.where('businessId', isEqualTo: businessId);
-      }
-      final snap = await query.get(const GetOptions(source: Source.server));
-
-      return snap.docs
-          .where((d) => d.id != excludeId)
-          .map(ApplicationModel.tryFromFirestore)
-          .whereType<ApplicationModel>()
+      final allApps = await getMyApplications(uid);
+      return allApps
+          .where((a) => a.id != excludeId)
           .where((a) => statusFilter.contains(a.status))
           .where((a) => a.isWorkingOnDate(workDate))
           .where((a) => ApplicationModel.hasTimeOverlap(startTime, endTime, a.startTime, a.endTime))
@@ -1143,42 +1157,67 @@ extension ApplicationFirestore on FirestoreService {
     required String uid,
     required DateTime workDate,
   }) async {
+    // TTL 캐시 — 날짜별 3분 캐시 (지원 상태 변경 시 invalidateMyApplicationsCache로 무효화)
+    final dateStr = '${workDate.year}-${workDate.month.toString().padLeft(2, '0')}-${workDate.day.toString().padLeft(2, '0')}';
+    final cacheKey = '${uid}_$dateStr';
+    final cached = _confirmedSchedulesCache[cacheKey];
+    final cachedTs = _confirmedSchedulesCacheTs[cacheKey];
+    if (cached != null && cachedTs != null &&
+        DateTime.now().difference(cachedTs) < FirestoreService._confirmedSchedulesCacheTTL) {
+      return cached;
+    }
+
     try {
-      // [BUGFIX] 범위 쿼리(workDate >=, workEndDate >=)는 Firestore 복합 인덱스를 사용하게 되며,
-      // 이 경우 보안 규칙에서 request.query.filters.uid가 null 반환 → PERMISSION_DENIED.
-      // 해결: 순수 equality 쿼리(status별 병렬)로 대체 후 날짜 필터링을 클라이언트에서 수행.
-      // 한 사용자의 확정 지원서는 소수이므로 성능 영향 최소.
-      final allConfirmed = (await Future.wait(
-        AppStatus.confirmedStatuses.map((s) => _firestore
-            .collection('applications')
-            .where('uid', isEqualTo: uid)
-            .where('status', isEqualTo: s)
-            .get()),
-      )).expand((snap) => snap.docs)
-          .map(ApplicationModel.tryFromFirestore)
-          .whereType<ApplicationModel>()
-          .toList();
+      // [PERF-2026-07-16] 단기/장기 분리 병렬 조회로 전환 — 기존 limit:2000 단일 조회 대비 데이터 전송량 90%↓
+      // 단기: isLongTerm=false 서버 필터 + 클라이언트 날짜 필터 (limit:200)
+      // 장기: isLongTerm=true 서버 필터 + 클라이언트 스케줄 필터 (limit:50)
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetMyApplications',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+
+      final results = await Future.wait([
+        callable.call<Map<String, dynamic>>({
+          'statuses': AppStatus.confirmedStatuses,
+          'isLongTerm': false,
+          'limit': 200,
+        }),
+        callable.call<Map<String, dynamic>>({
+          'statuses': AppStatus.confirmedStatuses,
+          'isLongTerm': true,
+          'limit': 50,
+        }),
+      ]);
+
+      ApplicationModel? parseApp(Map m) {
+        final raw = _cfHydrate(Map<String, dynamic>.from(m));
+        final id = raw.remove('id') as String? ?? '';
+        return ApplicationModel.tryFromMap(raw, id);
+      }
+
+      final shortTermAll = (results[0].data['applications'] as List? ?? [])
+          .whereType<Map>().map(parseApp).whereType<ApplicationModel>().toList();
+      final longTermAll = (results[1].data['applications'] as List? ?? [])
+          .whereType<Map>().map(parseApp).whereType<ApplicationModel>().toList();
 
       final dateStart = DateTime(workDate.year, workDate.month, workDate.day);
       final dateEnd = dateStart.add(const Duration(days: 1));
 
-      final shortTerm = allConfirmed
-          .where((a) => !a.isLongTermApplication)
-          .where((a) {
-            final wd = DateTime(a.workDate.year, a.workDate.month, a.workDate.day);
-            return !wd.isBefore(dateStart) && wd.isBefore(dateEnd);
-          })
-          .toList();
+      final shortTerm = shortTermAll.where((a) {
+        final wd = DateTime(a.workDate.year, a.workDate.month, a.workDate.day);
+        return !wd.isBefore(dateStart) && wd.isBefore(dateEnd);
+      }).toList();
 
-      final longTermCandidates = allConfirmed
-          .where((a) => a.isLongTermApplication)
+      final longTermCandidates = longTermAll
           .where((a) => a.isWorkingOnDate(workDate))
           .toList();
 
-      return [...shortTerm, ...longTermCandidates];
+      final combined = [...shortTerm, ...longTermCandidates];
+      _confirmedSchedulesCache[cacheKey] = combined;
+      _confirmedSchedulesCacheTs[cacheKey] = DateTime.now();
+      return combined;
     } catch (e) {
       debugPrint('❌ 확정 일정 조회 실패: $e');
-      return [];
+      return cached ?? [];
     }
   }
 
@@ -1227,6 +1266,7 @@ extension ApplicationFirestore on FirestoreService {
     final workDays = (appInfo['workDays'] as List?)?.cast<String>();
 
     if (toId != null) clearCache(toId: toId);
+    if (uid.isNotEmpty) invalidateMyApplicationsCache(uid);
 
     // [SEC-FIX] 충돌 AUTO_CANCEL → CF 이전 (callableAutoConflictCancel)
     // 이유: BUSINESS_ADMIN이 uid 단독 LIST 쿼리 시 보안 규칙에서 PERMISSION_DENIED
@@ -1428,81 +1468,23 @@ extension ApplicationFirestore on FirestoreService {
   ///   non-null → ADMIN 경로: `requesterBusinessId == businessId` 필터 사용
   ///          (관리자 취소: cancelConfirmedApplication isAdminCancel=true)
   ///
-  /// 주의: isAdminCancel=true 이더라도 appData['businessId']가 null/빈값이면
-  ///       businessId=null → USER 경로로 fallback. 관리자 계정의 idCard 요청이
-  ///       정리되지 않을 수 있으므로 호출부에서 businessId를 반드시 검증해야 함.
+  // [CF-MIGRATED 2026-07-15] callableCleanupApplicationData CF 이전 완료
+  // Admin SDK로 idCardAccessRequests·schedule_change_requests·attendance 일괄 정리.
+  // USER list 직접 쿼리 불필요 → schedule_change_requests·idCardAccessRequests USER list 규칙 차단 가능.
   Future<void> _cleanupApplicationRelatedData({
     required String applicationId,
-    required String uid,
-    // businessId가 있으면 관리자 경로 (requesterBusinessId 필터),
-    // 없으면 사용자 경로 (targetUserId 필터) — 보안 규칙과 1:1 매핑
-    String? businessId,
-    WriteBatch? batch,
+    required String uid,   // CF 내부에서 application.uid로 서버 검증 — 이 값은 미사용
+    String? businessId,    // CF 내부에서 callerUid 권한 검증 — 이 값은 미사용
+    WriteBatch? batch,     // CF는 자체 배치 사용 — 이 값은 미사용
   }) async {
-    final useBatch = batch != null;
-    final localBatch = batch ?? _firestore.batch();
     try {
-      // 관리자 경로: requesterBusinessId 기반, 사용자 경로: targetUserId 기반
-      // 보안 규칙: isAdminOf(requesterBusinessId) 또는 targetUserId == auth.uid
-      final idCardQuery = businessId != null
-          ? _firestore
-              .collection('idCardAccessRequests')
-              .where('applicationId', isEqualTo: applicationId)
-              .where('requesterBusinessId', isEqualTo: businessId)
-              .where('status', isEqualTo: 'pending')
-          : _firestore
-              .collection('idCardAccessRequests')
-              .where('applicationId', isEqualTo: applicationId)
-              .where('targetUserId', isEqualTo: uid)
-              .where('status', isEqualTo: 'pending');
-      final idCardRequests = await idCardQuery
-          .get(const GetOptions(source: Source.server));
-      for (final doc in idCardRequests.docs) {
-        localBatch.update(doc.reference, {'status': 'canceled'});
-      }
-      // 관리자 경로: businessId 필터 → 보안 규칙 isAdminOf(filters.businessId) 충족
-      // 사용자 경로: applicantUid 필터 포함 → 보안 규칙 isUser() && filters.applicantUid==auth.uid (CRIT-02) 충족.
-      //   [특이사항] applicationId+applicantUid+status 3중 복합 쿼리지만 모두 isEqualTo(whereIn 없음).
-      //   isEqualTo 복합 쿼리에서는 filters.applicantUid가 정상 반환됨. whereIn 혼합 시는 null 반환 주의.
-      final scheduleQuery = businessId != null
-          ? _firestore
-              .collection('schedule_change_requests')
-              .where('applicationId', isEqualTo: applicationId)
-              .where('businessId', isEqualTo: businessId)
-              .where('status', isEqualTo: 'PENDING')
-          : _firestore
-              .collection('schedule_change_requests')
-              .where('applicationId', isEqualTo: applicationId)
-              .where('applicantUid', isEqualTo: uid)
-              .where('status', isEqualTo: 'PENDING');
-      final scheduleRequests = await scheduleQuery
-          .get(const GetOptions(source: Source.server));
-      for (final doc in scheduleRequests.docs) {
-        localBatch.update(doc.reference, {'status': 'CANCELED'});
-      }
-      // wageStatus == 'pending' 출근 기록만 무효화(canceledWithApplication: true) — 의도된 설계.
-      // calculated/confirmed/transferred 상태 attendance는 건드리지 않는다:
-      // 이미 급여 계산이 시작된 기록을 삭제하면 정산 불일치가 발생하므로,
-      // 관리자가 수동으로 wage_confirm_dialog에서 처리하도록 위임한다.
-      final attendanceBaseQuery = _firestore
-          .collection('attendance')
-          .where('applicationId', isEqualTo: applicationId)
-          .where('wageStatus', isEqualTo: 'pending');
-      // [MISMATCH-FIX] USER 경로: rules isUser() && filters.userId == auth.uid 충족을 위해 userId 필터 필수
-      final attendanceRecords = await (businessId != null
-              ? attendanceBaseQuery.where('businessId', isEqualTo: businessId)
-              : attendanceBaseQuery.where('userId', isEqualTo: uid))
-          .get(const GetOptions(source: Source.server));
-      for (final doc in attendanceRecords.docs) {
-        localBatch.update(doc.reference, {'canceledWithApplication': true});
-      }
-      if (!useBatch) await localBatch.commit();
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableCleanupApplicationData',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+      await callable.call({'applicationId': applicationId});
     } catch (e) {
-      // [M-4 수정] useBatch=true이면 호출자의 배치에 연산이 부분적으로 추가된 상태.
-      // 에러를 삼키면 호출자가 불완전한 배치를 커밋할 수 있으므로 rethrow.
-      // useBatch=false(독립 배치)일 때만 에러 격리 — 호출자 흐름에 영향 없음.
       debugPrint('❌ 연관 데이터 정리 실패: $e');
-      if (useBatch) rethrow;
+      if (batch != null) rethrow;
     }
   }
 

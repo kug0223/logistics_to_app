@@ -797,7 +797,12 @@ service cloud.firestore {
       //   (공식 docs의 request.query 속성: limit/offset/orderBy 3개만 존재).
       //   ALL list 쿼리에서 null 반환 → isAdminOf(null) = false → PERMISSION_DENIED.
       //   관리자 직접 list (hasAttendanceRecord 등) 전면 차단되는 치명적 기능 깨짐 수정.
-      //   [TODO-CF] 향후 CF로 이전해 businessId 교차검증 강화 (현재 클라이언트 필터에 의존)
+      // [H-CF-1 특이사항] businessId 서버 교차검증 없음 — 클라이언트 필터 의존.
+      //   위험: BUSINESS_ADMIN이 앱을 수정해 businessId 필터 제거 시 전체 attendance 열람 가능.
+      //   실질 위험: 내부자 위협 수준 (정상 앱 사용자는 항상 businessId 필터 전달).
+      //   모든 6개 클라이언트 쿼리에 businessId 필터 포함 확인 (2026-07-16 전수 점검).
+      //   [TODO-CF] CF 이전 시: assertBizAdmin(businessId) + businessId 쿼리 파라미터 서버 검증.
+      //     close_management_dialog의 다중 appId+월범위 필터링이 CF 구조상 복잡 → 대형 작업.
       //   [CF-MIGRATED 2026-07-15] USER 직접 list 완전 차단
       //   · _cleanupApplicationRelatedData → callableCleanupApplicationData CF
       //   · 탈퇴 3-pre4 attendance 정리 → callableDeleteAccountApplications CF
@@ -1450,7 +1455,11 @@ service cloud.firestore {
       // [FILTERS-BROKEN-FIX 2026-07-16] request.query.filters 미지원 → isAdmin()||isSubAdmin()으로 교체
       //   updateApplicationStatus() CONTRACT_PENDING→PENDING 롤백 시 employment_contracts 조회 포함
       //   → 이 규칙이 PERMISSION_DENIED 반환하면 롤백 전체 실패. 즉시 수정 필수.
-      //   [TODO-CF] 향후 CF 이전해 businessId 교차검증 강화 (현재 클라이언트 필터에 의존)
+      // [H-CF-2 특이사항] businessId 서버 교차검증 없음 — 클라이언트 필터 의존.
+      //   위험: BUSINESS_ADMIN이 앱 수정 시 타 사업장 계약서 열람 가능 (내부자 위협 수준).
+      //   모든 2개 클라이언트 쿼리(contractQ1/Q2)에 businessId 필터 포함 확인 (2026-07-16 전수 점검).
+      //   [TODO-CF] CF 이전 시: batch.update와 결합된 updateApplicationStatus 전체를 CF로 이전해야 함.
+      //     계약서 voiding이 CF 단독 트랜잭션으로 분리 가능해지면 자연스럽게 해결.
       allow list: if isLoggedIn() && (
                     isSuperAdmin() ||
                     isAdmin() ||

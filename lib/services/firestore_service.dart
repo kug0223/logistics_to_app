@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import '../utils/format_helper.dart';
 import '../models/core/user_model.dart';
 import '../models/core/to_model.dart';
@@ -133,6 +132,11 @@ class FirestoreService {
   final Map<String, DateTime> _myApplicationsCacheTimestamps = {};
   static const Duration _myApplicationsCacheTTL = Duration(minutes: 1);
 
+  // 확정 일정 날짜별 캐시 ("${uid}_${dateStr}" → List<ApplicationModel>)
+  final Map<String, List<ApplicationModel>> _confirmedSchedulesCache = {};
+  final Map<String, DateTime> _confirmedSchedulesCacheTs = {};
+  static const Duration _confirmedSchedulesCacheTTL = Duration(minutes: 3);
+
   // 사용자 정보 캐시
   final Map<String, UserModel> _userCache = {};
   final Map<String, DateTime> _userCacheTimestamps = {};
@@ -164,6 +168,9 @@ class FirestoreService {
   void invalidateMyApplicationsCache(String uid) {
     _myApplicationsCache.remove(uid);
     _myApplicationsCacheTimestamps.remove(uid);
+    // 확정 일정 캐시도 같이 무효화 — 지원 상태 변경 시 날짜별 캐시 오염 방지
+    _confirmedSchedulesCache.removeWhere((k, _) => k.startsWith('${uid}_'));
+    _confirmedSchedulesCacheTs.removeWhere((k, _) => k.startsWith('${uid}_'));
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -246,15 +253,16 @@ class FirestoreService {
     }
   }
 
-  /// TO 시간만료 자동 마감 (isManualClosed: false — 재오픈 버튼 미표시)
+  /// TO 시간만료 자동 마감 — callableUpdateTO CF 위임 (status:CLOSED)
+  /// [D-2 FIX 2026-07-15] 직접 쓰기는 isSuperAdmin() 전용 규칙에 의해 일반 관리자 PERMISSION_DENIED
   Future<void> markTOAsExpired(String toId) async {
     try {
-      await _firestore.collection('tos').doc(toId).update({
-        'status': TOStatus.closed,
-        'isManualClosed': false,
-        'closedAt': FieldValue.serverTimestamp(),
-        'statusUpdatedAt': FieldValue.serverTimestamp(),
-        'closedBy': FieldValue.delete(),
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableUpdateTO',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+      await callable.call<Map<String, dynamic>>({
+        'toId': toId,
+        'updates': {'status': TOStatus.closed},
       });
       clearCache(toId: toId);
     } catch (e) {
@@ -779,19 +787,20 @@ class FirestoreService {
 
       final toStatus = toData['status'] as String? ?? '';
 
+      // [D-3 FIX 2026-07-15] 직접 쓰기 → callableUpdateTO CF 이전 (isSuperAdmin 전용 규칙 우회)
+      final cfUpdateTO = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableUpdateTO',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
       if (allClosed && toStatus != TOStatus.closed) {
-        await toRef.update({
-          'status': TOStatus.closed,
-          'isManualClosed': false,
-          'closedAt': FieldValue.serverTimestamp(),
-          'closedBy': FieldValue.delete(),
+        await cfUpdateTO.call<Map<String, dynamic>>({
+          'toId': toId,
+          'updates': {'status': TOStatus.closed},
         });
         clearCache(toId: toId);
       } else if (!allClosed && (toStatus == TOStatus.closed || toStatus == TOStatus.expired)) {
-        await toRef.update({
-          'status': TOStatus.active,
-          'isManualClosed': false,
-          'reopenedAt': FieldValue.serverTimestamp(),
+        await cfUpdateTO.call<Map<String, dynamic>>({
+          'toId': toId,
+          'updates': {'status': TOStatus.active},
         });
         clearCache(toId: toId);
       }
@@ -815,21 +824,71 @@ class FirestoreService {
     return result != null;
   }
 
-  /// 해당 지원서에 출근 기록이 1개 이상 있는지 확인
-  /// [businessId] 관리자 경로에서 반드시 전달 — attendance list 규칙의 businessId 필터 요건 충족
-  Future<bool> hasAttendanceRecord(String applicationId,
-      {String? businessId}) async {
+  /// 해당 지원서에 출근 기록이 1개 이상 있는지 확인 (관리자 경로)
+  /// [H-CF-1 특이사항] attendance list 규칙은 isAdmin()/isSubAdmin() 전체 허용 — businessId 교차검증 없음.
+  ///   서버 규칙이 businessId를 강제하지 않으므로 관리자는 타 사업장 기록도 조회 가능(내부자 위협 수준).
+  ///   현재 클라이언트 businessId 필터 의존 — [TODO-CF] callableAdminHasAttendanceRecord CF 이전 시
+  ///   assertBizAdmin(businessId) 서버 교차검증으로 완전 차단 가능.
+  ///   근로자 경로: callableWorkerHasAttendanceRecord CF(applicationId 소유권 검증)로 이미 이전 완료.
+  Future<bool> hasAttendanceRecord(
+    String applicationId, {
+    required String businessId,
+  }) async {
+    // [H-CF-1] businessId 필수 — 옵셔널 허용 시 businessId 없이 전체 attendance 목록 쿼리 가능
     try {
-      Query<Map<String, dynamic>> q = _firestore
+      final snap = await _firestore
           .collection('attendance')
-          .where('applicationId', isEqualTo: applicationId);
-      if (businessId != null && businessId.isNotEmpty) {
-        q = q.where('businessId', isEqualTo: businessId);
-      }
-      final snap = await q.limit(1).get();
+          .where('applicationId', isEqualTo: applicationId)
+          .where('businessId', isEqualTo: businessId)
+          .limit(1)
+          .get();
       return snap.docs.isNotEmpty;
     } catch (e) {
       debugPrint('⚠️ hasAttendanceRecord 조회 실패 ($applicationId): $e');
+      return false;
+    }
+  }
+
+  /// 근무자 본인 확정 지원서 전체 목록 (장기공고 달력 충돌 체크용)
+  /// [CF-MIGRATED 2026-07-15] applications list isSuperAdmin() only
+  ///   → callableGetMyApplications CF 경유 (uid 서버 검증)
+  Future<List<ApplicationModel>> getMyConfirmedApplicationsForConflictCheck() async {
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetMyApplications',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'statuses': [AppStatus.confirmed, AppStatus.contractPending],
+        'limit': 200,
+      });
+      return ((result.data['applications'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return ApplicationModel.tryFromMap(raw, id);
+          })
+          .whereType<ApplicationModel>()
+          .toList());
+    } catch (e) {
+      debugPrint('⚠️ getMyConfirmedApplicationsForConflictCheck 실패: $e');
+      return [];
+    }
+  }
+
+  /// 근무자 본인 출근 기록 존재 여부 확인 (USER 경로)
+  /// [CF-MIGRATED 2026-07-15] attendance list isAdminOf only — USER 직접 list 차단
+  ///   → callableWorkerHasAttendanceRecord CF 경유 (applicationId 소유권 서버 검증)
+  Future<bool> workerHasAttendanceRecord(String applicationId) async {
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableWorkerHasAttendanceRecord',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 10)));
+      final result = await callable.call<Map<String, dynamic>>({'applicationId': applicationId});
+      final data = Map<String, dynamic>.from(result.data as Map? ?? {});
+      return data['hasRecord'] as bool? ?? false;
+    } catch (e) {
+      debugPrint('⚠️ workerHasAttendanceRecord 조회 실패 ($applicationId): $e');
       return false;
     }
   }
