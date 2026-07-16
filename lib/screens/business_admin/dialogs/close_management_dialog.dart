@@ -220,50 +220,43 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
 
       debugPrint('  [appsByDate] ${appsByDate.length}개 날짜: ${appsByDate.keys.toList()}');
 
-      // 3. 배치로 attendance 조회 (N+1 방지)
-      // applicationId whereIn 방식: 단일 필드 자동 인덱스 사용, 복합 인덱스 불필요
-      // key: '{applicationId}_{yyyy-MM-dd}'
-      final Map<String, AttendanceModel> attendanceByKey = {};
+      // 3. attendance 조회 — [H-CF-1] callableGetAttendanceForClosing CF 경유
+      // assertBizAdmin 서버 교차검증 + 월 범위 서버 필터링
+      // key: '{applicationId}_{yyyy-MM-dd}', value: {status, wageStatus}
+      final Map<String, Map<String, String?>> attendanceByKey = {};
 
       if (appsByDate.isNotEmpty) {
         final allAppIds = appsByDate.values
             .expand((apps) => apps.map((a) => a.id))
             .toSet()
             .toList();
-
-        // [SEC] whereIn 제거 → 단건 병렬 쿼리 + businessId 필터 추가
-        // whereIn에서 filters.businessId null 반환 → 보안 규칙 폴백 의존 제거.
-        // 30개 단위 청크: 동시 Firestore 연결 수 조절
-        // [H-CF-1 특이사항] attendance list 규칙: isAdmin()/isSubAdmin() 전체 허용, 서버 businessId 교차검증 없음.
-        //   클라이언트 businessId 필터 의존 — 관리자가 앱 수정 시 타 사업장 기록 접근 가능(내부자 위협 수준).
-        //   [TODO-CF] CF 이전 시 비용: applicationIds 다수 + 월 범위 필터링을 서버에서 처리해야 하므로
-        //   단건 parallel get과 비교해 구조적 이점이 없음. businessId 검증은 isAdmin() 로그인 단계 보장.
-        for (int i = 0; i < allAppIds.length; i += 30) {
-          final batchIds = allAppIds.sublist(
-            i,
-            (i + 30).clamp(0, allAppIds.length),
-          );
-          final snaps = await Future.wait(
-            batchIds.map((appId) => FirebaseFirestore.instance
-                .collection('attendance')
-                .where('applicationId', isEqualTo: appId)
-                .where('businessId', isEqualTo: businessId)
-                .get()),
-          );
-          for (final snap in snaps) {
-            for (final doc in snap.docs) {
-              final att = AttendanceModel.tryFromFirestore(doc);
-              if (att == null) continue;
-              // 코드에서 월 범위 필터링 (monthEndExclusive의 하루 전 = 말일 23:59:59.999 이하)
-              if (att.workDate.isBefore(monthStart) || !att.workDate.isBefore(monthEndExclusive)) {
-                continue;
-              }
-              final dateKey = DateFormat('yyyy-MM-dd').format(att.workDate);
-              attendanceByKey['${att.applicationId}_$dateKey'] = att;
-            }
+        try {
+          final attResult = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableGetAttendanceForClosing',
+                  options: HttpsCallableOptions(timeout: const Duration(seconds: 60)))
+              .call({
+                'businessId': businessId,
+                'applicationIds': allAppIds,
+                'monthStartMs': monthStart.millisecondsSinceEpoch,
+                'monthEndExclusiveMs': monthEndExclusive.millisecondsSinceEpoch,
+              });
+          for (final rec in (attResult.data['records'] as List? ?? [])) {
+            final m = Map<String, dynamic>.from(rec as Map);
+            final appId = m['applicationId'] as String? ?? '';
+            final wdRaw = m['workDate'] as Map?;
+            if (wdRaw == null || appId.isEmpty) continue;
+            final seconds = (wdRaw['_seconds'] as num?)?.toInt() ?? 0;
+            final workDate = DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
+            final dateKey = DateFormat('yyyy-MM-dd').format(workDate);
+            attendanceByKey['${appId}_$dateKey'] = {
+              'status': m['status'] as String? ?? '',
+              'wageStatus': m['wageStatus'] as String?,
+            };
           }
+          debugPrint('  [attendance] 이번달 레코드(CF): ${attendanceByKey.length}건');
+        } catch (e) {
+          debugPrint('⚠️ [마감관리] attendance CF 조회 실패: $e');
         }
-        debugPrint('  [attendance] 이번달 레코드: ${attendanceByKey.length}건');
       }
 
       // 4. 각 날짜별 마감 상태 확인
@@ -281,11 +274,11 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
           final att = attendanceByKey['${app.id}_$dateKey'];
           if (att == null) {
             noAttendanceCount++;
-          } else if (att.status == AttendanceModel.statusNoShow) {
+          } else if (att['status'] == AttendanceModel.statusNoShow) {
             noshowCount++;
             closedCount++;
-          } else if (att.wageStatus == AttendanceModel.wageConfirmed ||
-                     att.wageStatus == AttendanceModel.wageTransferred) {
+          } else if (att['wageStatus'] == AttendanceModel.wageConfirmed ||
+                     att['wageStatus'] == AttendanceModel.wageTransferred) {
             // wageTransferred(송금완료)도 마감 완료로 집계
             closedCount++;
           } else {

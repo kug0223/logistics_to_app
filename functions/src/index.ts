@@ -15645,3 +15645,190 @@ export const callableWorkerHasAttendanceRecord = onCall(
     return {hasRecord: !attendanceSnap.empty};
   }
 );
+
+// ─── callableAdminHasAttendanceRecord ────────────────────────────────────────
+// 관리자용 출근기록 존재 여부 확인 — assertBizAdmin 서버 교차검증
+// [H-CF-1] attendance list rules 미교차검증 보완
+// Input:  { applicationId, businessId }
+// Output: { hasRecord: boolean }
+export const callableAdminHasAttendanceRecord = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const {applicationId, businessId} = request.data as {
+      applicationId?: string;
+      businessId?: string;
+    };
+    if (!applicationId || !businessId) {
+      throw new HttpsError("invalid-argument", "applicationId와 businessId가 필요합니다.");
+    }
+    await assertBizAdmin(request.auth.uid, businessId);
+    const snap = await db
+      .collection("attendance")
+      .where("applicationId", "==", applicationId)
+      .where("businessId", "==", businessId)
+      .limit(1)
+      .get();
+    return {hasRecord: !snap.empty};
+  }
+);
+
+// ─── callableGetWageStatusCount ───────────────────────────────────────────────
+// 파트변경 전 확정 급여 건수 조회 — assertBizAdmin 서버 교차검증
+// [H-CF-1] attendance list rules 미교차검증 보완
+// Input:  { applicationId, businessId }
+// Output: { calculatedCount: number, confirmedCount: number, total: number }
+export const callableGetWageStatusCount = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const {applicationId, businessId} = request.data as {
+      applicationId?: string;
+      businessId?: string;
+    };
+    if (!applicationId || !businessId) {
+      throw new HttpsError("invalid-argument", "applicationId와 businessId가 필요합니다.");
+    }
+    await assertBizAdmin(request.auth.uid, businessId);
+    const [calcSnap, confSnap] = await Promise.all([
+      db.collection("attendance")
+        .where("applicationId", "==", applicationId)
+        .where("businessId", "==", businessId)
+        .where("wageStatus", "==", "calculated")
+        .count()
+        .get(),
+      db.collection("attendance")
+        .where("applicationId", "==", applicationId)
+        .where("businessId", "==", businessId)
+        .where("wageStatus", "==", "confirmed")
+        .count()
+        .get(),
+    ]);
+    const calculatedCount = calcSnap.data().count;
+    const confirmedCount = confSnap.data().count;
+    return {calculatedCount, confirmedCount, total: calculatedCount + confirmedCount};
+  }
+);
+
+// ─── callableGetAttendanceForClosing ─────────────────────────────────────────
+// 마감관리 다이얼로그용 출근기록 조회 — assertBizAdmin 서버 교차검증
+// [H-CF-1] attendance list rules 미교차검증 보완
+// Input:  { businessId, applicationIds: string[], monthStartMs: number, monthEndExclusiveMs: number }
+// Output: { records: Array<{id, applicationId, workDate, status, wageStatus}> }
+export const callableGetAttendanceForClosing = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const {businessId, applicationIds, monthStartMs, monthEndExclusiveMs} =
+      request.data as {
+        businessId?: string;
+        applicationIds?: string[];
+        monthStartMs?: number;
+        monthEndExclusiveMs?: number;
+      };
+    if (!businessId || !Array.isArray(applicationIds) || !monthStartMs || !monthEndExclusiveMs) {
+      throw new HttpsError("invalid-argument", "필수 파라미터가 없습니다.");
+    }
+    if (applicationIds.length > 500) {
+      throw new HttpsError("invalid-argument", "applicationIds는 최대 500개입니다.");
+    }
+    await assertBizAdmin(request.auth.uid, businessId);
+
+    const monthStart = Timestamp.fromMillis(monthStartMs);
+    const monthEndExclusive = Timestamp.fromMillis(monthEndExclusiveMs);
+    const records: Array<{
+      id: string;
+      applicationId: string;
+      workDate: {_seconds: number; _nanoseconds: number};
+      status: string;
+      wageStatus: string;
+    }> = [];
+
+    // 30개 단위 병렬 처리 (클라이언트와 동일 패턴)
+    const CHUNK = 30;
+    for (let i = 0; i < applicationIds.length; i += CHUNK) {
+      const chunk = applicationIds.slice(i, i + CHUNK);
+      const snaps = await Promise.all(
+        chunk.map((appId) =>
+          db.collection("attendance")
+            .where("applicationId", "==", appId)
+            .where("businessId", "==", businessId)
+            .get()
+        )
+      );
+      for (const snap of snaps) {
+        for (const doc of snap.docs) {
+          const d = doc.data();
+          const workDateTs = d["workDate"] as Timestamp | undefined;
+          if (!workDateTs) continue;
+          // 월 범위 필터링 서버에서 처리
+          if (workDateTs.toMillis() < monthStart.toMillis() ||
+              workDateTs.toMillis() >= monthEndExclusive.toMillis()) continue;
+          records.push({
+            id: doc.id,
+            applicationId: d["applicationId"] as string,
+            workDate: {_seconds: workDateTs.seconds, _nanoseconds: workDateTs.nanoseconds},
+            status: (d["status"] as string | undefined) ?? "",
+            wageStatus: (d["wageStatus"] as string | undefined) ?? "",
+          });
+        }
+      }
+    }
+    return {records};
+  }
+);
+
+// ─── callableVoidApplicationContracts ────────────────────────────────────────
+// 확정취소 시 연결된 계약서 voided 전환 — assertBizAdmin 서버 교차검증
+// [H-CF-2] employment_contracts list rules 미교차검증 보완
+// Input:  { applicationId, businessId }
+// Output: { voidedCount: number }
+export const callableVoidApplicationContracts = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const {applicationId, businessId} = request.data as {
+      applicationId?: string;
+      businessId?: string;
+    };
+    if (!applicationId || !businessId) {
+      throw new HttpsError("invalid-argument", "applicationId와 businessId가 필요합니다.");
+    }
+    await assertBizAdmin(request.auth.uid, businessId);
+
+    const VOID_TARGET = new Set(["pending_employer", "pending_worker", "draft"]);
+    const [contractQ1, contractQ2] = await Promise.all([
+      db.collection("employment_contracts")
+        .where("applicationId", "==", applicationId)
+        .where("businessId", "==", businessId)
+        .get(),
+      db.collection("employment_contracts")
+        .where("applicationIds", "array-contains", applicationId)
+        .where("businessId", "==", businessId)
+        .get(),
+    ]);
+
+    const toVoid = new Map<string, FirebaseFirestore.DocumentReference>();
+    for (const doc of contractQ1.docs) {
+      if (VOID_TARGET.has(doc.data()["status"] as string)) toVoid.set(doc.id, doc.ref);
+    }
+    for (const doc of contractQ2.docs) {
+      if (!toVoid.has(doc.id) && VOID_TARGET.has(doc.data()["status"] as string)) {
+        toVoid.set(doc.id, doc.ref);
+      }
+    }
+
+    if (toVoid.size === 0) return {voidedCount: 0};
+
+    const batch = db.batch();
+    for (const ref of toVoid.values()) {
+      batch.update(ref, {
+        status: "voided",
+        contractVoidedAt: Timestamp.now(),
+        voidReason: "CONFIRMATION_CANCELED",
+      });
+    }
+    await batch.commit();
+    return {voidedCount: toVoid.size};
+  }
+);

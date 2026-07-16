@@ -456,55 +456,22 @@ extension ApplicationFirestore on FirestoreService {
       // 배치에 포함 시 PERMISSION_DENIED → application 상태 업데이트까지 실패.
       // 아래 별도 counterBatch에서 비임계 처리 (실패 시 CF syncTOStats 교정).
 
-      // [BUG-수정] 확정 취소 시 생성된 계약서 무효화
-      // CONTRACT_PENDING → PENDING 롤백 시 연결된 계약서(pending_employer / pending_worker / draft)를
-      // voided로 전환한다. 그렇지 않으면 지원자 화면에 "서명 필요" 계약서가 유령 상태로 남는다.
+      await batch.commit();
+
+      // [H-CF-2] 확정 취소 시 계약서 무효화 — callableVoidApplicationContracts CF 경유
+      // assertBizAdmin 서버 교차검증. application 상태 변경(batch) 완료 후 처리.
+      // 원자성 분리: CF 실패 시 계약서가 유령 상태로 남을 수 있으나 application은 이미 PENDING으로 복구됨.
       if (status == AppStatus.pending &&
           AppStatus.confirmedStatuses.contains(prevStatus)) {
-        // [BUGFIX] status whereIn + applicationId/applicationIds 복합쿼리에서
-        //   Firestore 보안 규칙이 request.query.filters.businessId를 null 반환 → PERMISSION_DENIED.
-        //   businessId 필터 추가 + status whereIn 제거 후 클라이언트 필터링으로 전환.
-        const voidTargetStatuses = {'pending_employer', 'pending_worker', 'draft'};
-        final contractBusinessId = appData['businessId'] as String? ?? '';
-
-        // 장기 계약서: applicationId 직접 매칭 (businessId 필터로 보안 규칙 통과)
-        // [H-CF-2 특이사항] employment_contracts list 규칙: isAdmin()/isSubAdmin() 전체 허용,
-        //   서버 businessId 교차검증 없음. 클라이언트 businessId 필터(contractBusinessId) 의존.
-        //   이 쿼리는 batch.update와 묶인 원자적 흐름이라 CF 이전 시 전체 updateApplicationStatus를
-        //   CF로 이전해야 하는 대형 작업 → 현재 수준 유지. (Source.server 강제로 캐시 오염 방지)
-        final contractQ1 = await _firestore
-            .collection('employment_contracts')
-            .where('applicationId', isEqualTo: applicationId)
-            .where('businessId', isEqualTo: contractBusinessId)
-            .get(const GetOptions(source: Source.server));
-        for (final doc in contractQ1.docs) {
-          if (!voidTargetStatuses.contains(doc.data()['status'])) continue;
-          batch.update(doc.reference, {
-            'status': 'voided',
-            'contractVoidedAt': FieldValue.serverTimestamp(),
-            'voidReason': 'CONFIRMATION_CANCELED',
-          });
-        }
-
-        // 단기 번들 계약서: applicationIds 배열 포함 매칭 (businessId 필터로 보안 규칙 통과)
-        final contractQ2 = await _firestore
-            .collection('employment_contracts')
-            .where('applicationIds', arrayContains: applicationId)
-            .where('businessId', isEqualTo: contractBusinessId)
-            .get(const GetOptions(source: Source.server));
-        for (final doc in contractQ2.docs) {
-          // Q1과 중복 처리 방지 (장기 계약서가 applicationIds에도 포함된 경우)
-          if (contractQ1.docs.any((d) => d.id == doc.id)) continue;
-          if (!voidTargetStatuses.contains(doc.data()['status'])) continue;
-          batch.update(doc.reference, {
-            'status': 'voided',
-            'contractVoidedAt': FieldValue.serverTimestamp(),
-            'voidReason': 'CONFIRMATION_CANCELED',
-          });
+        try {
+          final contractBusinessId = appData['businessId'] as String? ?? '';
+          await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableVoidApplicationContracts')
+              .call({'applicationId': applicationId, 'businessId': contractBusinessId});
+        } catch (e) {
+          debugPrint('⚠️ [H-CF-2] 계약서 무효화 CF 실패 (복구 가능): $e');
         }
       }
-
-      await batch.commit();
 
       // TO/슬롯 카운터 낙관적 업데이트 — 비임계 별도 배치
       // tos totalConfirmed/totalPending은 rules상 admin 직접 쓰기 불가(PERMISSION_DENIED 가능).

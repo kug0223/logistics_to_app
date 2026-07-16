@@ -825,24 +825,16 @@ class FirestoreService {
   }
 
   /// 해당 지원서에 출근 기록이 1개 이상 있는지 확인 (관리자 경로)
-  /// [H-CF-1 특이사항] attendance list 규칙은 isAdmin()/isSubAdmin() 전체 허용 — businessId 교차검증 없음.
-  ///   서버 규칙이 businessId를 강제하지 않으므로 관리자는 타 사업장 기록도 조회 가능(내부자 위협 수준).
-  ///   현재 클라이언트 businessId 필터 의존 — [TODO-CF] callableAdminHasAttendanceRecord CF 이전 시
-  ///   assertBizAdmin(businessId) 서버 교차검증으로 완전 차단 가능.
-  ///   근로자 경로: callableWorkerHasAttendanceRecord CF(applicationId 소유권 검증)로 이미 이전 완료.
+  /// [H-CF-1] callableAdminHasAttendanceRecord CF 경유 — assertBizAdmin 서버 교차검증
   Future<bool> hasAttendanceRecord(
     String applicationId, {
     required String businessId,
   }) async {
-    // [H-CF-1] businessId 필수 — 옵셔널 허용 시 businessId 없이 전체 attendance 목록 쿼리 가능
     try {
-      final snap = await _firestore
-          .collection('attendance')
-          .where('applicationId', isEqualTo: applicationId)
-          .where('businessId', isEqualTo: businessId)
-          .limit(1)
-          .get();
-      return snap.docs.isNotEmpty;
+      final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableAdminHasAttendanceRecord')
+          .call({'applicationId': applicationId, 'businessId': businessId});
+      return (result.data as Map)['hasRecord'] == true;
     } catch (e) {
       debugPrint('⚠️ hasAttendanceRecord 조회 실패 ($applicationId): $e');
       return false;

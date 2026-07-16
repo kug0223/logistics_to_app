@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'dart:math' show min;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -1795,29 +1796,13 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     }
 
     // [C-1] 파트변경 전 확정된 급여 건 체크 — 있으면 미확정 처리됨을 사전 경고
-    // businessId 필터 추가 — attendance list 규칙의 businessId 요건 충족
-    // [H-CF-1 특이사항] count() 쿼리는 문서 내용(PII)이 아닌 건수만 반환 — 실질적 PII 노출 없음.
-    //   서버 businessId 교차검증은 없으나 count()의 PII 노출 위험이 낮아 TODO-CF 수준으로 유지.
+    // [H-CF-1] callableGetWageStatusCount CF 경유 — assertBizAdmin 서버 교차검증
     final int confirmedWageCount;
     try {
-      final wageCountResults = await Future.wait([
-        FirebaseFirestore.instance
-            .collection('attendance')
-            .where('applicationId', isEqualTo: app.id)
-            .where('businessId', isEqualTo: app.businessId)
-            .where('wageStatus', isEqualTo: 'calculated')
-            .count()
-            .get(),
-        FirebaseFirestore.instance
-            .collection('attendance')
-            .where('applicationId', isEqualTo: app.id)
-            .where('businessId', isEqualTo: app.businessId)
-            .where('wageStatus', isEqualTo: 'confirmed')
-            .count()
-            .get(),
-      ]);
-      confirmedWageCount =
-          (wageCountResults[0].count ?? 0) + (wageCountResults[1].count ?? 0);
+      final wageCountResult = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetWageStatusCount')
+          .call({'applicationId': app.id, 'businessId': app.businessId});
+      confirmedWageCount = (wageCountResult.data as Map)['total'] as int? ?? 0;
     } catch (e) {
       if (mounted) setState(() => _isProcessing = false);
       return;
