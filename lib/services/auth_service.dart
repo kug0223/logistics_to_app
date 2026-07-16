@@ -7,6 +7,8 @@ import '../models/core/user_model.dart';
 import '../utils/toast_helper.dart';
 import '../utils/encryption_helper.dart';
 import 'fcm_service.dart';
+import 'firestore_service.dart';
+import 'storage_service.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -309,6 +311,10 @@ class AuthService {
   // 로그아웃
   Future<void> signOut() async {
     try {
+      final uid = _auth.currentUser?.uid;
+      final fs = FirestoreService();
+      fs.invalidateGlobalTOLimitCache();
+      if (uid != null) fs.invalidateAdminTOLimitCache(uid);
       await _auth.signOut();
       ToastHelper.showInfo('로그아웃되었습니다.');
     } catch (e) {
@@ -332,28 +338,6 @@ class AuthService {
     } catch (e) {
       debugPrint('사용자 정보 가져오기 실패: $e');
       return null;
-    }
-  }
-
-  // 사용자 권한 업데이트 (슈퍼관리자만 호출 가능)
-  Future<void> updateUserRole({
-    required String uid,
-    required UserRole role,
-    String? businessId,
-  }) async {
-    try {
-      await _firestore.collection('users').doc(uid).update({
-        'role': role == UserRole.SUPER_ADMIN
-            ? 'SUPER_ADMIN'
-            : role == UserRole.BUSINESS_ADMIN
-                ? 'BUSINESS_ADMIN'
-                : 'USER',
-        'businessId': businessId,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      ToastHelper.showSuccess('사용자 권한이 업데이트되었습니다.');
-    } catch (e) {
-      throw Exception('권한 업데이트에 실패했습니다.');
     }
   }
 
@@ -455,290 +439,95 @@ class AuthService {
         preDeleteBusinessId = preDoc.data()?['businessId'] as String?;
       } catch (_) {}
 
-      // 3-pre. review_requests 익명화 — users 문서 삭제 전 처리 필수
-      // users 문서가 존재해야 isUser() / LIST 보안 규칙이 통과됨.
-      // 삭제 후 처리 시 Firestore PERMISSION_DENIED 발생 (SEC-88).
+      // 3-pre~3-pre3/3-pre6/3-pre7: 개인정보 익명화 & 연관 문서 삭제
+      // [CF-MIGRATED 2026-07-15] callableDeleteAccountPreData CF 이전 (병렬 처리)
+      //   · review_requests workerId 익명화 (SEC-88)
+      //   · monthly_reviews targetUserId/reviewerId 익명화 (SEC-92)
+      //   · idCardAccessRequests 전체 삭제 (SEC-93)
+      //   · trust_score_history userId 익명화 (WARN-AUTH-01)
+      //   · member_invitations 삭제 + invitedBy 익명화 (WARN-AUTH-02)
+      // Admin SDK → 각 컬렉션 LIST isSuperAdmin only 규칙 우회
       try {
-        bool hasMore = true;
-        while (hasMore) {
-          final snap = await _firestore
-              .collection('review_requests')
-              .where('workerId', isEqualTo: user.uid)
-              .limit(100)
-              .get();
-          if (snap.docs.isEmpty) break;
-          hasMore = snap.docs.length == 100;
-          final batch = _firestore.batch();
-          for (final doc in snap.docs) {
-            batch.update(doc.reference, {'workerName': '탈퇴한 회원'});
-          }
-          await batch.commit();
-        }
+        final preDataCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('callableDeleteAccountPreData',
+                options: HttpsCallableOptions(timeout: const Duration(seconds: 120)));
+        final result = await preDataCallable.call<Map<String, dynamic>>({});
+        final data = Map<String, dynamic>.from(result.data as Map? ?? {});
+        final failed = List<String>.from(data['failedOps'] as List? ?? []);
+        if (failed.isNotEmpty) debugPrint('⚠️ 계정 삭제: 사전정리 일부 실패 ($failed)');
       } catch (e) {
-        debugPrint('⚠️ 계정 삭제: review_requests 익명화 실패 (계속 진행): $e');
+        debugPrint('⚠️ 계정 삭제: 개인정보 사전정리 실패 (계속 진행): $e');
       }
 
-      // 3-pre2. monthly_reviews 익명화 — users 문서 삭제 전 처리 필수 (SEC-92)
-      // SEC-88 패턴과 동일: users 삭제 후엔 isUser() 체크 실패 → LIST PERMISSION_DENIED
-      // ─ 9-A. 대상자(지원자) 탈퇴: ADMIN_TO_USER 리뷰에서 식별자 제거
+      // 3-pre4. applications 활성 상태 → CANCELED + attendance scheduled → absent
+      // [CF-MIGRATED 2026-07-15] callableDeleteAccountApplications CF 이전
+      //   · applications LIST는 기존 isUser() 직접 쿼리 → rules 차단됨 (isSuperAdmin only)
+      //   · CONFIRMED/CONTRACT_PENDING → CANCELED는 USER update 규칙 불허 → CF Admin SDK 필요
+      //   · CF가 한 번의 배치로 모두 처리 후 pendingToIds/confirmedApps 반환
       try {
-        bool hasMore = true;
-        while (hasMore) {
-          final snap = await _firestore
-              .collection('monthly_reviews')
-              .where('targetUserId', isEqualTo: user.uid)
-              .limit(100)
-              .get();
-          if (snap.docs.isEmpty) break;
-          hasMore = snap.docs.length == 100;
-          final batch = _firestore.batch();
-          for (final doc in snap.docs) {
-            batch.update(doc.reference, {
-              'targetUserName': '탈퇴한 회원',
-              'targetUserId': FieldValue.delete(),
-              'comment': FieldValue.delete(),
-            });
-          }
-          await batch.commit();
-        }
-      } catch (e) {
-        debugPrint('⚠️ 계정 삭제: monthly_reviews(대상자) 익명화 실패 (계속 진행): $e');
-      }
+        final deleteAppsCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('callableDeleteAccountApplications',
+                options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+        final result = await deleteAppsCallable.call<Map<String, dynamic>>({});
+        final data = Map<String, dynamic>.from(result.data as Map);
 
-      // ─ 9-B. 작성자(관리자) 탈퇴: reviewerId·reviewerName 제거
-      try {
-        bool hasMore = true;
-        while (hasMore) {
-          final snap = await _firestore
-              .collection('monthly_reviews')
-              .where('reviewerId', isEqualTo: user.uid)
-              .limit(100)
-              .get();
-          if (snap.docs.isEmpty) break;
-          hasMore = snap.docs.length == 100;
-          final batch = _firestore.batch();
-          for (final doc in snap.docs) {
-            batch.update(doc.reference, {
-              'reviewerName': '탈퇴한 회원',
-              'reviewerId': FieldValue.delete(),
-            });
-          }
-          await batch.commit();
-        }
-      } catch (e) {
-        debugPrint('⚠️ 계정 삭제: monthly_reviews(작성자) 익명화 실패 (계속 진행): $e');
-      }
-
-      // 3-pre3. idCardAccessRequests 전체 삭제 — users 문서 삭제 전 처리 필수 (SEC-93)
-      // isUser() 체크가 users 문서를 get()하므로 삭제 후엔 LIST PERMISSION_DENIED 발생
-      try {
-        for (final field in ['targetUserId', 'requesterId']) {
-          bool hasMore = true;
-          while (hasMore) {
-            final snap = await _firestore
-                .collection('idCardAccessRequests')
-                .where(field, isEqualTo: user.uid)
-                .limit(100)
-                .get();
-            if (snap.docs.isEmpty) break;
-            hasMore = snap.docs.length == 100;
-            final batch = _firestore.batch();
-            for (final doc in snap.docs) { batch.delete(doc.reference); }
-            await batch.commit();
-          }
-        }
-      } catch (e) {
-        debugPrint('⚠️ 계정 삭제: idCardAccessRequests 삭제 실패 (계속 진행): $e');
-      }
-
-      // 3-pre4. applications 활성 상태 → CANCELED 처리 — users 문서 삭제 전 처리 필수 (SEC-93)
-      // applications LIST 규칙이 isUser() 조건을 포함하므로 삭제 후 PERMISSION_DENIED 발생
-      try {
-        final activeDocs = (await Future.wait(
-          ['PENDING', 'CONTRACT_PENDING', 'CONFIRMED'].map((s) =>
-              _firestore.collection('applications')
-                  .where('uid', isEqualTo: user.uid)
-                  .where('status', isEqualTo: s)
-                  .get()),
-        )).expand((snap) => snap.docs).toList();
-
-        if (activeDocs.isNotEmpty) {
-          // [M-5] TO 카운터 감소 정보 사전 수집 (배치 commit 전)
-          // CONFIRMED/CONTRACT_PENDING → callableDecrementSlotConfirmed CF 경유
-          // PENDING → totalPending 트랜잭션으로 -1씩 처리
-          //   [M-5A 수정] flex TO에서 동일 TO에 다른 workType으로 PENDING 복수 지원 가능
-          //   → Map<toId, count> + increment(-N) 패턴은 rules ±1 제한 위반
-          //   → 각 지원에 대해 별도 트랜잭션으로 -1씩 처리
-          final List<Map<String, dynamic>> confirmedApps = [];
-          final List<String> pendingToIds = [];
-          for (final doc in activeDocs) {
-            final d = doc.data();
-            final status = d['status'] as String?;
-            final toId = d['toId'] as String?;
-            if (status == 'CONFIRMED' || status == 'CONTRACT_PENDING') {
-              confirmedApps.add({
-                'id': doc.id,
-                'toId': toId,
-                'slotId': d['slotId'] as String?,
-                'workType': d['selectedWorkType'] as String?,
+        // PENDING totalPending 개별 트랜잭션 감소 (rules ±1 제한 준수 — CF Admin SDK도 rules 우회 가능하나 기존 패턴 유지)
+        //   [M-5A 수정] flex TO에서 동일 TO에 다른 workType으로 PENDING 복수 지원 가능
+        //   → Map<toId, count> + increment(-N) 패턴은 rules ±1 제한 위반 → 건별 트랜잭션 유지
+        final pendingToIds = List<String>.from(data['pendingToIds'] as List? ?? []);
+        if (pendingToIds.isNotEmpty) {
+          await Future.wait(pendingToIds.map((toId) async {
+            try {
+              await _firestore.runTransaction((tx) async {
+                tx.update(_firestore.collection('tos').doc(toId), {'totalPending': FieldValue.increment(-1)});
               });
-            } else if (status == 'PENDING' && toId != null) {
-              pendingToIds.add(toId);
+            } catch (e) {
+              debugPrint('⚠️ totalPending 감소 실패 ($toId): $e');
             }
-          }
-
-          final batch = _firestore.batch();
-          for (final doc in activeDocs) {
-            batch.update(doc.reference, {
-              'status': 'CANCELED',
-              'canceledAt': FieldValue.serverTimestamp(),
-              'cancelReason': 'USER_DELETED',
-            });
-          }
-          await batch.commit();
-
-          // PENDING 앱: totalPending 개별 트랜잭션으로 -1씩 처리 (rules ±1 제한 준수)
-          if (pendingToIds.isNotEmpty) {
-            await Future.wait(pendingToIds.map((toId) async {
-              try {
-                await _firestore.runTransaction((tx) async {
-                  final ref = _firestore.collection('tos').doc(toId);
-                  tx.update(ref, {'totalPending': FieldValue.increment(-1)});
-                });
-              } catch (e) {
-                debugPrint('⚠️ totalPending 감소 실패 ($toId): $e');
-              }
-            }));
-          }
-
-          // CONFIRMED/CONTRACT_PENDING: totalConfirmed -1 (CF Admin SDK 경유 — 클라이언트 직접 쓰기 차단)
-          if (confirmedApps.isNotEmpty) {
-            final decrementCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-                .httpsCallable('callableDecrementSlotConfirmed',
-                    options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
-            await Future.wait(confirmedApps.map((app) async {
-              try {
-                await decrementCallable.call<Map<String, dynamic>>({
-                  'applicationId': app['id'],
-                  'toId': app['toId'],
-                  'slotId': app['slotId'],
-                  'workType': app['workType'],
-                });
-              } catch (e) {
-                debugPrint('⚠️ totalConfirmed 감소 실패 (${app['id']}): $e');
-              }
-            }));
-          }
+          }));
         }
 
-        // [SEC-99] attendance scheduled → absent: applicationId 기반 루프 제거 →
-        // userId+status 단일 쿼리로 변경. attendance LIST 규칙에 isUser() 경로 추가됨.
-        // 이전 코드는 applicationId 기반 개별 쿼리로 PERMISSION_DENIED(무음 실패) 발생.
-        final attSnap = await _firestore
-            .collection('attendance')
-            .where('userId', isEqualTo: user.uid)
-            .where('status', isEqualTo: 'scheduled')
-            .get();
-        if (attSnap.docs.isNotEmpty) {
-          final attBatch = _firestore.batch();
-          for (final attDoc in attSnap.docs) {
-            attBatch.update(attDoc.reference, {
-              'status': 'absent',
-              'absentReason': 'USER_DELETED',
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-          }
-          await attBatch.commit();
+        // CONFIRMED/CONTRACT_PENDING: slot 카운터 감소 (callableDecrementSlotConfirmed CF 경유)
+        final confirmedApps = (data['confirmedApps'] as List? ?? [])
+            .whereType<Map>()
+            .map((m) => Map<String, dynamic>.from(m))
+            .toList();
+        if (confirmedApps.isNotEmpty) {
+          final decrementCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableDecrementSlotConfirmed',
+                  options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+          await Future.wait(confirmedApps.map((app) async {
+            try {
+              await decrementCallable.call<Map<String, dynamic>>({
+                'applicationId': app['id'],
+                'toId': app['toId'],
+                'slotId': app['slotId'],
+                'workType': app['workType'],
+              });
+            } catch (e) {
+              debugPrint('⚠️ totalConfirmed 감소 실패 (${app['id']}): $e');
+            }
+          }));
         }
       } catch (e) {
         debugPrint('⚠️ 계정 삭제: applications/attendance 정리 실패 (계속 진행): $e');
       }
 
       // 3-pre5. worker_locations 전체 삭제 — users 문서 삭제 전 처리 필수 (SEC-94)
-      // worker_locations LIST 규칙이 isUser() + userId 필터를 사용하므로
-      // users 삭제 후엔 isUser() 체크 실패 → PERMISSION_DENIED.
       // 위치정보: 개인정보보호법 제21조 (법령 보존 근거 없음 — 즉시 파기 대상)
+      // [CF-MIGRATED 2026-07-15] callableDeleteWorkerLocations CF 이전
+      //   · worker_locations LIST USER 직접 쿼리 제거 → Admin SDK 경유
       try {
-        bool hasMore3pre5 = true;
-        while (hasMore3pre5) {
-          final snap = await _firestore
-              .collection('worker_locations')
-              .where('userId', isEqualTo: user.uid)
-              .limit(100)
-              .get();
-          if (snap.docs.isEmpty) break;
-          hasMore3pre5 = snap.docs.length == 100;
-          final batch = _firestore.batch();
-          for (final doc in snap.docs) { batch.delete(doc.reference); }
-          await batch.commit();
-        }
+        final deleteLocsCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('callableDeleteWorkerLocations',
+                options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+        await deleteLocsCallable.call<Map<String, dynamic>>({});
       } catch (e) {
         debugPrint('⚠️ 계정 삭제: worker_locations 삭제 실패 (계속 진행): $e');
       }
 
-      // 3-pre6. trust_score_history userId 익명화 — users 문서 삭제 전 처리 (WARN-AUTH-01)
-      // trust_score_history는 근로 내역 기록으로 법령 보존 가능성 있음 → 삭제 대신 userId 익명화
-      // isUser() 체크가 users 문서를 조회하므로 삭제 전 처리 필수
-      try {
-        bool hasMore3pre6 = true;
-        while (hasMore3pre6) {
-          final snap = await _firestore
-              .collection('trust_score_history')
-              .where('userId', isEqualTo: user.uid)
-              .limit(100)
-              .get();
-          if (snap.docs.isEmpty) break;
-          hasMore3pre6 = snap.docs.length == 100;
-          final batch = _firestore.batch();
-          for (final doc in snap.docs) {
-            batch.update(doc.reference, {'userId': '탈퇴한 회원'});
-          }
-          await batch.commit();
-        }
-      } catch (e) {
-        debugPrint('⚠️ 계정 삭제: trust_score_history 익명화 실패 (계속 진행): $e');
-      }
-
-      // 3-pre7. member_invitations 처리 — users 문서 삭제 전 처리 (WARN-AUTH-02)
-      // 탈퇴자가 초대 대상(targetUid)인 PENDING 초대 → 삭제 (더 이상 수락 불가)
-      // 탈퇴자가 초대자(invitedBy)인 미응답 초대 → targetPhone 등 개인정보 익명화
-      try {
-        // 탈퇴자가 초대 대상인 문서 삭제
-        bool hasMore3pre7a = true;
-        while (hasMore3pre7a) {
-          final snap = await _firestore
-              .collection('member_invitations')
-              .where('targetUid', isEqualTo: user.uid)
-              .limit(100)
-              .get();
-          if (snap.docs.isEmpty) break;
-          hasMore3pre7a = snap.docs.length == 100;
-          final batch = _firestore.batch();
-          for (final doc in snap.docs) { batch.delete(doc.reference); }
-          await batch.commit();
-        }
-        // 탈퇴자가 초대자(invitedBy)인 문서 익명화
-        bool hasMore3pre7b = true;
-        while (hasMore3pre7b) {
-          final snap = await _firestore
-              .collection('member_invitations')
-              .where('invitedBy', isEqualTo: user.uid)
-              .limit(100)
-              .get();
-          if (snap.docs.isEmpty) break;
-          hasMore3pre7b = snap.docs.length == 100;
-          final batch = _firestore.batch();
-          for (final doc in snap.docs) {
-            batch.update(doc.reference, {
-              'invitedByName': '탈퇴한 회원',
-              'invitedBy': FieldValue.delete(),
-            });
-          }
-          await batch.commit();
-        }
-      } catch (e) {
-        debugPrint('⚠️ 계정 삭제: member_invitations 처리 실패 (계속 진행): $e');
-      }
+      // 3-pre6/3-pre7: [CF-MIGRATED 2026-07-15] callableDeleteAccountPreData에서 처리 완료
+      // trust_score_history + member_invitations 모두 3-pre 단계에서 병렬 처리됨
 
       // 3. Firestore 사용자 문서 삭제 — 개인정보보호법 제21조
       // Storage URL 참조를 먼저 제거해야 broken URL 방지 (CLAUDE.md 삭제 순서 규칙)
@@ -854,15 +643,9 @@ class AuthService {
                       'imageUrls': FieldValue.delete(),
                     });
 
-                    // 2단계: Storage 이미지 삭제 (개별 실패는 로그만 — Firestore는 이미 정리됨)
-                    for (final url in allUrls) {
-                      try {
-                        final ref = FirebaseStorage.instance.refFromURL(url);
-                        await ref.delete();
-                      } catch (e) {
-                        debugPrint('⚠️ 사업장 이미지 Storage 삭제 실패 ($url): $e');
-                      }
-                    }
+                    // 2단계: Storage 이미지 삭제 — businesses/ 경로는 storage.rules allow delete: if false
+                    // → 직접 삭제 불가. callableDeleteBusinessImage CF 경유(StorageService 내부 처리).
+                    await StorageService().deleteMultipleByUrls(allUrls);
                   }
                 } catch (e) {
                   debugPrint('⚠️ 사업장 Storage 정리 실패 (계속 진행): $e');

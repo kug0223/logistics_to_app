@@ -366,6 +366,7 @@ export const createNotification = onCall(
       "screen", "action", "applicationId", "businessId", "toId",
       "requestId", "reviewId", "contractId", "attendanceId", "invitationId",
       "workDetailId", "workType", "expiryDate", "reason",
+      "settlementRequestId", "netAmount",
     ]);
     const filteredData: Record<string, unknown> = {};
     for (const key of Object.keys(rawData)) {
@@ -795,20 +796,25 @@ export const masterScheduler = onSchedule(
     try {
       const pendingRevocations = await db.collection("pending_token_revocations").limit(50).get();
       if (!pendingRevocations.empty) {
+        // [PERF-2026-07-16] 순차 → Promise.allSettled 병렬 처리 (UID 간 독립적)
         let revokeSuccessCount = 0;
-        for (const revDoc of pendingRevocations.docs) {
-          const data = revDoc.data();
-          const targetUid = data.uid as string | undefined;
-          if (!targetUid) { await revDoc.ref.delete(); continue; }
-          try {
+        const revokeResults = await Promise.allSettled(
+          pendingRevocations.docs.map(async (revDoc): Promise<boolean> => {
+            const data = revDoc.data();
+            const targetUid = data.uid as string | undefined;
+            if (!targetUid) { await revDoc.ref.delete(); return false; }
             await admin.auth().revokeRefreshTokens(targetUid);
             await revDoc.ref.delete();
-            revokeSuccessCount++;
-          } catch (retryErr) {
-            // 재시도 실패 — 다음 실행까지 유지
-            console.warn(`[세션무효화-retry] 재시도 실패 uid=${targetUid}:`, retryErr);
+            return true;
+          })
+        );
+        revokeResults.forEach((r, i) => {
+          if (r.status === "fulfilled" && r.value === true) { revokeSuccessCount++; }
+          else if (r.status === "rejected") {
+            const targetUid = (pendingRevocations.docs[i]?.data()?.uid as string | undefined) ?? "unknown";
+            console.warn(`[세션무효화-retry] 재시도 실패 uid=${targetUid}:`, r.reason);
           }
-        }
+        });
         if (revokeSuccessCount > 0) {
           console.log(`✅ [세션무효화-retry] ${revokeSuccessCount}건 성공`);
         }
@@ -1014,138 +1020,157 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
     let created = 0;
 
     // ── 단기 지원서 처리 ─────────────────────────────────────────────────
-    for (const doc of snap.docs) {
-      const data = doc.data();
-      const workerId = data.uid as string;
-      const businessId = data.businessId as string;
-      if (!workerId || !businessId) continue;
+    // [PERF-2026-07-16] 순차 → chunk-20 병렬 처리 (requestKey 간 독립적)
+    const CHUNK_RR = 20;
+    for (let ci = 0; ci < snap.docs.length; ci += CHUNK_RR) {
+      const chunk = snap.docs.slice(ci, ci + CHUNK_RR);
+      const chunkResults = await Promise.allSettled(
+        chunk.map(async (doc): Promise<boolean> => {
+          const data = doc.data();
+          const workerId = data.uid as string;
+          const businessId = data.businessId as string;
+          if (!workerId || !businessId) return false;
 
-      const workDate = (data.workDate as Timestamp).toDate();
-      const workDateKST = new Date(workDate.getTime() + KST_OFFSET_MS);
-      const year = workDateKST.getUTCFullYear();
-      const month = workDateKST.getUTCMonth() + 1;
+          const workDate = (data.workDate as Timestamp).toDate();
+          const workDateKST = new Date(workDate.getTime() + KST_OFFSET_MS);
+          const year = workDateKST.getUTCFullYear();
+          const month = workDateKST.getUTCMonth() + 1;
 
-      const requestKey = `${businessId}_${workerId}_${year}_${month}`;
-      const requestRef = db.collection("review_requests").doc(requestKey);
+          const requestKey = `${businessId}_${workerId}_${year}_${month}`;
+          const requestRef = db.collection("review_requests").doc(requestKey);
 
-      const deadline = new Date(workDate);
-      deadline.setDate(deadline.getDate() + 14);
+          const deadline = new Date(workDate);
+          deadline.setDate(deadline.getDate() + 14);
 
-      const adminAlreadyReviewed = existingReviewSet.has(requestKey);
-      const workerName = (data.applicantName as string | undefined)
-        || userNameMap.get(workerId)
-        || "근무자";
+          const adminAlreadyReviewed = existingReviewSet.has(requestKey);
+          const workerName = (data.applicantName as string | undefined)
+            || userNameMap.get(workerId)
+            || "근무자";
 
-      try {
-        await requestRef.create({
-          requestKey,
-          businessId,
-          businessName: data.businessName ?? "",
-          workerId,
-          workerName,
-          reviewYear: year,
-          reviewMonth: month,
-          deadline: Timestamp.fromDate(deadline),
-          adminStatus: adminAlreadyReviewed ? "submitted" : "pending",
-          workerStatus: "pending",
-          adminReviewId: adminAlreadyReviewed ? requestKey : null,
-          workerReviewId: null,
-          isPublished: false,
-          publishedAt: null,
-          createdAt: Timestamp.now(),
-        });
-        created++;
+          try {
+            await requestRef.create({
+              requestKey,
+              businessId,
+              businessName: data.businessName ?? "",
+              workerId,
+              workerName,
+              reviewYear: year,
+              reviewMonth: month,
+              deadline: Timestamp.fromDate(deadline),
+              adminStatus: adminAlreadyReviewed ? "submitted" : "pending",
+              workerStatus: "pending",
+              adminReviewId: adminAlreadyReviewed ? requestKey : null,
+              workerReviewId: null,
+              isPublished: false,
+              publishedAt: null,
+              createdAt: Timestamp.now(),
+            });
 
-        if (!adminAlreadyReviewed) {
-          await _sendReviewRequestNotification(
-            businessId, workerName,
-            requestKey, year, month, "admin", businessId
-          );
-        }
-        await _sendReviewRequestNotification(
-          workerId, data.businessName ?? "사업장",
-          requestKey, year, month, "worker", businessId
-        );
-      } catch (err: any) {
-        // ALREADY_EXISTS(gRPC 코드 6)만 처리 — 다른 에러는 상위로 전파
-        if (err?.code !== 6) throw err;
-        // 이미 존재 — workerName 누락인 경우만 보완 (구버전 CF가 workerName 없이 생성한 문서)
-        try {
-          const existing = await requestRef.get();
-          if (existing.exists && !existing.data()?.workerName) {
-            await requestRef.update({ workerName });
+            if (!adminAlreadyReviewed) {
+              await _sendReviewRequestNotification(
+                businessId, workerName,
+                requestKey, year, month, "admin", businessId
+              );
+            }
+            await _sendReviewRequestNotification(
+              workerId, data.businessName ?? "사업장",
+              requestKey, year, month, "worker", businessId
+            );
+            return true;
+          } catch (err: any) {
+            if (err?.code !== 6) throw err;
+            try {
+              const existing = await requestRef.get();
+              if (existing.exists && !existing.data()?.workerName) {
+                await requestRef.update({ workerName });
+              }
+            } catch { /* 무시 */ }
+            return false;
           }
-        } catch {
-          // 무시
+        })
+      );
+      chunkResults.forEach((r, idx) => {
+        if (r.status === "fulfilled" && r.value === true) { created++; }
+        else if (r.status === "rejected") {
+          console.error(`  ❌ [리뷰 요청-단기] doc ${chunk[idx].id} 처리 실패:`, r.reason);
         }
-      }
+      });
     }
 
     // ── 장기 근무자: workEndDate가 윈도우 내인 CONFIRMED/CONTRACT_PENDING 지원서 ──
-    for (const doc of longTermSnap.docs) {
-      const data = doc.data();
-      const workerId = data.uid as string;
-      const businessId = data.businessId as string;
-      if (!workerId || !businessId) continue;
+    // [PERF-2026-07-16] 순차 → chunk-20 병렬 처리 (requestKey 간 독립적)
+    for (let ci = 0; ci < longTermSnap.docs.length; ci += CHUNK_RR) {
+      const chunk = longTermSnap.docs.slice(ci, ci + CHUNK_RR);
+      const chunkResults = await Promise.allSettled(
+        chunk.map(async (doc): Promise<boolean> => {
+          const data = doc.data();
+          const workerId = data.uid as string;
+          const businessId = data.businessId as string;
+          if (!workerId || !businessId) return false;
 
-      const endDate = (data.workEndDate as Timestamp).toDate();
-      const endDateKST = new Date(endDate.getTime() + KST_OFFSET_MS);
-      const endYear = endDateKST.getUTCFullYear();
-      const endMonth = endDateKST.getUTCMonth() + 1;
+          const endDate = (data.workEndDate as Timestamp).toDate();
+          const endDateKST = new Date(endDate.getTime() + KST_OFFSET_MS);
+          const endYear = endDateKST.getUTCFullYear();
+          const endMonth = endDateKST.getUTCMonth() + 1;
 
-      const requestKey = `${businessId}_${workerId}_${endYear}_${endMonth}`;
-      const requestRef = db.collection("review_requests").doc(requestKey);
+          const requestKey = `${businessId}_${workerId}_${endYear}_${endMonth}`;
+          const requestRef = db.collection("review_requests").doc(requestKey);
 
-      const deadlineDate = new Date(endDate);
-      deadlineDate.setDate(deadlineDate.getDate() + 14);
+          const deadlineDate = new Date(endDate);
+          deadlineDate.setDate(deadlineDate.getDate() + 14);
 
-      const adminAlreadyReviewed = existingReviewSet.has(requestKey);
-      const workerName = (data.applicantName as string | undefined)
-        || userNameMap.get(workerId)
-        || "근무자";
+          const adminAlreadyReviewed = existingReviewSet.has(requestKey);
+          const workerName = (data.applicantName as string | undefined)
+            || userNameMap.get(workerId)
+            || "근무자";
 
-      try {
-        await requestRef.create({
-          requestKey,
-          businessId,
-          businessName: data.businessName ?? "",
-          workerId,
-          workerName,
-          reviewYear: endYear,
-          reviewMonth: endMonth,
-          deadline: Timestamp.fromDate(deadlineDate),
-          adminStatus: adminAlreadyReviewed ? "submitted" : "pending",
-          workerStatus: "pending",
-          adminReviewId: adminAlreadyReviewed ? requestKey : null,
-          workerReviewId: null,
-          isPublished: false,
-          publishedAt: null,
-          createdAt: Timestamp.now(),
-        });
-        created++;
-        if (!adminAlreadyReviewed) {
-          await _sendReviewRequestNotification(
-            businessId, workerName,
-            requestKey, endYear, endMonth, "admin", businessId
-          );
-        }
-        await _sendReviewRequestNotification(
-          workerId, data.businessName ?? "사업장",
-          requestKey, endYear, endMonth, "worker", businessId
-        );
-      } catch (err: any) {
-        // ALREADY_EXISTS(gRPC 코드 6)만 처리 — 다른 에러는 상위로 전파
-        if (err?.code !== 6) throw err;
-        // 이미 존재 — workerName 누락인 경우만 보완 (구버전 CF가 workerName 없이 생성한 문서)
-        try {
-          const existing = await requestRef.get();
-          if (existing.exists && !existing.data()?.workerName) {
-            await requestRef.update({ workerName });
+          try {
+            await requestRef.create({
+              requestKey,
+              businessId,
+              businessName: data.businessName ?? "",
+              workerId,
+              workerName,
+              reviewYear: endYear,
+              reviewMonth: endMonth,
+              deadline: Timestamp.fromDate(deadlineDate),
+              adminStatus: adminAlreadyReviewed ? "submitted" : "pending",
+              workerStatus: "pending",
+              adminReviewId: adminAlreadyReviewed ? requestKey : null,
+              workerReviewId: null,
+              isPublished: false,
+              publishedAt: null,
+              createdAt: Timestamp.now(),
+            });
+            if (!adminAlreadyReviewed) {
+              await _sendReviewRequestNotification(
+                businessId, workerName,
+                requestKey, endYear, endMonth, "admin", businessId
+              );
+            }
+            await _sendReviewRequestNotification(
+              workerId, data.businessName ?? "사업장",
+              requestKey, endYear, endMonth, "worker", businessId
+            );
+            return true;
+          } catch (err: any) {
+            if (err?.code !== 6) throw err;
+            try {
+              const existing = await requestRef.get();
+              if (existing.exists && !existing.data()?.workerName) {
+                await requestRef.update({ workerName });
+              }
+            } catch { /* 무시 */ }
+            return false;
           }
-        } catch {
-          // 무시
+        })
+      );
+      chunkResults.forEach((r, idx) => {
+        if (r.status === "fulfilled" && r.value === true) { created++; }
+        else if (r.status === "rejected") {
+          console.error(`  ❌ [리뷰 요청-장기] doc ${chunk[idx].id} 처리 실패:`, r.reason);
         }
-      }
+      });
     }
 
     console.log(`  ✅ [리뷰 요청] ${created}개 생성 완료`);
@@ -1925,12 +1950,13 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
 
   // [008] 공개된 TO의 슬롯 중 visibleFrom이 이미 지난 것은 삭제 — 즉시 노출
   // (publishMode 변경이나 조기 게시로 visibleFrom이 과거 일자에 남아있는 경우 대응)
-  for (const toId of publishedTOIds) {
-    try {
+  // [PERF-2026-07-16] 순차 → Promise.allSettled 병렬 처리 (TO 간 독립적)
+  await Promise.allSettled(
+    publishedTOIds.map(async (toId) => {
       const slotsSnap = await db
         .collection("tos").doc(toId)
         .collection("slots").get();
-      if (slotsSnap.empty) continue;
+      if (slotsSnap.empty) return;
       let slotBatch = db.batch();
       let slotCount = 0;
       for (const slot of slotsSnap.docs) {
@@ -1946,10 +1972,14 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
         }
       }
       if (slotCount > 0) await slotBatch.commit();
-    } catch (e) {
-      console.error(`  ⚠️ [예약공개] ${toId} 슬롯 visibleFrom 정리 실패:`, e);
-    }
-  }
+    })
+  ).then((results) => {
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        console.error(`  ⚠️ [예약공개] ${publishedTOIds[i]} 슬롯 visibleFrom 정리 실패:`, r.reason);
+      }
+    });
+  });
 
   // 그룹 마스터 상태 동기화 — 병렬 처리로 N번 순차 쿼리 단축
   await Promise.all([...affectedGroupIds].map((gid) => syncGroupMasterStatus(db, gid)));
@@ -1987,6 +2017,9 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
   let totalClosed = 0;
   const affectedTOIds = new Set<string>();
   const affectedGroupIds = new Set<string>();
+  // [PERF-2026-07-16] 취소 큐: 배치 완료 후 일괄 병렬 처리
+  type ExpiredCancel = {toId: string; workType: string};
+  const cancelQueue: ExpiredCancel[] = [];
 
   let batch = db.batch();
   let batchCount = 0;
@@ -2031,10 +2064,19 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
     );
     if (toData.groupId) affectedGroupIds.add(toData.groupId);
 
-    // [L001 수정] 만료된 workType의 PENDING 지원서를 AUTO_CANCELED로 처리
-    // CF syncTOStats가 status 변경 시 totalPending을 자동 재계산하므로 카운터 직접 수정 불필요.
-    // [CF-TRY-04 수정] per-workType try-catch — 단일 실패로 나머지 workType 처리 중단 방지
-    for (const workType of expiredTypes) {
+    // [PERF-2026-07-16] 취소 작업 큐 수집 — 배치 커밋 후 병렬 처리
+    expiredTypes.forEach((wt) => cancelQueue.push({toId, workType: wt}));
+  }
+
+  if (batchCount > 0) await batch.commit();
+
+  console.log(`  ✅ [WorkDetail 마감] ${totalClosed}개 마감 완료`);
+
+  // [PERF-2026-07-16] PENDING 취소 — (toId, workType)별 독립 쿼리이므로 병렬 처리
+  // [L001 수정] 만료된 workType의 PENDING 지원서를 AUTO_CANCELED로 처리
+  // CF syncTOStats가 status 변경 시 totalPending을 자동 재계산하므로 카운터 직접 수정 불필요.
+  await Promise.allSettled(
+    cancelQueue.map(async ({toId, workType}) => {
       try {
         const pendingApps = await db
           .collection("applications")
@@ -2077,22 +2119,19 @@ async function processWorkDetailExpiry(now: Timestamp): Promise<void> {
       } catch (err) {
         console.error(`[WorkDetail 마감] ${toId}/${workType} AUTO_CANCELED 처리 실패 — 나머지 계속:`, err);
       }
-    }
-  }
+    })
+  );
 
-  if (batchCount > 0) await batch.commit();
-
-  console.log(`  ✅ [WorkDetail 마감] ${totalClosed}개 마감 완료`);
-
-  // 영향받은 TO들의 status 동기화
-  // [CF-TRY-04 수정] per-TO try-catch — 단일 실패로 나머지 동기화 중단 방지
-  for (const toId of affectedTOIds) {
-    try {
-      await syncTOStatusFromWorkDetails(db, toId);
-    } catch (err) {
-      console.error(`[WorkDetail 마감] TO ${toId} status 동기화 실패 — 나머지 계속:`, err);
-    }
-  }
+  // [PERF-2026-07-16] TO status 동기화 — 병렬 처리
+  await Promise.allSettled(
+    [...affectedTOIds].map(async (toId) => {
+      try {
+        await syncTOStatusFromWorkDetails(db, toId);
+      } catch (err) {
+        console.error(`[WorkDetail 마감] TO ${toId} status 동기화 실패 — 나머지 계속:`, err);
+      }
+    })
+  );
 
   // 영향받은 그룹 마스터 동기화 — 병렬 처리
   await Promise.all([...affectedGroupIds].map((gid) => syncGroupMasterStatus(db, gid)));
@@ -2212,21 +2251,24 @@ async function processSlotWorkDetailExpiry(now: Timestamp): Promise<void> {
     }
   }
 
+  // [PERF-2026-07-16] PENDING 취소 — (toId, slotId, workType)별 독립 쿼리이므로 병렬 처리
   // [L003 수정] 만료된 슬롯 workType의 PENDING 지원서 → AUTO_CANCELED
   // processWorkDetailExpiry(L001)의 flex TO 버전 — 슬롯 단위 처리
   // slotId+selectedWorkType+status 복합 인덱스 사용 (firestore.indexes.json A02/S42 인덱스)
-  // [CF-TRY-05 수정] per-workType try-catch — 단일 실패로 나머지 슬롯/workType 처리 중단 방지
-  for (let i = 0; i < pending.length; i++) {
-    if (results[i].status === "rejected") continue; // 슬롯 업데이트 실패 시 건너뜀
-    const {slotDoc, expiredItems, toId} = pending[i];
-    if (!toId) continue;
-    const expiredTypes = [...new Set(expiredItems.map((wd: any) => wd.workType as string).filter(Boolean))];
-    for (const workType of expiredTypes) {
+  type SlotCancel = {toId: string; slotId: string; workType: string};
+  const slotCancelQueue: SlotCancel[] = pending.flatMap(({slotDoc, expiredItems, toId}, i) => {
+    if (results[i].status === "rejected" || !toId) return [];
+    return [...new Set(expiredItems.map((wd: any) => wd.workType as string).filter(Boolean))]
+      .map((workType) => ({toId, slotId: slotDoc.id, workType}));
+  });
+
+  await Promise.allSettled(
+    slotCancelQueue.map(async ({toId, slotId, workType}) => {
       try {
         const pendingApps = await db
           .collection("applications")
           .where("toId", "==", toId)
-          .where("slotId", "==", slotDoc.id)
+          .where("slotId", "==", slotId)
           .where("selectedWorkType", "==", workType)
           .where("status", "==", "PENDING")
           .get();
@@ -2260,28 +2302,29 @@ async function processSlotWorkDetailExpiry(now: Timestamp): Promise<void> {
             }
             await cancelBatch.commit();
           }
-          console.log(`    → [L003] ${toId}/${slotDoc.id}/${workType} PENDING ${pendingApps.size}건 → AUTO_CANCELED`);
+          console.log(`    → [L003] ${toId}/${slotId}/${workType} PENDING ${pendingApps.size}건 → AUTO_CANCELED`);
         }
       } catch (err) {
-        console.error(`[슬롯 WorkDetail 마감] ${toId}/${slotDoc.id}/${workType} AUTO_CANCELED 처리 실패 — 나머지 계속:`, err);
+        console.error(`[슬롯 WorkDetail 마감] ${toId}/${slotId}/${workType} AUTO_CANCELED 처리 실패 — 나머지 계속:`, err);
       }
-    }
-  }
+    })
+  );
 
   console.log(
     `  ✅ [슬롯 WorkDetail 마감] 업무상세 ${totalClosedDetails}개, ` +
       `슬롯 ${totalClosedSlots}개 마감 완료`
   );
 
-  // 영향받은 TO status를 슬롯 상태 기반으로 동기화
-  // [CF-TRY-05 수정] per-TO try-catch
-  for (const toId of affectedTOIds) {
-    try {
-      await syncTOStatusFromSlots(db, toId, now);
-    } catch (err) {
-      console.error(`[슬롯 WorkDetail 마감] TO ${toId} status 동기화 실패 — 나머지 계속:`, err);
-    }
-  }
+  // [PERF-2026-07-16] TO status 동기화 — 병렬 처리
+  await Promise.allSettled(
+    [...affectedTOIds].map(async (toId) => {
+      try {
+        await syncTOStatusFromSlots(db, toId, now);
+      } catch (err) {
+        console.error(`[슬롯 WorkDetail 마감] TO ${toId} status 동기화 실패 — 나머지 계속:`, err);
+      }
+    })
+  );
 }
 
 /**
@@ -2597,94 +2640,104 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
       }
     }
 
+    // [PERF-2026-07-16] 순차 → chunk-20 병렬 처리 (user 간 독립적)
+    const userEntries = [...userJobsMap.entries()];
+    const CHUNK_WR = 20;
     let sentCount = 0;
 
-    for (const [userId, jobs] of userJobsMap.entries()) {
-      try {
-        const userData = userDataMap.get(userId);
+    for (let ci = 0; ci < userEntries.length; ci += CHUNK_WR) {
+      const chunk = userEntries.slice(ci, ci + CHUNK_WR);
+      const chunkResults = await Promise.allSettled(
+        chunk.map(async ([userId, jobs]): Promise<boolean> => {
+          const userData = userDataMap.get(userId);
 
-        // 알림 본문 구성 — 여러 근무가 있으면 모두 표시
-        let notifBody: string;
-        let fcmBody: string;
-        if (jobs.length === 1) {
-          const d = jobs[0].data();
-          notifBody =
-            `${d.businessName}에서 내일 ${d.selectedWorkType} ` +
-            `근무가 있습니다.\n시간: ${d.startTime}~${d.endTime}`;
-          fcmBody = `${d.businessName} ${d.startTime} 출근`;
-        } else {
-          notifBody =
-            `내일 ${jobs.length}건의 근무가 예정되어 있습니다.\n` +
-            jobs
-              .map((j) => `• ${j.data().businessName} ${j.data().startTime}~${j.data().endTime}`)
-              .join("\n");
-          fcmBody = `내일 ${jobs.length}건의 근무가 예정되어 있습니다`;
-        }
-
-        // [STRUCT-02] Firestore 먼저 (알림 저장 + reminderSentDate 배치 통합) → FCM fire-and-forget
-        // 수정 전: FCM await 성공 → Firestore 배치 실패 시 재실행에서 중복 알림 발송
-        // 수정 후: Firestore 커밋 성공 후 FCM 발송 → 실패해도 앱 내 알림은 보존, 재실행 시 중복 없음
-        const reminderBatch = db.batch();
-        const notifRef = db.collection("users").doc(userId).collection("notifications").doc();
-        reminderBatch.set(notifRef, {
-          userId,
-          type: "workReminder",
-          title: "내일 근무 알림",
-          body: notifBody,
-          data: { applicationId: jobs[0].id, action: "applicationDetail", businessId: jobs[0].data().businessId ?? "" },
-          isRead: false,
-          createdAt: now,
-        });
-        for (const appDoc of jobs) {
-          reminderBatch.update(appDoc.ref, {reminderSentDate: todayStr});
-        }
-        await reminderBatch.commit(); // Firestore 원자적 기록 완료 → 이후 재실행 시 reminderSentDate 필터로 중복 방지
-
-        // FCM 푸시 — fire-and-forget (실패해도 Firestore에 이미 기록됨)
-        // workReminder 수신 설정 확인 (onNotificationCreated가 workReminder 스킵하므로 여기서 직접 처리)
-        const notifPrefs = userData?.notifPrefs as Record<string, boolean> | undefined;
-        if (notifPrefs?.["workReminder"] !== false) {
-          // [G-001] fcmTokens 배열 우선 사용, 없으면 레거시 fcmToken 단일 필드 폴백
-          const tokens: string[] =
-            (userData?.fcmTokens as string[] | undefined)?.filter(Boolean) ??
-            (userData?.fcmToken ? [userData.fcmToken as string] : []);
-          if (tokens.length > 0) {
-            // sendEachForMulticast: 단일 HTTP 요청으로 멀티 디바이스 발송
-            admin.messaging().sendEachForMulticast({
-              tokens,
-              notification: {title: "내일 근무 알림 📅", body: fcmBody},
-              // [FCM-05 수정] screen 필드 추가 — 탭 시 _navigateByPayload가 mySchedule로 이동
-              // 기존엔 screen 없어 default → 알림 목록으로만 이동했음
-              data: {type: "workReminder", applicationId: jobs[0].id, screen: "mySchedule",
-                businessId: jobs[0].data().businessId ?? ""},
-              android: {priority: "high", notification: {channelId: "alfit_notifications", sound: "default"}},
-              apns: {payload: {aps: {sound: "default", badge: 1}}},
-            }).then((multicastResp) => {
-              const expiredReminderTokens = tokens.filter((_, i) => {
-                const errCode = multicastResp.responses[i].error?.code ?? "";
-                return (
-                  errCode === "messaging/invalid-registration-token" ||
-                  errCode === "messaging/registration-token-not-registered"
-                );
-              });
-              if (expiredReminderTokens.length > 0) {
-                db.collection("users").doc(userId).update({
-                  fcmTokens: admin.firestore.FieldValue.arrayRemove(...expiredReminderTokens),
-                }).catch((e) => console.error(`[리마인더] FCM 만료 토큰 정리 실패 userId=${userId}:`, e));
-              }
-            }).catch((e) => console.error(`    ❌ [리마인더] FCM 발송 실패 userId=${userId}:`, e));
+          // 알림 본문 구성 — 여러 근무가 있으면 모두 표시
+          let notifBody: string;
+          let fcmBody: string;
+          if (jobs.length === 1) {
+            const d = jobs[0].data();
+            notifBody =
+              `${d.businessName}에서 내일 ${d.selectedWorkType} ` +
+              `근무가 있습니다.\n시간: ${d.startTime}~${d.endTime}`;
+            fcmBody = `${d.businessName} ${d.startTime} 출근`;
           } else {
-            console.log(`    ⚠️ FCM 토큰 없음 (리마인더 스킵): ${userId}`);
+            notifBody =
+              `내일 ${jobs.length}건의 근무가 예정되어 있습니다.\n` +
+              jobs
+                .map((j) => `• ${j.data().businessName} ${j.data().startTime}~${j.data().endTime}`)
+                .join("\n");
+            fcmBody = `내일 ${jobs.length}건의 근무가 예정되어 있습니다`;
           }
-        } else {
-          console.log(`    ⚠️ 근무 리마인더 FCM 스킵 (수신 차단): ${userId}`);
-        }
 
-        sentCount++;
-      } catch (err) {
-        console.error(`    ❌ [리마인더] userId ${userId} 처리 실패:`, err);
-      }
-    }
+          // [STRUCT-02] Firestore 먼저 (알림 저장 + reminderSentDate 배치 통합) → FCM fire-and-forget
+          // 수정 전: FCM await 성공 → Firestore 배치 실패 시 재실행에서 중복 알림 발송
+          // 수정 후: Firestore 커밋 성공 후 FCM 발송 → 실패해도 앱 내 알림은 보존, 재실행 시 중복 없음
+          const reminderBatch = db.batch();
+          const notifRef = db.collection("users").doc(userId).collection("notifications").doc();
+          reminderBatch.set(notifRef, {
+            userId,
+            type: "workReminder",
+            title: "내일 근무 알림",
+            body: notifBody,
+            data: { applicationId: jobs[0].id, action: "applicationDetail", businessId: jobs[0].data().businessId ?? "" },
+            isRead: false,
+            createdAt: now,
+          });
+          for (const appDoc of jobs) {
+            reminderBatch.update(appDoc.ref, {reminderSentDate: todayStr});
+          }
+          await reminderBatch.commit(); // Firestore 원자적 기록 완료 → 이후 재실행 시 reminderSentDate 필터로 중복 방지
+
+          // FCM 푸시 — fire-and-forget (실패해도 Firestore에 이미 기록됨)
+          // workReminder 수신 설정 확인 (onNotificationCreated가 workReminder 스킵하므로 여기서 직접 처리)
+          const notifPrefs = userData?.notifPrefs as Record<string, boolean> | undefined;
+          if (notifPrefs?.["workReminder"] !== false) {
+            // [G-001] fcmTokens 배열 우선 사용, 없으면 레거시 fcmToken 단일 필드 폴백
+            const tokens: string[] =
+              (userData?.fcmTokens as string[] | undefined)?.filter(Boolean) ??
+              (userData?.fcmToken ? [userData.fcmToken as string] : []);
+            if (tokens.length > 0) {
+              // sendEachForMulticast: 단일 HTTP 요청으로 멀티 디바이스 발송
+              admin.messaging().sendEachForMulticast({
+                tokens,
+                notification: {title: "내일 근무 알림 📅", body: fcmBody},
+                // [FCM-05 수정] screen 필드 추가 — 탭 시 _navigateByPayload가 mySchedule로 이동
+                // 기존엔 screen 없어 default → 알림 목록으로만 이동했음
+                data: {type: "workReminder", applicationId: jobs[0].id, screen: "mySchedule",
+                  businessId: jobs[0].data().businessId ?? ""},
+                android: {priority: "high", notification: {channelId: "alfit_notifications", sound: "default"}},
+                apns: {payload: {aps: {sound: "default", badge: 1}}},
+              }).then((multicastResp) => {
+                const expiredReminderTokens = tokens.filter((_, i) => {
+                  const errCode = multicastResp.responses[i].error?.code ?? "";
+                  return (
+                    errCode === "messaging/invalid-registration-token" ||
+                    errCode === "messaging/registration-token-not-registered"
+                  );
+                });
+                if (expiredReminderTokens.length > 0) {
+                  db.collection("users").doc(userId).update({
+                    fcmTokens: admin.firestore.FieldValue.arrayRemove(...expiredReminderTokens),
+                  }).catch((e) => console.error(`[리마인더] FCM 만료 토큰 정리 실패 userId=${userId}:`, e));
+                }
+              }).catch((e) => console.error(`    ❌ [리마인더] FCM 발송 실패 userId=${userId}:`, e));
+            } else {
+              console.log(`    ⚠️ FCM 토큰 없음 (리마인더 스킵): ${userId}`);
+            }
+          } else {
+            console.log(`    ⚠️ 근무 리마인더 FCM 스킵 (수신 차단): ${userId}`);
+          }
+          return true;
+        })
+      ); // Promise.allSettled chunk
+      chunkResults.forEach((r, idx) => {
+        if (r.status === "fulfilled" && r.value === true) {
+          sentCount++;
+        } else if (r.status === "rejected") {
+          console.error(`    ❌ [리마인더] userId ${chunk[idx][0]} 처리 실패:`, r.reason);
+        }
+      });
+    } // for ci chunk loop
 
     console.log(`  ✅ [리마인더] ${sentCount}명에게 알림 전송 완료`);
   } catch (error) {
@@ -3374,6 +3427,8 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       await Promise.all(d1Snap.docs.map(async (d1Doc) => {
         try {
           const app = d1Doc.data();
+          // 멱등 가드 — 이미 D+1 알림을 발송한 신청서는 재발송 금지 (스케줄러 재시도 중복 방지)
+          if (app.d1NotifiedAt != null) return;
           const bizSnap = await db.collection("businesses").doc(app.businessId).get();
           const bizData = bizSnap.exists ? bizSnap.data() : undefined;
           const adminIds: string[] = (() => {
@@ -3393,6 +3448,8 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
               createdAt: now,
             })
           ));
+          // 알림 발송 완료 — 재실행 시 중복 방지 플래그
+          await d1Doc.ref.update({ d1NotifiedAt: admin.firestore.FieldValue.serverTimestamp() });
         } catch (e) {
           console.error(`[D+1 퇴사 알림] 실패 ${d1Doc.id}:`, e);
         }
@@ -3411,6 +3468,8 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       await Promise.all(d2Snap.docs.map(async (d2Doc) => {
         try {
           const app = d2Doc.data();
+          // 멱등 가드 — 이미 D+2 알림을 발송한 신청서는 재발송 금지
+          if (app.d2NotifiedAt != null) return;
           const bizSnap = await db.collection("businesses").doc(app.businessId).get();
           const bizData = bizSnap.exists ? bizSnap.data() : undefined;
           const adminIds: string[] = (() => {
@@ -3430,6 +3489,8 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
               createdAt: now,
             })
           ));
+          // 알림 발송 완료 — 재실행 시 중복 방지 플래그
+          await d2Doc.ref.update({ d2NotifiedAt: admin.firestore.FieldValue.serverTimestamp() });
         } catch (e) {
           console.error(`[D+2 퇴사 알림] 실패 ${d2Doc.id}:`, e);
         }
@@ -3573,10 +3634,10 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           console.error(`[D+3 퇴사 AUTO_APPROVED] 정리 실패 ${doc.id}:`, cleanupErr);
         }
 
-        // 근무자에게 자동 승인 알림
+        // 근무자에게 자동 승인 알림 (best-effort — 알림 실패가 자동승인 자체를 막지 않음)
         // [FCM-03 수정] businessId 누락 → notification_screen resignApproved 분기에서
         // IntegratedWorkforceScreen(initialBusinessId: null)로 열리는 버그 방지
-        await db.collection("users").doc(app.uid as string).collection("notifications").add({
+        db.collection("users").doc(app.uid as string).collection("notifications").add({
           userId: app.uid,
           type: "resignApproved",
           title: "퇴사 요청 자동 승인",
@@ -3584,9 +3645,9 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           data: {applicationId: doc.id, businessId: app.businessId, action: "resignDetail"},
           isRead: false,
           createdAt: now,
-        });
+        }).catch((e: unknown) => console.error(`[D+3 퇴사] 근무자 알림 실패 ${doc.id}:`, e));
 
-        // 관리자에게도 알림 (ownerId fallback)
+        // 관리자에게도 알림 (ownerId fallback, best-effort)
         const bizDoc = await db.collection("businesses").doc(app.businessId).get();
         const bizDocData = bizDoc.exists ? bizDoc.data() : undefined;
         const resignAdminIds: string[] = (() => {
@@ -3595,7 +3656,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           const fallback = bizDocData?.ownerId as string | undefined;
           return fallback ? [fallback] : [];
         })();
-        await Promise.all(resignAdminIds.map((adminId) => db.collection("users").doc(adminId).collection("notifications").add({
+        Promise.all(resignAdminIds.map((adminId) => db.collection("users").doc(adminId).collection("notifications").add({
           userId: adminId,
           type: "resignApproved",
           title: "퇴사 요청 자동 승인됨",
@@ -3606,7 +3667,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           data: {applicationId: doc.id, businessId: app.businessId, screen: "fixedWorker"},
           isRead: false,
           createdAt: now,
-        })));
+        }).catch((e: unknown) => console.error(`[D+3 퇴사] 관리자 알림 실패 ${adminId}:`, e))));
 
         autoResignCount++;
       } catch (err) {
@@ -3718,8 +3779,8 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           console.error(`[D+3 계약해지 AUTO_APPROVED] 정리 실패 ${doc.id}:`, cleanupErr);
         }
 
-        // 근무자에게 자동 승인 알림
-        await db.collection("users").doc(app.uid as string).collection("notifications").add({
+        // 근무자에게 자동 승인 알림 (best-effort)
+        db.collection("users").doc(app.uid as string).collection("notifications").add({
           userId: app.uid,
           type: "terminationApproved",
           title: "계약해지 자동 승인",
@@ -3728,9 +3789,9 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           data: {applicationId: doc.id, businessId: app.businessId, action: "terminationDetail"},
           isRead: false,
           createdAt: now,
-        });
+        }).catch((e: unknown) => console.error(`[D+3 계약해지] 근무자 알림 실패 ${doc.id}:`, e));
 
-        // [BUG-CF-03 수정] 관리자에게도 계약해지 자동승인 알림 — 퇴사(resignApproved)와 일관성 유지 (ownerId fallback)
+        // [BUG-CF-03 수정] 관리자에게도 계약해지 자동승인 알림 — 퇴사(resignApproved)와 일관성 유지 (ownerId fallback, best-effort)
         const terminationBizDoc = await db.collection("businesses").doc(app.businessId as string).get();
         const terminationBizData = terminationBizDoc.exists ? terminationBizDoc.data() : undefined;
         const terminationAdminIds: string[] = (() => {
@@ -3739,7 +3800,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           const fallback = terminationBizData?.ownerId as string | undefined;
           return fallback ? [fallback] : [];
         })();
-        await Promise.all(terminationAdminIds.map((adminId) =>
+        Promise.all(terminationAdminIds.map((adminId) =>
           db.collection("users").doc(adminId).collection("notifications").add({
             userId: adminId,
             type: "terminationApproved",
@@ -3749,7 +3810,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
             data: {applicationId: doc.id, businessId: app.businessId, screen: "fixedWorker"},
             isRead: false,
             createdAt: now,
-          })
+          }).catch((e: unknown) => console.error(`[D+3 계약해지] 관리자 알림 실패 ${adminId}:`, e))
         ));
 
         autoTerminationCount++;
@@ -3817,6 +3878,18 @@ export const migrateAddressFields = onCall(
     if (callerRole !== "SUPER_ADMIN") {
       throw new HttpsError("permission-denied", "슈퍼관리자만 실행할 수 있습니다.");
     }
+    // [PERF-GUARD] 이미 완료된 마이그레이션 재실행 방지 — 전체 컬렉션 스캔(고비용) 차단
+    const migrationStatus = await db.collection("admin_settings").doc("migration_status").get();
+    if (migrationStatus.data()?.addressFieldsMigratedAt != null) {
+      return {
+        bizUpdated: 0,
+        toUpdated: 0,
+        skipped: true,
+        completedAt: migrationStatus.data()!.addressFieldsMigratedAt,
+        message: "마이그레이션이 이미 완료되었습니다.",
+      };
+    }
+
     const db2: Firestore = getFirestore();
     const BATCH_LIMIT = 499;
     let bizUpdated = 0;
@@ -3889,6 +3962,14 @@ export const migrateAddressFields = onCall(
       }
     }
     await commitInChunks(tosOps);
+
+    // 완료 마커 저장 — 다음 호출 시 fast-fail
+    await db.collection("admin_settings").doc("migration_status").set({
+      addressFieldsMigratedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedBy: request.auth!.uid,
+      bizUpdated,
+      toUpdated,
+    }, {merge: true});
 
     console.log(`✅ 마이그레이션 완료: businesses=${bizUpdated}, tos=${toUpdated}`);
     return {bizUpdated, toUpdated};
@@ -4292,9 +4373,10 @@ export const onBusinessDeleted = onDocumentDeleted(
       }
 
       // [D-BIZ-05] TO 삭제 전 slots 서브컬렉션 orphan 방지 — 각 TO의 slots를 먼저 정리
-      for (const toDoc of tosPage.docs) {
-        await deleteSubcollection(`tos/${toDoc.id}/slots`);
-      }
+      // [PERF-2026-07-16] 순차 → Promise.allSettled 병렬 처리 (TO 간 독립적)
+      await Promise.allSettled(
+        tosPage.docs.map((toDoc) => deleteSubcollection(`tos/${toDoc.id}/slots`))
+      );
 
       // [NEW-06] groups 수집 (전체 페이지 완료 후 일괄 삭제)
       for (const toDoc of tosPage.docs) {
@@ -4460,6 +4542,7 @@ export const callableBlacklistUser = onCall(
       blacklistedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     // [BL-1-FIX] Trust Boundary Charter 감사 로그 — 블랙리스트 등록 이력 영구 보존
+    // best-effort: 감사 로그 실패가 블랙리스트 처리 자체를 롤백하지 않도록 catch 처리
     await db.collection("blacklist_audit_log").add({
       action: "BLACKLIST",
       targetUid,
@@ -4467,7 +4550,7 @@ export const callableBlacklistUser = onCall(
       blacklistReason,
       prevIsBlacklisted: targetDataForAudit.isBlacklisted ?? false,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    }).catch((e: unknown) => console.error("[블랙리스트] 감사 로그 기록 실패 — 블랙리스트 처리는 완료됨:", e));
     try {
       await admin.auth().revokeRefreshTokens(targetUid);
     } catch (err) {
@@ -4817,6 +4900,10 @@ export const finalizeRegistration = onCall(
       if (process.env.GCLOUD_PROJECT === "alfit-prod") {
         throw new HttpsError("unavailable", "mock 토큰은 production에서 사용할 수 없습니다.");
       }
+      // mock: passVerifiedAt 기록 → isPassVerified(passVerifiedAt != null) 통과
+      await db.collection("users").doc(request.auth.uid).update({
+        passVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
       return {success: true};
     }
 
@@ -4831,11 +4918,14 @@ export const finalizeRegistration = onCall(
       throw new HttpsError("permission-denied", "register 토큰만 소비 가능");
     }
 
-    // ciHash를 users/{uid}에 복사 (비밀번호 찾기 CI 매칭에 필요)
+    // ciHash + passVerifiedAt을 users/{uid}에 복사
+    // ciHash: 비밀번호 찾기 CI 매칭에 필요
+    // passVerifiedAt: isPassVerified 게이트 + 법적 인증 타임스탬프
     const ciHash = tokenData["ciHash"] as string | undefined;
-    if (ciHash) {
-      await db.collection("users").doc(request.auth.uid).update({ciHash});
-    }
+    await db.collection("users").doc(request.auth.uid).update({
+      ...(ciHash ? {ciHash} : {}),
+      passVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
     // 토큰 즉시 삭제 (일회용)
     await tokenRef.delete();
     return {success: true};
@@ -5004,6 +5094,17 @@ export const callableFinalizeWorkerSignature = onCall(
       throw e;
     }
 
+    // ── 서명 이미지 다운로드 + 해시 계산 (서버 측 — 클라이언트 전달 값 불사용)
+    let computedSigHash: string;
+    try {
+      const sigFile = bucket.file(sigStoragePath);
+      const [sigBuffer] = await sigFile.download();
+      computedSigHash = crypto.createHash("sha256").update(sigBuffer).digest("hex");
+    } catch (e) {
+      await _cleanupContractFiles(contractId);
+      throw e;
+    }
+
     const contractRef = db.collection("employment_contracts").doc(contractId);
 
     try {
@@ -5038,7 +5139,7 @@ export const callableFinalizeWorkerSignature = onCall(
         tx.update(contractRef, {
           status: "completed",
           workerSignatureUrl: sigUrl,
-          workerSignatureHash: workerSignatureHash,
+          workerSignatureHash: computedSigHash,
           workerSignedAt: admin.firestore.FieldValue.serverTimestamp(),
           pdfUrl: computedPdfUrl,
           // [SEC-CONTRACT-PDF-HASH] CF가 직접 계산 — 클라이언트 전달 값 불사용
@@ -5514,6 +5615,7 @@ export const callableCreateTO = onCall(
       const quotaSnap = await db.collection("tos")
         .where("businessId", "==", businessId)
         .where("isPublished", "==", true)
+        .limit(101)
         .get();
       const totalActive = quotaSnap.size;
 
@@ -5542,6 +5644,26 @@ export const callableCreateTO = onCall(
       createdAt: serverTime,         // 클라이언트 전달값 오버라이드
       statusUpdatedAt: serverTime,   // 클라이언트 전달값 오버라이드
     };
+    // 클라이언트가 Timestamp → millisecondsSinceEpoch로 변환하여 전달한 날짜 필드를 복원
+    for (const field of ["rangeStart", "rangeEnd", "applicationDeadline", "publishAt"]) {
+      const v = finalData[field];
+      if (typeof v === "number") {
+        finalData[field] = admin.firestore.Timestamp.fromMillis(v);
+      }
+    }
+    // workDetails 내부 날짜 필드도 복원
+    if (Array.isArray(finalData.workDetails)) {
+      finalData.workDetails = (finalData.workDetails as Record<string, unknown>[]).map((wd) => {
+        const newWd = {...wd};
+        for (const field of ["applicationDeadline", "closedAt", "emergencyOpenedAt"]) {
+          const v = newWd[field];
+          if (typeof v === "number") {
+            newWd[field] = admin.firestore.Timestamp.fromMillis(v);
+          }
+        }
+        return newWd;
+      });
+    }
     // creatorUID 재확인 (callerUid 기준으로 고정)
     finalData.creatorUID = callerUid;
     // [S5-FIX] 서버 전용 집계 카운터 — 클라이언트 주입 값 무시하고 0으로 강제
@@ -5890,6 +6012,27 @@ export const approveForeignWorker = onCall(
     }
     if (userDoc.data()?.accountStatus !== "pending") {
       throw new HttpsError("failed-precondition", "승인 대기 중인 계정이 아닙니다.");
+    }
+
+    // [M-2] 외국인 나이 서버 재검증 — 클라이언트 우회 차단
+    // birthDate는 클라이언트가 외국인등록번호에서 파싱해 저장한 값이므로 위조 가능성 있음.
+    // PASS 연동 전까지 최선의 서버 방어선 역할.
+    const rawBirthDate = userDoc.data()?.birthDate;
+    if (rawBirthDate) {
+      const birthTs: Date =
+        rawBirthDate instanceof Timestamp
+          ? rawBirthDate.toDate()
+          : new Date(rawBirthDate as string);
+      const today = new Date();
+      let age = today.getFullYear() - birthTs.getFullYear();
+      const m = today.getMonth() - birthTs.getMonth();
+      if (m < 0 || (m === 0 && today.getDate() < birthTs.getDate())) age--;
+      if (age < 19) {
+        throw new HttpsError(
+          "failed-precondition",
+          "만 19세 미만은 가입할 수 없습니다."
+        );
+      }
     }
 
     await userRef.update({
@@ -8904,7 +9047,7 @@ export const callableGetApplicationsByBiz = onCall(
     }
     // [APP-WHITELIST] status/type/resignStatus 허용 목록 — 임의 값 Firestore 쿼리 조작 차단
     const VALID_APP_STATUSES = new Set(["PENDING", "CONTRACT_PENDING", "CONFIRMED", "REJECTED", "CANCELED", "AUTO_CANCELED"]);
-    const VALID_APP_TYPES = new Set(["contract", "flex"]);
+    const VALID_APP_TYPES = new Set(["long_term", "short", "contract", "flex"]);
     const VALID_RESIGN_STATUSES = new Set(["PENDING", "APPROVED", "REJECTED", "AUTO_APPROVED"]);
     if (status !== undefined && !VALID_APP_STATUSES.has(status)) {
       throw new HttpsError("invalid-argument", `허용되지 않는 status 값입니다: ${status}`);
@@ -9326,7 +9469,8 @@ export const callableRequestTermination = onCall(
     if (workerUid) {
       const td = terminationDate!.toDate();
       const tdStr = `${td.getMonth() + 1}/${td.getDate()}`;
-      await db.collection("users").doc(workerUid).collection("notifications").add({
+      // best-effort: 트랜잭션 이미 커밋 후이므로 알림 실패 시 에러 반환하지 않음
+      db.collection("users").doc(workerUid).collection("notifications").add({
         type: "terminationRequested",
         userId: workerUid,
         title: "계약해지 요청",
@@ -9334,7 +9478,7 @@ export const callableRequestTermination = onCall(
         data: {applicationId, businessId: bId, action: "terminationDetail"},
         isRead: false,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
+      }).catch(e => console.error(`[callableRequestTermination] 알림 전송 실패 (best-effort) uid=${workerUid}:`, e));
     }
 
     return {success: true};
@@ -9535,19 +9679,23 @@ export const callableApproveTermination = onCall(
     if (!resolvedData) throw new HttpsError("internal", "트랜잭션 결과 없음");
     const app = resolvedData as TerminationResolved;
 
-    // TO totalConfirmed 감소
+    // TO totalConfirmed 감소 (best-effort: 실패해도 트랜잭션은 이미 커밋됨 — CF syncTOStats 교정)
     if (app.toId && CONFIRMED_STATUSES.includes(app.originalStatus)) {
-      const batch = db.batch();
-      batch.update(db.collection("tos").doc(app.toId), {
-        totalConfirmed: admin.firestore.FieldValue.increment(-1),
-      });
-      if (app.slotId) {
-        batch.update(
-          db.collection("tos").doc(app.toId).collection("slots").doc(app.slotId),
-          {confirmedCount: admin.firestore.FieldValue.increment(-1)}
-        );
+      try {
+        const batch = db.batch();
+        batch.update(db.collection("tos").doc(app.toId), {
+          totalConfirmed: admin.firestore.FieldValue.increment(-1),
+        });
+        if (app.slotId) {
+          batch.update(
+            db.collection("tos").doc(app.toId).collection("slots").doc(app.slotId),
+            {confirmedCount: admin.firestore.FieldValue.increment(-1)}
+          );
+        }
+        await batch.commit();
+      } catch (e) {
+        console.warn(`[callableApproveTermination] TO 카운터 감소 실패 (best-effort) toId=${app.toId}:`, e);
       }
-      await batch.commit();
     }
 
     // 퇴직 확정 → Auth 토큰 즉시 무효화 (수동 해지 경로 — D+3 자동 승인과 동일 패턴)
@@ -9717,19 +9865,23 @@ export const callableApproveResignation = onCall(
     if (!resolvedData) throw new HttpsError("internal", "트랜잭션 결과 없음");
     const app = resolvedData as ResignationResolved;
 
-    // TO totalConfirmed 감소
+    // TO totalConfirmed 감소 (best-effort: 실패해도 트랜잭션은 이미 커밋됨 — CF syncTOStats 교정)
     if (app.toId && CONFIRMED_STATUSES.includes(app.originalStatus)) {
-      const batch = db.batch();
-      batch.update(db.collection("tos").doc(app.toId), {
-        totalConfirmed: admin.firestore.FieldValue.increment(-1),
-      });
-      if (app.slotId) {
-        batch.update(
-          db.collection("tos").doc(app.toId).collection("slots").doc(app.slotId),
-          {confirmedCount: admin.firestore.FieldValue.increment(-1)}
-        );
+      try {
+        const batch = db.batch();
+        batch.update(db.collection("tos").doc(app.toId), {
+          totalConfirmed: admin.firestore.FieldValue.increment(-1),
+        });
+        if (app.slotId) {
+          batch.update(
+            db.collection("tos").doc(app.toId).collection("slots").doc(app.slotId),
+            {confirmedCount: admin.firestore.FieldValue.increment(-1)}
+          );
+        }
+        await batch.commit();
+      } catch (e) {
+        console.warn(`[callableApproveResignation] TO 카운터 감소 실패 (best-effort) toId=${app.toId}:`, e);
       }
-      await batch.commit();
     }
 
     // 퇴직 확정 → Auth 토큰 즉시 무효화 (수동 퇴사 승인 경로 — D+3 자동 승인과 동일 패턴)
@@ -10183,6 +10335,7 @@ export const callableCloseSlots = onCall(
           .where("businessId", "==", businessId)
           .where("slotId", "==", slotId)
           .where("status", "==", "PENDING")
+          .limit(500)
           .get()
       )
     );
@@ -10264,15 +10417,12 @@ export const callableCloseSlots = onCall(
       }
     }
 
-    // 4. TO totalPending 감소
-    if (totalCanceledPending > 0) {
-      await db.collection("tos").doc(toId).update({
-        totalPending: admin.firestore.FieldValue.increment(-totalCanceledPending),
-      });
-    }
-
-    // 5. TO status 재계산
+    // 4+5. TO totalPending 감소 + status 재계산 — 단일 update()로 원자적 처리
     try {
+      const toUpdateData: Record<string, unknown> = {};
+      if (totalCanceledPending > 0) {
+        toUpdateData.totalPending = admin.firestore.FieldValue.increment(-totalCanceledPending);
+      }
       const allSlotsSnap = await db.collection("tos").doc(toId).collection("slots").get();
       const hasOpenSlot = allSlotsSnap.docs.some((d) => {
         const s = d.data();
@@ -10282,10 +10432,14 @@ export const callableCloseSlots = onCall(
       const currentTOStatus = toSnap2.data()?.status as string | undefined;
       const openStates = ["ACTIVE", "FULL", "SCHEDULED"];
       if (!hasOpenSlot && openStates.includes(currentTOStatus ?? "")) {
-        await db.collection("tos").doc(toId).update({status: "CLOSED", closedAt: now});
+        toUpdateData.status = "CLOSED";
+        toUpdateData.closedAt = now;
+      }
+      if (Object.keys(toUpdateData).length > 0) {
+        await db.collection("tos").doc(toId).update(toUpdateData);
       }
     } catch (e) {
-      console.error(`[CloseSlots] TO status 재계산 실패 (${toId}):`, e);
+      console.error(`[CloseSlots] TO 상태 업데이트 실패 (${toId}):`, e);
     }
 
     return {success: true, canceledCount: totalCanceledPending};
@@ -10327,10 +10481,10 @@ export const callableReopenSlots = onCall(
     const now = admin.firestore.FieldValue.serverTimestamp();
 
     // 각 슬롯 트랜잭션: TOCTOU 방지 — confirmedCount 읽기 + open/full 결정 + 쓰기 원자화
-    let reopenedCount = 0;
-    for (const slotId of slotIds) {
-      const slotRef = db.collection("tos").doc(toId).collection("slots").doc(slotId);
-      try {
+    // [PERF-2026-07-16] 슬롯별 독립 트랜잭션이므로 Promise.allSettled 병렬화 안전
+    const slotResults = await Promise.allSettled(
+      slotIds.map(async (slotId) => {
+        const slotRef = db.collection("tos").doc(toId).collection("slots").doc(slotId);
         // [L-1-FIX] 트랜잭션 반환값으로 실제 업데이트 여부 확인 — 미존재 슬롯 오증가 방지
         const updated = await db.runTransaction(async (tx) => {
           const slotSnap = await tx.get(slotRef);
@@ -10355,11 +10509,17 @@ export const callableReopenSlots = onCall(
           });
           return true;
         });
-        if (updated) reopenedCount++;
-      } catch (e) {
-        console.error(`[ReopenSlots] 슬롯 ${slotId} 재오픈 실패:`, e);
+        return updated;
+      })
+    );
+    const reopenedCount = slotResults.filter(
+      (r) => r.status === "fulfilled" && r.value === true
+    ).length;
+    slotResults.forEach((r, i) => {
+      if (r.status === "rejected") {
+        console.error(`[ReopenSlots] 슬롯 ${slotIds[i]} 재오픈 실패:`, r.reason);
       }
-    }
+    });
 
     // TO cascade status 동기화 — open/full 슬롯이 생기면 CLOSED → ACTIVE 복구
     try {
@@ -10995,11 +11155,14 @@ export const callableBatchSetNoShow = onCall(
     const now = admin.firestore.FieldValue.serverTimestamp();
     const skippedSet = new Set<string>();
 
-    // [BATCH-RACE-FIX] Promise.all(reads)+batch.commit() → 항목별 개별 트랜잭션으로 전환
-    // 이유: Promise.all read - batch.commit 사이 wageStatus 변경 시 transferred 기록에 finalWage=0 덮어쓰기 가능
-    // 신규 생성 항목은 appRef 포함 2 reads/tx → 단일 트랜잭션으로 합치면 200×2 reads+200 writes=600 ops(한도 초과)
-    // → callableConfirmFinalWage와 동일 패턴으로 항목별 순차 트랜잭션 사용
-    for (const entry of entries) {
+    // [BATCH-RACE-FIX] TOCTOU 방지 — 항목별 개별 트랜잭션 사용
+    // [PERF-2026-07-16] 순차 → chunk-20 병렬 트랜잭션
+    // 각 트랜잭션: 최대 2 reads + 1 write = 3 ops → chunk-20 최대 60 ops(한도 500 이내)
+    const CHUNK_NS = 20;
+    for (let ci = 0; ci < entries.length; ci += CHUNK_NS) {
+      const chunk = entries.slice(ci, ci + CHUNK_NS);
+      await Promise.allSettled(
+        chunk.map(async (entry) => {
       const {applicationId, workDateMs, userId, businessName, workType, attendanceId} = entry;
       const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
       const dateKST = new Date(workDateMs + KST_OFFSET_MS);
@@ -11077,7 +11240,9 @@ export const callableBatchSetNoShow = onCall(
       } catch (e) {
         skippedSet.add(resolvedId);
       }
-    }
+        }) // chunk.map async entry
+      ); // Promise.allSettled
+    } // for ci chunk loop
 
     const skipped = Array.from(skippedSet);
     return {success: true, processed: entries.length - skipped.length, skipped};
@@ -11242,60 +11407,65 @@ export const callableConfirmFinalWage = onCall(
     let successCount = 0;
     const skipped: string[] = [];
 
-    for (const id of attendanceIds) {
-      const ref = db.collection("attendance").doc(id);
-      try {
-        const result = await db.runTransaction(async (tx) => {
-          const snap = await tx.get(ref);
-          if (!snap.exists) return "skip";
-          const data = snap.data()!;
-          // [SEC] businessId 교차검증
-          if (data.businessId !== businessId) return "skip";
-          // 이미 마감됐거나 송금완료이면 멱등 skip (클라이언트와 동일 동작)
-          if (data.wageStatus === "confirmed" || data.wageStatus === "transferred") return "already_closed";
-          // wageCalculated 상태만 마감 가능
-          if (data.wageStatus !== "calculated") return "skip";
+    // [PERF-2026-07-16] attendance 항목별 독립 트랜잭션 → chunk-20 병렬화
+    // 각 트랜잭션이 서로 다른 attendance/{id}만 접근하므로 contention 없음
+    const CHUNK = 20;
+    for (let ci = 0; ci < attendanceIds.length; ci += CHUNK) {
+      const chunk = attendanceIds.slice(ci, ci + CHUNK);
+      const chunkResults = await Promise.allSettled(
+        chunk.map(async (id) => {
+          const ref = db.collection("attendance").doc(id);
+          return db.runTransaction(async (tx) => {
+            const snap = await tx.get(ref);
+            if (!snap.exists) return "skip";
+            const data = snap.data()!;
+            // [SEC] businessId 교차검증
+            if (data.businessId !== businessId) return "skip";
+            // 이미 마감됐거나 송금완료이면 멱등 skip (클라이언트와 동일 동작)
+            if (data.wageStatus === "confirmed" || data.wageStatus === "transferred") return "already_closed";
+            // wageCalculated 상태만 마감 가능
+            if (data.wageStatus !== "calculated") return "skip";
 
-          const existingWd = (data.wageDetail ?? {}) as Record<string, unknown>;
-          const confirmedWageDetail = {
-            ...existingWd,
-            confirmedBy: callerUid,
-            // serverTimestamp는 wageDetail 맵 내부에 사용할 수 없어 ISO 문자열로 저장
-            // (Firestore: 배열·맵 내부 serverTimestamp 미지원 — D-M1 주석 참고)
-            // CF 서버 시각(admin SDK)으로 고정 → 클라이언트 시계 위조 차단
-            confirmedAt: admin.firestore.Timestamp.now(),
-          };
+            const existingWd = (data.wageDetail ?? {}) as Record<string, unknown>;
+            const confirmedWageDetail = {
+              ...existingWd,
+              confirmedBy: callerUid,
+              // serverTimestamp는 wageDetail 맵 내부에 사용할 수 없어 ISO 문자열로 저장
+              // (Firestore: 배열·맵 내부 serverTimestamp 미지원 — D-M1 주석 참고)
+              // CF 서버 시각(admin SDK)으로 고정 → 클라이언트 시계 위조 차단
+              confirmedAt: admin.firestore.Timestamp.now(),
+            };
 
-          // paymentDueDate 서버 계산 (Dart PaymentDueDateCalculator 재구현)
-          const workDate = (data.workDate as admin.firestore.Timestamp)?.toDate?.() ?? new Date();
-          const payScheduleType = existingWd.payScheduleType as string | undefined;
-          const payScheduleDay = existingWd.payScheduleDay as number | undefined;
-          const paymentDueDate = srvCalculatePaymentDueDate(payScheduleType, payScheduleDay, workDate);
+            // paymentDueDate 서버 계산 (Dart PaymentDueDateCalculator 재구현)
+            const workDate = (data.workDate as admin.firestore.Timestamp)?.toDate?.() ?? new Date();
+            const payScheduleType = existingWd.payScheduleType as string | undefined;
+            const payScheduleDay = existingWd.payScheduleDay as number | undefined;
+            const paymentDueDate = srvCalculatePaymentDueDate(payScheduleType, payScheduleDay, workDate);
 
-          const updateData: Record<string, unknown> = {
-            wageStatus: "confirmed",
-            finalConfirmedAt: now,
-            confirmedBy: callerUid,
-            wageDetail: confirmedWageDetail,
-            updatedAt: now,
-          };
-          if (paymentDueDate !== null) {
-            updateData["paymentDueDate"] = admin.firestore.Timestamp.fromDate(paymentDueDate);
-          }
+            const updateData: Record<string, unknown> = {
+              wageStatus: "confirmed",
+              finalConfirmedAt: now,
+              confirmedBy: callerUid,
+              wageDetail: confirmedWageDetail,
+              updatedAt: now,
+            };
+            if (paymentDueDate !== null) {
+              updateData["paymentDueDate"] = admin.firestore.Timestamp.fromDate(paymentDueDate);
+            }
 
-          tx.update(ref, updateData);
-          return "ok";
-        });
-
-        if (result === "ok") {
+            tx.update(ref, updateData);
+            return "ok";
+          });
+        })
+      );
+      chunkResults.forEach((r, j) => {
+        if (r.status === "fulfilled" && r.value === "ok") {
           successCount++;
         } else {
-          skipped.push(id);
+          if (r.status === "rejected") console.error(`마감 실패 (${chunk[j]}):`, r.reason);
+          skipped.push(chunk[j]);
         }
-      } catch (e) {
-        console.error(`마감 실패 (${id}):`, e);
-        skipped.push(id);
-      }
+      });
     }
 
     return {success: true, processed: successCount, skipped};
@@ -11323,42 +11493,47 @@ export const callableCancelFinalConfirmation = onCall(
     let successCount = 0;
     const skipped: string[] = [];
 
-    // runTransaction: 읽기-쓰기 원자성 보장 — 동시 transferred 전환 경합 방어
-    for (const id of attendanceIds) {
-      const ref = db.collection("attendance").doc(id);
-      try {
-        const didUpdate = await db.runTransaction(async (tx) => {
-          const snap = await tx.get(ref);
-          if (!snap.exists) return false;
-          const data = snap.data()!;
-          // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
-          if (data.businessId !== businessId) return false;
-          if (data.wageStatus === "transferred" || data.wageStatus !== "confirmed") return false;
+    // [PERF-2026-07-16] attendance 항목별 독립 트랜잭션 → chunk-20 병렬화
+    // runTransaction: 읽기-쓰기 원자성 보장 — 동시 transferred 전환 경합 방어 (변경 없음)
+    const CHUNK = 20;
+    for (let ci = 0; ci < attendanceIds.length; ci += CHUNK) {
+      const chunk = attendanceIds.slice(ci, ci + CHUNK);
+      const chunkResults = await Promise.allSettled(
+        chunk.map(async (id) => {
+          const ref = db.collection("attendance").doc(id);
+          return db.runTransaction(async (tx) => {
+            const snap = await tx.get(ref);
+            if (!snap.exists) return false;
+            const data = snap.data()!;
+            // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
+            if (data.businessId !== businessId) return false;
+            if (data.wageStatus === "transferred" || data.wageStatus !== "confirmed") return false;
 
-          const existingDetail = (data.wageDetail ?? {}) as Record<string, unknown>;
-          const updatedDetail: Record<string, unknown> = {...existingDetail};
-          delete updatedDetail.confirmedBy;
-          delete updatedDetail.confirmedAt;
+            const existingDetail = (data.wageDetail ?? {}) as Record<string, unknown>;
+            const updatedDetail: Record<string, unknown> = {...existingDetail};
+            delete updatedDetail.confirmedBy;
+            delete updatedDetail.confirmedAt;
 
-          tx.update(ref, {
-            wageStatus: "calculated",
-            wageDetail: Object.keys(updatedDetail).length > 0 ? updatedDetail : admin.firestore.FieldValue.delete(),
-            finalConfirmedAt: admin.firestore.FieldValue.delete(),
-            // [V3-FIX] paymentDueDate 삭제 — 클라이언트 _reverseCloseWages와 불일치 해소
-            paymentDueDate: admin.firestore.FieldValue.delete(),
-            updatedAt: now,
+            tx.update(ref, {
+              wageStatus: "calculated",
+              wageDetail: Object.keys(updatedDetail).length > 0 ? updatedDetail : admin.firestore.FieldValue.delete(),
+              finalConfirmedAt: admin.firestore.FieldValue.delete(),
+              // [V3-FIX] paymentDueDate 삭제 — 클라이언트 _reverseCloseWages와 불일치 해소
+              paymentDueDate: admin.firestore.FieldValue.delete(),
+              updatedAt: now,
+            });
+            return true;
           });
-          return true;
-        });
-        if (didUpdate) {
+        })
+      );
+      chunkResults.forEach((r, j) => {
+        if (r.status === "fulfilled" && r.value === true) {
           successCount++;
         } else {
-          skipped.push(id);
+          if (r.status === "rejected") console.error(`마감 취소 실패 (${chunk[j]}):`, r.reason);
+          skipped.push(chunk[j]);
         }
-      } catch (e) {
-        console.error(`마감 취소 실패 (${id}):`, e);
-        skipped.push(id);
-      }
+      });
     }
 
     return {success: true, processed: successCount, skipped};
@@ -11669,82 +11844,97 @@ export const callableBatchCheckIn = onCall(
     const now = admin.firestore.FieldValue.serverTimestamp();
     let successCount = 0;
 
-    for (const entry of entries) {
-      const {applicationId, workDateMs, userId, businessName, workType, status, checkInMs, attendanceId} = entry;
-      if (!VALID_ATTENDANCE_STATUS.has(status)) {
-        console.error(`출근 처리 건너뜀 — 유효하지 않은 status: ${status} (${applicationId})`);
-        continue;
+    // Phase 1: 유효하지 않은 status 건 사전 필터
+    const validEntries = entries.filter(e => {
+      if (!VALID_ATTENDANCE_STATUS.has(e.status)) {
+        console.error(`출근 처리 건너뜀 — 유효하지 않은 status: ${e.status} (${e.applicationId})`);
+        return false;
       }
-      // [HIGH-02-FIX] workDateMs = Dart KST 자정 UTC ms → getFullYear()는 UTC 기준 → 전날 날짜
-      // callableCheckIn과 동일한 KST 오프셋 패턴으로 docId 날짜 통일
-      const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
-      const workDateKST = new Date(workDateMs + KST_OFFSET_MS);
-      const workDate = new Date(workDateMs);
-      const checkInTs = admin.firestore.Timestamp.fromMillis(checkInMs);
+      return true;
+    });
 
-      try {
-        if (attendanceId) {
-          // 서버 상태 확인 — confirmed/transferred 건은 출근 시간 수정 불가
-          const snap = await db.collection("attendance").doc(attendanceId).get();
-          if (snap.exists) {
-            const snapData = snap.data()!;
-            // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
-            if (snapData.businessId !== businessId) continue;
-            const ws = snapData.wageStatus as string | undefined;
-            if (ws === "confirmed" || ws === "transferred") continue;
-          }
-          await db.collection("attendance").doc(attendanceId).update({
-            checkIn: checkInTs,
-            checkInMethod: "manual",
-            status,
-            isModified: true,
-            modifiedAt: now,
-            modifiedBy: callerUid,
-            updatedAt: now,
-          });
-        } else {
-          // 신규 출근 기록 — wageStatus='pending' 고정
-          // [L3-FIX] applicationId → userId 교차검증 — 타 근로자 UID 지정으로 TrustScore 조작 차단
-          const appVerifySnap = await db.collection("applications").doc(applicationId).get();
-          // [BATCH-CHECKIN-BIZ-FIX] businessId 교차검증 추가 — 타 사업장 근무자 명의로 출근 기록 생성 차단
-          if (!appVerifySnap.exists || appVerifySnap.data()!.uid !== userId ||
-              appVerifySnap.data()!.businessId !== businessId) {
-            console.error(`출근 처리 건너뜀 — userId 또는 businessId 불일치 (${applicationId})`);
-            continue;
-          }
-          const dateStr = `${workDateKST.getUTCFullYear()}${String(workDateKST.getUTCMonth() + 1).padStart(2, "0")}${String(workDateKST.getUTCDate()).padStart(2, "0")}`;
-          const docId = `${applicationId}_${dateStr}`;
-          // [BATCH-CHECKIN-WAGE-FIX] 신규 생성 경로에서도 confirmed/transferred 덮어쓰기 차단
-          //   set({...wageStatus:"pending"},{merge:true})는 기존 confirmed 문서를 초기화할 수 있음
-          const existingSnap = await db.collection("attendance").doc(docId).get();
-          if (existingSnap.exists) {
-            const existWs = existingSnap.data()?.wageStatus as string | undefined;
-            if (existWs === "confirmed" || existWs === "transferred") {
-              console.error(`출근 처리 건너뜀 — 이미 임금 확정/이체 완료 (${docId})`);
-              continue;
+    // Phase 2: [PERF-2026-07-16] 순차 → chunk-20 병렬 처리
+    // attendanceId 경로: 1 read + 1 write / 신규 경로: 2 reads + 1 write → chunk-20 최대 60 ops
+    const CHUNK_CI = 20;
+    for (let ci = 0; ci < validEntries.length; ci += CHUNK_CI) {
+      const chunk = validEntries.slice(ci, ci + CHUNK_CI);
+      const chunkResults = await Promise.allSettled(
+        chunk.map(async (entry): Promise<boolean> => {
+          const {applicationId, workDateMs, userId, businessName, workType, status, checkInMs, attendanceId} = entry;
+          // [HIGH-02-FIX] workDateMs = Dart KST 자정 UTC ms → getFullYear()는 UTC 기준 → 전날 날짜
+          const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+          const workDateKST = new Date(workDateMs + KST_OFFSET_MS);
+          const workDate = new Date(workDateMs);
+          const checkInTs = admin.firestore.Timestamp.fromMillis(checkInMs);
+
+          try {
+            if (attendanceId) {
+              // 서버 상태 확인 — confirmed/transferred 건은 출근 시간 수정 불가
+              const snap = await db.collection("attendance").doc(attendanceId).get();
+              if (snap.exists) {
+                const snapData = snap.data()!;
+                // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
+                if (snapData.businessId !== businessId) return false;
+                const ws = snapData.wageStatus as string | undefined;
+                if (ws === "confirmed" || ws === "transferred") return false;
+              }
+              await db.collection("attendance").doc(attendanceId).update({
+                checkIn: checkInTs,
+                checkInMethod: "manual",
+                status,
+                isModified: true,
+                modifiedAt: now,
+                modifiedBy: callerUid,
+                updatedAt: now,
+              });
+            } else {
+              // 신규 출근 기록 — wageStatus='pending' 고정
+              // [L3-FIX] applicationId → userId 교차검증 — 타 근로자 UID 지정으로 TrustScore 조작 차단
+              const appVerifySnap = await db.collection("applications").doc(applicationId).get();
+              // [BATCH-CHECKIN-BIZ-FIX] businessId 교차검증 추가 — 타 사업장 근무자 명의로 출근 기록 생성 차단
+              if (!appVerifySnap.exists || appVerifySnap.data()!.uid !== userId ||
+                  appVerifySnap.data()!.businessId !== businessId) {
+                console.error(`출근 처리 건너뜀 — userId 또는 businessId 불일치 (${applicationId})`);
+                return false;
+              }
+              const dateStr = `${workDateKST.getUTCFullYear()}${String(workDateKST.getUTCMonth() + 1).padStart(2, "0")}${String(workDateKST.getUTCDate()).padStart(2, "0")}`;
+              const docId = `${applicationId}_${dateStr}`;
+              // [BATCH-CHECKIN-WAGE-FIX] 신규 생성 경로에서도 confirmed/transferred 덮어쓰기 차단
+              const existingSnap = await db.collection("attendance").doc(docId).get();
+              if (existingSnap.exists) {
+                const existWs = existingSnap.data()?.wageStatus as string | undefined;
+                if (existWs === "confirmed" || existWs === "transferred") {
+                  console.error(`출근 처리 건너뜀 — 이미 임금 확정/이체 완료 (${docId})`);
+                  return false;
+                }
+              }
+              await db.collection("attendance").doc(docId).set({
+                applicationId,
+                userId,
+                businessId,
+                businessName,
+                workDate: admin.firestore.Timestamp.fromDate(workDate),
+                workType,
+                checkIn: checkInTs,
+                checkInMethod: "manual",
+                status,
+                isModified: false,
+                modifyRequested: false,
+                wageStatus: "pending",
+                createdAt: now,
+                updatedAt: now,
+              }, {merge: true});
             }
+            return true;
+          } catch (e) {
+            console.error(`출근 처리 실패 (${applicationId}):`, e);
+            return false;
           }
-          await db.collection("attendance").doc(docId).set({
-            applicationId,
-            userId,
-            businessId,
-            businessName,
-            workDate: admin.firestore.Timestamp.fromDate(workDate),
-            workType,
-            checkIn: checkInTs,
-            checkInMethod: "manual",
-            status,
-            isModified: false,
-            modifyRequested: false,
-            wageStatus: "pending",
-            createdAt: now,
-            updatedAt: now,
-          }, {merge: true});
-        }
-        successCount++;
-      } catch (e) {
-        console.error(`출근 처리 실패 (${applicationId}):`, e);
-      }
+        })
+      );
+      chunkResults.forEach((r) => {
+        if (r.status === "fulfilled" && r.value === true) successCount++;
+      });
     }
 
     return {success: true, processed: successCount, total: entries.length};
@@ -11779,17 +11969,20 @@ export const callableBatchCheckOut = onCall(
     const now = admin.firestore.FieldValue.serverTimestamp();
     let successCount = 0;
     const skipped: string[] = [];
+    // [PERF-2026-07-16] O(n²) skipped.includes → O(1) Set.has 전환
+    const skippedSet = new Set<string>();
+    const addSkipped = (id: string) => { if (!skippedSet.has(id)) { skipped.push(id); skippedSet.add(id); } };
 
     for (const entry of entries) {
       const {attendanceId, checkOutMs, workHours, status, resetWageDetail} = entry;
       // [L4-FIX] workHours 상한 검증 — 관리자가 24시간 초과 근무시간 입력으로 임금 부풀리기 차단
       if (typeof workHours === "number" && (workHours < 0 || workHours > 24)) {
-        skipped.push(attendanceId);
+        addSkipped(attendanceId);
         continue;
       }
       if (!VALID_ATTENDANCE_STATUS.has(status)) {
         console.error(`퇴근 처리 건너뜀 — 유효하지 않은 status: ${status} (${attendanceId})`);
-        skipped.push(attendanceId);
+        addSkipped(attendanceId);
         continue;
       }
       const ref = db.collection("attendance").doc(attendanceId);
@@ -11798,12 +11991,12 @@ export const callableBatchCheckOut = onCall(
           // wageCalculated → pending 리셋 시 트랜잭션: 동시에 confirmed/transferred 전환 방어
           await db.runTransaction(async (tx) => {
             const snap = await tx.get(ref);
-            if (!snap.exists) { skipped.push(attendanceId); return; }
+            if (!snap.exists) { addSkipped(attendanceId); return; }
             const snapData = snap.data()!;
             // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
-            if (snapData.businessId !== businessId) { skipped.push(attendanceId); return; }
+            if (snapData.businessId !== businessId) { addSkipped(attendanceId); return; }
             const ws = snapData.wageStatus as string | undefined;
-            if (ws === "confirmed" || ws === "transferred") { skipped.push(attendanceId); return; }
+            if (ws === "confirmed" || ws === "transferred") { addSkipped(attendanceId); return; }
             tx.update(ref, {
               checkOut: admin.firestore.Timestamp.fromMillis(checkOutMs),
               checkOutMethod: "manual",
@@ -11815,29 +12008,31 @@ export const callableBatchCheckOut = onCall(
             });
           });
         } else {
-          // 단순 퇴근 기록 — transferred 건만 보호
-          const snap = await ref.get();
-          if (snap.exists) {
-            const snapData = snap.data()!;
-            // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
-            if (snapData.businessId !== businessId) { skipped.push(attendanceId); continue; }
-            // [BATCH-CHECKOUT-WAGE-FIX] confirmed도 차단 — callableCheckOut과 일치
-            if (snapData.wageStatus === "transferred" || snapData.wageStatus === "confirmed") {
-              skipped.push(attendanceId); continue;
+          // 단순 퇴근 기록 — TOCTOU 방지를 위해 runTransaction 사용
+          await db.runTransaction(async (tx) => {
+            const snap = await tx.get(ref);
+            if (snap.exists) {
+              const snapData = snap.data()!;
+              // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
+              if (snapData.businessId !== businessId) { addSkipped(attendanceId); return; }
+              // [BATCH-CHECKOUT-WAGE-FIX] confirmed도 차단 — callableCheckOut과 일치
+              if (snapData.wageStatus === "transferred" || snapData.wageStatus === "confirmed") {
+                addSkipped(attendanceId); return;
+              }
             }
-          }
-          await ref.update({
-            checkOut: admin.firestore.Timestamp.fromMillis(checkOutMs),
-            checkOutMethod: "manual",
-            workHours,
-            status,
-            updatedAt: now,
+            tx.update(ref, {
+              checkOut: admin.firestore.Timestamp.fromMillis(checkOutMs),
+              checkOutMethod: "manual",
+              workHours,
+              status,
+              updatedAt: now,
+            });
           });
         }
-        if (!skipped.includes(attendanceId)) successCount++;
+        if (!skippedSet.has(attendanceId)) successCount++;
       } catch (e) {
         console.error(`퇴근 처리 실패 (${attendanceId}):`, e);
-        skipped.push(attendanceId);
+        addSkipped(attendanceId);
       }
     }
 
@@ -12322,8 +12517,9 @@ export const callableBatchAdjustAttendanceTime = onCall(
     const skippedSet = new Set<string>();
     const skipped: string[] = [];
 
+    // Phase 1: 입력 검증 — 유효하지 않은 status skip, 시간 역전·범위 오류 fail-fast
     for (const entry of entries) {
-      const {attendanceId, checkInMs, checkOutMs, workHours, status, resetWageDetail} = entry;
+      const {attendanceId, checkInMs, checkOutMs, workHours, status} = entry;
       if (!VALID_ATTENDANCE_STATUS.has(status)) {
         console.error(`시간 조정 건너뜀 — 유효하지 않은 status: ${status} (${attendanceId})`);
         skippedSet.add(attendanceId); skipped.push(attendanceId);
@@ -12336,65 +12532,77 @@ export const callableBatchAdjustAttendanceTime = onCall(
       if (workHours != null && (workHours < 0 || workHours > 24)) {
         throw new HttpsError("invalid-argument", `workHours(${workHours})는 0~24 범위여야 합니다. (${attendanceId})`);
       }
-      const attRef = db.collection("attendance").doc(attendanceId);
-      try {
-        await db.runTransaction(async (tx) => {
-          const snap = await tx.get(attRef);
-          if (!snap.exists) {
+    }
+
+    // Phase 2: [PERF-2026-07-16] 순차 → chunk-20 병렬 트랜잭션
+    // 각 트랜잭션: 1 read + 1 write = 2 ops → chunk-20 최대 40 ops (한도 500 이내)
+    const validEntries = entries.filter(e => !skippedSet.has(e.attendanceId));
+    const CHUNK_AT = 20;
+    for (let ci = 0; ci < validEntries.length; ci += CHUNK_AT) {
+      const chunk = validEntries.slice(ci, ci + CHUNK_AT);
+      await Promise.allSettled(
+        chunk.map(async (entry) => {
+          const {attendanceId, checkInMs, checkOutMs, workHours, status, resetWageDetail} = entry;
+          const attRef = db.collection("attendance").doc(attendanceId);
+          try {
+            await db.runTransaction(async (tx) => {
+              const snap = await tx.get(attRef);
+              if (!snap.exists) {
+                skippedSet.add(attendanceId); skipped.push(attendanceId);
+                return;
+              }
+              const snapData = snap.data()!;
+              // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
+              if (snapData.businessId !== businessId) {
+                skippedSet.add(attendanceId); skipped.push(attendanceId);
+                return;
+              }
+              const serverStatus = snapData.wageStatus as string | undefined;
+              if (serverStatus === "confirmed" || serverStatus === "transferred") {
+                skippedSet.add(attendanceId); skipped.push(attendanceId);
+                return;
+              }
+              // [M-3 수정 2026-07-15] calculated 상태 강제 초기화 — 시간 변경 시 기존 임금 계산값이 무효화됨
+              const effectiveResetWageDetail = resetWageDetail || serverStatus === "calculated";
+              // [DESIGN-A-M3] 소급 수정 기간 제한: 90일 이내 기록만 수정 가능
+              const recordTs = (snapData.workDate ?? snapData.checkIn) as admin.firestore.Timestamp | undefined;
+              const recordDate = recordTs?.toDate();
+              const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+              if (recordDate && recordDate < ninetyDaysAgo) {
+                skippedSet.add(attendanceId); skipped.push(attendanceId);
+                return;
+              }
+              const updates: Record<string, unknown> = {
+                isModified: true,
+                modifiedAt: now,
+                modifiedBy: callerUid,
+                updatedAt: now,
+                status,
+              };
+              if (checkInMs != null) {
+                updates["checkIn"] = admin.firestore.Timestamp.fromMillis(checkInMs);
+                updates["checkInMethod"] = "manual";
+              }
+              if (checkOutMs != null) {
+                updates["checkOut"] = admin.firestore.Timestamp.fromMillis(checkOutMs);
+                updates["checkOutMethod"] = "manual";
+              }
+              if (workHours != null) updates["workHours"] = workHours;
+              if (effectiveResetWageDetail) {
+                updates["wageStatus"] = "pending";
+                updates["wageDetail"] = admin.firestore.FieldValue.delete();
+                // [M-1 수정 2026-07-15] finalWage도 함께 삭제 — wageDetail 리셋 시 확정 임금도 무효화
+                updates["finalWage"] = admin.firestore.FieldValue.delete();
+              }
+              tx.update(attRef, updates);
+            });
+            if (!skippedSet.has(attendanceId)) successCount++;
+          } catch (e) {
+            console.error(`시간 조정 실패 (${attendanceId}):`, e);
             skippedSet.add(attendanceId); skipped.push(attendanceId);
-            return;
           }
-          const snapData = snap.data()!;
-          // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
-          if (snapData.businessId !== businessId) {
-            skippedSet.add(attendanceId); skipped.push(attendanceId);
-            return;
-          }
-          const serverStatus = snapData.wageStatus as string | undefined;
-          if (serverStatus === "confirmed" || serverStatus === "transferred") {
-            skippedSet.add(attendanceId); skipped.push(attendanceId);
-            return;
-          }
-          // [M-3 수정 2026-07-15] calculated 상태 강제 초기화 — 시간 변경 시 기존 임금 계산값이 무효화됨
-          const effectiveResetWageDetail = resetWageDetail || serverStatus === "calculated";
-          // [DESIGN-A-M3] 소급 수정 기간 제한: 90일 이내 기록만 수정 가능
-          const recordTs = (snapData.workDate ?? snapData.checkIn) as admin.firestore.Timestamp | undefined;
-          const recordDate = recordTs?.toDate();
-          const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-          if (recordDate && recordDate < ninetyDaysAgo) {
-            skippedSet.add(attendanceId); skipped.push(attendanceId);
-            return;
-          }
-          const updates: Record<string, unknown> = {
-            isModified: true,
-            modifiedAt: now,
-            modifiedBy: callerUid,
-            updatedAt: now,
-            status,
-          };
-          if (checkInMs != null) {
-            updates["checkIn"] = admin.firestore.Timestamp.fromMillis(checkInMs);
-            updates["checkInMethod"] = "manual";
-          }
-          if (checkOutMs != null) {
-            updates["checkOut"] = admin.firestore.Timestamp.fromMillis(checkOutMs);
-            updates["checkOutMethod"] = "manual";
-          }
-          if (workHours != null) updates["workHours"] = workHours;
-          if (effectiveResetWageDetail) {
-            updates["wageStatus"] = "pending";
-            updates["wageDetail"] = admin.firestore.FieldValue.delete();
-            // [M-1 수정 2026-07-15] finalWage도 함께 삭제 — wageDetail 리셋 시 확정 임금도 무효화
-            updates["finalWage"] = admin.firestore.FieldValue.delete();
-          }
-          tx.update(attRef, updates);
-        });
-        // [QA-FIX][L-5] skippedSet.has — O(1) 조회로 최적화
-        if (!skippedSet.has(attendanceId)) successCount++;
-      } catch (e) {
-        console.error(`시간 조정 실패 (${attendanceId}):`, e);
-        skippedSet.add(attendanceId); skipped.push(attendanceId);
-      }
+        })
+      );
     }
 
     return {success: true, processed: successCount, skipped};
@@ -13304,6 +13512,20 @@ export const callableApproveScheduleChangeRequest = onCall(
         }
         if (appDataPre.uid !== (scrData.applicantUid as string)) {
           throw new HttpsError("permission-denied", "애플리케이션 소유자가 요청자와 일치하지 않습니다.");
+        }
+
+        // [LEAVE-GUARD] LEAVE/NO_WORK 승인 시 이미 출근한 날짜 서버 재검증 (read-before-write 원칙 준수)
+        const requestTypeEarly = scrData.requestType as string;
+        if (requestTypeEarly === "LEAVE" || requestTypeEarly === "NO_WORK") {
+          const targetDateTs = scrData.targetDate as admin.firestore.Timestamp;
+          const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+          const targetKST = new Date(targetDateTs.toMillis() + KST_OFFSET_MS);
+          const leaveDateStr = `${targetKST.getUTCFullYear()}${String(targetKST.getUTCMonth() + 1).padStart(2, "0")}${String(targetKST.getUTCDate()).padStart(2, "0")}`;
+          const attRef = db.collection("attendance").doc(`${scrData.applicationId as string}_${leaveDateStr}`);
+          const attSnap = await tx.get(attRef);
+          if (attSnap.exists && attSnap.data()?.checkIn != null) {
+            throw new HttpsError("failed-precondition", "이미 출근한 날짜는 휴무/미출근 처리를 할 수 없습니다.");
+          }
         }
       }
 
@@ -14467,6 +14689,7 @@ export const callableApplyToTO = onCall(
         db.collection("applications")
           .where("uid", "==", uid)
           .where("status", "==", s)
+          .limit(200)
           .get()
       )
     );
@@ -14772,5 +14995,572 @@ export const callableManageBusiness = onCall(
     await bizRef.update(updateData);
     console.log(`✅ [callableManageBusiness] action=${action} businessId=${businessId} by=${callerUid}`);
     return {success: true};
+  }
+);
+
+// ─── callableGetMyApplications ───────────────────────────────────────────────
+// USER 본인 지원서 목록 조회 — uid 서버 검증 강제 (request.query.filters 우회 대책)
+export const callableGetMyApplications = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    const { toId, statuses, limit: rawLimit, startAfterDocId, isLongTerm } = (request.data ?? {}) as {
+      toId?: string; statuses?: string[]; limit?: number; startAfterDocId?: string; isLongTerm?: boolean;
+    };
+    const cap = Math.min(typeof rawLimit === "number" ? rawLimit : 200, 2000);
+    let q: admin.firestore.Query = db.collection("applications").where("uid", "==", uid);
+    if (toId && typeof toId === "string" && toId.trim() !== "") {
+      q = q.where("toId", "==", toId);
+    }
+    if (statuses && Array.isArray(statuses) && statuses.length > 0) {
+      if (statuses.length === 1) {
+        q = q.where("status", "==", statuses[0]);
+      } else {
+        q = q.where("status", "in", statuses.slice(0, 30));
+      }
+    }
+    // isLongTerm 필터 — 단기/장기 분리 조회로 데이터 전송량 절감
+    if (typeof isLongTerm === "boolean") {
+      q = q.where("isLongTermApplication", "==", isLongTerm);
+    }
+    q = q.limit(cap + 1);
+    if (startAfterDocId && typeof startAfterDocId === "string") {
+      const cursorSnap = await db.collection("applications").doc(startAfterDocId).get();
+      if (cursorSnap.exists) q = q.startAfter(cursorSnap);
+    }
+    const snap = await q.get();
+    const hasMore = snap.docs.length > cap;
+    const docs = hasMore ? snap.docs.slice(0, cap) : snap.docs;
+    return {
+      applications: docs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
+      hasMore,
+      lastDocId: docs.length > 0 ? docs[docs.length - 1].id : null,
+    };
+  }
+);
+
+// ─── callableGetMyInvitations ────────────────────────────────────────────────
+// USER 본인 대기 중 초대 목록 — targetUid 서버 검증 강제
+export const callableGetMyInvitations = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    const snap = await db.collection("member_invitations")
+      .where("targetUid", "==", uid)
+      .where("status", "==", "pending")
+      .limit(50)
+      .get();
+    return {
+      invitations: snap.docs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
+    };
+  }
+);
+
+// ─── callableGetMyScheduleChanges ────────────────────────────────────────────
+// USER 본인 스케줄 변경 요청 목록 — applicantUid 서버 검증 강제
+export const callableGetMyScheduleChanges = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    const snap = await db.collection("schedule_change_requests")
+      .where("applicantUid", "==", uid)
+      .limit(200)
+      .get();
+    return {
+      items: snap.docs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
+    };
+  }
+);
+
+// ─── callableGetMyIdCardRequests ─────────────────────────────────────────────
+// USER 본인에게 온 신분증 열람 요청 목록 — targetUserId 서버 검증 강제
+export const callableGetMyIdCardRequests = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    const { status } = (request.data ?? {}) as { status?: string };
+    let q: admin.firestore.Query = db.collection("idCardAccessRequests")
+      .where("targetUserId", "==", uid);
+    if (status && typeof status === "string") q = q.where("status", "==", status);
+    const snap = await q.limit(50).get();
+    return {
+      requests: snap.docs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
+    };
+  }
+);
+
+// ─── callableGetMyReviewRequests ─────────────────────────────────────────────
+// USER 본인 미작성 리뷰 요청 목록 — workerId 서버 검증 강제
+export const callableGetMyReviewRequests = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    const snap = await db.collection("review_requests")
+      .where("workerId", "==", uid)
+      .where("workerStatus", "==", "pending")
+      .where("isPublished", "==", false)
+      .limit(50)
+      .get();
+    return {
+      reviewRequests: snap.docs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
+    };
+  }
+);
+
+// ─── callableDeleteAccountApplications ───────────────────────────────────────
+// 탈퇴 처리 3-pre4: 활성 지원서 일괄 취소 + scheduled 출근 기록 absent 처리
+// Admin SDK로 실행 → applications LIST 직접 쿼리 / USER update 규칙 불필요
+// 반환: pendingToIds(클라이언트에서 totalPending -1), confirmedApps(callableDecrementSlotConfirmed 호출용)
+export const callableDeleteAccountApplications = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    // 활성 지원서 병렬 조회 (Admin SDK → rules 우회)
+    const [pendingSnap, contractSnap, confirmedSnap, attSnap] = await Promise.all([
+      db.collection("applications").where("uid", "==", callerUid).where("status", "==", "PENDING").get(),
+      db.collection("applications").where("uid", "==", callerUid).where("status", "==", "CONTRACT_PENDING").get(),
+      db.collection("applications").where("uid", "==", callerUid).where("status", "==", "CONFIRMED").get(),
+      db.collection("attendance").where("userId", "==", callerUid).where("status", "==", "scheduled").get(),
+    ]);
+
+    const allAppDocs = [...pendingSnap.docs, ...contractSnap.docs, ...confirmedSnap.docs];
+    const pendingToIds: string[] = [];
+    const confirmedApps: { id: string; toId: string | null; slotId: string | null; workType: string | null }[] = [];
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const batch = db.batch();
+
+    for (const doc of allAppDocs) {
+      const d = doc.data();
+      const status = d.status as string;
+      const toId = (d.toId as string | undefined) ?? null;
+      batch.update(doc.ref, { status: "CANCELED", canceledAt: now, cancelReason: "USER_DELETED" });
+      if (status === "PENDING" && toId) {
+        pendingToIds.push(toId);
+      } else if ((status === "CONFIRMED" || status === "CONTRACT_PENDING") && toId) {
+        confirmedApps.push({
+          id: doc.id,
+          toId,
+          slotId: (d.slotId as string | undefined) ?? null,
+          workType: (d.selectedWorkType as string | undefined) ?? null,
+        });
+      }
+    }
+
+    for (const doc of attSnap.docs) {
+      batch.update(doc.ref, { status: "absent", absentReason: "USER_DELETED", updatedAt: now });
+    }
+
+    if (allAppDocs.length > 0 || attSnap.docs.length > 0) await batch.commit();
+
+    return {
+      canceledCount: allAppDocs.length,
+      attendanceCount: attSnap.docs.length,
+      pendingToIds,
+      confirmedApps,
+    };
+  }
+);
+
+// ─── callableCleanupApplicationData ──────────────────────────────────────────
+// 지원 취소 시 연관 문서(idCardAccessRequests·schedule_change_requests·attendance) 일괄 정리
+// 권한: 지원서의 근무자 본인 OR 해당 사업장 관리자/서브어드민/슈퍼어드민
+// Admin SDK로 실행 → 보안 규칙 우회 → USER list 쿼리 직접 접근 불필요
+export const callableCleanupApplicationData = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const { applicationId } = (request.data ?? {}) as { applicationId?: string };
+
+    if (!applicationId || typeof applicationId !== "string") {
+      throw new HttpsError("invalid-argument", "applicationId가 필요합니다.");
+    }
+
+    // 지원서 조회
+    const appSnap = await db.collection("applications").doc(applicationId).get();
+    if (!appSnap.exists) {
+      return { cleaned: 0 }; // 이미 없으면 정리할 것도 없음
+    }
+    const appData = appSnap.data()!;
+    const workerUid = appData.uid as string;
+    const businessId = appData.businessId as string;
+
+    // 권한 검증: 근무자 본인 또는 사업장 관리자/서브어드민/슈퍼어드민
+    const isWorker = callerUid === workerUid;
+    if (!isWorker) {
+      const [bizSnap, callerSnap] = await Promise.all([
+        db.collection("businesses").doc(businessId).get(),
+        db.collection("users").doc(callerUid).get(),
+      ]);
+      const adminIds: string[] = (bizSnap.data()?.adminIds ?? []) as string[];
+      const callerRole = callerSnap.data()?.role as string | undefined;
+      const callerSubAdminOf = callerSnap.data()?.subAdminOf as string | undefined;
+      const isBizAdmin = adminIds.includes(callerUid);
+      const isSubAdmin = callerSubAdminOf === businessId;
+      const isSuperAdmin = callerRole === "SUPER_ADMIN";
+      if (!isBizAdmin && !isSubAdmin && !isSuperAdmin) {
+        throw new HttpsError("permission-denied", "권한이 없습니다.");
+      }
+    }
+
+    // 연관 문서 병렬 조회
+    const [idCardSnap, scrSnap, attSnap] = await Promise.all([
+      db.collection("idCardAccessRequests")
+        .where("applicationId", "==", applicationId)
+        .where("status", "==", "pending")
+        .get(),
+      db.collection("schedule_change_requests")
+        .where("applicationId", "==", applicationId)
+        .where("status", "==", "PENDING")
+        .get(),
+      db.collection("attendance")
+        .where("applicationId", "==", applicationId)
+        .where("wageStatus", "==", "pending")
+        .get(),
+    ]);
+
+    const batch = db.batch();
+    let cleaned = 0;
+    for (const doc of idCardSnap.docs) {
+      batch.update(doc.ref, { status: "canceled" });
+      cleaned++;
+    }
+    for (const doc of scrSnap.docs) {
+      batch.update(doc.ref, { status: "CANCELED" });
+      cleaned++;
+    }
+    for (const doc of attSnap.docs) {
+      batch.update(doc.ref, { canceledWithApplication: true });
+      cleaned++;
+    }
+    if (cleaned > 0) await batch.commit();
+
+    return { cleaned };
+  }
+);
+
+// ─── callableDeleteAccountPreData ────────────────────────────────────────────
+// 탈퇴 처리 3-pre~3-pre3/3-pre6/3-pre7: 개인정보 익명화 & 연관 문서 삭제 (병렬)
+// Admin SDK → 각 컬렉션 LIST 규칙 isSuperAdmin only 제한 우회
+export const callableDeleteAccountPreData = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    const fvDel = admin.firestore.FieldValue.delete;
+
+    const paginateUpdate = async (col: string, field: string, data: Record<string, unknown>) => {
+      let hasMore = true;
+      while (hasMore) {
+        const snap = await db.collection(col).where(field, "==", uid).limit(100).get();
+        if (snap.empty) break;
+        hasMore = snap.docs.length === 100;
+        const batch = db.batch();
+        for (const doc of snap.docs) batch.update(doc.ref, data);
+        await batch.commit();
+      }
+    };
+    const paginateDelete = async (col: string, field: string) => {
+      let hasMore = true;
+      while (hasMore) {
+        const snap = await db.collection(col).where(field, "==", uid).limit(100).get();
+        if (snap.empty) break;
+        hasMore = snap.docs.length === 100;
+        const batch = db.batch();
+        for (const doc of snap.docs) batch.delete(doc.ref);
+        await batch.commit();
+      }
+    };
+
+    const results = await Promise.allSettled([
+      // 3-pre: review_requests workerId 익명화 (SEC-88)
+      paginateUpdate("review_requests", "workerId", {workerName: "탈퇴한 회원"}),
+      // 3-pre2a: monthly_reviews 대상자 익명화 (SEC-92)
+      paginateUpdate("monthly_reviews", "targetUserId", {
+        targetUserName: "탈퇴한 회원", targetUserId: fvDel(), comment: fvDel(),
+      }),
+      // 3-pre2b: monthly_reviews 작성자 익명화 (SEC-92)
+      paginateUpdate("monthly_reviews", "reviewerId", {
+        reviewerName: "탈퇴한 회원", reviewerId: fvDel(),
+      }),
+      // 3-pre3: idCardAccessRequests 삭제 (SEC-93)
+      paginateDelete("idCardAccessRequests", "targetUserId"),
+      paginateDelete("idCardAccessRequests", "requesterId"),
+      // 3-pre6: trust_score_history 익명화 (WARN-AUTH-01)
+      paginateUpdate("trust_score_history", "userId", {userId: "탈퇴한 회원"}),
+      // 3-pre7: member_invitations 삭제 + 익명화 (WARN-AUTH-02)
+      paginateDelete("member_invitations", "targetUid"),
+      paginateUpdate("member_invitations", "invitedBy", {
+        invitedByName: "탈퇴한 회원", invitedBy: fvDel(),
+      }),
+    ]);
+    const failed: string[] = [];
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        console.error(`callableDeleteAccountPreData op${i}:`, (r as PromiseRejectedResult).reason);
+        failed.push(`op${i}`);
+      }
+    });
+    return {success: true, failedOps: failed};
+  }
+);
+
+// ─── callableCheckIdCardAccess ────────────────────────────────────────────────
+// 관리자용: requesterId + targetUserId 복합쿼리로 최신 신분증 열람 권한 확인
+// Admin SDK → idCardAccessRequests LIST 규칙 우회. 만료 시 'expired' 자동 업데이트.
+export const callableCheckIdCardAccess = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {requesterId, targetUserId} =
+      (request.data ?? {}) as {requesterId?: string; targetUserId?: string};
+    if (!requesterId || typeof requesterId !== "string")
+      throw new HttpsError("invalid-argument", "requesterId가 필요합니다.");
+    if (!targetUserId || typeof targetUserId !== "string")
+      throw new HttpsError("invalid-argument", "targetUserId가 필요합니다.");
+    if (callerUid !== requesterId)
+      throw new HttpsError("permission-denied", "본인 요청만 조회 가능합니다.");
+
+    const snap = await db.collection("idCardAccessRequests")
+      .where("requesterId", "==", requesterId)
+      .where("targetUserId", "==", targetUserId)
+      .get();
+    if (snap.empty) return {request: null};
+
+    const docs: Record<string, unknown>[] = snap.docs
+      .map((d) => ({id: d.id, ...serializeFirestoreData(d.data())} as Record<string, unknown>))
+      .sort((a, b) => {
+        const at = (a.requestedAt as Record<string, number> | null)?._seconds ?? 0;
+        const bt = (b.requestedAt as Record<string, number> | null)?._seconds ?? 0;
+        return bt - at;
+      });
+    const latest = {...docs[0]} as Record<string, unknown>;
+
+    // 만료 처리
+    const status = latest.status as string;
+    const expiresAt = latest.expiresAt as Record<string, number> | null;
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (status === "approved" && expiresAt && (expiresAt._seconds ?? 0) < nowSec) {
+      try {
+        await db.collection("idCardAccessRequests").doc(latest.id as string).update({status: "expired"});
+        latest.status = "expired";
+      } catch (_) { /* expired 업데이트 실패해도 UI는 expired 반환 */ }
+    }
+    return {request: latest};
+  }
+);
+
+// ─── callableGetMyIdCardRequestsAsAdmin ──────────────────────────────────────
+// 관리자용: 내가 보낸 신분증 열람 요청 목록 (requesterId == callerUid)
+// Admin SDK → idCardAccessRequests LIST 규칙 우회
+export const callableGetMyIdCardRequestsAsAdmin = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {limit: rawLimit} = (request.data ?? {}) as {limit?: number};
+    const cap = Math.min(typeof rawLimit === "number" ? rawLimit : 50, 200);
+
+    const snap = await db.collection("idCardAccessRequests")
+      .where("requesterId", "==", callerUid)
+      .limit(cap)
+      .get();
+    return {
+      requests: snap.docs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
+    };
+  }
+);
+
+// ─── callableCreateIdCardAccessRequest ───────────────────────────────────────
+// 관리자용: 신분증 열람 요청 생성 (중복 체크 서버 포함) — 알림은 클라이언트에서 별도 처리
+// Admin SDK → idCardAccessRequests LIST 규칙 우회
+// 반환: {requestId, reason: 'CREATED'|'ALREADY_PENDING'|'ALREADY_APPROVED'}
+export const callableCreateIdCardAccessRequest = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {requesterId, requesterName, requesterBusinessId, requesterBusinessName,
+           targetUserId, targetUserName, reason, customReason, applicationId} =
+      (request.data ?? {}) as {
+        requesterId?: string; requesterName?: string; requesterBusinessId?: string;
+        requesterBusinessName?: string; targetUserId?: string; targetUserName?: string;
+        reason?: string; customReason?: string; applicationId?: string;
+      };
+
+    if (!requesterId || callerUid !== requesterId)
+      throw new HttpsError("permission-denied", "본인 명의 요청만 가능합니다.");
+    if (!targetUserId || !requesterBusinessId || !reason)
+      throw new HttpsError("invalid-argument", "필수 파라미터 누락");
+    // [SEC-FIX 2026-07-16] requesterBusinessId 소속 검증 — 클라이언트 위조 방지
+    //   타 사업장 ID를 주입해 해당 사업장 관리자로 위장하는 것을 차단
+    await assertBizAdmin(callerUid, requesterBusinessId);
+
+    const now = admin.firestore.Timestamp.now();
+    const [pendingSnap, approvedSnap] = await Promise.all([
+      db.collection("idCardAccessRequests")
+        .where("requesterId", "==", requesterId)
+        .where("targetUserId", "==", targetUserId)
+        .where("status", "==", "pending")
+        .limit(1)
+        .get(),
+      db.collection("idCardAccessRequests")
+        .where("requesterId", "==", requesterId)
+        .where("targetUserId", "==", targetUserId)
+        .where("status", "==", "approved")
+        .where("expiresAt", ">", now)
+        .limit(1)
+        .get(),
+    ]);
+
+    if (!pendingSnap.empty) return {requestId: null as string | null, reason: "ALREADY_PENDING"};
+    if (!approvedSnap.empty) return {requestId: approvedSnap.docs[0].id, reason: "ALREADY_APPROVED"};
+
+    const docRef = await db.collection("idCardAccessRequests").add({
+      requesterId,
+      requesterName: requesterName ?? "",
+      requesterBusinessId,
+      requesterBusinessName: requesterBusinessName ?? "",
+      targetUserId,
+      targetUserName: targetUserName ?? "",
+      reason,
+      customReason: customReason ?? null,
+      status: "pending",
+      requestedAt: admin.firestore.FieldValue.serverTimestamp(),
+      applicationId: applicationId ?? null,
+    });
+
+    return {requestId: docRef.id, reason: "CREATED"};
+  }
+);
+
+// ─── callableDeleteWorkerLocations ───────────────────────────────────────────
+// 탈퇴 처리 3-pre5: 본인 worker_locations 전체 삭제
+// Admin SDK로 실행 → worker_locations LIST USER 규칙 불필요
+export const callableDeleteWorkerLocations = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    let deletedCount = 0;
+    let hasMore = true;
+    while (hasMore) {
+      const snap = await db.collection("worker_locations")
+        .where("userId", "==", callerUid)
+        .limit(100)
+        .get();
+      if (snap.docs.length === 0) break;
+      hasMore = snap.docs.length === 100;
+      const batch = db.batch();
+      for (const doc of snap.docs) { batch.delete(doc.ref); }
+      await batch.commit();
+      deletedCount += snap.docs.length;
+    }
+    return { deletedCount };
+  }
+);
+
+// ─── callableGetReviewsForUser ────────────────────────────────────────────────
+// USER 본인 수신 리뷰 목록 (전체/공개) + ADMIN이 다른 유저 공개 리뷰 조회
+// 본인(callerUid == targetUserId)이면 미공개 포함 가능; 타인은 isPublished==true 강제
+export const callableGetReviewsForUser = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const { targetUserId, isPublishedOnly, limit: rawLimit, startAfterId, reviewType } =
+      (request.data ?? {}) as {
+        targetUserId?: string; isPublishedOnly?: boolean; limit?: number;
+        startAfterId?: string; reviewType?: string;
+      };
+    if (!targetUserId || typeof targetUserId !== "string") {
+      throw new HttpsError("invalid-argument", "targetUserId가 필요합니다.");
+    }
+    const cap = Math.min(typeof rawLimit === "number" ? rawLimit : 30, 500);
+    const isSelf = callerUid === targetUserId;
+    let q: admin.firestore.Query = db.collection("monthly_reviews")
+      .where("targetUserId", "==", targetUserId);
+    if (reviewType && typeof reviewType === "string") {
+      q = q.where("reviewType", "==", reviewType);
+    }
+    if (!isSelf || isPublishedOnly === true) {
+      q = q.where("isPublished", "==", true);
+    }
+    q = q.limit(cap + 1);
+    if (startAfterId && typeof startAfterId === "string") {
+      const cursorSnap = await db.collection("monthly_reviews").doc(startAfterId).get();
+      if (cursorSnap.exists) q = q.startAfter(cursorSnap);
+    }
+    const snap = await q.get();
+    const hasMore = snap.docs.length > cap;
+    const docs = hasMore ? snap.docs.slice(0, cap) : snap.docs;
+    return {
+      reviews: docs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
+      hasMore,
+      lastDocId: docs.length > 0 ? docs[docs.length - 1].id : null,
+    };
+  }
+);
+
+// ─── callableGetApplicationsForConflictCheck ─────────────────────────────────
+// USER 스케줄 충돌체크용 확정 지원서 조회 — uid 서버 검증, status+workEndDate 서버 필터
+// [CF-MIGRATED 2026-07-15] schedule_conflict_service._getConfirmedSchedules()
+//   · applications list isSuperAdmin() only → PERMISSION_DENIED 무력화됨
+//   · Admin SDK로 uid == callerUid + status in [CONFIRMED, CONTRACT_PENDING] + workEndDate >= workDate
+export const callableGetApplicationsForConflictCheck = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    const {workDateSeconds} = (request.data ?? {}) as {workDateSeconds?: number};
+    if (typeof workDateSeconds !== "number") {
+      throw new HttpsError("invalid-argument", "workDateSeconds가 필요합니다.");
+    }
+    const workDateTs = admin.firestore.Timestamp.fromDate(new Date(workDateSeconds * 1000));
+    const snap = await db.collection("applications")
+      .where("uid", "==", uid)
+      .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
+      .where("workEndDate", ">=", workDateTs)
+      .limit(200)
+      .get();
+    return {
+      applications: snap.docs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())} as Record<string, unknown>)),
+    };
+  }
+);
+
+// ─── callableWorkerHasAttendanceRecord ───────────────────────────────────────
+// 근무자 본인 출퇴근 기록 존재여부 확인 — applicationId 소유권 서버 검증
+// [CF-MIGRATED 2026-07-15] apply_work_dialog.dart 장기공고 신청 흐름
+//   · attendance list: isAdminOf only, USER 직접 list 차단됨
+//   · applicationId 소유권(application.uid == callerUid) 확인 후 attendance 조회
+export const callableWorkerHasAttendanceRecord = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    const {applicationId} = (request.data ?? {}) as {applicationId?: string};
+    if (!applicationId || typeof applicationId !== "string") {
+      throw new HttpsError("invalid-argument", "applicationId가 필요합니다.");
+    }
+    const appDoc = await db.collection("applications").doc(applicationId).get();
+    if (!appDoc.exists) return {hasRecord: false};
+    if ((appDoc.data() as Record<string, unknown>)?.uid !== uid) {
+      throw new HttpsError("permission-denied", "본인의 지원서가 아닙니다.");
+    }
+    const attendanceSnap = await db.collection("attendance")
+      .where("applicationId", "==", applicationId)
+      .limit(1)
+      .get();
+    return {hasRecord: !attendanceSnap.empty};
   }
 );
