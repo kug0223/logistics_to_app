@@ -7744,6 +7744,15 @@ export const callableGetIdCardSignedUrl = onCall(
       expires: Date.now() + 60 * 60 * 1000, // 1시간
     });
 
+    // 감사 로그 CF 내부 기록 — 클라이언트 직접 쓰기 제거(일관성: Signed URL 성공 시에만 기록)
+    await db.collection("id_card_copy_logs").add({
+      viewerId: request.auth.uid,
+      targetUserId,
+      businessId: (callerDoc.data()?.businessId as string | undefined) ?? "",
+      action: "view_id_card_image",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
     console.log(
       `[callableGetIdCardSignedUrl] ${request.auth.uid} → ${targetUserId}` +
       ` (superAdmin=${isSuperAdmin})`

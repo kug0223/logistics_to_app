@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:provider/provider.dart';
 import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
@@ -618,27 +616,14 @@ class _ForeignWorkerApprovalScreenState
 
   Future<void> _showIdCardImage(UserModel user) async {
     // ID-1 보안: CF callableGetIdCardSignedUrl 경유로 1시간 만료 Signed URL 발급
-    // SUPER_ADMIN은 CF 내부에서 role 확인 후 무조건 허용
-    // 감사 로그 병렬 처리 — 실패 시 UX 차단 없이 콘솔 기록만
-    final viewerId = FirebaseAuth.instance.currentUser?.uid ?? '';
+    // SUPER_ADMIN은 CF 내부에서 role 확인 + 감사 로그 기록 후 무조건 허용
     String? signedUrl;
 
     try {
-      final results = await Future.wait([
-        // 감사 로그
-        FirebaseFirestore.instance.collection('id_card_copy_logs').add({
-          'viewerId': viewerId,
-          'targetUserId': user.uid,
-          'businessId': '',
-          'action': 'view_id_card_image',
-          'createdAt': FieldValue.serverTimestamp(),
-        }),
-        // Signed URL 발급
-        _fn.httpsCallable('callableGetIdCardSignedUrl').call<Map<String, dynamic>>(
-          {'targetUserId': user.uid},
-        ),
-      ]);
-      final fnResult = results[1] as HttpsCallableResult<Map<String, dynamic>>;
+      // CF 내부에서 감사 로그를 함께 기록 — Signed URL 성공 시에만 감사 항목 생성
+      final fnResult = await _fn.httpsCallable('callableGetIdCardSignedUrl').call<Map<String, dynamic>>(
+        {'targetUserId': user.uid},
+      );
       signedUrl = fnResult.data['signedUrl'] as String?;
     } catch (e) {
       debugPrint('⚠️ [_showIdCardImage] Signed URL 발급 실패: $e');
