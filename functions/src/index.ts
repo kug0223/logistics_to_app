@@ -3443,9 +3443,10 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
     console.log(`  ✅ [D-0 종료알림] ${terminateD0Count}건 처리`);
 
     // ── D+1 퇴사 대기 알림 (관리자에게 2일 남은 경고) ────────
+    // 요청일로부터 1일 경과한 신청서 대상 (내일=D+2, 모레=D+3 자동승인)
     {
-      const d1Start = new Date(todayKST.getTime() - 2 * 24 * 60 * 60 * 1000);
-      const d1End   = new Date(todayKST.getTime() - 1 * 24 * 60 * 60 * 1000);
+      const d1Start = new Date(todayKST.getTime() - 1 * 24 * 60 * 60 * 1000);
+      const d1End   = new Date(todayKST.getTime()); // todayKST 자정
       const d1Snap = await db.collection("applications")
         .where("resignStatus", "==", "PENDING")
         .where("resignRequestedAt", ">=", Timestamp.fromDate(new Date(d1Start.getTime() - KST_OFFSET_MS)))
@@ -3484,9 +3485,10 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
     }
 
     // ── D+2 퇴사 긴급 알림 (내일 자동 승인 경고) ─────────────
+    // 요청일로부터 2일 경과한 신청서 대상 (내일=D+3 자동승인)
     {
-      const d2Start = new Date(todayKST.getTime() - 3 * 24 * 60 * 60 * 1000);
-      const d2End   = new Date(todayKST.getTime() - 2 * 24 * 60 * 60 * 1000);
+      const d2Start = new Date(todayKST.getTime() - 2 * 24 * 60 * 60 * 1000);
+      const d2End   = new Date(todayKST.getTime() - 1 * 24 * 60 * 60 * 1000);
       const d2Snap = await db.collection("applications")
         .where("resignStatus", "==", "PENDING")
         .where("resignRequestedAt", ">=", Timestamp.fromDate(new Date(d2Start.getTime() - KST_OFFSET_MS)))
@@ -5261,9 +5263,10 @@ export const callableFinalizeWorkerSignature = onCall(
         });
 
         // applications CONTRACT_PENDING → CONFIRMED (Admin SDK 전용 경로)
+        // 레거시 계약서(applicationId 단건 필드)와 신규(applicationIds 배열) 모두 지원
         const applicationIds: string[] = Array.isArray(data["applicationIds"])
           ? (data["applicationIds"] as string[])
-          : [];
+          : (data["applicationId"] ? [data["applicationId"] as string] : []);
         for (const appId of applicationIds) {
           const appRef = db.collection("applications").doc(appId);
           const appSnap = await tx.get(appRef);
@@ -9430,7 +9433,18 @@ export const callableCalculateAndConfirmWage = onCall(
           const prevGross = await srvGetPrevGrossTotalTx(tx, userId2, businessId2, d.yearMonth, d.attendanceId);
           wageResult2 = srvApplyDay8Retroactive(base2, prevGross, rates2);
         } else if (prevDays + 1 > 8) {
-          wageResult2 = srvApplyFourInsurance(base2, rates2, "daily_auto_8");
+          // 9일차 이후: 4대보험 + 일용근로소득세 계속 공제
+          // srvApplyFourInsurance는 소득세 미포함 → 별도 계산 후 합산
+          const fourIns9 = srvApplyFourInsurance(base2, rates2, "daily_auto_8");
+          const g9 = Math.max(0, base2.totalAmount);
+          const tx9 = Math.max(0, g9 - rates2.dailyWageExemption);
+          const inc9 = tx9 > 0 ? Math.round(tx9 * rates2.dailyWorkerTaxRate / 100) : 0;
+          const loc9 = inc9 > 0 ? Math.round(inc9 * rates2.localIncomeTaxRate / 100) : 0;
+          wageResult2 = {
+            ...fourIns9,
+            incomeTaxDeduction: inc9 + loc9,
+            netWage: fourIns9.netWage - inc9 - loc9,
+          };
         } else {
           wageResult2 = srvApplyEmpIncomeTax(base2, rates2);
         }
