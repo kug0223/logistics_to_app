@@ -1474,7 +1474,10 @@ service cloud.firestore {
                        !request.resource.data.keys().hasAny([
                          'workerSignatureUrl', 'workerSignatureHash', 'workerSignedAt',
                          'employerSignatureUrl', 'employerSignatureHash', 'employerSignedAt'
-                       ]))
+                       ]) &&
+                       // [MEDIUM-CONTRACT-STATUS] status 화이트리스트 — 'completed' 위조 계약서 차단
+                       //   CF Admin SDK는 rules 우회하므로 정상 생성 흐름에 영향 없음
+                       request.resource.data.get('status', 'pending_employer') == 'pending_employer'))
                     );
 
       // 슈퍼어드민: 오기재 정정 등 운영 목적 수정 허용

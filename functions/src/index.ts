@@ -4269,7 +4269,27 @@ export const onBusinessDeleted = onDocumentDeleted(
       }
     }
 
-    // 서브컬렉션 삭제
+    // 서브컬렉션 삭제 — businesses/${businessId}/workTypes는 URL 수집 후 삭제
+    // [LOW-STORAGE] 서브컬렉션 workTypes 이미지 URL 수집 (deleteSubcollection 전에 먼저 읽어야 함)
+    const subWorkTypeUrls: string[] = [];
+    {
+      let lastSub: FirebaseFirestore.DocumentSnapshot | undefined;
+      while (true) {
+        let q: FirebaseFirestore.Query = db.collection(`businesses/${businessId}/workTypes`).limit(PAGE);
+        if (lastSub) q = q.startAfter(lastSub);
+        const snap = await q.get();
+        if (snap.empty) break;
+        for (const doc of snap.docs) {
+          const d = doc.data();
+          if (typeof d["thumbnailUrl"] === "string") subWorkTypeUrls.push(d["thumbnailUrl"]);
+          if (Array.isArray(d["images"])) {
+            d["images"].forEach((u: unknown) => typeof u === "string" && subWorkTypeUrls.push(u));
+          }
+        }
+        if (snap.size < PAGE) break;
+        lastSub = snap.docs[snap.docs.length - 1];
+      }
+    }
     await deleteSubcollection(`businesses/${businessId}/workTypes`);
     await deleteSubcollection(`businesses/${businessId}/members`);
     await deleteSubcollection(`businesses/${businessId}/contract_templates`); // [B-M1-FIX]
@@ -4533,7 +4553,7 @@ export const onBusinessDeleted = onDocumentDeleted(
       }
 
       // URL에서 Storage 경로 추출 후 삭제 (실패 허용 — retry로 재시도)
-      const allImageUrls = [...bizImageUrls, ...workTypeUrls];
+      const allImageUrls = [...bizImageUrls, ...workTypeUrls, ...subWorkTypeUrls];
       if (allImageUrls.length > 0) {
         const results = await Promise.allSettled(
           allImageUrls.map(async (url) => {
@@ -5117,8 +5137,8 @@ async function _cleanupContractFiles(contractId: string): Promise<void> {
 //   현재 설계: pdfHash와 Firestore articles를 대조하면 향후 분쟁 시 불일치 감지 가능.
 // [NOTE-DELETE-RULES] storage.rules contracts/ 경로는 allow delete: if false.
 //   CF 실패 시 클라이언트 롤백 불가 → 이 함수 내부에서 Admin SDK로 직접 정리.
-// Input:  { contractId, sigUrl, workerSignatureHash }
-// Output: { success: true, pdfUrl: string }
+// Input:  { contractId, signatureBase64: string, pdfBase64: string }
+// Output: { success: true, pdfUrl: string, sigUrl: string }
 export const callableFinalizeWorkerSignature = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
