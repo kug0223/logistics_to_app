@@ -1051,11 +1051,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
         'quota-exceeded'       => '인증번호 발송 횟수를 초과했습니다. 잠시 후 다시 시도해주세요',
         _                      => '발송에 실패했습니다. 다시 시도해주세요',
       };
+      if (!mounted) return; // dispose 후 ValueNotifier 접근 방지
       _phoneVerifyStatus.value = _PhoneVerifyStatus(error: msg);
-      if (mounted) ToastHelper.showError(msg);
+      ToastHelper.showError(msg);
     } on Exception {
+      if (!mounted) return;
       _phoneVerifyStatus.value = const _PhoneVerifyStatus(error: '발송에 실패했습니다. 다시 시도해주세요');
-      if (mounted) ToastHelper.showError('발송에 실패했습니다. 다시 시도해주세요');
+      ToastHelper.showError('발송에 실패했습니다. 다시 시도해주세요');
     }
   }
 
@@ -1074,6 +1076,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
             role: _selectedRole!,
           );
           if (!mounted) return;
+          if (isDuplicate == null) {
+            // 중복 체크 CF 오류 — null 폴스루로 중복 계정 통과 방지
+            _phoneVerifyStatus.value = const _PhoneVerifyStatus(isSent: true);
+            ToastHelper.showWarning('중복 확인 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
+            return;
+          }
           if (isDuplicate == true) {
             final roleLabel = _selectedRole == UserRole.USER ? '지원자' : '사업장 관리자';
             _phoneVerifyStatus.value = _PhoneVerifyStatus(
@@ -1093,10 +1101,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
           'too_many_attempts' => '시도 횟수를 초과했습니다. 재발송해주세요',
           _                   => '인증번호가 일치하지 않습니다',
         };
+        if (!mounted) return; // dispose 후 ValueNotifier 접근 방지
         _phoneVerifyStatus.value = _PhoneVerifyStatus(isSent: true, error: msg);
-        if (mounted) ToastHelper.showError(msg);
+        ToastHelper.showError(msg);
       }
     } on Exception {
+      if (!mounted) return;
       _phoneVerifyStatus.value = const _PhoneVerifyStatus(
           isSent: true, error: '확인에 실패했습니다');
     }

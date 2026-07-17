@@ -428,7 +428,11 @@ class AuthService {
         final preDoc = await _firestore.collection('users').doc(user.uid).get();
         preDeleteRole = preDoc.data()?['role'] as String?;
         preDeleteBusinessId = preDoc.data()?['businessId'] as String?;
-      } catch (_) {}
+      } catch (e) {
+        // pre-read 실패 시 사업장 비활성화 누락 위험 — 탈퇴 중단
+        debugPrint('❌ [탈퇴] pre-read 실패: $e');
+        throw Exception('계정 정보를 확인하는데 실패했습니다. 잠시 후 다시 시도해주세요.');
+      }
 
       // 3-pre~3-pre3/3-pre6/3-pre7: 개인정보 익명화 & 연관 문서 삭제
       // [CF-MIGRATED 2026-07-15] callableDeleteAccountPreData CF 이전 (병렬 처리)
