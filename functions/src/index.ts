@@ -3556,6 +3556,17 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
             failedAt: now,
           }).catch(() => {/* 기록 실패는 무시 */});
         }
+        // [SEC-SUBADMIN-CLEAR] subAdminOf 초기화 — 퇴직 후 SubAdmin 권한 잔류 방지
+        try {
+          const resignWorkerSnap = await db.collection("users").doc(app.uid as string).get();
+          if (resignWorkerSnap.data()?.subAdminOf === app.businessId) {
+            await db.collection("users").doc(app.uid as string).update({
+              subAdminOf: admin.firestore.FieldValue.delete(),
+            });
+          }
+        } catch (e) {
+          console.warn(`[퇴직-D+3] subAdminOf 초기화 실패 uid=${app.uid}:`, e);
+        }
 
         // [R-H4/H5/H6-FIX] AUTO_APPROVED 수동 approveResignation()과 동일하게 3가지 정리 추가
         // 수동 승인 경로에만 있던 처리(카운터·계약서·attendance)를 AUTO_APPROVED에도 적용
@@ -5510,6 +5521,11 @@ export const callableMarkIdCardVerified = onCall(
     const storagePath = decodeURIComponent(pathMatch[1]);
     if (!storagePath.startsWith(`users/${callerUid}/`)) {
       throw new HttpsError("permission-denied", "본인 신분증 이미지만 등록 가능합니다.");
+    }
+    // [SEC-IDCARD-EXIST] Storage 파일 실제 존재 검증 — 존재하지 않는 URL로 isIdVerified 설정 차단
+    const [idCardFileExists] = await admin.storage().bucket().file(storagePath).exists();
+    if (!idCardFileExists) {
+      throw new HttpsError("not-found", "Storage에 해당 신분증 파일이 존재하지 않습니다.");
     }
 
     await db.collection("users").doc(callerUid).update({
@@ -9990,6 +10006,17 @@ export const callableApproveTermination = onCall(
         failedAt: admin.firestore.FieldValue.serverTimestamp(),
       }).catch(() => {/* 기록 실패는 무시 */});
     }
+    // [SEC-SUBADMIN-CLEAR] subAdminOf 초기화 — 해지 후 SubAdmin 권한 잔류 방지
+    try {
+      const terminationWorkerSnap = await db.collection("users").doc(workerUid).get();
+      if (terminationWorkerSnap.data()?.subAdminOf === businessId) {
+        await db.collection("users").doc(workerUid).update({
+          subAdminOf: admin.firestore.FieldValue.delete(),
+        });
+      }
+    } catch (e) {
+      console.warn(`[해지승인] subAdminOf 초기화 실패 uid=${workerUid}:`, e);
+    }
 
     const terminationDateStr = app.terminationEffectiveDate
       ? (() => { const d = app.terminationEffectiveDate!.toDate(); return `${d.getMonth()+1}/${d.getDate()}`; })()
@@ -10175,6 +10202,17 @@ export const callableApproveResignation = onCall(
         applicationId,
         failedAt: admin.firestore.FieldValue.serverTimestamp(),
       }).catch(() => {/* 기록 실패는 무시 */});
+    }
+    // [SEC-SUBADMIN-CLEAR] subAdminOf 초기화 — 퇴사 후 SubAdmin 권한 잔류 방지
+    try {
+      const resignationWorkerSnap = await db.collection("users").doc(app.uid).get();
+      if (resignationWorkerSnap.data()?.subAdminOf === app.businessId) {
+        await db.collection("users").doc(app.uid).update({
+          subAdminOf: admin.firestore.FieldValue.delete(),
+        });
+      }
+    } catch (e) {
+      console.warn(`[퇴사승인] subAdminOf 초기화 실패 uid=${app.uid}:`, e);
     }
 
     // 퇴사일 이후 scheduled attendance → absent 일괄 처리
