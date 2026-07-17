@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 
 import '../../models/core/contract_template_model.dart';
@@ -42,7 +43,7 @@ class _ContractTemplateListScreenState
     if (!mounted) return;
     setState(() => _loading = true);
     try {
-      debugPrint('📂 [ContractTemplateListScreen] businessId=${widget.businessId}');
+      if (kDebugMode) debugPrint('📂 [ContractTemplateListScreen] businessId=${widget.businessId}');
       _templates = await _service.getTemplates(widget.businessId);
     } catch (e) {
       debugPrint('❌ 템플릿 로드 실패: $e');

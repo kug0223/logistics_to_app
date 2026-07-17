@@ -603,6 +603,7 @@ class WorkDetailManagementDialog {
       if (!context.mounted) return;
       Navigator.pop(context);
       onLocalStatsChanged?.call();
+      onComplete();
       ToastHelper.showSuccess('${works.length}개 업무 긴급모집이 종료되었습니다');
     } catch (e) {
       if (context.mounted) ToastHelper.showError('일부 긴급모집 종료에 실패했습니다');

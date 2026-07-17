@@ -63,7 +63,7 @@ class AlgoliaService {
       ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode != 200) {
-        debugPrint('❌ Algolia 검색 실패 (${response.statusCode}): ${response.body}');
+        if (kDebugMode) debugPrint('❌ Algolia 검색 실패 (${response.statusCode}): ${response.body}');
         return [];
       }
 

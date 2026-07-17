@@ -383,7 +383,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   final nav = Navigator.of(context);
                   final biz = await BusinessPickerHelper.pick(context);
                   if (biz == null || !mounted) return;
-                  debugPrint('📋 [settings/contractTemplate] businessId=${biz.id}');
+                  if (kDebugMode) debugPrint('📋 [settings/contractTemplate] businessId=${biz.id}');
                   nav.push(MaterialPageRoute(
                       builder: (_) => ContractTemplateListScreen(businessId: biz.id)));
                 },

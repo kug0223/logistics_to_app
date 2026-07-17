@@ -1,5 +1,5 @@
 import 'package:ALfit/screens/common/document_management_screen.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -1991,7 +1991,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               ? result.bname
               : FormatHelper.parseAddressDistrict(result.fullAddress);
         });
-        debugPrint('📍 [주소검색] 위도: ${result.latitude} / 경도: ${result.longitude}');
+        if (kDebugMode) debugPrint('📍 [주소검색] 위도: ${result.latitude} / 경도: ${result.longitude}');
       }
     } catch (e) {
       debugPrint('⚠️ 주소 검색 실패, 수기 입력 모드: $e');
@@ -2108,7 +2108,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
 
       final ownerId = user.uid;
 
-      debugPrint('📍 [저장] 위도: $_latitude / 경도: $_longitude');
+      if (kDebugMode) debugPrint('📍 [저장] 위도: $_latitude / 경도: $_longitude');
 
       // 업로드 경로에 사용할 bizId: 수정=기존 ID, 신규=미리 생성 (Storage 규칙이 businesses/{bizId}/ 구조 요구)
       final uploadBizId = _isEditMode

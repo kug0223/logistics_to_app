@@ -16003,6 +16003,101 @@ export const callableGetForeignWorkerUsers = onCall(
 );
 
 // ═══════════════════════════════════════════════════════════
+// 🔑 슈퍼어드민 — 사업장 관리자 목록 조회 (TO 한도 설정용)
+// ═══════════════════════════════════════════════════════════
+// 이전: to_limit_settings_screen users 직접 list 쿼리 (USER list CF 정책 위반)
+// 현재: Admin SDK 경유 — SUPER_ADMIN 검증 후 BUSINESS_ADMIN 목록 반환
+export const callableGetBusinessAdmins = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerSnap = await db.collection("users").doc(request.auth.uid).get();
+    if (callerSnap.data()?.["role"] !== "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "슈퍼관리자 권한이 필요합니다.");
+    }
+    const snap = await db.collection("users")
+      .where("role", "==", "BUSINESS_ADMIN")
+      .orderBy("name")
+      .limit(500)
+      .get();
+    const admins = snap.docs.map(d => {
+      const data = d.data();
+      return {
+        uid: d.id,
+        name: (data["name"] as string | undefined) ?? "이름 없음",
+        businessName: (data["businessName"] as string | undefined) ?? null,
+        managedBizCount: ((data["managedBusinessIds"] as unknown[] | undefined) ?? []).length,
+        maxActiveTOs: (data["maxActiveTOs"] as number | undefined) ?? null,
+      };
+    });
+    return {admins};
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+// 🔑 슈퍼어드민 — 관리자별 TO 한도 설정/초기화
+// ═══════════════════════════════════════════════════════════
+// 이전: to_limit_settings_screen users/{uid}.maxActiveTOs 직접 write (타인 데이터 CF 필수)
+// 현재: Admin SDK 경유 — SUPER_ADMIN 검증 후 maxActiveTOs 갱신
+export const callableSetAdminTOLimit = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerSnap = await db.collection("users").doc(request.auth.uid).get();
+    if (callerSnap.data()?.["role"] !== "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "슈퍼관리자 권한이 필요합니다.");
+    }
+    const {targetUid, value} = request.data as {targetUid?: string; value?: number | null};
+    if (!targetUid) throw new HttpsError("invalid-argument", "targetUid가 필요합니다.");
+    if (value === null || value === undefined) {
+      await db.collection("users").doc(targetUid).update({
+        maxActiveTOs: admin.firestore.FieldValue.delete(),
+      });
+    } else {
+      if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 50) {
+        throw new HttpsError("invalid-argument", "value는 1~50 사이의 정수여야 합니다.");
+      }
+      await db.collection("users").doc(targetUid).update({maxActiveTOs: value});
+    }
+    return {success: true};
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+// 🔑 슈퍼어드민 — 사업장 소유자 정보 일괄 조회
+// ═══════════════════════════════════════════════════════════
+// 이전: all_businesses_screen users whereIn 직접 쿼리 (USER list CF 정책 위반)
+// 현재: Admin SDK 경유 — SUPER_ADMIN 검증 후 name/email만 반환
+export const callableGetOwnerInfosByIds = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerSnap = await db.collection("users").doc(request.auth.uid).get();
+    if (callerSnap.data()?.["role"] !== "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "슈퍼관리자 권한이 필요합니다.");
+    }
+    const {ownerIds} = request.data as {ownerIds?: string[]};
+    if (!ownerIds || !Array.isArray(ownerIds) || ownerIds.length === 0) return {owners: {}};
+    if (ownerIds.length > 300) throw new HttpsError("invalid-argument", "ownerIds는 300개 이하여야 합니다.");
+    const result: Record<string, {name: string; email: string}> = {};
+    for (let i = 0; i < ownerIds.length; i += 30) {
+      const chunk = ownerIds.slice(i, i + 30);
+      const snap = await db.collection("users")
+        .where(admin.firestore.FieldPath.documentId(), "in", chunk)
+        .get();
+      for (const doc of snap.docs) {
+        const data = doc.data();
+        result[doc.id] = {
+          name: (data["name"] as string | undefined) ?? "알 수 없음",
+          email: (data["email"] as string | undefined) ?? "",
+        };
+      }
+    }
+    return {owners: result};
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
 // 🏅 배지 평가 및 업데이트 (badge_service CF 이전)
 // ═══════════════════════════════════════════════════════════
 // 이전: badge_service.dart — attendance 직접 list 쿼리 (allow list: if false → PERMISSION_DENIED)

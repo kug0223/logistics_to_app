@@ -29,6 +29,9 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
   final _bizCF = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
       .httpsCallable('callableManageBusiness',
           options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+  final _ownerInfoCF = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+      .httpsCallable('callableGetOwnerInfosByIds',
+          options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
 
   List<_BusinessWithOwner> _businesses = [];
   String _statusFilter = 'ALL'; // 'ALL' | 'PENDING' | 'ACTIVE' | 'DEACTIVATED'
@@ -68,24 +71,22 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
         try { return BusinessModel.fromMap(doc.data(), doc.id); } catch (_) { return null; }
       }).whereType<BusinessModel>().toList();
 
-      // 소유자 일괄 조회: whereIn 30개 청크 배치 → 최대 10회 read (기존 300회 → 97% 절감)
+      // [CF-MIGRATED] USER list CF 정책 — callableGetOwnerInfosByIds
       final ownerIds = businesses.map((b) => b.ownerId).toSet().toList();
       final ownerMap = <String, ({String name, String email})>{};
-
-      for (var i = 0; i < ownerIds.length; i += 30) {
-        final chunk = ownerIds.sublist(i, i + 30 < ownerIds.length ? i + 30 : ownerIds.length);
+      if (ownerIds.isNotEmpty) {
         try {
-          final snap = await _firestore
-              .collection('users')
-              .where(FieldPath.documentId, whereIn: chunk)
-              .get();
-          for (final doc in snap.docs) {
-            final data = doc.data();
-            ownerMap[doc.id] = (
-              name: data['name'] as String? ?? '알 수 없음',
-              email: data['email'] as String? ?? '',
-            );
-          }
+          final result = await _ownerInfoCF
+              .call<Map<String, dynamic>>({'ownerIds': ownerIds});
+          final raw = result.data['owners'] as Map? ?? {};
+          raw.forEach((k, v) {
+            if (v is Map) {
+              ownerMap[k.toString()] = (
+                name: v['name'] as String? ?? '알 수 없음',
+                email: v['email'] as String? ?? '',
+              );
+            }
+          });
         } catch (_) {}
       }
 

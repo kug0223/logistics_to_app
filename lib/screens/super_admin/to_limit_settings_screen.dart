@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
 import '../../services/firestore_service.dart';
@@ -22,6 +23,12 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
     with SingleTickerProviderStateMixin {
   final _firestore = FirebaseFirestore.instance;
   final _service = FirestoreService();
+  final _getAdminsCF = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+      .httpsCallable('callableGetBusinessAdmins',
+          options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+  final _setLimitCF = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+      .httpsCallable('callableSetAdminTOLimit',
+          options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
   late TabController _tabController;
 
   // ── 전역 기본값 탭 ──
@@ -113,27 +120,22 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
 
   Future<void> _loadAdmins() async {
     try {
-      final snap = await _firestore
-          .collection('users')
-          .where('role', isEqualTo: 'BUSINESS_ADMIN')
-          .orderBy('name')
-          .get();
-      final items = snap.docs.map((doc) {
-        final data = doc.data();
-        final custom =
-            (data['maxActiveTOs'] as num?)?.toInt();
-        final managedBizCount =
-            (data['managedBusinessIds'] as List? ?? []).length;
+      // [CF-MIGRATED] USER list CF 정책 — callableGetBusinessAdmins
+      final result = await _getAdminsCF.call<Map<String, dynamic>>({});
+      final rawList = (result.data['admins'] as List?) ?? [];
+      final items = rawList.whereType<Map>().map((m) {
+        final data = Map<String, dynamic>.from(m);
+        final custom = (data['maxActiveTOs'] as num?)?.toInt();
         return _AdminItem(
-          uid: doc.id,
+          uid: data['uid'] as String? ?? '',
           name: data['name'] as String? ?? '이름 없음',
           businessName: data['businessName'] as String?,
-          managedBizCount: managedBizCount,
+          managedBizCount: (data['managedBizCount'] as num?)?.toInt() ?? 0,
           customLimit: custom,
           ctrl: TextEditingController(
               text: custom != null ? custom.toString() : ''),
         );
-      }).toList();
+      }).where((a) => a.uid.isNotEmpty).toList();
       if (mounted) {
         setState(() {
           _admins = items;
@@ -165,8 +167,8 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
 
     setState(() => admin.isSaving = true);
     try {
-      await _service.updateUserDocument(
-          admin.uid, {'maxActiveTOs': value});
+      // [CF-MIGRATED] 타인 users/{uid} write CF 필수
+      await _setLimitCF.call({'targetUid': admin.uid, 'value': value});
       _service.invalidateAdminTOLimitCache(admin.uid);
       if (mounted) {
         setState(() => admin.customLimit = value);
@@ -183,8 +185,8 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
   Future<void> _resetAdminLimit(_AdminItem admin) async {
     setState(() => admin.isSaving = true);
     try {
-      await _service.updateUserDocument(
-          admin.uid, {'maxActiveTOs': FieldValue.delete()});
+      // [CF-MIGRATED] 타인 users/{uid} write CF 필수 (null = FieldValue.delete())
+      await _setLimitCF.call({'targetUid': admin.uid, 'value': null});
       _service.invalidateAdminTOLimitCache(admin.uid);
       if (mounted) {
         setState(() {
