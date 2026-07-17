@@ -50,7 +50,7 @@ class _LegalTermsManagementScreenState
       final terms = await _service.getTerms();
       if (mounted) setState(() { _terms = terms; });
     } catch (e) {
-      // 예외는 무시하고 finally에서 상태 초기화
+      if (mounted) ToastHelper.showError('약관을 불러오는데 실패했습니다');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
