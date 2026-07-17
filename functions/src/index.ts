@@ -1359,9 +1359,11 @@ export const onReviewCreated = onDocumentCreated(
       }
 
       // 소유자 검증 (트랜잭션 안에서 수행 — 외부 읽기 제거)
-      // USER_TO_BUSINESS: 익명 리뷰라 reviewerId 필드 없음 — Firestore rules에서 작성자 검증
-      // ADMIN_TO_USER: reviewerId가 review_request.workerId와 일치해야 함 (J-2 버그 수정)
-      if (reviewType !== "USER_TO_BUSINESS" && req.workerId !== reviewerId) {
+      // USER_TO_BUSINESS: 익명 리뷰라 reviewerId 없음 → Firestore rules의 isUser()로 검증
+      // ADMIN_TO_USER: 리뷰 대상(targetUserId)이 review_request.workerId와 일치해야 함
+      // [38차 감사-MEDIUM-01] 기존 코드는 reviewerId(관리자 UID) ↔ req.workerId(근무자 UID) 비교라
+      //   항상 blocked 발생 → 관리자→근무자 리뷰 기능 완전 비활성화 버그. targetUserId로 수정.
+      if (isAdminReview && (data.targetUserId as string | undefined) !== req.workerId) {
         blocked = true;
         return;
       }
