@@ -118,6 +118,15 @@ service cloud.firestore {
       );
     }
 
+    // USER_TO_BUSINESS 리뷰 requestId 소유권 검증
+    // [SEC-RR-WORKER-OWN 2026-07-17] review_requests.workerId == uid 강제
+    //   onDocumentCreated에서 auth context 없어 CF 검증 불가 → rules 레벨 강제
+    function isReviewRequestOwnedBy(requestId, uid) {
+      let rrDoc = get(/databases/$(database)/documents/review_requests/$(requestId));
+      let rr = rrDoc != null && rrDoc.data != null ? rrDoc.data : null;
+      return rr != null && rr.get('workerId', '') == uid;
+    }
+
     // 멤버 초대 유효성 검증: pending 상태 + 대상 일치 + 30일 이내
     // [MEDIUM-01] 클라이언트 만료 필터링(30일)을 Firestore 규칙 레벨에서 보강
     //   get() 1회로 4개 조건을 한 번에 검증 (기존 3회 반복 호출 통합)
@@ -915,10 +924,8 @@ service cloud.firestore {
       // ADMIN_TO_USER: 해당 사업장 관리자/하위관리자만 작성
       // USER_TO_BUSINESS: 블랙리스트 미포함 일반 유저, 본인 명의(reviewerId == auth.uid)만 허용
       // requestId 필수 — review_requests와 연결되지 않은 가짜 리뷰 차단.
-      // 소유자 검증(workerId == reviewerId)은 onReviewCreated CF 트리거에서 수행.
-      // [특이사항] Firestore 규칙에서 review_requests.get()으로 workerId 검증 시
-      // 규칙 평가 비용 급증 및 get() 호출 실패 시 PERMISSION_DENIED 오류 발생 위험이 있어
-      // CF 레벨 검증으로 위임. 가짜 리뷰는 생성 직후 CF가 삭제하므로 노출 시간 최소화.
+      // [SEC-RR-WORKER-OWN 2026-07-17] USER_TO_BUSINESS: isReviewRequestOwnedBy()로 requestId 소유권 강제
+      //   onDocumentCreated에서 auth context 없어 CF 검증 불가 → rules 레벨에서 workerId 교차검증으로 보완.
       // [HIGH-FIX] SubAdmin 누락: 알림에서 리뷰 작성 요청 수락 시 SubAdmin이 리뷰 생성 → PERMISSION_DENIED
       // SEC-76: 생성 시 isPublished를 false로 강제 — 클라이언트가 isPublished:true 직접 설정 차단
       //   onReviewCreated CF가 shouldPublish 평가 후 isPublished를 서버에서 제어
@@ -942,7 +949,9 @@ service cloud.firestore {
                          !('reviewerId' in request.resource.data) &&
                          'businessId' in request.resource.data &&
                          request.resource.data.businessId.size() > 0 &&
-                         'requestId' in request.resource.data)
+                         'requestId' in request.resource.data &&
+                         // [SEC-RR-WORKER-OWN] requestId 소유권 강제 — 타 근무자 리뷰 슬롯 탈취 차단
+                         isReviewRequestOwnedBy(request.resource.data.requestId, request.auth.uid))
                       );
 
       // 사업장 답변 추가(USER_TO_BUSINESS): 사업장 관리자/하위관리자는 답변 필드만 수정 가능
@@ -1262,11 +1271,14 @@ service cloud.firestore {
       // 생성: 해당 사업장 관리자/하위관리자 또는 슈퍼어드민
       // [SEC-RR-STATUS] status 초기값 'PENDING' 강제 — 관리자가 COMPLETED 등으로 직접 생성해
       //   CF onReviewCreated 처리 없이 완료된 요청으로 오인되는 취약점 차단
+      // [SEC-RR-CREATE-MEMBER] workerId가 해당 사업장 소속 근무자인지 검증
+      //   악의적 관리자가 타 사업장 근무자를 workerId로 지정해 허위 리뷰 TO-DO 생성 차단
       allow create: if isLoggedIn() && (
                       isSuperAdmin() ||
                       ((isAdminOf(request.resource.data.businessId) ||
                         isSubAdminOf(request.resource.data.businessId)) &&
-                       request.resource.data.get('status', '') == 'PENDING')
+                       request.resource.data.get('status', '') == 'PENDING' &&
+                       exists(/databases/$(database)/documents/businesses/$(request.resource.data.businessId)/members/$(request.resource.data.get('workerId', '_'))))
                     );
 
       // 수정: 워커(자신의 리뷰 제출 필드만) · 해당 사업장 관리자/하위관리자(자신의 필드만) · 슈퍼어드민
