@@ -547,10 +547,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   }
 
   // H-8: 주민번호 복사 시 감사 로그 기록 (개인정보보호법 접근 기록)
-  Future<void> _logResidentNumberCopy() async {
+  // [SEC-LOG-COPY] 로그 실패 시 false 반환 → 호출자가 복사 차단
+  Future<bool> _logResidentNumberCopy() async {
     try {
       final viewerId = context.read<UserProvider>().currentUser?.uid;
-      if (viewerId == null) return;
+      if (viewerId == null) return false;
       // [SEC-84] bizId 폴백: widget 파라미터가 모두 null일 경우 UserProvider에서 보완
       //   isAdminOf('')==false → 로그 미기록 silently fail 방지
       final userProv = context.read<UserProvider>();
@@ -566,8 +567,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         'copiedAt': FieldValue.serverTimestamp(),
         'action': 'resident_number_copy',
       });
+      return true;
     } catch (e) {
       debugPrint('⚠️ [H-8] 주민번호 복사 감사 로그 기록 실패: $e');
+      if (mounted) ToastHelper.showError('감사 로그 기록 실패로 복사가 중단되었습니다.');
+      return false;
     }
   }
 
@@ -1329,10 +1333,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                   IconButton(
                     icon: Icon(Icons.copy, color: AppColors.info, size: ResponsiveHelper.iconSize(context, 20)),
                     tooltip: '번호 복사',
-                    onPressed: () {
-                      Clipboard.setData(ClipboardData(text: widget.user.residentNumber!.replaceAll('-', '')));
+                    onPressed: () async {
+                      final logged = await _logResidentNumberCopy();
+                      if (!logged || !mounted) return;
+                      await Clipboard.setData(ClipboardData(text: widget.user.residentNumber!.replaceAll('-', '')));
+                      if (!mounted) return;
                       ToastHelper.showSuccess('주민번호가 복사되었습니다.');
-                      _logResidentNumberCopy();
                     },
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
