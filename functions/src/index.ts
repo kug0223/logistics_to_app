@@ -7057,6 +7057,9 @@ export const onBusinessDeactivated = onDocumentUpdated(
     ]);
 
     const activeTos = [...activeSnap.docs, ...fullSnap.docs, ...scheduledSnap.docs];
+    if (activeSnap.size >= 500 || fullSnap.size >= 500 || scheduledSnap.size >= 500) {
+      console.warn(`⚠️ [사업장 비활성화] TO 조회 500건 limit 도달 — 초과분은 CLOSED 처리 누락 가능: ${businessId}`);
+    }
     console.log(`📋 [사업장 비활성화] 활성 TO ${activeTos.length}건 발견: ${businessId}`);
 
     if (activeTos.length === 0) {
