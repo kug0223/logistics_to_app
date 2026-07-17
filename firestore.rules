@@ -1648,12 +1648,14 @@ service cloud.firestore {
                       isSuperAdmin()
                     );
 
-      // 수정: 해당 사업장 관리자만 (권한 변경)
-      // [RULE-FIX-L6] isSubAdminOf 추가 — get/list/create/delete에는 있으나 update에만 누락됨
+      // 수정: 사업주(BUSINESS_ADMIN)·슈퍼어드민만 (권한 변경)
+      // [RULE-FIX-L6] isSubAdminOf 추가됐으나 SEC-SUBADMIN-ESC로 제거 — 권한 상승 차단
+      // SEC-SUBADMIN-ESC: SubAdmin이 자신보다 높은 permissions를 타 SubAdmin에게 부여 가능
+      //   → isAdminOf(businessId)(사업주)·isSuperAdmin()만 허용으로 제한
       // [SEC-M7] permissions 필드만 허용 — 관리자가 name/phone/addedAt 등 식별 필드를 임의 수정하는 공격 차단
       allow update: if isLoggedIn() && (
                       isSuperAdmin() ||
-                      ((isAdminOf(businessId) || isSubAdminOf(businessId)) &&
+                      (isAdminOf(businessId) &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['permissions']))
                     );
