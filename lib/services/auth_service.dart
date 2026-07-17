@@ -26,26 +26,17 @@ class AuthService {
     try { await _auth.signOut(); } catch (_) {}
 
     try {
-      // 1. username으로 사용자 찾기
-      final userSnapshot = await _firestore
-          .collection('users')
-          .where('username', isEqualTo: username)
-          .limit(1)
-          .get();
-      
-      if (userSnapshot.docs.isEmpty) {
-        // [AUTH-H4] 사용자 열거 차단 — 아이디 존재 여부를 에러 메시지로 노출하지 않음
+      // 1. CF 경유: username → email 조회 (비인증 직접 쿼리 대신 CF 사용 — M-3 정책)
+      final emailCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetEmailByUsername',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+      final emailResult = await emailCallable.call<Map<String, dynamic>>({'username': username});
+      final email = emailResult.data['email'] as String?;
+
+      if (email == null || email.isEmpty) {
         throw Exception('아이디 또는 비밀번호가 올바르지 않습니다.');
       }
-      
-      final userDoc = userSnapshot.docs.first;
-      final userData = userDoc.data();
-      final email = userData['email'] as String?;
-      
-      if (email == null || email.isEmpty) {
-        throw Exception('계정 정보에 이메일이 없습니다.');
-      }
-      
+
       // 2. 이메일로 Firebase Auth 로그인
       UserCredential result = await _auth.signInWithEmailAndPassword(
         email: email,
@@ -754,14 +745,15 @@ class AuthService {
     required UserRole role,
   }) async {
     try {
-      // 동일 역할 + 동일 전화번호 체크
-      final snapshot = await _firestore
-          .collection('users')
-          .where('phone', isEqualTo: phone)
-          .where('role', isEqualTo: _roleToString(role))
-          .limit(1)
-          .get();
-      return snapshot.docs.isNotEmpty;
+      // CF 경유: 비인증 직접 쿼리 대신 CF 사용 (M-3 정책)
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableCheckPhoneDuplicate',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'phone': phone,
+        'role': _roleToString(role),
+      });
+      return result.data['isDuplicate'] as bool?;
     } catch (e) {
       debugPrint('❌ 중복 가입 체크 실패: $e');
       return null;
@@ -771,14 +763,14 @@ class AuthService {
   /// 사업자등록번호 중복 가입 체크 — 동일 번호로 BUSINESS_ADMIN 이미 존재하면 true
   Future<bool?> checkBusinessNumberDuplicate(String businessNumber) async {
     try {
-      final clean = businessNumber.replaceAll('-', '');
-      final snapshot = await _firestore
-          .collection('users')
-          .where('businessNumber', isEqualTo: clean)
-          .where('role', isEqualTo: 'BUSINESS_ADMIN')
-          .limit(1)
-          .get();
-      return snapshot.docs.isNotEmpty;
+      // CF 경유: 비인증 직접 쿼리 대신 CF 사용 (M-3 정책)
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableCheckBusinessNumberDuplicate',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessNumber': businessNumber,
+      });
+      return result.data['isDuplicate'] as bool?;
     } catch (e) {
       debugPrint('❌ 사업자등록번호 중복 체크 실패: $e');
       return null;

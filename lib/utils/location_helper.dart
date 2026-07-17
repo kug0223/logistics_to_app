@@ -42,32 +42,32 @@ class LocationHelper {
       // 1. 위치 서비스 활성화 확인
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        debugPrint('⚠️ 위치 서비스가 비활성화되어 있습니다.');
+        if (kDebugMode) debugPrint('⚠️ 위치 서비스가 비활성화되어 있습니다.');
         return false;
       }
 
       // 2. 권한 상태 확인
       LocationPermission permission = await Geolocator.checkPermission();
-      
+
       // 3. 권한이 거부된 경우 요청
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
-          debugPrint('❌ 위치 권한이 거부되었습니다.');
+          if (kDebugMode) debugPrint('❌ 위치 권한이 거부되었습니다.');
           return false;
         }
       }
 
       // 4. 영구 거부된 경우 — 앱 설정으로 유도
       if (permission == LocationPermission.deniedForever) {
-        debugPrint('❌ 위치 권한이 영구적으로 거부되었습니다. 앱 설정에서 허용 필요.');
+        if (kDebugMode) debugPrint('❌ 위치 권한이 영구적으로 거부되었습니다. 앱 설정에서 허용 필요.');
         return false; // 호출부에서 openAppSettings() 제공 필요
       }
 
-      debugPrint('✅ 위치 권한 확인 완료');
+      if (kDebugMode) debugPrint('✅ 위치 권한 확인 완료');
       return true;
     } catch (e) {
-      debugPrint('❌ 위치 권한 확인 실패: $e');
+      if (kDebugMode) debugPrint('❌ 위치 권한 확인 실패: $e');
       return false;
     }
   }
@@ -91,13 +91,13 @@ class LocationHelper {
 
       // 가짜 GPS 앱(Mock Location) 감지 — 위치 스푸핑 차단
       if (position.isMocked) {
-        debugPrint('⚠️ Mock GPS 감지됨 — 위치 위조 시도');
+        if (kDebugMode) debugPrint('⚠️ Mock GPS 감지됨 — 위치 위조 시도');
         return null;
       }
       if (kDebugMode) debugPrint('✅ 현재 위치: ${position.latitude}, ${position.longitude}');
       return position;
     } catch (e) {
-      debugPrint('❌ 위치 가져오기 실패: $e');
+      if (kDebugMode) debugPrint('❌ 위치 가져오기 실패: $e');
       return null;
     }
   }
@@ -165,13 +165,19 @@ class LocationHelper {
         ),
       );
 
+      // Mock GPS 앱(위치 스푸핑) 차단 — getCurrentPosition과 동일 방어 적용
+      if (position.isMocked) {
+        if (kDebugMode) debugPrint('⚠️ isAccuracyGood: Mock GPS 감지됨');
+        return false;
+      }
+
       // 정확도가 50m 이하면 양호
       final isGood = position.accuracy <= 50;
-      debugPrint('📍 위치 정확도: ${position.accuracy.toStringAsFixed(1)}m ${isGood ? "✅" : "⚠️"}');
-      
+      if (kDebugMode) debugPrint('📍 위치 정확도: ${position.accuracy.toStringAsFixed(1)}m ${isGood ? "✅" : "⚠️"}');
+
       return isGood;
     } catch (e) {
-      debugPrint('❌ 정확도 체크 실패: $e');
+      if (kDebugMode) debugPrint('❌ 정확도 체크 실패: $e');
       return false;
     }
   }

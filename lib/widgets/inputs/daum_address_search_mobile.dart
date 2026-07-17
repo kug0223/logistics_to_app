@@ -2,6 +2,7 @@
 // daum_address_search_mobile.dart (Android/iOS) - 완전 리팩토링
 // ✨ StyledDialog + ResponsiveHelper + Theme 색상 + WebView 스케일 조정
 // ============================================
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'dart:convert';
@@ -133,7 +134,7 @@ class _DaumPostcodeWebViewState extends State<_DaumPostcodeWebView> {
 
       widget.onAddressSelected(result);
     } catch (e) {
-      debugPrint('❌ 주소 데이터 파싱 실패: $e');
+      if (kDebugMode) debugPrint('❌ 주소 데이터 파싱 실패: $e');
     }
   }
 

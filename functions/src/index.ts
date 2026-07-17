@@ -6314,6 +6314,81 @@ export const callableFindUsername = onCall(
   }
 );
 
+// ── callableGetEmailByUsername ────────────────────────────────
+// 로그인 시 username → email 조회 — 비인증 가능, App Check 필수
+// [M-3] auth_service.dart 직접 쿼리 대체 — users 문서 PII 노출 차단
+// [보안] 반환값은 email만 — 사용자 열거 방지를 위해 not-found/empty email 동일 오류 메시지 사용
+// Input:  { username: string }
+// Output: { email: string }
+export const callableGetEmailByUsername = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    const {username} = request.data as {username?: string};
+    if (!username || typeof username !== "string" || username.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "username이 필요합니다.");
+    }
+    const snap = await db
+      .collection("users")
+      .where("username", "==", username.trim())
+      .limit(1)
+      .get();
+    const email = snap.empty ? null : (snap.docs[0].data()["email"] as string | undefined);
+    if (!email) {
+      // [AUTH-H4] 사용자 열거 차단 — 아이디 존재 여부를 에러 메시지로 노출하지 않음
+      throw new HttpsError("not-found", "아이디 또는 비밀번호가 올바르지 않습니다.");
+    }
+    return {email};
+  }
+);
+
+// ── callableCheckPhoneDuplicate ──────────────────────────────
+// 회원가입 전 전화번호+역할 중복 체크 — 비인증 가능, App Check 필수
+// [M-3] auth_service.dart checkDuplicateRegistration 직접 쿼리 대체
+// Input:  { phone: string, role: "USER" | "BUSINESS_ADMIN" }
+// Output: { isDuplicate: boolean }
+export const callableCheckPhoneDuplicate = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    const {phone, role} = request.data as {phone?: string; role?: string};
+    if (!phone || typeof phone !== "string" || phone.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "phone이 필요합니다.");
+    }
+    if (!role || !["USER", "BUSINESS_ADMIN"].includes(role)) {
+      throw new HttpsError("invalid-argument", "유효하지 않은 role입니다.");
+    }
+    const snap = await db
+      .collection("users")
+      .where("phone", "==", phone.trim())
+      .where("role", "==", role)
+      .limit(1)
+      .get();
+    return {isDuplicate: !snap.empty};
+  }
+);
+
+// ── callableCheckBusinessNumberDuplicate ──────────────────────
+// 회원가입 전 사업자등록번호 중복 체크 — 비인증 가능, App Check 필수
+// [M-3] auth_service.dart checkBusinessNumberDuplicate 직접 쿼리 대체
+// Input:  { businessNumber: string }
+// Output: { isDuplicate: boolean }
+export const callableCheckBusinessNumberDuplicate = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    const {businessNumber} = request.data as {businessNumber?: string};
+    if (!businessNumber || typeof businessNumber !== "string" || businessNumber.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "businessNumber가 필요합니다.");
+    }
+    const clean = businessNumber.trim().replace(/-/g, "");
+    const snap = await db
+      .collection("users")
+      .where("businessNumber", "==", clean)
+      .where("role", "==", "BUSINESS_ADMIN")
+      .limit(1)
+      .get();
+    return {isDuplicate: !snap.empty};
+  }
+);
+
 // cleanExpiredPassTokens 제거 — Firestore TTL 정책으로 대체
 // 설정: Firebase 콘솔 → Firestore → TTL → passTokens 컬렉션, expiresAt 필드
 

@@ -219,7 +219,7 @@ class MonthlyReviewService {
         }
       });
 
-      debugPrint('✅ 리뷰 작성 완료: $reviewKey');
+      if (kDebugMode) debugPrint('✅ 리뷰 작성 완료: $reviewKey');
       return (reviewId: reviewKey, error: null);
     } on FirebaseException catch (e) {
       if (e.code == 'already-exists') {
@@ -308,7 +308,7 @@ class MonthlyReviewService {
         }
       });
 
-      debugPrint('✅ 사업장 리뷰 작성 완료: $reviewKey');
+      if (kDebugMode) debugPrint('✅ 사업장 리뷰 작성 완료: $reviewKey');
       return (reviewId: reviewKey, error: null);
     } on FirebaseException catch (e) {
       if (e.code == 'already-exists') {

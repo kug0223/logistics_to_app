@@ -71,8 +71,16 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
       ..loadHtmlString(_buildMapHtml(), baseUrl: 'https://localhost');
   }
 
+  String _escapeHtml(String s) => s
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+
   /// 🗺️ 카카오맵 HTML 생성
   String _buildMapHtml() {
+    final escapedPlaceName = _escapeHtml(widget.placeName);
     return '''
 <!DOCTYPE html>
 <html>
@@ -120,7 +128,7 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
 
             // 인포윈도우 (장소명 표시)
             var infowindow = new kakao.maps.InfoWindow({
-                content: '<div style="padding:8px 12px;font-size:14px;font-weight:bold;background:white;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">${widget.placeName}</div>',
+                content: '<div style="padding:8px 12px;font-size:14px;font-weight:bold;background:white;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">$escapedPlaceName</div>',
                 removable: false
             });
             infowindow.open(map, marker);

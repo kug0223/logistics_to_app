@@ -47,10 +47,10 @@ class WageCalculator {
               .where((e) => int.tryParse(e.key) != null)
               .map((e) => MapEntry(int.parse(e.key), (e.value as num).toInt())),
         );
-        debugPrint('✅ 최저시급 로드 완료: $_cachedMinimumWages');
+        if (kDebugMode) debugPrint('✅ 최저시급 로드 완료: $_cachedMinimumWages');
       }
     } catch (e) {
-      debugPrint('⚠️ 최저시급 로드 실패, 로컬 백업 사용: $e');
+      if (kDebugMode) debugPrint('⚠️ 최저시급 로드 실패, 로컬 백업 사용: $e');
     }
   }
   
@@ -403,7 +403,7 @@ class WageCalculator {
     final s = _parseTime(startTime);
     final e0 = _parseTime(endTime);
     if (s == null || e0 == null) {
-      debugPrint('⚠️ _calculateMinutesBetween: 파싱 실패 — start=$startTime, end=$endTime');
+      if (kDebugMode) debugPrint('⚠️ _calculateMinutesBetween: 파싱 실패 — start=$startTime, end=$endTime');
       return 0;
     }
     var e = e0;
@@ -453,7 +453,7 @@ class WageCalculator {
     final s = _parseTime(startTime);
     final e0 = _parseTime(endTime);
     if (s == null || e0 == null) {
-      debugPrint('⚠️ _calculateNightMinutes: 파싱 실패 — start=$startTime, end=$endTime');
+      if (kDebugMode) debugPrint('⚠️ _calculateNightMinutes: 파싱 실패 — start=$startTime, end=$endTime');
       return 0;
     }
     var e = e0;
