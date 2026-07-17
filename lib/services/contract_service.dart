@@ -686,7 +686,7 @@ class ContractService {
       return EmploymentContractModel.tryFromMap(m, id);
     } catch (e) {
       debugPrint('❌ 번들 계약서 조회 실패: $e');
-      return null;
+      rethrow; // null 반환 시 _createNew가 중복 계약서를 생성하므로 에러 전파
     }
   }
 

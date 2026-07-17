@@ -51,7 +51,7 @@ class _BusinessApprovalSettingsScreenState
       final doc = await _firestore.collection('settings').doc('system').get();
       if (doc.exists) {
         final data = doc.data()!;
-        _autoApprove = (data['businessAutoApprove'] as bool?) ?? true;
+        if (mounted) setState(() => _autoApprove = (data['businessAutoApprove'] as bool?) ?? true);
       }
     } catch (e) {
       if (mounted) {

@@ -255,11 +255,15 @@ class ScheduleConflictService {
     if (newEndMin <= newStartMin) newEndMin += 1440;
 
     // 비교 기준 통일: 두 근무를 공통 기준점으로 정렬
-    // 기존 근무가 새 근무 시작보다 12시간 이상 늦으면 전날 기준으로 이동
-    // ※ existEndMin은 이미 +1440이 적용됐을 수 있으므로 shift는 existStartMin에만 적용
+    // 기존 근무가 새 근무보다 12시간 이상 늦으면 전날로 이동 (예: exist=01:00, new=22:00)
     if (existStartMin > newStartMin + 720) {
       existStartMin -= 1440;
-      existEndMin -= 1440; // start와 end를 함께 이동해야 상대 간격 유지
+      existEndMin -= 1440;
+    }
+    // 새 근무가 기존 근무보다 12시간 이상 늦으면 전날로 이동 (예: exist=00:00~06:00, new=22:00~02:00)
+    if (newStartMin > existStartMin + 720) {
+      newStartMin -= 1440;
+      newEndMin -= 1440;
     }
 
     // 겹치지 않는 조건: 새 종료 <= 기존 시작 OR 기존 종료 <= 새 시작

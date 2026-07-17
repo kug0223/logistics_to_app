@@ -86,16 +86,15 @@ class _ForeignWorkerApprovalScreenState
 
   Future<void> _approve(UserModel user) async {
     if (_isProcessing) return;
+    final confirmed = await _showConfirmDialog(
+      title: '승인 확인',
+      message: '${user.name}님의 가입을 승인하시겠습니까?\n승인 후 앱 사용이 가능해집니다.',
+      confirmLabel: '승인',
+      confirmColor: AppColors.success,
+    );
+    if (!confirmed || !mounted) return;
     setState(() => _isProcessing = true);
     try {
-      final confirmed = await _showConfirmDialog(
-        title: '승인 확인',
-        message: '${user.name}님의 가입을 승인하시겠습니까?\n승인 후 앱 사용이 가능해집니다.',
-        confirmLabel: '승인',
-        confirmColor: AppColors.success,
-      );
-      if (!confirmed || !mounted) return;
-
       await _fn.httpsCallable('approveForeignWorker').call({'userId': user.uid});
       if (!mounted) return;
       ToastHelper.showSuccess('${user.name}님이 승인되었습니다');
@@ -113,11 +112,10 @@ class _ForeignWorkerApprovalScreenState
 
   Future<void> _reject(UserModel user) async {
     if (_isProcessing) return;
+    final reason = await _showRejectDialog(user.name);
+    if (reason == null || !mounted) return;
     setState(() => _isProcessing = true);
     try {
-      final reason = await _showRejectDialog(user.name);
-      if (reason == null || !mounted) return;
-
       await _fn.httpsCallable('rejectForeignWorker').call({
         'userId': user.uid,
         'reason': reason,
@@ -138,15 +136,15 @@ class _ForeignWorkerApprovalScreenState
 
   Future<void> _resetPassword(UserModel user) async {
     if (_isProcessing) return;
+    final confirmed = await _showConfirmDialog(
+      title: '비밀번호 초기화',
+      message: '${user.name}님의 비밀번호를 임시 비밀번호로 초기화합니다.\n초기화 후 임시 비밀번호를 해당 근무자에게 전달해주세요.',
+      confirmLabel: '초기화',
+      confirmColor: AppColors.warning,
+    );
+    if (!confirmed || !mounted) return;
     setState(() => _isProcessing = true);
     try {
-      final confirmed = await _showConfirmDialog(
-        title: '비밀번호 초기화',
-        message: '${user.name}님의 비밀번호를 임시 비밀번호로 초기화합니다.\n초기화 후 임시 비밀번호를 해당 근무자에게 전달해주세요.',
-        confirmLabel: '초기화',
-        confirmColor: AppColors.warning,
-      );
-      if (!confirmed || !mounted) return;
       final result = await _fn.httpsCallable('adminResetForeignPassword').call({'userId': user.uid});
       if (!mounted) return;
       final tempPassword = result.data['tempPassword'] as String?;
@@ -164,16 +162,15 @@ class _ForeignWorkerApprovalScreenState
 
   Future<void> _resetToReview(UserModel user) async {
     if (_isProcessing) return;
+    final confirmed = await _showConfirmDialog(
+      title: '재검토 전환',
+      message: '${user.name}님을 재검토 대기 상태로 되돌립니다.\n다시 승인 또는 거절하실 수 있습니다.',
+      confirmLabel: '재검토',
+      confirmColor: AppColors.info,
+    );
+    if (!confirmed || !mounted) return;
     setState(() => _isProcessing = true);
     try {
-      final confirmed = await _showConfirmDialog(
-        title: '재검토 전환',
-        message: '${user.name}님을 재검토 대기 상태로 되돌립니다.\n다시 승인 또는 거절하실 수 있습니다.',
-        confirmLabel: '재검토',
-        confirmColor: AppColors.info,
-      );
-      if (!confirmed || !mounted) return;
-
       await _fn.httpsCallable('callableResetAccountStatus').call({'userId': user.uid});
       if (!mounted) return;
       ToastHelper.showSuccess('${user.name}님이 재검토 대기 상태로 전환되었습니다');

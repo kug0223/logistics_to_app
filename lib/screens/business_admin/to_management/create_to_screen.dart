@@ -665,12 +665,16 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           taxDeductionType: result['taxDeductionType'] ?? detail.taxDeductionType,
           description: result['description'],
         );
+        _hasChanges = true;
       });
     }
   }
 
   void _removeWorkDetail(int index) {
-    setState(() => _workDetails.removeAt(index));
+    setState(() {
+      _workDetails.removeAt(index);
+      _hasChanges = true;
+    });
   }
 
   // ============================================================
@@ -785,6 +789,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     await Future.microtask(() {});
     if (!mounted) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (_titleController.text.trim().isEmpty) {
+      ToastHelper.showError('제목을 입력해주세요');
+      return;
+    }
 
     if (_selectedBusiness == null) {
       ToastHelper.showError('사업장을 선택해주세요');
@@ -1114,24 +1122,24 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 TODeadlineSection(
                   isLongTerm: false,
                   hoursBeforeStart: _hoursBeforeStart,
-                  onHoursChanged: (h) => setState(() => _hoursBeforeStart = h),
+                  onHoursChanged: (h) => setState(() { _hoursBeforeStart = h; _hasChanges = true; }),
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
               ],
 
               TOPublishSection(
                 publishMode: _publishMode,
-                onPublishModeChanged: (m) => setState(() => _publishMode = m),
+                onPublishModeChanged: (m) => setState(() { _publishMode = m; _hasChanges = true; }),
                 publishDaysBefore: _publishDaysBefore,
-                onDaysBeforeChanged: (d) => setState(() => _publishDaysBefore = d),
+                onDaysBeforeChanged: (d) => setState(() { _publishDaysBefore = d; _hasChanges = true; }),
                 publishTime: _publishTime,
-                onTimeChanged: (t) => setState(() => _publishTime = t),
+                onTimeChanged: (t) => setState(() { _publishTime = t; _hasChanges = true; }),
                 previewDates: _selectedJobType == TOType.contract
                     ? (_rangeStart != null ? [_rangeStart!] : [])
                     : _selectedDates,
                 isLongTerm: _selectedJobType == TOType.contract,
                 postingDurationDays: _postingDurationDays,
-                onPostingDurationChanged: (d) => setState(() => _postingDurationDays = d),
+                onPostingDurationChanged: (d) => setState(() { _postingDurationDays = d; _hasChanges = true; }),
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
