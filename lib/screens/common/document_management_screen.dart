@@ -583,7 +583,11 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       );
 
       if (oldUrl != null) {
-        await _storageService.deleteImageByUrl(oldUrl);
+        try {
+          await _storageService.deleteImageByUrl(oldUrl);
+        } catch (e) {
+          debugPrint('⚠️ 사업자등록증 Storage 삭제 실패 (무시): $e');
+        }
       }
 
       await userProvider.refreshCurrentUser();
@@ -821,7 +825,11 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
       // 3. Firestore 성공 후 Storage 삭제
       if (oldBankbookUrl != null) {
-        await _storageService.deleteImageByUrl(oldBankbookUrl);
+        try {
+          await _storageService.deleteImageByUrl(oldBankbookUrl);
+        } catch (e) {
+          debugPrint('⚠️ 통장사본 Storage 삭제 실패 (무시): $e');
+        }
       }
 
       await userProvider.refreshCurrentUser();
