@@ -360,6 +360,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       }
 
       for (final adminUid in adminIds) {
+        if (!mounted) return;
         final notification = NotificationModel.createContractRequested(
           userId: adminUid,
           workerName: workerName,
