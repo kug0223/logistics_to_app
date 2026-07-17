@@ -38,8 +38,9 @@ class MemberService {
         'phone': result.data['phone'] as String? ?? '',
       };
     } catch (e) {
+      // null 반환 시 "사용자 없음"과 "CF 오류"를 호출자가 구분 불가
       debugPrint('전화번호 검색 실패: $e');
-      return null;
+      rethrow;
     }
   }
 
@@ -62,8 +63,9 @@ class MemberService {
       });
       return result.data['hasPending'] as bool? ?? false;
     } catch (e) {
-      debugPrint('⚠️ hasPendingInvitation CF 오류, 폴백: $e');
-      return false;
+      // false 반환 시 pending 초대가 있어도 없다고 판단해 중복 초대 허용 위험
+      debugPrint('⚠️ hasPendingInvitation CF 오류: $e');
+      rethrow;
     }
   }
 
@@ -245,8 +247,9 @@ class MemberService {
           .where((inv) => inv.createdAt.isAfter(expiry))
           .toList();
     } catch (e) {
+      // return [] 시 CF 오류를 "초대 없음"으로 오판 — 호출자에게 전파
       debugPrint('초대 목록 조회 실패: $e');
-      return [];
+      rethrow;
     }
   }
 
@@ -257,8 +260,9 @@ class MemberService {
       if (!doc.exists) return null;
       return MemberInvitationModel.tryFromFirestore(doc);
     } catch (e) {
+      // null 반환 시 "초대 없음"과 "Firestore 오류"를 호출자가 구분 불가
       debugPrint('초대 조회 실패: $e');
-      return null;
+      rethrow;
     }
   }
 
@@ -273,8 +277,9 @@ class MemberService {
           .get();
       return snap.docs.map(BusinessMemberModel.tryFromFirestore).whereType<BusinessMemberModel>().toList();
     } catch (e) {
+      // return [] 시 Firestore 오류를 "멤버 없음"으로 오판 — 호출자에게 전파
       debugPrint('멤버 목록 조회 실패: $e');
-      return [];
+      rethrow;
     }
   }
 

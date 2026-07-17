@@ -69,18 +69,25 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
   }
 
   void _initControllers() {
+    // 1. 먼저 리스너 제거 — text 설정 시 _markDirty 트리거 방지 (_cancelEditing에서도 호출됨)
+    for (final c in [
+      _oneLineIntroController, _descriptionController,
+      _requirementsController, _dutiesController, _precautionsController,
+    ]) {
+      c.removeListener(_markDirty);
+    }
+    // 2. 텍스트 설정 (리스너 없으므로 _markDirty 미트리거)
     _oneLineIntroController.text = _currentWorkType.oneLineIntro ?? '';
     _descriptionController.text = _currentWorkType.description ?? '';
     _requirementsController.text = _currentWorkType.requirements ?? '';
     _dutiesController.text = _currentWorkType.duties ?? '';
     _precautionsController.text = _currentWorkType.precautions ?? '';
     _selectedWorkEnvironment = _currentWorkType.workEnvironment;
-    // 텍스트 변경 시 dirty 표시 — 리스너 중복 방지를 위해 removeListener 후 재등록
+    // 3. 리스너 재등록
     for (final c in [
       _oneLineIntroController, _descriptionController,
       _requirementsController, _dutiesController, _precautionsController,
     ]) {
-      c.removeListener(_markDirty);
       c.addListener(_markDirty);
     }
   }
@@ -916,7 +923,11 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
 
       if (_newThumbnail != null) {
         thumbnailUrl = await _uploadImage(_newThumbnail!, 'thumbnail');
-        if (thumbnailUrl != null) newlyUploadedUrls.add(thumbnailUrl);
+        if (thumbnailUrl == null) {
+          if (mounted) ToastHelper.showError('썸네일 업로드에 실패했습니다. 다시 시도해주세요.');
+          return; // null URL로 Firestore 저장 방지, finally에서 _isLoading 초기화
+        }
+        newlyUploadedUrls.add(thumbnailUrl);
       }
 
       List<String> imageUrls = [];

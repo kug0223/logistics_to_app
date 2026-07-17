@@ -6,6 +6,7 @@ import '../../providers/user_provider.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/toast_helper.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 import '../common/document_management_screen.dart';
 import '../common/settings_screen.dart';
@@ -94,9 +95,12 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
   int get _totalItemCount => widget.isFlexType ? 5 : 4;
 
   Future<void> _reCheck() async {
+    if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
       await context.read<UserProvider>().refreshCurrentUser();
+    } catch (e) {
+      if (mounted) ToastHelper.showError('새로고침에 실패했습니다. 다시 시도해주세요.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -260,7 +264,7 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
                     children: [
                       Expanded(
                         child: OutlinedButton.icon(
-                          onPressed: _reCheck,
+                          onPressed: _isLoading ? null : _reCheck,
                           icon: const Icon(Icons.refresh),
                           label: const Text('다시 확인'),
                           style: OutlinedButton.styleFrom(
@@ -441,7 +445,11 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
 /// 다이얼로그 없이 bool만 반환 — UI 결정은 호출자가 담당.
 bool meetsApplyPrerequisites(UserModel user, {required bool isFlexType}) {
   // 블랙리스트·제재 계정: 문서 갖춰도 지원 불가 — CF 차단과 동일
-  if (user.isBlacklisted || user.isRestricted) {
+  // restrictedUntil 만료 체크 포함 (위젯 _isRestricted getter와 동일 로직)
+  final restrictedUntil = user.restrictedUntil;
+  final isCurrentlyRestricted = user.isRestricted &&
+      (restrictedUntil == null || restrictedUntil.isAfter(DateTime.now()));
+  if (user.isBlacklisted || isCurrentlyRestricted) {
     return false;
   }
   if (!user.isPassVerified) {

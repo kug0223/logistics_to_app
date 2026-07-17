@@ -360,14 +360,17 @@ class _InviteDialogState extends State<_InviteDialog> {
       _searching = true;
       _found = null;
     });
-    final result = await _service.findUserByPhone(phone);
-    if (!mounted) return;
-    setState(() {
-      _searching = false;
-      _found = result;
-    });
-    if (result == null) {
-      ToastHelper.showError('해당 전화번호로 가입된 근무자를 찾을 수 없습니다');
+    try {
+      final result = await _service.findUserByPhone(phone);
+      if (!mounted) return;
+      setState(() => _found = result);
+      if (result == null) {
+        ToastHelper.showError('해당 전화번호로 가입된 근무자를 찾을 수 없습니다');
+      }
+    } catch (e) {
+      if (mounted) ToastHelper.showError('검색 중 오류가 발생했습니다. 다시 시도해주세요.');
+    } finally {
+      if (mounted) setState(() => _searching = false);
     }
   }
 
