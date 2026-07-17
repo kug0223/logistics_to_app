@@ -607,7 +607,9 @@ extension TOFirestore on FirestoreService {
         'totalCount': apps.length,
       };
     } catch (e) {
-      return {'hasApplicants': false, 'confirmedCount': 0, 'totalCount': 0};
+      debugPrint('❌ [TO] 삭제 전 지원자 확인 실패: $e');
+      // fail-closed: 조회 실패 시 삭제 차단 (안전 기본값)
+      return {'hasApplicants': true, 'confirmedCount': 0, 'totalCount': 0, 'hasError': true};
     }
   }
 
@@ -642,9 +644,9 @@ extension TOFirestore on FirestoreService {
           .get(const GetOptions(source: Source.server));
       if (!doc.exists) return 0;
       final workDetails = doc.data()?['workDetails'] as List? ?? [];
-      return workDetails.fold<int>(
+      return workDetails.whereType<Map>().fold<int>(
         0,
-        (acc, wd) => acc + (((wd as Map<String, dynamic>)['requiredCount'] as num?)?.toInt() ?? 0),
+        (acc, wd) => acc + ((Map<String, dynamic>.from(wd)['requiredCount'] as num?)?.toInt() ?? 0),
       );
     } catch (_) {
       return 0;
@@ -662,8 +664,8 @@ extension TOFirestore on FirestoreService {
       if (!doc.exists) return {};
       final workDetails = doc.data()?['workDetails'] as List? ?? [];
       final result = <String, int>{};
-      for (final wd in workDetails) {
-        final map = wd as Map<String, dynamic>;
+      for (final wd in workDetails.whereType<Map>()) {
+        final map = Map<String, dynamic>.from(wd);
         final id = (map['id'] as String?)?.isNotEmpty == true
             ? map['id'] as String
             : '${map['workType']}_${map['startTime']}_${map['endTime']}';
@@ -835,8 +837,10 @@ extension TOFirestore on FirestoreService {
       int currentRequired = 0;
       if (currentSlot.exists) {
         final wds = currentSlot.data()!['workDetails'] as List? ?? [];
-        currentRequired = wds.fold<int>(0, (s, wd) =>
-            s + (((wd as Map<String, dynamic>)['requiredCount'] as num?)?.toInt() ?? 0));
+        currentRequired = wds.whereType<Map>().fold<int>(0, (s, wd) {
+          final map = Map<String, dynamic>.from(wd);
+          return s + ((map['requiredCount'] as num?)?.toInt() ?? 0);
+        });
       }
       final delta = newTotalRequired - currentRequired;
 

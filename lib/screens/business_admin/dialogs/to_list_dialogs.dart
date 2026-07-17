@@ -28,6 +28,10 @@ class TOListDialogs {
     final to = toItem.to;
 
     final checkResult = await firestoreService.checkTOBeforeDelete(to.id, businessId: to.businessId);
+    if (checkResult['hasError'] == true) {
+      if (context.mounted) ToastHelper.showError('지원자 정보를 확인할 수 없습니다. 잠시 후 다시 시도해주세요.');
+      return;
+    }
     final hasApplicants = checkResult['hasApplicants'] as bool;
     final confirmedCount = checkResult['confirmedCount'] as int;
     final totalCount = checkResult['totalCount'] as int;
