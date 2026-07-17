@@ -121,10 +121,12 @@ service cloud.firestore {
     // USER_TO_BUSINESS 리뷰 requestId 소유권 검증
     // [SEC-RR-WORKER-OWN 2026-07-17] review_requests.workerId == uid 강제
     //   onDocumentCreated에서 auth context 없어 CF 검증 불가 → rules 레벨 강제
-    function isReviewRequestOwnedBy(requestId, uid) {
+    // [H-1 수정 2026-07-17] bizId 파라미터 추가 — requestId.businessId 교차검증
+    //   이전: workerId만 검증 → 근무자가 A사 requestId + businessId=B로 리뷰 생성 시 B사 평점 오염 가능
+    function isReviewRequestOwnedBy(requestId, uid, bizId) {
       let rrDoc = get(/databases/$(database)/documents/review_requests/$(requestId));
       let rr = rrDoc != null && rrDoc.data != null ? rrDoc.data : null;
-      return rr != null && rr.get('workerId', '') == uid;
+      return rr != null && rr.get('workerId', '') == uid && rr.get('businessId', '') == bizId;
     }
 
     // 멤버 초대 유효성 검증: pending 상태 + 대상 일치 + 30일 이내
@@ -436,7 +438,9 @@ service cloud.firestore {
                         // [SEC-108] rating/reviewCount: CF updateBusinessReviewStats Admin SDK 전용
                         //   관리자가 직접 평점 위조 시 USER들이 허위 평판 사업장을 신뢰하는 피해 발생
                         .hasAny(['ownerId', 'adminIds', 'approvedAt',
-                                 'deactivatedAt', 'reactivatedAt', 'rating', 'reviewCount']) ||
+                                 'deactivatedAt', 'reactivatedAt', 'rating', 'reviewCount',
+                                 // [M-4 수정 2026-07-17] businessNumber 불변 — 승인 후 사업자번호 변경 차단
+                                 'businessNumber']) ||
                       (request.resource.data.diff(resource.data).affectedKeys()
                         .hasOnly(['deactivatedAt']) &&
                        resource.data.get('adminIds', []).size() <= 1)));
@@ -457,7 +461,12 @@ service cloud.firestore {
 
       match /workTypes/{workTypeId} {
         allow read: if isLoggedIn();
-        allow write: if isAdminOf(businessId) || isSubAdminOf(businessId) || isSuperAdmin();
+        // [M-5 수정 2026-07-17] write 통합 → create/update/delete 분리
+        //   update 시 businessId 불변 보장 — 다른 사업장 workType으로 재귀속 공격 차단
+        allow create: if isAdminOf(businessId) || isSubAdminOf(businessId) || isSuperAdmin();
+        allow update: if (isAdminOf(businessId) || isSubAdminOf(businessId) || isSuperAdmin()) &&
+                        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['businessId']);
+        allow delete: if isAdminOf(businessId) || isSubAdminOf(businessId) || isSuperAdmin();
       }
 
       match /contract_templates/{templateId} {
@@ -885,6 +894,11 @@ service cloud.firestore {
                         request.resource.data.get('wageStatus', '') != 'transferred') &&
                        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['finalWage']) ||
                         request.resource.data.get('finalWage', 0) >= 0) &&
+                       // [M-1 수정 2026-07-17] transferred 상태 finalWage/wageDetail 소급 수정 차단
+                       //   지급 완료된 임금은 변경 불가 — 급여 증빙 위변조 방지
+                       !(resource.data.get('wageStatus', '') == 'transferred' &&
+                         request.resource.data.diff(resource.data).affectedKeys()
+                           .hasAny(['finalWage', 'wageDetail'])) &&
                        // [RULE-ATT-STATUS] status 화이트리스트 — 임의 문자열 삽입 차단
                        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
                         request.resource.data.get('status', '') in
@@ -963,7 +977,7 @@ service cloud.firestore {
                          request.resource.data.businessId.size() > 0 &&
                          'requestId' in request.resource.data &&
                          // [SEC-RR-WORKER-OWN] requestId 소유권 강제 — 타 근무자 리뷰 슬롯 탈취 차단
-                         isReviewRequestOwnedBy(request.resource.data.requestId, request.auth.uid))
+                         isReviewRequestOwnedBy(request.resource.data.requestId, request.auth.uid, request.resource.data.businessId))
                       );
 
       // 사업장 답변 추가(USER_TO_BUSINESS): 사업장 관리자/하위관리자는 답변 필드만 수정 가능
@@ -1141,12 +1155,13 @@ service cloud.firestore {
 
       // 관리자/하위관리자: 소속 사업장 스케줄 변경 요청 삭제 허용 (TO 삭제 시 고아 데이터 정리)
       // [FIX] isSubAdminOf 누락 — SubAdmin이 TO 연계 정리 시 고아 데이터 발생
-      // [E-2 특이사항 2026-07-14] PENDING/APPROVED 상태 제한 없음:
-      //   관리자가 불편한 PENDING 요청을 거절 처리 없이 삭제 → 근로자에게 알림 없이 요청 소멸
-      //   의도적 설계(TO 연계 정리) vs. 남용 가능성 공존. 현재는 CF 없이 클라이언트에서만 삭제 가능.
+      // [M-8 수정 2026-07-17] PENDING 상태 클라이언트 삭제 차단
+      //   관리자가 불리한 요청을 거절 기록 없이 삭제하는 남용 방지.
+      //   TO 삭제 cascade는 CF Admin SDK 경유 → rules 우회하므로 영향 없음.
       allow delete: if isSuperAdmin() ||
-                      isAdminOf(resource.data.businessId) ||
-                      isSubAdminOf(resource.data.businessId);
+                      ((isAdminOf(resource.data.businessId) ||
+                        isSubAdminOf(resource.data.businessId)) &&
+                       resource.data.get('status', '') != 'PENDING');
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -1413,11 +1428,9 @@ service cloud.firestore {
       // [SEC-03 완료] 생성: CF Admin SDK 전용 — 클라이언트 직접 create 차단
       // callableReportLate·onAttendanceWageStatusChanged CF 트리거에서 Admin SDK로 기록
       // 슈퍼어드민 긴급 수정만 허용
-      // [D-1 특이사항 2026-07-14] 코멘트와 실제 규칙 불일치:
-      //   코멘트: "CF Admin SDK 전용" / 실제: isSuperAdmin() 클라이언트 직접 create 허용
-      //   SuperAdmin이 임의 callerUid/reason 입력 가능 → 신뢰도 이력 감사 무결성 미약한 훼손 가능
-      //   수정 방향: CF callableManageTrustScore 전용으로 이전 시 코멘트와 일치
-      allow create: if isSuperAdmin();
+      // [L-5 수정 2026-07-17] CF Admin SDK 전용 — 클라이언트 직접 write 차단
+      //   슈퍼어드민도 callerUid/reason 임의 설정 가능하므로 차단. CF Admin SDK는 rules 우회.
+      allow create: if false;
       // [LOW-FIX] 감사 로그 불변 — update 차단 (Admin SDK는 rules 우회하여 긴급 수정 가능)
       allow update: if false;
       allow delete: if isSuperAdmin();

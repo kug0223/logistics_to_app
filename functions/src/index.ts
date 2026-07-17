@@ -709,8 +709,9 @@ export const onNotificationCreated = onDocumentCreated(
         const updates: Record<string, unknown> = {
           fcmTokens: admin.firestore.FieldValue.arrayRemove(...expiredTokens),
         };
-        // 단일 토큰 필드도 만료된 경우 삭제
-        if (expiredTokens.some((t) => t === fcmTokens[0])) {
+        // [L-1 수정 2026-07-17] fcmTokens[0] → singleToken 비교
+        //   fcmTokens 배열과 singleToken 단일 필드가 다를 수 있으므로 singleToken 기준으로 비교
+        if (singleToken && expiredTokens.some((t) => t === singleToken)) {
           updates.fcmToken = admin.firestore.FieldValue.delete();
         }
         await db.collection("users").doc(userId).update(updates);
@@ -2554,15 +2555,20 @@ async function processTOExpiry(now: Timestamp): Promise<void> {
       const slotsSnap = await db.collection("tos").doc(doc.id).collection("slots")
         .where("status", "in", ["open", "full"]).get();
       if (!slotsSnap.empty) {
-        const slotBatch = db.batch();
-        for (const slotDoc of slotsSnap.docs) {
-          slotBatch.update(slotDoc.ref, {
-            status: "closed",
-            closedAt: now,
-            closedReason: "PARENT_TO_EXPIRED",
-          });
+        // [M-9 수정 2026-07-17] 단일 배치 → 499건 분할 처리
+        //   슬롯 500개 이상 TO는 단일 배치가 Firestore 500건 제한 초과로 전체 실패했던 버그 수정
+        const SLOT_BATCH_SIZE = 499;
+        for (let bi = 0; bi < slotsSnap.docs.length; bi += SLOT_BATCH_SIZE) {
+          const slotBatch = db.batch();
+          for (const slotDoc of slotsSnap.docs.slice(bi, bi + SLOT_BATCH_SIZE)) {
+            slotBatch.update(slotDoc.ref, {
+              status: "closed",
+              closedAt: now,
+              closedReason: "PARENT_TO_EXPIRED",
+            });
+          }
+          await slotBatch.commit();
         }
-        await slotBatch.commit();
         console.log(`    → ${doc.id} flex 슬롯 ${slotsSnap.size}개 CLOSED`);
       }
     }
@@ -2988,6 +2994,12 @@ function _getNotifCategory(type: string): string | null {
     wageTransferred:           "wageAlert",            // 추가: 임금 지급 완료
     retroactiveDeductionAlert: "wageAlert",            // 추가: 소급 공제 알림
     terminationRejected:       "contractAlert",        // 추가: 계약 종료 거절
+    // [M-2 수정 2026-07-17] 누락된 5개 타입 추가 — 사용자 알림 차단 설정이 무시되던 버그
+    resignReminder:            "contractAlert",
+    workCanceled:              "applicationUpdate",
+    workTypeChanged:           "applicationUpdate",
+    scheduleChangeApproved:    "applicationUpdate",
+    scheduleChangeRejected:    "applicationUpdate",
   };
   return map[type] ?? null;
 }
@@ -3757,7 +3769,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           const fallback = bizDocData?.ownerId as string | undefined;
           return fallback ? [fallback] : [];
         })();
-        Promise.all(resignAdminIds.map((adminId) => db.collection("users").doc(adminId).collection("notifications").add({
+        await Promise.all(resignAdminIds.map((adminId) => db.collection("users").doc(adminId).collection("notifications").add({
           userId: adminId,
           type: "resignApproved",
           title: "퇴사 요청 자동 승인됨",
@@ -3901,7 +3913,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           const fallback = terminationBizData?.ownerId as string | undefined;
           return fallback ? [fallback] : [];
         })();
-        Promise.all(terminationAdminIds.map((adminId) =>
+        await Promise.all(terminationAdminIds.map((adminId) =>
           db.collection("users").doc(adminId).collection("notifications").add({
             userId: adminId,
             type: "terminationApproved",

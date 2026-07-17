@@ -181,6 +181,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       _hasWrittenReview = results[5] as bool?;
       _contract = results[6] as EmploymentContractModel?;
 
+      // [M-10 수정 2026-07-17] Future.wait 완료 후 mounted 체크
+      //   dispose 중 Future.wait가 완료되면 타이머가 생성되어 _WorkerDetailDialogState GC 불가 → 메모리 누수
+      if (!mounted) return;
       if (_idCardAccess?.isValidAccess == true) {
         _startAccessRefreshTimer();
         _loadIdCardSignedUrl();
