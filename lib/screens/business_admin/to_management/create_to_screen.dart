@@ -786,6 +786,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     if (_isCreating) return;
     // 키보드 닫기 — IME animation과 setState rebuild 타이밍 충돌 방지
     FocusScope.of(context).unfocus();
+    setState(() => _isCreating = true);
+    try {
     await Future.microtask(() {});
     if (!mounted) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
@@ -889,9 +891,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     final userProvider = Provider.of<UserProvider>(context, listen: false);
     final uid = userProvider.currentUser?.uid;
 
-    setState(() => _isCreating = true);
-
-    try {
       if (uid != null) {
         // sealBase64는 users/{uid} 문서에만 저장 — businesses 문서 폴백 불필요
         final userDoc = await FirebaseFirestore.instance
