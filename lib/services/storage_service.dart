@@ -62,6 +62,11 @@ class StorageService {
       debugPrint('❌ 유효하지 않은 이미지 형식: $filePath');
       return null;
     }
+    // [SS-01] businesses/ 경로는 callableUploadBusinessImage CF 전용 — 직접 업로드 차단
+    if (storagePath.startsWith('businesses/')) {
+      debugPrint('⚠️ businesses/ 경로는 uploadBusinessImage()로 호출해야 합니다: $storagePath');
+      return null;
+    }
     try {
       final ref = _storage.ref().child(storagePath);
       final contentType = _mimeFromPath(filePath) ?? 'image/jpeg';
@@ -119,6 +124,11 @@ class StorageService {
     String storagePath, {
     String contentType = 'image/jpeg',
   }) async {
+    // [SS-01] businesses/ 경로는 callableUploadBusinessImage CF 전용 — 직접 업로드 차단
+    if (storagePath.startsWith('businesses/')) {
+      debugPrint('⚠️ businesses/ 경로는 uploadBusinessImage()로 호출해야 합니다: $storagePath');
+      return null;
+    }
     try {
       final ref = _storage.ref().child(storagePath);
       await ref.putData(bytes, SettableMetadata(contentType: contentType));
