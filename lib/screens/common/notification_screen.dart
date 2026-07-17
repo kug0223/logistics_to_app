@@ -47,6 +47,7 @@ class NotificationScreen extends StatefulWidget {
 
 class _NotificationScreenState extends State<NotificationScreen> {
   bool _isHandlingTap = false;
+  bool _isMarkingAllRead = false;
 
   @override
   Widget build(BuildContext context) {
@@ -95,15 +96,22 @@ class _NotificationScreenState extends State<NotificationScreen> {
             actions: [
               if (provider.hasUnread)
                 TextButton(
-                  onPressed: () async {
-                    final ok = await provider.markAllAsRead();
-                    if (!mounted) return;
-                    if (ok) {
-                      ToastHelper.showSuccess('모든 알림을 읽음 처리했습니다');
-                    } else {
-                      ToastHelper.showError('읽음 처리에 실패했습니다');
-                    }
-                  },
+                  onPressed: _isMarkingAllRead
+                      ? null
+                      : () async {
+                          setState(() => _isMarkingAllRead = true);
+                          try {
+                            final ok = await provider.markAllAsRead();
+                            if (!mounted) return;
+                            if (ok) {
+                              ToastHelper.showSuccess('모든 알림을 읽음 처리했습니다');
+                            } else {
+                              ToastHelper.showError('읽음 처리에 실패했습니다');
+                            }
+                          } finally {
+                            if (mounted) setState(() => _isMarkingAllRead = false);
+                          }
+                        },
                   child: Text(
                     '모두 읽음',
                     style: ResponsiveHelper.smallStyle(context, color: Colors.white),
@@ -653,6 +661,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
     // async gap 이전에 context 의존 값 추출
     final currentUser = context.read<UserProvider>().currentUser;
+    final nav = Navigator.of(context); // 언마운트 후에도 다이얼로그 닫기 위해 사전 캡처
 
     showDialog(
       context: context,
@@ -668,10 +677,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
         contract = await ContractService().getById(contractId);
         // 본인 계약서인지 검증 (타인 contractId 주입 방어)
         if (contract != null && contract.workerId != currentUser?.uid) {
-          if (context.mounted) {
-            Navigator.pop(context);
-            ToastHelper.showError('본인의 계약서가 아닙니다');
-          }
+          if (nav.canPop()) nav.pop();
+          if (context.mounted) ToastHelper.showError('본인의 계약서가 아닙니다');
           return;
         }
       }
@@ -680,15 +687,13 @@ class _NotificationScreenState extends State<NotificationScreen> {
       // contractId는 계약서 서명 요청 알림 생성 시 항상 포함되어야 함
       if (contract == null && applicationId != null && applicationId.isNotEmpty) {
         // getByApplication은 USER 역할에서 PERMISSION_DENIED 발생 — 단건 get 불가, 안내만 제공
-        if (context.mounted) {
-          Navigator.pop(context);
-          ToastHelper.showError('계약서 정보를 불러올 수 없습니다. 관리자에게 문의하세요.');
-        }
+        if (nav.canPop()) nav.pop();
+        if (context.mounted) ToastHelper.showError('계약서 정보를 불러올 수 없습니다. 관리자에게 문의하세요.');
         return;
       }
 
+      if (nav.canPop()) nav.pop();
       if (!context.mounted) return;
-      Navigator.pop(context);
 
       if (contract == null) {
         ToastHelper.showError('계약서를 찾을 수 없습니다');
@@ -713,9 +718,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
         }
       });
     } catch (e) {
-      if (!context.mounted) return;
-      Navigator.pop(context);
-      ToastHelper.showError('계약서를 불러오는데 실패했습니다');
+      if (nav.canPop()) nav.pop();
+      if (context.mounted) ToastHelper.showError('계약서를 불러오는데 실패했습니다');
     }
   }
 
@@ -738,6 +742,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
       return;
     }
 
+    final navReview = Navigator.of(context); // 언마운트 후에도 다이얼로그 닫기 위해 사전 캡처
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -748,27 +754,35 @@ class _NotificationScreenState extends State<NotificationScreen> {
       final reviewService = MonthlyReviewService();
       final ReviewRequestModel? req = await reviewService.getReviewRequest(requestKey);
 
-      if (!context.mounted) return;
-
       if (req == null) {
-        Navigator.pop(context); // 로딩 닫기
-        ToastHelper.showError('리뷰 요청 정보를 찾을 수 없습니다');
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => isUser ? const MyScheduleScreen() : const AdminReviewListScreen(),
-          ),
-        );
+        if (navReview.canPop()) navReview.pop();
+        if (context.mounted) {
+          ToastHelper.showError('리뷰 요청 정보를 찾을 수 없습니다');
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => isUser ? const MyScheduleScreen() : const AdminReviewListScreen(),
+            ),
+          );
+        }
+        return;
+      }
+
+      if (!context.mounted) {
+        if (navReview.canPop()) navReview.pop();
         return;
       }
 
       final currentUser = context.read<UserProvider>().currentUser;
       if (currentUser == null) {
-        Navigator.pop(context); // 로딩 닫기
-        ToastHelper.showError('사용자 정보를 찾을 수 없습니다');
+        if (navReview.canPop()) navReview.pop();
+        if (context.mounted) ToastHelper.showError('사용자 정보를 찾을 수 없습니다');
         return;
       }
-      if (!context.mounted) return;
+      if (!context.mounted) {
+        if (navReview.canPop()) navReview.pop();
+        return;
+      }
 
       final yearMonthStr =
           '${req.reviewYear}-${req.reviewMonth.toString().padLeft(2, '0')}';
@@ -819,10 +833,15 @@ class _NotificationScreenState extends State<NotificationScreen> {
         }
       } catch (e) {
         debugPrint('❌ 리뷰 요청 정보 로드 실패: $e');
+        if (context.mounted) {
+          Navigator.pop(context);
+          ToastHelper.showError('리뷰 정보를 불러오는데 실패했습니다');
+        }
+        return; // 불완전한 데이터로 리뷰 다이얼로그 열지 않음
       }
 
+      if (navReview.canPop()) navReview.pop(); // 로딩 닫기 — 모든 데이터 준비 후
       if (!context.mounted) return;
-      Navigator.pop(context); // 로딩 닫기 — 모든 데이터 준비 후
 
       if (!isUser) {
         // 관리자 → 근무자 리뷰 다이얼로그
@@ -855,9 +874,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
         );
       }
     } catch (e) {
-      if (!context.mounted) return;
-      Navigator.pop(context);
-      ToastHelper.showError('리뷰 정보를 불러오는데 실패했습니다');
+      if (navReview.canPop()) navReview.pop();
+      if (context.mounted) ToastHelper.showError('리뷰 정보를 불러오는데 실패했습니다');
     }
   }
 
@@ -888,6 +906,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
       return;
     }
 
+    final navInvite = Navigator.of(context); // 언마운트 후에도 다이얼로그 닫기 위해 사전 캡처
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -897,8 +917,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
     try {
       final invitation = await MemberService().getInvitation(invitationId);
 
+      if (navInvite.canPop()) navInvite.pop();
       if (!context.mounted) return;
-      Navigator.pop(context);
 
       // [BUG-M-01 수정] 만료 초대도 여기서 차단 — acceptInvitation 서버 레이어도 막지만
       // 팝업을 보여준 뒤 오류 토스트로 끝나는 불필요한 UX를 방지
@@ -958,6 +978,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       if (result == null || !context.mounted) return;
 
+      final navInvite2 = Navigator.of(context); // 두 번째 다이얼로그용 사전 캡처
+
       showDialog(
         context: context,
         barrierDismissible: false,
@@ -966,26 +988,26 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       if (result) {
         await MemberService().acceptInvitation(invitation);
+        if (navInvite2.canPop()) navInvite2.pop();
         if (!context.mounted) return;
-        Navigator.pop(context); // 로딩 다이얼로그 닫기
         // context.read<>()는 await 전 동기 호출이므로 안전 — await 후 context.mounted 체크로 보호
         await context.read<UserProvider>().refreshUserData();
         if (!context.mounted) return;
         ToastHelper.showSuccess('초대를 수락했습니다. 잠시 후 관리자 모드를 사용할 수 있어요!');
       } else {
         await MemberService().rejectInvitation(invitation);
-        if (!context.mounted) return;
-        Navigator.pop(context);
-        ToastHelper.showSuccess('초대를 거절했습니다');
+        if (navInvite2.canPop()) navInvite2.pop();
+        if (context.mounted) ToastHelper.showSuccess('초대를 거절했습니다');
       }
     } catch (e) {
-      if (!context.mounted) return;
-      Navigator.pop(context);
-      // [D05] 만료·이미처리된 초대는 Exception 메시지를 그대로 표시 (acceptInvitation 참고)
-      final message = e is Exception
-          ? e.toString().replaceFirst('Exception: ', '')
-          : '초대 처리 중 오류가 발생했습니다';
-      ToastHelper.showError(message);
+      if (navInvite.canPop()) navInvite.pop();
+      if (context.mounted) {
+        // [D05] 만료·이미처리된 초대는 Exception 메시지를 그대로 표시 (acceptInvitation 참고)
+        final message = e is Exception
+            ? e.toString().replaceFirst('Exception: ', '')
+            : '초대 처리 중 오류가 발생했습니다';
+        ToastHelper.showError(message);
+      }
     }
   }
 
@@ -1024,6 +1046,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
       return;
     }
 
+    final navWA = Navigator.of(context); // 언마운트 후에도 다이얼로그 닫기 위해 사전 캡처
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -1034,8 +1058,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
       final toDoc = await FirebaseFirestore.instance.collection('tos').doc(toId).get();
 
       if (!toDoc.exists) {
+        if (navWA.canPop()) navWA.pop();
         if (!context.mounted) return;
-        Navigator.pop(context);
         ToastHelper.showError('공고를 찾을 수 없습니다');
         Navigator.push(
           context,
@@ -1048,8 +1072,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       final toData = toDoc.data();
       if (toData == null) {
+        if (navWA.canPop()) navWA.pop();
         if (!context.mounted) return;
-        Navigator.pop(context);
         ToastHelper.showError('공고 데이터를 불러올 수 없습니다');
         Navigator.push(context, MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
           initialBusinessId: fallbackBusinessId,
@@ -1058,8 +1082,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
       }
       final to = TOModel.tryFromMap(toData, toId);
       if (to == null) {
+        if (navWA.canPop()) navWA.pop();
         if (!context.mounted) return;
-        Navigator.pop(context);
         ToastHelper.showError('공고 데이터를 불러올 수 없습니다');
         Navigator.push(context, MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
           initialBusinessId: fallbackBusinessId,
@@ -1075,8 +1099,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
       );
 
       if (workDetail == null) {
+        if (navWA.canPop()) navWA.pop();
         if (!context.mounted) return;
-        Navigator.pop(context);
         ToastHelper.showError('업무 정보를 찾을 수 없습니다');
         Navigator.push(
           context,
@@ -1096,8 +1120,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
         isWorkDetailLoaded: true,
       );
 
+      if (navWA.canPop()) navWA.pop();
       if (!context.mounted) return;
-      Navigator.pop(context);
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!context.mounted) return;
         await showDialog<WorkApplicantsDialogResult>(
@@ -1112,9 +1136,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
         );
       });
     } catch (e) {
-      if (!context.mounted) return;
-      Navigator.pop(context);
+      if (navWA.canPop()) navWA.pop();
       debugPrint('❌ 알림 네비게이션 실패: $e');
+      if (!context.mounted) return;
       ToastHelper.showError('데이터를 불러오는데 실패했습니다');
       Navigator.push(
         context,

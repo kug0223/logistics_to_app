@@ -15835,7 +15835,9 @@ export const callableManageBusiness = onCall(
     } else {
       // reactivate
       updateData = {
+        isApproved: true,
         deactivatedAt: admin.firestore.FieldValue.delete(),
+        deactivatedBy: admin.firestore.FieldValue.delete(),
         reactivatedAt: admin.firestore.FieldValue.serverTimestamp(),
         reactivatedBy: callerUid,
       };
