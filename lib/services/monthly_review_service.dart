@@ -85,7 +85,7 @@ class MonthlyReviewService {
       final res = await _fn
           .httpsCallable('callableGetReviewRequestsByBiz')
           .call({'businessId': businessId, 'adminStatus': 'pending', 'limit': 200});
-      final raw = List<Map>.from(res.data['reviewRequests'] as List? ?? []);
+      final raw = (res.data['reviewRequests'] as List? ?? []).whereType<Map>().toList();
       return raw
           .map((e) {
             final m = Map<String, dynamic>.from(e);
@@ -110,7 +110,7 @@ class MonthlyReviewService {
       final res = await _fn
           .httpsCallable('callableGetReviewRequestsByBiz')
           .call({'businessId': businessId, 'isPublished': false, 'limit': 500});
-      final raw = List<Map>.from(res.data['reviewRequests'] as List? ?? []);
+      final raw = (res.data['reviewRequests'] as List? ?? []).whereType<Map>().toList();
       return raw
           .map((e) {
             final m = Map<String, dynamic>.from(e);
@@ -359,7 +359,7 @@ class MonthlyReviewService {
       final res = await _fn
           .httpsCallable('callableGetMonthlyReviewsByBiz')
           .call({'businessId': businessId, 'reviewType': ReviewType.ADMIN_TO_USER.name, 'limit': limit});
-      final raw = List<Map>.from(res.data['reviews'] as List? ?? []);
+      final raw = (res.data['reviews'] as List? ?? []).whereType<Map>().toList();
       return raw
           .map((e) {
             final m = Map<String, dynamic>.from(e);
@@ -455,7 +455,7 @@ class MonthlyReviewService {
             'isPublished': true,
             'limit': limit,
           });
-      final raw = List<Map>.from(res.data['reviews'] as List? ?? []);
+      final raw = (res.data['reviews'] as List? ?? []).whereType<Map>().toList();
       return raw
           .map((e) {
             final m = Map<String, dynamic>.from(e);
@@ -510,12 +510,12 @@ class MonthlyReviewService {
       // 지원서 원시 맵 파싱 (parseTimestampNullable로 {_seconds,_nanoseconds} 처리)
       final List<Map<String, dynamic>> allAppMaps = [];
       for (final res in allResults.sublist(0, 2)) {
-        final list = List<Map>.from(res.data['applications'] as List? ?? []);
+        final list = (res.data['applications'] as List? ?? []).whereType<Map>();
         allAppMaps.addAll(list.map((e) => Map<String, dynamic>.from(e)));
       }
 
       // 이미 리뷰된 targetUserId 집합
-      final rawReviews = List<Map>.from(allResults[2].data['reviews'] as List? ?? []);
+      final rawReviews = (allResults[2].data['reviews'] as List? ?? []).whereType<Map>().toList();
       final reviewedUserIds = rawReviews
           .map((d) => d['targetUserId'] as String?)
           .whereType<String>()
@@ -756,7 +756,7 @@ class MonthlyReviewService {
             'limit': pageSize + 1,
             if (startAfterId != null) 'startAfterId': startAfterId,
           });
-      final raw = List<Map>.from(res.data['reviews'] as List? ?? []);
+      final raw = (res.data['reviews'] as List? ?? []).whereType<Map>().toList();
       final hasMore = raw.length > pageSize;
       final page = hasMore ? raw.sublist(0, pageSize) : raw;
       final records = page
@@ -794,7 +794,7 @@ class MonthlyReviewService {
             'limit': pageSize + 1,
             if (startAfterId != null) 'startAfterId': startAfterId,
           });
-      final raw = List<Map>.from(res.data['reviews'] as List? ?? []);
+      final raw = (res.data['reviews'] as List? ?? []).whereType<Map>().toList();
       final hasMore = raw.length > pageSize;
       final page = hasMore ? raw.sublist(0, pageSize) : raw;
       final records = page
