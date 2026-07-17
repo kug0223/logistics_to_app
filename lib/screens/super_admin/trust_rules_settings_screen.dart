@@ -79,6 +79,7 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
         await _firestore.collection('settings').doc('trust_rules').set(_settings!.toMap());
       }
       
+      if (!mounted) return;
       _populateControllers();
     } catch (e) {
       if (kDebugMode) debugPrint('❌ 설정 로드 실패: $e');
@@ -231,6 +232,7 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
     if (!confirmed || !mounted) return;
       _settings = TrustSettingsModel.defaults();
       await _firestore.collection('settings').doc('trust_rules').set(_settings!.toMap());
+      if (!mounted) return;
 
       // 컨트롤러 초기화 (기존 컨트롤러 먼저 dispose)
       for (final c in _ruleControllers.values) { c.dispose(); }

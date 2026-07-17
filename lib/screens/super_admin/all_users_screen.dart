@@ -69,15 +69,15 @@ class _AllUsersScreenState extends State<AllUsersScreen>
           .httpsCallable('callableGetAllUsers',
               options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
       final result = await callable.call<Map<String, dynamic>>();
-      final usersData =
-          (result.data['users'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+      final rawList = (result.data['users'] as List?) ?? [];
 
       if (!mounted) return;
       setState(() {
-        _users = usersData.map((data) {
+        _users = rawList.whereType<Map>().map((data) {
           try {
-            final uid = data['uid'] as String? ?? '';
-            return UserModel.fromMap(data, uid);
+            final d = Map<String, dynamic>.from(data);
+            final uid = d['uid'] as String? ?? '';
+            return UserModel.fromMap(d, uid);
           } catch (_) { return null; }
         }).whereType<UserModel>().toList();
       });
