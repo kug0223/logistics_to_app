@@ -1,4 +1,5 @@
-﻿import 'dart:io';
+﻿import 'dart:convert';
+import 'dart:io';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
@@ -83,6 +84,31 @@ class StorageService {
       return downloadUrl;
     } catch (e) {
       debugPrint('❌ Storage 업로드 실패: $e');
+      return null;
+    }
+  }
+
+  /// [SEC-BIZ-UPLOAD] 사업장 이미지 업로드 — callableUploadBusinessImage CF 경유
+  /// Storage rules에서 Firestore 읽기 불가로 소속 검증 불가 → CF assertBizAdmin 검증 후 저장
+  Future<String?> uploadBusinessImage(
+    Uint8List bytes,
+    String businessId, {
+    String contentType = 'image/jpeg',
+  }) async {
+    try {
+      final base64 = base64Encode(bytes);
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableUploadBusinessImage');
+      final result = await callable.call<Map<dynamic, dynamic>>({
+        'businessId': businessId,
+        'imageBase64': base64,
+        'contentType': contentType,
+      });
+      final downloadUrl = result.data['downloadUrl'] as String?;
+      if (kDebugMode) debugPrint('✅ businesses/ 이미지 CF 업로드 성공: $downloadUrl');
+      return downloadUrl;
+    } catch (e) {
+      debugPrint('❌ businesses/ 이미지 CF 업로드 실패: $e');
       return null;
     }
   }

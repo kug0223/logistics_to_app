@@ -1341,6 +1341,23 @@ export const onReviewCreated = onDocumentCreated(
 
       const req = reqSnap.data()!;
 
+      // [MEDIUM-MR-01] ADMIN_TO_USER: targetUserId 소속 검증 — 미소속 사용자 허위 리뷰 차단
+      if (isAdminReview) {
+        const targetUserId = data.targetUserId as string | undefined;
+        const bizId = data.businessId as string | undefined;
+        if (!targetUserId || !bizId) {
+          blocked = true;
+          return;
+        }
+        const memberRef = db.collection("businesses").doc(bizId)
+          .collection("members").doc(targetUserId);
+        const memberSnap = await tx.get(memberRef);
+        if (!memberSnap.exists) {
+          blocked = true;
+          return;
+        }
+      }
+
       // 소유자 검증 (트랜잭션 안에서 수행 — 외부 읽기 제거)
       // USER_TO_BUSINESS: 익명 리뷰라 reviewerId 필드 없음 — Firestore rules에서 작성자 검증
       // ADMIN_TO_USER: reviewerId가 review_request.workerId와 일치해야 함 (J-2 버그 수정)
@@ -5639,6 +5656,59 @@ export const callableDeleteBusinessImage = onCall(
     }
 
     return {success: true};
+  }
+);
+
+// ── callableUploadBusinessImage ──────────────────────────
+// [SEC-BIZ-UPLOAD] businesses/ 이미지 업로드 → CF Admin SDK 이전
+//   Storage rules에서 Firestore 읽기 불가(프로젝트 특이사항)로 소속 검증 불가.
+//   → assertBizAdmin 검증 후 Admin SDK로 직접 저장 (클라이언트 직접 업로드 차단)
+// Input:  { businessId: string, imageBase64: string, contentType?: string }
+// Output: { downloadUrl: string, filePath: string }
+export const callableUploadBusinessImage = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {businessId, imageBase64, contentType} = request.data as {
+      businessId?: string; imageBase64?: string; contentType?: string;
+    };
+
+    if (!businessId || typeof businessId !== "string" || businessId.length > 100) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+    if (!imageBase64 || typeof imageBase64 !== "string") {
+      throw new HttpsError("invalid-argument", "imageBase64가 필요합니다.");
+    }
+    // 5MB base64 ≈ 6.87MB string
+    if (imageBase64.length > 7 * 1024 * 1024) {
+      throw new HttpsError("invalid-argument", "이미지 크기는 5MB 이하여야 합니다.");
+    }
+
+    const safeContentType = (typeof contentType === "string" && contentType.startsWith("image/"))
+      ? contentType : "image/jpeg";
+
+    await assertBizAdmin(callerUid, businessId);
+
+    const ext = safeContentType.includes("png") ? "png" : "jpg";
+    const timestamp = Date.now();
+    const token = crypto.randomBytes(16).toString("hex");
+    const filePath = `businesses/${businessId}/${timestamp}.${ext}`;
+
+    const imageBuffer = Buffer.from(imageBase64, "base64");
+    const bucket = admin.storage().bucket();
+    const file = bucket.file(filePath);
+
+    await file.save(imageBuffer, {
+      metadata: {
+        contentType: safeContentType,
+        metadata: {firebaseStorageDownloadTokens: token},
+      },
+    });
+
+    const encodedPath = encodeURIComponent(filePath);
+    const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${token}`;
+    return {downloadUrl, filePath};
   }
 );
 

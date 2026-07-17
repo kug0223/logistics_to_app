@@ -2317,18 +2317,19 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     }
   }
 
+  // [SEC-BIZ-UPLOAD] CF 경유 업로드 — callableUploadBusinessImage → assertBizAdmin 검증 후 저장
   Future<String?> _uploadImage(File imageFile, String bizId, String type) async {
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final fileName = '${type}_$timestamp.jpg';
-    final storagePath = 'businesses/$bizId/$fileName';
-    final url = await _storageService.uploadImage(imageFile.path, storagePath);
-    // TMP-01: pickAndCompressImage()가 반환한 임시 파일(compressed_xxx.jpg)은
-    // 업로드 후 반드시 삭제해야 한다. 업로드 성공/실패 무관하게 정리.
     try {
-      if (await imageFile.exists()) await imageFile.delete();
-    } catch (_) {
-      debugPrint('⚠️ 임시 이미지 파일 삭제 실패 (무시 가능)');
+      final bytes = await imageFile.readAsBytes();
+      return await _storageService.uploadBusinessImage(bytes, bizId);
+    } finally {
+      // TMP-01: pickAndCompressImage()가 반환한 임시 파일(compressed_xxx.jpg)은
+      // 업로드 성공/실패 무관하게 정리.
+      try {
+        if (await imageFile.exists()) await imageFile.delete();
+      } catch (_) {
+        debugPrint('⚠️ 임시 이미지 파일 삭제 실패 (무시 가능)');
+      }
     }
-    return url;
   }
 }

@@ -24,27 +24,15 @@ service firebase.storage {
     // ═══════════════════════════════════════════════════════════
     // businesses/ — 사업장 이미지 (대표, 추가, 업무유형)
     // ═══════════════════════════════════════════════════════════
-    // [STORAGE-RULE-NOTE] Firebase Storage 규칙 내 firestore.get() 호출이 이 프로젝트에서
-    // 동작하지 않는 것이 실험으로 확인됨 (isLoggedIn()만으로 진단 시 성공).
-    // isBusinessAdmin(businessId) 등 Firestore 읽기 기반 함수 전부 제거.
-    //
-    // create/update 보안:
-    // - 로그인 + 5MB 제한 → 미인증 업로드 차단
-    // - businesses/{businessId} 경로의 businessId는 20자 무작위 ID → 외부 추측 불가
-    // - 사업장 이미지는 민감 데이터 아님 (신분증·계약서는 users/, contracts/ 경로 분리)
-    //
-    // delete 보안:
-    // - 로그인 필수, UI 레벨에서 ownerId만 삭제 버튼 노출
-    //
-    // list 보안:
-    // - 앱 코드에서 businesses/ 경로에 listAll() 미사용 → false로 차단
+    // [SEC-BIZ-UPLOAD 2026-07-17] create/update → callableUploadBusinessImage CF 전용
+    //   Storage rules에서 Firestore 읽기 불가(프로젝트 특이사항)로 소속 검증 불가.
+    //   이전: isLoggedIn()만으로 허용 → TO 목록에서 businessId 획득한 임의 사용자가 덮어쓰기 가능.
+    //   이후: CF assertBizAdmin 검증 + Admin SDK 저장 → 소속 사업장 관리자만 업로드 가능.
+    //   delete: callableDeleteBusinessImage CF 전용 (기존 유지)
     match /businesses/{businessId}/{allPaths=**} {
       allow get: if isLoggedIn();
       allow list: if false;
-      // [SEC-ST01] isImageType(): MIME 타입 검증 — HTML/JS 업로드 차단
-      allow create, update: if isLoggedIn() && isUnder5MB() && isImageType();
-      // [LOW-STORAGE] 클라이언트 직접 삭제 차단 — callableDeleteBusinessImage CF(Admin SDK)로만 허용
-      // Storage rules에서 Firestore 읽기 불가(프로젝트 특이사항)이므로 소속 검증을 CF에서 처리
+      allow create, update: if false;
       allow delete: if false;
     }
 
