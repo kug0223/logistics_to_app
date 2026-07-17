@@ -229,7 +229,12 @@ export const resetPasswordWithCode = onCall(
     await docRef.delete();
 
     // 기존 세션(리프레시 토큰) 무효화 — 다른 디바이스 강제 로그아웃
-    await admin.auth().revokeRefreshTokens(uid);
+    // try-catch: 토큰 취소 실패해도 비밀번호 이력 업데이트는 반드시 완료해야 함
+    try {
+      await admin.auth().revokeRefreshTokens(uid);
+    } catch (revokeErr) {
+      console.error(`[resetPasswordWithCode] revokeRefreshTokens 실패 (uid=${uid}):`, revokeErr);
+    }
 
     // 비밀번호 이력 업데이트 (최근 5개 유지)
     const updatedHistory = [newPwHash, ...pwHistory].slice(0, 5);
