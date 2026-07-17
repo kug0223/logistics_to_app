@@ -1825,6 +1825,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
 
       if (mounted) {
         if (newStatus == AppStatus.confirmed) {
+          setState(() => _isLoading = false); // _createContractAndSign 진입 가드 해제
           await _createContractAndSign();
         } else {
           Navigator.pop(context);
@@ -1854,15 +1855,18 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       return;
     }
 
+    setState(() => _isLoading = true); // 첫 번째 await 이전 설정으로 이중 탭 방지
+
     // 템플릿 선택 먼저 — 취소하면 계약 생성 중단
     if (!mounted) return;
     final articles = await ContractTemplateSelectorDialog.show(
       context,
       businessId: businessId,
     );
-    if (articles == null || !mounted) return;
-
-    setState(() => _isLoading = true);
+    if (articles == null || !mounted) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
 
     try {
     // 해당 지원서에 맞는 WorkDetailData 찾기
@@ -2273,6 +2277,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
 
   /// 🆕 리뷰 작성 다이얼로그 열기
   Future<void> _openReviewDialog() async {
+    if (_isLoading) return;
     final app = widget.application;
     if (app == null || widget.businessId == null) return;
 

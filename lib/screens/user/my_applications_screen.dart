@@ -92,6 +92,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
   Future<void> _loadApplications() async {
     if (!mounted) return; // _cancelApplication 등 재호출 경로에서 화면 pop 후 진입 방지
+    if (_isLoading) return; // 동시 다중 호출 방지 (pull-to-refresh + 자동 재로드 경합)
     final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
     if (uid == null) {
       ToastHelper.showError('로그인이 필요합니다.');
@@ -503,7 +504,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       label: label,
       isSelected: _selectedFilter == value,
       onTap: () {
-        setState(() { _selectedFilter = value; _autoLoadCount = 0; });
+        setState(() { _selectedFilter = value; _autoLoadCount = 0; if (_lastDocId != null) _hasMore = true; });
         // 탭 필터는 클라이언트 필터 — 탭 변경 시 서버 재조회 없이 로드된 데이터 내에서만 필터링
         // _loadMore 내 _lastDoc 가드로 커서 소실 방지 처리됨
         WidgetsBinding.instance.addPostFrameCallback((_) {

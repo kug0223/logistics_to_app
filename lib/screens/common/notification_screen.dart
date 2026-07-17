@@ -834,7 +834,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       } catch (e) {
         debugPrint('❌ 리뷰 요청 정보 로드 실패: $e');
         if (context.mounted) {
-          Navigator.pop(context);
+          if (navReview.canPop()) navReview.pop();
           ToastHelper.showError('리뷰 정보를 불러오는데 실패했습니다');
         }
         return; // 불완전한 데이터로 리뷰 다이얼로그 열지 않음

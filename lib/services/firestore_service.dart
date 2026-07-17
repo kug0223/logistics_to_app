@@ -1065,7 +1065,7 @@ class FirestoreService {
         'resignStatus': AppStatus.pending,
         'limit': 200,
       });
-      final raw = List<Map>.from(result.data['applications'] as List? ?? []);
+      final raw = (result.data['applications'] as List? ?? []).whereType<Map>().toList();
       final apps = raw.map((e) => ApplicationModel.tryFromMap(
         Map<String, dynamic>.from(e),
         e['id'] as String? ?? '',
@@ -1100,7 +1100,7 @@ class FirestoreService {
         'businessId': businessId,
         'uid': userId,
       });
-      final rawApps = List<Map>.from(cfResult.data['applications'] as List? ?? []);
+      final rawApps = (cfResult.data['applications'] as List? ?? []).whereType<Map>().toList();
 
       if (rawApps.isEmpty) {
         return {

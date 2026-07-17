@@ -497,6 +497,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ],
           ),
         );
+        if (!mounted) return;
         if (confirmed != true) return;
       }
       await _registerUser();
@@ -558,7 +559,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       color: AppColors.grey500)),
             ),
             ElevatedButton(
-              onPressed: () async { Navigator.pop(ctx); await _registerUser(); },
+              onPressed: () async { Navigator.pop(ctx); if (!mounted) return; await _registerUser(); },
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.warningDark,
                 elevation: 0,

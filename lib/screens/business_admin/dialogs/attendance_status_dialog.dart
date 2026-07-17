@@ -2307,8 +2307,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   // 알림도 발송하지 않는다: 1차 확인은 관리자 정산 준비 단계이고,
   // 지원자에게는 최종 마감(wageConfirmed) 시점에만 급여 알림이 전송된다.
   Future<void> _confirmWorker(ApplicationModel app) async {
+    if (_isLoading) return;
     final attendance = _attendanceMap[app.id];
     if (attendance == null) return;
+    setState(() => _isLoading = true);
     try {
       await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableBatchAdminConfirm')
@@ -2322,14 +2324,17 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       });
     } catch (e) {
       debugPrint('❌ 확인 처리 실패: $e');
-      if (!mounted) return;
-      ToastHelper.showError('확인 처리 실패');
+      if (mounted) ToastHelper.showError('확인 처리 실패');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _unconfirmWorker(ApplicationModel app) async {
+    if (_isLoading) return;
     final attendance = _attendanceMap[app.id];
     if (attendance == null) return;
+    setState(() => _isLoading = true);
     try {
       await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableBatchAdminConfirm')
@@ -2342,8 +2347,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       });
     } catch (e) {
       debugPrint('❌ 확인 취소 실패: $e');
-      if (!mounted) return;
-      ToastHelper.showError('확인 취소 실패');
+      if (mounted) ToastHelper.showError('확인 취소 실패');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -3062,6 +3068,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       confirmText: '리셋',
     );
     if (!confirmed || !mounted) return;
+    setState(() => _isLoading = true);
 
     // CF callableBatchResetAttendance 경유 — 서버에서 급여확정 건 재차 방어
     final resetIds = resetTargets
@@ -3080,8 +3087,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       await _loadData();
     } catch (e) {
       debugPrint('❌ 리셋 실패: $e');
-      if (!mounted) return;
-      ToastHelper.showError('리셋 실패');
+      if (mounted) ToastHelper.showError('리셋 실패');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -4398,15 +4406,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       }
 
       if (!mounted) return;
-      setState(() => _isLoading = false);
       _hasChanges = true;
       ToastHelper.showSuccess('$processed명 마감취소 완료');
       await _loadData();
     } catch (e) {
       debugPrint('❌ 마감 취소 실패: $e');
+      if (mounted) ToastHelper.showError('마감취소에 실패했습니다');
+    } finally {
       if (mounted) setState(() => _isLoading = false);
-      if (!mounted) return;
-      ToastHelper.showError('마감취소에 실패했습니다');
     }
   }
 

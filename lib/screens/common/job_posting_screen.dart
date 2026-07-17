@@ -85,6 +85,7 @@ class JobPostingScreen extends StatefulWidget {
 class _JobPostingScreenState extends State<JobPostingScreen>
     with WidgetsBindingObserver {
   final FirestoreService _firestoreService = FirestoreService();
+  UserProvider? _userProvider; // dispose()에서 context.read() 대신 캐시 사용
 
   bool _isLoading = true;
   TOModel? _to;
@@ -206,7 +207,8 @@ class _JobPostingScreenState extends State<JobPostingScreen>
     // UserProvider 변경 감지 — 다른 화면에서 사전조건 완료 후 돌아올 때 자동 갱신
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        context.read<UserProvider>().addListener(_checkApplyEligibility);
+        _userProvider = context.read<UserProvider>();
+        _userProvider!.addListener(_checkApplyEligibility);
         _checkApplyEligibility();
       }
     });
@@ -215,7 +217,7 @@ class _JobPostingScreenState extends State<JobPostingScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    context.read<UserProvider>().removeListener(_checkApplyEligibility);
+    _userProvider?.removeListener(_checkApplyEligibility);
     super.dispose();
   }
 
