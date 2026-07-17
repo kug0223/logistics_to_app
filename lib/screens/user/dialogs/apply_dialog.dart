@@ -94,6 +94,7 @@ class ApplyDialog {
       }
     } catch (e) {
       debugPrint('❌ 지원 실패: $e');
+      if (!context.mounted) return false;
       ToastHelper.showError('지원 중 오류가 발생했습니다.');
       return false;
     }

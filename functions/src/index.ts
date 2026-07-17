@@ -3946,55 +3946,71 @@ export const migrateAddressFields = onCall(
       }
     }
 
-    // 1. businesses 마이그레이션
-    const bizSnap = await db2.collection("businesses").get();
-    const bizOps: Array<{
-      ref: FirebaseFirestore.DocumentReference;
-      fields: Record<string, string>;
-    }> = [];
-    for (const doc of bizSnap.docs) {
-      const data = doc.data();
-      if (data.city || data.district) continue;
-      const address = data.address as string | undefined;
-      const city = parseAddressCity(address);
-      const district = parseAddressDistrict(address);
-      if (city || district) {
-        bizOps.push({
-          ref: doc.ref,
-          fields: {
-            ...(city ? {city} : {}),
-            ...(district ? {district} : {}),
-          },
-        });
-        bizUpdated++;
+    // 1. businesses 마이그레이션 — 500건 단위 페이지네이션 (전체 스캔 메모리 초과 방지)
+    let lastBizDoc: FirebaseFirestore.DocumentSnapshot | null = null;
+    while (true) {
+      let bizQuery: FirebaseFirestore.Query = db2.collection("businesses").limit(500);
+      if (lastBizDoc) bizQuery = bizQuery.startAfter(lastBizDoc);
+      const bizSnap = await bizQuery.get();
+      if (bizSnap.empty) break;
+      const bizOps: Array<{
+        ref: FirebaseFirestore.DocumentReference;
+        fields: Record<string, string>;
+      }> = [];
+      for (const doc of bizSnap.docs) {
+        const data = doc.data();
+        if (data.city || data.district) continue;
+        const address = data.address as string | undefined;
+        const city = parseAddressCity(address);
+        const district = parseAddressDistrict(address);
+        if (city || district) {
+          bizOps.push({
+            ref: doc.ref,
+            fields: {
+              ...(city ? {city} : {}),
+              ...(district ? {district} : {}),
+            },
+          });
+          bizUpdated++;
+        }
       }
+      await commitInChunks(bizOps);
+      if (bizSnap.size < 500) break;
+      lastBizDoc = bizSnap.docs[bizSnap.docs.length - 1];
     }
-    await commitInChunks(bizOps);
 
-    // 2. tos 마이그레이션 — businessCity가 없는 TO만 처리
-    const tosSnap = await db2.collection("tos").get();
-    const tosOps: Array<{
-      ref: FirebaseFirestore.DocumentReference;
-      fields: Record<string, string>;
-    }> = [];
-    for (const doc of tosSnap.docs) {
-      const data = doc.data();
-      if (data.businessCity || data.businessDistrict) continue;
-      const address = data.businessAddress as string | undefined;
-      const city = parseAddressCity(address);
-      const district = parseAddressDistrict(address);
-      if (city || district) {
-        tosOps.push({
-          ref: doc.ref,
-          fields: {
-            ...(city ? {businessCity: city} : {}),
-            ...(district ? {businessDistrict: district} : {}),
-          },
-        });
-        toUpdated++;
+    // 2. tos 마이그레이션 — 500건 단위 페이지네이션
+    let lastTosDoc: FirebaseFirestore.DocumentSnapshot | null = null;
+    while (true) {
+      let tosQuery: FirebaseFirestore.Query = db2.collection("tos").limit(500);
+      if (lastTosDoc) tosQuery = tosQuery.startAfter(lastTosDoc);
+      const tosSnap = await tosQuery.get();
+      if (tosSnap.empty) break;
+      const tosOps: Array<{
+        ref: FirebaseFirestore.DocumentReference;
+        fields: Record<string, string>;
+      }> = [];
+      for (const doc of tosSnap.docs) {
+        const data = doc.data();
+        if (data.businessCity || data.businessDistrict) continue;
+        const address = data.businessAddress as string | undefined;
+        const city = parseAddressCity(address);
+        const district = parseAddressDistrict(address);
+        if (city || district) {
+          tosOps.push({
+            ref: doc.ref,
+            fields: {
+              ...(city ? {businessCity: city} : {}),
+              ...(district ? {businessDistrict: district} : {}),
+            },
+          });
+          toUpdated++;
+        }
       }
+      await commitInChunks(tosOps);
+      if (tosSnap.size < 500) break;
+      lastTosDoc = tosSnap.docs[tosSnap.docs.length - 1];
     }
-    await commitInChunks(tosOps);
 
     // 완료 마커 저장 — 다음 호출 시 fast-fail
     await db.collection("admin_settings").doc("migration_status").set({
@@ -7383,6 +7399,7 @@ export const onTODeleted = onDocumentDeleted(
         chunk.map((appId) =>
           db.collection("attendance")
             .where("applicationId", "==", appId)
+            .limit(500) // 단일 계약 최대 ~500일 근무 가정 (약 1.4년)
             .get()
         )
       );
@@ -9300,8 +9317,8 @@ export const callableCalculateAndConfirmWage = onCall(
     if (!/^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$/.test(d.workDate)) {
       throw new HttpsError("invalid-argument", "workDate는 YYYY-MM-DD 형식이어야 합니다.");
     }
-    if (!/^\d{4}(?:0[1-9]|1[0-2])$/.test(d.yearMonth)) {
-      throw new HttpsError("invalid-argument", "yearMonth는 YYYYMM 형식이어야 합니다.");
+    if (!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(d.yearMonth)) {
+      throw new HttpsError("invalid-argument", "yearMonth는 YYYY-MM 형식이어야 합니다.");
     }
     const _timeRegex = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
     if (!_timeRegex.test(d.scheduledStart) || !_timeRegex.test(d.scheduledEnd) ||
@@ -9401,14 +9418,11 @@ export const callableCalculateAndConfirmWage = onCall(
       const cur = (latestSnap.data()?.wageStatus as string) ?? "pending";
       if (cur !== "pending") throw new HttpsError("failed-precondition", `이미 처리된 급여입니다 (${cur})`);
 
-      // [S3-FIX][YEARMONTH-QUERY-FIX] Firestore 저장 포맷 YYYY-MM — 쿼리도 동일 포맷 사용해야 함
-      // d.yearMonth 입력 포맷 YYYYMM을 그대로 전달하면 항상 0건 반환 → daily_auto_8 소급공제 영구 불발
-      const yearMonthForDoc = `${d.yearMonth.substring(0, 4)}-${d.yearMonth.substring(4, 6)}`;
       // [M-4] daily_auto_8: prevDays/prevGross를 트랜잭션 내부에서 조회 — 동시 확정 경쟁 차단
       if (d.taxDeductionType === "daily_auto_8") {
-        const prevDays = await srvGetMonthlyWorkDaysTx(tx, userId2, businessId2, yearMonthForDoc, d.attendanceId);
+        const prevDays = await srvGetMonthlyWorkDaysTx(tx, userId2, businessId2, d.yearMonth, d.attendanceId);
         if (prevDays + 1 === 8) {
-          const prevGross = await srvGetPrevGrossTotalTx(tx, userId2, businessId2, yearMonthForDoc, d.attendanceId);
+          const prevGross = await srvGetPrevGrossTotalTx(tx, userId2, businessId2, d.yearMonth, d.attendanceId);
           wageResult2 = srvApplyDay8Retroactive(base2, prevGross, rates2);
         } else if (prevDays + 1 > 8) {
           wageResult2 = srvApplyFourInsurance(base2, rates2, "daily_auto_8");
@@ -9454,7 +9468,7 @@ export const callableCalculateAndConfirmWage = onCall(
         wageStatus: "calculated",
         finalWage: effectiveNetWage2,
         wageDetail: wd,
-        yearMonth: yearMonthForDoc,
+        yearMonth: d.yearMonth,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
     });

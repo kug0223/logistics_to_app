@@ -145,7 +145,9 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
             confirmedByMonth[idx]++;
           }
         }
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('⚠️ 출근 집계 CF 실패 (월별 대기/확정 카운트 0 유지): $e');
+      }
       final pendingResults     = pendingByMonth;
       final notTransferredResults = confirmedByMonth;
 

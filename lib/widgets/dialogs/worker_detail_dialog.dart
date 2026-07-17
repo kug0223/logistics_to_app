@@ -1941,9 +1941,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     } catch (e) {
       debugPrint('❌ 계약서 생성 실패: $e');
       if (mounted) {
+        // 승인(status=confirmed)은 이미 완료됐지만 계약서 생성에 실패한 경우.
+        // showSuccess가 아닌 showWarning으로 사용자에게 계약서 미생성 사실을 알림.
         final callback = widget.onStatusChanged; // pop 전에 캡처
         Navigator.pop(context);
-        ToastHelper.showSuccess('승인 처리되었습니다');
+        ToastHelper.showWarning('승인은 완료됐지만 계약서 생성에 실패했습니다.\n계약서 탭에서 다시 시도해주세요.');
         callback?.call();
       }
     } finally {
