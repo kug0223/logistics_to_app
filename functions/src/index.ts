@@ -781,15 +781,16 @@ export const masterScheduler = onSchedule(
       // 순차 실행 시 앞 함수가 타임아웃을 소모하면 뒤 함수가 minute<10 윈도우를 놓칠 수 있음
       // allSettled: 한 함수 실패가 나머지 실행을 차단하지 않음 (기존 개별 try-catch와 동일 격리 수준)
       // [I-1 수정] processExpiredIdCardAccess 추가 — 만료된 신분증 요청 자동 정리
-      console.log("⏰ [자정 작업] 병렬 실행 시작 (미퇴근처리·리뷰요청·리뷰공개·계약연장·신분증만료)...");
+      console.log("⏰ [자정 작업] 병렬 실행 시작 (미퇴근처리·자동결근·리뷰요청·리뷰공개·계약연장·신분증만료)...");
       const midnightResults = await Promise.allSettled([
         processMissedCheckouts(timestamp),
+        processAutoAbsent(timestamp),
         createPendingReviewRequests(timestamp),
         processExpiredReviewRequests(timestamp),
         processContractRenewalChecks(timestamp),
         processExpiredIdCardAccess(timestamp),
       ]);
-      const midnightNames = ["미퇴근 처리", "리뷰 요청", "리뷰 공개", "계약 연장", "신분증 만료"];
+      const midnightNames = ["미퇴근 처리", "자동 결근", "리뷰 요청", "리뷰 공개", "계약 연장", "신분증 만료"];
       midnightResults.forEach((r, i) => {
         if (r.status === "rejected") console.error(`❌ [${midnightNames[i]}] 실패:`, r.reason);
         else console.log(`✅ [${midnightNames[i]}] 완료`);
@@ -925,6 +926,58 @@ async function processMissedCheckouts(now: Timestamp): Promise<void> {
   if (count > 0) {
     await batch.commit();
     console.log(`⏰ [미퇴근 처리] ${count}건 missed_checkout 처리 완료`);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// 🚫 전날 이전 scheduled 상태 + 체크인 없음 → absent 자동 처리
+// ═══════════════════════════════════════════════════════════
+async function processAutoAbsent(now: Timestamp): Promise<void> {
+  const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+  const nowKST = new Date(now.toDate().getTime() + KST_OFFSET_MS);
+  // KST 기준 오늘 자정 → UTC 역변환 (workDate < 오늘KST자정UTC → 어제 이전만 처리)
+  const todayKSTMidnight = new Date(nowKST.getFullYear(), nowKST.getMonth(), nowKST.getDate());
+  const cutoffUTC = new Date(todayKSTMidnight.getTime() - KST_OFFSET_MS);
+
+  // Firestore inequality 제한: status(equality) + workDate(inequality) 복합 사용 가능
+  const snap = await db
+    .collection("attendance")
+    .where("status", "==", "scheduled")
+    .where("workDate", "<", Timestamp.fromDate(cutoffUTC))
+    .limit(499)
+    .get();
+
+  if (snap.empty) return;
+
+  let batch = db.batch();
+  let count = 0;
+  let batchCount = 0;
+
+  for (const doc of snap.docs) {
+    const data = doc.data();
+    // checkIn이 있으면 체크인 후 관리자 처리 대기 중 — 건드리지 않음
+    if (data.checkIn) continue;
+
+    batch.update(doc.ref, {
+      status: "absent",
+      finalWage: 0,
+      wageStatus: "confirmed",
+      autoAbsentAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    count++;
+    batchCount++;
+
+    if (batchCount >= 499) {
+      await batch.commit();
+      batch = db.batch();
+      batchCount = 0;
+    }
+  }
+
+  if (batchCount > 0) await batch.commit();
+  if (count > 0) {
+    console.log(`🚫 [자동 결근] ${count}건 absent 처리 완료`);
   }
 }
 
@@ -3451,7 +3504,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         .where("resignStatus", "==", "PENDING")
         .where("resignRequestedAt", ">=", Timestamp.fromDate(new Date(d1Start.getTime() - KST_OFFSET_MS)))
         .where("resignRequestedAt", "<",  Timestamp.fromDate(new Date(d1End.getTime()   - KST_OFFSET_MS)))
-        .limit(200).get();
+        .limit(500).get();
       await Promise.all(d1Snap.docs.map(async (d1Doc) => {
         try {
           const app = d1Doc.data();
@@ -3497,7 +3550,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         .where("resignStatus", "==", "PENDING")
         .where("resignRequestedAt", ">=", Timestamp.fromDate(new Date(d2Start.getTime() - KST_OFFSET_MS)))
         .where("resignRequestedAt", "<",  Timestamp.fromDate(new Date(d2End.getTime()   - KST_OFFSET_MS)))
-        .limit(200).get();
+        .limit(500).get();
       await Promise.all(d2Snap.docs.map(async (d2Doc) => {
         try {
           const app = d2Doc.data();
@@ -5229,6 +5282,8 @@ export const callableFinalizeWorkerSignature = onCall(
     }
 
     const contractRef = db.collection("employment_contracts").doc(contractId);
+    // 트랜잭션 재시도 시 동일 타임스탬프 보장 (Timestamp.now()는 재시도마다 달라짐)
+    const signedAt = admin.firestore.Timestamp.now();
 
     try {
       await db.runTransaction(async (tx) => {
@@ -5283,7 +5338,7 @@ export const callableFinalizeWorkerSignature = onCall(
               status: "CONFIRMED",
               statusHistory: admin.firestore.FieldValue.arrayUnion({
                 status: "CONFIRMED",
-                at: admin.firestore.Timestamp.now(),
+                at: signedAt,
                 by: "SYSTEM",
                 action: "CONTRACT_SIGNED",
               }),
