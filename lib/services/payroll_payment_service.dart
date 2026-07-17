@@ -465,16 +465,16 @@ class PayrollPaymentService {
     bool skipMarkTransferred = false;
     List<String> idsToTransfer = List.from(req.attendanceIds);
 
-    if (req.attendanceIds.isNotEmpty) {
-      // attendanceIds의 현재 wageStatus를 서버에서 조회
-      final attSnaps = await Future.wait(
-        req.attendanceIds.map(
-          (id) => _db
-              .collection('attendance')
-              .doc(id)
-              .get(const GetOptions(source: Source.server)),
-        ),
-      );
+    // attendanceIds의 현재 wageStatus를 서버에서 조회 (L454에서 isEmpty 시 throw하므로 항상 비어있지 않음)
+    final attSnaps = await Future.wait(
+      req.attendanceIds.map(
+        (id) => _db
+            .collection('attendance')
+            .doc(id)
+            .get(const GetOptions(source: Source.server)),
+      ),
+    );
+    {
       final allTransferred = attSnaps
           .every((s) => s.data()?['wageStatus'] == AttendanceModel.wageTransferred);
       if (allTransferred) {
@@ -531,12 +531,18 @@ class PayrollPaymentService {
 
     // 3단계: 근로자에게 중간정산 완료 알림 발송 (실패해도 이체 자체에 영향 없음)
     try {
+      // 실제 이체된 항목의 finalWage 합산 — req.netAmount(요청 시점 추정치)보다 정확
+      final actualNetAmount = idsToTransfer.isNotEmpty
+          ? attSnaps
+              .where((s) => idsToTransfer.contains(s.id))
+              .fold<int>(0, (acc, s) => acc + ((s.data()?['finalWage'] as num?)?.toInt() ?? 0))
+          : req.netAmount; // 전부 이미 transferred인 재시도 케이스
       final notification = NotificationModel.createInterimSettlementCompleted(
         userId: req.workerId,
         workerName: req.workerName,
         businessName: req.businessName,
         businessId: req.businessId,
-        netAmount: req.netAmount,
+        netAmount: actualNetAmount,
         periodStart: req.periodStart,
         periodEnd: req.periodEnd,
         settlementRequestId: req.id,

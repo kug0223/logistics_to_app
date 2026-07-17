@@ -564,7 +564,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         'viewerId': viewerId,
         'targetUserId': widget.user.uid,
         'businessId': bizId,
-        'copiedAt': FieldValue.serverTimestamp(),
+        'createdAt': FieldValue.serverTimestamp(),
         'action': 'resident_number_copy',
       });
       return true;

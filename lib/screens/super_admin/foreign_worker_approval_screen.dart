@@ -634,7 +634,7 @@ class _ForeignWorkerApprovalScreenState
           'targetUserId': user.uid,
           'businessId': '',
           'action': 'view_id_card_image',
-          'timestamp': FieldValue.serverTimestamp(),
+          'createdAt': FieldValue.serverTimestamp(),
         }),
         // Signed URL 발급
         _fn.httpsCallable('callableGetIdCardSignedUrl').call<Map<String, dynamic>>(

@@ -3455,8 +3455,14 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       await Promise.all(d1Snap.docs.map(async (d1Doc) => {
         try {
           const app = d1Doc.data();
-          // 멱등 가드 — 이미 D+1 알림을 발송한 신청서는 재발송 금지 (스케줄러 재시도 중복 방지)
-          if (app.d1NotifiedAt != null) return;
+          // 트랜잭션으로 플래그 체크+설정 원자화 — 스케줄러 재시도 시 중복 알림 발송 방지
+          const alreadyNotified = await db.runTransaction(async (tx) => {
+            const fresh = await tx.get(d1Doc.ref);
+            if (fresh.data()?.d1NotifiedAt != null) return true;
+            tx.update(d1Doc.ref, {d1NotifiedAt: admin.firestore.FieldValue.serverTimestamp()});
+            return false;
+          });
+          if (alreadyNotified) return;
           const bizSnap = await db.collection("businesses").doc(app.businessId).get();
           const bizData = bizSnap.exists ? bizSnap.data() : undefined;
           const adminIds: string[] = (() => {
@@ -3476,8 +3482,6 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
               createdAt: now,
             })
           ));
-          // 알림 발송 완료 — 재실행 시 중복 방지 플래그
-          await d1Doc.ref.update({ d1NotifiedAt: admin.firestore.FieldValue.serverTimestamp() });
         } catch (e) {
           console.error(`[D+1 퇴사 알림] 실패 ${d1Doc.id}:`, e);
         }
@@ -3497,8 +3501,14 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       await Promise.all(d2Snap.docs.map(async (d2Doc) => {
         try {
           const app = d2Doc.data();
-          // 멱등 가드 — 이미 D+2 알림을 발송한 신청서는 재발송 금지
-          if (app.d2NotifiedAt != null) return;
+          // 트랜잭션으로 플래그 체크+설정 원자화 — 스케줄러 재시도 시 중복 알림 발송 방지
+          const alreadyNotified = await db.runTransaction(async (tx) => {
+            const fresh = await tx.get(d2Doc.ref);
+            if (fresh.data()?.d2NotifiedAt != null) return true;
+            tx.update(d2Doc.ref, {d2NotifiedAt: admin.firestore.FieldValue.serverTimestamp()});
+            return false;
+          });
+          if (alreadyNotified) return;
           const bizSnap = await db.collection("businesses").doc(app.businessId).get();
           const bizData = bizSnap.exists ? bizSnap.data() : undefined;
           const adminIds: string[] = (() => {
@@ -3518,8 +3528,6 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
               createdAt: now,
             })
           ));
-          // 알림 발송 완료 — 재실행 시 중복 방지 플래그
-          await d2Doc.ref.update({ d2NotifiedAt: admin.firestore.FieldValue.serverTimestamp() });
         } catch (e) {
           console.error(`[D+2 퇴사 알림] 실패 ${d2Doc.id}:`, e);
         }
@@ -5879,6 +5887,12 @@ export const callableCreateTO = onCall(
       }
     }
 
+    // totalRequired 음수 차단
+    const totalRequired = toData.totalRequired as number | undefined;
+    if (typeof totalRequired === "number" && totalRequired < 0) {
+      throw new HttpsError("invalid-argument", "totalRequired는 0 이상이어야 합니다.");
+    }
+
     // TO 문서 생성 — serverTimestamp 강제, 클라이언트 전달 timestamp 필드 사용
     const serverTime = admin.firestore.FieldValue.serverTimestamp();
     const finalData: Record<string, unknown> = {
@@ -6098,9 +6112,12 @@ export const callableUpdateTO = onCall(
       }
     }
 
-    // totalRequired: totalConfirmed 이상이어야 함 (0은 무제한)
+    // totalRequired: 0 이상, totalConfirmed 이상이어야 함 (0은 무제한)
     if (!isSuperAdmin && "totalRequired" in updates) {
       const newRequired = updates.totalRequired as number;
+      if (newRequired < 0) {
+        throw new HttpsError("invalid-argument", "totalRequired는 0 이상이어야 합니다.");
+      }
       if (newRequired !== 0 && newRequired < totalConfirmed) {
         throw new HttpsError(
           "failed-precondition",
@@ -7214,11 +7231,18 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
       workTypeConfirmedUpdate[`workTypeConfirmedCounts.${wt}`] = wtSnaps[i].data().count;
     });
 
+    const confirmedCnt = confirmedSnap.data().count;
+    const totalRequired = (toData?.totalRequired as number) ?? 0;
+    const toStatus = toData?.status as string | undefined;
+    const toStatusUpdate = (toStatus !== "CLOSED" && toStatus !== "EXPIRED")
+      ? {status: totalRequired > 0 && confirmedCnt >= totalRequired ? "FULL" : "ACTIVE"}
+      : {};
     await toRef.update({
-      totalConfirmed: confirmedSnap.data().count,
+      totalConfirmed: confirmedCnt,
       totalPending: pendingSnap.data().count,
       statsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
       ...workTypeConfirmedUpdate,
+      ...toStatusUpdate,
     });
     return;
   }
@@ -7284,11 +7308,19 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
       wtCountResults[i][1].data().count;
   });
 
+  const flexToData = toSnap.data();
+  const flexTotalRequired = (flexToData?.totalRequired as number) ?? 0;
+  const flexToStatus = flexToData?.status as string | undefined;
+  const flexConfirmedCnt = toConfirmedSnap.data().count;
+  const flexToStatusUpdate = (flexToStatus !== "CLOSED" && flexToStatus !== "EXPIRED")
+    ? {status: flexTotalRequired > 0 && flexConfirmedCnt >= flexTotalRequired ? "FULL" : "ACTIVE"}
+    : {};
   const writeBatch = db.batch();
   writeBatch.update(toRef, {
-    totalConfirmed: toConfirmedSnap.data().count,
+    totalConfirmed: flexConfirmedCnt,
     totalPending: toPendingSnap.data().count,
     statsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    ...flexToStatusUpdate,
   });
   if (slotDoc.exists) {
     writeBatch.update(slotRef, {
@@ -7526,7 +7558,7 @@ export const callableGetIdCardSignedUrl = onCall(
       }
 
       // [MEDIUM] 퇴직 관리자 stale access 방어 — 승인 당시 사업장에 여전히 소속인지 재검증
-      const approvedForBiz = accessSnap.docs[0].data().businessId as string | undefined;
+      const approvedForBiz = accessSnap.docs[0].data().requesterBusinessId as string | undefined;
       if (approvedForBiz) {
         const callerBizId = callerDoc.data()?.businessId as string | undefined;
         // [M-02-FIX] subAdminOf는 단일 businessId 문자열 — string[]로 잘못 캐스팅 시
@@ -10495,6 +10527,9 @@ export const callableRecalculateTOStats = onCall(
     let totalPending = 0;
     let totalConfirmed = 0;
     const slotStats: Record<string, {pending: number; confirmed: number}> = {};
+    // workType 단위 카운터 — syncTOStats와 동일한 필드를 교정해야 정원 초과 체크 오동작 방지
+    const workTypeConfirmedCounts: Record<string, number> = {};
+    const slotWorkTypeCounts: Record<string, Record<string, {pending: number; confirmed: number}>> = {};
     {
       let lastApp2: FirebaseFirestore.DocumentSnapshot | undefined;
       while (true) {
@@ -10508,14 +10543,26 @@ export const callableRecalculateTOStats = onCall(
         for (const doc of pageSnap.docs) {
           const d = doc.data();
           const status = d.status as string | undefined;
+          const selectedWorkType = d.selectedWorkType as string | undefined;
           if (status === "PENDING") totalPending++;
           if (status && CONFIRMED_STATUSES.includes(status)) totalConfirmed++;
+          if (!isFlexType && selectedWorkType && status && CONFIRMED_STATUSES.includes(status)) {
+            workTypeConfirmedCounts[selectedWorkType] =
+              (workTypeConfirmedCounts[selectedWorkType] ?? 0) + 1;
+          }
           if (isFlexType) {
             const slotId = d.slotId as string | undefined;
             if (slotId && status && ["PENDING", ...CONFIRMED_STATUSES].includes(status)) {
               if (!slotStats[slotId]) slotStats[slotId] = {pending: 0, confirmed: 0};
               if (status === "PENDING") slotStats[slotId].pending++;
               if (CONFIRMED_STATUSES.includes(status)) slotStats[slotId].confirmed++;
+              if (selectedWorkType) {
+                if (!slotWorkTypeCounts[slotId]) slotWorkTypeCounts[slotId] = {};
+                if (!slotWorkTypeCounts[slotId][selectedWorkType])
+                  slotWorkTypeCounts[slotId][selectedWorkType] = {pending: 0, confirmed: 0};
+                if (status === "PENDING") slotWorkTypeCounts[slotId][selectedWorkType].pending++;
+                if (CONFIRMED_STATUSES.includes(status)) slotWorkTypeCounts[slotId][selectedWorkType].confirmed++;
+              }
             }
           }
         }
@@ -10530,6 +10577,11 @@ export const callableRecalculateTOStats = onCall(
       const shouldBeFull = totalRequired > 0 && totalConfirmed >= totalRequired;
       toUpdate.status = shouldBeFull ? "FULL" : "ACTIVE";
     }
+    if (!isFlexType) {
+      for (const [wt, cnt] of Object.entries(workTypeConfirmedCounts)) {
+        toUpdate[`workTypeConfirmedCounts.${wt}`] = cnt;
+      }
+    }
     await db.collection("tos").doc(toId).update(toUpdate);
 
     if (isFlexType) {
@@ -10539,9 +10591,16 @@ export const callableRecalculateTOStats = onCall(
         let count = 0;
         for (const slotDoc of slotsSnap.docs) {
           const stats = slotStats[slotDoc.id] ?? {pending: 0, confirmed: 0};
+          const wtCounts = slotWorkTypeCounts[slotDoc.id] ?? {};
+          const wtUpdate: Record<string, number> = {};
+          for (const [wt, c] of Object.entries(wtCounts)) {
+            wtUpdate[`workTypeCounts.${wt}.confirmedCount`] = c.confirmed;
+            wtUpdate[`workTypeCounts.${wt}.pendingCount`] = c.pending;
+          }
           batch.update(slotDoc.ref, {
             pendingCount: stats.pending,
             confirmedCount: stats.confirmed,
+            ...wtUpdate,
           });
           count++;
           if (count >= 499) {
@@ -12332,7 +12391,7 @@ export const callableChangeApplicationWorkType = onCall(
 // H-1 MEDIUM: 출근/퇴근/시간조정/adminConfirmed CF 이전
 // ═══════════════════════════════════════════════════════════
 
-const VALID_ATTENDANCE_STATUS = new Set(["present", "late", "early_leave", "absent", "noshow"]);
+const VALID_ATTENDANCE_STATUS = new Set(["present", "late", "early_leave", "absent"]);
 
 interface CheckInEntry {
   applicationId: string;
