@@ -479,76 +479,77 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
   /// 사업자등록증 업로드
   Future<void> _uploadBusinessLicense() async {
+    if (_isLoading) return;
     final userProvider = context.read<UserProvider>();
     final user = userProvider.currentUser;
-
     if (user == null) return;
 
-    // 입력한 정보로 OCR 검증
-    final imagePath = await DocumentUploadHelper.pickAndVerifyBusinessLicense(
-      context,
-      businessNumber: _businessNumberController.text.trim(),
-      ceoName: _ceoNameController.text.trim(),
-      onCeoNameExtracted: (name) {
-        if (mounted) setState(() => _ceoNameController.text = name);
-      },
-    );
+    setState(() => _isLoading = true); // 피커 전에 설정 — 피커 도중 이중 탭 방지
 
-    if (imagePath != null && mounted) {
-      setState(() => _isLoading = true);
+    String? newUrl; // catch에서 orphan 정리를 위해 try 밖에서 선언
+    try {
+      // 입력한 정보로 OCR 검증
+      final imagePath = await DocumentUploadHelper.pickAndVerifyBusinessLicense(
+        context,
+        businessNumber: _businessNumberController.text.trim(),
+        ceoName: _ceoNameController.text.trim(),
+        onCeoNameExtracted: (name) {
+          if (mounted) setState(() => _ceoNameController.text = name);
+        },
+      );
 
-      String? newUrl; // catch에서 orphan 정리를 위해 try 밖에서 선언
+      if (imagePath == null || !mounted) return; // finally가 _isLoading 초기화
+
+      final oldUrl = user.businessLicenseImageUrl;
+
+      // 1. 새 이미지 먼저 업로드 — 예외 여부와 무관하게 임시 파일 삭제 보장
+      final storagePath = 'users/${user.uid}/businessLicense_${DateTime.now().millisecondsSinceEpoch}.jpg';
       try {
-        final oldUrl = user.businessLicenseImageUrl;
-
-        // 1. 새 이미지 먼저 업로드 (실패해도 기존 이미지 보존)
-        final storagePath = 'users/${user.uid}/businessLicense_${DateTime.now().millisecondsSinceEpoch}.jpg';
         newUrl = await _storageService.uploadImage(imagePath, storagePath);
-        // TMP-01: pickAndVerifyBusinessLicense가 반환한 임시 압축 파일.
-        // 업로드 직후 삭제 — 실패해도 예외를 삼켜 업로드 성공 흐름을 유지.
-        try { await File(imagePath).delete(); } catch (_) {}
-
-        if (newUrl == null) {
-          if (mounted) ToastHelper.showError('이미지 업로드에 실패했습니다');
-          if (mounted) setState(() => _isLoading = false);
-          return;
-        }
-
-        // 2. Firestore에 새 URL 저장
-        await _firestoreService.updateUserDocument(
-          user.uid,
-          {
-            'businessLicenseImageUrl': newUrl,
-          },
-        );
-        newUrl = null; // Firestore 저장 성공 → 정리 불필요
-
-        // 3. 업로드·저장 성공 후 기존 이미지 삭제 (best-effort)
-        if (oldUrl != null) {
-          try {
-            await _storageService.deleteImageByUrl(oldUrl);
-          } catch (e) {
-            debugPrint('⚠️ 기존 사업자등록증 삭제 실패 (무시): $e');
-          }
-        }
-
-        // UserProvider 갱신
-        await userProvider.refreshCurrentUser();
-        if (!mounted) return;
-
-        ToastHelper.showSuccess('사업자등록증이 등록되었습니다');
-        _hasChanges = true;
-      } catch (e) {
-        // Firestore 저장 실패 시 이미 업로드된 파일 정리 (고아 파일 방지)
-        if (newUrl != null) {
-          try {
-            await _storageService.deleteImageByUrl(newUrl);
-          } catch (_) {}
-        }
-        if (mounted) ToastHelper.showError('사업자등록증 등록에 실패했습니다');
       } finally {
-        if (mounted) setState(() => _isLoading = false);
+        // TMP-01: pickAndVerifyBusinessLicense가 반환한 임시 압축 파일.
+        try { await File(imagePath).delete(); } catch (_) {}
       }
+
+      if (newUrl == null) {
+        if (mounted) ToastHelper.showError('이미지 업로드에 실패했습니다');
+        return;
+      }
+
+      // 2. Firestore에 새 URL 저장
+      await _firestoreService.updateUserDocument(
+        user.uid,
+        {
+          'businessLicenseImageUrl': newUrl,
+        },
+      );
+      newUrl = null; // Firestore 저장 성공 → 정리 불필요
+
+      // 3. 업로드·저장 성공 후 기존 이미지 삭제 (best-effort)
+      if (oldUrl != null) {
+        try {
+          await _storageService.deleteImageByUrl(oldUrl);
+        } catch (e) {
+          debugPrint('⚠️ 기존 사업자등록증 삭제 실패 (무시): $e');
+        }
+      }
+
+      // UserProvider 갱신
+      await userProvider.refreshCurrentUser();
+      if (!mounted) return;
+
+      ToastHelper.showSuccess('사업자등록증이 등록되었습니다');
+      _hasChanges = true;
+    } catch (e) {
+      // Firestore 저장 실패 시 이미 업로드된 파일 정리 (고아 파일 방지)
+      if (newUrl != null) {
+        try {
+          await _storageService.deleteImageByUrl(newUrl);
+        } catch (_) {}
+      }
+      if (mounted) ToastHelper.showError('사업자등록증 등록에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -637,73 +638,76 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
   /// 신분증 업로드
   Future<void> _uploadIdCard() async {
+    if (_isLoading) return;
     final userProvider = context.read<UserProvider>();
     final user = userProvider.currentUser;
-
     if (user == null) return;
 
-    // 주민번호 앞 7자리 조합
-    String? residentNumber;
-    if (user.residentNumber != null && user.residentNumber!.length >= 8) {
-      residentNumber = user.residentNumber!.substring(0, 8); // "990101-1"
-    }
+    setState(() => _isLoading = true); // 피커 전에 설정 — 피커 도중 이중 탭 방지
 
-    final imagePath = await DocumentUploadHelper.pickAndVerifyIdCard(
-      context,
-      user.name,
-      expectedResidentNumber: residentNumber,
-    );
-
-    if (imagePath != null && mounted) {
-      setState(() => _isLoading = true);
-      String? newIdCardUrl; // [M-19] CF 실패 시 Storage orphan 방지
-
-      try {
-        final oldUrl = user.idCardImageUrl;
-
-        // 1. 새 이미지 먼저 업로드
-        final storagePath = 'users/${user.uid}/idCard_${DateTime.now().millisecondsSinceEpoch}.jpg';
-        final downloadUrl = await _storageService.uploadImage(imagePath, storagePath);
-        // TMP-01: pickAndVerifyIdCard가 반환한 임시 압축 파일. 업로드 직후 삭제.
-        try { await File(imagePath).delete(); } catch (_) {}
-
-        if (downloadUrl == null) {
-          if (mounted) ToastHelper.showError('이미지 업로드에 실패했습니다');
-          if (mounted) setState(() => _isLoading = false);
-          return;
-        }
-
-        // 2. CF로 isIdVerified/idCardVerifiedAt 설정 — Admin SDK 경유로 직접 쓰기 차단 준수
-        newIdCardUrl = downloadUrl; // CF 호출 전 추적 시작
-        await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-            .httpsCallable('callableMarkIdCardVerified')
-            .call({'imageUrl': downloadUrl});
-        newIdCardUrl = null; // CF 성공 — Storage 정리 불필요
-
-        // 3. 기존 이미지 삭제 (best-effort — CF callableDeleteIdCard가 새 URL 기준 처리)
-        if (oldUrl != null && oldUrl != downloadUrl) {
-          try {
-            await _storageService.deleteImageByUrl(oldUrl);
-          } catch (e) {
-            debugPrint('⚠️ 기존 신분증 삭제 실패 (무시): $e');
-          }
-        }
-
-        // UserProvider 갱신
-        await userProvider.refreshCurrentUser();
-        if (!mounted) return;
-
-        ToastHelper.showSuccess('신분증이 등록되었습니다');
-        _hasChanges = true;
-      } catch (e) {
-        // [M-19] CF 실패 시 업로드된 신분증 파일 Storage orphan 방지
-        if (newIdCardUrl != null) {
-          try { await _storageService.deleteImageByUrl(newIdCardUrl); } catch (_) {}
-        }
-        if (mounted) ToastHelper.showError('신분증 등록에 실패했습니다');
-      } finally {
-        if (mounted) setState(() => _isLoading = false);
+    String? newIdCardUrl; // [M-19] CF 실패 시 Storage orphan 방지
+    try {
+      // 주민번호 앞 7자리 조합
+      String? residentNumber;
+      if (user.residentNumber != null && user.residentNumber!.length >= 8) {
+        residentNumber = user.residentNumber!.substring(0, 8); // "990101-1"
       }
+
+      final imagePath = await DocumentUploadHelper.pickAndVerifyIdCard(
+        context,
+        user.name,
+        expectedResidentNumber: residentNumber,
+      );
+
+      if (imagePath == null || !mounted) return; // finally가 _isLoading 초기화
+
+      final oldUrl = user.idCardImageUrl;
+
+      // 1. 새 이미지 먼저 업로드 — 예외 여부와 무관하게 임시 파일 삭제 보장
+      final storagePath = 'users/${user.uid}/idCard_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      String? downloadUrl;
+      try {
+        downloadUrl = await _storageService.uploadImage(imagePath, storagePath);
+      } finally {
+        // TMP-01: pickAndVerifyIdCard가 반환한 임시 압축 파일.
+        try { await File(imagePath).delete(); } catch (_) {}
+      }
+
+      if (downloadUrl == null) {
+        if (mounted) ToastHelper.showError('이미지 업로드에 실패했습니다');
+        return;
+      }
+
+      // 2. CF로 isIdVerified/idCardVerifiedAt 설정 — Admin SDK 경유로 직접 쓰기 차단 준수
+      newIdCardUrl = downloadUrl; // CF 호출 전 추적 시작
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableMarkIdCardVerified')
+          .call({'imageUrl': downloadUrl});
+      newIdCardUrl = null; // CF 성공 — Storage 정리 불필요
+
+      // 3. 기존 이미지 삭제 (best-effort — CF callableDeleteIdCard가 새 URL 기준 처리)
+      if (oldUrl != null && oldUrl != downloadUrl) {
+        try {
+          await _storageService.deleteImageByUrl(oldUrl);
+        } catch (e) {
+          debugPrint('⚠️ 기존 신분증 삭제 실패 (무시): $e');
+        }
+      }
+
+      // UserProvider 갱신
+      await userProvider.refreshCurrentUser();
+      if (!mounted) return;
+
+      ToastHelper.showSuccess('신분증이 등록되었습니다');
+      _hasChanges = true;
+    } catch (e) {
+      // [M-19] CF 실패 시 업로드된 신분증 파일 Storage orphan 방지
+      if (newIdCardUrl != null) {
+        try { await _storageService.deleteImageByUrl(newIdCardUrl); } catch (_) {}
+      }
+      if (mounted) ToastHelper.showError('신분증 등록에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -974,7 +978,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
               CommonWidgets.primaryButton(
                 context: context,
                 text: '신분증 업로드',
-                onPressed: _uploadIdCard,
+                onPressed: _isLoading ? null : _uploadIdCard,
                 icon: Icons.camera_alt,
               ),
             ],
@@ -1079,7 +1083,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                         ),
                       ),
                       TextButton(
-                        onPressed: _uploadBankbookImage,
+                        onPressed: _isLoading ? null : _uploadBankbookImage,
                         child: const Text('업로드'),
                       ),
                     ],
@@ -1288,69 +1292,71 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
   /// 통장사본 업로드
   Future<void> _uploadBankbookImage() async {
+    if (_isLoading) return;
     final userProvider = context.read<UserProvider>();
     final user = userProvider.currentUser;
-
     if (user == null) return;
 
-    final imagePath = await DocumentUploadHelper.pickAndVerifyBankbook(
-      context,
-      user.name,
-      expectedAccountNumber: (user.accountNumber?.isEmpty ?? true) ? null : user.accountNumber,
-    );
+    setState(() => _isLoading = true); // 피커 전에 설정 — 피커 도중 이중 탭 방지
 
-    if (imagePath != null && mounted) {
-      setState(() => _isLoading = true);
+    String? newUrl; // catch에서 orphan 정리를 위해 try 밖에서 선언
+    try {
+      final imagePath = await DocumentUploadHelper.pickAndVerifyBankbook(
+        context,
+        user.name,
+        expectedAccountNumber: (user.accountNumber?.isEmpty ?? true) ? null : user.accountNumber,
+      );
 
-      String? newUrl; // catch에서 orphan 정리를 위해 try 밖에서 선언
+      if (imagePath == null || !mounted) return; // finally가 _isLoading 초기화
+
+      final oldUrl = user.bankbookImageUrl;
+
+      // 1. 새 이미지 먼저 업로드 — 예외 여부와 무관하게 임시 파일 삭제 보장
+      final storagePath = 'users/${user.uid}/bankbook_${DateTime.now().millisecondsSinceEpoch}.jpg';
       try {
-        final oldUrl = user.bankbookImageUrl;
-
-        // 1. 새 이미지 먼저 업로드 (실패해도 기존 이미지 보존)
-        final storagePath = 'users/${user.uid}/bankbook_${DateTime.now().millisecondsSinceEpoch}.jpg';
         newUrl = await _storageService.uploadImage(imagePath, storagePath);
-        // TMP-01: pickAndVerifyBankbook이 반환한 임시 압축 파일. 업로드 직후 삭제.
-        try { await File(imagePath).delete(); } catch (_) {}
-
-        if (newUrl == null) {
-          if (mounted) ToastHelper.showError('이미지 업로드에 실패했습니다');
-          if (mounted) setState(() => _isLoading = false);
-          return;
-        }
-
-        await _firestoreService.updateUserDocument(
-          user.uid,
-          {
-            'bankbookImageUrl': newUrl,
-          },
-        );
-        newUrl = null; // Firestore 저장 성공 → 정리 불필요
-
-        // 2. 업로드·저장 성공 후 기존 이미지 삭제 (best-effort)
-        if (oldUrl != null) {
-          try {
-            await _storageService.deleteImageByUrl(oldUrl);
-          } catch (e) {
-            debugPrint('⚠️ 기존 통장사본 삭제 실패 (무시): $e');
-          }
-        }
-
-        await userProvider.refreshCurrentUser();
-        if (!mounted) return;
-
-        _hasChanges = true;
-        ToastHelper.showSuccess('통장사본이 등록되었습니다');
-      } catch (e) {
-        // Firestore 저장 실패 시 이미 업로드된 파일 정리 (고아 파일 방지)
-        if (newUrl != null) {
-          try {
-            await _storageService.deleteImageByUrl(newUrl);
-          } catch (_) {}
-        }
-        if (mounted) ToastHelper.showError('통장사본 등록에 실패했습니다');
       } finally {
-        if (mounted) setState(() => _isLoading = false);
+        // TMP-01: pickAndVerifyBankbook이 반환한 임시 압축 파일.
+        try { await File(imagePath).delete(); } catch (_) {}
       }
+
+      if (newUrl == null) {
+        if (mounted) ToastHelper.showError('이미지 업로드에 실패했습니다');
+        return;
+      }
+
+      await _firestoreService.updateUserDocument(
+        user.uid,
+        {
+          'bankbookImageUrl': newUrl,
+        },
+      );
+      newUrl = null; // Firestore 저장 성공 → 정리 불필요
+
+      // 2. 업로드·저장 성공 후 기존 이미지 삭제 (best-effort)
+      if (oldUrl != null) {
+        try {
+          await _storageService.deleteImageByUrl(oldUrl);
+        } catch (e) {
+          debugPrint('⚠️ 기존 통장사본 삭제 실패 (무시): $e');
+        }
+      }
+
+      await userProvider.refreshCurrentUser();
+      if (!mounted) return;
+
+      _hasChanges = true;
+      ToastHelper.showSuccess('통장사본이 등록되었습니다');
+    } catch (e) {
+      // Firestore 저장 실패 시 이미 업로드된 파일 정리 (고아 파일 방지)
+      if (newUrl != null) {
+        try {
+          await _storageService.deleteImageByUrl(newUrl);
+        } catch (_) {}
+      }
+      if (mounted) ToastHelper.showError('통장사본 등록에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
