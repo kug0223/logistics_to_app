@@ -103,6 +103,7 @@ class _JobPostingScreenState extends State<JobPostingScreen>
   // 지원 자격 상태
   String? _applyBlockReason;
   bool get _isApplyable => _applyBlockReason == null;
+  bool _isApplying = false; // 지원 진행 중 이중 탭 방어
 
   void _checkApplyEligibility() {
     if (!mounted) return;
@@ -1384,10 +1385,8 @@ class _JobPostingScreenState extends State<JobPostingScreen>
                     // 지원자 모드: 지원하기 + 닫기 / 관리자 모드: 닫기만
                     if (widget.mode == TODetailMode.applicant) ...[
                       Builder(builder: (sheetCtx) {
-                        final effectiveRequired = widget.slotTotalRequired ?? _to!.totalRequired;
-                        final effectiveConfirmed = widget.slotConfirmedCount ?? _to!.totalConfirmed;
-                        final isSlotFull = effectiveRequired > 0 && effectiveConfirmed >= effectiveRequired;
-                        final isClosed = _isEffectivelyClosed || isSlotFull;
+                        // _isEffectivelyClosed는 _slot?.confirmedCount를 우선 사용 — 중복 계산 불필요
+                        final isClosed = _isEffectivelyClosed;
                         final isBlocked = isClosed || !_isApplyable;
                         return CommonWidgets.primaryButton(
                           context: sheetCtx,
@@ -2040,102 +2039,106 @@ class _JobPostingScreenState extends State<JobPostingScreen>
   }
 
   Future<void> _applyTO() async {
-    if (_isLoading) return; // 이중 탭 방어
+    if (_isLoading || _isApplying) return;
     if (_to == null) return;
+    setState(() => _isApplying = true);
+    try {
+      // 지원 전 필수 서류·인증 체크 — 미완료 항목 있으면 전체 화면으로 이동
+      final user = context.read<UserProvider>().currentUser;
+      if (user == null) return;
+      if (!meetsApplyPrerequisites(user, isFlexType: _to!.isFlexType)) {
+        final ok = await ApplyPrerequisitesScreen.show(context, isFlexType: _to!.isFlexType);
+        if (!ok || !mounted) return;
+      }
 
-    // 지원 전 필수 서류·인증 체크 — 미완료 항목 있으면 전체 화면으로 이동
-    final user = context.read<UserProvider>().currentUser;
-    if (user == null) return;
-    if (!meetsApplyPrerequisites(user, isFlexType: _to!.isFlexType)) {
-      final ok = await ApplyPrerequisitesScreen.show(context, isFlexType: _to!.isFlexType);
-      if (!ok || !mounted) return;
-    }
+      if (_to!.isFlexType) {
+        // flex TO — 단일 슬롯(slotDate 있음) 또는 다중 슬롯
+        if (widget.slotDate != null && _slot != null) {
+          final slotTO = _to!.copyWith(rangeStart: _slot!.date);
+          final result = await ApplyWorkDialog.show(
+            context: context,
+            to: slotTO,
+            workDetails: _slot!.workDetails,
+            businessName: _to!.businessName,
+            slotId: _slot!.id,
+            myApplications: _myApplications,
+          );
+          if (result?.hasChanges == true && mounted) Navigator.pop(context, true);
+        } else {
+          // 다중 슬롯 지원 다이얼로그
+          final now = DateTime.now();
+          final Map<DateTime, TOModel> groupTOsByDate = {};
+          final Map<DateTime, List<WorkDetailModel>> groupWorkDetailsByDate = {};
+          final Map<DateTime, String> groupSlotIdsByDate = {};
 
-    if (_to!.isFlexType) {
-      // flex TO — 단일 슬롯(slotDate 있음) 또는 다중 슬롯
-      if (widget.slotDate != null && _slot != null) {
-        final slotTO = _to!.copyWith(rangeStart: _slot!.date);
-        final result = await ApplyWorkDialog.show(
-          context: context,
-          to: slotTO,
-          workDetails: _slot!.workDetails,
-          businessName: _to!.businessName,
-          slotId: _slot!.id,
-          myApplications: _myApplications,
-        );
-        if (result?.hasChanges == true && mounted) Navigator.pop(context, true);
-      } else {
-        // 다중 슬롯 지원 다이얼로그
-        final now = DateTime.now();
-        final Map<DateTime, TOModel> groupTOsByDate = {};
-        final Map<DateTime, List<WorkDetailModel>> groupWorkDetailsByDate = {};
-        final Map<DateTime, String> groupSlotIdsByDate = {};
+          for (final slot in _allSlots) {
+            if (slot.isEffectivelyClosed) continue;
+            if (slot.visibleFrom != null && slot.visibleFrom!.isAfter(now)) continue;
+            if (slot.workDetails.isNotEmpty &&
+                slot.workDetails.every((wd) => wd.isTimeExpired)) { continue; }
+            final key = DateTime(slot.date.year, slot.date.month, slot.date.day);
+            groupTOsByDate[key] = _to!.copyWith(rangeStart: slot.date);
+            groupWorkDetailsByDate[key] = slot.workDetails.map((wd) =>
+                slot.isWorkTypeFull(wd.workType)
+                    ? wd.copyWith(runtimeFull: true)
+                    : wd).toList();
+            groupSlotIdsByDate[key] = slot.id;
+          }
 
-        for (final slot in _allSlots) {
-          if (slot.isEffectivelyClosed) continue;
-          if (slot.visibleFrom != null && slot.visibleFrom!.isAfter(now)) continue;
-          if (slot.workDetails.isNotEmpty &&
-              slot.workDetails.every((wd) => wd.isTimeExpired)) { continue; }
-          final key = DateTime(slot.date.year, slot.date.month, slot.date.day);
-          groupTOsByDate[key] = _to!.copyWith(rangeStart: slot.date);
-          groupWorkDetailsByDate[key] = slot.workDetails.map((wd) =>
-              slot.isWorkTypeFull(wd.workType)
-                  ? wd.copyWith(runtimeFull: true)
-                  : wd).toList();
-          groupSlotIdsByDate[key] = slot.id;
+          if (groupTOsByDate.isEmpty) {
+            if (mounted) ToastHelper.showError('지원 가능한 날짜가 없습니다');
+            return;
+          }
+
+          if (!mounted) return;
+          final result = await ApplyWorkDialog.show(
+            context: context,
+            to: _to!,
+            workDetails: _workDetails,
+            businessName: _to!.businessName,
+            groupTOsByDate: groupTOsByDate,
+            groupWorkDetailsByDate: groupWorkDetailsByDate,
+            groupSlotIdsByDate: groupSlotIdsByDate,
+            myApplications: _myApplications,
+          );
+          if (result?.hasChanges == true && mounted) Navigator.pop(context, true);
         }
+        return;
+      }
 
-        if (groupTOsByDate.isEmpty) {
-          if (mounted) ToastHelper.showError('지원 가능한 날짜가 없습니다');
+      // contract TO
+      var details = _workDetails;
+      if (details.isEmpty) {
+        setState(() => _isLoading = true);
+        try {
+          details = await _firestoreService.getWorkDetails(_to!.id);
+          if (!mounted) return;
+          setState(() => _workDetails = details);
+        } catch (e) {
+          debugPrint('❌ 업무 정보 로드 실패: $e');
+          if (mounted) ToastHelper.showError('업무 정보를 불러오지 못했습니다');
+          return;
+        } finally {
+          if (mounted) setState(() => _isLoading = false);
+        }
+        if (details.isEmpty) {
+          ToastHelper.showError('업무 정보를 불러오지 못했습니다');
           return;
         }
-
-        if (!mounted) return;
-        final result = await ApplyWorkDialog.show(
-          context: context,
-          to: _to!,
-          workDetails: _workDetails,
-          businessName: _to!.businessName,
-          groupTOsByDate: groupTOsByDate,
-          groupWorkDetailsByDate: groupWorkDetailsByDate,
-          groupSlotIdsByDate: groupSlotIdsByDate,
-          myApplications: _myApplications,
-        );
-        if (result?.hasChanges == true && mounted) Navigator.pop(context, true);
       }
-      return;
+      if (!mounted) return;
+      final result = await ApplyWorkDialog.show(
+        context: context,
+        to: _to!,
+        workDetails: details,
+        businessName: _to!.businessName,
+        myApplications: _myApplications,
+      );
+      // contract TO도 flex TO와 동일하게 true 반환 — AllTOListScreen._refreshMyApplications 트리거에 필요
+      if (result?.hasChanges == true && mounted) Navigator.pop(context, true);
+    } finally {
+      if (mounted) setState(() => _isApplying = false);
     }
-
-    // contract TO
-    var details = _workDetails;
-    if (details.isEmpty) {
-      setState(() => _isLoading = true);
-      try {
-        details = await _firestoreService.getWorkDetails(_to!.id);
-        if (!mounted) return;
-        setState(() => _workDetails = details);
-      } catch (e) {
-        debugPrint('❌ 업무 정보 로드 실패: $e');
-        if (mounted) ToastHelper.showError('업무 정보를 불러오지 못했습니다');
-        return;
-      } finally {
-        if (mounted) setState(() => _isLoading = false);
-      }
-      if (details.isEmpty) {
-        ToastHelper.showError('업무 정보를 불러오지 못했습니다');
-        return;
-      }
-    }
-    if (!mounted) return;
-    final result = await ApplyWorkDialog.show(
-      context: context,
-      to: _to!,
-      workDetails: details,
-      businessName: _to!.businessName,
-      myApplications: _myApplications,
-    );
-    // contract TO도 flex TO(line 1997/2035)와 동일하게 true 반환 — AllTOListScreen._refreshMyApplications 트리거에 필요
-    if (result?.hasChanges == true && mounted) Navigator.pop(context, true);
   }
 
 }

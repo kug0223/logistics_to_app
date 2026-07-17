@@ -168,6 +168,13 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
         _displayList = displayList;
         _isLoading = false;
       });
+      // [H-1-FIX] 초기 로드에서 status 클라이언트 필터 후 toList가 비어도 hasMore=true이면
+      // 스크롤이 불가능해 _loadMoreTOs가 트리거되지 않는 버그 → postFrame에서 자동 로드
+      if (toList.isEmpty && hasMore) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _loadMoreTOs();
+        });
+      }
     } catch (e) {
       debugPrint('❌ TO 목록 로드 실패: $e');
       if (!mounted) return;

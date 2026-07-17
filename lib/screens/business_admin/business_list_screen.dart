@@ -112,15 +112,19 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       // 2. Firestore 먼저 삭제 — 실패 시 Storage는 건드리지 않아 일관성 유지
       // onBusinessDeleted Cloud Function이 tos/applications/attendance를 추가 정리함
       final memberDocs = await bizRef.collection('members').get();
-      final subBatch = FirebaseFirestore.instance.batch();
-      for (final doc in workTypesSnapshot.docs) { subBatch.delete(doc.reference); }
-      for (final doc in memberDocs.docs) { subBatch.delete(doc.reference); }
-      // [BUG-수정] T-H-2: bizRef.delete()를 subBatch에 포함시켜 원자적 커밋.
-      // 기존에는 subBatch.commit() 성공 후 별도 await bizRef.delete()를 호출해,
-      // 두 번째 작업 실패 시 서브컬렉션은 삭제됐으나 비즈니스 문서가 남는 불일치 발생.
-      // workTypes + members 최대합이 500 ops를 넘기 어려우므로 단일 배치로 통합.
-      subBatch.delete(bizRef); // 부모 문서도 배치에 포함 — 원자적 삭제 보장
-      await subBatch.commit();
+      // 500 ops 한도 방어: workTypes + members 합이 499 초과 시 청크로 분할 커밋
+      final allSubRefs = [
+        ...workTypesSnapshot.docs.map((d) => d.reference),
+        ...memberDocs.docs.map((d) => d.reference),
+      ];
+      for (int i = 0; i < allSubRefs.length; i += 499) {
+        final chunk = allSubRefs.skip(i).take(499).toList();
+        final batch = FirebaseFirestore.instance.batch();
+        for (final ref in chunk) { batch.delete(ref); }
+        await batch.commit();
+      }
+      // 서브컬렉션 삭제 완료 후 부모 문서 삭제
+      await bizRef.delete();
 
       // 3. Firestore 삭제 성공 후 Storage 정리 — StorageService 경유(CF로 businesses/ 삭제)
       final urlsToDelete = <String>[

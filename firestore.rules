@@ -56,19 +56,30 @@ service cloud.firestore {
         );
     }
     function isSubAdminOf(businessId) {
-      let u = get(/databases/$(database)/documents/users/$(request.auth.uid));
-      return businessId is string && businessId.size() > 0 &&
-        isLoggedIn() &&
-        u != null &&
-        u.data != null &&
-        u.data.get('subAdminOf', '') == businessId;
+      // [SA-04-FIX] let u=get() 바인딩이 isLoggedIn() 전에 평가되어 비인증 시 null.uid 경로 접근하는 버그
+      // &&  short-circuit: isLoggedIn() false이면 exists()/get() 평가 안 함 → null.uid 안전
+      return businessId is string && businessId.size() > 0 && isLoggedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', '') == businessId;
     }
 
     // 하위 관리자인지 (특정 businessId 무관, subAdminOf 필드 존재 여부만 확인)
     function isSubAdmin() {
-      let u = get(/databases/$(database)/documents/users/$(request.auth.uid));
-      return isLoggedIn() && u != null && u.data != null &&
-        u.data.get('subAdminOf', '') != '';
+      // [SA-04-FIX] 동일 패턴 — isLoggedIn() 먼저 평가 후 exists() 가드
+      return isLoggedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('subAdminOf', '') != '';
+    }
+
+    // [SA-01-FIX] SubAdmin이 발송하는 초대의 permissions를 본인 권한 이하로 제한 — 권한 상승 체인 차단
+    // SubAdmin A(canManageTo=true)가 B에게 canManageWage=true 초대 발송 시 차단
+    function subAdminInvitePermissionsWithinBounds(businessId, newPerms) {
+      let myMember = get(/databases/$(database)/documents/businesses/$(businessId)/members/$(request.auth.uid));
+      let myPerms = myMember != null && myMember.data != null ? myMember.data.get('permissions', {}) : {};
+      return (!newPerms.get('canManageTo', false)      || myPerms.get('canManageTo', false)) &&
+             (!newPerms.get('canManageWorkers', false)  || myPerms.get('canManageWorkers', false)) &&
+             (!newPerms.get('canManageWage', false)     || myPerms.get('canManageWage', false)) &&
+             (!newPerms.get('canManageContract', false) || myPerms.get('canManageContract', false));
     }
 
     // [SEC-04] u == null 시 true 반환 → 블랙리스트 우회 가능 취약점 수정
@@ -363,7 +374,8 @@ service cloud.firestore {
                        request.resource.data.get('badges', []).size() == 0
                       ));
 
-      allow delete: if isSuperAdmin();
+      // [HIGH-2-FIX] SUPER_ADMIN 자기 문서 삭제 차단 — 삭제 시 모든 CF/rules 권한 상실로 시스템 잠금 위험
+      allow delete: if isSuperAdmin() && request.auth.uid != userId;
 
       // ─── users/{userId}/notifications 서브컬렉션 ─────────────
       // create: CF createNotification Callable(Admin SDK)로 단일화 — 클라이언트 직접 write 차단
@@ -1677,13 +1689,21 @@ service cloud.firestore {
       //   SubAdmin은 isAdminOf를 통과하지 못해 member_management_screen에서 초대 발송 실패.
       // [M10-FIX] status 초기값 'pending' 강제 — status='accepted' 초대 직접 생성 차단.
       //   applications, schedule_change_requests 등과 동일 패턴 적용.
+      // [SA-01-FIX] SubAdmin 경로는 permissions 범위 검증 추가 — 권한 상승 체인 차단.
+      //   BUSINESS_ADMIN 경로는 제한 없음 (사업장 소유자 전권).
       allow create: if isLoggedIn() && (
-                      ((isAdminOf(request.resource.data.businessId) ||
-                        isSubAdminOf(request.resource.data.businessId)) &&
+                      (isAdminOf(request.resource.data.businessId) &&
                        request.resource.data.invitedBy == request.auth.uid &&
                        request.resource.data.get('status', '') == 'pending' &&
                        // [LOW-FIX 2026-07-14] createdAt 서버 타임스탬프 강제 — 미래 날짜 주입으로 30일 유효기간 우회 차단
                        request.resource.data.createdAt == request.time) ||
+                      (isSubAdminOf(request.resource.data.businessId) &&
+                       request.resource.data.invitedBy == request.auth.uid &&
+                       request.resource.data.get('status', '') == 'pending' &&
+                       request.resource.data.createdAt == request.time &&
+                       subAdminInvitePermissionsWithinBounds(
+                         request.resource.data.businessId,
+                         request.resource.data.get('permissions', {}))) ||
                       isSuperAdmin()
                     );
 

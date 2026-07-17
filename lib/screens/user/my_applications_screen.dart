@@ -105,8 +105,10 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     });
 
     try {
-      // 만료된 PENDING 자동 처리
-      await _firestoreService.autoExpirePendingApplications(uid);
+      // 만료된 PENDING 자동 처리 — [M-02-FIX] 실패해도 지원 내역 로드를 막지 않도록 독립 처리
+      await _firestoreService.autoExpirePendingApplications(uid).catchError((e) {
+        debugPrint('⚠️ autoExpirePendingApplications 실패 (무시): $e');
+      });
 
       final page = await _firestoreService.getMyApplicationsPaged(
         uid: uid, pageSize: _pageSize,
@@ -1015,7 +1017,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 10)),
       width: double.infinity,
       child: OutlinedButton.icon(
-        onPressed: () => _cancelApplication(app.id),
+        // [M-04-FIX] 취소 진행 중 버튼 비활성화 — 중복 탭으로 확인 다이얼로그 이중 열림 방지
+        onPressed: _cancellingIds.contains(app.id) ? null : () => _cancelApplication(app.id),
         icon: Icon(
           Icons.close,
           size: ResponsiveHelper.iconSize(context, 16),

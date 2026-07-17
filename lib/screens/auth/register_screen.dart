@@ -1943,7 +1943,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     focusNode: _phoneFocus,
                     textInputAction: TextInputAction.next,
                     onChanged: (value) {
-                      if (value != _lastSentPhone && _phoneVerifyStatus.value.isSent) {
+                      // [M-01-FIX] isVerified 상태에서도 번호 변경 시 재인증 초기화
+                      // 이전: isSent만 체크 → 인증 완료 후 번호 교체해도 isVerified가 유지됨
+                      if (value != _lastSentPhone &&
+                          (_phoneVerifyStatus.value.isSent || _phoneVerifyStatus.value.isVerified)) {
                         _phoneVerifyStatus.value = const _PhoneVerifyStatus();
                       }
                       if (value.length == 11) {

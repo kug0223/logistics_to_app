@@ -165,6 +165,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   final Set<String> _hasAttendanceIds = {};
   // ✅ 장기공고 희망 시작일
   DateTime? _desiredStartDate;
+  // [BUG-1-FIX] 장기공고 캘린더 달 이동 스냅백 방지 — onPageChanged에서 업데이트
+  DateTime? _longTermFocusedDay;
 
   // ═══════════════════════════════════════════════════════════
   // Getter
@@ -1118,7 +1120,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             locale: 'ko_KR',
             firstDay: DateTime(startDate.year, startDate.month, 1),
             lastDay: DateTime(endDate.year, endDate.month + 1, 0),
-            focusedDay: _desiredStartDate ?? selectableStartDate,
+            focusedDay: _longTermFocusedDay ?? _desiredStartDate ?? selectableStartDate,
             calendarFormat: CalendarFormat.month,
             
             // 컴팩트한 사이즈
@@ -1161,13 +1163,17 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             onDaySelected: (selectedDay, focusedDay) {
               // 🔥 FIX: 이미 지원한 상태면 선택 무시
               if (_hasActiveApplication) return;
-              
+
               setState(() {
                 _desiredStartDate = selectedDay;
+                _longTermFocusedDay = selectedDay;
               });
             },
-            
-            onPageChanged: (focusedDay) {},
+
+            // [BUG-1-FIX] onPageChanged에서 _longTermFocusedDay 업데이트 — 누락 시 setState 후 원래 달로 스냅백
+            onPageChanged: (focusedDay) {
+              setState(() { _longTermFocusedDay = focusedDay; });
+            },
             
             // 헤더 스타일
             headerStyle: HeaderStyle(
@@ -2281,16 +2287,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         : _filterApplicationsByDateOrSlot(applications, dateKey);
 
     final active = scoped.where((app) {
-      if (app.isLongTermApplication) {
-        // [AP-M3-FIX] CANCELED/REJECTED 장기 지원서도 명시적으로 제외
-        // 이전 코드: pending/confirmed가 아닌 케이스에서 return false 없이 outer return true로 흘러
-        //           CANCELED(USER_CANCELED 등)가 캐시에 포함되는 버그
-        if (app.status == AppStatus.pending || AppStatus.confirmedStatuses.contains(app.status)) {
-          return true;
-        }
-        return false;  // CANCELED·REJECTED·그외 → 제외
-      }
-      return true;
+      // [BUG-2-FIX] 단기 TO도 CANCELED/REJECTED 제외
+      // 동일 workKey에 CANCELED→PENDING 순으로 존재 시 CANCELED가 마지막에 Map에 기록되어 PENDING을 덮어쓰는 버그
+      // 장기/단기 모두 pending/confirmed 계열만 캐시에 포함
+      return app.status == AppStatus.pending || AppStatus.confirmedStatuses.contains(app.status);
     }).toList();
 
     return {
@@ -2307,23 +2307,32 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   Future<void> _applyForWork(TOModel to, WorkDetailModel work, {DateTime? date}) async {
     // 중복 동시 지원 방지 — 다른 카드의 지원이 처리 중이면 즉시 차단
     if (_isSubmitting) return;
+    // [H-01-FIX] async gap(선결조건 화면) 진입 전 즉시 lock — 대기 중 이중 지원 차단
+    setState(() => _isSubmitting = true);
 
     // 지원 선결조건 게이트 (job_posting_screen 경로와 동일하게 유지)
     final user = context.read<UserProvider>().currentUser;
-    if (user == null) return;
+    if (user == null) {
+      if (mounted) setState(() => _isSubmitting = false);
+      return;
+    }
     if (!meetsApplyPrerequisites(user, isFlexType: to.isFlexType)) {
       final ok = await ApplyPrerequisitesScreen.show(context, isFlexType: to.isFlexType);
-      if (ok != true || !mounted) return;
+      if (ok != true || !mounted) {
+        if (mounted) setState(() => _isSubmitting = false);
+        return;
+      }
     }
 
     // 🔥 장기공고: 희망 시작일 유효성 검사
     if (_isLongTerm) {
       // 1. 희망 시작일이 선택되지 않은 경우
       if (_desiredStartDate == null) {
+        if (mounted) setState(() => _isSubmitting = false);
         ToastHelper.showWarning('희망 시작일을 선택해주세요');
         return;
       }
-      
+
       // 2. 선택된 날짜가 선택 가능한 날짜인지 확인
       final today = DateTime.now();
       final todayOnly = DateTime(today.year, today.month, today.day);
@@ -2336,35 +2345,37 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
       // 과거 날짜인지
       if (selectedDayOnly.isBefore(selectableStartDate)) {
+        if (mounted) setState(() => _isSubmitting = false);
         ToastHelper.showWarning('선택한 날짜는 지원할 수 없습니다.\n캘린더에서 희망 시작일을 다시 선택해주세요.');
         return;
       }
 
       // 종료일 이후인지 (preset 타입이면 미래 제한 없음)
       if (!to.hasPresetPeriod && selectedDayOnly.isAfter(endDate)) {
+        if (mounted) setState(() => _isSubmitting = false);
         ToastHelper.showWarning('선택한 날짜가 근무 종료일 이후입니다.');
         return;
       }
-      
+
       // 근무 요일인지
       if (workDays.isNotEmpty) {
         if (!workDays.contains(FormatHelper.weekday(selectedDayOnly))) {
+          if (mounted) setState(() => _isSubmitting = false);
           ToastHelper.showWarning('선택한 날짜는 근무 요일이 아닙니다.');
           return;
         }
       }
-      
+
       // 충돌 날짜인지 (이 날짜 이후에 확정 근무가 있으면 불가)
       for (final conflictDate in _confirmedDatesInRange) {
         if (!conflictDate.isBefore(selectedDayOnly)) {
+          if (mounted) setState(() => _isSubmitting = false);
           ToastHelper.showWarning('선택한 시작일 이후에 확정된 근무가 있습니다.\n다른 날짜를 선택해주세요.');
           return;
         }
       }
     }
-    
-    // 팝업 대기 중 다른 카드 중복 호출 차단
-    setState(() => _isSubmitting = true);
+    // (H-01-FIX: _isSubmitting은 이미 메서드 진입 시 true로 설정됨)
 
     // ✅ 지원 확인 팝업
     final confirmed = await ApplyConfirmDialog.show(

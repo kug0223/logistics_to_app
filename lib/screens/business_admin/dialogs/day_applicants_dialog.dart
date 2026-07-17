@@ -2443,7 +2443,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       }
       if (successCount > 0) _hasChanges = true;
       if (!mounted) return;
-      ToastHelper.showSuccess('$successCount명이 확정되었습니다');
+      // [DAY-2-FIX] successCount==0일 때 showSuccess 대신 showError — 모두 실패한 경우 안내
+      if (successCount > 0) {
+        ToastHelper.showSuccess('$successCount명이 확정되었습니다');
+      } else {
+        ToastHelper.showError('확정에 실패했습니다. 잠시 후 다시 시도해주세요.');
+      }
       await _load();
     } finally {
       if (mounted) setState(() => _isProcessing = false);

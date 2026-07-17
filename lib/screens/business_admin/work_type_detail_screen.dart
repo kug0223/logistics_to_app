@@ -44,6 +44,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
   bool _isLoading = false;
   bool _isEditing = false;
   bool _hasChanges = false;
+  bool _isDirty = false; // 편집 중 미저장 변경사항 여부
   int _currentImageIndex = 0;
 
   // 수정용 컨트롤러
@@ -74,6 +75,18 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
     _dutiesController.text = _currentWorkType.duties ?? '';
     _precautionsController.text = _currentWorkType.precautions ?? '';
     _selectedWorkEnvironment = _currentWorkType.workEnvironment;
+    // 텍스트 변경 시 dirty 표시 — 리스너 중복 방지를 위해 removeListener 후 재등록
+    for (final c in [
+      _oneLineIntroController, _descriptionController,
+      _requirementsController, _dutiesController, _precautionsController,
+    ]) {
+      c.removeListener(_markDirty);
+      c.addListener(_markDirty);
+    }
+  }
+
+  void _markDirty() {
+    if (!_isDirty) setState(() => _isDirty = true);
   }
 
   @override
@@ -94,9 +107,12 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: !_hasChanges,
-      onPopInvokedWithResult: (didPop, result) async {
-        if (!didPop && _hasChanges) {
+      canPop: !_isDirty && !_hasChanges,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (_isDirty) {
+          _confirmDiscardChanges();
+        } else if (_hasChanges) {
           NavigationHelper.popWithChange(context);
         }
       },
@@ -540,6 +556,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
                           onSelected: (selected) {
                             setState(() {
                               _selectedWorkEnvironment = selected ? env : null;
+                              _isDirty = true;
                             });
                           },
                           selectedColor: theme.primaryColor,
@@ -811,7 +828,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
 
     if (image != null) {
       if (!mounted) return; // [MOUNTED-01 수정] 이미지 피커 복귀 시 위젯 dispose 경합 방지
-      setState(() => _newImages.add(image));
+      setState(() { _newImages.add(image); _isDirty = true; });
     }
   }
 
@@ -820,6 +837,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
     final image = allImages[index];
 
     setState(() {
+      _isDirty = true;
       if (image is File) {
         // TMP-01: 선택 취소된 임시 압축 파일 즉시 정리 (fire-and-forget)
         image.delete().ignore();
@@ -843,6 +861,27 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
     });
   }
 
+  Future<void> _confirmDiscardChanges() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('변경사항 취소'),
+        content: const Text('저장하지 않은 변경사항이 있습니다.\n나가시겠습니까?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('계속 수정')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('나가기')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _isDirty = false);
+    if (_hasChanges) {
+      NavigationHelper.popWithChange(context);
+    } else {
+      Navigator.pop(context);
+    }
+  }
+
   /// 수정 취소
   void _cancelEditing() {
     // TMP-01: 수정 취소 시 미업로드 임시 압축 파일 정리 (fire-and-forget)
@@ -851,6 +890,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
     }
     setState(() {
       _isEditing = false;
+      _isDirty = false;
       _initControllers();
       _newThumbnail = null;
       _newImages.clear();
@@ -956,6 +996,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
           images: imageUrls.isEmpty ? null : imageUrls,
         );
         _isEditing = false;
+        _isDirty = false;
         _hasChanges = true;
         _newThumbnail = null;
         _newImages.clear();

@@ -4909,6 +4909,10 @@ export const callableAdjustTrustScore = onCall(
     if (!targetSnap.exists) {
       throw new HttpsError("not-found", "대상 사용자를 찾을 수 없습니다.");
     }
+    // SUPER_ADMIN 간 신뢰도 조작 방어 — 동급 계정은 대상에서 제외
+    if (targetSnap.data()?.role === "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "다른 슈퍼어드민의 신뢰도는 조정할 수 없습니다.");
+    }
     const previousScore = (targetSnap.data()!.trustScore ?? 50) as number;
     const newScore = score;
     const now = admin.firestore.FieldValue.serverTimestamp();
@@ -5945,6 +5949,10 @@ export const callableCreateTO = onCall(
       const bizOwnerId = bizAuthSnap.data()?.ownerId as string | undefined;
       if (!bizAdminIds.includes(callerUid) && bizOwnerId !== callerUid) {
         throw new HttpsError("permission-denied", "소속 사업장만 공고를 생성할 수 있습니다.");
+      }
+      // 비활성화 사업장에서는 신규 공고 생성 불가
+      if (bizAuthSnap.data()?.deactivatedAt) {
+        throw new HttpsError("failed-precondition", "비활성화된 사업장에서는 공고를 생성할 수 없습니다.");
       }
     }
 
@@ -15779,6 +15787,7 @@ export const callableManageBusiness = onCall(
       };
     } else if (action === "deactivate") {
       updateData = {
+        isApproved: false,
         deactivatedAt: admin.firestore.FieldValue.serverTimestamp(),
         deactivatedBy: callerUid,
       };

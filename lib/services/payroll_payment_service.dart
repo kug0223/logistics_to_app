@@ -463,6 +463,7 @@ class PayrollPaymentService {
     // 원래 req.attendanceIds를 그대로 쓸 경우 취소된 항목도 wageTransferred로 덮어쓰는 버그.
     // 현재 wageStatus를 서버 조회 후 wageConfirmed 항목만 필터링해서 이체.
     bool skipMarkTransferred = false;
+    bool zeroTransfer = false; // 실질 이체 0건(모든 항목 취소) 여부
     List<String> idsToTransfer = List.from(req.attendanceIds);
 
     // attendanceIds의 현재 wageStatus를 서버에서 조회 (L454에서 isEmpty 시 throw하므로 항상 비어있지 않음)
@@ -491,7 +492,7 @@ class PayrollPaymentService {
             .where((s) => s.data()?['wageStatus'] == AttendanceModel.wageConfirmed)
             .map((s) => s.id)
             .toList();
-        if (idsToTransfer.isEmpty) skipMarkTransferred = true;
+        if (idsToTransfer.isEmpty) { skipMarkTransferred = true; zeroTransfer = true; }
       }
     }
     // [I-01] skipMarkTransferred=true 시 이체 0건인데도 status=PROCESSED 마킹됨.
@@ -536,12 +537,15 @@ class PayrollPaymentService {
 
     // 3단계: 근로자에게 중간정산 완료 알림 발송 (실패해도 이체 자체에 영향 없음)
     try {
+      // 실질 이체 0건(모든 항목 취소) — 알림 불발송으로 혼란 방지 [MEDIUM-2 FIX]
+      if (zeroTransfer) return;
+
       // 실제 이체된 항목의 finalWage 합산 — req.netAmount(요청 시점 추정치)보다 정확
       final actualNetAmount = idsToTransfer.isNotEmpty
           ? attSnaps
               .where((s) => idsToTransfer.contains(s.id))
               .fold<int>(0, (acc, s) => acc + ((s.data()?['finalWage'] as num?)?.toInt() ?? 0))
-          : req.netAmount; // 전부 이미 transferred인 재시도 케이스
+          : req.netAmount; // 전부 이미 transferred인 재시도 케이스 — req.netAmount 재사용
       final notification = NotificationModel.createInterimSettlementCompleted(
         userId: req.workerId,
         workerName: req.workerName,
@@ -682,6 +686,8 @@ List<TransferRow> buildTransferRows(
 
     if (totalNet <= 0) continue;
 
+    // [MEDIUM-3-FIX] CF 반환 순서에 의존하지 않도록 workDate 오름차순 정렬
+    recs.sort((a, b) => a.workDate.compareTo(b.workDate));
     final firstName = recs.first;
     final dateRange = recs.length == 1
         ? FormatHelper.formatDateDot(recs.first.workDate)
