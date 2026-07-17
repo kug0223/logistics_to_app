@@ -146,7 +146,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
       _consentNotifier.value = {..._consentNotifier.value, ...map};
       setState(() { _legalTerms = terms; _isTermsLoading = false; });
-    } catch (_) {
+    } catch (e) {
+      debugPrint('⚠️ 약관 로드 실패, 기본값 사용: $e');
       final defaults = LegalTerms.defaultTerms();
       if (!mounted) return;
       final map = <String, bool>{};
@@ -1240,21 +1241,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _handlePassAuth() async {
-    // [TODO-DANAL] kDebugMode 블록 전체는 다날 계약 후 실제 PASS 연동 시 제거.
-    // 그 시점에는 아래 PassVerificationService.authenticate() 흐름만 남긴다.
-    if (kDebugMode) {
-      final result = await _showPassMockDialog();
-      if (!mounted || result == null) return;
-      setState(() {
-        _passAuthResult = result;
-        _nameController.text = result.name;
-        _phoneController.text = result.phone;
-      });
-      return;
-    }
-
+    if (_isPassLoading) return;
     setState(() => _isPassLoading = true);
     try {
+      // [TODO-DANAL] kDebugMode 블록 전체는 다날 계약 후 실제 PASS 연동 시 제거.
+      // 그 시점에는 아래 PassVerificationService.authenticate() 흐름만 남긴다.
+      if (kDebugMode) {
+        final result = await _showPassMockDialog();
+        if (!mounted || result == null) return;
+        setState(() {
+          _passAuthResult = result;
+          _nameController.text = result.name;
+          _phoneController.text = result.phone;
+        });
+        return;
+      }
+
       final result = await PassVerificationService.authenticate(
         purpose: 'register',
         role: _selectedRole?.name ?? 'USER',

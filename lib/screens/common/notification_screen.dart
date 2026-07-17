@@ -814,8 +814,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
           }
           final cfResult = results[1] as HttpsCallableResult<Map<String, dynamic>>;
           final cfItems = (cfResult.data['items'] as List<dynamic>? ?? []);
-          workDaysInMonth = cfItems.where((e) {
-            final status = (e as Map)['wageStatus'] as String?;
+          workDaysInMonth = cfItems.whereType<Map>().where((e) {
+            final status = e['wageStatus'] as String?;
             return status == 'confirmed' || status == 'transferred';
           }).length;
         } else {
