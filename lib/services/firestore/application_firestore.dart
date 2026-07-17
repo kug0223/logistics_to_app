@@ -417,10 +417,10 @@ extension ApplicationFirestore on FirestoreService {
         return [];
       }
 
-      // [B-001] 거절된 지원서는 관리자가 직접 PENDING으로 되돌릴 수 없음
-      // 재지원은 applyToTO() 경로(지원자 직접 재지원)만 허용
-      if (status == AppStatus.pending && prevStatus == AppStatus.rejected) {
-        ToastHelper.showError('거절된 지원서는 재활성화할 수 없습니다.\n지원자가 직접 재지원해야 합니다.');
+      // [B-001] 비활성 상태(거절/취소)의 지원서는 관리자가 직접 PENDING으로 되돌릴 수 없음
+      // 재지원은 callableApplyToTO CF 경로(지원자 직접 재지원)만 허용 — wage/startTime 등 재검증 필요
+      if (status == AppStatus.pending && AppStatus.inactiveStates.contains(prevStatus)) {
+        ToastHelper.showError('거절/취소된 지원서는 재활성화할 수 없습니다.\n지원자가 직접 재지원해야 합니다.');
         return [];
       }
 

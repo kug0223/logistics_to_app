@@ -781,10 +781,11 @@ service cloud.firestore {
                        //   canceledBy 서버 강제 + statusHistory.at CF 서버 시간 + slot decrement 원자성
                        !(resource.data.get('status', '') in ['CONFIRMED', 'CONTRACT_PENDING'] &&
                          request.resource.data.status == 'CANCELED') &&
-                       // [MEDIUM-1] CANCELED/AUTO_CANCELED → CONFIRMED 직접 전이 차단
-                       //   취소된 지원서를 totalConfirmed CF 없이 직접 확정 상태로 변경 시 카운터 불일치
+                       // [MEDIUM-1] CANCELED/AUTO_CANCELED/REJECTED → CONFIRMED/PENDING 직접 전이 차단
+                       //   CONFIRMED: totalConfirmed CF 없이 확정 시 카운터 불일치
+                       //   PENDING: callableApplyToTO 우회 — wage/startTime/endTime 재검증 누락
                        !(resource.data.get('status', '') in ['CANCELED', 'AUTO_CANCELED', 'REJECTED'] &&
-                         request.resource.data.status == 'CONFIRMED')) ||
+                         request.resource.data.status in ['CONFIRMED', 'PENDING'])) ||
                       isSuperAdmin()
                     );
 
