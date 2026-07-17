@@ -94,7 +94,7 @@ class LocationHelper {
         debugPrint('⚠️ Mock GPS 감지됨 — 위치 위조 시도');
         return null;
       }
-      debugPrint('✅ 현재 위치: ${position.latitude}, ${position.longitude}');
+      if (kDebugMode) debugPrint('✅ 현재 위치: ${position.latitude}, ${position.longitude}');
       return position;
     } catch (e) {
       debugPrint('❌ 위치 가져오기 실패: $e');
@@ -133,7 +133,7 @@ class LocationHelper {
       lon2: businessLon,
     );
 
-    debugPrint('📍 사업장과의 거리: ${distance.toStringAsFixed(1)}m (기준: ${radiusInMeters}m)');
+    if (kDebugMode) debugPrint('📍 사업장과의 거리: ${distance.toStringAsFixed(1)}m (기준: ${radiusInMeters}m)');
     return distance <= radiusInMeters;
   }
 

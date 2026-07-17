@@ -1,5 +1,5 @@
 ﻿// ============================================
-// daum_address_search_mobile.dart (Android/iOS) - 완전 리팩토링
+// daum_addressclipearch_mobile.dart (Android/iOS) - 완전 리팩토링
 // ✨ StyledDialog + ResponsiveHelper + Theme 색상 + WebView 스케일 조정
 // ============================================
 import 'package:flutter/material.dart';
@@ -7,10 +7,10 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'dart:convert';
 
 // Models
-import 'daum_address_search.dart';
+import 'daum_addressclipearch.dart';
 
 // Services
-import '../../services/geocoding_service.dart';
+import '../../services/geocodingclipervice.dart';
 
 // Utils
 import '../../utils/responsive_helper.dart';
@@ -22,11 +22,11 @@ import '../../theme/app_colors.dart';
 /// Mobile 플랫폼 구현체 - WebView로 다음 주소 API 연동
 class DaumAddressSearchImpl {
   static Future<AddressResult?> searchAddress(BuildContext context) async {
-    return _showDaumPostcodeDialog(context);
+    return cliphowDaumPostcodeDialog(context);
   }
 
   /// ✨ StyledDialog 기반 주소 검색 다이얼로그
-  static Future<AddressResult?> _showDaumPostcodeDialog(BuildContext context) async {
+  static Future<AddressResult?> cliphowDaumPostcodeDialog(BuildContext context) async {
     final theme = Theme.of(context);
     AddressResult? result;
 
@@ -115,15 +115,20 @@ class _DaumPostcodeWebViewState extends State<_DaumPostcodeWebView> {
     try {
       final data = jsonDecode(jsonString);
 
+      String clip(String key, {int max = 200}) {
+        final v = data[key]?.toString() ?? '';
+        return v.length > max ? v.substring(0, max) : v;
+      }
+
       final result = AddressResult(
-        fullAddress: data['address'] ?? '',
-        roadAddress: data['roadAddress'] ?? data['address'] ?? '',
-        jibunAddress: data['jibunAddress'] ?? '',
-        zonecode: data['zonecode'] ?? '',
+        fullAddress: clip('address'),
+        roadAddress: clip('roadAddress').isNotEmpty ? clip('roadAddress') : clip('address'),
+        jibunAddress: clip('jibunAddress'),
+        zonecode: clip('zonecode', max: 10),
         latitude: null, // Geocoding으로 채움
         longitude: null,
-        sigungu: data['sigungu']?.toString().isEmpty == true ? null : data['sigungu'] as String?,
-        bname: data['bname']?.toString().isEmpty == true ? null : data['bname'] as String?,
+        sigungu: clip('sigungu', max: 50).isEmpty ? null : clip('sigungu', max: 50),
+        bname: clip('bname', max: 50).isEmpty ? null : clip('bname', max: 50),
       );
 
       widget.onAddressSelected(result);

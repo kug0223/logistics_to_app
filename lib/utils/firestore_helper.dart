@@ -5,7 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 DateTime parseTimestamp(dynamic v) {
   if (v is Timestamp) return v.toDate().toLocal();
   if (v is Map) {
-    final s = (v['_seconds'] as num).toInt();
+    final s = (v['_seconds'] as num? ?? 0).toInt();
     final ns = (v['_nanoseconds'] as num? ?? 0).toInt();
     return Timestamp(s, ns).toDate().toLocal();
   }

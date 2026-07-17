@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -52,10 +52,10 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (String url) {
-            debugPrint('🗺️ 지도 로딩 시작: $url');
+            if (kDebugMode) debugPrint('🗺️ 지도 로딩 시작: $url');
           },
           onPageFinished: (String url) {
-            debugPrint('✅ 지도 로딩 완료: $url');
+            if (kDebugMode) debugPrint('✅ 지도 로딩 완료: $url');
             if (mounted) setState(() => _isLoading = false);
           },
           onWebResourceError: (WebResourceError error) {
@@ -63,7 +63,7 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
             // 서브리소스를 localhost에 요청 → ERR_CONNECTION_REFUSED 발생 (무해)
             // isForMainFrame이 false인 경우는 서브리소스 오류이므로 무시
             if (!(error.isForMainFrame ?? true)) return;
-            debugPrint('❌ 지도 로딩 에러: ${error.description}');
+            if (kDebugMode) debugPrint('❌ 지도 로딩 에러: ${error.description}');
             if (mounted) setState(() => _isLoading = false);
           },
         ),
@@ -87,6 +87,7 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
 </head>
 <body>
     <div id="map"></div>
+    <!-- 카카오 개발자 콘솔에서 앱 번들 ID(com.alfit.app) 플랫폼 제한 설정 필수 — 미설정 시 키 도용 위험 -->
     <script type="text/javascript" src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=e635c28704a468da61d38e893139fe10"></script>
     <script>
         // ✅ SDK 로드 완료 대기!
@@ -160,7 +161,7 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
             // url_launcher 없이 window.open 사용 (웹 전용)
             // ignore: avoid_web_libraries_in_flutter
             // ignore: undefined_prefixed_name
-            debugPrint('🗺️ 지도 열기: $kakaoUrl');
+            if (kDebugMode) debugPrint('🗺️ 지도 열기: $kakaoUrl');
           },
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
