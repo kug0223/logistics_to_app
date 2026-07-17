@@ -326,7 +326,7 @@ class ContractService {
     try {
       final snap = await _db.collection('employment_contracts').doc(contractId).get();
       if (!snap.exists) return null;
-      return EmploymentContractModel.fromFirestore(snap);
+      return EmploymentContractModel.tryFromFirestore(snap);
     } on FirebaseException catch (e) {
       debugPrint('❌ [contract] getById 실패 (Firebase): ${e.code} $e');
       return null;
@@ -721,6 +721,12 @@ class ContractService {
       // (이중 확정 또는 동시 호출 시 발생 가능)
       if (current.applicationIds.contains(application.id)) {
         return current;
+      }
+
+      // [SEC-FIX] 트랜잭션 내 status 재검증 — K-001 외부 검증(L57)과 트랜잭션 진입 사이
+      // 사업주 서명이 완료된 경우 slotの추가를 차단해 서명 무결성 보호
+      if (current.status != ContractStatus.pendingEmployer) {
+        throw StateError('계약서가 이미 서명 단계에 있어 슬롯을 추가할 수 없습니다: ${current.status.value}');
       }
 
       final updatedSlots = [...current.slots, newSlot];

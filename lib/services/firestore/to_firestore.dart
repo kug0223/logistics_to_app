@@ -233,14 +233,17 @@ extension TOFirestore on FirestoreService {
     //   request.query.filters.get('isPublished', false)가 null을 반환해 PERMISSION_DENIED 유발
     //   orderBy 제거 후 각 페이지 내 클라이언트 정렬. 페이지 간 정렬은 __name__ 기준이므로
     //   마감임박순 등 createdAt 기준 전체 정렬은 여전히 미지원 (단일 페이지 내에서만 정렬됨).
-    query = query.limit(pageSize);
+    // [HASMORE-FIX] limit+1 패턴: pageSize+1개 요청 후 pageSize 초과 여부로 hasMore 판단
+    query = query.limit(pageSize + 1);
 
     if (startAfter != null) {
       query = query.startAfterDocument(startAfter);
     }
 
     final snap = await query.get(const GetOptions(source: Source.server));
-    final items = snap.docs
+    final hasMore = snap.docs.length > pageSize;
+    final docsToProcess = hasMore ? snap.docs.take(pageSize).toList() : snap.docs;
+    final items = docsToProcess
         .map((d) => TOModel.tryFromMap(d.data() as Map<String, dynamic>, d.id))
         .whereType<TOModel>()
         // [BUGFIX-WHEREIN] status whereIn 제거로 클라이언트에서 active/full 필터링
@@ -249,8 +252,8 @@ extension TOFirestore on FirestoreService {
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return {
       'items': items,
-      'lastDoc': snap.docs.isNotEmpty ? snap.docs.last : null,
-      'hasMore': snap.docs.length >= pageSize,
+      'lastDoc': docsToProcess.isNotEmpty ? docsToProcess.last : null,
+      'hasMore': hasMore,
     };
   }
 

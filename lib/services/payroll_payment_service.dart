@@ -135,7 +135,8 @@ class PayrollPaymentService {
       // [FIX] 알림 포함 여부를 await 이전에 결정·잠금:
       // 이전 코드는 CF 실패 시 notificationsSent=false 유지 → 다음 청크가
       // 전체 근로자에게 허위 이체완료 알림 발송하는 버그
-      final bool sendNotifs = !notificationsSent && allNotifications != null;
+      // [BUG-FIX] null 체크만으로는 빈 배열([])도 통과 → 0건 알림 발송 버그
+      final bool sendNotifs = !notificationsSent && (allNotifications?.isNotEmpty ?? false);
       if (sendNotifs) notificationsSent = true;
       try {
         await _cf.httpsCallable('callableMarkTransferredBatch').call({

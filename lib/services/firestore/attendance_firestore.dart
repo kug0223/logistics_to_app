@@ -317,8 +317,9 @@ extension AttendanceFirestore on FirestoreService {
       final result = await callable.call({'year': year, 'month': month});
       final items = (result.data['items'] as List<dynamic>? ?? []);
       return items
+          .whereType<Map>()
           .map((e) {
-            final m = Map<String, dynamic>.from(e as Map);
+            final m = Map<String, dynamic>.from(e);
             final id = m.remove('id') as String? ?? '';
             return AttendanceModel.tryFromMap(m, id);
           })
@@ -353,8 +354,9 @@ extension AttendanceFirestore on FirestoreService {
       debugPrint('⚠️ callableGetAdminAttendances: limit(10000) 도달 — 데이터 누락 가능 (bizId=$businessId)');
     }
     return items
+        .whereType<Map>()
         .map((e) {
-          final m = Map<String, dynamic>.from(e as Map);
+          final m = Map<String, dynamic>.from(e);
           final id = m.remove('id') as String? ?? '';
           return AttendanceModel.tryFromMap(m, id);
         })

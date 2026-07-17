@@ -1017,9 +1017,10 @@ class _NotificationScreenState extends State<NotificationScreen> {
     NotificationModel notification,
   ) async {
     // 심층 방어: 호출부 isUser && !isSubAdmin 가드 외 함수 진입부에서도 재차 확인
-    // tos 직접 GET을 수행하므로 USER 역할이 도달하면 데이터 노출 위험이 있다.
-    // [주의] 호출부는 isUser && !isSubAdmin으로 분기하지만, 이 가드는 isUser만 체크 — SubAdmin은 통과 (의도됨)
-    if (context.read<UserProvider>().isUser) return;
+    // tos 직접 GET을 수행하므로 순수 USER 역할이 도달하면 데이터 노출 위험이 있다.
+    // SubAdmin은 role==USER이지만 관리자 알림을 수신하므로 통과 (isSubAdmin 제외 필수)
+    final up = context.read<UserProvider>();
+    if (up.isUser && !up.isSubAdmin) return;
 
     final data = notification.data;
     final fallbackBusinessId = data?['businessId']?.toString();

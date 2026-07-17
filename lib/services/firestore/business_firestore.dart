@@ -57,11 +57,19 @@ extension BusinessFirestore on FirestoreService {
               options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
       final response = await callable.call<Map<String, dynamic>>({});
       final list = (response.data['businesses'] as List?) ?? [];
-      final businesses = list.map((e) {
-        final map = Map<String, dynamic>.from(e as Map);
-        final id = map['id'] as String? ?? '';
-        return BusinessModel.fromMap(map, id);
-      }).toList();
+      final businesses = list
+          .whereType<Map>()
+          .map((e) {
+            final map = Map<String, dynamic>.from(e);
+            final id = map['id'] as String? ?? '';
+            try {
+              return BusinessModel.fromMap(map, id);
+            } catch (_) {
+              return null;
+            }
+          })
+          .whereType<BusinessModel>()
+          .toList();
       debugPrint('✅ [FirestoreService] 조회 완료: ${businesses.length}개');
       return businesses;
     } catch (e) {

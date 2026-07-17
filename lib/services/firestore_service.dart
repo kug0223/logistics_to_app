@@ -217,11 +217,16 @@ class FirestoreService {
         final usersRaw = (response.data['users'] as Map?)?.cast<String, dynamic>() ?? {};
         for (final entry in usersRaw.entries) {
           final uid = entry.key;
-          final data = Map<String, dynamic>.from(entry.value as Map);
-          final user = UserModel.fromMap(data, uid);
-          _userCache[uid] = user;
-          _userCacheTimestamps[uid] = now;
-          result[uid] = user;
+          try {
+            final data = Map<String, dynamic>.from(entry.value as Map);
+            final user = UserModel.fromMap(data, uid);
+            _userCache[uid] = user;
+            _userCacheTimestamps[uid] = now;
+            result[uid] = user;
+          } catch (e) {
+            // 단일 항목 파싱 실패가 청크 전체를 드롭하지 않도록 방어
+            debugPrint('⚠️ getUsersBatch: uid=$uid 파싱 실패 (건너뜀): $e');
+          }
         }
       } catch (e) {
         debugPrint('❌ getUsersBatch CF 실패 (chunk $i): $e');

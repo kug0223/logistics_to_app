@@ -1842,6 +1842,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   }
 
   Future<void> _createContractAndSign() async {
+    if (_isLoading) return; // 이중 탭 방지
     final app = widget.application!;
     final businessId = widget.businessId ?? widget.toItem?.to.businessId;
 

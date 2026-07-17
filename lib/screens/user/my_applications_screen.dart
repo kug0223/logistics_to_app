@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'dart:async' show unawaited;
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 
@@ -105,10 +106,11 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     });
 
     try {
-      // 만료된 PENDING 자동 처리 — [M-02-FIX] 실패해도 지원 내역 로드를 막지 않도록 독립 처리
-      await _firestoreService.autoExpirePendingApplications(uid).catchError((e) {
+      // 만료된 PENDING 자동 처리 — unawaited로 병렬 실행해 화면 로드를 블로킹하지 않음
+      // [BUG-FIX] await 사용 시 성공 경로에서도 만료 처리 완료까지 데이터 로드 지연 발생
+      unawaited(_firestoreService.autoExpirePendingApplications(uid).catchError((e) {
         debugPrint('⚠️ autoExpirePendingApplications 실패 (무시): $e');
-      });
+      }));
 
       final page = await _firestoreService.getMyApplicationsPaged(
         uid: uid, pageSize: _pageSize,

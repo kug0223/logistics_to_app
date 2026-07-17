@@ -44,7 +44,7 @@ class BusinessListScreen extends StatefulWidget {
 class _BusinessListScreenState extends State<BusinessListScreen> {
   final FirestoreService _firestoreService = FirestoreService();
   List<BusinessModel> _businesses = [];
-  bool _isLoading = true;
+  bool _isLoading = false; // [BUG-FIX] true면 initState에서 _loadBusinesses()가 L58 가드에 차단됨
   bool _isDeleting = false;
 
   @override

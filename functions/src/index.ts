@@ -6219,7 +6219,8 @@ export const callableUpdateTO = onCall(
     ];
 
     // status 화이트리스트
-    const VALID_STATUSES = ["ACTIVE", "FULL", "CLOSED", "EXPIRED", "DRAFT", "SCHEDULED"];
+    // [SEC-FIX] EXPIRED는 스케줄러 전용 — 관리자 직접 설정 차단 (closedAt 등 연계 필드 누락 방지)
+    const VALID_STATUSES = ["ACTIVE", "FULL", "CLOSED", "DRAFT", "SCHEDULED"];
     if ("status" in updates && !VALID_STATUSES.includes(updates.status as string)) {
       throw new HttpsError("invalid-argument", `status는 ${VALID_STATUSES.join("/")} 중 하나여야 합니다.`);
     }
@@ -8066,6 +8067,10 @@ function ruleArrayToMap(rules: unknown): Record<string, number> {
 export const onAttendanceWageStatusChanged = onDocumentWritten(
   {document: "attendance/{attendanceId}", region: "asia-northeast3"},
   async (event) => {
+    // [멱등성 수정] CF at-least-once 재시도로 totalWorkDays/trustScore/noShowCount 이중 증감 방지
+    const eventId = event.id;
+    const processedRef = db.collection("_processedWageEvents").doc(eventId);
+
     const before = event.data?.before?.data();
     const after = event.data?.after?.data();
 
@@ -8106,6 +8111,12 @@ export const onAttendanceWageStatusChanged = onDocumentWritten(
       const trustReason = wageConfirmedOn ? "work_complete" : "work_complete_canceled";
 
       await db.runTransaction(async (tx) => {
+        // 멱등성 체크 — 이미 처리된 이벤트 스킵
+        const processedSnap = await tx.get(processedRef);
+        if (processedSnap.exists) {
+          console.log(`ℹ️ [wageStatusChanged] 중복 이벤트 스킵: ${eventId}`);
+          return;
+        }
         const userSnap = await tx.get(userRef);
         if (!userSnap.exists) return;
         const currentScore = (userSnap.data()?.trustScore ?? 50) as number;
@@ -8126,6 +8137,7 @@ export const onAttendanceWageStatusChanged = onDocumentWritten(
           reason: trustReason,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
+        tx.set(processedRef, {processedAt: admin.firestore.FieldValue.serverTimestamp()});
       });
       return null;
     }
@@ -8141,6 +8153,12 @@ export const onAttendanceWageStatusChanged = onDocumentWritten(
       const decreaseRules = ruleArrayToMap(rulesData.decreaseRules);
 
       await db.runTransaction(async (tx) => {
+        // 멱등성 체크 — 이미 처리된 이벤트 스킵
+        const processedSnap = await tx.get(processedRef);
+        if (processedSnap.exists) {
+          console.log(`ℹ️ [wageStatusChanged-noshow] 중복 이벤트 스킵: ${eventId}`);
+          return;
+        }
         const userSnap = await tx.get(userRef);
         if (!userSnap.exists) return;
         const userData = userSnap.data()!;
@@ -8179,6 +8197,7 @@ export const onAttendanceWageStatusChanged = onDocumentWritten(
           reason: trustReason,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
+        tx.set(processedRef, {processedAt: admin.firestore.FieldValue.serverTimestamp()});
       });
     }
 
