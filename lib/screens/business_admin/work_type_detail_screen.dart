@@ -975,14 +975,14 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
     }
   }
 
-  /// 이미지 업로드
+  /// 이미지 업로드 — CF 경유 (storage.rules: businesses/ if false)
   Future<String?> _uploadImage(File imageFile, String type) async {
     try {
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final fileName = 'workType_${_currentWorkType.id}_${type}_$timestamp.jpg';
-      final storagePath = 'businesses/${_currentWorkType.businessId}/workTypes/$fileName';
-
-      final url = await _storageService.uploadImage(imageFile.path, storagePath);
+      final bytes = await imageFile.readAsBytes();
+      final url = await _storageService.uploadBusinessImage(
+        bytes,
+        _currentWorkType.businessId,
+      );
       // TMP-01: pickAndCompressImage()가 생성한 임시 압축 파일은 업로드 후 즉시 삭제
       try {
         if (await imageFile.exists()) await imageFile.delete();

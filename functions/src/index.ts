@@ -5070,73 +5070,56 @@ export const callableFinalizeWorkerSignature = onCall(
     const uid = request.auth?.uid;
     if (!uid) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
 
-    const {contractId, sigUrl, workerSignatureHash} = request.data;
+    const {contractId, signatureBase64, pdfBase64} = request.data;
     if (!contractId || typeof contractId !== "string") {
       throw new HttpsError("invalid-argument", "contractId가 필요합니다.");
     }
-    if (!sigUrl || typeof sigUrl !== "string" || sigUrl.length > 2048) {
-      throw new HttpsError("invalid-argument", "sigUrl이 필요합니다.");
+    if (!signatureBase64 || typeof signatureBase64 !== "string" || signatureBase64.length > 500_000) {
+      throw new HttpsError("invalid-argument", "signatureBase64가 필요하거나 너무 큽니다 (최대 375KB).");
     }
-    // [M-03-FIX] sigUrl이 해당 contractId 경로인지 검증
-    //   → 타인 서명 URL 주입으로 타인 서명이 계약서에 등록되는 공격 차단
-    const sigPathMatch = sigUrl.match(/\/o\/([^?#]+)/);
-    if (!sigPathMatch) {
-      throw new HttpsError("invalid-argument", "유효하지 않은 서명 이미지 URL 형식입니다.");
-    }
-    const sigStoragePath = decodeURIComponent(sigPathMatch[1]);
-    if (!sigStoragePath.startsWith(`contracts/${contractId}/`)) {
-      throw new HttpsError("permission-denied", "해당 계약서의 서명 이미지만 등록 가능합니다.");
-    }
-    if (!workerSignatureHash || typeof workerSignatureHash !== "string") {
-      throw new HttpsError("invalid-argument", "workerSignatureHash가 필요합니다.");
+    if (!pdfBase64 || typeof pdfBase64 !== "string" || pdfBase64.length > 6_700_000) {
+      throw new HttpsError("invalid-argument", "pdfBase64가 필요하거나 너무 큽니다 (최대 5MB).");
     }
 
     const bucket = admin.storage().bucket();
+    const signatureBytes = Buffer.from(signatureBase64, "base64");
+    const computedSigHash = crypto.createHash("sha256").update(signatureBytes).digest("hex");
+    const pdfBytes = Buffer.from(pdfBase64, "base64");
+    const pdfHash = crypto.createHash("sha256").update(pdfBytes).digest("hex");
 
-    // ── PDF 다운로드 + 해시 계산 (트랜잭션 외부 — Storage 읽기는 tx 불가)
-    // 클라이언트가 업로드한 contracts/{contractId}/contract.pdf를 Admin SDK로 직접 읽음.
-    // pdfUrl을 클라이언트에서 전달받지 않으므로 URL 위·변조 불가.
-    let pdfHash: string;
+    // ── 서명 이미지 업로드 (Admin SDK — storage rules: if false)
+    const sigStoragePath = `contracts/${contractId}/signature_worker.png`;
+    const sigToken = crypto.randomBytes(16).toString("hex");
+    try {
+      await bucket.file(sigStoragePath).save(signatureBytes, {
+        contentType: "image/png",
+        metadata: {metadata: {firebaseStorageDownloadTokens: sigToken}},
+      });
+    } catch (e) {
+      throw new HttpsError("internal", "서명 이미지 업로드에 실패했습니다.");
+    }
+    const encodedSigPath = encodeURIComponent(sigStoragePath);
+    const sigUrl =
+      `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/` +
+      `${encodedSigPath}?alt=media&token=${sigToken}`;
+
+    // ── PDF 업로드 (Admin SDK) + URL 생성
     let computedPdfUrl: string;
     try {
       const pdfFile = bucket.file(`contracts/${contractId}/contract.pdf`);
-      const [exists] = await pdfFile.exists();
-      if (!exists) {
-        throw new HttpsError(
-          "not-found",
-          "PDF 파일을 찾을 수 없습니다. Storage 업로드 후 다시 시도하세요."
-        );
-      }
-
-      const [buffer] = await pdfFile.download();
-      pdfHash = crypto.createHash("sha256").update(buffer).digest("hex");
-
-      // Firebase Storage 다운로드 URL — 업로드 시 자동 발급된 토큰 기반
-      const [metadata] = await pdfFile.getMetadata();
-      const token = (metadata.metadata as Record<string, string>)
-        ?.firebaseStorageDownloadTokens;
-      if (!token) {
-        throw new HttpsError("internal", "PDF 다운로드 토큰을 가져올 수 없습니다.");
-      }
-      const encodedPath = encodeURIComponent(`contracts/${contractId}/contract.pdf`);
+      const pdfToken = crypto.randomBytes(16).toString("hex");
+      await pdfFile.save(pdfBytes, {
+        contentType: "application/pdf",
+        metadata: {metadata: {firebaseStorageDownloadTokens: pdfToken}},
+      });
+      const encodedPdfPath = encodeURIComponent(`contracts/${contractId}/contract.pdf`);
       computedPdfUrl =
         `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/` +
-        `${encodedPath}?alt=media&token=${token}`;
+        `${encodedPdfPath}?alt=media&token=${pdfToken}`;
     } catch (e) {
-      // PDF 다운로드/해시 실패 → Storage 파일 Admin SDK로 정리 (클라이언트 삭제는 rules 차단)
+      // PDF 업로드 실패 → 이미 업로드된 서명 이미지도 Admin SDK로 정리
       await _cleanupContractFiles(contractId);
-      throw e;
-    }
-
-    // ── 서명 이미지 다운로드 + 해시 계산 (서버 측 — 클라이언트 전달 값 불사용)
-    let computedSigHash: string;
-    try {
-      const sigFile = bucket.file(sigStoragePath);
-      const [sigBuffer] = await sigFile.download();
-      computedSigHash = crypto.createHash("sha256").update(sigBuffer).digest("hex");
-    } catch (e) {
-      await _cleanupContractFiles(contractId);
-      throw e;
+      throw new HttpsError("internal", "PDF 업로드에 실패했습니다.");
     }
 
     const contractRef = db.collection("employment_contracts").doc(contractId);
@@ -5207,7 +5190,7 @@ export const callableFinalizeWorkerSignature = onCall(
       throw e;
     }
 
-    return {success: true, pdfUrl: computedPdfUrl};
+    return {success: true, pdfUrl: computedPdfUrl, sigUrl};
   }
 );
 
@@ -7001,6 +6984,43 @@ export const onBusinessDeactivated = onDocumentUpdated(
       }
       if (totalVoided > 0) {
         console.log(`✅ [사업장 비활성화] employment_contracts ${totalVoided}건 → voided: ${businessId}`);
+      }
+    }
+
+    // [MEDIUM-2] 4) 비활성화된 사업장의 workType 이미지 Storage 정리
+    // work_types/{id}.thumbnailUrl / .images[] → businesses/{bizId}/workTypes/ 경로
+    {
+      const bucket = admin.storage().bucket();
+      const workTypeSnap = await db.collection("work_types")
+        .where("businessId", "==", businessId)
+        .limit(500)
+        .get();
+
+      const imageUrls: string[] = [];
+      for (const doc of workTypeSnap.docs) {
+        const d = doc.data();
+        if (d["thumbnailUrl"]) imageUrls.push(d["thumbnailUrl"] as string);
+        const imgs = d["images"];
+        if (Array.isArray(imgs)) {
+          for (const u of imgs) {
+            if (typeof u === "string") imageUrls.push(u);
+          }
+        }
+      }
+
+      if (imageUrls.length > 0) {
+        const deleteResults = await Promise.allSettled(
+          imageUrls.map(async (url) => {
+            const match = url.match(/\/o\/([^?#]+)/);
+            if (!match) return;
+            const path = decodeURIComponent(match[1]);
+            await bucket.file(path).delete();
+          })
+        );
+        const failed = deleteResults.filter((r) => r.status === "rejected").length;
+        console.log(
+          `✅ [사업장 비활성화] workType 이미지 정리: ${imageUrls.length - failed}/${imageUrls.length}건 삭제 (실패 ${failed}건): ${businessId}`
+        );
       }
     }
   }

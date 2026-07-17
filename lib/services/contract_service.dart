@@ -2,9 +2,7 @@ import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/core/application_model.dart';
@@ -20,7 +18,6 @@ import 'firestore_service.dart';
 
 class ContractService {
   final _db = FirebaseFirestore.instance;
-  final _storage = FirebaseStorage.instance;
   final _firestoreService = FirestoreService();
 
   // ── 핵심: 번들링 생성/추가 ─────────────────────────────────────
@@ -194,60 +191,34 @@ class ContractService {
       throw Exception('이미 근무자 서명이 완료된 계약서입니다');
     }
 
-    // 서명 이미지 업로드
-    final sigUrl = await _uploadSignature(
-      contractId: contract.id,
-      role: 'worker',
-      bytes: signatureBytes,
-    );
-
-    // PDF 업로드 — CF가 Admin SDK로 직접 읽으므로 반환 URL 불사용
-    // 실패 시 서명 이미지 롤백
-    try {
-      await _uploadPdf(contractId: contract.id, bytes: pdfBytes);
-    } catch (e) {
-      try {
-        await _storage.ref()
-            .child('contracts/${contract.id}/signature_worker.png')
-            .delete();
-      } catch (cleanupErr) {
-        // [K-005] 서명 이미지 삭제 실패 — 고아 파일 가능성, 수동 확인 필요
-        debugPrint('⚠️ [K-005] 근무자 서명 이미지 삭제 실패 (고아 파일 주의) — ${contract.id}: $cleanupErr');
-      }
-      rethrow;
-    }
-
-    // [SEC-CONTRACT-H1] CF Admin SDK 경유로 전환 — 클라이언트 직접 Firestore 트랜잭션 제거.
-    // [SEC-CONTRACT-PDF-HASH] pdfUrl은 CF에서 직접 계산해 반환 — 클라이언트 전달 값 불사용.
-    //   CF가 Storage에서 PDF를 Admin SDK로 다운로드 → SHA-256(pdfHash) 계산 → Firestore 저장.
-    //   조작된 URL이나 다른 파일을 Firestore에 심는 공격 차단.
-    // [NOTE-DELETE-RULES] CF 실패 시 Storage 롤백은 CF 내부(_cleanupContractFiles)에서 처리.
-    //   storage.rules contracts/ allow delete: if false → 클라이언트 삭제 시도는 실패함.
-    final workerHash = sha256.convert(signatureBytes).toString();
+    // [SEC-WORKER-SIG] CF Admin SDK로 Storage 업로드 전환 (storage.rules: if false)
+    // 클라이언트가 직접 업로드하지 않고 base64로 CF에 전달 → CF가 Admin SDK로 업로드
+    final sigBase64 = base64Encode(signatureBytes);
+    final pdfBase64 = base64Encode(pdfBytes);
     final HttpsCallableResult cfResult;
     try {
       cfResult = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableFinalizeWorkerSignature',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)))
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 60)))
           .call({
             'contractId': contract.id,
-            'sigUrl': sigUrl,
-            'workerSignatureHash': workerHash,
-            // pdfUrl 미전달 — CF가 Storage에서 직접 읽어 계산
+            'signatureBase64': sigBase64,
+            'pdfBase64': pdfBase64,
           });
     } catch (e) {
-      // CF 실패 → CF 내부에서 이미 Storage 정리 완료.
-      // storage.rules allow delete: if false이므로 클라이언트 삭제 시도하지 않음.
+      // CF 실패 → CF 내부에서 Storage 정리 완료.
       rethrow;
     }
 
-    // CF 응답에서 pdfUrl 추출 (CF가 계산한 실제 Storage URL)
-    final cfPdfUrl = (cfResult.data as Map<Object?, Object?>?)?['pdfUrl'] as String? ?? '';
+    // CF 응답에서 URL 추출 (CF가 Admin SDK로 업로드 후 반환한 실제 Storage URL)
+    final cfData = cfResult.data as Map<Object?, Object?>?;
+    final cfPdfUrl = cfData?['pdfUrl'] as String? ?? '';
+    final cfSigUrl = cfData?['sigUrl'] as String? ?? '';
 
     final workerNow = DateTime.now(); // 로컬 변수 분리 — nullable ! 방지
     final updated = contract.copyWith(
       status: ContractStatus.completed,
-      workerSignatureUrl: sigUrl,
+      workerSignatureUrl: cfSigUrl,
       workerSignedAt: workerNow,
       pdfUrl: cfPdfUrl,
       updatedAt: workerNow,
@@ -908,42 +879,6 @@ class ContractService {
       payScheduleTime: workDetail.payScheduleTime,
       taxDeductionType: workDetail.taxDeductionType,
     );
-  }
-
-  // ── Storage 업로드 ────────────────────────────────────────────
-
-  Future<String> _uploadSignature({
-    required String contractId,
-    required String role,
-    required Uint8List bytes,
-  }) async {
-    try {
-      final ref = _storage
-          .ref()
-          .child('contracts/$contractId/signature_$role.png');
-      final task =
-          await ref.putData(bytes, SettableMetadata(contentType: 'image/png'));
-      return await task.ref.getDownloadURL();
-    } catch (e) {
-      debugPrint('❌ 서명 이미지 업로드 실패: $e');
-      throw Exception('서명 저장에 실패했습니다. 네트워크 연결을 확인해주세요.');
-    }
-  }
-
-  Future<String> _uploadPdf({
-    required String contractId,
-    required Uint8List bytes,
-  }) async {
-    try {
-      final ref =
-          _storage.ref().child('contracts/$contractId/contract.pdf');
-      final task = await ref.putData(
-          bytes, SettableMetadata(contentType: 'application/pdf'));
-      return await task.ref.getDownloadURL();
-    } catch (e) {
-      debugPrint('❌ 계약서 PDF 업로드 실패: $e');
-      throw Exception('계약서 저장에 실패했습니다. 네트워크 연결을 확인해주세요.');
-    }
   }
 
   // ── 유틸 ─────────────────────────────────────────────────────

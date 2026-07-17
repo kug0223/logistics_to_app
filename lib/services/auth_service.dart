@@ -621,10 +621,14 @@ class AuthService {
                   final mainImageUrl = bizData['mainImageUrl'] as String?;
                   final imageUrlsRaw = bizData['imageUrls'] as List<dynamic>?;
                   final imageUrls = imageUrlsRaw?.cast<String>() ?? [];
+                  // [MEDIUM-1 수정] transportImageUrls 누락으로 교통편 사진 고아 발생
+                  final transportUrlsRaw = bizData['transportImageUrls'] as List<dynamic>?;
+                  final transportUrls = transportUrlsRaw?.cast<String>() ?? [];
 
                   final allUrls = [
                     if (mainImageUrl != null && mainImageUrl.isNotEmpty) mainImageUrl,
                     ...imageUrls.where((u) => u.isNotEmpty),
+                    ...transportUrls.where((u) => u.isNotEmpty),
                   ];
 
                   if (allUrls.isNotEmpty) {
@@ -632,6 +636,7 @@ class AuthService {
                     await bizRef.update({
                       'mainImageUrl': FieldValue.delete(),
                       'imageUrls': FieldValue.delete(),
+                      'transportImageUrls': FieldValue.delete(),
                     });
 
                     // 2단계: Storage 이미지 삭제 — businesses/ 경로는 storage.rules allow delete: if false
