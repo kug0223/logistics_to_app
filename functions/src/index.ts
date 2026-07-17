@@ -5379,8 +5379,11 @@ export const callableFinalizeWorkerSignature = onCall(
         }
       });
     } catch (e) {
-      // 트랜잭션 실패 → Storage 파일 Admin SDK로 정리 (클라이언트 삭제는 rules 차단)
-      await _cleanupContractFiles(contractId);
+      // 이미 완료된 계약서(failed-precondition)는 기존 파일 보존 — cleanup 불필요
+      // 그 외 Firestore/내부 오류에서만 업로드된 파일을 Admin SDK로 정리
+      if (!(e instanceof HttpsError) || e.code !== "failed-precondition") {
+        await _cleanupContractFiles(contractId);
+      }
       throw e;
     }
 
@@ -5441,6 +5444,19 @@ export const callableFinalizeEmployerSignature = onCall(
         if (!bizId) throw new HttpsError("invalid-argument", "contractData.businessId가 필요합니다.");
         await assertBizAdmin(callerUid, bizId);
 
+        // workerId가 해당 사업장의 확정/계약대기 지원자인지 검증 (임의 UID 주입 방지)
+        const workerId = contractData["workerId"] as string | undefined;
+        if (!workerId) throw new HttpsError("invalid-argument", "contractData.workerId가 필요합니다.");
+        const workerAppQuery = await db.collection("applications")
+          .where("businessId", "==", bizId)
+          .where("uid", "==", workerId)
+          .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
+          .limit(1)
+          .get();
+        if (workerAppQuery.empty) {
+          throw new HttpsError("permission-denied", "해당 근로자는 이 사업장의 확정된 지원자가 아닙니다.");
+        }
+
         await db.runTransaction(async (tx) => {
           const snap = await tx.get(contractRef);
           if (snap.exists) throw new HttpsError("already-exists", "이미 계약서가 생성되었습니다.");
@@ -5493,8 +5509,14 @@ export const callableFinalizeEmployerSignature = onCall(
         });
       }
     } catch (e) {
-      // Firestore 실패 → Storage 파일 Admin SDK로 정리 (rules에서 클라이언트 삭제 차단)
-      try { await sigFile.delete(); } catch (_) {}
+      // 이미 완료된 계약서(failed-precondition/already-exists)는 기존 파일 보존
+      // 그 외 Firestore/내부 오류에서만 업로드된 파일을 Admin SDK로 정리
+      const isAlreadyDone =
+        e instanceof HttpsError &&
+        (e.code === "failed-precondition" || e.code === "already-exists");
+      if (!isAlreadyDone) {
+        try { await sigFile.delete(); } catch (_) {}
+      }
       throw e;
     }
 

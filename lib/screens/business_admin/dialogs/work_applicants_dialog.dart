@@ -2625,18 +2625,24 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   /// 확정자 계약서 일괄작성 (이미 확정된 상태 → 상태 변경 없이 계약서만 생성)
   Future<void> _batchCreateContractsForConfirmed() async {
     if (_isContractBatchProcessing) return;
+    setState(() => _isContractBatchProcessing = true);
     final businessId = widget.toItem.to.businessId;
 
     // 1. 템플릿 선택
     final articles = await ContractTemplateSelectorDialog.show(context, businessId: businessId);
-    if (articles == null || !mounted) return;
+    if (articles == null || !mounted) {
+      if (mounted) setState(() => _isContractBatchProcessing = false);
+      return;
+    }
 
     // 2. 인감 확인
     final currentUser = context.read<UserProvider>().currentUser;
     final sealBase64 = currentUser?.sealBase64 ?? '';
     final sealType = currentUser?.sealType ?? 'stamp';
     if (sealBase64.isEmpty) {
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       final goSettings = await DialogHelper.showConfirm(
         context,
         title: '사업주 날인 미등록',
@@ -2644,16 +2650,18 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         confirmText: '설정으로 이동',
         cancelText: '취소',
       );
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       if (goSettings) {
         Navigator.of(context, rootNavigator: true)
             .push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
       }
+      setState(() => _isContractBatchProcessing = false);
       return;
     }
 
     // 3. 사업장 정보 로드
-    setState(() => _isContractBatchProcessing = true);
     late BusinessModel business;
     try {
       final b = await _firestoreService.getBusinessById(businessId);
@@ -2787,21 +2795,30 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   /// 개별 계약서 작성 (확정자 단건)
   Future<void> _createContractForConfirmedUser(Map<String, dynamic> item) async {
     if (_isProcessing) return;
+    setState(() => _isProcessing = true);
     final app = item['application'] as ApplicationModel;
     final user = item['user'] as UserModel?;
-    if (user == null) return;
+    if (user == null) {
+      if (mounted) setState(() => _isProcessing = false);
+      return;
+    }
     final businessId = widget.toItem.to.businessId;
 
     // 1. 템플릿 선택
     final articles = await ContractTemplateSelectorDialog.show(context, businessId: businessId);
-    if (articles == null || !mounted) return;
+    if (articles == null || !mounted) {
+      if (mounted) setState(() => _isProcessing = false);
+      return;
+    }
 
     // 2. 인감 확인
     final currentUser = context.read<UserProvider>().currentUser;
     final sealBase64 = currentUser?.sealBase64 ?? '';
     final sealType = currentUser?.sealType ?? 'stamp';
     if (sealBase64.isEmpty) {
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       final goSettings = await DialogHelper.showConfirm(
         context,
         title: '사업주 날인 미등록',
@@ -2809,11 +2826,14 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         confirmText: '설정으로 이동',
         cancelText: '취소',
       );
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       if (goSettings) {
         Navigator.of(context, rootNavigator: true)
             .push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
       }
+      setState(() => _isProcessing = false);
       return;
     }
 
@@ -2821,9 +2841,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     final resolvedWork = widget.work ?? _getWorkForApp(app);
     if (resolvedWork == null) {
       ToastHelper.showError('업무 정보를 찾을 수 없습니다');
+      if (mounted) setState(() => _isProcessing = false);
       return;
     }
-    setState(() => _isProcessing = true);
     late EmploymentContractModel previewContract;
     try {
       final b = await _firestoreService.getBusinessById(businessId);
@@ -2889,6 +2909,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   /// 일괄 거절
   Future<void> _batchReject() async {
     if (_selectedIds.isEmpty || _isProcessing) return;
+    setState(() => _isProcessing = true);
 
     final userProvider = context.read<UserProvider>();
     final reason = await DialogHelper.showRejectReasonPicker(
@@ -2897,9 +2918,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       message: '선택한 ${_selectedIds.length}명을 거절합니다.\n거절 사유를 선택해주세요.',
     );
 
-    if (reason == null || !mounted) return;
-
-    setState(() => _isProcessing = true);
+    if (reason == null || !mounted) {
+      if (mounted) setState(() => _isProcessing = false);
+      return;
+    }
 
     try {
       final adminUID = userProvider.currentUser?.uid;

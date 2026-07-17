@@ -321,7 +321,7 @@ class ScheduleConflictService {
       return null;
     } catch (e) {
       debugPrint('❌ 사용자 제한 체크 실패: $e');
-      return null;
+      rethrow; // null 반환 시 이용 제한 우회 가능 → 에러 전파
     }
   }
 

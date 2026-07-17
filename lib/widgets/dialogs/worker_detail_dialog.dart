@@ -1777,6 +1777,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   /// 상태 업데이트
   Future<void> _updateStatus(String newStatus) async {
     if (widget.application == null || _isLoading) return;
+    setState(() => _isLoading = true);
 
     final actionText = newStatus == AppStatus.confirmed ? '승인' : '거절';
     final adminUID = context.read<UserProvider>().currentUser?.uid;
@@ -1794,7 +1795,10 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         iconColor: AppColors.success,
       );
 
-      if (confirm != true || !mounted) return;
+      if (confirm != true || !mounted) {
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
     } else {
       // 거절 - 사유 선택
       rejectReason = await DialogHelper.showRejectReasonPicker(
@@ -1803,11 +1807,13 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         targetName: widget.user.name,
       );
 
-      if (rejectReason == null) return;
+      if (rejectReason == null || !mounted) {
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
     }
 
-    if (!mounted || _isLoading) return;
-    setState(() => _isLoading = true);
+    if (!mounted) return;
     try {
       await _firestoreService.updateApplicationStatus(
         applicationId: widget.application!.id,

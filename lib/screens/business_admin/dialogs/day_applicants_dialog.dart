@@ -2076,6 +2076,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   // ── 개별 계약서 작성 ────────────────────────────────────────────────────────
 
   Future<void> _createContractForOne(ApplicationModel app) async {
+    if (_isProcessing) return;
     final bizId = _selectedBusinessId ?? '';
     if (bizId.isEmpty || widget.businesses.isEmpty) return;
     // [특이사항] orElse 폴백 제거 — 잘못된 bizId 시 첫 번째 사업장 명의로 계약서가 생성되는 것을 방지.
@@ -2087,18 +2088,24 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       ToastHelper.showError('지원자 정보를 불러올 수 없습니다');
       return;
     }
+    setState(() => _isProcessing = true);
 
     // 1. 템플릿 선택
     final articles =
         await ContractTemplateSelectorDialog.show(context, businessId: bizId);
-    if (articles == null || !mounted) return;
+    if (articles == null || !mounted) {
+      if (mounted) setState(() => _isProcessing = false);
+      return;
+    }
 
     // 2. 인감 확인
     final currentUser = context.read<UserProvider>().currentUser;
     final sealBase64 = currentUser?.sealBase64 ?? '';
     final sealType = currentUser?.sealType ?? 'stamp';
     if (sealBase64.isEmpty) {
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       final goSettings = await DialogHelper.showConfirm(
         context,
         title: '사업주 날인 미등록',
@@ -2106,11 +2113,14 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         confirmText: '설정으로 이동',
         cancelText: '취소',
       );
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       if (goSettings) {
         Navigator.of(context, rootNavigator: true)
             .push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
       }
+      setState(() => _isProcessing = false);
       return;
     }
 
