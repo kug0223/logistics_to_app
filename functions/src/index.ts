@@ -7549,6 +7549,58 @@ export const callableGetUsersBatch = onCall(
   }
 );
 
+/**
+ * callableGetAllUsers — 슈퍼관리자 전용 전체 사용자 목록 조회
+ *
+ * Firestore rules M-3: users list는 슈퍼어드민만 허용하나,
+ * 클라이언트 직접 쿼리 대신 CF 경유로 민감 필드 제거 후 반환.
+ *
+ * 보안:
+ *   - 슈퍼어드민 역할 커스텀 클레임 서버 검증
+ *   - ci, residentNumber, foreignIdNumber, idCardImageUrl,
+ *     signatureBase64, sealBase64, bankbookImageUrl 필드 제거
+ *   - fcmToken, passwordHistory, ciHash, phoneHash, accountNumber 제거
+ *
+ * 입력: 없음
+ * 출력: { users: SafeUserData[] }  (createdAt 내림차순, 최대 500개)
+ */
+export const callableGetAllUsers = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    }
+    const claims = request.auth.token;
+    if (claims["role"] !== "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "슈퍼관리자 권한이 필요합니다.");
+    }
+
+    const SENSITIVE_FIELDS = new Set([
+      "ci", "residentNumber", "foreignIdNumber",
+      "idCardImageUrl", "signatureBase64", "sealBase64", "bankbookImageUrl",
+      "fcmToken", "fcmTokens",
+      "passwordHistory", "ciHash", "phoneHash", "accountNumber",
+    ]);
+
+    const snap = await db.collection("users")
+      .orderBy("createdAt", "desc")
+      .limit(500)
+      .get();
+
+    const users: Array<Record<string, unknown>> = [];
+    for (const doc of snap.docs) {
+      const data = doc.data();
+      const safeData: Record<string, unknown> = {uid: doc.id};
+      for (const [key, value] of Object.entries(data)) {
+        if (!SENSITIVE_FIELDS.has(key)) safeData[key] = value;
+      }
+      users.push(safeData);
+    }
+
+    return {users};
+  }
+);
+
 // ═══════════════════════════════════════════════════════════
 // 🏢 내 사업장 목록 조회 (adminIds arrayContains — list 권한 불필요)
 // ═══════════════════════════════════════════════════════════

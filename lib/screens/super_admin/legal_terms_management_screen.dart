@@ -331,7 +331,6 @@ class _TermsEditScreenState extends State<_TermsEditScreen> {
     content: _contentCtrl.text.trim(),
     version: _versionCtrl.text.trim(),
     isRequired: _isRequired,
-    updatedAt: DateTime.now(),
   );
 
   @override

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
 import '../../models/core/user_model.dart';
@@ -27,8 +26,6 @@ class AllUsersScreen extends StatefulWidget {
 
 class _AllUsersScreenState extends State<AllUsersScreen>
     with LoadingStateMixin {
-  final _firestore = FirebaseFirestore.instance;
-
   List<UserModel> _users = [];
   String _roleFilter = 'ALL';
   String _searchQuery = '';
@@ -68,16 +65,20 @@ class _AllUsersScreenState extends State<AllUsersScreen>
   Future<void> _loadAllUsers() async {
     setLoading(true);
     try {
-      final snap = await _firestore
-          .collection('users')
-          .orderBy('createdAt', descending: true)
-          .limit(500)
-          .get();
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetAllUsers',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>();
+      final usersData =
+          (result.data['users'] as List?)?.cast<Map<String, dynamic>>() ?? [];
 
       if (!mounted) return;
       setState(() {
-        _users = snap.docs.map((d) {
-          try { return UserModel.fromMap(d.data(), d.id); } catch (_) { return null; }
+        _users = usersData.map((data) {
+          try {
+            final uid = data['uid'] as String? ?? '';
+            return UserModel.fromMap(data, uid);
+          } catch (_) { return null; }
         }).whereType<UserModel>().toList();
       });
       setLoading(false);

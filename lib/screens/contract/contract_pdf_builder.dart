@@ -41,7 +41,7 @@ class ContractPdfBuilder {
           employerSig = pw.MemoryImage(resp.bodyBytes);
         }
       } catch (e) {
-        debugPrint('사업주 서명 이미지 로드 실패: $e');
+        if (kDebugMode) debugPrint('사업주 서명 이미지 로드 실패: $e');
       }
     }
     if (workerSignatureBytes != null) {

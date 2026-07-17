@@ -117,7 +117,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           setState(() => _resolvedBusinessId = first['id'] as String?);
         }
       } catch (e) {
-        debugPrint('⚠️ 사업장 조회 실패: $e');
+        if (kDebugMode) debugPrint('⚠️ 사업장 조회 실패: $e');
       }
     }
   }
@@ -232,7 +232,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
       setState(() => _isPushEnabled = value);
     } catch (e) {
-      debugPrint('❌ 알림 설정 변경 실패: $e');
+      if (kDebugMode) debugPrint('❌ 알림 설정 변경 실패: $e');
       if (mounted) ToastHelper.showError('알림 설정 변경에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isLoading = false);
