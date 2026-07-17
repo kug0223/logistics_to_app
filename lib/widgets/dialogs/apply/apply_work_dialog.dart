@@ -2474,6 +2474,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       ToastHelper.showInfo('이미 자동취소된 지원입니다 (시간 충돌)');
       return;
     }
+    setState(() => _isSubmitting = true);
 
     final confirmed = await DialogHelper.showCancelConfirm(
       context,
@@ -2481,7 +2482,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       message: '${application.selectedWorkType} 지원을 취소하시겠습니까?',
     );
 
-    if (!confirmed || !mounted) return;
+    if (!confirmed || !mounted) {
+      if (mounted) setState(() => _isSubmitting = false);
+      return;
+    }
 
     // ✅ 로딩 키 통일 (applyForWork와 동일한 방식)
     final loadingKey = _makeWorkKey(
@@ -2490,7 +2494,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       application.endTime,
     );
     setState(() {
-      _isSubmitting = true; // finally에서 해제
       _loadingWorkIds.add(loadingKey);
     });
 
@@ -2531,6 +2534,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   }) async {
     // [LOCK-01] 다이얼로그 await 이전 이중 진입 방지
     if (_isSubmitting) return;
+    setState(() => _isSubmitting = true);
     final result = await ConfirmCancelDialog.show(
       context: context,
       workDate: date ?? application.workDate,
@@ -2540,15 +2544,17 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       currentNoShowCount: _userNoShowCount,
     );
 
-    if (result != ConfirmCancelResult.proceed || !mounted) return;
+    if (result != ConfirmCancelResult.proceed || !mounted) {
+      if (mounted) setState(() => _isSubmitting = false);
+      return;
+    }
 
     final loadingKey = date != null
         ? '${date.millisecondsSinceEpoch}_${work.id}'
         : work.id;
 
     setState(() {
-      _isSubmitting = true; // finally에서 해제
-      _loadingWorkIds.add(loadingKey);
+      _loadingWorkIds.add(loadingKey); // _isSubmitting은 이미 true
     });
 
     try {

@@ -7713,6 +7713,16 @@ export const callableGetIdCardSignedUrl = onCall(
         );
       }
 
+      // 클라이언트 시계 조작으로 expiresAt이 7일보다 길게 설정된 경우 차단
+      // respondedAt(serverTimestamp) + 7일을 서버에서 직접 계산하여 재검증
+      const respondedAt = accessSnap.docs[0].data().respondedAt as Timestamp | undefined;
+      if (respondedAt) {
+        const maxExpiry = new Date(respondedAt.toMillis() + 7 * 24 * 60 * 60 * 1000);
+        if (new Date() > maxExpiry) {
+          throw new HttpsError("permission-denied", "신분증 열람 권한이 만료되었습니다.");
+        }
+      }
+
       // [MEDIUM] 퇴직 관리자 stale access 방어 — 승인 당시 사업장에 여전히 소속인지 재검증
       const approvedForBiz = accessSnap.docs[0].data().requesterBusinessId as string | undefined;
       if (approvedForBiz) {
