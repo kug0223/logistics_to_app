@@ -233,13 +233,13 @@ class TaxDeductionService {
 
     final totalDeduction = retroactive + pension8 + health8 + ltc8 + employment8 + totalTax8;
 
-    debugPrint('📊 8일 소급 계산: 이전합계=$prevGrossTotal원, 소급=$retroactive원, 당일4대보험=${pension8 + health8 + ltc8 + employment8}원, 당일소득세=$totalTax8원');
+    if (kDebugMode) debugPrint('📊 8일 소급 계산: 이전합계=$prevGrossTotal원, 소급=$retroactive원, 당일4대보험=${pension8 + health8 + ltc8 + employment8}원, 당일소득세=$totalTax8원');
 
     final netWage8 = gross8 - totalDeduction;
 
     // 소급공제가 당일 급여를 초과하면 netWage가 음수 — 설계상 허용된 한계.
     // UI는 effectiveNetWage(clamp 0)로 표시. 초과분은 다음 급여에서 수동 공제.
-    if (netWage8 < 0) {
+    if (kDebugMode && netWage8 < 0) {
       debugPrint(
         '⚠️ [8일 소급] 음수 netWage 발생: gross=$gross8원, 총공제=$totalDeduction원 '
         '(소급=$retroactive + 당일보험=${pension8 + health8 + ltc8 + employment8} + 세금=$totalTax8), '

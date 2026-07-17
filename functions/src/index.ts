@@ -15832,3 +15832,223 @@ export const callableVoidApplicationContracts = onCall(
     return {voidedCount: toVoid.size};
   }
 );
+
+// ═══════════════════════════════════════════════════════════
+// 👥 전화번호로 근무자 검색 (멤버 초대용 — users list CF 이전)
+// ═══════════════════════════════════════════════════════════
+// 이전: member_service.dart findUserByPhone — users 직접 list 쿼리
+//       allow list: if isSuperAdmin() 변경(M-3) 후 BUSINESS_ADMIN PERMISSION_DENIED 발생
+// 현재: Admin SDK 경유 — 호출자 역할 서버 검증 후 조회 결과 반환
+export const callableGetUserByPhone = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const phone = request.data.phone as string | undefined;
+    if (!phone || typeof phone !== "string" || phone.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "phone이 필요합니다.");
+    }
+
+    // 호출자 권한 검증: BUSINESS_ADMIN, SubAdmin, SUPER_ADMIN만 허용
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    const callerData = callerSnap.data();
+    if (!callerData) throw new HttpsError("not-found", "호출자 정보를 찾을 수 없습니다.");
+
+    const callerRole = callerData.role as string | undefined;
+    const isSuperAdmin = callerRole === "SUPER_ADMIN";
+    const isAdmin = callerRole === "BUSINESS_ADMIN";
+    const isSubAdmin = callerRole === "USER" && !!(callerData.subAdminOf as string | undefined);
+
+    if (!isSuperAdmin && !isAdmin && !isSubAdmin) {
+      throw new HttpsError("permission-denied", "멤버 검색 권한이 없습니다.");
+    }
+
+    // 전화번호 정규화: 숫자만 추출 후 두 형식으로 시도
+    const digits = phone.replace(/[^0-9]/g, "");
+    const formatted = digits.length === 11
+      ? `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`
+      : digits.length === 10
+        ? `${digits.slice(0, 2)}-${digits.slice(2, 6)}-${digits.slice(6)}`
+        : digits;
+
+    for (const query of [digits, formatted]) {
+      const snap = await db.collection("users")
+        .where("phone", "==", query)
+        .where("role", "==", "USER")
+        .limit(1)
+        .get();
+      if (!snap.empty) {
+        const doc = snap.docs[0];
+        const data = doc.data();
+        return {
+          uid: doc.id,
+          name: (data.name as string | undefined) ?? "",
+          phone: (data.phone as string | undefined) ?? "",
+        };
+      }
+    }
+
+    return {uid: null};
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+// 🏅 배지 평가 및 업데이트 (badge_service CF 이전)
+// ═══════════════════════════════════════════════════════════
+// 이전: badge_service.dart — attendance 직접 list 쿼리 (allow list: if false → PERMISSION_DENIED)
+//       users/{uid}.badges 직접 write (슈퍼어드민 blocked 필드 목록에 badges 포함 → PERMISSION_DENIED)
+// 현재: Admin SDK 경유 — 모든 attendance 쿼리 + badges write 서버에서 처리
+
+// 배지 정의 (Dart BadgeModel.defaultBadges()와 동기화 필수)
+type BadgeDef = {
+  id: string;
+  conditionType: "minScore" | "workDays" | "consecutive" | "monthlyPerfect";
+  conditionValue: number;
+  minWorkDays?: number;
+  maxNoShow?: number;
+  minRating?: number;
+  workType?: string;
+};
+
+const BADGE_DEFINITIONS: BadgeDef[] = [
+  // 레벨 배지 (신뢰도 + 복합 조건)
+  {id: "badge_bronze", conditionType: "minScore", conditionValue: 60, minWorkDays: 5},
+  {id: "badge_silver", conditionType: "minScore", conditionValue: 70, minWorkDays: 20, maxNoShow: 1},
+  {id: "badge_gold", conditionType: "minScore", conditionValue: 85, minWorkDays: 50, maxNoShow: 0},
+  {id: "badge_diamond", conditionType: "minScore", conditionValue: 95, minWorkDays: 100, maxNoShow: 0, minRating: 4.5},
+  // 경험 배지 (총 근무일수)
+  {id: "badge_veteran", conditionType: "workDays", conditionValue: 100},
+  {id: "badge_master", conditionType: "workDays", conditionValue: 200},
+  // 근태 배지
+  {id: "badge_streak", conditionType: "consecutive", conditionValue: 15},
+  {id: "badge_time_master", conditionType: "consecutive", conditionValue: 30},
+  {id: "badge_perfect_attendance", conditionType: "monthlyPerfect", conditionValue: 1},
+  // 업종 전문 배지
+  {id: "badge_picking_expert", conditionType: "workDays", conditionValue: 30, workType: "PICK"},
+  {id: "badge_loading_expert", conditionType: "workDays", conditionValue: 30, workType: "LOAD"},
+  {id: "badge_inspection_expert", conditionType: "workDays", conditionValue: 30, workType: "INSPECT"},
+];
+
+async function evaluateBadge(
+  uid: string,
+  userData: FirebaseFirestore.DocumentData,
+  badge: BadgeDef
+): Promise<boolean> {
+  const trustScore = (userData.trustScore as number | undefined) ?? 0;
+  const totalWorkDays = (userData.totalWorkDays as number | undefined) ?? 0;
+  const noShowCount = (userData.noShowCount as number | undefined) ?? 0;
+  const averageRating = (userData.averageRating as number | undefined) ?? 0;
+
+  if (badge.conditionType === "minScore") {
+    if (trustScore < badge.conditionValue) return false;
+    if (badge.minWorkDays !== undefined && totalWorkDays < badge.minWorkDays) return false;
+    if (badge.maxNoShow !== undefined && noShowCount > badge.maxNoShow) return false;
+    if (badge.minRating !== undefined && averageRating < badge.minRating) return false;
+    return true;
+  }
+
+  if (badge.conditionType === "workDays") {
+    if (!badge.workType) return totalWorkDays >= badge.conditionValue;
+    // 업종 전문 배지: attendance 컬렉션 집계
+    const PRESENT = ["present", "late", "early_leave"];
+    const counts = await Promise.all(
+      PRESENT.map((s) =>
+        db.collection("attendance")
+          .where("userId", "==", uid)
+          .where("workType", "==", badge.workType)
+          .where("status", "==", s)
+          .count()
+          .get()
+          .then((r) => r.data().count)
+      )
+    );
+    return counts.reduce((sum, c) => sum + c, 0) >= badge.conditionValue;
+  }
+
+  if (badge.conditionType === "consecutive") {
+    const snap = await db.collection("attendance")
+      .where("userId", "==", uid)
+      .orderBy("workDate", "desc")
+      .limit(badge.conditionValue + 5)
+      .get();
+    let streak = 0;
+    for (const doc of snap.docs) {
+      const status = doc.data().status as string | undefined;
+      if (status === "present" || status === "early_leave") {
+        streak++;
+        if (streak >= badge.conditionValue) return true;
+      } else {
+        break;
+      }
+    }
+    return false;
+  }
+
+  if (badge.conditionType === "monthlyPerfect") {
+    const now = new Date();
+    const firstOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const firstOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const snap = await db.collection("attendance")
+      .where("userId", "==", uid)
+      .where("workDate", ">=", Timestamp.fromDate(firstOfLastMonth))
+      .where("workDate", "<", Timestamp.fromDate(firstOfThisMonth))
+      .get();
+    if (snap.empty) return false;
+    return snap.docs.every((doc) => {
+      const s = doc.data().status as string | undefined;
+      return s !== "absent" && s !== "NO_SHOW";
+    });
+  }
+
+  return false;
+}
+
+export const callableEvaluateAndUpdateBadges = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const targetUid = request.data.uid as string | undefined;
+    if (!targetUid || typeof targetUid !== "string" || targetUid.length === 0) {
+      throw new HttpsError("invalid-argument", "uid가 필요합니다.");
+    }
+
+    // 권한: 슈퍼어드민 또는 자신에 대한 배지 평가만 허용
+    if (callerUid !== targetUid) {
+      const callerSnap = await db.collection("users").doc(callerUid).get();
+      if ((callerSnap.data()?.role as string | undefined) !== "SUPER_ADMIN") {
+        throw new HttpsError("permission-denied", "본인 계정에 대한 배지 평가만 가능합니다.");
+      }
+    }
+
+    const userSnap = await db.collection("users").doc(targetUid).get();
+    if (!userSnap.exists) throw new HttpsError("not-found", "사용자를 찾을 수 없습니다.");
+    const userData = userSnap.data()!;
+
+    const currentBadges = new Set<string>(
+      Array.isArray(userData.badges) ? (userData.badges as string[]) : []
+    );
+    const newlyEarned: string[] = [];
+
+    for (const badge of BADGE_DEFINITIONS) {
+      if (currentBadges.has(badge.id)) continue;
+      try {
+        if (await evaluateBadge(targetUid, userData, badge)) {
+          newlyEarned.push(badge.id);
+        }
+      } catch {
+        // 개별 배지 평가 실패는 건너뜀 (fire-and-forget 안전성)
+      }
+    }
+
+    if (newlyEarned.length > 0) {
+      await db.collection("users").doc(targetUid).update({
+        badges: admin.firestore.FieldValue.arrayUnion(...newlyEarned),
+      });
+    }
+
+    return {newBadges: newlyEarned};
+  }
+);

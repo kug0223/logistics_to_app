@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import '../models/core/business_member_model.dart';
 import '../models/core/member_invitation_model.dart';
 import '../models/core/notification_model.dart';
-import '../utils/format_helper.dart';
 import 'firestore_service.dart';
 
 class MemberService {
@@ -22,35 +21,26 @@ class MemberService {
 
   // ── 초대 발송 ─────────────────────────────────────────────────
 
-  /// 전화번호로 근무자 검색 (숫자형·하이픈형 모두 시도)
+  /// 전화번호로 근무자 검색 — callableGetUserByPhone CF 경유
+  /// [CF-MIGRATED 2026-07-17] users list: if isSuperAdmin() 강화(M-3) 후
+  /// BUSINESS_ADMIN PERMISSION_DENIED 발생 → Admin SDK CF 이전
   Future<Map<String, dynamic>?> findUserByPhone(String phone) async {
-    // 입력값 정규화: 숫자만 추출
-    final digits = phone.replaceAll(RegExp(r'[^0-9]'), '');
-    final formatted = FormatHelper.formatPhone(digits); // 010-1234-5678
-
-    // 두 형식으로 순차 조회 (DB 저장 방식이 다를 수 있음)
-    for (final query in [digits, formatted]) {
-      try {
-        final snap = await _db
-            .collection('users')
-            .where('phone', isEqualTo: query)
-            .where('role', isEqualTo: 'USER')
-            .limit(1)
-            .get();
-        if (snap.docs.isNotEmpty) {
-          final doc = snap.docs.first;
-          final data = doc.data();
-          return {
-            'uid': doc.id,
-            'name': data['name'] ?? '',
-            'phone': data['phone'] ?? '',
-          };
-        }
-      } catch (e) {
-        debugPrint('전화번호 검색 실패 ($query): $e');
-      }
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetUserByPhone',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+      final result = await callable.call<Map<String, dynamic>>({'phone': phone});
+      final uid = result.data['uid'] as String?;
+      if (uid == null) return null;
+      return {
+        'uid': uid,
+        'name': result.data['name'] as String? ?? '',
+        'phone': result.data['phone'] as String? ?? '',
+      };
+    } catch (e) {
+      debugPrint('전화번호 검색 실패: $e');
+      return null;
     }
-    return null;
   }
 
   /// 이미 해당 사업장 멤버인지 확인
