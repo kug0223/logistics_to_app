@@ -1609,10 +1609,15 @@ service cloud.firestore {
                          // [M12-FIX] pending_worker → pending_employer 역전환 차단 — 근무자 서명 우회 방지
                          //   callableFinalizeEmployerSignature CF가 pending_employer→pending_worker 전이를 서버에서 수행
                          //   관리자가 직접 pending_worker→pending_employer 쓰면 근무자에게 서명 완료로 오인
+                         // [M-4 FIX] pending_worker → voided 직접 전환 차단 — callableVoidApplicationContracts CF 전용
+                         //   관리자가 직접 voided 전환 시 applications 상태 미처리 + 근무자 알림 누락
+                         //   CF Admin SDK는 rules 우회 → CF 경유 정상 처리에 영향 없음
                          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
                           (request.resource.data.get('status', '') != 'completed' &&
                            !(resource.data.get('status', '') == 'pending_worker' &&
-                             request.resource.data.get('status', '') == 'pending_employer'))) &&
+                             request.resource.data.get('status', '') == 'pending_employer') &&
+                           !(resource.data.get('status', '') == 'pending_worker' &&
+                             request.resource.data.get('status', '') == 'voided'))) &&
                          // [CONTRACT-L2-FIX] contractVoidedAt 서버 타임스탬프 강제 (관리자 경로)
                          //   근무자 경로(1492줄)와 동일 보호 — 과거/미래 무효화 날짜 위변조 차단
                          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['contractVoidedAt']) ||
