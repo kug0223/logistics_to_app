@@ -40,6 +40,7 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
   }
 
   Future<void> _load() async {
+    if (_loading) return;
     setState(() => _loading = true);
     try {
       final result = await _service.getMembers(widget.businessId);

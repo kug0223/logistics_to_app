@@ -86,7 +86,7 @@ extension TOFirestore on FirestoreService {
           _cachedPerAdminAt[adminUID] = now;
           return v;
         }
-      } catch (_) {}
+      } catch (e) { debugPrint('⚠️ getMaxActiveTOLimit per-admin 조회 실패: $e'); }
     }
 
     // 전역값 폴백
@@ -105,7 +105,7 @@ extension TOFirestore on FirestoreService {
           return v;
         }
       }
-    } catch (_) {}
+    } catch (e) { debugPrint('⚠️ getMaxActiveTOLimit 전역값 조회 실패: $e'); }
     return 4;
   }
 
@@ -648,7 +648,8 @@ extension TOFirestore on FirestoreService {
         0,
         (acc, wd) => acc + ((Map<String, dynamic>.from(wd)['requiredCount'] as num?)?.toInt() ?? 0),
       );
-    } catch (_) {
+    } catch (e) {
+      debugPrint('⚠️ getSlotTotalRequired 조회 실패 [$toId/$slotId]: $e');
       return 0;
     }
   }
@@ -672,7 +673,8 @@ extension TOFirestore on FirestoreService {
         result[id] = (map['requiredCount'] as num?)?.toInt() ?? 0;
       }
       return result;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('⚠️ getSlotWorkDetailCapacities 조회 실패 [$toId/$slotId]: $e');
       return {};
     }
   }

@@ -40,7 +40,7 @@ class _ContractTemplateListScreenState
   }
 
   Future<void> _load() async {
-    if (!mounted) return;
+    if (!mounted || _loading) return;
     setState(() => _loading = true);
     try {
       if (kDebugMode) debugPrint('📂 [ContractTemplateListScreen] businessId=${widget.businessId}');

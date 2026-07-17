@@ -144,6 +144,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   // ============================================================
 
   Future<void> _loadMyBusinesses() async {
+    if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);

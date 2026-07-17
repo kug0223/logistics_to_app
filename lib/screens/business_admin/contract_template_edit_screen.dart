@@ -110,6 +110,7 @@ class _ContractTemplateEditScreenState
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) {
       ToastHelper.showWarning('템플릿 이름을 입력해주세요');

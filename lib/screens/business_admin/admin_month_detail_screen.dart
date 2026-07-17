@@ -54,6 +54,7 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
   }
 
   Future<void> _loadData() async {
+    if (_isLoading) return;
     setState(() { _isLoading = true; _hasError = false; });
     try {
       final data = await _service.getMonthDetail(

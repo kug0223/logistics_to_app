@@ -43,7 +43,7 @@ extension IdCardFirestore on FirestoreService {
         'customReason': customReason,
         'applicationId': applicationId,
       });
-      final data = Map<String, dynamic>.from(result.data as Map);
+      final data = Map<String, dynamic>.from(result.data as Map? ?? {});
       final cfReason = data['reason'] as String?;
       final requestId = data['requestId'] as String?;
 
@@ -212,7 +212,7 @@ extension IdCardFirestore on FirestoreService {
         'requesterId': requesterId,
         'targetUserId': targetUserId,
       });
-      final data = Map<String, dynamic>.from(result.data as Map);
+      final data = Map<String, dynamic>.from(result.data as Map? ?? {});
       final raw = data['request'];
       if (raw == null) return null;
       final hydrated = _cfHydrate(Map<String, dynamic>.from(raw as Map));

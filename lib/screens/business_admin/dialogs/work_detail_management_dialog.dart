@@ -507,6 +507,7 @@ class WorkDetailManagementDialog {
         onComplete();
         ToastHelper.showSuccess('${works.length}개 업무가 마감되었습니다');
       } catch (e) {
+        debugPrint('❌ 업무 일괄 마감 실패: $e');
         if (context.mounted) ToastHelper.showError('일부 업무 마감에 실패했습니다');
       }
     } finally {
@@ -557,6 +558,7 @@ class WorkDetailManagementDialog {
         onComplete();
         ToastHelper.showSuccess('${works.length}개 업무가 재오픈되었습니다');
       } catch (e) {
+        debugPrint('❌ 업무 일괄 재오픈 실패: $e');
         if (context.mounted) ToastHelper.showError('일부 업무 재오픈에 실패했습니다');
       }
     } finally {
@@ -606,6 +608,7 @@ class WorkDetailManagementDialog {
       onComplete();
       ToastHelper.showSuccess('${works.length}개 업무 긴급모집이 종료되었습니다');
     } catch (e) {
+      debugPrint('❌ 업무 일괄 긴급모집 종료 실패: $e');
       if (context.mounted) ToastHelper.showError('일부 긴급모집 종료에 실패했습니다');
     } finally {
       _isProcessing = false;

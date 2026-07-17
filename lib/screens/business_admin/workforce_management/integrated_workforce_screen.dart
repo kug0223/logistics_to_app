@@ -33,6 +33,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
   List<String> _allBusinessIds = [];
   String? _selectedBusinessId;
   bool _isCalendarView = false;
+  bool _isLoading = false;
 
   late final VoidCallback _fcmRefreshCallback;
 
@@ -63,6 +64,8 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
 
   /// 관리자의 모든 사업장 ID 로드
   Future<void> _loadBusinessIds() async {
+    if (_isLoading) return;
+    setState(() => _isLoading = true);
     try {
       final userProvider = context.read<UserProvider>();
       final uid = userProvider.currentUser?.uid;
@@ -106,6 +109,8 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
     } catch (e) {
       debugPrint('❌ 사업장 조회 실패: $e');
       if (mounted) ToastHelper.showError('사업장 정보를 불러올 수 없습니다.');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 

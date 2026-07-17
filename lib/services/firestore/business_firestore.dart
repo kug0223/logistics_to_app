@@ -64,7 +64,8 @@ extension BusinessFirestore on FirestoreService {
             final id = map['id'] as String? ?? '';
             try {
               return BusinessModel.fromMap(map, id);
-            } catch (_) {
+            } catch (e) {
+              debugPrint('⚠️ BusinessModel 파싱 실패 [$id]: $e');
               return null;
             }
           })
@@ -357,7 +358,7 @@ extension BusinessFirestore on FirestoreService {
         // businesses/ 경로는 storage.rules에서 클라이언트 직접 삭제 차단
         final urlsToDelete = <String>[
           if (data['thumbnailUrl'] != null) data['thumbnailUrl'] as String,
-          ...List<String>.from(data['images'] ?? []),
+          ...(data['images'] as List? ?? []).whereType<String>(),
         ];
         if (urlsToDelete.isNotEmpty) {
           final cf = FirebaseFunctions.instanceFor(region: 'asia-northeast3')

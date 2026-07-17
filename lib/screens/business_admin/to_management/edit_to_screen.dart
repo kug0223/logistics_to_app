@@ -127,6 +127,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   // ============================================================
 
   Future<void> _loadData() async {
+    if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
       final workTypes = await _firestoreService

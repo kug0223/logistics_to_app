@@ -230,6 +230,9 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
         _reviewService.getAllNonPublishedRequestsForBusiness(businessId),
       ]);
 
+      // [S-01 fix] Future.wait 이후 mounted 체크 — CF 과금·dispose된 State 쓰기 방지
+      if (!mounted) return;
+
       final writtenPage = results[0] as ReviewPage<MonthlyReviewModel>;
       final receivedPage = results[1] as ReviewPage<MonthlyReviewModel>;
 
@@ -244,10 +247,6 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
 
       final allNonPublished = results[3] as List<ReviewRequestModel>;
       _requestDeadlines = {for (final r in allNonPublished) r.id: r.deadline};
-
-      // workerName 누락 항목 보완 조회 (CF callableGetUsersBatch 경유 — 서버 소속 검증)
-      // [S-01 fix] Future.wait 이후 mounted 체크 — CF 과금·dispose된 State 쓰기 방지
-      if (!mounted) return;
       final missingNameIds = _rawPending
           .where((r) => r.workerName.isEmpty && r.workerId.isNotEmpty)
           .map((r) => r.workerId)
@@ -268,7 +267,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
             final name = (entry.value as Map)['name'] as String? ?? '';
             resolvedMap[entry.key] = name.isNotEmpty ? name : '근무자';
           }
-        } catch (_) {}
+        } catch (e) { debugPrint('⚠️ 근무자 이름 조회 실패: $e'); }
         for (final uid in ids) {
           resolvedMap.putIfAbsent(uid, () => '근무자');
         }

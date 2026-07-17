@@ -452,7 +452,7 @@ class TODeadlineSection extends StatelessWidget {
         minuteInterval: 5,
       );
 
-      if (pickedTime != null && onFixedDeadlineChanged != null) {
+      if (pickedTime != null && context.mounted && onFixedDeadlineChanged != null) {
         final dateTime = DateTime(
           pickedDate.year,
           pickedDate.month,

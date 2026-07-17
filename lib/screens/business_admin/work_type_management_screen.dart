@@ -49,6 +49,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
   }
 
   Future<void> _loadWorkTypes() async {
+    if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
       final workTypes =

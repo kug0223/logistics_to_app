@@ -105,7 +105,7 @@ class _AdminContractManagementScreenState
   }
 
   Future<void> _load() async {
-    if (!mounted) return;
+    if (!mounted || _isLoading) return;
     setState(() { _isLoading = true; _items = []; _lastDoc = null; });
     try {
       final result = await _contractService.getByBusinessPaged(

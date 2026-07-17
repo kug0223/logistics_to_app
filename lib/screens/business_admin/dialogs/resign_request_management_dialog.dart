@@ -438,6 +438,7 @@ class _ResignRequestManagementDialogState
         ToastHelper.showError('승인 처리 중 오류가 발생했습니다.');
       }
     } catch (e) {
+      debugPrint('❌ 퇴사 승인 실패: $e');
       if (mounted) {
         ToastHelper.showError('승인 처리 중 오류가 발생했습니다.');
       }
@@ -483,6 +484,7 @@ class _ResignRequestManagementDialogState
         ToastHelper.showError('거절 처리 중 오류가 발생했습니다.');
       }
     } catch (e) {
+      debugPrint('❌ 퇴사 거절 실패: $e');
       if (mounted) {
         ToastHelper.showError('거절 처리 중 오류가 발생했습니다.');
       }
