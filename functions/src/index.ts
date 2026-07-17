@@ -6020,6 +6020,13 @@ export const callableCreateTO = onCall(
         finalData.status = "SCHEDULED";
         finalData.isPublished = false;
         break;
+      case "deferred":
+        // flex 즉시공개 TO — 슬롯 생성 완료 전까지 비공개로 생성 (노출 창 최소화)
+        // 슬롯 생성 완료 후 클라이언트가 isPublished:true로 전환 (rules에서 허용)
+        // publishAt 없어도 됨 — 스케줄 공개가 아니라 슬롯 생성 완료 시점 공개
+        finalData.status = "SCHEDULED";
+        finalData.isPublished = false;
+        break;
       default: // "immediate"
         finalData.status = "ACTIVE";
         finalData.isPublished = true;
@@ -11219,12 +11226,34 @@ export const callableReopenSlots = onCall(
       const currentTOStatus = toSnap2.data()?.status as string | undefined;
       // [MEDIUM-2 수정 2026-07-17] EXPIRED 상태도 ACTIVE로 복구
       //   이전: CLOSED만 처리 → EXPIRED TO 슬롯 재오픈 시 TO가 EXPIRED 상태로 유지되던 버그
+      // [MEDIUM-2 FIX-B] EXPIRED → ACTIVE: closedReason 잔존 + applicationDeadline 미갱신 버그
+      //   closedReason: "TIME_EXPIRED" 잔존 시 ACTIVE TO에 만료 사유가 남음
+      //   applicationDeadline이 과거이면 processTOExpiry가 다음 실행 시 즉시 재닫힘
       if (hasOpenSlot && (currentTOStatus === "CLOSED" || currentTOStatus === "EXPIRED")) {
-        await db.collection("tos").doc(toId).update({
+        const toUpdatePayload: Record<string, unknown> = {
           status: "ACTIVE",
           closedAt: admin.firestore.FieldValue.delete(),
+          closedReason: admin.firestore.FieldValue.delete(),
           isManualClosed: false,
-        });
+          statusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+        if (currentTOStatus === "EXPIRED") {
+          // 가장 이른 open 슬롯 workDate를 applicationDeadline으로 연장 — 재만료 방지
+          const openSlotDates = allSlotsSnap.docs
+            .filter((d) => {
+              const sd = d.data();
+              return !sd.isManualClosed && (sd.status === "open" || sd.status === "full");
+            })
+            .map((d) => d.data().workDate as admin.firestore.Timestamp | undefined)
+            .filter((t): t is admin.firestore.Timestamp => t != null);
+          if (openSlotDates.length > 0) {
+            const earliest = openSlotDates.reduce((min, t) =>
+              t.toMillis() < min.toMillis() ? t : min
+            );
+            toUpdatePayload.applicationDeadline = earliest;
+          }
+        }
+        await db.collection("tos").doc(toId).update(toUpdatePayload);
       }
     } catch (e) {
       console.error(`[ReopenSlots] TO cascade status 재계산 실패 (${toId}):`, e);

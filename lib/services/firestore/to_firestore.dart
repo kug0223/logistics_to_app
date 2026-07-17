@@ -458,8 +458,10 @@ extension TOFirestore on FirestoreService {
           !isDraft &&
           dates != null &&
           dates.isNotEmpty;
+      // [DEFERRED-PUBLISH-FIX] publishMode:'scheduled'은 CF에서 publishAt 필수 검증에 걸림
+      // deferPublish 전용 publishMode:'deferred'로 마킹 → CF에서 별도 처리 + rules 전환 허용
       final initialData = deferPublish
-          ? {...toData, 'isPublished': false, 'status': TOStatus.scheduled, 'publishMode': 'scheduled'}
+          ? {...toData, 'isPublished': false, 'status': TOStatus.scheduled, 'publishMode': 'deferred'}
           : toData;
 
       // [HIGH-02] CF callableCreateTO — 개수 제한 서버 강제 + serverTimestamp 설정
