@@ -7590,8 +7590,10 @@ export const callableGetAllUsers = onCall(
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     }
-    const claims = request.auth.token;
-    if (claims["role"] !== "SUPER_ADMIN") {
+    // [SEC-ALLUSER-ROLE] Firestore 재확인 — JWT claims가 아닌 실시간 role 검증
+    //   callableGetForeignWorkerUsers와 일관성 유지 (권한 제거 즉시 차단)
+    const callerSnap = await db.collection("users").doc(request.auth.uid).get();
+    if (callerSnap.data()?.["role"] !== "SUPER_ADMIN") {
       throw new HttpsError("permission-denied", "슈퍼관리자 권한이 필요합니다.");
     }
 
@@ -16154,8 +16156,15 @@ export const callableGetForeignWorkerUsers = onCall(
       .limit(300)
       .get();
 
-    // 민감 필드(ci, ciHash, sealBase64) 제외하고 반환
-    const BLOCKED = new Set(["ci", "ciHash", "sealBase64", "passVerifiedAt"]);
+    // [SEC-FW-BLOCKED] callableGetAllUsers SENSITIVE_FIELDS와 동일 기준 적용 — 민감 필드 완전 제거
+    //   foreignIdNumber는 이 함수 목적(외국인 근로자 조회)에 필수이므로 제외
+    const BLOCKED = new Set([
+      "ci", "ciHash", "sealBase64", "passVerifiedAt",
+      "residentNumber",
+      "idCardImageUrl", "signatureBase64", "bankbookImageUrl",
+      "fcmToken", "fcmTokens",
+      "passwordHistory", "phoneHash", "accountNumber",
+    ]);
     const users = snap.docs
       .filter(d => d.data()["foreignIdNumber"] != null)
       .map(d => {
