@@ -4734,6 +4734,10 @@ export const callableBlacklistUser = onCall(
     if (!targetUid || typeof targetUid !== "string") {
       throw new HttpsError("invalid-argument", "targetUid가 올바르지 않습니다.");
     }
+    // [BL-4-FIX] 자기 자신 블랙리스트 등록 차단 — 단일 관리자 환경 시스템 잠금 방지
+    if (callerUid === targetUid) {
+      throw new HttpsError("permission-denied", "자기 자신을 블랙리스트에 등록할 수 없습니다.");
+    }
     // [BL-3-FIX] 공백 문자열 사유 차단
     if (!blacklistReason || typeof blacklistReason !== "string" ||
         blacklistReason.trim().length === 0 || blacklistReason.length > 500) {
@@ -4742,6 +4746,10 @@ export const callableBlacklistUser = onCall(
     const targetSnap = await db.collection("users").doc(targetUid).get();
     if (!targetSnap.exists) {
       throw new HttpsError("not-found", "대상 사용자를 찾을 수 없습니다.");
+    }
+    // [BL-5-FIX] 다른 SUPER_ADMIN 블랙리스트 등록 차단 — 관리자 간 권한 탈취 방지
+    if (targetSnap.data()?.role === "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "다른 슈퍼어드민을 블랙리스트에 등록할 수 없습니다.");
     }
     // [BL-2-FIX] 이중 등록 차단 — 원래 등록 이력 덮어쓰기 방지
     if (targetSnap.data()?.isBlacklisted === true) {
@@ -11948,10 +11956,20 @@ export const callableBatchSetNoShow = onCall(
       const ref = db.collection("attendance").doc(resolvedId);
       const yearMonth = `${dateKST.getUTCFullYear()}-${String(dateKST.getUTCMonth() + 1).padStart(2, "0")}`;
 
+      // [NS-02-FIX] 미래 날짜 NO_SHOW 선제 생성 차단 — 오늘 KST 00:00 이후 날짜 skip
+      const todayKSTStart = new Date(Date.now() + KST_OFFSET_MS);
+      todayKSTStart.setUTCHours(0, 0, 0, 0);
+      const todayKSTStartMs = todayKSTStart.getTime() - KST_OFFSET_MS;
+      if (workDateMs > todayKSTStartMs) {
+        skippedSet.add(resolvedId);
+        return undefined;
+      }
+
       try {
         await db.runTransaction(async (tx) => {
           const snap = await tx.get(ref);
-          if (snap.exists && snap.data()!.wageStatus === "transferred") {
+          // [NS-01-FIX] calculated/confirmed 임금 0원 덮어쓰기 차단 — transferred·confirmed·calculated는 보호
+          if (snap.exists && ["transferred", "confirmed", "calculated"].includes(snap.data()!.wageStatus as string)) {
             skippedSet.add(resolvedId);
             return;
           }
