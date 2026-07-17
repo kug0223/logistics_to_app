@@ -411,7 +411,7 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
           if (!isReady && actionLabel != null && onAction != null) ...[
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             TextButton(
-              onPressed: onAction,
+              onPressed: _isLoading ? null : onAction,
               style: TextButton.styleFrom(
                 foregroundColor: theme.primaryColor,
                 padding: EdgeInsets.symmetric(

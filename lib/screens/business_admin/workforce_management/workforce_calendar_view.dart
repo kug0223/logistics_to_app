@@ -661,8 +661,9 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       } catch (e) {
         debugPrint('❌ 고정근무 업무 상세 로드 실패: $e');
         if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+      } finally {
+        if (mounted) setState(() => _loadingSlots.remove(key));
       }
-      if (mounted) setState(() => _loadingSlots.remove(key));
     } else {
       // groupItem.isWorkDetailLoaded = true이지만 캐시된 TOItem은 workDetails가 없을 수 있음
       // (위젯 재생성 시 _contractTOItems가 초기화되므로)
@@ -678,8 +679,9 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         } catch (e) {
           debugPrint('❌ 고정근무 업무 상세 로드 실패 (재시도): $e');
           if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+        } finally {
+          if (mounted) setState(() => _loadingSlots.remove(key));
         }
-        if (mounted) setState(() => _loadingSlots.remove(key));
       }
     }
   }
@@ -709,8 +711,9 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       } catch (e) {
         debugPrint('❌ 슬롯 업무 상세 로드 실패: $e');
         if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+      } finally {
+        if (mounted) setState(() => _loadingSlots.remove(key));
       }
-      if (mounted) setState(() => _loadingSlots.remove(key));
     }
   }
 

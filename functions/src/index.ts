@@ -8779,9 +8779,30 @@ export const callableDecrementSlotConfirmed = onCall(
 //   → 충돌 AUTO_CANCEL 전혀 미작동. Admin SDK로 이전해 타사업장 포함 처리.
 // ═══════════════════════════════════════════════════════════
 
+function _timeToMinutes(t: string): number {
+  const parts = t.split(":");
+  if (parts.length !== 2) return -1;
+  const h = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  if (isNaN(h) || isNaN(m)) return -1;
+  return h * 60 + m;
+}
+
+// 야간 근무(자정 넘김) 포함 시간 충돌 감지.
+// 단순 문자열 비교("22:00" < "03:00" → false)로는 야간 교대 충돌 미감지 —
+// 분 단위 + 자정 정규화로 Dart _checkTimeConflict와 동일 로직 적용.
 function _hasTimeOverlap(s1: string, e1: string, s2: string, e2: string): boolean {
   if (!s1 || !e1 || !s2 || !e2) return false;
-  return s1 < e2 && s2 < e1;
+  let start1 = _timeToMinutes(s1), end1 = _timeToMinutes(e1);
+  let start2 = _timeToMinutes(s2), end2 = _timeToMinutes(e2);
+  if (start1 < 0 || end1 < 0 || start2 < 0 || end2 < 0) return false;
+  // 자정 넘김 정규화: 종료 <= 시작이면 다음날로
+  if (end1 <= start1) end1 += 1440;
+  if (end2 <= start2) end2 += 1440;
+  // 기준 통일: 두 근무 중 하나가 12시간 이상 늦으면 전날로 이동
+  if (start1 > start2 + 720) { start1 -= 1440; end1 -= 1440; }
+  if (start2 > start1 + 720) { start2 -= 1440; end2 -= 1440; }
+  return start1 < end2 && start2 < end1;
 }
 
 // [H-1 수정 2026-07-15] Firestore workDays는 한글 저장 (callableApplyToTO weekdayNames 기준)
@@ -15564,9 +15585,9 @@ export const callableApplyToTO = onCall(
       snap.docs.map((d) => ({id: d.id, ...(d.data() as Record<string, unknown>)}))
     );
 
+    // callableApplyToTO 내부 — 전역 _hasTimeOverlap(야간 자정 정규화 포함)에 위임
     function hasTimeOverlap(s1: string, e1: string, s2: string, e2: string): boolean {
-      if (!s1 || !e1 || !s2 || !e2) return false; // 빈문자열 오탐 방지 — _hasTimeOverlap과 동일
-      return s1 < e2 && e1 > s2;
+      return _hasTimeOverlap(s1, e1, s2, e2);
     }
     const weekdayNames = ["일", "월", "화", "수", "목", "금", "토"];
 

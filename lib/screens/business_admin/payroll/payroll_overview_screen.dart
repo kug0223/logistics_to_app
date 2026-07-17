@@ -497,6 +497,7 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _workersLoading = false);
+      ToastHelper.showError('근무자 목록을 불러오지 못했습니다');
     }
   }
 

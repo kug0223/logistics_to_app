@@ -167,9 +167,10 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 고정근무자 로드
   Future<void> _loadFixedWorkers() => runWithLoading(() async {
-    if (_selectedBusinessId == null) return;
+    final businessId = _selectedBusinessId;
+    if (businessId == null) return;
 
-    final allApps = await _firestoreService.getApplicationsByBusinessId(_selectedBusinessId!);
+    final allApps = await _firestoreService.getApplicationsByBusinessId(businessId);
 
       // 기본 필터: 장기 확정자 중 퇴사/해지 완료 제외
       final allFiltered = allApps.where((app) {
@@ -215,14 +216,14 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       }).toList();
 
       // ✅ 1. 업무유형 정보 한 번만 조회 (중복 제거!)
-      final businessWorkTypes = await _firestoreService.getBusinessWorkTypes(_selectedBusinessId!);
+      final businessWorkTypes = await _firestoreService.getBusinessWorkTypes(businessId);
       final workTypeMap = { for (var w in businessWorkTypes) w.name: w };
-      
+
       // ✅ 2. 중복 제거된 UID 목록
       final uniqueUids = filtered.map((app) => app.uid).toSet().toList();
 
       // ✅ 3. 사용자 정보 일괄 조회 (캐시 포함)
-      final userMap = await _firestoreService.getUsersBatch(uniqueUids, businessId: _selectedBusinessId!);
+      final userMap = await _firestoreService.getUsersBatch(uniqueUids, businessId: businessId);
       
       // ✅ 4. 결과 매핑 (추가 조회 없음)
       final results = filtered.map((app) {
@@ -242,11 +243,11 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           .compareTo(a.application.confirmedAt ?? a.application.appliedAt));
 
       // 날짜 모드: 해당 날짜의 대기 요청 로드
-      if (_isDateMode && _selectedBusinessId != null) {
+      if (_isDateMode) {
         _pendingRequestsForDate =
             await _firestoreService.getScheduleChangeRequestsForDate(
           date: widget.focusDate!,
-          businessIds: [_selectedBusinessId!],
+          businessIds: [businessId],
         );
       }
 
@@ -640,8 +641,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     final userProvider = Provider.of<UserProvider>(context, listen: false);
     final uid = userProvider.currentUser?.uid;
     if (uid == null) return const SizedBox.shrink();
-    final approverUid = uid;
-
     final pending = _pendingRequestsForDate
         .where((r) => r.applicationId == app.id)
         .firstOrNull;
@@ -670,7 +669,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             context,
             label: '거절',
             color: AppColors.error,
-            onTap: isLoading || _isProcessing ? null : () => _rejectPendingRequest(pending, approverUid),
+            onTap: isLoading || _isProcessing ? null : () => _rejectPendingRequest(pending),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
           _buildMiniButton(
@@ -678,7 +677,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             label: '승인',
             color: AppColors.teal,
             filled: true,
-            onTap: isLoading || _isProcessing ? null : () => _approvePendingRequest(pending, approverUid),
+            onTap: isLoading || _isProcessing ? null : () => _approvePendingRequest(pending),
           ),
         ],
       ),
@@ -717,7 +716,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 대기 요청 승인 처리
   Future<void> _approvePendingRequest(
-      ScheduleChangeRequestModel request, String approverUid) async {
+      ScheduleChangeRequestModel request) async {
     if (_isProcessing) return;
     setState(() => _isProcessing = true);
     try {
@@ -738,7 +737,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 대기 요청 거절 처리
   Future<void> _rejectPendingRequest(
-      ScheduleChangeRequestModel request, String approverUid) async {
+      ScheduleChangeRequestModel request) async {
     if (_isProcessing) return;
     setState(() => _isProcessing = true);
     try {
@@ -1657,7 +1656,6 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       if (!mounted) return;
 
       // 연장 계약서는 항상 서명 화면으로 이동 — 사업주가 내용 확인 후 서명
-      if (!mounted) return;
       final nav = Navigator.of(context, rootNavigator: true);
       await nav.push(MaterialPageRoute(
         builder: (_) => ContractSignScreen(contract: contract, role: 'employer'),

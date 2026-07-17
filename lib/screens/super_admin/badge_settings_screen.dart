@@ -27,6 +27,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
     with LoadingStateMixin {
   final _firestore = FirebaseFirestore.instance;
   List<BadgeModel> _badges = [];
+  bool _isAdding = false;
 
   @override
   void initState() {
@@ -124,34 +125,40 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
   }
 
   Future<void> _addBadge() async {
-    final result = await showDialog<BadgeModel>(
-      context: context,
-      builder: (context) => const _BadgeEditDialog(),
-    );
+    if (_isAdding || isLoading) return;
+    setState(() => _isAdding = true);
+    try {
+      final result = await showDialog<BadgeModel>(
+        context: context,
+        builder: (context) => const _BadgeEditDialog(),
+      );
 
-    if (result != null) {
-      if (!mounted) return;
-      try {
-        final newId = _firestore.collection('badges').doc().id;
-        final newBadge = BadgeModel(
-          id: newId,
-          name: result.name,
-          icon: result.icon,
-          type: result.type,
-          conditionType: result.conditionType,
-          conditionValue: result.conditionValue,
-          workType: result.workType,
-          isActive: true,
-          order: _badges.length + 1,
-          createdAt: DateTime.now(),
-        );
+      if (result != null) {
+        if (!mounted) return;
+        try {
+          final newId = _firestore.collection('badges').doc().id;
+          final newBadge = BadgeModel(
+            id: newId,
+            name: result.name,
+            icon: result.icon,
+            type: result.type,
+            conditionType: result.conditionType,
+            conditionValue: result.conditionValue,
+            workType: result.workType,
+            isActive: true,
+            order: _badges.length + 1,
+            createdAt: DateTime.now(),
+          );
 
-        await _firestore.collection('badges').doc(newId).set(newBadge.toMap());
-        await _loadBadges();
-        if (mounted) ToastHelper.showSuccess('배지가 추가되었습니다');
-      } catch (e) {
-        if (mounted) ToastHelper.showError('추가에 실패했습니다');
+          await _firestore.collection('badges').doc(newId).set(newBadge.toMap());
+          await _loadBadges();
+          if (mounted) ToastHelper.showSuccess('배지가 추가되었습니다');
+        } catch (e) {
+          if (mounted) ToastHelper.showError('추가에 실패했습니다');
+        }
       }
+    } finally {
+      if (mounted) setState(() => _isAdding = false);
     }
   }
 
@@ -187,7 +194,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
     return GradientScaffold(
       title: '배지 관리',
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _addBadge,
+        onPressed: (_isAdding || isLoading) ? null : _addBadge,
         backgroundColor: theme.primaryColor,
         icon: const Icon(Icons.add),
         label: const Text('배지 추가'),

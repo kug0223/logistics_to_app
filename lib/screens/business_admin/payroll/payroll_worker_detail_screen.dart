@@ -506,23 +506,21 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
     // 전체 금액 합산
     int totalNet = settleableRecords.fold(0, (acc, r) => acc + _netOf(r));
 
-    final ok = await DialogHelper.showConfirm(
-      ctx,
-      title: '중간정산 처리',
-      message: '${widget.workerName}님의 확정 급여 ${settleableRecords.length}건을\n'
-          '중간정산 처리하시겠습니까?\n\n'
-          '대상 금액: ${FormatHelper.formatWage(totalNet)}\n'
-          '처리 후 "이체완료" 상태로 변경됩니다.',
-      confirmText: '이체완료 처리',
-      cancelText: '취소',
-    );
-    if (ok != true || !mounted) return;
-    // 확인 후에만 처리 잠금 — 다이얼로그 표시 중에는 버튼 잠금 불필요
     setState(() => _isSettling = true);
-
     // async gap 전에 uid 획득
     final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid ?? 'UNKNOWN';
     try {
+      final ok = await DialogHelper.showConfirm(
+        ctx,
+        title: '중간정산 처리',
+        message: '${widget.workerName}님의 확정 급여 ${settleableRecords.length}건을\n'
+            '중간정산 처리하시겠습니까?\n\n'
+            '대상 금액: ${FormatHelper.formatWage(totalNet)}\n'
+            '처리 후 "이체완료" 상태로 변경됩니다.',
+        confirmText: '이체완료 처리',
+        cancelText: '취소',
+      );
+      if (ok != true || !mounted) return;
       final svc = PayrollPaymentService();
       final req = InterimSettlementRequestModel(
         id: '',
