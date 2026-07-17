@@ -34,7 +34,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
   bool _isLoading = true;
   String? _loadError;
   List<PayrollSummaryModel> _summaries = [];
-  int _todayPaymentCount = 0;
+  int _todayPaymentCount = 0; // null(조회실패) 시 이전 값 유지
 
   static const List<String> _monthLabels = [
     '1월', '2월', '3월', '4월', '5월', '6월',
@@ -211,7 +211,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
       final count = await PayrollPaymentService().getTodayPaymentCount(
         businessId: bizId,
       );
-      if (mounted) setState(() => _todayPaymentCount = count);
+      if (mounted && count != null) setState(() => _todayPaymentCount = count);
     } catch (e) {
       debugPrint('⚠️ 오늘 급여 건수 조회 실패: $e');
     }

@@ -208,7 +208,7 @@ class PayrollPaymentService {
       return PayrollPage(records: allRecords, hasMore: false);
     } catch (e) {
       debugPrint('❌ 급여 현황 조회 실패: $e');
-      return PayrollPage(records: [], hasMore: false);
+      rethrow; // 0건 반환 시 관리자가 급여 없는 것으로 오인 → 에러 전파
     }
   }
 
@@ -249,7 +249,7 @@ class PayrollPaymentService {
 
   /// 오늘 지급 예정 건수 (배지용)
   /// [CF 이전 2026-07-13] callableGetAdminAttendances (paymentDueDateLteMs + wageStatus)
-  Future<int> getTodayPaymentCount({
+  Future<int?> getTodayPaymentCount({
     required String businessId,
     DateTime? referenceDate,
   }) async {
@@ -266,7 +266,7 @@ class PayrollPaymentService {
       return (result.data['items'] as List? ?? []).length;
     } catch (e) {
       debugPrint('❌ 오늘 지급 건수 조회 실패: $e');
-      return 0;
+      return null; // 0 반환 시 지급 건 없는 것으로 오인 → null로 미조회 상태 구분
     }
   }
 

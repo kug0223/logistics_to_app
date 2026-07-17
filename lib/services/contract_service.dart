@@ -144,7 +144,9 @@ class ContractService {
             options: HttpsCallableOptions(timeout: const Duration(seconds: 30)))
         .call(cfData);
 
-    final url = (result.data as Map<dynamic, dynamic>)['employerSignatureUrl'] as String;
+    final cfMap = result.data as Map<dynamic, dynamic>?;
+    final url = cfMap?['employerSignatureUrl'] as String? ?? '';
+    if (url.isEmpty) throw Exception('CF 응답에 employerSignatureUrl 없음');
     final now = DateTime.now();
     final updated = contract.copyWith(
       status: ContractStatus.pendingWorker,

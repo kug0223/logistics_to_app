@@ -606,11 +606,16 @@ class _TodayPaymentBadgeCardState extends State<_TodayPaymentBadgeCard> {
 
   Future<void> _loadCount() async {
     if (widget.businessIds.isEmpty) return;
-    int total = 0;
-    for (final id in widget.businessIds) {
-      total += await _payrollService.getTodayPaymentCount(businessId: id);
+    try {
+      int total = 0;
+      for (final id in widget.businessIds) {
+        final n = await _payrollService.getTodayPaymentCount(businessId: id);
+        total += n ?? 0; // null = 조회 실패 → 해당 사업장은 0으로 집계
+      }
+      if (mounted) setState(() => _count = total);
+    } catch (e) {
+      debugPrint('⚠️ 오늘 지급 건수 조회 실패: $e');
     }
-    if (mounted) setState(() => _count = total);
   }
 
   @override
