@@ -514,19 +514,26 @@ class PayrollPaymentService {
       );
     }
 
-    // 2단계: 요청 상태 변경 (출근기록 이체 완료 후)
+    // 2단계: 요청 상태 변경 (트랜잭션) — 동시 승인 경합 시 FCM 중복 발송 방지
     // ⚠️ 1단계 성공 후 여기서 실패하면 attendance=transferred, status=pending 불일치.
     //   단, 멱등 재시도로 안전하게 복구되므로 관리자에게 "재시도 안내" 메시지 전달.
+    // [MEDIUM-FIX] 동시 승인: 두 번째 관리자는 트랜잭션 내에서 statusTransitioned=false로
+    //   종료 → 3단계 FCM 발송 건너뜀 (이미 처리된 경우)
+    bool statusTransitioned = false;
     try {
-      await _db
-          .collection('interim_settlement_requests')
-          .doc(req.id)
-          .update({
-        'status':      InterimSettlementRequestModel.statusProcessed,
-        'processedBy': processedBy,
-        'processedAt': FieldValue.serverTimestamp(),
-        if (transferNote != null) 'transferNote': transferNote,
-        'updatedAt':   FieldValue.serverTimestamp(),
+      final docRef = _db.collection('interim_settlement_requests').doc(req.id);
+      await _db.runTransaction((tx) async {
+        final snap = await tx.get(docRef);
+        final current = snap.data()?['status'] as String?;
+        if (current == InterimSettlementRequestModel.statusProcessed) return;
+        tx.update(docRef, {
+          'status':      InterimSettlementRequestModel.statusProcessed,
+          'processedBy': processedBy,
+          'processedAt': FieldValue.serverTimestamp(),
+          if (transferNote != null) 'transferNote': transferNote,
+          'updatedAt':   FieldValue.serverTimestamp(),
+        });
+        statusTransitioned = true;
       });
     } catch (e) {
       // 이체 자체는 완료됐으므로 재시도 시 중복 이체 없이 안전하게 복구됨
@@ -538,8 +545,8 @@ class PayrollPaymentService {
 
     // 3단계: 근로자에게 중간정산 완료 알림 발송 (실패해도 이체 자체에 영향 없음)
     try {
-      // 실질 이체 0건(모든 항목 취소) — 알림 불발송으로 혼란 방지 [MEDIUM-2 FIX]
-      if (zeroTransfer) return;
+      // 동시 승인 경합에서 두 번째 승인자 또는 실질 이체 0건 — FCM 발송 생략
+      if (!statusTransitioned || zeroTransfer) return;
 
       // 실제 이체된 항목의 finalWage 합산 — req.netAmount(요청 시점 추정치)보다 정확
       final actualNetAmount = idsToTransfer.isNotEmpty
