@@ -1035,6 +1035,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // ── SMS 인증 ────────────────────────────────────────────────────
 
   Future<void> _sendPhoneCode() async {
+    if (_phoneVerifyStatus.value.isSending) return; // 이중 탭 방지 — SMS 이중 발송 차단
     final phone = _phoneController.text.trim();
     _phoneVerifyStatus.value = const _PhoneVerifyStatus(isSending: true);
     try {
@@ -1064,6 +1065,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _verifyPhoneCode() async {
     final code = _phoneCodeController.text.trim();
     if (code.length != 6) return;
+    if (_phoneVerifyStatus.value.isVerifying) return; // 이중 탭 방지
     _phoneVerifyStatus.value = const _PhoneVerifyStatus(
         isSent: true, isVerifying: true);
     try {

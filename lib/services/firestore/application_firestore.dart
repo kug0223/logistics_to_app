@@ -458,10 +458,11 @@ extension ApplicationFirestore on FirestoreService {
 
       await batch.commit();
 
-      // [H-CF-2] 확정 취소 시 계약서 무효화 — callableVoidApplicationContracts CF 경유
+      // [H-CF-2] 확정 취소/취소 시 계약서 무효화 — callableVoidApplicationContracts CF 경유
       // assertBizAdmin 서버 교차검증. application 상태 변경(batch) 완료 후 처리.
-      // 원자성 분리: CF 실패 시 계약서가 유령 상태로 남을 수 있으나 application은 이미 PENDING으로 복구됨.
-      if (status == AppStatus.pending &&
+      // 원자성 분리: CF 실패 시 계약서가 유령 상태로 남을 수 있으나 application은 이미 복구됨.
+      // [BUG-FIX] CANCELED 경로도 포함 — CONFIRMED→CANCELED 시 계약서 유령 상태 방지
+      if ((status == AppStatus.pending || status == AppStatus.canceled) &&
           AppStatus.confirmedStatuses.contains(prevStatus)) {
         try {
           final contractBusinessId = appData['businessId'] as String? ?? '';

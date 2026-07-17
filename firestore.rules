@@ -1393,7 +1393,8 @@ service cloud.firestore {
       allow read: if isLoggedIn();
 
       // 쓰기: 슈퍼어드민만 + [MEDIUM-5 수정 2026-07-15] trust_rules 값 범위 검증
-      // maxScore 0~100, decreaseRules 내 개별 포인트 -100~0 제한 (계정 침해 시 극단값 조작 차단)
+      // maxScore 0~100 검증. decreaseRules 배열 내부 포인트 필드는 rules에서 배열 요소별 검증 불가
+      // (Firestore rules는 배열 요소 순회 미지원) — CF callableUpdateTrustRules에서 서버사이드 검증
       allow write: if isSuperAdmin() && (
         settingId != 'trust_rules' ||
         (
@@ -1734,10 +1735,14 @@ service cloud.firestore {
 
       // SEC-44: 관리자·발신자 삭제 허용 추가 (슈퍼어드민 단독 제한 완화)
       // [RULE-FIX-L4] isSubAdminOf 추가 — SubAdmin이 소속 사업장 초대를 일괄 삭제 가능하도록
+      // [SEC-FIX-L2] invitedBy 경로에 현재 소속 검증 추가 — 퇴직한 전직 SubAdmin의 초대장 삭제 차단
       allow delete: if isSuperAdmin() ||
                        isAdminOf(resource.data.businessId) ||
                        isSubAdminOf(resource.data.businessId) ||
-                       (isLoggedIn() && request.auth.uid == resource.data.invitedBy);
+                       (isLoggedIn() &&
+                        request.auth.uid == resource.data.invitedBy &&
+                        get(/databases/$(database)/documents/users/$(request.auth.uid))
+                          .data.get('businessId', '') == resource.data.businessId);
     }
 
     // ═══════════════════════════════════════════════════════════
