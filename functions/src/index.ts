@@ -492,6 +492,10 @@ export const createNotification = onCall(
         const appRef = db.collection("applications").doc(appId);
         const appSnap = await appRef.get();
         if (appSnap.exists) {
+          // [SEC-NOTIF-OWN] applicationId 소유권 검증 — 타인 쿨다운 오염 + contractRequested 스팸 방지
+          if (appSnap.data()?.uid !== callerUid) {
+            throw new HttpsError("permission-denied", "본인의 지원서에 대해서만 계약서를 요청할 수 있습니다.");
+          }
           const lastReq = appSnap.data()?.lastContractRequestedAt as FirebaseFirestore.Timestamp | undefined;
           if (lastReq) {
             const diffMs = Date.now() - lastReq.toMillis();
