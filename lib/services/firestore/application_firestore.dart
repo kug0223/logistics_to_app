@@ -74,7 +74,7 @@ extension ApplicationFirestore on FirestoreService {
           .toList();
     } catch (e) {
       debugPrint('❌ 지원자 목록 조회 실패(admin): $e');
-      return [];
+      rethrow; // 빈 목록 반환 시 관리자가 지원자 없는 것으로 오인
     }
   }
 

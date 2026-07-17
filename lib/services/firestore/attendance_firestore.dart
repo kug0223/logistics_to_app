@@ -281,7 +281,7 @@ extension AttendanceFirestore on FirestoreService {
       };
     } catch (e) {
       debugPrint('⚠️ loadHasWorkedMap 실패 ($date): $e');
-      return {};
+      rethrow; // 빈 맵 반환 시 "근무자 없음"으로 오인 → 확정취소 가드 오동작
     }
   }
 
@@ -426,14 +426,14 @@ extension AttendanceFirestore on FirestoreService {
         'pendingOnly': true,
       });
       final items = (result.data['items'] as List<dynamic>?) ?? [];
-      return items.map((e) {
-        final m = Map<String, dynamic>.from(e as Map);
+      return items.whereType<Map>().map((e) {
+        final m = Map<String, dynamic>.from(e);
         final id = m.remove('id') as String? ?? '';
         return ScheduleChangeRequestModel.tryFromMap(_cfHydrate(m), id);
       }).whereType<ScheduleChangeRequestModel>().toList();
     } catch (e) {
       debugPrint('❌ 대기중인 스케줄 변경 요청 조회 실패: $e');
-      return [];
+      rethrow;
     }
   }
 
@@ -450,14 +450,14 @@ extension AttendanceFirestore on FirestoreService {
         'limit': 2000,
       });
       final items = (result.data['items'] as List<dynamic>?) ?? [];
-      return items.map((e) {
-        final m = Map<String, dynamic>.from(e as Map);
+      return items.whereType<Map>().map((e) {
+        final m = Map<String, dynamic>.from(e);
         final id = m.remove('id') as String? ?? '';
         return ScheduleChangeRequestModel.tryFromMap(_cfHydrate(m), id);
       }).whereType<ScheduleChangeRequestModel>().toList();
     } catch (e) {
       debugPrint('❌ 스케줄 변경 요청 조회 실패: $e');
-      return [];
+      rethrow;
     }
   }
 

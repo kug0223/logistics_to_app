@@ -72,7 +72,7 @@ class MonthlyReviewService {
           .toList();
     } catch (e) {
       debugPrint('❌ worker 리뷰 요청 조회 실패: $e');
-      return [];
+      rethrow; // 빈 목록 반환 시 미작성 리뷰가 없는 것으로 오인
     }
   }
 
@@ -96,7 +96,7 @@ class MonthlyReviewService {
           .toList();
     } catch (e) {
       debugPrint('❌ admin 리뷰 요청 조회 실패: $e');
-      return [];
+      rethrow; // 빈 목록 반환 시 관리자가 대기 리뷰 없는 것으로 오인
     }
   }
 
@@ -599,7 +599,7 @@ class MonthlyReviewService {
       return workerMap.values.toList();
     } catch (e) {
       debugPrint('❌ 리뷰 대상자 조회 실패: $e');
-      return [];
+      rethrow; // 빈 목록 반환 시 리뷰 대상자 없는 것으로 오인
     }
   }
 

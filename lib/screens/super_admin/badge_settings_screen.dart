@@ -116,6 +116,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
       if (!mounted) return;
       try {
         await _firestore.collection('badges').doc(result.id).update(result.toMap());
+        if (!mounted) return;
         await _loadBadges();
         if (mounted) ToastHelper.showSuccess('배지가 수정되었습니다');
       } catch (e) {
@@ -174,6 +175,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
 
     try {
       await _firestore.collection('badges').doc(badge.id).delete();
+      if (!mounted) return;
       await _loadBadges();
       if (mounted) ToastHelper.showSuccess('배지가 삭제되었습니다');
     } catch (e) {

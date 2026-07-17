@@ -458,8 +458,9 @@ class ContractService {
       final data = result.data as Map<dynamic, dynamic>;
       final rawItems = (data['items'] as List<dynamic>? ?? []);
       final items = rawItems
+          .whereType<Map>()
           .map((e) {
-            final m = Map<String, dynamic>.from(e as Map);
+            final m = Map<String, dynamic>.from(e);
             final id = m.remove('id') as String? ?? '';
             return EmploymentContractModel.tryFromMap(m, id);
           })
@@ -485,8 +486,9 @@ class ContractService {
       final data = result.data as Map<dynamic, dynamic>;
       final rawItems = (data['items'] as List<dynamic>? ?? []);
       return rawItems
+          .whereType<Map>()
           .map((e) {
-            final m = Map<String, dynamic>.from(e as Map);
+            final m = Map<String, dynamic>.from(e);
             final id = m.remove('id') as String? ?? '';
             return EmploymentContractModel.tryFromMap(m, id);
           })
@@ -554,7 +556,7 @@ class ContractService {
     final workerId = data['workerId'] as String? ?? '';
     final bizName = data['businessName'] as String? ?? '';
     final bizId = data['businessId'] as String? ?? '';
-    final appIds = (data['applicationIds'] as List?)?.cast<String>() ?? [];
+    final appIds = (data['applicationIds'] as List?)?.whereType<String>().toList() ?? [];
 
     if (workerId.isEmpty) return; // 이미 voided — 멱등 처리
 

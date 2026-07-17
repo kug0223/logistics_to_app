@@ -48,7 +48,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   Map<String, EmploymentContractModel> _contractMap = {};
   Map<String, MonthlyReviewModel?> _reviewMap = {};
 
-  bool _isLoading = true;
+  bool _isLoading = false;
   bool _isLoadingMore = false;
   bool _hasMore = true;
   String? _lastDocId;

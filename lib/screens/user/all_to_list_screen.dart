@@ -64,7 +64,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
   Timer? _searchDebounce;
 
   // UI 상태
-  bool _isLoading = true;
+  bool _isLoading = false;
   String? _selectedTOId;
 
   @override
@@ -106,6 +106,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
 
   /// 첫 페이지 로드 (새로고침 포함)
   Future<void> _loadAllTOs() async {
+    if (_isLoading) return;
     setState(() {
       _isLoading = true;
       _lastDoc = null;

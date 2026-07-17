@@ -379,12 +379,12 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
           children: [
             IconButton(
               icon: const Icon(Icons.close, color: AppColors.error),
-              onPressed: () => _handleIdCardReject(request),
+              onPressed: _isProcessing ? null : () => _handleIdCardReject(request),
               tooltip: '거절',
             ),
             IconButton(
               icon: const Icon(Icons.check, color: AppColors.success),
-              onPressed: () => _handleIdCardApprove(request),
+              onPressed: _isProcessing ? null : () => _handleIdCardApprove(request),
               tooltip: '승인',
             ),
           ],
@@ -450,12 +450,12 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
           children: [
             IconButton(
               icon: const Icon(Icons.close, color: AppColors.error),
-              onPressed: () => _handleTerminationReject(app),
+              onPressed: _isProcessing ? null : () => _handleTerminationReject(app),
               tooltip: '거절',
             ),
             IconButton(
               icon: const Icon(Icons.check, color: AppColors.success),
-              onPressed: () => _handleTerminationApprove(app),
+              onPressed: _isProcessing ? null : () => _handleTerminationApprove(app),
               tooltip: '승인',
             ),
           ],

@@ -294,7 +294,7 @@ class MemberService {
           (data['permissions'] as Map<String, dynamic>?) ?? {});
     } catch (e) {
       debugPrint('멤버 권한 조회 실패: $e');
-      return null;
+      rethrow;
     }
   }
 
