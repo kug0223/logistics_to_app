@@ -130,7 +130,10 @@ service cloud.firestore {
         inv.targetUid == uid &&
         inv.businessId == bizId &&
         inv.status == 'pending' &&
-        inv.createdAt > request.time - duration.value(30, 'd');
+        inv.createdAt > request.time - duration.value(30, 'd') &&
+        // [SEC-MEMBER-PERM] permissions는 초대장에 정의된 값과 일치 강제 — 초대 수락 시 권한 위조 차단
+        //   공격: REST API로 permissions:{canManageWage:true,...} 포함해 create → UI 레이어 권한 위조
+        request.resource.data.get('permissions', {}) == inv.get('permissions', {});
     }
 
     // ╔═══════════════════════════════════════════════════════════╗
@@ -456,7 +459,11 @@ service cloud.firestore {
         // SEC-78: write 단일 규칙 → create/update/delete 분리
         // update 시 수정 가능 필드 화이트리스트 — businessId·createdAt 불변 보장
         // (ContractTemplateModel.copyWith: name·templateType·articles·updatedAt만 편집 허용)
-        allow create: if isAdminOf(businessId) || isSubAdminOf(businessId) || isSuperAdmin();
+        // [SEC-CT-BIZ] create 시 문서 내 businessId가 URL 경로 businessId와 일치 강제
+        //   공격: A 사업장 관리자가 A 경로에 {businessId:'B'} 문서 생성 → B 사업장 계약서로 오귀속
+        allow create: if (isAdminOf(businessId) || isSubAdminOf(businessId) || isSuperAdmin()) &&
+          (isSuperAdmin() ||
+           request.resource.data.get('businessId', '') == businessId);
         allow update: if (isAdminOf(businessId) || isSubAdminOf(businessId) || isSuperAdmin()) &&
           (isSuperAdmin() ||
            request.resource.data.diff(resource.data).affectedKeys()
@@ -968,7 +975,11 @@ service cloud.firestore {
                        isSubAdminOf(resource.data.businessId)) &&
                       resource.data.get('businessResponse', null) == null &&
                       request.resource.data.diff(resource.data).affectedKeys()
-                        .hasOnly(['businessResponse', 'businessRespondedAt']));
+                        .hasOnly(['businessResponse', 'businessRespondedAt']) &&
+                      // [SEC-MR-TS] businessRespondedAt 서버 타임스탬프 강제 — 답변 시각 위조 차단
+                      (!request.resource.data.diff(resource.data).affectedKeys()
+                          .hasAny(['businessRespondedAt']) ||
+                       request.resource.data.businessRespondedAt == request.time));
 
       allow delete: if isSuperAdmin();
     }
@@ -1527,7 +1538,12 @@ service cloud.firestore {
                           request.resource.data.contractVoidedAt == request.time) &&
                          // [SEC-104] applicationIds도 pending_employer 상태에서만 수정 허용
                          //   근무자 서명 후 계약서에 다른 지원서로 재귀속하는 공격 차단
-                         (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['articles', 'templateId', 'slots', 'applicationIds']) ||
+                         // [SEC-WAGE-LOCK] workType/wage/wageType도 pending_employer 상태에서만 수정 허용
+                         //   공격: pending_worker(근무자 서명 대기) 중 관리자가 임금 임의 인하 → 낮은 임금으로 서명
+                         //   CF(callableChangeApplicationWorkType)는 Admin SDK 사용 → rules 우회(정상 경로)
+                         (!request.resource.data.diff(resource.data).affectedKeys()
+                            .hasAny(['articles', 'templateId', 'slots', 'applicationIds',
+                                     'workType', 'wage', 'wageType']) ||
                           resource.data.status == 'pending_employer'))
                       );
 
