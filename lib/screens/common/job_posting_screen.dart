@@ -2120,7 +2120,7 @@ class _JobPostingScreenState extends State<JobPostingScreen>
           if (mounted) setState(() => _isLoading = false);
         }
         if (details.isEmpty) {
-          ToastHelper.showError('업무 정보를 불러오지 못했습니다');
+          if (mounted) ToastHelper.showError('업무 정보를 불러오지 못했습니다');
           return;
         }
       }
