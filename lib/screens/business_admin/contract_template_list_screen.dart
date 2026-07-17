@@ -44,7 +44,9 @@ class _ContractTemplateListScreenState
     setState(() => _loading = true);
     try {
       if (kDebugMode) debugPrint('📂 [ContractTemplateListScreen] businessId=${widget.businessId}');
-      _templates = await _service.getTemplates(widget.businessId);
+      final templates = await _service.getTemplates(widget.businessId);
+      if (!mounted) return;
+      setState(() => _templates = templates);
     } catch (e) {
       debugPrint('❌ 템플릿 로드 실패: $e');
       if (mounted) ToastHelper.showError('템플릿 목록을 불러오지 못했습니다');

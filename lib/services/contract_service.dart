@@ -363,7 +363,7 @@ class ContractService {
         final res = await _fn
             .httpsCallable('callableGetContractsByBiz')
             .call({'businessId': businessId, 'applicationId': applicationId, 'limit': 10});
-        final raw = List<Map>.from(res.data['contracts'] as List? ?? []);
+        final raw = (res.data['contracts'] as List? ?? []).whereType<Map>().toList();
         if (raw.isNotEmpty) {
           final m = Map<String, dynamic>.from(raw.first);
           final id = m['id'] as String? ?? '';
@@ -415,7 +415,7 @@ class ContractService {
           final res = await _fn
               .httpsCallable('callableGetContractsByBiz')
               .call({'businessId': businessId, 'applicationIds': chunk, 'limit': 200});
-          final raw = List<Map>.from(res.data['contracts'] as List? ?? []);
+          final raw = (res.data['contracts'] as List? ?? []).whereType<Map>().toList();
           for (final c in raw) {
             final appId = c['applicationId'] as String?;
             final status = c['status'] as String?;
@@ -472,7 +472,7 @@ class ContractService {
       );
     } catch (e) {
       debugPrint('❌ 근무자 계약서 조회 실패: $e');
-      return (items: <EmploymentContractModel>[], lastDocId: null, hasMore: false);
+      rethrow;
     }
   }
 
@@ -519,7 +519,7 @@ class ContractService {
             'limit': pageSize + 1,
             if (startAfterId != null) 'startAfterId': startAfterId,
           });
-      final raw = List<Map>.from(res.data['contracts'] as List? ?? []);
+      final raw = (res.data['contracts'] as List? ?? []).whereType<Map>().toList();
       final hasMore = raw.length > pageSize;
       final page = hasMore ? raw.sublist(0, pageSize) : raw;
       final items = page
@@ -534,7 +534,7 @@ class ContractService {
       return (items: items, lastDocId: lastDocId, hasMore: hasMore);
     } catch (e) {
       debugPrint('❌ 사업장 계약서 조회 실패: $e');
-      return (items: <EmploymentContractModel>[], lastDocId: null, hasMore: false);
+      rethrow;
     }
   }
 
@@ -681,7 +681,7 @@ class ContractService {
             'isLongTerm': false,
             'limit': 1,
           });
-      final raw = List<Map>.from(res.data['contracts'] as List? ?? []);
+      final raw = (res.data['contracts'] as List? ?? []).whereType<Map>().toList();
       if (raw.isEmpty) return null;
       final m = Map<String, dynamic>.from(raw.first);
       final id = m['id'] as String? ?? '';
