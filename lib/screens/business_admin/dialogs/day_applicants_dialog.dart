@@ -1119,19 +1119,21 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                   GestureDetector(
                     onTap: () async {
                       final nowStarred = !_starredIds.contains(app.id);
+                      setState(() {
+                        if (nowStarred) { _starredIds.add(app.id); }
+                        else { _starredIds.remove(app.id); }
+                      });
                       try {
                         await _svc.updateApplicationFields(
                             app.id, {'isStarred': nowStarred});
-                        if (!mounted) return;
-                        setState(() {
-                          if (nowStarred) {
-                            _starredIds.add(app.id);
-                          } else {
-                            _starredIds.remove(app.id);
-                          }
-                        });
                       } catch (e) {
-                        if (mounted) ToastHelper.showError('별 표시 저장에 실패했습니다');
+                        if (mounted) {
+                          setState(() {
+                            if (nowStarred) { _starredIds.remove(app.id); }
+                            else { _starredIds.add(app.id); }
+                          });
+                          ToastHelper.showError('별 표시 저장에 실패했습니다');
+                        }
                       }
                     },
                     behavior: HitTestBehavior.opaque,
@@ -1624,6 +1626,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   }
 
   Future<void> _batchRequestIdCard() async {
+    if (_isProcessing) return;
     if (_selectedIdCardUserIds.isEmpty) return;
     final currentUser = context.read<UserProvider>().currentUser;
     if (currentUser == null) {
@@ -1658,24 +1661,29 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     }
 
     if (!mounted) return;
-    final successCount = await IdCardHelper.showBatchRequestDialog(
-      context: context,
-      firestoreService: _svc,
-      requester: {'uid': currentUser.uid, 'name': currentUser.name},
-      business: {'id': bizId, 'name': business.name},
-      targets: targets,
-    );
+    setState(() => _isProcessing = true);
+    try {
+      final successCount = await IdCardHelper.showBatchRequestDialog(
+        context: context,
+        firestoreService: _svc,
+        requester: {'uid': currentUser.uid, 'name': currentUser.name},
+        business: {'id': bizId, 'name': business.name},
+        targets: targets,
+      );
 
-    if (!mounted) return;
-    if (successCount > 0) {
-      _hasChanges = true;
-      setState(() {
-        for (final uid in _selectedIdCardUserIds) {
-          _idCardStatusMap[uid] = 'pending';
-        }
-        _idCardSelectGroupKey = null;
-        _selectedIdCardUserIds.clear();
-      });
+      if (!mounted) return;
+      if (successCount > 0) {
+        _hasChanges = true;
+        setState(() {
+          for (final uid in _selectedIdCardUserIds) {
+            _idCardStatusMap[uid] = 'pending';
+          }
+          _idCardSelectGroupKey = null;
+          _selectedIdCardUserIds.clear();
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 

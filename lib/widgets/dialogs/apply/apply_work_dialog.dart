@@ -313,7 +313,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       }
     } catch (e) {
       debugPrint('❌ 초기 데이터 로드 실패: $e');
-     } finally {
+      if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다');
+    } finally {
       if (mounted) {
         setState(() => _isLoading = false);
         

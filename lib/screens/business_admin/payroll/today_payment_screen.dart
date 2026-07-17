@@ -115,6 +115,7 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
       }
     } catch (e) {
       debugPrint('❌ 급여 목록 로드 실패: $e');
+      if (mounted) ToastHelper.showError('급여 목록을 불러오는데 실패했습니다');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -311,6 +312,9 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
         filename: '${biz}_${today.month}월_오늘송금목록.xlsx',
         businessId: widget.businessId,
       );
+    } catch (e) {
+      debugPrint('❌ 엑셀 내보내기 실패: $e');
+      if (mounted) ToastHelper.showError('엑셀 내보내기에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isExporting = false);
     }

@@ -680,6 +680,9 @@ class _PayrollPaymentDashboardScreenState
         filename:   '${bizName}_${widget.year}년${widget.month}월_이체목록$suffix.xlsx',
         businessId: widget.businessId,
       );
+    } catch (e) {
+      debugPrint('❌ 엑셀 내보내기 실패: $e');
+      if (mounted) ToastHelper.showError('엑셀 내보내기에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isExporting = false);
     }

@@ -108,8 +108,8 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
       final psItems = (psResult.data['items'] as List<dynamic>?) ?? [];
 
       final summaryMap = <int, PayrollSummaryModel>{};
-      for (final e in psItems) {
-        final raw = Map<String, dynamic>.from(e as Map);
+      for (final e in psItems.whereType<Map>()) {
+        final raw = Map<String, dynamic>.from(e);
         final id = raw.remove('id') as String? ?? '';
         final m = PayrollSummaryModel.tryFromMap(raw, id);
         if (m != null) summaryMap[m.month] = m;

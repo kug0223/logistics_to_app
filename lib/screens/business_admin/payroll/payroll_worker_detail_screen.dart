@@ -56,6 +56,7 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
   }
 
   Future<void> _loadRecords() async {
+    if (mounted) setState(() => _isLoading = true);
     try {
       final monthStart = DateTime(widget.year, widget.month, 1);
       final monthEnd = DateTime(widget.year, widget.month + 1, 1);
@@ -76,8 +77,8 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
         AttendanceModel.wageConfirmed,
         AttendanceModel.wageTransferred,
       };
-      final records = cfItems.map((e) {
-        final m = Map<String, dynamic>.from(e as Map);
+      final records = cfItems.whereType<Map>().map((e) {
+        final m = Map<String, dynamic>.from(e);
         final id = m.remove('id') as String? ?? '';
         return AttendanceModel.tryFromMap(m, id);
       }).whereType<AttendanceModel>()

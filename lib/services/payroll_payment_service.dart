@@ -244,7 +244,7 @@ class PayrollPaymentService {
           .toList();
     } catch (e) {
       debugPrint('❌ 오늘 지급 조회 실패: $e');
-      return [];
+      rethrow; // 빈 목록 반환 시 관리자가 0건으로 오인 → 에러 전파
     }
   }
 

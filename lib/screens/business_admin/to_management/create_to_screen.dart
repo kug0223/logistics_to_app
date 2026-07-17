@@ -250,6 +250,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   /// 사전조건 화면에서 "다시 확인" 또는 준비 화면 복귀 시 재체크
   Future<void> _reCheckPrerequisites() async {
+    if (_isLoading) return;
     if (_selectedBusiness == null) {
       await _loadMyBusinesses();
       return;
@@ -294,11 +295,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   // 드롭다운으로 사업장 변경 시 업무목록 + 계약서 템플릿 재로드
   // 사업장 전환 시 업무목록만 재로드 (계약서 템플릿은 전역 — _reCheckPrerequisites에서 관리)
   Future<void> _loadWorkTypes() async {
-    if (_selectedBusiness == null) return;
+    final biz = _selectedBusiness;
+    if (biz == null) return;
     try {
       final workTypes = await _firestoreService
-          .getBusinessWorkTypes(_selectedBusiness!.id);
-      if (!mounted) return;
+          .getBusinessWorkTypes(biz.id);
+      if (!mounted || _selectedBusiness?.id != biz.id) return;
       setState(() {
         _businessWorkTypes = workTypes;
         _workTypesReady = workTypes.isNotEmpty;

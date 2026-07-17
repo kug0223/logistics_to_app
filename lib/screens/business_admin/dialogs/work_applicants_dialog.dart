@@ -2390,17 +2390,22 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       (item) => _selectedIds.contains((item['application'] as ApplicationModel).id),
       orElse: () => <String, dynamic>{},
     );
-    if (firstItem.isEmpty) return;
+    if (firstItem.isEmpty) {
+      if (mounted) setState(() => _isProcessing = false);
+      return;
+    }
 
     final firstApp = firstItem['application'] as ApplicationModel;
     final firstUser = firstItem['user'] as UserModel?;
     if (firstUser == null) {
       ToastHelper.showError('지원자 정보를 불러올 수 없습니다');
+      if (mounted) setState(() => _isProcessing = false);
       return;
     }
     final firstWorkDetail = widget.work ?? _getWorkForApp(firstApp);
     if (firstWorkDetail == null) {
       ToastHelper.showError('업무 정보를 찾을 수 없습니다');
+      if (mounted) setState(() => _isProcessing = false);
       return;
     }
 
