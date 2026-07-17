@@ -5974,6 +5974,13 @@ export const callableCreateTO = onCall(
         finalData[field] = admin.firestore.Timestamp.fromMillis(v);
       }
     }
+    // [HIGH-1 수정 2026-07-17] rangeStart < rangeEnd 역전 검증
+    //   역전된 날짜가 계약서·임금 계산 전체로 전파됨 (workEndDate = rangeEnd)
+    const rsTs = finalData.rangeStart as admin.firestore.Timestamp | undefined;
+    const reTs = finalData.rangeEnd as admin.firestore.Timestamp | undefined;
+    if (rsTs && reTs && rsTs.toMillis() >= reTs.toMillis()) {
+      throw new HttpsError("invalid-argument", "rangeEnd는 rangeStart보다 이후여야 합니다.");
+    }
     // workDetails 내부 날짜 필드도 복원
     if (Array.isArray(finalData.workDetails)) {
       finalData.workDetails = (finalData.workDetails as Record<string, unknown>[]).map((wd) => {
@@ -6190,6 +6197,21 @@ export const callableUpdateTO = onCall(
           "failed-precondition",
           `totalRequired(${newRequired})는 확정 인원(${totalConfirmed}) 이상이어야 합니다.`
         );
+      }
+    }
+
+    // [HIGH-1 수정 2026-07-17] rangeStart/rangeEnd 날짜 역전 검증
+    if ("rangeStart" in updates || "rangeEnd" in updates) {
+      const newRs = (typeof updates.rangeStart === "number"
+        ? admin.firestore.Timestamp.fromMillis(updates.rangeStart as number)
+        : updates.rangeStart as admin.firestore.Timestamp | undefined)
+        ?? (toData.rangeStart as admin.firestore.Timestamp | undefined);
+      const newRe = (typeof updates.rangeEnd === "number"
+        ? admin.firestore.Timestamp.fromMillis(updates.rangeEnd as number)
+        : updates.rangeEnd as admin.firestore.Timestamp | undefined)
+        ?? (toData.rangeEnd as admin.firestore.Timestamp | undefined);
+      if (newRs && newRe && newRs.toMillis() >= newRe.toMillis()) {
+        throw new HttpsError("invalid-argument", "rangeEnd는 rangeStart보다 이후여야 합니다.");
       }
     }
 
@@ -11178,7 +11200,9 @@ export const callableReopenSlots = onCall(
       });
       const toSnap2 = await db.collection("tos").doc(toId).get();
       const currentTOStatus = toSnap2.data()?.status as string | undefined;
-      if (hasOpenSlot && currentTOStatus === "CLOSED") {
+      // [MEDIUM-2 수정 2026-07-17] EXPIRED 상태도 ACTIVE로 복구
+      //   이전: CLOSED만 처리 → EXPIRED TO 슬롯 재오픈 시 TO가 EXPIRED 상태로 유지되던 버그
+      if (hasOpenSlot && (currentTOStatus === "CLOSED" || currentTOStatus === "EXPIRED")) {
         await db.collection("tos").doc(toId).update({
           status: "ACTIVE",
           closedAt: admin.firestore.FieldValue.delete(),
@@ -11216,9 +11240,12 @@ export const callableDeleteSlots = onCall(
 
     // TO 정보 조회 (알림용)
     const toDoc = await db.collection("tos").doc(toId).get();
-    const toData = toDoc.data() ?? {};
+    // [MEDIUM-3 수정 2026-07-17] TO 비존재 시 교차검증 우회 차단
+    //   미존재 TO는 toData.businessId=undefined → ?? businessId 폴백으로 검증 통과하던 버그
+    if (!toDoc.exists) throw new HttpsError("not-found", "해당 TO를 찾을 수 없습니다.");
+    const toData = toDoc.data()!;
     const toBusinessName = (toData.businessName as string) ?? "";
-    const toBusinessId = (toData.businessId as string) ?? businessId;
+    const toBusinessId = toData.businessId as string;
     const toTitle = (toData.title as string) ?? "";
 
     // [S4-FIX] toId ↔ businessId 교차검증 — 다른 사업장 TO 슬롯 삭제 차단
@@ -11332,6 +11359,41 @@ export const callableDeleteSlots = onCall(
       }
     }
 
+    // [HIGH-2 수정 2026-07-17] 슬롯 삭제 전 연결된 계약서 voided 처리
+    //   CONFIRMED/CONTRACT_PENDING 지원서의 employment_contracts가 pending_* 상태로 고아 잔존하던 버그
+    if (allActiveDocs.length > 0) {
+      const confirmedAppIds = allActiveDocs
+        .filter((d) => CONFIRMED_STATUSES.includes((d.data().status as string) ?? ""))
+        .map((d) => d.id);
+      if (confirmedAppIds.length > 0) {
+        for (let ci = 0; ci < confirmedAppIds.length; ci += 30) {
+          const chunk = confirmedAppIds.slice(ci, ci + 30);
+          const contractSnaps = await db.collection("employment_contracts")
+            .where("applicationId", "in", chunk)
+            .where("status", "in", ["pending_employer", "pending_worker"])
+            .get();
+          if (!contractSnaps.empty) {
+            let contractBatch = db.batch();
+            let contractCount = 0;
+            for (const cDoc of contractSnaps.docs) {
+              contractBatch.update(cDoc.ref, {
+                status: "voided",
+                voidedAt: now,
+                voidReason: "SLOT_DELETED",
+              });
+              contractCount++;
+              if (contractCount >= 499) {
+                await contractBatch.commit();
+                contractBatch = db.batch();
+                contractCount = 0;
+              }
+            }
+            if (contractCount > 0) await contractBatch.commit();
+          }
+        }
+      }
+    }
+
     // 슬롯 삭제 + TO 카운터 업데이트 (배치)
     let deleteBatch = db.batch();
     let deleteCount = 0;
@@ -11344,6 +11406,7 @@ export const callableDeleteSlots = onCall(
         deleteCount = 0;
       }
     }
+    const remainingSlots = (toData.totalSlots as number ?? 0) - slotIds.length;
     const toUpdate: Record<string, unknown> = {
       totalSlots: admin.firestore.FieldValue.increment(-slotIds.length),
     };
@@ -11353,6 +11416,15 @@ export const callableDeleteSlots = onCall(
       toUpdate.totalConfirmed = admin.firestore.FieldValue.increment(-removedConfirmed);
     if (removedPending > 0)
       toUpdate.totalPending = admin.firestore.FieldValue.increment(-removedPending);
+    // [MEDIUM-1 수정 2026-07-17] 전체 슬롯 삭제 시 TO status 재계산
+    //   슬롯 0개 + ACTIVE 상태 TO가 목록에 노출되던 버그
+    const currentStatus = toData.status as string | undefined;
+    if (remainingSlots <= 0 && currentStatus === "ACTIVE") {
+      toUpdate.status = "CLOSED";
+      toUpdate.closedAt = now;
+      toUpdate.closedReason = "ALL_SLOTS_DELETED";
+      toUpdate.statusUpdatedAt = now;
+    }
     deleteBatch.update(db.collection("tos").doc(toId), toUpdate);
     await deleteBatch.commit();
 
