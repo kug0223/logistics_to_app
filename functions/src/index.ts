@@ -15044,7 +15044,11 @@ export const callableApplyToTO = onCall(
       throw new HttpsError("failed-precondition", "해당 업무 유형의 임금 정보를 서버에서 찾을 수 없습니다.");
     }
     const effectiveWage = serverWage;
-    const effectiveWageType = serverWageType ?? wageType;
+    // [LOW-41-01] wageType 화이트리스트 — 레거시 TO 누락 시 클라이언트 값 무검증 저장 방지
+    const VALID_WAGE_TYPES = ["hourly", "daily"];
+    const effectiveWageType = (serverWageType && VALID_WAGE_TYPES.includes(serverWageType))
+      ? serverWageType
+      : (VALID_WAGE_TYPES.includes(wageType) ? wageType : "hourly");
 
     // ── 5. 복합 docId 계산 + 기존 지원서 중복/재활성화 판단 ──
     const discriminator = (workDetailId && workDetailId.length > 0) ? workDetailId : selectedWorkType;
