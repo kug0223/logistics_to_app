@@ -288,13 +288,11 @@ class _JobPostingScreenState extends State<JobPostingScreen>
             await _firestoreService.getMyApplications(_applicantUid!);
       }
 
-      if (!mounted) return;
-      setState(() => _isLoading = false);
     } catch (e) {
       debugPrint('❌ 데이터 로드 실패: $e');
-      if (!mounted) return;
-      ToastHelper.showError('데이터를 불러오는데 실패했습니다');
-      setState(() => _isLoading = false);
+      if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 

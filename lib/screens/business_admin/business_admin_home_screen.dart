@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -97,7 +98,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
       }
     } catch (e) {
       debugPrint('❌ 사업장 조회 실패: $e');
-      if (mounted) setState(() => _hasApprovedBusiness = false);
+      // _hasApprovedBusiness를 null(미조회)로 유지 — false 설정 시 승인 사업장 없음으로 오인
     }
   }
 
@@ -601,7 +602,7 @@ class _TodayPaymentBadgeCardState extends State<_TodayPaymentBadgeCard> {
   @override
   void didUpdateWidget(_TodayPaymentBadgeCard old) {
     super.didUpdateWidget(old);
-    if (old.businessIds != widget.businessIds) _loadCount();
+    if (!listEquals(old.businessIds, widget.businessIds)) _loadCount();
   }
 
   Future<void> _loadCount() async {

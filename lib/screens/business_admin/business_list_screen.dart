@@ -55,7 +55,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
 
   /// 사업장 목록 로드
   Future<void> _loadBusinesses({bool forceServer = false}) async {
-    if (!mounted) return;
+    if (!mounted || _isLoading) return;
     setState(() => _isLoading = true);
 
     try {
@@ -63,7 +63,6 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       final ownerId = userProvider.currentUser?.uid;
 
       if (ownerId == null) {
-        setState(() => _isLoading = false);
         return;
       }
 
@@ -79,13 +78,11 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       }
 
       if (!mounted) return;
-      setState(() {
-        _businesses = businesses;
-        _isLoading = false;
-      });
+      setState(() => _businesses = businesses);
     } catch (e) {
       debugPrint('❌ 사업장 로드 실패: $e');
       if (mounted) ToastHelper.showError('사업장 목록을 불러오는데 실패했습니다');
+    } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
