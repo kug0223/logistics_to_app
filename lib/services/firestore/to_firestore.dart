@@ -529,7 +529,7 @@ extension TOFirestore on FirestoreService {
       return toId;
     } catch (e) {
       debugPrint('❌ [TO] 공고 생성 실패: $e');
-      return null;
+      rethrow; // MAX_ACTIVE_TO_LIMIT 등 CF 예외가 화면 catch 블록까지 전파되도록
     }
   }
 

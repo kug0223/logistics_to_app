@@ -278,14 +278,14 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                     color: Colors.white.withValues(alpha: 0.2),
                                     borderRadius: BorderRadius.circular(12),
                                     child: InkWell(
-                                      onTap: () {
-                                        Navigator.push(
+                                      onTap: () => _safeNavigate(() async {
+                                        await Navigator.push(
                                           context,
                                           MaterialPageRoute(
                                             builder: (_) => const NotificationScreen(),
                                           ),
                                         );
-                                      },
+                                      }),
                                       borderRadius: BorderRadius.circular(12),
                                       child: Padding(
                                         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
@@ -304,13 +304,13 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                   color: Colors.white.withValues(alpha: 0.2),
                                   borderRadius: BorderRadius.circular(12),
                                   child: InkWell(
-                                    onTap: () async {
+                                    onTap: () => _safeNavigate(() async {
                                       final confirmed = await DialogHelper.showLogoutConfirm(context);
                                       if (confirmed && context.mounted) {
                                         context.read<ThemeProvider>().reset();
                                         await context.read<UserProvider>().signOut();
                                       }
-                                    },
+                                    }),
                                     borderRadius: BorderRadius.circular(12),
                                     child: Padding(
                                       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),

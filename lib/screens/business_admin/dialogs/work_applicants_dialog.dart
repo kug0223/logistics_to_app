@@ -1049,8 +1049,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
   /// 일괄 신분증 요청
   Future<void> _batchRequestIdCard() async {
+    if (_isProcessing) return; // 이중 탭 방지 — 중복 요청 전송 차단
     if (_selectedIdCardUserIds.isEmpty) return;
-
+    setState(() => _isProcessing = true);
+    try {
     final userProvider = context.read<UserProvider>();
     final currentUser = userProvider.currentUser;
     if (currentUser == null) {
@@ -1102,6 +1104,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         _isIdCardSelectMode = false;
         _selectedIdCardUserIds.clear();
       });
+    }
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -1284,21 +1289,31 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                             GestureDetector(
                               onTap: () async {
                                 final nowStarred = !_starredIds.contains(app.id);
+                                // Optimistic update — 즉시 반영해 이중 탭 시 방향 뒤집힘 방지
+                                setState(() {
+                                  if (nowStarred) {
+                                    _starredIds.add(app.id);
+                                  } else {
+                                    _starredIds.remove(app.id);
+                                  }
+                                });
                                 try {
                                   await _firestoreService.updateApplicationFields(
                                     app.id,
                                     {'isStarred': nowStarred},
                                   );
-                                  if (!mounted) return;
-                                  setState(() {
-                                    if (nowStarred) {
-                                      _starredIds.add(app.id);
-                                    } else {
-                                      _starredIds.remove(app.id);
-                                    }
-                                  });
                                 } catch (e) {
-                                  if (mounted) ToastHelper.showError('별 표시 저장에 실패했습니다');
+                                  // 실패 시 UI 롤백
+                                  if (mounted) {
+                                    setState(() {
+                                      if (nowStarred) {
+                                        _starredIds.remove(app.id);
+                                      } else {
+                                        _starredIds.add(app.id);
+                                      }
+                                    });
+                                    ToastHelper.showError('별 표시 저장에 실패했습니다');
+                                  }
                                 }
                               },
                               behavior: HitTestBehavior.opaque,

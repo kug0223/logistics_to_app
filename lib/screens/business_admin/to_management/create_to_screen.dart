@@ -302,7 +302,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       setState(() {
         _businessWorkTypes = workTypes;
         _workTypesReady = workTypes.isNotEmpty;
-        if (!workTypes.isNotEmpty) _workDetails.clear();
+        if (workTypes.isEmpty) _workDetails.clear();
       });
       if (workTypes.isEmpty) {
         ToastHelper.showWarning(
@@ -1011,6 +1011,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         ToastHelper.showSuccess(label);
         AnalyticsService.logTOCreate(toType: _selectedJobType);
         NavigationHelper.popWithChange(context);
+      } else if (mounted) {
+        ToastHelper.showError('공고 등록에 실패했습니다');
       }
     } catch (e) {
       debugPrint('❌ TO 생성 실패: $e');
