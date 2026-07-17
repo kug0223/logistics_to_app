@@ -117,7 +117,8 @@ class NotificationProvider with ChangeNotifier {
               _hasMore = true;
             } else {
               _streamNotifications = received;
-              _hasMore = false;
+              // additionalNotifications가 이미 로드된 경우 loadMore 결과를 유지
+              if (_additionalNotifications.isEmpty) _hasMore = false;
             }
             _isLoading = false;
             _hasError = false;

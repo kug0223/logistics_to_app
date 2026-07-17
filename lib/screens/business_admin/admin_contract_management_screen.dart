@@ -54,6 +54,7 @@ class _AdminContractManagementScreenState
   bool _isLoadingMore = false;
   bool _hasMore = false;
   bool _isVoidingContract = false;
+  bool _isRetrying = false;
   String? _lastDoc;
 
   String _searchQuery = '';
@@ -191,6 +192,8 @@ class _AdminContractManagementScreenState
 
   /// voidFailedAppIds 재처리 — 실패한 application 취소를 다시 시도
   Future<void> _retryVoidFailedApps(EmploymentContractModel c) async {
+    if (_isRetrying) return;
+    setState(() => _isRetrying = true);
     try {
       await _contractService.retryVoidFailedApps(c);
       if (!mounted) return;
@@ -200,6 +203,8 @@ class _AdminContractManagementScreenState
       if (!mounted) return;
       ToastHelper.showError('재처리 실패: $e');
       _refresh();
+    } finally {
+      if (mounted) setState(() => _isRetrying = false);
     }
   }
 

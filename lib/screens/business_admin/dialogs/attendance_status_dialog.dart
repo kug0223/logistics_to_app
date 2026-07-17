@@ -3018,6 +3018,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   // 또는 결근(statusAbsent) 처리된 인원을 대상으로 한다. 일반 아르바이트 사업장
   // 최대 규모 기준 하루 수백 명 수준으로 단일 batch(500 ops) 내에서 충분히 처리 가능하다.
   Future<void> _showBatchResetDialog() async {
+    if (_isLoading) return;
     final targets = _selectedIds
         .map((id) => _workerIdMap[id])
         .whereType<ApplicationModel>()
@@ -3555,7 +3556,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
   /// 일괄 출근 다이얼로그
   Future<void> _showBatchCheckInDialog() async {
-    if (_selectedIds.isEmpty) return;
+    if (_isLoading || _selectedIds.isEmpty) return;
 
     // 파트별 그룹화
     final Map<String, List<ApplicationModel>> groups = {};
@@ -3599,7 +3600,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
   /// 일괄 퇴근 다이얼로그
   Future<void> _showBatchCheckOutDialog() async {
-    if (_selectedIds.isEmpty) return;
+    if (_isLoading || _selectedIds.isEmpty) return;
 
     // 출근했으나 퇴근 미처리 인원만 필터 (checkin / late / missed_checkout)
     final checkedInIds = _selectedIds.where((id) {

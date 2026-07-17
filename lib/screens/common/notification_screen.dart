@@ -54,7 +54,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       builder: (context, provider, _) {
         if (provider.loadMoreFailed) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
+            if (mounted && provider.loadMoreFailed) {
               ToastHelper.showError('알림을 더 불러오지 못했습니다');
               provider.clearLoadMoreError();
             }
