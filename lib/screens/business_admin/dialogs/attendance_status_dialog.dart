@@ -2659,6 +2659,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     final businessName = _businessNameMap[_selectedBusinessId] ?? '사업장';
 
     // 최신 출퇴근 기록·workDetail을 Firestore에서 재조회
+    setState(() => _isLoading = true);
+    try {
     final appIds = _confirmedWorkers.map((w) => w.id).toList();
     final attendanceFuture = _getAttendanceRecords(appIds);
     final workDetailFuture = _getWorkDetailTimes();
@@ -2666,6 +2668,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     if (!mounted) return;
     _workDetailTimeMap = await workDetailFuture;
     if (!mounted) return;
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
     _rebuildStatusCache();
 
     final hasChanges = await showDialog<bool>(
@@ -2697,6 +2702,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
   /// PDF 명단 미리보기 표시
   Future<void> _showPrintPreview() async {
+    if (_isLoading) return;
     if (_confirmedWorkers.isEmpty) {
       ToastHelper.showWarning('출력할 인원이 없습니다');
       return;
@@ -3149,6 +3155,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
   /// 일괄 시간 조정 다이얼로그 (이미 출근/퇴근한 인원의 시간을 일괄 수정)
   Future<void> _showBatchAdjustTimeDialog() async {
+    if (_isLoading) return;
     if (_selectedIds.isEmpty) return;
 
     // 선택된 인원 중 출근 기록이 있는 인원만 대상

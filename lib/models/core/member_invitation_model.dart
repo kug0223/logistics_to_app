@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'business_member_model.dart';
 import '../../utils/firestore_helper.dart';
 
@@ -35,7 +36,7 @@ class MemberInvitationModel {
   });
 
   static MemberInvitationModel? tryFromFirestore(DocumentSnapshot doc) {
-    try { return MemberInvitationModel.fromFirestore(doc); } catch (_) { return null; }
+    try { return MemberInvitationModel.fromFirestore(doc); } catch (e) { debugPrint('⚠️ MemberInvitationModel.tryFromFirestore 파싱 실패 [${doc.id}]: $e'); return null; }
   }
 
   /// CF callable 응답(serializeFirestoreData 직렬화) 파싱용.
@@ -57,7 +58,7 @@ class MemberInvitationModel {
         createdAt: parseTimestamp(d['createdAt']),
         respondedAt: parseTimestampNullable(d['respondedAt']),
       );
-    } catch (_) { return null; }
+    } catch (e) { debugPrint('⚠️ MemberInvitationModel.tryFromMap 파싱 실패 [$docId]: $e'); return null; }
   }
 
   factory MemberInvitationModel.fromFirestore(DocumentSnapshot doc) {

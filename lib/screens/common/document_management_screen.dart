@@ -555,6 +555,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
   /// 사업자등록증 삭제
   Future<void> _deleteBusinessLicense() async {
+    if (_isLoading) return;
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
       title: '사업자등록증 삭제',
@@ -754,6 +755,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
   /// 신분증 삭제
   Future<void> _deleteIdCard() async {
+    if (_isLoading) return;
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
       title: '신분증 삭제',
@@ -791,6 +793,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
   /// 통장 정보 삭제
   Future<void> _deleteBankInfo() async {
+    if (_isLoading) return;
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
       title: '통장 정보 삭제',
