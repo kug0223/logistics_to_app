@@ -475,14 +475,19 @@ class PayrollPaymentService {
       ),
     );
     {
-      final allTransferred = attSnaps
-          .every((s) => s.data()?['wageStatus'] == AttendanceModel.wageTransferred);
+      // [HIGH-BUG1] userId 교차검증 — 요청의 workerId와 attendance.userId 일치 여부 검사
+      // 다른 워커의 attendanceId가 포함된 경우 필터링
+      final validSnaps = attSnaps
+          .where((s) => s.data()?['userId'] == req.workerId)
+          .toList();
+      final allTransferred = validSnaps.isNotEmpty &&
+          validSnaps.every((s) => s.data()?['wageStatus'] == AttendanceModel.wageTransferred);
       if (allTransferred) {
         // 모든 항목이 이미 transferred → 1단계 건너뛰고 status만 PROCESSED로 복구
         skipMarkTransferred = true;
       } else {
-        // wageConfirmed 항목만 이체 처리 — 취소된(wagePending 등) 항목 제외
-        idsToTransfer = attSnaps
+        // wageConfirmed 항목만 이체 처리 — 취소된(wagePending 등) 항목 및 타 워커 항목 제외
+        idsToTransfer = validSnaps
             .where((s) => s.data()?['wageStatus'] == AttendanceModel.wageConfirmed)
             .map((s) => s.id)
             .toList();

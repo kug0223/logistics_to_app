@@ -5909,6 +5909,13 @@ export const callableCreateTO = onCall(
     if (role !== "BUSINESS_ADMIN" && role !== "SUPER_ADMIN") {
       throw new HttpsError("permission-denied", "관리자만 공고를 생성할 수 있습니다.");
     }
+    // [HIGH-AUTH] pending 외국인 관리자 차단
+    if (role === "BUSINESS_ADMIN") {
+      const accountStatus = callerData?.accountStatus as string | undefined;
+      if (accountStatus !== undefined && accountStatus !== "active") {
+        throw new HttpsError("permission-denied", "계정 승인 대기 중입니다. 승인 후 이용 가능합니다.");
+      }
+    }
 
     // 소속 사업장 교차검증 (슈퍼어드민 예외)
     // [HIGH-04-FIX] managedBusinessIds는 클라이언트가 arrayUnion으로 임의 businessId 추가 가능
@@ -9626,12 +9633,18 @@ async function assertBizAdmin(callerUid: string, businessId: string): Promise<vo
     db.collection("users").doc(callerUid).get(),
     db.collection("businesses").doc(businessId).get(),
   ]);
-  const isSuperAdmin = (callerSnap.data()?.role as string | undefined) === "SUPER_ADMIN";
+  const callerData = callerSnap.data();
+  const isSuperAdmin = (callerData?.role as string | undefined) === "SUPER_ADMIN";
   if (isSuperAdmin) return;
+  // [HIGH-AUTH] pending 외국인 관리자 차단 — accountStatus 필드 존재 시 active만 허용
+  const accountStatus = callerData?.accountStatus as string | undefined;
+  if (accountStatus !== undefined && accountStatus !== "active") {
+    throw new HttpsError("permission-denied", "계정 승인 대기 중입니다. 승인 후 이용 가능합니다.");
+  }
   if (!bizSnap.exists) throw new HttpsError("not-found", "사업장을 찾을 수 없습니다.");
   const adminIds = (bizSnap.data()?.adminIds as string[] | undefined) ?? [];
   const ownerId = bizSnap.data()?.ownerId as string | undefined;
-  const subAdminOf = callerSnap.data()?.subAdminOf as string | undefined;
+  const subAdminOf = callerData?.subAdminOf as string | undefined;
   if (!adminIds.includes(callerUid) && ownerId !== callerUid && subAdminOf !== businessId) {
     throw new HttpsError("permission-denied", "해당 사업장에 대한 권한이 없습니다.");
   }
