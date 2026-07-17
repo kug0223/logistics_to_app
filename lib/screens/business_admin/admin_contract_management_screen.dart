@@ -182,8 +182,12 @@ class _AdminContractManagementScreenState
       _refresh();
     } catch (e) {
       if (!mounted) return;
-      // voidContract는 app 취소 실패 시에도 계약서 voided는 완료됨 — 경고 토스트 후 목록 갱신
-      ToastHelper.showWarning('무효 처리됐으나 일부 지원서 취소에 실패했습니다. 카드에서 재처리하세요.');
+      // CF 무효화 완료 후 app 취소 일부 실패 vs CF 자체 실패 분기
+      if (e.toString().contains('계약서가 무효화되었으나')) {
+        ToastHelper.showWarning('무효 처리됐으나 일부 지원서 취소에 실패했습니다. 카드에서 재처리하세요.');
+      } else {
+        ToastHelper.showError('무효 처리에 실패했습니다. 다시 시도해주세요.');
+      }
       _refresh();
     } finally {
       if (mounted) setState(() => _isVoidingContract = false);
