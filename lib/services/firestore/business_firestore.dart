@@ -153,9 +153,10 @@ extension BusinessFirestore on FirestoreService {
   Future<bool> updateWorkType(String workTypeId, WorkTypeModel workType) async {
     NetworkChecker.instance.assertOnline('업무 유형 수정을 하려면 인터넷 연결이 필요합니다.');
     try {
-      await _firestore.collection('work_types').doc(workTypeId).update(
-        workType.copyWith(updatedAt: DateTime.now()).toMap(),
-      );
+      await _firestore.collection('work_types').doc(workTypeId).update({
+        ...workType.toMap(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
       
       ToastHelper.showSuccess('업무 정보가 수정되었습니다.');
       return true;
@@ -237,7 +238,7 @@ extension BusinessFirestore on FirestoreService {
         name: name,
         icon: icon,
         color: color,
-        backgroundColor: backgroundColor, 
+        backgroundColor: backgroundColor,
         displayOrder: order,
         isActive: true,
         createdAt: DateTime.now(),
@@ -247,7 +248,10 @@ extension BusinessFirestore on FirestoreService {
           .collection('businesses')
           .doc(businessId)
           .collection('workTypes')
-          .add(workType.toMap());
+          .add({
+            ...workType.toMap(),
+            'createdAt': FieldValue.serverTimestamp(),
+          });
 
       debugPrint('✅ [FirestoreService] 업무 유형 추가 완료: ${docRef.id}');
       ToastHelper.showSuccess('업무 유형이 추가되었습니다');
@@ -341,25 +345,24 @@ extension BusinessFirestore on FirestoreService {
             .doc(workTypeId)
             .update({'isActive': false});
 
-        // ✅ 3. Firestore 성공 후 Storage 정리 (실패해도 문서는 이미 비활성화됨)
-        final storage = FirebaseStorage.instance;
-        if (data['thumbnailUrl'] != null) {
-          try {
-            await storage.refFromURL(data['thumbnailUrl']).delete();
-            debugPrint('✅ 썸네일 삭제: ${data['thumbnailUrl']}');
-          } catch (e) {
-            debugPrint('⚠️ 썸네일 삭제 실패: $e');
-          }
-        }
-        if (data['images'] != null) {
-          for (var url in List<String>.from(data['images'])) {
-            try {
-              await storage.refFromURL(url).delete();
-              debugPrint('✅ 이미지 삭제: $url');
-            } catch (e) {
-              debugPrint('⚠️ 이미지 삭제 실패: $e');
-            }
-          }
+        // ✅ 3. Firestore 성공 후 Storage 정리 — CF callableDeleteBusinessImage 경유
+        // businesses/ 경로는 storage.rules에서 클라이언트 직접 삭제 차단
+        final urlsToDelete = <String>[
+          if (data['thumbnailUrl'] != null) data['thumbnailUrl'] as String,
+          ...List<String>.from(data['images'] ?? []),
+        ];
+        if (urlsToDelete.isNotEmpty) {
+          final cf = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableDeleteBusinessImage');
+          await Future.wait(
+            urlsToDelete.map((url) async {
+              try {
+                await cf.call({'imageUrl': url});
+              } catch (e) {
+                debugPrint('⚠️ 업무유형 이미지 삭제 실패 (계속 진행): $url — $e');
+              }
+            }),
+          );
         }
         ToastHelper.showSuccess('업무 유형이 삭제되었습니다');
         return true;

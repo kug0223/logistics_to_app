@@ -11,6 +11,7 @@ import '../../../widgets/common/gradient_scaffold.dart';
 import '../../../widgets/common/app_empty_state.dart';
 import '../../../theme/app_colors.dart';
 import '../../../services/fcm_service.dart';
+import '../business_list_screen.dart';
 
 
 /// ✨ 세련된 통합 인력 관리 화면 (business_home_screen 테마 적용)
@@ -117,6 +118,15 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
         body: AppEmptyState(
           icon: Icons.business_center,
           title: '등록된 사업장이 없습니다',
+          subtitle: '사업장을 먼저 등록해주세요',
+          action: FilledButton.icon(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const BusinessListScreen()),
+            ),
+            icon: const Icon(Icons.add_business, size: 18),
+            label: const Text('사업장 등록'),
+          ),
         ),
       );
     }

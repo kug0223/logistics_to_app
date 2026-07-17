@@ -53,16 +53,23 @@ class MonthlyReviewService {
   }
 
   /// 특정 workerId의 미작성 리뷰 요청 조회 (지원자용)
+  /// [CF 이전 2026-07-15] callableGetMyReviewRequests — workerId 서버 검증 강제
   Future<List<ReviewRequestModel>> getPendingRequestsForWorker(
       String workerId) async {
     try {
-      final snap = await _db
-          .collection('review_requests')
-          .where('workerId', isEqualTo: workerId)
-          .where('workerStatus', isEqualTo: 'pending')
-          .where('isPublished', isEqualTo: false)
-          .get();
-      return snap.docs.map(ReviewRequestModel.tryFromFirestore).whereType<ReviewRequestModel>().toList();
+      final result = await _fn
+          .httpsCallable('callableGetMyReviewRequests',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
+          .call({});
+      return (result.data['reviewRequests'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final d = Map<String, dynamic>.from(m);
+            final id = d.remove('id') as String? ?? '';
+            return ReviewRequestModel.tryFromMap(d, id);
+          })
+          .whereType<ReviewRequestModel>()
+          .toList();
     } catch (e) {
       debugPrint('❌ worker 리뷰 요청 조회 실패: $e');
       return [];
@@ -198,7 +205,11 @@ class MonthlyReviewService {
         if (existing.exists) {
           throw FirebaseException(plugin: 'firestore', code: 'already-exists');
         }
-        tx.set(docRef, review.toMap());
+        // [TS-FIX 2026-07-16] createdAt 서버타임스탬프 강제 — 법적 감사 기록 시각 위조 차단
+        tx.set(docRef, {
+          ...review.toMap(),
+          'createdAt': FieldValue.serverTimestamp(),
+        });
         if (requestId != null) {
           final requestRef = _db.collection('review_requests').doc(requestId);
           tx.set(requestRef, {
@@ -283,7 +294,11 @@ class MonthlyReviewService {
         if (existing.exists) {
           throw FirebaseException(plugin: 'firestore', code: 'already-exists');
         }
-        tx.set(docRef, review.toMap());
+        // [TS-FIX 2026-07-16] createdAt 서버타임스탬프 강제 — 법적 감사 기록 시각 위조 차단
+        tx.set(docRef, {
+          ...review.toMap(),
+          'createdAt': FieldValue.serverTimestamp(),
+        });
         if (requestId != null) {
           final requestRef = _db.collection('review_requests').doc(requestId);
           tx.set(requestRef, {
@@ -360,20 +375,32 @@ class MonthlyReviewService {
   }
 
   /// 사용자가 받은 공개 리뷰 (지원자 본인 + 관리자용)
+  /// [CF 이전 2026-07-15] callableGetReviewsForUser
+  /// USER 본인이면 전체, 타인(관리자 등)이면 공개 리뷰만 반환 (서버 강제)
   Future<List<MonthlyReviewModel>> getPublishedReviewsForUser({
     required String targetUserId,
     int limit = 20,
   }) async {
     try {
-      final snap = await _db
-          .collection('monthly_reviews')
-          .where('targetUserId', isEqualTo: targetUserId)
-          .where('reviewType', isEqualTo: ReviewType.ADMIN_TO_USER.name)
-          .where('isPublished', isEqualTo: true)
-          .orderBy('createdAt', descending: true)
-          .limit(limit)
-          .get();
-      return snap.docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList();
+      final result = await _fn
+          .httpsCallable('callableGetReviewsForUser',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
+          .call({
+            'targetUserId': targetUserId,
+            'isPublishedOnly': true,
+            'reviewType': ReviewType.ADMIN_TO_USER.name,
+            'limit': limit,
+          });
+      return ((result.data['reviews'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final d = Map<String, dynamic>.from(m);
+            final id = d.remove('id') as String? ?? '';
+            return MonthlyReviewModel.tryFromMap(d, id);
+          })
+          .whereType<MonthlyReviewModel>()
+          .toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt)));
     } catch (e) {
       debugPrint('❌ 공개 리뷰 조회 실패: $e');
       return [];
@@ -381,19 +408,31 @@ class MonthlyReviewService {
   }
 
   /// 사용자가 받은 모든 리뷰 (관리자 전용 — 미공개 포함)
+  /// [CF 이전 2026-07-15] callableGetReviewsForUser
   Future<List<MonthlyReviewModel>> getAllReviewsForUser({
     required String targetUserId,
     int limit = 20,
   }) async {
     try {
-      final snap = await _db
-          .collection('monthly_reviews')
-          .where('targetUserId', isEqualTo: targetUserId)
-          .where('reviewType', isEqualTo: ReviewType.ADMIN_TO_USER.name)
-          .orderBy('createdAt', descending: true)
-          .limit(limit)
-          .get();
-      return snap.docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList();
+      final result = await _fn
+          .httpsCallable('callableGetReviewsForUser',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
+          .call({
+            'targetUserId': targetUserId,
+            'isPublishedOnly': false,
+            'reviewType': ReviewType.ADMIN_TO_USER.name,
+            'limit': limit,
+          });
+      return ((result.data['reviews'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final d = Map<String, dynamic>.from(m);
+            final id = d.remove('id') as String? ?? '';
+            return MonthlyReviewModel.tryFromMap(d, id);
+          })
+          .whereType<MonthlyReviewModel>()
+          .toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt)));
     } catch (e) {
       debugPrint('❌ 사용자 리뷰 조회 실패: $e');
       return [];
@@ -533,17 +572,17 @@ class MonthlyReviewService {
         if (reviewedUserIds.contains(uid)) continue;
 
         final workDate = parseTimestampNullable(data['workDate']);
+        if (workDate == null) continue;
         final workEndDate = parseTimestampNullable(data['workEndDate']);
-        if (workDate == null || workEndDate == null) continue;
-        // 해당 월 이전에 종료된 장기 지원서 제외
-        if (workEndDate.isBefore(monthStart)) continue;
+        // workEndDate==null이면 진행중인 개방형 계약 → 제외하지 않음
+        if (workEndDate != null && workEndDate.isBefore(monthStart)) continue;
 
         final daysInMonth = _countWorkingDaysInMonth(
           workDaysList.whereType<String>().toList(),
           year,
           month,
           workDate,
-          workEndDate,
+          workEndDate ?? DateTime(year, month + 1, 0),
         );
         if (daysInMonth == 0) continue;
 
@@ -778,30 +817,37 @@ class MonthlyReviewService {
   ///
   /// targetUserId 단일 equality 필터 — 보안 규칙 버그 없이 직접 Firestore 사용 가능.
   /// startAfterId: DocumentSnapshot 대신 문서 ID 문자열 사용 (ReviewPage.cursor 타입 통일).
+  /// [CF 이전 2026-07-15] callableGetReviewsForUser (isPublishedOnly: true)
   Future<ReviewPage<MonthlyReviewModel>> getPublishedReviewsForUserPaged({
     required String targetUserId,
     String? startAfterId,
     int pageSize = 30,
   }) async {
     try {
-      Query<Map<String, dynamic>> q = _db
-          .collection('monthly_reviews')
-          .where('targetUserId', isEqualTo: targetUserId)
-          .where('reviewType', isEqualTo: ReviewType.ADMIN_TO_USER.name)
-          .where('isPublished', isEqualTo: true)
-          .orderBy('createdAt', descending: true)
-          .limit(pageSize + 1);
-      if (startAfterId != null) {
-        final cursorSnap = await _db.collection('monthly_reviews').doc(startAfterId).get();
-        if (cursorSnap.exists) q = q.startAfterDocument(cursorSnap);
-      }
-      final snap = await q.get();
-      final hasMore = snap.docs.length > pageSize;
-      final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
+      final result = await _fn
+          .httpsCallable('callableGetReviewsForUser',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
+          .call({
+            'targetUserId': targetUserId,
+            'isPublishedOnly': true,
+            'reviewType': ReviewType.ADMIN_TO_USER.name,
+            'limit': pageSize,
+            if (startAfterId != null) 'startAfterId': startAfterId,
+          });
+      final reviews = (result.data['reviews'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final d = Map<String, dynamic>.from(m);
+            final id = d.remove('id') as String? ?? '';
+            return MonthlyReviewModel.tryFromMap(d, id);
+          })
+          .whereType<MonthlyReviewModel>()
+          .toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
       return ReviewPage(
-        records: docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList(),
-        cursor: docs.isNotEmpty ? docs.last.id : null,
-        hasMore: hasMore,
+        records: reviews,
+        cursor: result.data['lastDocId'] as String?,
+        hasMore: result.data['hasMore'] as bool? ?? false,
       );
     } catch (e) {
       debugPrint('❌ 근무자 리뷰 페이지 조회 실패: $e');
@@ -809,35 +855,37 @@ class MonthlyReviewService {
     }
   }
 
-  /// 지원자 본인이 받은 공개 리뷰 — 페이지네이션 (M-2: isPublished 필터 추가)
-  /// 인덱스: (targetUserId, reviewType, isPublished, createdAt DESC) — firestore.indexes.json에 존재
-  ///
-  /// targetUserId 단일 equality 필터 — 보안 규칙 버그 없이 직접 Firestore 사용 가능.
-  /// startAfterId: DocumentSnapshot 대신 문서 ID 문자열 사용 (ReviewPage.cursor 타입 통일).
+  /// [CF 이전 2026-07-15] callableGetReviewsForUser (본인은 미공개 포함 가능)
   Future<ReviewPage<MonthlyReviewModel>> getAllReviewsForUserPaged({
     required String targetUserId,
     String? startAfterId,
     int pageSize = 30,
   }) async {
     try {
-      Query<Map<String, dynamic>> q = _db
-          .collection('monthly_reviews')
-          .where('targetUserId', isEqualTo: targetUserId)
-          .where('reviewType', isEqualTo: ReviewType.ADMIN_TO_USER.name)
-          .where('isPublished', isEqualTo: true)
-          .orderBy('createdAt', descending: true)
-          .limit(pageSize + 1);
-      if (startAfterId != null) {
-        final cursorSnap = await _db.collection('monthly_reviews').doc(startAfterId).get();
-        if (cursorSnap.exists) q = q.startAfterDocument(cursorSnap);
-      }
-      final snap = await q.get();
-      final hasMore = snap.docs.length > pageSize;
-      final docs = hasMore ? snap.docs.sublist(0, pageSize) : snap.docs;
+      final result = await _fn
+          .httpsCallable('callableGetReviewsForUser',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
+          .call({
+            'targetUserId': targetUserId,
+            'isPublishedOnly': false,
+            'reviewType': ReviewType.ADMIN_TO_USER.name,
+            'limit': pageSize,
+            if (startAfterId != null) 'startAfterId': startAfterId,
+          });
+      final reviews = (result.data['reviews'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final d = Map<String, dynamic>.from(m);
+            final id = d.remove('id') as String? ?? '';
+            return MonthlyReviewModel.tryFromMap(d, id);
+          })
+          .whereType<MonthlyReviewModel>()
+          .toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
       return ReviewPage(
-        records: docs.map(MonthlyReviewModel.tryFromFirestore).whereType<MonthlyReviewModel>().toList(),
-        cursor: docs.isNotEmpty ? docs.last.id : null,
-        hasMore: hasMore,
+        records: reviews,
+        cursor: result.data['lastDocId'] as String?,
+        hasMore: result.data['hasMore'] as bool? ?? false,
       );
     } catch (e) {
       debugPrint('❌ 근무자 전체 리뷰 조회 실패: $e');

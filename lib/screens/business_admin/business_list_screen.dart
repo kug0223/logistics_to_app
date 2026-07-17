@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 
 // Models
 import '../../models/core/business_model.dart';
@@ -11,6 +10,7 @@ import '../../providers/user_provider.dart';
 
 // Services
 import '../../services/firestore_service.dart';
+import '../../services/storage_service.dart';
 
 // Utils
 import '../../utils/responsive_helper.dart';
@@ -28,7 +28,6 @@ import 'business_detail_screen.dart';
 import 'business_form_screen.dart';
 import 'to_management/create_to_screen.dart';
 import '../../widgets/common/app_menu_sheet.dart';
-import 'to_prerequisites_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/app_empty_state.dart';
@@ -105,7 +104,6 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
 
     if (confirmed != true || !mounted) return;
 
-      final storage = FirebaseStorage.instance;
       final bizRef = FirebaseFirestore.instance.collection('businesses').doc(business.id);
 
       // 1. Storage URL 미리 수집 (Firestore 삭제 전에 읽어야 함)
@@ -124,37 +122,17 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       subBatch.delete(bizRef); // 부모 문서도 배치에 포함 — 원자적 삭제 보장
       await subBatch.commit();
 
-      // 3. Firestore 삭제 성공 후 Storage 정리 (실패해도 고아 파일만 남음)
-      if (business.mainImageUrl != null) {
-        try {
-          await storage.refFromURL(business.mainImageUrl!).delete();
-        } catch (e) {
-          debugPrint('⚠️ 대표 이미지 삭제 실패: $e');
-        }
-      }
-      for (var url in business.imageUrls ?? []) {
-        try {
-          await storage.refFromURL(url).delete();
-        } catch (e) {
-          debugPrint('⚠️ 추가 이미지 삭제 실패: $e');
-        }
-      }
-      for (var doc in workTypesSnapshot.docs) {
-        final data = doc.data();
-        if (data['thumbnailUrl'] != null) {
-          try {
-            await storage.refFromURL(data['thumbnailUrl'] as String).delete();
-          } catch (e) {
-            debugPrint('⚠️ 업무유형 썸네일 삭제 실패: $e');
-          }
-        }
-        for (var url in List<String>.from(data['images'] ?? [])) {
-          try {
-            await storage.refFromURL(url).delete();
-          } catch (e) {
-            debugPrint('⚠️ 업무유형 이미지 삭제 실패: $e');
-          }
-        }
+      // 3. Firestore 삭제 성공 후 Storage 정리 — StorageService 경유(CF로 businesses/ 삭제)
+      final urlsToDelete = <String>[
+        if (business.mainImageUrl != null) business.mainImageUrl!,
+        ...?business.imageUrls,
+        for (final doc in workTypesSnapshot.docs) ...[
+          if (doc.data()['thumbnailUrl'] != null) doc.data()['thumbnailUrl'] as String,
+          ...List<String>.from(doc.data()['images'] ?? []),
+        ],
+      ];
+      if (urlsToDelete.isNotEmpty) {
+        await StorageService().deleteMultipleByUrls(urlsToDelete);
       }
           
       if (!mounted) return;
@@ -523,34 +501,6 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
   }
 
   Future<void> _handleCreateTO(BuildContext context, BusinessModel business) async {
-    final user = Provider.of<UserProvider>(context, listen: false).currentUser;
-    if (user != null) {
-      final workTypes = await _firestoreService.getBusinessWorkTypes(business.id);
-      if (!context.mounted) return;
-      final canProceed = await checkTOPrerequisites(
-        context,
-        hasApprovedBusiness: true,
-        hasWorkTypes: workTypes.isNotEmpty,
-        hasSeal: user.sealBase64 != null && user.sealBase64!.isNotEmpty,
-        hasLicense: user.businessLicenseImageUrl != null,
-        approvedBusiness: business,
-      );
-      // checkTOPrerequisites 자체가 내부적으로 다이얼로그를 띄우므로
-      //           완료 후 위젯이 dispose될 수 있음 — await 이후 mounted 체크 필수.
-      if (!context.mounted) return;
-      if (!canProceed) return;
-
-      // 진행중 공고 수 사전 체크 — 폼 진입 자체를 차단
-      final limit = await _firestoreService.getMaxActiveTOLimit();
-      // [M-BL-01 수정] 첫 번째 await 이후 두 번째 await 진입 전 mounted 체크
-      if (!context.mounted) return;
-      final activeCount = await _firestoreService.countAllActiveTO(user.uid);
-      if (activeCount >= limit) {
-        if (!context.mounted) return;
-        ToastHelper.showError('진행 중인 공고가 $limit개를 초과할 수 없습니다.\n기존 공고를 마감한 후 등록해주세요.');
-        return;
-      }
-    }
     if (!context.mounted) return;
     await NavigationHelper.push<bool>(
       context,

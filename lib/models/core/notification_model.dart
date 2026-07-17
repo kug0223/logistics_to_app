@@ -1117,6 +1117,35 @@ class NotificationModel {
     );
   }
 
+  /// 중간정산 완료 알림 생성 (근로자에게)
+  static NotificationModel createInterimSettlementCompleted({
+    required String userId,
+    required String workerName,
+    required String businessName,
+    required String businessId,
+    required int netAmount,
+    required DateTime periodStart,
+    required DateTime periodEnd,
+    required String settlementRequestId,
+  }) {
+    final periodText =
+        '${periodStart.month}/${periodStart.day}~${periodEnd.month}/${periodEnd.day}';
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.wageTransferred,
+      title: '중간정산 완료',
+      body: '[$businessName] $periodText 기간 중간정산이 완료되었습니다. 실수령액을 앱에서 확인하세요.',
+      createdAt: DateTime.now(),
+      data: {
+        'businessId': businessId,
+        'settlementRequestId': settlementRequestId,
+        'screen': 'interimSettlement',
+        'netAmount': netAmount,
+      },
+    );
+  }
+
   /// 급여 정산 완료 알림 생성 (지원자에게)
   static NotificationModel createWageConfirmed({
     required String userId,

@@ -449,8 +449,8 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final userProvider = context.watch<UserProvider>();
-    final canEdit = userProvider.can((p) => p.canManageTo);
+    // [PERF-2026-07-16] bool 1개만 필요 → select으로 rebuild 범위 축소
+    final canEdit = context.select<UserProvider, bool>((p) => p.can((perm) => perm.canManageTo));
 
     return GradientScaffold(
       title: '업무 유형 관리',

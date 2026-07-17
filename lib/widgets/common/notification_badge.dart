@@ -17,9 +17,10 @@ class NotificationBadge extends StatelessWidget {
   
   @override
   Widget build(BuildContext context) {
-    return Consumer<NotificationProvider>(
-      builder: (context, provider, _) {
-        final count = provider.unreadCount;
+    // [PERF-2026-07-16] int 1개만 필요 → Selector로 rebuild 범위 축소
+    return Selector<NotificationProvider, int>(
+      selector: (_, p) => p.unreadCount,
+      builder: (context, count, _) {
         
         if (count == 0 && !showZero) {
           return child;

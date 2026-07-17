@@ -16,8 +16,11 @@ class NotificationProvider with ChangeNotifier {
   bool _hasError = false;
   bool _hasMore = false;
   bool _isLoadingMore = false;
+  bool _loadMoreFailed = false;
   bool _disposed = false;
   String? _userId;
+  // 구독 세대 카운터: reload() 시 증가 → 구독 콜백·loadMore가 stale 여부 판단에 사용
+  int _generation = 0;
 
   StreamSubscription? _notificationSubscription;
 
@@ -37,6 +40,7 @@ class NotificationProvider with ChangeNotifier {
   bool get hasUnread => notifications.any((n) => !n.isRead);
   bool get hasMore => _hasMore;
   bool get isLoadingMore => _isLoadingMore;
+  bool get loadMoreFailed => _loadMoreFailed;
   String? get userId => _userId;
 
   // ── 초기화 / 정리 ─────────────────────────────────────────
@@ -53,11 +57,17 @@ class NotificationProvider with ChangeNotifier {
     deleteOldNotifications();
   }
 
-  /// 스트림 에러 후 재시도
+  /// 스트림 에러 후 재시도 (에러 상태에서만 재연결)
   void retry() {
     if (_userId == null || _disposed) return;
-    // 정상 상태에서는 Firestore 스트림이 자동 갱신되므로 no-op
     if (!_hasError && _notificationSubscription != null) return;
+    _hasError = false;
+    _startListening();
+  }
+
+  /// pull-to-refresh: 항상 스트림 재연결
+  void reload() {
+    if (_userId == null || _disposed) return;
     _hasError = false;
     _startListening();
   }
@@ -87,7 +97,10 @@ class NotificationProvider with ChangeNotifier {
     _hasMore = false;
     _isLoadingMore = false;
 
-    debugPrint('🔔 [NotificationProvider] 실시간 리스닝 시작');
+    // 세대 증가: 이 구독 이전에 발생한 콜백·loadMore 결과를 무효화
+    final int myGeneration = ++_generation;
+
+    debugPrint('🔔 [NotificationProvider] 실시간 리스닝 시작 (gen=$myGeneration)');
 
     _isLoading = true;
     notifyListeners();
@@ -96,7 +109,8 @@ class NotificationProvider with ChangeNotifier {
         .watchUserNotifications(_userId!)
         .listen(
           (received) {
-            if (_disposed) return;
+            // stale 콜백 차단: reload() 이후 구 구독이 마지막 버퍼 이벤트를 전달할 수 있음
+            if (_disposed || myGeneration != _generation) return;
             // limit(31) 패턴: 31건 조회해 31건이면 hasMore=true, 30건만 표시 — length>30 보장 후 sublist 안전
             if (received.length > 30) {
               _streamNotifications = received.sublist(0, 30);
@@ -110,7 +124,7 @@ class NotificationProvider with ChangeNotifier {
             notifyListeners();
           },
           onError: (e) {
-            if (_disposed) return;
+            if (_disposed || myGeneration != _generation) return;
             debugPrint('❌ 알림 스트림 에러: $e');
             _isLoading = false;
             _hasError = true;
@@ -138,18 +152,23 @@ class NotificationProvider with ChangeNotifier {
     final oldest = allCurrent.last.createdAt;
 
     _isLoadingMore = true;
+    _loadMoreFailed = false;
     notifyListeners();
 
+    // 세대 스냅샷: await 완료 후 reload()가 발생했으면 결과 버림
+    final int genSnapshot = _generation;
     try {
       final page = await _firestoreService.getOlderNotificationsPaged(
         userId: uid,
         before: oldest,
       );
-      if (_disposed) return;
+      // reload()가 _additionalNotifications를 이미 초기화한 경우 덮어쓰지 않음
+      if (_disposed || genSnapshot != _generation) return;
       _additionalNotifications = [..._additionalNotifications, ...page.records];
       _hasMore = page.hasMore;
     } catch (e) {
       debugPrint('❌ 알림 더 보기 실패: $e');
+      _loadMoreFailed = true;
     } finally {
       if (!_disposed) {
         _isLoadingMore = false;
@@ -192,17 +211,25 @@ class NotificationProvider with ChangeNotifier {
     if (changed) notifyListeners();
   }
 
-  /// 모든 알림 읽음 처리
-  Future<void> markAllAsRead() async {
+  /// 모든 알림 읽음 처리 — true: 성공, false: 실패
+  Future<bool> markAllAsRead() async {
     // [ASYNC-GAP] clearUser()와 경쟁 조건 방지 — await 이전에 uid 캡처
     final uid = _userId;
-    if (uid == null) return;
-    await _firestoreService.markAllNotificationsAsRead(uid);
-    if (_disposed) return;
+    if (uid == null) return false;
+    final success = await _firestoreService.markAllNotificationsAsRead(uid);
+    if (_disposed) return false;
     // 스트림 이벤트가 오기 전에 _additionalNotifications도 즉시 반영
     if (_additionalNotifications.isNotEmpty) {
       _additionalNotifications =
           _additionalNotifications.map((n) => n.copyWith(isRead: true)).toList();
+      notifyListeners();
+    }
+    return success;
+  }
+
+  void clearLoadMoreError() {
+    if (_loadMoreFailed && !_disposed) {
+      _loadMoreFailed = false;
       notifyListeners();
     }
   }

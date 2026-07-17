@@ -52,7 +52,8 @@ class LegalTermsService {
         // 문서 없는 경우 트랜잭션 밖에서 초기화 후 종료
         return;
       }
-      final current = LegalTerms.fromFirestore(snap);
+      final current = LegalTerms.tryFromFirestore(snap);
+      if (current == null) return;
       final updated = current.items.map((t) => t.id == item.id ? item : t).toList();
       tx.update(_ref, {
         'items': updated.map((t) => t.toMap()).toList(),
@@ -70,7 +71,8 @@ class LegalTermsService {
     await FirebaseFirestore.instance.runTransaction((tx) async {
       final snap = await tx.get(_ref);
       if (!snap.exists || snap.data() == null) return;
-      final current = LegalTerms.fromFirestore(snap);
+      final current = LegalTerms.tryFromFirestore(snap);
+      if (current == null) return;
       final updated = current.items.map((t) =>
           t.id == itemId ? t.copyWith(isActive: isActive) : t).toList();
       tx.update(_ref, {

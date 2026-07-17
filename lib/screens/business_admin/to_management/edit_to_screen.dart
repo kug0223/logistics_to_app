@@ -63,6 +63,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   bool _isSaving = false;
   bool _hasChanges = false;
   List<WorkDetailData> _workDetails = [];
+  List<WorkDetailData> _originalWorkDetails = [];
   List<BusinessWorkTypeModel> _businessWorkTypes = [];
   DateTime? _firstSlotDate; // 단기 TO 예약 공개 기준일용
 
@@ -139,8 +140,10 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           setState(() => _isLoading = false);
           return;
         }
+        final batchWork = List<WorkDetailData>.from(batchSlots.first.workDetails);
         setState(() {
-          _workDetails = List<WorkDetailData>.from(batchSlots.first.workDetails);
+          _workDetails = batchWork;
+          _originalWorkDetails = List<WorkDetailData>.from(batchWork);
           _businessWorkTypes = workTypes;
           _isLoading = false;
         });
@@ -149,8 +152,10 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
       if (widget.slot != null) {
         _slotTitleController.text = widget.slot!.title ?? widget.to.title;
+        final slotWork = List<WorkDetailData>.from(widget.slot!.workDetails);
         setState(() {
-          _workDetails = List<WorkDetailData>.from(widget.slot!.workDetails);
+          _workDetails = slotWork;
+          _originalWorkDetails = List<WorkDetailData>.from(slotWork);
           _businessWorkTypes = workTypes;
           _isLoading = false;
         });
@@ -162,9 +167,11 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         if (!mounted) return;
         final template = slots.isNotEmpty ? slots.first : null;
         _slotTitleController.text = template?.title ?? widget.to.title;
+        final newSlotWork = List<WorkDetailData>.from(
+            template?.workDetails ?? widget.to.workDetails);
         setState(() {
-          _workDetails = List<WorkDetailData>.from(
-              template?.workDetails ?? widget.to.workDetails);
+          _workDetails = newSlotWork;
+          _originalWorkDetails = List<WorkDetailData>.from(newSlotWork);
           _businessWorkTypes = workTypes;
           _isLoading = false;
         });
@@ -181,8 +188,10 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         }
       }
 
+      final masterWork = List<WorkDetailData>.from(widget.to.workDetails);
       setState(() {
-        _workDetails = List<WorkDetailData>.from(widget.to.workDetails);
+        _workDetails = masterWork;
+        _originalWorkDetails = List<WorkDetailData>.from(masterWork);
         _businessWorkTypes = workTypes;
         _firstSlotDate = firstSlotDate;
         _isLoading = false;
@@ -220,8 +229,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     }
 
 
-    // [WAGE-GUARD] 확정 근무자가 있을 수 있는 수정 경로에서 경고 표시
-    // [M-6 수정] 기존 슬롯 개별 수정(widget.slot != null)은 draft 모드여도 WAGE-GUARD 적용.
+    // [WAGE-GUARD] 임금 관련 필드가 실제로 변경됐을 때만 경고 표시
     // draft 제외 의도: TO 최초 공개 전 draft 수정에는 확정 근무자가 없으므로 경고 불필요.
     // 단, slot != null이면 이미 공개된 슬롯을 수정하는 것이므로 확정 근무자가 존재할 수 있음.
     final isExistingSlotEdit = widget.slot != null || widget.isBatchMode;
@@ -229,7 +237,9 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     setState(() { _isSaving = true; _hasChanges = false; });
 
     try {
-      if (!widget.isNewSlot && (_publishMode != 'draft' || isExistingSlotEdit)) {
+      if (!widget.isNewSlot &&
+          (_publishMode != 'draft' || isExistingSlotEdit) &&
+          _hasWageFieldsChanged()) {
         final proceed = await _showWageGuardWarning();
         if (!mounted) return;
         if (!proceed) {
@@ -305,8 +315,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           targetDate.year,
           targetDate.month,
           targetDate.day,
-          int.parse(timeParts[0]),
-          int.parse(timeParts[1]),
+          int.tryParse(timeParts[0]) ?? 0,
+          int.tryParse(timeParts[1]) ?? 0,
         );
         if (publishAt.isBefore(DateTime.now())) {
           shouldPublishImmediately = true;
@@ -318,8 +328,17 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       // flex TO는 슬롯 수 × 슬롯당 요구인원; contract TO는 슬롯 1개 구조이므로 합산만
       final perSlotRequired =
           _workDetails.fold<int>(0, (s, d) => s + d.requiredCount);
-      final numSlots =
-          widget.to.isContractType ? 1 : (widget.to.totalSlots > 0 ? widget.to.totalSlots : 1);
+      // [M-15] totalSlots 스테일 방지 — 저장 직전 서버 최신값 조회 (flex TO만)
+      int freshTotalSlots = widget.to.totalSlots;
+      if (!widget.to.isContractType) {
+        final freshToSnap = await FirebaseFirestore.instance
+            .collection('tos')
+            .doc(widget.to.id)
+            .get(const GetOptions(source: Source.server));
+        freshTotalSlots = (freshToSnap.data()?['totalSlots'] as int?) ?? widget.to.totalSlots;
+        if (!mounted) return;
+      }
+      final numSlots = widget.to.isContractType ? 1 : (freshTotalSlots > 0 ? freshTotalSlots : 1);
       final totalRequired = perSlotRequired * numSlots;
 
       // isManualClosed가 아닌 isClosed 기준 — CF 자동마감(isManualClosed=false) 포함
@@ -330,7 +349,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       // workDetails(임금 포함)를 통째로 덮어씀 → 이미 확정된 지원자가 있어도
       // 슬롯의 wage 수정이 가능하다. CLAUDE.md "시급/일급 TO 레벨에서 고정" 원칙은
       // application 스냅샷(지원 시점 복사)으로 보호되나, 슬롯 기준 wage 재조회가 일어날 경우
-      // 불일치 발생 가능. 확정 지원자가 있을 때 wage 변경 시 경고 UI 추가 권장(미구현).
+      // 불일치 발생 가능. 확정 지원자가 있고 임금 필드가 실제 변경된 경우 WAGE-GUARD 경고 발동됨.
       final updates = <String, dynamic>{
         'title': _titleController.text.trim(),
         'description': _descriptionController.text.trim(),
@@ -448,7 +467,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         if (parts.length != 2) return work;
         final deadline = DateTime(
           slot.date.year, slot.date.month, slot.date.day,
-          int.parse(parts[0]), int.parse(parts[1]),
+          int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0,
         ).subtract(Duration(hours: _hoursBeforeStart));
         return work.copyWith(applicationDeadline: deadline);
       }).toList();
@@ -540,6 +559,24 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
   // [WAGE-GUARD] TO workDetails 변경 전 미확정 근무자 경고 다이얼로그
   // wageType·breakMinutes·야간설정은 저장 시점 TO값 재참조 — 확정 전 근무자 급여에 영향
+  bool _hasWageFieldsChanged() {
+    if (_workDetails.length != _originalWorkDetails.length) return true;
+    for (int i = 0; i < _workDetails.length; i++) {
+      final cur = _workDetails[i];
+      final orig = _originalWorkDetails[i];
+      if (cur.wage != orig.wage ||
+          cur.wageType != orig.wageType ||
+          cur.breakMinutes != orig.breakMinutes ||
+          cur.nightAllowanceApplied != orig.nightAllowanceApplied ||
+          cur.nightIncluded != orig.nightIncluded ||
+          cur.baseHourlyWage != orig.baseHourlyWage ||
+          cur.taxDeductionType != orig.taxDeductionType) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   Future<bool> _showWageGuardWarning() async {
     try {
       // [CF 이전 2026-07-13] callableGetApplicationsByBiz (Admin SDK, businessId+toId)
@@ -661,7 +698,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           if (parts.length != 2) return work;
           final deadline = DateTime(
             slot.date.year, slot.date.month, slot.date.day,
-            int.parse(parts[0]), int.parse(parts[1]),
+            int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0,
           ).subtract(Duration(hours: _hoursBeforeStart));
           return work.copyWith(applicationDeadline: deadline);
         }).toList();

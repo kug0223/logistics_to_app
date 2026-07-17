@@ -96,6 +96,10 @@ class ApplicationModel {
   /// [A4] 계약서 요청 마지막 시각 — CF 서버 타임스탬프 (24h 쿨다운 서버 강제)
   final DateTime? lastContractRequestedAt;
 
+  /// 지원 시점 성명 스냅샷 — CF/더미생성이 users/{uid}.name 을 비정규화해 저장
+  /// getUsersBatch CF 미반환 시 폴백 표시용
+  final String? applicantName;
+
   ApplicationModel({
     required this.id,
     required this.businessId,
@@ -168,6 +172,7 @@ class ApplicationModel {
     this.applicationType,
     this.isStarred = false,
     this.lastContractRequestedAt,
+    this.applicantName,
   });
 
   static ApplicationModel? tryFromMap(Map<String, dynamic> data, String documentId) {
@@ -273,6 +278,7 @@ class ApplicationModel {
       applicationType: data['type'] as String?,
       isStarred: data['isStarred'] as bool? ?? false,
       lastContractRequestedAt: parseTimestampNullable(data['lastContractRequestedAt']),
+      applicantName: data['applicantName'] as String?,
     );
   }
   
@@ -467,6 +473,8 @@ class ApplicationModel {
     List<Map<String, dynamic>>? statusHistory,
     String? applicationType,
     bool? isStarred,
+    DateTime? lastContractRequestedAt,
+    String? applicantName,
   }) {
     return ApplicationModel(
       id: id ?? this.id,
@@ -536,6 +544,8 @@ class ApplicationModel {
       statusHistory: statusHistory ?? this.statusHistory,
       applicationType: applicationType ?? this.applicationType,
       isStarred: isStarred ?? this.isStarred,
+      lastContractRequestedAt: lastContractRequestedAt ?? this.lastContractRequestedAt,
+      applicantName: applicantName ?? this.applicantName,
     );
   }
 

@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:table_calendar/table_calendar.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../../models/core/to_model.dart';
 import '../../../models/core/work_detail_model.dart';
@@ -24,7 +23,7 @@ import 'apply_confirm_dialog.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../utils/network_checker.dart';
 import '../../../screens/common/job_posting_screen.dart';
-import '../../../screens/user/apply_prerequisites_helper.dart';
+import '../../../screens/user/apply_prerequisites_screen.dart';
 import '../../../services/tooltip_service.dart';
 import '../../../services/analytics_service.dart';
 import '../../../widgets/common/loading_widget.dart';
@@ -369,9 +368,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       _applicationsByDate[dateKey] = _buildActiveDateCache(applications, dateKey);
 
       // ✅ 장기공고: 확정된 application의 출퇴근 기록 확인
+      // [CF-MIGRATED 2026-07-15] attendance list USER 직접 차단 → workerHasAttendanceRecord CF 경유
       if (_isLongTerm) {
         for (final app in applications.where((a) => AppStatus.confirmedStatuses.contains(a.status))) {
-          final hasRecord = await _firestoreService.hasAttendanceRecord(app.id, businessId: app.businessId);
+          final hasRecord = await _firestoreService.workerHasAttendanceRecord(app.id);
           if (hasRecord) {
             _hasAttendanceIds.add(app.id);
           }
@@ -433,19 +433,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     final workEndTime = widget.workDetails.isNotEmpty ? widget.workDetails.first.endTime : '';
     
     try {
-      // ✅ 1. 사용자의 모든 지원서 조회 후 클라이언트 필터링
-      // [BUGFIX-WHEREIN] uid isEqualTo + status whereIn 복합쿼리 → filters.uid null → PERMISSION_DENIED
-      // status whereIn 제거 후 클라이언트에서 confirmedStatuses 필터링으로 전환
-      final snapshot = await FirebaseFirestore.instance
-          .collection('applications')
-          .where('uid', isEqualTo: _currentUserId)
-          .get();
-
-      final allConfirmed = snapshot.docs
-          .map(ApplicationModel.tryFromFirestore)
-          .whereType<ApplicationModel>()
-          .where((app) => AppStatus.confirmedStatuses.contains(app.status))
-          .toList();
+      // [CF-MIGRATED 2026-07-15] applications list isSuperAdmin() only
+      // → getMyConfirmedApplicationsForConflictCheck() CF 경유 (uid 서버 검증)
+      final allConfirmed = await _firestoreService.getMyConfirmedApplicationsForConflictCheck();
       
       debugPrint('📅 [장기충돌] 전체 CONFIRMED: ${allConfirmed.length}개');
       
@@ -541,7 +531,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
     try {
       final conflicts = await _conflictService.checkConflictsForWorkDetails(
-        uid: _currentUserId!,
         workDate: date,
         workDetails: workDetails,
       );
@@ -2319,15 +2308,13 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     // 중복 동시 지원 방지 — 다른 카드의 지원이 처리 중이면 즉시 차단
     if (_isSubmitting) return;
 
-    // 지원 전 필수 서류·인증 사전 체크 — 미완료 시 안내 다이얼로그 표시 후 중단
+    // 지원 선결조건 게이트 (job_posting_screen 경로와 동일하게 유지)
     final user = context.read<UserProvider>().currentUser;
     if (user == null) return;
-    final met = await checkApplyPrerequisites(
-      context,
-      user: user,
-      isFlexType: !_isLongTerm,
-    );
-    if (!met || !mounted) return;
+    if (!meetsApplyPrerequisites(user, isFlexType: to.isFlexType)) {
+      final ok = await ApplyPrerequisitesScreen.show(context, isFlexType: to.isFlexType);
+      if (ok != true || !mounted) return;
+    }
 
     // 🔥 장기공고: 희망 시작일 유효성 검사
     if (_isLongTerm) {
@@ -2376,6 +2363,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       }
     }
     
+    // 팝업 대기 중 다른 카드 중복 호출 차단
+    setState(() => _isSubmitting = true);
+
     // ✅ 지원 확인 팝업
     final confirmed = await ApplyConfirmDialog.show(
       context: context,
@@ -2388,16 +2378,16 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       workDays: _isLongTerm ? to.workDays : null,
     );
 
-    if (!confirmed || !mounted) return;  // 취소 시 종료
+    if (!confirmed || !mounted) {
+      if (mounted) setState(() => _isSubmitting = false);
+      return;  // 취소 시 종료
+    }
 
     final loadingKey = date != null
         ? '${date.millisecondsSinceEpoch}_${work.id}'
         : work.id;
 
-    setState(() {
-      _isSubmitting = true;
-      _loadingWorkIds.add(loadingKey);
-    });
+    setState(() => _loadingWorkIds.add(loadingKey));
 
     // slotId: 단일 슬롯이면 widget.slotId, 다중 슬롯이면 날짜 맵에서 조회
     final resolvedSlotId = widget.slotId ?? (date == null
@@ -2474,11 +2464,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       return;
     }
 
-    final confirmed = await DialogHelper.showConfirm(
+    final confirmed = await DialogHelper.showCancelConfirm(
       context,
       title: '지원 취소',
       message: '${application.selectedWorkType} 지원을 취소하시겠습니까?',
-      confirmText: '취소하기',
     );
 
     if (!confirmed || !mounted) return;
@@ -2570,6 +2559,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       await _refreshApplicationStatus(targetDate, application.selectedWorkType);
       await _loadMyConfirmedSchedules(targetDate);
       await _loadConflictsForDate(targetDate);
+      // 장기공고: 확정 취소 후 기간 내 충돌 날짜 재계산
+      if (_isLongTerm) await _loadConfirmedDatesInRange();
       _reloadAllMyApplications(); // fire-and-forget: 내 지원 현황 갱신
 
       if (!mounted) return;

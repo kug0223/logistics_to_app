@@ -36,7 +36,7 @@ import '../../../widgets/app_select_field.dart';
 import '../../../widgets/common/gradient_scaffold.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../common/settings_screen.dart';
-import '../admin_contract_management_screen.dart';
+import '../contract_template_list_screen.dart';
 import '../work_type_management_screen.dart';
 import '../Business_form_screen.dart';
 
@@ -81,9 +81,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   bool _workTypesReady = false;
   bool _contractTemplatesReady = false;
   bool _formUnlocked = false;        // 한번 true가 되면 항상 폼 표시 (일방향 래치)
+  bool _hasLicense = false;           // 사업자등록증 등록 여부
   List<_BizReadiness> _businessReadinessList = []; // 멀티 사업장 결핍 정보
   bool get _allPrerequisitesMet =>
-      _businessApproved && _workTypesReady && _contractTemplatesReady;
+      _businessApproved && _workTypesReady && _contractTemplatesReady && _hasLicense;
 
   // TO 설정 — 'flex' 단기 / 'contract' 장기
   String _selectedJobType = TOType.flex;
@@ -162,6 +163,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         allBusinesses = await _firestoreService.getMyBusiness(uid);
       }
       final approvedBusinesses = allBusinesses.where((b) => b.isApproved).toList();
+      final bool hasLicense =
+          (userProvider.currentUser?.businessLicenseImageUrl?.isNotEmpty ?? false);
 
       if (!mounted) return;
 
@@ -171,6 +174,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           _businessApproved = false;
           _workTypesReady = false;
           _contractTemplatesReady = false;
+          _hasLicense = hasLicense;
           _businessReadinessList = [];
           _isLoading = false;
         });
@@ -211,6 +215,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           _businessApproved = true;
           _workTypesReady = true;
           _contractTemplatesReady = allTemplates.isNotEmpty;
+          _hasLicense = hasLicense;
           _businessReadinessList = [];
           if (_allPrerequisitesMet) _formUnlocked = true;
           _isLoading = false;
@@ -226,6 +231,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           _businessApproved = true;
           _workTypesReady = first.workTypes.isNotEmpty;
           _contractTemplatesReady = allTemplates.isNotEmpty;
+          _hasLicense = hasLicense;
           _businessReadinessList = checks
               .map((c) => _BizReadiness(
                     business: c.business,
@@ -268,6 +274,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         _businessWorkTypes = workTypes;
         _workTypesReady = workTypes.isNotEmpty;
         _contractTemplatesReady = allTemplates.isNotEmpty;
+        _hasLicense = (Provider.of<UserProvider>(context, listen: false)
+                .currentUser
+                ?.businessLicenseImageUrl
+                ?.isNotEmpty ??
+            false);
         if (_allPrerequisitesMet) {
           _formUnlocked = true;
           _businessReadinessList = [];
@@ -697,7 +708,24 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     });
   }
 
-  void _onJobTypeChanged(String newType) {
+  Future<void> _onJobTypeChanged(String newType) async {
+    if (newType == _selectedJobType) return;
+
+    // 날짜/기간 데이터가 입력된 상태에서 유형 변경 시 초기화 경고
+    final hasScheduleData = _selectedDates.isNotEmpty ||
+        _selectedWeekdays.isNotEmpty ||
+        _rangeStart != null;
+    if (hasScheduleData) {
+      final confirmed = await DialogHelper.showConfirm(
+        context,
+        title: '근무 유형 변경',
+        message: '유형을 변경하면 입력한 날짜/기간 정보가 초기화됩니다.\n계속하시겠습니까?',
+        confirmText: '변경',
+        cancelText: '취소',
+      );
+      if (!confirmed || !context.mounted) return;
+    }
+
     setState(() {
       _hasChanges = true;
       _selectedJobType = newType;
@@ -752,6 +780,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   Future<void> _createTO() async {
     if (_isCreating) return;
+    // 키보드 닫기 — IME animation과 setState rebuild 타이밍 충돌 방지
+    FocusScope.of(context).unfocus();
+    await Future.microtask(() {});
+    if (!mounted) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
     if (_selectedBusiness == null) {
@@ -1230,7 +1262,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                   ? () async {
                       await NavigationHelper.push<void>(
                         context,
-                        destination: AdminContractManagementScreen(
+                        destination: ContractTemplateListScreen(
                             businessId: _selectedBusiness!.id),
                       );
                       if (!mounted) return;
@@ -1529,7 +1561,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   }) {
     final isSelected = _selectedJobType == value;
     return GestureDetector(
-      onTap: () => _onJobTypeChanged(value),
+      onTap: () async => _onJobTypeChanged(value),
       child: Container(
         padding:
             EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 16)),

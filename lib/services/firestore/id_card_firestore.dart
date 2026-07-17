@@ -11,6 +11,9 @@ extension IdCardFirestore on FirestoreService {
   // ═══════════════════════════════════════════════════════════
 
   /// 신분증 열람 요청 생성
+  /// [CF-MIGRATED 2026-07-15] callableCreateIdCardAccessRequest CF 이전
+  ///   · 중복 체크(compound 쿼리)가 FILTERS-BROKEN으로 PERMISSION_DENIED 발생
+  ///   · Admin SDK로 중복 체크 + 생성. 알림만 클라이언트에서 처리.
   Future<String?> createIdCardAccessRequest({
     required String requesterId,
     required String requesterName,
@@ -24,75 +27,60 @@ extension IdCardFirestore on FirestoreService {
   }) async {
     try {
       debugPrint('📄 [createIdCardAccessRequest] 요청 생성');
-      
-      // 1 & 2. pending/approved 동시 조회 — 두 쿼리는 독립적이므로 Future.wait 병렬 처리
-      // 첫 요청(pending·approved 모두 없는 케이스)이 대부분이므로 병렬이 유리
-      final now = Timestamp.fromDate(DateTime.now());
-      final results = await Future.wait([
-        _firestore
-            .collection('idCardAccessRequests')
-            .where('requesterId', isEqualTo: requesterId)
-            .where('targetUserId', isEqualTo: targetUserId)
-            .where('status', isEqualTo: 'pending')
-            .limit(1)
-            .get(),
-        _firestore
-            .collection('idCardAccessRequests')
-            .where('requesterId', isEqualTo: requesterId)
-            .where('targetUserId', isEqualTo: targetUserId)
-            .where('status', isEqualTo: 'approved')
-            .where('expiresAt', isGreaterThan: now)
-            .limit(1)
-            .get(),
-      ]);
-      final existingPending = results[0];
-      final existingApproved = results[1];
+      final reasonStr = _reasonToString(reason);
 
-      if (existingPending.docs.isNotEmpty) {
-        debugPrint('⚠️ 이미 대기 중인 요청이 있습니다');
-        ToastHelper.showWarning('이미 요청 중입니다. 응답을 기다려주세요.');
-        return null;
-      }
-
-      if (existingApproved.docs.isNotEmpty) {
-        debugPrint('⚠️ 이미 유효한 열람 권한이 있습니다');
-        ToastHelper.showInfo('이미 열람 권한이 있습니다.');
-        return existingApproved.docs.first.id;
-      }
-      
-      // 3. 요청 생성
-      final docRef = await _firestore.collection('idCardAccessRequests').add({
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableCreateIdCardAccessRequest',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+      final result = await callable.call<Map<String, dynamic>>({
         'requesterId': requesterId,
         'requesterName': requesterName,
         'requesterBusinessId': requesterBusinessId,
         'requesterBusinessName': requesterBusinessName,
         'targetUserId': targetUserId,
         'targetUserName': targetUserName,
-        'reason': _reasonToString(reason),
+        'reason': reasonStr,
         'customReason': customReason,
-        'status': 'pending',
-        'requestedAt': FieldValue.serverTimestamp(),
         'applicationId': applicationId,
       });
-      
-      // 4. 알림 생성 (지원자에게)
-      final reasonText = reason == IdCardAccessReason.other 
-          ? (customReason ?? '기타') 
-          : _getReasonText(reason);
-      
-      await createNotification(
-        NotificationModel.createIdCardAccessRequest(
-          userId: targetUserId,
-          businessName: requesterBusinessName,
-          businessId: requesterBusinessId,
-          reason: reasonText,
-          requestId: docRef.id,
-        ),
-      );
-      
-      debugPrint('✅ [createIdCardAccessRequest] 요청 생성 완료: ${docRef.id}');
+      final data = Map<String, dynamic>.from(result.data as Map);
+      final cfReason = data['reason'] as String?;
+      final requestId = data['requestId'] as String?;
+
+      if (cfReason == 'ALREADY_PENDING') {
+        debugPrint('⚠️ 이미 대기 중인 요청이 있습니다');
+        ToastHelper.showWarning('이미 요청 중입니다. 응답을 기다려주세요.');
+        return null;
+      }
+      if (cfReason == 'ALREADY_APPROVED') {
+        debugPrint('⚠️ 이미 유효한 열람 권한이 있습니다');
+        ToastHelper.showInfo('이미 열람 권한이 있습니다.');
+        return requestId;
+      }
+
+      // CREATED: 알림 생성 (지원자에게) — 클라이언트에서 처리
+      if (requestId != null) {
+        final reasonText = reason == IdCardAccessReason.other
+            ? (customReason ?? '기타')
+            : _getReasonText(reason);
+        try {
+          await createNotification(
+            NotificationModel.createIdCardAccessRequest(
+              userId: targetUserId,
+              businessName: requesterBusinessName,
+              businessId: requesterBusinessId,
+              reason: reasonText,
+              requestId: requestId,
+            ),
+          );
+        } catch (e) {
+          debugPrint('⚠️ [createIdCardAccessRequest] 알림 생성 실패: $e');
+        }
+      }
+
+      debugPrint('✅ [createIdCardAccessRequest] 요청 생성 완료: $requestId');
       ToastHelper.showSuccess('신분증 열람 요청을 보냈습니다');
-      return docRef.id;
+      return requestId;
     } catch (e) {
       debugPrint('❌ [createIdCardAccessRequest] 실패: $e');
       ToastHelper.showError('요청 실패');
@@ -210,73 +198,49 @@ extension IdCardFirestore on FirestoreService {
 
 
   /// 신분증 열람 권한 확인 (최신 요청 1건 반환 — 상태 무관)
+  /// [CF-MIGRATED 2026-07-15] callableCheckIdCardAccess CF 이전
+  ///   · requesterId+targetUserId compound 쿼리 FILTERS-BROKEN → Admin SDK 경유
   Future<IdCardAccessRequestModel?> checkIdCardAccess({
     required String requesterId,
     required String targetUserId,
   }) async {
     try {
-      final snapshot = await _firestore
-          .collection('idCardAccessRequests')
-          .where('requesterId', isEqualTo: requesterId)
-          .where('targetUserId', isEqualTo: targetUserId)
-          .orderBy('requestedAt', descending: true)
-          .limit(1)
-          .get(const GetOptions(source: Source.server));
-
-      if (snapshot.docs.isEmpty) return null;
-
-      var request = IdCardAccessRequestModel.fromFirestore(snapshot.docs.first);
-
-      // approved 상태인데 만료됐으면 Firestore 업데이트 + expired로 반환
-      if (request.status == IdCardAccessStatus.approved && request.isExpired) {
-        // update 실패해도 UI는 expired 상태로 반환 — 다음 checkIdCardAccess 호출 시 재시도
-        try {
-          await _firestore
-              .collection('idCardAccessRequests')
-              .doc(request.id)
-              .update({'status': 'expired'});
-        } catch (updateErr) {
-          debugPrint('⚠️ 신분증 만료 상태 업데이트 실패 (계속 진행): $updateErr');
-        }
-        request = IdCardAccessRequestModel(
-          id: request.id,
-          requesterId: request.requesterId,
-          requesterName: request.requesterName,
-          requesterBusinessId: request.requesterBusinessId,
-          requesterBusinessName: request.requesterBusinessName,
-          targetUserId: request.targetUserId,
-          targetUserName: request.targetUserName,
-          reason: request.reason,
-          customReason: request.customReason,
-          status: IdCardAccessStatus.expired,
-          requestedAt: request.requestedAt,
-          respondedAt: request.respondedAt,
-          expiresAt: request.expiresAt,
-          applicationId: request.applicationId,
-          rejectionReason: request.rejectionReason,
-        );
-      }
-
-      return request;
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableCheckIdCardAccess',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'requesterId': requesterId,
+        'targetUserId': targetUserId,
+      });
+      final data = Map<String, dynamic>.from(result.data as Map);
+      final raw = data['request'];
+      if (raw == null) return null;
+      final hydrated = _cfHydrate(Map<String, dynamic>.from(raw as Map));
+      final id = hydrated.remove('id') as String? ?? '';
+      return IdCardAccessRequestModel.fromMap(hydrated, id);
     } catch (e) {
       debugPrint('❌ 열람 권한 확인 실패: $e');
       return null;
     }
   }
   /// 사용자에게 온 신분증 열람 요청 조회 (지원자/근무자용)
+  /// [CF 이전 2026-07-15] callableGetMyIdCardRequests — targetUserId 서버 검증 강제
   Future<List<IdCardAccessRequestModel>> getPendingIdCardRequestsForUser(String userId) async {
     try {
-      final snapshot = await _firestore
-          .collection('idCardAccessRequests')
-          .where('targetUserId', isEqualTo: userId)
-          .where('status', isEqualTo: 'pending')
-          .orderBy('requestedAt', descending: true)
-          .get();
-
-      return snapshot.docs
-          .map(IdCardAccessRequestModel.tryFromFirestore)
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetMyIdCardRequests',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({'status': 'pending'});
+      return ((result.data['requests'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return IdCardAccessRequestModel.tryFromMap(raw, id);
+          })
           .whereType<IdCardAccessRequestModel>()
-          .toList();
+          .toList()
+        ..sort((a, b) => b.requestedAt.compareTo(a.requestedAt)));
     } catch (e) {
       debugPrint('❌ 신분증 요청 조회 실패: $e');
       return [];
@@ -284,21 +248,25 @@ extension IdCardFirestore on FirestoreService {
   }
 
   /// 사용자에게 온 계약해지 요청 조회 (근무자용)
+  /// [CF 이전 2026-07-15] callableGetMyApplications — uid 서버 검증 강제
   Future<List<ApplicationModel>> getMyTerminationRequests(String uid) async {
     try {
-      // whereIn 복합 쿼리 → PERMISSION_DENIED 방지를 위해 병렬 isEqualTo 쿼리로 대체
-      final results = await Future.wait(
-        ['CONFIRMED', 'CONTRACT_PENDING'].map((s) => _firestore
-            .collection('applications')
-            .where('uid', isEqualTo: uid)
-            .where('status', isEqualTo: s)
-            .where('terminationStatus', isEqualTo: 'PENDING')
-            .get()),
-      );
-      return results
-          .expand((snap) => snap.docs)
-          .map(ApplicationModel.tryFromFirestore)
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetMyApplications',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'statuses': ['CONFIRMED', 'CONTRACT_PENDING'],
+        'limit': 200,
+      });
+      return (result.data['applications'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return ApplicationModel.tryFromMap(raw, id);
+          })
           .whereType<ApplicationModel>()
+          .where((a) => a.terminationStatus == 'PENDING')
           .toList();
     } catch (e) {
       debugPrint('❌ 계약해지 요청 조회 실패: $e');
@@ -307,19 +275,24 @@ extension IdCardFirestore on FirestoreService {
   }
 
   /// 내가 보낸 신분증 열람 요청 조회 (관리자용)
+  /// [CF-MIGRATED 2026-07-15] callableGetMyIdCardRequestsAsAdmin CF 이전
+  ///   · requesterId 단일 필터도 FILTERS-BROKEN으로 isSuperAdmin only 규칙에 막힘 → Admin SDK 경유
   Future<List<IdCardAccessRequestModel>> getMyIdCardRequests(String requesterId) async {
     try {
-      final snapshot = await _firestore
-          .collection('idCardAccessRequests')
-          .where('requesterId', isEqualTo: requesterId)
-          .orderBy('requestedAt', descending: true)
-          .limit(50)
-          .get();
-      
-      return snapshot.docs
-          .map(IdCardAccessRequestModel.tryFromFirestore)
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetMyIdCardRequestsAsAdmin',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+      final result = await callable.call<Map<String, dynamic>>({'limit': 50});
+      return ((result.data['requests'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return IdCardAccessRequestModel.tryFromMap(raw, id);
+          })
           .whereType<IdCardAccessRequestModel>()
-          .toList();
+          .toList()
+        ..sort((a, b) => b.requestedAt.compareTo(a.requestedAt)));
     } catch (e) {
       debugPrint('❌ 내 요청 조회 실패: $e');
       return [];

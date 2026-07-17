@@ -48,9 +48,10 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<UserProvider>(
-      builder: (context, userProvider, _) {
-        final user = userProvider.currentUser;
+    // [PERF-2026-07-16] 이름 1개만 필요 → Selector로 rebuild 범위 축소
+    return Selector<UserProvider, String?>(
+      selector: (_, p) => p.currentUser?.name,
+      builder: (context, userName, _) {
         final theme = Theme.of(context);
         final isLandscape =
             MediaQuery.of(context).orientation == Orientation.landscape;
@@ -162,7 +163,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                                           context);
                                   if (confirmed && context.mounted) {
                                     context.read<ThemeProvider>().reset();
-                                    await userProvider.signOut();
+                                    await context.read<UserProvider>().signOut();
                                   }
                                 },
                                 borderRadius: BorderRadius.circular(12),
@@ -192,7 +193,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                           SizedBox(
                               height: ResponsiveHelper.spacing(context, 8)),
                           Text(
-                            '${user?.name ?? '관리자'}님',
+                            '${userName ?? '관리자'}님',
                             style: ResponsiveHelper.titleStyle(context).copyWith(
                               color: Colors.white,
                               fontSize:

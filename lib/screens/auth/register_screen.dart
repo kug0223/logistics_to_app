@@ -433,6 +433,72 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
 
     if (_selectedRole == UserRole.USER) {
+      final missingDocs = <String>[];
+      if (_idCardImagePath == null) missingDocs.add('신분증');
+      if (_bankbookImagePath == null) missingDocs.add('통장사본');
+
+      if (missingDocs.isNotEmpty) {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+            title: Row(children: [
+              Container(
+                width: 34, height: 34,
+                decoration: BoxDecoration(
+                  color: AppColors.warningBg,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(Icons.warning_amber_outlined,
+                    color: AppColors.warningDark,
+                    size: ResponsiveHelper.iconSize(ctx, 18)),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(ctx, 10)),
+              Text('서류 미등록',
+                  style: ResponsiveHelper.subtitleStyle(ctx)
+                      .copyWith(fontWeight: FontWeight.bold)),
+            ]),
+            content: Column(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 12)),
+                decoration: BoxDecoration(
+                  color: AppColors.warningBg,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppColors.warningLight),
+                ),
+                child: Text(
+                  '${missingDocs.join(', ')} 미등록 시 단기 공고 지원이 불가합니다.\n설정 > 내 서류 관리에서 나중에 등록할 수 있어요.',
+                  style: ResponsiveHelper.smallStyle(ctx, color: AppColors.warningDeep),
+                ),
+              ),
+            ]),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text('돌아가기',
+                    style: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey500)),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.warningDark,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(ctx, 16),
+                      vertical: ResponsiveHelper.spacing(ctx, 10)),
+                ),
+                child: Text('나중에 등록',
+                    style: ResponsiveHelper.smallStyle(ctx,
+                        color: Colors.white, fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true) return;
+      }
       await _registerUser();
     } else if (_selectedRole == UserRole.BUSINESS_ADMIN) {
       _showBusinessRegistrationDialog();
@@ -492,7 +558,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       color: AppColors.grey500)),
             ),
             ElevatedButton(
-              onPressed: () { Navigator.pop(ctx); _registerUser(); },
+              onPressed: () async { Navigator.pop(ctx); await _registerUser(); },
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.warningDark,
                 elevation: 0,
@@ -1292,11 +1358,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
     // select로 isLoading만 구독 — UserProvider의 다른 변경 시 전체 폼 rebuild 방지
     final isProviderLoading = context.select<UserProvider, bool>((p) => p.isLoading);
     return PopScope(
-      canPop: !_isSubmitting,
+      // 제출 중이거나 중간 단계면 pop 차단 — onPopInvokedWithResult에서 처리
+      canPop: !_isSubmitting && _currentStep == 0,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _isSubmitting) {
+        if (didPop) return;
+        if (_isSubmitting) {
           ToastHelper.showWarning('처리 중입니다. 잠시만 기다려주세요.');
+          return;
         }
+        // 시스템 뒤로가기를 단계 이전으로 처리 (_currentStep > 0 보장)
+        _onStepCancel();
       },
       child: Scaffold(
         resizeToAvoidBottomInset: true,
@@ -3211,7 +3282,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final isSelected = _selectedRole == role;
 
     return InkWell(
-      onTap: () => setState(() => _selectedRole = role),
+      onTap: () => setState(() {
+        if (_selectedRole == role) return;
+        _selectedRole = role;
+        // 역할 변경 시 인증 상태 초기화 — 이전 역할 기준 인증 결과가 재사용되는 것 방지
+        _passAuthResult = null;
+        _phoneVerifyStatus.value = const _PhoneVerifyStatus();
+        _phoneController.clear();
+      }),
       borderRadius: BorderRadius.circular(12),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),

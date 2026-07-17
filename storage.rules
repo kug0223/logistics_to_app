@@ -91,14 +91,14 @@ service firebase.storage {
     match /contracts/{contractId}/signature_employer.png {
       allow create: if false;
     }
-    // worker 서명·PDF: employer 서명 완료 후 Firestore 문서 보장 → workerId 교차검증
+    // worker 서명·PDF: callableFinalizeWorkerSignature CF(Admin SDK)가 전담.
+    // [STORAGE-RULE-NOTE] firestore.get()은 이 프로젝트에서 작동하지 않는 것으로 실험 확인.
+    // → 근무자가 CF를 우회해 직접 업로드하는 경로 차단 + employer와 일관성 유지.
     match /contracts/{contractId}/signature_worker.png {
-      allow create: if isLoggedIn() && isUnder10MB() &&
-        firestore.get(/databases/(default)/documents/employment_contracts/$(contractId)).data.workerId == request.auth.uid;
+      allow create: if false;
     }
     match /contracts/{contractId}/contract.pdf {
-      allow create: if isLoggedIn() && isUnder10MB() &&
-        firestore.get(/databases/(default)/documents/employment_contracts/$(contractId)).data.workerId == request.auth.uid;
+      allow create: if false;
     }
 
     // ═══════════════════════════════════════════════════════════

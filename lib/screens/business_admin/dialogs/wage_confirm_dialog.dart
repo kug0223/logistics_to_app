@@ -489,6 +489,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       int successCount = 0;
       int failCount = 0;
       final confirmedIds = <String>{};
+      final failedNames = <String>[];
 
       // [특이사항 2026-07-14] 루프 내부 await(CF call) 후 per-iteration mounted 체크 없음
       // 현재는 루프 내부에서 setState 호출이 없고 로컬 변수/Map만 갱신하므로 실제 크래시 없음
@@ -500,6 +501,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
         if (wage == null || attendance == null) {
           failCount++;
+          final failApp = widget.workers.where((w) => w.id == appId).firstOrNull;
+          failedNames.add(widget.userMap[failApp?.uid]?.name ?? appId);
           continue;
         }
 
@@ -594,9 +597,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         } catch (e) {
           debugPrint('❌ 급여 확정 실패 ($appId): $e');
           failCount++;
+          final failApp = widget.workers.where((w) => w.id == appId).firstOrNull;
+          failedNames.add(widget.userMap[failApp?.uid]?.name ?? appId);
         }
       }
-      
+
       if (successCount > 0) {
         _hasChanges = true;
         widget.onConfirmed?.call();
@@ -616,9 +621,49 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         // 확정내역 탭으로 자동 이동
         _tabController.animateTo(1);
       }
-      
-      if (failCount > 0) {
-        if (mounted) ToastHelper.showWarning('$failCount명 처리 실패');
+
+      if (failCount > 0 && mounted) {
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.warning_amber_rounded, color: Colors.orange),
+                SizedBox(width: 8),
+                Text('일부 확정 실패'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('$failCount명의 급여 확정에 실패했습니다.'),
+                const SizedBox(height: 12),
+                ...failedNames.map((name) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline, size: 14, color: Colors.orange),
+                      const SizedBox(width: 6),
+                      Text(name),
+                    ],
+                  ),
+                )),
+                const SizedBox(height: 12),
+                const Text(
+                  '해당 근무자를 개별 선택하여 다시 시도하거나, 잠시 후 재시도해주세요.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('확인'),
+              ),
+            ],
+          ),
+        );
       }
     } on FirebaseFunctionsException catch (e) {
       debugPrint('❌ 일괄 급여 확정 CF 오류 [${e.code}]: ${e.message}');
@@ -1154,16 +1199,18 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     if (_isProcessing) return;
     if (_calculatedSelectedIds.isEmpty) return;
 
+    // [BUG-FIX 2026-07-16] 확인 다이얼로그 중 중복 탭 방지용으로만 lock
     setState(() => _isProcessing = true);
     try {
-    final count = _calculatedSelectedIds.length;
-    final confirmed = await DialogHelper.showDangerConfirm(
-      context,
-      title: '급여 확정 취소',
-      message: '선택한 $count명의 급여 확정을 취소하시겠습니까?\n미확정 상태로 되돌아갑니다.',
-      confirmText: '취소',
-    );
-    if (!confirmed || !mounted) return;
+      final count = _calculatedSelectedIds.length;
+      final confirmed = await DialogHelper.showDangerConfirm(
+        context,
+        title: '급여 확정 되돌리기',
+        message: '선택한 $count명의 급여 확정을 되돌리시겠습니까?\n\n입력 오류 수정이 필요한 경우에 사용하세요.\n미확정 상태로 돌아가며, 각 근무자에게 재조정 안내 알림이 발송됩니다.',
+        confirmText: '되돌리기',
+      );
+      if (!confirmed || !mounted) return;
+
       final ids = List<String>.from(_calculatedSelectedIds);
       // 루프 전에 앱 스냅샷 확보 — _processWageCancel 내부 setState가 _calculatedWorkers를 수정하기 때문
       final appSnapshots = <String, ApplicationModel>{};
@@ -1171,7 +1218,14 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         final matches = _calculatedWorkers.where((a) => a.id == id);
         if (matches.isNotEmpty) appSnapshots[id] = matches.first;
       }
+
+      // [BUG-FIX 2026-07-16] 루프 전 unlock — _processWageCancel이 자체적으로 _isProcessing을 관리.
+      //   기존: _isProcessing=true 유지 → _processWageCancel guard(if _isProcessing return)에서
+      //   즉시 return → 실제 CF 미호출 → 성공 토스트만 표시되는 완전 무동작 버그.
+      setState(() => _isProcessing = false);
+
       for (final appId in ids) {
+        if (!mounted) break;
         final app = appSnapshots[appId];
         if (app == null) continue;
         final attendance = widget.attendanceMap[appId];
@@ -1297,7 +1351,56 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     if (failCount == 0) {
       ToastHelper.showSuccess('$successCount명 마감 완료');
     } else {
-      ToastHelper.showWarning('$successCount명 완료, $failCount명 실패');
+      ToastHelper.showSuccess('$successCount명 마감 완료');
+      final processedIds = processedApps.map((a) => a.id).toSet();
+      final failedNames = targetIds
+          .where((id) => !processedIds.contains(id))
+          .map((id) {
+            final app = _calculatedWorkers.where((a) => a.id == id).firstOrNull;
+            return widget.userMap[app?.uid]?.name ?? id;
+          })
+          .toList();
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.orange),
+              SizedBox(width: 8),
+              Text('일부 마감 실패'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('$failCount명의 마감에 실패했습니다.'),
+              const SizedBox(height: 12),
+              ...failedNames.map((name) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  children: [
+                    const Icon(Icons.error_outline, size: 14, color: Colors.orange),
+                    const SizedBox(width: 6),
+                    Text(name),
+                  ],
+                ),
+              )),
+              const SizedBox(height: 12),
+              const Text(
+                '해당 근무자를 개별 선택하여 다시 시도해주세요.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('확인'),
+            ),
+          ],
+        ),
+      );
     }
     // 마감내역 탭으로 자동 이동
     _tabController.animateTo(2);

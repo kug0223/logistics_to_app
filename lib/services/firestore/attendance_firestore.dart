@@ -461,20 +461,26 @@ extension AttendanceFirestore on FirestoreService {
 
   /// 지원자의 스케줄 변경 요청 조회
   // [BUG-수정] 캐시 데이터로 중복 요청 방어 로직이 오동작하지 않도록 항상 서버에서 최신 상태 조회
-  // [보안 규칙] where('applicantUid') 단독 → filters.applicantUid == auth.uid (CRIT-02) 충족.
-  //   whereIn 없이 isEqualTo 단독이므로 filters 정상 반환. 혼합(where+whereIn) 시 null 반환됨.
+  // [BUGFIX-COMPOUND] orderBy('requestedAt') 제거 — applicantUid isEqualTo + orderBy requestedAt 복합 인덱스 쿼리에서
+  //   request.query.filters.applicantUid가 null을 반환해 PERMISSION_DENIED 유발
+  //   orderBy 제거 후 클라이언트 정렬. 보안 규칙: isUser() && filters.applicantUid == auth.uid.
+  /// [CF 이전 2026-07-15] callableGetMyScheduleChanges — applicantUid 서버 검증 강제
   Future<List<ScheduleChangeRequestModel>> getMyScheduleChangeRequests(String applicantUid) async {
     try {
-      final snapshot = await _firestore
-          .collection('schedule_change_requests')
-          .where('applicantUid', isEqualTo: applicantUid)
-          .orderBy('requestedAt', descending: true)
-          .get(const GetOptions(source: Source.server));
-
-      return snapshot.docs
-          .map((doc) => ScheduleChangeRequestModel.tryFromMap(doc.data(), doc.id))
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetMyScheduleChanges',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({});
+      return ((result.data['items'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return ScheduleChangeRequestModel.tryFromMap(raw, id);
+          })
           .whereType<ScheduleChangeRequestModel>()
-          .toList();
+          .toList()
+        ..sort((a, b) => b.requestedAt.compareTo(a.requestedAt)));
     } catch (e) {
       debugPrint('❌ 내 스케줄 변경 요청 조회 실패: $e');
       return [];
@@ -713,21 +719,4 @@ extension AttendanceFirestore on FirestoreService {
     );
   }
 
-  /// 대기중인 요청 개수 조회
-  // [BUG-M2 검토 2026-07-15] 직접 Firestore 쿼리 — Trust Boundary Charter 기준 읽기 전용 OK
-  //   schedule_change_requests 규칙: isAdminOf(businessId) LIST 허용, 타 사업장 접근 차단
-  Future<int> getPendingScheduleChangeRequestCount(String businessId) async {
-    try {
-      final snapshot = await _firestore
-          .collection('schedule_change_requests')
-          .where('businessId', isEqualTo: businessId)
-          .where('status', isEqualTo: 'PENDING')
-          .get(const GetOptions(source: Source.server));
-
-      return snapshot.docs.length;
-    } catch (e) {
-      debugPrint('❌ 대기중인 요청 개수 조회 실패: $e');
-      return 0;
-    }
-  }
 }

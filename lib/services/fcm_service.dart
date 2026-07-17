@@ -120,6 +120,12 @@ class FCMService {
     } catch (e) {
       debugPrint('❌ FCM 초기화 실패: $e');
       _currentUserId = null;
+      await _tokenRefreshSub?.cancel();
+      await _onMessageSub?.cancel();
+      await _onMessageOpenedAppSub?.cancel();
+      _tokenRefreshSub = null;
+      _onMessageSub = null;
+      _onMessageOpenedAppSub = null;
     } finally {
       _isInitializing = false;
       // [118] 초기화 중 계정 전환 요청이 있었으면 재초기화

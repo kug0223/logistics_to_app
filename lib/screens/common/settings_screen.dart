@@ -269,6 +269,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   MaterialPageRoute(builder: (_) => const ProfileEditScreen())),
             ),
           ]),
+          if (user?.role == UserRole.BUSINESS_ADMIN) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            _buildMenuGroup(context, [
+              _SettingsItem(
+                icon: Icons.verified_user_outlined,
+                iconColor: AppColors.infoDark,
+                title: '본인인증 (PASS)',
+                subtitle: (user?.isPassVerified ?? false) ? '완료' : '미완료',
+                subtitleColor: (user?.isPassVerified ?? false)
+                    ? AppColors.success
+                    : AppColors.warning,
+                onTap: () => _handlePassAuth(user!),
+              ),
+            ]),
+          ],
           if (user?.role == UserRole.USER) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             _buildMenuGroup(context, [
@@ -277,12 +292,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 iconColor: AppColors.infoDark,
                 title: '본인인증 (PASS)',
                 subtitle: (user?.isPassVerified ?? false) ? '완료' : '미완료',
+                subtitleColor: (user?.isPassVerified ?? false)
+                    ? AppColors.success
+                    : AppColors.warning,
                 onTap: () => _handlePassAuth(user!),
               ),
               _SettingsItem(
                 icon: Icons.folder_special_outlined,
                 iconColor: AppColors.successDark,
                 title: '내 서류 관리',
+                subtitle: () {
+                  final idDone = user?.idCardImageUrl?.isNotEmpty ?? false;
+                  final accDone = (user?.bankName?.isNotEmpty ?? false) &&
+                      (user?.accountNumber?.isNotEmpty ?? false);
+                  final bookDone = user?.bankbookImageUrl?.isNotEmpty ?? false;
+                  final done = [idDone, accDone, bookDone].where((v) => v).length;
+                  if (done == 3) return '신분증 · 계좌 · 통장사본 모두 완료';
+                  if (done == 0) return '신분증 · 계좌 · 통장사본 미등록';
+                  return '서류 $done/3 완료';
+                }(),
+                subtitleColor: () {
+                  final idDone = user?.idCardImageUrl?.isNotEmpty ?? false;
+                  final accDone = (user?.bankName?.isNotEmpty ?? false) &&
+                      (user?.accountNumber?.isNotEmpty ?? false);
+                  final bookDone = user?.bankbookImageUrl?.isNotEmpty ?? false;
+                  final done = [idDone, accDone, bookDone].where((v) => v).length;
+                  if (done == 3) return AppColors.success;
+                  if (done == 0) return AppColors.error;
+                  return AppColors.warning;
+                }(),
                 onTap: () => NavigationHelper.push<bool>(context,
                     destination: const DocumentManagementScreen()),
               ),
@@ -878,7 +916,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   if (item.subtitle != null)
                     Text(item.subtitle!,
                         style: ResponsiveHelper.smallStyle(context,
-                            color: AppColors.grey500)),
+                            color: item.subtitleColor ?? AppColors.grey500)),
                 ],
               ),
             ),
@@ -1192,6 +1230,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 if (proceed != true || !ctx.mounted) return;
               }
             }
+
+            // 최종 재확인
+            if (!ctx.mounted) return;
+            final confirmed = await DialogHelper.showDangerConfirm(
+              ctx,
+              title: '정말 탈퇴하시겠습니까?',
+              message: '탈퇴 후 계정 및 모든 데이터가 삭제되며 복구할 수 없습니다.',
+              confirmText: '탈퇴하기',
+            );
+            if (confirmed != true || !ctx.mounted) return;
 
             setModal(() {
               isLoading = true;
@@ -1928,6 +1976,7 @@ class _SettingsItem {
   final Color iconColor;
   final String title;
   final String? subtitle;
+  final Color? subtitleColor;
   final VoidCallback onTap;
 
   const _SettingsItem({
@@ -1935,6 +1984,7 @@ class _SettingsItem {
     required this.iconColor,
     required this.title,
     this.subtitle,
+    this.subtitleColor,
     required this.onTap,
   });
 }

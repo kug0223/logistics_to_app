@@ -88,12 +88,11 @@ class PassVerificationService {
     }
   }
 
-  /// 가입 완료 후 passToken 소비 — [AUTH-H3] 15분 재사용 차단
+  /// 가입 완료 후 passToken 소비 + passVerifiedAt 저장 — [AUTH-H3] 15분 재사용 차단
   ///
   /// 가입 성공 직후 호출한다. 실패해도 가입 자체는 완료된 상태이므로 예외를 삼킨다.
-  /// mock 토큰은 kDebugMode에서만 CF 호출 생략 — 릴리즈 빌드에서 'mock-' 접두어 우회 차단.
+  /// CF 내부에서 mock- 접두어 토큰을 dev 환경 전용으로 처리하므로 kDebugMode 분기 제거.
   static Future<void> finalizeRegistration(String passToken) async {
-    if (kDebugMode) return;
     try {
       await _fn.httpsCallable('finalizeRegistration',
           options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))

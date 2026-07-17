@@ -4,6 +4,27 @@
 // 공고(TO) 서비스 — slots 구조 기반
 // ═══════════════════════════════════════════════════════════
 
+/// CF SDK는 Firestore Timestamp 타입을 허용하지 않으므로 밀리초 정수로 재귀 변환.
+/// CF(callableCreateTO)에서 밀리초를 다시 Timestamp.fromMillis()로 복원.
+Map<String, dynamic> _sanitizeForCF(Map<String, dynamic> data) {
+  return data.map((key, value) {
+    if (value is Timestamp) {
+      return MapEntry(key, value.millisecondsSinceEpoch);
+    }
+    if (value is Map<String, dynamic>) {
+      return MapEntry(key, _sanitizeForCF(value));
+    }
+    if (value is List) {
+      return MapEntry(key, value.map((e) {
+        if (e is Timestamp) return (e as Timestamp).millisecondsSinceEpoch;
+        if (e is Map<String, dynamic>) return _sanitizeForCF(e as Map<String, dynamic>);
+        return e;
+      }).toList());
+    }
+    return MapEntry(key, value);
+  });
+}
+
 extension TOFirestore on FirestoreService {
 
   // ───────────────────────────────────────────────────────
@@ -162,17 +183,21 @@ extension TOFirestore on FirestoreService {
       // [BUGFIX-WHEREIN] isPublished isEqualTo + status whereIn → PERMISSION_DENIED
       // status 서버 필터 제거, 클라이언트에서 active/full 필터링
       // [SEC] tos list 규칙: USER에게 limit <= 50 강제 — limit(100)이면 PERMISSION_DENIED
+      // [BUGFIX-COMPOUND] orderBy('createdAt') 제거 — isPublished isEqualTo + orderBy createdAt 복합 인덱스 쿼리에서
+      //   request.query.filters.get('isPublished', false)가 null을 반환해 PERMISSION_DENIED 유발
+      //   orderBy 제거 후 클라이언트 정렬로 대체
       final snap = await _firestore
           .collection('tos')
           .where('isPublished', isEqualTo: true)
-          .orderBy('createdAt', descending: true)
           .limit(50)
           .get(const GetOptions(source: Source.server));
 
-      return snap.docs
+      return (snap.docs
           .map((d) => TOModel.tryFromMap(d.data(), d.id))
           .whereType<TOModel>()
           .where((t) => t.status == TOStatus.active || t.status == TOStatus.full)
+          .toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt)))
           .take(50)
           .toList();
     } catch (e) {
@@ -204,11 +229,11 @@ extension TOFirestore on FirestoreService {
     }
 
     // sortBy='date'(마감임박순)는 서버 정렬 미지원 — 클라이언트 후처리로만 동작
-    // Firestore는 복합 정렬(isPublished+closingAt)을 위한 복합 인덱스가 필요하나 미구성.
-    // 현재: createdAt desc 서버 정렬 후 1페이지 내에서만 마감임박순 재정렬.
-    // 2페이지 이후 마감임박 공고는 createdAt 기준 뒤에 밀려 노출 안 될 수 있음.
-    // 해결 시: Firestore에 (isPublished ASC, closingAt ASC) 복합 인덱스 추가 + 쿼리 변경 필요.
-    query = query.orderBy('createdAt', descending: true).limit(pageSize);
+    // [BUGFIX-COMPOUND] orderBy('createdAt') 제거 — isPublished isEqualTo + orderBy createdAt 복합 인덱스 쿼리에서
+    //   request.query.filters.get('isPublished', false)가 null을 반환해 PERMISSION_DENIED 유발
+    //   orderBy 제거 후 각 페이지 내 클라이언트 정렬. 페이지 간 정렬은 __name__ 기준이므로
+    //   마감임박순 등 createdAt 기준 전체 정렬은 여전히 미지원 (단일 페이지 내에서만 정렬됨).
+    query = query.limit(pageSize);
 
     if (startAfter != null) {
       query = query.startAfterDocument(startAfter);
@@ -220,7 +245,8 @@ extension TOFirestore on FirestoreService {
         .whereType<TOModel>()
         // [BUGFIX-WHEREIN] status whereIn 제거로 클라이언트에서 active/full 필터링
         .where((t) => t.status == TOStatus.active || t.status == TOStatus.full)
-        .toList();
+        .toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return {
       'items': items,
       'lastDoc': snap.docs.isNotEmpty ? snap.docs.last : null,
@@ -433,13 +459,14 @@ extension TOFirestore on FirestoreService {
           dates != null &&
           dates.isNotEmpty;
       final initialData = deferPublish
-          ? {...toData, 'isPublished': false, 'status': TOStatus.scheduled}
+          ? {...toData, 'isPublished': false, 'status': TOStatus.scheduled, 'publishMode': 'scheduled'}
           : toData;
 
       // [HIGH-02] CF callableCreateTO — 개수 제한 서버 강제 + serverTimestamp 설정
+      // CF SDK는 Firestore Timestamp 타입을 허용하지 않으므로 밀리초 정수로 변환 후 전달
       final cfResult = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableCreateTO')
-          .call({'toData': initialData});
+          .call({'toData': _sanitizeForCF(initialData)});
       final toId = cfResult.data['toId'] as String;
       final toRef = _firestore.collection('tos').doc(toId);
       debugPrint('✅ [TO] 공고 생성: $toId');
@@ -830,11 +857,16 @@ extension TOFirestore on FirestoreService {
     if (slotIds.isEmpty) return;
     final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
         .httpsCallable('callableCloseSlots');
-    await callable.call({
-      'toId': toId,
-      'slotIds': slotIds,
-      'businessId': businessId,
-    });
+    try {
+      await callable.call({
+        'toId': toId,
+        'slotIds': slotIds,
+        'businessId': businessId,
+      });
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('❌ [Slot] 일괄 마감 실패: ${e.code} — ${e.message}');
+      rethrow;
+    }
     debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 마감 완료 (CF)');
   }
 
@@ -850,11 +882,16 @@ extension TOFirestore on FirestoreService {
     final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
         .httpsCallable('callableReopenSlots',
             options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-    await callable.call({
-      'toId': toId,
-      'slotIds': slotIds,
-      'businessId': businessId,
-    });
+    try {
+      await callable.call({
+        'toId': toId,
+        'slotIds': slotIds,
+        'businessId': businessId,
+      });
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('❌ [Slot] 일괄 재오픈 실패: ${e.code} — ${e.message}');
+      rethrow;
+    }
     clearCache(toId: toId);
     debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 재오픈 완료 (CF)');
   }
@@ -890,32 +927,25 @@ extension TOFirestore on FirestoreService {
     final slotRequired = workDetails.fold<int>(0, (s, d) => s + d.requiredCount);
     final dateOnly = DateTime(date.year, date.month, date.day);
 
-    // [BUG-수정] T-M-1: toUpdates를 미리 계산해 _createSlots의 마지막 배치에 함께 커밋
-    // — 슬롯 생성 후 별도 update() 호출 시 카운터 업데이트 실패로 totalSlots/totalRequired
-    //   불일치하는 비원자성 문제를 제거한다.
-    final Map<String, dynamic> toUpdates = {
+    // [T-M-1] 카운터·범위 업데이트만 배치에 포함 — status는 Firestore rules상
+    // isSuperAdmin()만 직접 쓰기 가능. 일반 관리자는 callableUpdateTO CF 경유 필수.
+    final Map<String, dynamic> toCounterUpdates = {
       'totalSlots': FieldValue.increment(1),
       'totalRequired': FieldValue.increment(slotRequired),
     };
-
-    // 마감/만료 상태였으면 새 슬롯 추가 시 ACTIVE 복구
-    // isPublished는 기존 상태 유지 — 관리자가 의도적으로 비공개 설정한 경우 자동 공개 방지
-    if (TOStatus.closedStates.contains(to.status)) {
-      toUpdates['status'] = TOStatus.active;
-      if (to.isPublished) toUpdates['isPublished'] = true;
-      toUpdates['statusUpdatedAt'] = FieldValue.serverTimestamp();
-      debugPrint('🔄 [TO] 상태 복구: ${to.status} → ACTIVE (새 슬롯 추가, isPublished=${to.isPublished})');
-    }
 
     // 새 슬롯이 날짜 범위를 벗어나면 rangeStart/rangeEnd 갱신
     final rangeEnd = to.rangeEnd;
     final rangeStart = to.rangeStart;
     if (rangeEnd == null || dateOnly.isAfter(rangeEnd)) {
-      toUpdates['rangeEnd'] = Timestamp.fromDate(dateOnly);
+      toCounterUpdates['rangeEnd'] = Timestamp.fromDate(dateOnly);
     }
     if (rangeStart == null || dateOnly.isBefore(rangeStart)) {
-      toUpdates['rangeStart'] = Timestamp.fromDate(dateOnly);
+      toCounterUpdates['rangeStart'] = Timestamp.fromDate(dateOnly);
     }
+
+    // 마감/만료 상태 복구 필요 여부를 슬롯 생성 전에 확인
+    final needsStatusRestore = TOStatus.closedStates.contains(to.status);
 
     await _createSlots(
       toId: to.id,
@@ -930,8 +960,18 @@ extension TOFirestore on FirestoreService {
       slotTitle: title,
       overrideVisibleFrom: visibleFrom,
       toRefForCounter: _firestore.collection('tos').doc(to.id),
-      toCounterUpdates: toUpdates,
+      toCounterUpdates: toCounterUpdates,
     );
+
+    // status 복구: 배치가 아닌 callableUpdateTO CF 경유 (rules 우회 방지)
+    // isPublished는 기존 상태 유지 — 관리자가 의도적으로 비공개 설정한 경우 자동 공개 방지
+    if (needsStatusRestore) {
+      debugPrint('🔄 [TO] 상태 복구: ${to.status} → ACTIVE (새 슬롯 추가, isPublished=${to.isPublished})');
+      await updateTO(to.id, {
+        'status': TOStatus.active,
+        if (to.isPublished) 'isPublished': true,
+      });
+    }
 
     debugPrint('✅ [TO] 슬롯 추가 완료: ${date.toIso8601String().substring(0, 10)}');
   }

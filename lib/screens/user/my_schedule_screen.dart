@@ -667,6 +667,23 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     final today = DateTime(now.year, now.month, now.day);
     final sel = DateTime(_selectedDay!.year, _selectedDay!.month, _selectedDay!.day);
     final isFutureOrToday = !sel.isBefore(today);
+    final isFiltered = _selectedFilter != 'ALL';
+
+    // 필터가 켜져 있으면 "필터에 해당하는 일정 없음" 안내 — 공고 유도 메시지 제거
+    if (isFiltered) {
+      final filterLabel = _selectedFilter == AppStatus.confirmed ? '확정' : '대기';
+      return AppEmptyState(
+        icon: Icons.filter_list_off,
+        iconColor: AppColors.grey300,
+        title: "'$filterLabel' 일정이 없습니다",
+        subtitle: '다른 필터를 선택하거나 전체 보기를 눌러보세요',
+        action: TextButton(
+          onPressed: () => setState(() => _selectedFilter = 'ALL'),
+          child: const Text('전체 보기'),
+        ),
+        asSliver: true,
+      );
+    }
 
     return AppEmptyState(
       icon: isFutureOrToday ? Icons.work_outline : Icons.event_busy,

@@ -148,23 +148,27 @@ extension NotificationFirestore on FirestoreService {
   Future<int> deleteOldNotifications(String userId) async {
     try {
       final cutoffDate = DateTime.now().subtract(const Duration(days: 30));
+      int totalDeleted = 0;
 
-      final snapshot = await _notificationsFor(userId)
-          .where('createdAt', isLessThan: Timestamp.fromDate(cutoffDate))
-          .limit(500)
-          .get();
+      while (true) {
+        final snapshot = await _notificationsFor(userId)
+            .where('createdAt', isLessThan: Timestamp.fromDate(cutoffDate))
+            .limit(500)
+            .get();
 
-      const chunkSize = 500;
-      for (int i = 0; i < snapshot.docs.length; i += chunkSize) {
+        if (snapshot.docs.isEmpty) break;
+
         final batch = _firestore.batch();
-        final end = (i + chunkSize).clamp(0, snapshot.docs.length);
-        for (int j = i; j < end; j++) {
-          batch.delete(snapshot.docs[j].reference);
+        for (final doc in snapshot.docs) {
+          batch.delete(doc.reference);
         }
         await batch.commit();
+        totalDeleted += snapshot.docs.length;
+
+        if (snapshot.docs.length < 500) break;
       }
-      debugPrint('✅ ${snapshot.docs.length}개 오래된 알림 삭제');
-      return snapshot.docs.length;
+      debugPrint('✅ $totalDeleted개 오래된 알림 삭제');
+      return totalDeleted;
     } catch (e) {
       debugPrint('❌ 오래된 알림 삭제 실패: $e');
       return 0;

@@ -16,6 +16,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/core/attendance_model.dart';
+import '../models/core/notification_model.dart';
 import '../models/core/payment_change_request_model.dart';
 import '../models/core/interim_settlement_request_model.dart';
 import '../utils/format_helper.dart';
@@ -128,16 +129,31 @@ class PayrollPaymentService {
         .toList();
 
     bool notificationsSent = false;
+    final List<String> chunkErrors = [];
     for (int i = 0; i < attendanceIds.length; i += 200) {
       final chunk = attendanceIds.skip(i).take(200).toList();
-      await _cf.httpsCallable('callableMarkTransferredBatch').call({
-        'businessId': businessId,
-        'attendanceIds': chunk,
-        if (transferNote != null && transferNote.isNotEmpty) 'transferNote': transferNote,
-        if (!notificationsSent && allNotifications != null)
-          'notifications': allNotifications,
-      });
-      notificationsSent = true;
+      // [FIX] 알림 포함 여부를 await 이전에 결정·잠금:
+      // 이전 코드는 CF 실패 시 notificationsSent=false 유지 → 다음 청크가
+      // 전체 근로자에게 허위 이체완료 알림 발송하는 버그
+      final bool sendNotifs = !notificationsSent && allNotifications != null;
+      if (sendNotifs) notificationsSent = true;
+      try {
+        await _cf.httpsCallable('callableMarkTransferredBatch').call({
+          'businessId': businessId,
+          'attendanceIds': chunk,
+          if (transferNote != null && transferNote.isNotEmpty) 'transferNote': transferNote,
+          if (sendNotifs) 'notifications': allNotifications,
+        });
+      } catch (e) {
+        final msg = e is FirebaseFunctionsException
+            ? (e.message ?? e.code)
+            : e.toString();
+        debugPrint('⚠️ [markTransferredBatch] 청크 ${i ~/ 200 + 1} 실패: $msg');
+        chunkErrors.add('청크 ${i ~/ 200 + 1}: $msg');
+      }
+    }
+    if (chunkErrors.isNotEmpty) {
+      throw Exception('이체 일괄처리 실패 (${chunkErrors.length}개 청크):\n${chunkErrors.join('\n')}');
     }
   }
 
@@ -187,18 +203,9 @@ class PayrollPaymentService {
         return AttendanceModel.tryFromMap(raw, id);
       }).whereType<AttendanceModel>().toList();
 
-      // cursor 기반 페이지네이션: cursor 이후 pageSize건 슬라이싱
-      final List<AttendanceModel> page;
-      if (cursor == null) {
-        page = allRecords.take(pageSize + 1).toList();
-      } else {
-        // cursor 지원 불가 — 전체 반환 (호출부는 cursor==null 로만 호출해야 함)
-        page = allRecords.take(pageSize + 1).toList();
-      }
-      final hasMore = page.length > pageSize;
-      final records = hasMore ? page.take(pageSize).toList() : page;
-
-      return PayrollPage(records: records, cursor: null, hasMore: hasMore);
+      // [FIX-MEDIUM-01] CF는 전체 레코드 반환 — cursor 기반 슬라이싱 제거
+      // 이전 버그: cursor!=null에서도 첫 페이지 재반환 → load more 시 중복 데이터 누적
+      return PayrollPage(records: allRecords, hasMore: false);
     } catch (e) {
       debugPrint('❌ 급여 현황 조회 실패: $e');
       return PayrollPage(records: [], hasMore: false);
@@ -521,6 +528,26 @@ class PayrollPaymentService {
         '다시 시도하면 안전하게 처리됩니다. ($e)',
       );
     }
+
+    // 3단계: 근로자에게 중간정산 완료 알림 발송 (실패해도 이체 자체에 영향 없음)
+    try {
+      final notification = NotificationModel.createInterimSettlementCompleted(
+        userId: req.workerId,
+        workerName: req.workerName,
+        businessName: req.businessName,
+        businessId: req.businessId,
+        netAmount: req.netAmount,
+        periodStart: req.periodStart,
+        periodEnd: req.periodEnd,
+        settlementRequestId: req.id,
+      );
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('createNotification',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
+          .call(notification.toMap());
+    } catch (e) {
+      debugPrint('⚠️ 중간정산 완료 알림 발송 실패 (이체는 완료): $e');
+    }
   }
 
   /// 중간정산 거절
@@ -529,15 +556,19 @@ class PayrollPaymentService {
     required String processedBy,
     required String rejectReason,
   }) async {
-    await _db
-        .collection('interim_settlement_requests')
-        .doc(requestId)
-        .update({
-      'status':       InterimSettlementRequestModel.statusRejected,
-      'processedBy':  processedBy,
-      'processedAt':  FieldValue.serverTimestamp(),
-      'rejectReason': rejectReason,
-      'updatedAt':    FieldValue.serverTimestamp(),
+    final ref = _db.collection('interim_settlement_requests').doc(requestId);
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(ref);
+      if (snap.data()?['status'] != InterimSettlementRequestModel.statusPending) {
+        throw Exception('이미 처리된 요청입니다.');
+      }
+      tx.update(ref, {
+        'status':       InterimSettlementRequestModel.statusRejected,
+        'processedBy':  processedBy,
+        'processedAt':  FieldValue.serverTimestamp(),
+        'rejectReason': rejectReason,
+        'updatedAt':    FieldValue.serverTimestamp(),
+      });
     });
   }
 }

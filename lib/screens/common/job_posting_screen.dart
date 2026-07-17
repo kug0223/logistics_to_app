@@ -36,7 +36,7 @@ import '../../widgets/maps/kakao_map_widget.dart';
 import '../../widgets/maps/full_map_dialog.dart';
 import '../../widgets/dialogs/apply/apply_work_dialog.dart';
 import '../../theme/app_colors.dart';
-import '../user/apply_prerequisites_helper.dart';
+import '../user/apply_prerequisites_screen.dart';
 
 /// 📋 TO 공고 상세보기 화면
 /// - 지원자 모드: 공고 확인 + 지원하기
@@ -82,7 +82,8 @@ class JobPostingScreen extends StatefulWidget {
   State<JobPostingScreen> createState() => _JobPostingScreenState();
 }
 
-class _JobPostingScreenState extends State<JobPostingScreen> {
+class _JobPostingScreenState extends State<JobPostingScreen>
+    with WidgetsBindingObserver {
   final FirestoreService _firestoreService = FirestoreService();
 
   bool _isLoading = true;
@@ -104,6 +105,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
   bool get _isApplyable => _applyBlockReason == null;
 
   void _checkApplyEligibility() {
+    if (!mounted) return;
     if (widget.mode != TODetailMode.applicant) return;
     final user = context.read<UserProvider>().currentUser;
     if (user == null) {
@@ -114,11 +116,17 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       setState(() => _applyBlockReason = '이용 제한된 계정입니다');
       return;
     }
+    // isRestricted(노쇼 페널티)는 선결조건보다 먼저 체크 — 선결조건 완료 후에야 제한 안내가 뜨는 문제 방지
+    if (user.isRestricted) {
+      final remainDays = (user.restrictedUntil?.difference(DateTime.now()).inDays ?? 0) + 1;
+      setState(() => _applyBlockReason = '무단 결근 페널티 ($remainDays일 제한)');
+      return;
+    }
     if (!user.isPassVerified) {
       setState(() => _applyBlockReason = 'PASS 인증이 필요합니다');
       return;
     }
-    if (user.idCardImageUrl == null) {
+    if (user.idCardImageUrl == null || user.idCardImageUrl!.isEmpty) {
       setState(() => _applyBlockReason = '신분증 등록이 필요합니다');
       return;
     }
@@ -126,22 +134,24 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       setState(() => _applyBlockReason = '통장 정보 등록이 필요합니다');
       return;
     }
-    if (user.bankbookImageUrl == null) {
+    if (user.bankbookImageUrl == null || user.bankbookImageUrl!.isEmpty) {
       setState(() => _applyBlockReason = '통장사본 등록이 필요합니다');
-      return;
-    }
-    if (user.isRestricted) {
-      final remainDays = (user.restrictedUntil?.difference(DateTime.now()).inDays ?? 0) + 1;
-      setState(() => _applyBlockReason = '무단 결근 페널티 ($remainDays일 제한)');
       return;
     }
     setState(() => _applyBlockReason = null);
   }
 
-  /// TO가 실질적으로 마감됐는지 (날짜 경과 포함)
+  /// TO가 실질적으로 마감됐는지 (날짜 경과·정원 초과 포함)
   bool get _isEffectivelyClosed {
     if (_to == null) return false;
     if (_to!.isClosed) return true;
+
+    // 정원 초과 체크 — _buildTOInfoCard의 로컬 isSlotFull과 동일 로직
+    final req = _slot?.workDetails.fold<int>(0, (s, wd) => s + wd.requiredCount)
+        ?? widget.slotTotalRequired
+        ?? _to!.totalRequired;
+    final conf = _slot?.confirmedCount ?? widget.slotConfirmedCount ?? _to!.totalConfirmed;
+    if (req > 0 && conf >= req) return true;
 
     // slotDate가 명시된 경우(특정 날짜 뷰)에만 날짜 경과 체크.
     // flex 전체 뷰: slotDate 없음 → rangeStart가 과거일 수 있어 생략.
@@ -190,8 +200,22 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadData();
-    _checkApplyEligibility();
+    // UserProvider 변경 감지 — 다른 화면에서 사전조건 완료 후 돌아올 때 자동 갱신
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        context.read<UserProvider>().addListener(_checkApplyEligibility);
+        _checkApplyEligibility();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    context.read<UserProvider>().removeListener(_checkApplyEligibility);
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -774,13 +798,40 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 Expanded(
-                  child: _buildStatCard(
-                    context,
-                    Icons.hourglass_empty,
-                    '남은 자리',
-                    '${(effectiveRequired - effectiveConfirmed).clamp(0, effectiveRequired)}명',
-                    (effectiveRequired - effectiveConfirmed) > 0 ? AppColors.warning : AppColors.error,
-                  ),
+                  child: Builder(builder: (_) {
+                    final effectivePending = widget.slotPendingCount ?? _to!.totalPending;
+                    final rawRemaining = effectiveRequired - effectiveConfirmed;
+                    final remaining = (rawRemaining - effectivePending).clamp(0, effectiveRequired);
+                    final color = remaining > 0 ? AppColors.warning : AppColors.error;
+                    final valueText = remaining > 0
+                        ? '$remaining명'
+                        : (rawRemaining > 0 ? '대기 중' : '0명');
+                    return Container(
+                      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        children: [
+                          Icon(Icons.hourglass_empty,
+                              size: ResponsiveHelper.iconSize(context, 20), color: color),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                          Text(valueText,
+                              style: ResponsiveHelper.subtitleStyle(context)
+                                  .copyWith(fontWeight: FontWeight.bold, color: color)),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                          Text('남은 자리',
+                              style: ResponsiveHelper.tinyStyle(context)
+                                  .copyWith(color: AppColors.grey600)),
+                          if (effectivePending > 0 && rawRemaining > 0)
+                            Text('(대기 $effectivePending명)',
+                                style: ResponsiveHelper.tinyStyle(context)
+                                    .copyWith(color: AppColors.warning, fontSize: 9)),
+                        ],
+                      ),
+                    );
+                  }),
                 ),
               ],
             ),
@@ -819,7 +870,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     final workConfirmed = workStats?['confirmed'] ?? 0;
     final workPending = workStats?['pending'] ?? 0;
     final workRequired = work.requiredCount;
-    final workAvailable = (workRequired - workConfirmed).clamp(0, workRequired);
+    final workAvailable = (workRequired - workConfirmed - workPending).clamp(0, workRequired);
     final hasWorkStats = widget.workDetailStats != null;
 
     final slotRequired = _slot?.workDetails.fold(0, (sum, wd) => sum + wd.requiredCount);
@@ -1337,11 +1388,16 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                         final effectiveConfirmed = widget.slotConfirmedCount ?? _to!.totalConfirmed;
                         final isSlotFull = effectiveRequired > 0 && effectiveConfirmed >= effectiveRequired;
                         final isClosed = _isEffectivelyClosed || isSlotFull;
+                        final isBlocked = isClosed || !_isApplyable;
                         return CommonWidgets.primaryButton(
                           context: sheetCtx,
-                          text: isClosed ? '마감된 공고입니다' : '지원하기',
-                          icon: isClosed ? Icons.block : Icons.send,
-                          onPressed: isClosed
+                          text: isClosed
+                              ? '마감된 공고입니다'
+                              : !_isApplyable
+                                  ? _applyBlockReason ?? '지원 불가'
+                                  : '지원하기',
+                          icon: isBlocked ? Icons.block : Icons.send,
+                          onPressed: isBlocked
                               ? null
                               : () {
                                   Navigator.pop(sheetCtx);
@@ -1987,15 +2043,13 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     if (_isLoading) return; // 이중 탭 방어
     if (_to == null) return;
 
-    // 지원 전 필수 서류·인증 체크 — 미완료 항목 있으면 다이얼로그 표시 후 중단
+    // 지원 전 필수 서류·인증 체크 — 미완료 항목 있으면 전체 화면으로 이동
     final user = context.read<UserProvider>().currentUser;
     if (user == null) return;
-    final canApply = await checkApplyPrerequisites(
-      context,
-      user: user,
-      isFlexType: _to!.isFlexType,
-    );
-    if (!canApply || !mounted) return;
+    if (!meetsApplyPrerequisites(user, isFlexType: _to!.isFlexType)) {
+      final ok = await ApplyPrerequisitesScreen.show(context, isFlexType: _to!.isFlexType);
+      if (!ok || !mounted) return;
+    }
 
     if (_to!.isFlexType) {
       // flex TO — 단일 슬롯(slotDate 있음) 또는 다중 슬롯

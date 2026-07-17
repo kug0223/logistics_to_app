@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'business_member_model.dart';
+import '../../utils/firestore_helper.dart';
 
 enum InvitationStatus { pending, accepted, rejected, cancelled }
 
@@ -35,6 +36,28 @@ class MemberInvitationModel {
 
   static MemberInvitationModel? tryFromFirestore(DocumentSnapshot doc) {
     try { return MemberInvitationModel.fromFirestore(doc); } catch (_) { return null; }
+  }
+
+  /// CF callable 응답(serializeFirestoreData 직렬화) 파싱용.
+  /// Timestamp 필드는 {_seconds, _nanoseconds} Map 또는 Timestamp 객체 모두 허용.
+  static MemberInvitationModel? tryFromMap(Map<String, dynamic> d, String docId) {
+    try {
+      return MemberInvitationModel(
+        id: docId,
+        businessId: d['businessId'] ?? '',
+        businessName: d['businessName'] ?? '',
+        targetUid: d['targetUid'] ?? '',
+        targetName: d['targetName'] ?? '',
+        targetPhone: d['targetPhone'],
+        invitedBy: d['invitedBy'] ?? '',
+        invitedByName: d['invitedByName'] ?? '',
+        permissions: MemberPermissions.fromMap(
+            (d['permissions'] as Map<String, dynamic>?) ?? {}),
+        status: _statusFromString(d['status'] ?? 'pending'),
+        createdAt: parseTimestamp(d['createdAt']),
+        respondedAt: parseTimestampNullable(d['respondedAt']),
+      );
+    } catch (_) { return null; }
   }
 
   factory MemberInvitationModel.fromFirestore(DocumentSnapshot doc) {

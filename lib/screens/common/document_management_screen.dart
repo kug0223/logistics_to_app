@@ -656,6 +656,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
     if (imagePath != null && mounted) {
       setState(() => _isLoading = true);
+      String? newIdCardUrl; // [M-19] CF 실패 시 Storage orphan 방지
 
       try {
         final oldUrl = user.idCardImageUrl;
@@ -673,9 +674,11 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         }
 
         // 2. CF로 isIdVerified/idCardVerifiedAt 설정 — Admin SDK 경유로 직접 쓰기 차단 준수
+        newIdCardUrl = downloadUrl; // CF 호출 전 추적 시작
         await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
             .httpsCallable('callableMarkIdCardVerified')
             .call({'imageUrl': downloadUrl});
+        newIdCardUrl = null; // CF 성공 — Storage 정리 불필요
 
         // 3. 기존 이미지 삭제 (best-effort — CF callableDeleteIdCard가 새 URL 기준 처리)
         if (oldUrl != null && oldUrl != downloadUrl) {
@@ -693,7 +696,10 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         ToastHelper.showSuccess('신분증이 등록되었습니다');
         _hasChanges = true;
       } catch (e) {
-        // 업로드·Firestore 실패 시 async gap 후 unmounted 가능 → mounted 체크 필수
+        // [M-19] CF 실패 시 업로드된 신분증 파일 Storage orphan 방지
+        if (newIdCardUrl != null) {
+          try { await _storageService.deleteImageByUrl(newIdCardUrl); } catch (_) {}
+        }
         if (mounted) ToastHelper.showError('신분증 등록에 실패했습니다');
       } finally {
         if (mounted) setState(() => _isLoading = false);
@@ -888,7 +894,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: _uploadIdCard,
+                      onPressed: _isLoading ? null : _uploadIdCard,
                       icon: const Icon(Icons.refresh, size: 14),
                       label: Text('재업로드',
                           style: ResponsiveHelper.smallStyle(context)),
@@ -1290,6 +1296,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     final imagePath = await DocumentUploadHelper.pickAndVerifyBankbook(
       context,
       user.name,
+      expectedAccountNumber: (user.accountNumber?.isEmpty ?? true) ? null : user.accountNumber,
     );
 
     if (imagePath != null && mounted) {

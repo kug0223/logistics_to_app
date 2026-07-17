@@ -20,6 +20,7 @@ import '../../widgets/common/gradient_scaffold.dart';
 import '../../services/device_integrity_service.dart';
 import '../../services/fcm_service.dart';
 import '../../widgets/common/app_empty_state.dart';
+import 'all_to_list_screen.dart';
 
 /// 출퇴근 체크 화면
 class AttendanceCheckScreen extends StatefulWidget {
@@ -936,9 +937,18 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
 
   /// 빈 상태
   Widget _buildEmptyState() {
-    return const AppEmptyState(
+    return AppEmptyState(
       icon: Icons.event_busy,
       title: '오늘 확정된 근무가 없습니다',
+      subtitle: '새로운 공고에 지원해보세요',
+      action: FilledButton.icon(
+        onPressed: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const AllTOListScreen()),
+        ),
+        icon: const Icon(Icons.search, size: 18),
+        label: const Text('공고 보러가기'),
+      ),
     );
   }
 

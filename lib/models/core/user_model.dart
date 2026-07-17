@@ -188,7 +188,9 @@ class UserModel {
 
   /// PASS 인증 완료 여부 (내국인)
   /// SUPER_ADMIN은 시스템 계정이므로 항상 true
-  bool get isPassVerified => isSuperAdmin || (ci != null && passVerifiedAt != null);
+  /// [FIX] ci(암호화 원문)는 CF가 저장하지 않음 — ciHash(해시)만 저장.
+  ///   passVerifiedAt만 체크하도록 수정 (finalizeRegistration/finalizePassReauth CF가 저장)
+  bool get isPassVerified => isSuperAdmin || passVerifiedAt != null;
 
   /// 가입 승인 대기 중 (외국인)
   bool get isPending => accountStatus == 'pending';

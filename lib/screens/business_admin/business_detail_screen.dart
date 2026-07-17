@@ -92,7 +92,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
         title: _currentBusiness.name,
         onBack: () => NavigationHelper.pop(context, changed: _hasChanges),
         actions: [
-          if (!context.watch<UserProvider>().isSubAdmin)
+          if (!context.select<UserProvider, bool>((p) => p.isSubAdmin))
             IconButton(
               icon: const Icon(Icons.edit_outlined, color: Colors.white),
               onPressed: () async {

@@ -18,12 +18,16 @@ class AppTabLabel extends StatelessWidget {
   /// true면 배지가 solid red로 강조 (예: 미완료 항목이 있을 때)
   final bool urgent;
 
+  /// count 뒤에 붙는 접미사 (예: "+" — 더 많은 항목이 있음을 표시)
+  final String countSuffix;
+
   const AppTabLabel({
     super.key,
     required this.label,
     this.count,
     this.badgeColor,
     this.urgent = false,
+    this.countSuffix = '',
   });
 
   @override
@@ -53,7 +57,7 @@ class AppTabLabel extends StatelessWidget {
             borderRadius: BorderRadius.circular(10),
           ),
           child: Text(
-            '$displayCount',
+            '$displayCount$countSuffix',
             style: ResponsiveHelper.tinyStyle(
               context,
               color: urgent ? Colors.white : effectiveColor,

@@ -387,7 +387,7 @@ class _LoginScreenState extends State<LoginScreen> {
             try {
               // Custom Token으로 Firebase 재로그인 → 비밀번호 변경
               final cred = await _auth.signInWithCustomToken(customToken!);
-              await cred.user?.updatePassword(pw);
+              await cred.user!.updatePassword(pw);
               await _auth.signOut(); // 변경 완료 후 로그아웃 → 새 비밀번호로 재로그인 유도
               if (!ctx.mounted) return;
               setSheetState(() { isChanging = false; step = 2; });

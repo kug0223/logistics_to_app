@@ -345,9 +345,9 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         confirmText = '최종 확정';
         break;
       case 'cancel':
-        confirmTitle = '급여 확정 취소';
-        confirmMessage = '$userName의 급여 확정을 취소하시겠습니까?\n\n미확정 상태로 되돌아갑니다.';
-        confirmText = '취소하기';
+        confirmTitle = '급여 확정 되돌리기';
+        confirmMessage = '$userName의 급여 확정을 되돌리시겠습니까?\n\n입력 오류 수정이 필요한 경우에 사용하세요.\n미확정 상태로 돌아가며, 근무자에게 재조정 안내 알림이 발송됩니다.';
+        confirmText = '되돌리기';
         isDanger = true;
         break;
       default:
@@ -395,12 +395,15 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
     );
   }
 
+  bool get _isTransferred => widget.attendance.isWageTransferred;
+
   Color get _headerColor {
     switch (widget.mode) {
       case WageDialogMode.pending:    return AppColors.warning;
       case WageDialogMode.calculated:
       case WageDialogMode.editOnly:   return AppColors.info;
-      case WageDialogMode.confirmed:  return AppColors.success;
+      case WageDialogMode.confirmed:
+        return _isTransferred ? AppColors.info : AppColors.success;
     }
   }
 
@@ -409,7 +412,8 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
       case WageDialogMode.pending:    return Icons.receipt_long;
       case WageDialogMode.calculated:
       case WageDialogMode.editOnly:   return Icons.edit_outlined;
-      case WageDialogMode.confirmed:  return Icons.verified;
+      case WageDialogMode.confirmed:
+        return _isTransferred ? Icons.account_balance : Icons.verified;
     }
   }
 
@@ -418,7 +422,8 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
       case WageDialogMode.pending:    return '미확정 · 급여 확정 필요';
       case WageDialogMode.calculated: return '급여 확정됨 · 수정 가능';
       case WageDialogMode.editOnly:   return '급여 수정';
-      case WageDialogMode.confirmed:  return '최종 확정됨';
+      case WageDialogMode.confirmed:
+        return _isTransferred ? '이체 완료' : '최종 확정됨';
     }
   }
 
@@ -574,6 +579,46 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
 
   // ── 근무 정보 섹션 ────────────────────────────────────────────
 
+  Widget _buildTransferBanner(BuildContext context) {
+    final transferDate = widget.attendance.transferDate;
+    final transferNote = widget.attendance.transferNote;
+    final dateStr = transferDate != null
+        ? '${transferDate.year}.${transferDate.month.toString().padLeft(2, '0')}.${transferDate.day.toString().padLeft(2, '0')}'
+        : null;
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 14)),
+      decoration: BoxDecoration(
+        color: AppColors.info.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.info.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.account_balance, color: AppColors.info,
+              size: ResponsiveHelper.iconSize(context, 20)),
+          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('급여 이체 완료',
+                    style: ResponsiveHelper.smallStyle(context)
+                        .copyWith(color: AppColors.info, fontWeight: FontWeight.bold)),
+                if (dateStr != null)
+                  Text('이체일: $dateStr',
+                      style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600)),
+                if (transferNote != null && transferNote.isNotEmpty)
+                  Text(transferNote,
+                      style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildInfoSection(BuildContext context) {
     final d = widget.attendance.workDate;
     final dateStr = '${d.year}년 ${d.month}월 ${d.day}일';
@@ -604,6 +649,12 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // 이체 완료 배너 (transferred 상태)
+        if (_isTransferred) ...[
+          _buildTransferBanner(context),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+        ],
+
         _buildSectionTitle(context, '근무 정보'),
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 

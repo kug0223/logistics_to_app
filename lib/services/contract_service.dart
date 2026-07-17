@@ -398,25 +398,10 @@ class ContractService {
         }
         return null;
       }
-      // workerId 경로: 근무자 본인 확인 (단건 조회)
-      Query<Map<String, dynamic>> q = _db
-          .collection('employment_contracts')
-          .where('applicationId', isEqualTo: applicationId)
-          .where('workerId', isEqualTo: workerId);
-      final snap = await q.orderBy('createdAt', descending: true).limit(1).get();
-      if (snap.docs.isNotEmpty) {
-        return EmploymentContractModel.fromFirestore(snap.docs.first);
-      }
-      // applicationIds 배열 폴백 (번들 슬롯)
-      final slotSnap = await _db
-          .collection('employment_contracts')
-          .where('applicationIds', arrayContains: applicationId)
-          .where('workerId', isEqualTo: workerId)
-          .limit(1)
-          .get();
-      if (slotSnap.docs.isNotEmpty) {
-        return EmploymentContractModel.fromFirestore(slotSnap.docs.first);
-      }
+      // [CF-MIGRATED 2026-07-15] employment_contracts USER list 차단
+      //   workerId 단독 경로는 PERMISSION_DENIED 발생 — 호출자 없음 (데드코드)
+      //   contractId를 알고 있으면 getById(), 없으면 businessId 경로 필수
+      debugPrint('⚠️ [contract] getByApplication(workerId:) — USER list 차단됨, null 반환');
       return null;
     } on FirebaseException catch (e) {
       // FAILED_PRECONDITION: 복합 인덱스 미생성 → 개발자가 인지해야 하므로 rethrow
@@ -465,7 +450,7 @@ class ContractService {
               result[appId] = status;
             }
           }
-        } catch (_) {}
+        } catch (e) { debugPrint('⚠️ 계약 상태 조회 오류 (청크): $e'); }
       }());
     }
     await Future.wait(futures);
@@ -499,11 +484,14 @@ class ContractService {
       });
       final data = result.data as Map<dynamic, dynamic>;
       final rawItems = (data['items'] as List<dynamic>? ?? []);
-      final items = rawItems.map((e) {
-        final m = Map<String, dynamic>.from(e as Map);
-        final id = m.remove('id') as String? ?? '';
-        return EmploymentContractModel.fromMap(m, id);
-      }).toList();
+      final items = rawItems
+          .map((e) {
+            final m = Map<String, dynamic>.from(e as Map);
+            final id = m.remove('id') as String? ?? '';
+            return EmploymentContractModel.tryFromMap(m, id);
+          })
+          .whereType<EmploymentContractModel>()
+          .toList();
       return (
         items: items,
         lastDocId: data['lastDocId'] as String?,
@@ -523,11 +511,14 @@ class ContractService {
       final result = await callable.call({'pageSize': 200});
       final data = result.data as Map<dynamic, dynamic>;
       final rawItems = (data['items'] as List<dynamic>? ?? []);
-      return rawItems.map((e) {
-        final m = Map<String, dynamic>.from(e as Map);
-        final id = m.remove('id') as String? ?? '';
-        return EmploymentContractModel.fromMap(m, id);
-      }).toList();
+      return rawItems
+          .map((e) {
+            final m = Map<String, dynamic>.from(e as Map);
+            final id = m.remove('id') as String? ?? '';
+            return EmploymentContractModel.tryFromMap(m, id);
+          })
+          .whereType<EmploymentContractModel>()
+          .toList();
     } catch (e) {
       debugPrint('❌ 근무자 계약서 조회 실패: $e');
       return [];
@@ -574,24 +565,6 @@ class ContractService {
     }
   }
 
-  /// 사업장 계약서 목록 조회 (하위 호환)
-  ///
-  /// 호출자 없음. 신규 사용 시 getByBusinessPaged() 사용할 것.
-  Future<List<EmploymentContractModel>> getByBusiness(
-      String businessId) async {
-    try {
-      final snap = await _db
-          .collection('employment_contracts')
-          .where('businessId', isEqualTo: businessId)
-          .orderBy('createdAt', descending: true)
-          .limit(200) // 대량 읽기 방지 상한
-          .get();
-      return snap.docs.map(EmploymentContractModel.tryFromFirestore).whereType<EmploymentContractModel>().toList();
-    } catch (e) {
-      debugPrint('❌ 사업장 계약서 조회 실패: $e');
-      return [];
-    }
-  }
 
   /// 계약서 무효화 (관리자 전용)
   ///
@@ -623,6 +596,7 @@ class ContractService {
       tx.update(contractRef, {
         'status': ContractStatus.voided.value,
         'voidedBy': voidedBy,
+        'contractVoidedAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
       contract = parsed;

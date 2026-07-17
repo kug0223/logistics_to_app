@@ -236,19 +236,24 @@ class MemberService {
   // ── 초대 조회 ─────────────────────────────────────────────────
 
   /// 특정 사용자의 pending 초대 목록 (30일 이내만 — 만료된 초대 자동 제외)
+  /// [CF 이전 2026-07-15] callableGetMyInvitations — targetUid 서버 검증 강제
   Future<List<MemberInvitationModel>> getPendingInvitations(String uid) async {
     try {
-      final expiry = Timestamp.fromDate(
-        DateTime.now().subtract(const Duration(days: 30)),
-      );
-      final snap = await _invitations
-          .where('targetUid', isEqualTo: uid)
-          .where('status', isEqualTo: 'pending')
-          .where('createdAt', isGreaterThan: expiry)
-          .orderBy('createdAt', descending: true)
-          .limit(50)
-          .get();
-      return snap.docs.map(MemberInvitationModel.tryFromFirestore).whereType<MemberInvitationModel>().toList();
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetMyInvitations',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+      final result = await callable.call<Map<String, dynamic>>({});
+      final expiry = DateTime.now().subtract(const Duration(days: 30));
+      return (result.data['invitations'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final d = Map<String, dynamic>.from(m);
+            final id = d.remove('id') as String? ?? '';
+            return MemberInvitationModel.tryFromMap(d, id);
+          })
+          .whereType<MemberInvitationModel>()
+          .where((inv) => inv.createdAt.isAfter(expiry))
+          .toList();
     } catch (e) {
       debugPrint('초대 목록 조회 실패: $e');
       return [];

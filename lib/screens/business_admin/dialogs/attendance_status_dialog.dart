@@ -996,6 +996,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                   labelStyle: ResponsiveHelper.smallStyle(context, fontWeight: FontWeight.bold),
                   unselectedLabelStyle: ResponsiveHelper.smallStyle(context),
                   onTap: (index) {
+                    final hadSelection = _selectedIds.isNotEmpty;
                     setState(() {
                       _currentTabIndex = index;
                       _selectedIds.clear();
@@ -1004,6 +1005,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                       _nameFilter = '';
                       _searchController.clear();
                     });
+                    if (hadSelection) {
+                      ToastHelper.showInfo('탭 전환으로 선택이 초기화됐습니다.');
+                    }
                   },
                   tabs: [
                     Tab(child: AppTabLabel(label: '검토', count: needsReview.length, urgent: needsReview.isNotEmpty)),
@@ -1155,7 +1159,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       if (s == 'pending') {
         checkInCount++;
       } else {
-        adjustCount++;
+        // final_confirmed / transferred 는 급여확정 완료 상태 — 시간 조정 불가이므로 카운트 제외
+        if (s != 'final_confirmed' && s != 'transferred') {
+          adjustCount++;
+        }
         if (s == 'checkin' || s == 'late' || s == 'missed_checkout') checkOutCount++;
       }
       if (att?.checkIn != null) resetCount++;
@@ -1288,6 +1295,50 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
               ),
               onChanged: (v) => setState(() => _nameFilter = v.trim()),
             ),
+          ],
+
+          // 검토 탭에서 상태별 빠른 선택 칩
+          if (_currentTabIndex == 0) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+            Builder(builder: (ctx) {
+              final reviewWorkers = _workersByTab(0);
+              final pendingList = reviewWorkers.where((a) => _getAttendanceStatus(a)['status'] == 'pending').toList();
+              final lateList    = reviewWorkers.where((a) => _getAttendanceStatus(a)['status'] == 'late').toList();
+              final missedList  = reviewWorkers.where((a) => _getAttendanceStatus(a)['status'] == 'missed_checkout').toList();
+              if (pendingList.isEmpty && lateList.isEmpty && missedList.isEmpty) return const SizedBox.shrink();
+              return Wrap(
+                spacing: ResponsiveHelper.spacing(context, 6),
+                children: [
+                  if (pendingList.isNotEmpty)
+                    _buildActionChip(
+                      label: '미출근 ${pendingList.length}명',
+                      color: AppColors.warning,
+                      onTap: () => setState(() {
+                        _selectedIds.addAll(pendingList.map((a) => a.id));
+                        _selectAll = _selectedIds.length >= reviewWorkers.length;
+                      }),
+                    ),
+                  if (lateList.isNotEmpty)
+                    _buildActionChip(
+                      label: '지각 ${lateList.length}명',
+                      color: AppColors.error,
+                      onTap: () => setState(() {
+                        _selectedIds.addAll(lateList.map((a) => a.id));
+                        _selectAll = _selectedIds.length >= reviewWorkers.length;
+                      }),
+                    ),
+                  if (missedList.isNotEmpty)
+                    _buildActionChip(
+                      label: '퇴근미기록 ${missedList.length}명',
+                      color: AppColors.purple,
+                      onTap: () => setState(() {
+                        _selectedIds.addAll(missedList.map((a) => a.id));
+                        _selectAll = _selectedIds.length >= reviewWorkers.length;
+                      }),
+                    ),
+                ],
+              );
+            }),
           ],
 
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -3385,6 +3436,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     String? newCheckOut,
   ) async {
     if (_isLoading) return;
+    setState(() => _isLoading = true);
     try {
       // 로컬 검증 후 CF에 전달할 entries 빌드
       final entries = <Map<String, dynamic>>[];
@@ -3495,8 +3547,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       await _loadData();
     } catch (e) {
       debugPrint('❌ 일괄 시간 조정 실패: $e');
-      if (!mounted) return;
-      ToastHelper.showError('일괄 시간 조정 실패');
+      if (mounted) ToastHelper.showError('일괄 시간 조정 실패');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -3530,11 +3583,17 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         scheduledTimes: scheduledTimes.isEmpty ? null : scheduledTimes,
         isCheckIn: true,
       );
-      if (time != null) await _processBatchCheckIn(time);
+      if (time != null) {
+        if (!mounted) return;
+        await _processBatchCheckIn(time);
+      }
     } else {
       // 복수 파트 → 파트별 다이얼로그
       final groupTimes = await _showBatchByGroupDialog(groups, isCheckIn: true);
-      if (groupTimes != null) await _processBatchCheckInByGroup(groupTimes);
+      if (groupTimes != null) {
+        if (!mounted) return;
+        await _processBatchCheckInByGroup(groupTimes);
+      }
     }
   }
 
@@ -3581,11 +3640,17 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         scheduledTimes: scheduledTimes.isEmpty ? null : scheduledTimes,
         isCheckIn: false,
       );
-      if (time != null) await _processBatchCheckOut(time, checkedInIds);
+      if (time != null) {
+        if (!mounted) return;
+        await _processBatchCheckOut(time, checkedInIds);
+      }
     } else {
       // 복수 파트 → 파트별 다이얼로그
       final groupTimes = await _showBatchByGroupDialog(groups, isCheckIn: false);
-      if (groupTimes != null) await _processBatchCheckOutByGroup(groupTimes, checkedInIds);
+      if (groupTimes != null) {
+        if (!mounted) return;
+        await _processBatchCheckOutByGroup(groupTimes, checkedInIds);
+      }
     }
   }
 

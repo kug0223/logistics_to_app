@@ -85,6 +85,15 @@ class IdCardAccessRequestModel {
     return IdCardAccessRequestModel.fromMap(raw as Map<String, dynamic>, doc.id);
   }
 
+  static IdCardAccessRequestModel? tryFromMap(Map<String, dynamic> map, String id) {
+    try {
+      return IdCardAccessRequestModel.fromMap(map, id);
+    } catch (e, st) {
+      debugPrint('[IdCardAccessRequestModel] tryFromMap 실패 id=$id: $e\n$st');
+      return null;
+    }
+  }
+
   // [SCHEMA-09] 역직렬화 실패 격리 — 손상 문서 1건이 목록 전체 크래시 방지
   static IdCardAccessRequestModel? tryFromFirestore(DocumentSnapshot doc) {
     try {

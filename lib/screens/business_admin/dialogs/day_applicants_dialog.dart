@@ -3,6 +3,7 @@
 import 'dart:convert';
 import 'dart:math' show min;
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -2310,8 +2311,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       if (!mounted) return;
       ToastHelper.showSuccess('확정 처리되었습니다');
       await _load();
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) ToastHelper.showError(e.message ?? '확정 처리 중 오류가 발생했습니다');
     } catch (e) {
-      if (mounted) ToastHelper.showError('확정 실패: $e');
+      if (mounted) ToastHelper.showError('확정 처리 중 오류가 발생했습니다');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }

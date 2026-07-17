@@ -57,41 +57,37 @@ class ApplyDialog {
 
       final firestoreService = FirestoreService();
 
-      // [S-01] 중복 지원 경합 분석:
-      // 이 체크(1차)와 applyToTOWithWorkType 호출 사이에 짧은 gap이 있으나,
-      // applyToTO 내부에서 Source.server 기반 2차 중복 체크(application_firestore.dart:351)를
-      // 수행하므로 서버 측 방어가 이중으로 존재함. 추가 Firestore Rules 불필요.
-      //
-      // [설계 주의] 이 1차 쿼리는 toId가 아닌 businessId+toTitle+workDate+workType+time 조합으로
-      // 검색한다. 동명의 다른 공고에서 오탐이 이론상 가능하나, 2차 체크(applyToTO)에서
-      // toId 기반으로 정확히 확인하므로 실질적 영향 없음. 1차는 빠른 UI 차단용 목적이다.
-      final snapshot = await FirebaseFirestore.instance
-          .collection('applications')
-          .where('uid', isEqualTo: uid)
-          .where('businessId', isEqualTo: to.businessId)
-          .where('toTitle', isEqualTo: to.title)
-          .where('workDate', isEqualTo: Timestamp.fromDate(to.date))
-          .where('selectedWorkType', isEqualTo: work.workType)
-          .where('startTime', isEqualTo: work.startTime)
-          .where('endTime', isEqualTo: work.endTime)
-          .limit(1)
-          .get();
-
-      if (!context.mounted) return false;
-      if (snapshot.docs.isNotEmpty) {
-        final docData = snapshot.docs.first.data();
-        final status = docData['status'];
-
-        debugPrint('🔍 apply_dialog 중복 체크: status = $status');
-
-        if (AppStatus.inactiveStates.contains(status)) {
-          debugPrint('✅ 취소된 지원 → 재지원 허용');
-        } else {
-          debugPrint('❌ 유효한 지원 존재 (status: $status) → 차단');
-          ToastHelper.showWarning('이미 지원한 업무입니다.');
-          return false;
+      // [S-01] 1차 중복 체크 — UI 속도 목적, applyToTO CF에서 2차 서버 검증 수행
+      // [CF-MIGRATED 2026-07-15] applications list isSuperAdmin() only
+      //   PERMISSION_DENIED 시 1차 체크 skip → CF 2차 검증이 실제 방어선
+      try {
+        final snapshot = await FirebaseFirestore.instance
+            .collection('applications')
+            .where('uid', isEqualTo: uid)
+            .where('businessId', isEqualTo: to.businessId)
+            .where('toTitle', isEqualTo: to.title)
+            .where('workDate', isEqualTo: Timestamp.fromDate(to.date))
+            .where('selectedWorkType', isEqualTo: work.workType)
+            .where('startTime', isEqualTo: work.startTime)
+            .where('endTime', isEqualTo: work.endTime)
+            .limit(1)
+            .get();
+        if (!context.mounted) return false;
+        if (snapshot.docs.isNotEmpty) {
+          final status = snapshot.docs.first.data()['status'];
+          debugPrint('🔍 apply_dialog 중복 체크: status = $status');
+          if (AppStatus.inactiveStates.contains(status)) {
+            debugPrint('✅ 취소된 지원 → 재지원 허용');
+          } else {
+            debugPrint('❌ 유효한 지원 존재 (status: $status) → 차단');
+            ToastHelper.showWarning('이미 지원한 업무입니다.');
+            return false;
+          }
         }
+      } catch (e) {
+        debugPrint('⚠️ [apply_dialog] 1차 중복 체크 스킵 — CF 2차 서버 검증 수행: $e');
       }
+      if (!context.mounted) return false;
 
       final success = await firestoreService.applyToTOWithWorkType(
         uid: uid,

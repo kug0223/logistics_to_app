@@ -377,12 +377,15 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 6)),
             if (isEmpty)
-              Text(
-                isFuture ? '' : '데이터 없음',
-                style: ResponsiveHelper.tinyStyle(context).copyWith(
-                  color: AppColors.grey400,
-                ),
-              )
+              if (isFuture)
+                const SizedBox.shrink()
+              else
+                Text(
+                  '데이터 없음',
+                  style: ResponsiveHelper.tinyStyle(context).copyWith(
+                    color: AppColors.grey400,
+                  ),
+                )
             else ...[
               Text(
                 summary.formattedTotalPayout,

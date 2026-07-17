@@ -74,7 +74,10 @@ class _AdminContractManagementScreenState
     super.initState();
     _tabCtrl = TabController(length: _tabs.length, vsync: this);
     _tabCtrl.addListener(() {
-      if (!_tabCtrl.indexIsChanging) _refresh();
+      if (!_tabCtrl.indexIsChanging) {
+        _searchCtrl.clear();
+        _refresh();
+      }
     });
     _scrollCtrl.addListener(_onScroll);
     _searchCtrl.addListener(() {

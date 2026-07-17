@@ -866,8 +866,9 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
     if (_isLoading) return; // 이중 탭 방어
     setState(() => _isLoading = true);
 
+    final List<String> newlyUploadedUrls = [];
     try {
-      // 1. 새 이미지 업로드 (Firestore 업데이트 전)
+      // 1. 새 이미지 업로드 (Firestore 업데이트 전) — 실패 시 catch에서 newlyUploadedUrls 롤백
       String? thumbnailUrl = _currentWorkType.thumbnailUrl;
       if (_imagesToDelete.contains(thumbnailUrl)) {
         thumbnailUrl = null;
@@ -875,6 +876,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
 
       if (_newThumbnail != null) {
         thumbnailUrl = await _uploadImage(_newThumbnail!, 'thumbnail');
+        if (thumbnailUrl != null) newlyUploadedUrls.add(thumbnailUrl);
       }
 
       List<String> imageUrls = [];
@@ -887,7 +889,10 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
       for (var image in _newImages) {
         if (!mounted) return;
         final url = await _uploadImage(image, 'image');
-        if (url != null) imageUrls.add(url);
+        if (url != null) {
+          imageUrls.add(url);
+          newlyUploadedUrls.add(url);
+        }
       }
 
       // 첫 번째 이미지를 대표이미지로 (images 배열에서는 제외)
@@ -959,6 +964,10 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
 
       if (mounted) ToastHelper.showSuccess('업무유형이 수정되었습니다');
     } catch (e) {
+      // Firestore 실패 시 이미 업로드된 신규 파일 롤백
+      for (final url in newlyUploadedUrls) {
+        try { await _storageService.deleteImageByUrl(url); } catch (_) {}
+      }
       debugPrint('❌ 저장 실패: $e');
       if (mounted) ToastHelper.showError('저장에 실패했습니다');
     } finally {

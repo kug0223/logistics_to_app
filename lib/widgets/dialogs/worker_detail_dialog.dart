@@ -140,7 +140,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                 businessId: businessId, userId: widget.user.uid)
             : Future.value(null),
 
-        // 1: 최근 리뷰 (monthly_reviews 컬렉션)
+        // 1: 최근 리뷰 (monthly_reviews 컬렉션) — CF 경유 (callableGetReviewsForUser)
         MonthlyReviewService().getPublishedReviewsForUser(targetUserId: widget.user.uid, limit: 5),
 
         // 2: 신분증 열람 권한 (확정자만)
@@ -1579,7 +1579,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   }
 
   Widget _buildBottomButtons(BuildContext context, bool isPending) {
-    final isConfirmed = widget.application?.status == AppStatus.confirmed;
+    final isConfirmed = AppStatus.confirmedStatuses.contains(widget.application?.status);
     final isLongTerm = widget.toItem?.to.isLongTerm ??
                        widget.application?.isLongTermApplication ??
                        false;
@@ -1604,7 +1604,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           ),
 
           // 승인/거절 버튼 (대기중이고 showApprovalButtons가 true일 때만)
-          if (isPending && widget.showApprovalButtons && widget.application != null) ...[
+          // 블랙리스트 근무자는 승인 버튼 숨김 (지원 후 블랙리스트 등록된 경우 방어)
+          if (isPending && widget.showApprovalButtons && widget.application != null &&
+              !widget.user.isBlacklisted) ...[
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             Expanded(
               child: _buildDialogButton(
@@ -1623,6 +1625,44 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                 bgColor: AppColors.successBg,
                 textColor: AppColors.successDark,
                 onTap: () => _updateStatus(AppStatus.confirmed),
+              ),
+            ),
+          ] else if (isPending && widget.showApprovalButtons && widget.application != null &&
+              widget.user.isBlacklisted) ...[
+            // 블랙리스트 경고 배너 (거절만 허용)
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: EdgeInsets.symmetric(
+                        horizontal: ResponsiveHelper.spacing(context, 8),
+                        vertical: ResponsiveHelper.spacing(context, 4)),
+                    decoration: BoxDecoration(
+                      color: AppColors.errorBg,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.block, color: AppColors.error, size: 14),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                        Text('이용 제한 근무자',
+                            style: ResponsiveHelper.smallStyle(context,
+                                color: AppColors.error, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                  _buildDialogButton(
+                    label: '거절',
+                    icon: Icons.cancel_outlined,
+                    bgColor: AppColors.errorBg,
+                    textColor: AppColors.error,
+                    onTap: () => _updateStatus(AppStatus.rejected),
+                  ),
+                ],
               ),
             ),
           ],
@@ -1964,11 +2004,16 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   Future<void> _cancelConfirmation() async {
     if (widget.application == null) return;
     if (_isLoading) return; // 중복 실행 방어
+    // [BUG-FIX 2026-07-16] _isLoading 설정 누락 — _showCancelReasonPicker() await 중 재진입 가능
+    setState(() => _isLoading = true);
 
     final adminUID = context.read<UserProvider>().currentUser?.uid;
 
     final cancelReason = await _showCancelReasonPicker();
-    if (cancelReason == null || !mounted) return;
+    if (cancelReason == null || !mounted) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
 
     try {
       final success = await _firestoreService.cancelConfirmedApplication(
@@ -1988,6 +2033,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       if (mounted) {
         ToastHelper.showError('확정 취소 중 오류가 발생했습니다');
       }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 

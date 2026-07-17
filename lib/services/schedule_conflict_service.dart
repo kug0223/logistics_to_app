@@ -2,8 +2,25 @@
 
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../models/core/application_model.dart';
 import '../models/core/work_detail_model.dart';
+
+// CF Timestamp 역직렬화 헬퍼 — serializeFirestoreData(_seconds/_nanoseconds) 복원
+Map<String, dynamic> _cfHydrate(Map<String, dynamic> m) {
+  return Map.fromEntries(m.entries.map((e) {
+    final v = e.value;
+    if (v is Map && v.containsKey('_seconds') && v.containsKey('_nanoseconds')) {
+      return MapEntry(e.key, Timestamp((v['_seconds'] as num).toInt(), (v['_nanoseconds'] as num? ?? 0).toInt()));
+    }
+    if (v is Map) return MapEntry(e.key, _cfHydrate(Map<String, dynamic>.from(v)));
+    if (v is List) {
+      return MapEntry(e.key,
+          v.map((el) => el is Map ? _cfHydrate(Map<String, dynamic>.from(el)) : el).toList());
+    }
+    return MapEntry(e.key, v);
+  }));
+}
 
 /// 시간 충돌 레벨
 enum ConflictLevel {
@@ -50,15 +67,13 @@ class ScheduleConflictService {
   // ═══════════════════════════════════════════════════════════
 
   /// 특정 날짜/시간대에 대해 충돌 체크
-  /// 
-  /// [uid] 사용자 UID
+  ///
   /// [workDate] 근무 날짜
   /// [startTime] 시작 시간 (예: "09:00")
   /// [endTime] 종료 시간 (예: "14:00")
-  /// 
+  ///
   /// 반환: ConflictInfo (충돌 레벨 + 상세 정보)
   Future<ConflictInfo> checkConflict({
-    required String uid,
     required DateTime workDate,
     required String startTime,
     required String endTime,
@@ -66,7 +81,6 @@ class ScheduleConflictService {
     try {
       // 1. 해당 날짜의 확정된 근무 조회
       final confirmedSchedules = await _getConfirmedSchedules(
-        uid: uid,
         workDate: workDate,
       );
 
@@ -74,7 +88,8 @@ class ScheduleConflictService {
         return ConflictInfo.ok;
       }
 
-      // 2. 각 확정된 근무와 비교
+      // 2. 각 확정된 근무와 비교 — worstConflict 패턴으로 BLOCKED 우선
+      ConflictInfo? worstConflict;
       for (final schedule in confirmedSchedules) {
         final conflictLevel = _checkTimeConflict(
           existingStart: schedule.startTime,
@@ -84,16 +99,17 @@ class ScheduleConflictService {
         );
 
         if (conflictLevel == ConflictLevel.blocked) {
-          return ConflictInfo(
+          worstConflict = ConflictInfo(
             level: ConflictLevel.blocked,
             businessName: schedule.businessName,
             conflictTime: '${schedule.startTime}~${schedule.endTime}',
             message: '${schedule.startTime}~${schedule.endTime} 확정 근무 (${schedule.businessName})와 시간 충돌',
           );
+          break; // BLOCKED는 최악 — 이후 스케줄 확인 불필요
         }
 
-        if (conflictLevel == ConflictLevel.warning) {
-          return ConflictInfo(
+        if (conflictLevel == ConflictLevel.warning && worstConflict == null) {
+          worstConflict = ConflictInfo(
             level: ConflictLevel.warning,
             businessName: schedule.businessName,
             conflictTime: '${schedule.startTime}~${schedule.endTime}',
@@ -102,7 +118,7 @@ class ScheduleConflictService {
         }
       }
 
-      return ConflictInfo.ok;
+      return worstConflict ?? ConflictInfo.ok;
     } catch (e) {
       debugPrint('❌ 충돌 체크 실패: $e');
       // 에러 시 경고 반환 (ok 반환 시 실제 충돌을 묵인할 수 있음)
@@ -114,10 +130,9 @@ class ScheduleConflictService {
   }
 
   /// 여러 업무에 대해 한번에 충돌 체크
-  /// 
+  ///
   /// 반환: `Map<workDetailId, ConflictInfo>`
   Future<Map<String, ConflictInfo>> checkConflictsForWorkDetails({
-    required String uid,
     required DateTime workDate,
     required List<WorkDetailModel> workDetails,
   }) async {
@@ -126,7 +141,6 @@ class ScheduleConflictService {
     try {
       // 해당 날짜의 확정된 근무 한번만 조회
       final confirmedSchedules = await _getConfirmedSchedules(
-        uid: uid,
         workDate: workDate,
       );
 
@@ -187,31 +201,31 @@ class ScheduleConflictService {
   // ═══════════════════════════════════════════════════════════
 
   /// 해당 날짜의 확정된 근무 조회 (장기공고 포함)
+  /// [CF-MIGRATED 2026-07-15] applications list isSuperAdmin() only
+  ///   → callableGetApplicationsForConflictCheck CF 경유 (uid 서버 검증)
   Future<List<ApplicationModel>> _getConfirmedSchedules({
-    required String uid,
     required DateTime workDate,
   }) async {
     try {
-      // 만료된 지원서 제외 — workEndDate >= 검사일 (장기공고도 정상 포함)
-      final queryDate = Timestamp.fromDate(workDate);
-      // whereIn 제거: uid + status whereIn + 범위필터 복합쿼리 → filters.uid null 반환
-      // → USER 컨텍스트에서 PERMISSION_DENIED로 충돌체크 무력화됨
-      // 해결: status 조건을 클라이언트에서 필터링
-      final snapshot = await _firestore
-          .collection('applications')
-          .where('uid', isEqualTo: uid)
-          .where('workEndDate', isGreaterThanOrEqualTo: queryDate)
-          .get();
-
-      final allConfirmed = snapshot.docs
-          .map(ApplicationModel.tryFromFirestore)
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetApplicationsForConflictCheck',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'workDateSeconds': workDate.millisecondsSinceEpoch ~/ 1000,
+      });
+      final data = Map<String, dynamic>.from(result.data as Map? ?? {});
+      final apps = (data['applications'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return ApplicationModel.tryFromMap(raw, id);
+          })
           .whereType<ApplicationModel>()
-          .where((app) => AppStatus.confirmedStatuses.contains(app.status))
           .toList();
 
-      // ✅ 해당 날짜에 근무하는 지원서만 필터링 (장기공고 포함)
-      final workingOnDate = allConfirmed.where((app) => app.isWorkingOnDate(workDate)).toList();
-
+      // 해당 날짜에 근무하는 지원서만 필터링 (장기공고 포함)
+      final workingOnDate = apps.where((app) => app.isWorkingOnDate(workDate)).toList();
       debugPrint('📅 [충돌체크] ${workDate.month}/${workDate.day} 확정 근무: ${workingOnDate.length}건');
       return workingOnDate;
     } catch (e) {

@@ -84,6 +84,9 @@ class _PayrollPaymentDashboardScreenState
   // 미이체 탭 퀵필터
   _PendingFilter _pendingFilter = _PendingFilter.all;
 
+  // 미이체 탭 지급유형 필터 (null=전체)
+  String? _payTypeFilter;
+
   // 탭 라벨용 카운트 캐시 (빌드마다 _groupByWorker 재호출 방지)
   int _pendingWorkerCount = 0;
   int _transferredWorkerCount = 0;
@@ -108,11 +111,13 @@ class _PayrollPaymentDashboardScreenState
     _tabCtrl = TabController(length: 4, vsync: this);
     _tabCtrl.addListener(() {
       if (!_tabCtrl.indexIsChanging) {
-        // 미이체 탭 떠날 때 배치모드 자동 해제
-        if (_batchMode && _tabCtrl.index != 0) {
+        // 미이체 탭 떠날 때 배치모드 + 필터 초기화
+        if (_tabCtrl.index != 0) {
           setState(() {
             _batchMode = false;
             _selectedIds.clear();
+            _payTypeFilter = null;
+            _pendingFilter = _PendingFilter.all;
           });
         }
       }
@@ -511,13 +516,17 @@ class _PayrollPaymentDashboardScreenState
       if (!mounted) return;
       final selectedRecords =
           _pendingRecords.where((r) => _selectedIds.contains(r.id)).toList();
+      if (selectedRecords.isEmpty) {
+        if (mounted) ToastHelper.showError('이체할 항목을 찾을 수 없습니다. 화면을 새로고침하세요');
+        return;
+      }
       final nameByUid = Map.fromEntries(
         _userBankCache.entries.map((e) => MapEntry(e.key, e.value['name'] ?? e.key)),
       );
 
       await _payService.markTransferredBatch(
         attendanceIds:     _selectedIds.toList(),
-        businessId:        selectedRecords.isNotEmpty ? selectedRecords.first.businessId : '',
+        businessId:        selectedRecords.first.businessId,
         transferNote:      note,
         notificationInfos: buildTransferNotificationInfos(
           records:         selectedRecords,
@@ -657,22 +666,32 @@ class _PayrollPaymentDashboardScreenState
   }
 
   // ── 엑셀 내보내기 → 공통 헬퍼 위임 ─────────────────────────
-  Future<void> _exportCsv() async {
+  Future<void> _exportCsv([List<AttendanceModel>? records]) async {
     if (_isExporting) return;
     setState(() => _isExporting = true);
     try {
-      final bizName = widget.businessName ?? widget.businessId;
+      final bizName    = widget.businessName ?? widget.businessId;
+      final typeLabel  = _payTypeLabel(_payTypeFilter);
+      final suffix     = typeLabel != null ? '_$typeLabel' : '';
       await PayrollExcelHelper.exportAndShare(
-        context: context,
-        records: _pendingRecords,
-        title: '$bizName ${widget.year}년 ${widget.month}월 이체목록',
-        filename: '${bizName}_${widget.year}년${widget.month}월_이체목록.xlsx',
+        context:    context,
+        records:    records ?? _pendingRecords,
+        title:      '$bizName ${widget.year}년 ${widget.month}월 이체목록$suffix',
+        filename:   '${bizName}_${widget.year}년${widget.month}월_이체목록$suffix.xlsx',
         businessId: widget.businessId,
       );
     } finally {
       if (mounted) setState(() => _isExporting = false);
     }
   }
+
+  static String? _payTypeLabel(String? type) => switch (type) {
+    'same_day' => '당일',
+    'next_day' => '익일',
+    'weekly'   => '주급',
+    'monthly'  => '월급',
+    _          => null,
+  };
 
   // ── 중간정산 승인 ─────────────────────────────────────────
   Future<void> _approveSettlement(InterimSettlementRequestModel req) async {
@@ -735,7 +754,7 @@ class _PayrollPaymentDashboardScreenState
         _load();
       }
     } catch (e) {
-      if (mounted) ToastHelper.showError('처리에 실패했습니다');
+      if (mounted) ToastHelper.showError('처리에 실패했습니다\n$e');
     } finally {
       WidgetsBinding.instance.addPostFrameCallback((_) => ctrl.dispose());
       if (mounted) setState(() => _isTransferring = false);
@@ -764,7 +783,7 @@ class _PayrollPaymentDashboardScreenState
         _load();
       }
     } catch (e) {
-      if (mounted) ToastHelper.showError('처리에 실패했습니다');
+      if (mounted) ToastHelper.showError('처리에 실패했습니다\n$e');
     } finally {
       if (mounted) setState(() => _isTransferring = false);
     }
@@ -801,7 +820,7 @@ class _PayrollPaymentDashboardScreenState
         _load();
       }
     } catch (e) {
-      if (mounted) ToastHelper.showError('처리에 실패했습니다');
+      if (mounted) ToastHelper.showError('처리에 실패했습니다\n$e');
     } finally {
       WidgetsBinding.instance.addPostFrameCallback((_) => ctrl.dispose());
       if (mounted) setState(() => _isTransferring = false);
@@ -899,8 +918,14 @@ class _PayrollPaymentDashboardScreenState
         return 0;
       });
 
-    // 퀵필터 적용
-    final entries = allEntries.where((e) {
+    // ── Stage 1: 지급유형 필터
+    final payTypeEntries = _payTypeFilter == null
+        ? allEntries
+        : allEntries.where((e) => e.value.any(
+            (r) => r.wageDetail?.payScheduleType == _payTypeFilter)).toList();
+
+    // ── Stage 2: 날짜 상태 퀵필터
+    final entries = payTypeEntries.where((e) {
       switch (_pendingFilter) {
         case _PendingFilter.overdue:   return _groupIsOverdue(e.value);
         case _PendingFilter.today:     return _groupIsDueToday(e.value);
@@ -911,26 +936,93 @@ class _PayrollPaymentDashboardScreenState
       }
     }).toList();
 
-    final overdueTotal    = allEntries.where((e) => _groupIsOverdue(e.value)).length;
-    final todayTotal      = allEntries.where((e) => _groupIsDueToday(e.value)).length;
-    final noAccountTotal  = allEntries.where((e) {
+    // 지급유형별 카운트 (allEntries 기준)
+    final sameDayCount  = allEntries.where((e) => e.value.any((r) => r.wageDetail?.payScheduleType == 'same_day')).length;
+    final nextDayCount  = allEntries.where((e) => e.value.any((r) => r.wageDetail?.payScheduleType == 'next_day')).length;
+    final weeklyCount   = allEntries.where((e) => e.value.any((r) => r.wageDetail?.payScheduleType == 'weekly')).length;
+    final monthlyCount  = allEntries.where((e) => e.value.any((r) => r.wageDetail?.payScheduleType == 'monthly')).length;
+
+    // 날짜 상태 카운트 (payTypeEntries 기준 — 유형 필터 반영)
+    final overdueTotal    = payTypeEntries.where((e) => _groupIsOverdue(e.value)).length;
+    final todayTotal      = payTypeEntries.where((e) => _groupIsDueToday(e.value)).length;
+    final noAccountTotal  = payTypeEntries.where((e) {
       final uid = _uidFromKey(e.key);
       return (_userBankCache[uid]?['bankName'] ?? '').isEmpty;
     }).length;
-    final allIds          = allEntries.expand((e) => e.value.map((r) => r.id)).toSet();
+    // 일괄선택 대상: 현재 보이는 카드들만
+    final allIds          = entries.expand((e) => e.value.map((r) => r.id)).toSet();
+    // 엑셀 내보내기: 현재 필터 기준 레코드
+    final filteredRecords = entries.expand((e) => e.value).toList();
 
     return Column(
       children: [
         // ── 요약 헤더 2×2 그리드
         _DashboardSummaryHeader(
-          pendingAmount:  _totalPending,
+          pendingAmount:     _totalPending,
           transferredAmount: _totalTransferred,
-          pendingCount:   grouped.length,
-          overdueCount:   overdueTotal,
-          onExportCsv:    _exportCsv,
+          pendingCount:      grouped.length,
+          overdueCount:      overdueTotal,
+          onExportCsv:       () => _exportCsv(filteredRecords),
         ),
 
-        // ── 퀵필터 칩 행
+        // ── 지급유형 필터 칩 행 (B안)
+        Container(
+          color: Colors.white,
+          padding: EdgeInsets.fromLTRB(
+            ResponsiveHelper.spacing(context, 12),
+            ResponsiveHelper.spacing(context, 8),
+            ResponsiveHelper.spacing(context, 12),
+            ResponsiveHelper.spacing(context, 2),
+          ),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                AppFilterChip(
+                  label: '전체',
+                  count: allEntries.length,
+                  isSelected: _payTypeFilter == null,
+                  color: AppColors.grey700,
+                  onTap: () => setState(() { _payTypeFilter = null; _pendingFilter = _PendingFilter.all; _selectedIds.clear(); }),
+                ),
+                const SizedBox(width: 6),
+                AppFilterChip(
+                  label: '당일지급',
+                  count: sameDayCount,
+                  isSelected: _payTypeFilter == 'same_day',
+                  color: AppColors.infoDark,
+                  onTap: () => setState(() { _payTypeFilter = 'same_day'; _pendingFilter = _PendingFilter.all; _selectedIds.clear(); }),
+                ),
+                const SizedBox(width: 6),
+                AppFilterChip(
+                  label: '익일지급',
+                  count: nextDayCount,
+                  isSelected: _payTypeFilter == 'next_day',
+                  color: AppColors.infoDark,
+                  onTap: () => setState(() { _payTypeFilter = 'next_day'; _pendingFilter = _PendingFilter.all; _selectedIds.clear(); }),
+                ),
+                const SizedBox(width: 6),
+                AppFilterChip(
+                  label: '주급',
+                  count: weeklyCount,
+                  isSelected: _payTypeFilter == 'weekly',
+                  color: AppColors.successDark,
+                  onTap: () => setState(() { _payTypeFilter = 'weekly'; _pendingFilter = _PendingFilter.all; _selectedIds.clear(); }),
+                ),
+                const SizedBox(width: 6),
+                AppFilterChip(
+                  label: '월급',
+                  count: monthlyCount,
+                  isSelected: _payTypeFilter == 'monthly',
+                  color: AppColors.successDark,
+                  onTap: () => setState(() { _payTypeFilter = 'monthly'; _pendingFilter = _PendingFilter.all; _selectedIds.clear(); }),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        // ── 날짜 상태 퀵필터 칩 행
         Container(
           color: Colors.white,
           padding: EdgeInsets.fromLTRB(
@@ -949,7 +1041,7 @@ class _PayrollPaymentDashboardScreenState
                     children: [
                       AppFilterChip(
                         label: '전체',
-                        count: allEntries.length,
+                        count: payTypeEntries.length,
                         isSelected: _pendingFilter == _PendingFilter.all,
                         color: AppColors.grey600,
                         onTap: () => setState(() => _pendingFilter = _PendingFilter.all),
@@ -1034,12 +1126,14 @@ class _PayrollPaymentDashboardScreenState
             onRefresh: _load,
             child: entries.isEmpty
                 ? _buildEmptyState(
-                    switch (_pendingFilter) {
-                      _PendingFilter.overdue   => '연체 건이 없습니다',
-                      _PendingFilter.today     => '오늘 마감 건이 없습니다',
-                      _PendingFilter.noAccount => '계좌 정보 없는 근무자가 없습니다',
-                      _PendingFilter.all       => '미이체 내역이 없습니다',
-                    },
+                    _payTypeFilter != null && _pendingFilter == _PendingFilter.all
+                        ? '${_payTypeLabel(_payTypeFilter) ?? '해당 유형'} 미이체 건이 없습니다'
+                        : switch (_pendingFilter) {
+                            _PendingFilter.overdue   => '연체 건이 없습니다',
+                            _PendingFilter.today     => '오늘 마감 건이 없습니다',
+                            _PendingFilter.noAccount => '계좌 정보 없는 근무자가 없습니다',
+                            _PendingFilter.all       => '미이체 내역이 없습니다',
+                          },
                     '',
                   )
                 : ListView.builder(

@@ -52,6 +52,14 @@ class _NotificationScreenState extends State<NotificationScreen> {
   Widget build(BuildContext context) {
     return Consumer<NotificationProvider>(
       builder: (context, provider, _) {
+        if (provider.loadMoreFailed) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              ToastHelper.showError('알림을 더 불러오지 못했습니다');
+              provider.clearLoadMoreError();
+            }
+          });
+        }
         final unreadList = provider.notifications.where((n) => !n.isRead).toList();
 
         return DefaultTabController(
@@ -70,6 +78,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
                   child: AppTabLabel(
                     label: '전체',
                     count: provider.notifications.length,
+                    countSuffix: provider.hasMore ? '+' : '',
                     badgeColor: Colors.white,
                   ),
                 ),
@@ -87,9 +96,13 @@ class _NotificationScreenState extends State<NotificationScreen> {
               if (provider.hasUnread)
                 TextButton(
                   onPressed: () async {
-                    await provider.markAllAsRead();
+                    final ok = await provider.markAllAsRead();
                     if (!mounted) return;
-                    ToastHelper.showSuccess('모든 알림을 읽음 처리했습니다');
+                    if (ok) {
+                      ToastHelper.showSuccess('모든 알림을 읽음 처리했습니다');
+                    } else {
+                      ToastHelper.showError('읽음 처리에 실패했습니다');
+                    }
                   },
                   child: Text(
                     '모두 읽음',
@@ -116,15 +129,28 @@ class _NotificationScreenState extends State<NotificationScreen> {
       return _buildErrorState(context, provider);
     }
 
+    // [PERF-2026-07-16] rebuild당 _buildGroupedItems를 _buildBody에서 한 번만 계산
+    final groupedAll = _buildGroupedItems(provider.notifications);
+    final groupedUnread = _buildGroupedItems(unreadList);
+
     return TabBarView(
       children: [
         _buildList(
           context, provider, provider.notifications,
+          grouped: groupedAll,
           hasMore: provider.hasMore,
           isLoadingMore: provider.isLoadingMore,
           onLoadMore: provider.loadMore,
         ),
-        _buildList(context, provider, unreadList, emptyMessage: '미읽음 알림이 없습니다'),
+        _buildList(
+          context, provider, unreadList,
+          grouped: groupedUnread,
+          emptyMessage: '미읽음 알림이 없습니다',
+          // 미읽음 탭은 클라이언트 필터 결과 — 별도 페이지네이션 없음
+          // 전체 탭에 더 불러올 알림이 있으면 안내 문구만 표시
+          hasMore: false,
+          showLoadMoreHint: provider.hasMore,
+        ),
       ],
     );
   }
@@ -186,10 +212,12 @@ class _NotificationScreenState extends State<NotificationScreen> {
     BuildContext context,
     NotificationProvider provider,
     List<NotificationModel> notifications, {
+    required List<Object> grouped,
     String emptyMessage = '알림이 없습니다',
     bool hasMore = false,
     bool isLoadingMore = false,
     VoidCallback? onLoadMore,
+    bool showLoadMoreHint = false,
   }) {
     if (notifications.isEmpty) {
       return AppEmptyState(
@@ -198,33 +226,45 @@ class _NotificationScreenState extends State<NotificationScreen> {
       );
     }
 
-    final grouped = _buildGroupedItems(notifications);
-
     return RefreshIndicator(
       onRefresh: () async {
-        // 에러 상태인 경우 스트림 재연결, 정상 상태에서는 Firestore 스트림이 자동 갱신
-        provider.retry();
-        await Future.delayed(const Duration(milliseconds: 300));
+        provider.reload();
+        await Future.delayed(const Duration(milliseconds: 400));
       },
       child: ListView.builder(
-        itemCount: grouped.length + (hasMore ? 1 : 0),
+        itemCount: grouped.length + (hasMore || showLoadMoreHint ? 1 : 0),
         padding: ResponsiveHelper.listPadding(context),
         itemBuilder: (context, index) {
-          if (hasMore && index == grouped.length) {
-            return Padding(
-              padding: EdgeInsets.symmetric(
-                vertical: ResponsiveHelper.spacing(context, 12),
-              ),
-              child: Center(
-                child: isLoadingMore
-                    ? const CircularProgressIndicator()
-                    : TextButton.icon(
-                        onPressed: onLoadMore,
-                        icon: const Icon(Icons.expand_more),
-                        label: const Text('이전 알림 더 보기'),
-                      ),
-              ),
-            );
+          if (index == grouped.length) {
+            if (hasMore) {
+              return Padding(
+                padding: EdgeInsets.symmetric(
+                  vertical: ResponsiveHelper.spacing(context, 12),
+                ),
+                child: Center(
+                  child: isLoadingMore
+                      ? const CircularProgressIndicator()
+                      : TextButton.icon(
+                          onPressed: onLoadMore,
+                          icon: const Icon(Icons.expand_more),
+                          label: const Text('이전 알림 더 보기'),
+                        ),
+                ),
+              );
+            }
+            if (showLoadMoreHint) {
+              return Padding(
+                padding: EdgeInsets.symmetric(
+                  vertical: ResponsiveHelper.spacing(context, 12),
+                  horizontal: ResponsiveHelper.spacing(context, 16),
+                ),
+                child: Text(
+                  '이전 알림은 전체 탭에서 더 불러올 수 있습니다',
+                  textAlign: TextAlign.center,
+                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+                ),
+              );
+            }
           }
           final item = grouped[index];
           if (item is String) {
@@ -583,17 +623,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
         break;
       case NotificationType.systemNotice:
       case NotificationType.other:
-        // 시스템 공지: 근무자는 내 스케줄, 관리자는 인력관리로 이동
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => isUser
-                ? const MyScheduleScreen()
-                : IntegratedWorkforceScreen(
-                    initialBusinessId: notification.data?['businessId']?.toString(),
-                  ),
-          ),
-        );
+        // 시스템 공지·기타: 내용은 알림 카드에 이미 표시됨 — 별도 화면 이동 없음
         break;
     }
     } finally {

@@ -454,7 +454,9 @@ class _TOItemCardState extends State<TOItemCard> {
         ),
         SizedBox(width: ResponsiveHelper.spacing(context, 4)),
         Text(
-          '$confirmed/$required',
+          required == 0
+              ? '미설정'
+              : '${confirmed < 0 ? 0 : confirmed}/$required',
           style: ResponsiveHelper.bodyStyle(
             context,
             color: statusColor,

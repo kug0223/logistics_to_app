@@ -114,11 +114,16 @@ class StorageService {
         return true;
       }
 
+      // businesses/ 경로는 storage.rules allow delete: if false → CF 경유
+      if (storagePath.startsWith('businesses/')) {
+        debugPrint('⚠️ businesses/ 경로는 URL 기반 deleteImageByUrl()로 호출해야 합니다: $storagePath');
+        return false;
+      }
+
       final ref = _storage.ref().child(storagePath);
 
-      // 파일 존재 여부 확인
       try {
-        await ref.getMetadata();
+        await ref.delete();
       } on FirebaseException catch (e) {
         if (e.code == 'object-not-found') {
           debugPrint('⚠️ 파일이 이미 없음 (무시): $storagePath');
@@ -126,8 +131,6 @@ class StorageService {
         }
         rethrow;
       }
-
-      await ref.delete();
       debugPrint('✅ Storage 삭제 성공: $storagePath');
       return true;
     } catch (e) {
@@ -161,12 +164,10 @@ class StorageService {
         }
       }
 
-      // 3. URL에서 Storage Reference 생성
+      // 3. URL에서 Storage Reference 생성 후 삭제
       final ref = _storage.refFromURL(downloadUrl);
-
-      // 4. 파일 존재 여부 확인
       try {
-        await ref.getMetadata();
+        await ref.delete();
       } on FirebaseException catch (e) {
         if (e.code == 'object-not-found') {
           debugPrint('⚠️ 파일이 이미 없음 (무시): ${ref.fullPath}');
@@ -174,9 +175,6 @@ class StorageService {
         }
         rethrow;
       }
-
-      // 5. 파일 삭제
-      await ref.delete();
       debugPrint('✅ Storage 삭제 성공 (URL): ${ref.fullPath}');
       return true;
     } catch (e) {

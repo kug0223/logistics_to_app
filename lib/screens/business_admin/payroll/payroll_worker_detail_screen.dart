@@ -695,8 +695,11 @@ class _PayslipIssueSheetState extends State<_PayslipIssueSheet> {
           ? '${widget.workerName}_${widget.month}월$_selectedWeekNo주차_임금명세서.pdf'
           : '${widget.workerName}_${widget.year}년${widget.month}월_임금명세서.pdf';
       if (!mounted) return;
-      Navigator.pop(context);
+      // [UX-FIX 2026-07-16] Navigator.pop을 sharePdf 이후로 이동
+      //   pop이 먼저 실행되면 위젯이 언마운트 → catch의 if(mounted) 항상 false → 에러 토스트 무음 소멸
       await Printing.sharePdf(bytes: bytes, filename: filename);
+      if (!mounted) return;
+      Navigator.pop(context);
     } catch (e) {
       if (mounted) ToastHelper.showError('임금명세서 생성에 실패했습니다');
     } finally {
