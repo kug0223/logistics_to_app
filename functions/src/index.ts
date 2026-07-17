@@ -2674,6 +2674,10 @@ async function sendWorkReminders(now: Timestamp): Promise<void> {
         .get(),
     ]);
 
+    if (longTermSnap.size >= 2000) {
+      console.warn("  ⚠️ [리마인더] 장기 근무자 2000건 limit 도달 — 초과분은 리마인더 미발송. pagination 구현 필요.");
+    }
+
     if (applicationsSnapshot.empty && longTermSnap.empty) {
       console.log("  ✅ [리마인더] 내일 근무 예정자 없음");
       return;
