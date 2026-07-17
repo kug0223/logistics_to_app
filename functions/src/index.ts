@@ -16542,7 +16542,7 @@ export const callableVoidApplicationContracts = onCall(
     for (const ref of toVoid.values()) {
       batch.update(ref, {
         status: "voided",
-        contractVoidedAt: Timestamp.now(),
+        contractVoidedAt: admin.firestore.FieldValue.serverTimestamp(),
         voidReason: "CONFIRMATION_CANCELED",
       });
     }
