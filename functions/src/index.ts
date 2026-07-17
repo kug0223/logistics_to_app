@@ -2245,6 +2245,10 @@ async function processSlotWorkDetailExpiry(now: Timestamp): Promise<void> {
     .limit(5000)
     .get();
 
+  if (slotsSnap.size >= 5000) {
+    console.warn("  ⚠️ [슬롯 WorkDetail 마감] 5000건 limit 도달 — 초과분은 다음 실행에서 처리. 슬롯 폭증 시 CF 메모리 압박 가능.");
+  }
+
   if (slotsSnap.empty) {
     console.log("  ✅ [슬롯 WorkDetail 마감] 처리할 슬롯 없음");
     return;
