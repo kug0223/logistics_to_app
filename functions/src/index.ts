@@ -1298,7 +1298,6 @@ export const onReviewCreated = onDocumentCreated(
 
     const requestId = data.requestId as string | undefined;
     const reviewType = data.reviewType as string | undefined;
-    const reviewerId = data.reviewerId as string | undefined;
 
     // [특이사항] requestId 없는 리뷰는 Firestore 규칙이 근무 이력을 검증하지 못해
     // 가짜 리뷰가 Firestore에 잔류할 수 있음. 공개는 안 되지만 데이터 오염 방지 위해 삭제.
@@ -4493,6 +4492,62 @@ export const onBusinessDeleted = onDocumentDeleted(
         });
       }
       await adminBatch.commit();
+    }
+
+    // [LOW-STORAGE] 사업장 이미지 + work_types 이미지 Storage 정리
+    // work_types 루트 컬렉션 Firestore 삭제 + thumbnailUrl/images[] Storage 정리
+    {
+      const bucket = admin.storage().bucket();
+
+      // 비즈니스 대표·추가·교통 이미지 URL 수집 (삭제된 문서 스냅샷에서)
+      const bizImageUrls: string[] = [];
+      if (deletedData) {
+        if (typeof deletedData["mainImageUrl"] === "string") bizImageUrls.push(deletedData["mainImageUrl"]);
+        const imgs = deletedData["imageUrls"];
+        if (Array.isArray(imgs)) imgs.forEach((u: unknown) => typeof u === "string" && bizImageUrls.push(u));
+        const transportImgs = deletedData["transportImageUrls"];
+        if (Array.isArray(transportImgs)) transportImgs.forEach((u: unknown) => typeof u === "string" && bizImageUrls.push(u));
+      }
+
+      // work_types 루트 컬렉션 URL 수집 + Firestore 삭제 (페이지네이션)
+      const workTypeUrls: string[] = [];
+      let lastWt: FirebaseFirestore.DocumentSnapshot | undefined;
+      while (true) {
+        let q: FirebaseFirestore.Query = db.collection("work_types")
+          .where("businessId", "==", businessId).limit(PAGE);
+        if (lastWt) q = q.startAfter(lastWt);
+        const wtSnap = await q.get();
+        if (wtSnap.empty) break;
+        for (const doc of wtSnap.docs) {
+          const d = doc.data();
+          if (typeof d["thumbnailUrl"] === "string") workTypeUrls.push(d["thumbnailUrl"]);
+          if (Array.isArray(d["images"])) {
+            d["images"].forEach((u: unknown) => typeof u === "string" && workTypeUrls.push(u));
+          }
+        }
+        const wtBatch = db.batch();
+        wtSnap.docs.forEach((doc) => wtBatch.delete(doc.ref));
+        await wtBatch.commit();
+        if (wtSnap.size < PAGE) break;
+        lastWt = wtSnap.docs[wtSnap.docs.length - 1];
+      }
+
+      // URL에서 Storage 경로 추출 후 삭제 (실패 허용 — retry로 재시도)
+      const allImageUrls = [...bizImageUrls, ...workTypeUrls];
+      if (allImageUrls.length > 0) {
+        const results = await Promise.allSettled(
+          allImageUrls.map(async (url) => {
+            const match = url.match(/\/o\/([^?#]+)/);
+            if (!match) return;
+            await bucket.file(decodeURIComponent(match[1])).delete();
+          })
+        );
+        const failed = results.filter((r) => r.status === "rejected").length;
+        console.log(
+          `Storage 이미지 정리: ${allImageUrls.length - failed}/${allImageUrls.length}건 삭제` +
+          `(실패 ${failed}건): ${businessId}`
+        );
+      }
     }
 
     console.log(`사업장 삭제 cascade 완료: ${businessId}`);
@@ -10208,6 +10263,7 @@ export const callableApproveResignation = onCall(
       toId: string | null;
       slotId: string | null;
       uid: string;
+      businessId: string;
       businessName: string;
       resignRequestDate: admin.firestore.Timestamp | null;
       originalStatus: string;
@@ -10241,6 +10297,7 @@ export const callableApproveResignation = onCall(
         toId: (d.toId as string | null) ?? null,
         slotId: (d.slotId as string | null) ?? null,
         uid: d.uid as string,
+        businessId: (d.businessId as string) ?? "",
         businessName: (d.businessName as string) ?? "",
         resignRequestDate,
         originalStatus: d.status as string,
