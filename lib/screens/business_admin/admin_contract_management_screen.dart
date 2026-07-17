@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../models/core/employment_contract_model.dart';
 import '../../services/contract_service.dart';
@@ -176,8 +175,7 @@ class _AdminContractManagementScreenState
         iconColor: AppColors.error,
       );
       if (ok != true || !mounted) return;
-      final uid = FirebaseAuth.instance.currentUser!.uid;
-      await _contractService.voidContract(c.id, voidedBy: uid);
+      await _contractService.voidContract(c.id);
       if (!mounted) return;
       ToastHelper.showSuccess('계약서가 무효 처리되었습니다');
       _refresh();

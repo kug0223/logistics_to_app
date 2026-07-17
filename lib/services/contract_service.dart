@@ -569,49 +569,30 @@ class ContractService {
   /// 계약서 무효화 (관리자 전용)
   ///
   /// [V-001] 실행 순서: 계약서 voided 먼저 → 알림 발송 → application 취소
-  /// 이전 순서(앱 취소 → 계약서 voided)는 계약서 update 실패 시 앱은 CANCELED인데
-  /// 계약서는 pendingWorker로 남는 Scenario A(상태 불일치)가 있었음.
-  /// 순서 역전으로 Scenario A를 원천 차단: 계약서 voided update 실패 시 아무것도 변경되지 않아
-  /// 관리자가 재시도 가능. 앱 취소 실패 시에는 계약서가 이미 voided이므로 근무자가 서명 불가.
-  Future<void> voidContract(String contractId, {required String voidedBy}) async {
-    // [M-4] 1단계: 상태 확인 + voided 업데이트를 트랜잭션으로 원자화.
-    // 두 관리자가 동시에 voidContract를 호출할 경우 한 쪽만 실제 update를 수행하고
-    // 나머지는 조기 반환 — 중복 application 취소 시도 방지.
-    EmploymentContractModel? contract;
-    final contractRef = _db.collection('employment_contracts').doc(contractId);
-    await _db.runTransaction((tx) async {
-      final snap = await tx.get(contractRef);
-      if (!snap.exists) return;
+  /// [CF-MIGRATED 2026-07-17] Trust Boundary Charter "계약 효력 상태 = CF 필수" 준수.
+  ///   callableVoidContract CF(Admin SDK)가 voidedBy=callerUid 강제 + serverTimestamp 적용.
+  Future<void> voidContract(String contractId) async {
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableVoidContract',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+    final result = await callable.call<Map<String, dynamic>>({'contractId': contractId});
+    final data = result.data;
 
-      final parsed = EmploymentContractModel.tryFromFirestore(snap);
-      if (parsed == null) throw StateError('계약서 데이터를 파싱할 수 없습니다: $contractId');
+    final workerId = data['workerId'] as String? ?? '';
+    final bizName = data['businessName'] as String? ?? '';
+    final bizId = data['businessId'] as String? ?? '';
+    final appIds = (data['applicationIds'] as List?)?.cast<String>() ?? [];
 
-      // 이미 voided → 조기 반환 (contract = null 유지)
-      if (parsed.status == ContractStatus.voided) return;
-      // 쌍방 서명 완료된 계약서 무효화 차단
-      if (parsed.status == ContractStatus.completed) {
-        throw Exception('쌍방 서명이 완료된 계약서는 무효화할 수 없습니다');
-      }
-
-      tx.update(contractRef, {
-        'status': ContractStatus.voided.value,
-        'voidedBy': voidedBy,
-        'contractVoidedAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      contract = parsed;
-    });
-    if (contract == null) return;
-    final c = contract!;
+    if (workerId.isEmpty) return; // 이미 voided — 멱등 처리
 
     // 2단계: 근무자에게 무효화 알림 즉시 발송 (계약서 voided 직후 — 앱 취소 전)
     // [H-34] 앱 취소 실패와 무관하게 근무자가 즉시 인지하도록 순서 보장
     try {
       await _firestoreService.createNotification(
         NotificationModel.createContractVoided(
-          userId: c.workerId,
-          businessName: c.snapshot.businessName,
-          businessId: c.businessId,
+          userId: workerId,
+          businessName: bizName,
+          businessId: bizId,
           contractId: contractId,
         ),
       );
@@ -626,7 +607,7 @@ class ContractService {
     // null 전달 시 USER_CANCELED로 기록되어 감사 로그에서 혼동 발생
     final firestoreService = FirestoreService();
     final List<String> failedIds = [];
-    for (final appId in c.applicationIds) {
+    for (final appId in appIds) {
       try {
         final ok = await firestoreService.cancelConfirmedApplication(
           appId,

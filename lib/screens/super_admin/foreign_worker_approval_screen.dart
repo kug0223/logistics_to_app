@@ -53,23 +53,24 @@ class _ForeignWorkerApprovalScreenState
   Future<void> _loadUsers() async {
     setLoading(true);
     try {
-      // Firestore 인덱스 필요: users → role(ASC) + createdAt(DESC)
-      // Firebase Console에서 복합 인덱스가 없으면 첫 실행 시 인덱스 생성 링크가 에러에 포함됨.
-      // foreignIdNumber isNull 조건은 단독 whereIn 쿼리와 복합 불가 → 클라이언트 필터로 분리.
-      final snap = await FirebaseFirestore.instance
-          .collection('users')
-          .where('role', isEqualTo: 'USER')
-          .where('accountStatus', whereIn: ['pending', 'active', 'rejected'])
-          .orderBy('createdAt', descending: true)
-          .limit(300)
-          .get();
+      // [CF-MIGRATED 2026-07-17] USER list = CF 정책 준수 (feedback_user_list_cf_pattern.md)
+      // callableGetForeignWorkerUsers CF: 슈퍼관리자 검증 + foreignIdNumber 있는 USER 목록 반환
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetForeignWorkerUsers',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({});
 
       if (!mounted) return;
+      final rawList = (result.data['users'] as List?) ?? [];
       setState(() {
-        _pending = snap.docs
-            .map((d) => UserModel.tryFromMap(d.data(), d.id))
+        _pending = rawList
+            .whereType<Map>()
+            .map((m) {
+              final d = Map<String, dynamic>.from(m);
+              final uid = d.remove('uid') as String? ?? '';
+              return UserModel.tryFromMap(d, uid);
+            })
             .whereType<UserModel>()
-            .where((u) => u.foreignIdNumber != null) // 외국인만
             .toList();
       });
       setLoading(false);

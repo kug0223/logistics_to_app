@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import '../../../models/core/application_model.dart';
 import '../../../models/core/work_detail_model.dart';
 import '../../../models/core/to_model.dart';
 import '../../../services/firestore_service.dart';
@@ -57,36 +55,9 @@ class ApplyDialog {
 
       final firestoreService = FirestoreService();
 
-      // [S-01] 1차 중복 체크 — UI 속도 목적, applyToTO CF에서 2차 서버 검증 수행
-      // [CF-MIGRATED 2026-07-15] applications list isSuperAdmin() only
-      //   PERMISSION_DENIED 시 1차 체크 skip → CF 2차 검증이 실제 방어선
-      try {
-        final snapshot = await FirebaseFirestore.instance
-            .collection('applications')
-            .where('uid', isEqualTo: uid)
-            .where('businessId', isEqualTo: to.businessId)
-            .where('toTitle', isEqualTo: to.title)
-            .where('workDate', isEqualTo: Timestamp.fromDate(to.date))
-            .where('selectedWorkType', isEqualTo: work.workType)
-            .where('startTime', isEqualTo: work.startTime)
-            .where('endTime', isEqualTo: work.endTime)
-            .limit(1)
-            .get();
-        if (!context.mounted) return false;
-        if (snapshot.docs.isNotEmpty) {
-          final status = snapshot.docs.first.data()['status'];
-          debugPrint('🔍 apply_dialog 중복 체크: status = $status');
-          if (AppStatus.inactiveStates.contains(status)) {
-            debugPrint('✅ 취소된 지원 → 재지원 허용');
-          } else {
-            debugPrint('❌ 유효한 지원 존재 (status: $status) → 차단');
-            ToastHelper.showWarning('이미 지원한 업무입니다.');
-            return false;
-          }
-        }
-      } catch (e) {
-        debugPrint('⚠️ [apply_dialog] 1차 중복 체크 스킵 — CF 2차 서버 검증 수행: $e');
-      }
+      // 중복 체크는 callableApplyToTO CF에서 서버 검증 수행
+      // [CF-MIGRATED 2026-07-15] applications list: if isSuperAdmin() only
+      //   클라이언트 직접 list 쿼리는 항상 PERMISSION_DENIED — CF 단일 경로로 정리
       if (!context.mounted) return false;
 
       final success = await firestoreService.applyToTOWithWorkType(

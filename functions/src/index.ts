@@ -5291,6 +5291,74 @@ export const callableFinalizeEmployerSignature = onCall(
   }
 );
 
+// ── callableVoidContract ─────────────────────────────────
+// 계약서 수동 무효화 — Trust Boundary Charter "계약 효력 상태 = CF 필수"
+// [CF-MIGRATED 2026-07-17] contract_service.dart voidContract() 클라이언트 트랜잭션 이전.
+//   Firestore rules가 voidedBy == request.auth.uid + contractVoidedAt == request.time을
+//   서버에서 강제했으나, Charter 규정 준수를 위해 Admin SDK CF로 이전.
+//   Admin SDK: callerUid 위조 불가 + FieldValue.serverTimestamp() 확실 적용.
+// Input:  { contractId: string }
+// Output: { applicationIds: string[], workerId: string, businessName: string, businessId: string }
+export const callableVoidContract = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {contractId} = request.data as {contractId?: string};
+    if (!contractId) throw new HttpsError("invalid-argument", "contractId가 필요합니다.");
+
+    const contractRef = db.collection("employment_contracts").doc(contractId);
+
+    // 1단계: 사전 읽기 — businessId 확인 + 권한 검증
+    //   businessId는 불변 필드이므로 TOCTOU 위험 없음 (assertBizAdmin 트랜잭션 밖에서 실행)
+    const preSnap = await contractRef.get();
+    if (!preSnap.exists) throw new HttpsError("not-found", "계약서를 찾을 수 없습니다.");
+    const businessId = preSnap.data()!["businessId"] as string;
+    if (!businessId) throw new HttpsError("internal", "계약서 businessId 누락");
+    await assertBizAdmin(callerUid, businessId);
+
+    // 2단계: 사업장명 조회 (알림 텍스트용 — 트랜잭션 밖에서 읽어 부하 감소)
+    const bizSnap = await db.collection("businesses").doc(businessId).get();
+    const businessName = (bizSnap.data()?.["name"] as string | undefined) ?? "";
+
+    // 3단계: 상태 검증 + voided 전환 원자 처리
+    let workerId = "";
+    let applicationIds: string[] = [];
+    let alreadyVoided = false;
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(contractRef);
+      if (!snap.exists) throw new HttpsError("not-found", "계약서를 찾을 수 없습니다.");
+      const data = snap.data()!;
+      const status = data["status"] as string;
+
+      if (status === "voided") { alreadyVoided = true; return; }
+      if (status === "completed") {
+        throw new HttpsError("failed-precondition", "쌍방 서명이 완료된 계약서는 무효화할 수 없습니다.");
+      }
+
+      workerId = (data["workerId"] as string) ?? "";
+      // applicationIds 우선, 없으면 레거시 applicationId 단건 처리
+      applicationIds = (data["applicationIds"] as string[] | undefined) ??
+        (data["applicationId"] ? [data["applicationId"] as string] : []);
+
+      tx.update(contractRef, {
+        status: "voided",
+        voidedBy: callerUid,
+        contractVoidedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+
+    return {
+      applicationIds: alreadyVoided ? [] : applicationIds,
+      workerId: alreadyVoided ? "" : workerId,
+      businessName,
+      businessId,
+    };
+  }
+);
+
 // ── recordDeletedAccount ────────────────────────────────
 // 탈퇴 기록을 deleted_accounts에 Admin SDK로 저장
 // [AUTH-H2] 클라이언트가 deleted_accounts에 직접 쓰면 탈퇴 안 한 상태에서 임의 문서를
@@ -15890,6 +15958,47 @@ export const callableGetUserByPhone = onCall(
     }
 
     return {uid: null};
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+// 🌏 외국인 근로자 목록 조회 (슈퍼관리자 전용)
+// ═══════════════════════════════════════════════════════════
+// [CF-MIGRATED 2026-07-17] USER list = CF 정책 준수 (feedback_user_list_cf_pattern.md)
+// 이전: foreign_worker_approval_screen 직접 list 쿼리
+//       allow list: if isSuperAdmin() 규칙으로 보호됐으나 USER list CF 정책 일관성 위반.
+// Input:  {} (호출자 역할 서버 검증)
+// Output: { users: object[] } — foreignIdNumber 있는 USER 목록
+export const callableGetForeignWorkerUsers = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerSnap = await db.collection("users").doc(request.auth.uid).get();
+    if (callerSnap.data()?.["role"] !== "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "슈퍼관리자 권한이 필요합니다.");
+    }
+
+    const snap = await db.collection("users")
+      .where("role", "==", "USER")
+      .where("accountStatus", "in", ["pending", "active", "rejected"])
+      .orderBy("createdAt", "desc")
+      .limit(300)
+      .get();
+
+    // 민감 필드(ci, ciHash, sealBase64) 제외하고 반환
+    const BLOCKED = new Set(["ci", "ciHash", "sealBase64", "passVerifiedAt"]);
+    const users = snap.docs
+      .filter(d => d.data()["foreignIdNumber"] != null)
+      .map(d => {
+        const raw = d.data();
+        const safe: Record<string, unknown> = {uid: d.id};
+        for (const [k, v] of Object.entries(raw)) {
+          if (!BLOCKED.has(k)) safe[k] = v;
+        }
+        return safe;
+      });
+
+    return {users};
   }
 );
 

@@ -1930,8 +1930,12 @@ service cloud.firestore {
       // [특이사항] isSuperAdmin() 추가: SUPER_ADMIN이 foreign_worker_approval_screen에서
       // 신분증 이미지를 열람할 때 감사 로그 기록이 가능하도록 허용.
       // businessId == '' (빈 문자열)로 기록하여 사업장 귀속 없음을 명시한다.
+      // [SEC-ACTION] action 화이트리스트: 감사 로그 위변조 차단
+      //   클라이언트가 임의 action 값을 써서 실제 없는 행위를 기록하거나
+      //   열람 행위를 'did_not_view' 같은 값으로 숨기는 것을 차단.
       allow create: if isLoggedIn() &&
                       request.resource.data.viewerId == request.auth.uid &&
+                      request.resource.data.action in ['resident_number_copy', 'view_id_card_image'] &&
                       (isAdminOf(request.resource.data.businessId) ||
                        isSubAdminOf(request.resource.data.businessId) ||
                        isSuperAdmin());
