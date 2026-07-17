@@ -6013,6 +6013,10 @@ export const callableCreateTO = onCall(
         finalData.isPublished = false;
         break;
       case "scheduled":
+        // [LOW-PUB-02] publishAt 미설정 시 SCHEDULED 영구 잠김 방지
+        if (!finalData.publishAt) {
+          throw new HttpsError("invalid-argument", "scheduled 모드에서는 publishAt이 필요합니다.");
+        }
         finalData.status = "SCHEDULED";
         finalData.isPublished = false;
         break;
