@@ -1804,7 +1804,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           .call({'applicationId': app.id, 'businessId': app.businessId});
       confirmedWageCount = (wageCountResult.data as Map)['total'] as int? ?? 0;
     } catch (e) {
-      if (mounted) setState(() => _isProcessing = false);
+      debugPrint('❌ 급여 상태 확인 실패: $e');
+      if (mounted) {
+        setState(() => _isProcessing = false);
+        ToastHelper.showError('급여 상태 확인 중 오류가 발생했습니다. 다시 시도해주세요.');
+      }
       return;
     }
     if (!mounted) return;
