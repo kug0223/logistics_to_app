@@ -193,7 +193,7 @@ class WageCalculator {
         // 일급에 야간수당 포함 → 계약 구간 내 야간분은 제외, 초과분만 적용
         if (overtimeMinutes > 0) {
           nightMinutes = _calculateNightMinutes(scheduledEnd, actualEnd);
-          debugPrint('🌙 야간(nightIncluded OT): scheduledEnd=$scheduledEnd, actualEnd=$actualEnd → ${nightMinutes}min');
+          if (kDebugMode) debugPrint('🌙 야간(nightIncluded OT): scheduledEnd=$scheduledEnd, actualEnd=$actualEnd → ${nightMinutes}min');
         }
       } else {
         final rawNightMinutes = _calculateNightMinutes(actualStart, actualEnd);
@@ -201,7 +201,7 @@ class WageCalculator {
         final dayPortion = actualMinutes - rawNightMinutes;
         final breakInNight = max(0, breakMinutes - dayPortion.clamp(0, actualMinutes));
         nightMinutes = max(0, rawNightMinutes - breakInNight);
-        if (rawNightMinutes > 0) {
+        if (rawNightMinutes > 0 && kDebugMode) {
           debugPrint('🌙 야간: actualStart=$actualStart, actualEnd=$actualEnd → raw=${rawNightMinutes}min, final=${nightMinutes}min');
         }
       }

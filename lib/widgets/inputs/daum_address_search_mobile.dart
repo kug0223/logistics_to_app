@@ -1,5 +1,5 @@
 ﻿// ============================================
-// daum_addressclipearch_mobile.dart (Android/iOS) - 완전 리팩토링
+// daum_address_search_mobile.dart (Android/iOS) - 완전 리팩토링
 // ✨ StyledDialog + ResponsiveHelper + Theme 색상 + WebView 스케일 조정
 // ============================================
 import 'package:flutter/material.dart';
@@ -7,10 +7,10 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'dart:convert';
 
 // Models
-import 'daum_addressclipearch.dart';
+import 'daum_address_search.dart';
 
 // Services
-import '../../services/geocodingclipervice.dart';
+import '../../services/geocoding_service.dart';
 
 // Utils
 import '../../utils/responsive_helper.dart';
@@ -22,11 +22,11 @@ import '../../theme/app_colors.dart';
 /// Mobile 플랫폼 구현체 - WebView로 다음 주소 API 연동
 class DaumAddressSearchImpl {
   static Future<AddressResult?> searchAddress(BuildContext context) async {
-    return cliphowDaumPostcodeDialog(context);
+    return _showDaumPostcodeDialog(context);
   }
 
   /// ✨ StyledDialog 기반 주소 검색 다이얼로그
-  static Future<AddressResult?> cliphowDaumPostcodeDialog(BuildContext context) async {
+  static Future<AddressResult?> _showDaumPostcodeDialog(BuildContext context) async {
     final theme = Theme.of(context);
     AddressResult? result;
 

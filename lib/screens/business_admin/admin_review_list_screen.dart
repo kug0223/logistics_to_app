@@ -1,6 +1,5 @@
 // lib/screens/business_admin/admin_review_list_screen.dart
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -20,7 +19,6 @@ import '../../providers/user_provider.dart';
 // Models
 import '../../models/core/monthly_review_model.dart';
 import '../../models/core/review_request_model.dart';
-import '../../models/core/user_model.dart';
 
 // Services
 import '../../services/monthly_review_service.dart';
@@ -858,12 +856,18 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
         '${req.reviewYear}-${req.reviewMonth.toString().padLeft(2, '0')}';
 
     try {
-      // CF 경유: callableGetAdminAttendances yearMonth 모드 + user 조회 병렬 실행
+      // CF 경유: callableGetUsersBatch + callableGetAdminAttendances 병렬 실행
+      final usersBatchCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetUsersBatch',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
       final attendanceCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableGetAdminAttendances',
               options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
       final results = await Future.wait([
-        FirebaseFirestore.instance.collection('users').doc(req.workerId).get(),
+        usersBatchCallable.call<Map<String, dynamic>>({
+          'uids': [req.workerId],
+          'businessId': req.businessId,
+        }),
         attendanceCallable.call<Map<String, dynamic>>({
           'businessId': req.businessId,
           'yearMonth': yearMonthStr,
@@ -871,11 +875,17 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
         }),
       ]);
 
-      final userSnap = results[0] as DocumentSnapshot<Map<String, dynamic>>;
-      if (userSnap.exists && userSnap.data() != null) {
-        final worker = UserModel.tryFromMap(userSnap.data()!, userSnap.id);
-        workerGender = worker?.gender;
-        workerAge = worker?.age;
+      final usersResult = results[0] as HttpsCallableResult<Map<String, dynamic>>;
+      final users = usersResult.data['users'] as Map<String, dynamic>? ?? {};
+      final workerData = users[req.workerId] as Map<String, dynamic>?;
+      if (workerData != null) {
+        workerGender = workerData['gender'] as String?;
+        final birthDateRaw = workerData['birthDate'];
+        if (birthDateRaw is Map) {
+          final s = (birthDateRaw['_seconds'] as num? ?? 0).toInt();
+          workerAge = DateTime.now().year -
+              DateTime.fromMillisecondsSinceEpoch(s * 1000).year;
+        }
       }
 
       final cfResult = results[1] as HttpsCallableResult<Map<String, dynamic>>;
