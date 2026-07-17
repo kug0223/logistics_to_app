@@ -374,9 +374,12 @@ service cloud.firestore {
       match /notifications/{notificationId} {
         allow read: if isLoggedIn() && isOwner(userId);
         allow create: if false;
+        // [LOW-FIX 29차] readAt 서버타임스탬프 강제 — 읽은 시각 과거/미래 조작 차단
         allow update: if isLoggedIn() && isOwner(userId) &&
                         request.resource.data.diff(resource.data).affectedKeys()
-                          .hasOnly(['isRead', 'readAt']);
+                          .hasOnly(['isRead', 'readAt']) &&
+                        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['readAt']) ||
+                         request.resource.data.readAt == request.time);
         allow delete: if isLoggedIn() && isOwner(userId);
       }
     }
@@ -984,7 +987,13 @@ service cloud.firestore {
       // (평점·태그·코멘트 등 근무자가 작성한 필드는 수정 불가 — 리뷰 조작 방지)
       // [FIX] isSubAdminOf 누락 — SubAdmin이 사업장 대표 답변 작성 시 PERMISSION_DENIED
       // [H-02] 기존 답변 덮어쓰기 차단 — businessResponse가 없을 때만 작성 허용
-      allow update: if isSuperAdmin() ||
+      // [MEDIUM-FIX 29차] isSuperAdmin update에서 핵심 리뷰 필드 불변 강제
+      //   슈퍼어드민이 rating/comment/tags 직접 수정 시 집계 통계(businesses.rating 등)와 불일치 발생
+      //   집계 재계산 없이 원본 데이터만 변경하면 플랫폼 신뢰도 훼손
+      allow update: if (isSuperAdmin() &&
+                        !request.resource.data.diff(resource.data).affectedKeys()
+                          .hasAny(['rating', 'comment', 'tags', 'reviewType',
+                                   'reviewerId', 'targetUserId', 'businessId'])) ||
                      // [SEC-92/103] 탈퇴 익명화 — 9-A: 대상자 본인이 자신의 리뷰 식별자 제거
                      // isDeletingAccount 교차검증: deleteAccountWithPassword CF가 마킹한 경우만 허용
                      // (활성 계정이 FieldValue.delete()로 불리한 리뷰 선택 삭제하는 취약점 차단)
@@ -1264,6 +1273,9 @@ service cloud.firestore {
                          request.resource.data.expiresAt >= request.time - duration.value(5, 'm')))) ||
                       ((isAdminOf(resource.data.requesterBusinessId) ||
                         isSubAdminOf(resource.data.requesterBusinessId)) &&
+                       // [LOW-FIX 29차] 현재 status 전제 조건 추가 — approved 상태 재조작 차단
+                       //   이미 처리 완료된 요청을 expired로 위장해 신분증 접근 기록 은폐 방지
+                       resource.data.status in ['pending', 'approved'] &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['status']) &&
                        // SEC-33: 관리자 취소/만료만 허용 — 스스로 approved 전환 차단
@@ -1314,21 +1326,29 @@ service cloud.firestore {
       // 수정: 워커(자신의 리뷰 제출 필드만) · 해당 사업장 관리자/하위관리자(자신의 필드만) · 슈퍼어드민
       allow update: if isLoggedIn() && (
                       // 워커: 자신의 리뷰 제출 필드만 (isPublished 등 변조 불가)
+                      // [MEDIUM-FIX 29차] workerStatus 값 화이트리스트 — 임의 값 삽입으로 CF 트리거 분기 오작동 차단
                       (isOwner(resource.data.workerId) &&
                        request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['workerStatus', 'workerReviewId'])) ||
+                         .hasOnly(['workerStatus', 'workerReviewId']) &&
+                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['workerStatus']) ||
+                        request.resource.data.workerStatus in ['pending', 'submitted'])) ||
                       // [SEC-88] 탈퇴 익명화: 계정 삭제 flow에서 workerName만 '탈퇴한 회원'으로 변경 허용
                       // auth_service.dart step 3(users 삭제) 이전에 실행되므로 isUser() 체크 통과
                       // [RULE-FIX-L1] workerName 값 제한 추가 — 활성 계정도 임의 문자열 변경 가능했던 취약점 차단
+                      // [MEDIUM-FIX 29차] isDeletingAccount 교차검증 추가 — monthly_reviews 동일 패턴과 일관성
                       (isOwner(resource.data.workerId) &&
+                       get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isDeletingAccount == true &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['workerName']) &&
                        request.resource.data.get('workerName', '') == '탈퇴한 회원') ||
                       // 관리자/하위관리자: 자신의 리뷰 제출 필드만
+                      // [MEDIUM-FIX 29차] adminStatus 값 화이트리스트 추가
                       ((isAdminOf(resource.data.businessId) ||
                         isSubAdminOf(resource.data.businessId)) &&
                        request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['adminStatus', 'adminReviewId'])) ||
+                         .hasOnly(['adminStatus', 'adminReviewId']) &&
+                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['adminStatus']) ||
+                        request.resource.data.adminStatus in ['pending', 'submitted'])) ||
                       isSuperAdmin()
                     );
 
@@ -1514,7 +1534,10 @@ service cloud.firestore {
       // 슈퍼어드민: 오기재 정정 등 운영 목적 수정 허용
       // [RULE-FIX-M5] 서명 증거 필드 불변 강제 — 근로기준법상 계약서 위변조 방지
       //   서명 URL/해시/타임스탬프는 CF callableFinalizeWorkerSignature 전용
+      // [HIGH-FIX 29차] completed 계약서 핵심 필드 보호 — 관리자 브랜치(L1541)와 동일 조건 추가
+      //   isSuperAdmin() completed 업데이트 허용 시 articles/wage/slots 등 계약 내용 변조 가능
       allow update: if isSuperAdmin() &&
+                      resource.data.status != 'completed' &&
                       !request.resource.data.diff(resource.data).affectedKeys().hasAny([
                         'workerSignatureUrl', 'workerSignatureHash', 'workerSignedAt',
                         'employerSignatureUrl', 'employerSignatureHash', 'employerSignedAt'
@@ -1774,8 +1797,11 @@ service cloud.firestore {
       // [AUTH-H2] Admin SDK는 Firestore 규칙 우회 → 클라이언트는 항상 거부
       allow create: if false;
 
-      // 수정·삭제: 슈퍼어드민만
-      allow update, delete: if isSuperAdmin();
+      // [HIGH-FIX 29차] update: if false — 재가입 차단 기록(phone/ci/ciHash) 슈퍼어드민도 직접 수정 차단
+      //   기록 조작 시 CF callableRegister의 중복 차단 로직 우회 가능
+      //   운영 수정 필요 시 CF Admin SDK 경유 전용
+      allow update: if false;
+      allow delete: if isSuperAdmin();
     }
 
     // ═══════════════════════════════════════════════════════════
