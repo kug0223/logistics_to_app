@@ -50,7 +50,7 @@ class _AdminContractManagementScreenState
   late final TabController _tabCtrl;
 
   List<EmploymentContractModel> _items = [];
-  bool _isLoading = true;
+  bool _isLoading = false; // initState → _load() 가드 통과를 위해 false 초기화
   bool _isLoadingMore = false;
   bool _hasMore = false;
   bool _isVoidingContract = false;

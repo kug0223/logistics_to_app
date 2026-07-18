@@ -59,7 +59,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   late TextEditingController _descriptionController;
   late TextEditingController _slotTitleController; // 슬롯 개별 공고 제목
 
-  bool _isLoading = true;
+  bool _isLoading = false; // initState → _loadData() 가드 통과를 위해 false 초기화
   bool _isSaving = false;
   bool _hasChanges = false;
   List<WorkDetailData> _workDetails = [];
@@ -524,7 +524,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       if (parts.length != 2) return false;
       final deadline = DateTime(
         slotDate.year, slotDate.month, slotDate.day,
-        int.parse(parts[0]), int.parse(parts[1]),
+        int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0,
       ).subtract(Duration(hours: _hoursBeforeStart));
       return now.isAfter(deadline);
     });
@@ -684,6 +684,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             .collection('slots').doc(s.id)
             .get(const GetOptions(source: Source.server))),
       );
+      if (!mounted) return;
       final freshSlotRequired = <String, int>{};
       for (final snap in freshSnaps) {
         if (snap.exists) {

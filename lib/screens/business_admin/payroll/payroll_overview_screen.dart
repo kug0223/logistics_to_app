@@ -50,7 +50,10 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
   Future<void> _init() async {
     final userProvider = context.read<UserProvider>();
     final uid = userProvider.currentUser?.uid;
-    if (uid == null) return;
+    if (uid == null) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
 
     try {
       List<BusinessModel> businesses;

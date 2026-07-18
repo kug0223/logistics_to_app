@@ -30,7 +30,7 @@ class MemberManagementScreen extends StatefulWidget {
 class _MemberManagementScreenState extends State<MemberManagementScreen> {
   final _service = MemberService();
   List<BusinessMemberModel> _members = [];
-  bool _loading = true;
+  bool _loading = false; // initState → _load() 가드 통과를 위해 false 초기화
   bool _isProcessing = false;
 
   @override

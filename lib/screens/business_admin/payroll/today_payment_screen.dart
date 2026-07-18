@@ -82,6 +82,7 @@ class _TodayPaymentScreenState extends State<TodayPaymentScreen> {
       final records = await _payService.getTodayPayments(
         businessId: widget.businessId,
       );
+      if (!mounted) return;
 
       final uidList = records.map((r) => r.userId).toSet()
           .difference(_nameCache.keys.toSet()).toList();

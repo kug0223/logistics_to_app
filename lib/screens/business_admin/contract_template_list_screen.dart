@@ -29,7 +29,7 @@ class _ContractTemplateListScreenState
     extends State<ContractTemplateListScreen> {
   final _service = ContractTemplateService();
   List<ContractTemplateModel> _templates = [];
-  bool _loading = true;
+  bool _loading = false; // initState → _load() 가드 통과를 위해 false 초기화
   bool _isDuplicating = false;
   bool _isDeleting = false;
 

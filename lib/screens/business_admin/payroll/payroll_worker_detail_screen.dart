@@ -87,10 +87,12 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
 
       if (mounted) {
         _computeTotals(records);
-        setState(() { _records = records; _isLoading = false; });
+        setState(() { _records = records; });
       }
     } catch (e) {
-      if (mounted) setState(() { _loadError = e.toString(); _isLoading = false; });
+      if (mounted) setState(() => _loadError = e.toString());
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -550,6 +552,7 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
       // 생성 직후 즉시 승인: 관리자가 직접 요청하는 중간정산이므로
       // 근무자 별도 동의 단계 없이 바로 이체완료 처리. 근무자가 요청하는 경우와 설계 다름.
       final reqId = await svc.createInterimSettlementRequest(req);
+      if (!mounted) return;
       final reqWithId = InterimSettlementRequestModel(
         id: reqId,
         applicationId:   req.applicationId,
