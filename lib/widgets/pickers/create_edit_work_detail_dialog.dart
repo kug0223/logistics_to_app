@@ -2431,7 +2431,7 @@ class WorkDetailDialog {
           GestureDetector(
             onTap: () async {
               final selected = await _showMonthlyDatePicker(context, theme, payScheduleDay);
-              if (selected != null) setDialogState(() => onDayChanged(selected));
+              if (selected != null && context.mounted) setDialogState(() => onDayChanged(selected));
             },
             child: Container(
               padding: EdgeInsets.symmetric(
@@ -2480,7 +2480,7 @@ class WorkDetailDialog {
             onTap: () async {
               final selected =
                   await _showTimePickerSheet(context, theme, payScheduleTime, '입금 예정 시간');
-              if (selected != null) setDialogState(() => onTimeChanged(selected));
+              if (selected != null && context.mounted) setDialogState(() => onTimeChanged(selected));
             },
             child: Container(
               padding: EdgeInsets.symmetric(

@@ -10125,7 +10125,10 @@ export const callableGetMonthlyReviewsByBiz = onCall(
       .collection("monthly_reviews")
       .where("businessId", "==", businessId);
 
-    if (reviewType) q = q.where("reviewType", "==", reviewType);
+    const VALID_REVIEW_TYPES = ["MONTHLY", "PERIOD", "SPOT", "EXIT"];
+    if (reviewType && VALID_REVIEW_TYPES.includes(reviewType as string)) {
+      q = q.where("reviewType", "==", reviewType);
+    }
     if (isPublished !== undefined) q = q.where("isPublished", "==", isPublished);
     if (reviewYear !== undefined) q = q.where("reviewYear", "==", reviewYear);
     if (reviewMonth !== undefined) q = q.where("reviewMonth", "==", reviewMonth);
@@ -10179,7 +10182,10 @@ export const callableGetReviewRequestsByBiz = onCall(
       .collection("review_requests")
       .where("businessId", "==", businessId);
 
-    if (adminStatus) q = q.where("adminStatus", "==", adminStatus);
+    const VALID_ADMIN_STATUSES = ["pending", "approved", "rejected", "hidden"];
+    if (adminStatus && VALID_ADMIN_STATUSES.includes(adminStatus as string)) {
+      q = q.where("adminStatus", "==", adminStatus);
+    }
     if (isPublished !== undefined) q = q.where("isPublished", "==", isPublished);
 
     q = q.limit(cap);
@@ -13962,7 +13968,8 @@ export const callableGetPaymentChangeRequests = onCall(
 
     await assertBizAdmin(callerUid, businessId);
 
-    const targetStatus = (typeof status === "string" && status.length > 0) ? status : "PENDING";
+    const VALID_PAYMENT_STATUSES = ["PENDING", "APPROVED", "REJECTED", "CANCELED"];
+    const targetStatus = (typeof status === "string" && VALID_PAYMENT_STATUSES.includes(status)) ? status : "PENDING";
     const cap = Math.min(
       typeof rawLimit === "number" && rawLimit > 0 ? rawLimit : 1000,
       2000
@@ -16027,7 +16034,8 @@ export const callableGetMyApplications = onCall(
     q = q.limit(cap + 1);
     if (startAfterDocId && typeof startAfterDocId === "string") {
       const cursorSnap = await db.collection("applications").doc(startAfterDocId).get();
-      if (cursorSnap.exists) q = q.startAfter(cursorSnap);
+      // [L-4-FIX] cursor uid 교차검증 — 타 유저 docId로 페이지 위치 조작 차단
+      if (cursorSnap.exists && cursorSnap.data()?.["uid"] === callerUid) q = q.startAfter(cursorSnap);
     }
     const snap = await q.get();
     const hasMore = snap.docs.length > cap;
@@ -16509,7 +16517,10 @@ export const callableGetReviewsForUser = onCall(
     q = q.limit(cap + 1);
     if (startAfterId && typeof startAfterId === "string") {
       const cursorSnap = await db.collection("monthly_reviews").doc(startAfterId).get();
-      if (cursorSnap.exists) q = q.startAfter(cursorSnap);
+      // [L-5-FIX] cursor targetUserId 교차검증 — 타 유저 리뷰 docId로 페이지 위치 조작 차단
+      if (cursorSnap.exists && cursorSnap.data()?.["targetUserId"] === targetUserId) {
+        q = q.startAfter(cursorSnap);
+      }
     }
     const snap = await q.get();
     const hasMore = snap.docs.length > cap;
