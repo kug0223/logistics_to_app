@@ -15128,6 +15128,15 @@ export const callableCreateContractRenewal = onCall(
     const originalData = originalSnap.data()!;
     const businessId = originalData.businessId as string;
 
+    // [CRN-02-FIX] 갱신 시작일 >= 원본 종료일 검증 — 중복 근무 기간 생성 방지
+    const originalEndDate = originalData.workEndDate as Timestamp | undefined;
+    if (originalEndDate && newStartDateMs < originalEndDate.toMillis()) {
+      throw new HttpsError(
+        "invalid-argument",
+        "갱신 계약 시작일은 원본 계약 종료일 이후여야 합니다."
+      );
+    }
+
     // 2. 관리자 권한 검증
     await assertBizAdmin(callerUid, businessId);
 
