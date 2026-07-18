@@ -289,7 +289,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       });
     } catch (e) {
       debugPrint('❌ 사전조건 재체크 실패: $e');
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ToastHelper.showError('사전 조건 확인에 실패했습니다.');
+      }
     }
   }
 

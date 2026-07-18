@@ -107,6 +107,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
     _isNavigating = true;  // setState 없이 — build()에서 미사용, push animation과 충돌 방지
     try {
       await action();
+    } catch (e) {
+      debugPrint('❌ 탐색 오류: $e');
+      if (mounted) ToastHelper.showError('처리 중 오류가 발생했습니다.');
     } finally {
       if (mounted) setState(() => _isNavigating = false);
     }

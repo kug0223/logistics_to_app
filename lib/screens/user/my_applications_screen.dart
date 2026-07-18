@@ -1556,6 +1556,9 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         if (!mounted) return;
         setState(() => _reviewMap[app.id] = review);
       }
+    } catch (e) {
+      debugPrint('❌ 리뷰 다이얼로그 오류: $e');
+      if (mounted) ToastHelper.showError('리뷰 데이터를 불러오는데 실패했습니다.');
     } finally {
       if (mounted) setState(() => _reviewDialogOpenIds.remove(app.id));
     }

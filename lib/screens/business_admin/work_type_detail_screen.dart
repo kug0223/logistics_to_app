@@ -827,15 +827,19 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
 
   /// 이미지 선택
   Future<void> _pickImages() async {
-    final image = await ImageHelper.pickAndCompressImage(
-      context,
-      type: ImageType.general,
-      useBottomSheet: true,
-    );
-
-    if (image != null) {
-      if (!mounted) return; // [MOUNTED-01 수정] 이미지 피커 복귀 시 위젯 dispose 경합 방지
-      setState(() { _newImages.add(image); _isDirty = true; });
+    try {
+      final image = await ImageHelper.pickAndCompressImage(
+        context,
+        type: ImageType.general,
+        useBottomSheet: true,
+      );
+      if (image != null) {
+        if (!mounted) return; // [MOUNTED-01 수정] 이미지 피커 복귀 시 위젯 dispose 경합 방지
+        setState(() { _newImages.add(image); _isDirty = true; });
+      }
+    } catch (e) {
+      debugPrint('❌ 이미지 선택 오류: $e');
+      if (mounted) ToastHelper.showError('이미지를 불러오는 데 실패했습니다.');
     }
   }
 
