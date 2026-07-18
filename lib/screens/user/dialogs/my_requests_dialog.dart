@@ -547,6 +547,9 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       } else {
         ToastHelper.showError('승인 실패');
       }
+    } catch (e) {
+      debugPrint('❌ 신분증 승인 오류: $e');
+      if (mounted) ToastHelper.showError('처리 중 오류가 발생했습니다');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -610,6 +613,9 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       } else {
         ToastHelper.showError('거절 실패');
       }
+    } catch (e) {
+      debugPrint('❌ 신분증 거절 오류: $e');
+      if (mounted) ToastHelper.showError('처리 중 오류가 발생했습니다');
     } finally {
       WidgetsBinding.instance.addPostFrameCallback((_) => reasonController.dispose());
       if (mounted) setState(() => _isProcessing = false);
@@ -672,6 +678,9 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       } else {
         ToastHelper.showError('처리 실패');
       }
+    } catch (e) {
+      debugPrint('❌ 계약해지 승인 오류: $e');
+      if (mounted) ToastHelper.showError('처리 중 오류가 발생했습니다');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -737,6 +746,9 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       } else {
         ToastHelper.showError('거절 실패');
       }
+    } catch (e) {
+      debugPrint('❌ 계약해지 거절 오류: $e');
+      if (mounted) ToastHelper.showError('처리 중 오류가 발생했습니다');
     } finally {
       WidgetsBinding.instance.addPostFrameCallback((_) => reasonController.dispose());
       if (mounted) setState(() => _isProcessing = false);

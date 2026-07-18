@@ -3344,6 +3344,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     );
 
     if (confirmed == true) {
+      if (!context.mounted) return;
       await _processBatchAdjustTime(targets, adjustCheckIn, adjustCheckOut);
     }
   }
