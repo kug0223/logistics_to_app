@@ -7428,6 +7428,7 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
   }
 
   const appsRef = db.collection("applications").where("toId", "==", toId);
+  const IMMUTABLE_TO_STATUSES = ["CLOSED", "EXPIRED", "SCHEDULED", "DRAFT"];
 
   if (!slotId) {
     // contract TO: TO 카운터 + 업무별 확정 카운터 재계산
@@ -7462,7 +7463,6 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
     const confirmedCnt = confirmedSnap.data().count;
     const totalRequired = (toData?.totalRequired as number) ?? 0;
     const toStatus = toData?.status as string | undefined;
-    const IMMUTABLE_TO_STATUSES = ["CLOSED", "EXPIRED", "SCHEDULED", "DRAFT"];
     const toStatusUpdate = !IMMUTABLE_TO_STATUSES.includes(toStatus ?? "")
       ? {status: totalRequired > 0 && confirmedCnt >= totalRequired ? "FULL" : "ACTIVE"}
       : {};
@@ -16060,7 +16060,7 @@ export const callableGetMyApplications = onCall(
     if (startAfterDocId && typeof startAfterDocId === "string") {
       const cursorSnap = await db.collection("applications").doc(startAfterDocId).get();
       // [L-4-FIX] cursor uid 교차검증 — 타 유저 docId로 페이지 위치 조작 차단
-      if (cursorSnap.exists && cursorSnap.data()?.["uid"] === callerUid) q = q.startAfter(cursorSnap);
+      if (cursorSnap.exists && cursorSnap.data()?.["uid"] === uid) q = q.startAfter(cursorSnap);
     }
     const snap = await q.get();
     const hasMore = snap.docs.length > cap;
