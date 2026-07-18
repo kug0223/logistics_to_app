@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import '../../../utils/format_helper.dart';
 import 'work_detail_data.dart';
 
@@ -130,7 +131,8 @@ class TOModel {
   static TOModel? tryFromMap(Map<String, dynamic> data, String documentId) {
     try {
       return TOModel.fromMap(data, documentId);
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('[TOModel] tryFromMap 실패 id=$documentId: $e\n$st');
       return null;
     }
   }

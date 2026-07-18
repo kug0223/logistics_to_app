@@ -471,7 +471,7 @@ class EmploymentContractModel {
       // [CRASH-GUARD] whereType<Map>()은 Dart에서 LinkedHashMap 등 모든 Map 구현체 포함 — 안전
       slots: rawSlots != null
           ? rawSlots.whereType<Map>()
-              .map((s) { try { return ContractSlot.fromMap(Map<String, dynamic>.from(s)); } catch (_) { return null; } })
+              .map((s) { try { return ContractSlot.fromMap(Map<String, dynamic>.from(s)); } catch (e) { debugPrint('[ContractSlot] 파싱 실패 (contractId=$id): $e'); return null; } })
               .whereType<ContractSlot>()
               .toList()
           : [],
@@ -490,7 +490,7 @@ class EmploymentContractModel {
           : (throw ArgumentError('EmploymentContractModel: snapshot 필드 누락 (id: $id)')),
       articles: rawArticles != null
           ? rawArticles
-              .map((a) { try { return ContractArticle.fromMap(Map<String, dynamic>.from(a as Map)); } catch (_) { return null; } })
+              .map((a) { try { return ContractArticle.fromMap(Map<String, dynamic>.from(a as Map)); } catch (e) { debugPrint('[ContractArticle] 파싱 실패 (contractId=$id): $e'); return null; } })
               .whereType<ContractArticle>()
               .toList()
           : [],

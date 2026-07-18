@@ -121,15 +121,9 @@ class _JobPostingScreenState extends State<JobPostingScreen>
     // isRestricted(노쇼 페널티)는 선결조건보다 먼저 체크 — 선결조건 완료 후에야 제한 안내가 뜨는 문제 방지
     // restrictedUntil이 과거이면 제한 만료로 처리 (apply_prerequisites_screen._isRestricted와 동일 로직)
     if (user.isRestricted) {
-      final until = user.restrictedUntil;
-      final isStillRestricted = until == null || until.isAfter(DateTime.now());
-      if (isStillRestricted) {
-        final remainDays = until != null ? (until.difference(DateTime.now()).inDays + 1) : null;
-        setState(() => _applyBlockReason = remainDays != null
-            ? '무단 결근 페널티 ($remainDays일 제한)'
-            : '무단 결근 페널티 (이용 제한)');
-        return;
-      }
+      final remainDays = user.restrictedUntil!.difference(DateTime.now()).inDays + 1;
+      setState(() => _applyBlockReason = '무단 결근 페널티 ($remainDays일 제한)');
+      return;
     }
     if (!user.isPassVerified) {
       setState(() => _applyBlockReason = 'PASS 인증이 필요합니다');

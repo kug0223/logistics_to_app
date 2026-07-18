@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 /// 신뢰도 증감 규칙
 class TrustRule {
@@ -24,7 +25,12 @@ class TrustRule {
   }
 
   static TrustRule? tryFromMap(Map<String, dynamic> map) {
-    try { return TrustRule.fromMap(map); } catch (_) { return null; }
+    try {
+      return TrustRule.fromMap(map);
+    } catch (e) {
+      debugPrint('[TrustRule] tryFromMap 파싱 실패: $e');
+      return null;
+    }
   }
 
   Map<String, dynamic> toMap() {

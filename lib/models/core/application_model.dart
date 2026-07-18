@@ -178,7 +178,8 @@ class ApplicationModel {
   static ApplicationModel? tryFromMap(Map<String, dynamic> data, String documentId) {
     try {
       return ApplicationModel.fromMap(data, documentId);
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('[ApplicationModel] tryFromMap 실패 id=$documentId: $e\n$st');
       return null;
     }
   }

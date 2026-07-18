@@ -71,9 +71,7 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
 
   bool get _isRestricted {
     final u = _user;
-    if (u == null || !u.isRestricted) return false;
-    final until = u.restrictedUntil;
-    return until == null || until.isAfter(DateTime.now());
+    return u != null && u.isRestricted;
   }
 
   int? get _restrictedRemainDays {
@@ -448,10 +446,7 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
 bool meetsApplyPrerequisites(UserModel user, {required bool isFlexType}) {
   // 블랙리스트·제재 계정: 문서 갖춰도 지원 불가 — CF 차단과 동일
   // restrictedUntil 만료 체크 포함 (위젯 _isRestricted getter와 동일 로직)
-  final restrictedUntil = user.restrictedUntil;
-  final isCurrentlyRestricted = user.isRestricted &&
-      (restrictedUntil == null || restrictedUntil.isAfter(DateTime.now()));
-  if (user.isBlacklisted || isCurrentlyRestricted) {
+  if (user.isBlacklisted || user.isRestricted) {
     return false;
   }
   if (!user.isPassVerified) {

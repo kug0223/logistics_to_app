@@ -456,7 +456,8 @@ class ContractService {
         if (startAfter != null) 'lastDocId': startAfter,
         'pageSize': pageSize,
       });
-      final data = result.data as Map<dynamic, dynamic>;
+      final data = (result.data as Map<dynamic, dynamic>?);
+      if (data == null) throw Exception('CF 응답이 null입니다 (getPagedContracts)');
       final rawItems = (data['items'] as List<dynamic>? ?? []);
       final items = rawItems
           .whereType<Map>()
@@ -484,7 +485,8 @@ class ContractService {
       final callable = _fn.httpsCallable('getMyContracts',
           options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
       final result = await callable.call({'pageSize': 200});
-      final data = result.data as Map<dynamic, dynamic>;
+      final data = (result.data as Map<dynamic, dynamic>?);
+      if (data == null) return [];
       final rawItems = (data['items'] as List<dynamic>? ?? []);
       return rawItems
           .whereType<Map>()

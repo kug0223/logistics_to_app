@@ -24,7 +24,12 @@ class PayrollWorkerSummary {
   }
 
   static PayrollWorkerSummary? tryFromMap(String workerId, Map<String, dynamic> map) {
-    try { return PayrollWorkerSummary.fromMap(workerId, map); } catch (_) { return null; }
+    try {
+      return PayrollWorkerSummary.fromMap(workerId, map);
+    } catch (e) {
+      debugPrint('[PayrollWorkerSummary] tryFromMap 파싱 실패 workerId=$workerId: $e');
+      return null;
+    }
   }
 
   Map<String, dynamic> toMap() => {

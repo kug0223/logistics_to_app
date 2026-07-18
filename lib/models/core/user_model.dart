@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import '../../utils/encryption_helper.dart';
 import '../../utils/trust_score_helper.dart';
 
@@ -257,7 +258,8 @@ class UserModel {
   static UserModel? tryFromMap(Map<String, dynamic> map, String uid) {
     try {
       return UserModel.fromMap(map, uid);
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('[UserModel] tryFromMap 실패 uid=$uid: $e\n$st');
       return null;
     }
   }
