@@ -619,6 +619,7 @@ export const onNotificationCreated = onDocumentCreated(
     const notifRef = db.collection("users").doc(userId).collection("notifications").doc(notificationId);
     const alreadySent = await db.runTransaction(async (tx) => {
       const doc = await tx.get(notifRef);
+      if (!doc.exists) return true;  // 계정 삭제 등으로 문서 삭제됨 — FCM 발송 불필요
       if (doc.data()?.fcmSent === true) return true;
       tx.update(notifRef, {
         fcmSent: true,
