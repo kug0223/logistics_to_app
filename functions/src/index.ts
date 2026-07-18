@@ -3083,7 +3083,6 @@ async function syncGroupMasterStatus(
     const groupSnapshot = await firestore
       .collection("tos")
       .where("groupId", "==", groupId)
-      .limit(100)
       .get();
 
     if (groupSnapshot.empty) return;

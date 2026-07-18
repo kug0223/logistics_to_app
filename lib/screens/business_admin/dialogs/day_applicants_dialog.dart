@@ -1767,12 +1767,13 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     }).toList();
     if (toProcess.isEmpty) return;
 
-    List<ContractArticle>? articles;
-    String sealBase64 = '';
-    String sealType = 'stamp';
     setState(() => _contractBatchGroupKey = g.groupKey);
-    WorkDetailData? workDetail;
     try {
+      List<ContractArticle>? articles;
+      String sealBase64 = '';
+      String sealType = 'stamp';
+      WorkDetailData? workDetail;
+
       // 1. 템플릿 선택
       articles =
           await ContractTemplateSelectorDialog.show(context, businessId: bizId);
@@ -1812,56 +1813,49 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               .firstOrNull;
         }
       }
-    } finally {
-      if (mounted) setState(() => _contractBatchGroupKey = null);
-    }
-    if (!mounted) return;
+      if (!mounted) return;
 
-    if (workDetail == null) {
-      ToastHelper.showError('근무 유형 정보를 찾을 수 없습니다. TO를 확인해 주세요.');
-      return;
-    }
+      if (workDetail == null) {
+        ToastHelper.showError('근무 유형 정보를 찾을 수 없습니다. TO를 확인해 주세요.');
+        return;
+      }
 
-    // 4. 첫 번째 대상으로 미리보기 생성
-    final firstApp = toProcess.first;
-    final firstUser = _userMap[firstApp.uid];
-    if (firstUser == null) {
-      ToastHelper.showError('지원자 정보를 불러올 수 없습니다');
-      return;
-    }
+      // 4. 첫 번째 대상으로 미리보기 생성
+      final firstApp = toProcess.first;
+      final firstUser = _userMap[firstApp.uid];
+      if (firstUser == null) {
+        ToastHelper.showError('지원자 정보를 불러올 수 없습니다');
+        return;
+      }
 
-    setState(() => _contractBatchGroupKey = g.groupKey);
-    late EmploymentContractModel previewContract;
-    try {
-      previewContract = await ContractService().buildPreviewContract(
-        application: firstApp,
-        business: business,
-        worker: firstUser,
-        workDetail: workDetail,
-        articles: articles,
+      late EmploymentContractModel previewContract;
+      try {
+        previewContract = await ContractService().buildPreviewContract(
+          application: firstApp,
+          business: business,
+          worker: firstUser,
+          workDetail: workDetail,
+          articles: articles,
+        );
+      } catch (e) {
+        if (mounted) ToastHelper.showError('계약서 미리보기 생성에 실패했습니다');
+        return;
+      }
+      if (!mounted) return;
+
+      // 5. 미리보기 다이얼로그
+      final confirmed = await _showBatchContractPreview(
+        contract: previewContract,
+        sealBase64: sealBase64,
+        sealType: sealType,
+        count: toProcess.length,
       );
-    } catch (e) {
-      if (mounted) ToastHelper.showError('계약서 미리보기 생성에 실패했습니다');
-      return;
-    } finally {
-      if (mounted) setState(() => _contractBatchGroupKey = null);
-    }
-    if (!mounted) return;
+      if (confirmed != true || !mounted) return;
 
-    // 5. 미리보기 다이얼로그
-    final confirmed = await _showBatchContractPreview(
-      contract: previewContract,
-      sealBase64: sealBase64,
-      sealType: sealType,
-      count: toProcess.length,
-    );
-    if (confirmed != true || !mounted) return;
+      // 6. 일괄 계약서 생성 + 날인
+      final sealBytes = base64Decode(sealBase64);
+      final finalWorkDetail = workDetail;
 
-    // 6. 일괄 계약서 생성 + 날인
-    setState(() => _contractBatchGroupKey = g.groupKey);
-    final sealBytes = base64Decode(sealBase64);
-    final finalWorkDetail = workDetail;
-    try {
       Future<bool> processOne(ApplicationModel app) async {
         final user = _userMap[app.uid];
         if (user == null) return false;
