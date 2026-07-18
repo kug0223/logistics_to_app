@@ -76,9 +76,9 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
     return until == null || until.isAfter(DateTime.now());
   }
 
-  int get _restrictedRemainDays {
+  int? get _restrictedRemainDays {
     final until = _user?.restrictedUntil;
-    if (until == null) return 0;
+    if (until == null) return null; // 영구 제한 — 일수 없음
     return until.difference(DateTime.now()).inDays + 1;
   }
 
@@ -130,7 +130,9 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
                     _buildRestrictionBanner(
                       icon: Icons.timer_off_outlined,
                       color: AppColors.warning,
-                      message: '무단 결근 패널티로 $_restrictedRemainDays일간 지원이 제한됩니다.',
+                      message: _restrictedRemainDays != null
+                          ? '무단 결근 패널티로 $_restrictedRemainDays일간 지원이 제한됩니다.'
+                          : '무단 결근 패널티로 이용이 제한되어 있습니다.',
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                   ],

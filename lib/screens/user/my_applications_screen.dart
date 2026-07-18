@@ -417,6 +417,9 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       } else {
         ToastHelper.showError('취소에 실패했습니다.');
       }
+    } catch (e) {
+      debugPrint('❌ 지원 취소 오류: $e');
+      if (mounted) ToastHelper.showError('취소 중 오류가 발생했습니다.');
     } finally {
       if (mounted) setState(() => _cancellingIds.remove(applicationId));
     }

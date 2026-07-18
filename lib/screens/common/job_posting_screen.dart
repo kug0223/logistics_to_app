@@ -119,10 +119,17 @@ class _JobPostingScreenState extends State<JobPostingScreen>
       return;
     }
     // isRestricted(노쇼 페널티)는 선결조건보다 먼저 체크 — 선결조건 완료 후에야 제한 안내가 뜨는 문제 방지
+    // restrictedUntil이 과거이면 제한 만료로 처리 (apply_prerequisites_screen._isRestricted와 동일 로직)
     if (user.isRestricted) {
-      final remainDays = (user.restrictedUntil?.difference(DateTime.now()).inDays ?? 0) + 1;
-      setState(() => _applyBlockReason = '무단 결근 페널티 ($remainDays일 제한)');
-      return;
+      final until = user.restrictedUntil;
+      final isStillRestricted = until == null || until.isAfter(DateTime.now());
+      if (isStillRestricted) {
+        final remainDays = until != null ? (until.difference(DateTime.now()).inDays + 1) : null;
+        setState(() => _applyBlockReason = remainDays != null
+            ? '무단 결근 페널티 ($remainDays일 제한)'
+            : '무단 결근 페널티 (이용 제한)');
+        return;
+      }
     }
     if (!user.isPassVerified) {
       setState(() => _applyBlockReason = 'PASS 인증이 필요합니다');
@@ -132,7 +139,13 @@ class _JobPostingScreenState extends State<JobPostingScreen>
       setState(() => _applyBlockReason = '신분증 등록이 필요합니다');
       return;
     }
-    if (user.bankName == null || user.accountNumber == null) {
+    // flex 공고는 신분증 인증(isIdVerified)까지 요구 (apply_prerequisites_screen과 동일 조건)
+    if (_to?.jobType == TOType.flex && !user.isIdVerified) {
+      setState(() => _applyBlockReason = '신분증 인증이 필요합니다');
+      return;
+    }
+    if (user.bankName == null || user.bankName!.isEmpty ||
+        user.accountNumber == null || user.accountNumber!.isEmpty) {
       setState(() => _applyBlockReason = '통장 정보 등록이 필요합니다');
       return;
     }
@@ -600,7 +613,8 @@ class _JobPostingScreenState extends State<JobPostingScreen>
     final effectiveRequired = slotRequired ?? widget.slotTotalRequired ?? _to!.totalRequired;
     final effectiveConfirmed = _slot?.confirmedCount ?? widget.slotConfirmedCount ?? _to!.totalConfirmed;
     final isSlotFull = effectiveRequired > 0 && effectiveConfirmed >= effectiveRequired;
-    final isEffectivelyClosed = _to!.isClosed || isSlotFull;
+    // _isEffectivelyClosed getter 사용 — 날짜 경과 체크 포함 (슬롯 마감일 경과 포함)
+    final isEffectivelyClosed = _isEffectivelyClosed;
 
     final (statusLabel, statusColor) = isEffectivelyClosed
         ? ('마감', AppColors.grey500)
@@ -1387,14 +1401,16 @@ class _JobPostingScreenState extends State<JobPostingScreen>
                       Builder(builder: (sheetCtx) {
                         // _isEffectivelyClosed는 _slot?.confirmedCount를 우선 사용 — 중복 계산 불필요
                         final isClosed = _isEffectivelyClosed;
-                        final isBlocked = isClosed || !_isApplyable;
+                        final isBlocked = isClosed || !_isApplyable || _isApplying;
                         return CommonWidgets.primaryButton(
                           context: sheetCtx,
                           text: isClosed
                               ? '마감된 공고입니다'
-                              : !_isApplyable
-                                  ? _applyBlockReason ?? '지원 불가'
-                                  : '지원하기',
+                              : _isApplying
+                                  ? '처리 중...'
+                                  : !_isApplyable
+                                      ? _applyBlockReason ?? '지원 불가'
+                                      : '지원하기',
                           icon: isBlocked ? Icons.block : Icons.send,
                           onPressed: isBlocked
                               ? null

@@ -2651,10 +2651,11 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   }
   /// 상세보기 화면 이동
   void _goToJobPosting(TOModel to, List<WorkDetailModel> workDetails) {
-    final nav = Navigator.of(context);
-    nav.pop();
+    // pop 전에 context를 캡처 — pop 이후 nav.context는 dispose된 subtree를 참조할 수 있음
+    final navigatorContext = context;
+    Navigator.of(context).pop();
     NavigationHelper.push(
-      nav.context,
+      navigatorContext,
       destination: JobPostingScreen(
         to: to,
         workDetails: workDetails,
