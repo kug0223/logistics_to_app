@@ -511,6 +511,10 @@ export const createNotification = onCall(
               const remainHours = Math.ceil((cooldownMs - diffMs) / (60 * 60 * 1000));
               throw new HttpsError("resource-exhausted", `${remainHours}시간 후 재요청 가능합니다.`);
             }
+            // diffMs >= cooldownMs: 쿨다운 만료 → 타임스탬프 갱신 후 발송 허용
+            if (diffMs >= cooldownMs) {
+              await appRef.update({lastContractRequestedAt: admin.firestore.FieldValue.serverTimestamp()});
+            }
             // diffMs < loopGraceMs: 루프 내 호출 — 타임스탬프 업데이트 없이 알림만 발송
           } else {
             // 첫 번째 요청: lastContractRequestedAt 설정
@@ -3829,6 +3833,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
             terminationEffectiveDate: Timestamp.fromDate(effectiveDate),
             status: "CANCELED",
             cancelReason: "TERMINATION_APPROVED",
+            canceledAt: admin.firestore.FieldValue.serverTimestamp(),
           });
         });
 
@@ -5401,10 +5406,14 @@ export const callableFinalizeWorkerSignature = onCall(
         const applicationIds: string[] = Array.isArray(data["applicationIds"])
           ? (data["applicationIds"] as string[])
           : (data["applicationId"] ? [data["applicationId"] as string] : []);
+        const contractBizId = data["businessId"] as string | undefined;
         for (const appId of applicationIds) {
           const appRef = db.collection("applications").doc(appId);
           const appSnap = await tx.get(appRef);
-          if (appSnap.exists && appSnap.data()?.["status"] === "CONTRACT_PENDING") {
+          const appData = appSnap.data();
+          // [SEC-APPID-BIZ] applicationIds가 계약서와 동일한 사업장에 속하는지 검증 — 타 사업장 지원서 상태 변조 차단
+          if (appSnap.exists && appData?.["status"] === "CONTRACT_PENDING"
+              && (!contractBizId || appData?.["businessId"] === contractBizId)) {
             tx.update(appRef, {
               status: "CONFIRMED",
               statusHistory: admin.firestore.FieldValue.arrayUnion({
@@ -6188,7 +6197,7 @@ export const callablePublishTO = onCall(
       if (freshTo.data()!.isPublished === true) { alreadyPublished = true; return; }
 
       const quotaSnap = await tx.get(
-        db.collection("tos").where("businessId", "==", businessId).where("isPublished", "==", true)
+        db.collection("tos").where("businessId", "==", businessId).where("isPublished", "==", true).limit(limit + 1)
       );
       if (quotaSnap.size >= limit) {
         throw new HttpsError("resource-exhausted", `MAX_ACTIVE_TO_LIMIT:${limit}`);
@@ -6490,7 +6499,7 @@ export const approveForeignWorker = onCall(
 
     await userRef.update({
       accountStatus: "active",
-      approvedAt: Timestamp.now(),
+      approvedAt: admin.firestore.FieldValue.serverTimestamp(),
       approvedBy: request.auth.uid,
     });
 
@@ -7431,7 +7440,8 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
     const confirmedCnt = confirmedSnap.data().count;
     const totalRequired = (toData?.totalRequired as number) ?? 0;
     const toStatus = toData?.status as string | undefined;
-    const toStatusUpdate = (toStatus !== "CLOSED" && toStatus !== "EXPIRED")
+    const IMMUTABLE_TO_STATUSES = ["CLOSED", "EXPIRED", "SCHEDULED", "DRAFT"];
+    const toStatusUpdate = !IMMUTABLE_TO_STATUSES.includes(toStatus ?? "")
       ? {status: totalRequired > 0 && confirmedCnt >= totalRequired ? "FULL" : "ACTIVE"}
       : {};
     await toRef.update({
@@ -7509,7 +7519,7 @@ async function _syncTOCounters(toId: string, slotId?: string): Promise<void> {
   const flexTotalRequired = (flexToData?.totalRequired as number) ?? 0;
   const flexToStatus = flexToData?.status as string | undefined;
   const flexConfirmedCnt = toConfirmedSnap.data().count;
-  const flexToStatusUpdate = (flexToStatus !== "CLOSED" && flexToStatus !== "EXPIRED")
+  const flexToStatusUpdate = !IMMUTABLE_TO_STATUSES.includes(flexToStatus ?? "")
     ? {status: flexTotalRequired > 0 && flexConfirmedCnt >= flexTotalRequired ? "FULL" : "ACTIVE"}
     : {};
   const writeBatch = db.batch();
@@ -10481,6 +10491,7 @@ export const callableApproveTermination = onCall(
         actualResignDate:
           terminationEffectiveDate ?? admin.firestore.FieldValue.serverTimestamp(),
         status: "CANCELED",
+        canceledAt: admin.firestore.FieldValue.serverTimestamp(),
       });
       // [VOID-01] pending 상태일 때만 voiding — completed 계약서는 법적 증거 보전
       if (contractRef && freshContractStatus && pendingContractStatuses.includes(freshContractStatus)) {
