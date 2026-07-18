@@ -730,6 +730,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       } else if (mounted) {
         ToastHelper.showError('승인 처리에 실패했습니다');
       }
+    } catch (e) {
+      debugPrint('❌ 요청 승인 오류: $e');
+      if (mounted) ToastHelper.showError('승인 처리 중 오류가 발생했습니다');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -751,6 +754,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       } else if (mounted) {
         ToastHelper.showError('거절 처리에 실패했습니다');
       }
+    } catch (e) {
+      debugPrint('❌ 요청 거절 오류: $e');
+      if (mounted) ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -2183,34 +2189,39 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       return;
     }
 
-    final worker = await _firestoreService.getUser(app.uid);
-    if (!mounted) return;
-    final workerName = worker?.name ?? '이름 없음';
+    try {
+      final worker = await _firestoreService.getUser(app.uid);
+      if (!mounted) return;
+      final workerName = worker?.name ?? '이름 없음';
 
-    final request = ScheduleChangeRequestModel(
-      id: '',
-      businessId: _selectedBusinessId!,
-      applicationId: app.id,
-      applicantUid: app.uid,
-      applicantName: workerName,
-      targetDate: DateTime(date.year, date.month, date.day),
-      requestType: RequestType.EXTRA_WORK,
-      requestedBy: RequesterType.ADMIN,
-      requestedByUid: adminUid,
-      requestedAt: DateTime.now(),
-      reason: reason.isEmpty ? null : reason,
-      wageAmount: app.wage,
-    );
+      final request = ScheduleChangeRequestModel(
+        id: '',
+        businessId: _selectedBusinessId!,
+        applicationId: app.id,
+        applicantUid: app.uid,
+        applicantName: workerName,
+        targetDate: DateTime(date.year, date.month, date.day),
+        requestType: RequestType.EXTRA_WORK,
+        requestedBy: RequesterType.ADMIN,
+        requestedByUid: adminUid,
+        requestedAt: DateTime.now(),
+        reason: reason.isEmpty ? null : reason,
+        wageAmount: app.wage,
+      );
 
-    final requestId = await _firestoreService.createScheduleChangeRequest(request);
+      final requestId = await _firestoreService.createScheduleChangeRequest(request);
 
-    if (!mounted) return;
-    if (requestId != null) {
-      ToastHelper.showSuccess('추가 근무 요청이 전송되었습니다');
-      widget.onChanged();
-      _loadFixedWorkers();
-    } else {
-      ToastHelper.showError('추가 근무 요청 실패');
+      if (!mounted) return;
+      if (requestId != null) {
+        ToastHelper.showSuccess('추가 근무 요청이 전송되었습니다');
+        widget.onChanged();
+        _loadFixedWorkers();
+      } else {
+        ToastHelper.showError('추가 근무 요청 실패');
+      }
+    } catch (e) {
+      debugPrint('❌ 추가 근무 요청 오류: $e');
+      if (mounted) ToastHelper.showError('추가 근무 요청 중 오류가 발생했습니다');
     }
   }
 
@@ -2351,34 +2362,39 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       return;
     }
 
-    final worker = await _firestoreService.getUser(app.uid);
-    if (!mounted) return;
-    final workerName = worker?.name ?? '이름 없음';
+    try {
+      final worker = await _firestoreService.getUser(app.uid);
+      if (!mounted) return;
+      final workerName = worker?.name ?? '이름 없음';
 
-    final request = ScheduleChangeRequestModel(
-      id: '',
-      businessId: _selectedBusinessId!,
-      applicationId: app.id,
-      applicantUid: app.uid,
-      applicantName: workerName,
-      targetDate: DateTime(date.year, date.month, date.day),
-      requestType: RequestType.NO_WORK,
-      requestedBy: RequesterType.ADMIN,
-      requestedByUid: adminUid,
-      requestedAt: DateTime.now(),
-      reason: reason.isEmpty ? null : reason,
-      wageAmount: app.wage,
-    );
+      final request = ScheduleChangeRequestModel(
+        id: '',
+        businessId: _selectedBusinessId!,
+        applicationId: app.id,
+        applicantUid: app.uid,
+        applicantName: workerName,
+        targetDate: DateTime(date.year, date.month, date.day),
+        requestType: RequestType.NO_WORK,
+        requestedBy: RequesterType.ADMIN,
+        requestedByUid: adminUid,
+        requestedAt: DateTime.now(),
+        reason: reason.isEmpty ? null : reason,
+        wageAmount: app.wage,
+      );
 
-    final requestId = await _firestoreService.createScheduleChangeRequest(request);
+      final requestId = await _firestoreService.createScheduleChangeRequest(request);
 
-    if (!mounted) return;
-    if (requestId != null) {
-      ToastHelper.showSuccess('미출근 요청이 전송되었습니다');
-      widget.onChanged();
-      _loadFixedWorkers();
-    } else {
-      ToastHelper.showError('미출근 요청 실패');
+      if (!mounted) return;
+      if (requestId != null) {
+        ToastHelper.showSuccess('미출근 요청이 전송되었습니다');
+        widget.onChanged();
+        _loadFixedWorkers();
+      } else {
+        ToastHelper.showError('미출근 요청 실패');
+      }
+    } catch (e) {
+      debugPrint('❌ 미출근 요청 오류: $e');
+      if (mounted) ToastHelper.showError('미출근 요청 중 오류가 발생했습니다');
     }
   }
 
