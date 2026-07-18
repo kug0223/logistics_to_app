@@ -7,6 +7,7 @@ import '../../../models/core/slot_model.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/navigation_helper.dart';
+import '../../../utils/toast_helper.dart';
 import '../../../theme/app_colors.dart';
 import '../../../providers/user_provider.dart';
 import '../../work_type_icon.dart';
@@ -1075,6 +1076,12 @@ class _UserTOCardState extends State<UserTOCard> {
       setState(() => _isApplyLoading = true);
       try {
         workDetails = await _fetch();
+      } catch (e) {
+        if (mounted) {
+          setState(() => _isApplyLoading = false);
+          ToastHelper.showError('근무 정보를 불러오는데 실패했습니다.');
+        }
+        return;
       } finally {
         // mounted 체크 없이 조기 리턴하면 _isApplyLoading이 true로 고착됨 — finally로 항상 리셋
         if (mounted) setState(() => _isApplyLoading = false);
@@ -1108,6 +1115,12 @@ class _UserTOCardState extends State<UserTOCard> {
       setState(() => _isApplyLoading = true);
       try {
         slots = await _fetchSlots();
+      } catch (e) {
+        if (mounted) {
+          setState(() => _isApplyLoading = false);
+          ToastHelper.showError('슬롯 정보를 불러오는데 실패했습니다.');
+        }
+        return;
       } finally {
         if (mounted) setState(() => _isApplyLoading = false);
       }

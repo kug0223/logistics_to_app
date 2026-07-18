@@ -4832,8 +4832,17 @@ export const callableUnblacklistUser = onCall(
       throw new HttpsError("failed-precondition", "블랙리스트 상태가 아닙니다.");
     }
     const prevData = targetSnap.data() ?? {};
-    // [UBL-1-FIX] Trust Boundary Charter 감사 로그 — 해제 이력 + 해제 당시 사유 영구 보존
-    await db.collection("blacklist_audit_log").add({
+    // [UBL-ORD-FIX] 실제 업데이트 먼저, 감사 로그는 best-effort — 순서 반전 방지:
+    //   로그 성공+업데이트 실패 → phantom 감사 로그 (해제 안 됐는데 기록됨)
+    //   로그 실패 → throw로 업데이트 자체 미실행 (블랙리스트 해제 불가)
+    await db.collection("users").doc(targetUid).update({
+      isBlacklisted: false,
+      blacklistReason: admin.firestore.FieldValue.delete(),
+      unblacklistedBy: callerUid,
+      unblacklistedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    // 감사 로그는 업데이트 성공 후 best-effort 기록
+    db.collection("blacklist_audit_log").add({
       action: "UNBLACKLIST",
       targetUid,
       callerUid,
@@ -4841,13 +4850,7 @@ export const callableUnblacklistUser = onCall(
       originalBlacklistedBy: prevData.blacklistedBy ?? null,
       originalBlacklistedAt: prevData.blacklistedAt ?? null,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-    await db.collection("users").doc(targetUid).update({
-      isBlacklisted: false,
-      blacklistReason: admin.firestore.FieldValue.delete(),
-      unblacklistedBy: callerUid,
-      unblacklistedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    }).catch((err) => console.warn(`[callableUnblacklistUser] 감사 로그 실패 uid=${targetUid}: ${err}`));
     return {success: true};
   }
 );
@@ -5992,15 +5995,17 @@ export const callableCreateTO = onCall(
       throw new HttpsError("permission-denied", "creatorUID 불일치.");
     }
 
-    // 관리자 검증
+    // 관리자 검증 — assertBizAdmin과 동일 로직, deactivatedAt 추가 체크
     const callerSnap = await db.collection("users").doc(callerUid).get();
     const callerData = callerSnap.data();
     const role = callerData?.role as string;
-    if (role !== "BUSINESS_ADMIN" && role !== "SUPER_ADMIN") {
+    const subAdminOf = callerData?.subAdminOf as string | undefined;
+    // [M-2-FIX] SubAdmin(role=USER, subAdminOf=businessId)도 TO 생성 허용 — callableUpdateTO/callablePublishTO와 통일
+    if (role !== "BUSINESS_ADMIN" && role !== "SUPER_ADMIN" && subAdminOf !== businessId) {
       throw new HttpsError("permission-denied", "관리자만 공고를 생성할 수 있습니다.");
     }
     // [HIGH-AUTH] pending 외국인 관리자 차단
-    if (role === "BUSINESS_ADMIN") {
+    if (role !== "SUPER_ADMIN") {
       const accountStatus = callerData?.accountStatus as string | undefined;
       if (accountStatus !== undefined && accountStatus !== "active") {
         throw new HttpsError("permission-denied", "계정 승인 대기 중입니다. 승인 후 이용 가능합니다.");
@@ -6017,7 +6022,7 @@ export const callableCreateTO = onCall(
       }
       const bizAdminIds = (bizAuthSnap.data()?.adminIds as string[] | undefined) ?? [];
       const bizOwnerId = bizAuthSnap.data()?.ownerId as string | undefined;
-      if (!bizAdminIds.includes(callerUid) && bizOwnerId !== callerUid) {
+      if (!bizAdminIds.includes(callerUid) && bizOwnerId !== callerUid && subAdminOf !== businessId) {
         throw new HttpsError("permission-denied", "소속 사업장만 공고를 생성할 수 있습니다.");
       }
       // 비활성화 사업장에서는 신규 공고 생성 불가
@@ -6261,6 +6266,7 @@ export const callableUpdateTO = onCall(
       "totalConfirmed", "totalPending",
       "closedAt", "closedBy",         // closeTOManually CF 전용
       "isManualClosed",               // 아래에서 false만 허용 처리
+      "createdAt",                    // TO 생성일 위변조 차단
       "updatedAt", "updatedBy",       // 서버 강제
       "reopenedAt", "reopenedBy",     // 서버 강제
       "statusUpdatedAt",              // 서버 강제
@@ -16398,6 +16404,17 @@ export const callableCreateIdCardAccessRequest = onCall(
     // [SEC-FIX 2026-07-16] requesterBusinessId 소속 검증 — 클라이언트 위조 방지
     //   타 사업장 ID를 주입해 해당 사업장 관리자로 위장하는 것을 차단
     await assertBizAdmin(callerUid, requesterBusinessId);
+
+    // [L-2-FIX] targetUserId가 requesterBusinessId 소속인지 검증 — 무관한 사용자에게 신분증 요청 스팸 차단
+    const targetAppSnap = await db.collection("applications")
+      .where("uid", "==", targetUserId)
+      .where("businessId", "==", requesterBusinessId)
+      .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
+      .limit(1)
+      .get();
+    if (targetAppSnap.empty) {
+      throw new HttpsError("permission-denied", "해당 사용자는 이 사업장의 소속 근무자가 아닙니다.");
+    }
 
     const now = admin.firestore.Timestamp.now();
     const [pendingSnap, approvedSnap] = await Promise.all([

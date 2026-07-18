@@ -20,6 +20,7 @@ import '../widgets/common/loading_widget.dart';
 import '../widgets/dialogs/styled_dialog.dart';
 import 'format_helper.dart';
 import 'responsive_helper.dart';
+import 'toast_helper.dart';
 
 /// 그룹(파트) 정렬 기준
 enum AttendanceGroupSort {
@@ -752,6 +753,8 @@ class _PreviewBottomSheetWithBytesState
       final name =
           '${_data.businessName}_근무명단_${FormatHelper.formatDateStamp(_data.date)}.pdf';
       await Printing.layoutPdf(onLayout: (_) async => _pdfBytes, name: name);
+    } catch (e) {
+      if (mounted) ToastHelper.showError('인쇄에 실패했습니다.');
     } finally {
       if (mounted) setState(() => _isPdfPrinting = false);
     }

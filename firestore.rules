@@ -1790,10 +1790,12 @@ service cloud.firestore {
                          .hasOnly(['permissions']))
                     );
 
-      // 삭제: 해당 사업장 관리자 · 본인(자진 탈퇴) · 슈퍼어드민
+      // 삭제: 해당 사업장 관리자 · 본인(자진 탈퇴, SubAdmin 제외) · 슈퍼어드민
+      // [SEC-MEMBER-DEL] SubAdmin은 자기 member 문서 삭제 불가 — 삭제해도 users.subAdminOf가 유지되어
+      //   멤버 목록에서 사라진 채 SubAdmin 권한을 무기한 유지하는 스텔스 지속 공격 차단
       allow delete: if isLoggedIn() && (
                       isAdminOf(businessId) ||
-                      request.auth.uid == uid ||
+                      (request.auth.uid == uid && !isSubAdminOf(businessId)) ||
                       isSuperAdmin()
                     );
     }
