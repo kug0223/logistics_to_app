@@ -2024,11 +2024,14 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           );
         });
       }
+    } catch (e) {
+      debugPrint('❌ 신분증 열람 요청 실패: $e');
+      if (mounted) ToastHelper.showError('신분증 열람 요청 중 오류가 발생했습니다');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
-  
+
   /// 확정 취소 (CONFIRMED / CONTRACT_PENDING 모두 처리)
   Future<void> _cancelConfirmation() async {
     if (widget.application == null) return;

@@ -2152,6 +2152,9 @@ class _JobPostingScreenState extends State<JobPostingScreen>
       );
       // contract TO도 flex TO와 동일하게 true 반환 — AllTOListScreen._refreshMyApplications 트리거에 필요
       if (result?.hasChanges == true && mounted) Navigator.pop(context, true);
+    } catch (e) {
+      debugPrint('❌ 지원 처리 실패: $e');
+      if (mounted) ToastHelper.showError('지원 처리 중 오류가 발생했습니다');
     } finally {
       if (mounted) setState(() => _isApplying = false);
     }

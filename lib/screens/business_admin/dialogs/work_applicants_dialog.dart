@@ -280,7 +280,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         for (final app in confirmedShortTermApps) {
           final appDay = DateTime(
               app.workDate.year, app.workDate.month, app.workDate.day);
-          final userAtts = (weeklyMap[app.uid] ?? []).cast<AttendanceModel>();
+          final userAtts = (weeklyMap[app.uid] ?? []).whereType<AttendanceModel>().toList();
           for (final att in userAtts) {
             final attDay = DateTime(
                 att.workDate.year, att.workDate.month, att.workDate.day);
@@ -1105,6 +1105,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         _selectedIdCardUserIds.clear();
       });
     }
+    } catch (e) {
+      debugPrint('❌ [_batchRequestIdCard] 신분증 요청 실패: $e');
+      if (mounted) ToastHelper.showError('신분증 요청 중 오류가 발생했습니다');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -2378,6 +2381,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       sealBase64 = currentUserSeal;
       sealType = currentUserSealType;
       continueToProcess = true;
+    } catch (e) {
+      debugPrint('❌ [_batchApprove] 사업장 정보 조회 실패: $e');
+      if (mounted) ToastHelper.showError('사업장 정보를 불러오는 중 오류가 발생했습니다');
     } finally {
       // 실제 일괄 처리로 이어지는 경우 _isProcessing을 유지, 아니면 복원
       if (!continueToProcess && mounted) setState(() => _isProcessing = false);
@@ -2694,6 +2700,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         return;
       }
       business = b;
+    } catch (e) {
+      debugPrint('❌ [_batchCreateContractsForConfirmed] 사업장 정보 조회 실패: $e');
+      if (mounted) ToastHelper.showError('사업장 정보를 불러오는 중 오류가 발생했습니다');
+      return;
     } finally {
       if (mounted) setState(() => _isContractBatchProcessing = false);
     }

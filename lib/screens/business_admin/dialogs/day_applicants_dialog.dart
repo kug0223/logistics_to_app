@@ -1683,6 +1683,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           _selectedIdCardUserIds.clear();
         });
       }
+    } catch (e) {
+      debugPrint('❌ [day_batchRequestIdCard] 신분증 요청 실패: $e');
+      if (mounted) ToastHelper.showError('신분증 요청 중 오류가 발생했습니다');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
