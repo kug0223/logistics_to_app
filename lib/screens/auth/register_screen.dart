@@ -622,7 +622,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ]),
         actions: [
           TextButton(
-            onPressed: () { Navigator.pop(ctx); _registerUser(); },
+            onPressed: () async { Navigator.pop(ctx); if (!mounted) return; await _registerUser(); },
             child: Text('나중에',
                 style: ResponsiveHelper.smallStyle(ctx,
                     color: AppColors.grey500)),

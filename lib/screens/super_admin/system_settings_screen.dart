@@ -1,6 +1,8 @@
 ﻿// lib/screens/super_admin/system_settings_screen.dart
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../../providers/user_provider.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/toast_helper.dart';
@@ -14,10 +16,28 @@ import 'business_approval_settings_screen.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 
 /// 슈퍼관리자 시스템 설정 화면
-/// 
+///
 /// 신뢰도 규칙, 리뷰 태그, 배지 등 시스템 전반 설정 관리
-class SystemSettingsScreen extends StatelessWidget {
+class SystemSettingsScreen extends StatefulWidget {
   const SystemSettingsScreen({super.key});
+
+  @override
+  State<SystemSettingsScreen> createState() => _SystemSettingsScreenState();
+}
+
+class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final up = Provider.of<UserProvider>(context, listen: false);
+      if (!up.isSuperAdmin) {
+        ToastHelper.showError('슈퍼관리자만 접근할 수 있습니다.');
+        Navigator.pop(context);
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {

@@ -267,7 +267,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       final app = item.application;
       if (app.status != AppStatus.confirmed) return false;
       final rd = _reviewDate(app);
-      return rd.isBefore(DateTime.now());
+      return rd != null && rd.isBefore(DateTime.now());
     }).toList();
 
     if (relevant.isEmpty) return {};
@@ -275,7 +275,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     final reviewSvc = MonthlyReviewService();
     final entries = await Future.wait(relevant.map((item) async {
       final app = item.application;
-      final rd = _reviewDate(app);
+      final rd = _reviewDate(app)!; // relevant 필터에서 null 제외됨
       final key = MonthlyReviewModel.generateKeyForBusiness(
         businessId: app.businessId,
         reviewerId: uid,
@@ -289,10 +289,11 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     return Map.fromEntries(entries);
   }
 
-  /// 리뷰 기준일: 단기=근무일, 장기=종료일
-  DateTime _reviewDate(ApplicationModel app) {
+  /// 리뷰 기준일: 단기=근무일, 장기=종료일(null이면 아직 재직 중 → 리뷰 불가)
+  DateTime? _reviewDate(ApplicationModel app) {
     if (app.isLongTermApplication) {
-      return app.actualResignDate ?? app.workEndDate ?? app.workDate;
+      // actualResignDate/workEndDate 모두 null이면 아직 재직 중 — 리뷰 대상 아님
+      return app.actualResignDate ?? app.workEndDate;
     }
     return app.workDate;
   }
@@ -664,8 +665,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                 if (app.status == AppStatus.confirmed && !app.isLongTermApplication && !app.workDate.isBefore(DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day)))
                   _buildConfirmedCancelHint(app),
 
-                // 장기 공고: 퇴사/계약해지 복합 상태 배너
-                if (app.isLongTermApplication)
+                // 장기 공고: 퇴사/계약해지 복합 상태 배너 — 확정 상태일 때만 표시
+                if (app.isLongTermApplication && AppStatus.confirmedStatuses.contains(app.status))
                   _buildLongTermStatusSection(app),
 
                 // 과거 확정 근무 → 리뷰 섹션
@@ -707,17 +708,23 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         ? '${app.startTime} ~ ${app.endTime}'
         : '--:-- ~ --:--';
 
-    // 장기 근무: 희망 시작일 또는 TO 근무 기간 표시
+    // 장기 근무: 희망 시작일 또는 실제 계약 기간 표시 (갱신·퇴사 반영)
     final String dateDisplay;
     if (app.isLongTermApplication) {
       final start = app.desiredStartDate ?? to.startDate ?? app.workDate;
-      final end = to.endDate;
+      // 갱신된 계약의 실제 종료일(app.workEndDate) 우선, 없으면 TO 공고 종료일 표시
+      final end = app.actualResignDate ?? app.workEndDate ?? to.endDate;
       dateDisplay = end != null
           ? '${FormatHelper.formatDateCompact(start)} ~ ${FormatHelper.formatDateCompact(end)}'
           : FormatHelper.formatDateLong(start);
     } else {
       dateDisplay = FormatHelper.formatDateLong(app.workDate);
     }
+
+    // D-day 배지: 실제 계약 종료일(갱신·퇴사 반영) 기준
+    final effectiveEndDate = app.isLongTermApplication
+        ? (app.actualResignDate ?? app.workEndDate ?? to.endDate)
+        : null;
 
     return Row(
       children: [
@@ -736,9 +743,9 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         ),
         if (app.isLongTermApplication &&
             (app.status == AppStatus.confirmed || app.status == AppStatus.contractPending) &&
-            to.endDate != null) ...[
+            effectiveEndDate != null) ...[
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          _buildDdayBadge(context, to.endDate!),
+          _buildDdayBadge(context, effectiveEndDate),
         ],
         if (!app.isLongTermApplication) ...[
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -1399,7 +1406,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   Widget _buildReviewSection(ApplicationModel app) {
     if (app.status != AppStatus.confirmed) return const SizedBox.shrink();
     final rd = _reviewDate(app);
-    if (rd.isAfter(DateTime.now())) return const SizedBox.shrink();
+    // null = 아직 재직 중(장기 계약, 종료일 없음) — 리뷰 불가
+    if (rd == null || rd.isAfter(DateTime.now())) return const SizedBox.shrink();
 
     final review = _reviewMap[app.id];
     if (review != null) return _buildWrittenReviewBadge(review);

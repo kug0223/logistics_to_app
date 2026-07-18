@@ -40,7 +40,7 @@ enum _SortType { days, wage, name }
 class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
   final _service = AdminStatsService();
 
-  bool _isLoading = true;
+  bool _isLoading = false;
   bool _isExporting = false;
   bool _hasError = false;
   MonthDetailData? _data;

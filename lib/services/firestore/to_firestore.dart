@@ -45,7 +45,7 @@ extension TOFirestore on FirestoreService {
       final counts = await Future.wait<int>(myBusinesses.map((biz) async {
         final result = await callable.call({
           'businessId': biz.id,
-          'statuses': [TOStatus.active, TOStatus.full, TOStatus.scheduled, TOStatus.closed],
+          'statuses': [TOStatus.active, TOStatus.full, TOStatus.scheduled],
           'limit': 1000,
         });
         final tos = result.data['tos'] as List? ?? [];

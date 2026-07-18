@@ -426,8 +426,8 @@ class ConfirmCancelDialog extends StatelessWidget {
               ),
             ),
             
-            // 3회 도달 경고
-            if (currentNoShowCount >= 2) ...[
+            // 3회 도달 경고 — 정확히 2회일 때만 표시 (이미 3회 이상이면 제한 이미 적용됨)
+            if (currentNoShowCount == 2) ...[
               SizedBox(height: ResponsiveHelper.spacing(context, 8)),
               Text(
                 '⚠️ 이 취소 후 3회가 되어 3일간 이용이 제한됩니다!',

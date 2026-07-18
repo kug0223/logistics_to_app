@@ -508,7 +508,13 @@ class WorkDetailManagementDialog {
         ToastHelper.showSuccess('${works.length}개 업무가 마감되었습니다');
       } catch (e) {
         debugPrint('❌ 업무 일괄 마감 실패: $e');
-        if (context.mounted) ToastHelper.showError('일부 업무 마감에 실패했습니다');
+        if (context.mounted) {
+          ToastHelper.showError('일부 업무 마감에 실패했습니다');
+          // 성공한 항목이 있을 수 있으므로 부모 화면 갱신 후 닫기
+          Navigator.pop(context);
+          onLocalStatsChanged?.call();
+          onComplete();
+        }
       }
     } finally {
       _isProcessing = false;

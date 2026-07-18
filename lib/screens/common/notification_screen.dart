@@ -540,7 +540,17 @@ class _NotificationScreenState extends State<NotificationScreen> {
       // 신분증 열람 관련 알림
       // ═══════════════════════════════════════════════════════════
       case NotificationType.idCardAccessRequested:
-        _showMyRequestsDialog(context, userProvider.currentUser?.uid);
+        // 이 알림은 관리자에게 전송됨 — 역할별 분기
+        if (isUser) {
+          _showMyRequestsDialog(context, userProvider.currentUser?.uid);
+        } else {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+              initialBusinessId: notification.data?['businessId']?.toString(),
+            )),
+          );
+        }
         break;
 
       case NotificationType.idCardAccessApproved:

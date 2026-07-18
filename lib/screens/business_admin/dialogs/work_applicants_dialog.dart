@@ -1495,8 +1495,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                         ),
                       ],
 
-                      // 대기 중 액션 버튼 (파트변경 / 거절 / 승인) — 일괄선택 모드에서는 숨김
-                      if (isPending && !_isBatchMode) ...[
+                      // 대기 중 액션 버튼 (파트변경 / 거절 / 승인) — 마감/인원충족 TO에서는 숨김
+                      if (isPending && !_isBatchMode && !widget.toItem.to.isClosed) ...[
                         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.end,

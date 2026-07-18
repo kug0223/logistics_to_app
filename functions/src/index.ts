@@ -1626,6 +1626,10 @@ export const onAttendanceWageChanged = onDocumentUpdated(
 
     if (!wasConfirmed && !isConfirmed) return;
 
+    // absent 기록(processAutoAbsent 처리)은 finalWage=0이므로 payroll_summaries 집계 제외
+    const docStatus = (after.status as string | undefined) ?? "";
+    if (docStatus === "absent") return;
+
     const businessId = after.businessId as string | undefined;
     const userId = after.userId as string | undefined;
     if (!businessId || !userId) return;
@@ -8121,7 +8125,9 @@ export const onAttendanceWageStatusChanged = onDocumentWritten(
     // 노쇼 문서는 wageStatus=confirmed이어도 실제 근무 완료가 아님 — 별도 처리
     // [BUG-FIX] 상태값 수정: "wageConfirmed"→"confirmed", "wageTransferred"→"transferred"
     //   Dart AttendanceModel.wageConfirmed='confirmed', wageTransferred='transferred'
-    const isNoshowDoc = afterStatus === "NO_SHOW" || beforeStatus === "NO_SHOW";
+    // absent 상태(processAutoAbsent 처리)는 실제 근무 완료가 아님 — NO_SHOW와 동일하게 제외
+    const isNoshowDoc = afterStatus === "NO_SHOW" || beforeStatus === "NO_SHOW"
+      || afterStatus === "absent" || beforeStatus === "absent";
     const wageConfirmedOn = !isNoshowDoc &&
       afterWageStatus === "confirmed" &&
       beforeWageStatus !== "confirmed";
@@ -8655,6 +8661,29 @@ export const callableCancelConfirmedApplication = onCall(
       if (!CONFIRMED_STATUSES.includes(freshStatus)) return; // 이미 취소됨 — 멱등
       tx.update(appRef, updateData);
     });
+
+    // 6-A. 취소된 지원서의 출근 기록 canceledWithApplication=true 설정
+    //     → 자정 processMissedCheckouts가 missed_checkout으로 잘못 마킹하지 않도록 방지
+    try {
+      const attSnap = await db.collection("attendance")
+        .where("applicationId", "==", applicationId)
+        .limit(5)  // 단기 1건, 장기도 당일 활성 체크인은 소수
+        .get();
+      if (!attSnap.empty) {
+        const attBatch = db.batch();
+        let hasAttUpdate = false;
+        for (const attDoc of attSnap.docs) {
+          const attData = attDoc.data();
+          if (attData.checkIn != null && attData.checkOut == null) {
+            attBatch.update(attDoc.ref, {canceledWithApplication: true});
+            hasAttUpdate = true;
+          }
+        }
+        if (hasAttUpdate) await attBatch.commit();
+      }
+    } catch (e) {
+      console.warn("[cancelConfirmedApplication] 출근기록 canceledWithApplication 설정 실패 (무시):", e);
+    }
 
     // 6. 클라이언트 후속 처리(slot decrement, 패널티, 알림)에 필요한 값 반환
     return {
@@ -14910,6 +14939,11 @@ export const callableCheckOut = onCall(
       // 이미 퇴근 여부
       if (data.checkOut != null) {
         throw new HttpsError("already-exists", "이미 퇴근하셨습니다.");
+      }
+
+      // missed_checkout 상태: 자정 이후 자동 처리된 기록 — 관리자 수동 조치 필요
+      if ((data.status as string | undefined) === "missed_checkout") {
+        throw new HttpsError("failed-precondition", "미퇴근 처리된 기록입니다. 관리자에게 문의하세요.");
       }
 
       // wageStatus 보호

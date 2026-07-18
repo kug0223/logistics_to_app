@@ -494,10 +494,12 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
   /// 중간정산 처리 다이얼로그
   Future<void> _showInterimSettlementDialog(BuildContext ctx) async {
     if (_isSettling) return;
-    // 확정 상태 (아직 이체 안 된) 기록만 대상
+    // 확정 상태 (아직 이체 안 된) 기록만 대상 — 날짜 오름차순 정렬 후 first/last 사용
     final settleableRecords = _records.where((r) =>
         r.wageStatus == AttendanceModel.wageConfirmed &&
-        r.wageDetail != null).toList();
+        r.wageDetail != null)
+      .toList()
+      ..sort((a, b) => a.workDate.compareTo(b.workDate));
 
     if (settleableRecords.isEmpty) {
       ToastHelper.showWarning('중간정산 가능한 확정 급여가 없습니다');

@@ -1351,7 +1351,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     if (failCount == 0) {
       ToastHelper.showSuccess('$successCount명 마감 완료');
     } else {
-      ToastHelper.showSuccess('$successCount명 마감 완료');
+      ToastHelper.showWarning('$successCount명 마감 완료 ($failCount명 실패)');
       final processedIds = processedApps.map((a) => a.id).toSet();
       final failedNames = targetIds
           .where((id) => !processedIds.contains(id))
