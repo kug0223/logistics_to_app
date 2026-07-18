@@ -146,7 +146,11 @@ class _ForeignWorkerApprovalScreenState
       final result = await _fn.httpsCallable('adminResetForeignPassword').call({'userId': user.uid});
       if (!mounted) return;
       final tempPassword = result.data['tempPassword'] as String?;
-      if (tempPassword != null) await _showTempPasswordDialog(user.name, tempPassword);
+      if (tempPassword != null) {
+        await _showTempPasswordDialog(user.name, tempPassword);
+      } else {
+        if (mounted) ToastHelper.showError('비밀번호 초기화에 실패했습니다 (서버 응답 없음)');
+      }
     } on FirebaseFunctionsException catch (e) {
       if (!mounted) return;
       ToastHelper.showError(e.message ?? '비밀번호 초기화에 실패했습니다');

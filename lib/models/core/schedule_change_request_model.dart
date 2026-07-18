@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 /// 스케줄 변경 요청 타입
 enum RequestType {
@@ -133,7 +134,8 @@ class ScheduleChangeRequestModel {
   static ScheduleChangeRequestModel? tryFromMap(Map<String, dynamic> map, String id) {
     try {
       return ScheduleChangeRequestModel.fromMap(map, id);
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[ScheduleChangeRequestModel] tryFromMap 실패 id=$id: $e');
       return null;
     }
   }
@@ -154,12 +156,12 @@ class ScheduleChangeRequestModel {
       applicantUid: map['applicantUid'] ?? '',
       applicantName: map['applicantName'] ?? '',
       targetDate: targetDate,
-      requestType: _requestTypeFromString(map['requestType']),
-      requestedBy: _requesterTypeFromString(map['requestedBy']),
+      requestType: _requestTypeFromString(map['requestType'] as String? ?? 'LEAVE'),
+      requestedBy: _requesterTypeFromString(map['requestedBy'] as String? ?? 'APPLICANT'),
       requestedByUid: map['requestedByUid'] ?? '',
       requestedAt: requestedAt,
       reason: map['reason'],
-      status: _statusFromString(map['status']),
+      status: _statusFromString(map['status'] as String? ?? 'PENDING'),
       respondedByUid: map['respondedByUid'],
       respondedAt: (map['respondedAt'] as Timestamp?)?.toDate().toLocal(),
       rejectReason: map['rejectReason'],

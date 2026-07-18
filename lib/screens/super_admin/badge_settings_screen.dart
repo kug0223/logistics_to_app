@@ -159,6 +159,9 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
           if (mounted) ToastHelper.showError('추가에 실패했습니다');
         }
       }
+    } catch (e) {
+      debugPrint('❌ 배지 추가 실패: $e');
+      if (mounted) ToastHelper.showError('오류가 발생했습니다');
     } finally {
       if (mounted) setState(() => _isAdding = false);
     }

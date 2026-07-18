@@ -136,6 +136,9 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
         if (!mounted) return;
         await _saveTags();
       }
+    } catch (e) {
+      debugPrint('❌ 태그 추가 실패: $e');
+      if (mounted) ToastHelper.showError('태그 추가 중 오류가 발생했습니다');
     } finally {
       WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
     }
