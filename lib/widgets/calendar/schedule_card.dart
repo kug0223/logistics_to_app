@@ -928,7 +928,14 @@ class ScheduleCard extends StatelessWidget {
       }
     } catch (e) {
       debugPrint('❌ 휴무 요청 오류: $e');
-      if (context.mounted) ToastHelper.showError('휴무 요청 중 오류가 발생했습니다.');
+      if (context.mounted) {
+        final msg = e.toString().replaceFirst('Exception: ', '');
+        ToastHelper.showError(
+          (e is Exception && msg.isNotEmpty && !msg.startsWith('Exception'))
+              ? msg
+              : '휴무 요청 중 오류가 발생했습니다.',
+        );
+      }
     }
   }
 

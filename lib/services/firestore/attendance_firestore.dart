@@ -367,30 +367,31 @@ extension AttendanceFirestore on FirestoreService {
 
   /// 스케줄 변경 요청 생성
   Future<String?> createScheduleChangeRequest(ScheduleChangeRequestModel request) async {
-    try {
-      // [특이사항] LEAVE 요청 시 해당 날짜에 이미 출근한 경우 차단.
-      // 출근 후 LEAVE 승인 시 application.leaveDates에는 날짜가 추가되지만
-      // attendance.status는 'present'로 남아 데이터 불일치가 발생한다.
-      if (request.requestType == RequestType.LEAVE &&
-          request.requestedBy == RequesterType.APPLICANT) {
-        final t = request.targetDate;
-        final dateStr =
-            '${t.year}${t.month.toString().padLeft(2, '0')}${t.day.toString().padLeft(2, '0')}';
-        final attendanceDoc = await _firestore
-            .collection('attendance')
-            .doc('${request.applicationId}_$dateStr')
-            .get();
-        if (attendanceDoc.exists &&
-            attendanceDoc.data()?['checkIn'] != null) {
-          throw Exception('이미 출근한 날짜는 휴무 요청을 할 수 없습니다.');
-        }
+    // [특이사항] LEAVE 요청 시 해당 날짜에 이미 출근한 경우 차단.
+    // 출근 후 LEAVE 승인 시 application.leaveDates에는 날짜가 추가되지만
+    // attendance.status는 'present'로 남아 데이터 불일치가 발생한다.
+    // → 의도적 검증 예외 — try-catch 밖에서 throw하여 호출부로 전파
+    if (request.requestType == RequestType.LEAVE &&
+        request.requestedBy == RequesterType.APPLICANT) {
+      final t = request.targetDate;
+      final dateStr =
+          '${t.year}${t.month.toString().padLeft(2, '0')}${t.day.toString().padLeft(2, '0')}';
+      final attendanceDoc = await _firestore
+          .collection('attendance')
+          .doc('${request.applicationId}_$dateStr')
+          .get();
+      if (attendanceDoc.exists &&
+          attendanceDoc.data()?['checkIn'] != null) {
+        throw Exception('이미 출근한 날짜는 휴무 요청을 할 수 없습니다.');
       }
+    }
 
+    try {
       // [B6-FIX] requestedAt 서버 타임스탬프 오버라이드 — toMap()의 DateTime 값 조작 차단
       final scrMap = request.toMap()..['requestedAt'] = FieldValue.serverTimestamp();
       final docRef = await _firestore.collection('schedule_change_requests').add(scrMap);
       debugPrint('✅ 스케줄 변경 요청 생성 완료: ${docRef.id}');
-      
+
       // 🔔 알림 생성 (관리자에게) - 지원자가 요청한 경우 (fire-and-forget)
       if (request.requestedBy == RequesterType.APPLICANT) {
         // ignore: unawaited_futures
@@ -403,7 +404,7 @@ extension AttendanceFirestore on FirestoreService {
           reason: request.reason,
         );
       }
-      
+
       return docRef.id;
     } catch (e) {
       debugPrint('❌ 스케줄 변경 요청 생성 실패: $e');

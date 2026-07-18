@@ -464,7 +464,7 @@ class AuthService {
             .httpsCallable('callableDeleteAccountApplications',
                 options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
         final result = await deleteAppsCallable.call<Map<String, dynamic>>({});
-        final data = Map<String, dynamic>.from(result.data as Map);
+        final data = Map<String, dynamic>.from(result.data as Map? ?? {});
 
         // PENDING totalPending 개별 트랜잭션 감소 (rules ±1 제한 준수 — CF Admin SDK도 rules 우회 가능하나 기존 패턴 유지)
         //   [M-5A 수정] flex TO에서 동일 TO에 다른 workType으로 PENDING 복수 지원 가능
@@ -473,9 +473,7 @@ class AuthService {
         if (pendingToIds.isNotEmpty) {
           await Future.wait(pendingToIds.map((toId) async {
             try {
-              await _firestore.runTransaction((tx) async {
-                tx.update(_firestore.collection('tos').doc(toId), {'totalPending': FieldValue.increment(-1)});
-              });
+              await _firestore.collection('tos').doc(toId).update({'totalPending': FieldValue.increment(-1)});
             } catch (e) {
               debugPrint('⚠️ totalPending 감소 실패 ($toId): $e');
             }

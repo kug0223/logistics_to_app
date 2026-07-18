@@ -581,11 +581,10 @@ class ContractService {
     // exception 대신 false로 반환하므로 반환값을 명시적으로 체크해야 함
     // [W-2] canceledBy: 'system' — voidContract는 시스템/관리자 취소이므로 ADMIN_CANCELED로 기록
     // null 전달 시 USER_CANCELED로 기록되어 감사 로그에서 혼동 발생
-    final firestoreService = FirestoreService();
     final List<String> failedIds = [];
     for (final appId in appIds) {
       try {
-        final ok = await firestoreService.cancelConfirmedApplication(
+        final ok = await _firestoreService.cancelConfirmedApplication(
           appId,
           canceledBy: 'system',
           cancelReason: '계약서가 무효화되었습니다',
@@ -629,12 +628,11 @@ class ContractService {
   Future<void> retryVoidFailedApps(EmploymentContractModel contract) async {
     if (contract.voidFailedAppIds.isEmpty) return;
 
-    final firestoreService = FirestoreService();
     final List<String> stillFailedIds = [];
 
     for (final appId in contract.voidFailedAppIds) {
       try {
-        final ok = await firestoreService.cancelConfirmedApplication(
+        final ok = await _firestoreService.cancelConfirmedApplication(
           appId,
           canceledBy: 'system', // [W-2] 재처리도 시스템 취소 — ADMIN_CANCELED 기록 유지
           cancelReason: '계약서가 무효화되었습니다',

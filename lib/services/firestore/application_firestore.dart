@@ -837,7 +837,9 @@ extension ApplicationFirestore on FirestoreService {
         if (slotSnap.exists) {
           final slotData = slotSnap.data()!;
           final workDetails = (slotData['workDetails'] as List? ?? [])
-              .cast<Map<String, dynamic>>();
+              .whereType<Map>()
+              .map((m) => Map<String, dynamic>.from(m))
+              .toList();
           final wd = workDetails.firstWhere(
             (d) => d['workType'] == newWorkType, orElse: () => {});
           final required = (wd['requiredCount'] as num?)?.toInt() ?? 0;
@@ -853,7 +855,9 @@ extension ApplicationFirestore on FirestoreService {
         if (toSnap.exists) {
           final toData = toSnap.data()!;
           final workDetails = (toData['workDetails'] as List? ?? [])
-              .cast<Map<String, dynamic>>();
+              .whereType<Map>()
+              .map((m) => Map<String, dynamic>.from(m))
+              .toList();
           final wd = workDetails.firstWhere(
             (d) => d['workType'] == newWorkType, orElse: () => {});
           final required = (wd['requiredCount'] as num?)?.toInt() ?? 0;
@@ -1261,7 +1265,9 @@ extension ApplicationFirestore on FirestoreService {
         },
       });
       canceledDetails = ((autoConflictResult.data as Map?)?['canceledDetails'] as List? ?? [])
-          .cast<Map<String, dynamic>>();
+          .whereType<Map>()
+          .map((m) => Map<String, dynamic>.from(m))
+          .toList();
       debugPrint('✅ AUTO_CANCEL CF 완료 — ${canceledDetails.length}건 취소');
     } catch (e) {
       debugPrint('⚠️ AUTO_CANCEL CF 실패 (확정은 완료됨): $e');
