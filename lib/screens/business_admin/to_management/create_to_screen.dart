@@ -65,7 +65,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   final TextEditingController _descriptionController = TextEditingController();
 
   // 로딩 상태
-  bool _isLoading = true;
+  bool _isLoading = false; // initState에서 _loadMyBusinesses() 호출 시 가드 통과를 위해 false 초기화
   bool _isCreating = false;
   bool _hasChanges = false; // 미저장 변경 감지용
 

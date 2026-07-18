@@ -3733,9 +3733,10 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           await resignCleanupBatch.commit();
 
           // [R-H4] actualResignDate 이후 scheduled attendance → absent 처리 (orphan 방지)
+          // limit(500): 1년 주 5일 근무 ≈ 260건, 500으로 충분 (초과 시 다음 스케줄에서 처리)
           const resignScheduledSnap = await db.collection("attendance")
             .where("applicationId", "==", doc.id)
-            .where("status", "==", "scheduled").get();
+            .where("status", "==", "scheduled").limit(500).get();
           if (!resignScheduledSnap.empty) {
             let attBatch = db.batch();
             let attCount = 0;
@@ -4746,24 +4747,29 @@ export const callableBlacklistUser = onCall(
         blacklistReason.trim().length === 0 || blacklistReason.length > 500) {
       throw new HttpsError("invalid-argument", "사유가 올바르지 않습니다 (1자 이상 500자 이하).");
     }
-    const targetSnap = await db.collection("users").doc(targetUid).get();
-    if (!targetSnap.exists) {
-      throw new HttpsError("not-found", "대상 사용자를 찾을 수 없습니다.");
-    }
-    // [BL-5-FIX] 다른 SUPER_ADMIN 블랙리스트 등록 차단 — 관리자 간 권한 탈취 방지
-    if (targetSnap.data()?.role === "SUPER_ADMIN") {
-      throw new HttpsError("permission-denied", "다른 슈퍼어드민을 블랙리스트에 등록할 수 없습니다.");
-    }
-    // [BL-2-FIX] 이중 등록 차단 — 원래 등록 이력 덮어쓰기 방지
-    if (targetSnap.data()?.isBlacklisted === true) {
-      throw new HttpsError("already-exists", "이미 블랙리스트 처리된 사용자입니다.");
-    }
-    const targetDataForAudit = targetSnap.data() ?? {};
-    await db.collection("users").doc(targetUid).update({
-      isBlacklisted: true,
-      blacklistReason,
-      blacklistedBy: callerUid,
-      blacklistedAt: admin.firestore.FieldValue.serverTimestamp(),
+    // 중복 체크 + update를 트랜잭션으로 원자화 — 두 SUPER_ADMIN 동시 등록 시 감사 로그 중복 방지
+    let targetDataForAudit: FirebaseFirestore.DocumentData = {};
+    await db.runTransaction(async (tx) => {
+      const targetRef = db.collection("users").doc(targetUid);
+      const targetSnap = await tx.get(targetRef);
+      if (!targetSnap.exists) {
+        throw new HttpsError("not-found", "대상 사용자를 찾을 수 없습니다.");
+      }
+      // [BL-5-FIX] 다른 SUPER_ADMIN 블랙리스트 등록 차단 — 관리자 간 권한 탈취 방지
+      if (targetSnap.data()?.role === "SUPER_ADMIN") {
+        throw new HttpsError("permission-denied", "다른 슈퍼어드민을 블랙리스트에 등록할 수 없습니다.");
+      }
+      // [BL-2-FIX] 이중 등록 차단 — 원래 등록 이력 덮어쓰기 방지
+      if (targetSnap.data()?.isBlacklisted === true) {
+        throw new HttpsError("already-exists", "이미 블랙리스트 처리된 사용자입니다.");
+      }
+      targetDataForAudit = targetSnap.data() ?? {};
+      tx.update(targetRef, {
+        isBlacklisted: true,
+        blacklistReason,
+        blacklistedBy: callerUid,
+        blacklistedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
     });
     // [BL-1-FIX] Trust Boundary Charter 감사 로그 — 블랙리스트 등록 이력 영구 보존
     // best-effort: 감사 로그 실패가 블랙리스트 처리 자체를 롤백하지 않도록 catch 처리
@@ -6322,11 +6328,12 @@ export const callableUpdateTO = onCall(
     // 최종 업데이트 맵 구성
     const finalUpdates: Record<string, unknown> = {};
 
+    const TIMESTAMP_FIELDS = ["rangeStart", "rangeEnd", "applicationDeadline", "publishAt"];
     for (const [key, value] of Object.entries(updates)) {
       if (BLOCKED_FIELDS.includes(key)) continue;  // 위험 필드 스킵
       if (value === null) {
         finalUpdates[key] = admin.firestore.FieldValue.delete();  // null → 삭제
-      } else if (key === "publishAt" && typeof value === "number") {
+      } else if (TIMESTAMP_FIELDS.includes(key) && typeof value === "number") {
         finalUpdates[key] = admin.firestore.Timestamp.fromMillis(value);  // ms → Timestamp
       } else {
         finalUpdates[key] = value;
@@ -11819,6 +11826,13 @@ export const callableRequestResignation = onCall(
       const snap = await tx.get(appRef);
       if (!snap.exists) throw new HttpsError("not-found", "지원서 없음");
       const data = snap.data()!;
+      const currentStatus = data.status as string;
+      if (!CONFIRMED_STATUSES.includes(currentStatus)) {
+        throw new HttpsError(
+          "failed-precondition",
+          `확정된 지원서에만 퇴사 요청이 가능합니다. 현재 상태: ${currentStatus}`
+        );
+      }
       const currentResignStatus = (data.resignStatus as string | null) ?? null;
       if (currentResignStatus !== null && currentResignStatus !== "REJECTED") {
         throw new HttpsError(
