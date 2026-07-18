@@ -2499,18 +2499,19 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     });
 
     try {
-      await _firestoreService.cancelApplication(application.id, _currentUserId!);
-      
+      final success = await _firestoreService.cancelApplication(application.id, _currentUserId!);
+      if (!success) return; // 서비스에서 이미 에러 토스트 표시 — finally에서 로딩 해제
+
       // 상태 새로고침
       await _refreshApplicationStatus(application.workDate, application.selectedWorkType);
       _reloadAllMyApplications(); // fire-and-forget: 내 지원 현황 갱신
 
       if (!mounted) return;
       _hasChanges = true;
-      ToastHelper.showSuccess('지원이 취소되었습니다');
+      // 성공 토스트 생략 — cancelApplication 서비스에서 이미 "지원이 취소되었습니다." 표시
     } catch (e) {
-      debugPrint('❌ 지원 취소 실패: $e');
-      if (mounted) ToastHelper.showError('지원 취소에 실패했습니다');
+      debugPrint('❌ 지원 취소 후 상태 갱신 실패: $e');
+      if (mounted) ToastHelper.showError('지원 취소 후 상태 갱신에 실패했습니다');
     } finally {
       if (mounted) {
         // ✅ 로딩 키 통일

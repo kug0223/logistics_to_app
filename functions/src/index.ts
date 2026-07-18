@@ -1147,7 +1147,7 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
               if (existing.exists && !existing.data()?.workerName) {
                 await requestRef.update({ workerName });
               }
-            } catch { /* 무시 */ }
+            } catch (e) { console.warn("[createPendingReviewRequests] 단기 workerName 업데이트 실패 (무시):", e); }
             return false;
           }
         })
@@ -1223,7 +1223,7 @@ async function createPendingReviewRequests(now: Timestamp): Promise<void> {
               if (existing.exists && !existing.data()?.workerName) {
                 await requestRef.update({ workerName });
               }
-            } catch { /* 무시 */ }
+            } catch (e) { console.warn("[createPendingReviewRequests] 장기 workerName 업데이트 실패 (무시):", e); }
             return false;
           }
         })
@@ -1653,8 +1653,8 @@ export const onAttendanceWageChanged = onDocumentUpdated(
       if (userDoc.exists) {
         workerName = (userDoc.data()?.name as string) ?? "";
       }
-    } catch {
-      // 이름 없으면 빈 문자열 유지
+    } catch (e) {
+      console.warn(`[onAttendanceWageChanged] 근무자 이름 조회 실패 (빈 문자열 유지) userId=${userId}:`, e);
     }
 
     const beforeWage =
@@ -5934,8 +5934,8 @@ export const callableCreateTO = onCall(
     const creatorUID = String(toData.creatorUID ?? "");
     const publishMode = String(toData.publishMode ?? "immediate");
     // [M-1-FIX] publishMode 화이트리스트 — 임의 값으로 isPublished 강제화 우회 차단
-    if (!["draft", "scheduled", "immediate"].includes(publishMode)) {
-      throw new HttpsError("invalid-argument", "publishMode는 draft/scheduled/immediate 중 하나여야 합니다.");
+    if (!["draft", "scheduled", "immediate", "deferred"].includes(publishMode)) {
+      throw new HttpsError("invalid-argument", "publishMode는 draft/scheduled/immediate/deferred 중 하나여야 합니다.");
     }
 
     if (!businessId) throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
@@ -10799,8 +10799,11 @@ export const callableRecalculateTOStats = onCall(
       toUpdate.status = shouldBeFull ? "FULL" : "ACTIVE";
     }
     if (!isFlexType) {
-      for (const [wt, cnt] of Object.entries(workTypeConfirmedCounts)) {
-        toUpdate[`workTypeConfirmedCounts.${wt}`] = cnt;
+      // [MEDIUM-RecalcTO] 기존 키도 0으로 초기화 — 업무유형 삭제/이동 후 잔여 카운터 방지
+      const existingWtKeys = Object.keys((toData.workTypeConfirmedCounts as Record<string, number> | undefined) ?? {});
+      const allWtKeys = new Set([...existingWtKeys, ...Object.keys(workTypeConfirmedCounts)]);
+      for (const wt of allWtKeys) {
+        toUpdate[`workTypeConfirmedCounts.${wt}`] = workTypeConfirmedCounts[wt] ?? 0;
       }
     }
     await db.collection("tos").doc(toId).update(toUpdate);
@@ -12570,74 +12573,86 @@ export const callableChangeApplicationWorkType = onCall(
       if (contractQ2.docs.length > 0) contractSnap = contractQ2.docs[0];
     }
 
-    // 4. 1차 WriteBatch: application + slot/TO 카운터 + contract
-    const batch = db.batch();
-
-    const appUpdate: Record<string, unknown> = {
-      selectedWorkType: newWorkType,
-      wage: newWage,
-      originalWorkType: appData.originalWorkType ?? currentWorkType,
-      originalWage: appData.originalWage ?? currentWage,
-      changedAt: admin.firestore.FieldValue.serverTimestamp(),
-      changedBy: callerUid,
-    };
-    if (newWorkDetailId !== undefined) appUpdate.workDetailId = newWorkDetailId;
-    if (newWageType !== undefined) appUpdate.wageType = newWageType;
-    if (newWorkTypeIcon !== undefined) appUpdate.workTypeIcon = newWorkTypeIcon;
-    if (newWorkTypeColor !== undefined) appUpdate.workTypeColor = newWorkTypeColor;
-    if (newWorkTypeBackgroundColor !== undefined) appUpdate.workTypeBackgroundColor = newWorkTypeBackgroundColor;
-    batch.update(appRef, appUpdate);
-
-    // slot 카운터 (단기TO — slotId 있음)
+    // 4. 트랜잭션: application 재읽기 + 카운터 + contract 원자적 커밋 (TOCTOU 방지)
     const CONFIRMED_STATUSES = new Set(["CONFIRMED", "CONTRACT_PENDING"]);
-    if (toId && slotId) {
-      const slotRef = db.collection("tos").doc(toId).collection("slots").doc(slotId);
-      if (CONFIRMED_STATUSES.has(currentStatus)) {
-        batch.update(slotRef, {
-          [`workTypeCounts.${currentWorkType}.confirmedCount`]: admin.firestore.FieldValue.increment(-1),
-          [`workTypeCounts.${newWorkType}.confirmedCount`]: admin.firestore.FieldValue.increment(1),
-        });
-      } else if (currentStatus === "PENDING") {
-        batch.update(slotRef, {
-          [`workTypeCounts.${currentWorkType}.pendingCount`]: admin.firestore.FieldValue.increment(-1),
-          [`workTypeCounts.${newWorkType}.pendingCount`]: admin.firestore.FieldValue.increment(1),
-        });
+    await db.runTransaction(async (t) => {
+      // 재읽기 — 1차 읽기 이후 상태 변경 여부 확인
+      const freshSnap = await t.get(appRef);
+      if (!freshSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+      const freshData = freshSnap.data()!;
+      if (freshData.businessId !== businessId) {
+        throw new HttpsError("permission-denied", "해당 사업장의 지원서가 아닙니다.");
       }
-    }
+      const freshStatus = (freshData.status as string) ?? "";
+      if (TERMINAL_APP_STATUSES.has(freshStatus)) {
+        throw new HttpsError("failed-precondition", "이미 종료된 지원서는 업무유형을 변경할 수 없습니다.");
+      }
+      if ((freshData.selectedWorkType as string) === newWorkType) {
+        throw new HttpsError("failed-precondition", "동일한 업무유형입니다.");
+      }
+      const freshWorkType = (freshData.selectedWorkType as string) ?? currentWorkType;
 
-    // TO 카운터 (장기TO — slotId 없음, confirmed 상태)
-    if (toId && !slotId && CONFIRMED_STATUSES.has(currentStatus)) {
-      const toRef = db.collection("tos").doc(toId);
-      batch.update(toRef, {
-        [`workTypeConfirmedCounts.${currentWorkType}`]: admin.firestore.FieldValue.increment(-1),
-        [`workTypeConfirmedCounts.${newWorkType}`]: admin.firestore.FieldValue.increment(1),
-      });
-    }
+      const appUpdate: Record<string, unknown> = {
+        selectedWorkType: newWorkType,
+        wage: newWage,
+        originalWorkType: freshData.originalWorkType ?? freshWorkType,
+        originalWage: freshData.originalWage ?? currentWage,
+        changedAt: admin.firestore.FieldValue.serverTimestamp(),
+        changedBy: callerUid,
+      };
+      if (newWorkDetailId !== undefined) appUpdate.workDetailId = newWorkDetailId;
+      if (newWageType !== undefined) appUpdate.wageType = newWageType;
+      if (newWorkTypeIcon !== undefined) appUpdate.workTypeIcon = newWorkTypeIcon;
+      if (newWorkTypeColor !== undefined) appUpdate.workTypeColor = newWorkTypeColor;
+      if (newWorkTypeBackgroundColor !== undefined) appUpdate.workTypeBackgroundColor = newWorkTypeBackgroundColor;
+      t.update(appRef, appUpdate);
 
-    // contract 업데이트
-    if (contractSnap) {
-      const contractData = contractSnap.data();
-      const contractUpdate: Record<string, unknown> = {workType: newWorkType, wage: newWage};
-      if (newWageType !== undefined) contractUpdate.wageType = newWageType;
-
-      // pending_employer 상태에서만 slots 배열 내 wage/wageType 수정
-      if (contractData.status === "pending_employer") {
-        const rawSlots = (contractData.slots as unknown[]) ?? [];
-        if (rawSlots.length > 0) {
-          contractUpdate.slots = rawSlots.map((s) => {
-            const slot = {...(s as Record<string, unknown>)};
-            if (slot.applicationId === applicationId) {
-              slot.wage = newWage;
-              if (newWageType !== undefined) slot.wageType = newWageType;
-            }
-            return slot;
+      // slot 카운터 (단기TO — slotId 있음)
+      if (toId && slotId) {
+        const slotRef = db.collection("tos").doc(toId).collection("slots").doc(slotId);
+        if (CONFIRMED_STATUSES.has(freshStatus)) {
+          t.update(slotRef, {
+            [`workTypeCounts.${freshWorkType}.confirmedCount`]: admin.firestore.FieldValue.increment(-1),
+            [`workTypeCounts.${newWorkType}.confirmedCount`]: admin.firestore.FieldValue.increment(1),
+          });
+        } else if (freshStatus === "PENDING") {
+          t.update(slotRef, {
+            [`workTypeCounts.${freshWorkType}.pendingCount`]: admin.firestore.FieldValue.increment(-1),
+            [`workTypeCounts.${newWorkType}.pendingCount`]: admin.firestore.FieldValue.increment(1),
           });
         }
       }
-      batch.update(contractSnap.ref, contractUpdate);
-    }
 
-    await batch.commit();
+      // TO 카운터 (장기TO — slotId 없음, confirmed 상태)
+      if (toId && !slotId && CONFIRMED_STATUSES.has(freshStatus)) {
+        const toRef = db.collection("tos").doc(toId);
+        t.update(toRef, {
+          [`workTypeConfirmedCounts.${freshWorkType}`]: admin.firestore.FieldValue.increment(-1),
+          [`workTypeConfirmedCounts.${newWorkType}`]: admin.firestore.FieldValue.increment(1),
+        });
+      }
+
+      // contract 업데이트
+      if (contractSnap) {
+        const contractData = contractSnap.data();
+        const contractUpdate: Record<string, unknown> = {workType: newWorkType, wage: newWage};
+        if (newWageType !== undefined) contractUpdate.wageType = newWageType;
+        if (contractData.status === "pending_employer") {
+          const rawSlots = (contractData.slots as unknown[]) ?? [];
+          if (rawSlots.length > 0) {
+            contractUpdate.slots = rawSlots.map((s) => {
+              const slot = {...(s as Record<string, unknown>)};
+              if (slot.applicationId === applicationId) {
+                slot.wage = newWage;
+                if (newWageType !== undefined) slot.wageType = newWageType;
+              }
+              return slot;
+            });
+          }
+        }
+        t.update(contractSnap.ref, contractUpdate);
+      }
+    });
 
     // 5. 2차 attendance BulkWriter — wagePending 초기화 (500+건 대응)
     // [M-6 수정 2026-07-15] 1차 batch 커밋 성공 후 BulkWriter 실패 시 부분 커밋 발생.
@@ -16991,8 +17006,8 @@ export const callableEvaluateAndUpdateBadges = onCall(
         if (await evaluateBadge(targetUid, userData, badge)) {
           newlyEarned.push(badge.id);
         }
-      } catch {
-        // 개별 배지 평가 실패는 건너뜀 (fire-and-forget 안전성)
+      } catch (e) {
+        console.warn(`[callableEvaluateAndUpdateBadges] 배지 ${badge.id} 평가 실패 (건너뜀):`, e);
       }
     }
 

@@ -1969,6 +1969,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
 
   /// 신분증 열람 요청 다이얼로그
   Future<void> _showIdCardAccessRequestDialog() async {
+    if (_isLoading) return;
     final userProvider = context.read<UserProvider>();
     final currentUser = userProvider.currentUser;
     if (currentUser == null) {
@@ -1976,49 +1977,54 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       return;
     }
 
-    final businessId = widget.businessId ?? widget.toItem?.to.businessId;
-    final business = businessId != null
-        ? await _firestoreService.getBusinessById(businessId)
-        : null;
+    setState(() => _isLoading = true);
+    try {
+      final businessId = widget.businessId ?? widget.toItem?.to.businessId;
+      final business = businessId != null
+          ? await _firestoreService.getBusinessById(businessId)
+          : null;
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    final successCount = await IdCardHelper.showBatchRequestDialog(
-      context: context,
-      firestoreService: _firestoreService,
-      requester: {
-        'uid': currentUser.uid,
-        'name': currentUser.name,
-      },
-      business: {
-        'id': businessId ?? '',
-        'name': business?.name ?? '',
-      },
-      targets: [
-        {
-          'uid': widget.user.uid,
-          'name': widget.user.name,
-          'applicationId': widget.application?.id ?? '',
+      final successCount = await IdCardHelper.showBatchRequestDialog(
+        context: context,
+        firestoreService: _firestoreService,
+        requester: {
+          'uid': currentUser.uid,
+          'name': currentUser.name,
         },
-      ],
-    );
+        business: {
+          'id': businessId ?? '',
+          'name': business?.name ?? '',
+        },
+        targets: [
+          {
+            'uid': widget.user.uid,
+            'name': widget.user.name,
+            'applicationId': widget.application?.id ?? '',
+          },
+        ],
+      );
 
-    if (successCount > 0 && mounted) {
-      setState(() {
-        _hasChanges = true;
-        _idCardAccess = IdCardAccessRequestModel(
-          id: '',
-          requesterId: currentUser.uid,
-          requesterName: currentUser.name,
-          requesterBusinessId: businessId ?? '',
-          requesterBusinessName: business?.name ?? '',
-          targetUserId: widget.user.uid,
-          targetUserName: widget.user.name,
-          reason: IdCardAccessReason.other,  // 실제 선택값은 Helper에서 처리
-          status: IdCardAccessStatus.pending,
-          requestedAt: DateTime.now(),
-        );
-      });
+      if (successCount > 0 && mounted) {
+        setState(() {
+          _hasChanges = true;
+          _idCardAccess = IdCardAccessRequestModel(
+            id: '',
+            requesterId: currentUser.uid,
+            requesterName: currentUser.name,
+            requesterBusinessId: businessId ?? '',
+            requesterBusinessName: business?.name ?? '',
+            targetUserId: widget.user.uid,
+            targetUserName: widget.user.name,
+            reason: IdCardAccessReason.other,
+            status: IdCardAccessStatus.pending,
+            requestedAt: DateTime.now(),
+          );
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
   
@@ -2049,6 +2055,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         Navigator.pop(context, true);
         ToastHelper.showSuccess('확정이 취소되었습니다');
         widget.onStatusChanged?.call();
+      } else if (mounted && !success) {
+        ToastHelper.showError('확정 취소 처리 중 오류가 발생했습니다');
       }
     } catch (e) {
       debugPrint('❌ 확정 취소 실패: $e');

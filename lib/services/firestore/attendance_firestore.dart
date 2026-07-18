@@ -290,18 +290,15 @@ extension AttendanceFirestore on FirestoreService {
     required String businessId,
     required DateTime date,
   }) async {
-    try {
-      final dateStart = DateTime(date.year, date.month, date.day);
-      final dateEnd = dateStart.add(const Duration(days: 1));
-      return await _callableGetAdminAttendances(
-        businessId: businessId,
-        startDate: dateStart,
-        endDate: dateEnd,
-      );
-    } catch (e) {
-      debugPrint('❌ 출근 기록 조회 실패: $e');
-      return [];
-    }
+    // try-catch 제거 — 호출자(loadHasWorkedMap)가 rethrow를 담당
+    // return [] 시 "근무자 없음"으로 오인되어 확정취소 가드가 오동작할 수 있음
+    final dateStart = DateTime(date.year, date.month, date.day);
+    final dateEnd = dateStart.add(const Duration(days: 1));
+    return _callableGetAdminAttendances(
+      businessId: businessId,
+      startDate: dateStart,
+      endDate: dateEnd,
+    );
   }
   /// 사용자별 월별 출근 기록 조회 (CF 프록시)
   /// attendance list 규칙에서 isUser() 제거 → CF로 auth.uid 기반 서버 검증
