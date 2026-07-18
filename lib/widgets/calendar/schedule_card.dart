@@ -595,6 +595,19 @@ class ScheduleCard extends StatelessWidget {
     );
     final reviewRequest =
         await MonthlyReviewService().getReviewRequest(requestKey);
+    if (!context.mounted) return;
+
+    final List<AttendanceModel> attendances =
+        await FirestoreService().getMyMonthlyAttendances(
+      userId: application.uid,
+      year: workDate.year,
+      month: workDate.month,
+    );
+    final workDaysInMonth = attendances
+        .where((a) =>
+            a.businessId == application.businessId &&
+            (a.isWageConfirmed || a.isWageTransferred))
+        .length;
 
     if (!context.mounted) return;
 
@@ -605,7 +618,7 @@ class ScheduleCard extends StatelessWidget {
       businessName: application.businessName,
       reviewYear: workDate.year,
       reviewMonth: workDate.month,
-      workDaysInMonth: 1,
+      workDaysInMonth: workDaysInMonth,
       requestId: reviewRequest?.id,
     );
     

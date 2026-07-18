@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../models/core/application_model.dart';
+import '../../models/core/attendance_model.dart';
 import '../../models/core/employment_contract_model.dart';
 import '../../models/core/notification_model.dart';
 import '../../models/core/monthly_review_model.dart';
@@ -1517,6 +1518,18 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       final reviewRequest =
           await MonthlyReviewService().getReviewRequest(requestKey);
       if (!mounted) return;
+      final List<AttendanceModel> attendances =
+          await FirestoreService().getMyMonthlyAttendances(
+        userId: uid,
+        year: reviewDate.year,
+        month: reviewDate.month,
+      );
+      if (!mounted) return;
+      final workDaysInMonth = attendances
+          .where((a) =>
+              a.businessId == app.businessId &&
+              (a.isWageConfirmed || a.isWageTransferred))
+          .length;
 
       final result = await showBusinessReviewDialog(
         context,
@@ -1525,7 +1538,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         businessName: app.businessName,
         reviewYear: reviewDate.year,
         reviewMonth: reviewDate.month,
-        workDaysInMonth: 1,
+        workDaysInMonth: workDaysInMonth,
         requestId: reviewRequest?.id,
       );
 
