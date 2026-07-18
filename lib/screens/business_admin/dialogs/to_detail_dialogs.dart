@@ -116,11 +116,11 @@ class TODetailDialogs {
         actions: [
           if (confirmedList.isNotEmpty)
             TextButton.icon(
-              onPressed: () {
+              onPressed: () async {
                 final lines = confirmedList.map((a) =>
                   '${a['userName']}  ${a['userPhone']}  ${a['workType']}(${a['workTime']})'
                 ).join('\n');
-                Clipboard.setData(ClipboardData(text: lines));
+                await Clipboard.setData(ClipboardData(text: lines));
                 ToastHelper.showSuccess('연락처가 클립보드에 복사되었습니다');
               },
               icon: const Icon(Icons.content_copy),

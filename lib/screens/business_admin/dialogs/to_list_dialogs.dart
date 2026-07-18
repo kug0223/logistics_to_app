@@ -60,6 +60,8 @@ class TOListDialogs {
         if (success) {
           if (!context.mounted) return;
           onChanged();
+        } else {
+          if (context.mounted) ToastHelper.showError('공고 삭제에 실패했습니다.');
         }
       } catch (e) {
         debugPrint('❌ TO 삭제 실패: $e');
