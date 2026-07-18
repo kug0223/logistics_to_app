@@ -249,7 +249,7 @@ service cloud.firestore {
                          'blacklistReason', 'blacklistedBy', 'blacklistedAt',
                          'unblacklistedBy', 'unblacklistedAt',
                          'trustScore', 'noShowCount', 'lateCount', 'totalWorkDays', 'lastRestartAt',
-                         'restrictedUntil', 'isAdmin', 'sealBase64',
+                         'restrictedUntil', 'isAdmin', 'sealBase64', 'signatureBase64',
                          'accountStatus', 'rejectionReason', 'approvedBy', 'approvedAt',
                          'rejectedBy', 'rejectedAt',
                          'ci', 'ciHash', 'passVerifiedAt',

@@ -4974,6 +4974,36 @@ export const callableSaveSeal = onCall(
   }
 );
 
+// ── callableSaveUserSignature ────────────────────────────
+// 근무자 사전 등록 서명 저장/삭제 — Admin SDK 경유로 signatureBase64 필드를 저장.
+// firestore.rules에서 클라이언트 직접 쓰기를 차단하므로 반드시 이 CF 경유 필요.
+// Input:  { signatureBase64: string|null }  (null = 삭제)
+// Output: { success: true }
+export const callableSaveUserSignature = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+    const {signatureBase64} = request.data as {signatureBase64: string | null};
+
+    if (signatureBase64 !== null && signatureBase64 !== undefined) {
+      // base64 500KB 원본 기준 → base64 문자열 최대 ~670KB (callableSaveSeal과 동일 기준)
+      if (signatureBase64.length > 700000) {
+        throw new HttpsError("invalid-argument", "이미지 크기가 너무 큽니다 (최대 500KB).");
+      }
+      const b64Body = signatureBase64.startsWith("data:") ? signatureBase64.split(",")[1] : signatureBase64;
+      if (!b64Body || !/^[A-Za-z0-9+/]+=*$/.test(b64Body)) {
+        throw new HttpsError("invalid-argument", "signatureBase64가 유효한 Base64 형식이 아닙니다.");
+      }
+      await db.collection("users").doc(uid).update({signatureBase64});
+    } else {
+      await db.collection("users").doc(uid).update({signatureBase64: admin.firestore.FieldValue.delete()});
+    }
+
+    return {success: true};
+  }
+);
+
 // ── verifyPassAuth ───────────────────────────────────────
 // 다날 encData 복호화 → 연령/CI 중복/재가입 검증 → passToken(15분) 발급
 // Input:  { encData, txSeq, purpose, role? }

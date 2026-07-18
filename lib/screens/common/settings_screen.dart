@@ -1601,10 +1601,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return;
       }
       final b64 = base64Encode(bytes);
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .update({'signatureBase64': b64});
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableSaveUserSignature')
+          .call({'signatureBase64': b64});
       await userProvider.refreshUserData();
       if (mounted) ToastHelper.showSuccess('서명이 등록되었습니다');
     } catch (e) {
@@ -1626,10 +1625,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (uid == null) return;
 
     try {
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .update({'signatureBase64': null});
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableSaveUserSignature')
+          .call({'signatureBase64': null});
       await userProvider.refreshUserData();
       if (mounted) ToastHelper.showSuccess('서명이 삭제되었습니다');
     } catch (e) {

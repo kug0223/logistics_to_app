@@ -262,27 +262,29 @@ class ContractService {
 
   // ── 사용자 서명 저장/삭제 ─────────────────────────────────────
 
-  /// Firestore users/{uid}에 signatureBase64 저장
+  /// users/{uid}.signatureBase64 저장 (CF callableSaveUserSignature 경유)
   Future<void> saveUserSignature({
     required String uid,
     required String base64,
   }) async {
-    // [SEC-CS01] 본인 문서만 수정 허용 — Firestore 규칙 단일 방어선 보완
     final currentUid = FirebaseAuth.instance.currentUser?.uid;
     if (currentUid == null || currentUid != uid) {
       throw StateError('saveUserSignature: 본인 서명만 저장 가능합니다.');
     }
-    await _db.collection('users').doc(uid).update({'signatureBase64': base64});
+    await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableSaveUserSignature')
+        .call({'signatureBase64': base64});
   }
 
-  /// 저장된 서명 삭제
+  /// 저장된 서명 삭제 (CF callableSaveUserSignature 경유)
   Future<void> clearUserSignature(String uid) async {
-    // [SEC-CS01] 본인 문서만 수정 허용
     final currentUid = FirebaseAuth.instance.currentUser?.uid;
     if (currentUid == null || currentUid != uid) {
       throw StateError('clearUserSignature: 본인 서명만 삭제 가능합니다.');
     }
-    await _db.collection('users').doc(uid).update({'signatureBase64': null});
+    await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableSaveUserSignature')
+        .call({'signatureBase64': null});
   }
 
   /// 기존 계약서에 템플릿 조항 적용 (articles가 비어있던 구 계약서용)
