@@ -356,26 +356,28 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
 
     if (!mounted) return;
     setState(() => _isActing = true);
-    bool confirmed = false;
-    if (isDanger) {
-      confirmed = await DialogHelper.showDangerConfirm(
-        context,
-        title: confirmTitle,
-        message: confirmMessage,
-        confirmText: confirmText,
-      );
-    } else {
-      confirmed = await DialogHelper.showConfirm(
-        context,
-        title: confirmTitle,
-        message: confirmMessage,
-        confirmText: confirmText,
-      );
-    }
-    if (mounted) setState(() => _isActing = false);
-
-    if (confirmed && mounted) {
-      Navigator.pop(context, WageDialogResult(action: action, wage: _wage));
+    try {
+      bool confirmed = false;
+      if (isDanger) {
+        confirmed = await DialogHelper.showDangerConfirm(
+          context,
+          title: confirmTitle,
+          message: confirmMessage,
+          confirmText: confirmText,
+        );
+      } else {
+        confirmed = await DialogHelper.showConfirm(
+          context,
+          title: confirmTitle,
+          message: confirmMessage,
+          confirmText: confirmText,
+        );
+      }
+      if (confirmed && mounted) {
+        Navigator.pop(context, WageDialogResult(action: action, wage: _wage));
+      }
+    } finally {
+      if (mounted) setState(() => _isActing = false);
     }
   }
 

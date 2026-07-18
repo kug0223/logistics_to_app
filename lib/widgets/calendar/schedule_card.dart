@@ -299,13 +299,18 @@ class ScheduleCard extends StatelessWidget {
     // 이미 이 달에 해당 사업장 리뷰를 작성했는지 확인
     bool hasReviewedThisMonth = false;
     if (hasWorked) {
-      final workDate = application.workDate;
-      hasReviewedThisMonth = await MonthlyReviewService().hasWorkerReviewThisMonth(
-        businessId: application.businessId,
-        reviewerId: application.uid,
-        year: workDate.year,
-        month: workDate.month,
-      );
+      try {
+        final workDate = application.workDate;
+        hasReviewedThisMonth = await MonthlyReviewService().hasWorkerReviewThisMonth(
+          businessId: application.businessId,
+          reviewerId: application.uid,
+          year: workDate.year,
+          month: workDate.month,
+        );
+      } catch (e) {
+        debugPrint('❌ 리뷰 여부 확인 오류: $e');
+        // hasReviewedThisMonth = false 유지 → 리뷰 버튼 표시
+      }
       if (!context.mounted) return;
     }
 
@@ -547,16 +552,21 @@ class ScheduleCard extends StatelessWidget {
       // [BUG-수정] H-1: cancelApplication은 CONFIRMED/CONTRACT_PENDING 상태를 내부에서 차단해
       // success=false를 반환했음. 확정 취소는 cancelConfirmedApplication을 사용해야 함.
       // 근무자 자기 취소이므로 applyNoShowPenalty: false, canceledBy: null.
-      final success = await firestoreService.cancelConfirmedApplication(
-        application.id,
-        applyNoShowPenalty: false,
-      );
-
-      if (success && context.mounted) {
-        ToastHelper.showSuccess('근무가 취소되었습니다.');
-        onChanged?.call();
+      try {
+        final success = await firestoreService.cancelConfirmedApplication(
+          application.id,
+          applyNoShowPenalty: false,
+        );
+        if (success && context.mounted) {
+          ToastHelper.showSuccess('근무가 취소되었습니다.');
+          onChanged?.call();
+        } else if (!success && context.mounted) {
+          ToastHelper.showError('취소 처리에 실패했습니다.');
+        }
+      } catch (e) {
+        debugPrint('❌ 확정 취소 오류: $e');
+        if (context.mounted) ToastHelper.showError('취소 처리 중 오류가 발생했습니다.');
       }
-      
     } else if (application.status == AppStatus.pending) {
       // ⭐ 대기중인 경우 - 간단한 확인 후 취소
       final confirmed = await DialogHelper.showCancelConfirm(
@@ -564,17 +574,23 @@ class ScheduleCard extends StatelessWidget {
         title: '지원 취소',
         message: '정말 지원을 취소하시겠습니까?',
       );
-      
+
       if (!confirmed) return;
-      
-      final success = await firestoreService.cancelApplication(
-        application.id,
-        application.uid,
-      );
-      
-      if (success && context.mounted) {
-        ToastHelper.showSuccess('지원이 취소되었습니다.');
-        onChanged?.call();
+
+      try {
+        final success = await firestoreService.cancelApplication(
+          application.id,
+          application.uid,
+        );
+        if (success && context.mounted) {
+          ToastHelper.showSuccess('지원이 취소되었습니다.');
+          onChanged?.call();
+        } else if (!success && context.mounted) {
+          ToastHelper.showError('취소 처리에 실패했습니다.');
+        }
+      } catch (e) {
+        debugPrint('❌ 지원 취소 오류: $e');
+        if (context.mounted) ToastHelper.showError('취소 처리 중 오류가 발생했습니다.');
       }
     }
   }
@@ -902,13 +918,17 @@ class ScheduleCard extends StatelessWidget {
       wageAmount: application.wage,
     );
 
-    final requestId = await firestoreService.createScheduleChangeRequest(request);
-
-    if (requestId != null && context.mounted) {
-      ToastHelper.showSuccess('휴무 요청이 전송되었습니다');
-      onChanged?.call();
-    } else if (context.mounted) {
-      ToastHelper.showError('휴무 요청 실패');
+    try {
+      final requestId = await firestoreService.createScheduleChangeRequest(request);
+      if (requestId != null && context.mounted) {
+        ToastHelper.showSuccess('휴무 요청이 전송되었습니다');
+        onChanged?.call();
+      } else if (context.mounted) {
+        ToastHelper.showError('휴무 요청 실패');
+      }
+    } catch (e) {
+      debugPrint('❌ 휴무 요청 오류: $e');
+      if (context.mounted) ToastHelper.showError('휴무 요청 중 오류가 발생했습니다.');
     }
   }
 
@@ -1043,13 +1063,17 @@ class ScheduleCard extends StatelessWidget {
       wageAmount: application.wage,
     );
 
-    final requestId = await firestoreService.createScheduleChangeRequest(request);
-
-    if (requestId != null && context.mounted) {
-      ToastHelper.showSuccess('추가근무 취소 요청이 전송되었습니다');
-      onChanged?.call();
-    } else if (context.mounted) {
-      ToastHelper.showError('요청 실패');
+    try {
+      final requestId = await firestoreService.createScheduleChangeRequest(request);
+      if (requestId != null && context.mounted) {
+        ToastHelper.showSuccess('추가근무 취소 요청이 전송되었습니다');
+        onChanged?.call();
+      } else if (context.mounted) {
+        ToastHelper.showError('요청 실패');
+      }
+    } catch (e) {
+      debugPrint('❌ 추가근무 취소 요청 오류: $e');
+      if (context.mounted) ToastHelper.showError('추가근무 취소 요청 중 오류가 발생했습니다.');
     }
   }
 
@@ -1184,13 +1208,17 @@ class ScheduleCard extends StatelessWidget {
       wageAmount: application.wage,
     );
 
-    final requestId = await firestoreService.createScheduleChangeRequest(request);
-
-    if (requestId != null && context.mounted) {
-      ToastHelper.showSuccess('휴무 취소 요청이 전송되었습니다');
-      onChanged?.call();
-    } else if (context.mounted) {
-      ToastHelper.showError('요청 실패');
+    try {
+      final requestId = await firestoreService.createScheduleChangeRequest(request);
+      if (requestId != null && context.mounted) {
+        ToastHelper.showSuccess('휴무 취소 요청이 전송되었습니다');
+        onChanged?.call();
+      } else if (context.mounted) {
+        ToastHelper.showError('요청 실패');
+      }
+    } catch (e) {
+      debugPrint('❌ 휴무 취소 요청 오류: $e');
+      if (context.mounted) ToastHelper.showError('휴무 취소 요청 중 오류가 발생했습니다.');
     }
   }
 

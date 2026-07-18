@@ -42,6 +42,7 @@ class _RestartProgramDialogState extends State<RestartProgramDialog> {
   bool _isLoading = true;
   bool _isSubmitting = false;
   bool _canRestart = false;
+  bool _loadFailed = false;
   int? _daysRemaining;
   bool _agreed = false;
 
@@ -63,7 +64,12 @@ class _RestartProgramDialogState extends State<RestartProgramDialog> {
       });
     } catch (e) {
       debugPrint('❌ 재시작 프로그램 확인 실패: $e');
-      if (mounted) setState(() => _isLoading = false);
+      if (!mounted) return;
+      ToastHelper.showError('재시작 프로그램 정보를 불러올 수 없습니다.');
+      setState(() {
+        _loadFailed = true;
+        _isLoading = false;
+      });
     }
   }
 
@@ -139,6 +145,23 @@ class _RestartProgramDialogState extends State<RestartProgramDialog> {
   }
 
   Widget _buildContent(BuildContext context) {
+    if (_loadFailed) {
+      return Container(
+        padding: ResponsiveHelper.cardPadding(context),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline, color: AppColors.error, size: 48),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            Text(
+              '정보를 불러오는데 실패했습니다.',
+              style: ResponsiveHelper.bodyStyle(context, color: AppColors.error),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
+    }
     if (!_canRestart) {
       return _buildCooldownMessage(context);
     }
