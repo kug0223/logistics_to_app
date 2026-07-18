@@ -66,8 +66,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      // 승인된 사업장 유무 사전 조회 (메뉴 접근 가드용)
-      _loadApprovedBusinessStatus();
+      // 승인된 사업장 유무 사전 조회 (메뉴 접근 가드용) — 투어 전 완료 필수
+      await _loadApprovedBusinessStatus();
       if (!await TourHelper.isCompleted(TourHelper.adminHome)) {
         if (mounted) {
           await pushTourScreen(context, role: 'BUSINESS_ADMIN');
@@ -466,7 +466,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
                                 title: '통계',
                                 subtitle: '근태 · 급여 · 리뷰',
                                 color: theme.primaryColor,
-                                onTap: () => _safeNavigate(() async { pushAdminStatsScreen(context); }),
+                                onTap: () => _safeNavigate(() async { await pushAdminStatsScreen(context); }),
                               ),
 
                             // 6. 설정: 항상 표시

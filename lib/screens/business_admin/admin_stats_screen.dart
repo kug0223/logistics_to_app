@@ -950,7 +950,7 @@ class _LegendDot extends StatelessWidget {
 
 // ─── 진입점 ──────────────────────────────────────────────────
 
-void pushAdminStatsScreen(BuildContext context) {
+Future<void> pushAdminStatsScreen(BuildContext context) async {
   final userProvider = context.read<UserProvider>();
   final user = userProvider.currentUser;
   if (user == null) {
@@ -960,14 +960,14 @@ void pushAdminStatsScreen(BuildContext context) {
   final ids = user.managedBusinessIds;
   // 다중 사업장 관리자
   if (ids.isNotEmpty) {
-    Navigator.push(context,
+    await Navigator.push(context,
         MaterialPageRoute(builder: (_) => AdminStatsScreen(businessIds: ids)));
     return;
   }
   // 단일 사업장: BUSINESS_ADMIN은 businessId, SubAdmin은 subAdminOf → effectiveBusinessId로 통합
   final effectiveBizId = userProvider.effectiveBusinessId;
   if (effectiveBizId != null) {
-    Navigator.push(context,
+    await Navigator.push(context,
         MaterialPageRoute(builder: (_) => AdminStatsScreen(businessIds: [effectiveBizId])));
     return;
   }

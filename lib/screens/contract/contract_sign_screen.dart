@@ -393,14 +393,22 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
         final uid = userProvider.currentUser?.uid;
         if (uid != null) {
           final b64 = base64Encode(bytes);
+          bool signatureSaved = false;
           try {
             await _service.saveUserSignature(uid: uid, base64: b64);
-            if (!mounted) return;
-            await userProvider.refreshCurrentUser();
-            if (mounted) setState(() => _savedSignatureBase64 = b64);
+            signatureSaved = true;
           } catch (e) {
             debugPrint('⚠️ 서명 저장 실패: $e');
             if (mounted) ToastHelper.showWarning('서명 저장에 실패했습니다. 계약 서명은 계속 진행합니다.');
+          }
+          if (!mounted) return;
+          if (signatureSaved) {
+            setState(() => _savedSignatureBase64 = b64);
+            try {
+              await userProvider.refreshCurrentUser();
+            } catch (e) {
+              debugPrint('⚠️ 사용자 정보 갱신 실패 (서명은 저장됨): $e');
+            }
           }
         }
       }

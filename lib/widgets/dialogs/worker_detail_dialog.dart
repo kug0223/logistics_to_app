@@ -34,6 +34,7 @@ import '../../models/core/monthly_review_model.dart';
 import '../../models/core/review_request_model.dart';
 import '../../services/monthly_review_service.dart';
 import '../../widgets/common/loading_widget.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 /// 공통 근무자/지원자 상세 다이얼로그
 /// 
@@ -2293,7 +2294,6 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     if (reviewer == null) return;
 
     final now = DateTime.now();
-    final workDays = _businessHistory?['totalDays'] ?? 1;
 
     // 리뷰 기준 월: 단기는 실제 근무일, 장기는 직전 완료 달
     int reviewYear;
@@ -2345,6 +2345,32 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       return;
     }
 
+    // 실제 근무일 수: wageStatus confirmed/transferred 출근기록 건수
+    int workDaysInMonth = 0;
+    try {
+      final yearMonthStr =
+          '$reviewYear-${reviewMonth.toString().padLeft(2, '0')}';
+      final attendanceCallable =
+          FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableGetAdminAttendances',
+                  options: HttpsCallableOptions(
+                      timeout: const Duration(seconds: 30)));
+      final cfResult =
+          await attendanceCallable.call<Map<String, dynamic>>({
+        'businessId': widget.businessId!,
+        'yearMonth': yearMonthStr,
+        'userId': widget.user.uid,
+      });
+      final cfItems = (cfResult.data['items'] as List<dynamic>? ?? []);
+      workDaysInMonth = cfItems.where((e) {
+        final status = (e as Map)['wageStatus'] as String?;
+        return status == 'confirmed' || status == 'transferred';
+      }).length;
+    } catch (e) {
+      debugPrint('❌ 근무일 조회 실패: $e');
+    }
+    if (!mounted) return;
+
     final result = await showMonthlyReviewDialog(
       context,
       reviewerId: reviewer.uid,
@@ -2355,8 +2381,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       targetUserName: widget.user.name,
       reviewYear: reviewYear,
       reviewMonth: reviewMonth,
-      workDaysInMonth: workDays,
-      normalAttendanceDays: workDays,
+      workDaysInMonth: workDaysInMonth,
+      normalAttendanceDays: workDaysInMonth,
       lateDays: 0,
       requestId: reviewRequest?.id,
     );

@@ -444,7 +444,10 @@ class PayrollPaymentService {
         .collection('interim_settlement_requests')
         .doc(req.id)
         .get(const GetOptions(source: Source.server));
-    final currentStatus = reqSnap.data()?['status'] as String?;
+    if (!reqSnap.exists) {
+      throw Exception('중간정산 요청을 찾을 수 없습니다.');
+    }
+    final currentStatus = reqSnap.data()!['status'] as String?;
     // [BUG-수정] S-1: APPROVED 상태도 멱등성 체크에 포함 — 재호출 시 1단계 중복 실행 방지
     if (currentStatus == InterimSettlementRequestModel.statusProcessed ||
         currentStatus == InterimSettlementRequestModel.statusApproved) {
@@ -582,7 +585,10 @@ class PayrollPaymentService {
     final ref = _db.collection('interim_settlement_requests').doc(requestId);
     await _db.runTransaction((tx) async {
       final snap = await tx.get(ref);
-      if (snap.data()?['status'] != InterimSettlementRequestModel.statusPending) {
+      if (!snap.exists) {
+        throw Exception('중간정산 요청을 찾을 수 없습니다.');
+      }
+      if (snap.data()!['status'] != InterimSettlementRequestModel.statusPending) {
         throw Exception('이미 처리된 요청입니다.');
       }
       tx.update(ref, {
