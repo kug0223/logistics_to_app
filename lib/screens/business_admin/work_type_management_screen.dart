@@ -401,6 +401,9 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
           ToastHelper.showError('삭제에 실패했습니다');
         }
       }
+    } catch (e) {
+      debugPrint('❌ 업무유형 삭제 실패: $e');
+      if (mounted) ToastHelper.showError('삭제 중 오류가 발생했습니다');
     } finally {
       if (mounted) setState(() => _isDeleting = false);
     }

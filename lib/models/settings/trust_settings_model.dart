@@ -53,10 +53,10 @@ class RestartProgramSettings {
 
   factory RestartProgramSettings.fromMap(Map<String, dynamic> map) {
     return RestartProgramSettings(
-      resetScore: map['resetScore'] ?? 50,
-      noshowReduction: map['noshowReduction'] ?? 1,
-      lateReduction: map['lateReduction'] ?? 1,
-      cooldownDays: map['cooldownDays'] ?? 60,
+      resetScore: (map['resetScore'] as num?)?.toInt() ?? 50,
+      noshowReduction: (map['noshowReduction'] as num?)?.toInt() ?? 1,
+      lateReduction: (map['lateReduction'] as num?)?.toInt() ?? 1,
+      cooldownDays: (map['cooldownDays'] as num?)?.toInt() ?? 60,
     );
   }
 
@@ -117,11 +117,11 @@ class TrustSettingsModel {
       startScore: (map['startScore'] as num?)?.toInt() ?? 60,
       maxScore: (map['maxScore'] as num?)?.toInt() ?? 100,
       increaseRules: (map['increaseRules'] as List<dynamic>?)
-          ?.map((e) => TrustRule.tryFromMap(e as Map<String, dynamic>))
+          ?.map((e) => TrustRule.tryFromMap(Map<String, dynamic>.from(e as Map)))
           .whereType<TrustRule>()
           .toList() ?? [],
       decreaseRules: (map['decreaseRules'] as List<dynamic>?)
-          ?.map((e) => TrustRule.tryFromMap(e as Map<String, dynamic>))
+          ?.map((e) => TrustRule.tryFromMap(Map<String, dynamic>.from(e as Map)))
           .whereType<TrustRule>()
           .toList() ?? [],
       restartProgram: map['restartProgram'] != null

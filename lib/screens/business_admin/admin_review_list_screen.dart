@@ -189,6 +189,9 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
       } else {
         ToastHelper.showError('답변 등록에 실패했습니다');
       }
+    } catch (e) {
+      debugPrint('❌ 리뷰 답변 등록 실패: $e');
+      if (mounted) ToastHelper.showError('답변 등록 중 오류가 발생했습니다');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -896,6 +899,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
       }).length;
     } catch (e) {
       debugPrint('❌ 리뷰 요청 정보 로드 실패: $e');
+      if (mounted) ToastHelper.showError('추가 정보를 불러오는 데 실패했습니다');
     }
 
     if (!mounted) return;
