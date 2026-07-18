@@ -89,7 +89,7 @@ class MonthlyReviewService {
       return raw
           .map((e) {
             final m = Map<String, dynamic>.from(e);
-            final id = m['id'] as String? ?? '';
+            final id = m.remove('id') as String? ?? '';
             return ReviewRequestModel.tryFromMap(m, id);
           })
           .whereType<ReviewRequestModel>()
@@ -114,7 +114,7 @@ class MonthlyReviewService {
       return raw
           .map((e) {
             final m = Map<String, dynamic>.from(e);
-            final id = m['id'] as String? ?? '';
+            final id = m.remove('id') as String? ?? '';
             return ReviewRequestModel.tryFromMap(m, id);
           })
           .whereType<ReviewRequestModel>()
@@ -363,7 +363,7 @@ class MonthlyReviewService {
       return raw
           .map((e) {
             final m = Map<String, dynamic>.from(e);
-            final id = m['id'] as String? ?? '';
+            final id = m.remove('id') as String? ?? '';
             return MonthlyReviewModel.tryFromMap(m, id);
           })
           .whereType<MonthlyReviewModel>()
@@ -459,7 +459,7 @@ class MonthlyReviewService {
       return raw
           .map((e) {
             final m = Map<String, dynamic>.from(e);
-            final id = m['id'] as String? ?? '';
+            final id = m.remove('id') as String? ?? '';
             return MonthlyReviewModel.tryFromMap(m, id);
           })
           .whereType<MonthlyReviewModel>()
@@ -762,7 +762,7 @@ class MonthlyReviewService {
       final records = page
           .map((e) {
             final m = Map<String, dynamic>.from(e);
-            final id = m['id'] as String? ?? '';
+            final id = m.remove('id') as String? ?? '';
             return MonthlyReviewModel.tryFromMap(m, id);
           })
           .whereType<MonthlyReviewModel>()
@@ -800,7 +800,7 @@ class MonthlyReviewService {
       final records = page
           .map((e) {
             final m = Map<String, dynamic>.from(e);
-            final id = m['id'] as String? ?? '';
+            final id = m.remove('id') as String? ?? '';
             return MonthlyReviewModel.tryFromMap(m, id);
           })
           .whereType<MonthlyReviewModel>()

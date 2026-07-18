@@ -1236,7 +1236,7 @@ extension ApplicationFirestore on FirestoreService {
     final workDateMs = appInfo['workDateMs'] as int? ?? 0;
     final startDateMs = appInfo['startDateMs'] as int?;
     final workEndDateMs = appInfo['workEndDateMs'] as int?;
-    final workDays = (appInfo['workDays'] as List?)?.cast<String>();
+    final workDays = (appInfo['workDays'] as List?)?.whereType<String>().toList();
 
     if (toId != null) clearCache(toId: toId);
     if (uid.isNotEmpty) invalidateMyApplicationsCache(uid);
@@ -1611,8 +1611,9 @@ extension ApplicationFirestore on FirestoreService {
         'newStartDateMs': newStartDate.millisecondsSinceEpoch,
         'newEndDateMs': newEndDate.millisecondsSinceEpoch,
       });
-      final data = result.data as Map<dynamic, dynamic>;
-      final newApplicationId = data['newApplicationId'] as String;
+      final data = (result.data as Map<dynamic, dynamic>?) ?? {};
+      final newApplicationId = data['newApplicationId'] as String? ?? '';
+      if (newApplicationId.isEmpty) throw Exception('계약 연장 응답에 지원서 ID가 없습니다.');
       // CF 완료 후 신규 application 문서 fetch
       final newDoc = await _firestore
           .collection('applications')

@@ -1,3 +1,4 @@
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../models/core/work_detail_model.dart';
@@ -92,6 +93,11 @@ class ApplyDialog {
         ToastHelper.showError('지원에 실패했습니다.');
         return false;
       }
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('❌ 지원 실패 (CF): ${e.code} ${e.message}');
+      if (!context.mounted) return false;
+      ToastHelper.showError(e.message ?? '지원 중 오류가 발생했습니다.');
+      return false;
     } catch (e) {
       debugPrint('❌ 지원 실패: $e');
       if (!context.mounted) return false;

@@ -50,7 +50,7 @@ class ScheduleCalendar extends StatelessWidget {
           : CalendarHelper.getEventsForDay(day, applications, selectedFilter),
       markerBuilder: (context, date, events) {
         if (events.isEmpty) return null;
-        final apps = events.cast<ApplicationModel>();
+        final apps = events.whereType<ApplicationModel>().toList();
 
         final shortTermApps = apps.where((a) => !a.isLongTermApplication).toList();
         final longTermApps = apps.where((a) => a.isLongTermApplication).toList();
