@@ -38,7 +38,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
   final FirestoreService _firestoreService = FirestoreService();
 
   List<BusinessWorkTypeModel> _workTypes = [];
-  bool _isLoading = true;
+  bool _isLoading = false; // initState → _loadWorkTypes() 가드 통과를 위해 false 초기화
   bool _isReordering = false;
   bool _isDeleting = false;
 

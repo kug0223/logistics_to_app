@@ -566,6 +566,12 @@ class WorkDetailManagementDialog {
       } catch (e) {
         debugPrint('❌ 업무 일괄 재오픈 실패: $e');
         if (context.mounted) ToastHelper.showError('일부 업무 재오픈에 실패했습니다');
+        // 부분 성공된 변경사항을 부모 화면에 반영 (_handleBulkClose와 동일한 패턴)
+        if (context.mounted) {
+          Navigator.pop(context);
+          onLocalStatsChanged?.call();
+          onComplete();
+        }
       }
     } finally {
       _isProcessing = false;
@@ -616,6 +622,12 @@ class WorkDetailManagementDialog {
     } catch (e) {
       debugPrint('❌ 업무 일괄 긴급모집 종료 실패: $e');
       if (context.mounted) ToastHelper.showError('일부 긴급모집 종료에 실패했습니다');
+      // 부분 성공된 변경사항을 부모 화면에 반영
+      if (context.mounted) {
+        Navigator.pop(context);
+        onLocalStatsChanged?.call();
+        onComplete();
+      }
     } finally {
       _isProcessing = false;
     }

@@ -299,16 +299,15 @@ class ContractService {
     final contractRef = _db.collection('employment_contracts').doc(contractId);
     await _db.runTransaction((tx) async {
       final snap = await tx.get(contractRef);
-      if (snap.exists) {
-        final contract = EmploymentContractModel.tryFromFirestore(snap);
-        if (contract == null) throw StateError('계약서 데이터를 파싱할 수 없습니다.');
-        if (contract.status == ContractStatus.pendingWorker) {
-          throw StateError('근무자 서명 대기 중인 계약서는 조항을 수정할 수 없습니다. 수정이 필요하면 계약서를 재발송하세요.');
-        }
-        if (contract.status == ContractStatus.completed ||
-            contract.status == ContractStatus.voided) {
-          throw StateError('서명 완료 또는 무효화된 계약서는 수정할 수 없습니다.');
-        }
+      if (!snap.exists) throw StateError('계약서를 찾을 수 없습니다.');
+      final contract = EmploymentContractModel.tryFromFirestore(snap);
+      if (contract == null) throw StateError('계약서 데이터를 파싱할 수 없습니다.');
+      if (contract.status == ContractStatus.pendingWorker) {
+        throw StateError('근무자 서명 대기 중인 계약서는 조항을 수정할 수 없습니다. 수정이 필요하면 계약서를 재발송하세요.');
+      }
+      if (contract.status == ContractStatus.completed ||
+          contract.status == ContractStatus.voided) {
+        throw StateError('서명 완료 또는 무효화된 계약서는 수정할 수 없습니다.');
       }
       tx.update(contractRef, {
         'articles': articles.map((a) => a.toMap()).toList(),
