@@ -169,7 +169,10 @@ class NotificationProvider with ChangeNotifier {
       _hasMore = page.hasMore;
     } catch (e) {
       debugPrint('❌ 알림 더 보기 실패: $e');
-      _loadMoreFailed = true;
+      // [GEN-FIX] reload()로 세대가 바뀐 경우 stale 에러 배너 표시 차단
+      if (!_disposed && genSnapshot == _generation) {
+        _loadMoreFailed = true;
+      }
     } finally {
       if (!_disposed) {
         _isLoadingMore = false;

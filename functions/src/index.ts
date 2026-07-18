@@ -17059,6 +17059,7 @@ async function evaluateBadge(
     let streak = 0;
     for (const doc of snap.docs) {
       const status = doc.data().status as string | undefined;
+      // [DESIGN] late(지각)는 연속 출근 스트릭을 끊는 의도적 설계 — workDays 배지(late 허용)와 구분
       if (status === "present" || status === "early_leave") {
         streak++;
         if (streak >= badge.conditionValue) return true;
