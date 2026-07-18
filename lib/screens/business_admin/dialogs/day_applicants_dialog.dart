@@ -320,7 +320,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                     a.status != AttendanceModel.statusNoShow)
                 .length,
           ));
-    } catch (_) {
+    } catch (e) {
+      debugPrint('⚠️ _loadWeeklyCount 조회 실패 (빈 맵 반환): $e');
       return {};
     }
   }

@@ -29,6 +29,7 @@ class LongTermWorkManagementDialog extends StatefulWidget {
 class _LongTermWorkManagementDialogState
     extends State<LongTermWorkManagementDialog> {
   final FirestoreService _firestoreService = FirestoreService();
+  bool _isProcessing = false;
 
   @override
   Widget build(BuildContext context) {
@@ -373,76 +374,80 @@ class _LongTermWorkManagementDialogState
 
   /// 퇴사 요청
   Future<void> _handleResignRequest(ApplicationModel app) async {
-    // 퇴사 희망일 선택
-    final resignDate = await DatePickerBottomSheet.show(
-      context: context,
-      title: '퇴사 희망일 선택',
-      minDate: DateTime.now(),
-      maxDate: app.workEndDate ?? DateTime.now().add(const Duration(days: 365)),
-    );
-
-    if (resignDate == null || !mounted) return;
-
-    // 확인 다이얼로그
-    final confirmed = await DialogHelper.showConfirm(
-      context,
-      title: '퇴사 요청',
-      message:
-          '${DateFormat('yyyy년 M월 d일').format(resignDate)}자로 퇴사 요청합니다.\n\n'
-          '✓ 관리자가 3일 이내에 승인/거절합니다\n'
-          '✓ 3일 후에도 처리가 없으면 자동 승인됩니다\n'
-          '✓ 승인 전까지 요청을 취소할 수 있습니다\n\n'
-          '요청하시겠습니까?',
-      confirmText: '퇴사 요청',
-      confirmColor: AppColors.error,
-    );
-
-    if (!confirmed || !mounted) return;
-
+    if (_isProcessing) return;
+    setState(() => _isProcessing = true);
     try {
+      final resignDate = await DatePickerBottomSheet.show(
+        context: context,
+        title: '퇴사 희망일 선택',
+        minDate: DateTime.now(),
+        maxDate: app.workEndDate ?? DateTime.now().add(const Duration(days: 365)),
+      );
+
+      if (resignDate == null || !mounted) return;
+
+      final confirmed = await DialogHelper.showConfirm(
+        context,
+        title: '퇴사 요청',
+        message:
+            '${DateFormat('yyyy년 M월 d일').format(resignDate)}자로 퇴사 요청합니다.\n\n'
+            '✓ 관리자가 3일 이내에 승인/거절합니다\n'
+            '✓ 3일 후에도 처리가 없으면 자동 승인됩니다\n'
+            '✓ 승인 전까지 요청을 취소할 수 있습니다\n\n'
+            '요청하시겠습니까?',
+        confirmText: '퇴사 요청',
+        confirmColor: AppColors.error,
+      );
+
+      if (!confirmed || !mounted) return;
+
       final success = await _firestoreService.requestResignation(
         applicationId: app.id,
         resignDate: resignDate,
       );
 
-      if (success && mounted) {
+      if (!mounted) return;
+      if (success) {
         ToastHelper.showSuccess('퇴사 요청이 완료되었습니다.');
         widget.onChanged();
-      } else if (mounted) {
+      } else {
         ToastHelper.showError('퇴사 요청 중 오류가 발생했습니다.');
       }
     } catch (e) {
-      if (mounted) {
-        ToastHelper.showError('퇴사 요청 중 오류가 발생했습니다.');
-      }
+      if (mounted) ToastHelper.showError('퇴사 요청 중 오류가 발생했습니다.');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
   /// 퇴사 요청 취소
   Future<void> _handleCancelResignRequest(ApplicationModel app) async {
-    final confirmed = await DialogHelper.showConfirm(
-      context,
-      title: '퇴사 요청 취소',
-      message: '퇴사 요청을 취소하시겠습니까?',
-      confirmText: '취소하기',
-      confirmColor: AppColors.warning,
-    );
-
-    if (!confirmed || !mounted) return;
-
+    if (_isProcessing) return;
+    setState(() => _isProcessing = true);
     try {
+      final confirmed = await DialogHelper.showConfirm(
+        context,
+        title: '퇴사 요청 취소',
+        message: '퇴사 요청을 취소하시겠습니까?',
+        confirmText: '취소하기',
+        confirmColor: AppColors.warning,
+      );
+
+      if (!confirmed || !mounted) return;
+
       final success = await _firestoreService.cancelResignRequest(app.id);
 
-      if (success && mounted) {
+      if (!mounted) return;
+      if (success) {
         ToastHelper.showSuccess('퇴사 요청이 취소되었습니다.');
         widget.onChanged();
-      } else if (mounted) {
+      } else {
         ToastHelper.showError('취소 중 오류가 발생했습니다.');
       }
     } catch (e) {
-      if (mounted) {
-        ToastHelper.showError('취소 중 오류가 발생했습니다.');
-      }
+      if (mounted) ToastHelper.showError('취소 중 오류가 발생했습니다.');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 }
