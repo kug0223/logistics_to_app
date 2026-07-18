@@ -1467,7 +1467,17 @@ export const onReviewCreated = onDocumentCreated(
 
     // 양쪽 모두 제출 → 즉시 동시 공개
     const reviewIds: string[] = [reviewId];
-    if (otherReviewId) reviewIds.push(otherReviewId);
+    if (otherReviewId) {
+      // [M1-FIX] 클라이언트가 workerReviewId/adminReviewId를 가짜 ID로 덮어쓰면
+      // batch.update()가 NOT_FOUND 오류 → 배치 전체 실패 → 상대방 리뷰 영구 미공개.
+      // 존재 확인 후 배치에 추가 (미존재 시 skip — 배치 부분 성공 허용)
+      const otherSnap = await db.collection("monthly_reviews").doc(otherReviewId).get();
+      if (otherSnap.exists) {
+        reviewIds.push(otherReviewId);
+      } else {
+        console.warn(`[리뷰 공개] otherReviewId 문서 미존재 — 상대방 리뷰 공개 스킵: ${otherReviewId}`);
+      }
+    }
 
     const batch = db.batch();
     for (const rid of reviewIds) {
@@ -1513,6 +1523,11 @@ export const onWageConfirmed = onDocumentUpdated(
       before.wageStatus === "confirmed" ||
       after.wageStatus !== "confirmed"
     ) return;
+
+    // [M2-FIX] absent/NO_SHOW는 실제 근무 없음 — 리뷰 요청 생성 불필요
+    // processAutoAbsent, callableBatchSetNoShow 모두 wageStatus:"confirmed"를 함께 설정하므로 트리거됨
+    const docStatus = after.status as string | undefined;
+    if (docStatus === "absent" || docStatus === "NO_SHOW") return;
 
     const applicationId = after.applicationId as string | undefined;
     if (!applicationId) return;
