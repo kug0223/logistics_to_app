@@ -108,6 +108,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
                             } else {
                               ToastHelper.showError('읽음 처리에 실패했습니다');
                             }
+                          } catch (e) {
+                            debugPrint('❌ 전체 읽음 처리 오류: $e');
+                            if (mounted) ToastHelper.showError('읽음 처리에 실패했습니다');
                           } finally {
                             if (mounted) setState(() => _isMarkingAllRead = false);
                           }
@@ -284,12 +287,17 @@ class _NotificationScreenState extends State<NotificationScreen> {
             notification: notification,
             onTap: () => _handleNotificationTap(context, notification, provider),
             onDismiss: () async {
-              final success = await provider.deleteNotification(notification.id);
-              if (!mounted) return;
-              if (success) {
-                ToastHelper.showSuccess('알림이 삭제되었습니다');
-              } else {
-                ToastHelper.showError('알림 삭제에 실패했습니다');
+              try {
+                final success = await provider.deleteNotification(notification.id);
+                if (!mounted) return;
+                if (success) {
+                  ToastHelper.showSuccess('알림이 삭제되었습니다');
+                } else {
+                  ToastHelper.showError('알림 삭제에 실패했습니다');
+                }
+              } catch (e) {
+                debugPrint('❌ 알림 삭제 오류: $e');
+                if (mounted) ToastHelper.showError('알림 삭제에 실패했습니다');
               }
             },
           );

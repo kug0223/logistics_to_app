@@ -2661,13 +2661,17 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     // 최신 출퇴근 기록·workDetail을 Firestore에서 재조회
     setState(() => _isLoading = true);
     try {
-    final appIds = _confirmedWorkers.map((w) => w.id).toList();
-    final attendanceFuture = _getAttendanceRecords(appIds);
-    final workDetailFuture = _getWorkDetailTimes();
-    _attendanceMap = await attendanceFuture;
-    if (!mounted) return;
-    _workDetailTimeMap = await workDetailFuture;
-    if (!mounted) return;
+      final appIds = _confirmedWorkers.map((w) => w.id).toList();
+      final attendanceFuture = _getAttendanceRecords(appIds);
+      final workDetailFuture = _getWorkDetailTimes();
+      _attendanceMap = await attendanceFuture;
+      if (!mounted) return;
+      _workDetailTimeMap = await workDetailFuture;
+      if (!mounted) return;
+    } catch (e) {
+      debugPrint('❌ 출퇴근 기록 재조회 실패: $e');
+      if (mounted) ToastHelper.showError('출퇴근 기록을 불러오는 데 실패했습니다');
+      return;
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

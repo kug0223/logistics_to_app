@@ -72,6 +72,7 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
     } catch (e) {
       debugPrint('❌ 태그 로드 실패: $e');
       _setDefaultTags();
+      if (mounted) ToastHelper.showError('태그 설정을 불러오는 데 실패했습니다');
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);

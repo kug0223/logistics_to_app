@@ -66,6 +66,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
     } catch (e) {
       debugPrint('❌ 배지 로드 실패: $e');
       _badges = BadgeModel.defaultBadges();
+      if (mounted) ToastHelper.showError('배지 정보를 불러오는 데 실패했습니다');
     } finally {
       if (mounted) setLoading(false);
     }
