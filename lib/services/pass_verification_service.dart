@@ -1,6 +1,10 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
+import 'package:iamport_flutter/iamport_flutter.dart';
+import 'package:iamport_flutter/model/certification_data.dart';
+import '../utils/navigation_key.dart';
 import '../utils/toast_helper.dart';
 
 /// PASS 본인인증 결과 데이터
@@ -20,23 +24,23 @@ class PassAuthResult {
   });
 }
 
-/// PASS 본인인증 서비스
+/// PASS 본인인증 서비스 — PortOne(포트원) SDK 기반
 ///
-/// [TODO-DANAL] kDebugMode에서는 mock 데이터를 반환합니다.
-/// 다날 계약 완료 후 아래 단계로 실제 연결:
-///   1. initiatePassAuth CF에서 다날 txSeq + authUrl 수신
-///   2. WebView로 authUrl 오픈
-///   3. 인증 완료 후 encData 수신
-///   4. verifyPassAuth CF로 복호화 + CI 검증
+/// [kDebugMode]에서는 mock 데이터를 반환합니다.
+/// 운영 환경에서는 iamport_flutter → verifyPassAuth CF → passToken 흐름으로 처리됩니다.
 class PassVerificationService {
   static final _fn = FirebaseFunctions.instanceFor(region: 'asia-northeast3');
+
+  /// PortOne 가맹점 식별코드 (포트원 콘솔 > 내 식별코드·API Keys)
+  /// 계약 후 실제 코드로 교체 필요
+  static const _portoneUserCode = 'imp00000000';
 
   /// PASS 인증 실행
   ///
   /// [purpose]: 'register' (가입) | 'resetPassword' (비밀번호 찾기)
   /// [role]: 'USER' | 'BUSINESS_ADMIN' (가입 시 중복 체크에 사용)
   ///
-  /// 반환값이 null이면 사용자가 인증을 취소한 것입니다.
+  /// 반환값이 null이면 사용자가 인증을 취소하거나 오류가 발생한 것입니다.
   static Future<PassAuthResult?> authenticate({
     required String purpose,
     String role = 'USER',
@@ -45,20 +49,61 @@ class PassVerificationService {
       return _mockAuthenticate(purpose: purpose);
     }
 
-    // [TODO-DANAL] 실제 다날 WebView 인증 흐름
-    // 1. CF initiatePassAuth 호출 → txSeq + authUrl 수신
-    // 2. PassAuthWebViewPage 열기 (WebView)
-    // 3. 인증 완료 콜백에서 encData 수신
-    // 4. CF verifyPassAuth 호출 → PassAuthResult 반환
-    // 릴리즈 빌드에서 throw가 아닌 graceful fallback — UnimplementedError 던지면 앱 크래시
-    ToastHelper.showInfo('PASS 인증은 현재 준비 중입니다. 잠시 후 이용해주세요.');
-    return null;
+    final completer = Completer<PassAuthResult?>();
+    final merchantUid = 'cert_${DateTime.now().millisecondsSinceEpoch}';
+
+    IamportCertification.certification(
+      navigatorKey,
+      userCode: _portoneUserCode,
+      data: CertificationData(
+        pg: 'danal',
+        merchantUid: merchantUid,
+        name: '',
+        phone: '',
+        minAge: 19,
+      ),
+      callback: (IamportResponse response) async {
+        if (response.success != true || response.impUid == null) {
+          // 사용자 취소 또는 인증 실패
+          if (response.errorMsg != null && response.errorMsg!.isNotEmpty) {
+            debugPrint('⚠️ [PassVerificationService] 인증 실패: ${response.errorMsg}');
+          }
+          completer.complete(null);
+          return;
+        }
+
+        try {
+          final result = await _fn
+              .httpsCallable(
+                'verifyPassAuth',
+                options: HttpsCallableOptions(timeout: const Duration(seconds: 15)),
+              )
+              .call({
+            'imp_uid': response.impUid,
+            'purpose': purpose,
+            'role': role,
+          });
+
+          final data = Map<String, dynamic>.from(result.data as Map);
+          completer.complete(PassAuthResult(
+            name: data['name'] as String,
+            gender: data['gender'] as String,
+            birthDate: _parseBirthDate(data['birthDate'] as String),
+            phone: data['phone'] as String,
+            passToken: data['passToken'] as String,
+          ));
+        } catch (e) {
+          debugPrint('❌ [PassVerificationService] verifyPassAuth 실패: $e');
+          ToastHelper.showError('본인인증 처리 중 오류가 발생했습니다.');
+          completer.complete(null);
+        }
+      },
+    );
+
+    return completer.future;
   }
 
   /// 비밀번호 찾기용 PASS 인증 후 Custom Token 발급
-  ///
-  /// [주의] 현재 LoginScreen은 이 메서드를 사용하지 않고 CF를 직접 호출함.
-  /// 이 메서드는 향후 다른 진입점(예: 딥링크)에서 재사용을 위해 남겨둠.
   ///
   /// [passToken]: authenticate()에서 받은 토큰
   /// [username]: 비밀번호를 찾을 계정 아이디
@@ -69,18 +114,16 @@ class PassVerificationService {
     required String username,
   }) async {
     if (kDebugMode) {
-      // debug 모드: CF 호출 없이 mock 토큰 반환
-      // 실제 Firebase signInWithCustomToken에는 사용 불가 — UX 흐름 테스트용
       return 'mock-custom-token-for-debug';
     }
 
-    // [TODO-DANAL] 실제 CF 호출
     try {
       final result = await _fn
-          .httpsCallable('resetPasswordWithPass',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
+          .httpsCallable(
+            'resetPasswordWithPass',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 15)),
+          )
           .call({'passToken': passToken, 'username': username});
-      // result.data가 null이거나 키 없으면 예외 → 아래 catch에서 null 반환 처리
       return result.data['customToken'] as String?;
     } catch (e) {
       debugPrint('❌ [PassVerificationService] resetPasswordWithPass 실패: $e');
@@ -88,14 +131,16 @@ class PassVerificationService {
     }
   }
 
-  /// 가입 완료 후 passToken 소비 + passVerifiedAt 저장 — [AUTH-H3] 15분 재사용 차단
+  /// 가입 완료 후 passToken 소비 + ciHash 저장 — [AUTH-H3] 15분 재사용 차단
   ///
   /// 가입 성공 직후 호출한다. 실패해도 가입 자체는 완료된 상태이므로 예외를 삼킨다.
-  /// CF 내부에서 mock- 접두어 토큰을 dev 환경 전용으로 처리하므로 kDebugMode 분기 제거.
   static Future<void> finalizeRegistration(String passToken) async {
     try {
-      await _fn.httpsCallable('finalizeRegistration',
-          options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
+      await _fn
+          .httpsCallable(
+            'finalizeRegistration',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 10)),
+          )
           .call({'passToken': passToken});
     } catch (e) {
       debugPrint('⚠️ [PassVerificationService] finalizeRegistration 실패: $e');
@@ -103,7 +148,17 @@ class PassVerificationService {
     }
   }
 
-  // ── Mock (개발/테스트용) ─────────────────────────────────────────────────
+  // ── 유틸 ───────────────────────────────────────────────────────────────────
+
+  /// YYYYMMDD → DateTime 변환
+  static DateTime _parseBirthDate(String yyyymmdd) {
+    final y = int.parse(yyyymmdd.substring(0, 4));
+    final m = int.parse(yyyymmdd.substring(4, 6));
+    final d = int.parse(yyyymmdd.substring(6, 8));
+    return DateTime(y, m, d);
+  }
+
+  // ── Mock (개발/테스트용) ───────────────────────────────────────────────────
 
   static final _rng = Random();
 
@@ -112,7 +167,7 @@ class PassVerificationService {
     '강하은', '조민서', '윤도현', '임채원', '한소율',
   ];
 
-  /// 다날 계약 전 개발 테스트용 mock 데이터 — 매 호출마다 랜덤 값 반환
+  /// 포트원 계약 전 개발 테스트용 mock 데이터 — 매 호출마다 랜덤 값 반환
   static Future<PassAuthResult?> _mockAuthenticate({
     required String purpose,
   }) async {

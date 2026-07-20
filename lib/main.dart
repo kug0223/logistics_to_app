@@ -33,6 +33,7 @@ import 'services/analytics_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'widgets/common/network_banner.dart';
 import 'utils/tour_helper.dart';
+import 'utils/navigation_key.dart';
 
 /// 앱이 완전히 종료된 상태에서 FCM 메시지 수신 시 호출되는 최상위 핸들러
 /// (반드시 main() 바깥 최상위 함수여야 함 — Flutter 요구사항)
@@ -41,13 +42,6 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   debugPrint('🔔 [백그라운드] FCM 수신: ${message.notification?.title}');
 }
-
-/// 🔔 전역 Navigator Key (FCM 알림 클릭 시 화면 이동용)
-final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
-
-/// 전역 ScaffoldMessenger Key (어디서든 SnackBar 표시용)
-final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey =
-    GlobalKey<ScaffoldMessengerState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();

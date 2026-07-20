@@ -4710,36 +4710,9 @@ export const onBusinessDeleted = onDocumentDeleted(
 // DANAL_MOCK_MODE=true 환경변수 설정 시 mock 데이터 반환 (다날 계약 전 테스트용).
 // 배포 후 Firebase Functions 환경변수: firebase functions:secrets:set DANAL_MOCK_MODE
 
-// ── initiatePassAuth ─────────────────────────────────────
-// 다날 txSeq + 인증 URL 발급
-// Input:  { purpose: 'register'|'resetPassword', role?: string }
-// Output: { txSeq, authUrl, isMock? }
-export const initiatePassAuth = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
-  async (request) => {
-    const purpose = request.data.purpose as string | undefined;
-    if (!purpose || !["register", "resetPassword"].includes(purpose)) {
-      throw new HttpsError("invalid-argument", "purpose는 'register' 또는 'resetPassword'여야 합니다.");
-    }
-
-    const isMock = process.env.DANAL_MOCK_MODE === "true";
-    // [SEC-MOCK] production에서 mock 모드 사용 차단 — GCLOUD_PROJECT로 prod 감지
-    if (isMock && process.env.GCLOUD_PROJECT === "alfit-prod") {
-      throw new HttpsError("unavailable", "DANAL_MOCK_MODE는 production에서 사용할 수 없습니다.");
-    }
-    if (isMock) {
-      return {
-        txSeq: `MOCK-${Date.now()}`,
-        authUrl: "https://mock.danal.example.com/auth",
-        isMock: true,
-      };
-    }
-
-    // [TODO-DANAL] 실제 다날 API 호출 — txSeq + authUrl 발급
-    // 계약 완료 후 다날 SDK / REST API 연동 필요
-    throw new HttpsError("unimplemented", "서비스 준비 중입니다.");
-  }
-);
+// ── initiatePassAuth — 포트원 전환으로 제거됨 ──────────────
+// 포트원 SDK(iamport_flutter)가 클라이언트에서 직접 인증 URL을 처리하므로
+// 이 CF는 더 이상 필요하지 않습니다.
 
 // ── callableBlacklistUser ────────────────────────────────
 // 블랙리스트 등록 + Firebase Auth 세션 즉시 무효화 (슈퍼어드민 전용)
@@ -5038,15 +5011,15 @@ export const callableSaveUserSignature = onCall(
 );
 
 // ── verifyPassAuth ───────────────────────────────────────
-// 다날 encData 복호화 → 연령/CI 중복/재가입 검증 → passToken(15분) 발급
-// Input:  { encData, txSeq, purpose, role? }
+// 포트원 imp_uid 검증 → 연령/CI 중복/재가입 검증 → passToken(15분) 발급
+// Input:  { imp_uid, purpose, role? }
 // Output: { passToken, name, gender, birthDate, phone }
+// Secrets: PORTONE_IMP_KEY, PORTONE_IMP_SECRET (포트원 콘솔 > API Keys)
 export const verifyPassAuth = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
-    const {purpose, role = "USER"} = request.data as {
-      encData?: string;
-      txSeq?: string;
+    const {imp_uid, purpose, role = "USER"} = request.data as {
+      imp_uid?: string;
       purpose?: string;
       role?: string;
     };
@@ -5059,10 +5032,10 @@ export const verifyPassAuth = onCall(
       throw new HttpsError("invalid-argument", "role이 올바르지 않습니다.");
     }
 
-    const isMock = process.env.DANAL_MOCK_MODE === "true";
+    const isMock = process.env.AUTH_MOCK_MODE === "true";
     // [SEC-MOCK] production에서 mock 모드 사용 차단
     if (isMock && process.env.GCLOUD_PROJECT === "alfit-prod") {
-      throw new HttpsError("unavailable", "DANAL_MOCK_MODE는 production에서 사용할 수 없습니다.");
+      throw new HttpsError("unavailable", "AUTH_MOCK_MODE는 production에서 사용할 수 없습니다.");
     }
 
     let ci: string;
@@ -5078,12 +5051,61 @@ export const verifyPassAuth = onCall(
       birthDateStr = "19900115";
       phone = "01012345678";
     } else {
-      const {encData, txSeq} = request.data as {encData?: string; txSeq?: string};
-      if (!encData || !txSeq) {
-        throw new HttpsError("invalid-argument", "encData, txSeq 필수입니다.");
+      if (!imp_uid || typeof imp_uid !== "string") {
+        throw new HttpsError("invalid-argument", "imp_uid가 필요합니다.");
       }
-      // [TODO-DANAL] 다날 복호화 로직 — AES 키는 Functions Secret으로 관리
-      throw new HttpsError("unimplemented", "서비스 준비 중입니다.");
+
+      const impKey = process.env.PORTONE_IMP_KEY;
+      const impSecret = process.env.PORTONE_IMP_SECRET;
+      if (!impKey || !impSecret) {
+        throw new HttpsError("internal", "PortOne 인증 설정이 없습니다. 환경 변수를 확인하세요.");
+      }
+
+      // 포트원 액세스 토큰 발급
+      const tokenRes = await fetch("https://api.iamport.kr/users/getToken", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({imp_key: impKey, imp_secret: impSecret}),
+      });
+      const tokenData = await tokenRes.json() as {
+        code?: number;
+        response?: {access_token?: string};
+      };
+      const accessToken = tokenData.response?.access_token;
+      if (!accessToken) {
+        throw new HttpsError("internal", "PortOne 토큰 발급 실패.");
+      }
+
+      // 본인인증 결과 조회
+      const certRes = await fetch(`https://api.iamport.kr/certifications/${imp_uid}`, {
+        headers: {Authorization: accessToken},
+      });
+      const certData = await certRes.json() as {
+        code?: number;
+        response?: {
+          unique_key?: string;   // CI
+          name?: string;
+          gender?: string;       // 'male' | 'female'
+          birthday?: string;     // YYYY-MM-DD
+          phone?: string;
+          certified?: boolean;
+        };
+      };
+
+      if (certData.code !== 0 || !certData.response?.certified) {
+        throw new HttpsError("permission-denied", "본인인증에 실패했습니다.");
+      }
+
+      const cert = certData.response!;
+      ci = cert.unique_key ?? "";
+      name = cert.name ?? "";
+      gender = cert.gender === "male" ? "남성" : "여성";
+      birthDateStr = (cert.birthday ?? "").replace(/-/g, ""); // YYYY-MM-DD → YYYYMMDD
+      phone = (cert.phone ?? "").replace(/-/g, "");
+
+      if (!ci || !name || birthDateStr.length !== 8 || !phone) {
+        throw new HttpsError("internal", "본인인증 데이터가 불완전합니다.");
+      }
     }
 
     // 만 19세 미만 차단
