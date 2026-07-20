@@ -1382,7 +1382,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   Widget _contractBadge(BuildContext context, String appId,
       {bool isPending = false}) {
     final status = _contractStatusMap[appId];
-    if (status == null) {
+    // [BUG-FIX] status == null || status.isEmpty — _contractStatusMap은 String?이므로 빈 문자열도 처리
+    if (status == null || status.isEmpty) {
       if (!isPending) {
         return _chip(context,
             label: '계약미작성',
@@ -2039,8 +2040,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     // 장기 근무자: 계약 시작일 이후 날짜를 보고 있는 경우 취소 불가
     // [특이사항] workEndDate == null 인 무기한 계약도 동일하게 처리됨
     if (app.isLongTermApplication) {
+      // [BUG-FIX] workDate 직접 사용 → desiredStartDate ?? workDate
+      // desiredStartDate는 희망 시작일(슬롯 날짜), workDate는 계약 기본 날짜
+      // 장기 근무자가 특정 슬롯 날짜부터 시작하는 경우 desiredStartDate가 실제 시작일
+      final effectiveStart = app.desiredStartDate ?? app.workDate;
       final contractStart = DateTime(
-          app.workDate.year, app.workDate.month, app.workDate.day);
+          effectiveStart.year, effectiveStart.month, effectiveStart.day);
       final viewDate = DateTime(
           widget.date.year, widget.date.month, widget.date.day);
       if (contractStart.isBefore(viewDate)) return false;
@@ -2161,6 +2166,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     }
     if (!mounted) return;
     if (workDetail == null) {
+      // [DART-HIGH-1-FIX] toId==null 경로에서 _isProcessing=true 상태로 return하면 버튼 영구 비활성화
+      // toId!=null 경로는 finally에서 해제되지만 toId==null 경로는 해제 코드 없음
+      if (mounted) setState(() => _isProcessing = false);
       ToastHelper.showError('근무 정보를 찾을 수 없습니다');
       return;
     }
@@ -2306,6 +2314,21 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   Future<void> _approveApp(ApplicationModel app) async {
     if (_isProcessing) return;
+    // [DART-HIGH-2-FIX] 개별 확정 시 정원 초과 체크 — _batchApprove에는 있으나 단일 확정에 누락
+    final groups = _buildGroups();
+    for (final g in groups) {
+      if (g.confirmedApps.any((a) => a.id == app.id)) continue; // 이미 confirmed면 체크 불필요
+      final wKey = app.workDetailId?.isNotEmpty == true
+          ? app.workDetailId!
+          : '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
+      if (g.groupKey.endsWith('_$wKey') || g.groupKey == '${app.toId ?? app.toTitle}_$wKey') {
+        if (g.requiredCount > 0 && g.confirmedApps.length >= g.requiredCount) {
+          ToastHelper.showWarning('정원이 초과되어 확정할 수 없습니다 (${g.toTitle} · ${g.workType})');
+          return;
+        }
+        break;
+      }
+    }
     setState(() => _isProcessing = true);
     try {
       final name = _userMap[app.uid]?.name ?? '근무자';
@@ -2320,7 +2343,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       final adminUID = FirebaseAuth.instance.currentUser?.uid;
       await _svc.updateApplicationStatus(
         applicationId: app.id,
-        status: AppStatus.confirmed,
+        // [BUG-FIX] confirmed → contractPending — 관리자 확정은 계약서 서명 대기 상태
+        // CONFIRMED는 계약 체결 완료 상태로 양방 서명 후에만 설정해야 함
+        status: AppStatus.contractPending,
         confirmedBy: adminUID,
       );
       _hasChanges = true;
@@ -2447,7 +2472,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         try {
           await _svc.updateApplicationStatus(
             applicationId: appId,
-            status: AppStatus.confirmed,
+            // [BUG-FIX] confirmed → contractPending — 관리자 확정은 계약서 서명 대기 상태
+            status: AppStatus.contractPending,
             confirmedBy: adminUID,
           );
           successCount++;

@@ -137,7 +137,6 @@ class PayrollPaymentService {
       // 전체 근로자에게 허위 이체완료 알림 발송하는 버그
       // [BUG-FIX] null 체크만으로는 빈 배열([])도 통과 → 0건 알림 발송 버그
       final bool sendNotifs = !notificationsSent && (allNotifications?.isNotEmpty ?? false);
-      if (sendNotifs) notificationsSent = true;
       try {
         await _cf.httpsCallable('callableMarkTransferredBatch').call({
           'businessId': businessId,
@@ -145,6 +144,9 @@ class PayrollPaymentService {
           if (transferNote != null && transferNote.isNotEmpty) 'transferNote': transferNote,
           if (sendNotifs) 'notifications': allNotifications,
         });
+        // [BUG-FIX] notificationsSent = true를 await 성공 후로 이동
+        // await 이전에 설정하면 첫 청크 실패 시 이후 청크에서 알림을 전혀 발송하지 않음
+        if (sendNotifs) notificationsSent = true;
       } catch (e) {
         final msg = e is FirebaseFunctionsException
             ? (e.message ?? e.code)
@@ -276,11 +278,14 @@ class PayrollPaymentService {
   // ══════════════════════════════════════════════════════════
 
   /// CSV Injection 방지: =, +, -, @ 시작 데이터에 작은따옴표 접두어 추가
+  /// [BUG-FIX] RFC 4180: 필드 내 큰따옴표(") → "" 이스케이프 추가
   static String _sanitizeCsvField(String value) {
     if (value.isEmpty) return value;
-    final c = value[0];
-    if (c == '=' || c == '+' || c == '-' || c == '@') return "'$value";
-    return value;
+    // RFC 4180: 큰따옴표를 포함하는 필드는 "" 로 이스케이프 (generateTransferCsv가 필드를 " "로 감싸므로 필수)
+    final escaped = value.replaceAll('"', '""');
+    final c = escaped[0];
+    if (c == '=' || c == '+' || c == '-' || c == '@') return "'$escaped";
+    return escaped;
   }
 
   /// 이체 목록 CSV 생성 (미이체 근무자만)
@@ -490,6 +495,10 @@ class PayrollPaymentService {
       if (allTransferred) {
         // 모든 항목이 이미 transferred → 1단계 건너뛰고 status만 PROCESSED로 복구
         skipMarkTransferred = true;
+        // [BUG-FIX-A006] allTransferred=true 시 idsToTransfer를 validSnaps 기반으로 갱신
+        // 초기값 List.from(req.attendanceIds)는 타 워커 attendanceId를 포함할 수 있어
+        // FCM 금액 계산(아래 actualNetAmount)에서 타 워커 finalWage가 합산되는 버그
+        idsToTransfer = validSnaps.map((s) => s.id).toList();
       } else {
         // wageConfirmed 항목만 이체 처리 — 취소된(wagePending 등) 항목 및 타 워커 항목 제외
         idsToTransfer = validSnaps

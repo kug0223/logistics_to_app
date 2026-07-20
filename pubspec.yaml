@@ -58,7 +58,7 @@ dependencies:
   webview_flutter: ^4.4.2
 
   # 포트원(PortOne) 본인인증 SDK
-  iamport_flutter: ^1.4.0
+  iamport_flutter: ^0.10.21
   
   # 캘린더
   table_calendar: ^3.1.2

@@ -121,18 +121,25 @@ extension ApplicationFirestore on FirestoreService {
     required String businessId,
   }) async {
     if (toIds.isEmpty) return {};
-    try {
-      final results = await Future.wait(
-        toIds.map((id) async {
+    // [BUG-FIX] Future.wait 단일 실패 시 전체 결과 소실 → 개별 예외 격리
+    // eagerError:true(기본값)로 하나라도 실패하면 전체 Future.wait가 throw해 모든 TO 결과 손실
+    // Future.wait(..., eagerError:false)와 null 필터링으로 부분 성공 유지
+    final results = await Future.wait(
+      toIds.map((id) async {
+        try {
           final apps = await getApplicationsByTOId(id, businessId: businessId);
           return MapEntry(id, apps);
-        }),
-      );
-      return Map.fromEntries(results);
-    } catch (e) {
-      debugPrint('❌ 배치 지원자 조회 실패: $e');
-      return {};
+        } catch (e) {
+          debugPrint('⚠️ [getApplicationsByTOIds] TO[$id] 조회 실패: $e');
+          return null;
+        }
+      }),
+    );
+    final map = <String, List<ApplicationModel>>{};
+    for (final entry in results) {
+      if (entry != null) map[entry.key] = entry.value;
     }
+    return map;
   }
 
   /// 사업장별 전체 지원서 조회 (관리자용) — [CF 이전 2026-07-13] callableGetApplicationsByBiz
@@ -230,6 +237,10 @@ extension ApplicationFirestore on FirestoreService {
       final result = await callable.call<Map<String, dynamic>>({
         'limit': pageSize,
         if (startAfterDocId != null) 'startAfterDocId': startAfterDocId,
+        // [BUG-FIX] statusFilter CF에 미전달 — 페이지네이션 커서 불일치 방지
+        // CF가 statusFilter 없이 전체 목록 기준으로 커서를 설정하면
+        // 클라이언트 in-memory 필터 후 페이지 크기가 줄어 마지막 페이지로 오인하는 버그
+        if (statusFilter != null) 'statusFilter': statusFilter,
       });
 
       final items = (result.data['applications'] as List? ?? [])
@@ -1274,10 +1285,11 @@ extension ApplicationFirestore on FirestoreService {
     }
 
     // 자동 취소된 충돌 지원서의 TO 캐시 무효화
+    // [BUG-FIX] detail['id']는 applicationId이고 TO 캐시 키는 toId — detail['toId'] 사용해야 함
     final Set<String> affectedTOIds = {};
     for (final detail in canceledDetails) {
-      final cId = detail['id'] as String?;
-      if (cId != null) affectedTOIds.add(cId);
+      final tId = detail['toId'] as String?;
+      if (tId != null) affectedTOIds.add(tId);
     }
     for (final tId in affectedTOIds) {
       clearCache(toId: tId);

@@ -2962,22 +2962,37 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       // 순회 중 컬렉션 변경을 방지하기 위해 복사본으로 순회
       final idsToReject = List<String>.from(_selectedIds);
 
+      // [BUG-FIX] 부분 실패 시 나머지 처리 중단 방지 — 개별 try-catch로 성공/실패 카운팅
+      int successCount = 0;
+      int failCount = 0;
       for (final appId in idsToReject) {
-        await _firestoreService.updateApplicationStatus(
-          applicationId: appId,
-          status: AppStatus.rejected,
-          rejectedBy: adminUID,
-          message: reason,
-        );
+        try {
+          await _firestoreService.updateApplicationStatus(
+            applicationId: appId,
+            status: AppStatus.rejected,
+            rejectedBy: adminUID,
+            message: reason,
+          );
+          successCount++;
+        } catch (e) {
+          debugPrint('❌ [_batchReject] 거절 실패 [$appId]: $e');
+          failCount++;
+        }
       }
 
-      // [BUG-6 수정] for 루프 await 완료 후 mounted 체크 추가
       if (!mounted) return;
-      ToastHelper.showSuccess('${idsToReject.length}명이 거절되었습니다');
-      _selectedIds.clear();
-      await _loadApplicants();
-      if (!mounted) return;
-      await _updateLocalStats();
+      if (successCount > 0) {
+        final msg = failCount > 0
+            ? '$successCount명 거절 완료 ($failCount명 실패)'
+            : '$successCount명이 거절되었습니다';
+        ToastHelper.showSuccess(msg);
+        _selectedIds.clear();
+        await _loadApplicants();
+        if (!mounted) return;
+        await _updateLocalStats();
+      } else {
+        ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
+      }
     } catch (e) {
       if (mounted) ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
     } finally {
@@ -3036,11 +3051,12 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
     } catch (e) {
       // 실패 시 현재 다이얼로그 목록 기준으로 현재 업무만 업데이트
+      // [BUG-FIX] _applicants(필터된 Map 목록) → _allApplications(원본 ApplicationModel 목록) 사용
+      // _applicants는 현재 업무(widget.work)로 필터된 결과라 전체 통계가 정확하지 않음
       int pending = 0;
       int confirmed = 0;
 
-      for (final item in _applicants) {
-        final app = item['application'] as ApplicationModel;
+      for (final app in _allApplications) {
         if (app.status == AppStatus.pending) pending++;
         if (app.status == AppStatus.confirmed || app.status == AppStatus.contractPending) confirmed++;
       }

@@ -489,6 +489,8 @@ class _PayrollPaymentDashboardScreenState
     } catch (e) {
       debugPrint('❌ 송금 처리 실패: $e');
       if (mounted) ToastHelper.showError('송금 처리에 실패했습니다\n$e');
+      // [BUG-FIX] 부분 성공 시 Firestore는 변경됐지만 화면이 갱신되지 않아 이미 처리된 건 재처리 시도 방지
+      if (mounted) _load();
     } finally {
       if (mounted) setState(() => _isTransferring = false);
     }
@@ -540,6 +542,8 @@ class _PayrollPaymentDashboardScreenState
     } catch (e) {
       debugPrint('❌ 일괄 이체 실패: $e');
       if (mounted) ToastHelper.showError('일괄 처리에 실패했습니다\n$e');
+      // [BUG-FIX] 부분 성공 시 성공 청크는 Firestore에 반영됐지만 화면은 미갱신 → 재이체 시도 방지
+      if (mounted) _load();
     } finally {
       if (mounted) setState(() => _isTransferring = false);
     }
@@ -1047,7 +1051,9 @@ class _PayrollPaymentDashboardScreenState
                         count: payTypeEntries.length,
                         isSelected: _pendingFilter == _PendingFilter.all,
                         color: AppColors.grey600,
-                        onTap: () => setState(() => _pendingFilter = _PendingFilter.all),
+                        // [BUG-FIX] _pendingFilter 변경 시 _selectedIds.clear() — _payTypeFilter 칩과 동일 패턴
+                        // 필터 전환 후 화면에 보이지 않는 이전 선택 항목이 이체 처리되는 버그 방지
+                        onTap: () => setState(() { _pendingFilter = _PendingFilter.all; _selectedIds.clear(); }),
                       ),
                       const SizedBox(width: 6),
                       AppFilterChip(
@@ -1055,7 +1061,7 @@ class _PayrollPaymentDashboardScreenState
                         count: overdueTotal,
                         isSelected: _pendingFilter == _PendingFilter.overdue,
                         color: AppColors.error,
-                        onTap: () => setState(() => _pendingFilter = _PendingFilter.overdue),
+                        onTap: () => setState(() { _pendingFilter = _PendingFilter.overdue; _selectedIds.clear(); }),
                       ),
                       const SizedBox(width: 6),
                       AppFilterChip(
@@ -1063,7 +1069,7 @@ class _PayrollPaymentDashboardScreenState
                         count: todayTotal,
                         isSelected: _pendingFilter == _PendingFilter.today,
                         color: AppColors.warning,
-                        onTap: () => setState(() => _pendingFilter = _PendingFilter.today),
+                        onTap: () => setState(() { _pendingFilter = _PendingFilter.today; _selectedIds.clear(); }),
                       ),
                       const SizedBox(width: 6),
                       AppFilterChip(
@@ -1071,7 +1077,7 @@ class _PayrollPaymentDashboardScreenState
                         count: noAccountTotal,
                         isSelected: _pendingFilter == _PendingFilter.noAccount,
                         color: AppColors.grey600,
-                        onTap: () => setState(() => _pendingFilter = _PendingFilter.noAccount),
+                        onTap: () => setState(() { _pendingFilter = _PendingFilter.noAccount; _selectedIds.clear(); }),
                       ),
                     ],
                   ),
@@ -1253,7 +1259,8 @@ class _PayrollPaymentDashboardScreenState
         _DashboardSummaryHeader(
           pendingAmount:     _totalPending,
           transferredAmount: _totalTransferred,
-          pendingCount:      _pendingWorkerCount,
+          // [BUG-FIX] _transferredTab에서 _pendingWorkerCount → _transferredWorkerCount
+          pendingCount:      _transferredWorkerCount,
           overdueCount:      0,
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),

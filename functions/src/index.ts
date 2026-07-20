@@ -12198,6 +12198,12 @@ export const callableBatchSetNoShow = onCall(
             skippedSet.add(resolvedId);
             return;
           }
+          // [CF-MED-3-FIX] attendanceId 없는 경로: 이미 출근 기록(checkIn)이 있는 pending 문서를 NO_SHOW로 오염 방지
+          // merge:true 사용 시 checkIn/checkOut/workHours가 남아있는 채로 status:NO_SHOW/wageStatus:confirmed 모순 문서 생성 가능
+          if (!attendanceId && snap.exists && snap.data()!.checkIn != null) {
+            skippedSet.add(resolvedId);
+            return;
+          }
 
           // [L3-FIX] 신규 노쇼 생성 시 applicationId → userId 교차검증 (트랜잭션 내 원자적 검증)
           // [M-1 수정 2026-07-15] applicationId.businessId 교차검증 추가
@@ -12301,6 +12307,12 @@ export const callableBatchCancelNoShow = onCall(
         const data = snap.data()!;
         if (data.businessId !== businessId) { skipped.push(snap.id); continue; }
         if (data.wageStatus === "transferred") { skipped.push(snap.id); continue; }
+        // [CF-HIGH-2-FIX] NO_SHOW 레코드만 처리 — 정규 confirmed 근태(status != NO_SHOW) 보호
+        // callableBatchSetNoShow가 생성한 NO_SHOW는 wageStatus:confirmed이지만
+        // callableConfirmFinalWage로 확정된 일반 근태도 wageStatus:confirmed이므로
+        // status 필드로 구분 필수 (callableWageCancel이 confirmed/transferred 모두 차단하는 것과 달리
+        // 이 함수는 NO_SHOW 취소 전용이므로 status:NO_SHOW만 허용)
+        if (data.status !== "NO_SHOW") { skipped.push(snap.id); continue; }
         tx.update(snap.ref, {
           status: admin.firestore.FieldValue.delete(),
           wageStatus: "pending",
@@ -12374,7 +12386,8 @@ export const callableBatchResetAttendance = onCall(
 function srvNextWeekday(from: Date, targetWeekday: number): Date {
   // Dart weekday: 1=월...7=일. JS getDay(): 0=일,1=월...6=토 → 1=월...7=일로 변환
   const jsDay = from.getDay() === 0 ? 7 : from.getDay();
-  const diff = ((targetWeekday - jsDay) + 7) % 7;
+  // [CF-MED-4-FIX] 동일 요일(diff=0)이면 다음 주 해당 요일(+7일) 반환 — 당일 반환은 same_day와 구분 불가
+  const diff = ((targetWeekday - jsDay) + 7) % 7 || 7;
   const d = new Date(from);
   d.setDate(d.getDate() + diff);
   return d;
@@ -12540,6 +12553,9 @@ export const callableCancelFinalConfirmation = onCall(
               finalConfirmedAt: admin.firestore.FieldValue.delete(),
               // [V3-FIX] paymentDueDate 삭제 — 클라이언트 _reverseCloseWages와 불일치 해소
               paymentDueDate: admin.firestore.FieldValue.delete(),
+              // [CF-MED-1-FIX] 최상위 confirmedBy 필드 삭제 — callableConfirmFinalWage가 저장한 confirmedBy 잔류 방지
+              // wageDetail 내부 confirmedBy는 위에서 JS delete로 처리했으나 Firestore 최상위 필드는 별도 삭제 필요
+              confirmedBy: admin.firestore.FieldValue.delete(),
               updatedAt: now,
             });
             return true;
@@ -12901,23 +12917,27 @@ export const callableBatchCheckIn = onCall(
 
           try {
             if (attendanceId) {
-              // 서버 상태 확인 — confirmed/transferred 건은 출근 시간 수정 불가
-              const snap = await db.collection("attendance").doc(attendanceId).get();
-              if (snap.exists) {
-                const snapData = snap.data()!;
-                // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
-                if (snapData.businessId !== businessId) return false;
-                const ws = snapData.wageStatus as string | undefined;
-                if (ws === "confirmed" || ws === "transferred") return false;
-              }
-              await db.collection("attendance").doc(attendanceId).update({
-                checkIn: checkInTs,
-                checkInMethod: "manual",
-                status,
-                isModified: true,
-                modifiedAt: now,
-                modifiedBy: callerUid,
-                updatedAt: now,
+              // [CF-HIGH-1-FIX] TOCTOU 방지 — get+update를 runTransaction으로 원자화
+              // callableBatchCheckOut non-resetWageDetail 경로와 동일 패턴 적용
+              const ref = db.collection("attendance").doc(attendanceId);
+              await db.runTransaction(async (tx) => {
+                const snap = await tx.get(ref);
+                if (snap.exists) {
+                  const snapData = snap.data()!;
+                  // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
+                  if (snapData.businessId !== businessId) return;
+                  const ws = snapData.wageStatus as string | undefined;
+                  if (ws === "confirmed" || ws === "transferred") return;
+                }
+                tx.update(ref, {
+                  checkIn: checkInTs,
+                  checkInMethod: "manual",
+                  status,
+                  isModified: true,
+                  modifiedAt: now,
+                  modifiedBy: callerUid,
+                  updatedAt: now,
+                });
               });
             } else {
               // 신규 출근 기록 — wageStatus='pending' 고정
@@ -13036,6 +13056,10 @@ export const callableBatchCheckOut = onCall(
               status,
               wageStatus: "pending",
               wageDetail: admin.firestore.FieldValue.delete(),
+              // [CF-MED-2-FIX] finalWage/yearMonth 삭제 — callableWageCancel 패턴과 통일
+              // pending 복귀 시 stale finalWage/yearMonth가 잔류하면 daily_auto_8 소급 공제 계산 오류
+              finalWage: admin.firestore.FieldValue.delete(),
+              yearMonth: admin.firestore.FieldValue.delete(),
               updatedAt: now,
             });
           });
@@ -13740,7 +13764,15 @@ export const callableMarkTransferredBatch = onCall(
 
     // [E-M2] 단일 트랜잭션으로 read-then-write 원자화 — TOCTOU 방지
     // 200건 × 2 ops = 400 < Firestore 한도(500)
+    // [CF-HIGH-3-FIX] 트랜잭션 재시도 시 외부 변수 중복 누적 방지 — 콜백 진입 시 초기화
+    // Firestore Admin SDK가 충돌 시 콜백을 재실행하면 외부 선언 변수에 결과가 중복 누적됨
     await db.runTransaction(async (tx) => {
+      // 재시도 시 이전 누적분 초기화
+      skipped.length = 0;
+      processed = 0;
+      processedAttendanceIds.clear();
+      validWorkerUserIds.clear();
+
       const snaps = await Promise.all(
         attendanceIds.map(id => tx.get(db.collection("attendance").doc(id)))
       );

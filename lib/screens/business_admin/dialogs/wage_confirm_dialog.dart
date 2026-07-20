@@ -2810,7 +2810,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               final label = min == 0 ? '없음' : '+$min분';
               return GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTap: () => _setGroupBreak(groupWorkers, min),
+                // [BUG-FIX] _isProcessing 중 그룹 break 칩 탭 차단 — 동시 요청 방지
+                onTap: _isProcessing ? null : () => _setGroupBreak(groupWorkers, min),
                 child: Container(
                   margin: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 5)),
                   padding: ResponsiveHelper.symmetricPadding(
