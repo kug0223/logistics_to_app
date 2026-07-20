@@ -354,7 +354,7 @@ extension TOFirestore on FirestoreService {
     NetworkChecker.instance.assertOnline('공고 등록을 하려면 인터넷 연결이 필요합니다.');
 
     // [HIGH-02] 개수 제한은 callableCreateTO CF에서 서버 측 강제 — 클라이언트 체크 제거
-
+    GlobalLoadingController.show('공고 등록 중...');
     try {
       // 사업장 주소 조회
       String? businessAddress, businessCity, businessDistrict;
@@ -530,6 +530,8 @@ extension TOFirestore on FirestoreService {
     } catch (e) {
       debugPrint('❌ [TO] 공고 생성 실패: $e');
       rethrow; // MAX_ACTIVE_TO_LIMIT 등 CF 예외가 화면 catch 블록까지 전파되도록
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 
@@ -550,6 +552,7 @@ extension TOFirestore on FirestoreService {
   // [CF-이전 2026-07-14] callableUpdateTO — assertBizAdmin 교차검증 + updatedBy 감사 로그 강제
   // null 값 = 필드 삭제, publishAt = ms epoch 정수로 전달 (Timestamp/FieldValue 직렬화 불가)
   Future<void> updateTO(String toId, Map<String, dynamic> updates) async {
+    GlobalLoadingController.show('공고 수정 중...');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableUpdateTO',
@@ -559,12 +562,15 @@ extension TOFirestore on FirestoreService {
     } catch (e) {
       debugPrint('❌ [TO] 공고 수정 실패: $e');
       rethrow;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 
   /// draft/scheduled TO를 즉시공개로 전환 — CF callablePublishTO 위임 (maxActiveTOs 서버 강제)
   /// 반환값: true=성공, false=한도 초과 또는 실패
   Future<bool> publishTO(String toId) async {
+    GlobalLoadingController.show('공고 공개 중...');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callablePublishTO',
@@ -584,6 +590,8 @@ extension TOFirestore on FirestoreService {
     } catch (e) {
       debugPrint('❌ [TO] 공개 전환 실패: $e');
       rethrow;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 
@@ -616,6 +624,7 @@ extension TOFirestore on FirestoreService {
   /// 공고 삭제 — CF callableDeleteTO 위임 (Admin SDK로 보안 규칙 우회)
   /// 슬롯·지원서·고아 데이터 정리 및 알림 발송은 CF에서 처리
   Future<bool> deleteTO(String toId) async {
+    GlobalLoadingController.show('공고 삭제 중...');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableDeleteTO');
@@ -627,6 +636,8 @@ extension TOFirestore on FirestoreService {
       debugPrint('❌ [TO] 공고 삭제 실패: $e');
       ToastHelper.showError('공고 삭제에 실패했습니다.');
       return false;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 
@@ -866,6 +877,7 @@ extension TOFirestore on FirestoreService {
     required String closedBy,
   }) async {
     if (slotIds.isEmpty) return;
+    GlobalLoadingController.show('슬롯 마감 중...');
     final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
         .httpsCallable('callableCloseSlots');
     try {
@@ -877,6 +889,8 @@ extension TOFirestore on FirestoreService {
     } on FirebaseFunctionsException catch (e) {
       debugPrint('❌ [Slot] 일괄 마감 실패: ${e.code} — ${e.message}');
       rethrow;
+    } finally {
+      GlobalLoadingController.hide();
     }
     debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 마감 완료 (CF)');
   }
@@ -890,6 +904,7 @@ extension TOFirestore on FirestoreService {
     String? reopenedBy, // CF에서 callerUid로 대체 — 하위 호환 유지
   }) async {
     if (slotIds.isEmpty) return;
+    GlobalLoadingController.show('슬롯 재오픈 중...');
     final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
         .httpsCallable('callableReopenSlots',
             options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
@@ -902,6 +917,8 @@ extension TOFirestore on FirestoreService {
     } on FirebaseFunctionsException catch (e) {
       debugPrint('❌ [Slot] 일괄 재오픈 실패: ${e.code} — ${e.message}');
       rethrow;
+    } finally {
+      GlobalLoadingController.hide();
     }
     clearCache(toId: toId);
     debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 재오픈 완료 (CF)');
@@ -915,15 +932,20 @@ extension TOFirestore on FirestoreService {
     required List<String> slotIds,
   }) async {
     if (slotIds.isEmpty) return;
+    GlobalLoadingController.show('슬롯 삭제 중...');
     final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
         .httpsCallable('callableDeleteSlots');
-    await callable.call({
-      'toId': toId,
-      'slotIds': slotIds,
-      'businessId': businessId,
-    });
-    clearCache(toId: toId);
-    debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 삭제 완료 (CF)');
+    try {
+      await callable.call({
+        'toId': toId,
+        'slotIds': slotIds,
+        'businessId': businessId,
+      });
+      clearCache(toId: toId);
+      debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 삭제 완료 (CF)');
+    } finally {
+      GlobalLoadingController.hide();
+    }
   }
 
   /// 새 날짜 슬롯 추가

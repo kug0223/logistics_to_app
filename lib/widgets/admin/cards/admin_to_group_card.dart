@@ -1346,6 +1346,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           if (deletesAll) {
             // 슬롯을 모두 삭제했으니 TO 문서도 삭제 (지원서·알림 포함)
             await widget.firestoreService.deleteTO(masterTO.id);
+            if (mounted) ToastHelper.showSuccess('공고가 삭제되었습니다');
           } else {
             widget.firestoreService.clearCache(toId: masterTO.id);
             if (mounted) ToastHelper.showSuccess('${deleteSlots.length}개 날짜가 삭제되었습니다');

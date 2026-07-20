@@ -298,6 +298,7 @@ extension ApplicationFirestore on FirestoreService {
     DateTime? desiredStartDate,
   }) async {
     NetworkChecker.instance.assertOnline('지원하려면 인터넷 연결이 필요합니다.');
+    GlobalLoadingController.show('지원 중...');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableApplyToTO',
@@ -356,6 +357,8 @@ extension ApplicationFirestore on FirestoreService {
       debugPrint('❌ 지원 실패: $e');
       ToastHelper.showError('지원 중 오류가 발생했습니다.');
       return false;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 
@@ -394,6 +397,7 @@ extension ApplicationFirestore on FirestoreService {
     String? canceledBy,
     String? message,
   }) async {
+    GlobalLoadingController.show('처리 중...');
     try {
       if (status == AppStatus.confirmed) {
         return await _confirmWithConflictCheck(
@@ -537,6 +541,8 @@ extension ApplicationFirestore on FirestoreService {
     } catch (e) {
       debugPrint('❌ 지원서 상태 업데이트 실패: $e');
       rethrow;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 
@@ -667,6 +673,7 @@ extension ApplicationFirestore on FirestoreService {
     String? cancelReason, // 관리자 취소 사유
   }) async {
     NetworkChecker.instance.assertOnline('확정 취소를 하려면 인터넷 연결이 필요합니다.');
+    GlobalLoadingController.show('처리 중...');
     try {
       // 1. CF로 application 상태 업데이트 (canceledBy·at 서버 강제)
       final cancelCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
@@ -802,6 +809,8 @@ extension ApplicationFirestore on FirestoreService {
       debugPrint('❌ 확정 취소 실패: $e');
       ToastHelper.showError('확정 취소에 실패했습니다');
       return false;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 
@@ -820,6 +829,7 @@ extension ApplicationFirestore on FirestoreService {
     String? newWorkTypeColor,
     String? newWorkTypeBackgroundColor,
   }) async {
+    GlobalLoadingController.show('업무유형 변경 중...');
     try {
       final appDoc = await _firestore
           .collection('applications')
@@ -909,6 +919,8 @@ extension ApplicationFirestore on FirestoreService {
       debugPrint('❌ 업무유형 변경 실패: $e');
       ToastHelper.showError('업무유형 변경에 실패했습니다.');
       return false;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 
@@ -1614,6 +1626,7 @@ extension ApplicationFirestore on FirestoreService {
     required DateTime newEndDate,
   }) async {
     NetworkChecker.instance.assertOnline('계약 연장 중 네트워크 연결이 필요합니다.');
+    GlobalLoadingController.show('계약 연장 중...');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableCreateContractRenewal',
@@ -1640,6 +1653,8 @@ extension ApplicationFirestore on FirestoreService {
       return parsed;
     } on FirebaseFunctionsException catch (e) {
       throw Exception(e.message ?? '계약 연장 중 오류가 발생했습니다.');
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 

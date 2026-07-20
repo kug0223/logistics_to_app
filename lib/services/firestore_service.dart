@@ -11,6 +11,7 @@ import '../models/ui/admin_to_list_ui_models.dart';
 import '../models/core/business_model.dart';
 import '../models/core/work_type_model.dart';
 import '../utils/toast_helper.dart';
+import '../utils/global_loading_controller.dart';
 import '../models/core/business_work_type_model.dart';
 import '../models/core/attendance_model.dart';
 import '../models/core/schedule_change_request_model.dart';
@@ -244,6 +245,7 @@ class FirestoreService {
   // [M-2] closedBy 서버 UID 강제: CF에서 request.auth.uid 사용 → 클라이언트 위조 불가
   // [Charter] AUTO_CANCELED 법적 상태 전이: CF Admin SDK 전용으로 이전
   Future<bool> closeTOManually(String toId, String adminUID) async {
+    GlobalLoadingController.show('공고 마감 중...');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableCloseTOManually',
@@ -255,6 +257,8 @@ class FirestoreService {
     } catch (e) {
       debugPrint('❌ TO 수동 마감 실패: $e');
       return false;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 
@@ -320,6 +324,7 @@ class FirestoreService {
   ///   callableUpdateTO가 isManualClosed:false 재오픈 로직을 서버에서 처리:
   ///   reopenedBy=callerUid·reopenedAt/closedAt/closedBy=serverTimestamp()/delete() 강제.
   Future<bool> reopenTO(String toId, String adminUID) async {
+    GlobalLoadingController.show('공고 재오픈 중...');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableUpdateTO',
@@ -337,6 +342,8 @@ class FirestoreService {
     } catch (e) {
       debugPrint('❌ TO 재오픈 실패: $e');
       return false;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 
@@ -916,6 +923,7 @@ class FirestoreService {
     String? businessId,
     String? reason,
   }) async {
+    GlobalLoadingController.show('계약해지 요청 중...');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableRequestTermination');
@@ -930,11 +938,14 @@ class FirestoreService {
     } catch (e) {
       debugPrint('❌ requestTermination 실패: $e');
       return false;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 
   /// 계약해지 요청 취소 — CF callableCancelTermination 위임 (Admin SDK로 보안 규칙 우회)
   Future<bool> cancelTerminationRequest(String applicationId) async {
+    GlobalLoadingController.show('처리 중...');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableCancelTermination');
@@ -944,12 +955,15 @@ class FirestoreService {
     } catch (e) {
       debugPrint('❌ cancelTerminationRequest 실패: $e');
       return false;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 
   /// 계약해지 승인 (근무자 → 관리자 요청 수락)
   /// CF callableApproveTermination으로 위임 — 트랜잭션·TO 카운터·알림을 서버에서 원자적 처리
   Future<bool> approveTermination(String applicationId, {String? adminUID}) async {
+    GlobalLoadingController.show('처리 중...');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableApproveTermination');
@@ -959,6 +973,8 @@ class FirestoreService {
     } catch (e) {
       debugPrint('❌ approveTermination 실패: $e');
       return false;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 
@@ -967,6 +983,7 @@ class FirestoreService {
     required String applicationId,
     String? rejectReason,
   }) async {
+    GlobalLoadingController.show('처리 중...');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableRejectTermination');
@@ -979,6 +996,8 @@ class FirestoreService {
     } catch (e) {
       debugPrint('❌ rejectTermination 실패: $e');
       return false;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 
@@ -987,6 +1006,7 @@ class FirestoreService {
     required String applicationId,
     DateTime? resignDate,
   }) async {
+    GlobalLoadingController.show('퇴사 요청 중...');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableRequestResignation');
@@ -999,12 +1019,15 @@ class FirestoreService {
     } catch (e) {
       debugPrint('❌ requestResignation 실패: $e');
       return false;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 
   /// 퇴사 요청 취소 (근무자) — CF callableCancelResignRequest 위임
   /// cancelTerminationRequest와 대칭성 확보, rules 클라이언트 경로 제거를 위해 CF 이전
   Future<bool> cancelResignRequest(String applicationId) async {
+    GlobalLoadingController.show('처리 중...');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableCancelResignRequest');
@@ -1014,6 +1037,8 @@ class FirestoreService {
     } catch (e) {
       debugPrint('❌ cancelResignRequest 실패: $e');
       return false;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 
@@ -1022,6 +1047,7 @@ class FirestoreService {
   Future<bool> approveResignation({
     required String applicationId,
   }) async {
+    GlobalLoadingController.show('퇴사 승인 중...');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableApproveResignation');
@@ -1031,6 +1057,8 @@ class FirestoreService {
     } catch (e) {
       debugPrint('❌ approveResignation 실패: $e');
       return false;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 
@@ -1040,6 +1068,7 @@ class FirestoreService {
     required String applicationId,
     String? rejectReason,
   }) async {
+    GlobalLoadingController.show('처리 중...');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableRejectResignation');
@@ -1052,6 +1081,8 @@ class FirestoreService {
     } catch (e) {
       debugPrint('❌ rejectResignation 실패: $e');
       return false;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 

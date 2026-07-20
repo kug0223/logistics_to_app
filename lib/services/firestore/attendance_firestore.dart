@@ -28,6 +28,7 @@ extension AttendanceFirestore on FirestoreService {
     AttendanceRules? attendanceRules,
   }) async {
     NetworkChecker.instance.assertOnline('출근 체크를 하려면 인터넷 연결이 필요합니다.');
+    GlobalLoadingController.show('출근 처리 중...');
     try {
       debugPrint('🕐 [checkIn] CF 호출...');
       debugPrint('   applicationId: $applicationId, workDate: $workDate');
@@ -74,6 +75,8 @@ extension AttendanceFirestore on FirestoreService {
     } catch (e) {
       debugPrint('❌ 출근 체크 실패: $e');
       rethrow;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 
@@ -91,6 +94,7 @@ extension AttendanceFirestore on FirestoreService {
     AttendanceRules? attendanceRules,
   }) async {
     NetworkChecker.instance.assertOnline('퇴근 체크를 하려면 인터넷 연결이 필요합니다.');
+    GlobalLoadingController.show('퇴근 처리 중...');
     try {
       debugPrint('🕐 [checkOut] CF 호출...');
       debugPrint('   attendanceId: $attendanceId');
@@ -132,6 +136,8 @@ extension AttendanceFirestore on FirestoreService {
     } catch (e) {
       debugPrint('❌ 퇴근 체크 실패: $e');
       rethrow;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 
@@ -539,6 +545,7 @@ extension AttendanceFirestore on FirestoreService {
   Future<bool> approveScheduleChangeRequest({
     required String requestId,
   }) async {
+    GlobalLoadingController.show('처리 중...');
     try {
       // [BUG-REGION-FIX 2026-07-15] instance(us-central1 기본값) → instanceFor(asia-northeast3)
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
@@ -558,6 +565,8 @@ extension AttendanceFirestore on FirestoreService {
         debugPrint('❌ 스케줄 변경 요청 승인 실패: $e');
       }
       return false;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 
@@ -567,6 +576,7 @@ extension AttendanceFirestore on FirestoreService {
     required String requestId,
     String? rejectReason,
   }) async {
+    GlobalLoadingController.show('처리 중...');
     try {
       // [BUG-REGION-FIX 2026-07-15] instance(us-central1 기본값) → instanceFor(asia-northeast3)
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
@@ -586,6 +596,8 @@ extension AttendanceFirestore on FirestoreService {
         debugPrint('❌ 스케줄 변경 요청 거절 실패: $e');
       }
       return false;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
   /// 🔔 스케줄 변경 요청 알림 전송 (관리자에게)
@@ -639,6 +651,7 @@ extension AttendanceFirestore on FirestoreService {
   Future<bool> cancelScheduleChangeRequest({
     required String requestId,
   }) async {
+    GlobalLoadingController.show('처리 중...');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableCancelScheduleChangeRequest',
@@ -652,6 +665,8 @@ extension AttendanceFirestore on FirestoreService {
     } catch (e) {
       debugPrint('❌ 스케줄 변경 요청 취소 실패: $e');
       return false;
+    } finally {
+      GlobalLoadingController.hide();
     }
   }
 

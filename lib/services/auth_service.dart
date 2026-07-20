@@ -132,10 +132,13 @@ class AuthService {
       throw Exception(message);
 
     } on FirebaseException catch (e) {
-      // Firestore 예외 (FirebaseAuthException이 아닌 것) — 네트워크·권한·토큰 만료 등
+      // Firestore/Functions 예외 (FirebaseAuthException이 아닌 것)
       debugPrint('❌ [signIn] FirebaseException: ${e.code} / ${e.message}');
       String message;
-      if (e.code == 'permission-denied' || e.code == 'unauthenticated') {
+      if (e.code == 'not-found' || e.code == 'invalid-argument') {
+        // callableGetEmailByUsername이 username 미발견 시 not-found 반환 (사용자 열거 차단 설계)
+        message = '아이디 또는 비밀번호가 올바르지 않습니다.';
+      } else if (e.code == 'permission-denied' || e.code == 'unauthenticated') {
         message = '인증이 만료되었습니다. 다시 시도해주세요.';
       } else if (e.code == 'unavailable' || e.code == 'network-request-failed') {
         message = '네트워크 연결을 확인해주세요.';
