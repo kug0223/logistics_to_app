@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:math';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
-import 'package:iamport_flutter/iamport_flutter.dart';
-import 'package:iamport_flutter/model/certification_data.dart';
-import '../utils/navigation_key.dart';
 import '../utils/toast_helper.dart';
+
+// TODO: 다날 계약 완료 후 아래 주석 해제 + pubspec.yaml에 iamport_flutter 추가
+// import 'package:iamport_flutter/iamport_flutter.dart';
+// import 'package:iamport_flutter/model/certification_data.dart';
+// import '../utils/navigation_key.dart';
 
 /// PASS 본인인증 결과 데이터
 class PassAuthResult {
@@ -33,6 +35,7 @@ class PassVerificationService {
 
   /// PortOne 가맹점 식별코드 (포트원 콘솔 > 내 식별코드·API Keys)
   /// 계약 후 실제 코드로 교체 필요
+  // ignore: unused_field
   static const _portoneUserCode = 'imp00000000';
 
   /// PASS 인증 실행
@@ -49,58 +52,21 @@ class PassVerificationService {
       return _mockAuthenticate(purpose: purpose);
     }
 
-    final completer = Completer<PassAuthResult?>();
-    final merchantUid = 'cert_${DateTime.now().millisecondsSinceEpoch}';
+    // TODO: 다날 계약 완료 후 아래 PortOne SDK 연동 코드로 교체
+    // 현재 iamport_flutter 패키지가 주석 처리되어 있으므로 운영 인증 불가
+    ToastHelper.showError('본인인증은 서비스 준비 중입니다.');
+    return null;
 
-    IamportCertification.certification(
-      navigatorKey,
-      userCode: _portoneUserCode,
-      data: CertificationData(
-        pg: 'danal',
-        merchantUid: merchantUid,
-        name: '',
-        phone: '',
-        minAge: 19,
-      ),
-      callback: (IamportResponse response) async {
-        if (response.success != true || response.impUid == null) {
-          // 사용자 취소 또는 인증 실패
-          if (response.errorMsg != null && response.errorMsg!.isNotEmpty) {
-            debugPrint('⚠️ [PassVerificationService] 인증 실패: ${response.errorMsg}');
-          }
-          completer.complete(null);
-          return;
-        }
-
-        try {
-          final result = await _fn
-              .httpsCallable(
-                'verifyPassAuth',
-                options: HttpsCallableOptions(timeout: const Duration(seconds: 15)),
-              )
-              .call({
-            'imp_uid': response.impUid,
-            'purpose': purpose,
-            'role': role,
-          });
-
-          final data = Map<String, dynamic>.from(result.data as Map);
-          completer.complete(PassAuthResult(
-            name: data['name'] as String,
-            gender: data['gender'] as String,
-            birthDate: _parseBirthDate(data['birthDate'] as String),
-            phone: data['phone'] as String,
-            passToken: data['passToken'] as String,
-          ));
-        } catch (e) {
-          debugPrint('❌ [PassVerificationService] verifyPassAuth 실패: $e');
-          ToastHelper.showError('본인인증 처리 중 오류가 발생했습니다.');
-          completer.complete(null);
-        }
-      },
-    );
-
-    return completer.future;
+    // ── 계약 후 교체할 코드 (참고용) ──────────────────────────────────────
+    // final completer = Completer<PassAuthResult?>();
+    // final merchantUid = 'cert_${DateTime.now().millisecondsSinceEpoch}';
+    // IamportCertification.certification(
+    //   navigatorKey,
+    //   userCode: _portoneUserCode,
+    //   data: CertificationData(pg: 'danal', merchantUid: merchantUid, name: '', phone: '', minAge: 19),
+    //   callback: (IamportResponse response) async { ... },
+    // );
+    // return completer.future;
   }
 
   /// 비밀번호 찾기용 PASS 인증 후 Custom Token 발급
@@ -150,7 +116,8 @@ class PassVerificationService {
 
   // ── 유틸 ───────────────────────────────────────────────────────────────────
 
-  /// YYYYMMDD → DateTime 변환
+  /// YYYYMMDD → DateTime 변환 (포트원 계약 후 authenticate()에서 사용)
+  // ignore: unused_element
   static DateTime _parseBirthDate(String yyyymmdd) {
     final y = int.parse(yyyymmdd.substring(0, 4));
     final m = int.parse(yyyymmdd.substring(4, 6));

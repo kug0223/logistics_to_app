@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../main.dart';
+import '../utils/navigation_key.dart';
 import '../theme/app_colors.dart';
 
 class ToastHelper {
