@@ -806,7 +806,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                   style: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey700),
                 ),
                 const SizedBox(height: 12),
-                ...affected.map((w) => _buildDay8WarningCard(w.name, w.retroactive, w.gross, w.net)),
+                ...affected.map((w) => _buildDay8WarningCard(ctx, w.name, w.retroactive, w.gross, w.net)),
                 const SizedBox(height: 12),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -851,7 +851,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     ) ?? false;
   }
 
-  Widget _buildDay8WarningCard(String name, int retroactive, int gross, int net) {
+  Widget _buildDay8WarningCard(BuildContext ctx, String name, int retroactive, int gross, int net) {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(10),
@@ -863,26 +863,26 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(name, style: ResponsiveHelper.smallStyle(context).copyWith(fontWeight: FontWeight.bold)),
+          Text(name, style: ResponsiveHelper.smallStyle(ctx).copyWith(fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
-          _buildWarningInfoRow('소급 공제', '- ${FormatHelper.formatWage(retroactive)}', AppColors.errorDark),
-          _buildWarningInfoRow('세전 급여', FormatHelper.formatWage(gross), AppColors.grey700),
-          _buildWarningInfoRow('실수령액', FormatHelper.formatWage(net), AppColors.successDark),
+          _buildWarningInfoRow(ctx, '소급 공제', '- ${FormatHelper.formatWage(retroactive)}', AppColors.errorDark),
+          _buildWarningInfoRow(ctx, '세전 급여', FormatHelper.formatWage(gross), AppColors.grey700),
+          _buildWarningInfoRow(ctx, '실수령액', FormatHelper.formatWage(net), AppColors.successDark),
         ],
       ),
     );
   }
 
-  Widget _buildWarningInfoRow(String label, String value, Color valueColor) {
+  Widget _buildWarningInfoRow(BuildContext ctx, String label, String value, Color valueColor) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
           SizedBox(
             width: 70,
-            child: Text(label, style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)),
+            child: Text(label, style: ResponsiveHelper.tinyStyle(ctx, color: AppColors.grey500)),
           ),
-          Expanded(child: Text(value, style: ResponsiveHelper.tinyStyle(context, color: valueColor).copyWith(fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis)),
+          Expanded(child: Text(value, style: ResponsiveHelper.tinyStyle(ctx, color: valueColor).copyWith(fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis)),
         ],
       ),
     );

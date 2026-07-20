@@ -292,7 +292,7 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
         }
         return Icon(Icons.edit,
             color: Colors.white54,
-            size: ResponsiveHelper.iconSize(context, 20));
+            size: ResponsiveHelper.iconSize(ctx, 20));
       },
     );
   }

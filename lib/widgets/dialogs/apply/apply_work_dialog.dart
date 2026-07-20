@@ -2889,7 +2889,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 20)),
+          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(ctx, 20)),
         ),
         contentPadding: EdgeInsets.zero,
         content: Column(
@@ -2898,28 +2898,28 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             // 헤더
             Container(
               width: double.infinity,
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 20)),
               decoration: BoxDecoration(
                 color: bgColor,
                 borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(ResponsiveHelper.spacing(context, 20)),
-                  topRight: Radius.circular(ResponsiveHelper.spacing(context, 20)),
+                  topLeft: Radius.circular(ResponsiveHelper.spacing(ctx, 20)),
+                  topRight: Radius.circular(ResponsiveHelper.spacing(ctx, 20)),
                 ),
               ),
               child: Column(
                 children: [
                   Container(
-                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+                    padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 12)),
                     decoration: const BoxDecoration(
                       color: Colors.white,
                       shape: BoxShape.circle,
                     ),
-                    child: Icon(icon, size: ResponsiveHelper.iconSize(context, 28), color: iconColor),
+                    child: Icon(icon, size: ResponsiveHelper.iconSize(ctx, 28), color: iconColor),
                   ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                  SizedBox(height: ResponsiveHelper.spacing(ctx, 12)),
                   Text(
                     title,
-                    style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                    style: ResponsiveHelper.subtitleStyle(ctx).copyWith(
                       fontWeight: FontWeight.bold,
                       color: iconColor,
                     ),
@@ -2927,38 +2927,38 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                 ],
               ),
             ),
-            
+
             // 내용
             Padding(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 20)),
               child: Column(
                 children: [
                   Text(
                     message,
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w600),
+                    style: ResponsiveHelper.bodyStyle(ctx).copyWith(fontWeight: FontWeight.w600),
                     textAlign: TextAlign.center,
                   ),
                   if (detail != null) ...[
-                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                    SizedBox(height: ResponsiveHelper.spacing(ctx, 12)),
                     Container(
                       width: double.infinity,
-                      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+                      padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 12)),
                       decoration: BoxDecoration(
                         color: AppColors.grey100,
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
                         detail,
-                        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+                        style: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey700),
                         textAlign: TextAlign.center,
                       ),
                     ),
                   ],
                   if (subMessage != null) ...[
-                    SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                    SizedBox(height: ResponsiveHelper.spacing(ctx, 12)),
                     Text(
                       subMessage,
-                      style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                      style: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey600),
                       textAlign: TextAlign.center,
                     ),
                   ],
@@ -2975,21 +2975,21 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               style: TextButton.styleFrom(
                 backgroundColor: iconColor,
                 foregroundColor: Colors.white,
-                padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
+                padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(ctx, 12)),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
               ),
               child: Text(
                 '확인',
-                style: ResponsiveHelper.bodyStyle(context, color: Colors.white).copyWith(fontWeight: FontWeight.bold),
+                style: ResponsiveHelper.bodyStyle(ctx, color: Colors.white).copyWith(fontWeight: FontWeight.bold),
               ),
             ),
           ),
         ],
         actionsPadding: EdgeInsets.fromLTRB(
-          ResponsiveHelper.spacing(context, 20),
+          ResponsiveHelper.spacing(ctx, 20),
           0,
-          ResponsiveHelper.spacing(context, 20),
-          ResponsiveHelper.spacing(context, 16),
+          ResponsiveHelper.spacing(ctx, 20),
+          ResponsiveHelper.spacing(ctx, 16),
         ),
       ),
     );

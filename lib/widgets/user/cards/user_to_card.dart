@@ -403,12 +403,12 @@ class _UserTOCardState extends State<UserTOCard> {
         onTap: () => ctx.read<UserProvider>().toggleFavoriteTo(widget.to.id),
         behavior: HitTestBehavior.opaque,
         child: SizedBox(
-          width: ResponsiveHelper.spacing(context, 36),
-          height: ResponsiveHelper.spacing(context, 36),
+          width: ResponsiveHelper.spacing(ctx, 36),
+          height: ResponsiveHelper.spacing(ctx, 36),
           child: Center(
             child: Icon(
               isFav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-              size: ResponsiveHelper.iconSize(context, 18),
+              size: ResponsiveHelper.iconSize(ctx, 18),
               color: isFav ? AppColors.error : AppColors.grey300,
             ),
           ),
