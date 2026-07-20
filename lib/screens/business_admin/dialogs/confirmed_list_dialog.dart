@@ -1056,7 +1056,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
 
     final result = await showDialog<String>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
+      builder: (dialogCtx) => StatefulBuilder(
         builder: (ctx, setDialogState) => Dialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           child: Container(
@@ -1066,7 +1066,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
               children: [
                 Container(
                   width: double.infinity,
-                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+                  padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 16)),
                   decoration: const BoxDecoration(
                     color: AppColors.error,
                     borderRadius: BorderRadius.only(
@@ -1077,19 +1077,19 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
                   child: Row(
                     children: [
                       Icon(Icons.cancel_outlined, color: Colors.white,
-                          size: ResponsiveHelper.iconSize(context, 24)),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                          size: ResponsiveHelper.iconSize(ctx, 24)),
+                      SizedBox(width: ResponsiveHelper.spacing(ctx, 12)),
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             '확정 취소 ($count명)',
-                            style: ResponsiveHelper.subtitleStyle(context)
+                            style: ResponsiveHelper.subtitleStyle(ctx)
                                 .copyWith(color: Colors.white, fontWeight: FontWeight.bold),
                           ),
                           Text(
                             '취소 사유를 선택하세요',
-                            style: ResponsiveHelper.smallStyle(context)
+                            style: ResponsiveHelper.smallStyle(ctx)
                                 .copyWith(color: Colors.white.withValues(alpha: 0.8)),
                           ),
                         ],
@@ -1099,21 +1099,21 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
                 ),
                 SingleChildScrollView(
                   child: Padding(
-                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+                    padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 16)),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Wrap(
-                          spacing: ResponsiveHelper.spacing(context, 8),
-                          runSpacing: ResponsiveHelper.spacing(context, 8),
+                          spacing: ResponsiveHelper.spacing(ctx, 8),
+                          runSpacing: ResponsiveHelper.spacing(ctx, 8),
                           children: reasons.map((r) {
                             final isSelected = selectedReason == r;
                             return GestureDetector(
                               onTap: () => setDialogState(() => selectedReason = r),
                               child: Container(
                                 padding: EdgeInsets.symmetric(
-                                  horizontal: ResponsiveHelper.spacing(context, 14),
-                                  vertical: ResponsiveHelper.spacing(context, 8),
+                                  horizontal: ResponsiveHelper.spacing(ctx, 14),
+                                  vertical: ResponsiveHelper.spacing(ctx, 8),
                                 ),
                                 decoration: BoxDecoration(
                                   color: isSelected ? AppColors.error : AppColors.grey100,
@@ -1125,7 +1125,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
                                 child: Text(
                                   r,
                                   style: ResponsiveHelper.smallStyle(
-                                    context,
+                                    ctx,
                                     color: isSelected ? Colors.white : AppColors.grey700,
                                   ).copyWith(fontWeight: FontWeight.w600),
                                 ),
@@ -1134,7 +1134,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
                           }).toList(),
                         ),
                         if (selectedReason == '기타') ...[
-                          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                          SizedBox(height: ResponsiveHelper.spacing(ctx, 12)),
                           TextField(
                             controller: customController,
                             maxLength: 200,
@@ -1143,8 +1143,8 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
                               border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(8)),
                               contentPadding: EdgeInsets.symmetric(
-                                horizontal: ResponsiveHelper.spacing(context, 12),
-                                vertical: ResponsiveHelper.spacing(context, 10),
+                                horizontal: ResponsiveHelper.spacing(ctx, 12),
+                                vertical: ResponsiveHelper.spacing(ctx, 10),
                               ),
                               counterText: '',
                             ),
@@ -1156,20 +1156,20 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
                 ),
                 Padding(
                   padding: EdgeInsets.fromLTRB(
-                    ResponsiveHelper.spacing(context, 16),
+                    ResponsiveHelper.spacing(ctx, 16),
                     0,
-                    ResponsiveHelper.spacing(context, 16),
-                    ResponsiveHelper.spacing(context, 16),
+                    ResponsiveHelper.spacing(ctx, 16),
+                    ResponsiveHelper.spacing(ctx, 16),
                   ),
                   child: Row(
                     children: [
                       Expanded(
                         child: OutlinedButton(
-                          onPressed: () => Navigator.pop(ctx),
+                          onPressed: () => Navigator.pop(dialogCtx),
                           child: const Text('취소'),
                         ),
                       ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                      SizedBox(width: ResponsiveHelper.spacing(ctx, 12)),
                       Expanded(
                         child: ElevatedButton(
                           onPressed: selectedReason == null
@@ -1179,7 +1179,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
                                           customController.text.trim().isNotEmpty
                                       ? customController.text.trim()
                                       : selectedReason!;
-                                  Navigator.pop(ctx, reason);
+                                  Navigator.pop(dialogCtx, reason);
                                 },
                           style: ElevatedButton.styleFrom(
                               backgroundColor: AppColors.error),

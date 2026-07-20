@@ -111,7 +111,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                 _filterBusinessId == null
                     ? Icons.radio_button_checked
                     : Icons.radio_button_unchecked,
-                color: Theme.of(context).primaryColor),
+                color: Theme.of(ctx).primaryColor),
             title: const Text('전체 사업장'),
             onTap: () {
               Navigator.pop(ctx);
@@ -126,7 +126,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                     _filterBusinessId == b.id
                         ? Icons.radio_button_checked
                         : Icons.radio_button_unchecked,
-                    color: Theme.of(context).primaryColor),
+                    color: Theme.of(ctx).primaryColor),
                 title: Text(b.name),
                 onTap: () {
                   Navigator.pop(ctx);

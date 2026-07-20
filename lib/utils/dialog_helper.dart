@@ -37,20 +37,20 @@ class DialogHelper {
     final result = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => _buildDialog(
-        context,
+        dialogContext,
         title: title,
         icon: icon ?? Icons.help_outline,
         accentColor: accentColor,
         body: Text(
           message,
           style: ResponsiveHelper.bodyStyle(
-            context,
+            dialogContext,
             color: theme.textTheme.bodyMedium?.color,
           ),
         ),
         actions: [
-          _cancelBtn(context, () => Navigator.pop(dialogContext, false), cancelText),
-          _confirmBtn(context, () => Navigator.pop(dialogContext, true), confirmText, accentColor),
+          _cancelBtn(dialogContext, () => Navigator.pop(dialogContext, false), cancelText),
+          _confirmBtn(dialogContext, () => Navigator.pop(dialogContext, true), confirmText, accentColor),
         ],
       ),
     );
@@ -111,19 +111,19 @@ class DialogHelper {
     return showDialog(
       context: context,
       builder: (dialogContext) => _buildDialog(
-        context,
+        dialogContext,
         title: title,
         icon: icon ?? Icons.notifications_outlined,
         accentColor: accentColor,
         body: Text(
           message,
           style: ResponsiveHelper.bodyStyle(
-            context,
+            dialogContext,
             color: theme.textTheme.bodyMedium?.color,
           ),
         ),
         actions: [
-          _confirmBtn(context, () => Navigator.pop(dialogContext), buttonText, accentColor),
+          _confirmBtn(dialogContext, () => Navigator.pop(dialogContext), buttonText, accentColor),
         ],
       ),
     );
@@ -194,18 +194,18 @@ class DialogHelper {
         child: Center(
           child: Card(
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 16)),
+              borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(dialogContext, 16)),
             ),
             child: Padding(
-              padding: ResponsiveHelper.cardPadding(context),
+              padding: ResponsiveHelper.cardPadding(dialogContext),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const LoadingWidget(),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                  SizedBox(height: ResponsiveHelper.spacing(dialogContext, 16)),
                   Text(
                     message,
-                    style: ResponsiveHelper.bodyStyle(context),
+                    style: ResponsiveHelper.bodyStyle(dialogContext),
                   ),
                 ],
               ),
@@ -238,7 +238,7 @@ class DialogHelper {
     return showDialog<T>(
       context: context,
       builder: (dialogContext) => _buildDialog(
-        context,
+        dialogContext,
         title: title,
         icon: Icons.list_outlined,
         accentColor: theme.primaryColor,
@@ -251,17 +251,17 @@ class DialogHelper {
               borderRadius: BorderRadius.circular(8),
               child: Padding(
                 padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 4),
-                  vertical: ResponsiveHelper.spacing(context, 12),
+                  horizontal: ResponsiveHelper.spacing(dialogContext, 4),
+                  vertical: ResponsiveHelper.spacing(dialogContext, 12),
                 ),
                 child: Row(
                   children: [
                     Icon(Icons.chevron_right,
-                        size: ResponsiveHelper.iconSize(context, 18),
+                        size: ResponsiveHelper.iconSize(dialogContext, 18),
                         color: theme.primaryColor),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    SizedBox(width: ResponsiveHelper.spacing(dialogContext, 8)),
                     Expanded(
-                      child: Text(label, style: ResponsiveHelper.bodyStyle(context)),
+                      child: Text(label, style: ResponsiveHelper.bodyStyle(dialogContext)),
                     ),
                   ],
                 ),
@@ -270,7 +270,7 @@ class DialogHelper {
           }).toList(),
         ),
         actions: [
-          _cancelBtn(context, () => Navigator.pop(dialogContext), '취소'),
+          _cancelBtn(dialogContext, () => Navigator.pop(dialogContext), '취소'),
         ],
       ),
     );
@@ -303,7 +303,7 @@ class DialogHelper {
       builder: (dialogContext) {
         if (title != null) {
           return _buildDialog(
-            context,
+            dialogContext,
             title: title,
             icon: icon ?? Icons.info_outline,
             accentColor: iconColor ?? theme.primaryColor,
@@ -313,10 +313,10 @@ class DialogHelper {
         }
         return AlertDialog(
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
+            borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(dialogContext, 24)),
           ),
           content: content,
-          actionsPadding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+          actionsPadding: EdgeInsets.all(ResponsiveHelper.spacing(dialogContext, 16)),
           actions: actions,
         );
       },
@@ -408,7 +408,7 @@ class DialogHelper {
     final result = await showDialog<String>(
       context: context,
       builder: (dialogContext) => _buildDialog(
-        context,
+        dialogContext,
         title: title,
         icon: icon ?? Icons.edit_outlined,
         accentColor: accentColor,
@@ -420,29 +420,29 @@ class DialogHelper {
               Text(
                 message,
                 style: ResponsiveHelper.bodyStyle(
-                  context,
+                  dialogContext,
                   color: theme.textTheme.bodyMedium?.color,
                 ),
               ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              SizedBox(height: ResponsiveHelper.spacing(dialogContext, 16)),
             ],
             TextField(
               controller: controller,
               maxLines: maxLines,
               maxLength: maxLength,
-              style: ResponsiveHelper.bodyStyle(context),
+              style: ResponsiveHelper.bodyStyle(dialogContext),
               decoration: InputDecoration(
                 hintText: hintText,
                 hintStyle: ResponsiveHelper.bodyStyle(
-                  context,
+                  dialogContext,
                   color: theme.hintColor,
                 ),
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
+                  borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(dialogContext, 8)),
                 ),
                 contentPadding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 12),
-                  vertical: ResponsiveHelper.spacing(context, 12),
+                  horizontal: ResponsiveHelper.spacing(dialogContext, 12),
+                  vertical: ResponsiveHelper.spacing(dialogContext, 12),
                 ),
               ),
               autofocus: true,
@@ -450,9 +450,9 @@ class DialogHelper {
           ],
         ),
         actions: [
-          _cancelBtn(context, () => Navigator.pop(dialogContext), cancelText),
+          _cancelBtn(dialogContext, () => Navigator.pop(dialogContext), cancelText),
           _confirmBtn(
-            context,
+            dialogContext,
             () {
               final value = controller.text.trim();
               if (validator != null && !validator(value)) return;
@@ -614,7 +614,7 @@ class DialogHelper {
     final result = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => _buildDialog(
-        context,
+        dialogContext,
         title: title,
         icon: Icons.warning_amber_rounded,
         accentColor: AppColors.warning,
@@ -624,14 +624,14 @@ class DialogHelper {
           children: [
             Text(
               '지원하기 전에 서류 등록이 필요합니다.',
-              style: ResponsiveHelper.bodyStyle(context),
+              style: ResponsiveHelper.bodyStyle(dialogContext),
             ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            SizedBox(height: ResponsiveHelper.spacing(dialogContext, 16)),
             Container(
-              padding: ResponsiveHelper.cardPadding(context),
+              padding: ResponsiveHelper.cardPadding(dialogContext),
               decoration: BoxDecoration(
                 color: AppColors.warning.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
+                borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(dialogContext, 8)),
                 border: Border.all(color: AppColors.warning.withValues(alpha: 0.3)),
               ),
               child: Column(
@@ -641,37 +641,37 @@ class DialogHelper {
                     children: [
                       Icon(
                         Icons.description_outlined,
-                        size: ResponsiveHelper.iconSize(context, 20),
+                        size: ResponsiveHelper.iconSize(dialogContext, 20),
                         color: AppColors.warning,
                       ),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      SizedBox(width: ResponsiveHelper.spacing(dialogContext, 8)),
                       Text(
                         '미등록 항목:',
-                        style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        style: ResponsiveHelper.bodyStyle(dialogContext).copyWith(
                           fontWeight: FontWeight.bold,
                           color: AppColors.warning,
                         ),
                       ),
                     ],
                   ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                  SizedBox(height: ResponsiveHelper.spacing(dialogContext, 8)),
                   ...missingDocuments.map((doc) => Padding(
                         padding: EdgeInsets.only(
-                          left: ResponsiveHelper.spacing(context, 8),
-                          top: ResponsiveHelper.spacing(context, 4),
+                          left: ResponsiveHelper.spacing(dialogContext, 8),
+                          top: ResponsiveHelper.spacing(dialogContext, 4),
                         ),
                         child: Row(
                           children: [
                             Icon(
                               Icons.circle,
-                              size: ResponsiveHelper.iconSize(context, 6),
+                              size: ResponsiveHelper.iconSize(dialogContext, 6),
                               color: AppColors.warning,
                             ),
-                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                            SizedBox(width: ResponsiveHelper.spacing(dialogContext, 8)),
                             Text(
                               doc,
                               style: ResponsiveHelper.bodyStyle(
-                                context,
+                                dialogContext,
                                 color: AppColors.warning,
                               ),
                             ),
@@ -681,20 +681,20 @@ class DialogHelper {
                 ],
               ),
             ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            SizedBox(height: ResponsiveHelper.spacing(dialogContext, 12)),
             Text(
               '설정 > 내 서류 관리에서\n서류를 등록해주세요.',
               style: ResponsiveHelper.smallStyle(
-                context,
+                dialogContext,
                 color: theme.textTheme.bodySmall?.color,
               ),
             ),
           ],
         ),
         actions: [
-          _cancelBtn(context, () => Navigator.pop(dialogContext, false), '취소'),
+          _cancelBtn(dialogContext, () => Navigator.pop(dialogContext, false), '취소'),
           _confirmBtn(
-              context, () => Navigator.pop(dialogContext, true), '서류 등록하기', AppColors.warning),
+              dialogContext, () => Navigator.pop(dialogContext, true), '서류 등록하기', AppColors.warning),
         ],
       ),
     );

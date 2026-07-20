@@ -3195,7 +3195,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
           child: Container(
             constraints: const BoxConstraints(maxWidth: 340),
-            padding: ResponsiveHelper.cardPadding(context),
+            padding: ResponsiveHelper.cardPadding(ctx),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -3204,45 +3204,45 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                 Row(
                   children: [
                     Container(
-                      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+                      padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 10)),
                       decoration: BoxDecoration(
                         color: AppColors.info.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: Icon(Icons.tune, color: AppColors.info, size: ResponsiveHelper.iconSize(context, 24)),
+                      child: Icon(Icons.tune, color: AppColors.info, size: ResponsiveHelper.iconSize(ctx, 24)),
                     ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                    SizedBox(width: ResponsiveHelper.spacing(ctx, 12)),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             '일괄 시간 조정',
-                            style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold),
+                            style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.bold),
                           ),
                           Text(
                             '${targets.length}명 대상',
-                            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                            style: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey600),
                           ),
                         ],
                       ),
                     ),
                     IconButton(
                       onPressed: () => Navigator.pop(dialogContext, false),
-                      icon: Icon(Icons.close, color: AppColors.grey500, size: ResponsiveHelper.iconSize(context, 20)),
+                      icon: Icon(Icons.close, color: AppColors.grey500, size: ResponsiveHelper.iconSize(ctx, 20)),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
                     ),
                   ],
                 ),
 
-                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                SizedBox(height: ResponsiveHelper.spacing(ctx, 8)),
                 Divider(color: AppColors.border),
-                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                SizedBox(height: ResponsiveHelper.spacing(ctx, 8)),
 
                 // 안내
                 Container(
-                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+                  padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 10)),
                   decoration: BoxDecoration(
                     color: AppColors.infoBg,
                     borderRadius: BorderRadius.circular(8),
@@ -3250,19 +3250,19 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.info_outline, color: AppColors.infoDark, size: ResponsiveHelper.iconSize(context, 16)),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      Icon(Icons.info_outline, color: AppColors.infoDark, size: ResponsiveHelper.iconSize(ctx, 16)),
+                      SizedBox(width: ResponsiveHelper.spacing(ctx, 8)),
                       Expanded(
                         child: Text(
                           '입력한 시간으로만 조정됩니다.\n비워두면 해당 시간은 변경되지 않습니다.',
-                          style: ResponsiveHelper.tinyStyle(context, color: AppColors.infoDark),
+                          style: ResponsiveHelper.tinyStyle(ctx, color: AppColors.infoDark),
                         ),
                       ),
                     ],
                   ),
                 ),
 
-                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                SizedBox(height: ResponsiveHelper.spacing(ctx, 16)),
 
                 // 출근 시간 조정
                 _buildAdjustRow(
@@ -3283,7 +3283,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                   onClear: adjustCheckIn != null ? () => setDialogState(() => adjustCheckIn = null) : null,
                 ),
 
-                SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+                SizedBox(height: ResponsiveHelper.spacing(ctx, 10)),
 
                 // 퇴근 시간 조정
                 _buildAdjustRow(
@@ -3304,7 +3304,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                   onClear: adjustCheckOut != null ? () => setDialogState(() => adjustCheckOut = null) : null,
                 ),
 
-                SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+                SizedBox(height: ResponsiveHelper.spacing(ctx, 20)),
 
                 // 버튼
                 Row(
@@ -3313,14 +3313,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                       child: OutlinedButton(
                         onPressed: () => Navigator.pop(dialogContext, false),
                         style: OutlinedButton.styleFrom(
-                          padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 14)),
+                          padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(ctx, 14)),
                           side: BorderSide(color: AppColors.grey300),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         ),
-                        child: Text('취소', style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600)),
+                        child: Text('취소', style: ResponsiveHelper.bodyStyle(ctx, color: AppColors.grey600)),
                       ),
                     ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                    SizedBox(width: ResponsiveHelper.spacing(ctx, 12)),
                     Expanded(
                       child: ElevatedButton(
                         onPressed: (adjustCheckIn != null || adjustCheckOut != null)
@@ -3329,12 +3329,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.info,
                           foregroundColor: Colors.white,
-                          padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 14)),
+                          padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(ctx, 14)),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         ),
                         child: Text(
                           '조정하기',
-                          style: ResponsiveHelper.bodyStyle(context, color: Colors.white).copyWith(fontWeight: FontWeight.bold),
+                          style: ResponsiveHelper.bodyStyle(ctx, color: Colors.white).copyWith(fontWeight: FontWeight.bold),
                         ),
                       ),
                     ),

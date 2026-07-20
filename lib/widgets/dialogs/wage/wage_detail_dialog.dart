@@ -173,9 +173,9 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('무급 휴게시간 수정',
-                style: ResponsiveHelper.subtitleStyle(context)
+                style: ResponsiveHelper.subtitleStyle(ctx)
                     .copyWith(fontWeight: FontWeight.bold)),
-            SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+            SizedBox(height: ResponsiveHelper.spacing(ctx, 10)),
             // 법정 기준 안내
             Container(
               width: double.infinity,
@@ -190,14 +190,14 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                     isOver
                         ? Icons.warning_amber_outlined
                         : Icons.info_outline,
-                    size: ResponsiveHelper.iconSize(context, 14),
+                    size: ResponsiveHelper.iconSize(ctx, 14),
                     color: isOver ? AppColors.errorDark : AppColors.infoDark,
                   ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                  SizedBox(width: ResponsiveHelper.spacing(ctx, 6)),
                   Expanded(
                     child: Text(
                       '체류 ${FormatHelper.formatCompactHours(_wage.actualMinutes)} 기준  법정 최대: $legalLabel',
-                      style: ResponsiveHelper.tinyStyle(context,
+                      style: ResponsiveHelper.tinyStyle(ctx,
                           color: isOver
                               ? AppColors.errorDark
                               : AppColors.infoDark),
@@ -206,14 +206,14 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                 ],
               ),
             ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+            SizedBox(height: ResponsiveHelper.spacing(ctx, 16)),
             Text('적용할 휴게시간 선택',
-                style: ResponsiveHelper.smallStyle(context,
+                style: ResponsiveHelper.smallStyle(ctx,
                     color: AppColors.grey500)),
-            SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+            SizedBox(height: ResponsiveHelper.spacing(ctx, 10)),
             Wrap(
-              spacing: ResponsiveHelper.spacing(context, 8),
-              runSpacing: ResponsiveHelper.spacing(context, 8),
+              spacing: ResponsiveHelper.spacing(ctx, 8),
+              runSpacing: ResponsiveHelper.spacing(ctx, 8),
               children: [0, 30, 60, 90].map((min) {
                 final isSelected = _wage.breakMinutes == min;
                 final exceedsLegal = legalMax > 0 && min > legalMax;
@@ -242,7 +242,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                     ),
                     child: Text(
                       min == 0 ? '없음' : '$min분',
-                      style: ResponsiveHelper.smallStyle(context,
+                      style: ResponsiveHelper.smallStyle(ctx,
                               color: isSelected
                                   ? Colors.white
                                   : exceedsLegal

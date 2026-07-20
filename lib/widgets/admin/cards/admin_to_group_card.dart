@@ -1548,10 +1548,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Padding(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 16)),
                 child: Text(
                   '날짜를 선택하세요',
-                  style: ResponsiveHelper.subtitleStyle(context).copyWith(fontWeight: FontWeight.bold),
+                  style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.bold),
                 ),
               ),
               const Divider(height: 1),
@@ -1568,28 +1568,28 @@ class _TOGroupCardState extends State<TOGroupCard> {
                     return ListTile(
                       leading: Icon(
                         Icons.event,
-                        color: Theme.of(context).primaryColor,
-                        size: ResponsiveHelper.iconSize(context, 20),
+                        color: Theme.of(ctx).primaryColor,
+                        size: ResponsiveHelper.iconSize(ctx, 20),
                       ),
                       title: Text(
                         FormatHelper.formatDate(toItem.slot?.date ?? toItem.to.date),
-                        style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w600),
+                        style: ResponsiveHelper.bodyStyle(ctx).copyWith(fontWeight: FontWeight.w600),
                       ),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
                             '$confirmed/$required',
-                            style: ResponsiveHelper.bodyStyle(context, color: AppColors.infoDark)
+                            style: ResponsiveHelper.bodyStyle(ctx, color: AppColors.infoDark)
                                 .copyWith(fontWeight: FontWeight.bold),
                           ),
                           if (pending > 0)
                             Text(
                               ' +$pending',
-                              style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark),
+                              style: ResponsiveHelper.smallStyle(ctx, color: AppColors.warningDark),
                             ),
-                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                          Icon(Icons.chevron_right, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.grey400),
+                          SizedBox(width: ResponsiveHelper.spacing(ctx, 8)),
+                          Icon(Icons.chevron_right, size: ResponsiveHelper.iconSize(ctx, 18), color: AppColors.grey400),
                         ],
                       ),
                       onTap: () => Navigator.pop(ctx, toItem),
