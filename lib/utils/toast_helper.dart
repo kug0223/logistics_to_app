@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../utils/navigation_key.dart';
 import '../theme/app_colors.dart';
@@ -73,7 +74,10 @@ class _ToastWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    final mq = MediaQuery.of(context);
+    // viewInsets.bottom = 키보드 높이, padding.bottom = safe area
+    // 키보드가 올라와 있으면 viewInsets.bottom이 더 크므로 둘 중 max 사용
+    final bottomPadding = math.max(mq.padding.bottom, mq.viewInsets.bottom);
     return Positioned(
       bottom: 24 + bottomPadding,
       left: 16,

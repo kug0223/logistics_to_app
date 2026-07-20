@@ -59,6 +59,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _handleLogin() async {
     if (!_formKey.currentState!.validate()) return;
+    FocusScope.of(context).unfocus(); // 키보드 닫기 → toast가 키보드 뒤에 숨지 않도록
 
     final userProvider = context.read<UserProvider>();
     if (userProvider.isLoading) return;
@@ -91,7 +92,8 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
     await showModalBottomSheet(
       context: context,
-      useSafeArea: true,
+      // useSafeArea: true를 쓰면 투명 배경 시트에서 홈 인디케이터 높이만큼 흰 컨테이너
+      // 아래에 투명 갭이 생겨 잘려 보임. 수동으로 padding.bottom 추가해 대응.
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => StatefulBuilder(
@@ -129,7 +131,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
               ),
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 0, 24, 40),
+                padding: EdgeInsets.fromLTRB(24, 0, 24, 40 + MediaQuery.of(ctx).padding.bottom),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -295,7 +297,8 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
     await showModalBottomSheet(
       context: context,
-      useSafeArea: true,
+      // useSafeArea: true를 쓰면 투명 배경 시트에서 홈 인디케이터 높이만큼 흰 컨테이너
+      // 아래에 투명 갭이 생겨 잘려 보임. 수동으로 padding.bottom 추가해 대응.
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => StatefulBuilder(
@@ -408,7 +411,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
               ),
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 0, 24, 40),
+                padding: EdgeInsets.fromLTRB(24, 0, 24, 40 + MediaQuery.of(ctx).padding.bottom),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
