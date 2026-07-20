@@ -151,10 +151,12 @@ class WorkDetailDialog {
                           ),
                           if (selectedWageType == 'daily') ...[
                             SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                            // builder의 ctx를 사용해야 외부 context로 InheritedWidget 의존성이
+                            // 잘못 등록되는 _dependents.isEmpty 어설션을 방지할 수 있다
                             ValueListenableBuilder<TextEditingValue>(
                               valueListenable: wageController,
-                              builder: (_, __, ___) => _buildBaseHourlyWageSection(
-                                context, theme,
+                              builder: (ctx, __, ___) => _buildBaseHourlyWageSection(
+                                ctx, theme,
                                 wageController, baseHourlyWageController,
                                 startTime, endTime, breakMinutes,
                               ),
@@ -390,8 +392,8 @@ class WorkDetailDialog {
                             SizedBox(height: ResponsiveHelper.spacing(context, 24)),
                             ValueListenableBuilder<TextEditingValue>(
                               valueListenable: wageController,
-                              builder: (_, __, ___) => _buildBaseHourlyWageSection(
-                                context, theme,
+                              builder: (ctx, __, ___) => _buildBaseHourlyWageSection(
+                                ctx, theme,
                                 wageController, baseHourlyWageController,
                                 startTime, endTime, breakMinutes,
                               ),
@@ -1332,9 +1334,21 @@ class WorkDetailDialog {
     }
     String selectedTime = times[initialIndex];
 
+    // builder 내부에서 외부 context로 InheritedWidget 조회 시 _dependents 잘못 등록 방지 —
+    // showModalBottomSheet 호출 전에 스타일을 미리 캡처해 builder 내부에서 재사용한다.
+    final capturedTitleStyle = ResponsiveHelper.subtitleStyle(context)
+        .copyWith(fontWeight: FontWeight.bold);
+    final capturedConfirmStyle = ResponsiveHelper.bodyStyle(context,
+            color: theme.primaryColor)
+        .copyWith(fontWeight: FontWeight.bold);
+    final capturedItemStyle = ResponsiveHelper.subtitleStyle(context)
+        .copyWith(fontWeight: FontWeight.w500);
+    final safeBottom = MediaQuery.of(context).padding.bottom;
+
     return showModalBottomSheet<String>(
       context: context,
-      useSafeArea: true,
+      // useSafeArea:true + backgroundColor:transparent 조합 시 홈 인디케이터 높이만큼
+      // 흰 컨테이너 아래 투명 갭 발생 → 수동 padding으로 대응
       backgroundColor: Colors.transparent,
       builder: (ctx) {
         return Container(
@@ -1342,65 +1356,54 @@ class WorkDetailDialog {
             color: Colors.white,
             borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
           ),
-          constraints: const BoxConstraints(maxHeight: 280),
-          child: SafeArea(
-            top: false,
-            child: Column(
-              children: [
-                Container(
-                  margin: const EdgeInsets.only(top: 12, bottom: 4),
-                  width: 40, height: 4,
-                  decoration: BoxDecoration(
-                    color: AppColors.grey300,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
+          constraints: BoxConstraints(maxHeight: 280 + safeBottom),
+          child: Column(
+            children: [
+              Container(
+                margin: const EdgeInsets.only(top: 12, bottom: 4),
+                width: 40, height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.grey300,
+                  borderRadius: BorderRadius.circular(2),
                 ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(title,
-                        style: ResponsiveHelper.subtitleStyle(context)
-                            .copyWith(fontWeight: FontWeight.bold)),
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx, selectedTime),
-                        child: Text('확인',
-                          style: ResponsiveHelper.bodyStyle(context,
-                                  color: theme.primaryColor)
-                              .copyWith(fontWeight: FontWeight.bold)),
-                      ),
-                    ],
-                  ),
-                ),
-                Divider(height: 1, color: AppColors.grey200),
-                Expanded(
-                  child: CupertinoPicker(
-                    scrollController: FixedExtentScrollController(
-                      initialItem: initialIndex,
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(title, style: capturedTitleStyle),
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx, selectedTime),
+                      child: Text('확인', style: capturedConfirmStyle),
                     ),
-                    itemExtent: 48,
-                    selectionOverlay: CupertinoPickerDefaultSelectionOverlay(
-                      background: theme.primaryColor.withValues(alpha: 0.08),
-                    ),
-                    onSelectedItemChanged: (i) {
-                      selectedTime = times[i];
-                    },
-                    children: times
-                        .map(
-                          (t) => Center(
-                            child: Text(
-                              t,
-                              style: ResponsiveHelper.subtitleStyle(context)
-                                  .copyWith(fontWeight: FontWeight.w500),
-                            ),
-                          ),
-                        )
-                        .toList(),
-                  ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              Divider(height: 1, color: AppColors.grey200),
+              Expanded(
+                child: CupertinoPicker(
+                  scrollController: FixedExtentScrollController(
+                    initialItem: initialIndex,
+                  ),
+                  itemExtent: 48,
+                  selectionOverlay: CupertinoPickerDefaultSelectionOverlay(
+                    background: theme.primaryColor.withValues(alpha: 0.08),
+                  ),
+                  onSelectedItemChanged: (i) {
+                    selectedTime = times[i];
+                  },
+                  children: times
+                      .map(
+                        (t) => Center(
+                          child: Text(t, style: capturedItemStyle),
+                        ),
+                      )
+                      .toList(),
+                ),
+              ),
+              SizedBox(height: safeBottom),
+            ],
           ),
         );
       },
@@ -2550,65 +2553,65 @@ class WorkDetailDialog {
     if (initialIndex < 0) initialIndex = 0;
     int selected = items[initialIndex];
 
+    // builder 내부에서 외부 context로 InheritedWidget 조회 시 _dependents 잘못 등록 방지
+    final capturedTitleStyle = ResponsiveHelper.subtitleStyle(context)
+        .copyWith(fontWeight: FontWeight.bold);
+    final capturedConfirmStyle = ResponsiveHelper.bodyStyle(context,
+            color: theme.primaryColor)
+        .copyWith(fontWeight: FontWeight.bold);
+    final capturedItemStyle = ResponsiveHelper.subtitleStyle(context)
+        .copyWith(fontWeight: FontWeight.w500);
+    final safeBottom = MediaQuery.of(context).padding.bottom;
+
     return showModalBottomSheet<int>(
       context: context,
-      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => Container(
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
-        constraints: const BoxConstraints(maxHeight: 340),
-        child: SafeArea(
-          top: false,
-          child: Column(
-            children: [
-              Container(
-                margin: const EdgeInsets.only(top: 12, bottom: 4),
-                width: 40, height: 4,
-                decoration: BoxDecoration(
-                    color: AppColors.grey300,
-                    borderRadius: BorderRadius.circular(2)),
+        constraints: BoxConstraints(maxHeight: 340 + safeBottom),
+        child: Column(
+          children: [
+            Container(
+              margin: const EdgeInsets.only(top: 12, bottom: 4),
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                  color: AppColors.grey300,
+                  borderRadius: BorderRadius.circular(2)),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('지급일 선택', style: capturedTitleStyle),
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, selected),
+                    child: Text('확인', style: capturedConfirmStyle),
+                  ),
+                ],
               ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('지급일 선택',
-                        style: ResponsiveHelper.subtitleStyle(context)
-                            .copyWith(fontWeight: FontWeight.bold)),
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx, selected),
-                      child: Text('확인',
-                          style: ResponsiveHelper.bodyStyle(context,
-                                  color: theme.primaryColor)
-                              .copyWith(fontWeight: FontWeight.bold)),
-                    ),
-                  ],
-                ),
+            ),
+            Divider(height: 1, color: AppColors.grey200),
+            Expanded(
+              child: CupertinoPicker(
+                scrollController:
+                    FixedExtentScrollController(initialItem: initialIndex),
+                itemExtent: 48,
+                selectionOverlay: CupertinoPickerDefaultSelectionOverlay(
+                    background: theme.primaryColor.withValues(alpha: 0.08)),
+                onSelectedItemChanged: (i) => selected = items[i],
+                children: labels
+                    .map((l) => Center(
+                          child: Text(l, style: capturedItemStyle),
+                        ))
+                    .toList(),
               ),
-              Divider(height: 1, color: AppColors.grey200),
-              Expanded(
-                child: CupertinoPicker(
-                  scrollController:
-                      FixedExtentScrollController(initialItem: initialIndex),
-                  itemExtent: 48,
-                  selectionOverlay: CupertinoPickerDefaultSelectionOverlay(
-                      background: theme.primaryColor.withValues(alpha: 0.08)),
-                  onSelectedItemChanged: (i) => selected = items[i],
-                  children: labels
-                      .map((l) => Center(
-                            child: Text(l,
-                                style: ResponsiveHelper.subtitleStyle(context)
-                                    .copyWith(fontWeight: FontWeight.w500)),
-                          ))
-                      .toList(),
-                ),
-              ),
-            ],
-          ),
+            ),
+            SizedBox(height: safeBottom),
+          ],
         ),
       ),
     );
