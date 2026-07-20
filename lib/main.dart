@@ -184,6 +184,9 @@ class _AuthWrapperState extends State<AuthWrapper> {
   bool? _isOnboardingCompleted;
   bool _emailBannerShown = false;
   bool _checkingOnboarding = false;
+  // Firebase Auth 초기 상태 확인 완료 후 true → 이후 isLoading=true(signIn 등)에서
+  // LoginScreen을 스피너로 교체하지 않기 위한 가드
+  bool _seenNotLoading = false;
 
   @override
   void initState() {
@@ -230,10 +233,15 @@ class _AuthWrapperState extends State<AuthWrapper> {
           debugPrint('isLoggedIn: ${userProvider.isLoggedIn}');
         }
         
+        // Firebase Auth 초기 상태 확인 완료 마킹 (빌드 중 setState 없이 플래그만 업데이트)
+        if (!userProvider.isLoading) _seenNotLoading = true;
+
         // 🔄 초기 로딩 중 (_isOnboardingCompleted이 결정된 이후엔 로딩 스피너를 표시하지 않음)
         // isLoading이 다시 true가 되어도 OnboardingScreen/홈 화면을 유지해야 한다.
         // 그렇지 않으면 OnboardingScreen이 로딩 스피너로 교체됐다가 재생성될 때 페이지가 초기화된다.
-        if (userProvider.isLoading && _isOnboardingCompleted == null) {
+        // _seenNotLoading: 초기 인증 확인 완료 후엔 signIn() 중 isLoading=true여도 스피너 불표시
+        // (LoginScreen 언마운트 → mounted=false → toast 미표시 방지)
+        if (userProvider.isLoading && _isOnboardingCompleted == null && !_seenNotLoading) {
           if (kDebugMode) debugPrint('⏳ 로딩 중...');
           return const Scaffold(
             body: Center(
