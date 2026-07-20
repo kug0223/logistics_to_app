@@ -541,7 +541,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         headerColor: AppColors.warning,
         content: Text(
           '등록 즉시 마감 상태가 됩니다.\n그래도 등록하시겠습니까?',
-          style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
+          style: ResponsiveHelper.bodyStyle(ctx, color: AppColors.grey700),
         ),
         actions: [
           StyledDialogButton.cancel(
@@ -611,7 +611,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         headerColor: AppColors.warning,
         content: Text(
           '급여 유형·휴게시간·야간 설정을 변경하면\n미확정 급여 계산에 영향을 줄 수 있습니다.\n\n계속 저장하시겠습니까?',
-          style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
+          style: ResponsiveHelper.bodyStyle(ctx, color: AppColors.grey700),
         ),
         actions: [
           StyledDialogButton.cancel(

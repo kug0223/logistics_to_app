@@ -473,8 +473,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                         itemCount: filteredTOs.length,
                         separatorBuilder: (_, __) =>
                             Divider(height: 1, color: AppColors.divider),
-                        itemBuilder: (context, index) =>
-                            _buildTOListTile(filteredTOs[index]),
+                        itemBuilder: (ctx, index) =>
+                            _buildTOListTile(filteredTOs[index], ctx),
                       ),
               ),
               Container(
@@ -499,29 +499,29 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     );
   }
 
-  Widget _buildTOListTile(TOModel to) {
+  Widget _buildTOListTile(TOModel to, BuildContext ctx) {
     final isFlexNoRange = to.isFlexType && to.rangeStart == null;
     final displayDate = to.rangeStart ?? to.createdAt;
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: () => Navigator.pop(context, to),
+        onTap: () => Navigator.pop(ctx, to),
         child: Padding(
           padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 4),
-            vertical: ResponsiveHelper.spacing(context, 12),
+            horizontal: ResponsiveHelper.spacing(ctx, 4),
+            vertical: ResponsiveHelper.spacing(ctx, 12),
           ),
           child: Row(
             children: [
               Container(
                 padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 10),
-                  vertical: ResponsiveHelper.spacing(context, 6),
+                  horizontal: ResponsiveHelper.spacing(ctx, 10),
+                  vertical: ResponsiveHelper.spacing(ctx, 6),
                 ),
                 decoration: BoxDecoration(
                   color: to.isContractType
                       ? AppColors.longTermBg
-                      : Theme.of(context).primaryColor.withValues(alpha: 0.1),
+                      : Theme.of(ctx).primaryColor.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
@@ -529,44 +529,44 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                       ? '${to.totalSlots}일'
                       : DateFormat('MM/dd').format(displayDate),
                   style: ResponsiveHelper.smallStyle(
-                    context,
+                    ctx,
                     color: to.isContractType
                         ? AppColors.longTermDark
-                        : Theme.of(context).primaryColor,
+                        : Theme.of(ctx).primaryColor,
                   ).copyWith(fontWeight: FontWeight.w600),
                 ),
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              SizedBox(width: ResponsiveHelper.spacing(ctx, 12)),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       to.title,
-                      style: ResponsiveHelper.bodyStyle(context)
+                      style: ResponsiveHelper.bodyStyle(ctx)
                           .copyWith(fontWeight: FontWeight.w600),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                    SizedBox(height: ResponsiveHelper.spacing(ctx, 2)),
                     Row(
                       children: [
                         if (to.isContractType) ...[
                           Icon(Icons.repeat,
-                              size: ResponsiveHelper.iconSize(context, 12),
+                              size: ResponsiveHelper.iconSize(ctx, 12),
                               color: AppColors.longTermDark),
-                          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                          SizedBox(width: ResponsiveHelper.spacing(ctx, 4)),
                           Text('장기',
-                              style: ResponsiveHelper.tinyStyle(context,
+                              style: ResponsiveHelper.tinyStyle(ctx,
                                   color: AppColors.longTermDark)),
-                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                          SizedBox(width: ResponsiveHelper.spacing(ctx, 8)),
                         ],
                         Icon(Icons.people_outline,
-                            size: ResponsiveHelper.iconSize(context, 12),
+                            size: ResponsiveHelper.iconSize(ctx, 12),
                             color: AppColors.grey500),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                        SizedBox(width: ResponsiveHelper.spacing(ctx, 4)),
                         Text('${to.totalRequired}명',
-                            style: ResponsiveHelper.tinyStyle(context,
+                            style: ResponsiveHelper.tinyStyle(ctx,
                                 color: AppColors.grey600)),
                       ],
                     ),
@@ -575,7 +575,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               ),
               Icon(Icons.chevron_right,
                   color: AppColors.grey400,
-                  size: ResponsiveHelper.iconSize(context, 20)),
+                  size: ResponsiveHelper.iconSize(ctx, 20)),
             ],
           ),
         ),
