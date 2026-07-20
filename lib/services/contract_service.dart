@@ -216,6 +216,9 @@ class ContractService {
     final cfData = cfResult.data as Map<Object?, Object?>?;
     final cfPdfUrl = cfData?['pdfUrl'] as String? ?? '';
     final cfSigUrl = cfData?['sigUrl'] as String? ?? '';
+    // saveEmployerSignature와 동일한 가드: 빈 URL은 CF 응답 이상 — completed 설정 금지
+    if (cfSigUrl.isEmpty) throw Exception('CF 응답에 sigUrl 없음');
+    if (cfPdfUrl.isEmpty) throw Exception('CF 응답에 pdfUrl 없음');
 
     final workerNow = DateTime.now(); // 로컬 변수 분리 — nullable ! 방지
     final updated = contract.copyWith(
@@ -553,13 +556,14 @@ class ContractService {
     final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
         .httpsCallable('callableVoidContract',
             options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-    final result = await callable.call<Map<String, dynamic>>({'contractId': contractId});
-    final data = result.data;
+    final result = await callable.call({'contractId': contractId});
+    // Firebase SDK 런타임 반환형은 Map<dynamic,dynamic> — 다른 CF 호출과 동일하게 방어 캐스팅
+    final data = result.data as Map<dynamic, dynamic>?;
 
-    final workerId = data['workerId'] as String? ?? '';
-    final bizName = data['businessName'] as String? ?? '';
-    final bizId = data['businessId'] as String? ?? '';
-    final appIds = (data['applicationIds'] as List?)?.whereType<String>().toList() ?? [];
+    final workerId = data?['workerId'] as String? ?? '';
+    final bizName = data?['businessName'] as String? ?? '';
+    final bizId = data?['businessId'] as String? ?? '';
+    final appIds = (data?['applicationIds'] as List?)?.whereType<String>().toList() ?? [];
 
     if (workerId.isEmpty) return; // 이미 voided — 멱등 처리
 
@@ -876,7 +880,10 @@ class ContractService {
       contractStart: isLong
           ? _fmtDate(application.desiredStartDate ?? application.workDate)
           : null,
-      contractEnd: isLong ? _fmtDate(application.workEndDate) : null,
+      // workEndDate가 null(개방형 계약)이면 '' 대신 null을 전달 — '' 전달 시 workPeriodText != null 체크 통과
+      contractEnd: isLong && application.workEndDate != null
+          ? _fmtDate(application.workEndDate)
+          : null,
       workDays: application.workDays,
       startTime: workDetail.startTime,
       endTime: workDetail.endTime,

@@ -68,7 +68,7 @@ class _ResignRequestManagementDialogState
 
     if (mounted) setState(() => _requests = results);
     debugPrint('✅ 퇴사 요청 ${results.length}건 로드 완료');
-  }, errorTag: '퇴사 요청 로드');
+  }, errorTag: '퇴사 요청 로드', errorMessage: '요청 목록을 불러올 수 없습니다');
 
   @override
   Widget build(BuildContext context) {

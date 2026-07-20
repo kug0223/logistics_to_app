@@ -80,7 +80,7 @@ class _ScheduleRequestManagementDialogState
   /// 필터 적용
   void _applyFilter() {
     if (_selectedFilter == 'ALL') {
-      _filteredRequests = _allRequests;
+      _filteredRequests = List.of(_allRequests); // 복사본 — sort()가 _allRequests를 오염하지 않도록
     } else {
       _filteredRequests = _allRequests.where((item) {
         return item.request.status.toString().split('.').last == _selectedFilter;
