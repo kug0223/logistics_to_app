@@ -195,30 +195,30 @@ class TODetailDialogs {
                 
                 // 대기 중
                 if (work.pendingApplicants.isNotEmpty) ...[
-                  _buildSectionHeader('⏳ 대기 중', AppColors.warning, work.pendingApplicants.length),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+                  _buildSectionHeader(context, '⏳ 대기 중', AppColors.warning, work.pendingApplicants.length),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                   ...work.pendingApplicants.map((applicant) {
-                    return _buildApplicantCard(applicant, onConfirm, onReject);
+                    return _buildApplicantCard(context, applicant, onConfirm, onReject);
                   }),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                 ],
-                
+
                 // 확정
                 if (work.confirmedApplicants.isNotEmpty) ...[
-                  _buildSectionHeader('✅ 확정', AppColors.success, work.confirmedApplicants.length),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+                  _buildSectionHeader(context, '✅ 확정', AppColors.success, work.confirmedApplicants.length),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                   ...work.confirmedApplicants.map((applicant) {
-                    return _buildApplicantCard(applicant, onConfirm, onReject);
+                    return _buildApplicantCard(context, applicant, onConfirm, onReject);
                   }),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                 ],
-                
+
                 // 거절
                 if (work.rejectedApplicants.isNotEmpty) ...[
-                  _buildSectionHeader('❌ 거절', AppColors.error, work.rejectedApplicants.length),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+                  _buildSectionHeader(context, '❌ 거절', AppColors.error, work.rejectedApplicants.length),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                   ...work.rejectedApplicants.map((applicant) {
-                    return _buildApplicantCard(applicant, onConfirm, onReject);
+                    return _buildApplicantCard(context, applicant, onConfirm, onReject);
                   }),
                 ],
               ],
@@ -251,13 +251,13 @@ class TODetailDialogs {
   }
 
   /// 섹션 헤더
-  Widget _buildSectionHeader(String title, Color color, int count) {
+  Widget _buildSectionHeader(BuildContext ctx, String title, Color color, int count) {
     return Row(
       children: [
         Container(
           padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 12),  // ⭐ 변경
-            vertical: ResponsiveHelper.spacing(context, 6),  // ⭐ 변경
+            horizontal: ResponsiveHelper.spacing(ctx, 12),
+            vertical: ResponsiveHelper.spacing(ctx, 6),
           ),
           decoration: BoxDecoration(
             color: color.withValues(alpha: 0.1),
@@ -268,16 +268,16 @@ class TODetailDialogs {
             children: [
               Text(
                 title,
-                style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
-                  context,
+                style: ResponsiveHelper.bodyStyle(
+                  ctx,
                   color: color,
                 ).copyWith(fontWeight: FontWeight.bold),
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+              SizedBox(width: ResponsiveHelper.spacing(ctx, 8)),
               Text(
                 '$count명',
-                style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
-                  context,
+                style: ResponsiveHelper.bodyStyle(
+                  ctx,
                   color: color,
                 ).copyWith(fontWeight: FontWeight.bold),
               ),
@@ -290,22 +290,23 @@ class TODetailDialogs {
 
   /// 지원자 카드
   Widget _buildApplicantCard(
+    BuildContext ctx,
     Map<String, dynamic> applicant,
     Function(String) onConfirm,
     Function(String) onReject,
   ) {
     final app = applicant['application'] as ApplicationModel?;
     if (app == null) return const SizedBox.shrink();
-    
+
     final statusColor = _appStatusColor(app.status);
     final statusText = app.statusText;
 
     return Card(
-      margin: EdgeInsets.only(  // ⭐ const 제거
-        bottom: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
+      margin: EdgeInsets.only(
+        bottom: ResponsiveHelper.spacing(ctx, 8),
       ),
       child: Padding(
-        padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
+        padding: ResponsiveHelper.cardPadding(ctx),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -315,17 +316,17 @@ class TODetailDialogs {
                 Expanded(
                   child: Text(
                     applicant['userName'],
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
+                    style: ResponsiveHelper.bodyStyle(ctx).copyWith(
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
-                
+
                 // 상태 배지
                 Container(
                   padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 8),  // ⭐ 변경
-                    vertical: ResponsiveHelper.spacing(context, 4),  // ⭐ 변경
+                    horizontal: ResponsiveHelper.spacing(ctx, 8),
+                    vertical: ResponsiveHelper.spacing(ctx, 4),
                   ),
                   decoration: BoxDecoration(
                     color: statusColor.withValues(alpha: 0.1),
@@ -334,52 +335,52 @@ class TODetailDialogs {
                   ),
                   child: Text(
                     statusText,
-                    style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
-                      context,
+                    style: ResponsiveHelper.tinyStyle(
+                      ctx,
                       color: statusColor,
                     ).copyWith(fontWeight: FontWeight.bold),
                   ),
                 ),
               ],
             ),
-            
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
-            
+
+            SizedBox(height: ResponsiveHelper.spacing(ctx, 8)),
+
             // 연락처
             Row(
               children: [
                 Icon(
-                  Icons.phone, 
-                  size: ResponsiveHelper.iconSize(context, 14),  // ⭐ 변경
-                  color: Theme.of(context).textTheme.bodySmall?.color,
+                  Icons.phone,
+                  size: ResponsiveHelper.iconSize(ctx, 14),
+                  color: Theme.of(ctx).textTheme.bodySmall?.color,
                 ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 6)),  // ⭐ 변경
+                SizedBox(width: ResponsiveHelper.spacing(ctx, 6)),
                 Text(
                   applicant['userPhone'],
-                  style: ResponsiveHelper.smallStyle(  // ⭐ 변경
-                    context,
-                    color: Theme.of(context).textTheme.bodyMedium?.color,
+                  style: ResponsiveHelper.smallStyle(
+                    ctx,
+                    color: Theme.of(ctx).textTheme.bodyMedium?.color,
                   ),
                 ),
               ],
             ),
-            
-            SizedBox(height: ResponsiveHelper.spacing(context, 4)),  // ⭐ 변경
-            
+
+            SizedBox(height: ResponsiveHelper.spacing(ctx, 4)),
+
             // 지원 시간
             Row(
               children: [
                 Icon(
-                  Icons.access_time, 
-                  size: ResponsiveHelper.iconSize(context, 14),  // ⭐ 변경
-                  color: Theme.of(context).textTheme.bodySmall?.color,
+                  Icons.access_time,
+                  size: ResponsiveHelper.iconSize(ctx, 14),
+                  color: Theme.of(ctx).textTheme.bodySmall?.color,
                 ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 6)),  // ⭐ 변경
+                SizedBox(width: ResponsiveHelper.spacing(ctx, 6)),
                 Text(
                   '지원: ${DateFormat('MM/dd HH:mm', 'ko_KR').format(app.appliedAt)}',
-                  style: ResponsiveHelper.tinyStyle(  // ⭐ 변경
-                    context,
-                    color: Theme.of(context).textTheme.bodySmall?.color,
+                  style: ResponsiveHelper.tinyStyle(
+                    ctx,
+                    color: Theme.of(ctx).textTheme.bodySmall?.color,
                   ),
                 ),
               ],
@@ -387,18 +388,18 @@ class TODetailDialogs {
 
             // 버튼 (대기 중인 경우만)
             if (app.status == AppStatus.pending) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
+              SizedBox(height: ResponsiveHelper.spacing(ctx, 12)),
               Row(
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
                       onPressed: () {
-                        Navigator.pop(context);
+                        Navigator.pop(ctx);
                         onReject(applicant['applicationId']);
                       },
                       icon: Icon(
-                        Icons.close, 
-                        size: ResponsiveHelper.iconSize(context, 18),  // ⭐ 변경
+                        Icons.close,
+                        size: ResponsiveHelper.iconSize(ctx, 18),
                       ),
                       label: const Text('거절'),
                       style: OutlinedButton.styleFrom(
@@ -407,16 +408,16 @@ class TODetailDialogs {
                       ),
                     ),
                   ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),  // ⭐ 변경
+                  SizedBox(width: ResponsiveHelper.spacing(ctx, 8)),
                   Expanded(
                     child: ElevatedButton.icon(
                       onPressed: () {
-                        Navigator.pop(context);
+                        Navigator.pop(ctx);
                         onConfirm(applicant['applicationId']);
                       },
                       icon: Icon(
-                        Icons.check, 
-                        size: ResponsiveHelper.iconSize(context, 18),  // ⭐ 변경
+                        Icons.check,
+                        size: ResponsiveHelper.iconSize(ctx, 18),
                       ),
                       label: const Text('승인'),
                       style: ElevatedButton.styleFrom(

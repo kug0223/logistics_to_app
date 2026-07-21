@@ -169,13 +169,13 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
             children: [
               Icon(
                 Icons.schedule,
-                size: ResponsiveHelper.iconSize(context, 48),
+                size: ResponsiveHelper.iconSize(resultContext, 48),
                 color: AppColors.info,
               ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              SizedBox(height: ResponsiveHelper.spacing(resultContext, 16)),
               Text(
                 '리뷰가 작성되었습니다.\n${widget.targetUserName}님도 사업장 리뷰를 작성하면\n즉시 동시에 공개됩니다.\n(미작성 시 14일 후 자동 공개)',
-                style: ResponsiveHelper.bodyStyle(context),
+                style: ResponsiveHelper.bodyStyle(resultContext),
                 textAlign: TextAlign.center,
               ),
             ],

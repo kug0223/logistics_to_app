@@ -127,13 +127,13 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
               children: [
                 Icon(
                   Icons.schedule,
-                  size: ResponsiveHelper.iconSize(context, 48),
+                  size: ResponsiveHelper.iconSize(resultContext, 48),
                   color: AppColors.info,
                 ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                SizedBox(height: ResponsiveHelper.spacing(resultContext, 16)),
                 Text(
                   '리뷰가 작성되었습니다.\n관리자도 리뷰를 작성하면 즉시 공개됩니다.\n(미작성 시 14일 후 자동 공개)',
-                  style: ResponsiveHelper.bodyStyle(context),
+                  style: ResponsiveHelper.bodyStyle(resultContext),
                   textAlign: TextAlign.center,
                 ),
               ],
