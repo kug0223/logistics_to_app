@@ -51,6 +51,7 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     final user = userProvider.currentUser;
 
     return Scaffold(
+      bottomNavigationBar: _buildPendingContractBar(context, userProvider),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -293,6 +294,45 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
       ],      // outer Column children close
     ),        // outer Column close
   );
+  }
+
+  Widget? _buildPendingContractBar(BuildContext context, UserProvider userProvider) {
+    if (!userProvider.hasPendingContract) return null;
+    final count = userProvider.pendingContractCount;
+    return SafeArea(
+      top: false,
+      child: GestureDetector(
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const UserContractsScreen()),
+        ),
+        child: Container(
+          width: double.infinity,
+          color: const Color(0xFFFFF3CD),
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 16),
+            vertical: ResponsiveHelper.spacing(context, 12),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded,
+                  color: Color(0xFF856404), size: 18),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              Expanded(
+                child: Text(
+                  '미서명 계약서 $count건이 있습니다. 탭하여 확인하세요.',
+                  style: ResponsiveHelper.smallStyle(context).copyWith(
+                    color: const Color(0xFF664D03),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: Color(0xFF856404), size: 18),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildMenuCard(BuildContext context, {
