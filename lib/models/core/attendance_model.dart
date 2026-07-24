@@ -147,8 +147,11 @@ class AttendanceModel {
 
   // ── 표시용 "HH:mm" getter ───────────────────────────────────
 
-  static String _fmt(DateTime dt) =>
-      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+  static const _kst = Duration(hours: 9);
+  static String _fmt(DateTime dt) {
+    final kst = dt.toUtc().add(_kst);
+    return '${kst.hour.toString().padLeft(2, '0')}:${kst.minute.toString().padLeft(2, '0')}';
+  }
 
   /// 최종 출근 시각 "HH:mm" (UI 표시용)
   String? get checkIn         => checkInAt        != null ? _fmt(checkInAt!)        : null;
@@ -268,7 +271,8 @@ class AttendanceModel {
   /// - null → null
   static DateTime? _parseTimeField(dynamic value, dynamic workDateRaw) {
     if (value == null) return null;
-    if (value is Timestamp) return value.toDate();
+    // 기기 타임존과 무관하게 항상 KST(UTC+9)로 반환한다.
+    if (value is Timestamp) return value.toDate().toLocal();
     // CF 응답: {_seconds: N, _nanoseconds: N} Map 형식
     if (value is Map) {
       try {
@@ -280,7 +284,7 @@ class AttendanceModel {
       }
     }
     if (value is String && value.length >= 4) {
-      // v1: "H:mm"/"HH:mm"/"HH:mm:ss" — workDate 기준으로 복원
+      // v1: "H:mm"/"HH:mm"/"HH:mm:ss" — workDate 기준으로 복원 (문자열 자체가 KST)
       final parts = value.split(':');
       if (parts.length < 2) return null;
       final h = int.tryParse(parts[0]);
@@ -289,10 +293,11 @@ class AttendanceModel {
       if (workDateRaw == null) return null;
       try {
         final wd = workDateRaw is Timestamp
-            ? workDateRaw.toDate()
+            ? workDateRaw.toDate().toLocal()
             : workDateRaw is Map
                 ? Timestamp((workDateRaw['_seconds'] as num).toInt(),
-                            (workDateRaw['_nanoseconds'] as num? ?? 0).toInt()).toDate()
+                            (workDateRaw['_nanoseconds'] as num? ?? 0).toInt())
+                    .toDate().toLocal()
                 : null;
         if (wd == null) return null;
         return DateTime(wd.year, wd.month, wd.day, h, m);

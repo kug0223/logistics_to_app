@@ -40,7 +40,8 @@ enum _SortType { days, wage, name }
 class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
   final _service = AdminStatsService();
 
-  bool _isLoading = false;
+  bool _isLoading = true;
+  bool _fetchInProgress = false;
   bool _isExporting = false;
   bool _hasError = false;
   MonthDetailData? _data;
@@ -54,7 +55,8 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
   }
 
   Future<void> _loadData() async {
-    if (_isLoading) return;
+    if (_fetchInProgress) return;
+    _fetchInProgress = true;
     setState(() { _isLoading = true; _hasError = false; });
     try {
       final data = await _service.getMonthDetail(
@@ -68,6 +70,7 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
       debugPrint('❌ 월 상세 로드 실패: $e');
       if (mounted) setState(() => _hasError = true);
     } finally {
+      _fetchInProgress = false;
       if (mounted) setState(() => _isLoading = false);
     }
   }

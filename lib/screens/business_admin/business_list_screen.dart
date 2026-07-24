@@ -44,8 +44,9 @@ class BusinessListScreen extends StatefulWidget {
 class _BusinessListScreenState extends State<BusinessListScreen> {
   final FirestoreService _firestoreService = FirestoreService();
   List<BusinessModel> _businesses = [];
-  bool _isLoading = false; // [BUG-FIX] true면 initState에서 _loadBusinesses()가 L58 가드에 차단됨
+  bool _isLoading = true; // 첫 빌드부터 로딩 표시 — 빈 상태 flash 방지
   bool _isDeleting = false;
+  bool _fetchInProgress = false; // 중복 호출 방지 (_isLoading과 분리)
 
   @override
   void initState() {
@@ -55,8 +56,9 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
 
   /// 사업장 목록 로드
   Future<void> _loadBusinesses({bool forceServer = false}) async {
-    if (!mounted || _isLoading) return;
-    setState(() => _isLoading = true);
+    if (!mounted || _fetchInProgress) return;
+    _fetchInProgress = true;
+    if (!_isLoading) setState(() => _isLoading = true);
 
     try {
       final userProvider = context.read<UserProvider>();
@@ -74,7 +76,8 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         final biz = await _firestoreService.getBusinessById(effectiveBizId);
         businesses = biz != null ? [biz] : [];
       } else {
-        businesses = await _firestoreService.getMyBusiness(ownerId);
+        final managedIds = userProvider.currentUser?.managedBusinessIds ?? [];
+        businesses = await _firestoreService.getBusinessesByIds(managedIds);
       }
 
       if (!mounted) return;
@@ -83,6 +86,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       debugPrint('❌ 사업장 로드 실패: $e');
       if (mounted) ToastHelper.showError('사업장 목록을 불러오는데 실패했습니다');
     } finally {
+      _fetchInProgress = false;
       if (mounted) setState(() => _isLoading = false);
     }
   }

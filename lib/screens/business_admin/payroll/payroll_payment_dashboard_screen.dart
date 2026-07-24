@@ -66,7 +66,8 @@ class _PayrollPaymentDashboardScreenState
   late int _selectedMonth;
 
   // ── 데이터
-  bool _isLoading = false;
+  bool _isLoading = true;
+  bool _fetchInProgress = false;
   bool _isExporting = false;
   List<AttendanceModel> _allRecords = [];      // confirmed + transferred 합산
   List<PaymentChangeRequestModel>     _changeRequests    = [];
@@ -127,8 +128,9 @@ class _PayrollPaymentDashboardScreenState
   // ══════════════════════════════════════════════════════════
 
   Future<void> _load() async {
-    if (!mounted || _isLoading) return;
-    setState(() => _isLoading = true);
+    if (!mounted || _fetchInProgress) return;
+    _fetchInProgress = true;
+    if (!_isLoading) setState(() => _isLoading = true);
     try {
       final results = await Future.wait([
         _payService.getPayrollRecords(
@@ -162,6 +164,7 @@ class _PayrollPaymentDashboardScreenState
       debugPrint('❌ 급여 대시보드 로드 실패: $e');
       if (mounted) ToastHelper.showError('데이터를 불러오지 못했습니다');
     } finally {
+      _fetchInProgress = false;
       if (mounted) setState(() => _isLoading = false);
     }
   }

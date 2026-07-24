@@ -48,6 +48,32 @@ extension BusinessFirestore on FirestoreService {
     }
   }
 
+  /// ID 목록으로 사업장 일괄 조회 — 병렬 doc.get (list 권한 불필요, 오프라인 캐시 활용)
+  Future<List<BusinessModel>> getBusinessesByIds(List<String> ids) async {
+    if (ids.isEmpty) return [];
+    try {
+      final uniqueIds = ids.toSet().toList();
+      final docs = await Future.wait(
+        uniqueIds.map((id) => _firestore.collection('businesses').doc(id).get()),
+      );
+      return docs
+          .where((d) => d.exists)
+          .map((d) {
+            try {
+              return BusinessModel.fromFirestore(d);
+            } catch (e) {
+              debugPrint('⚠️ BusinessModel 파싱 실패 [${d.id}]: $e');
+              return null;
+            }
+          })
+          .whereType<BusinessModel>()
+          .toList();
+    } catch (e) {
+      debugPrint('❌ 사업장 일괄 조회 실패: $e');
+      return [];
+    }
+  }
+
   /// 내 사업장 목록 조회 — CF callableGetMyBusiness (adminIds 노출 없이 서버 검증)
   Future<List<BusinessModel>> getMyBusiness(String uid) async {
     try {

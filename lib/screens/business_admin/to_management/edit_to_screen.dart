@@ -99,7 +99,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         final vf = slot!.visibleFrom!;
         final diff = slot.date.difference(DateTime(vf.year, vf.month, vf.day)).inDays;
         _publishDaysBefore = diff.clamp(1, 14);
-        _publishTime = '${vf.hour.toString().padLeft(2, '0')}:${vf.minute.toString().padLeft(2, '0')}';
+        final vfKst = vf.toUtc().add(const Duration(hours: 9));
+        _publishTime = '${vfKst.hour.toString().padLeft(2, '0')}:${vfKst.minute.toString().padLeft(2, '0')}';
       } else {
         // draft면 즉시공개로, 아니면 TO 설정 유지
         if (widget.to.publishMode == 'draft') _publishMode = 'immediate';

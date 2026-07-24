@@ -1,4 +1,4 @@
-﻿// lib/services/trust_score_service.dart
+// lib/services/trust_score_service.dart
 
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';

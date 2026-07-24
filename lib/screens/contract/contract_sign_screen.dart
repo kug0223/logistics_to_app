@@ -108,6 +108,8 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
       await _checkTOType();
       return;
     }
+    // TO 타입 조회는 businesses/users 순차 fetch와 독립적 — 병렬 실행으로 RTT 1회 절약
+    final toTypeFuture = _checkTOType();
     try {
       final doc = await FirebaseFirestore.instance
           .collection('businesses')
@@ -156,7 +158,7 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
         }
       });
 
-      await _checkTOType();
+      await toTypeFuture;
     } catch (e) {
       debugPrint('인감/대표자 로드 실패: $e');
       if (mounted) ToastHelper.showError('계약서 정보를 불러오는데 실패했습니다.');

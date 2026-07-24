@@ -1,4 +1,4 @@
-﻿// lib/screens/business_admin/dialogs/close_management_dialog.dart
+// lib/screens/business_admin/dialogs/close_management_dialog.dart
 // 마감관리 다이얼로그 - 월별 당일명단 마감 현황 조회 및 관리
 //
 // 주요 기능:
@@ -255,7 +255,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
               final wdRaw = m['workDate'] as Map?;
               if (wdRaw == null || appId.isEmpty) continue;
               final seconds = (wdRaw['_seconds'] as num?)?.toInt() ?? 0;
-              final workDate = DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
+              final workDate = DateTime.fromMillisecondsSinceEpoch(seconds * 1000).toLocal();
               final dateKey = DateFormat('yyyy-MM-dd').format(workDate);
               attendanceByKey['${appId}_$dateKey'] = {
                 'status': m['status'] as String? ?? '',

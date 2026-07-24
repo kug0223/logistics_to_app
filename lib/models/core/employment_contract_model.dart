@@ -38,7 +38,7 @@ extension ContractStatusX on ContractStatus {
       case 'pending_worker':   return ContractStatus.pendingWorker;
       case 'completed':        return ContractStatus.completed;
       case 'voided':           return ContractStatus.voided;
-      default:                 return ContractStatus.voided;
+      default:                 return ContractStatus.pendingEmployer;
     }
   }
 }

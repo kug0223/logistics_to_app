@@ -50,7 +50,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   Map<String, EmploymentContractModel> _contractMap = {};
   Map<String, MonthlyReviewModel?> _reviewMap = {};
 
-  bool _isLoading = false;
+  bool _isLoading = true;
+  bool _fetchInProgress = false;
   bool _isLoadingMore = false;
   bool _hasMore = true;
   String? _lastDocId;
@@ -94,7 +95,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
   Future<void> _loadApplications() async {
     if (!mounted) return; // _cancelApplication 등 재호출 경로에서 화면 pop 후 진입 방지
-    if (_isLoading) return; // 동시 다중 호출 방지 (pull-to-refresh + 자동 재로드 경합)
+    if (_fetchInProgress) return; // 동시 다중 호출 방지 (pull-to-refresh + 자동 재로드 경합)
+    _fetchInProgress = true;
     final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
     if (uid == null) {
       ToastHelper.showError('로그인이 필요합니다.');
@@ -130,6 +132,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       final reviewMap   = initResults[1] as Map<String, MonthlyReviewModel?>;
 
       if (mounted) {
+        _fetchInProgress = false;
         setState(() {
           _applications = appWithTOs;
           _contractMap = contractMap;
@@ -144,6 +147,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       debugPrint('❌ 지원 내역 로드 실패: $e');
       if (mounted) {
         ToastHelper.showError(_firestoreErrMsg(e, '지원 내역을 불러오는데 실패했습니다.'));
+        _fetchInProgress = false;
         setState(() => _isLoading = false);
       }
     }

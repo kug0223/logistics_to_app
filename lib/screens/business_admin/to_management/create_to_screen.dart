@@ -161,7 +161,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         final biz = await _firestoreService.getBusinessById(effectiveBizId);
         allBusinesses = biz != null ? [biz] : [];
       } else {
-        allBusinesses = await _firestoreService.getMyBusiness(uid);
+        final managedIds = userProvider.currentUser?.managedBusinessIds ?? [];
+        allBusinesses = await _firestoreService.getBusinessesByIds(managedIds);
       }
       final approvedBusinesses = allBusinesses.where((b) => b.isApproved).toList();
       final bool hasLicense =

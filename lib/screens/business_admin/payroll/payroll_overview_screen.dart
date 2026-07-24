@@ -62,7 +62,8 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
         final biz = await FirestoreService().getBusinessById(effectiveBizId);
         businesses = biz != null ? [biz] : [];
       } else {
-        businesses = await FirestoreService().getMyBusiness(uid);
+        final managedIds = userProvider.currentUser?.managedBusinessIds ?? [];
+        businesses = await FirestoreService().getBusinessesByIds(managedIds);
       }
       if (!mounted) return;
       if (businesses.isEmpty) {

@@ -50,7 +50,8 @@ class _AdminContractManagementScreenState
   late final TabController _tabCtrl;
 
   List<EmploymentContractModel> _items = [];
-  bool _isLoading = false; // initState → _load() 가드 통과를 위해 false 초기화
+  bool _isLoading = true;
+  bool _fetchInProgress = false;
   bool _isLoadingMore = false;
   bool _hasMore = false;
   bool _isVoidingContract = false;
@@ -105,7 +106,8 @@ class _AdminContractManagementScreenState
   }
 
   Future<void> _load() async {
-    if (!mounted || _isLoading) return;
+    if (!mounted || _fetchInProgress) return;
+    _fetchInProgress = true;
     setState(() { _isLoading = true; _items = []; _lastDoc = null; });
     try {
       final result = await _contractService.getByBusinessPaged(
@@ -122,6 +124,7 @@ class _AdminContractManagementScreenState
       debugPrint('❌ 계약 목록 로드 실패: $e');
       if (mounted) ToastHelper.showError('계약서 목록을 불러오는데 실패했습니다.');
     } finally {
+      _fetchInProgress = false;
       if (mounted) setState(() => _isLoading = false);
     }
   }

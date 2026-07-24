@@ -38,7 +38,8 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
   final FirestoreService _firestoreService = FirestoreService();
 
   List<BusinessWorkTypeModel> _workTypes = [];
-  bool _isLoading = false; // initState → _loadWorkTypes() 가드 통과를 위해 false 초기화
+  bool _isLoading = true;
+  bool _fetchInProgress = false;
   bool _isReordering = false;
   bool _isDeleting = false;
 
@@ -49,12 +50,14 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
   }
 
   Future<void> _loadWorkTypes() async {
-    if (_isLoading) return;
-    setState(() => _isLoading = true);
+    if (_fetchInProgress) return;
+    _fetchInProgress = true;
+    if (!_isLoading) setState(() => _isLoading = true);
     try {
       final workTypes =
           await _firestoreService.getBusinessWorkTypes(widget.businessId);
       if (!mounted) return;
+      _fetchInProgress = false;
       setState(() {
         _workTypes = workTypes;
         _isLoading = false;
@@ -62,6 +65,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     } catch (e) {
       debugPrint('❌ 업무 유형 로드 실패: $e');
       if (!mounted) return;
+      _fetchInProgress = false;
       setState(() => _isLoading = false);
       ToastHelper.showError('업무 유형을 불러올 수 없습니다');
     }

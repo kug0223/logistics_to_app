@@ -73,38 +73,45 @@ class FormatHelper {
   /// 예시:
   /// - formatDateTime(DateTime(2024, 11, 27, 18, 30)) → '11/27 18:30'
   static String formatDateTime(DateTime dateTime) {
-    return '${dateTime.month}/${dateTime.day} '
-           '${dateTime.hour.toString().padLeft(2, '0')}:'
-           '${dateTime.minute.toString().padLeft(2, '0')}';
+    final kst = _toKst(dateTime);
+    return '${kst.month}/${kst.day} '
+           '${kst.hour.toString().padLeft(2, '0')}:'
+           '${kst.minute.toString().padLeft(2, '0')}';
   }
 
   static const _weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+  static const _kst = Duration(hours: 9);
+  static DateTime _toKst(DateTime dt) => dt.toUtc().add(_kst);
 
-  /// 요일 한글 (월~일) — ['월','화','수','목','금','토','일'][date.weekday-1] 대체
-  static String weekday(DateTime date) => _weekdays[date.weekday - 1];
+  /// 요일 한글 (월~일) — KST 기준
+  static String weekday(DateTime date) => _weekdays[_toKst(date).weekday - 1];
 
   /// DateTime을 날짜만 포맷팅 (요일 포함)
   ///
   /// 예시:
   /// - formatDate(DateTime(2024, 11, 27)) → '11/27 (수)'
   static String formatDate(DateTime date) {
-    return '${date.month}/${date.day} (${weekday(date)})';
+    final kst = _toKst(date);
+    return '${kst.month}/${kst.day} (${_weekdays[kst.weekday - 1]})';
   }
 
   /// DateTime을 날짜만 포맷팅 (요일 없이)
-  /// 
+  ///
   /// 예시:
   /// - formatDateShort(DateTime(2024, 11, 27)) → '11/27'
   static String formatDateShort(DateTime date) {
-    return '${date.month}/${date.day}';
+    final kst = _toKst(date);
+    return '${kst.month}/${kst.day}';
   }
 
   /// DateTime을 시간만 포맷팅
   ///
   /// 예시:
   /// - formatTime(DateTime(2024, 11, 27, 18, 30)) → '18:30'
-  static String formatTime(DateTime dateTime) =>
-      formatHourMinute(dateTime.hour, dateTime.minute);
+  static String formatTime(DateTime dateTime) {
+    final kst = _toKst(dateTime);
+    return formatHourMinute(kst.hour, kst.minute);
+  }
 
   /// 시/분 정수를 'HH:mm' 형식으로 포맷팅
   /// 예시: formatHourMinute(9, 5) → '09:05'
@@ -115,17 +122,20 @@ class FormatHelper {
   /// DateTime을 초 포함 시간으로 포맷팅 (출퇴근 기록용)
   /// 예시: '18:30:45'
   static String formatTimeWithSeconds(DateTime dateTime) {
-    return '${dateTime.hour.toString().padLeft(2, '0')}:'
-           '${dateTime.minute.toString().padLeft(2, '0')}:'
-           '${dateTime.second.toString().padLeft(2, '0')}';
+    final kst = _toKst(dateTime);
+    return '${kst.hour.toString().padLeft(2, '0')}:'
+           '${kst.minute.toString().padLeft(2, '0')}:'
+           '${kst.second.toString().padLeft(2, '0')}';
   }
 
   /// 날짜 범위 포맷팅
-  /// 
+  ///
   /// 예시:
   /// - formatDateRange(start, end) → '11/1 ~ 11/30'
   static String formatDateRange(DateTime start, DateTime end) {
-    return '${start.month}/${start.day} ~ ${end.month}/${end.day}';
+    final kstS = _toKst(start);
+    final kstE = _toKst(end);
+    return '${kstS.month}/${kstS.day} ~ ${kstE.month}/${kstE.day}';
   }
 
   // ============================================================
@@ -274,45 +284,60 @@ class FormatHelper {
 
   /// 날짜를 ISO 형식으로 포맷팅
   /// 예시: '2024-11-28'
-  static String formatDateISO(DateTime date) =>
-      '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+  static String formatDateISO(DateTime date) {
+    final kst = _toKst(date);
+    return '${kst.year}-${kst.month.toString().padLeft(2, '0')}-${kst.day.toString().padLeft(2, '0')}';
+  }
 
   /// 연월을 ISO 형식으로 포맷팅 (급여 문서 키 등에 사용)
   /// 예시: '2024-11'
-  static String formatYearMonthISO(DateTime date) =>
-      '${date.year}-${date.month.toString().padLeft(2, '0')}';
+  static String formatYearMonthISO(DateTime date) {
+    final kst = _toKst(date);
+    return '${kst.year}-${kst.month.toString().padLeft(2, '0')}';
+  }
 
   /// 날짜를 점 구분 형식으로 포맷팅
   /// 예시: '2024.11.28'
-  static String formatDateDot(DateTime date) =>
-      '${date.year}.${date.month.toString().padLeft(2, '0')}.${date.day.toString().padLeft(2, '0')}';
+  static String formatDateDot(DateTime date) {
+    final kst = _toKst(date);
+    return '${kst.year}.${kst.month.toString().padLeft(2, '0')}.${kst.day.toString().padLeft(2, '0')}';
+  }
 
   /// 날짜를 구분자 없는 숫자 형식으로 포맷팅 (파일명 등에 사용)
   /// 예시: '20241128'
-  static String formatDateStamp(DateTime date) =>
-      '${date.year}${date.month.toString().padLeft(2, '0')}${date.day.toString().padLeft(2, '0')}';
+  static String formatDateStamp(DateTime date) {
+    final kst = _toKst(date);
+    return '${kst.year}${kst.month.toString().padLeft(2, '0')}${kst.day.toString().padLeft(2, '0')}';
+  }
 
   /// 날짜를 간결하게 포맷팅 (요일 포함)
   ///
   /// 예시:
   /// - formatDateCompact(DateTime(2024, 11, 28)) → '11/28(목)'
-  static String formatDateCompact(DateTime date) =>
-      '${date.month}/${date.day}(${weekday(date)})';
+  static String formatDateCompact(DateTime date) {
+    final kst = _toKst(date);
+    return '${kst.month}/${kst.day}(${_weekdays[kst.weekday - 1]})';
+  }
 
   /// 날짜를 한국어 긴 형식으로 포맷팅
   /// 예시: '2024년 5월 13일 (화)'
-  static String formatDateLong(DateTime date) =>
-      '${date.year}년 ${date.month}월 ${date.day}일 (${weekday(date)})';
+  static String formatDateLong(DateTime date) {
+    final kst = _toKst(date);
+    return '${kst.year}년 ${kst.month}월 ${kst.day}일 (${_weekdays[kst.weekday - 1]})';
+  }
 
   /// 날짜를 한국어 짧은 형식으로 포맷팅 (연도 없음)
   /// 예시: '5월 13일 (화)'
-  static String formatDateKorean(DateTime date) =>
-      '${date.month}월 ${date.day}일 (${weekday(date)})';
+  static String formatDateKorean(DateTime date) {
+    final kst = _toKst(date);
+    return '${kst.month}월 ${kst.day}일 (${_weekdays[kst.weekday - 1]})';
+  }
 
   /// 연월 포맷팅
   /// 예시: '2024년 5월'
   static String formatYearMonth(DateTime date) {
-    return '${date.year}년 ${date.month}월';
+    final kst = _toKst(date);
+    return '${kst.year}년 ${kst.month}월';
   }
 
   /// 근무 기간 포맷팅 (단기/장기 구분)

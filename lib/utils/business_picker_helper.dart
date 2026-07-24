@@ -35,7 +35,10 @@ class BusinessPickerHelper {
       final biz = await FirestoreService().getBusinessById(bizId);
       businesses = biz != null ? [biz] : [];
     } else {
-      businesses = await FirestoreService().getMyBusiness(uid);
+      // CF callableGetMyBusiness 대신 UserProvider에 이미 있는 managedBusinessIds로
+      // 병렬 doc.get — CF 콜드스타트(1–3초) 제거, Firestore 오프라인 캐시 활용
+      final managedIds = userProvider.currentUser?.managedBusinessIds ?? [];
+      businesses = await FirestoreService().getBusinessesByIds(managedIds);
     }
 
     if (approvedOnly) {

@@ -815,17 +815,10 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                     _buildStatDivider(),
                     _buildStatCell(context, '미근무', unworkedStr, AppColors.errorDark),
                   ],
-                  if (_wage.earlyArrivalMinutes > 0 && _effectiveEarlyArrivalAmount(_wage.earlyArrivalMinutes) > 0) ...[
-                    _buildStatDivider(),
-                    _buildStatCell(context, '조출',
-                        FormatHelper.formatCompactHours(_wage.earlyArrivalMinutes),
-                        AppColors.warningDark),
-                  ],
-                  if (_wage.overtimeMinutes - _wage.earlyArrivalMinutes > 0) ...[
+                  if (_wage.overtimeMinutes > 0) ...[
                     _buildStatDivider(),
                     _buildStatCell(context, '연장',
-                        FormatHelper.formatCompactHours(
-                            _wage.overtimeMinutes - _wage.earlyArrivalMinutes),
+                        FormatHelper.formatCompactHours(_wage.overtimeMinutes),
                         AppColors.warningDark),
                   ],
                   if (nightStr != null) ...[
@@ -870,12 +863,6 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
     final nightStr = _wage.nightMinutes > 0
         ? FormatHelper.formatCompactHours(_wage.nightMinutes)
         : null;
-
-    // 조출/연장 분리
-    final earlyMins = _wage.earlyArrivalMinutes;
-    final regularMins = _wage.overtimeMinutes - earlyMins;
-    final earlyArrivalAmount = _effectiveEarlyArrivalAmount(earlyMins);
-    final regularOvertimeAmount = _wage.overtimeAmount - earlyArrivalAmount;
 
     // 일급제 미근무 공제: 원래 일급과 실제 기본급의 차이
     final absenceDeduction = isDaily
@@ -964,24 +951,13 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                   isDeduction: true,
                 ),
               ],
-              if (earlyArrivalAmount > 0) ...[
-                Divider(height: 1, color: AppColors.grey100),
-                _buildWageLineItem(
-                  context,
-                  label: '조출수당',
-                  subLabel: FormatHelper.formatCompactHours(earlyMins),
-                  amount: earlyArrivalAmount,
-                  color: AppColors.warningDark,
-                  icon: Icons.trending_up,
-                ),
-              ],
-              if (regularMins > 0) ...[
+              if (_wage.overtimeAmount > 0) ...[
                 Divider(height: 1, color: AppColors.grey100),
                 _buildWageLineItem(
                   context,
                   label: '연장수당',
-                  subLabel: FormatHelper.formatCompactHours(regularMins),
-                  amount: regularOvertimeAmount,
+                  subLabel: FormatHelper.formatCompactHours(_wage.overtimeMinutes),
+                  amount: _wage.overtimeAmount,
                   color: AppColors.warningDark,
                   icon: Icons.trending_up,
                 ),
@@ -1032,8 +1008,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
               if (_wage.taxDeductionType != InsuranceRateModel.typeNone &&
                   _wage.totalInsuranceDeduction > 0 &&
                   (absenceDeduction > 0 ||
-                   earlyArrivalAmount > 0 ||
-                   regularMins > 0 ||
+                   _wage.overtimeAmount > 0 ||
                    _wage.nightAmount > 0 ||
                    _wage.additionalAmount > 0 ||
                    _wage.deductionAmount > 0 ||

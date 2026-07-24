@@ -64,7 +64,8 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
   Timer? _searchDebounce;
 
   // UI 상태
-  bool _isLoading = false;
+  bool _isLoading = true;
+  bool _fetchInProgress = false;
   String? _selectedTOId;
 
   @override
@@ -106,7 +107,8 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
 
   /// 첫 페이지 로드 (새로고침 포함)
   Future<void> _loadAllTOs() async {
-    if (_isLoading) return;
+    if (_fetchInProgress) return;
+    _fetchInProgress = true;
     setState(() {
       _isLoading = true;
       _lastDoc = null;
@@ -159,6 +161,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       // 지역 옵션·필터 결과를 사전 계산 후 단일 setState로 반영 — 연속 3회 setState(리빌드 낭비) 방지
       final regionResult = _computeRegionOptions(toList);
       final displayList = _computeDisplayList(toList);
+      _fetchInProgress = false;
       setState(() {
         _allTOList = toList;
         _lastDoc = lastDoc;
@@ -179,6 +182,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
     } catch (e) {
       debugPrint('❌ TO 목록 로드 실패: $e');
       if (!mounted) return;
+      _fetchInProgress = false;
       setState(() => _isLoading = false);
       ToastHelper.showError('공고 목록을 불러오는데 실패했습니다.');
     }

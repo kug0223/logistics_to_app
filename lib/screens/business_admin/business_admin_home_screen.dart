@@ -89,7 +89,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen> {
         if (mounted) setState(() => _hasApprovedBusiness = biz?.isApproved ?? false);
         return;
       }
-      final businesses = await _firestoreService.getMyBusiness(uid);
+      // CF getMyBusiness 대신 UserProvider의 managedBusinessIds로 병렬 doc.get
+      final managedIds = userProvider.currentUser?.managedBusinessIds ?? [];
+      final businesses = await _firestoreService.getBusinessesByIds(managedIds);
       if (mounted) {
         setState(() {
           _hasApprovedBusiness = businesses.any((b) => b.isApproved);

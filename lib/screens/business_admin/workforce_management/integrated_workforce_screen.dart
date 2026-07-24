@@ -9,6 +9,7 @@ import 'workforce_list_view.dart';
 import 'workforce_calendar_view.dart';
 import '../../../widgets/common/gradient_scaffold.dart';
 import '../../../widgets/common/app_empty_state.dart';
+import '../../../widgets/common/loading_widget.dart';
 import '../../../theme/app_colors.dart';
 import '../../../services/fcm_service.dart';
 import '../business_list_screen.dart';
@@ -33,7 +34,9 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
   List<String> _allBusinessIds = [];
   String? _selectedBusinessId;
   bool _isCalendarView = false;
-  bool _isLoading = false;
+  bool _isLoading = true;
+  bool _fetchInProgress = false;
+  DateTime? _lastResumedAt; // 앱 복귀 시 2분 쿨다운 — 매 복귀마다 CF reload 방지
 
   late final VoidCallback _fcmRefreshCallback;
 
@@ -57,15 +60,19 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // Cloud Functions이 갱신한 Firestore 상태를 반영
+      final now = DateTime.now();
+      final last = _lastResumedAt;
+      if (last != null && now.difference(last) < const Duration(minutes: 2)) return;
+      _lastResumedAt = now;
       if (mounted) _controller.reload(context);
     }
   }
 
   /// 관리자의 모든 사업장 ID 로드
   Future<void> _loadBusinessIds() async {
-    if (_isLoading) return;
-    setState(() => _isLoading = true);
+    if (_fetchInProgress) return;
+    _fetchInProgress = true;
+    if (!_isLoading) setState(() => _isLoading = true);
     try {
       final userProvider = context.read<UserProvider>();
       final uid = userProvider.currentUser?.uid;
@@ -75,7 +82,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
         return;
       }
 
-      // SubAdmin인 경우 effectiveBusinessId로 직접 사용 (adminIds에 없으므로 getMyBusiness 결과 0건)
+      // SubAdmin은 effectiveBusinessId로 직접 사용 (adminIds에 없으므로 CF 호출 불필요)
       final effectiveBizId = userProvider.effectiveBusinessId;
       if (userProvider.isSubAdmin && effectiveBizId != null) {
         setState(() {
@@ -86,6 +93,23 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
         return;
       }
 
+      // BUSINESS_ADMIN: 로그인 시 이미 UserProvider에 로드된 managedBusinessIds 즉시 사용.
+      // callableGetMyBusiness CF 호출을 건너뛰어 첫 진입 레이턴시를 CF 1회로 줄인다.
+      final cachedIds = userProvider.currentUser?.managedBusinessIds ?? [];
+      if (cachedIds.isNotEmpty) {
+        final preferred = widget.initialBusinessId;
+        setState(() {
+          _allBusinessIds = cachedIds;
+          _selectedBusinessId = (preferred != null && cachedIds.contains(preferred))
+              ? preferred
+              : cachedIds.first;
+          _isLoading = false;
+        });
+        if (mounted) _controller.load(context);
+        return;
+      }
+
+      // managedBusinessIds가 비어 있는 경우(신규 관리자 등)만 CF로 확인
       final businesses = await _firestoreService.getMyBusiness(uid);
 
       if (!mounted) return;
@@ -97,7 +121,6 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
 
       setState(() {
         _allBusinessIds = businesses.map((b) => b.id).toList();
-        // initialBusinessId(알림 딥링크) 우선 → 목록 첫 번째
         final preferred = widget.initialBusinessId;
         _selectedBusinessId = (preferred != null && _allBusinessIds.contains(preferred))
             ? preferred
@@ -105,11 +128,12 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
       });
 
       if (mounted) _controller.load(context);
-      debugPrint('✅ 관리 사업장: ${_allBusinessIds.length}개');
+      debugPrint('✅ 관리 사업장: ${_allBusinessIds.length}개 (CF 조회)');
     } catch (e) {
       debugPrint('❌ 사업장 조회 실패: $e');
       if (mounted) ToastHelper.showError('사업장 정보를 불러올 수 없습니다.');
     } finally {
+      _fetchInProgress = false;
       if (mounted) setState(() => _isLoading = false);
     }
   }
@@ -120,19 +144,21 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
       // 빈 상태(사업장 미등록)에도 메인 화면과 동일한 '공고 관리' 타이틀 유지
       return GradientScaffold(
         title: '공고 관리',
-        body: AppEmptyState(
-          icon: Icons.business_center,
-          title: '등록된 사업장이 없습니다',
-          subtitle: '사업장을 먼저 등록해주세요',
-          action: FilledButton.icon(
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const BusinessListScreen()),
-            ),
-            icon: const Icon(Icons.add_business, size: 18),
-            label: const Text('사업장 등록'),
-          ),
-        ),
+        body: _isLoading
+            ? const LoadingWidget()
+            : AppEmptyState(
+                icon: Icons.business_center,
+                title: '등록된 사업장이 없습니다',
+                subtitle: '사업장을 먼저 등록해주세요',
+                action: FilledButton.icon(
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const BusinessListScreen()),
+                  ),
+                  icon: const Icon(Icons.add_business, size: 18),
+                  label: const Text('사업장 등록'),
+                ),
+              ),
       );
     }
 

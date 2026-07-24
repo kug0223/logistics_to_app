@@ -67,26 +67,49 @@ class WeekPeriod {
 // ─── 기간 계산 헬퍼 ───────────────────────────────────────────────
 
 class PayslipPeriodHelper {
-  /// 특정 연월의 주차 목록 반환 (7일 블록, 월 경계 내)
+  /// 특정 연월의 주차 목록 반환 — 월요일 기준 월~일(Mon~Sun)
   ///
-  /// 방식 A: 1일부터 7일씩 끊음
-  ///   1주차: 1~7, 2주차: 8~14, 3주차: 15~21, 4주차: 22~28, 5주차: 29~말일
+  /// 이체현황(_calcWeekRanges)과 동일한 기준:
+  ///   - 해당 월의 첫 번째 월요일부터 7일씩 끊음
+  ///   - 주 종료일이 다음 달로 넘어가도 클립하지 않음 (항상 월~일 전체)
+  ///   - 최소 4주차 보장 (UI 칩 표시 용)
+  ///   - 월 초 이전 달 주차에 속하는 날(예: 7/1~7/5)은 포함 안 됨
+  ///     → 이체현황과 동일하게 제외 처리
   static List<WeekPeriod> weeksOfMonth(int year, int month) {
-    final weeks = <WeekPeriod>[];
-    final lastDay = DateTime(year, month + 1, 0).day;
+    final lastDay = DateTime(year, month + 1, 0); // 해당 월 말일
 
-    for (int weekNo = 1; weekNo <= 5; weekNo++) {
-      final startDay = (weekNo - 1) * 7 + 1;
-      if (startDay > lastDay) break;
-      final endDay = (startDay + 6).clamp(startDay, lastDay);
+    // 해당 월의 첫 번째 월요일 (weekday: Mon=1, Sun=7)
+    final firstDay = DateTime(year, month, 1);
+    final daysToMonday = (1 - firstDay.weekday + 7) % 7;
+    DateTime weekStart = firstDay.add(Duration(days: daysToMonday));
+
+    final weeks = <WeekPeriod>[];
+    int weekNo = 1;
+    while (!weekStart.isAfter(lastDay)) {
+      final weekEnd = weekStart.add(const Duration(days: 6)); // 일요일
       weeks.add(WeekPeriod(
         weekNo: weekNo,
-        start: DateTime(year, month, startDay),
-        end: DateTime(year, month, endDay),
+        start: weekStart,
+        end: weekEnd, // 다음 달로 넘어갈 수 있음
+        year: year,
+        month: month,
+      ));
+      weekStart = weekStart.add(const Duration(days: 7));
+      weekNo++;
+    }
+
+    // 최소 4주차 보장
+    while (weeks.length < 4) {
+      final next = weeks.last.start.add(const Duration(days: 7));
+      weeks.add(WeekPeriod(
+        weekNo: weeks.length + 1,
+        start: next,
+        end: next.add(const Duration(days: 6)),
         year: year,
         month: month,
       ));
     }
+
     return weeks;
   }
 
