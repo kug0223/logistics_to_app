@@ -837,31 +837,6 @@ class NotificationModel {
     );
   }
 
-  /// 계약서 작성 요청 알림 생성 (근무자→관리자)
-  /// 근무자가 CONTRACT_PENDING 상태에서 "계약서 요청하기" 버튼을 누를 때 adminIds 전체에 발송.
-  // 클라이언트에서 24시간 쿨다운(SharedPreferences key: contract_req_{applicationId})을 강제하므로
-  //           서버 중복 발송 방어는 없음. 관리자 UX 과부하 방지 목적의 소프트 제한이다.
-  static NotificationModel createContractRequested({
-    required String userId,
-    required String workerName,
-    required String businessId,
-    required String applicationId,
-  }) {
-    return NotificationModel(
-      id: '',
-      userId: userId,
-      type: NotificationType.contractRequested,
-      title: '계약서 발송 요청',
-      body: '$workerName님이 계약서 발송을 요청했습니다.',
-      data: {
-        'applicationId': applicationId,
-        'businessId': businessId,
-        'action': 'applicationDetail',
-      },
-      createdAt: DateTime.now(),
-    );
-  }
-
   /// 계약서 서명 완료 알림 생성 (관리자에게)
   /// 근무자가 서명을 완료하면 사업장 오너에게 발송.
   static NotificationModel createContractSigned({
