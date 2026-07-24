@@ -5,10 +5,13 @@
 // - 홈화면·내 스케줄·공고 찾기와 동일한 디자인 언어
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/navigation_helper.dart';
 import '../../screens/common/notification_screen.dart';
+import '../../screens/user/user_contracts_screen.dart';
+import '../../providers/user_provider.dart';
 import 'notification_badge.dart';
 
 class GradientScaffold extends StatelessWidget {
@@ -33,6 +36,8 @@ class GradientScaffold extends StatelessWidget {
   final bool showNotificationBell;
   /// 우상단 홈 아이콘 표시 여부 (기본 true) — 홈 화면 자체에서는 false로 설정
   final bool showHomeButton;
+  /// 미서명 계약서 노란 바 표시 여부 (기본 true) — 계약서 화면·목록 화면은 false로 설정
+  final bool showPendingContractBar;
 
   const GradientScaffold({
     super.key,
@@ -48,6 +53,7 @@ class GradientScaffold extends StatelessWidget {
     this.floatingActionButtonLocation,
     this.showNotificationBell = true,
     this.showHomeButton = true,
+    this.showPendingContractBar = true,
   });
 
   @override
@@ -57,6 +63,7 @@ class GradientScaffold extends StatelessWidget {
     return Scaffold(
       floatingActionButton: floatingActionButton,
       floatingActionButtonLocation: floatingActionButtonLocation,
+      bottomNavigationBar: _buildPendingContractBar(context),
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
@@ -131,6 +138,53 @@ class GradientScaffold extends StatelessWidget {
                   child: body,
                 ),
               ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget? _buildPendingContractBar(BuildContext context) {
+    if (!showPendingContractBar) return null;
+    UserProvider? userProvider;
+    try {
+      userProvider = Provider.of<UserProvider>(context);
+    } catch (_) {
+      return null;
+    }
+    if (!userProvider.isUser || !userProvider.hasPendingContract) return null;
+    final count = userProvider.pendingContractCount;
+    return SafeArea(
+      top: false,
+      child: GestureDetector(
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const UserContractsScreen()),
+        ),
+        child: Container(
+          width: double.infinity,
+          color: const Color(0xFFFFF3CD),
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 16),
+            vertical: ResponsiveHelper.spacing(context, 12),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded,
+                  color: Color(0xFF856404), size: 18),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              Expanded(
+                child: Text(
+                  '미서명 계약서 $count건이 있습니다. 탭하여 확인하세요.',
+                  style: ResponsiveHelper.smallStyle(context).copyWith(
+                    color: const Color(0xFF664D03),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const Icon(Icons.chevron_right,
+                  color: Color(0xFF856404), size: 18),
             ],
           ),
         ),

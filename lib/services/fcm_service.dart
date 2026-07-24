@@ -51,6 +51,23 @@ class FCMService {
     }
   }
 
+  /// USER 미서명 계약서 갱신 콜백 (contractSignRequested FCM 수신 시 호출)
+  final Set<VoidCallback> _userContractRefreshCallbacks = {};
+
+  void addUserContractRefreshListener(VoidCallback callback) {
+    _userContractRefreshCallbacks.add(callback);
+  }
+
+  void removeUserContractRefreshListener(VoidCallback callback) {
+    _userContractRefreshCallbacks.remove(callback);
+  }
+
+  void _notifyUserContractRefresh() {
+    for (final cb in _userContractRefreshCallbacks) {
+      cb();
+    }
+  }
+
   /// 전역 Navigator Key (main.dart에서 설정)
   GlobalKey<NavigatorState>? _navigatorKey;
   
@@ -244,11 +261,17 @@ class FCMService {
       ).catchError((e) => debugPrint('⚠️ 로컬 알림 표시 실패: $e'));
     }
 
+    final type = message.data['type'] as String? ?? '';
+
     // 지원/취소/계약서 서명 완료 알림 수신 시 관리자 화면 자동 갱신
     const adminRefreshTypes = {'newApplication', 'applicationCanceled', 'contractSigned'};
-    final type = message.data['type'] as String? ?? '';
     if (adminRefreshTypes.contains(type)) {
       _notifyAdminRefresh();
+    }
+
+    // 계약서 서명 요청 수신 시 USER 미서명 계약서 목록 갱신 (노란 바 즉시 표시)
+    if (type == 'contractSignRequested') {
+      _notifyUserContractRefresh();
     }
   }
 

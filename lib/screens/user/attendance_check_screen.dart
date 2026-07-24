@@ -20,6 +20,7 @@ import '../../widgets/common/gradient_scaffold.dart';
 import '../../services/device_integrity_service.dart';
 import '../../services/fcm_service.dart';
 import '../../widgets/common/app_empty_state.dart';
+import '../../screens/contract/contract_sign_screen.dart';
 import 'all_to_list_screen.dart';
 
 /// 출퇴근 체크 화면
@@ -941,6 +942,75 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
     );
   }
 
+  /// 출근 버튼 영역 — 미서명 계약서가 있으면 차단 UI, 없으면 출근하기 버튼
+  Widget _buildCheckInArea(ApplicationModel work) {
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+    final pendingContract = userProvider.pendingContractForTo(work.toId ?? '');
+
+    if (pendingContract != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF3CD),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFFFD966)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.warning_amber_rounded,
+                    color: Color(0xFF856404), size: 18),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Expanded(
+                  child: Text(
+                    '계약서 서명이 완료되지 않았습니다',
+                    style: ResponsiveHelper.smallStyle(context).copyWith(
+                      color: const Color(0xFF664D03),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ContractSignScreen(
+                  contract: pendingContract,
+                  role: 'worker',
+                ),
+              ),
+            ).then((_) {
+              if (mounted) setState(() {});
+            }),
+            icon: const Icon(Icons.draw_outlined, size: 18),
+            label: const Text('작성하기'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF856404),
+              foregroundColor: Colors.white,
+              minimumSize: const Size(double.infinity, 44),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return LoadingButton.primary(
+      text: '출근하기',
+      icon: Icons.login,
+      expand: true,
+      isLoading: _isProcessing,
+      onPressed: () async => _checkIn(work),
+    );
+  }
+
   /// 근무 카드
   Widget _buildWorkCard(ApplicationModel work, AttendanceModel? attendance) {
     final hasCheckedIn = attendance?.hasCheckedIn ?? false;
@@ -1025,13 +1095,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
 
             // 출근/퇴근 버튼
             if (!hasCheckedIn)
-              LoadingButton.primary(
-                text: '출근하기',
-                icon: Icons.login,
-                expand: true,
-                isLoading: _isProcessing,
-                onPressed: () async => _checkIn(work),
-              )
+              _buildCheckInArea(work)
             else if (!hasCheckedOut)
               LoadingButton(
                 text: '퇴근하기',

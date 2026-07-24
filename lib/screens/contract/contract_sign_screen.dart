@@ -458,6 +458,11 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
           pdfBytes: pdfBytes,
         );
         if (mounted) {
+          // 노란 바·출근 차단 즉시 해제 (서명 완료 직후 동기 갱신 필요)
+          await Provider.of<UserProvider>(context, listen: false)
+              .refreshPendingContracts();
+        }
+        if (mounted) {
           ToastHelper.showSuccess('계약서 서명이 완료되었습니다!');
           Navigator.pop(context, updated);
         }
@@ -479,6 +484,7 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
 
     return GradientScaffold(
       title: '근로계약서',
+      showPendingContractBar: false,
       body: Column(
         children: [
           // 안내 배너

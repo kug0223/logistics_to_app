@@ -3,8 +3,10 @@ import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/core/user_model.dart';
 import '../models/core/business_member_model.dart';
+import '../models/core/employment_contract_model.dart';
 import '../services/auth_service.dart';
 import '../services/member_service.dart';
+import '../services/contract_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'notification_provider.dart';
 import '../services/fcm_service.dart';
@@ -27,6 +29,11 @@ class UserProvider with ChangeNotifier {
   StreamSubscription? _authSubscription;
   bool _disposed = false;
 
+  // 미서명 계약서 목록 (USER 역할만 사용)
+  List<EmploymentContractModel> _pendingContracts = [];
+  // FCM contractSignRequested 콜백 참조 (등록/해제 쌍 일치를 위해 보관)
+  VoidCallback? _contractFcmCallback;
+
   void setNotificationProvider(NotificationProvider provider) {
     _notificationProvider = provider;
   }
@@ -35,6 +42,20 @@ class UserProvider with ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get error => _error;
   bool get isLoggedIn => _currentUser != null;
+
+  /// 미서명 계약서 여부 (노란 바 표시용)
+  bool get hasPendingContract => _pendingContracts.isNotEmpty;
+  int get pendingContractCount => _pendingContracts.length;
+
+  /// 특정 TO에 연결된 미서명 계약서 (출근 차단 확인용)
+  EmploymentContractModel? pendingContractForTo(String toId) {
+    if (toId.isEmpty) return null;
+    try {
+      return _pendingContracts.firstWhere((c) => c.toId == toId);
+    } catch (_) {
+      return null;
+    }
+  }
 
   bool get isAdmin => _currentUser?.isAdmin ?? false;
   bool get isSuperAdmin => _currentUser?.isSuperAdmin ?? false;
@@ -77,6 +98,9 @@ class UserProvider with ChangeNotifier {
   void dispose() {
     _disposed = true;
     _authSubscription?.cancel();
+    if (_contractFcmCallback != null) {
+      FCMService().removeUserContractRefreshListener(_contractFcmCallback!);
+    }
     super.dispose();
   }
 
@@ -142,6 +166,16 @@ class UserProvider with ChangeNotifier {
           _memberPermissions = null;
           _isAdminMode = false;
         }
+
+        // USER 역할: 미서명 계약서 목록 초기 로드 + FCM 실시간 갱신 등록
+        if (user.isUser) {
+          if (_contractFcmCallback == null) {
+            _contractFcmCallback = () => refreshPendingContracts();
+            FCMService().addUserContractRefreshListener(_contractFcmCallback!);
+          }
+          await refreshPendingContracts();
+          if (_disposed) return;
+        }
       }
 
       _isLoading = false;
@@ -173,6 +207,24 @@ class UserProvider with ChangeNotifier {
       }
 
       notifyListeners();
+    }
+  }
+
+  /// 미서명 계약서 목록 갱신 — 로그인 시·서명 완료 후 호출
+  Future<void> refreshPendingContracts() async {
+    final uid = _currentUser?.uid;
+    if (uid == null || !isUser) return;
+    try {
+      final result = await ContractService().getByWorkerPaged(
+        uid,
+        statusFilter: ContractStatus.pendingWorker,
+        pageSize: 50,
+      );
+      if (_disposed) return;
+      _pendingContracts = result.items;
+      notifyListeners();
+    } catch (e) {
+      debugPrint('⚠️ 미서명 계약서 조회 실패: $e');
     }
   }
 
@@ -301,6 +353,12 @@ class UserProvider with ChangeNotifier {
       // 알림 Provider 정리
       _notificationProvider?.clearUser();
 
+      // FCM USER 계약서 갱신 콜백 해제
+      if (_contractFcmCallback != null) {
+        FCMService().removeUserContractRefreshListener(_contractFcmCallback!);
+        _contractFcmCallback = null;
+      }
+
       // FCM 토큰 삭제
       await FCMService().clearToken();
 
@@ -308,6 +366,7 @@ class UserProvider with ChangeNotifier {
       _currentUser = null;
       _memberPermissions = null;
       _isAdminMode = false;
+      _pendingContracts = [];
       _error = null;
       _isLoading = false;
 
@@ -323,9 +382,14 @@ class UserProvider with ChangeNotifier {
       debugPrint('❌ 로그아웃 실패: $e');
       // 로그아웃 실패해도 로컬 상태는 초기화
       _notificationProvider?.clearUser();
+      if (_contractFcmCallback != null) {
+        FCMService().removeUserContractRefreshListener(_contractFcmCallback!);
+        _contractFcmCallback = null;
+      }
       _currentUser = null;
       _memberPermissions = null;
       _isAdminMode = false;
+      _pendingContracts = [];
       _error = null;
       FirestoreService().clearCache();
       notifyListeners();

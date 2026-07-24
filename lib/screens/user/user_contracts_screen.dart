@@ -149,6 +149,7 @@ class _UserContractsScreenState extends State<UserContractsScreen>
     return GradientScaffold(
       title: '내 계약서',
       showNotificationBell: true,
+      showPendingContractBar: false,
       onRefresh: _refresh,
       headerBottom: TabBar(
         controller: _tabCtrl,
