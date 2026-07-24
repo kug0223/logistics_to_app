@@ -1558,7 +1558,7 @@ service cloud.firestore {
                        request.resource.data.get('status', 'pending_employer') == 'pending_employer' &&
                        // [RULE-CONTRACT-TIMESTAMP] 계약 초안 날짜 소급 차단 — 계약 제시 시점 위변조 방지
                        (!('createdAt' in request.resource.data) ||
-                        request.resource.data.createdAt == request.time)))
+                        request.resource.data.createdAt == request.time))
                     );
 
       // 슈퍼어드민: 오기재 정정 등 운영 목적 수정 허용
@@ -2008,21 +2008,37 @@ service cloud.firestore {
                      request.resource.data.get('status', '') == 'PENDING')
                   );
       // [CRITICAL-FIX] SubAdmin 누락: approveInterimSettlement → PERMISSION_DENIED
-      // [SEC-52] PENDING 상태에서만 처리 허용 + 허용 필드 화이트리스트
-      //   — REJECTED → APPROVED 역변조 차단 (상태 전이 무결성 보장)
+      // [SEC-52] 상태 전이 무결성 보장 + 허용 필드 화이트리스트
+      //   PENDING → APPROVED/REJECTED (관리자 승인/거절)
+      //   APPROVED → PROCESSED (관리자 이체 처리 — callableProcessInterimSettlement CF Admin SDK)
       // [V10-FIX] processedBy 호출자 UID 검증 추가
+      // [INTERIM-2026-07-23] scheduledTransferDate 필드 추가 — PENDING→APPROVED 시 이체예정일 저장
+      //   callableApprove/ProcessInterimSettlement CF는 Admin SDK로 rules 우회하지만
+      //   직접 클라이언트 경로(거절) 호환성 유지 및 상태 기계 문서화 목적
       allow update: if isLoggedIn() &&
                     (isAdminOf(resource.data.businessId) ||
                      isSubAdminOf(resource.data.businessId) ||
                      isSuperAdmin()) &&
-                    resource.data.status == 'PENDING' &&
-                    (request.resource.data.status == 'PROCESSED' ||
-                     request.resource.data.status == 'APPROVED' ||
-                     request.resource.data.status == 'REJECTED') &&
-                    request.resource.data.processedBy == request.auth.uid &&
-                    request.resource.data.diff(resource.data).affectedKeys()
-                      .hasOnly(['status', 'processedBy', 'processedAt',
-                                'rejectReason', 'transferNote', 'updatedAt']);
+                    request.resource.data.processedBy == request.auth.uid && (
+                      // PENDING → APPROVED (승인 + 이체예정일)
+                      (resource.data.status == 'PENDING' &&
+                       request.resource.data.status == 'APPROVED' &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['status', 'processedBy', 'processedAt',
+                                   'scheduledTransferDate', 'transferNote', 'updatedAt'])) ||
+                      // PENDING → REJECTED (거절)
+                      (resource.data.status == 'PENDING' &&
+                       request.resource.data.status == 'REJECTED' &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['status', 'processedBy', 'processedAt',
+                                   'rejectReason', 'updatedAt'])) ||
+                      // APPROVED → PROCESSED (이체 실행 — CF Admin SDK 경유이나 규칙 일관성 유지)
+                      (resource.data.status == 'APPROVED' &&
+                       request.resource.data.status == 'PROCESSED' &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['status', 'processedBy', 'processedAt',
+                                   'transferNote', 'updatedAt']))
+                    );
       allow delete: if isSuperAdmin();
     }
 

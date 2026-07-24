@@ -7,16 +7,21 @@ import '../../theme/app_colors.dart';
 ///
 /// 왼쪽으로 드래그 시 [취소 | 🗑 삭제] 패널이 드러나며,
 /// 휴지통 버튼을 눌러야만 실제 삭제가 실행된다.
+///
+/// [openCardIdNotifier] — 스크린이 공유하는 "현재 열린 카드 ID" 노티파이어.
+/// 이 카드의 ID와 다른 값이 세팅되면 자동으로 닫힌다.
 class NotificationCard extends StatefulWidget {
   final NotificationModel notification;
   final VoidCallback? onTap;
   final VoidCallback? onDismiss;
+  final ValueNotifier<String?>? openCardIdNotifier;
 
   const NotificationCard({
     super.key,
     required this.notification,
     this.onTap,
     this.onDismiss,
+    this.openCardIdNotifier,
   });
 
   @override
@@ -36,18 +41,50 @@ class _NotificationCardState extends State<NotificationCard>
       vsync: this,
       duration: const Duration(milliseconds: 220),
     );
+    widget.openCardIdNotifier?.addListener(_onOpenCardChanged);
+  }
+
+  @override
+  void didUpdateWidget(NotificationCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.openCardIdNotifier != widget.openCardIdNotifier) {
+      oldWidget.openCardIdNotifier?.removeListener(_onOpenCardChanged);
+      widget.openCardIdNotifier?.addListener(_onOpenCardChanged);
+    }
+  }
+
+  @override
+  void reassemble() {
+    super.reassemble();
+    // Hot reload 시 열린 상태 초기화
+    _ctrl.value = 0.0;
+    if (widget.openCardIdNotifier?.value == widget.notification.id) {
+      widget.openCardIdNotifier?.value = null;
+    }
   }
 
   @override
   void dispose() {
+    widget.openCardIdNotifier?.removeListener(_onOpenCardChanged);
     _ctrl.dispose();
     super.dispose();
+  }
+
+  void _onOpenCardChanged() {
+    if (widget.openCardIdNotifier?.value != widget.notification.id) {
+      _ctrl.animateTo(0.0, curve: Curves.easeOut);
+    }
   }
 
   void _open() => _ctrl.animateTo(1.0, curve: Curves.easeOut);
   void _close() => _ctrl.animateTo(0.0, curve: Curves.easeOut);
 
   void _onDragUpdate(DragUpdateDetails d) {
+    // 왼쪽으로 드래그 시작 시 자신을 열린 카드로 등록 → 다른 카드들이 즉시 닫힘
+    if (d.delta.dx < 0 &&
+        widget.openCardIdNotifier?.value != widget.notification.id) {
+      widget.openCardIdNotifier?.value = widget.notification.id;
+    }
     _ctrl.value = (_ctrl.value - d.delta.dx / _revealWidth).clamp(0.0, 1.0);
   }
 
@@ -56,6 +93,10 @@ class _NotificationCardState extends State<NotificationCard>
       _open();
     } else {
       _close();
+      // 닫히면 열린 카드 등록도 해제
+      if (widget.openCardIdNotifier?.value == widget.notification.id) {
+        widget.openCardIdNotifier?.value = null;
+      }
     }
   }
 
@@ -153,7 +194,10 @@ class _NotificationCardState extends State<NotificationCard>
                 padding: ResponsiveHelper.cardPadding(context),
                 decoration: BoxDecoration(
                   color: isUnread
-                      ? theme.primaryColor.withValues(alpha: 0.05)
+                      ? Color.alphaBlend(
+                          theme.primaryColor.withValues(alpha: 0.05),
+                          theme.scaffoldBackgroundColor,
+                        )
                       : theme.scaffoldBackgroundColor,
                   border: Border(
                     bottom: BorderSide(color: AppColors.grey200, width: 1),
@@ -206,6 +250,8 @@ class _NotificationCardState extends State<NotificationCard>
                                   context,
                                   color: AppColors.grey500,
                                 ),
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
                               ),
                             ],
                           ),
@@ -224,16 +270,23 @@ class _NotificationCardState extends State<NotificationCard>
                       ),
                     ),
 
-                    // 미읽음 뱃지
+                    // 미읽음 뱃지 — 스와이프 시 삭제 버튼과 겹치지 않도록 페이드아웃
                     if (isUnread)
-                      Container(
-                        width: 8,
-                        height: 8,
-                        margin: EdgeInsets.only(
-                            left: ResponsiveHelper.spacing(context, 8)),
-                        decoration: BoxDecoration(
-                          color: theme.primaryColor,
-                          shape: BoxShape.circle,
+                      AnimatedBuilder(
+                        animation: _ctrl,
+                        builder: (_, child) => Opacity(
+                          opacity: (1.0 - _ctrl.value * 4).clamp(0.0, 1.0),
+                          child: child,
+                        ),
+                        child: Container(
+                          width: 8,
+                          height: 8,
+                          margin: EdgeInsets.only(
+                              left: ResponsiveHelper.spacing(context, 8)),
+                          decoration: BoxDecoration(
+                            color: theme.primaryColor,
+                            shape: BoxShape.circle,
+                          ),
                         ),
                       ),
                   ],
@@ -318,6 +371,12 @@ class _NotificationCardState extends State<NotificationCard>
         return Icons.person_remove;
       case NotificationType.workTypeChanged:
         return Icons.swap_horiz;
+      case NotificationType.interimSettlementRequested:
+        return Icons.account_balance_wallet_outlined;
+      case NotificationType.interimSettlementApproved:
+        return Icons.account_balance_wallet;
+      case NotificationType.interimSettlementRejected:
+        return Icons.money_off;
       case NotificationType.systemNotice:
         return Icons.campaign;
       case NotificationType.other:
@@ -382,6 +441,12 @@ class _NotificationCardState extends State<NotificationCard>
         return AppColors.info;
       case NotificationType.workTypeChanged:
         return AppColors.info;
+      case NotificationType.interimSettlementRequested:
+        return AppColors.teal;
+      case NotificationType.interimSettlementApproved:
+        return AppColors.success;
+      case NotificationType.interimSettlementRejected:
+        return AppColors.error;
       case NotificationType.applicationCanceled:
       case NotificationType.other:
         return AppColors.grey500;

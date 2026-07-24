@@ -50,6 +50,11 @@ enum NotificationType {
   wageTransferred,            // 급여 송금 완료
   wageCancelConfirmed,        // 급여 마감 취소
   retroactiveDeductionAlert,  // 4대보험 소급 공제 안내
+
+  // 중간정산 관련
+  interimSettlementRequested, // 중간정산 요청됨 (관리자에게)
+  interimSettlementApproved,  // 중간정산 승인됨 + 이체예정일 (근로자에게)
+  interimSettlementRejected,  // 중간정산 거절됨 (근로자에게)
   
   // 리뷰 관련
   reviewReceived,          // 리뷰 받음
@@ -236,6 +241,13 @@ class NotificationModel {
         return 'payments';
       case NotificationType.retroactiveDeductionAlert:
         return 'warning_amber';
+      // 중간정산 관련
+      case NotificationType.interimSettlementRequested:
+        return 'account_balance_wallet';
+      case NotificationType.interimSettlementApproved:
+        return 'event_available';
+      case NotificationType.interimSettlementRejected:
+        return 'event_busy';
       // 리뷰
       case NotificationType.reviewReceived:
       case NotificationType.reviewRequest:
@@ -322,6 +334,10 @@ class NotificationModel {
       case 'wageTransferred': return NotificationType.wageTransferred;
       case 'wageCancelConfirmed': return NotificationType.wageCancelConfirmed;
       case 'retroactiveDeductionAlert': return NotificationType.retroactiveDeductionAlert;
+      // 중간정산 관련
+      case 'interimSettlementRequested': return NotificationType.interimSettlementRequested;
+      case 'interimSettlementApproved': return NotificationType.interimSettlementApproved;
+      case 'interimSettlementRejected': return NotificationType.interimSettlementRejected;
       // 리뷰
       case 'reviewReceived': return NotificationType.reviewReceived;
       case 'REVIEW_REQUEST': return NotificationType.reviewRequest;
@@ -379,6 +395,10 @@ class NotificationModel {
       case NotificationType.wageTransferred: return 'wageTransferred';
       case NotificationType.wageCancelConfirmed: return 'wageCancelConfirmed';
       case NotificationType.retroactiveDeductionAlert: return 'retroactiveDeductionAlert';
+      // 중간정산 관련
+      case NotificationType.interimSettlementRequested: return 'interimSettlementRequested';
+      case NotificationType.interimSettlementApproved: return 'interimSettlementApproved';
+      case NotificationType.interimSettlementRejected: return 'interimSettlementRejected';
       // 리뷰
       case NotificationType.reviewReceived: return 'reviewReceived';
       case NotificationType.reviewRequest: return 'REVIEW_REQUEST';
@@ -428,6 +448,7 @@ class NotificationModel {
     required String targetUserName,
     required String businessId,
     required String requestId,
+    required String workerId,
   }) {
     return NotificationModel(
       id: '',
@@ -438,6 +459,7 @@ class NotificationModel {
       data: {
         'requestId': requestId,
         'businessId': businessId,
+        'workerId': workerId,
         'action': 'idCardAccessApproved',
       },
       createdAt: DateTime.now(),
@@ -562,6 +584,7 @@ class NotificationModel {
         'businessId': businessId,
         'workDetailId': workDetailId,
         'workType': workType,
+        'workDate': workDate.toIso8601String(),
         'action': 'applicantDetail',
       },
       createdAt: DateTime.now(),
@@ -591,6 +614,7 @@ class NotificationModel {
         'toId': toId,
         'workDetailId': workDetailId,
         'workType': workType,
+        'workDate': workDate.toIso8601String(),
         'action': 'applicantDetail',
       },
       createdAt: DateTime.now(),
@@ -620,6 +644,7 @@ class NotificationModel {
         'toId': toId,
         'workDetailId': workDetailId,
         'workType': workType,
+        'workDate': workDate.toIso8601String(),
         'action': 'applicantDetail',
       },
       createdAt: DateTime.now(),
@@ -1113,6 +1138,94 @@ class NotificationModel {
         if (applicationId != null) 'applicationId': applicationId,
         'businessId': businessId,
         'screen': 'wageTransferred',
+      },
+    );
+  }
+
+  /// 중간정산 요청 알림 생성 (관리자에게)
+  static NotificationModel createInterimSettlementRequested({
+    required String userId,       // 관리자 uid
+    required String workerName,
+    required String businessName,
+    required String businessId,
+    required String settlementRequestId,
+    required int recordCount,
+    required int netAmount,
+    required DateTime periodStart,
+    required DateTime periodEnd,
+  }) {
+    final periodText =
+        '${periodStart.month}/${periodStart.day}~${periodEnd.month}/${periodEnd.day}';
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.interimSettlementRequested,
+      title: '중간정산 요청',
+      body: '[$businessName] $workerName 님이 $periodText $recordCount건 중간정산을 요청했습니다.',
+      createdAt: DateTime.now(),
+      data: {
+        'businessId': businessId,
+        'settlementRequestId': settlementRequestId,
+        'screen': 'interimSettlementAdmin',
+      },
+    );
+  }
+
+  /// 중간정산 승인 알림 생성 (근로자에게) — 이체예정일 포함
+  static NotificationModel createInterimSettlementApproved({
+    required String userId,       // 근로자 uid
+    required String businessName,
+    required String businessId,
+    required String settlementRequestId,
+    required int netAmount,
+    required DateTime periodStart,
+    required DateTime periodEnd,
+    required DateTime scheduledTransferDate,
+  }) {
+    final periodText =
+        '${periodStart.month}/${periodStart.day}~${periodEnd.month}/${periodEnd.day}';
+    final transferText =
+        '${scheduledTransferDate.month}/${scheduledTransferDate.day}';
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.interimSettlementApproved,
+      title: '중간정산 승인됨',
+      body: '[$businessName] $periodText 중간정산이 승인되었습니다. $transferText에 이체될 예정입니다.',
+      createdAt: DateTime.now(),
+      data: {
+        'businessId': businessId,
+        'settlementRequestId': settlementRequestId,
+        'scheduledTransferDate': scheduledTransferDate.toIso8601String(),
+        'netAmount': netAmount,
+        'screen': 'interimSettlement',
+      },
+    );
+  }
+
+  /// 중간정산 거절 알림 생성 (근로자에게)
+  static NotificationModel createInterimSettlementRejected({
+    required String userId,       // 근로자 uid
+    required String businessName,
+    required String businessId,
+    required String settlementRequestId,
+    required DateTime periodStart,
+    required DateTime periodEnd,
+    String? rejectReason,
+  }) {
+    final periodText =
+        '${periodStart.month}/${periodStart.day}~${periodEnd.month}/${periodEnd.day}';
+    return NotificationModel(
+      id: '',
+      userId: userId,
+      type: NotificationType.interimSettlementRejected,
+      title: '중간정산 거절됨',
+      body: '[$businessName] $periodText 중간정산 요청이 거절되었습니다.${rejectReason != null ? '\n사유: $rejectReason' : ''}',
+      createdAt: DateTime.now(),
+      data: {
+        'businessId': businessId,
+        'settlementRequestId': settlementRequestId,
+        'screen': 'interimSettlement',
       },
     );
   }

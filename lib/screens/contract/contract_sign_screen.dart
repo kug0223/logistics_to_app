@@ -22,6 +22,7 @@ import '../../widgets/contract/signature_pad_widget.dart';
 import 'contract_pdf_builder.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 import '../common/settings_screen.dart';
+import '../../utils/dialog_helper.dart';
 
 /// 계약서 확인 + 서명 화면 (사업주 / 근무자 공용)
 ///
@@ -243,27 +244,17 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
   Future<void> _signAsEmployer() async {
     if (!_hasSeal) {
       if (!mounted) return;
-      final goToSettings = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text('사업주 날인 미등록'),
-          content: const Text('계약서 발송을 위해 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 또는 서명을 먼저 등록해주세요.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('취소'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('설정으로 이동'),
-            ),
-          ],
-        ),
+      final goToSettings = await DialogHelper.showConfirm(
+        context,
+        title: '사업주 날인 미등록',
+        message: '계약서 발송을 위해 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 또는 서명을 먼저 등록해주세요.',
+        confirmText: '설정으로 이동',
+        icon: Icons.verified_outlined,
+        iconColor: AppColors.warning,
       );
       // [BUG-수정] CS-M-1: 인감 미등록으로 조기 반환 시 락 해제
       if (mounted) setState(() => _isSigning = false);
-      if (goToSettings == true && mounted) {
+      if (goToSettings && mounted) {
         await Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const SettingsScreen()),
@@ -419,25 +410,15 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
 
   Future<bool> _askSaveSignature() async {
     if (!mounted) return false;
-    return await showDialog<bool>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            title: const Text('서명 저장'),
-            content: const Text('이 서명을 저장해두면 다음 계약서 서명 시 바로 사용할 수 있습니다.'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('저장 안 함'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('저장'),
-              ),
-            ],
-          ),
-        ) ??
-        false;
+    return DialogHelper.showConfirm(
+      context,
+      title: '서명 저장',
+      message: '이 서명을 저장해두면 다음 계약서 서명 시 바로 사용할 수 있습니다.',
+      confirmText: '저장',
+      cancelText: '저장 안 함',
+      icon: Icons.save_outlined,
+      iconColor: Theme.of(context).primaryColor,
+    );
   }
 
   // 실제 서명 저장 + 화면 완료 처리

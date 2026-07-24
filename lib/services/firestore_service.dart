@@ -208,29 +208,40 @@ class FirestoreService {
         .httpsCallable('callableGetUsersBatch',
             options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
 
+    // [PERF] 청크별 CF 호출 병렬화
+    final chunks = <List<String>>[];
     for (int i = 0; i < uncached.length; i += 30) {
-      final chunk = uncached.skip(i).take(30).toList();
-      try {
-        final response = await callable.call<Map<String, dynamic>>({
-          'uids': chunk,
-          'businessId': businessId,
-        });
-        final usersRaw = (response.data['users'] as Map?)?.cast<String, dynamic>() ?? {};
-        for (final entry in usersRaw.entries) {
-          final uid = entry.key;
-          try {
-            final data = Map<String, dynamic>.from(entry.value as Map);
-            final user = UserModel.fromMap(data, uid);
-            _userCache[uid] = user;
-            _userCacheTimestamps[uid] = now;
-            result[uid] = user;
-          } catch (e) {
-            // 단일 항목 파싱 실패가 청크 전체를 드롭하지 않도록 방어
-            debugPrint('⚠️ getUsersBatch: uid=$uid 파싱 실패 (건너뜀): $e');
-          }
+      chunks.add(uncached.skip(i).take(30).toList());
+    }
+    final responses = await Future.wait(
+      chunks.asMap().entries.map((entry) async {
+        final idx = entry.key;
+        final chunk = entry.value;
+        try {
+          return await callable.call<Map<String, dynamic>>({
+            'uids': chunk,
+            'businessId': businessId,
+          });
+        } catch (e) {
+          debugPrint('❌ getUsersBatch CF 실패 (chunk $idx): $e');
+          return null;
         }
-      } catch (e) {
-        debugPrint('❌ getUsersBatch CF 실패 (chunk $i): $e');
+      }),
+    );
+    for (final response in responses) {
+      if (response == null) continue;
+      final usersRaw = (response.data['users'] as Map?)?.cast<String, dynamic>() ?? {};
+      for (final entry in usersRaw.entries) {
+        final uid = entry.key;
+        try {
+          final data = _cfHydrate(Map<String, dynamic>.from(entry.value as Map));
+          final user = UserModel.fromMap(data, uid);
+          _userCache[uid] = user;
+          _userCacheTimestamps[uid] = now;
+          result[uid] = user;
+        } catch (e) {
+          debugPrint('⚠️ getUsersBatch: uid=$uid 파싱 실패 (건너뜀): $e');
+        }
       }
     }
 
@@ -288,23 +299,25 @@ class FirestoreService {
       // 실제 CONFIRMED/PENDING 지원서 수 집계
       // [BUGFIX-WHEREIN] toId isEqualTo + status whereIn → PERMISSION_DENIED
       // confirmedStatuses 각각 병렬 isEqualTo 쿼리로 대체 (whereIn 제거)
-      final confirmedResults = await Future.wait(
-        AppStatus.confirmedStatuses.map((s) => _firestore
+      // [PERF] confirmed 쿼리 + pending 쿼리 단일 Future.wait으로 통합
+      final allCountResults = await Future.wait([
+        ...AppStatus.confirmedStatuses.map((s) => _firestore
             .collection('applications')
             .where('toId', isEqualTo: toId)
             .where('status', isEqualTo: s)
             .count()
             .get()),
-      );
-      final confirmedCount = confirmedResults.fold<int>(0, (acc, r) => acc + (r.count ?? 0));
-
-      final pendingResult = await _firestore
-          .collection('applications')
-          .where('toId', isEqualTo: toId)
-          .where('status', isEqualTo: AppStatus.pending)
-          .count()
-          .get();
-      final pendingCount = pendingResult.count ?? 0;
+        _firestore
+            .collection('applications')
+            .where('toId', isEqualTo: toId)
+            .where('status', isEqualTo: AppStatus.pending)
+            .count()
+            .get(),
+      ]);
+      final confirmedCount = allCountResults
+          .take(AppStatus.confirmedStatuses.length)
+          .fold<int>(0, (acc, r) => acc + (r.count ?? 0));
+      final pendingCount = allCountResults.last.count ?? 0;
 
       await _firestore.collection('tos').doc(toId).update({
         'totalConfirmed': confirmedCount,
@@ -1127,10 +1140,25 @@ class FirestoreService {
       // callableGetApplicationsByBiz (Admin SDK)로 교체
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableGetApplicationsByBiz');
-      final cfResult = await callable.call({
-        'businessId': businessId,
-        'uid': userId,
-      });
+      // [PERF] applications + reviews 두 CF 호출 병렬화
+      final reviewCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetMonthlyReviewsForUser',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final parallelResults = await Future.wait([
+        callable.call({
+          'businessId': businessId,
+          'uid': userId,
+        }),
+        reviewCallable.call<Map<String, dynamic>>({
+          'targetUserId': userId,
+          'businessId': businessId,
+          'reviewType': 'ADMIN_TO_USER',
+          'publishedOnly': true,
+          'limit': 5,
+        }),
+      ]);
+      final cfResult = parallelResults[0];
+      final reviewResult = parallelResults[1] as HttpsCallableResult<Map<String, dynamic>>;
       final rawApps = (cfResult.data['applications'] as List? ?? []).whereType<Map>().toList();
 
       if (rawApps.isEmpty) {
@@ -1152,19 +1180,6 @@ class FirestoreService {
           .where((a) => AppStatus.confirmedStatuses.contains(a.status))
           .toList()
           ..sort((a, b) => b.workDate.compareTo(a.workDate));
-
-      // [RULE-FIX-CF 2026-07-13] monthly_reviews admin path → CF 이전
-      // 다중 where 필터 + limitType=LIMIT_TO_FIRST → filters 평가 실패 방지
-      final reviewCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetMonthlyReviewsForUser',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final reviewResult = await reviewCallable.call<Map<String, dynamic>>({
-        'targetUserId': userId,
-        'businessId': businessId,
-        'reviewType': 'ADMIN_TO_USER',
-        'publishedOnly': true,
-        'limit': 5,
-      });
       final rawReviewItems = (reviewResult.data['items'] as List? ?? []);
       final reviews = rawReviewItems
           .whereType<Map>()

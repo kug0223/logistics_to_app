@@ -163,7 +163,15 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     });
 
     // 계산 완료 후 UI 갱신 + 초기화 플래그 해제
-    if (mounted) setState(() { _isInitializing = false; });
+    if (mounted) {
+      setState(() { _isInitializing = false; });
+      // 미확정이 비어있으면 데이터 있는 탭으로 자동 이동 (첫 방문자 혼란 방지)
+      if (_pendingWorkers.isEmpty && _calculatedWorkers.isNotEmpty) {
+        _tabController.animateTo(1);
+      } else if (_pendingWorkers.isEmpty && _calculatedWorkers.isEmpty && _transferredWorkers.isNotEmpty) {
+        _tabController.animateTo(2);
+      }
+    }
   }
 
   /// 파트+시간대 그룹 키 생성
@@ -614,55 +622,29 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           for (var id in confirmedIds) {
             final worker = pendingMap[id];
             if (worker != null) _calculatedWorkers.add(worker);
+            // [BUG-1-FIX] attendanceMap wageStatus 갱신 — 마감 버튼 활성화 필터(wageCalculated 체크)에 반영
+            final att = widget.attendanceMap[id];
+            if (att != null) {
+              widget.attendanceMap[id] = att.copyWith(wageStatus: AttendanceModel.wageCalculated);
+            }
           }
           _pendingWorkers.removeWhere((app) => confirmedIds.contains(app.id));
           _pendingSelectedIds.clear();
         });
-        // 확정내역 탭으로 자동 이동
-        _tabController.animateTo(1);
       }
 
       if (failCount > 0 && mounted) {
-        await showDialog<void>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Row(
-              children: [
-                Icon(Icons.warning_amber_rounded, color: Colors.orange),
-                SizedBox(width: 8),
-                Text('일부 확정 실패'),
-              ],
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('$failCount명의 급여 확정에 실패했습니다.'),
-                const SizedBox(height: 12),
-                ...failedNames.map((name) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.error_outline, size: 14, color: Colors.orange),
-                      const SizedBox(width: 6),
-                      Text(name),
-                    ],
-                  ),
-                )),
-                const SizedBox(height: 12),
-                const Text(
-                  '해당 근무자를 개별 선택하여 다시 시도하거나, 잠시 후 재시도해주세요.',
-                  style: TextStyle(fontSize: 12, color: Colors.grey),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('확인'),
-              ),
-            ],
+        await DialogHelper.showCustom<void>(
+          context,
+          title: '일부 확정 실패',
+          icon: Icons.warning_amber_rounded,
+          iconColor: AppColors.warning,
+          content: _buildFailureContent(
+            failCount: failCount,
+            failedNames: failedNames,
+            message: '해당 근무자를 개별 선택하여 다시 시도하거나, 잠시 후 재시도해주세요.',
           ),
+          actions: [_buildConfirmButton(context, '확인', AppColors.warning)],
         );
       }
     } on FirebaseFunctionsException catch (e) {
@@ -902,9 +884,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       return;
     }
 
-    // wageTransferred는 송금 완료 → 편집 불가(confirmed 모드)
-    final isTransferred = attendance.wageStatus == AttendanceModel.wageTransferred;
-    final mode = isTransferred
+    // confirmed(최종확정) · transferred(이체완료) → 편집 불가
+    final isReadOnly = attendance.isWageConfirmed || attendance.isWageTransferred;
+    final mode = isReadOnly
         ? WageDialogMode.confirmed
         : (isCalculated ? WageDialogMode.calculated : WageDialogMode.pending);
 
@@ -1056,6 +1038,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           _pendingWorkers.removeWhere((w) => w.id == app.id);
           _calculatedWorkers.add(app);
           _pendingSelectedIds.remove(app.id);
+          // [BUG-1-FIX] attendanceMap wageStatus 갱신 — 마감 버튼 활성화 필터(wageCalculated 체크)에 반영
+          final attSnap = widget.attendanceMap[app.id];
+          if (attSnap != null) {
+            widget.attendanceMap[app.id] = attSnap.copyWith(wageStatus: AttendanceModel.wageCalculated);
+          }
         });
       }
       
@@ -1108,10 +1095,16 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       if (mounted) {
         setState(() {
           // UI 로컬 반영: calculatedAt은 CF 서버 타임스탬프와 약간 다를 수 있으나 UI 표시 목적
-          _calculatedWages[app.id] = wage.copyWith(
+          final updatedWage = wage.copyWith(
             calculatedBy: adminUid,
             calculatedAt: DateTime.now(),
           );
+          _calculatedWages[app.id] = updatedWage;
+          // [CONSISTENCY-FIX] attendanceMap.wageDetail 동기화 — 수정 후 WageDetailDialog 재오픈 시 stale wageDetail 방지
+          final oldAtt = widget.attendanceMap[app.id];
+          if (oldAtt != null) {
+            widget.attendanceMap[app.id] = oldAtt.copyWith(wageDetail: updatedWage);
+          }
         });
       }
 
@@ -1156,20 +1149,13 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       _hasChanges = true;
       widget.onConfirmed?.call();
 
-      // 급여 확정 취소 알림 발송 (calculated→pending: 지원자에게 재조정 안내)
-      _firestoreService.createNotification(
-        NotificationModel.createWageCancelConfirmed(
-          userId: app.uid,
-          businessName: widget.businessName,
-          businessId: widget.businessId,
-          workDate: attendance.workDate,
-          attendanceId: attendance.id,
-        ),
-      );
+      // [설계 의도] 확정 취소(wageCalculated→pending)는 관리자 내부 수정 작업이므로 근무자 알림 미발송.
+      // 근무자에게 급여가 공개되는 시점은 마감(wageConfirmed)이며, 알림은 마감/마감취소 시에만 발송.
 
-      // 급여 재계산 (근무자별 추가 공제 유지, 재계산만)
+      // [BUG-2-FIX] forceRecalculate: true — CF 취소 후 widget.attendanceMap에 isCalculated=true wageDetail이
+      // 남아있을 경우 early return(line 281)으로 _wageParams 미설정 → 재확정 시 StateError 방지
       final extra = _workerExtraBreakMinutes[app.id] ?? 0;
-      final newWage = await _calculateWageForWorker(app, extraBreakMinutes: extra);
+      final newWage = await _calculateWageForWorker(app, extraBreakMinutes: extra, forceRecalculate: true);
       
       if (mounted) {
         setState(() {
@@ -1179,9 +1165,15 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           if (newWage != null) {
             _calculatedWages[app.id] = newWage;
           }
+          // [CONSISTENCY-FIX] attendanceMap.wageStatus 동기화 — 취소 후 stale wageCalculated 방지
+          // (부모 _attendanceMap은 닫힌 후 _loadData()로 정정되지만, 세션 내 stale 참조 방지)
+          final oldAtt = widget.attendanceMap[app.id];
+          if (oldAtt != null) {
+            widget.attendanceMap[app.id] = oldAtt.copyWith(wageStatus: AttendanceModel.wagePending);
+          }
         });
       }
-      
+
       if (showToast && mounted) ToastHelper.showSuccess('${user?.name ?? '근무자'} 급여 확정 취소');
     } on FirebaseFunctionsException catch (e) {
       debugPrint('❌ 급여 취소 CF 실패: ${e.code} ${e.message}');
@@ -1206,7 +1198,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       final confirmed = await DialogHelper.showDangerConfirm(
         context,
         title: '급여 확정 되돌리기',
-        message: '선택한 $count명의 급여 확정을 되돌리시겠습니까?\n\n입력 오류 수정이 필요한 경우에 사용하세요.\n미확정 상태로 돌아가며, 각 근무자에게 재조정 안내 알림이 발송됩니다.',
+        message: '선택한 $count명의 급여 확정을 되돌리시겠습니까?\n\n입력 오류 수정이 필요한 경우에 사용하세요.\n미확정 상태로 돌아갑니다.',
         confirmText: '되돌리기',
       );
       if (!confirmed || !mounted) return;
@@ -1244,18 +1236,24 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   /// 선택된 wageCalculated 항목 → wageConfirmed 마감 처리
   Future<void> _closeWages() async {
     if (_isProcessing) return;
-    // 선택된 항목 중 wageCalculated 상태인 것만 처리
-    final targetIds = _calculatedSelectedIds.where((id) {
-      final att = widget.attendanceMap[id];
-      return att?.wageStatus == AttendanceModel.wageCalculated;
-    }).toList();
+    // attendanceMap은 appId를 키로 사용하지만 CF에는 실제 attendance Firestore 문서 ID(att.id)가 필요
+    final targetPairs = _calculatedSelectedIds
+        .where((appId) {
+          final att = widget.attendanceMap[appId];
+          return att?.wageStatus == AttendanceModel.wageCalculated;
+        })
+        .map((appId) => MapEntry(appId, widget.attendanceMap[appId]!.id))
+        .toList();
 
-    if (targetIds.isEmpty) {
+    if (targetPairs.isEmpty) {
       ToastHelper.showWarning('마감할 항목이 없습니다 (이미 마감됐거나 선택 없음)');
       return;
     }
 
     setState(() => _isProcessing = true);
+
+    // CF에 전달할 attendance 문서 ID 목록
+    final attendanceDocIds = targetPairs.map((e) => e.value).toList();
 
     int successCount = 0;
     int failCount = 0;
@@ -1268,7 +1266,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       final confirmed = await DialogHelper.showConfirm(
         context,
         title: '마감',
-        message: '선택한 ${targetIds.length}명을 마감하시겠습니까?\n마감 후에는 급여 취소가 불가합니다.',
+        message: '선택한 ${targetPairs.length}명을 마감하시겠습니까?\n마감 후에는 급여 취소가 불가합니다.',
         confirmText: '마감',
       );
       if (confirmed != true || !mounted) {
@@ -1284,16 +1282,18 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           .httpsCallable('callableConfirmFinalWage');
       final cfResult = await cfConfirm.call({
         'businessId': widget.businessId,
-        'attendanceIds': targetIds,
+        'attendanceIds': attendanceDocIds,
       });
       successCount = (cfResult.data['processed'] as num?)?.toInt() ?? 0;
-      final skippedIds = ((cfResult.data['skipped'] as List?) ?? [])
+      final skippedAttIds = ((cfResult.data['skipped'] as List?) ?? [])
           .map((e) => e as String)
           .toSet();
-      failCount = skippedIds.length;
+      failCount = skippedAttIds.length;
       // totalWorkDays는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리
-      for (final appId in targetIds) {
-        if (!skippedIds.contains(appId)) {
+      for (final e in targetPairs) {
+        final appId = e.key;
+        final attId = e.value;
+        if (!skippedAttIds.contains(attId)) {
           final app = _calculatedWorkers.where((a) => a.id == appId).firstOrNull;
           if (app != null) processedApps.add(app);
         }
@@ -1320,7 +1320,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       }
     } catch (e) {
       debugPrint('❌ 마감 처리 실패: $e');
-      failCount = targetIds.length - successCount;
+      failCount = targetPairs.length - successCount;
     }
 
     if (!mounted) {
@@ -1353,57 +1353,28 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     } else {
       ToastHelper.showWarning('$successCount명 마감 완료 ($failCount명 실패)');
       final processedIds = processedApps.map((a) => a.id).toSet();
-      final failedNames = targetIds
-          .where((id) => !processedIds.contains(id))
-          .map((id) {
-            final app = _calculatedWorkers.where((a) => a.id == id).firstOrNull;
-            return widget.userMap[app?.uid]?.name ?? id;
+      final failedNames = targetPairs
+          .where((e) => !processedIds.contains(e.key))
+          .map((e) {
+            final app = _calculatedWorkers.where((a) => a.id == e.key).firstOrNull;
+            return widget.userMap[app?.uid]?.name ?? e.key;
           })
           .toList();
-      await showDialog<void>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.warning_amber_rounded, color: Colors.orange),
-              SizedBox(width: 8),
-              Text('일부 마감 실패'),
-            ],
+      if (mounted) {
+        await DialogHelper.showCustom<void>(
+          context,
+          title: '일부 마감 실패',
+          icon: Icons.warning_amber_rounded,
+          iconColor: AppColors.warning,
+          content: _buildFailureContent(
+            failCount: failCount,
+            failedNames: failedNames,
+            message: '해당 근무자를 개별 선택하여 다시 시도해주세요.',
           ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('$failCount명의 마감에 실패했습니다.'),
-              const SizedBox(height: 12),
-              ...failedNames.map((name) => Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Row(
-                  children: [
-                    const Icon(Icons.error_outline, size: 14, color: Colors.orange),
-                    const SizedBox(width: 6),
-                    Text(name),
-                  ],
-                ),
-              )),
-              const SizedBox(height: 12),
-              const Text(
-                '해당 근무자를 개별 선택하여 다시 시도해주세요.',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('확인'),
-            ),
-          ],
-        ),
-      );
+          actions: [_buildConfirmButton(context, '확인', AppColors.warning)],
+        );
+      }
     }
-    // 마감내역 탭으로 자동 이동
-    _tabController.animateTo(2);
   }
 
   /// 선택된 wageConfirmed 항목 → wageCalculated 마감 취소 처리
@@ -1524,12 +1495,73 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     } else {
       ToastHelper.showWarning('$successCount명 완료, $failCount명 실패');
     }
-    _tabController.animateTo(1);
   }
 
   // ═══════════════════════════════════════════════════════════
   // 합계 계산
   // ═══════════════════════════════════════════════════════════
+
+  // ═══════════════════════════════════════════════════════════
+  // 실패 다이얼로그 공통 빌더
+  // ═══════════════════════════════════════════════════════════
+
+  Widget _buildFailureContent({
+    required int failCount,
+    required List<String> failedNames,
+    required String message,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '$failCount명의 처리에 실패했습니다.',
+          style: ResponsiveHelper.bodyStyle(context),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+        ...failedNames.map((name) => Padding(
+          padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 2)),
+          child: Row(
+            children: [
+              Icon(Icons.person_outline,
+                  size: ResponsiveHelper.iconSize(context, 14),
+                  color: AppColors.warning),
+              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+              Flexible(child: Text(name, style: ResponsiveHelper.bodyStyle(context))),
+            ],
+          ),
+        )),
+        SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+        Text(
+          message,
+          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildConfirmButton(BuildContext ctx, String label, Color color) {
+    return Material(
+      color: color,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: () => Navigator.pop(ctx),
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(ctx, 13)),
+          child: Center(
+            child: Text(
+              label,
+              style: ResponsiveHelper.bodyStyle(ctx).copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   int _getSelectedTotal(Set<String> selectedIds) {
     int total = 0;
@@ -1704,7 +1736,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       return const AppEmptyState(
         icon: Icons.check_circle_outline,
         title: '미확정 인원이 없습니다',
-        subtitle: '퇴근 완료된 근무자가 여기에 표시됩니다',
+        subtitle: '당일명단 → 확인탭에서 출근 처리한 근무자가\n퇴근 완료 후 여기에 표시됩니다',
       );
     }
 
@@ -1736,7 +1768,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       return const AppEmptyState(
         icon: Icons.receipt_long_outlined,
         title: '급여 확정된 인원이 없습니다',
-        subtitle: '급여 확정 후 여기에 표시됩니다',
+        subtitle: '미확정 탭에서 급여를 계산·확정하면\n여기에 표시됩니다',
       );
     }
 
@@ -1789,7 +1821,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       return const AppEmptyState(
         icon: Icons.done_all,
         title: '마감된 내역이 없습니다',
-        subtitle: '마감 완료된 급여가 여기에 표시됩니다',
+        subtitle: '확정내역 탭에서 마감하면\n최종 확정되어 여기에 표시됩니다',
       );
     }
 

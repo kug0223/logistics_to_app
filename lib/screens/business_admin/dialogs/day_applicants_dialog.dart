@@ -218,38 +218,39 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         final confirmedUserIds = confirmed.map((a) => a.uid).toSet().toList();
         final currentUserId = FirebaseAuth.instance.currentUser?.uid ?? '';
 
-        Map<String, String> idCardMap = {};
-        if (confirmedUserIds.isNotEmpty && currentUserId.isNotEmpty) {
-          idCardMap = await IdCardHelper.loadStatusBatch(
-            firestoreService: _svc,
-            requesterId: currentUserId,
-            targetUserIds: confirmedUserIds,
-          );
-        }
+        // Phase 3: 독립 비동기 3개 동시 시작 (신분증·리뷰·근무여부 — 서로 의존성 없음)
+        final idCardFuture = (confirmedUserIds.isNotEmpty && currentUserId.isNotEmpty)
+            ? IdCardHelper.loadStatusBatch(
+                firestoreService: _svc,
+                requesterId: currentUserId,
+                targetUserIds: confirmedUserIds,
+              )
+            : Future.value(<String, String>{});
+
+        final reviewFuture = confirmedUserIds.isNotEmpty
+            ? Future.wait(confirmedUserIds.map((uid) async {
+                final key = MonthlyReviewModel.generateKeyForUser(
+                  businessId: bizId,
+                  targetUserId: uid,
+                  year: widget.date.year,
+                  month: widget.date.month,
+                );
+                final exists = await MonthlyReviewService().getReviewById(key);
+                return MapEntry(uid, exists != null);
+              }))
+            : Future.value(<MapEntry<String, bool>>[]);
+
+        final hasWorkedFuture = confirmedUserIds.isNotEmpty
+            ? _svc.loadHasWorkedMap(businessId: bizId, date: widget.date)
+            : Future.value(<String, bool>{});
+
+        final idCardMap = await idCardFuture;
 
         final Map<String, bool> reviewMap = {};
-        if (confirmedUserIds.isNotEmpty) {
-          final reviewEntries = await Future.wait(
-            confirmedUserIds.map((uid) async {
-              final key = MonthlyReviewModel.generateKeyForUser(
-                businessId: bizId,
-                targetUserId: uid,
-                year: widget.date.year,
-                month: widget.date.month,
-              );
-              final exists = await MonthlyReviewService().getReviewById(key);
-              return MapEntry(uid, exists != null);
-            }),
-          );
-          reviewMap.addAll(Map.fromEntries(reviewEntries));
-        }
+        reviewMap.addAll(Map.fromEntries(await reviewFuture));
 
         // [BUG-CANCEL-01] 당일 근무 여부 맵 — 확정취소 버튼 가드용
-        // 공통 로직: FirestoreService.loadHasWorkedMap (attendance_firestore.dart)
-        final hasWorkedMap = confirmedUserIds.isNotEmpty
-            ? await _svc.loadHasWorkedMap(
-                businessId: bizId, date: widget.date)
-            : <String, bool>{};
+        final hasWorkedMap = await hasWorkedFuture;
 
         final starredFromFirestore =
             allApps.where((app) => app.isStarred).map((app) => app.id).toSet();
@@ -1382,37 +1383,70 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   Widget _contractBadge(BuildContext context, String appId,
       {bool isPending = false}) {
     final status = _contractStatusMap[appId];
-    // [BUG-FIX] status == null || status.isEmpty — _contractStatusMap은 String?이므로 빈 문자열도 처리
     if (status == null || status.isEmpty) {
       if (!isPending) {
-        return _chip(context,
+        return _iconChip(context,
+            icon: Icons.assignment_late_outlined,
             label: '계약미작성',
-            color: AppColors.error,
-            bgColor: AppColors.errorBg);
+            color: AppColors.error);
       }
       return const SizedBox.shrink();
     }
-    final String label;
-    final Color color;
     switch (status) {
-      case 'pending_employer':
-        label = '관리자서명';
-        color = AppColors.warningDark;
       case 'pending_worker':
-        label = '서명대기';
-        color = AppColors.warningDark;
+        return _iconChip(context,
+            icon: Icons.draw_outlined,
+            label: '서명대기',
+            color: AppColors.warningDark);
+      case 'pending_employer':
+        return _chip(context,
+            label: '관리자서명',
+            color: AppColors.warningDark,
+            bgColor: AppColors.warningDark.withValues(alpha: 0.1));
       case 'completed':
-        label = '계약완료';
-        color = AppColors.successDark;
+        return _chip(context,
+            label: '계약완료',
+            color: AppColors.successDark,
+            bgColor: AppColors.successDark.withValues(alpha: 0.1));
       case 'voided':
-        label = '무효';
-        color = AppColors.error;
+        return _chip(context,
+            label: '무효',
+            color: AppColors.error,
+            bgColor: AppColors.errorBg);
       default:
-        label = '계약중';
-        color = AppColors.grey600;
+        return _chip(context,
+            label: '계약중',
+            color: AppColors.grey600,
+            bgColor: AppColors.grey600.withValues(alpha: 0.1));
     }
-    return _chip(context,
-        label: label, color: color, bgColor: color.withValues(alpha: 0.1));
+  }
+
+  // 아이콘 + 텍스트 조합 칩 — 액션이 필요한 계약 상태(미작성·서명대기)에 사용
+  Widget _iconChip(BuildContext context,
+      {required IconData icon, required String label, required Color color}) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 5),
+        vertical: ResponsiveHelper.spacing(context, 2),
+      ),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 9, color: color),
+          const SizedBox(width: 2),
+          Text(
+            label,
+            style: ResponsiveHelper.tinyStyle(context, color: color)
+                .copyWith(fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildReviewBadge(BuildContext context, String? uid) {

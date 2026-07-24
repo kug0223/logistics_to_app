@@ -388,23 +388,20 @@ class _InviteDialogState extends State<_InviteDialog> {
         return;
       }
 
-      // 이미 멤버인지 확인
-      final alreadyMember =
-          await _service.isAlreadyMember(widget.businessId, _found!['uid']);
+      // 이미 멤버/초대 여부 병렬 확인
+      final checkResults = await Future.wait([
+        _service.isAlreadyMember(widget.businessId, _found!['uid']),
+        _service.hasPendingInvitation(widget.businessId, _found!['uid']),
+      ]);
       if (!mounted) return;
-      if (alreadyMember) {
+      if (checkResults[0]) {
         ToastHelper.showError('이미 멤버로 등록된 사용자입니다');
-        setState(() => _sending = false); // early return 전 상태 복원
+        setState(() => _sending = false);
         return;
       }
-
-      // 이미 pending 초대 있는지 확인
-      final hasPending = await _service.hasPendingInvitation(
-          widget.businessId, _found!['uid']);
-      if (!mounted) return;
-      if (hasPending) {
+      if (checkResults[1]) {
         ToastHelper.showError('이미 초대가 발송된 사용자입니다');
-        setState(() => _sending = false); // early return 전 상태 복원
+        setState(() => _sending = false);
         return;
       }
 

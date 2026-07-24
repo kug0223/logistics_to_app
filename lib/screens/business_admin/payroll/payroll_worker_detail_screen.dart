@@ -453,27 +453,28 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
   Future<void> _openWageDetail(BuildContext context, AttendanceModel record) async {
     if (record.wageDetail == null) return;
 
-    // ApplicationModel 조회
+    // ApplicationModel + UserModel 병렬 조회
     ApplicationModel? app;
     UserModel? user;
     try {
-      final appDoc = await FirebaseFirestore.instance
-          .collection('applications')
-          .doc(record.applicationId)
-          .get();
+      final docs = await Future.wait([
+        FirebaseFirestore.instance
+            .collection('applications')
+            .doc(record.applicationId)
+            .get(),
+        FirebaseFirestore.instance
+            .collection('users')
+            .doc(record.userId)
+            .get(),
+      ]);
+      if (!context.mounted) return;
+      final appDoc = docs[0];
+      final userDoc = docs[1];
       if (appDoc.exists) app = ApplicationModel.tryFromFirestore(appDoc);
-      if (!context.mounted) return; // [BUG-수정] appDoc.get() 이후 async gap에서 mounted 체크 (D-M-1)
-
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(record.userId)
-          .get();
       final userData = userDoc.data();
       if (userDoc.exists && userData != null) {
         user = UserModel.fromMap(userData, userDoc.id);
       }
-      // [M-PD-01 수정] 두 번째 await 이후 try 블록 내 명시적 mounted 체크 추가
-      if (!context.mounted) return;
     } catch (e) {
       debugPrint('❌ 지원서/사용자 정보 로드 실패: $e');
       if (context.mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
@@ -490,6 +491,7 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
       wage: record.wageDetail!,
       mode: WageDialogMode.confirmed,
       businessName: app.businessName,
+      scheduledBreakMinutes: record.wageDetail!.scheduledBreakMinutes,
     );
   }
 

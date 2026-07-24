@@ -50,15 +50,16 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
   }
 
   Future<void> _init() async {
+    // 사업장 목록과 통계를 동시에 요청 — 서로 독립적
+    final bizFuture = _service.getBusinessOptions(widget.businessIds);
+    _loadStats(); // 내부 에러 처리 있음, await 없이 병렬 시작
     try {
-      final bizOptions =
-          await _service.getBusinessOptions(widget.businessIds);
+      final bizOptions = await bizFuture;
       if (!mounted) return;
       setState(() => _businesses = bizOptions);
     } catch (e) {
       debugPrint('⚠️ 사업장 목록 로드 실패: $e');
     }
-    if (mounted) await _loadStats();
   }
 
   Future<void> _loadStats() async {
@@ -335,6 +336,14 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                   color: AppColors.grey400),
             ),
           ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 14)),
+
+        // 신뢰점수 분포
+        if (data.workerTrustScores.isNotEmpty) ...[
+          _buildTrustScoreSection(data),
+          SizedBox(height: ResponsiveHelper.spacing(context, 14)),
+        ],
+
         SizedBox(height: ResponsiveHelper.spacing(context, 32)),
       ],
     );
@@ -741,6 +750,94 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                       minHeight: 6,
                       backgroundColor: AppColors.grey100,
                       valueColor: AlwaysStoppedAnimation<Color>(color),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTrustScoreSection(AnnualStatsData data) {
+    final scores = data.workerTrustScores.values.toList();
+    if (scores.isEmpty) return const SizedBox.shrink();
+
+    // 등급별 인원 집계
+    int excellent = 0, good = 0, average = 0, caution = 0, warning = 0;
+    for (final s in scores) {
+      if (s >= 90) { excellent++; }
+      else if (s >= 70) { good++; }
+      else if (s >= 50) { average++; }
+      else if (s >= 30) { caution++; }
+      else { warning++; }
+    }
+    final total = scores.length;
+    final avgScore = total == 0 ? 0 : (scores.reduce((a, b) => a + b) / total).round();
+
+    final grades = [
+      ('최우수', excellent, AppColors.success, '90~100'),
+      ('우수',   good,      AppColors.info,    '70~89'),
+      ('보통',   average,   AppColors.warning,  '50~69'),
+      ('주의',   caution,   AppColors.error,    '30~49'),
+      ('경고',   warning,   AppColors.grey500,  '0~29'),
+    ].where((g) => g.$2 > 0).toList();
+
+    return Container(
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8, offset: const Offset(0, 2))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Text('근로자 신뢰점수 분포',
+                style: ResponsiveHelper.bodyStyle(context)
+                    .copyWith(fontWeight: FontWeight.bold)),
+            const Spacer(),
+            Text('평균 $avgScore점 · $total명',
+                style: ResponsiveHelper.tinyStyle(context,
+                    color: AppColors.grey500)),
+          ]),
+          SizedBox(height: ResponsiveHelper.spacing(context, 14)),
+          ...grades.map((g) {
+            final ratio = total == 0 ? 0.0 : g.$2 / total;
+            return Padding(
+              padding: EdgeInsets.only(
+                  bottom: ResponsiveHelper.spacing(context, 10)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    SizedBox(
+                      width: ResponsiveHelper.spacing(context, 48),
+                      child: Text(g.$1,
+                          style: ResponsiveHelper.smallStyle(context)),
+                    ),
+                    Text(g.$4,
+                        style: ResponsiveHelper.tinyStyle(context,
+                            color: AppColors.grey400)),
+                    const Spacer(),
+                    Text('${g.$2}명 (${(ratio * 100).round()}%)',
+                        style: ResponsiveHelper.smallStyle(context,
+                                color: g.$3)
+                            .copyWith(fontWeight: FontWeight.w600)),
+                  ]),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: ratio,
+                      minHeight: 6,
+                      backgroundColor: AppColors.grey100,
+                      valueColor: AlwaysStoppedAnimation<Color>(g.$3),
                     ),
                   ),
                 ],

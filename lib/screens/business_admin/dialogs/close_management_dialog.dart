@@ -76,13 +76,13 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
   // ═══════════════════════════════════════════════════════════
 
   Future<void> _loadData() => runWithLoading(() async {
-    try {
-      await _loadBusinessNames();
-    } catch (e) {
-      debugPrint('❌ [마감관리] 사업장 이름 로드 실패: $e');
-      // 이름 로드 실패해도 현황 조회는 계속 진행
-    }
-    await _loadCloseStatus();
+    // [PERF] 이름 로드 + 현황 조회 병렬 실행 (두 작업 독립적)
+    await Future.wait([
+      _loadBusinessNames().catchError((Object e) {
+        debugPrint('❌ [마감관리] 사업장 이름 로드 실패: $e');
+      }),
+      _loadCloseStatus(),
+    ]);
     _calculateSummary();
   }, errorTag: '마감 현황 로드', errorMessage: '마감 현황을 불러오는데 실패했습니다');
 
@@ -126,13 +126,24 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
           .httpsCallable('callableGetApplicationsByBiz',
               options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
 
+      // [PERF] 단기/장기 확정자 병렬 조회
+      final callResults = await Future.wait([
+        callable.call<Map<String, dynamic>>({
+          'businessId': businessId,
+          'workDateGteMs': monthStart.millisecondsSinceEpoch,
+          'workDateLtMs': monthEndExclusive.millisecondsSinceEpoch,
+          'limit': 2000,
+        }),
+        callable.call<Map<String, dynamic>>({
+          'businessId': businessId,
+          'type': AppType.longTerm,
+          'limit': 2000,
+        }),
+      ]);
+      final shortTermResult = callResults[0];
+      final longTermResult  = callResults[1];
+
       // 1. 단기 확정자: 해당 월의 workDate 범위로 조회
-      final shortTermResult = await callable.call<Map<String, dynamic>>({
-        'businessId': businessId,
-        'workDateGteMs': monthStart.millisecondsSinceEpoch,
-        'workDateLtMs': monthEndExclusive.millisecondsSinceEpoch,
-        'limit': 2000,
-      });
       debugPrint('  [단기] businessId=$businessId → ${(shortTermResult.data['applications'] as List? ?? []).length}건');
 
       final Map<String, List<ApplicationModel>> appsByDate = {};
@@ -154,11 +165,6 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
       }
 
       // 2. 장기 확정자: 전체 조회 후 해당 월의 활성 날짜로 확장
-      final longTermResult = await callable.call<Map<String, dynamic>>({
-        'businessId': businessId,
-        'type': AppType.longTerm,
-        'limit': 2000,
-      });
       debugPrint('  [장기 전체] businessId=$businessId → ${(longTermResult.data['applications'] as List? ?? []).length}건');
 
       for (final e in (longTermResult.data['applications'] as List? ?? [])) {

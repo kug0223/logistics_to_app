@@ -27,34 +27,28 @@ class IdCardHelper {
     if (targetUserIds.isEmpty) return {};
 
     try {
-      final entries = await Future.wait(
-        targetUserIds.map((userId) async {
-          final access = await firestoreService.checkIdCardAccess(
-            requesterId: requesterId,
-            targetUserId: userId,
-          );
-          final String status;
-          if (access == null) {
-            status = 'none';
-          } else if (access.status == IdCardAccessStatus.pending) {
-            status = 'pending';
-          } else if (access.isValidAccess) {
-            status = 'approved';
-          } else if (access.status == IdCardAccessStatus.expired) {
-            status = 'expired';
-          } else if (access.status == IdCardAccessStatus.rejected) {
-            status = 'rejected';
-          } else {
-            status = 'none';
-          }
-          return MapEntry(userId, status);
-        }),
+      // [PERF-2026-07-21] N × callableCheckIdCardAccess → 단일 callableCheckIdCardAccessBatch
+      final accessMap = await firestoreService.checkIdCardAccessBatch(
+        requesterId: requesterId,
+        targetUserIds: targetUserIds,
       );
-      return Map.fromEntries(entries);
+      return {
+        for (final uid in targetUserIds)
+          uid: _toStatusString(accessMap[uid]),
+      };
     } catch (e) {
       debugPrint('⚠️ 신분증 상태 조회 실패: $e');
       return {};
     }
+  }
+
+  static String _toStatusString(dynamic access) {
+    if (access == null) return 'none';
+    if (access.status == IdCardAccessStatus.pending) return 'pending';
+    if (access.isValidAccess) return 'approved';
+    if (access.status == IdCardAccessStatus.expired) return 'expired';
+    if (access.status == IdCardAccessStatus.rejected) return 'rejected';
+    return 'none';
   }
 
   /// 신분증 상태 정보 가져오기

@@ -20,6 +20,7 @@ import '../../models/core/to_model.dart';
 import '../../models/core/work_detail_model.dart';
 import '../../models/ui/admin_to_list_ui_models.dart';
 import '../business_admin/dialogs/work_applicants_dialog.dart';
+import '../business_admin/dialogs/day_applicants_dialog.dart';
 import '../business_admin/dialogs/fixed_worker_management_dialog.dart';
 import '../../models/core/employment_contract_model.dart';
 import '../../services/contract_service.dart';
@@ -35,7 +36,10 @@ import '../../models/core/review_request_model.dart';
 import '../../models/core/user_model.dart';
 import '../../widgets/dialogs/monthly_review_dialog.dart';
 import '../../widgets/dialogs/business_review_dialog.dart';
+import '../../models/core/business_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/auth_service.dart';
+import '../../widgets/dialogs/worker_detail_dialog.dart';
 
 /// 알림 목록 화면 (전체 / 미읽음 탭)
 class NotificationScreen extends StatefulWidget {
@@ -48,6 +52,37 @@ class NotificationScreen extends StatefulWidget {
 class _NotificationScreenState extends State<NotificationScreen> {
   bool _isHandlingTap = false;
   bool _isMarkingAllRead = false;
+
+  /// 현재 열려 있는 카드의 ID를 공유하는 노티파이어.
+  /// 값이 바뀌면 해당 ID가 아닌 모든 카드가 listener를 통해 자동으로 닫힌다.
+  final ValueNotifier<String?> _openCardId = ValueNotifier<String?>(null);
+
+  /// 다른 화면에서 돌아올 때 열린 카드를 닫기 위한 secondary animation 참조.
+  Animation<double>? _secondaryAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _secondaryAnimation = ModalRoute.of(context)?.secondaryAnimation;
+      _secondaryAnimation?.addStatusListener(_onSecondaryAnimationStatus);
+    });
+  }
+
+  /// 위에 올린 화면(detail, dialog 등)이 pop될 때 열린 카드를 닫는다.
+  void _onSecondaryAnimationStatus(AnimationStatus status) {
+    if (status == AnimationStatus.dismissed && mounted) {
+      _openCardId.value = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _secondaryAnimation?.removeStatusListener(_onSecondaryAnimationStatus);
+    _openCardId.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -242,66 +277,77 @@ class _NotificationScreenState extends State<NotificationScreen> {
         provider.reload();
         await Future.delayed(const Duration(milliseconds: 400));
       },
-      child: ListView.builder(
-        itemCount: grouped.length + (hasMore || showLoadMoreHint ? 1 : 0),
-        padding: ResponsiveHelper.listPadding(context),
-        itemBuilder: (context, index) {
-          if (index == grouped.length) {
-            if (hasMore) {
-              return Padding(
-                padding: EdgeInsets.symmetric(
-                  vertical: ResponsiveHelper.spacing(context, 12),
-                ),
-                child: Center(
-                  child: isLoadingMore
-                      ? const CircularProgressIndicator()
-                      : TextButton.icon(
-                          onPressed: onLoadMore,
-                          icon: const Icon(Icons.expand_more),
-                          label: const Text('이전 알림 더 보기'),
-                        ),
-                ),
-              );
-            }
-            if (showLoadMoreHint) {
-              return Padding(
-                padding: EdgeInsets.symmetric(
-                  vertical: ResponsiveHelper.spacing(context, 12),
-                  horizontal: ResponsiveHelper.spacing(context, 16),
-                ),
-                child: Text(
-                  '이전 알림은 전체 탭에서 더 불러올 수 있습니다',
-                  textAlign: TextAlign.center,
-                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
-                ),
-              );
-            }
-          }
-          final item = grouped[index];
-          if (item is String) {
-            return _buildSectionHeader(context, item);
-          }
-          final notification = item as NotificationModel;
-          return NotificationCard(
-            key: Key(notification.id),
-            notification: notification,
-            onTap: () => _handleNotificationTap(context, notification, provider),
-            onDismiss: () async {
-              try {
-                final success = await provider.deleteNotification(notification.id);
-                if (!mounted) return;
-                if (success) {
-                  ToastHelper.showSuccess('알림이 삭제되었습니다');
-                } else {
-                  ToastHelper.showError('알림 삭제에 실패했습니다');
-                }
-              } catch (e) {
-                debugPrint('❌ 알림 삭제 오류: $e');
-                if (mounted) ToastHelper.showError('알림 삭제에 실패했습니다');
-              }
-            },
-          );
+      child: NotificationListener<ScrollStartNotification>(
+        // 스크롤 시작 시 열린 카드를 닫아 UX 정돈
+        onNotification: (notification) {
+          _openCardId.value = null;
+          return false;
         },
+        child: ListView.builder(
+          itemCount: grouped.length + (hasMore || showLoadMoreHint ? 1 : 0),
+          padding: ResponsiveHelper.listPadding(context),
+          itemBuilder: (context, index) {
+            if (index == grouped.length) {
+              if (hasMore) {
+                return Padding(
+                  padding: EdgeInsets.symmetric(
+                    vertical: ResponsiveHelper.spacing(context, 12),
+                  ),
+                  child: Center(
+                    child: isLoadingMore
+                        ? const CircularProgressIndicator()
+                        : TextButton.icon(
+                            onPressed: onLoadMore,
+                            icon: const Icon(Icons.expand_more),
+                            label: const Text('이전 알림 더 보기'),
+                          ),
+                  ),
+                );
+              }
+              if (showLoadMoreHint) {
+                return Padding(
+                  padding: EdgeInsets.symmetric(
+                    vertical: ResponsiveHelper.spacing(context, 12),
+                    horizontal: ResponsiveHelper.spacing(context, 16),
+                  ),
+                  child: Text(
+                    '이전 알림은 전체 탭에서 더 불러올 수 있습니다',
+                    textAlign: TextAlign.center,
+                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+                  ),
+                );
+              }
+            }
+            final item = grouped[index];
+            if (item is String) {
+              return _buildSectionHeader(context, item);
+            }
+            final notification = item as NotificationModel;
+            // RepaintBoundary: 카드 스와이프 애니메이션이 인접 카드의 repaint를 유발하지 않도록 격리
+            return RepaintBoundary(
+              child: NotificationCard(
+                key: Key(notification.id),
+                notification: notification,
+                openCardIdNotifier: _openCardId,
+                onTap: () => _handleNotificationTap(context, notification, provider),
+                onDismiss: () async {
+                  try {
+                    final success = await provider.deleteNotification(notification.id);
+                    if (!mounted) return;
+                    if (success) {
+                      ToastHelper.showSuccess('알림이 삭제되었습니다');
+                    } else {
+                      ToastHelper.showError('알림 삭제에 실패했습니다');
+                    }
+                  } catch (e) {
+                    debugPrint('❌ 알림 삭제 오류: $e');
+                    if (mounted) ToastHelper.showError('알림 삭제에 실패했습니다');
+                  }
+                },
+              ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -567,12 +613,18 @@ class _NotificationScreenState extends State<NotificationScreen> {
         if (isUser) {
           _showMyRequestsDialog(context, userProvider.currentUser?.uid);
         } else {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-              initialBusinessId: notification.data?['businessId']?.toString(),
-            )),
-          );
+          final workerId = notification.data?['workerId']?.toString();
+          final businessId = notification.data?['businessId']?.toString();
+          if (workerId != null && workerId.isNotEmpty) {
+            await _openWorkerDetailFromNotification(context, workerId, businessId);
+          } else {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+                initialBusinessId: businessId,
+              )),
+            );
+          }
         }
         break;
 
@@ -647,6 +699,30 @@ class _NotificationScreenState extends State<NotificationScreen> {
       case NotificationType.reviewRequest:
         await _openReviewDialogFromNotification(context, notification, isUser);
         break;
+      // ═══════════════════════════════════════════════════════════
+      // 중간정산 관련 알림
+      // · interimSettlementRequested → 관리자에게 발송
+      // · interimSettlementApproved / Rejected → 근로자에게 발송
+      // ═══════════════════════════════════════════════════════════
+      case NotificationType.interimSettlementRequested:
+        if (isUser) {
+          _showMyRequestsDialog(context, userProvider.currentUser?.uid);
+        } else {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+              initialBusinessId: notification.data?['businessId']?.toString(),
+            )),
+          );
+        }
+        break;
+
+      case NotificationType.interimSettlementApproved:
+      case NotificationType.interimSettlementRejected:
+        // 승인/거절 결과는 근로자의 내 요청 현황에서 확인
+        _showMyRequestsDialog(context, userProvider.currentUser?.uid);
+        break;
+
       case NotificationType.systemNotice:
       case NotificationType.other:
         // 시스템 공지·기타: 내용은 알림 카드에 이미 표시됨 — 별도 화면 이동 없음
@@ -913,6 +989,38 @@ class _NotificationScreenState extends State<NotificationScreen> {
     );
   }
 
+  /// 신분증 열람 승인/거절 알림 → 해당 근무자 상세 다이얼로그
+  Future<void> _openWorkerDetailFromNotification(
+    BuildContext context,
+    String workerId,
+    String? businessId,
+  ) async {
+    final nav = Navigator.of(context);
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const LoadingWidget(),
+    );
+    try {
+      final user = await AuthService().getUserData(workerId);
+      if (!context.mounted) return;
+      if (nav.canPop()) nav.pop();
+      if (user == null) {
+        ToastHelper.showError('근무자 정보를 불러올 수 없습니다');
+        return;
+      }
+      await WorkerDetailDialog.show(
+        context: context,
+        user: user,
+        businessId: businessId,
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      if (nav.canPop()) nav.pop();
+      ToastHelper.showError('근무자 정보를 불러오는 중 오류가 발생했습니다');
+    }
+  }
+
   /// 하위 관리자 초대 수락/거절 처리
   Future<void> _handleMemberInvitation(
     BuildContext context,
@@ -1030,6 +1138,62 @@ class _NotificationScreenState extends State<NotificationScreen> {
   }
 
   /// 알림에서 지원자 관리 다이얼로그 열기
+  // workDate가 있는 알림 → DayApplicantsDialog (날짜 기준 지원자 관리)
+  Future<void> _openDayApplicantsDialog(
+    BuildContext context,
+    DateTime date,
+    String? preferredBusinessId,
+  ) async {
+    final up = context.read<UserProvider>();
+    final uid = up.currentUser?.uid;
+    if (uid == null) return;
+
+    final nav = Navigator.of(context);
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const LoadingWidget(),
+    );
+
+    try {
+      final fsService = FirestoreService();
+      List<BusinessModel> businesses;
+      if (up.isSubAdmin && up.effectiveBusinessId != null) {
+        final biz = await fsService.getBusinessById(up.effectiveBusinessId!);
+        businesses = biz != null ? [biz] : [];
+      } else {
+        businesses = await fsService.getMyBusiness(uid);
+      }
+
+      if (nav.canPop()) nav.pop();
+      if (!context.mounted) return;
+
+      if (businesses.isEmpty) {
+        ToastHelper.showWarning('등록된 사업장이 없습니다');
+        return;
+      }
+
+      await showDialog<bool>(
+        context: context,
+        builder: (_) => DayApplicantsDialog(
+          date: date,
+          businessIds: businesses.map((b) => b.id).toList(),
+          businesses: businesses,
+        ),
+      );
+    } catch (e) {
+      if (nav.canPop()) nav.pop();
+      debugPrint('❌ DayApplicantsDialog 로드 실패: $e');
+      if (!context.mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+          initialBusinessId: preferredBusinessId,
+        )),
+      );
+    }
+  }
+
   Future<void> _openWorkApplicantsFromNotification(
     BuildContext context,
     NotificationModel notification,
@@ -1042,6 +1206,15 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
     final data = notification.data;
     final fallbackBusinessId = data?['businessId']?.toString();
+
+    // workDate가 있는 경우 → 날짜 기준 지원자 관리 다이얼로그로 직행
+    final workDateStr = data?['workDate']?.toString();
+    final workDate = workDateStr != null ? DateTime.tryParse(workDateStr) : null;
+    if (workDate != null) {
+      await _openDayApplicantsDialog(context, workDate, fallbackBusinessId);
+      return;
+    }
+
     if (data == null) {
       Navigator.push(
         context,
@@ -1143,6 +1316,11 @@ class _NotificationScreenState extends State<NotificationScreen> {
       if (!context.mounted) return;
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!context.mounted) return;
+        // workDate: 알림 data에 저장된 ISO 문자열 → 파싱 실패 시 null(헤더 TO 날짜 폴백)
+        final workDateStr = data['workDate']?.toString();
+        final initialDate = workDateStr != null
+            ? DateTime.tryParse(workDateStr)
+            : null;
         await showDialog<WorkApplicantsDialogResult>(
           context: context,
           builder: (_) => WorkApplicantsDialog(
@@ -1151,6 +1329,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
             onChanged: () {},
             // 지원/지원취소 알림에서 특정 지원자를 맨 앞에 하이라이트
             initialApplicationId: data['applicationId']?.toString(),
+            initialDate: initialDate,
           ),
         );
       });

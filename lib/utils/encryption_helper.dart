@@ -91,7 +91,12 @@ class EncryptionHelper {
         return _encrypter!.decrypt64(cipherBase64, iv: iv);
       } else {
         // 레거시 형식: 고정 IV (ENCRYPT_IV) 사용
-        return _encrypter!.decrypt64(encryptedText, iv: _legacyIv!);
+        // 암호화 도입 이전 평문 데이터는 base64 디코딩 실패 → 경고 없이 그대로 반환
+        try {
+          return _encrypter!.decrypt64(encryptedText, iv: _legacyIv!);
+        } on FormatException {
+          return encryptedText;
+        }
       }
     } catch (e) {
       // 레거시 평문 데이터 폴백 — $e에 민감 데이터 포함 가능하므로 타입만 로깅

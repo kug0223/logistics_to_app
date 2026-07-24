@@ -7,7 +7,12 @@
       "Write(*)",
       "Read(*)",
       "Glob(*)",
-      "Grep(*)"
-    ]
+      "Grep(*)",
+      "WebSearch(*)",
+      "WebFetch(*)",
+      "Agent(*)",
+      "Workflow(*)"
+    ],
+    "defaultMode": "dontAsk"
   }
 }

@@ -94,18 +94,24 @@ class FCMService {
 
       // 4. 토큰 갱신 리스너
       _tokenRefreshSub?.cancel();
-      _tokenRefreshSub = _messaging.onTokenRefresh.listen((newToken) async {
-        await _updateToken(newToken);
-      });
+      _tokenRefreshSub = _messaging.onTokenRefresh.listen(
+        (newToken) async { await _updateToken(newToken); },
+        onError: (e) => debugPrint('⚠️ FCM 토큰 갱신 스트림 에러: $e'),
+      );
 
       // 5. 포그라운드 메시지 리스너
       _onMessageSub?.cancel();
-      _onMessageSub = FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
+      _onMessageSub = FirebaseMessaging.onMessage.listen(
+        _handleForegroundMessage,
+        onError: (e) => debugPrint('⚠️ FCM 포그라운드 메시지 스트림 에러: $e'),
+      );
 
       // 6. 백그라운드 메시지 클릭 리스너
       _onMessageOpenedAppSub?.cancel();
-      _onMessageOpenedAppSub =
-          FirebaseMessaging.onMessageOpenedApp.listen(_handleMessageOpenedApp);
+      _onMessageOpenedAppSub = FirebaseMessaging.onMessageOpenedApp.listen(
+        _handleMessageOpenedApp,
+        onError: (e) => debugPrint('⚠️ FCM 앱 열기 메시지 스트림 에러: $e'),
+      );
 
       // 7. 앱이 완전히 종료된 상태에서 알림 탭으로 시작된 경우 처리
       final initialMessage = await _messaging.getInitialMessage();
@@ -235,7 +241,7 @@ class FCMService {
         title: title,
         body: body,
         payload: jsonEncode(message.data),
-      );
+      ).catchError((e) => debugPrint('⚠️ 로컬 알림 표시 실패: $e'));
     }
 
     // 지원/취소/계약서 서명 완료 알림 수신 시 관리자 화면 자동 갱신

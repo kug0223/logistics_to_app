@@ -58,6 +58,8 @@ class WorkApplicantsDialog extends StatefulWidget {
   final VoidCallback onChanged;
   /// 알림 딥링크에서 특정 지원자를 바로 강조 표시할 때 전달. null이면 일반 목록 표시.
   final String? initialApplicationId;
+  /// 알림 딥링크에서 slot이 없을 때 헤더에 표시할 날짜. slot?.date가 우선한다.
+  final DateTime? initialDate;
 
   const WorkApplicantsDialog({
     super.key,
@@ -65,6 +67,7 @@ class WorkApplicantsDialog extends StatefulWidget {
     required this.toItem,
     required this.onChanged,
     this.initialApplicationId,
+    this.initialDate,
   });
 
   @override
@@ -159,11 +162,29 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         return true; // 그룹 모드: 업무 필터 없음 (activeStatuses만 체크)
       }).toList();
 
-      // ✅ 1. 중복 제거된 UID 목록 추출
+      // ✅ 1. 중복 제거된 UID/ID 목록 추출
       final uniqueUids = filtered.map((app) => app.uid).toSet().toList();
+      final allAppIds = filtered.map((app) => app.id).toList();
 
-      // ✅ 2. 사용자 정보 일괄 조회 (캐시 포함)
-      final userMap = await _firestoreService.getUsersBatch(uniqueUids, businessId: widget.toItem.to.businessId);
+      // 날짜 범위 (weeklyMap Future 생성에 필요)
+      final slotDate = widget.toItem.slot?.date;
+      final refDate = slotDate ?? DateTime.now();
+      final ws = WeekHelper.weekStart(refDate);
+      final we = WeekHelper.weekEnd(refDate);
+
+      // ✅ 2. 독립 조회 4개 동시 시작 (서로 의존성 없음)
+      // hasWorkedMap은 슬롯 날짜 있을 때만 의미 있지만, 미리 시작해두면 크리티컬 패스에서 제외됨
+      final userMapFuture = _firestoreService.getUsersBatch(uniqueUids, businessId: widget.toItem.to.businessId);
+      final weeklyMapFuture = _firestoreService.getWeeklyAttendanceByBusiness(
+        businessId: widget.toItem.to.businessId, weekStart: ws, weekEnd: we);
+      final contractMapFuture = ContractService().getContractStatusBatch(
+        allAppIds, businessId: widget.toItem.to.businessId);
+      final hasWorkedFuture = slotDate != null
+          ? _firestoreService.loadHasWorkedMap(
+              businessId: widget.toItem.to.businessId, date: slotDate)
+          : Future.value(<String, bool>{});
+
+      final userMap = await userMapFuture;
       
       // ✅ 3. 결과 매핑 (추가 조회 없음)
       final applicantsWithUserInfo = filtered.map((app) {
@@ -198,7 +219,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       );
 
       // 리뷰 작성 여부 일괄 확인 (슬롯 날짜가 있는 확정자만)
-      final slotDate = widget.toItem.slot?.date;
       if (slotDate != null && confirmedUserIds.isNotEmpty) {
         final businessId = widget.toItem.to.businessId;
         final reviewFutures = confirmedUserIds.map((uid) async {
@@ -217,17 +237,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           ..addAll(Map.fromEntries(reviewEntries));
       }
 
-      // 이번 주 근무 횟수 조회 (기준 주: 슬롯 날짜 or 오늘)
-      final refDate = widget.toItem.slot?.date ?? DateTime.now();
-      final ws = WeekHelper.weekStart(refDate);
-      final we = WeekHelper.weekEnd(refDate);
+      // 이번 주 근무 횟수 — 위에서 동시에 시작한 weeklyMapFuture 결과 수집
       Map<String, List<dynamic>> weeklyMap;
       try {
-        weeklyMap = await _firestoreService.getWeeklyAttendanceByBusiness(
-          businessId: widget.toItem.to.businessId,
-          weekStart: ws,
-          weekEnd: we,
-        );
+        weeklyMap = await weeklyMapFuture;
       } catch (e) {
         debugPrint('⚠️ 주간 근무 횟수 조회 실패 (배지 미표시): $e');
         weeklyMap = {};
@@ -253,24 +266,15 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           .map((app) => app.id)
           .toSet();
 
-      // 계약서 상태 일괄 조회
-      final allAppIds = filtered.map((app) => app.id).toList();
-      final contractMap = await ContractService().getContractStatusBatch(
-        allAppIds,
-        businessId: widget.toItem.to.businessId,
-      );
+      // 계약서 상태 — 위에서 동시에 시작한 contractMapFuture 결과 수집
+      final contractMap = await contractMapFuture;
 
       // [BUG-CANCEL-01] 확정취소 버튼 가드 — 근무 이력 맵 구성
-      // 슬롯 기반: loadHasWorkedMap(슬롯 날짜) → 정확한 당일 출퇴근 조회
+      // 슬롯 기반: hasWorkedFuture (위에서 동시 시작) 결과 수집
       // 비슬롯: 이미 로드된 weeklyMap 에서 app.workDate 매칭으로 근무 여부 파악
-      //         주간 범위를 벗어난 과거 날짜는 hasWorked = false (버튼 표시 허용,
-      //         실질 피해는 적음 — 장기계약자는 이미 고정근무 관리로 분기됨)
       final Map<String, bool> hasWorkedMap;
       if (slotDate != null && confirmedUserIds.isNotEmpty) {
-        hasWorkedMap = await _firestoreService.loadHasWorkedMap(
-          businessId: widget.toItem.to.businessId,
-          date: slotDate,
-        );
+        hasWorkedMap = await hasWorkedFuture;
       } else {
         hasWorkedMap = {};
         final confirmedShortTermApps = filtered.where((app) =>
@@ -472,8 +476,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                 SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                 Text(
                   widget.work != null
-                      ? '${FormatHelper.formatDate(widget.toItem.slot?.date ?? widget.toItem.to.date)} · ${widget.work!.startTime}~${widget.work!.endTime} | ${widget.work!.formattedWage}'
-                      : '${FormatHelper.formatDate(widget.toItem.slot?.date ?? widget.toItem.to.date)} · 업무 ${widget.toItem.workDetails.length}종',
+                      ? '${FormatHelper.formatDate(widget.toItem.slot?.date ?? widget.initialDate ?? widget.toItem.to.date)} · ${widget.work!.startTime}~${widget.work!.endTime} | ${widget.work!.formattedWage}'
+                      : '${FormatHelper.formatDate(widget.toItem.slot?.date ?? widget.initialDate ?? widget.toItem.to.date)} · 업무 ${widget.toItem.workDetails.length}종',
                   style: ResponsiveHelper.smallStyle(context, color: Colors.white.withValues(alpha: 0.7)),
                 ),
               ],

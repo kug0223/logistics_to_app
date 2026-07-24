@@ -643,7 +643,7 @@ class AttendanceListPdf {
         
         return AttendanceListItem(
           workType: workType,
-          name: user?.name ?? 'Unknown',
+          name: user?.name ?? app.applicantName ?? 'Unknown',
           gender: user?.gender ?? '',
           phone: _formatPhone(user?.phone ?? ''),
           workTime: '${app.startTime}~${app.endTime}',

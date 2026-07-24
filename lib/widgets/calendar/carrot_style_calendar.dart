@@ -63,6 +63,9 @@ class CarrotStyleCalendar extends StatefulWidget {
   /// 컴팩트 모드 (작은 사이즈)
   final bool compact;
 
+  /// 날짜 셀 아래에 추가할 뱃지 위젯 빌더 (null 반환 시 표시 안 함)
+  final Widget? Function(DateTime)? dayBadgeBuilder;
+
   const CarrotStyleCalendar({
     super.key,
     this.mode = CalendarMode.single,
@@ -83,6 +86,7 @@ class CarrotStyleCalendar extends StatefulWidget {
     this.enabledDayPredicate,
     this.showHeader = true,
     this.compact = false,
+    this.dayBadgeBuilder,
   });
 
   @override
@@ -403,27 +407,34 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
       textColor = AppColors.textPrimary;
     }
 
+    final badge = widget.dayBadgeBuilder?.call(day);
     return GestureDetector(
       onTap: isDisabled ? null : () => _onDayTap(day),
-      child: Container(
-        height: cellSize,
-        margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 2)),
-        decoration: BoxDecoration(
-          color: backgroundColor,
-          shape: BoxShape.circle,
-          border: borderColor != null
-              ? Border.all(color: borderColor, width: 2)
-              : null,
-        ),
-        child: Center(
-          child: Text(
-            '${day.day}',
-            style: ResponsiveHelper.bodyStyle(context).copyWith(
-              color: textColor,
-              fontWeight: (isSelected || isToday) ? FontWeight.bold : FontWeight.normal,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            height: cellSize,
+            margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 2)),
+            decoration: BoxDecoration(
+              color: backgroundColor,
+              shape: BoxShape.circle,
+              border: borderColor != null
+                  ? Border.all(color: borderColor, width: 2)
+                  : null,
+            ),
+            child: Center(
+              child: Text(
+                '${day.day}',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  color: textColor,
+                  fontWeight: (isSelected || isToday) ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
             ),
           ),
-        ),
+          if (badge != null) badge,
+        ],
       ),
     );
   }

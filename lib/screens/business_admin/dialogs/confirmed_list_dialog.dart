@@ -119,10 +119,19 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
 
       // ✅ 1. 중복 제거된 UID 목록
       final uniqueUids = confirmed.map((app) => app.uid).toSet().toList();
+      final currentUserId = userProvider.currentUser?.uid ?? '';
 
-      // ✅ 2. 사용자 정보 일괄 조회 (캐시 포함)
-      final userMap = await widget.firestoreService.getUsersBatch(uniqueUids, businessId: widget.toItem.to.businessId);
-      
+      // ✅ 2. getUsersBatch + loadStatusBatch 동시 시작 (서로 의존성 없음)
+      // confirmedUserIds는 uniqueUids와 동일하므로 userMap 완료를 기다릴 필요 없음
+      final userMapFuture = widget.firestoreService.getUsersBatch(uniqueUids, businessId: widget.toItem.to.businessId);
+      final idCardFuture = IdCardHelper.loadStatusBatch(
+        firestoreService: widget.firestoreService,
+        requesterId: currentUserId,
+        targetUserIds: uniqueUids,
+      );
+
+      final userMap = await userMapFuture;
+
       // ✅ 3. 결과 매핑 (추가 조회 없음)
       final results = confirmed.map((app) {
         // workDetailId 우선, 없으면 workType으로 폴백 (구 데이터 호환)
@@ -137,47 +146,39 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
       }).toList();
       final Map<String, List<Map<String, dynamic>>> groupedByWork = {};
 
+      // [BUG-FIX] null user도 포함 — 드롭하면 확정 근무자가 관리자 화면에서 사라짐
+      // user가 null일 수 있는 경우: getUsersBatch CF 청크 오류, 또는 캐시 미스
       for (var result in results) {
-        if (result['user'] != null) {
-          final groupKey = result['groupKey'] as String;
-          groupedByWork.putIfAbsent(groupKey, () => []);
-          groupedByWork[groupKey]!.add(result);
-        }
+        final groupKey = result['groupKey'] as String;
+        groupedByWork.putIfAbsent(groupKey, () => []);
+        groupedByWork[groupKey]!.add(result);
       }
 
-      // 각 업무별로 성별→나이순 정렬
+      // 각 업무별로 성별→나이순 정렬 (user null 안전 처리)
       for (var workers in groupedByWork.values) {
         workers.sort((a, b) {
-          final userA = a['user'] as UserModel;
-          final userB = b['user'] as UserModel;
-          
+          final userA = a['user'] as UserModel?;
+          final userB = b['user'] as UserModel?;
+          if (userA == null && userB == null) return 0;
+          if (userA == null) return 1;
+          if (userB == null) return -1;
+
           final genderOrder = {'남성': 0, '여성': 1};
           final genderA = genderOrder[userA.gender] ?? 2;
           final genderB = genderOrder[userB.gender] ?? 2;
-          
+
           if (genderA != genderB) {
             return genderA.compareTo(genderB);
           }
-          
+
           final ageA = userA.age ?? 999;
           final ageB = userB.age ?? 999;
           return ageA.compareTo(ageB);
         });
       }
 
-      // 신분증 상태 일괄 조회
-      final currentUserId = userProvider.currentUser?.uid ?? '';
-      
-      final confirmedUserIds = results
-          .where((item) => item['user'] != null)
-          .map((item) => (item['user'] as UserModel).uid)
-          .toList();
-      
-      final idCardStatusMap = await IdCardHelper.loadStatusBatch(
-        firestoreService: widget.firestoreService,
-        requesterId: currentUserId,
-        targetUserIds: confirmedUserIds,
-      );
+      // 신분증 상태 — 위에서 동시에 시작한 idCardFuture 결과 수집
+      final idCardStatusMap = await idCardFuture;
 
       if (!mounted) return;
       setState(() {
@@ -533,9 +534,10 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
           ...workers.asMap().entries.map((entry) {
             final index = entry.key;
             final worker = entry.value;
-            final user = worker['user'] as UserModel;
+            final user = worker['user'] as UserModel?;
             final application = worker['application'] as ApplicationModel;
             final isLast = index == workers.length - 1;
+            if (user == null) return const SizedBox.shrink();
             final idCardStatus = _idCardStatusMap[user.uid] ?? 'none';
             final isIdCardSelected = _selectedIdCardUserIds.contains(user.uid);
 
@@ -805,7 +807,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
       setState(() {
         // 1. 목록에서 해당 워커 제거
         _confirmedByWork[groupKey]?.removeWhere(
-          (item) => (item['user'] as UserModel).uid == user.uid
+          (item) => (item['user'] as UserModel?)?.uid == user.uid
         );
 
         // 2. 해당 업무에 워커가 없으면 업무 자체 제거

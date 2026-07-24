@@ -533,36 +533,25 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
       if (!silent && mounted) {
         final isServiceOff  = locationResult == LocationCheckResult.serviceDisabled;
         final isDeniedForever = locationResult == LocationCheckResult.permissionDeniedForever;
-        await showDialog(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: Text(isServiceOff ? 'GPS를 켜주세요' : '위치 권한 필요'),
-            content: Text(
-              isServiceOff
-                  ? '기기의 위치 서비스(GPS)가 꺼져 있습니다.\n설정 앱에서 위치 서비스를 켜주세요.'
-                  : isDeniedForever
-                      ? '위치 권한이 영구적으로 거부되었습니다.\n설정 앱에서 위치 권한을 허용해주세요.'
-                      : '출퇴근 체크를 위해 위치 권한이 필요합니다.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('취소'),
-              ),
-              TextButton(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  if (isServiceOff) {
-                    LocationHelper.openLocationSettings();
-                  } else {
-                    LocationHelper.openAppSettings();
-                  }
-                },
-                child: const Text('설정 열기'),
-              ),
-            ],
-          ),
+        final goToSettings = await DialogHelper.showConfirm(
+          context,
+          title: isServiceOff ? 'GPS를 켜주세요' : '위치 권한 필요',
+          message: isServiceOff
+              ? '기기의 위치 서비스(GPS)가 꺼져 있습니다.\n설정 앱에서 위치 서비스를 켜주세요.'
+              : isDeniedForever
+                  ? '위치 권한이 영구적으로 거부되었습니다.\n설정 앱에서 위치 권한을 허용해주세요.'
+                  : '출퇴근 체크를 위해 위치 권한이 필요합니다.',
+          confirmText: '설정 열기',
+          icon: isServiceOff ? Icons.gps_off : Icons.location_off,
+          iconColor: AppColors.warning,
         );
+        if (goToSettings) {
+          if (isServiceOff) {
+            LocationHelper.openLocationSettings();
+          } else {
+            LocationHelper.openAppSettings();
+          }
+        }
       }
       return null;
     }

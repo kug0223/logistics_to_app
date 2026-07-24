@@ -14,6 +14,7 @@ import '../../theme/app_colors.dart';
 import '../dialogs/styled_dialog.dart';
 import '../../utils/wage_calculator.dart';
 import '../app_select_field.dart';
+import '../../utils/dialog_helper.dart';
 
 // ============================================================
 // 🎨 업무 추가 다이얼로그 (세련된 디자인)
@@ -756,30 +757,17 @@ class WorkDetailDialog {
 
                     if (currentCount > 0 && count < currentCount) {
                       if (!context.mounted) return;
-                      final proceed = await showDialog<bool>(
-                        context: context,
-                        builder: (ctx) => AlertDialog(
-                          title: const Text('모집인원 축소 경고'),
-                          content: Text(
-                            '현재 확정 인원($currentCount명)보다 적게 설정합니다.\n'
+                      final proceed = await DialogHelper.showConfirm(
+                        context,
+                        title: '모집인원 축소 경고',
+                        message: '현재 확정 인원($currentCount명)보다 적게 설정합니다.\n'
                             '이미 확정된 인원이 초과 상태가 됩니다. 계속하시겠습니까?',
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(ctx, false),
-                              child: const Text('취소'),
-                            ),
-                            TextButton(
-                              onPressed: () => Navigator.pop(ctx, true),
-                              child: Text(
-                                '저장',
-                                style: const TextStyle(color: AppColors.warningDark),
-                              ),
-                            ),
-                          ],
-                        ),
+                        confirmText: '저장',
+                        confirmColor: AppColors.warning,
+                        icon: Icons.warning_amber,
+                        iconColor: AppColors.warning,
                       );
-                      if (proceed != true) return;
+                      if (!proceed) return;
                       if (!context.mounted) return;
                     }
 
@@ -805,29 +793,20 @@ class WorkDetailDialog {
                     final minWage = WageCalculator.currentMinimumWage;
                     if (selectedWageType == 'hourly' && wage < minWage) {
                       if (!context.mounted) return;
-                      final proceed = await showDialog<bool>(
-                        context: context,
-                        builder: (ctx) => AlertDialog(
-                          title: const Text('최저임금 미달 경고'),
-                          content: Text(
-                            '입력한 시급(${FormatHelper.formatNumber(wage)}원)이\n'
+                      final proceed = await DialogHelper.showConfirm(
+                        context,
+                        title: '최저임금 미달 경고',
+                        message: '입력한 시급(${FormatHelper.formatNumber(wage)}원)이\n'
                             '최저임금(${FormatHelper.formatNumber(minWage)}원)보다 낮습니다.\n\n'
                             '최저임금법 위반 시 3년 이하 징역 또는 2천만 원 이하 벌금이 부과됩니다.\n'
                             '그래도 저장하시겠습니까?',
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(ctx, false),
-                              child: const Text('수정하기'),
-                            ),
-                            TextButton(
-                              onPressed: () => Navigator.pop(ctx, true),
-                              child: const Text('저장', style: TextStyle(color: AppColors.errorDark)),
-                            ),
-                          ],
-                        ),
+                        confirmText: '저장',
+                        cancelText: '수정하기',
+                        confirmColor: AppColors.errorDark,
+                        icon: Icons.warning_amber,
+                        iconColor: AppColors.errorDark,
                       );
-                      if (proceed != true) return;
+                      if (!proceed) return;
                       if (!context.mounted) return;
                     }
 

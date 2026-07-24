@@ -129,18 +129,16 @@ class UserProvider with ChangeNotifier {
         // 알림 Provider 초기화
         _notificationProvider?.setUser(user.uid);
 
-        // FCM 푸시 알림 초기화
-        await FCMService().initialize(user.uid, isAdmin: user.isAdmin);
-        if (_disposed) return;
-
-        // 하위 관리자이면 권한 로드
+        // FCM 초기화 + 하위 관리자 권한 로드 병렬 실행 (서로 독립)
         if (user.isSubAdmin && user.subAdminOf != null) {
-          _memberPermissions = await MemberService().getMemberPermissions(
-            user.subAdminOf!,
-            uid,
-          );
+          final fcmFuture = FCMService().initialize(user.uid, isAdmin: user.isAdmin);
+          final permsFuture = MemberService().getMemberPermissions(user.subAdminOf!, uid);
+          await fcmFuture;
+          _memberPermissions = await permsFuture;
           if (_disposed) return;
         } else {
+          await FCMService().initialize(user.uid, isAdmin: user.isAdmin);
+          if (_disposed) return;
           _memberPermissions = null;
           _isAdminMode = false;
         }

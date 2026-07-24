@@ -499,6 +499,7 @@ class ScheduleCard extends StatelessWidget {
       wage: attendance!.wageDetail!,
       mode: WageDialogMode.confirmed,
       businessName: business?.name,
+      scheduledBreakMinutes: attendance!.wageDetail!.scheduledBreakMinutes,
     );
   }
   

@@ -592,7 +592,7 @@ class PayslipPdfBuilder {
     return pw.TableRow(children: [
       _cell(label, ts, color: color),
       _cell(amount, ts, align: pw.Alignment.centerRight, color: color),
-      _cell(note, ts, color: PdfColor.fromHex('#9E9E9E')),
+      _cell(note, ts, color: PdfColor.fromHex('#424242')),
     ]);
   }
 
@@ -1010,7 +1010,7 @@ class PayslipPdfBuilder {
         _cell(_fmtMin(r.overtimeMinutes), ts),
         _cell(_fmtMin(r.nightMinutes), ts),
         _cell(_fmtWon(r.netWage), ts, align: pw.Alignment.centerRight),
-        if (hasMemos) _cell(r.memo ?? '', ts, color: grey),
+        if (hasMemos) _cell(r.memo ?? '', ts, color: PdfColor.fromHex('#424242')),
       ]));
     }
 

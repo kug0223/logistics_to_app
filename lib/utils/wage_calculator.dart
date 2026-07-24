@@ -257,6 +257,7 @@ class WageCalculator {
       wageType: wageType,
       baseWage: baseWage,
       scheduledMinutes: scheduledMinutes,
+      scheduledBreakMinutes: schedBreak,
       actualMinutes: actualMinutes,
       breakMinutes: breakMinutes,
       workMinutes: workMinutes,

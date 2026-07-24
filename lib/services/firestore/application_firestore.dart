@@ -324,24 +324,11 @@ extension ApplicationFirestore on FirestoreService {
         if (desiredStartDate != null) 'desiredStartDateMs': desiredStartDate.millisecondsSinceEpoch,
       });
       final data = result.data;
-      final applicationId = data['applicationId'] as String? ?? '';
       final isReactivation = data['isReactivation'] as bool? ?? false;
 
       clearCache(toId: toId);
       invalidateMyApplicationsCache(uid);
-      try {
-        _sendNewApplicationNotification(
-          businessId: businessId,
-          applicantUid: uid,
-          workType: selectedWorkType,
-          workDate: workDate,
-          applicationId: applicationId,
-          toId: toId,
-          workDetailId: workDetailId ?? '',
-        );
-      } catch (notifErr) {
-        debugPrint('⚠️ ${isReactivation ? "재지원" : "지원"} 알림 전송 실패 (지원은 완료됨): $notifErr');
-      }
+      // newApplication 알림은 callableApplyToTO CF 내부에서 Admin SDK로 발송됨 (클라이언트 불필요)
       debugPrint('✅ ${isReactivation ? "재지원" : "지원"} 완료: $toTitle / $selectedWorkType');
       return true;
     } on FirebaseFunctionsException catch (e) {
@@ -700,35 +687,39 @@ extension ApplicationFirestore on FirestoreService {
           ? DateTime.fromMillisecondsSinceEpoch(workDateMs).toLocal()
           : DateTime.now();
 
-      // 2. 슬롯 확정 인원 감소 (CF)
+      // 2+3. 슬롯 감소 + 노쇼 패널티 병렬 실행 (서로 다른 필드 조작 — 독립적)
+      if (toId != null) clearCache(toId: toId);
+      final step2and3 = <Future<void>>[];
       if (toId != null) {
-        clearCache(toId: toId);
-        try {
-          final decrementCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-              .httpsCallable('callableDecrementSlotConfirmed',
-                  options: HttpsCallableOptions(timeout: const Duration(seconds: 10)));
-          await decrementCallable.call({
-            'applicationId': applicationId,
-            'toId': toId,
-            'slotId': slotId,
-            'workType': selectedWorkType,
-          });
-        } catch (e) {
-          debugPrint('⚠️ slot confirmedCount 감소 CF 실패 (syncTOStats 복구 예정): $e');
-        }
+        final decrementCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('callableDecrementSlotConfirmed',
+                options: HttpsCallableOptions(timeout: const Duration(seconds: 10)));
+        step2and3.add(() async {
+          try {
+            await decrementCallable.call({
+              'applicationId': applicationId,
+              'toId': toId,
+              'slotId': slotId,
+              'workType': selectedWorkType,
+            });
+          } catch (e) {
+            debugPrint('⚠️ slot confirmedCount 감소 CF 실패 (syncTOStats 복구 예정): $e');
+          }
+        }());
       }
-
-      // 3. 노쇼 패널티 (CF)
       if (applyNoShowPenalty) {
-        try {
-          final penaltyCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-              .httpsCallable('callableApplyNoShowPenalty',
-                  options: HttpsCallableOptions(timeout: const Duration(seconds: 10)));
-          await penaltyCallable.call({'applicationId': applicationId});
-        } catch (e) {
-          debugPrint('⚠️ 노쇼 패널티 CF 실패 ($uid): $e');
-        }
+        final penaltyCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('callableApplyNoShowPenalty',
+                options: HttpsCallableOptions(timeout: const Duration(seconds: 10)));
+        step2and3.add(() async {
+          try {
+            await penaltyCallable.call({'applicationId': applicationId});
+          } catch (e) {
+            debugPrint('⚠️ 노쇼 패널티 CF 실패 ($uid): $e');
+          }
+        }());
       }
+      if (step2and3.isNotEmpty) await Future.wait(step2and3);
 
       // 4. 취소 후 슬롯 상태('full'→'open') 재계산
       if (toId != null && slotId != null) {
@@ -772,8 +763,8 @@ extension ApplicationFirestore on FirestoreService {
               final workerDoc = await _firestore.collection('users').doc(uid)
                   .get(const GetOptions(source: Source.server));
               final workerName = workerDoc.data()?['name'] as String? ?? '근무자';
-              for (final adminUid in adminIds) {
-                await createNotification(NotificationModel.createConfirmationCanceledByWorker(
+              await Future.wait(adminIds.map((adminUid) => createNotification(
+                NotificationModel.createConfirmationCanceledByWorker(
                   userId: adminUid,
                   workerName: workerName,
                   workType: selectedWorkType ?? '',
@@ -782,8 +773,8 @@ extension ApplicationFirestore on FirestoreService {
                   businessId: bId,
                   toId: toId ?? '',
                   workDetailId: workDetailId,
-                ));
-              }
+                ),
+              )));
             }
           }
         } catch (e) {
@@ -1491,44 +1482,9 @@ extension ApplicationFirestore on FirestoreService {
   // 알림 헬퍼
   // ───────────────────────────────────────────────────────
 
-  Future<void> _sendNewApplicationNotification({
-    required String businessId,
-    required String applicantUid,
-    required String workType,
-    required DateTime workDate,
-    required String applicationId,
-    required String toId,
-    required String workDetailId,
-  }) async {
-    try {
-      final businessDoc =
-          await _firestore.collection('businesses').doc(businessId).get();
-      if (!businessDoc.exists) return;
-      final adminIds = List<String>.from(businessDoc.data()?['adminIds'] as List? ?? []);
-      if (adminIds.isEmpty) {
-        final fallback = businessDoc.data()?['ownerId'] as String?;
-        if (fallback != null && fallback.isNotEmpty) adminIds.add(fallback);
-      }
-      if (adminIds.isEmpty) return;
-      final userDoc =
-          await _firestore.collection('users').doc(applicantUid).get();
-      final applicantName = userDoc.data()?['name'] as String? ?? '지원자';
-      for (final adminUid in adminIds) {
-        await createNotification(NotificationModel.createNewApplication(
-          userId: adminUid,
-          applicantName: applicantName,
-          workType: workType,
-          workDate: workDate,
-          applicationId: applicationId,
-          toId: toId,
-          businessId: businessId,
-          workDetailId: workDetailId,
-        ));
-      }
-    } catch (e) {
-      debugPrint('⚠️ 신규 지원 알림 전송 실패: $e');
-    }
-  }
+  // _sendNewApplicationNotification 제거 — callableApplyToTO CF 내부 Admin SDK로 이전
+  // 이유: 지원자는 members 서브컬렉션 비소속 → createNotification CF [SEC-SENDER-VERIFY] 차단이었으나
+  //        근본 해결책은 서버사이드 발송으로 전환함
 
   Future<void> _sendApplicationCanceledNotification({
     required String businessId,
@@ -1540,8 +1496,11 @@ extension ApplicationFirestore on FirestoreService {
     required String workDetailId,
   }) async {
     try {
-      final businessDoc =
-          await _firestore.collection('businesses').doc(businessId).get();
+      // 두 쿼리 독립적 — 동시에 시작
+      final bizFuture = _firestore.collection('businesses').doc(businessId).get();
+      final userFuture = _firestore.collection('users').doc(applicantUid).get();
+
+      final businessDoc = await bizFuture;
       if (!businessDoc.exists) return;
       final adminIds = List<String>.from(businessDoc.data()?['adminIds'] as List? ?? []);
       if (adminIds.isEmpty) {
@@ -1549,11 +1508,10 @@ extension ApplicationFirestore on FirestoreService {
         if (fallback != null && fallback.isNotEmpty) adminIds.add(fallback);
       }
       if (adminIds.isEmpty) return;
-      final userDoc =
-          await _firestore.collection('users').doc(applicantUid).get();
+      final userDoc = await userFuture;
       final applicantName = userDoc.data()?['name'] as String? ?? '지원자';
-      for (final adminUid in adminIds) {
-        await createNotification(NotificationModel.createApplicationCanceled(
+      await Future.wait(adminIds.map((adminUid) => createNotification(
+        NotificationModel.createApplicationCanceled(
           userId: adminUid,
           applicantName: applicantName,
           workType: workType,
@@ -1562,8 +1520,8 @@ extension ApplicationFirestore on FirestoreService {
           businessId: businessId,
           toId: toId,
           workDetailId: workDetailId,
-        ));
-      }
+        ),
+      )));
     } catch (e) {
       debugPrint('⚠️ 지원 취소 알림 전송 실패: $e');
     }

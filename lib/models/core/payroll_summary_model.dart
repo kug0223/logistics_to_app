@@ -144,7 +144,7 @@ class PayrollSummaryModel {
     );
   }
 
-  bool get isEmpty => confirmedCount == 0 && pendingCount == 0;
+  bool get isEmpty => confirmedCount == 0 && pendingCount == 0 && notTransferredCount == 0;
 
   String get formattedTotalPayout {
     if (totalPayout == 0) return '-';

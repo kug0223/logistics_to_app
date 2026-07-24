@@ -28,6 +28,7 @@ import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
 import '../../theme/app_colors.dart';
 import '../../widgets/app_select_field.dart';
 import '../../widgets/common/common_widgets.dart';
+import '../../utils/dialog_helper.dart';
 
 /// 개선된 회원가입 화면 - 자동 스크롤 + 여백 최적화 + Storage 업로드
 class RegisterScreen extends StatefulWidget {
@@ -439,71 +440,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (_bankbookImagePath == null) missingDocs.add('통장사본');
 
       if (missingDocs.isNotEmpty) {
-        final confirmed = await showDialog<bool>(
-          context: context,
-          barrierDismissible: false,
-          builder: (ctx) => AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-            title: Row(children: [
-              Container(
-                width: 34, height: 34,
-                decoration: BoxDecoration(
-                  color: AppColors.warningBg,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(Icons.warning_amber_outlined,
-                    color: AppColors.warningDark,
-                    size: ResponsiveHelper.iconSize(ctx, 18)),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(ctx, 10)),
-              Text('서류 미등록',
-                  style: ResponsiveHelper.subtitleStyle(ctx)
-                      .copyWith(fontWeight: FontWeight.bold)),
-            ]),
-            content: Column(mainAxisSize: MainAxisSize.min, children: [
-              Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 12)),
-                decoration: BoxDecoration(
-                  color: AppColors.warningBg,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppColors.warningLight),
-                ),
-                child: Text(
-                  '${missingDocs.join(', ')} 미등록 시 단기 공고 지원이 불가합니다.\n설정 > 내 서류 관리에서 나중에 등록할 수 있어요.',
-                  style: ResponsiveHelper.smallStyle(ctx, color: AppColors.warningDeep),
-                ),
-              ),
-            ]),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: Text('돌아가기',
-                    style: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey500)),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.warningDark,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  padding: EdgeInsets.symmetric(
-                      horizontal: ResponsiveHelper.spacing(ctx, 16),
-                      vertical: ResponsiveHelper.spacing(ctx, 10)),
-                ),
-                child: Text('나중에 등록',
-                    style: ResponsiveHelper.smallStyle(ctx,
-                        color: Colors.white, fontWeight: FontWeight.w600)),
-              ),
-            ],
-          ),
+        final confirmed = await DialogHelper.showConfirm(
+          context,
+          title: '서류 미등록',
+          message: '${missingDocs.join(', ')} 미등록 시 단기 공고 지원이 불가합니다.\n설정 > 내 서류 관리에서 나중에 등록할 수 있어요.',
+          confirmText: '나중에 등록',
+          cancelText: '돌아가기',
+          confirmColor: AppColors.warningDark,
+          icon: Icons.warning_amber_outlined,
+          iconColor: AppColors.warningDark,
         );
         if (!mounted) return;
-        if (confirmed != true) return;
+        if (!confirmed) return;
       }
       await _registerUser();
     } else if (_selectedRole == UserRole.BUSINESS_ADMIN) {
-      _showBusinessRegistrationDialog();
+      await _showBusinessRegistrationDialog();
     }
   }
   // ============================================================
@@ -511,143 +463,42 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // ============================================================
 
   // 사업장 등록 선택 다이얼로그
-  void _showBusinessRegistrationDialog() {
-    final theme = Theme.of(context);
-    
+  Future<void> _showBusinessRegistrationDialog() async {
     // 사업자등록증 미등록 시 경고
     if (_businessLicenseImagePath == null) {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          titlePadding: EdgeInsets.fromLTRB(20, 20, 20, 0),
-          title: Row(children: [
-            Container(
-              width: 34, height: 34,
-              decoration: BoxDecoration(
-                color: AppColors.warningBg,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(Icons.warning_amber_outlined,
-                  color: AppColors.warningDark,
-                  size: ResponsiveHelper.iconSize(ctx, 18)),
-            ),
-            SizedBox(width: ResponsiveHelper.spacing(ctx, 10)),
-            Text('사업자등록증 미등록',
-                style: ResponsiveHelper.subtitleStyle(ctx)
-                    .copyWith(fontWeight: FontWeight.bold)),
-          ]),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
-            Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 12)),
-              decoration: BoxDecoration(
-                color: AppColors.warningBg,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: AppColors.warningLight),
-              ),
-              child: Text(
-                '미등록 시 사업장 등록이 불가합니다.\n설정 > 내 서류 관리에서 나중에 등록할 수 있어요.',
-                style: ResponsiveHelper.smallStyle(ctx, color: AppColors.warningDeep),
-              ),
-            ),
-          ]),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: Text('돌아가기',
-                  style: ResponsiveHelper.smallStyle(ctx,
-                      color: AppColors.grey500)),
-            ),
-            ElevatedButton(
-              onPressed: () async { Navigator.pop(ctx); if (!mounted) return; await _registerUser(); },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.warningDark,
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10)),
-                padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(ctx, 16),
-                    vertical: ResponsiveHelper.spacing(ctx, 10)),
-              ),
-              child: Text('나중에 등록',
-                  style: ResponsiveHelper.smallStyle(ctx,
-                      color: Colors.white, fontWeight: FontWeight.w600)),
-            ),
-          ],
-        ),
+      if (!mounted) return;
+      final proceed = await DialogHelper.showConfirm(
+        context,
+        title: '사업자등록증 미등록',
+        message: '미등록 시 사업장 등록이 불가합니다.\n설정 > 내 서류 관리에서 나중에 등록할 수 있어요.',
+        confirmText: '나중에 등록',
+        cancelText: '돌아가기',
+        confirmColor: AppColors.warningDark,
+        icon: Icons.warning_amber_outlined,
+        iconColor: AppColors.warningDark,
       );
+      if (!mounted) return;
+      if (proceed) await _registerUser();
       return;
     }
 
     // 사업자등록증 등록 완료 — 사업장 등록 여부 선택
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        titlePadding: EdgeInsets.fromLTRB(20, 20, 20, 0),
-        title: Row(children: [
-          Container(
-            width: 34, height: 34,
-            decoration: BoxDecoration(
-              color: theme.primaryColor.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(Icons.business_outlined,
-                color: theme.primaryColor,
-                size: ResponsiveHelper.iconSize(ctx, 18)),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(ctx, 10)),
-          Text('사업장 등록',
-              style: ResponsiveHelper.subtitleStyle(ctx)
-                  .copyWith(fontWeight: FontWeight.bold)),
-        ]),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text('사업장 정보를 지금 등록하시겠습니까?',
-              style: ResponsiveHelper.bodyStyle(ctx)),
-          SizedBox(height: ResponsiveHelper.spacing(ctx, 10)),
-          Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 12)),
-            decoration: BoxDecoration(
-              color: theme.primaryColor.withValues(alpha: 0.06),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Text(
-              '지금 등록하면 TO를 바로 생성하고 지원자를 관리할 수 있습니다.',
-              style: ResponsiveHelper.smallStyle(ctx,
-                  color: theme.primaryColor),
-            ),
-          ),
-        ]),
-        actions: [
-          TextButton(
-            onPressed: () async { Navigator.pop(ctx); if (!mounted) return; await _registerUser(); },
-            child: Text('나중에',
-                style: ResponsiveHelper.smallStyle(ctx,
-                    color: AppColors.grey500)),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              _registerUserAndGoToBusinessRegistration();
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: theme.primaryColor,
-              elevation: 0,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10)),
-              padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(ctx, 16),
-                  vertical: ResponsiveHelper.spacing(ctx, 10)),
-            ),
-            child: Text('지금 등록',
-                style: ResponsiveHelper.smallStyle(ctx,
-                    color: Colors.white, fontWeight: FontWeight.w600)),
-          ),
-        ],
-      ),
+    if (!mounted) return;
+    final registerNow = await DialogHelper.showConfirm(
+      context,
+      title: '사업장 등록',
+      message: '사업장 정보를 지금 등록하시겠습니까?\n\n지금 등록하면 TO를 바로 생성하고 지원자를 관리할 수 있습니다.',
+      confirmText: '지금 등록',
+      cancelText: '나중에',
+      icon: Icons.business_outlined,
+      iconColor: Theme.of(context).primaryColor,
     );
+    if (!mounted) return;
+    if (registerNow) {
+      _registerUserAndGoToBusinessRegistration();
+    } else {
+      await _registerUser();
+    }
   }
 
   /// 회원가입: 계정 먼저 생성 → UID로 올바른 경로에 업로드 (temp 고아 파일 방지)

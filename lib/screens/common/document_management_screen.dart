@@ -1249,7 +1249,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
   Future<void> _showBankEditDialog() async {
     String? localBank = _selectedBank;
 
-    await showDialog(
+    final saved = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => StyledDialog(
@@ -1286,19 +1286,19 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
             ],
           ),
           actions: [
-            StyledDialogButton.cancel(onPressed: () => Navigator.pop(ctx)),
+            StyledDialogButton.cancel(onPressed: () => Navigator.pop(ctx, false)),
             StyledDialogButton.primary(
               text: '저장',
-              onPressed: () {
-                setState(() => _selectedBank = localBank);
-                Navigator.pop(ctx);
-                _saveBankInfo();
-              },
+              onPressed: () => Navigator.pop(ctx, true),
             ),
           ],
         ),
       ),
     );
+
+    if (saved != true || !mounted) return;
+    setState(() => _selectedBank = localBank);
+    _saveBankInfo();
   }
 
   /// 통장사본 업로드

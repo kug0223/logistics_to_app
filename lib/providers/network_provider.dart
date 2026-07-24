@@ -31,16 +31,17 @@ class NetworkProvider extends ChangeNotifier {
 
     // 이후 변화 감지 — dispose 이후 구독 방지
     if (_disposed) return;
-    _subscription = _connectivity
-        .onConnectivityChanged
-        .listen((List<ConnectivityResult> results) {
-      final online = _hasConnection(results);
-      if (online != _isOnline) {
-        _isOnline = online;
-        NetworkChecker.instance.update(online);
-        if (!_disposed) notifyListeners();
-      }
-    });
+    _subscription = _connectivity.onConnectivityChanged.listen(
+      (List<ConnectivityResult> results) {
+        final online = _hasConnection(results);
+        if (online != _isOnline) {
+          _isOnline = online;
+          NetworkChecker.instance.update(online);
+          if (!_disposed) notifyListeners();
+        }
+      },
+      onError: (e) => debugPrint('⚠️ Connectivity 스트림 에러: $e'),
+    );
   }
 
   bool _hasConnection(List<ConnectivityResult> results) {

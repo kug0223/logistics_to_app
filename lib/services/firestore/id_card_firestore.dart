@@ -128,6 +128,7 @@ extension IdCardFirestore on FirestoreService {
             // requesterBusinessId는 createIdCardAccessRequest(line 67)에서 항상 저장 — '' 폴백 실제 발생 가능성 없음
             businessId: requestData!['requesterBusinessId'] as String? ?? '',
             requestId: requestId,
+            workerId: requestData!['targetUserId'] as String? ?? '',
           ),
         );
       } catch (e) {
@@ -223,6 +224,37 @@ extension IdCardFirestore on FirestoreService {
       return null;
     }
   }
+  /// 신분증 열람 권한 일괄 확인 (N명 → 단일 CF 호출)
+  /// [CF-BATCH 2026-07-21] callableCheckIdCardAccessBatch — N × checkIdCardAccess 대체
+  Future<Map<String, IdCardAccessRequestModel?>> checkIdCardAccessBatch({
+    required String requesterId,
+    required List<String> targetUserIds,
+  }) async {
+    if (targetUserIds.isEmpty) return {};
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableCheckIdCardAccessBatch',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'requesterId': requesterId,
+        'targetUserIds': targetUserIds,
+      });
+      final raw = Map<String, dynamic>.from(result.data['requests'] as Map? ?? {});
+      return {
+        for (final entry in raw.entries)
+          entry.key: () {
+            if (entry.value == null) return null;
+            final hydrated = _cfHydrate(Map<String, dynamic>.from(entry.value as Map));
+            final id = hydrated.remove('id') as String? ?? '';
+            return IdCardAccessRequestModel.tryFromMap(hydrated, id);
+          }(),
+      };
+    } catch (e) {
+      debugPrint('❌ 신분증 일괄 권한 확인 실패: $e');
+      return {};
+    }
+  }
+
   /// 사용자에게 온 신분증 열람 요청 조회 (지원자/근무자용)
   /// [CF 이전 2026-07-15] callableGetMyIdCardRequests — targetUserId 서버 검증 강제
   Future<List<IdCardAccessRequestModel>> getPendingIdCardRequestsForUser(String userId) async {

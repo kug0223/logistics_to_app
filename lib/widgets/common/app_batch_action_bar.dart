@@ -49,7 +49,7 @@ class AppBatchActionBar extends StatelessWidget {
       color: AppColors.infoBg,
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 12),
-        vertical: ResponsiveHelper.spacing(context, 6),
+        vertical: ResponsiveHelper.spacing(context, 4),
       ),
       child: Row(
         children: [
@@ -59,24 +59,26 @@ class AppBatchActionBar extends StatelessWidget {
                 TextButton(
                   onPressed: onSelectAll,
                   style: TextButton.styleFrom(
-                      padding: EdgeInsets.zero,
-                      minimumSize: const Size(40, 32)),
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      minimumSize: const Size(36, 28),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap),
                   child: Text('전체선택',
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: AppColors.info)),
+                      style: ResponsiveHelper.tinyStyle(context,
+                          color: AppColors.info, fontWeight: FontWeight.w600)),
                 ),
-                const SizedBox(width: 4),
+                const SizedBox(width: 2),
                 TextButton(
                   onPressed: onDeselectAll,
                   style: TextButton.styleFrom(
-                      padding: EdgeInsets.zero,
-                      minimumSize: const Size(40, 32)),
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      minimumSize: const Size(32, 28),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap),
                   child: Text('해제',
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: AppColors.info)),
+                      style: ResponsiveHelper.tinyStyle(context,
+                          color: AppColors.info, fontWeight: FontWeight.w600)),
                 ),
                 if (selectedCount > 0 && selectedAmount > 0) ...[
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 6),
                   Flexible(
                     child: Text(
                       FormatHelper.formatWage(selectedAmount),
@@ -91,20 +93,23 @@ class AppBatchActionBar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          ElevatedButton.icon(
-            onPressed: onAction,
-            icon: Icon(actionIcon,
-                size: ResponsiveHelper.iconSize(context, 14)),
-            label: Text('$selectedCount건 $actionLabel'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.success,
-              foregroundColor: Colors.white,
-              padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 12),
-                vertical: ResponsiveHelper.spacing(context, 6),
+          SizedBox(
+            height: 30,
+            child: ElevatedButton.icon(
+              onPressed: onAction,
+              icon: Icon(actionIcon, size: 13),
+              label: Text('$selectedCount건 $actionLabel'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.success,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 10),
+                  vertical: 0,
+                ),
+                textStyle: ResponsiveHelper.tinyStyle(context,
+                    fontWeight: FontWeight.w600),
+                elevation: 0,
               ),
-              textStyle: ResponsiveHelper.smallStyle(context,
-                  fontWeight: FontWeight.w600),
             ),
           ),
         ],

@@ -111,7 +111,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   // ID-1 보안: 직접 URL 대신 CF 발급 1시간 만료 Signed URL 캐시
   String? _idCardSignedUrl;
   bool _idCardSignedUrlLoading = false;
-  bool _hasAttendance = false;  // ✅ 출퇴근 기록 여부 (장기 확정자용)
+  bool? _hasAttendance;  // 출퇴근 기록 여부 (null=로딩중, true=있음, false=없음)
   bool? _hasWrittenReview;     // 리뷰 작성 여부 (null=미확인)
   EmploymentContractModel? _contract;
 
@@ -150,11 +150,10 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                 requesterId: currentUserId, targetUserId: widget.user.uid)
             : Future.value(null),
 
-        // 3: 장기 출퇴근 기록 여부
-        (app != null &&
-                widget.isConfirmed &&
-                (app.isLongTermApplication ||
-                    widget.toItem?.to.isLongTerm == true))
+        // 3: 출퇴근 기록 여부 (확정자 전체 — 장기/단기 공통)
+        //    장기: 고정근무 관리 버튼 전환 조건에 사용
+        //    단기: 확정취소 버튼 비활성화 조건에 사용
+        (app != null && widget.isConfirmed)
             ? _firestoreService.hasAttendanceRecord(app.id, businessId: app.businessId)
             : Future.value(false),
 
@@ -177,7 +176,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       _businessHistory = results[0] as Map<String, dynamic>?;
       _recentReviews = (results[1] as List).whereType<MonthlyReviewModel>().toList();
       _idCardAccess = results[2] as IdCardAccessRequestModel?;
-      _hasAttendance = (results[3] as bool?) ?? false;
+      _hasAttendance = results[3] as bool?;
       _workTime = results[4] as String?;
       _hasWrittenReview = results[5] as bool?;
       _contract = results[6] as EmploymentContractModel?;
@@ -593,8 +592,14 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         return '대기중';
       case AppStatus.confirmed:
         return '확정';
+      case AppStatus.contractPending:
+        return '계약 대기';
       case AppStatus.rejected:
         return '거절';
+      case AppStatus.canceled:
+        return '취소됨';
+      case AppStatus.autoCanceled:
+        return '자동 취소됨';
       default:
         return status;
     }
@@ -1199,8 +1204,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             ),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-          if (widget.user.idCardImageUrl != null)
-            _idCardSignedUrlLoading
+          _idCardSignedUrlLoading
                 ? Container(
                     height: ResponsiveHelper.spacing(context, 150),
                     width: double.infinity,
@@ -1720,7 +1724,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                 ),
               ),
             // 장기 + 출퇴근 있음: 고정근무 관리
-            ] else if (isLongTerm && _hasAttendance) ...[
+            ] else if (isLongTerm && _hasAttendance == true) ...[
               Expanded(
                 child: _buildDialogButton(
                   label: '고정근무 관리',
@@ -1735,8 +1739,13 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
               Expanded(
                 child: Builder(
                   builder: (context) {
-                    final canCancel = widget.attendanceStatus == null ||
-                                      widget.attendanceStatus == 'pending';
+                    // _hasAttendance: Firestore에서 직접 확인한 출퇴근 기록 여부
+                    //   → 호출처에서 attendanceStatus를 넘기지 않아도 항상 정확하게 동작
+                    // attendanceStatus: 당일명단에서 넘기는 실시간 상태 (보조 가드)
+                    // null = 로딩중 → 버튼 비활성 (플래시 방지)
+                    final canCancel = _hasAttendance == false &&
+                                      (widget.attendanceStatus == null ||
+                                       widget.attendanceStatus == 'pending');
                     return _buildDialogButton(
                       label: '확정취소',
                       icon: Icons.cancel_outlined,

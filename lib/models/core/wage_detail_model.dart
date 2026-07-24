@@ -11,8 +11,9 @@ class WageDetailModel {
   
   // ── 시간 계산 (분 단위) ──
   final int scheduledMinutes;      // 예정 근무시간
+  final int scheduledBreakMinutes; // 예정 휴게시간 (TO 기준) — 실제와 다를 수 있음 (석식/야식 추가 시)
   final int actualMinutes;         // 실제 근무시간 (출퇴근 기준)
-  final int breakMinutes;          // 휴게시간
+  final int breakMinutes;          // 실제 적용 휴게시간
   final int workMinutes;           // 실 근무시간 (actual - break)
   final int overtimeMinutes;       // 연장근무 총합 (조출 + 연장, 시급제: 8h 초과 / 일급제: 예정 초과)
   final int earlyArrivalMinutes;   // 그 중 조출분 (예정 시작 전 근무) — 0이면 순수 연장만
@@ -73,6 +74,7 @@ class WageDetailModel {
     required this.wageType,
     required this.baseWage,
     this.scheduledMinutes = 0,
+    this.scheduledBreakMinutes = 0,
     this.actualMinutes = 0,
     this.breakMinutes = 0,
     this.workMinutes = 0,
@@ -113,6 +115,7 @@ class WageDetailModel {
       wageType: map['wageType'] ?? 'hourly',
       baseWage: (map['baseWage'] as num?)?.toInt() ?? 0,
       scheduledMinutes: (map['scheduledMinutes'] as num?)?.toInt() ?? 0,
+      scheduledBreakMinutes: (map['scheduledBreakMinutes'] as num?)?.toInt() ?? 0,
       actualMinutes: (map['actualMinutes'] as num?)?.toInt() ?? 0,
       breakMinutes: (map['breakMinutes'] as num?)?.toInt() ?? 0,
       workMinutes: (map['workMinutes'] as num?)?.toInt() ?? 0,
@@ -158,6 +161,7 @@ class WageDetailModel {
       'wageType': wageType,
       'baseWage': baseWage,
       'scheduledMinutes': scheduledMinutes,
+      if (scheduledBreakMinutes != 0) 'scheduledBreakMinutes': scheduledBreakMinutes,
       'actualMinutes': actualMinutes,
       'breakMinutes': breakMinutes,
       'workMinutes': workMinutes,
@@ -202,6 +206,7 @@ class WageDetailModel {
     String? wageType,
     int? baseWage,
     int? scheduledMinutes,
+    int? scheduledBreakMinutes,
     int? actualMinutes,
     int? breakMinutes,
     int? workMinutes,
@@ -239,6 +244,7 @@ class WageDetailModel {
       wageType: wageType ?? this.wageType,
       baseWage: baseWage ?? this.baseWage,
       scheduledMinutes: scheduledMinutes ?? this.scheduledMinutes,
+      scheduledBreakMinutes: scheduledBreakMinutes ?? this.scheduledBreakMinutes,
       actualMinutes: actualMinutes ?? this.actualMinutes,
       breakMinutes: breakMinutes ?? this.breakMinutes,
       workMinutes: workMinutes ?? this.workMinutes,
@@ -281,6 +287,7 @@ class WageDetailModel {
       wageType: wageType,
       baseWage: baseWage,
       scheduledMinutes: scheduledMinutes,
+      scheduledBreakMinutes: scheduledBreakMinutes,
       actualMinutes: actualMinutes,
       breakMinutes: breakMinutes,
       workMinutes: workMinutes,

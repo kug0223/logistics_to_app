@@ -2,6 +2,7 @@
 import '../../../models/core/work_detail_model.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/responsive_helper.dart';  // ⭐ 추가
+import '../../../utils/dialog_helper.dart';
 import '../../../theme/app_colors.dart';
 
 /// 업무 상세 다이얼로그
@@ -10,73 +11,65 @@ class WorkDetailDialog {
     required BuildContext context,
     required WorkDetailModel work,
   }) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
+    DialogHelper.showCustom(
+      context,
+      title: work.workType,
+      icon: Icons.work_outline,
+      iconColor: AppColors.info,
+      content: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              work.workTypeIcon, 
-              style: TextStyle(
-                fontSize: ResponsiveHelper.getFontSize(context, 24),
-              ),
+            _buildInfoRow(
+              context: context,
+              icon: Icons.access_time,
+              label: '근무 시간',
+              value: '${work.startTime} ~ ${work.endTime}',
             ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            Expanded(
-              child: Text(
-                work.workType,
-                style: ResponsiveHelper.subtitleStyle(context),
-              ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            _buildInfoRow(
+              context: context,
+              icon: Icons.attach_money,
+              label: '급여',
+              value: FormatHelper.formatWage(work.wage),
+              valueColor: AppColors.successDark,
             ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+            _buildInfoRow(
+              context: context,
+              icon: Icons.people,
+              label: '모집 인원',
+              value: '${work.requiredCount}명',
+            ),
+            if (work.description != null && work.description!.isNotEmpty) ...[
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+              const Divider(),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+              _buildInfoRow(
+                context: context,
+                icon: Icons.description,
+                label: '상세 설명',
+                value: work.description!,
+              ),
+            ],
           ],
         ),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildInfoRow(
-                context: context,
-                icon: Icons.access_time,
-                label: '근무 시간',
-                value: '${work.startTime} ~ ${work.endTime}',
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-              _buildInfoRow(
-                context: context,
-                icon: Icons.attach_money,
-                label: '급여',
-                value: FormatHelper.formatWage(work.wage),
-                valueColor: AppColors.successDark,
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-              _buildInfoRow(
-                context: context,
-                icon: Icons.people,
-                label: '모집 인원',
-                value: '${work.requiredCount}명',
-              ),
-              if (work.description != null && work.description!.isNotEmpty) ...[
-                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                const Divider(),
-                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                _buildInfoRow(
-                  context: context,
-                  icon: Icons.description,
-                  label: '상세 설명',
-                  value: work.description!,
-                ),
-              ],
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('닫기'),
-          ),
-        ],
       ),
+      actions: [
+        ElevatedButton(
+          onPressed: () => Navigator.pop(context),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.info,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            padding: const EdgeInsets.symmetric(vertical: 13),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            textStyle: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+          child: const Text('닫기'),
+        ),
+      ],
     );
   }
 

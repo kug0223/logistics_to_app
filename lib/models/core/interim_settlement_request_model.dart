@@ -38,6 +38,7 @@ class InterimSettlementRequestModel {
   final String status;
   final String? processedBy;
   final DateTime? processedAt;
+  final DateTime? scheduledTransferDate; // 관리자가 승인 시 지정한 이체 예정일
   final String? transferNote; // 실제 이체 메모
   final String? rejectReason;
 
@@ -60,6 +61,7 @@ class InterimSettlementRequestModel {
     required this.status,
     this.processedBy,
     this.processedAt,
+    this.scheduledTransferDate,
     this.transferNote,
     this.rejectReason,
     required this.createdAt,
@@ -115,6 +117,7 @@ class InterimSettlementRequestModel {
       status:         d['status']        ?? statusPending,
       processedBy:    d['processedBy'],
       processedAt:   (d['processedAt']   as Timestamp?)?.toDate().toLocal(),
+      scheduledTransferDate: (d['scheduledTransferDate'] as Timestamp?)?.toDate().toLocal(),
       transferNote:   d['transferNote'],
       rejectReason:   d['rejectReason'],
       createdAt: d['createdAt'] != null
@@ -140,6 +143,8 @@ class InterimSettlementRequestModel {
     if (processedBy  != null) 'processedBy':  processedBy,
     if (processedAt  != null)
       'processedAt': Timestamp.fromDate(processedAt!),
+    if (scheduledTransferDate != null)
+      'scheduledTransferDate': Timestamp.fromDate(scheduledTransferDate!),
     if (transferNote != null) 'transferNote': transferNote,
     if (rejectReason != null) 'rejectReason': rejectReason,
     'createdAt': Timestamp.fromDate(createdAt),

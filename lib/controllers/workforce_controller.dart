@@ -105,8 +105,7 @@ class WorkforceController extends ChangeNotifier {
         return;
       }
 
-      // 관리자별 개별 한도 우선, 없으면 전역 기본값 (1시간 캐시)
-      _maxActiveTOs = await _service.getMaxActiveTOLimit(adminUID: user.uid);
+      // businessIds를 먼저 동기적으로 결정 (await 불필요)
       final List<String>? businessIds;
       if (user.isSuperAdmin) {
         businessIds = null;
@@ -117,15 +116,20 @@ class WorkforceController extends ChangeNotifier {
       }
 
       if (businessIds != null && businessIds.isEmpty) {
+        // 아이템은 없지만 한도는 로드
+        _maxActiveTOs = await _service.getMaxActiveTOLimit(adminUID: user.uid);
         _items = [];
         // early return 하지 않고 finally + 후처리(_preload 등)가 실행되도록 통과
       } else {
-
-      _items = await _service.getTOGroupItemsLight(
+      // 두 호출은 서로 독립 — 동시에 실행
+      final limitFuture = _service.getMaxActiveTOLimit(adminUID: user.uid);
+      final itemsFuture = _service.getTOGroupItemsLight(
         activeOnly: false,
         closedOnly: false,
         businessIds: businessIds,
       );
+      _maxActiveTOs = await limitFuture;
+      _items = await itemsFuture;
       // flex TO 슬롯 날짜 일괄 로드 (캘린더 날짜 필터링용)
       final flexIds =
           _items.where((g) => g.masterTO.isFlexType).map((g) => g.id).toList();

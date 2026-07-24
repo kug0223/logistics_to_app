@@ -286,16 +286,13 @@ class _JobPostingScreenState extends State<JobPostingScreen>
         }
       }
 
-      // 업무유형 상세 정보 로드 (이미지, 설명 등)
-      if (_business != null) {
-        await _loadWorkTypes();
-      }
-
-      // 내 전체 지원 목록 로드 (내 지원 현황 섹션)
-      if (widget.mode == TODetailMode.applicant && _applicantUid != null) {
-        _myApplications =
-            await _firestoreService.getMyApplications(_applicantUid!);
-      }
+      // [PERF] 업무유형 + 내 지원목록 병렬 로드 (독립 작업)
+      await Future.wait([
+        if (_business != null) _loadWorkTypes(),
+        if (widget.mode == TODetailMode.applicant && _applicantUid != null)
+          _firestoreService.getMyApplications(_applicantUid!)
+              .then((apps) { _myApplications = apps; }),
+      ]);
 
     } catch (e) {
       debugPrint('❌ 데이터 로드 실패: $e');

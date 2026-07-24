@@ -621,19 +621,17 @@ extension AttendanceFirestore on FirestoreService {
       }
       if (adminIds.isEmpty) return;
 
-      for (final adminUid in adminIds) {
-        await createNotification(
-          NotificationModel.createScheduleChangeRequested(
-            userId: adminUid,
-            requesterName: requesterName,
-            requestType: requestType,
-            targetDate: targetDate,
-            requestId: requestId,
-            businessId: businessId,
-            reason: reason,
-          ),
-        );
-      }
+      await Future.wait(adminIds.map((adminUid) => createNotification(
+        NotificationModel.createScheduleChangeRequested(
+          userId: adminUid,
+          requesterName: requesterName,
+          requestType: requestType,
+          targetDate: targetDate,
+          requestId: requestId,
+          businessId: businessId,
+          reason: reason,
+        ),
+      )));
 
       debugPrint('🔔 스케줄 변경 요청 알림 전송 완료 → 관리자: ${adminIds.length}명');
     } catch (e) {

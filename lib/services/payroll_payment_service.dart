@@ -219,37 +219,6 @@ class PayrollPaymentService {
   // 오늘 처리할 송금 조회
   // ══════════════════════════════════════════════════════════
 
-  /// 오늘 지급 예정일이 도래한 미이체 출근기록 조회
-  /// [CF 이전 2026-07-13] callableGetAdminAttendances (paymentDueDateLteMs + wageStatus)
-  Future<List<AttendanceModel>> getTodayPayments({
-    required String businessId,
-    DateTime? referenceDate,
-  }) async {
-    try {
-      final ref = referenceDate ?? DateTime.now();
-      final todayEnd = DateTime(ref.year, ref.month, ref.day, 23, 59, 59);
-      final result = await _cf.httpsCallable('callableGetAdminAttendances',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)))
-          .call<Map<String, dynamic>>({
-        'businessId': businessId,
-        'paymentDueDateLteMs': todayEnd.millisecondsSinceEpoch,
-        'wageStatus': AttendanceModel.wageConfirmed,
-      });
-      return (result.data['items'] as List? ?? [])
-          .whereType<Map>()
-          .map((m) {
-            final raw = _cfHydrate(Map<String, dynamic>.from(m));
-            final id = raw.remove('id') as String? ?? '';
-            return AttendanceModel.tryFromMap(raw, id);
-          })
-          .whereType<AttendanceModel>()
-          .toList();
-    } catch (e) {
-      debugPrint('❌ 오늘 지급 조회 실패: $e');
-      rethrow; // 빈 목록 반환 시 관리자가 0건으로 오인 → 에러 전파
-    }
-  }
-
   /// 오늘 지급 예정 건수 (배지용)
   /// [CF 이전 2026-07-13] callableGetAdminAttendances (paymentDueDateLteMs + wageStatus)
   Future<int?> getTodayPaymentCount({
@@ -410,6 +379,101 @@ class PayrollPaymentService {
       ..['createdAt'] = FieldValue.serverTimestamp();
     await ref.set(data);
     return ref.id;
+  }
+
+  /// 중간정산 요청 생성 (CF 경유) — [SECURITY-1 수정] 서버사이드 ownership 검증
+  Future<String> requestInterimSettlement({
+    required String applicationId,
+    required String businessId,
+    required List<String> attendanceIds,
+    required int requestedAmount,
+    required int netAmount,
+    String? requestReason,
+    required DateTime periodStart,
+    required DateTime periodEnd,
+  }) async {
+    final callable = _cf.httpsCallable(
+      'callableRequestInterimSettlement',
+      options: HttpsCallableOptions(timeout: const Duration(seconds: 30)),
+    );
+    final result = await callable.call<Map<String, dynamic>>({
+      'applicationId': applicationId,
+      'businessId': businessId,
+      'attendanceIds': attendanceIds,
+      'requestedAmount': requestedAmount,
+      'netAmount': netAmount,
+      if (requestReason != null && requestReason.isNotEmpty)
+        'requestReason': requestReason,
+      'periodStart': periodStart.toIso8601String(),
+      'periodEnd': periodEnd.toIso8601String(),
+    });
+    return result.data['requestId'] as String;
+  }
+
+  /// 내 중간정산 요청 목록 조회 (근로자용 CF 경유)
+  Future<List<InterimSettlementRequestModel>> getMyInterimSettlements({
+    String? businessId,
+  }) async {
+    try {
+      final callable = _cf.httpsCallable(
+        'callableGetMyInterimSettlements',
+        options: HttpsCallableOptions(timeout: const Duration(seconds: 30)),
+      );
+      final result = await callable.call<Map<String, dynamic>>({
+        if (businessId != null) 'businessId': businessId,
+      });
+      final rawItems = (result.data['items'] as List? ?? []);
+      return rawItems
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return InterimSettlementRequestModel.tryFromMap(raw, id);
+          })
+          .whereType<InterimSettlementRequestModel>()
+          .toList();
+    } catch (e) {
+      debugPrint('❌ 내 중간정산 목록 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// 중간정산 승인 (CF 경유) — PENDING → APPROVED + 이체예정일 설정 + 근로자 FCM
+  Future<void> approveInterimSettlementWithDate({
+    required InterimSettlementRequestModel req,
+    required DateTime scheduledTransferDate,
+    String? transferNote,
+  }) async {
+    final callable = _cf.httpsCallable(
+      'callableApproveInterimSettlement',
+      options: HttpsCallableOptions(timeout: const Duration(seconds: 30)),
+    );
+    await callable.call({
+      'settlementRequestId': req.id,
+      'businessId': req.businessId,
+      // CF는 YYYY-MM-DD 형식만 허용 (시간대 혼선 방지)
+      'scheduledTransferDate':
+          '${scheduledTransferDate.year}-'
+          '${scheduledTransferDate.month.toString().padLeft(2, '0')}-'
+          '${scheduledTransferDate.day.toString().padLeft(2, '0')}',
+      if (transferNote != null && transferNote.isNotEmpty) 'transferNote': transferNote,
+    });
+  }
+
+  /// 중간정산 이체 처리 (CF 경유) — APPROVED → PROCESSED + attendance wageTransferred (원자적)
+  Future<void> processInterimSettlement({
+    required InterimSettlementRequestModel req,
+    String? transferNote,
+  }) async {
+    final callable = _cf.httpsCallable(
+      'callableProcessInterimSettlement',
+      options: HttpsCallableOptions(timeout: const Duration(seconds: 60)),
+    );
+    await callable.call({
+      'settlementRequestId': req.id,
+      'businessId': req.businessId,
+      if (transferNote != null && transferNote.isNotEmpty) 'transferNote': transferNote,
+    });
   }
 
   // [RULE-FIX-CF 2026-07-13] Firestore 직접 쿼리 → CF 이전
@@ -586,12 +650,13 @@ class PayrollPaymentService {
   }
 
   /// 중간정산 거절
+  // [BUG-2 FIX] 거절 시 근로자에게 FCM 알림 발송 추가 (이전 구현에서 누락됨)
   Future<void> rejectInterimSettlement({
-    required String requestId,
+    required InterimSettlementRequestModel req,
     required String processedBy,
     required String rejectReason,
   }) async {
-    final ref = _db.collection('interim_settlement_requests').doc(requestId);
+    final ref = _db.collection('interim_settlement_requests').doc(req.id);
     await _db.runTransaction((tx) async {
       final snap = await tx.get(ref);
       if (!snap.exists) {
@@ -608,6 +673,24 @@ class PayrollPaymentService {
         'updatedAt':    FieldValue.serverTimestamp(),
       });
     });
+    // 거절 알림 발송 (실패해도 거절 자체에 영향 없음)
+    try {
+      final notification = NotificationModel.createInterimSettlementRejected(
+        userId: req.workerId,
+        businessName: req.businessName,
+        businessId: req.businessId,
+        settlementRequestId: req.id,
+        periodStart: req.periodStart,
+        periodEnd: req.periodEnd,
+        rejectReason: rejectReason.isNotEmpty ? rejectReason : null,
+      );
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('createNotification',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
+          .call(notification.toMap());
+    } catch (e) {
+      debugPrint('⚠️ 중간정산 거절 알림 발송 실패 (거절 자체는 완료): $e');
+    }
   }
 }
 

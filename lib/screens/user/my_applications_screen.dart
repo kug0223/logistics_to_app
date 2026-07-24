@@ -15,6 +15,7 @@ import '../../models/core/review_request_model.dart';
 import '../../models/core/to_model.dart';
 import '../../screens/contract/contract_sign_screen.dart';
 import '../../screens/user/user_contracts_screen.dart';
+import '../../screens/user/interim_settlement_request_screen.dart';
 import '../../screens/common/job_posting_screen.dart';
 import '../../services/contract_service.dart';
 import '../../services/firestore_service.dart';
@@ -120,11 +121,13 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       final items = page['items'] as List<ApplicationModel>;
       final appWithTOs = await _attachTOInfo(items);
 
-      // 계약서 · 리뷰 병렬 로드 — 개별 실패가 전체 로드를 막지 않도록 독립 처리
-      final contractMap = await _loadContracts(uid, appWithTOs)
-          .catchError((_) => <String, EmploymentContractModel>{});
-      final reviewMap = await _loadWrittenReviews(uid, appWithTOs)
-          .catchError((_) => <String, MonthlyReviewModel?>{});
+      // [PERF] 계약서 · 리뷰 병렬 로드 (_loadMore와 동일 패턴)
+      final initResults = await Future.wait([
+        _loadContracts(uid, appWithTOs).catchError((_) => <String, EmploymentContractModel>{}),
+        _loadWrittenReviews(uid, appWithTOs).catchError((_) => <String, MonthlyReviewModel?>{}),
+      ]);
+      final contractMap = initResults[0] as Map<String, EmploymentContractModel>;
+      final reviewMap   = initResults[1] as Map<String, MonthlyReviewModel?>;
 
       if (mounted) {
         setState(() {
@@ -577,10 +580,10 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     }
 
     return Container(
-      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 6)),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: statusInfo.color.withValues(alpha: 0.3),
           width: 1,
@@ -605,75 +608,64 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
               ),
             ),
           ).then((_) { if (mounted) _loadApplications(); }),
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(12),
           child: Padding(
             padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 14),
-              vertical: ResponsiveHelper.spacing(context, 10),
+              horizontal: ResponsiveHelper.spacing(context, 12),
+              vertical: ResponsiveHelper.spacing(context, 8),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 1줄: 사업장명 + 상태 배지
+                // 1줄: 사업장명 + 지원일 + 상태 배지
                 _buildCardHeader(app, to, statusInfo),
 
-                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                // 계약서 서명 상태 배지 — 액션 필요 시만 표시
+                if (app.status == AppStatus.confirmed ||
+                    app.status == AppStatus.contractPending)
+                  _buildContractStatusBadge(app),
 
-                // 2줄: TO 제목
+                SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+
+                // TO 제목
                 Text(
                   to.title,
-                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(
                     fontWeight: FontWeight.w600,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
 
-                SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 3)),
 
-                // 3줄: 근무일 · 근무시간
+                // 근무일 · 근무시간
                 _buildDateTimeRow(app, to),
 
-                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
 
-                // 4줄: 업무유형 · 급여
+                // 업무유형 · 급여
                 _buildWorkWageRow(app),
 
-                // 지원일
-                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                Text(
-                  '지원일: ${DateFormat('yyyy.MM.dd HH:mm').format(app.appliedAt)}',
-                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
-                ),
-                
-                // 자동 취소인 경우 취소 사유 표시
-                // [H-001 수정] conflictingBusiness 유무와 관계없이 항상 표시
-                // cancelReason(마감·슬롯 만료)도 UI에서 전달
                 if (app.status == AppStatus.autoCanceled)
                   _buildAutoCanceledInfo(app),
 
-                // 대기 중인 경우 취소 버튼
-                // [A08/A09 설계] CONTRACT_PENDING·CONFIRMED 상태에서는 취소 버튼 미표시.
-                // cancelApplication()에서 confirmedStatuses 포함 시 에러 반환하므로 서버도 차단됨.
-                // 계약 서명 대기/완료 후 취소는 관리자에게 문의해야 한다(의도된 설계).
                 if (app.status == AppStatus.pending)
                   _buildCancelButton(app),
 
-                // 확정/계약대기인 경우 계약서 섹션
                 if (app.status == AppStatus.confirmed ||
                     app.status == AppStatus.contractPending)
                   _buildContractSection(app),
 
-                // 확정 취소 안내 (SHORT TERM CONFIRMED only — 장기는 별도 퇴사 신청 경로)
-                // 과거 근무일은 취소 불가이므로 오늘 이상인 경우에만 표시
                 if (app.status == AppStatus.confirmed && !app.isLongTermApplication && !app.workDate.isBefore(DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day)))
                   _buildConfirmedCancelHint(app),
 
-                // 장기 공고: 퇴사/계약해지 복합 상태 배너 — 확정 상태일 때만 표시
                 if (app.isLongTermApplication && AppStatus.confirmedStatuses.contains(app.status))
                   _buildLongTermStatusSection(app),
 
-                // 과거 확정 근무 → 리뷰 섹션
+                if (app.isLongTermApplication && AppStatus.confirmedStatuses.contains(app.status))
+                  _buildInterimSettlementButton(app),
+
                 _buildReviewSection(app),
               ],
             ),
@@ -688,22 +680,71 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       children: [
         Icon(
           Icons.business,
-          size: ResponsiveHelper.iconSize(context, 16),
-          color: AppColors.grey600,
+          size: ResponsiveHelper.iconSize(context, 13),
+          color: AppColors.grey500,
         ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
         Expanded(
           child: Text(
-            to.businessName,
-            style: ResponsiveHelper.bodyStyle(context).copyWith(
-              fontWeight: FontWeight.w500,
-            ),
+            '${to.businessName}  ·  ${DateFormat('yy.MM.dd HH:mm').format(app.appliedAt)}',
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
         ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
         _buildStatusBadge(statusInfo),
       ],
+    );
+  }
+
+  // 계약서 서명 상태 배지 — pendingWorker(강조)·pendingEmployer(조용) 만 표시
+  Widget _buildContractStatusBadge(ApplicationModel app) {
+    final contract = _contractMap[app.id];
+    if (contract == null) return const SizedBox.shrink();
+
+    final IconData icon;
+    final String label;
+    final Color color;
+
+    switch (contract.status) {
+      case ContractStatus.pendingWorker:
+        icon = Icons.draw_outlined;
+        label = '서명 필요';
+        color = AppColors.warning;
+      case ContractStatus.pendingEmployer:
+        icon = Icons.hourglass_top_outlined;
+        label = '사업주 서명 대기';
+        color = AppColors.grey500;
+      default:
+        return const SizedBox.shrink();
+    }
+
+    return Padding(
+      padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 2)),
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 5),
+          vertical: ResponsiveHelper.spacing(context, 1),
+        ),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: color.withValues(alpha: 0.45)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 10, color: color),
+            SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+            Text(
+              label,
+              style: ResponsiveHelper.tinyStyle(context, color: color)
+                  .copyWith(fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -824,16 +865,16 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
             iconString: app.workTypeIcon!,
             iconColor: app.workTypeColor,
             backgroundColor: app.workTypeBackgroundColor,
-            size: ResponsiveHelper.iconSize(context, 14),
-            containerSize: ResponsiveHelper.spacing(context, 24),
+            size: ResponsiveHelper.iconSize(context, 12),
+            containerSize: ResponsiveHelper.spacing(context, 20),
           )
         else
           Icon(
             Icons.work_outline,
-            size: ResponsiveHelper.iconSize(context, 14),
+            size: ResponsiveHelper.iconSize(context, 13),
             color: AppColors.grey500,
           ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+        SizedBox(width: ResponsiveHelper.spacing(context, 5)),
         Flexible(
           child: Text(
             app.selectedWorkType,
@@ -871,12 +912,12 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   Widget _buildStatusBadge(_StatusInfo statusInfo) {
     return Container(
       padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 10),
-        vertical: ResponsiveHelper.spacing(context, 4),
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 3),
       ),
       decoration: BoxDecoration(
         color: statusInfo.bgColor,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(6),
       ),
       child: Text(
         statusInfo.label,
@@ -907,8 +948,11 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     }
 
     return Container(
-      margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 10)),
-      padding: ResponsiveHelper.listPadding(context),
+      margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 6)),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 10),
+      ),
       decoration: BoxDecoration(
         color: AppColors.warningBg,
         borderRadius: BorderRadius.circular(8),
@@ -1388,6 +1432,39 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: banners,
+    );
+  }
+
+  // ── 중간정산 요청 버튼 (장기근무 확정 카드) ────────────────────
+  Widget _buildInterimSettlementButton(ApplicationModel app) {
+    return Container(
+      margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 6)),
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: () async {
+          final requested = await Navigator.push<bool>(
+            context,
+            MaterialPageRoute(
+              builder: (_) => InterimSettlementRequestScreen(app: app),
+            ),
+          );
+          if (requested == true && mounted) _loadApplications();
+        },
+        icon: Icon(Icons.account_balance_wallet_outlined,
+            size: ResponsiveHelper.iconSize(context, 15)),
+        label: Text('중간정산 요청',
+            style: ResponsiveHelper.smallStyle(context)),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.tealDark,
+          side: BorderSide(color: AppColors.teal),
+          padding: EdgeInsets.symmetric(
+            vertical: ResponsiveHelper.spacing(context, 8),
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      ),
     );
   }
 

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/core/attendance_model.dart';
 import '../models/core/monthly_review_model.dart';
+import 'firestore_service.dart';
 
 // ─── 데이터 모델 ────────────────────────────────────────────────
 
@@ -80,6 +81,9 @@ class AnnualStatsData {
   final List<WorkerException> exceptions;
   final int exceptionMonth; // 예외가 집계된 월
 
+  // 신뢰점수 분포 (userId → trustScore)
+  final Map<String, int> workerTrustScores;
+
   const AnnualStatsData({
     required this.year,
     this.filterBusinessId,
@@ -99,6 +103,7 @@ class AnnualStatsData {
     required this.monthlyTrends,
     required this.exceptions,
     required this.exceptionMonth,
+    this.workerTrustScores = const {},
   });
 
   double get wageDeltaPct {
@@ -337,7 +342,30 @@ class AdminStatsService {
     // 예외 알림 — 가장 최근 데이터 있는 달 기준
     final exceptionMonth = _latestActiveMonth(monthlyTrends);
     final exceptionRecords = exceptionMonth > 0 ? trendMap[exceptionMonth]! : <AttendanceModel>[];
-    final nameMap = await _fetchUserNamesByRecords(exceptionRecords);
+
+    // 신뢰점수 분포 + 예외 이름 — getUsersBatch를 공유하여 중복 CF 호출 방지
+    final workerGrouped = <String, Set<String>>{};
+    for (final r in thisYearAtt) {
+      if (r.businessId.isNotEmpty) {
+        workerGrouped.putIfAbsent(r.businessId, () => {}).add(r.userId);
+      }
+    }
+    final fsService = FirestoreService();
+    final trustScores = <String, int>{};
+    final nameMap = <String, String>{};
+    await Future.wait(workerGrouped.entries.map((entry) async {
+      try {
+        final userMap = await fsService.getUsersBatch(
+          entry.value.toList(), businessId: entry.key);
+        for (final e in userMap.entries) {
+          trustScores[e.key] = e.value.trustScore;
+          nameMap[e.key] = e.value.name.isNotEmpty ? e.value.name : '알 수 없음';
+        }
+      } catch (e) {
+        debugPrint('⚠️ trustScore 조회 실패 (${entry.key}): $e');
+      }
+    }));
+
     final exceptions =
         _buildExceptions(exceptionRecords, nameMap, exceptionMonth);
 
@@ -362,6 +390,7 @@ class AdminStatsService {
       monthlyTrends: monthlyTrends,
       exceptions: exceptions,
       exceptionMonth: exceptionMonth,
+      workerTrustScores: trustScores,
     );
   }
 
@@ -433,11 +462,12 @@ class AdminStatsService {
     }).toList()
       ..sort((a, b) => b.totalDays.compareTo(a.totalDays));
 
-    // 근태 합계
+    // 근태 합계 (직원별 집계와 동일 기준: dedupedAttendance + earlyLeave = present)
     int tp = 0, tl = 0, ta = 0, tw = 0;
-    for (final a in attendance) {
+    for (final a in dedupedAttendance) {
       switch (a.status) {
         case AttendanceModel.statusPresent:
+        case AttendanceModel.statusEarlyLeave:
           tp++;
         case AttendanceModel.statusLate:
           tl++;
@@ -573,48 +603,8 @@ class AdminStatsService {
     return results.expand((list) => list).toList();
   }
 
-  /// CF callableGetUsersBatch를 통해 이름만 조회
-  /// attendance 레코드로부터 (businessId → userIds) 그룹핑 후 각 사업장별 CF 호출
-  Future<Map<String, String>> _fetchUserNamesByRecords(
-      List<AttendanceModel> records) async {
-    if (records.isEmpty) return {};
-    final map = <String, String>{};
-
-    // businessId별로 userId 그룹핑
-    final grouped = <String, Set<String>>{};
-    for (final r in records) {
-      if (r.businessId.isNotEmpty) {
-        grouped.putIfAbsent(r.businessId, () => {}).add(r.userId);
-      }
-    }
-
-    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-        .httpsCallable('callableGetUsersBatch',
-            options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
-
-    for (final entry in grouped.entries) {
-      final businessId = entry.key;
-      final uids = entry.value.toList();
-      for (int i = 0; i < uids.length; i += 30) {
-        final chunk = uids.skip(i).take(30).toList();
-        try {
-          final response = await callable
-              .call<Map<String, dynamic>>({'uids': chunk, 'businessId': businessId})
-              .timeout(const Duration(seconds: 15));
-          final usersRaw = (response.data['users'] as Map?)?.cast<String, dynamic>() ?? {};
-          for (final e in usersRaw.entries) {
-            map[e.key] = (e.value as Map)['name'] as String? ?? '알 수 없음';
-          }
-        } catch (e) {
-          debugPrint('⚠️ 사용자 이름 조회 실패 ($businessId): $e');
-        }
-      }
-    }
-    return map;
-  }
-
-  /// CF callableGetUsersBatch를 통해 이름·성별·전화번호 조회
-  /// attendance 레코드로부터 (businessId → userIds) 그룹핑 후 각 사업장별 CF 호출
+  /// FirestoreService.getUsersBatch를 통해 이름·성별·전화번호 조회 (캐시 공유)
+  /// attendance 레코드로부터 (businessId → userIds) 그룹핑 후 각 사업장별 조회
   Future<Map<String, UserInfo>> _fetchUserInfoByRecords(
       List<AttendanceModel> records) async {
     if (records.isEmpty) return {};
@@ -627,33 +617,24 @@ class AdminStatsService {
       }
     }
 
-    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-        .httpsCallable('callableGetUsersBatch',
-            options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
-
-    for (final entry in grouped.entries) {
-      final businessId = entry.key;
-      final uids = entry.value.toList();
-      for (int i = 0; i < uids.length; i += 30) {
-        final chunk = uids.skip(i).take(30).toList();
-        try {
-          final response = await callable
-              .call<Map<String, dynamic>>({'uids': chunk, 'businessId': businessId})
-              .timeout(const Duration(seconds: 15));
-          final usersRaw = (response.data['users'] as Map?)?.cast<String, dynamic>() ?? {};
-          for (final e in usersRaw.entries) {
-            final d = e.value as Map;
-            map[e.key] = UserInfo(
-              name: d['name'] as String? ?? '알 수 없음',
-              gender: d['gender'] as String?,
-              phone: d['phone'] as String?,
-            );
-          }
-        } catch (e) {
-          debugPrint('⚠️ 사용자 정보 조회 실패 ($businessId): $e');
+    final fsService = FirestoreService();
+    await Future.wait(grouped.entries.map((entry) async {
+      try {
+        final userMap = await fsService.getUsersBatch(
+          entry.value.toList(),
+          businessId: entry.key,
+        );
+        for (final e in userMap.entries) {
+          map[e.key] = UserInfo(
+            name: e.value.name.isNotEmpty ? e.value.name : '알 수 없음',
+            gender: e.value.gender,
+            phone: e.value.phone,
+          );
         }
+      } catch (e) {
+        debugPrint('⚠️ 사용자 정보 조회 실패 (${entry.key}): $e');
       }
-    }
+    }));
     return map;
   }
 

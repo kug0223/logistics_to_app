@@ -18,6 +18,7 @@ import 'package:intl/intl.dart';
 // Models
 import '../../../models/core/application_model.dart';
 import '../../../models/core/attendance_model.dart';
+import '../../../models/core/business_model.dart';
 import '../../../models/core/user_model.dart';
 import '../../../models/core/business_work_type_model.dart';
 import '../../../models/core/worker_location_model.dart';
@@ -25,6 +26,7 @@ import '../../../models/core/notification_model.dart';
 
 // Services
 import '../../../services/firestore_service.dart';
+import '../../../services/contract_service.dart';
 
 // Utils
 import '../../../utils/toast_helper.dart';
@@ -47,6 +49,7 @@ import '../../../widgets/pickers/attendance_quick_time_sheet.dart';
 
 // PDF
 import '../../../utils/attendance_list_pdf.dart';
+import '../../../utils/attendance_rounding_helper.dart';
 // Dialogs
 import 'wage_confirm_dialog.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
@@ -69,7 +72,8 @@ class AttendanceStatusDialog extends StatefulWidget {
   State<AttendanceStatusDialog> createState() => _AttendanceStatusDialogState();
 }
 
-class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
+class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
+    with TickerProviderStateMixin {
   // ═══════════════════════════════════════════════════════════
   // 상태 변수
   // ═══════════════════════════════════════════════════════════
@@ -84,6 +88,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   Map<String, BusinessWorkTypeModel> _workTypeMap = {};  // 업무유형 정보
   Map<String, dynamic> _workDetailTimeMap = {};  // 업무별 근무시간 (WorkDetail)
   Map<String, WorkerLocationModel> _locationMap = {};  // 근로자 위치
+  Map<String, String?> _contractStatusMap = {};  // 계약서 서명 상태
+  AttendanceRules? _attendanceRules;            // 현재 사업장 반올림 정책
+  String? _rulesLoadedForBusinessId;           // 마지막으로 정책을 로드한 businessId (캐싱용)
   Map<String, ApplicationModel> _workerIdMap = {};   // id → worker (O(1) 조회용)
   Map<String, Map<String, dynamic>> _statusCache = {};  // _computeStatus 결과 캐시
   
@@ -98,6 +105,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
   // 탭 / 검색
   int _currentTabIndex = 0;
+  late TabController _tabController;
   String _nameFilter = '';
   bool _showSearch = false;
   final TextEditingController _searchController = TextEditingController();
@@ -148,6 +156,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 4, vsync: this);
     _selectedBusinessId = widget.initialBusinessId ??
         (widget.businessIds.isNotEmpty ? widget.businessIds.first : null);
     _applySavedBusinessThenLoad();
@@ -169,6 +178,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
   @override
   void dispose() {
+    _tabController.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -236,12 +246,25 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         _firestoreService.getUsersBatch(uids, businessId: _selectedBusinessId ?? ''),                       // [1] 사용자 정보
         _firestoreService.getLocationsForApplications(appIds, businessId: _selectedBusinessId ?? ''),       // [2] 위치 정보
         _getWorkDetailTimes(confirmedWorkers),                        // [3] WorkDetail 시간 정보 (근무자 목록 전달)
+        ContractService().getContractStatusBatch(appIds, businessId: _selectedBusinessId ?? ''),  // [4] 계약 서명 상태
       ]);
 
       final attendanceMap = step2Results[0] as Map<String, AttendanceModel>;
       final userMap = step2Results[1] as Map<String, UserModel>;
       final locationMap = step2Results[2] as Map<String, WorkerLocationModel>;
       final workDetailTimeMap = step2Results[3] as Map<String, dynamic>;
+      final contractStatusMap = step2Results[4] as Map<String, String?>;
+
+      // 사업장이 바뀐 경우에만 반올림 정책 로드 (매 refresh마다 Firestore 읽지 않음)
+      if (_rulesLoadedForBusinessId != _selectedBusinessId) {
+        try {
+          final business = await _firestoreService.getBusinessById(_selectedBusinessId ?? '');
+          _attendanceRules = business?.attendanceRules;
+          _rulesLoadedForBusinessId = _selectedBusinessId;
+        } catch (e) {
+          debugPrint('⚠️ 반올림 정책 로드 실패: $e');
+        }
+      }
 
       if (!mounted) return;
       setState(() {
@@ -252,6 +275,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         _workTypeMap = workTypeMap;
         _workDetailTimeMap = workDetailTimeMap;
         _locationMap = locationMap;
+        _contractStatusMap = contractStatusMap;
         _isLoading = false;
         _rebuildStatusCache();
       });
@@ -273,17 +297,27 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     final result = <ApplicationModel>[];
     final seenIds = <String>{};  // 단기/장기 중복 entry 방어
 
-    // ✅ 1. 단기 공고: CF callableGetApplicationsByBiz — workDateGteMs/LtMs 필터
+    // ✅ 1+2. 단기/장기 CF 동시 호출 (병렬화)
     // [CF 이전 2026-07-13] Firestore 보안규칙 PERMISSION_DENIED 근본 해결
-    final shortTermCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+    final appCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
         .httpsCallable('callableGetApplicationsByBiz',
             options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-    final shortTermCFResult = await shortTermCallable.call<Map<String, dynamic>>({
-      'businessId': _selectedBusinessId,
-      'workDateGteMs': dateStart.millisecondsSinceEpoch,
-      'workDateLtMs': dateEnd.millisecondsSinceEpoch,
-      'limit': 2000,
-    });
+    final cfResults = await Future.wait([
+      appCallable.call<Map<String, dynamic>>({
+        'businessId': _selectedBusinessId,
+        'workDateGteMs': dateStart.millisecondsSinceEpoch,
+        'workDateLtMs': dateEnd.millisecondsSinceEpoch,
+        'limit': 2000,
+      }),
+      appCallable.call<Map<String, dynamic>>({
+        'businessId': _selectedBusinessId,
+        'type': AppType.longTerm,
+        'limit': 2000,
+      }),
+    ]);
+    final shortTermCFResult = cfResults[0];
+    final longTermCFResult = cfResults[1];
+
     const confirmedStatuses = {AppStatus.confirmed, AppStatus.contractPending};
     for (final e in (shortTermCFResult.data['applications'] as List? ?? [])) {
       final m = Map<String, dynamic>.from(e as Map);
@@ -295,18 +329,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         if (seenIds.add(app.id)) result.add(app);
       }
     }
-    
-    debugPrint('📋 [당일명단] 단기 확정자: ${result.length}명');
 
-    // ✅ 2. 장기 공고: CF callableGetApplicationsByBiz (장기 전체 조회 후 날짜 필터)
-    final longTermCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-        .httpsCallable('callableGetApplicationsByBiz',
-            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-    final longTermCFResult = await longTermCallable.call<Map<String, dynamic>>({
-      'businessId': _selectedBusinessId,
-      'type': AppType.longTerm,
-      'limit': 2000,
-    });
+    debugPrint('📋 [당일명단] 단기 확정자: ${result.length}명');
     final longTermRaw = List.from(
         longTermCFResult.data['applications'] as List? ?? []);
 
@@ -978,9 +1002,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     final adminConfirmedWorkers = _workersByTab(2);
     final done = _workersByTab(3);
 
-    return DefaultTabController(
-      length: 4,
-      child: Column(
+    return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           // 탭 바 + 통계 + 액션바 — 스크롤 영역 밖 고정
@@ -992,6 +1014,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
               children: [
                 // 탭 바
                 TabBar(
+                  controller: _tabController,
                   labelPadding: const EdgeInsets.symmetric(horizontal: 6),
                   labelStyle: ResponsiveHelper.smallStyle(context, fontWeight: FontWeight.bold),
                   unselectedLabelStyle: ResponsiveHelper.smallStyle(context),
@@ -1028,6 +1051,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           // 탭별 콘텐츠 — 스크롤
           Flexible(
             child: TabBarView(
+              controller: _tabController,
               physics: const NeverScrollableScrollPhysics(),
               children: [
                 _buildTabContent(theme, needsReview, padding),
@@ -1038,8 +1062,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
             ),
           ),
         ],
-      ),
-    );
+      );
   }
 
   /// 탭 라벨 위젯 (카운트 배지 포함)
@@ -1986,6 +2009,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                           // 메인 상태 배지 (출근/퇴근/급여확정/최종확정 등)
                           _buildMainStatusBadge(statusInfo, theme),
 
+                          // 계약서 서명 상태 배지 (미작성·서명대기만 표시)
+                          _buildContractBadge(app.id),
+
                           // 추가 플래그 배지 (지각/조퇴/연장/심야)
                           ..._buildExtraBadges(app),
 
@@ -2037,6 +2063,48 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  /// 계약서 서명 상태 배지 — 미작성·서명대기만 표시, 완료는 생략
+  Widget _buildContractBadge(String appId) {
+    final status = _contractStatusMap[appId];
+    final IconData icon;
+    final String label;
+    final Color color;
+    if (status == null || status.isEmpty || status == 'voided') {
+      icon = Icons.assignment_late_outlined;
+      label = '계약미작성';
+      color = AppColors.error;
+    } else if (status == 'pending_worker') {
+      icon = Icons.draw_outlined;
+      label = '서명대기';
+      color = AppColors.warningDark;
+    } else {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 5),
+        vertical: ResponsiveHelper.spacing(context, 2),
+      ),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 9, color: color),
+          const SizedBox(width: 2),
+          Text(
+            label,
+            style: ResponsiveHelper.tinyStyle(context, color: color)
+                .copyWith(fontWeight: FontWeight.bold),
+          ),
+        ],
       ),
     );
   }
@@ -3187,6 +3255,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
     String? adjustCheckIn;
     String? adjustCheckOut;
+    bool dialogApplyRounding = false;
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -3261,6 +3330,58 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                     ],
                   ),
                 ),
+
+                // 반올림 정책 토글 (정책 설정된 사업장에서만 표시)
+                if (_attendanceRules != null) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(ctx, 10)),
+                  InkWell(
+                    onTap: () => setDialogState(() => dialogApplyRounding = !dialogApplyRounding),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: ResponsiveHelper.spacing(ctx, 12),
+                        vertical: ResponsiveHelper.spacing(ctx, 8),
+                      ),
+                      decoration: BoxDecoration(
+                        color: dialogApplyRounding
+                            ? AppColors.info.withValues(alpha: 0.07)
+                            : AppColors.grey50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: dialogApplyRounding
+                              ? AppColors.info.withValues(alpha: 0.35)
+                              : AppColors.border,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.auto_fix_high,
+                            size: ResponsiveHelper.iconSize(ctx, 16),
+                            color: dialogApplyRounding ? AppColors.info : AppColors.grey500,
+                          ),
+                          SizedBox(width: ResponsiveHelper.spacing(ctx, 8)),
+                          Expanded(
+                            child: Text(
+                              '사업장 반올림 정책 적용',
+                              style: ResponsiveHelper.smallStyle(ctx).copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: dialogApplyRounding ? AppColors.infoDark : AppColors.grey700,
+                              ),
+                            ),
+                          ),
+                          Switch(
+                            value: dialogApplyRounding,
+                            onChanged: (v) => setDialogState(() => dialogApplyRounding = v),
+                            activeThumbColor: AppColors.info,
+                            activeTrackColor: AppColors.info.withValues(alpha: 0.4),
+                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
 
                 SizedBox(height: ResponsiveHelper.spacing(ctx, 16)),
 
@@ -3349,7 +3470,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
     if (confirmed == true) {
       if (!context.mounted) return;
-      await _processBatchAdjustTime(targets, adjustCheckIn, adjustCheckOut);
+      await _processBatchAdjustTime(targets, adjustCheckIn, adjustCheckOut, applyRounding: dialogApplyRounding);
     }
   }
 
@@ -3454,8 +3575,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   Future<void> _processBatchAdjustTime(
     List<ApplicationModel> targets,
     String? newCheckIn,
-    String? newCheckOut,
-  ) async {
+    String? newCheckOut, {
+    bool applyRounding = false,
+  }) async {
     if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
@@ -3475,8 +3597,23 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           continue;
         }
 
-        final effectiveCheckIn  = newCheckIn  ?? attendance.checkIn  ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
-        final effectiveCheckOut = newCheckOut ?? attendance.checkOut;
+        // 반올림 적용 시 per-worker 유효 시간 결정
+        final resolvedCheckIn = (applyRounding && newCheckIn != null)
+            ? _roundedCheckIn(app, newCheckIn)
+            : newCheckIn;
+
+        final effectiveCheckIn = resolvedCheckIn ?? attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
+
+        // 퇴근 반올림: 출근 기준 DateTime 먼저 결정
+        final checkInDtForOut = resolvedCheckIn != null
+            ? _hmToDateTime(widget.date, resolvedCheckIn)
+            : attendance.checkInAt ?? _hmToDateTime(widget.date, effectiveCheckIn);
+
+        final resolvedCheckOut = (applyRounding && newCheckOut != null)
+            ? _roundedCheckOut(app, checkInDtForOut, newCheckOut)
+            : newCheckOut;
+
+        final effectiveCheckOut = resolvedCheckOut ?? attendance.checkOut;
 
         // 시간 역전 검사 (출퇴근 모두 있을 때만)
         if (effectiveCheckOut != null &&
@@ -3491,20 +3628,17 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           'resetWageDetail': attendance.wageStatus == AttendanceModel.wageCalculated,
         };
         if (newCheckIn != null) {
-          entry['checkInMs'] = _hmToDateTime(widget.date, newCheckIn).millisecondsSinceEpoch;
+          entry['checkInMs'] = _hmToDateTime(widget.date, effectiveCheckIn).millisecondsSinceEpoch;
         }
         if (newCheckOut != null) {
-          final checkInDtForOut = newCheckIn != null
-              ? _hmToDateTime(widget.date, newCheckIn)
-              : attendance.checkInAt ?? _hmToDateTime(widget.date, effectiveCheckIn);
-          entry['checkOutMs'] = _hmToDateTimeCheckout(widget.date, checkInDtForOut, newCheckOut).millisecondsSinceEpoch;
+          entry['checkOutMs'] = _hmToDateTimeCheckout(widget.date, checkInDtForOut, resolvedCheckOut!).millisecondsSinceEpoch;
         }
         if (effectiveCheckOut != null) {
           entry['workHours'] = _calcWorkHoursCompat(effectiveCheckIn, effectiveCheckOut);
         }
         entries.add(entry);
 
-        // 지각 변동 사전 계산 (CF 성공 후 처리)
+        // 지각 변동 사전 계산 (CF 성공 후 처리) — 반올림 적용 시 resolvedCheckIn 기준
         if (newCheckIn != null) {
           final expectedStartTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
           final oldCheckIn = attendance.checkIn;
@@ -3514,8 +3648,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
                 isNextDay: AttendanceStatusHelper.isNextDayCheckIn(oldCheckIn, expectedStartTime),
               );
           final isNowLate = AttendanceStatusHelper.isLate(
-            newCheckIn, expectedStartTime,
-            isNextDay: AttendanceStatusHelper.isNextDayCheckIn(newCheckIn, expectedStartTime),
+            effectiveCheckIn, expectedStartTime,
+            isNextDay: AttendanceStatusHelper.isNextDayCheckIn(effectiveCheckIn, expectedStartTime),
           );
           if (wasLate != isNowLate) {
             lateChanges.add((app: app, oldCheckIn: oldCheckIn ?? '', wasLate: wasLate, isNowLate: isNowLate));
@@ -3606,14 +3740,42 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       );
       if (time != null) {
         if (!mounted) return;
-        await _processBatchCheckIn(time);
+        // 반올림 정책 있을 때 — 달라지는 케이스 있으면 프리뷰 다이얼로그 표시
+        bool applyRounding = false;
+        if (_attendanceRules != null) {
+          final pendingApps = _selectedIds
+              .map((id) => _workerIdMap[id])
+              .whereType<ApplicationModel>()
+              .where((app) => _getAttendanceStatus(app)['status'] == 'pending')
+              .toList();
+          final wouldChange = pendingApps.any((app) => _roundedCheckIn(app, time) != time);
+          if (wouldChange) {
+            final choice = await _showRoundingPreviewDialog(rawTime: time, isCheckIn: true);
+            if (!mounted) return;
+            if (choice == null) return;
+            applyRounding = choice;
+          }
+        }
+        await _processBatchCheckIn(time, applyRounding: applyRounding);
       }
     } else {
       // 복수 파트 → 파트별 다이얼로그
       final groupTimes = await _showBatchByGroupDialog(groups, isCheckIn: true);
       if (groupTimes != null) {
         if (!mounted) return;
-        await _processBatchCheckInByGroup(groupTimes);
+        bool applyRounding = false;
+        if (_attendanceRules != null) {
+          final wouldChange = groupTimes.entries.any((e) =>
+            (groups[e.key] ?? []).any((app) => _roundedCheckIn(app, e.value) != e.value)
+          );
+          if (wouldChange) {
+            final choice = await _showRoundingPreviewDialog(isCheckIn: true);
+            if (!mounted) return;
+            if (choice == null) return;
+            applyRounding = choice;
+          }
+        }
+        await _processBatchCheckInByGroup(groupTimes, applyRounding: applyRounding);
       }
     }
   }
@@ -3663,14 +3825,53 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       );
       if (time != null) {
         if (!mounted) return;
-        await _processBatchCheckOut(time, checkedInIds);
+        bool applyRounding = false;
+        if (_attendanceRules != null) {
+          final checkedInApps = checkedInIds
+              .map((id) => _workerIdMap[id])
+              .whereType<ApplicationModel>()
+              .toList();
+          final wouldChange = checkedInApps.any((app) {
+            final attendance = _attendanceMap[app.id];
+            if (attendance == null) return false;
+            final checkInDt = attendance.checkInAt ??
+                _hmToDateTime(widget.date, attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap));
+            return _roundedCheckOut(app, checkInDt, time) != time;
+          });
+          if (wouldChange) {
+            final choice = await _showRoundingPreviewDialog(rawTime: time, isCheckIn: false);
+            if (!mounted) return;
+            if (choice == null) return;
+            applyRounding = choice;
+          }
+        }
+        await _processBatchCheckOut(time, checkedInIds, applyRounding: applyRounding);
       }
     } else {
       // 복수 파트 → 파트별 다이얼로그
       final groupTimes = await _showBatchByGroupDialog(groups, isCheckIn: false);
       if (groupTimes != null) {
         if (!mounted) return;
-        await _processBatchCheckOutByGroup(groupTimes, checkedInIds);
+        bool applyRounding = false;
+        if (_attendanceRules != null) {
+          final wouldChange = groupTimes.entries.any((e) {
+            final apps = groups[e.key] ?? [];
+            return apps.any((app) {
+              final attendance = _attendanceMap[app.id];
+              if (attendance == null) return false;
+              final checkInDt = attendance.checkInAt ??
+                  _hmToDateTime(widget.date, attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap));
+              return _roundedCheckOut(app, checkInDt, e.value) != e.value;
+            });
+          });
+          if (wouldChange) {
+            final choice = await _showRoundingPreviewDialog(isCheckIn: false);
+            if (!mounted) return;
+            if (choice == null) return;
+            applyRounding = choice;
+          }
+        }
+        await _processBatchCheckOutByGroup(groupTimes, checkedInIds, applyRounding: applyRounding);
       }
     }
   }
@@ -4011,6 +4212,121 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
     return dt;
   }
 
+  /// 출근 반올림 — 정책 미설정 시 입력값 그대로 반환
+  String _roundedCheckIn(ApplicationModel app, String rawTime) {
+    final rules = _attendanceRules;
+    if (rules == null) return rawTime;
+    final startTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
+    final contractStart = contractStartAt(widget.date, startTime);
+    final punchAt = _hmToDateTime(widget.date, rawTime);
+    final offsetMin = punchAt.difference(contractStart).inMinutes;
+    return processCheckin(
+      offsetMinutes: offsetMin,
+      referenceAt: contractStart,
+      rules: rules,
+    ).rounded;
+  }
+
+  /// 퇴근 반올림 — 정책 미설정 시 입력값 그대로 반환
+  String _roundedCheckOut(ApplicationModel app, DateTime checkInDt, String rawCheckOutTime) {
+    final rules = _attendanceRules;
+    if (rules == null) return rawCheckOutTime;
+    final startTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
+    final endTimeStr = app.endTime.isNotEmpty ? app.endTime : rawCheckOutTime;
+    final contractEnd = contractEndAt(widget.date, startTime, endTimeStr);
+    final punchAt = _hmToDateTimeCheckout(widget.date, checkInDt, rawCheckOutTime);
+    final offsetMin = punchAt.difference(contractEnd).inMinutes;
+    return processCheckout(
+      offsetMinutes: offsetMin,
+      referenceAt: contractEnd,
+      rules: rules,
+    ).rounded;
+  }
+
+  /// 반올림 정책 적용 여부 선택 다이얼로그 — 정책 적용 시 true, 그대로 시 false, 취소 시 null
+  Future<bool?> _showRoundingPreviewDialog({String? rawTime, required bool isCheckIn}) {
+    final label = isCheckIn ? '출근' : '퇴근';
+    final message = rawTime != null
+        ? '입력한 $label 시간($rawTime)이 사업장 정책에 따라 일부 근로자에게 다르게 적용될 수 있습니다.'
+        : '각 파트별 $label 시간이 사업장 정책에 따라 일부 근로자에게 다르게 적용될 수 있습니다.';
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Icon(Icons.auto_fix_high, color: AppColors.info, size: 20),
+            SizedBox(width: 8),
+            Text('반올림 정책', style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 10)),
+              decoration: BoxDecoration(
+                color: AppColors.infoBg,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.infoLight),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.info_outline, color: AppColors.infoDark, size: 14),
+                  SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      message,
+                      style: ResponsiveHelper.tinyStyle(ctx, color: AppColors.infoDark),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(ctx, 10)),
+            Text('정책을 적용하시겠습니까?', style: ResponsiveHelper.bodyStyle(ctx)),
+          ],
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        actions: [
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  style: OutlinedButton.styleFrom(
+                    padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(ctx, 12)),
+                    side: BorderSide(color: AppColors.grey300),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: Text('입력값 그대로', style: ResponsiveHelper.bodyStyle(ctx, color: AppColors.grey600)),
+                ),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(ctx, 10)),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.info,
+                    foregroundColor: Colors.white,
+                    padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(ctx, 12)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: Text(
+                    '정책 반올림 적용',
+                    style: ResponsiveHelper.bodyStyle(ctx, color: Colors.white).copyWith(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   /// 출근/퇴근 시간으로 DB status 결정 — effectiveStart/End 우선 적용
   String _deriveStatus(ApplicationModel app, String checkIn, String? checkOut) =>
       AttendanceStatusHelper.deriveStatus(
@@ -4020,7 +4336,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
       );
 
   /// 일괄 출근 처리 — CF callableBatchCheckIn 경유
-  Future<void> _processBatchCheckIn(String time) async {
+  Future<void> _processBatchCheckIn(String time, {bool applyRounding = false}) async {
     if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
@@ -4034,8 +4350,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         final status = _getAttendanceStatus(app);
         if (status['status'] != 'pending') continue;
 
+        // 반올림 정책 적용 여부에 따라 유효 시간 결정
+        final effectiveTime = applyRounding ? _roundedCheckIn(app, time) : time;
         final existing = _attendanceMap[app.id];
-        final checkInMs = _hmToDateTime(widget.date, time).millisecondsSinceEpoch;
+        final checkInMs = _hmToDateTime(widget.date, effectiveTime).millisecondsSinceEpoch;
         final entry = <String, dynamic>{
           'applicationId': app.id,
           'workDateMs': widget.date.millisecondsSinceEpoch,
@@ -4043,7 +4361,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           'businessId': app.businessId,
           'businessName': app.businessName,
           'workType': app.selectedWorkType,
-          'status': _deriveStatus(app, time, null),
+          'status': _deriveStatus(app, effectiveTime, null),
           'checkInMs': checkInMs,
         };
         if (existing != null) entry['attendanceId'] = existing.id;
@@ -4051,8 +4369,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
         final expectedStartTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
         if (AttendanceStatusHelper.isLate(
-          time, expectedStartTime,
-          isNextDay: AttendanceStatusHelper.isNextDayCheckIn(time, expectedStartTime),
+          effectiveTime, expectedStartTime,
+          isNextDay: AttendanceStatusHelper.isNextDayCheckIn(effectiveTime, expectedStartTime),
         )) {
           lateApps.add(app);
         }
@@ -4112,7 +4430,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   }
 
   /// 일괄 퇴근 처리 — CF callableBatchCheckOut 경유
-  Future<void> _processBatchCheckOut(String time, List<String> targetIds) async {
+  Future<void> _processBatchCheckOut(String time, List<String> targetIds, {bool applyRounding = false}) async {
     if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
@@ -4133,7 +4451,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         }
 
         final checkIn = attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
-        final minutes = AttendanceStatusHelper.workMinutes(checkIn, time);
+        final checkInDtForOut = attendance.checkInAt ?? _hmToDateTime(widget.date, checkIn);
+        final effectiveTime = applyRounding ? _roundedCheckOut(app, checkInDtForOut, time) : time;
+        final minutes = AttendanceStatusHelper.workMinutes(checkIn, effectiveTime);
         if (minutes <= 0) {
           skipCount++;
           continue;
@@ -4143,12 +4463,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           continue;
         }
 
-        final checkInDtForOut = attendance.checkInAt ?? _hmToDateTime(widget.date, checkIn);
         entries.add({
           'attendanceId': attendance.id,
-          'checkOutMs': _hmToDateTimeCheckout(widget.date, checkInDtForOut, time).millisecondsSinceEpoch,
-          'workHours': _calcWorkHoursCompat(checkIn, time),
-          'status': _deriveStatus(app, checkIn, time),
+          'checkOutMs': _hmToDateTimeCheckout(widget.date, checkInDtForOut, effectiveTime).millisecondsSinceEpoch,
+          'workHours': _calcWorkHoursCompat(checkIn, effectiveTime),
+          'status': _deriveStatus(app, checkIn, effectiveTime),
           'resetWageDetail': attendance.wageStatus == AttendanceModel.wageCalculated,
         });
       }
@@ -4184,7 +4503,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
   }
 
   /// 파트별 일괄 출근 처리 — CF callableBatchCheckIn 경유
-  Future<void> _processBatchCheckInByGroup(Map<String, String> groupTimes) async {
+  Future<void> _processBatchCheckInByGroup(Map<String, String> groupTimes, {bool applyRounding = false}) async {
     if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
@@ -4202,6 +4521,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         final status = _getAttendanceStatus(app);
         if (status['status'] != 'pending') continue;
 
+        final effectiveTime = applyRounding ? _roundedCheckIn(app, time) : time;
         final existing = _attendanceMap[app.id];
         final entry = <String, dynamic>{
           'applicationId': app.id,
@@ -4210,16 +4530,16 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           'businessId': app.businessId,
           'businessName': app.businessName,
           'workType': app.selectedWorkType,
-          'status': _deriveStatus(app, time, null),
-          'checkInMs': _hmToDateTime(widget.date, time).millisecondsSinceEpoch,
+          'status': _deriveStatus(app, effectiveTime, null),
+          'checkInMs': _hmToDateTime(widget.date, effectiveTime).millisecondsSinceEpoch,
         };
         if (existing != null) entry['attendanceId'] = existing.id;
         entries.add(entry);
 
         final expectedStartTime = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
         if (AttendanceStatusHelper.isLate(
-          time, expectedStartTime,
-          isNextDay: AttendanceStatusHelper.isNextDayCheckIn(time, expectedStartTime),
+          effectiveTime, expectedStartTime,
+          isNextDay: AttendanceStatusHelper.isNextDayCheckIn(effectiveTime, expectedStartTime),
         )) {
           lateApps.add(app);
         }
@@ -4273,7 +4593,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
 
   /// 파트별 일괄 퇴근 처리 — CF callableBatchCheckOut 경유
   Future<void> _processBatchCheckOutByGroup(
-      Map<String, String> groupTimes, List<String> targetIds) async {
+      Map<String, String> groupTimes, List<String> targetIds, {bool applyRounding = false}) async {
     if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
@@ -4300,7 +4620,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
         }
 
         final checkIn = attendance.checkIn ?? WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
-        final minutes = AttendanceStatusHelper.workMinutes(checkIn, time);
+        final checkInDtForOut = attendance.checkInAt ?? _hmToDateTime(widget.date, checkIn);
+        final effectiveTime = applyRounding ? _roundedCheckOut(app, checkInDtForOut, time) : time;
+        final minutes = AttendanceStatusHelper.workMinutes(checkIn, effectiveTime);
         if (minutes <= 0) {
           failMessages.add('$workerName: 퇴근 시간이 출근 시간보다 앞서 있습니다');
           continue;
@@ -4310,12 +4632,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog> {
           continue;
         }
 
-        final checkInDtForOut = attendance.checkInAt ?? _hmToDateTime(widget.date, checkIn);
         entries.add({
           'attendanceId': attendance.id,
-          'checkOutMs': _hmToDateTimeCheckout(widget.date, checkInDtForOut, time).millisecondsSinceEpoch,
-          'workHours': _calcWorkHoursCompat(checkIn, time),
-          'status': _deriveStatus(app, checkIn, time),
+          'checkOutMs': _hmToDateTimeCheckout(widget.date, checkInDtForOut, effectiveTime).millisecondsSinceEpoch,
+          'workHours': _calcWorkHoursCompat(checkIn, effectiveTime),
+          'status': _deriveStatus(app, checkIn, effectiveTime),
           'resetWageDetail': attendance.wageStatus == AttendanceModel.wageCalculated,
         });
       }

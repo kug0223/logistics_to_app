@@ -652,7 +652,10 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       NavigationHelper.popWithChange(context);
     } catch (e) {
       debugPrint('❌ 날짜 추가 실패: $e');
-      if (mounted) ToastHelper.showError('날짜 추가에 실패했습니다');
+      if (mounted) {
+        final msg = e.toString().replaceFirst('Exception: ', '');
+        ToastHelper.showError(msg.isNotEmpty ? msg : '날짜 추가에 실패했습니다');
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -1118,9 +1121,11 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     if (_publishMode != 'scheduled') return (null, true);
     final parts = _publishTime.split(':');
     if (parts.length < 2) return (null, true);
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    if (h == null || m == null) return (null, true);
     var vf = DateTime(
-      slotDate.year, slotDate.month, slotDate.day,
-      int.parse(parts[0]), int.parse(parts[1]),
+      slotDate.year, slotDate.month, slotDate.day, h, m,
     ).subtract(Duration(days: _publishDaysBefore));
     if (vf.isBefore(DateTime.now())) {
       ToastHelper.showInfo('공개 예정 시간이 지나 즉시 공개로 전환됩니다');

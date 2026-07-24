@@ -13,7 +13,6 @@ import '../../../utils/responsive_helper.dart';
 import '../../../utils/toast_helper.dart';
 import 'payroll_worker_detail_screen.dart';
 import 'payroll_payment_dashboard_screen.dart';
-import 'today_payment_screen.dart';
 import '../../../services/payroll_payment_service.dart';
 import '../../../widgets/common/gradient_scaffold.dart';
 import '../../../widgets/common/loading_widget.dart';
@@ -99,15 +98,35 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
     setState(() { _isLoading = true; _loadError = null; });
 
     try {
-      // 1. payroll_summaries — callableGetPayrollSummaries CF 경유 (server-side 권한 검증)
-      // [RULE-FIX-CF 2026-07-13] 직접 Firestore → CF 이전, year 서버 필터링으로 전환
+      // [PERF] 두 CF 병렬 호출 — 순차 최대 90초 → 병렬로 절반 단축
       final psCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableGetPayrollSummaries',
               options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final psResult = await psCallable.call<Map<String, dynamic>>({
-        'businessId': bizId,
-        'year': year,
-      });
+      final attCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetAdminAttendances',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 60)));
+
+      HttpsCallableResult<Map<String, dynamic>>? attResult;
+      final results = await Future.wait<Object?>([
+        psCallable.call<Map<String, dynamic>>({'businessId': bizId, 'year': year}),
+        () async {
+          try {
+            attResult = await attCallable.call<Map<String, dynamic>>({
+              'businessId': bizId,
+              'yearMonthGte': '$year-01',
+              'yearMonthLte': '$year-12',
+            });
+          } catch (e) {
+            debugPrint('⚠️ 출근 집계 CF 실패: $e');
+            if (mounted) ToastHelper.showWarning('출근 집계를 불러오지 못했습니다. 새로고침 해주세요.');
+          }
+          return null;
+        }(),
+      ]);
+      final psResult = results[0] as HttpsCallableResult<Map<String, dynamic>>;
+
+      // 1. payroll_summaries 파싱
+      // [RULE-FIX-CF 2026-07-13] 직접 Firestore → CF 이전, year 서버 필터링으로 전환
       final psItems = (psResult.data['items'] as List<dynamic>?) ?? [];
 
       final summaryMap = <int, PayrollSummaryModel>{};
@@ -121,37 +140,38 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
       // 2. pendingCount + notTransferredCount
       //    [CF 이전 2026-07-13] callableGetAdminAttendances (yearMonthGte/Lte)
       //    wageStatus·yearMonth 집계는 클라이언트에서 처리
-      final pendingByMonth   = List.filled(12, 0);
-      final confirmedByMonth = List.filled(12, 0);
-      try {
-        final attCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-            .httpsCallable('callableGetAdminAttendances',
-                options: HttpsCallableOptions(timeout: const Duration(seconds: 60)));
-        final attResult = await attCallable.call<Map<String, dynamic>>({
-          'businessId': bizId,
-          'yearMonthGte': '$year-01',
-          'yearMonthLte': '$year-12',
-        });
-        for (final raw in (attResult.data['items'] as List? ?? [])) {
-          final data = raw as Map? ?? {};
-          final ym = data['yearMonth'] as String?;
-          final ws = data['wageStatus'] as String?;
-          if (ym == null) continue;
-          final parts = ym.split('-');
-          if (parts.length != 2) continue;
-          final month = int.tryParse(parts[1]);
-          if (month == null || month < 1 || month > 12) continue;
-          final idx = month - 1;
-          if (ws == 'pending' || ws == 'calculated') {
-            pendingByMonth[idx]++;
-          } else if (ws == 'confirmed') {
+      final pendingByMonth      = List.filled(12, 0);
+      final confirmedByMonth    = List.filled(12, 0); // wageStatus='confirmed' (미이체)
+      final transferredByMonth  = List.filled(12, 0); // wageStatus='transferred' (이체완료)
+      final totalPayoutByMonth  = List.filled(12, 0);
+      final workersByMonth      = List.generate(12, (_) => <String>{});
+      for (final raw in (attResult?.data['items'] as List? ?? [])) {
+        final data = raw as Map? ?? {};
+        final ym = data['yearMonth'] as String?;
+        final ws = data['wageStatus'] as String?;
+        if (ym == null) continue;
+        final parts = ym.split('-');
+        if (parts.length != 2) continue;
+        final month = int.tryParse(parts[1]);
+        if (month == null || month < 1 || month > 12) continue;
+        final idx = month - 1;
+        if (ws == 'pending' || ws == 'calculated') {
+          pendingByMonth[idx]++;
+        } else if (ws == 'confirmed' || ws == 'transferred') {
+          // payroll_summaries 미생성 시 attendance에서 직접 집계
+          // confirmed(미이체) + transferred(이체완료) 모두 월별 인건비에 포함
+          if (ws == 'confirmed') {
             confirmedByMonth[idx]++;
+          } else {
+            transferredByMonth[idx]++;
           }
+          final wage = (data['finalWage'] as num?)?.toInt() ?? 0;
+          totalPayoutByMonth[idx] += wage;
+          final uid = data['userId'] as String?;
+          if (uid != null) workersByMonth[idx].add(uid);
         }
-      } catch (e) {
-        debugPrint('⚠️ 출근 집계 CF 실패 (월별 대기/확정 카운트 0 유지): $e');
       }
-      final pendingResults     = pendingByMonth;
+      final pendingResults        = pendingByMonth;
       final notTransferredResults = confirmedByMonth;
 
       // 3. 12개 PayrollSummaryModel 구성
@@ -160,6 +180,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
         final mm    = month.toString().padLeft(2, '0');
         final pCount  = pendingResults[i];
         final ntCount = notTransferredResults[i];
+        final tCount  = transferredByMonth[i]; // 이체완료 건수
         final existing = summaryMap[month];
 
         if (existing != null) {
@@ -179,19 +200,21 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
           );
         }
 
-        if (pCount == 0 && ntCount == 0) {
+        // payroll_summaries 문서 없음 — transferred 포함해서 빈 달 여부 판단
+        if (pCount == 0 && ntCount == 0 && tCount == 0) {
           return PayrollSummaryModel.empty(businessId: bizId, year: year, month: month);
         }
 
+        // attendance에서 직접 집계 (confirmed + transferred 합산)
         return PayrollSummaryModel(
           id: '${bizId}_$year-$mm',
           businessId: bizId,
           yearMonth: '$year-$mm',
           year: year,
           month: month,
-          totalPayout: 0,
-          confirmedCount: 0,
-          workerCount: 0,
+          totalPayout: totalPayoutByMonth[i],
+          confirmedCount: ntCount + tCount, // 확정+이체완료 합계
+          workerCount: workersByMonth[i].length,
           pendingCount: pCount,
           notTransferredCount: ntCount,
           workers: {},
@@ -256,11 +279,14 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
               _TodayPaymentBanner(
                 count: _todayPaymentCount,
                 onTap: () async {
+                  final now = DateTime.now();
                   await Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => TodayPaymentScreen(
+                      builder: (_) => PayrollPaymentDashboardScreen(
                         businessId: _businessId!,
+                        year: now.year,
+                        month: now.month,
                       ),
                     ),
                   );
@@ -335,12 +361,17 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
     return GestureDetector(
       onTap: isEmpty
           ? null
-          : () => Navigator.push(
+          : () async {
+              final result = await Navigator.push<bool>(
                 context,
                 MaterialPageRoute(
                   builder: (_) => PayrollMonthScreen(summary: summary),
                 ),
-              ),
+              );
+              if (!mounted) return;
+              // PayrollMonthScreen에서 집계 복원 완료 시 overview 리로드
+              if (result == true) _loadYear(_selectedYear);
+            },
       child: Container(
         decoration: BoxDecoration(
           color: isEmpty ? AppColors.grey100 : Colors.white,
@@ -456,6 +487,7 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
   _SortOrder _sortOrder = _SortOrder.amountDesc;
   List<PayrollWorkerSummary> _workers = [];
   bool _workersLoading = true;
+  bool _isRepairing = false;
 
   List<PayrollWorkerSummary> get _filteredWorkers {
     final workers = List<PayrollWorkerSummary>.of(_workers);
@@ -498,9 +530,33 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
       if (!mounted) return;
       setState(() { _workers = loaded; _workersLoading = false; });
     } catch (e) {
+      // payroll_summaries 문서 미존재 시 workers 서브컬렉션 접근이 PERMISSION_DENIED 됨
+      // → 에러 토스트 대신 조용히 실패 후 UI에서 "집계 데이터 복원" 버튼으로 처리
+      debugPrint('⚠️ workers 서브컬렉션 로드 실패 (payroll_summaries 미존재 가능): $e');
       if (!mounted) return;
       setState(() => _workersLoading = false);
-      ToastHelper.showError('근무자 목록을 불러오지 못했습니다');
+    }
+  }
+
+  // payroll_summaries 문서 누락 시 서버에서 재집계 후 overview 리로드 신호 반환
+  Future<void> _repairSummary() async {
+    setState(() => _isRepairing = true);
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableRepairPayrollSummaries',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      await callable.call<Map<String, dynamic>>({
+        'businessId': widget.summary.businessId,
+        'yearMonth': widget.summary.yearMonth,
+      });
+      if (!mounted) return;
+      ToastHelper.showSuccess('집계가 복원되었습니다.');
+      Navigator.pop(context, true); // overview에서 true 수신 시 리로드
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showError('복원 실패: $e');
+    } finally {
+      if (mounted) setState(() => _isRepairing = false);
     }
   }
 
@@ -535,21 +591,14 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
                   ),
                 ),
               ),
-              PopupMenuButton<_SortOrder>(
-                initialValue: _sortOrder,
-                onSelected: (order) => setState(() => _sortOrder = order),
+              IconButton(
+                onPressed: _showSortSheet,
                 icon: Icon(
                   Icons.sort,
                   color: _sortOrder == _SortOrder.amountDesc
                       ? AppColors.grey400
                       : theme.primaryColor,
                 ),
-                itemBuilder: (ctx) => [
-                  _sortMenuItem(ctx, _SortOrder.amountDesc, '지급액 높은순', Icons.arrow_downward),
-                  _sortMenuItem(ctx, _SortOrder.amountAsc,  '지급액 낮은순', Icons.arrow_upward),
-                  _sortMenuItem(ctx, _SortOrder.nameAsc,    '이름순',        Icons.sort_by_alpha),
-                  _sortMenuItem(ctx, _SortOrder.workDaysDesc, '근무일수 많은순', Icons.calendar_today),
-                ],
               ),
             ],
           ),
@@ -557,14 +606,50 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
             child: _workersLoading
                 ? const LoadingWidget()
                 : filtered.isEmpty
-                    ? AppEmptyState(
-                        icon: _searchQuery.isNotEmpty
-                            ? Icons.search_off
-                            : Icons.inbox_outlined,
-                        title: _searchQuery.isNotEmpty
-                            ? '"$_searchQuery" 검색 결과 없음'
-                            : '확정된 급여가 없습니다',
-                      )
+                    ? (_searchQuery.isEmpty && widget.summary.confirmedCount > 0
+                        // payroll_summaries 문서 누락 — 집계 복원 버튼 노출
+                        ? Column(
+                            children: [
+                              // Expanded로 감싸야 AppEmptyState 내 LayoutBuilder.maxHeight가 유한값
+                              Expanded(
+                                child: AppEmptyState(
+                                  icon: Icons.warning_amber_outlined,
+                                  title: '집계 데이터가 없습니다',
+                                ),
+                              ),
+                              SafeArea(
+                                top: false,
+                                child: Padding(
+                                  padding: EdgeInsets.fromLTRB(
+                                    ResponsiveHelper.spacing(context, 24),
+                                    0,
+                                    ResponsiveHelper.spacing(context, 24),
+                                    ResponsiveHelper.spacing(context, 24),
+                                  ),
+                                  child: SizedBox(
+                                    width: double.infinity,
+                                    child: ElevatedButton.icon(
+                                      onPressed: _isRepairing ? null : _repairSummary,
+                                      icon: _isRepairing
+                                          ? const SizedBox(
+                                              width: 14, height: 14,
+                                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                                          : const Icon(Icons.refresh),
+                                      label: Text(_isRepairing ? '복원 중…' : '집계 데이터 복원'),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          )
+                        : AppEmptyState(
+                            icon: _searchQuery.isNotEmpty
+                                ? Icons.search_off
+                                : Icons.inbox_outlined,
+                            title: _searchQuery.isNotEmpty
+                                ? '"$_searchQuery" 검색 결과 없음'
+                                : '확정된 급여가 없습니다',
+                          ))
                     : ListView.separated(
                         padding: EdgeInsets.all(
                             ResponsiveHelper.spacing(context, 16)),
@@ -580,34 +665,113 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
     );
   }
 
-  PopupMenuItem<_SortOrder> _sortMenuItem(
-    BuildContext ctx,
-    _SortOrder value,
-    String label,
-    IconData icon,
-  ) {
-    final isSelected = _sortOrder == value;
-    final color = isSelected ? Theme.of(ctx).primaryColor : AppColors.grey700;
-    return PopupMenuItem<_SortOrder>(
-      value: value,
-      child: Row(
-        children: [
-          Icon(icon, size: 16, color: color),
-          const SizedBox(width: 10),
-          Text(label,
-              style: ResponsiveHelper.smallStyle(ctx,
-                  color: color,
-                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.normal)),
-          if (isSelected) ...[
-            const Spacer(),
-            Icon(Icons.check, size: 14, color: color),
-          ],
-        ],
-      ),
+  void _showSortSheet() {
+    final options = [
+      (_SortOrder.amountDesc,   '지급액 높은순',   Icons.arrow_downward),
+      (_SortOrder.amountAsc,    '지급액 낮은순',   Icons.arrow_upward),
+      (_SortOrder.nameAsc,      '이름순',          Icons.sort_by_alpha),
+      (_SortOrder.workDaysDesc, '근무일수 많은순',  Icons.calendar_today),
+    ];
+    showModalBottomSheet(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        final theme = Theme.of(context);
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 핸들
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                width: 40, height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.grey300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              // 타이틀 + 닫기 버튼
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 8, 10),
+                child: Row(children: [
+                  Expanded(
+                    child: Text('정렬',
+                        style: ResponsiveHelper.subtitleStyle(context)
+                            .copyWith(fontWeight: FontWeight.bold)),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    icon: const Icon(Icons.close, color: AppColors.grey600),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ]),
+              ),
+              const Divider(height: 1, color: AppColors.grey100),
+              // 옵션 목록
+              ...options.map((e) {
+                final (order, label, icon) = e;
+                final isSelected = _sortOrder == order;
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () {
+                          setState(() => _sortOrder = order);
+                          Navigator.pop(ctx);
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 20, vertical: 14),
+                          child: Row(children: [
+                            Icon(icon,
+                                size: 18,
+                                color: isSelected
+                                    ? theme.primaryColor
+                                    : AppColors.grey500),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Text(label,
+                                  style: ResponsiveHelper.bodyStyle(context,
+                                      color: isSelected
+                                          ? theme.primaryColor
+                                          : AppColors.grey800,
+                                      fontWeight: isSelected
+                                          ? FontWeight.w700
+                                          : FontWeight.normal)),
+                            ),
+                            if (isSelected)
+                              Icon(Icons.check_rounded,
+                                  size: 18, color: theme.primaryColor),
+                          ]),
+                        ),
+                      ),
+                    ),
+                    const Divider(height: 1, color: AppColors.grey100),
+                  ],
+                );
+              }),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
     );
   }
 
   Widget _buildSummaryHeader(BuildContext context, ThemeData theme) {
+    final transferredCount = widget.summary.confirmedCount - widget.summary.notTransferredCount;
+    final pendingCount     = widget.summary.notTransferredCount;
+    final hasPending       = pendingCount > 0;
+
     return Container(
       color: theme.primaryColor.withValues(alpha: 0.06),
       padding: EdgeInsets.fromLTRB(
@@ -638,7 +802,7 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
                   style: ResponsiveHelper.tinyStyle(context,
                       color: AppColors.grey700)),
               const Spacer(),
-              TextButton.icon(
+              OutlinedButton.icon(
                 onPressed: () => Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -656,11 +820,14 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
                     style: ResponsiveHelper.tinyStyle(context,
                         color: theme.primaryColor,
                         fontWeight: FontWeight.w600)),
-                style: TextButton.styleFrom(
+                style: OutlinedButton.styleFrom(
                   padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 8),
-                    vertical: ResponsiveHelper.spacing(context, 4),
+                    horizontal: ResponsiveHelper.spacing(context, 10),
+                    vertical: ResponsiveHelper.spacing(context, 5),
                   ),
+                  side: BorderSide(color: theme.primaryColor.withValues(alpha: 0.4)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20)),
                   minimumSize: Size.zero,
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
@@ -670,38 +837,62 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           const Divider(height: 1, color: AppColors.grey200),
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          // ── 2행: 근무자 수 | 급여 건수 — 보조
+          // ── 2행: 이체완료 | 미이체 상태
           Row(children: [
             Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.people_outline,
-                  size: 12, color: theme.primaryColor),
-              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Text('${widget.summary.workerCount}명',
-                  style: ResponsiveHelper.smallStyle(context,
-                      color: theme.primaryColor,
-                      fontWeight: FontWeight.w600)),
-              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Text('근무자 수',
+              Container(
+                width: 8, height: 8,
+                decoration: const BoxDecoration(
+                  color: AppColors.success, shape: BoxShape.circle),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+              Text('이체완료',
                   style: ResponsiveHelper.tinyStyle(context,
-                      color: AppColors.grey700)),
+                      color: AppColors.grey500)),
+              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+              Text('$transferredCount건',
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: AppColors.successDark,
+                      fontWeight: FontWeight.w700)),
             ]),
             Container(
-                width: 1, height: 14,
+                width: 1, height: 12,
                 color: AppColors.grey200,
                 margin: EdgeInsets.symmetric(
                     horizontal: ResponsiveHelper.spacing(context, 12))),
             Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.receipt_outlined,
-                  size: 12, color: theme.primaryColor),
+              Container(
+                width: 8, height: 8,
+                decoration: BoxDecoration(
+                  color: hasPending ? AppColors.warning : AppColors.grey300,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+              Text('미이체',
+                  style: ResponsiveHelper.tinyStyle(context,
+                      color: AppColors.grey500)),
+              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+              Text('$pendingCount건',
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: hasPending ? AppColors.warningDark : AppColors.grey400,
+                      fontWeight: FontWeight.w700)),
+            ]),
+            const Spacer(),
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.people_outline, size: 12, color: AppColors.grey400),
+              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+              Text('${widget.summary.workerCount}명',
+                  style: ResponsiveHelper.tinyStyle(context,
+                      color: AppColors.grey500,
+                      fontWeight: FontWeight.w600)),
+              SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+              Icon(Icons.receipt_outlined, size: 12, color: AppColors.grey400),
               SizedBox(width: ResponsiveHelper.spacing(context, 4)),
               Text('${widget.summary.confirmedCount}건',
-                  style: ResponsiveHelper.smallStyle(context,
-                      color: theme.primaryColor,
-                      fontWeight: FontWeight.w600)),
-              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Text('급여 건수',
                   style: ResponsiveHelper.tinyStyle(context,
-                      color: AppColors.grey700)),
+                      color: AppColors.grey500,
+                      fontWeight: FontWeight.w600)),
             ]),
           ]),
         ],
@@ -739,51 +930,68 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
             ),
           ],
         ),
-        padding: EdgeInsets.symmetric(
-          horizontal: ResponsiveHelper.spacing(context, 16),
-          vertical: ResponsiveHelper.spacing(context, 14),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    worker.name.isNotEmpty ? worker.name : '(이름 없음)',
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                  Text(
-                    '${worker.workDays}일 근무',
-                    style: ResponsiveHelper.tinyStyle(context).copyWith(
-                      color: AppColors.grey500,
-                    ),
-                  ),
-                ],
+        clipBehavior: Clip.antiAlias,
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 좌측 상태 바
+              Container(
+                width: 4,
+                color: theme.primaryColor.withValues(alpha: 0.6),
               ),
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  FormatHelper.formatWage(worker.totalPayout),
-                  style: ResponsiveHelper.bodyStyle(context).copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.successDark,
+              // 본문
+              Expanded(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 14),
+                    vertical: ResponsiveHelper.spacing(context, 13),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              worker.name.isNotEmpty ? worker.name : '(이름 없음)',
+                              style: ResponsiveHelper.bodyStyle(context)
+                                  .copyWith(fontWeight: FontWeight.w600),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                            Text(
+                              '${worker.workDays}일 근무',
+                              style: ResponsiveHelper.tinyStyle(context,
+                                  color: AppColors.grey500),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            FormatHelper.formatWage(worker.totalPayout),
+                            style: ResponsiveHelper.bodyStyle(context).copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.successDark,
+                            ),
+                          ),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                          Icon(Icons.chevron_right,
+                              size: ResponsiveHelper.iconSize(context, 16),
+                              color: AppColors.grey300),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                Icon(Icons.chevron_right,
-                    size: ResponsiveHelper.iconSize(context, 16),
-                    color: AppColors.grey300),
-              ],
-            ),
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );

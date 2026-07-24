@@ -1,11 +1,15 @@
 // lib/screens/user/dialogs/my_requests_dialog.dart
 
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../../../models/core/schedule_change_request_model.dart';
 import '../../../models/core/id_card_access_request_model.dart';
 import '../../../models/core/application_model.dart';
+import '../../../models/core/interim_settlement_request_model.dart';
 import '../../../services/firestore_service.dart';
+import '../../../services/payroll_payment_service.dart';
 import '../../../utils/toast_helper.dart';
+import '../../../utils/dialog_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../widgets/common/loading_widget.dart';
@@ -14,9 +18,10 @@ import '../../../theme/app_colors.dart';
 
 /// 통합 알림 아이템 타입
 enum NotificationItemType {
-  scheduleChange,   // 스케줄 변경 요청
-  idCardRequest,    // 신분증 열람 요청
-  termination,      // 계약해지 요청
+  scheduleChange,      // 스케줄 변경 요청
+  idCardRequest,       // 신분증 열람 요청
+  termination,         // 계약해지 요청
+  interimSettlement,   // 중간정산 요청
 }
 
 /// 통합 알림 아이템
@@ -49,7 +54,8 @@ class MyRequestsDialog extends StatefulWidget {
 
 class _MyRequestsDialogState extends State<MyRequestsDialog> {
   final FirestoreService _firestoreService = FirestoreService();
-  
+  final PayrollPaymentService _payService = PayrollPaymentService();
+
   List<_NotificationItem> _allNotifications = [];
   bool _isLoading = true;
   bool _isProcessing = false;
@@ -71,11 +77,13 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
         _firestoreService.getMyScheduleChangeRequests(widget.applicantUid),
         _firestoreService.getPendingIdCardRequestsForUser(widget.applicantUid),
         _firestoreService.getMyTerminationRequests(widget.applicantUid),
+        _payService.getMyInterimSettlements(),
       ]);
 
       final scheduleRequests = results[0] as List<ScheduleChangeRequestModel>;
       final idCardRequests = results[1] as List<IdCardAccessRequestModel>;
       final terminations = results[2] as List<ApplicationModel>;
+      final interimSettlements = results[3] as List<InterimSettlementRequestModel>;
 
       // 통합 리스트 생성
       final notifications = <_NotificationItem>[];
@@ -111,6 +119,17 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
             type: NotificationItemType.termination,
             data: app,
             requestedAt: app.terminationRequestedAt!,
+          ));
+        }
+      }
+
+      // 4. 중간정산 요청 — PENDING(대기) · APPROVED(이체 대기)만 표시
+      for (final req in interimSettlements) {
+        if (req.isPending || req.isApproved) {
+          notifications.add(_NotificationItem(
+            type: NotificationItemType.interimSettlement,
+            data: req,
+            requestedAt: req.createdAt,
           ));
         }
       }
@@ -243,6 +262,8 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
         return _buildIdCardRequestCard(item.data as IdCardAccessRequestModel);
       case NotificationItemType.termination:
         return _buildTerminationCard(item.data as ApplicationModel);
+      case NotificationItemType.interimSettlement:
+        return _buildInterimSettlementCard(item.data as InterimSettlementRequestModel);
     }
   }
 
@@ -465,6 +486,71 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   }
 
   // ═══════════════════════════════════════════════════════════
+  // 중간정산 요청 카드
+  // ═══════════════════════════════════════════════════════════
+
+  Widget _buildInterimSettlementCard(InterimSettlementRequestModel req) {
+    final isPending = req.isPending;
+    final color = isPending ? AppColors.warning : AppColors.teal;
+    final bgColor = isPending ? AppColors.warningBg : AppColors.tealBg;
+    final icon = isPending ? Icons.hourglass_top : Icons.event_available;
+    final statusLabel = isPending ? '승인 대기' : '승인됨 · 이체 대기';
+
+    return Card(
+      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
+      color: bgColor,
+      child: Padding(
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            CircleAvatar(
+              backgroundColor: color.withValues(alpha: 0.2),
+              child: Icon(icon, color: color),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '중간정산 요청',
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                  Text(
+                    req.businessName,
+                    style: ResponsiveHelper.smallStyle(context,
+                        color: Theme.of(context).textTheme.bodySmall?.color),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    '${req.periodLabel}  ·  ${req.recordCount}일  ·  ${FormatHelper.formatWage(req.netAmount)}',
+                    style: ResponsiveHelper.tinyStyle(context,
+                        color: Theme.of(context).textTheme.bodySmall?.color),
+                  ),
+                  if (req.isApproved && req.scheduledTransferDate != null)
+                    Text(
+                      '이체 예정일: ${DateFormat('MM월 dd일').format(req.scheduledTransferDate!)}',
+                      style: ResponsiveHelper.tinyStyle(context,
+                              color: AppColors.tealDark)
+                          .copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                  _buildStatusChip(statusLabel, color),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // 공통 위젯
   // ═══════════════════════════════════════════════════════════
 
@@ -500,42 +586,19 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
     if (_isProcessing) return;
     setState(() => _isProcessing = true);
     try {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('신분증 열람 승인'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('${request.requesterBusinessName}에서 신분증 열람을 요청했습니다.'),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            Text('요청 사유: ${request.reasonText}'),
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            Text(
-              '승인 시 7일간 열람 가능합니다.',
-              style: ResponsiveHelper.smallStyle(
-                context,
-                color: Theme.of(context).textTheme.bodySmall?.color,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
-            child: const Text('승인'),
-          ),
-        ],
-      ),
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: '신분증 열람 승인',
+      message: '${request.requesterBusinessName}에서 신분증 열람을 요청했습니다.\n\n'
+          '요청 사유: ${request.reasonText}\n\n'
+          '승인 시 7일간 열람 가능합니다.',
+      confirmText: '승인',
+      confirmColor: AppColors.success,
+      icon: Icons.badge,
+      iconColor: AppColors.info,
     );
 
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
 
       final success = await _firestoreService.approveIdCardAccessRequest(request.id);
       if (!mounted) return;
@@ -558,51 +621,24 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   Future<void> _handleIdCardReject(IdCardAccessRequestModel request) async {
     if (_isProcessing) return;
     setState(() => _isProcessing = true);
-    final reasonController = TextEditingController();
     try {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-        title: const Text('신분증 열람 거절'),
-        content: SingleChildScrollView(
-          child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('${request.requesterBusinessName}의 요청을 거절합니다.'),
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            TextField(
-              controller: reasonController,
-              decoration: const InputDecoration(
-                hintText: '거절 사유 (선택)',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 2,
-            ),
-          ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.error),
-            child: const Text('거절'),
-          ),
-        ],
-      ),
+    final reason = await DialogHelper.showTextInput(
+      context,
+      title: '신분증 열람 거절',
+      message: '${request.requesterBusinessName}의 요청을 거절합니다.',
+      hintText: '거절 사유 (선택)',
+      maxLines: 2,
+      confirmText: '거절',
+      confirmColor: AppColors.error,
+      icon: Icons.cancel,
+      iconColor: AppColors.error,
     );
 
-    final idCardRejectReason = reasonController.text.trim().isEmpty ? null : reasonController.text.trim();
-
-    if (confirmed != true || !mounted) return;
+    if (reason == null || !mounted) return;
 
       final success = await _firestoreService.rejectIdCardAccessRequest(
         request.id,
-        reason: idCardRejectReason,
+        reason: reason.isEmpty ? null : reason,
       );
       if (!mounted) return;
       if (success) {
@@ -617,7 +653,6 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       debugPrint('❌ 신분증 거절 오류: $e');
       if (mounted) ToastHelper.showError('처리 중 오류가 발생했습니다');
     } finally {
-      WidgetsBinding.instance.addPostFrameCallback((_) => reasonController.dispose());
       if (mounted) setState(() => _isProcessing = false);
     }
   }
@@ -630,43 +665,19 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
     if (_isProcessing) return;
     setState(() => _isProcessing = true);
     try {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('계약해지 승인'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('${app.businessName}과의 계약을 해지합니다.'),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            if (app.terminationReason != null)
-              Text('해지 사유: ${app.terminationReason}'),
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            Text(
-              '승인 시 즉시 계약이 해지됩니다.',
-              style: ResponsiveHelper.smallStyle(
-                context,
-                color: AppColors.error,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.error),
-            child: const Text('승인 (해지)'),
-          ),
-        ],
-      ),
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: '계약해지 승인',
+      message: '${app.businessName}과의 계약을 해지합니다.'
+          '${app.terminationReason != null ? '\n\n해지 사유: ${app.terminationReason}' : ''}'
+          '\n\n승인 시 즉시 계약이 해지됩니다.',
+      confirmText: '승인 (해지)',
+      confirmColor: AppColors.error,
+      icon: Icons.warning_amber,
+      iconColor: AppColors.warning,
     );
 
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
 
       final success = await _firestoreService.approveTermination(app.id);
       if (!mounted) return;
@@ -689,51 +700,24 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   Future<void> _handleTerminationReject(ApplicationModel app) async {
     if (_isProcessing) return;
     setState(() => _isProcessing = true);
-    final reasonController = TextEditingController();
     try {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-        title: const Text('계약해지 거절'),
-        content: SingleChildScrollView(
-          child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('${app.businessName}의 계약해지 요청을 거절합니다.'),
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            TextField(
-              controller: reasonController,
-              decoration: const InputDecoration(
-                hintText: '거절 사유 (선택)',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 2,
-            ),
-          ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.info),
-            child: const Text('거절'),
-          ),
-        ],
-      ),
+    final reason = await DialogHelper.showTextInput(
+      context,
+      title: '계약해지 거절',
+      message: '${app.businessName}의 계약해지 요청을 거절합니다.',
+      hintText: '거절 사유 (선택)',
+      maxLines: 2,
+      confirmText: '거절',
+      confirmColor: AppColors.info,
+      icon: Icons.cancel,
+      iconColor: AppColors.error,
     );
 
-    final terminationRejectReason = reasonController.text.trim().isEmpty ? null : reasonController.text.trim();
-
-    if (confirmed != true || !mounted) return;
+    if (reason == null || !mounted) return;
 
       final success = await _firestoreService.rejectTermination(
         applicationId: app.id,
-        rejectReason: terminationRejectReason,
+        rejectReason: reason.isEmpty ? null : reason,
       );
       if (!mounted) return;
       if (success) {
@@ -750,7 +734,6 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
       debugPrint('❌ 계약해지 거절 오류: $e');
       if (mounted) ToastHelper.showError('처리 중 오류가 발생했습니다');
     } finally {
-      WidgetsBinding.instance.addPostFrameCallback((_) => reasonController.dispose());
       if (mounted) setState(() => _isProcessing = false);
     }
   }

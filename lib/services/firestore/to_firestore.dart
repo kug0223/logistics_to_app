@@ -960,6 +960,15 @@ extension TOFirestore on FirestoreService {
     final slotRequired = workDetails.fold<int>(0, (s, d) => s + d.requiredCount);
     final dateOnly = DateTime(date.year, date.month, date.day);
 
+    // 동일 날짜 슬롯 중복 방지 — 이미 해당 날짜 슬롯이 있으면 인원 집계 이중 카운팅 발생
+    final existingSlots = await getSlots(to.id);
+    final existingDates = existingSlots
+        .map((s) => DateTime(s.date.year, s.date.month, s.date.day))
+        .toSet();
+    if (existingDates.contains(dateOnly)) {
+      throw Exception('해당 날짜(${dateOnly.year}-${dateOnly.month.toString().padLeft(2,'0')}-${dateOnly.day.toString().padLeft(2,'0')})에 이미 슬롯이 존재합니다.');
+    }
+
     // [T-M-1] 카운터·범위 업데이트만 배치에 포함 — status는 Firestore rules상
     // isSuperAdmin()만 직접 쓰기 가능. 일반 관리자는 callableUpdateTO CF 경유 필수.
     final Map<String, dynamic> toCounterUpdates = {

@@ -71,19 +71,26 @@ class BeaconHelper {
 
       FlutterBluePlus.startScan(timeout: timeout);
 
-      sub = FlutterBluePlus.scanResults.listen((results) {
-        for (final result in results) {
-          if (!completer.isCompleted &&
-              _matchesBeacon(result, normalizedUUID, major, minor) &&
-              result.rssi >= rssiThreshold) {
-            debugPrint(
-              '✅ [Beacon] 비콘 감지: UUID=$normalizedUUID, RSSI=${result.rssi}dBm, '
-              '거리≈${rssiToDistance(result.rssi).toStringAsFixed(1)}m',
-            );
-            completer.complete(true);
+      sub = FlutterBluePlus.scanResults.listen(
+        (results) {
+          for (final result in results) {
+            if (!completer.isCompleted &&
+                _matchesBeacon(result, normalizedUUID, major, minor) &&
+                result.rssi >= rssiThreshold) {
+              debugPrint(
+                '✅ [Beacon] 비콘 감지: UUID=$normalizedUUID, RSSI=${result.rssi}dBm, '
+                '거리≈${rssiToDistance(result.rssi).toStringAsFixed(1)}m',
+              );
+              completer.complete(true);
+            }
           }
-        }
-      });
+        },
+        onError: (e) {
+          debugPrint('⚠️ [Beacon] 스캔 에러: $e');
+          if (!completer.isCompleted) completer.complete(false);
+        },
+        cancelOnError: true,
+      );
 
       // timeout 후 미발견
       Future.delayed(timeout, () {

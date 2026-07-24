@@ -244,8 +244,9 @@ class ContractService {
       if (adminIds.isEmpty) {
         debugPrint('⚠️ contractSigned: adminIds 없음 — businessId: ${contract.businessId}');
       } else {
-        for (final adminUid in adminIds) {
-          await _firestoreService.createNotification(
+        // [PERF] 알림 N+1 → 병렬 발송
+        await Future.wait(adminIds.map((adminUid) =>
+          _firestoreService.createNotification(
             NotificationModel.createContractSigned(
               userId: adminUid,
               workerName: contract.snapshot.workerName,
@@ -253,8 +254,8 @@ class ContractService {
               contractId: contract.id,
               applicationId: contract.applicationId,
             ),
-          );
-        }
+          ),
+        ));
       }
     } catch (e) {
       debugPrint('⚠️ contractSigned 알림 발송 실패 (비치명적): $e');
@@ -587,23 +588,27 @@ class ContractService {
     // exception 대신 false로 반환하므로 반환값을 명시적으로 체크해야 함
     // [W-2] canceledBy: 'system' — voidContract는 시스템/관리자 취소이므로 ADMIN_CANCELED로 기록
     // null 전달 시 USER_CANCELED로 기록되어 감사 로그에서 혼동 발생
-    final List<String> failedIds = [];
-    for (final appId in appIds) {
-      try {
-        final ok = await _firestoreService.cancelConfirmedApplication(
-          appId,
-          canceledBy: 'system',
-          cancelReason: '계약서가 무효화되었습니다',
-        );
-        if (!ok) {
-          debugPrint('⚠️ voidContract: application 취소 실패 ($appId): false 반환');
-          failedIds.add(appId);
+    // [PERF] 취소 N+1 → 병렬 처리 (각 appId 독립 실행)
+    final cancelResults = await Future.wait(
+      appIds.map((appId) async {
+        try {
+          final ok = await _firestoreService.cancelConfirmedApplication(
+            appId,
+            canceledBy: 'system',
+            cancelReason: '계약서가 무효화되었습니다',
+          );
+          if (!ok) {
+            debugPrint('⚠️ voidContract: application 취소 실패 ($appId): false 반환');
+            return appId;
+          }
+          return null;
+        } catch (e) {
+          debugPrint('⚠️ voidContract: application 취소 실패 ($appId): $e');
+          return appId;
         }
-      } catch (e) {
-        debugPrint('⚠️ voidContract: application 취소 실패 ($appId): $e');
-        failedIds.add(appId);
-      }
-    }
+      }),
+    );
+    final failedIds = cancelResults.whereType<String>().toList();
 
     // 4단계: 실패한 appId 기록 — 관리자 화면 경고 배너로 노출, 재처리 버튼 제공
     // M-5: voidFailedAppIds 저장 실패 시 재시도(retryVoidFailedApps) 메커니즘이
@@ -634,24 +639,27 @@ class ContractService {
   Future<void> retryVoidFailedApps(EmploymentContractModel contract) async {
     if (contract.voidFailedAppIds.isEmpty) return;
 
-    final List<String> stillFailedIds = [];
-
-    for (final appId in contract.voidFailedAppIds) {
-      try {
-        final ok = await _firestoreService.cancelConfirmedApplication(
-          appId,
-          canceledBy: 'system', // [W-2] 재처리도 시스템 취소 — ADMIN_CANCELED 기록 유지
-          cancelReason: '계약서가 무효화되었습니다',
-        );
-        if (!ok) {
-          debugPrint('⚠️ retryVoidFailedApps: application 취소 실패 ($appId): false 반환');
-          stillFailedIds.add(appId);
+    // [PERF] 재처리 N+1 → 병렬 처리 (voidContract와 동일 패턴)
+    final retryResults = await Future.wait(
+      contract.voidFailedAppIds.map((appId) async {
+        try {
+          final ok = await _firestoreService.cancelConfirmedApplication(
+            appId,
+            canceledBy: 'system', // [W-2] 재처리도 시스템 취소 — ADMIN_CANCELED 기록 유지
+            cancelReason: '계약서가 무효화되었습니다',
+          );
+          if (!ok) {
+            debugPrint('⚠️ retryVoidFailedApps: application 취소 실패 ($appId): false 반환');
+            return appId;
+          }
+          return null;
+        } catch (e) {
+          debugPrint('⚠️ retryVoidFailedApps: application 취소 실패 ($appId): $e');
+          return appId;
         }
-      } catch (e) {
-        debugPrint('⚠️ retryVoidFailedApps: application 취소 실패 ($appId): $e');
-        stillFailedIds.add(appId);
-      }
-    }
+      }),
+    );
+    final stillFailedIds = retryResults.whereType<String>().toList();
 
     // 성공한 항목 반영: 전부 성공 시 voidFailedAppIds 필드 삭제, 일부 실패 시 갱신
     await _db.collection('employment_contracts').doc(contract.id).update({
