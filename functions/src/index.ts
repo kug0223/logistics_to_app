@@ -13997,6 +13997,86 @@ export const callableMarkTransferredBatch = onCall(
   }
 );
 
+// ─── callableCancelTransfer ───────────────────────────────────────────────────
+// 이체완료(transferred) → 확정(confirmed) 역전환
+// - BUSINESS_ADMIN: 무조건 허용
+// - SUB_ADMIN: businesses/{businessId}/members/{uid}.permissions.canCancelTransfer 검증
+// - Firestore rules에서 클라이언트 직접 역전환 전면 차단 → Admin SDK CF 경유만 가능
+export const callableCancelTransfer = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {businessId, attendanceId, cancelNote} = request.data as {
+      businessId: string;
+      attendanceId: string;
+      cancelNote: string;
+    };
+
+    if (!businessId || typeof businessId !== "string") {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+    if (!attendanceId || typeof attendanceId !== "string") {
+      throw new HttpsError("invalid-argument", "attendanceId가 필요합니다.");
+    }
+    if (!cancelNote || cancelNote.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "취소 사유를 입력해주세요.");
+    }
+    if (cancelNote.trim().length > 200) {
+      throw new HttpsError("invalid-argument", "취소 사유는 200자 이내여야 합니다.");
+    }
+
+    const {callerData} = await assertBizAdmin(callerUid, businessId);
+
+    // SUB_ADMIN: canCancelTransfer 권한 추가 검증
+    const isSubAdmin = callerData?.subAdminOf === businessId;
+    if (isSubAdmin) {
+      const memberSnap = await db
+        .collection("businesses")
+        .doc(businessId)
+        .collection("members")
+        .doc(callerUid)
+        .get();
+      const perms = (memberSnap.data()?.permissions ?? {}) as Record<string, boolean>;
+      if (perms.canCancelTransfer !== true) {
+        throw new HttpsError("permission-denied", "이체 취소 권한이 없습니다.");
+      }
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(db.collection("attendance").doc(attendanceId));
+      if (!snap.exists) {
+        throw new HttpsError("not-found", "출근기록을 찾을 수 없습니다.");
+      }
+      const data = snap.data()!;
+      if (data.businessId !== businessId) {
+        throw new HttpsError("permission-denied", "해당 사업장의 출근기록이 아닙니다.");
+      }
+      if (data.wageStatus !== "transferred") {
+        throw new HttpsError(
+          "failed-precondition",
+          `이체완료 상태가 아닙니다. (현재: ${data.wageStatus ?? "unknown"})`
+        );
+      }
+      tx.update(snap.ref, {
+        wageStatus: "confirmed",
+        cancelledTransferAt: now,
+        cancelledTransferBy: callerUid,
+        cancelNote: cancelNote.trim(),
+        transferDate: admin.firestore.FieldValue.delete(),
+        transferredBy: admin.firestore.FieldValue.delete(),
+        transferNote: admin.firestore.FieldValue.delete(),
+        updatedAt: now,
+      });
+    });
+
+    return {success: true};
+  }
+);
+
 // ─── callableGetAdminTOs ──────────────────────────────────────────────────────
 // tos 공고 목록 조회 — Admin SDK server-side businessId 교차검증
 // [RULE-FIX-CF 2026-07-13] request.query.filters.businessId null 반환 문제를

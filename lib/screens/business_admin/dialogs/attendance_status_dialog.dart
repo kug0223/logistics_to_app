@@ -3628,10 +3628,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           'resetWageDetail': attendance.wageStatus == AttendanceModel.wageCalculated,
         };
         if (newCheckIn != null) {
-          entry['checkInMs'] = _hmToDateTime(widget.date, effectiveCheckIn).millisecondsSinceEpoch;
+          entry['checkInMs'] = _hmToKstEpochMs(widget.date, effectiveCheckIn);
         }
         if (newCheckOut != null) {
-          entry['checkOutMs'] = _hmToDateTimeCheckout(widget.date, checkInDtForOut, resolvedCheckOut!).millisecondsSinceEpoch;
+          entry['checkOutMs'] = _hmCheckoutToKstEpochMs(widget.date, checkInDtForOut, resolvedCheckOut!);
         }
         if (effectiveCheckOut != null) {
           entry['workHours'] = _calcWorkHoursCompat(effectiveCheckIn, effectiveCheckOut);
@@ -4197,19 +4197,39 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   double _calcWorkHoursCompat(String checkIn, String checkOut) =>
       AttendanceStatusHelper.workMinutes(checkIn, checkOut) / 60.0;
 
-  /// workDate + "HH:mm" → DateTime (출근: 당일 기준)
+  /// workDate + "HH:mm" → DateTime (로컬 시간, 반올림 차이 계산 전용)
   DateTime _hmToDateTime(DateTime workDate, String hhmm) {
     final parts = hhmm.split(':');
     return DateTime(workDate.year, workDate.month, workDate.day,
         int.parse(parts[0]), int.parse(parts[1]));
   }
 
-  /// workDate + checkIn DateTime + checkOut "HH:mm" → DateTime (야간 자동 처리)
+  /// workDate + checkIn DateTime + checkOut "HH:mm" → DateTime (야간 자동 처리, 반올림 전용)
   DateTime _hmToDateTimeCheckout(
       DateTime workDate, DateTime checkInDt, String checkOutHHmm) {
     var dt = _hmToDateTime(workDate, checkOutHHmm);
     if (!dt.isAfter(checkInDt)) dt = dt.add(const Duration(days: 1));
     return dt;
+  }
+
+  /// HH:mm → KST 기준 UTC epoch (CF 전송용)
+  /// 기기 시간대(UTC 시뮬레이터 등)와 무관하게 항상 KST 기준으로 epoch 계산
+  int _hmToKstEpochMs(DateTime workDate, String hhmm) {
+    final parts = hhmm.split(':');
+    return DateTime.utc(workDate.year, workDate.month, workDate.day,
+            int.parse(parts[0]), int.parse(parts[1]))
+        .subtract(const Duration(hours: 9))
+        .millisecondsSinceEpoch;
+  }
+
+  /// 퇴근 시간 → KST 기준 UTC epoch (CF 전송용, 야간교대 자동처리)
+  int _hmCheckoutToKstEpochMs(
+      DateTime workDate, DateTime checkInDt, String checkOutHHmm) {
+    final checkoutLocal = _hmToDateTime(workDate, checkOutHHmm);
+    final isNextDay = !checkoutLocal.isAfter(checkInDt);
+    var ms = _hmToKstEpochMs(workDate, checkOutHHmm);
+    if (isNextDay) ms += const Duration(days: 1).inMilliseconds;
+    return ms;
   }
 
   /// 출근 반올림 — 정책 미설정 시 입력값 그대로 반환
@@ -4353,7 +4373,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         // 반올림 정책 적용 여부에 따라 유효 시간 결정
         final effectiveTime = applyRounding ? _roundedCheckIn(app, time) : time;
         final existing = _attendanceMap[app.id];
-        final checkInMs = _hmToDateTime(widget.date, effectiveTime).millisecondsSinceEpoch;
+        final checkInMs = _hmToKstEpochMs(widget.date, effectiveTime);
         final entry = <String, dynamic>{
           'applicationId': app.id,
           'workDateMs': widget.date.millisecondsSinceEpoch,
@@ -4465,7 +4485,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
         entries.add({
           'attendanceId': attendance.id,
-          'checkOutMs': _hmToDateTimeCheckout(widget.date, checkInDtForOut, effectiveTime).millisecondsSinceEpoch,
+          'checkOutMs': _hmCheckoutToKstEpochMs(widget.date, checkInDtForOut, effectiveTime),
           'workHours': _calcWorkHoursCompat(checkIn, effectiveTime),
           'status': _deriveStatus(app, checkIn, effectiveTime),
           'resetWageDetail': attendance.wageStatus == AttendanceModel.wageCalculated,
@@ -4531,7 +4551,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           'businessName': app.businessName,
           'workType': app.selectedWorkType,
           'status': _deriveStatus(app, effectiveTime, null),
-          'checkInMs': _hmToDateTime(widget.date, effectiveTime).millisecondsSinceEpoch,
+          'checkInMs': _hmToKstEpochMs(widget.date, effectiveTime),
         };
         if (existing != null) entry['attendanceId'] = existing.id;
         entries.add(entry);
@@ -4634,7 +4654,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
         entries.add({
           'attendanceId': attendance.id,
-          'checkOutMs': _hmToDateTimeCheckout(widget.date, checkInDtForOut, effectiveTime).millisecondsSinceEpoch,
+          'checkOutMs': _hmCheckoutToKstEpochMs(widget.date, checkInDtForOut, effectiveTime),
           'workHours': _calcWorkHoursCompat(checkIn, effectiveTime),
           'status': _deriveStatus(app, checkIn, effectiveTime),
           'resetWageDetail': attendance.wageStatus == AttendanceModel.wageCalculated,

@@ -3,16 +3,18 @@ import 'package:flutter/foundation.dart';
 
 /// 하위 관리자 권한 항목
 class MemberPermissions {
-  final bool canManageTo;       // 공고 등록/수정/삭제
-  final bool canManageWorkers;  // 근무자 승인/출퇴근/확정 관리
-  final bool canManageWage;     // 급여 확인/정산
-  final bool canManageContract; // 계약서 작성/템플릿 관리
+  final bool canManageTo;         // 공고 등록/수정/삭제
+  final bool canManageWorkers;    // 근무자 승인/출퇴근/확정 관리
+  final bool canManageWage;       // 급여 확인/정산
+  final bool canManageContract;   // 계약서 작성/템플릿 관리
+  final bool canCancelTransfer;   // 이체 취소 (잘못 처리된 이체완료 상태 되돌리기)
 
   const MemberPermissions({
     this.canManageTo = false,
     this.canManageWorkers = false,
     this.canManageWage = false,
     this.canManageContract = false,
+    this.canCancelTransfer = false,
   });
 
   factory MemberPermissions.none() => const MemberPermissions();
@@ -22,6 +24,7 @@ class MemberPermissions {
         canManageWorkers: true,
         canManageWage: true,
         canManageContract: true,
+        canCancelTransfer: true,
       );
 
   factory MemberPermissions.fromMap(Map<String, dynamic> m) => MemberPermissions(
@@ -29,6 +32,7 @@ class MemberPermissions {
         canManageWorkers: m['canManageWorkers'] ?? false,
         canManageWage: m['canManageWage'] ?? false,
         canManageContract: m['canManageContract'] ?? false,
+        canCancelTransfer: m['canCancelTransfer'] ?? false,
       );
 
   Map<String, dynamic> toMap() => {
@@ -36,6 +40,7 @@ class MemberPermissions {
         'canManageWorkers': canManageWorkers,
         'canManageWage': canManageWage,
         'canManageContract': canManageContract,
+        'canCancelTransfer': canCancelTransfer,
       };
 
   MemberPermissions copyWith({
@@ -43,16 +48,19 @@ class MemberPermissions {
     bool? canManageWorkers,
     bool? canManageWage,
     bool? canManageContract,
+    bool? canCancelTransfer,
   }) =>
       MemberPermissions(
         canManageTo: canManageTo ?? this.canManageTo,
         canManageWorkers: canManageWorkers ?? this.canManageWorkers,
         canManageWage: canManageWage ?? this.canManageWage,
         canManageContract: canManageContract ?? this.canManageContract,
+        canCancelTransfer: canCancelTransfer ?? this.canCancelTransfer,
       );
 
   bool get hasAnyPermission =>
-      canManageTo || canManageWorkers || canManageWage || canManageContract;
+      canManageTo || canManageWorkers || canManageWage || canManageContract ||
+      canCancelTransfer;
 
   String get summaryText {
     final parts = <String>[];
@@ -60,6 +68,7 @@ class MemberPermissions {
     if (canManageWorkers) parts.add('근무자');
     if (canManageWage) parts.add('급여');
     if (canManageContract) parts.add('계약서');
+    if (canCancelTransfer) parts.add('이체취소');
     if (parts.isEmpty) return '권한 없음';
     return parts.join(' · ');
   }

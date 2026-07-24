@@ -275,6 +275,7 @@ class _MemberCard extends StatelessWidget {
                 _buildPermTag(context, '근무자', member.permissions.canManageWorkers, theme),
                 _buildPermTag(context, '급여', member.permissions.canManageWage, theme),
                 _buildPermTag(context, '계약서', member.permissions.canManageContract, theme),
+                _buildPermTag(context, '이체취소', member.permissions.canCancelTransfer, theme),
               ],
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -768,6 +769,13 @@ class _PermissionToggleList extends StatelessWidget {
         '계약서 작성·템플릿',
         permissions.canManageContract,
         (v) => permissions.copyWith(canManageContract: v),
+      ),
+      (
+        Icons.undo_outlined,
+        '이체 취소',
+        '잘못 처리된 이체완료 되돌리기',
+        permissions.canCancelTransfer,
+        (v) => permissions.copyWith(canCancelTransfer: v),
       ),
     ];
 

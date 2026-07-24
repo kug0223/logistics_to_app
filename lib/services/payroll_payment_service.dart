@@ -160,8 +160,24 @@ class PayrollPaymentService {
     }
   }
 
-  // cancelTransfer() 제거 — firestore.rules에서 transferred→confirmed 역전환을 전면 차단함
-  // (슈퍼어드민 포함 클라이언트 경로 불가, Admin SDK CF 경유만 가능)
+  /// 이체 취소 — transferred → confirmed (CF callableCancelTransfer 경유)
+  /// firestore.rules 클라이언트 직접 역전환 전면 차단 → Admin SDK CF 경유만 가능
+  Future<void> cancelTransfer({
+    required String attendanceId,
+    required String businessId,
+    required String cancelNote,
+  }) async {
+    await _cf
+        .httpsCallable(
+          'callableCancelTransfer',
+          options: HttpsCallableOptions(timeout: const Duration(seconds: 30)),
+        )
+        .call({
+      'attendanceId': attendanceId,
+      'businessId': businessId,
+      'cancelNote': cancelNote,
+    });
+  }
 
   // ══════════════════════════════════════════════════════════
   // 급여 지급 현황 조회

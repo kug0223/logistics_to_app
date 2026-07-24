@@ -1263,17 +1263,22 @@ class _PayrollPaymentDashboardScreenState
                       dueDate:       dueDate,
                       scheduleLabel: schLabel,
                       daysUntilDue:  daysUntil,
-                      onCardTap: !_batchMode ? () {
-                        Navigator.push(
+                      onCardTap: !_batchMode ? () async {
+                        final up = Provider.of<UserProvider>(context, listen: false);
+                        final canCancel = up.isBusinessAdmin ||
+                            (up.memberPermissions?.canCancelTransfer ?? false);
+                        final result = await Navigator.push<bool>(
                           context,
                           MaterialPageRoute(
                             builder: (_) => _WorkerPayDetailScreen(
                               workerName: workerName,
                               records:    recs,
                               bankInfo:   bankStr,
+                              canCancelTransfer: canCancel,
                             ),
                           ),
                         );
+                        if (result == true && mounted) _load();
                       } : null,
                       onSelect: _batchMode ? () {
                         setState(() {
@@ -1437,18 +1442,25 @@ class _PayrollPaymentDashboardScreenState
                       dueDate:                 dueDate,
                       scheduleLabel:           schLabel,
                       daysUntilDue:            daysUntil,
-                      onCardTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => _WorkerPayDetailScreen(
-                            workerName: bank?['name'] ?? uid,
-                            records:    recs,
-                            bankInfo:   bank?['bankName'] != null
-                                ? '${bank!['bankName']} ${bank['accountNumber'] ?? ''}'.trim()
-                                : null,
+                      onCardTap: () async {
+                        final up = Provider.of<UserProvider>(context, listen: false);
+                        final canCancel = up.isBusinessAdmin ||
+                            (up.memberPermissions?.canCancelTransfer ?? false);
+                        final result = await Navigator.push<bool>(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => _WorkerPayDetailScreen(
+                              workerName: bank?['name'] ?? uid,
+                              records:    recs,
+                              bankInfo:   bank?['bankName'] != null
+                                  ? '${bank!['bankName']} ${bank['accountNumber'] ?? ''}'.trim()
+                                  : null,
+                              canCancelTransfer: canCancel,
+                            ),
                           ),
-                        ),
-                      ),
+                        );
+                        if (result == true && mounted) _load();
+                      },
                     );
                   },
                 ),
@@ -2409,11 +2421,13 @@ class _WorkerPayDetailScreen extends StatefulWidget {
   final String workerName;
   final List<AttendanceModel> records;
   final String? bankInfo;
+  final bool canCancelTransfer;
 
   const _WorkerPayDetailScreen({
     required this.workerName,
     required this.records,
     this.bankInfo,
+    this.canCancelTransfer = false,
   });
 
   @override
@@ -2422,6 +2436,79 @@ class _WorkerPayDetailScreen extends StatefulWidget {
 
 class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
   bool _deductionExpanded = false;
+  bool _isCancelling = false;
+  final _payService = PayrollPaymentService();
+
+  Future<void> _cancelTransfer(AttendanceModel r) async {
+    final noteCtrl = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) => AlertDialog(
+          title: const Text('이체 취소'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '이체완료 상태를 미이체(확정)로 되돌립니다.\n실제 송금이 취소되지 않으니 별도 처리하세요.',
+                style: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey600),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: noteCtrl,
+                maxLength: 200,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  labelText: '취소 사유 *',
+                  hintText: '예) 잘못된 금액으로 이체, 계좌 오입력 등',
+                  border: OutlineInputBorder(),
+                  counterText: '',
+                ),
+                onChanged: (_) => setDlg(() {}),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('닫기'),
+            ),
+            TextButton(
+              onPressed: noteCtrl.text.trim().isEmpty
+                  ? null
+                  : () => Navigator.pop(ctx, true),
+              child: Text('취소 처리',
+                  style: TextStyle(
+                      color: noteCtrl.text.trim().isEmpty
+                          ? AppColors.grey400
+                          : AppColors.error)),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final note = noteCtrl.text.trim();
+    if (note.isEmpty) return;
+
+    setState(() => _isCancelling = true);
+    try {
+      await _payService.cancelTransfer(
+        attendanceId: r.id,
+        businessId: r.businessId,
+        cancelNote: note,
+      );
+      if (!mounted) return;
+      ToastHelper.showSuccess('이체가 취소되었습니다.');
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showError('이체 취소 실패: ${e.toString().replaceFirst("Exception: ", "")}');
+    } finally {
+      if (mounted) setState(() => _isCancelling = false);
+    }
+  }
 
   static const _weekdays = ['월', '화', '수', '목', '금', '토', '일'];
 
@@ -2846,6 +2933,24 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
                             '${xferDate.month}/${xferDate.day} 이체',
                             style: ResponsiveHelper.tinyStyle(ctx,
                                 color: AppColors.grey400),
+                          ),
+                        ],
+                        if (isXfer && widget.canCancelTransfer) ...[
+                          const SizedBox(height: 6),
+                          GestureDetector(
+                            onTap: _isCancelling ? null : () => _cancelTransfer(r),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                border: Border.all(color: AppColors.error.withValues(alpha: 0.5)),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text('이체 취소',
+                                  style: ResponsiveHelper.tinyStyle(ctx,
+                                      color: AppColors.error,
+                                      fontWeight: FontWeight.w600)),
+                            ),
                           ),
                         ],
                       ],
