@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'dart:async';
+import '../providers/user_provider.dart';
+import '../screens/user/user_home_screen.dart';
+import '../screens/business_admin/business_admin_home_screen.dart';
+import '../screens/super_admin/super_admin_home_screen.dart';
 
 /// 화면 이동 + 데이터 갱신 통합 헬퍼
 /// 
@@ -82,8 +87,25 @@ class NavigationHelper {
     Navigator.pop(context, true);
   }
 
-  /// 변경 없음으로 pop (편의 메서드)  
+  /// 변경 없음으로 pop (편의 메서드)
   static void popWithoutChange(BuildContext context) {
     Navigator.pop(context, false);
+  }
+
+  /// 역할에 맞는 홈 화면으로 이동 — 기존 스택 전체 제거
+  /// SuperAdmin → SuperAdminHomeScreen
+  /// BusinessAdmin / SubAdmin → BusinessAdminHomeScreen
+  /// 일반 사용자 → UserHomeScreen
+  static Future<void> goHome(BuildContext context) async {
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+    final Widget home;
+    if (userProvider.isSuperAdmin) {
+      home = const AdminHomeScreen();
+    } else if (userProvider.isBusinessAdmin || userProvider.isSubAdmin) {
+      home = const BusinessAdminHomeScreen();
+    } else {
+      home = const UserHomeScreen();
+    }
+    await pushAndRemoveAll(context, destination: home);
   }
 }
