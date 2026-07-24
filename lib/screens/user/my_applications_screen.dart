@@ -9,7 +9,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/core/application_model.dart';
 import '../../models/core/attendance_model.dart';
 import '../../models/core/employment_contract_model.dart';
-import '../../models/core/notification_model.dart';
 import '../../models/core/monthly_review_model.dart';
 import '../../models/core/review_request_model.dart';
 import '../../models/core/to_model.dart';
@@ -60,13 +59,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   int _autoLoadCount = 0;
   static const int _maxAutoLoad = 5;
 
-  // 계약서 요청 쿨다운 (앱ID → 마지막 요청 시각, 세션 내 낙관 업데이트용)
-  // 서버 쿨다운 강제: CF createNotification에서 lastContractRequestedAt 24h 체크
-  final Map<String, DateTime> _lastContractRequestMap = {};
-  final Map<String, bool> _isRequestingContract = {};
   final Set<String> _cancellingIds = {};
   final Set<String> _reviewDialogOpenIds = {};
-  static const Duration _contractRequestCooldown = Duration(hours: 24);
 
   static const int _pageSize = 20;
 
@@ -141,7 +135,6 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           _hasMore = page['hasMore'] as bool;
           _isLoading = false;
         });
-        _loadContractRequestTimes(appWithTOs.map((a) => a.application).toList());
       }
     } catch (e) {
       debugPrint('❌ 지원 내역 로드 실패: $e');
@@ -321,77 +314,6 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       }
       return status == _selectedFilter;
     }).toList();
-  }
-
-  // ── 계약서 요청 쿨다운 ──
-
-  // [A4-FIX] SharedPreferences 기반 → 서버 필드(app.lastContractRequestedAt) 기반으로 전환
-  // 재설치·타기기에서 우회 불가 (서버 쿨다운은 CF에서 강제)
-  void _loadContractRequestTimes(List<ApplicationModel> apps) {
-    final Map<String, DateTime> map = {};
-    for (final app in apps) {
-      final lastReq = app.lastContractRequestedAt;
-      if (lastReq != null) map[app.id] = lastReq;
-    }
-    if (mounted) setState(() => _lastContractRequestMap.addAll(map));
-  }
-
-  Future<void> _requestContract(ApplicationModel app) async {
-    if (_isRequestingContract[app.id] == true) return;
-    // W05-046: async gap 이전이라도 dispose 직후 호출될 수 있으므로 mounted 체크 필수
-    if (!mounted) return;
-    setState(() => _isRequestingContract[app.id] = true);
-
-    try {
-      final userProvider = Provider.of<UserProvider>(context, listen: false);
-      // W05-047: currentUser가 null인 비로그인 상태에서는 알림 발송 불가 — 조기 반환
-      final currentUser = userProvider.currentUser;
-      if (currentUser == null) {
-        ToastHelper.showError('로그인이 필요합니다.');
-        return;
-      }
-      final workerName = currentUser.name;
-
-      final bizDoc = await FirebaseFirestore.instance
-          .collection('businesses')
-          .doc(app.businessId)
-          .get();
-      if (!mounted) return;
-      final bizData = bizDoc.data();
-      final adminIds = List<String>.from(bizData?['adminIds'] as List? ?? []);
-      if (adminIds.isEmpty) {
-        final fallback = bizData?['ownerId'] as String?;
-        if (fallback != null && fallback.isNotEmpty) adminIds.add(fallback);
-      }
-      if (adminIds.isEmpty) {
-        ToastHelper.showError('사업주 정보를 찾을 수 없습니다.');
-        return;
-      }
-
-      // 관리자 N명에게 알림을 병렬 발송 — 직렬 대비 N배 빠름
-      await Future.wait(adminIds.map((adminUid) {
-        final notification = NotificationModel.createContractRequested(
-          userId: adminUid,
-          workerName: workerName,
-          businessId: app.businessId,
-          applicationId: app.id,
-        );
-        return _firestoreService.createNotification(notification);
-      }));
-      if (!mounted) return;
-
-      // 세션 내 낙관 업데이트 — 서버 lastContractRequestedAt은 CF가 설정
-      final now = DateTime.now();
-      if (!mounted) return;
-      setState(() => _lastContractRequestMap[app.id] = now);
-      ToastHelper.showSuccess('계약서 발송을 요청했습니다.');
-    } catch (e) {
-      debugPrint('❌ 계약서 요청 실패: $e');
-      if (!mounted) return;
-      ToastHelper.showError(_firestoreErrMsg(e, '계약서 요청에 실패했습니다. 다시 시도해 주세요.'));
-    } finally {
-      if (mounted) setState(() => _isRequestingContract[app.id] = false);
-    }
   }
 
   Future<void> _cancelApplication(String applicationId) async {
@@ -1107,53 +1029,6 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   /// 계약서 섹션 (확정된 지원서용)
   Widget _buildContractSection(ApplicationModel app) {
     final contract = _contractMap[app.id];
-
-    // 계약서 미생성 + 계약 대기 → 계약서 요청하기 버튼
-    if (contract == null && app.status == AppStatus.contractPending) {
-      final lastReq = _lastContractRequestMap[app.id];
-      final cooldownActive = lastReq != null &&
-          DateTime.now().difference(lastReq) < _contractRequestCooldown;
-      final isRequesting = _isRequestingContract[app.id] == true;
-
-      return Container(
-        margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 10)),
-        width: double.infinity,
-        child: OutlinedButton.icon(
-          onPressed: (cooldownActive || isRequesting)
-              ? null
-              : () => _requestContract(app),
-          icon: isRequesting
-              ? SizedBox(
-                  width: ResponsiveHelper.iconSize(context, 14),
-                  height: ResponsiveHelper.iconSize(context, 14),
-                  child: const CircularProgressIndicator(strokeWidth: 2),
-                )
-              : Icon(Icons.mail_outline, size: ResponsiveHelper.iconSize(context, 16)),
-          label: Text(
-            cooldownActive
-                ? '요청 완료 (24시간 내 재요청 불가)'
-                : '계약서 요청하기',
-            style: ResponsiveHelper.smallStyle(context).copyWith(
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: Theme.of(context).primaryColor,
-            side: BorderSide(
-              color: cooldownActive
-                  ? AppColors.grey300
-                  : Theme.of(context).primaryColor,
-            ),
-            padding: EdgeInsets.symmetric(
-              vertical: ResponsiveHelper.spacing(context, 10),
-            ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-        ),
-      );
-    }
 
     if (contract == null) return const SizedBox.shrink();
 
