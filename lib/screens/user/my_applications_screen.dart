@@ -368,16 +368,16 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         return;
       }
 
-      for (final adminUid in adminIds) {
-        if (!mounted) return;
+      // 관리자 N명에게 알림을 병렬 발송 — 직렬 대비 N배 빠름
+      await Future.wait(adminIds.map((adminUid) {
         final notification = NotificationModel.createContractRequested(
           userId: adminUid,
           workerName: workerName,
           businessId: app.businessId,
           applicationId: app.id,
         );
-        await _firestoreService.createNotification(notification);
-      }
+        return _firestoreService.createNotification(notification);
+      }));
       if (!mounted) return;
 
       // 세션 내 낙관 업데이트 — 서버 lastContractRequestedAt은 CF가 설정
@@ -611,7 +611,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                 workDetails: to.workDetails,
               ),
             ),
-          ).then((_) { if (mounted) _loadApplications(); }),
+          ).then((changed) { if (changed == true && mounted) _loadApplications(); }),
           borderRadius: BorderRadius.circular(12),
           child: Padding(
             padding: EdgeInsets.symmetric(
@@ -1599,15 +1599,17 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         year: reviewDate.year,
         month: reviewDate.month,
       );
-      final reviewRequest =
-          await MonthlyReviewService().getReviewRequest(requestKey);
-      if (!mounted) return;
-      final List<AttendanceModel> attendances =
-          await FirestoreService().getMyMonthlyAttendances(
-        userId: uid,
-        year: reviewDate.year,
-        month: reviewDate.month,
-      );
+      // 두 쿼리는 서로 독립적 — 병렬 실행으로 RTT 1회 절약
+      ReviewRequestModel? reviewRequest;
+      List<AttendanceModel> attendances = [];
+      await Future.wait([
+        MonthlyReviewService().getReviewRequest(requestKey).then((r) => reviewRequest = r),
+        FirestoreService().getMyMonthlyAttendances(
+          userId: uid,
+          year: reviewDate.year,
+          month: reviewDate.month,
+        ).then((a) => attendances = a),
+      ]);
       if (!mounted) return;
       final workDaysInMonth = attendances
           .where((a) =>
