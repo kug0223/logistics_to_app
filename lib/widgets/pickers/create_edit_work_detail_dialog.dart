@@ -48,11 +48,14 @@ class WorkDetailDialog {
     final result = await showDialog<WorkDetailInput>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          return Dialog(
-            backgroundColor: Colors.white,
-            shape: RoundedRectangleBorder(
+      builder: (ctx) => MediaQuery.removeViewInsets(
+        removeBottom: true,
+        context: ctx,
+        child: StatefulBuilder(
+          builder: (context, setDialogState) {
+            return Dialog(
+              backgroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(24),
             ),
             insetPadding: EdgeInsets.symmetric(
@@ -228,7 +231,8 @@ class WorkDetailDialog {
               ),
             ),
           );
-        },
+          },
+        ),
       ),
     );
     wageController.dispose();
@@ -285,9 +289,12 @@ class WorkDetailDialog {
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          return Dialog(
+      builder: (ctx) => MediaQuery.removeViewInsets(
+        removeBottom: true,
+        context: ctx,
+        child: StatefulBuilder(
+          builder: (context, setDialogState) {
+            return Dialog(
             backgroundColor: Colors.white,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(24),
@@ -466,8 +473,9 @@ class WorkDetailDialog {
                 ],
               ),
             ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
     wageController.dispose();
