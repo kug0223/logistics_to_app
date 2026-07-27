@@ -394,7 +394,10 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
               ),
               // 닫기 버튼
               IconButton(
-                onPressed: () => Navigator.pop(context),
+                onPressed: () {
+                  FocusScope.of(context).unfocus();
+                  Navigator.pop(context);
+                },
                 icon: const Icon(Icons.close, color: Colors.white),
               ),
             ],
@@ -1772,7 +1775,10 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       child: SizedBox(
         width: double.infinity,
         child: OutlinedButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            FocusScope.of(context).unfocus();
+            Navigator.pop(context);
+          },
           style: OutlinedButton.styleFrom(
             foregroundColor: AppColors.grey600,
             side: BorderSide(color: AppColors.grey300),

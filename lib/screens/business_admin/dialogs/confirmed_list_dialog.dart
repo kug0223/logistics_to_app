@@ -1207,7 +1207,10 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
                     children: [
                       Expanded(
                         child: OutlinedButton(
-                          onPressed: () => Navigator.pop(dialogCtx),
+                          onPressed: () {
+                            FocusScope.of(dialogCtx).unfocus();
+                            Navigator.pop(dialogCtx);
+                          },
                           child: const Text('취소'),
                         ),
                       ),
@@ -1221,6 +1224,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
                                           customController.text.trim().isNotEmpty
                                       ? customController.text.trim()
                                       : selectedReason!;
+                                  FocusScope.of(dialogCtx).unfocus();
                                   Navigator.pop(dialogCtx, reason);
                                 },
                           style: ElevatedButton.styleFrom(

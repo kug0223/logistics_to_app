@@ -936,7 +936,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                 color: Colors.white.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(12),
                 child: InkWell(
-                  onTap: () => Navigator.pop(context, _hasChanges),
+                  onTap: () {
+                    FocusScope.of(context).unfocus();
+                    Navigator.pop(context, _hasChanges);
+                  },
                   borderRadius: BorderRadius.circular(12),
                   child: Padding(
                     padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),

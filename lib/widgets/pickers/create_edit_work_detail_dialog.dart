@@ -47,6 +47,7 @@ class WorkDetailDialog {
 
     final result = await showDialog<WorkDetailInput>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           return Dialog(
@@ -283,6 +284,7 @@ class WorkDetailDialog {
 
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           return Dialog(
@@ -533,7 +535,10 @@ class WorkDetailDialog {
             color: Colors.white.withValues(alpha: 0.2),
             borderRadius: BorderRadius.circular(8),
             child: InkWell(
-              onTap: () => Navigator.pop(context),
+              onTap: () {
+                FocusScope.of(context).unfocus();
+                Navigator.pop(context);
+              },
               borderRadius: BorderRadius.circular(8),
               child: Padding(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
@@ -703,7 +708,10 @@ class WorkDetailDialog {
         children: [
           Expanded(
             child: OutlinedButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () {
+                FocusScope.of(context).unfocus();
+                Navigator.pop(context);
+              },
               style: OutlinedButton.styleFrom(
                 padding: EdgeInsets.symmetric(
                   vertical: ResponsiveHelper.spacing(context, 16),
@@ -932,7 +940,10 @@ class WorkDetailDialog {
             color: Colors.white.withValues(alpha: 0.2),
             borderRadius: BorderRadius.circular(8),
             child: InkWell(
-              onTap: () => Navigator.pop(context),
+              onTap: () {
+                FocusScope.of(context).unfocus();
+                Navigator.pop(context);
+              },
               borderRadius: BorderRadius.circular(8),
               child: Padding(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
@@ -1756,7 +1767,10 @@ class WorkDetailDialog {
         children: [
           Expanded(
             child: OutlinedButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () {
+                FocusScope.of(context).unfocus();
+                Navigator.pop(context);
+              },
               style: OutlinedButton.styleFrom(
                 padding: EdgeInsets.symmetric(
                   vertical: ResponsiveHelper.spacing(context, 16),

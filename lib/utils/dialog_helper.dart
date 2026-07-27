@@ -403,9 +403,18 @@ class DialogHelper {
       ),
       builder: (ctx) {
         final safeBottom = max(8.0, MediaQuery.viewPaddingOf(ctx).bottom);
-        return Padding(
-          padding: EdgeInsets.only(bottom: safeBottom),
-          child: builder(ctx),
+        return PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, result) {
+            if (!didPop) {
+              FocusScope.of(ctx).unfocus();
+              Navigator.pop(ctx);
+            }
+          },
+          child: Padding(
+            padding: EdgeInsets.only(bottom: safeBottom),
+            child: builder(ctx),
+          ),
         );
       },
     );

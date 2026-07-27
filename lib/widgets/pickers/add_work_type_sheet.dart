@@ -124,6 +124,7 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
         ? 'material:${_selectedIcon!.icon.codePoint}'
         : null;
 
+    FocusScope.of(context).unfocus();
     Navigator.pop(context, {
       'name': name,
       'icon': iconStr,
@@ -212,7 +213,10 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
             const Spacer(),
             IconButton(
               icon: const Icon(Icons.close),
-              onPressed: () => Navigator.pop(context),
+              onPressed: () {
+                FocusScope.of(context).unfocus();
+                Navigator.pop(context);
+              },
             ),
           ],
         ),
@@ -482,7 +486,10 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
         children: [
           Expanded(
             child: OutlinedButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () {
+                FocusScope.of(context).unfocus();
+                Navigator.pop(context);
+              },
               style: OutlinedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
