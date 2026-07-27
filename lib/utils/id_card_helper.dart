@@ -193,6 +193,7 @@ class IdCardHelper {
 
     final confirmed = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) {
           return StyledDialog(
@@ -313,12 +314,12 @@ class IdCardHelper {
               ],
             ),
             actions: [
-              StyledDialogButton.cancel(onPressed: () => Navigator.pop(dialogContext, false)),
+              StyledDialogButton.cancel(onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(dialogContext, false); }),
               StyledDialogButton.primary(
                 text: '요청 보내기',
                 backgroundColor: AppColors.info,
                 onPressed: selectedReason != null
-                    ? () => Navigator.pop(dialogContext, true)
+                    ? () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(dialogContext, true); }
                     : () {},
               ),
             ],

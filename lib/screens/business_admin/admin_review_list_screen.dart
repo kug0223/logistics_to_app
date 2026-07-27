@@ -150,6 +150,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     final ctrl = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         title: const Text('답변 작성'),
         content: TextField(
@@ -163,11 +164,11 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
+            onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(ctx, false); },
             child: const Text('취소'),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
+            onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(ctx, true); },
             child: const Text('등록'),
           ),
         ],

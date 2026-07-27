@@ -621,7 +621,7 @@ class _PayrollPaymentDashboardScreenState
     final primaryColor = Theme.of(context).primaryColor;
     final note = await showDialog<String>(
       context: context,
-      barrierDismissible: true,
+      barrierDismissible: false,
       builder: (ctx) => Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
@@ -678,7 +678,7 @@ class _PayrollPaymentDashboardScreenState
                       autofocus: true,
                       maxLines: 3,
                       textInputAction: TextInputAction.done,
-                      onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+                      onSubmitted: (v) { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(ctx, v.trim()); },
                       style: ResponsiveHelper.bodyStyle(ctx),
                       decoration: InputDecoration(
                         hintText: _lastTransferNote.isNotEmpty
@@ -694,7 +694,7 @@ class _PayrollPaymentDashboardScreenState
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+                      onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(ctx, ctrl.text.trim()); },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: primaryColor,
                         foregroundColor: Colors.white,
@@ -863,6 +863,7 @@ class _PayrollPaymentDashboardScreenState
     try {
       final reason = await showDialog<String>(
         context: context,
+        barrierDismissible: false,
         builder: (ctx) => AlertDialog(
           title: const Text('중간정산 거절'),
           content: TextField(
@@ -871,9 +872,9 @@ class _PayrollPaymentDashboardScreenState
             autofocus: true,
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('취소')),
+            TextButton(onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(ctx); }, child: const Text('취소')),
             TextButton(
-              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+              onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(ctx, ctrl.text.trim()); },
               child: const Text('거절'),
             ),
           ],
@@ -922,6 +923,7 @@ class _PayrollPaymentDashboardScreenState
     try {
       final reason = await showDialog<String>(
         context: context,
+        barrierDismissible: false,
         builder: (ctx) => AlertDialog(
           title: const Text('지급방식 변경 거절'),
           content: TextField(
@@ -930,9 +932,9 @@ class _PayrollPaymentDashboardScreenState
             autofocus: true,
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('취소')),
+            TextButton(onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(ctx); }, child: const Text('취소')),
             TextButton(
-              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+              onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(ctx, ctrl.text.trim()); },
               child: const Text('거절'),
             ),
           ],

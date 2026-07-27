@@ -1481,6 +1481,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
         final controller = TextEditingController(text: currentTitle);
         final newTitle = await showDialog<String>(
           context: this.context,
+          barrierDismissible: false,
           builder: (ctx) => StyledDialog(
             title: '카드 제목 변경',
             subtitle: '공고 카드에 표시될 제목을 설정합니다',
@@ -1492,16 +1493,25 @@ class _TOGroupCardState extends State<TOGroupCard> {
               hintText: masterTO.title,
               prefixIcon: Icons.title,
               autofocus: true,
-              onFieldSubmitted: (_) => Navigator.pop(ctx, controller.text.trim()),
+              onFieldSubmitted: (_) {
+                FocusManager.instance.primaryFocus?.unfocus();
+                Navigator.pop(ctx, controller.text.trim());
+              },
             ),
             actions: [
               StyledDialogButton.cancel(
-                onPressed: () => Navigator.pop(ctx),
+                onPressed: () {
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  Navigator.pop(ctx);
+                },
               ),
               StyledDialogButton.primary(
                 text: '저장',
                 backgroundColor: AppColors.purple,
-                onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+                onPressed: () {
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  Navigator.pop(ctx, controller.text.trim());
+                },
               ),
             ],
           ),

@@ -456,6 +456,7 @@ class DialogHelper {
 
     final result = await showDialog<String>(
       context: context,
+      barrierDismissible: false,
       builder: (dialogContext) => _buildDialog(
         dialogContext,
         title: title,
@@ -499,12 +500,13 @@ class DialogHelper {
           ],
         ),
         actions: [
-          _cancelBtn(dialogContext, () => Navigator.pop(dialogContext), cancelText),
+          _cancelBtn(dialogContext, () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(dialogContext); }, cancelText),
           _confirmBtn(
             dialogContext,
             () {
               final value = controller.text.trim();
               if (validator != null && !validator(value)) return;
+              FocusManager.instance.primaryFocus?.unfocus();
               Navigator.pop(dialogContext, value);
             },
             confirmText,
@@ -513,8 +515,8 @@ class DialogHelper {
         ],
       ),
     );
-    
-    controller.dispose();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
     return result;
   }
   /// 거절 사유 선택 다이얼로그
@@ -543,6 +545,7 @@ class DialogHelper {
     
     final result = await showDialog<String>(
       context: context,
+      barrierDismissible: false,
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
@@ -607,7 +610,7 @@ class DialogHelper {
               ),
               actions: [
                 StyledDialogButton.cancel(
-                  onPressed: () => Navigator.pop(dialogContext),
+                  onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(dialogContext); },
                 ),
                 StyledDialogButton.danger(
                   text: '거절',
@@ -627,6 +630,7 @@ class DialogHelper {
                           } else {
                             finalReason = selectedReason!;
                           }
+                          FocusManager.instance.primaryFocus?.unfocus();
                           Navigator.pop(dialogContext, finalReason);
                         },
                 ),

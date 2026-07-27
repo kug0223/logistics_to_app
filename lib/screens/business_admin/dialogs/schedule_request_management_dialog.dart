@@ -684,6 +684,7 @@ class _ScheduleRequestManagementDialogState
 
     final confirmed = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StyledDialog(
         title: '요청 거절',
         icon: Icons.cancel_outlined,
@@ -716,11 +717,11 @@ class _ScheduleRequestManagementDialogState
         ),
         actions: [
           StyledDialogButton.cancel(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(context, false); },
           ),
           StyledDialogButton.danger(
             text: '거절',
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(context, true); },
           ),
         ],
       ),

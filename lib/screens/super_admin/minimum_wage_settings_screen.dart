@@ -87,6 +87,7 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
     // → showDialog Future 완료 시점(애니메이션 시작 전)에 dispose되는 문제 방지
     final result = await showDialog<({int year, int wage})?>(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) => _WageEditDialog(
         isEdit: existingYear != null,
         existingYear: existingYear,
@@ -338,6 +339,7 @@ class _WageEditDialogState extends State<_WageEditDialog> {
       return;
     }
 
+    FocusManager.instance.primaryFocus?.unfocus();
     Navigator.pop(context, (year: year, wage: wage));
   }
 
@@ -388,7 +390,10 @@ class _WageEditDialogState extends State<_WageEditDialog> {
         ],
       ),
       actions: [
-        StyledDialogButton.cancel(onPressed: () => Navigator.pop(context)),
+        StyledDialogButton.cancel(onPressed: () {
+          FocusManager.instance.primaryFocus?.unfocus();
+          Navigator.pop(context);
+        }),
         StyledDialogButton.primary(
           text: widget.isEdit ? '수정' : '추가',
           onPressed: _submit,

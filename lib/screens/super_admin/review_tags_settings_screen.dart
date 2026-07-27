@@ -109,6 +109,7 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
     try {
       final result = await showDialog<String>(
         context: context,
+        barrierDismissible: false,
         builder: (context) => _TagInputDialog(
           title: '태그 추가',
           controller: controller,
@@ -444,7 +445,10 @@ class _TagInputDialog extends StatelessWidget {
       ),
       actions: [
         StyledDialogButton.cancel(
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            FocusManager.instance.primaryFocus?.unfocus();
+            Navigator.pop(context);
+          },
         ),
         StyledDialogButton.primary(
           text: '추가',
@@ -454,6 +458,7 @@ class _TagInputDialog extends StatelessWidget {
               ToastHelper.showError('태그 이름을 입력하세요');
               return;
             }
+            FocusManager.instance.primaryFocus?.unfocus();
             Navigator.pop(context, text);
           },
         ),

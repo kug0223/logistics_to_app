@@ -517,6 +517,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
           if (businessId != null) {
             showDialog(
               context: context,
+              barrierDismissible: false,
               builder: (_) => FixedWorkerManagementDialog(
                 initialBusinessId: businessId,
                 onChanged: () {},

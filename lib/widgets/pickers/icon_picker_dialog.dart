@@ -29,6 +29,7 @@ class IconPickerDialog {
     final theme = Theme.of(context);
     return showDialog<IconItem>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => _IconPickerWidget(
         theme: theme,
         initialIcon: initialIcon,

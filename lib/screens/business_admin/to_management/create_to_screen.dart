@@ -352,6 +352,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
     final selectedTO = await showDialog<TOModel>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => _buildLoadFromExistingDialog(),
     );
 

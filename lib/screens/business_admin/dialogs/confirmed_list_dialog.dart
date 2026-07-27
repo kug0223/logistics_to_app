@@ -1098,6 +1098,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
 
     final result = await showDialog<String>(
       context: context,
+      barrierDismissible: false,
       builder: (dialogCtx) => StatefulBuilder(
         builder: (ctx, setDialogState) => Dialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -1243,7 +1244,9 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
       ),
     );
 
-    customController.dispose();
+    Future<void>.delayed(const Duration(milliseconds: 400)).then((_) {
+      customController.dispose();
+    });
     return result;
   }
 

@@ -2097,6 +2097,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
 
     final result = await showDialog<String>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           return Dialog(
@@ -2151,7 +2152,10 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                             color: Colors.white,
                             size: ResponsiveHelper.iconSize(context, 24),
                           ),
-                          onPressed: () => Navigator.pop(context),
+                          onPressed: () {
+                            FocusManager.instance.primaryFocus?.unfocus();
+                            Navigator.pop(context);
+                          },
                         ),
                       ],
                     ),
@@ -2248,7 +2252,10 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                       children: [
                         Expanded(
                           child: OutlinedButton(
-                            onPressed: () => Navigator.pop(context),
+                            onPressed: () {
+                              FocusManager.instance.primaryFocus?.unfocus();
+                              Navigator.pop(context);
+                            },
                             style: OutlinedButton.styleFrom(
                               foregroundColor: AppColors.grey600,
                               side: BorderSide(color: AppColors.grey300),
@@ -2268,6 +2275,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                                             customReasonController.text.trim().isNotEmpty
                                         ? customReasonController.text.trim()
                                         : selectedReason;
+                                    FocusManager.instance.primaryFocus?.unfocus();
                                     Navigator.pop(context, reason);
                                   }
                                 : null,
@@ -2292,7 +2300,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         },
       ),
     );
-    customReasonController.dispose();
+    Future<void>.delayed(const Duration(milliseconds: 400)).then((_) {
+      customReasonController.dispose();
+    });
     return result;
   }
 
@@ -2424,6 +2434,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       showDialog(
         context: rootNav.context,
+        barrierDismissible: false,
         builder: (context) => FixedWorkerManagementDialog(
           businessIds: [businessId],
           initialBusinessId: businessId,

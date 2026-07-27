@@ -124,6 +124,7 @@ class _InsuranceRateSettingsScreenState
   Future<int?> _showYearPickerDialog() {
     return showDialog<int>(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) => _YearPickerDialog(
         initialYear: DateTime.now().year + 1,
       ),
@@ -391,6 +392,7 @@ class _YearPickerDialogState extends State<_YearPickerDialog> {
 
   void _submit() {
     final v = int.tryParse(_controller.text);
+    FocusManager.instance.primaryFocus?.unfocus();
     Navigator.pop(context, v);
   }
 
@@ -411,7 +413,10 @@ class _YearPickerDialogState extends State<_YearPickerDialog> {
         onFieldSubmitted: (_) => _submit(),
       ),
       actions: [
-        StyledDialogButton.cancel(onPressed: () => Navigator.pop(context)),
+        StyledDialogButton.cancel(onPressed: () {
+          FocusManager.instance.primaryFocus?.unfocus();
+          Navigator.pop(context);
+        }),
         StyledDialogButton.primary(text: '추가', onPressed: _submit),
       ],
     );

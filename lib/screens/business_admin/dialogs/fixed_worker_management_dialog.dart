@@ -2151,6 +2151,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
     final confirmed = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StyledDialog(
         title: '추가 근무 요청',
         icon: Icons.add_circle_outline,
@@ -2182,11 +2183,17 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         ),
         actions: [
           StyledDialogButton.cancel(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () {
+              FocusManager.instance.primaryFocus?.unfocus();
+              Navigator.pop(context, false);
+            },
           ),
           StyledDialogButton.primary(
             text: '요청',
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () {
+              FocusManager.instance.primaryFocus?.unfocus();
+              Navigator.pop(context, true);
+            },
           ),
         ],
       ),
@@ -2324,6 +2331,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
     final confirmed = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StyledDialog(
         title: '미출근 요청',
         icon: Icons.remove_circle_outline,
@@ -2355,11 +2363,17 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         ),
         actions: [
           StyledDialogButton.cancel(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () {
+              FocusManager.instance.primaryFocus?.unfocus();
+              Navigator.pop(context, false);
+            },
           ),
           StyledDialogButton.primary(
             text: '요청',
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () {
+              FocusManager.instance.primaryFocus?.unfocus();
+              Navigator.pop(context, true);
+            },
           ),
         ],
       ),
@@ -2443,6 +2457,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
     final result = await showDialog<String>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           return Dialog(
@@ -2491,7 +2506,10 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                         ),
                         IconButton(
                           icon: Icon(Icons.close, color: Colors.white, size: ResponsiveHelper.iconSize(context, 24)),
-                          onPressed: () => Navigator.pop(context),
+                          onPressed: () {
+                            FocusManager.instance.primaryFocus?.unfocus();
+                            Navigator.pop(context);
+                          },
                         ),
                       ],
                     ),
@@ -2600,7 +2618,10 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                       children: [
                         Expanded(
                           child: OutlinedButton(
-                            onPressed: () => Navigator.pop(context),
+                            onPressed: () {
+                              FocusManager.instance.primaryFocus?.unfocus();
+                              Navigator.pop(context);
+                            },
                             style: OutlinedButton.styleFrom(
                               foregroundColor: AppColors.grey600,
                               side: BorderSide(color: AppColors.grey300),
@@ -2618,6 +2639,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                                             customReasonController.text.trim().isNotEmpty
                                         ? customReasonController.text.trim()
                                         : selectedReason;
+                                    FocusManager.instance.primaryFocus?.unfocus();
                                     Navigator.pop(context, reason);
                                   }
                                 : null,
@@ -2640,7 +2662,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       ),
     );
 
-    customReasonController.dispose();
+    Future<void>.delayed(const Duration(milliseconds: 400)).then((_) {
+      customReasonController.dispose();
+    });
 
     if (result == null || !mounted) return;
 

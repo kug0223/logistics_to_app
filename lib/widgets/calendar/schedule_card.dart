@@ -817,6 +817,7 @@ class ScheduleCard extends StatelessWidget {
     
     final confirmed = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
@@ -869,14 +870,14 @@ class ScheduleCard extends StatelessWidget {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(context, false); },
             child: Text(
               '취소',
               style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
             ),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(context, true); },
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.warning,
               shape: RoundedRectangleBorder(
@@ -945,6 +946,7 @@ class ScheduleCard extends StatelessWidget {
     
     final confirmed = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
@@ -1022,14 +1024,14 @@ class ScheduleCard extends StatelessWidget {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(context, false); },
             child: Text(
               '취소',
               style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
             ),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(context, true); },
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.error,
               shape: RoundedRectangleBorder(
@@ -1090,6 +1092,7 @@ class ScheduleCard extends StatelessWidget {
     
     final confirmed = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
@@ -1167,14 +1170,14 @@ class ScheduleCard extends StatelessWidget {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(context, false); },
             child: Text(
               '취소',
               style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
             ),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(context, true); },
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.success,
               shape: RoundedRectangleBorder(

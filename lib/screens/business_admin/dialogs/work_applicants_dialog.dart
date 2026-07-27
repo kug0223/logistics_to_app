@@ -2165,6 +2165,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       showDialog(
         context: rootNav.context,
+        barrierDismissible: false,
         builder: (_) => FixedWorkerManagementDialog(
           businessIds: [businessId],
           initialBusinessId: businessId,

@@ -56,6 +56,7 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
   Future<void> _invite() async {
     final result = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (_) => _InviteDialog(
         businessId: widget.businessId,
         businessName: widget.businessName,
@@ -489,7 +490,7 @@ class _InviteDialogState extends State<_InviteDialog> {
                     color: Colors.white.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(8),
                     child: InkWell(
-                      onTap: () => Navigator.pop(context, false),
+                      onTap: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(context, false); },
                       borderRadius: BorderRadius.circular(8),
                       child: Padding(
                         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
@@ -710,7 +711,7 @@ class _InviteDialogState extends State<_InviteDialog> {
                       ),
                       ),  // SizedBox
                       TextButton(
-                        onPressed: () => Navigator.pop(context, false),
+                        onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(context, false); },
                         child: Text('취소',
                             style: ResponsiveHelper.smallStyle(context,
                                 color: AppColors.grey400)),

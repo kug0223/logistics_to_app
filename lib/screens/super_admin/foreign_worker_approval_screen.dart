@@ -270,6 +270,7 @@ class _ForeignWorkerApprovalScreenState
   Future<String?> _showRejectDialog(String name) {
     return showDialog<String>(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) => _RejectReasonDialog(name: name),
     );
   }
@@ -726,11 +727,15 @@ class _RejectReasonDialogState extends State<_RejectReasonDialog> {
         autofocus: true,
       ),
       actions: [
-        StyledDialogButton.cancel(onPressed: () => Navigator.pop(context)),
+        StyledDialogButton.cancel(onPressed: () {
+          FocusManager.instance.primaryFocus?.unfocus();
+          Navigator.pop(context);
+        }),
         StyledDialogButton.danger(
           text: '거절',
           onPressed: () {
             if (_controller.text.trim().isEmpty) return;
+            FocusManager.instance.primaryFocus?.unfocus();
             Navigator.pop(context, _controller.text.trim());
           },
         ),

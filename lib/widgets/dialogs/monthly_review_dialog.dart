@@ -294,7 +294,10 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
             ),
           ),
           IconButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () {
+              FocusManager.instance.primaryFocus?.unfocus();
+              Navigator.pop(context);
+            },
             icon: Icon(
               Icons.close,
               color: Colors.white,
@@ -735,7 +738,10 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
         children: [
           Expanded(
             child: StyledDialogButton.cancel(
-              onPressed: _isSubmitting ? null : () => Navigator.pop(context),
+              onPressed: _isSubmitting ? null : () {
+                FocusManager.instance.primaryFocus?.unfocus();
+                Navigator.pop(context);
+              },
             ),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),

@@ -78,6 +78,7 @@ class WageDetailDialog extends StatefulWidget {
   }) {
     return showDialog<WageDialogResult>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => WageDetailDialog(
         app: app,
         user: user,
@@ -568,7 +569,10 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
             ),
           ),
           IconButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () {
+              FocusManager.instance.primaryFocus?.unfocus();
+              Navigator.pop(context);
+            },
             icon: Icon(Icons.close, color: Colors.white,
                 size: ResponsiveHelper.iconSize(context, 24)),
           ),
@@ -1552,7 +1556,10 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: () => Navigator.pop(context),
+                onPressed: () {
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  Navigator.pop(context);
+                },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.success,
                   foregroundColor: Colors.white,
@@ -1585,7 +1592,10 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
       children: [
         Expanded(
           child: OutlinedButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () {
+              FocusManager.instance.primaryFocus?.unfocus();
+              Navigator.pop(context);
+            },
             style: OutlinedButton.styleFrom(
               foregroundColor: AppColors.grey600,
               side: BorderSide(color: theme.dividerColor),

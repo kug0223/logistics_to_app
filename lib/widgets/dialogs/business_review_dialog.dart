@@ -257,7 +257,10 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
           ),
           IconButton(
             tooltip: '닫기',
-            onPressed: () => Navigator.pop(context),
+            onPressed: () {
+              FocusManager.instance.primaryFocus?.unfocus();
+              Navigator.pop(context);
+            },
             icon: const Icon(Icons.close, color: Colors.white),
           ),
         ],
@@ -647,7 +650,10 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
         children: [
           Expanded(
             child: StyledDialogButton.cancel(
-              onPressed: _isSubmitting ? null : () => Navigator.pop(context),
+              onPressed: _isSubmitting ? null : () {
+                FocusManager.instance.primaryFocus?.unfocus();
+                Navigator.pop(context);
+              },
             ),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -687,6 +693,7 @@ Future<bool?> showBusinessReviewDialog(
 
   return showDialog<bool>(
     context: context,
+    barrierDismissible: false,
     builder: (context) => BusinessReviewDialog(
       reviewerId: reviewerId,
       businessId: businessId,

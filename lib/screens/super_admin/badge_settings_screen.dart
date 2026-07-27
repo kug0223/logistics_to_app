@@ -110,6 +110,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
   Future<void> _editBadge(BadgeModel badge) async {
     final result = await showDialog<BadgeModel>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => _BadgeEditDialog(badge: badge),
     );
     
@@ -132,6 +133,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
     try {
       final result = await showDialog<BadgeModel>(
         context: context,
+        barrierDismissible: false,
         builder: (context) => const _BadgeEditDialog(),
       );
 
@@ -633,7 +635,10 @@ class _BadgeEditDialogState extends State<_BadgeEditDialog> {
       ),
       actions: [
         StyledDialogButton.cancel(
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            FocusManager.instance.primaryFocus?.unfocus();
+            Navigator.pop(context);
+          },
         ),
         StyledDialogButton.primary(
           text: isEdit ? '수정' : '추가',
@@ -665,7 +670,8 @@ class _BadgeEditDialogState extends State<_BadgeEditDialog> {
                   ? null
                   : _benefitController.text.trim(),
             );
-            
+
+            FocusManager.instance.primaryFocus?.unfocus();
             Navigator.pop(context, result);
           },
         ),

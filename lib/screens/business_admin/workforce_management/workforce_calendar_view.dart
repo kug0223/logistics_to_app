@@ -478,6 +478,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
 
       showDialog(
         context: context,
+        barrierDismissible: false,
         builder: (context) => FixedWorkerManagementDialog(
           businessIds: businesses.map((b) => b.id).toList(),
           businesses: businesses,

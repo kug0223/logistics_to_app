@@ -2007,6 +2007,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     try {
     final result = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StyledDialog(
         title: '주소 직접 입력',
         icon: Icons.location_on,
@@ -2047,11 +2048,11 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         ),
         actions: [
           StyledDialogButton.cancel(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(context, false); },
           ),
           StyledDialogButton.primary(
             text: '확인',
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(context, true); },
           ),
         ],
       ),
