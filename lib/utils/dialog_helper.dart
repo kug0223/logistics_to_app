@@ -371,6 +371,38 @@ class DialogHelper {
     );
   }
 
+  /// 공통 바텀시트 — 앱 전체 디자인 통일 전담
+  ///
+  /// 모든 showModalBottomSheet 호출 대신 반드시 이 함수를 사용한다.
+  /// 직접 showModalBottomSheet를 호출하면 shape/useSafeArea 누락 위험이 있다.
+  ///
+  /// 사용 예:
+  /// ```dart
+  /// final result = await DialogHelper.showSheet<String>(
+  ///   context,
+  ///   builder: (ctx) => MySheet(),
+  /// );
+  /// ```
+  static Future<T?> showSheet<T>(
+    BuildContext context, {
+    required WidgetBuilder builder,
+    bool isScrollControlled = false,
+    bool enableDrag = true,
+    bool isDismissible = true,
+  }) {
+    return showModalBottomSheet<T>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: isScrollControlled,
+      enableDrag: enableDrag,
+      isDismissible: isDismissible,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: builder,
+    );
+  }
+
   /// 텍스트 입력 다이얼로그
   /// 
   /// 사용 예:

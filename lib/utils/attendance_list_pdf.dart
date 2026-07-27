@@ -18,6 +18,7 @@ import '../models/core/user_model.dart';
 import '../theme/app_colors.dart';
 import '../widgets/common/loading_widget.dart';
 import '../widgets/dialogs/styled_dialog.dart';
+import 'dialog_helper.dart';
 import 'format_helper.dart';
 import 'responsive_helper.dart';
 import 'toast_helper.dart';
@@ -163,13 +164,11 @@ class AttendanceListPdf {
     String? businessName,
     DateTime? date,
   }) async {
-    showModalBottomSheet(
-      context: context,
-      useSafeArea: true,
+    DialogHelper.showSheet(
+      context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      enableDrag: false,    // InteractiveViewer 제스처와 충돌 방지
-      isDismissible: false, // PDF 재생성 중 실수로 닫히는 것 방지
+      enableDrag: false,
+      isDismissible: false,
       builder: (context) => _PreviewBottomSheetWithBytes(
         initialData: data,
         initialPdfBytes: pdfBytes,

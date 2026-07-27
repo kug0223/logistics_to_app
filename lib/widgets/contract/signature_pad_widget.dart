@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:signature/signature.dart';
 
 import '../../theme/app_colors.dart';
+import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 
@@ -209,14 +210,9 @@ Future<Uint8List?> showSignaturePad(
   String title = '서명해주세요',
 }) async {
   Uint8List? result;
-  await showModalBottomSheet(
-    context: context,
-    useSafeArea: true,
+  await DialogHelper.showSheet(
+    context,
     isScrollControlled: true,
-    backgroundColor: Colors.white,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-    ),
     builder: (_) => SignaturePadWidget(
       title: title,
       onCancel: () => Navigator.pop(context),
