@@ -536,7 +536,7 @@ class WorkDetailDialog {
             borderRadius: BorderRadius.circular(8),
             child: InkWell(
               onTap: () {
-                FocusScope.of(context).unfocus();
+                FocusManager.instance.primaryFocus?.unfocus();
                 Navigator.pop(context);
               },
               borderRadius: BorderRadius.circular(8),
@@ -709,7 +709,7 @@ class WorkDetailDialog {
           Expanded(
             child: OutlinedButton(
               onPressed: () {
-                FocusScope.of(context).unfocus();
+                FocusManager.instance.primaryFocus?.unfocus();
                 Navigator.pop(context);
               },
               style: OutlinedButton.styleFrom(
@@ -818,6 +818,7 @@ class WorkDetailDialog {
                       if (!context.mounted) return;
                     }
 
+                    FocusManager.instance.primaryFocus?.unfocus();
                     Navigator.pop(context, {
                       if (selectedWorkType != null) ...{
                         'workType': selectedWorkType.name,
@@ -941,7 +942,7 @@ class WorkDetailDialog {
             borderRadius: BorderRadius.circular(8),
             child: InkWell(
               onTap: () {
-                FocusScope.of(context).unfocus();
+                FocusManager.instance.primaryFocus?.unfocus();
                 Navigator.pop(context);
               },
               borderRadius: BorderRadius.circular(8),
@@ -1768,7 +1769,7 @@ class WorkDetailDialog {
           Expanded(
             child: OutlinedButton(
               onPressed: () {
-                FocusScope.of(context).unfocus();
+                FocusManager.instance.primaryFocus?.unfocus();
                 Navigator.pop(context);
               },
               style: OutlinedButton.styleFrom(
@@ -1886,6 +1887,7 @@ class WorkDetailDialog {
                       return;
                     }
 
+                    FocusManager.instance.primaryFocus?.unfocus();
                     Navigator.pop(
                       context,
                       WorkDetailInput(
