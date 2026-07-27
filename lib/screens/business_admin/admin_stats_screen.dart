@@ -83,57 +83,93 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
   void _showBizPicker() {
     DialogHelper.showSheet(
       context,
-      builder: (ctx) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            margin: const EdgeInsets.only(top: 12, bottom: 4),
-            width: 36, height: 4,
-            decoration: BoxDecoration(
-                color: AppColors.grey300,
-                borderRadius: BorderRadius.circular(2)),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: Row(children: [
-              Text('사업장 선택',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 16)),
-            ]),
-          ),
-          // 전체
-          ListTile(
-            leading: Icon(
-                _filterBusinessId == null
-                    ? Icons.radio_button_checked
-                    : Icons.radio_button_unchecked,
-                color: Theme.of(ctx).primaryColor),
-            title: const Text('전체 사업장'),
-            onTap: () {
-              Navigator.pop(ctx);
-              if (!mounted) return;
-              setState(() => _filterBusinessId = null);
-              _loadStats();
-            },
-          ),
-          // 개별 사업장
-          ..._businesses.map((b) => ListTile(
-                leading: Icon(
-                    _filterBusinessId == b.id
-                        ? Icons.radio_button_checked
-                        : Icons.radio_button_unchecked,
-                    color: Theme.of(ctx).primaryColor),
-                title: Text(b.name),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  if (!mounted) return;
-                  setState(() => _filterBusinessId = b.id);
-                  _loadStats();
+      builder: (ctx) {
+        final allItems = [null, ..._businesses];
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 핸들바
+            Container(
+              margin: const EdgeInsets.only(top: 12, bottom: 4),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                  color: AppColors.grey300,
+                  borderRadius: BorderRadius.circular(2)),
+            ),
+            // 헤더
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '사업장 선택',
+                      style: ResponsiveHelper.subtitleStyle(ctx)
+                          .copyWith(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(ctx),
+                    visualDensity: VisualDensity.compact,
+                    color: AppColors.grey600,
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: AppColors.grey200),
+            // 목록
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: allItems.length,
+                separatorBuilder: (_, __) =>
+                    const Divider(height: 1, color: AppColors.grey100),
+                itemBuilder: (_, i) {
+                  final biz = allItems[i];
+                  final isSelected = biz == null
+                      ? _filterBusinessId == null
+                      : _filterBusinessId == biz.id;
+                  return InkWell(
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      if (!mounted) return;
+                      setState(() => _filterBusinessId = biz?.id);
+                      _loadStats();
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 13),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              biz?.name ?? '전체 사업장',
+                              style: ResponsiveHelper.bodyStyle(ctx,
+                                      color: isSelected
+                                          ? Theme.of(ctx).primaryColor
+                                          : AppColors.textPrimary)
+                                  .copyWith(
+                                      fontWeight: isSelected
+                                          ? FontWeight.bold
+                                          : FontWeight.normal),
+                            ),
+                          ),
+                          if (isSelected)
+                            Icon(Icons.check,
+                                color: Theme.of(ctx).primaryColor, size: 20),
+                        ],
+                      ),
+                    ),
+                  );
                 },
-              )),
-          SizedBox(height: 8.0),
-        ],
-      ),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        );
+      },
     );
   }
 

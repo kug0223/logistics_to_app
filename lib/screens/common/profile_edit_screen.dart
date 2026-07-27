@@ -91,29 +91,109 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   Future<void> _showPhotoPicker() async {
     final source = await DialogHelper.showSheet<ImageSource>(
       context,
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 36, height: 4, margin: const EdgeInsets.only(bottom: 12),
-              decoration: BoxDecoration(
-                  color: AppColors.grey300,
-                  borderRadius: BorderRadius.circular(2)),
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 핸들바
+          const SizedBox(height: 12),
+          Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+                color: AppColors.grey300,
+                borderRadius: BorderRadius.circular(2)),
+          ),
+          const SizedBox(height: 16),
+          // 헤더
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '사진 선택',
+                    style: ResponsiveHelper.subtitleStyle(ctx)
+                        .copyWith(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(ctx),
+                  visualDensity: VisualDensity.compact,
+                  color: AppColors.grey600,
+                ),
+              ],
             ),
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('앨범에서 선택'),
+          ),
+          const SizedBox(height: 4),
+          const Divider(height: 1, color: AppColors.grey100),
+          const SizedBox(height: 4),
+          // 앨범
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
               onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: AppColors.success.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: const Icon(Icons.photo_library_outlined,
+                          color: AppColors.success, size: 22),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Text('앨범에서 선택',
+                          style: ResponsiveHelper.bodyStyle(ctx)),
+                    ),
+                    const Icon(Icons.chevron_right,
+                        color: AppColors.grey300, size: 20),
+                  ],
+                ),
+              ),
             ),
-            ListTile(
-              leading: const Icon(Icons.camera_alt_outlined),
-              title: const Text('카메라로 촬영'),
+          ),
+          // 카메라
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
               onTap: () => Navigator.pop(ctx, ImageSource.camera),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: AppColors.info.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: const Icon(Icons.camera_alt_outlined,
+                          color: AppColors.info, size: 22),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Text('카메라로 촬영',
+                          style: ResponsiveHelper.bodyStyle(ctx)),
+                    ),
+                    const Icon(Icons.chevron_right,
+                        color: AppColors.grey300, size: 20),
+                  ],
+                ),
+              ),
             ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 12),
+        ],
       ),
     );
     if (source == null || !mounted) return;

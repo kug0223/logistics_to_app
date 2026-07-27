@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../models/core/business_model.dart';
 import '../providers/user_provider.dart';
 import '../services/firestore_service.dart';
+import '../theme/app_colors.dart';
 import '../utils/dialog_helper.dart';
 import '../utils/toast_helper.dart';
 import '../utils/responsive_helper.dart';
@@ -94,55 +95,105 @@ class _BusinessPickerSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return SafeArea(
-      top: false,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 20),
-              vertical: ResponsiveHelper.spacing(context, 16),
-            ),
-            child: Text(
-              title,
-              style: ResponsiveHelper.titleStyle(context)
-                  .copyWith(fontWeight: FontWeight.bold),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 핸들바
+        const SizedBox(height: 12),
+        Container(
+          width: 40,
+          height: 4,
+          decoration: BoxDecoration(
+            color: AppColors.grey300,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(height: 16),
+        // 헤더
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: ResponsiveHelper.subtitleStyle(context)
+                      .copyWith(fontWeight: FontWeight.bold),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () => Navigator.pop(context),
+                visualDensity: VisualDensity.compact,
+                color: AppColors.grey600,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 4),
+        const Divider(height: 1, color: AppColors.grey100),
+        const SizedBox(height: 4),
+        // 사업장 목록
+        Flexible(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final biz in businesses)
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () => Navigator.pop(context, biz),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 10),
+                        child: Row(
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: biz.mainImageUrl != null
+                                  ? ImageHelper.buildCachedImage(
+                                      biz.mainImageUrl!,
+                                      width: 44,
+                                      height: 44,
+                                      fit: BoxFit.cover,
+                                      memCacheWidth: 88,
+                                    )
+                                  : Container(
+                                      width: 44,
+                                      height: 44,
+                                      decoration: BoxDecoration(
+                                        color: theme.primaryColor
+                                            .withValues(alpha: 0.1),
+                                        borderRadius:
+                                            BorderRadius.circular(14),
+                                      ),
+                                      child: Icon(Icons.business,
+                                          color: theme.primaryColor,
+                                          size: 22),
+                                    ),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Text(
+                                biz.name,
+                                style: ResponsiveHelper.bodyStyle(context)
+                                    .copyWith(fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                            const Icon(Icons.chevron_right,
+                                color: AppColors.grey300, size: 20),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 12),
+              ],
             ),
           ),
-          const Divider(height: 1),
-          ...businesses.map((biz) => ListTile(
-                leading: biz.mainImageUrl != null
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: ImageHelper.buildCachedImage(
-                          biz.mainImageUrl!,
-                          width: 40,
-                          height: 40,
-                          fit: BoxFit.cover,
-                          memCacheWidth: 80,
-                        ),
-                      )
-                    : Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: theme.primaryColor.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Icon(Icons.business,
-                            color: theme.primaryColor, size: 20),
-                      ),
-                title: Text(
-                  biz.name,
-                  style: ResponsiveHelper.bodyStyle(context)
-                      .copyWith(fontWeight: FontWeight.w600),
-                ),
-                onTap: () => Navigator.pop(context, biz),
-              )),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

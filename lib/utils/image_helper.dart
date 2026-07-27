@@ -131,85 +131,108 @@ class ImageHelper {
               width: 40,
               height: 4,
               margin: EdgeInsets.symmetric(
-                vertical: ResponsiveHelper.spacing(ctx, 12),
-              ),
+                  vertical: ResponsiveHelper.spacing(ctx, 12)),
               decoration: BoxDecoration(
                 color: AppColors.grey300,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
-            // 제목
+            // 헤더
             Padding(
               padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(ctx, 20),
-                vertical: ResponsiveHelper.spacing(ctx, 4),
-              ),
+                  horizontal: ResponsiveHelper.spacing(ctx, 20)),
               child: Row(
                 children: [
-                  Icon(
-                    Icons.add_photo_alternate,
-                    color: Theme.of(ctx).primaryColor,
-                    size: ResponsiveHelper.iconSize(ctx, 20),
+                  Expanded(
+                    child: Text(
+                      '이미지 선택',
+                      style: ResponsiveHelper.subtitleStyle(ctx)
+                          .copyWith(fontWeight: FontWeight.bold),
+                    ),
                   ),
-                  SizedBox(width: ResponsiveHelper.spacing(ctx, 10)),
-                  Text(
-                    '이미지 선택',
-                    style: ResponsiveHelper.subtitleStyle(ctx)
-                        .copyWith(fontWeight: FontWeight.bold),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(ctx),
+                    visualDensity: VisualDensity.compact,
+                    color: AppColors.grey600,
                   ),
                 ],
               ),
             ),
+            const SizedBox(height: 4),
             const Divider(height: 1, color: AppColors.grey200),
+            const SizedBox(height: 4),
             // 카메라
-            ListTile(
-              contentPadding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(ctx, 20),
-                vertical: ResponsiveHelper.spacing(ctx, 4),
-              ),
-              leading: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: AppColors.info.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(10),
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () => Navigator.pop(ctx, ImageSource.camera),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(ctx, 20),
+                    vertical: ResponsiveHelper.spacing(ctx, 10),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: ResponsiveHelper.spacing(ctx, 44),
+                        height: ResponsiveHelper.spacing(ctx, 44),
+                        decoration: BoxDecoration(
+                          color: AppColors.info.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Icon(Icons.camera_alt,
+                            color: AppColors.info,
+                            size: ResponsiveHelper.iconSize(ctx, 22)),
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(ctx, 16)),
+                      Expanded(
+                        child: Text('카메라로 촬영',
+                            style: ResponsiveHelper.bodyStyle(ctx)),
+                      ),
+                      const Icon(Icons.chevron_right,
+                          color: AppColors.grey300, size: 20),
+                    ],
+                  ),
                 ),
-                child: Icon(
-                  Icons.camera_alt,
-                  color: AppColors.info,
-                  size: ResponsiveHelper.iconSize(ctx, 22),
-                ),
               ),
-              title: Text(
-                '카메라로 촬영',
-                style: ResponsiveHelper.bodyStyle(ctx),
-              ),
-              onTap: () => Navigator.pop(ctx, ImageSource.camera),
             ),
             // 갤러리
-            ListTile(
-              contentPadding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(ctx, 20),
-                vertical: ResponsiveHelper.spacing(ctx, 4),
-              ),
-              leading: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: AppColors.success.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(10),
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(ctx, 20),
+                    vertical: ResponsiveHelper.spacing(ctx, 10),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: ResponsiveHelper.spacing(ctx, 44),
+                        height: ResponsiveHelper.spacing(ctx, 44),
+                        decoration: BoxDecoration(
+                          color: AppColors.success.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Icon(Icons.photo_library,
+                            color: AppColors.success,
+                            size: ResponsiveHelper.iconSize(ctx, 22)),
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(ctx, 16)),
+                      Expanded(
+                        child: Text('갤러리에서 선택',
+                            style: ResponsiveHelper.bodyStyle(ctx)),
+                      ),
+                      const Icon(Icons.chevron_right,
+                          color: AppColors.grey300, size: 20),
+                    ],
+                  ),
                 ),
-                child: Icon(
-                  Icons.photo_library,
-                  color: AppColors.success,
-                  size: ResponsiveHelper.iconSize(ctx, 22),
-                ),
               ),
-              title: Text(
-                '갤러리에서 선택',
-                style: ResponsiveHelper.bodyStyle(ctx),
-              ),
-              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
             ),
-            SizedBox(height: 16.0),
+            SizedBox(height: ResponsiveHelper.spacing(ctx, 12)),
           ],
         );
       },
