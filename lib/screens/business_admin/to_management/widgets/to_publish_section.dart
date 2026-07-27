@@ -30,9 +30,12 @@ class TOPublishSection extends StatelessWidget {
   /// 슬롯 수정 모드: true면 '미공개 저장' 옵션 숨김
   final bool slotMode;
 
-  /// 게시 기간 (일수): 1, 2, 3, 5, 7
+  /// 게시 기간 (일수): 3, 5, 7, 10
   final int? postingDurationDays;
   final void Function(int? days)? onPostingDurationChanged;
+
+  /// 장기 TO 계약 종료일 — 이 날짜를 초과하는 게시기간 칩 비활성화
+  final DateTime? rangeEnd;
 
   const TOPublishSection({
     super.key,
@@ -47,6 +50,7 @@ class TOPublishSection extends StatelessWidget {
     this.slotMode = false,
     this.postingDurationDays,
     this.onPostingDurationChanged,
+    this.rangeEnd,
   });
 
   @override
@@ -368,14 +372,14 @@ class TOPublishSection extends StatelessWidget {
   }
 
   static const _durationOptions = [
-    (1, '1일'),
-    (2, '2일'),
     (3, '3일'),
     (5, '5일'),
     (7, '7일'),
+    (10, '10일'),
   ];
 
   Widget _buildPostingDurationSection(BuildContext context, ThemeData theme) {
+    final now = DateTime.now();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -385,7 +389,7 @@ class TOPublishSection extends StatelessWidget {
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 4)),
         Text(
-          '게시 기간이 만료되면 공고가 자동으로 마감됩니다.',
+          '게시 기간이 만료되면 공고가 자동으로 마감됩니다. 최대 10일.',
           style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 10)),
@@ -396,9 +400,17 @@ class TOPublishSection extends StatelessWidget {
             ..._durationOptions.map(((int, String) opt) {
               final (days, label) = opt;
               final isSelected = postingDurationDays == days;
-              return _buildDurationChip(context, theme, label, isSelected, () {
-                onPostingDurationChanged?.call(isSelected ? null : days);
-              });
+              // rangeEnd가 있으면 해당 일수가 계약 종료일을 초과하는 칩 비활성화
+              final isDisabled = rangeEnd != null &&
+                  now.add(Duration(days: days)).isAfter(rangeEnd!);
+              return _buildDurationChip(
+                context, theme, label, isSelected, isDisabled,
+                () {
+                  if (!isDisabled) {
+                    onPostingDurationChanged?.call(isSelected ? null : days);
+                  }
+                },
+              );
             }),
           ],
         ),
@@ -411,8 +423,25 @@ class TOPublishSection extends StatelessWidget {
     ThemeData theme,
     String label,
     bool isSelected,
+    bool isDisabled,
     VoidCallback onTap,
   ) {
+    final effectiveColor = isDisabled
+        ? AppColors.grey300
+        : isSelected
+            ? theme.primaryColor
+            : AppColors.grey100;
+    final borderColor = isDisabled
+        ? AppColors.grey300
+        : isSelected
+            ? theme.primaryColor
+            : AppColors.grey300;
+    final textColor = isDisabled
+        ? AppColors.grey400
+        : isSelected
+            ? Colors.white
+            : AppColors.grey700;
+
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
@@ -422,17 +451,17 @@ class TOPublishSection extends StatelessWidget {
           vertical: ResponsiveHelper.spacing(context, 8),
         ),
         decoration: BoxDecoration(
-          color: isSelected ? theme.primaryColor : AppColors.grey100,
+          color: effectiveColor,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: isSelected ? theme.primaryColor : AppColors.grey300,
+            color: borderColor,
             width: isSelected ? 2 : 1,
           ),
         ),
         child: Text(
           label,
           style: ResponsiveHelper.smallStyle(context).copyWith(
-            color: isSelected ? Colors.white : AppColors.grey700,
+            color: textColor,
             fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
           ),
         ),

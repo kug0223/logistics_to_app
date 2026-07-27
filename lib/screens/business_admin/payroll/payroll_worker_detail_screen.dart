@@ -20,6 +20,7 @@ import '../../../providers/user_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:printing/printing.dart';
 import '../../../widgets/common/gradient_scaffold.dart';
+import '../../../widgets/common/app_empty_state.dart';
 import '../../../widgets/common/loading_widget.dart';
 
 class PayrollWorkerDetailScreen extends StatefulWidget {
@@ -56,7 +57,7 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
   }
 
   Future<void> _loadRecords() async {
-    if (mounted) setState(() => _isLoading = true);
+    if (mounted) setState(() { _isLoading = true; _loadError = null; });
     try {
       final monthStart = DateTime(widget.year, widget.month, 1);
       final monthEnd = DateTime(widget.year, widget.month + 1, 1);
@@ -295,21 +296,22 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
   Widget _buildBody(BuildContext context, ThemeData theme) {
     if (_isLoading) return const LoadingWidget();
     if (_loadError != null) {
-      return Center(
-        child: Text(
-          '데이터를 불러오지 못했습니다',
-          style: ResponsiveHelper.bodyStyle(context)
-              .copyWith(color: AppColors.grey400),
+      return AppEmptyState(
+        icon: Icons.error_outline,
+        title: '데이터를 불러오지 못했습니다',
+        iconColor: AppColors.error,
+        action: TextButton.icon(
+          onPressed: _loadRecords,
+          icon: const Icon(Icons.refresh),
+          label: const Text('다시 시도'),
         ),
       );
     }
     if (_records.isEmpty) {
-      return Center(
-        child: Text(
-          '확정된 급여 내역이 없습니다',
-          style: ResponsiveHelper.bodyStyle(context)
-              .copyWith(color: AppColors.grey400),
-        ),
+      return AppEmptyState(
+        icon: Icons.receipt_long_outlined,
+        title: '확정된 급여 내역이 없습니다',
+        subtitle: '${widget.year}년 ${widget.month}월 확정된 급여가 없습니다',
       );
     }
 

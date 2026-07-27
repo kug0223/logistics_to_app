@@ -21,6 +21,7 @@ import '../../../utils/responsive_helper.dart';
 import '../../../utils/format_helper.dart';
 
 // Widgets
+import '../../../widgets/common/app_empty_state.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../../theme/app_colors.dart';
 
@@ -56,20 +57,28 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
   // 고정 TO용 synthetic TOItem 캐시 (reload 시 초기화)
   final Map<String, TOItem> _contractTOItems = {};
 
+  // 사업장 목록 캐시 — 버튼 탭마다 Firestore 재조회 방지
+  List<BusinessModel>? _cachedBusinesses;
+
   String _slotKey(TOGroupItem g, TOItem t) => '${g.id}_${t.slot?.id ?? t.to.id}';
 
-  /// SubAdmin 포함 관리 가능한 사업장 목록
+  /// SubAdmin 포함 관리 가능한 사업장 목록 (캐싱)
   Future<List<BusinessModel>> _getAdminBusinesses() async {
+    if (_cachedBusinesses != null) return _cachedBusinesses!;
     final userProvider = Provider.of<UserProvider>(context, listen: false);
     final uid = userProvider.currentUser?.uid;
     if (uid == null) return [];
     // SubAdmin은 adminIds에 없으므로 effectiveBusinessId(=subAdminOf)로 직접 조회
     final effectiveBizId = userProvider.effectiveBusinessId;
+    List<BusinessModel> result;
     if (userProvider.isSubAdmin && effectiveBizId != null) {
       final biz = await _firestoreService.getBusinessById(effectiveBizId);
-      return biz != null ? [biz] : [];
+      result = biz != null ? [biz] : [];
+    } else {
+      result = await _firestoreService.getMyBusiness(uid);
     }
-    return _firestoreService.getMyBusiness(uid);
+    _cachedBusinesses = result;
+    return result;
   }
 
   // 인원현황 관련 (당일명단 버튼은 항상 활성화)
@@ -93,6 +102,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     setState(() {
       _expandedSlots.clear();
       _contractTOItems.clear();
+      _cachedBusinesses = null;
     });
     context.read<WorkforceController>().reload(context).then((_) {
       if (_selectedDay != null && mounted) {
@@ -470,6 +480,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         context: context,
         builder: (context) => FixedWorkerManagementDialog(
           businessIds: businesses.map((b) => b.id).toList(),
+          businesses: businesses,
           focusDate: _selectedDay,
           onChanged: _reload,
         ),
@@ -493,6 +504,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       builder: (context) => CloseManagementDialog(
         initialMonth: _focusedDay,
         businessIds: businesses.map((b) => b.id).toList(),
+        businesses: businesses,
       ),
     );
 
@@ -503,14 +515,10 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
 
   Widget _buildSliverDayTOList() {
     if (_selectedDay == null) {
-      return SliverFillRemaining(
-        hasScrollBody: false,
-        child: Center(
-          child: Text(
-            '날짜를 선택해주세요',
-            style: ResponsiveHelper.subtitleStyle(context, color: AppColors.grey600),
-          ),
-        ),
+      return const AppEmptyState(
+        icon: Icons.calendar_today_outlined,
+        title: '날짜를 선택해주세요',
+        asSliver: true,
       );
     }
 
@@ -585,24 +593,10 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
   }
 
   Widget _buildEmptyDaySliver() {
-    return SliverFillRemaining(
-      hasScrollBody: false,
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.event_busy,
-                size: ResponsiveHelper.iconSize(context, 56),
-                color: AppColors.grey300),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            Text(
-              '이 날짜에 등록된 TO가 없습니다',
-              style: ResponsiveHelper.subtitleStyle(context,
-                  color: AppColors.grey600),
-            ),
-          ],
-        ),
-      ),
+    return const AppEmptyState(
+      icon: Icons.event_busy,
+      title: '이 날짜에 등록된 TO가 없습니다',
+      asSliver: true,
     );
   }
 
@@ -800,6 +794,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           date: _selectedDay!,
           businessIds: businessIds,
           initialBusinessId: currentBusinessId,
+          businesses: businesses,
         ),
       );
 

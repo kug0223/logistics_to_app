@@ -363,15 +363,15 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
       onTap: isEmpty
           ? null
           : () async {
-              final result = await Navigator.push<bool>(
+              await Navigator.push<bool>(
                 context,
                 MaterialPageRoute(
                   builder: (_) => PayrollMonthScreen(summary: summary),
                 ),
               );
               if (!mounted) return;
-              // PayrollMonthScreen에서 집계 복원 완료 시 overview 리로드
-              if (result == true) _loadYear(_selectedYear);
+              // 이체 처리/취소 등 변경사항이 있을 수 있으므로 항상 리로드
+              _loadYear(_selectedYear);
             },
       child: Container(
         decoration: BoxDecoration(
@@ -442,17 +442,12 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
-              if (summary.pendingCount > 0 || summary.notTransferredCount > 0) ...[
+              if (summary.notTransferredCount > 0) ...[
                 SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                 Text(
-                  [
-                    if (summary.pendingCount > 0) '미확정 ${summary.pendingCount}',
-                    if (summary.notTransferredCount > 0) '미이체 ${summary.notTransferredCount}',
-                  ].join(' · '),
+                  '미이체 ${summary.notTransferredCount}',
                   style: ResponsiveHelper.tinyStyle(context).copyWith(
-                    color: summary.pendingCount > 0
-                        ? AppColors.warningDark
-                        : AppColors.error,
+                    color: AppColors.error,
                     fontWeight: FontWeight.w600,
                   ),
                   maxLines: 1,
@@ -490,6 +485,9 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
   bool _workersLoading = true;
   bool _isRepairing = false;
 
+  // 이체 취소 후 notTransferredCount가 변경될 수 있으므로 mutable로 유지
+  late PayrollSummaryModel _liveSummary;
+
   List<PayrollWorkerSummary> get _filteredWorkers {
     final workers = List<PayrollWorkerSummary>.of(_workers);
 
@@ -512,10 +510,25 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
   @override
   void initState() {
     super.initState();
+    _liveSummary = widget.summary;
     _searchCtrl.addListener(() {
       setState(() => _searchQuery = _searchCtrl.text.trim());
     });
     _loadWorkers();
+  }
+
+  /// 지급현황 화면에서 돌아올 때 notTransferredCount 재조회
+  Future<void> _refreshSummary() async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('payroll_summaries')
+          .doc(_liveSummary.id)
+          .get();
+      if (!snap.exists || !mounted) return;
+      final fresh = PayrollSummaryModel.tryFromFirestore(snap);
+      if (fresh == null) return;
+      setState(() => _liveSummary = fresh);
+    } catch (_) {}
   }
 
   Future<void> _loadWorkers() async {
@@ -769,8 +782,9 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
   }
 
   Widget _buildSummaryHeader(BuildContext context, ThemeData theme) {
-    final transferredCount = widget.summary.confirmedCount - widget.summary.notTransferredCount;
-    final pendingCount     = widget.summary.notTransferredCount;
+    // CF 트리거(비동기) 갱신 지연으로 confirmedCount < notTransferredCount 가능 → clamp
+    final transferredCount = (_liveSummary.confirmedCount - _liveSummary.notTransferredCount).clamp(0, 999999);
+    final pendingCount     = _liveSummary.notTransferredCount;
     final hasPending       = pendingCount > 0;
 
     return Container(
@@ -804,16 +818,19 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
                       color: AppColors.grey700)),
               const Spacer(),
               OutlinedButton.icon(
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => PayrollPaymentDashboardScreen(
-                      businessId: widget.summary.businessId,
-                      year: widget.summary.year,
-                      month: widget.summary.month,
+                onPressed: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => PayrollPaymentDashboardScreen(
+                        businessId: widget.summary.businessId,
+                        year: widget.summary.year,
+                        month: widget.summary.month,
+                      ),
                     ),
-                  ),
-                ),
+                  );
+                  if (mounted) await _refreshSummary();
+                },
                 icon: Icon(Icons.receipt_long_outlined,
                     size: ResponsiveHelper.iconSize(context, 13),
                     color: theme.primaryColor),
@@ -890,7 +907,7 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
               SizedBox(width: ResponsiveHelper.spacing(context, 10)),
               Icon(Icons.receipt_outlined, size: 12, color: AppColors.grey400),
               SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Text('${widget.summary.confirmedCount}건',
+              Text('${_liveSummary.confirmedCount}건',
                   style: ResponsiveHelper.tinyStyle(context,
                       color: AppColors.grey500,
                       fontWeight: FontWeight.w600)),

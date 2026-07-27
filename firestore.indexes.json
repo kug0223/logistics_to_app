@@ -796,6 +796,15 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "applicationDeadline", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "tos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "postingExpiryDate", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

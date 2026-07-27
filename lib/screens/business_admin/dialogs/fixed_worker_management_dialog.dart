@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../../models/core/application_model.dart';
+import '../../../models/core/business_model.dart';
 import '../../../models/core/notification_model.dart';
 import '../../../models/core/schedule_change_request_model.dart';
 import '../../../models/core/user_model.dart';
@@ -52,6 +53,7 @@ enum _WorkerDayStatus {
 /// 고정근무자 관리 다이얼로그
 class FixedWorkerManagementDialog extends StatefulWidget {
   final List<String>? businessIds;  // 여러 사업장 (캘린더에서 호출 시)
+  final List<BusinessModel>? businesses;
   final String? initialBusinessId;  // 초기 선택 사업장
   final VoidCallback onChanged;
   final DateTime? focusDate;        // 날짜 모드 (캘린더에서 날짜 선택 후 열 때)
@@ -61,6 +63,7 @@ class FixedWorkerManagementDialog extends StatefulWidget {
   const FixedWorkerManagementDialog({
     super.key,
     this.businessIds,
+    this.businesses,
     this.initialBusinessId,
     required this.onChanged,
     this.focusDate,
@@ -139,13 +142,21 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         }
       }
       _showBusinessSelector = true;
-      await _loadBusinessNames();
+      if (widget.businesses != null) {
+        _businessNameMap = {for (final b in widget.businesses!) b.id: b.name};
+      } else {
+        await _loadBusinessNames();
+      }
     } else if (widget.initialBusinessId != null) {
       // 단일 사업장 모드 (기존 호출) — 드롭다운 없음, 저장값 무시
       _businessIds = [widget.initialBusinessId!];
       _selectedBusinessId = widget.initialBusinessId;
       _showBusinessSelector = false;
-      await _loadBusinessNames();
+      if (widget.businesses != null) {
+        _businessNameMap = {for (final b in widget.businesses!) b.id: b.name};
+      } else {
+        await _loadBusinessNames();
+      }
     }
 
     _loadFixedWorkers();
@@ -170,7 +181,17 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     final businessId = _selectedBusinessId;
     if (businessId == null) return;
 
-    final allApps = await _firestoreService.getApplicationsByBusinessId(businessId);
+    // [PERF] 독립적인 3개 Future 동시 시작 — 순차 await 제거
+    final appsFuture = _firestoreService.getApplicationsByBusinessId(businessId);
+    final workTypesFuture = _firestoreService.getBusinessWorkTypes(businessId);
+    final scheduleRequestsFuture = _isDateMode
+        ? _firestoreService.getScheduleChangeRequestsForDate(
+            date: widget.focusDate!,
+            businessIds: [businessId],
+          )
+        : Future.value(<ScheduleChangeRequestModel>[]);
+
+    final allApps = await appsFuture;
 
       // 기본 필터: 장기 확정자 중 퇴사/해지 완료 제외
       final allFiltered = allApps.where((app) {
@@ -215,8 +236,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         return true;
       }).toList();
 
-      // ✅ 1. 업무유형 정보 한 번만 조회 (중복 제거!)
-      final businessWorkTypes = await _firestoreService.getBusinessWorkTypes(businessId);
+      // ✅ 1. 업무유형 정보 (appsFuture와 병렬로 이미 실행 중)
+      final businessWorkTypes = await workTypesFuture;
       final workTypeMap = { for (var w in businessWorkTypes) w.name: w };
 
       // ✅ 2. 중복 제거된 UID 목록
@@ -242,13 +263,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       results.sort((a, b) => (b.application.confirmedAt ?? b.application.appliedAt)
           .compareTo(a.application.confirmedAt ?? a.application.appliedAt));
 
-      // 날짜 모드: 해당 날짜의 대기 요청 로드
+      // 날짜 모드: 해당 날짜의 대기 요청 로드 (appsFuture와 병렬로 이미 실행 중)
       if (_isDateMode) {
-        _pendingRequestsForDate =
-            await _firestoreService.getScheduleChangeRequestsForDate(
-          date: widget.focusDate!,
-          businessIds: [businessId],
-        );
+        _pendingRequestsForDate = await scheduleRequestsFuture;
       }
 
       if (!mounted) return;

@@ -68,6 +68,7 @@ class _PayrollPaymentDashboardScreenState
   // ── 데이터
   bool _isLoading = true;
   bool _fetchInProgress = false;
+  bool _pendingReload = false;
   bool _isExporting = false;
   List<AttendanceModel> _allRecords = [];      // confirmed + transferred 합산
   List<PaymentChangeRequestModel>     _changeRequests    = [];
@@ -128,7 +129,9 @@ class _PayrollPaymentDashboardScreenState
   // ══════════════════════════════════════════════════════════
 
   Future<void> _load() async {
-    if (!mounted || _fetchInProgress) return;
+    if (!mounted) return;
+    if (_fetchInProgress) { _pendingReload = true; return; }
+    _pendingReload = false;
     _fetchInProgress = true;
     if (!_isLoading) setState(() => _isLoading = true);
     try {
@@ -166,6 +169,8 @@ class _PayrollPaymentDashboardScreenState
     } finally {
       _fetchInProgress = false;
       if (mounted) setState(() => _isLoading = false);
+      // 연/월 변경으로 새 로드 요청이 밀린 경우 최신 상태로 재실행
+      if (_pendingReload) _load();
     }
   }
 
@@ -237,10 +242,10 @@ class _PayrollPaymentDashboardScreenState
   static List<DateTimeRange> _calcWeekRanges(int year, int month) {
     final lastDay = DateTime(year, month + 1, 0);
 
-    // 해당 월의 첫 번째 월요일 찾기 (weekday: Mon=1, Sun=7)
+    // 1일이 포함된 주의 월요일부터 시작 (첫째 주가 이전 달로 넘어갈 수 있음)
     final firstDay = DateTime(year, month, 1);
-    final daysToMonday = (1 - firstDay.weekday + 7) % 7;
-    DateTime weekStart = firstDay.add(Duration(days: daysToMonday));
+    final daysToMonday = (firstDay.weekday - 1) % 7; // 이전 월요일까지 역산
+    DateTime weekStart = firstDay.subtract(Duration(days: daysToMonday));
 
     final ranges = <DateTimeRange>[];
     while (!weekStart.isAfter(lastDay)) {
@@ -2440,57 +2445,21 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
   final _payService = PayrollPaymentService();
 
   Future<void> _cancelTransfer(AttendanceModel r) async {
-    final noteCtrl = TextEditingController();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDlg) => AlertDialog(
-          title: const Text('이체 취소'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '이체완료 상태를 미이체(확정)로 되돌립니다.\n실제 송금이 취소되지 않으니 별도 처리하세요.',
-                style: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey600),
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                controller: noteCtrl,
-                maxLength: 200,
-                maxLines: 2,
-                decoration: const InputDecoration(
-                  labelText: '취소 사유 *',
-                  hintText: '예) 잘못된 금액으로 이체, 계좌 오입력 등',
-                  border: OutlineInputBorder(),
-                  counterText: '',
-                ),
-                onChanged: (_) => setDlg(() {}),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('닫기'),
-            ),
-            TextButton(
-              onPressed: noteCtrl.text.trim().isEmpty
-                  ? null
-                  : () => Navigator.pop(ctx, true),
-              child: Text('취소 처리',
-                  style: TextStyle(
-                      color: noteCtrl.text.trim().isEmpty
-                          ? AppColors.grey400
-                          : AppColors.error)),
-            ),
-          ],
-        ),
-      ),
+    final note = await DialogHelper.showTextInput(
+      context,
+      title: '이체 취소',
+      message: '이체완료 상태를 미이체(확정)로 되돌립니다.\n실제 송금이 취소되지 않으니 별도 처리하세요.',
+      hintText: '예) 잘못된 금액으로 이체, 계좌 오입력 등',
+      maxLength: 200,
+      maxLines: 2,
+      confirmText: '취소 처리',
+      cancelText: '닫기',
+      confirmColor: AppColors.error,
+      icon: Icons.undo_outlined,
+      iconColor: AppColors.error,
+      validator: (v) => v != null && v.trim().isNotEmpty,
     );
-    if (confirmed != true || !mounted) return;
-    final note = noteCtrl.text.trim();
-    if (note.isEmpty) return;
+    if (note == null || note.trim().isEmpty || !mounted) return;
 
     setState(() => _isCancelling = true);
     try {

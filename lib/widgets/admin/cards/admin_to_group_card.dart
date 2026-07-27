@@ -41,7 +41,6 @@ import '../../../widgets/dialogs/styled_dialog.dart';
 import 'admin_to_item_card.dart';
 import 'admin_work_detail.dart';
 import '../../../screens/common/job_posting_screen.dart';
-import '../../pickers/date_picker_bottom_sheet.dart';
 import '../../../screens/business_admin/dialogs/work_detail_management_dialog.dart';
 
 enum TOCardDisplayMode { list, calendar }
@@ -102,7 +101,40 @@ class TOGroupCard extends StatefulWidget {
 }
 
 class _TOGroupCardState extends State<TOGroupCard> {
- @override
+  bool _isExtending = false;
+
+  Future<void> _handleExtend(BuildContext context, TOModel masterTO) async {
+    final selected = await showModalBottomSheet<int>(
+      context: context,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _ExtendDaysSheet(masterTO: masterTO),
+    );
+    if (selected == null) return;
+    if (!mounted) return;
+    setState(() => _isExtending = true);
+    try {
+      await widget.firestoreService.extendTOPosting(masterTO.id, selected);
+      if (!mounted) return;
+      ToastHelper.showSuccess('공고가 $selected일 연장되었습니다.');
+      widget.onChanged();
+    } on Exception catch (e) {
+      if (!mounted) return;
+      final msg = e.toString();
+      if (msg.contains('MAX_ACTIVE_TO_LIMIT')) {
+        final limit = msg.split(':').last.trim();
+        ToastHelper.showError('활성 공고 한도($limit개)를 초과하여 연장할 수 없습니다.');
+      } else {
+        ToastHelper.showError('연장 실패: $msg');
+      }
+    } finally {
+      if (mounted) setState(() => _isExtending = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final masterTO = widget.groupItem.masterTO;
     final theme = Theme.of(context);
@@ -474,6 +506,54 @@ class _TOGroupCardState extends State<TOGroupCard> {
                         }),
                       ],
                       
+                      // 장기 TO 게시만료 — 연장하기 버튼
+                      if (masterTO.isPostingExpiredAndExtendable) ...[
+                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                        GestureDetector(
+                          onTap: _isExtending
+                              ? null
+                              : () => _handleExtend(context, masterTO),
+                          child: Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: ResponsiveHelper.spacing(context, 12),
+                              vertical: ResponsiveHelper.spacing(context, 5),
+                            ),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).primaryColor,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (_isExtending)
+                                  SizedBox(
+                                    width: ResponsiveHelper.iconSize(context, 12),
+                                    height: ResponsiveHelper.iconSize(context, 12),
+                                    child: const CircularProgressIndicator(
+                                      strokeWidth: 1.5,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                else
+                                  Icon(
+                                    Icons.refresh,
+                                    size: ResponsiveHelper.iconSize(context, 13),
+                                    color: Colors.white,
+                                  ),
+                                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                Text(
+                                  '연장하기',
+                                  style: ResponsiveHelper.smallStyle(context).copyWith(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+
                       // ✨ 상태 표시 (마감/예약/모집중) - targetTOs 기준
                       SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                       _buildStatusBadge(context, allClosed: allClosed, targetTOs: targetTOs),
@@ -862,16 +942,6 @@ class _TOGroupCardState extends State<TOGroupCard> {
               onTap: () => _handleSingleTOMenuAction(context, 'preview'),
             ),
           ],
-        // 날짜 추가 (flex 전용)
-        if (!isContract)
-          [
-            AppMenuSheetItem(
-              icon: Icons.event_available,
-              label: '날짜 추가',
-              color: AppColors.info,
-              onTap: () => _handleSingleTOMenuAction(context, 'addSlot'),
-            ),
-          ],
         // 수정
         [
           AppMenuSheetItem(
@@ -1123,45 +1193,6 @@ class _TOGroupCardState extends State<TOGroupCard> {
         }
         break;
 
-      case 'addSlot':
-        final existingSlots = await widget.firestoreService.getSlots(masterTO.id);
-        if (!mounted) return;
-        final takenDates = existingSlots
-            .map((s) => DateTime(s.date.year, s.date.month, s.date.day))
-            .toSet();
-        final now = DateTime.now();
-        final today = DateTime(now.year, now.month, now.day);
-        // initialDate는 takenDates에 없는 첫 번째 날짜로 설정
-        DateTime initialDate = today;
-        final lastDate = today.add(const Duration(days: 365));
-        while (takenDates.contains(initialDate) && initialDate.isBefore(lastDate)) {
-          initialDate = initialDate.add(const Duration(days: 1));
-        }
-        if (takenDates.contains(initialDate)) {
-          ToastHelper.showError('추가 가능한 날짜가 없습니다');
-          return;
-        }
-        final picked = await DatePickerBottomSheet.show(
-          context: this.context,
-          initialDate: initialDate,
-          title: '근무 날짜 선택',
-          minDate: today,
-          maxDate: today.add(const Duration(days: 365)),
-          disabledDates: takenDates.toList(),
-        );
-        if (picked == null || !mounted) return;
-        await NavigationHelper.push<bool>(
-          this.context,
-          destination: AdminEditTOScreen(to: masterTO, newSlotDate: picked),
-          onReturn: (result) {
-            if (result == true && mounted) {
-              widget.firestoreService.clearCache(toId: masterTO.id);
-              widget.onChanged();
-            }
-          },
-        );
-        break;
-
       case 'edit':
         if (widget.calendarSlot != null) {
           // 캘린더 단기 슬롯: 슬롯 단위 수정
@@ -1389,12 +1420,16 @@ class _TOGroupCardState extends State<TOGroupCard> {
         if (widget.calendarSlot != null) {
           toItemForConfirmed = widget.calendarSlot!;
         } else if (widget.groupItem.groupTOs.isEmpty) {
-          // Contract TO: masterTO로 합성 TOItem 사용
+          // Contract TO: groupItem의 workDetailStats를 공유 참조로 전달
+          // → 확정명단에서 취소 시 in-place 갱신이 카드 확장 영역에도 즉시 반영됨
           toItemForConfirmed = TOItem(
             to: widget.groupItem.masterTO,
             confirmedCount: widget.groupItem.totalConfirmed,
             pendingCount: widget.groupItem.totalPending,
             totalRequired: widget.groupItem.totalRequired,
+            workDetails: widget.groupItem.masterTO.workDetails,
+            workDetailStats: widget.groupItem.workDetailStats,
+            isWorkDetailLoaded: widget.groupItem.isWorkDetailLoaded,
           );
         } else {
           final selected = await _selectTOItem(this.context);
@@ -1409,12 +1444,14 @@ class _TOGroupCardState extends State<TOGroupCard> {
             builder: (_) => const Center(child: LoadingWidget()),
           );
           try {
-            final calSlotForLoad = widget.calendarSlot;
-            final result = calSlotForLoad != null
+            // toItemForConfirmed.slot 우선 사용 (리스트 뷰 날짜 선택 경로),
+            // 없을 때만 calendarSlot 폴백 (캘린더 뷰 직접 탭 경로)
+            final effectiveSlot = toItemForConfirmed.slot ?? widget.calendarSlot?.slot;
+            final result = effectiveSlot != null
                 ? await widget.firestoreService.loadTOWorkDetails(
                     toItemForConfirmed.to,
-                    slotId: calSlotForLoad.slot?.id,
-                    slotWorkDetails: calSlotForLoad.slot?.workDetails,
+                    slotId: effectiveSlot.id,
+                    slotWorkDetails: effectiveSlot.workDetails,
                   )
                 : await widget.firestoreService.loadTOWorkDetails(toItemForConfirmed.to);
             toItemForConfirmed.setWorkDetails(
@@ -1436,7 +1473,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           context: this.context,
           toItem: toItemForConfirmed,
           firestoreService: widget.firestoreService,
-          slotId: widget.calendarSlot?.slot?.id,
+          slotId: toItemForConfirmed.slot?.id ?? widget.calendarSlot?.slot?.id,
           onLocalStatsChanged: () {
             if (mounted) setState(() {});
           },
@@ -1756,6 +1793,108 @@ class _TOGroupCardState extends State<TOGroupCard> {
 }
 
 /// 인원 현황 배지 — 리스트/캘린더 뷰 공용
+/// 게시기간 연장 일수 선택 바텀시트
+class _ExtendDaysSheet extends StatelessWidget {
+  final TOModel masterTO;
+  const _ExtendDaysSheet({required this.masterTO});
+
+  static const _options = [3, 5, 7, 10];
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final end = masterTO.endDate;
+    final now = DateTime.now();
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        ResponsiveHelper.spacing(context, 20),
+        ResponsiveHelper.spacing(context, 20),
+        ResponsiveHelper.spacing(context, 20),
+        ResponsiveHelper.spacing(context, 24),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '연장 기간 선택',
+            style: ResponsiveHelper.titleStyle(context).copyWith(fontWeight: FontWeight.bold),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            end != null ? '계약 종료일: ${FormatHelper.formatDate(end)}' : '',
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          Builder(
+            builder: (ctx) {
+              final allDisabled = end != null &&
+                  _options.every((d) => now.add(Duration(days: d)).isAfter(end));
+              if (allDisabled) {
+                return Padding(
+                  padding: EdgeInsets.symmetric(
+                    vertical: ResponsiveHelper.spacing(context, 8),
+                  ),
+                  child: Text(
+                    '계약 종료일까지 남은 기간이 짧아 선택 가능한 연장 기간이 없습니다.',
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                  ),
+                );
+              }
+              return Wrap(
+                spacing: ResponsiveHelper.spacing(context, 10),
+                runSpacing: ResponsiveHelper.spacing(context, 10),
+                children: _options.map((days) {
+                  final expiryDate = now.add(Duration(days: days));
+                  final disabled = end != null && expiryDate.isAfter(end);
+                  return GestureDetector(
+                    onTap: disabled ? null : () => Navigator.of(context).pop(days),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: ResponsiveHelper.spacing(context, 18),
+                        vertical: ResponsiveHelper.spacing(context, 10),
+                      ),
+                      decoration: BoxDecoration(
+                        color: disabled ? AppColors.grey100 : theme.primaryColor.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: disabled ? AppColors.grey300 : theme.primaryColor,
+                          width: 1.5,
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          Text(
+                            '$days일',
+                            style: ResponsiveHelper.bodyStyle(context).copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: disabled ? AppColors.grey400 : theme.primaryColor,
+                            ),
+                          ),
+                          if (!disabled && end != null)
+                            Text(
+                              '~${expiryDate.month}/${expiryDate.day}',
+                              style: ResponsiveHelper.smallStyle(
+                                context,
+                                color: AppColors.grey600,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  );
+                }).toList(),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class PersonnelBadge extends StatelessWidget {
   final int confirmed;
   final int required;

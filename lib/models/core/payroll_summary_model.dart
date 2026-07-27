@@ -69,9 +69,17 @@ class PayrollSummaryModel {
   });
 
   factory PayrollSummaryModel.fromMap(Map<String, dynamic> data, String id) {
-    // [MED-SAFE] 오프라인 쓰기 직후 updatedAt이 null일 수 있음 + CF 응답은 Timestamp로 복원 후 전달
-    final updatedAt = (data['updatedAt'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now();
-    final workersRaw = data['workers'] as Map<String, dynamic>? ?? {};
+    // updatedAt: Firestore native Timestamp 또는 CF 응답의 {_seconds, _nanoseconds} 맵 둘 다 처리
+    final rawTs = data['updatedAt'];
+    final updatedAt = rawTs is Timestamp
+        ? rawTs.toDate().toLocal()
+        : rawTs is Map
+            ? DateTime.fromMillisecondsSinceEpoch(
+                ((rawTs['_seconds'] as num?)?.toInt() ?? 0) * 1000 +
+                    ((rawTs['_nanoseconds'] as num?)?.toInt() ?? 0) ~/ 1000000,
+              ).toLocal()
+            : DateTime.now();
+    final workersRaw = Map<String, dynamic>.from((data['workers'] as Map?) ?? {});
     // [SAFETY] Firestore 내부 타입(_JsonMap)은 직접 as Map<String, dynamic> 캐스팅 실패 가능 — from()으로 안전 변환
     final workers = Map.fromEntries(
       workersRaw.entries.map((e) {

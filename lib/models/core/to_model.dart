@@ -58,8 +58,10 @@ class TOModel {
   final DateTime? applicationDeadline; // contract: 공고 마감일
   /// 계약 기간 유형: '15days' | '1month' | '3months' | '6months' | '1year' | 'custom'
   final String? contractPeriodType;
-  /// 게시 기간 (일수): 1, 2, 3, 5, 7
+  /// 게시 기간 (일수): 3, 5, 7, 10
   final int? postingDurationDays;
+  /// 서버 저장 게시 만료일 (CF 계산값 — 연장 시 업데이트됨)
+  final DateTime? postingExpiryDateServer;
 
   // ── 인원 집계 ─────────────────────────────────────
   final int totalRequired;
@@ -72,6 +74,8 @@ class TOModel {
   final bool isManualClosed;
   final DateTime? closedAt;
   final String? closedBy;
+  /// Firestore 저장 마감 원인 코드 (POSTING_EXPIRED | TIME_EXPIRED | MANUAL | ...)
+  final String? closedReasonCode;
   final DateTime? reopenedAt;
   final String? reopenedBy;
 
@@ -107,6 +111,7 @@ class TOModel {
     this.applicationDeadline,
     this.contractPeriodType,
     this.postingDurationDays,
+    this.postingExpiryDateServer,
     this.totalRequired = 0,
     this.totalConfirmed = 0,
     this.totalPending = 0,
@@ -115,6 +120,7 @@ class TOModel {
     this.isManualClosed = false,
     this.closedAt,
     this.closedBy,
+    this.closedReasonCode,
     this.reopenedAt,
     this.reopenedBy,
     this.publishMode = 'immediate',
@@ -164,6 +170,8 @@ class TOModel {
           (data['applicationDeadline'] as Timestamp?)?.toDate().toLocal(),
       contractPeriodType: data['contractPeriodType'] as String?,
       postingDurationDays: (data['postingDurationDays'] as num?)?.toInt(),
+      postingExpiryDateServer:
+          (data['postingExpiryDate'] as Timestamp?)?.toDate().toLocal(),
       totalRequired: (data['totalRequired'] as num?)?.toInt() ?? 0,
       totalConfirmed: (data['totalConfirmed'] as num?)?.toInt() ?? 0,
       totalPending: (data['totalPending'] as num?)?.toInt() ?? 0,
@@ -172,6 +180,7 @@ class TOModel {
       isManualClosed: data['isManualClosed'] as bool? ?? false,
       closedAt: (data['closedAt'] as Timestamp?)?.toDate().toLocal(),
       closedBy: data['closedBy'] as String?,
+      closedReasonCode: data['closedReason'] as String?,
       reopenedAt: (data['reopenedAt'] as Timestamp?)?.toDate().toLocal(),
       reopenedBy: data['reopenedBy'] as String?,
       publishMode: data['publishMode'] as String? ?? 'immediate',
@@ -256,6 +265,7 @@ class TOModel {
     bool? isManualClosed,
     DateTime? closedAt,
     String? closedBy,
+    String? closedReasonCode,
     DateTime? reopenedAt,
     String? reopenedBy,
     String? publishMode,
@@ -267,6 +277,8 @@ class TOModel {
     bool clearContractPeriodType = false,
     int? postingDurationDays,
     bool clearPostingDuration = false,
+    DateTime? postingExpiryDateServer,
+    bool clearPostingExpiryDateServer = false,
     String? creatorUID,
     DateTime? createdAt,
   }) {
@@ -297,6 +309,7 @@ class TOModel {
       isManualClosed: isManualClosed ?? this.isManualClosed,
       closedAt: closedAt ?? this.closedAt,
       closedBy: closedBy ?? this.closedBy,
+      closedReasonCode: closedReasonCode ?? this.closedReasonCode,
       reopenedAt: reopenedAt ?? this.reopenedAt,
       reopenedBy: reopenedBy ?? this.reopenedBy,
       publishMode: publishMode ?? this.publishMode,
@@ -306,6 +319,7 @@ class TOModel {
       publishTime: publishTime ?? this.publishTime,
       contractPeriodType: clearContractPeriodType ? null : (contractPeriodType ?? this.contractPeriodType),
       postingDurationDays: clearPostingDuration ? null : (postingDurationDays ?? this.postingDurationDays),
+      postingExpiryDateServer: clearPostingExpiryDateServer ? null : (postingExpiryDateServer ?? this.postingExpiryDateServer),
       creatorUID: creatorUID ?? this.creatorUID,
       createdAt: createdAt ?? this.createdAt,
     );
@@ -468,8 +482,9 @@ class TOModel {
 
   // ── 게시 만료 (contract용, postingDurationDays 기반) ─────────
 
-  /// 게시 만료일: publishAt(또는 createdAt) + postingDurationDays
+  /// 게시 만료일: 서버 저장값 우선, 없으면 publishAt(또는 createdAt) + postingDurationDays 계산
   DateTime? get postingExpiryDate {
+    if (postingExpiryDateServer != null) return postingExpiryDateServer;
     if (postingDurationDays == null) return null;
     final base = publishAt ?? createdAt;
     return base.add(Duration(days: postingDurationDays!));
@@ -490,6 +505,16 @@ class TOModel {
     final today = DateTime(now.year, now.month, now.day);
     final expiry = DateTime(d.year, d.month, d.day);
     return today.isAfter(expiry);
+  }
+
+  /// 게시기간 만료 마감이고 연장 가능 (rangeEnd 여유 3일 이상)
+  bool get isPostingExpiredAndExtendable {
+    if (!isContractType) return false;
+    if (status != TOStatus.closed) return false;
+    if (closedReasonCode != 'POSTING_EXPIRED') return false;
+    final end = endDate;
+    if (end == null) return false;
+    return end.difference(DateTime.now()).inDays >= 3;
   }
 
   String get closedReason {

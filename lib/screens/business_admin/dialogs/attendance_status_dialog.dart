@@ -41,6 +41,7 @@ import '../../../widgets/common/app_checkbox.dart';
 import '../../../widgets/common/app_tab_label.dart';
 
 // Widgets
+import '../../../widgets/common/app_empty_state.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/dialogs/worker_detail_dialog.dart';
 import '../../../widgets/work_type_icon.dart';
@@ -60,12 +61,14 @@ class AttendanceStatusDialog extends StatefulWidget {
   final DateTime date;
   final List<String> businessIds;
   final String? initialBusinessId;
+  final List<BusinessModel>? businesses;
 
   const AttendanceStatusDialog({
     super.key,
     required this.date,
     required this.businessIds,
     this.initialBusinessId,
+    this.businesses,
   });
 
   @override
@@ -159,6 +162,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     _tabController = TabController(length: 4, vsync: this);
     _selectedBusinessId = widget.initialBusinessId ??
         (widget.businessIds.isNotEmpty ? widget.businessIds.first : null);
+    if (widget.businesses != null) {
+      _businessNameMap = {for (final b in widget.businesses!) b.id: b.name};
+    }
     _applySavedBusinessThenLoad();
   }
 
@@ -187,7 +193,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   Future<void> _initializeData() async {
     try {
       await Future.wait([
-        _loadBusinessNames(),
+        // businesses가 생성자로 전달된 경우 Firestore 이름 조회 생략
+        if (widget.businesses == null) _loadBusinessNames(),
         _loadData(),
       ]);
     } catch (e) {
@@ -972,25 +979,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
   /// 빈 상태
   Widget _buildEmptyState() {
-    return Center(
-      child: Padding(
-        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 40)),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.people_outline,
-              size: ResponsiveHelper.iconSize(context, 64),
-              color: AppColors.grey400,
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            Text(
-              '확정된 근무자가 없습니다',
-              style: ResponsiveHelper.subtitleStyle(context, color: AppColors.grey600),
-            ),
-          ],
-        ),
-      ),
+    return const AppEmptyState(
+      icon: Icons.people_outline,
+      title: '확정된 근무자가 없습니다',
     );
   }
 
@@ -1069,11 +1060,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   /// 탭별 콘텐츠 (빈 상태 또는 업무 그룹 목록)
   Widget _buildTabContent(ThemeData theme, List<ApplicationModel> tabWorkers, EdgeInsets padding) {
     if (tabWorkers.isEmpty) {
-      return Center(
-        child: Text(
-          '해당 근무자가 없습니다',
-          style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
-        ),
+      return const AppEmptyState(
+        icon: Icons.people_outline,
+        title: '해당 근무자가 없습니다',
       );
     }
     return SingleChildScrollView(

@@ -336,7 +336,7 @@ class WorkDetailManagementDialog {
                             '$confirmed/${work.requiredCount}명',
                             style: ResponsiveHelper.smallStyle(
                               context,
-                              color: confirmed >= work.requiredCount
+                              color: work.requiredCount > 0 && confirmed >= work.requiredCount
                                   ? AppColors.success
                                   : AppColors.grey600,
                             ).copyWith(fontWeight: FontWeight.w600),
@@ -455,7 +455,7 @@ class WorkDetailManagementDialog {
     }
 
     if (work.isEmergencyOpen) return _WDS.emergency;
-    if (confirmed >= work.requiredCount) return _WDS.full;
+    if (work.requiredCount > 0 && confirmed >= work.requiredCount) return _WDS.full;
     return _WDS.active;
   }
 

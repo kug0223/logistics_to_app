@@ -78,7 +78,9 @@ class PayslipPeriodHelper {
   static List<WeekPeriod> weeksOfMonth(int year, int month) {
     final lastDay = DateTime(year, month + 1, 0); // 해당 월 말일
 
-    // 해당 월의 첫 번째 월요일 (weekday: Mon=1, Sun=7)
+    // 주 귀속 원칙: 월요일이 해당 월에 속하는 주만 이 월의 주차로 계산.
+    // → 7/1이 수요일이면 7/6(첫 월요일)부터 시작. 6/29주는 6월 마지막주.
+    // → 이체현황·급여명세서 모두 동일 기준. 절대 subtract(월요일 포함) 방식으로 바꾸지 말 것.
     final firstDay = DateTime(year, month, 1);
     final daysToMonday = (1 - firstDay.weekday + 7) % 7;
     DateTime weekStart = firstDay.add(Duration(days: daysToMonday));

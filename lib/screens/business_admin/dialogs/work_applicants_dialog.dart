@@ -38,6 +38,7 @@ import '../../../models/core/attendance_model.dart';
 import '../../../models/core/monthly_review_model.dart';
 import '../../../services/monthly_review_service.dart';
 import '../../../screens/contract/contract_sign_screen.dart' show ContractTemplateWidget;
+import '../../../widgets/common/app_empty_state.dart';
 import '../../../widgets/common/loading_widget.dart';
 
 /// 다이얼로그 결과
@@ -409,7 +410,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                 child: isLoading
                     ? const LoadingWidget()
                     : (pending.isEmpty && confirmed.isEmpty)
-                        ? _buildEmptyState(context)
+                        ? _buildEmptyState()
                         : widget.work == null
                             ? _buildGroupedApplicantList(context)
                             : _buildApplicantList(context, pending, confirmed),
@@ -644,19 +645,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   }
 
   /// 빈 상태
-  Widget _buildEmptyState(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.people_outline, size: ResponsiveHelper.iconSize(context, 64), color: AppColors.grey300),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          Text(
-            '지원자가 없습니다',
-            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
-          ),
-        ],
-      ),
+  Widget _buildEmptyState() {
+    return const AppEmptyState(
+      icon: Icons.people_outline,
+      title: '지원자가 없습니다',
     );
   }
 
@@ -734,7 +726,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   /// 그룹 모드: 업무별 섹션으로 나눈 지원자 목록
   Widget _buildGroupedApplicantList(BuildContext context) {
     final works = widget.toItem.workDetails;
-    if (works.isEmpty) return _buildEmptyState(context);
+    if (works.isEmpty) return _buildEmptyState();
 
     return SingleChildScrollView(
       padding: ResponsiveHelper.cardPadding(context),
@@ -1817,14 +1809,17 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       return;
     }
 
-    // [C-1] 파트변경 전 확정된 급여 건 체크 — 있으면 미확정 처리됨을 사전 경고
+    // [C-1] 파트변경 전 급여 상태 확인 — confirmed: 완전 차단 / calculated: 경고 후 선택
     // [H-CF-1] callableGetWageStatusCount CF 경유 — assertBizAdmin 서버 교차검증
-    final int confirmedWageCount;
+    final int confirmedCount;
+    final int calculatedCount;
     try {
       final wageCountResult = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableGetWageStatusCount')
           .call({'applicationId': app.id, 'businessId': app.businessId});
-      confirmedWageCount = (wageCountResult.data as Map)['total'] as int? ?? 0;
+      final resultMap = wageCountResult.data as Map;
+      confirmedCount   = resultMap['confirmedCount']   as int? ?? 0;
+      calculatedCount  = resultMap['calculatedCount']  as int? ?? 0;
     } catch (e) {
       debugPrint('❌ 급여 상태 확인 실패: $e');
       if (mounted) {
@@ -1835,11 +1830,23 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     }
     if (!mounted) return;
 
-    if (confirmedWageCount > 0) {
+    // confirmed(마감 완료) 기록 있으면 파트변경 완전 차단
+    if (confirmedCount > 0) {
+      setState(() => _isProcessing = false);
+      await DialogHelper.showError(
+        context,
+        title: '파트변경 불가',
+        message: '마감 처리된 급여가 $confirmedCount건 있습니다.\n먼저 마감을 취소한 후 다시 시도해주세요.',
+      );
+      return;
+    }
+
+    // calculated(계산 완료, 미마감) 기록 있으면 경고 후 선택
+    if (calculatedCount > 0) {
       final proceed = await DialogHelper.showConfirm(
         context,
-        title: '급여 확정 초기화 안내',
-        message: '이 근무자의 확정된 급여 $confirmedWageCount건이 있습니다.\n파트변경 시 해당 급여가 미확정 처리됩니다.\n계속하시겠습니까?',
+        title: '임금 계산 초기화 안내',
+        message: '계산된 급여 $calculatedCount건이 있습니다.\n파트변경 시 해당 급여가 초기화되어 재계산이 필요합니다.\n계속하시겠습니까?',
         confirmText: '계속',
         cancelText: '취소',
       );
@@ -1980,8 +1987,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         newWorkTypeColor: selectedWork.workTypeColor,
         newWorkTypeBackgroundColor: selectedWork.workTypeBackgroundColor,
       );
-      final resetMsg = confirmedWageCount > 0
-          ? '\n확정 급여 $confirmedWageCount건이 미확정 처리되었습니다.'
+      final resetMsg = calculatedCount > 0
+          ? '\n계산된 급여 $calculatedCount건이 초기화되었습니다.'
           : '';
       if (!mounted) return;
       ToastHelper.showSuccess('${user?.name ?? '지원자'}님의 파트가 ${selectedWork.workType}(으)로 변경되었습니다$resetMsg');

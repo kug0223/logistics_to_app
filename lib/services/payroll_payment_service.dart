@@ -258,6 +258,21 @@ class PayrollPaymentService {
     }
   }
 
+  /// 미이체(wageStatus=confirmed) 건수 (홈 배지용) — callableGetNotTransferredCount 경유
+  /// attendance.businessId 단일 필터 → wageStatus만 읽고 서버 카운트 (복합 인덱스 불필요)
+  Future<int?> getTotalNotTransferredCount({required String businessId}) async {
+    try {
+      final result = await _cf
+          .httpsCallable('callableGetNotTransferredCount',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)))
+          .call<Map<String, dynamic>>({'businessId': businessId});
+      return (result.data['count'] as num?)?.toInt() ?? 0;
+    } catch (e) {
+      debugPrint('❌ 미이체 건수 조회 실패: $e');
+      return null;
+    }
+  }
+
   // ══════════════════════════════════════════════════════════
   // CSV 내보내기
   // ══════════════════════════════════════════════════════════
@@ -535,7 +550,8 @@ class PayrollPaymentService {
     final currentStatus = reqSnap.data()!['status'] as String?;
     // [BUG-수정] S-1: APPROVED 상태도 멱등성 체크에 포함 — 재호출 시 1단계 중복 실행 방지
     if (currentStatus == InterimSettlementRequestModel.statusProcessed ||
-        currentStatus == InterimSettlementRequestModel.statusApproved) {
+        currentStatus == InterimSettlementRequestModel.statusApproved ||
+        currentStatus == InterimSettlementRequestModel.statusRejected) {
       // [D-002] silent return 대신 exception throw — 호출자가 성공으로 오인하는 버그 수정
       throw Exception('이미 처리된 중간정산 요청입니다. 중복 처리가 차단되었습니다.');
     }

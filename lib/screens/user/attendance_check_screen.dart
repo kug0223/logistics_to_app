@@ -149,9 +149,12 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
         if (att == null) return true;
         if (DateUtils.isSameDay(att.workDate, yesterday)) {
           // [G-3 수정] 어제 기록은 퇴근 완료 또는 missed_checkout 상태 모두 오늘 화면에서 숨김
-          // missed_checkout 상태인 채로 오늘 화면에 남으면 근무자가 출근 버튼을 찾지 못하는 UX 버그 발생
-          // missed_checkout 처리는 관리자의 수동 수정 영역 — 근무자 화면에서 제거
-          if (att.checkOut != null || att.status == 'missed_checkout') {
+          // [BUG-M2 수정 2026-07-27] NO_SHOW/absent 상태도 어제 기록이면 숨김
+          // — 배치 자동처리 후 어제 카드가 "출근하기" 버튼과 함께 오늘 화면에 남는 UX 버그 방지
+          if (att.checkOut != null ||
+              att.status == 'missed_checkout' ||
+              att.status == AttendanceModel.statusNoShow ||
+              att.status == AttendanceModel.statusAbsent) {
             return false;
           }
         }
@@ -489,6 +492,8 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
           message: e.toString().replaceAll('Exception: ', ''),
         );
       }
+      // [BUG-M1 수정 2026-07-27] 에러 후에도 재조회 — 배치 선처리(NO_SHOW 등)로 상태가 바뀐 경우 UI 동기화
+      if (mounted) await _loadTodayWorks();
     } finally {
       // mounted 여부와 무관하게 상태값 리셋 (영구 잠금 방지)
       _isProcessing = false;
@@ -597,7 +602,8 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
       return null;
     }
 
-    final gpsRadius = business.gpsRadius.toDouble();
+    // [BUG-M3 수정 2026-07-27] gpsRadius=0(미설정) 시 GPS 검증 항상 실패하는 버그 — 100m 기본값 적용
+    final gpsRadius = business.gpsRadius > 0 ? business.gpsRadius.toDouble() : 100.0;
     final isNearby = LocationHelper.isWithinRadius(
       currentLat: position.latitude,
       currentLon: position.longitude,
@@ -1094,7 +1100,10 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
             ],
 
             // 출근/퇴근 버튼
-            if (!hasCheckedIn)
+            if (attendance?.status == AttendanceModel.statusNoShow ||
+                attendance?.status == AttendanceModel.statusAbsent)
+              _buildNoShowBanner(attendance!.status)
+            else if (!hasCheckedIn)
               _buildCheckInArea(work)
             else if (!hasCheckedOut)
               LoadingButton(
@@ -1135,6 +1144,40 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// 노쇼/결근 안내 배너
+  Widget _buildNoShowBanner(String status) {
+    final isNoShow = status == AttendanceModel.statusNoShow;
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+      decoration: BoxDecoration(
+        color: isNoShow ? AppColors.errorBg : AppColors.warningBg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isNoShow ? AppColors.errorLight : AppColors.warningLight,
+        ),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.block,
+            color: isNoShow ? AppColors.errorDark : AppColors.warningDark,
+            size: ResponsiveHelper.iconSize(context, 20),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Text(
+            isNoShow ? '노쇼 처리됨' : '결근 처리됨',
+            style: ResponsiveHelper.bodyStyle(context).copyWith(
+              fontWeight: FontWeight.bold,
+              color: isNoShow ? AppColors.errorDark : AppColors.warningDark,
+            ),
+          ),
+        ],
       ),
     );
   }

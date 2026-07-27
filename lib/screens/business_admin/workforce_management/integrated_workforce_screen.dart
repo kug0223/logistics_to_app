@@ -1,5 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
@@ -34,6 +35,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
   List<String> _allBusinessIds = [];
   String? _selectedBusinessId;
   bool _isCalendarView = false;
+  static const _prefKey = 'workforce_view_is_calendar';
   bool _isLoading = true;
   bool _fetchInProgress = false;
   DateTime? _lastResumedAt; // 앱 복귀 시 2분 쿨다운 — 매 복귀마다 CF reload 방지
@@ -47,6 +49,12 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
     _loadBusinessIds();
     _fcmRefreshCallback = () { if (mounted) _controller.reload(context); };
     FCMService().addAdminRefreshListener(_fcmRefreshCallback);
+  }
+
+  Future<void> _setViewMode(bool isCalendar) async {
+    setState(() => _isCalendarView = isCalendar);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_prefKey, isCalendar);
   }
 
   @override
@@ -82,10 +90,16 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
         return;
       }
 
+      // 뷰 모드를 먼저 로드해서 _selectedBusinessId와 같은 setState에 묶는다 — 토글 애니메이션 방지
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      final savedIsCalendar = prefs.getBool(_prefKey) ?? false;
+
       // SubAdmin은 effectiveBusinessId로 직접 사용 (adminIds에 없으므로 CF 호출 불필요)
       final effectiveBizId = userProvider.effectiveBusinessId;
       if (userProvider.isSubAdmin && effectiveBizId != null) {
         setState(() {
+          _isCalendarView = savedIsCalendar;
           _allBusinessIds = [effectiveBizId];
           _selectedBusinessId = effectiveBizId;
         });
@@ -99,6 +113,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
       if (cachedIds.isNotEmpty) {
         final preferred = widget.initialBusinessId;
         setState(() {
+          _isCalendarView = savedIsCalendar;
           _allBusinessIds = cachedIds;
           _selectedBusinessId = (preferred != null && cachedIds.contains(preferred))
               ? preferred
@@ -120,6 +135,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
       }
 
       setState(() {
+        _isCalendarView = savedIsCalendar;
         _allBusinessIds = businesses.map((b) => b.id).toList();
         final preferred = widget.initialBusinessId;
         _selectedBusinessId = (preferred != null && _allBusinessIds.contains(preferred))
@@ -204,14 +220,14 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
                   icon: Icons.view_list,
                   label: '목록',
                   isSelected: !_isCalendarView,
-                  onTap: () => setState(() => _isCalendarView = false),
+                  onTap: () => _setViewMode(false),
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 2)),
                 _buildViewToggleButton(
                   icon: Icons.calendar_month,
                   label: '캘린더',
                   isSelected: _isCalendarView,
-                  onTap: () => setState(() => _isCalendarView = true),
+                  onTap: () => _setViewMode(true),
                 ),
               ],
             ),

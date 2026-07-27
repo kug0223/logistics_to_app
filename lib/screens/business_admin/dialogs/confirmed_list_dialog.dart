@@ -19,6 +19,7 @@ import '../../../widgets/dialogs/worker_detail_dialog.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/app_checkbox.dart';
+import '../../../widgets/common/app_empty_state.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../../utils/id_card_helper.dart';
 import '../../../utils/trust_score_helper.dart';
@@ -90,6 +91,9 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
   bool _isCancelSelectMode = false;
   final Set<String> _selectedCancelAppIds = {};
 
+  // [BUG-CANCEL-01] 근무 이력 있는 확정자는 확정취소 불가
+  Map<String, bool> _hasWorkedMap = {};
+
   @override
   void initState() {
     super.initState();
@@ -121,14 +125,21 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
       final uniqueUids = confirmed.map((app) => app.uid).toSet().toList();
       final currentUserId = userProvider.currentUser?.uid ?? '';
 
-      // ✅ 2. getUsersBatch + loadStatusBatch 동시 시작 (서로 의존성 없음)
-      // confirmedUserIds는 uniqueUids와 동일하므로 userMap 완료를 기다릴 필요 없음
+      // ✅ 2. getUsersBatch + loadStatusBatch + hasWorkedMap 동시 시작
       final userMapFuture = widget.firestoreService.getUsersBatch(uniqueUids, businessId: widget.toItem.to.businessId);
       final idCardFuture = IdCardHelper.loadStatusBatch(
         firestoreService: widget.firestoreService,
         requesterId: currentUserId,
         targetUserIds: uniqueUids,
       );
+      // [BUG-CANCEL-01] 슬롯 날짜가 있을 때만 출퇴근 기록 조회 — 날짜 없으면 빈 맵(가드 없음)
+      final slotDate = widget.toItem.slotDate;
+      final hasWorkedFuture = (uniqueUids.isNotEmpty && slotDate != null)
+          ? widget.firestoreService.loadHasWorkedMap(
+              businessId: widget.toItem.to.businessId,
+              date: slotDate,
+            )
+          : Future.value(<String, bool>{});
 
       final userMap = await userMapFuture;
 
@@ -177,13 +188,15 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
         });
       }
 
-      // 신분증 상태 — 위에서 동시에 시작한 idCardFuture 결과 수집
+      // 신분증 상태 + 출퇴근 기록 — 위에서 동시에 시작한 Future 결과 수집
       final idCardStatusMap = await idCardFuture;
+      final hasWorkedMap = await hasWorkedFuture;
 
       if (!mounted) return;
       setState(() {
         _confirmedByWork = groupedByWork;
         _idCardStatusMap = idCardStatusMap;
+        _hasWorkedMap = hasWorkedMap; // [BUG-CANCEL-01]
         _totalConfirmed = groupedByWork.values.fold(0, (sum, list) => sum + list.length);
       });
     } catch (e) {
@@ -214,7 +227,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
       child: StyledDialog(
         title: '확정 명단',
         subtitle:
-            '${dateFormat.format(widget.toItem.to.date)} · ${widget.toItem.to.title}',
+            '${dateFormat.format(widget.toItem.slot?.date ?? widget.toItem.to.date)} · ${widget.toItem.to.title}',
         icon: Icons.check_circle,
         headerColor: AppColors.success,
         maxHeightRatio: 0.85,
@@ -254,28 +267,22 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
     }
 
     if (_error != null) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.error_outline, size: ResponsiveHelper.iconSize(context, 48), color: AppColors.error),
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            Text('데이터를 불러올 수 없습니다', style: ResponsiveHelper.bodyStyle(context)),
-          ],
+      return AppEmptyState(
+        icon: Icons.error_outline,
+        title: '데이터를 불러올 수 없습니다',
+        iconColor: AppColors.error,
+        action: TextButton.icon(
+          onPressed: _loadConfirmedApplicants,
+          icon: const Icon(Icons.refresh),
+          label: const Text('다시 시도'),
         ),
       );
     }
 
     if (_confirmedByWork.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.people_outline, size: ResponsiveHelper.iconSize(context, 48), color: AppColors.grey400),
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            Text('확정된 근무자가 없습니다', style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600)),
-          ],
-        ),
+      return const AppEmptyState(
+        icon: Icons.people_outline,
+        title: '확정된 근무자가 없습니다',
       );
     }
 
@@ -461,7 +468,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
     final confirmedCount = workers.length;
     final requiredCount = workDetail.requiredCount;
     final progress = requiredCount > 0 ? (confirmedCount / requiredCount).clamp(0.0, 1.0) : 0.0;
-    final isFull = confirmedCount >= requiredCount;
+    final isFull = requiredCount > 0 && confirmedCount >= requiredCount;
 
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 16)),
@@ -545,7 +552,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
               color: Colors.transparent,
               child: InkWell(
                 onTap: _isCancelSelectMode
-                    ? () => _toggleCancelSelection(application.id)
+                    ? (_canCancelConfirmation(application) ? () => _toggleCancelSelection(application.id, application) : null)
                     : _isIdCardSelectMode && (idCardStatus == 'none' || idCardStatus == 'expired' || idCardStatus == 'rejected')
                         ? () => _toggleIdCardSelection(user.uid)
                         : () => _showWorkerDetailDialog(context, user, application, workDetail),
@@ -567,6 +574,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
                                 value: _selectedCancelAppIds.contains(application.id),
                                 activeColor: AppColors.error,
                                 size: 22,
+                                enabled: _canCancelConfirmation(application),
                               )
                             : _isIdCardSelectMode
                                 ? ((idCardStatus == 'none' || idCardStatus == 'expired' || idCardStatus == 'rejected')
@@ -833,6 +841,11 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
         if (stats != null) {
           stats['confirmed'] = ((stats['confirmed'] ?? 0) - 1).clamp(0, 9999);
         }
+        // 6. 슬롯 헤더 통계 감소 (그룹 헤더 배지 즉시 반영)
+        widget.toItem.updateOuterStats(
+          confirmed: (widget.toItem.confirmedCount - 1).clamp(0, 9999),
+          pending: widget.toItem.pendingCount,
+        );
       });
     } else if (mounted) {
       // 신분증 상태만 변경된 경우 (확정 취소 아님)
@@ -976,7 +989,13 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
     );
   }
 
-  void _toggleCancelSelection(String applicationId) {
+  // [BUG-CANCEL-01] 출퇴근 기록이 있는 근무자는 확정취소 불가
+  bool _canCancelConfirmation(ApplicationModel app) {
+    return _hasWorkedMap[app.uid] != true;
+  }
+
+  void _toggleCancelSelection(String applicationId, ApplicationModel app) {
+    if (!_canCancelConfirmation(app)) return;
     setState(() {
       if (_selectedCancelAppIds.contains(applicationId)) {
         _selectedCancelAppIds.remove(applicationId);
@@ -1027,6 +1046,27 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
 
     if (successCount > 0 && mounted) {
       setState(() {
+        // workDetailStats 업데이트 (개별 취소와 동일한 방어 로직)
+        widget.toItem.workDetailStats ??= {};
+        for (final entry in _confirmedByWork.entries) {
+          for (final w in entry.value) {
+            final app = w['application'] as ApplicationModel;
+            if (!successIds.contains(app.id)) continue;
+            final wdId = app.workDetailId;
+            final statsKey = (wdId != null && wdId.isNotEmpty && wdId != app.selectedWorkType)
+                ? wdId
+                : '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
+            final stats = widget.toItem.workDetailStats![statsKey];
+            if (stats != null) {
+              stats['confirmed'] = ((stats['confirmed'] ?? 0) - 1).clamp(0, 9999);
+            }
+          }
+        }
+        // 슬롯 헤더 통계 업데이트 (그룹 헤더 배지 즉시 반영)
+        widget.toItem.updateOuterStats(
+          confirmed: (widget.toItem.confirmedCount - successCount).clamp(0, 9999),
+          pending: widget.toItem.pendingCount,
+        );
         for (final entry in _confirmedByWork.entries.toList()) {
           // 실제 성공한 ID만 UI에서 제거
           entry.value.removeWhere((w) {
@@ -1234,6 +1274,10 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
     final business = await widget.firestoreService.getBusinessById(businessId);
 
     if (!mounted) return;
+    if (business == null) {
+      ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+      return;
+    }
     final successCount = await IdCardHelper.showBatchRequestDialog(
       context: context,
       firestoreService: widget.firestoreService,
@@ -1243,7 +1287,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
       },
       business: {
         'id': businessId,
-        'name': business?.name ?? '',
+        'name': business.name,
       },
       targets: targets,
     );

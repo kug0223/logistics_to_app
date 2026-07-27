@@ -16,7 +16,6 @@ import '../../../services/firestore_service.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../utils/responsive_helper.dart';
-import '../../../utils/format_helper.dart';
 import '../../../utils/dialog_helper.dart';
 
 // Widgets
@@ -33,19 +32,15 @@ class AdminEditTOScreen extends StatefulWidget {
   final TOModel to;
   final SlotModel? slot;             // 단일 슬롯 수정
   final List<SlotModel>? batchSlots; // 배치 슬롯 수정 (일괄수정)
-  final DateTime? newSlotDate;       // 새 날짜 슬롯 추가
-
   const AdminEditTOScreen({
     super.key,
     required this.to,
     this.slot,
     this.batchSlots,
-    this.newSlotDate,
   });
 
   bool get isBatchMode => batchSlots != null && batchSlots!.isNotEmpty;
-  bool get isNewSlot => newSlotDate != null;
-  bool get isSlotMode => slot != null || isBatchMode || isNewSlot;
+  bool get isSlotMode => slot != null || isBatchMode;
 
   @override
   State<AdminEditTOScreen> createState() => _AdminEditTOScreenState();
@@ -164,22 +159,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         return;
       }
 
-      if (widget.isNewSlot) {
-        final slots = await _firestoreService.getSlots(widget.to.id);
-        if (!mounted) return;
-        final template = slots.isNotEmpty ? slots.first : null;
-        _slotTitleController.text = template?.title ?? widget.to.title;
-        final newSlotWork = List<WorkDetailData>.from(
-            template?.workDetails ?? widget.to.workDetails);
-        setState(() {
-          _workDetails = newSlotWork;
-          _originalWorkDetails = List<WorkDetailData>.from(newSlotWork);
-          _businessWorkTypes = workTypes;
-          _isLoading = false;
-        });
-        return;
-      }
-
       DateTime? firstSlotDate;
       if (!widget.to.isContractType) {
         final slots = await _firestoreService.getSlots(widget.to.id);
@@ -239,8 +218,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     setState(() { _isSaving = true; _hasChanges = false; });
 
     try {
-      if (!widget.isNewSlot &&
-          (_publishMode != 'draft' || isExistingSlotEdit) &&
+      if ((_publishMode != 'draft' || isExistingSlotEdit) &&
           _hasWageFieldsChanged()) {
         final proceed = await _showWageGuardWarning();
         if (!mounted) return;
@@ -252,18 +230,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         }
       }
       // ── 슬롯 수정 모드 ──────────────────────────────────────
-      if (widget.isNewSlot) {
-        if (_isNewSlotDeadlineExpired()) {
-          final proceed = await _showExpiredDeadlineWarning();
-          if (!mounted) { _isSaving = false; return; }
-          if (!proceed) {
-            setState(() => _isSaving = false);
-            return;
-          }
-        }
-        await _saveNewSlotChanges();
-        return;
-      }
       if (widget.isBatchMode) {
         await _saveBatchSlotChanges();
         return;
@@ -514,50 +480,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     }
   }
 
-  /// 새 슬롯의 모든 업무 마감시각이 이미 지났는지 확인
-  bool _isNewSlotDeadlineExpired() {
-    final slotDate = widget.newSlotDate;
-    if (slotDate == null || _workDetails.isEmpty) return false;
-    final now = DateTime.now();
-    if (!DateUtils.isSameDay(slotDate, now)) return false;
-    return _workDetails.every((d) {
-      final parts = d.startTime.split(':');
-      if (parts.length != 2) return false;
-      final deadline = DateTime(
-        slotDate.year, slotDate.month, slotDate.day,
-        int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0,
-      ).subtract(Duration(hours: _hoursBeforeStart));
-      return now.isAfter(deadline);
-    });
-  }
-
-  /// 마감 경과 경고 다이얼로그 — true: 그래도 등록, false: 취소
-  Future<bool> _showExpiredDeadlineWarning() async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StyledDialog(
-        title: '지원 마감 경과',
-        subtitle: '선택한 근무 시간의 지원 마감이 이미 지났습니다',
-        icon: Icons.timer_off_outlined,
-        headerColor: AppColors.warning,
-        content: Text(
-          '등록 즉시 마감 상태가 됩니다.\n그래도 등록하시겠습니까?',
-          style: ResponsiveHelper.bodyStyle(ctx, color: AppColors.grey700),
-        ),
-        actions: [
-          StyledDialogButton.cancel(
-            onPressed: () => Navigator.pop(ctx, false),
-          ),
-          StyledDialogButton.primary(
-            text: '등록',
-            backgroundColor: AppColors.warning,
-            onPressed: () => Navigator.pop(ctx, true),
-          ),
-        ],
-      ),
-    );
-    return result == true;
-  }
 
   // [WAGE-GUARD] TO workDetails 변경 전 미확정 근무자 경고 다이얼로그
   // wageType·breakMinutes·야간설정은 저장 시점 TO값 재참조 — 확정 전 근무자 급여에 영향
@@ -627,39 +549,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       ),
     );
     return result == true;
-  }
-
-  Future<void> _saveNewSlotChanges() async {
-    try {
-      final (newSlotVisibleFrom, _) = _calcSlotVisibleFrom(widget.newSlotDate!);
-
-      // 공개 설정을 명시적으로 변경했을 때만 draft TO 자동 전환
-      if (_slotPublishChanged && widget.to.publishMode == 'draft') {
-        if (!await _applyTODraftTransition(newSlotVisibleFrom)) return;
-      }
-      await _firestoreService.addSlot(
-        to: widget.to,
-        date: widget.newSlotDate!,
-        workDetails: _workDetails,
-        hoursBeforeStart: _hoursBeforeStart,
-        title: _slotTitleController.text.trim(),
-        visibleFrom: newSlotVisibleFrom,
-      );
-
-      _firestoreService.clearCache(toId: widget.to.id);
-      if (!mounted) return;
-      ToastHelper.showSuccess(
-          '${widget.newSlotDate!.month}/${widget.newSlotDate!.day} 날짜가 추가되었습니다');
-      NavigationHelper.popWithChange(context);
-    } catch (e) {
-      debugPrint('❌ 날짜 추가 실패: $e');
-      if (mounted) {
-        final msg = e.toString().replaceFirst('Exception: ', '');
-        ToastHelper.showError(msg.isNotEmpty ? msg : '날짜 추가에 실패했습니다');
-      }
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
-    }
   }
 
   Future<void> _saveBatchSlotChanges() async {
@@ -855,14 +744,11 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final d = widget.newSlotDate;
-    final appBarTitle = widget.isNewSlot
-        ? '${d!.month}/${d.day} 날짜 추가'
-        : widget.isBatchMode
-            ? '${widget.batchSlots!.length}개 날짜 일괄수정'
-            : widget.slot != null
-                ? '${widget.slot!.formattedDate} 수정'
-                : '공고 수정';
+    final appBarTitle = widget.isBatchMode
+        ? '${widget.batchSlots!.length}개 날짜 일괄수정'
+        : widget.slot != null
+            ? '${widget.slot!.formattedDate} 수정'
+            : '공고 수정';
 
     if (_isLoading) {
       return GradientScaffold(
@@ -893,15 +779,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           child: ListView(
             padding: ResponsiveHelper.listPadding(context),
             children: [
-              if (widget.isNewSlot) ...[
-                _buildNewSlotBanner(context),
-                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-              ] else if (widget.isBatchMode) ...[
+              if (widget.isBatchMode) ...[
                 _buildBatchInfoBanner(context),
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
               ],
-              // 슬롯 개별 공고 제목 (단일 슬롯 수정 or 새 날짜 추가)
-              if (widget.slot != null || widget.isNewSlot) ...[
+              // 슬롯 개별 공고 제목 (단일 슬롯 수정)
+              if (widget.slot != null) ...[
                 _buildSlotTitleField(context),
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
               ],
@@ -955,6 +838,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                   postingDurationDays: _postingDurationDays,
                   onPostingDurationChanged: (d) =>
                       setState(() => _postingDurationDays = d),
+                  rangeEnd: widget.to.isContractType ? widget.to.rangeEnd : null,
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
                 TODescriptionSection(controller: _descriptionController),
@@ -986,9 +870,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                   }),
                   previewDates: widget.isBatchMode
                       ? widget.batchSlots!.map((s) => s.date).toList()
-                      : widget.isNewSlot
-                          ? [widget.newSlotDate!]
-                          : (widget.slot != null ? [widget.slot!.date] : []),
+                      : (widget.slot != null ? [widget.slot!.date] : []),
                   isLongTerm: false,
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 24)),
@@ -1044,34 +926,6 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                   borderRadius: BorderRadius.circular(12),
                   borderSide:
                       BorderSide(color: theme.primaryColor, width: 2)),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNewSlotBanner(BuildContext context) {
-    final d = widget.newSlotDate!;
-    final label = '${d.month}/${d.day} (${FormatHelper.weekday(d)})';
-    return Container(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-      decoration: BoxDecoration(
-        color: AppColors.infoBg,
-        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 10)),
-        border: Border.all(color: AppColors.infoLight),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.event_available,
-              size: ResponsiveHelper.iconSize(context, 16),
-              color: AppColors.infoDark),
-          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          Expanded(
-            child: Text(
-              '$label 날짜 추가 — 업무 내용을 확인 후 저장하세요',
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark)
-                  .copyWith(fontWeight: FontWeight.w600),
             ),
           ),
         ],

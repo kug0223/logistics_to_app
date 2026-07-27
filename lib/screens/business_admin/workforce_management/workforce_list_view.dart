@@ -488,6 +488,11 @@ class _WorkforceListViewState extends State<WorkforceListView> {
           if (mounted) setState(() => _loadingGroups.remove(key));
         }
       }
+      // 단일 슬롯 flex TO: 업무 상세 통계도 로드 (다중 슬롯은 TOItemCard 개별 확장 시 로드)
+      if (groupItem.groupTOs.length == 1 &&
+          groupItem.groupTOs.first.needsWorkDetailLoad) {
+        await controller.loadWorkDetails(groupItem.groupTOs.first);
+      }
     } else if (!groupItem.isWorkDetailLoaded) {
       // 단건 TO: 업무별 통계 lazy load
       setState(() => _loadingTOs.add(key));

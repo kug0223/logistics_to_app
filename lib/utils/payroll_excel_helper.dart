@@ -70,7 +70,7 @@ class PayrollExcelHelper {
       _cell(sheet, 2 + i, 1, r.bankName);
       _cell(sheet, 2 + i, 2, r.accountNumber);
       _cell(sheet, 2 + i, 3, r.accountHolder);
-      _cell(sheet, 2 + i, 4, r.netAmount.toString());
+      _numCell(sheet, 2 + i, 4, r.netAmount);
       _cell(sheet, 2 + i, 5, r.memo);
     }
 
@@ -78,7 +78,7 @@ class PayrollExcelHelper {
     final totalRow = 2 + rows.length;
     final total = rows.fold<int>(0, (a, r) => a + r.netAmount);
     _cell(sheet, totalRow, 3, '합계', bold: true, bgHex: 'FFEAF4FF');
-    _cell(sheet, totalRow, 4, total.toString(), bold: true, bgHex: 'FFEAF4FF');
+    _numCell(sheet, totalRow, 4, total, bold: true, bgHex: 'FFEAF4FF');
 
     if (!context.mounted) return;
     await _shareExcel(context, excel, filename);
@@ -167,12 +167,12 @@ class PayrollExcelHelper {
       _cell(sheet, row, 1,  r.businessName);
       _cell(sheet, row, 2,  _payTypeLabel(wd?.payScheduleType));
       _cell(sheet, row, 3,  FormatHelper.formatDateDot(r.workDate));
-      _cell(sheet, row, 4,  gross.toString());
-      _cell(sheet, row, 5,  pension > 0 ? pension.toString() : '');
-      _cell(sheet, row, 6,  health  > 0 ? health.toString()  : '');
-      _cell(sheet, row, 7,  ltc     > 0 ? ltc.toString()     : '');
-      _cell(sheet, row, 8,  employ  > 0 ? employ.toString()  : '');
-      _cell(sheet, row, 9,  net.toString());
+      _numCell(sheet, row, 4, gross);
+      if (pension > 0) _numCell(sheet, row, 5, pension);
+      if (health  > 0) _numCell(sheet, row, 6, health);
+      if (ltc     > 0) _numCell(sheet, row, 7, ltc);
+      if (employ  > 0) _numCell(sheet, row, 8, employ);
+      _numCell(sheet, row, 9, net);
       _cell(sheet, row, 10, isXfer ? '이체완료' : '미이체');
       _cell(sheet, row, 11,
           r.transferDate != null ? FormatHelper.formatDateDot(r.transferDate!) : '');
@@ -180,13 +180,13 @@ class PayrollExcelHelper {
 
     // 합계 행
     final totalRow = 2 + sorted.length;
-    _cell(sheet, totalRow, 3,  '합계', bold: true, bgHex: 'FFEAF4FF');
-    _cell(sheet, totalRow, 4,  sumGross.toString(),   bold: true, bgHex: 'FFEAF4FF');
-    _cell(sheet, totalRow, 5,  sumPension > 0 ? sumPension.toString() : '', bold: true, bgHex: 'FFEAF4FF');
-    _cell(sheet, totalRow, 6,  sumHealth  > 0 ? sumHealth.toString()  : '', bold: true, bgHex: 'FFEAF4FF');
-    _cell(sheet, totalRow, 7,  sumLtc     > 0 ? sumLtc.toString()     : '', bold: true, bgHex: 'FFEAF4FF');
-    _cell(sheet, totalRow, 8,  sumEmploy  > 0 ? sumEmploy.toString()  : '', bold: true, bgHex: 'FFEAF4FF');
-    _cell(sheet, totalRow, 9,  sumNet.toString(),     bold: true, bgHex: 'FFEAF4FF');
+    _cell(sheet, totalRow, 3,    '합계',    bold: true, bgHex: 'FFEAF4FF');
+    _numCell(sheet, totalRow, 4, sumGross,  bold: true, bgHex: 'FFEAF4FF');
+    if (sumPension > 0) _numCell(sheet, totalRow, 5, sumPension, bold: true, bgHex: 'FFEAF4FF');
+    if (sumHealth  > 0) _numCell(sheet, totalRow, 6, sumHealth,  bold: true, bgHex: 'FFEAF4FF');
+    if (sumLtc     > 0) _numCell(sheet, totalRow, 7, sumLtc,     bold: true, bgHex: 'FFEAF4FF');
+    if (sumEmploy  > 0) _numCell(sheet, totalRow, 8, sumEmploy,  bold: true, bgHex: 'FFEAF4FF');
+    _numCell(sheet, totalRow, 9, sumNet,    bold: true, bgHex: 'FFEAF4FF');
 
     if (!context.mounted) return;
     await _shareExcel(context, excel, filename);
@@ -262,6 +262,20 @@ class PayrollExcelHelper {
     final cell = sheet.cell(
         CellIndex.indexByColumnRow(columnIndex: col, rowIndex: row));
     cell.value = TextCellValue(text);
+    cell.cellStyle = bgHex != null
+        ? CellStyle(
+            bold: bold,
+            fontSize: fontSize,
+            backgroundColorHex: ExcelColor.fromHexString('#$bgHex'),
+          )
+        : CellStyle(bold: bold, fontSize: fontSize);
+  }
+
+  static void _numCell(Sheet sheet, int row, int col, int value,
+      {bool bold = false, int fontSize = 10, String? bgHex}) {
+    final cell = sheet.cell(
+        CellIndex.indexByColumnRow(columnIndex: col, rowIndex: row));
+    cell.value = IntCellValue(value);
     cell.cellStyle = bgHex != null
         ? CellStyle(
             bold: bold,

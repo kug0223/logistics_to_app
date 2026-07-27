@@ -180,6 +180,8 @@ class WorkforceController extends ChangeNotifier {
           .then((toItems) {
         if (_disposed) return;
         group.setGroupTOs(toItems);
+        // slotDates도 동기화 — groupTOs와 slotDates 불일치 방지
+        group.setSlotDates(toItems.map((t) => t.slotDate).whereType<DateTime>().toList());
         notifyListeners();
 
         // 모든 슬롯이 만료됐는데 TO가 여전히 ACTIVE면 Firestore cascade close
@@ -263,6 +265,7 @@ class WorkforceController extends ChangeNotifier {
       final toItems =
           await _service.loadGroupTOsLight(group.id, masterTO: group.masterTO);
       group.setGroupTOs(toItems);
+      group.setSlotDates(toItems.map((t) => t.slotDate).whereType<DateTime>().toList());
     } catch (e) {
       debugPrint('❌ WorkforceController.loadGroupDetails 실패: $e');
     } finally {

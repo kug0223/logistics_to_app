@@ -98,6 +98,11 @@ class AttendanceModel {
   final bool checkInSuspicious;
   final int? checkInDistance;
 
+  // 파트전환 대비 — 체크인 시점 임금 스냅샷 (CF callableCheckIn에서 저장)
+  // 파트전환 후 급여 계산 시 이 값을 우선 사용 → 전환 전 날짜는 구 임금으로 정확히 계산
+  final int? snapshotWage;
+  final String? snapshotWageType;
+
   final DateTime createdAt;
   final DateTime? updatedAt;
 
@@ -143,6 +148,8 @@ class AttendanceModel {
     this.transferredBy,
     this.checkInSuspicious = false,
     this.checkInDistance,
+    this.snapshotWage,
+    this.snapshotWageType,
   });
 
   // ── 표시용 "HH:mm" getter ───────────────────────────────────
@@ -261,6 +268,8 @@ class AttendanceModel {
       transferredBy:    map['transferredBy'] as String?,
       checkInSuspicious: map['checkInSuspicious'] as bool? ?? false,
       checkInDistance:   (map['checkInDistance'] as num?)?.toInt(),
+      snapshotWage:      (map['snapshotWage']     as num?)?.toInt(),
+      snapshotWageType:  map['snapshotWageType']  as String?,
     );
   }
 
@@ -364,8 +373,10 @@ class AttendanceModel {
         'transferDate': Timestamp.fromDate(transferDate!),
       if (transferNote != null)  'transferNote':  transferNote,
       if (transferredBy != null) 'transferredBy': transferredBy,
-      if (checkInSuspicious)     'checkInSuspicious': checkInSuspicious,
-      if (checkInDistance != null) 'checkInDistance': checkInDistance,
+      if (checkInSuspicious)       'checkInSuspicious': checkInSuspicious,
+      if (checkInDistance != null) 'checkInDistance':   checkInDistance,
+      if (snapshotWage != null)    'snapshotWage':      snapshotWage,
+      if (snapshotWageType != null)'snapshotWageType':  snapshotWageType,
     };
   }
 
@@ -463,6 +474,8 @@ class AttendanceModel {
     String? transferredBy,
     bool? checkInSuspicious,
     int? checkInDistance,
+    int? snapshotWage,
+    String? snapshotWageType,
   }) {
     return AttendanceModel(
       id:            id            ?? this.id,
@@ -506,6 +519,8 @@ class AttendanceModel {
       transferredBy:   transferredBy   ?? this.transferredBy,
       checkInSuspicious: checkInSuspicious ?? this.checkInSuspicious,
       checkInDistance:   checkInDistance   ?? this.checkInDistance,
+      snapshotWage:      snapshotWage      ?? this.snapshotWage,
+      snapshotWageType:  snapshotWageType  ?? this.snapshotWageType,
     );
   }
 }

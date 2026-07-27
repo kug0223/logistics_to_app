@@ -614,12 +614,12 @@ class _TodayPaymentBadgeCardState extends State<_TodayPaymentBadgeCard> {
     if (widget.businessIds.isEmpty) return;
     try {
       final counts = await Future.wait(
-        widget.businessIds.map((id) => _payrollService.getTodayPaymentCount(businessId: id)),
+        widget.businessIds.map((id) => _payrollService.getTotalNotTransferredCount(businessId: id)),
       );
-      final total = counts.fold<int>(0, (sum, n) => sum + (n ?? 0));
+      final total = counts.fold<int>(0, (acc, n) => acc + (n ?? 0));
       if (mounted) setState(() => _count = total);
     } catch (e) {
-      debugPrint('⚠️ 오늘 지급 건수 조회 실패: $e');
+      debugPrint('⚠️ 미이체 배지 조회 실패: $e');
     }
   }
 
@@ -687,20 +687,23 @@ class _TodayPaymentBadgeCardState extends State<_TodayPaymentBadgeCard> {
       children: [
         card,
         Positioned(
-          top: -4,
-          right: -4,
+          top: 10,
+          right: 10,
           child: Semantics(
-            label: '오늘 지급 예정 ${_count > 99 ? '99건 이상' : '$_count건'}',
+            label: '미이체 ${_count > 99 ? '99명 이상' : '$_count명'}',
             child: Container(
-              padding: const EdgeInsets.all(6),
-              decoration: const BoxDecoration(
+              constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+              decoration: BoxDecoration(
                 color: AppColors.error,
-                shape: BoxShape.circle,
+                borderRadius: BorderRadius.circular(10),
               ),
+              alignment: Alignment.center,
               child: ExcludeSemantics(
                 child: Text(
                   _count > 99 ? '99+' : '$_count',
-                  style: ResponsiveHelper.tinyStyle(context, color: Colors.white, fontWeight: FontWeight.bold),
+                  style: ResponsiveHelper.tinyStyle(context,
+                      color: Colors.white, fontWeight: FontWeight.bold),
                 ),
               ),
             ),

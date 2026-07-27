@@ -595,6 +595,38 @@ extension TOFirestore on FirestoreService {
     }
   }
 
+  /// 장기 TO 게시기간 연장 — callableExtendTOPosting CF 위임
+  /// extensionDays: 3 | 5 | 7 | 10
+  /// 반환값: 새 postingExpiryDate (밀리초)
+  Future<DateTime> extendTOPosting(String toId, int extensionDays) async {
+    GlobalLoadingController.show('공고 연장 중...');
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableExtendTOPosting',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+      final result = await callable.call<Map<String, dynamic>>(
+        {'toId': toId, 'extensionDays': extensionDays},
+      );
+      clearCache(toId: toId);
+      final expiryMs = result.data['postingExpiryDate'] as int;
+      return DateTime.fromMillisecondsSinceEpoch(expiryMs);
+    } on FirebaseFunctionsException catch (e) {
+      if (e.code == 'resource-exhausted' &&
+          (e.message ?? '').contains('MAX_ACTIVE_TO_LIMIT')) {
+        final parts = (e.message ?? '').split(':');
+        final limitStr = parts.length >= 2 ? parts.last : '4';
+        throw Exception('MAX_ACTIVE_TO_LIMIT:$limitStr');
+      }
+      debugPrint('❌ [TO] 연장 실패: ${e.code} — ${e.message}');
+      rethrow;
+    } catch (e) {
+      debugPrint('❌ [TO] 연장 실패: $e');
+      rethrow;
+    } finally {
+      GlobalLoadingController.hide();
+    }
+  }
+
   // ───────────────────────────────────────────────────────
   // 삭제
   // ───────────────────────────────────────────────────────
@@ -946,76 +978,6 @@ extension TOFirestore on FirestoreService {
     } finally {
       GlobalLoadingController.hide();
     }
-  }
-
-  /// 새 날짜 슬롯 추가
-  Future<void> addSlot({
-    required TOModel to,
-    required DateTime date,
-    required List<WorkDetailData> workDetails,
-    int? hoursBeforeStart,
-    String? title,
-    DateTime? visibleFrom,
-  }) async {
-    final slotRequired = workDetails.fold<int>(0, (s, d) => s + d.requiredCount);
-    final dateOnly = DateTime(date.year, date.month, date.day);
-
-    // 동일 날짜 슬롯 중복 방지 — 이미 해당 날짜 슬롯이 있으면 인원 집계 이중 카운팅 발생
-    final existingSlots = await getSlots(to.id);
-    final existingDates = existingSlots
-        .map((s) => DateTime(s.date.year, s.date.month, s.date.day))
-        .toSet();
-    if (existingDates.contains(dateOnly)) {
-      throw Exception('해당 날짜(${dateOnly.year}-${dateOnly.month.toString().padLeft(2,'0')}-${dateOnly.day.toString().padLeft(2,'0')})에 이미 슬롯이 존재합니다.');
-    }
-
-    // [T-M-1] 카운터·범위 업데이트만 배치에 포함 — status는 Firestore rules상
-    // isSuperAdmin()만 직접 쓰기 가능. 일반 관리자는 callableUpdateTO CF 경유 필수.
-    final Map<String, dynamic> toCounterUpdates = {
-      'totalSlots': FieldValue.increment(1),
-      'totalRequired': FieldValue.increment(slotRequired),
-    };
-
-    // 새 슬롯이 날짜 범위를 벗어나면 rangeStart/rangeEnd 갱신
-    final rangeEnd = to.rangeEnd;
-    final rangeStart = to.rangeStart;
-    if (rangeEnd == null || dateOnly.isAfter(rangeEnd)) {
-      toCounterUpdates['rangeEnd'] = Timestamp.fromDate(dateOnly);
-    }
-    if (rangeStart == null || dateOnly.isBefore(rangeStart)) {
-      toCounterUpdates['rangeStart'] = Timestamp.fromDate(dateOnly);
-    }
-
-    // 마감/만료 상태 복구 필요 여부를 슬롯 생성 전에 확인
-    final needsStatusRestore = TOStatus.closedStates.contains(to.status);
-
-    await _createSlots(
-      toId: to.id,
-      dates: [date],
-      workDetails: workDetails,
-      deadlineType: to.deadlineType,
-      hoursBeforeStart: hoursBeforeStart ?? to.hoursBeforeStart ?? 2,
-      fixedDeadline: to.applicationDeadline,
-      publishMode: to.publishMode,
-      publishDaysBefore: to.publishDaysBefore,
-      publishTime: to.publishTime,
-      slotTitle: title,
-      overrideVisibleFrom: visibleFrom,
-      toRefForCounter: _firestore.collection('tos').doc(to.id),
-      toCounterUpdates: toCounterUpdates,
-    );
-
-    // status 복구: 배치가 아닌 callableUpdateTO CF 경유 (rules 우회 방지)
-    // isPublished는 기존 상태 유지 — 관리자가 의도적으로 비공개 설정한 경우 자동 공개 방지
-    if (needsStatusRestore) {
-      debugPrint('🔄 [TO] 상태 복구: ${to.status} → ACTIVE (새 슬롯 추가, isPublished=${to.isPublished})');
-      await updateTO(to.id, {
-        'status': TOStatus.active,
-        if (to.isPublished) 'isPublished': true,
-      });
-    }
-
-    debugPrint('✅ [TO] 슬롯 추가 완료: ${date.toIso8601String().substring(0, 10)}');
   }
 
   /// TO 문서의 공개 설정(publishMode/publishDaysBefore/publishTime) 업데이트

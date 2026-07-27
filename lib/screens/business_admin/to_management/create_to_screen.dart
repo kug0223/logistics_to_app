@@ -1148,6 +1148,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 isLongTerm: _selectedJobType == TOType.contract,
                 postingDurationDays: _postingDurationDays,
                 onPostingDurationChanged: (d) => setState(() { _postingDurationDays = d; _hasChanges = true; }),
+                rangeEnd: _selectedJobType == TOType.contract ? _rangeEnd : null,
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 

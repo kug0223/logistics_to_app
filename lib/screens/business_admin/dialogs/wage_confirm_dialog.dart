@@ -291,8 +291,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     // 스케줄 시간: workDetailTimeMap 우선 (TO 수정 반영) → app 필드 폴백
     final scheduledStart = WorkDetailHelper.effectiveStart(app, widget.workDetailTimeMap);
     final scheduledEnd = WorkDetailHelper.effectiveEnd(app, widget.workDetailTimeMap);
-    final baseWage = app.wage;
-    
+    // 파트전환 대비: 체크인 시점 스냅샷 우선 → 전환 전 날짜는 구 임금으로 정확히 계산
+    final baseWage = attendance.snapshotWage ?? app.wage;
+
     // ✅ wageType, breakMinutes, nightAllowanceApplied, nightIncluded는 workDetailTimeMap에서 먼저 확인
     // [W-5] 초기값: app.wageType 우선 — TO 없이 직접 채용된 경우에도 application에 저장된 wageType 사용
     // 'hourly' 하드코딩 폴백이면 daily 근무자 급여 계산 오류 발생
@@ -373,6 +374,12 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       // toId=null인 지원서(TO 없이 직접 채용된 경우)는 WorkDetail 조회를 건너뛰고,
       // wageType은 app.wageType 초기값(위에서 설정), breakMinutes=0 기본값으로 계산된다.
       debugPrint('⚠️ WorkDetail 조회 불가: toId=${app.toId}, workDetailId=${app.workDetailId}');
+    }
+
+    // 파트전환 대비: 체크인 시점 snapshotWageType이 있으면 WorkDetail 해상도 결과보다 우선 적용
+    // 전환 전 날짜 출근 기록은 당시 wageType(예: daily)으로 계산해야 함
+    if (attendance.snapshotWageType != null) {
+      wageType = attendance.snapshotWageType!;
     }
 
     try {
@@ -1328,8 +1335,10 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       _isProcessing = false;
       return;
     }
-    _hasChanges = true;
-    widget.onClose?.call();
+    if (successCount > 0) {
+      _hasChanges = true;
+      widget.onClose?.call();
+    }
 
     // UI 상태 업데이트: 실제 마감 성공된 항목만 확정내역 → 마감내역으로 이동
     setState(() {
@@ -1466,8 +1475,10 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       _isProcessing = false;
       return;
     }
-    _hasChanges = true;
-    widget.onClose?.call();
+    if (successCount > 0) {
+      _hasChanges = true;
+      widget.onClose?.call();
+    }
 
     // 실제 트랜잭션 성공 항목만 UI 이동
     final processed = committedAppIds.toSet();

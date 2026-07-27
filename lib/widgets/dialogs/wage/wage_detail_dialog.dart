@@ -348,7 +348,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         break;
       case 'cancel':
         confirmTitle = '급여 확정 되돌리기';
-        confirmMessage = '$userName의 급여 확정을 되돌리시겠습니까?\n\n입력 오류 수정이 필요한 경우에 사용하세요.\n미확정 상태로 돌아가며, 근무자에게 재조정 안내 알림이 발송됩니다.';
+        confirmMessage = '$userName의 급여 확정을 되돌리시겠습니까?\n\n입력 오류 수정이 필요한 경우에 사용하세요.\n미확정 상태로 돌아가며, 수정 후 재확정이 필요합니다.';
         confirmText = '되돌리기';
         isDanger = true;
         break;
