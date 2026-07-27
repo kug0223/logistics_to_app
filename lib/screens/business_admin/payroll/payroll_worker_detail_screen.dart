@@ -594,11 +594,9 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
 
   /// 임금명세서 발행 유형/기간 선택 바텀시트
   Future<void> _showPayslipSheet(BuildContext ctx) async {
-    await showModalBottomSheet(
-      context: ctx,
-      useSafeArea: true,
+    await DialogHelper.showSheet(
+      ctx,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
       builder: (_) => _PayslipIssueSheet(
         year: widget.year,
         month: widget.month,

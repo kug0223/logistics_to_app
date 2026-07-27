@@ -9,6 +9,7 @@ import '../../services/analytics_service.dart';
 
 // Utils
 import 'package:cloud_functions/cloud_functions.dart';
+import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 
@@ -90,12 +91,9 @@ class _LoginScreenState extends State<LoginScreen> {
     bool isSearching = false;
 
     try {
-    await showModalBottomSheet(
-      context: context,
-      // useSafeArea: true를 쓰면 투명 배경 시트에서 홈 인디케이터 높이만큼 흰 컨테이너
-      // 아래에 투명 갭이 생겨 잘려 보임. 수동으로 padding.bottom 추가해 대응.
+    await DialogHelper.showSheet(
+      context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
       builder: (sheetContext) => StatefulBuilder(
         builder: (ctx, setSheetState) {
           Future<void> search() async {
@@ -295,12 +293,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
     // _showFindUsernameDialog와 동일하게 try-finally로 dispose 보장
     try {
-    await showModalBottomSheet(
-      context: context,
-      // useSafeArea: true를 쓰면 투명 배경 시트에서 홈 인디케이터 높이만큼 흰 컨테이너
-      // 아래에 투명 갭이 생겨 잘려 보임. 수동으로 padding.bottom 추가해 대응.
+    await DialogHelper.showSheet(
+      context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
       builder: (sheetContext) => StatefulBuilder(
         builder: (ctx, setSheetState) {
           // PASS 인증 → CF resetPasswordWithPass → customToken 확보 → step 1

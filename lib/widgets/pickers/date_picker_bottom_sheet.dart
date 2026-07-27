@@ -1,7 +1,6 @@
-﻿import 'dart:math' show max;
-
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../theme/app_colors.dart';
@@ -68,11 +67,9 @@ class DatePickerBottomSheet extends StatefulWidget {
     List<DateTime>? disabledDates,
     bool Function(DateTime)? enabledDayPredicate,
   }) {
-    return showModalBottomSheet<DateTime>(
-      context: context,
-      useSafeArea: true,
+    return DialogHelper.showSheet<DateTime>(
+      context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
       builder: (context) => DatePickerBottomSheet(
         initialDate: initialDate,
         title: title,
@@ -148,14 +145,7 @@ class _DatePickerBottomSheetState extends State<DatePickerBottomSheet> {
           // 버튼
           _buildButtons(context, theme),
 
-          // edge-to-edge 대응: viewPaddingOf는 SafeArea 소비 무관 물리적 인셋.
-          // max로 SafeArea 정상 동작 시 이중 합산 방지.
-          SizedBox(
-            height: max(
-              ResponsiveHelper.spacing(context, 16),
-              MediaQuery.viewPaddingOf(context).bottom,
-            ),
-          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
         ],
       ),
     );
@@ -376,11 +366,9 @@ class DateRangePickerBottomSheet extends StatefulWidget {
     List<DateTime>? disabledDates,
     bool Function(DateTime)? enabledDayPredicate,
   }) {
-    return showModalBottomSheet<DateTimeRange>(
-      context: context,
-      useSafeArea: true,
+    return DialogHelper.showSheet<DateTimeRange>(
+      context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
       builder: (context) => DateRangePickerBottomSheet(
         initialStart: initialStart,
         initialEnd: initialEnd,
@@ -462,14 +450,7 @@ class _DateRangePickerBottomSheetState extends State<DateRangePickerBottomSheet>
           // 버튼
           _buildButtons(context, theme),
 
-          // edge-to-edge 대응: viewPaddingOf는 SafeArea 소비 무관 물리적 인셋.
-          // max로 SafeArea 정상 동작 시 이중 합산 방지.
-          SizedBox(
-            height: max(
-              ResponsiveHelper.spacing(context, 16),
-              MediaQuery.viewPaddingOf(context).bottom,
-            ),
-          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
         ],
       ),
     );

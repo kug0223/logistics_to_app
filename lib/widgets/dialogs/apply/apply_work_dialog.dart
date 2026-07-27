@@ -94,11 +94,9 @@ class ApplyWorkDialog extends StatefulWidget {
     required String businessName,
     List<ApplicationModel>? myApplications,
   }) {
-    return showModalBottomSheet<ApplyDialogResult>(
-      context: context,
-      useSafeArea: true,
+    return DialogHelper.showSheet<ApplyDialogResult>(
+      context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
       builder: (context) => ApplyWorkDialog(
         mainTO: to,
         workDetails: workDetails,

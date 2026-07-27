@@ -1,5 +1,3 @@
-import 'dart:math' show max;
-
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
@@ -8,6 +6,7 @@ import '../../screens/business_admin/contract_template_list_screen.dart';
 import '../../services/contract_template_service.dart';
 import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../common/loading_widget.dart';
 import 'styled_dialog.dart';
@@ -23,11 +22,9 @@ class ContractTemplateSelectorDialog {
     BuildContext context, {
     required String businessId,
   }) {
-    return showModalBottomSheet<List<ContractArticle>?>(
-      context: context,
-      useSafeArea: true,
+    return DialogHelper.showSheet<List<ContractArticle>?>(
+      context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
       builder: (_) => _SelectorSheet(businessId: businessId),
     );
   }
@@ -268,17 +265,13 @@ class _SelectorSheetState extends State<_SelectorSheet> {
 
           // 하단 버튼
           SafeArea(
+            top: false,
             child: Padding(
               padding: EdgeInsets.fromLTRB(
                 ResponsiveHelper.spacing(context, 16),
                 ResponsiveHelper.spacing(context, 8),
                 ResponsiveHelper.spacing(context, 16),
-                // edge-to-edge 대응: viewPaddingOf는 SafeArea 소비 무관 물리적 인셋.
-                // max로 SafeArea 정상 동작 시 이중 합산 방지.
-                max(
-                  ResponsiveHelper.spacing(context, 16),
-                  MediaQuery.viewPaddingOf(context).bottom,
-                ),
+                ResponsiveHelper.spacing(context, 16),
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,

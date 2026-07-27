@@ -162,12 +162,8 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
         ? '없음 (4시간 미만 근무)'
         : '$legalMax분';
 
-    showModalBottomSheet<void>(
-      context: context,
-      useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
+    DialogHelper.showSheet<void>(
+      context,
       builder: (ctx) => Padding(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
         child: Column(

@@ -242,13 +242,9 @@ class _AllUsersScreenState extends State<AllUsersScreen>
   // ── 사용자 상세 바텀시트 ────────────────────────────────────────
 
   void _showUserDetailSheet(UserModel user) {
-    showModalBottomSheet(
-      context: context,
-      useSafeArea: true,
+    DialogHelper.showSheet(
+      context,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
       builder: (ctx) => _UserDetailSheet(
         user: user,
         onToggleBlacklist: () {

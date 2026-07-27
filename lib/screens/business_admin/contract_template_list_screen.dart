@@ -57,11 +57,9 @@ class _ContractTemplateListScreenState
 
   // ── 새 템플릿: 유형 선택 바텀시트 먼저 표시 ──
   Future<void> _showTypeSelector() async {
-    final selectedType = await showModalBottomSheet<String>(
-      context: context,
-      useSafeArea: true,
+    final selectedType = await DialogHelper.showSheet<String>(
+      context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
       builder: (ctx) => const _TypeSelectorSheet(),
     );
     if (selectedType == null || !mounted) return;

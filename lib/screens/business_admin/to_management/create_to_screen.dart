@@ -1070,29 +1070,29 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       child: GradientScaffold(
         title: '공고 등록',
         actions: [
-          TextButton(
-            onPressed: _selectedBusiness != null ? _showLoadFromExistingDialog : null,
-            style: TextButton.styleFrom(
-              foregroundColor: Colors.white,
-              disabledForegroundColor: Colors.white38,
-              padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 8),
-              ),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.file_copy_outlined,
-                    size: ResponsiveHelper.iconSize(context, 20)),
-                Text(
-                  '불러오기',
-                  style: ResponsiveHelper.tinyStyle(context,
-                      color: _selectedBusiness != null
-                          ? Colors.white
-                          : Colors.white38,
-                      fontWeight: FontWeight.w500),
+          Material(
+            color: Colors.white.withValues(
+                alpha: _selectedBusiness != null ? 0.2 : 0.08),
+            borderRadius: BorderRadius.circular(12),
+            child: Semantics(
+              label: '공고 불러오기',
+              button: true,
+              child: InkWell(
+                onTap: _selectedBusiness != null
+                    ? _showLoadFromExistingDialog
+                    : null,
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                  child: Icon(
+                    Icons.file_copy_outlined,
+                    color: _selectedBusiness != null
+                        ? Colors.white
+                        : Colors.white38,
+                    size: ResponsiveHelper.iconSize(context, 24),
+                  ),
                 ),
-              ],
+              ),
             ),
           ),
         ],

@@ -1,6 +1,5 @@
-import 'dart:math' show max;
-
 import 'package:flutter/material.dart';
+import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
@@ -37,11 +36,9 @@ class AttendanceQuickTimeSheet extends StatefulWidget {
     List<String>? scheduledTimes,
     bool isCheckIn = true,
   }) {
-    return showModalBottomSheet<String>(
-      context: context,
-      useSafeArea: true,
+    return DialogHelper.showSheet<String>(
+      context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
       builder: (context) => AttendanceQuickTimeSheet(
         title: title,
         scheduledTimes: scheduledTimes,
@@ -135,12 +132,7 @@ class _AttendanceQuickTimeSheetState extends State<AttendanceQuickTimeSheet> {
           ResponsiveHelper.spacing(context, 16),
           0,
           ResponsiveHelper.spacing(context, 16),
-          // edge-to-edge 대응: viewPaddingOf는 SafeArea 소비 무관 물리적 인셋.
-          // max로 SafeArea 정상 동작 시 이중 합산 방지.
-          max(
-            ResponsiveHelper.spacing(context, 20),
-            MediaQuery.viewPaddingOf(context).bottom,
-          ),
+          ResponsiveHelper.spacing(context, 20),
         ),
         child: Column(
             mainAxisSize: MainAxisSize.min,

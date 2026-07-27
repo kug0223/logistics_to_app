@@ -113,7 +113,11 @@ class GradientScaffold extends StatelessWidget {
                       SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                       _buildRefreshButton(context),
                     ],
-                    if (actions != null) ...actions!,
+                    if (actions != null) ...[
+                      if (showHomeButton || showNotificationBell || onRefresh != null)
+                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      ...actions!,
+                    ],
                   ],
                 ),
               ),

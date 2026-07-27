@@ -152,13 +152,7 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
                       ResponsiveHelper.spacing(context, 16),
                       0,
                       ResponsiveHelper.spacing(context, 16),
-                      // useSafeArea가 edge-to-edge에서 동작 안 할 수 있음.
-                      // viewPaddingOf는 SafeArea 소비 여부와 무관하게 물리적 인셋을 반환.
-                      // max 사용: SafeArea가 동작했을 때 이중 합산 방지.
-                      max(
-                        ResponsiveHelper.spacing(context, 24),
-                        MediaQuery.viewPaddingOf(context).bottom,
-                      ),
+                      ResponsiveHelper.spacing(context, 24),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,

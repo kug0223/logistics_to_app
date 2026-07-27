@@ -1,5 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../dialogs/styled_dialog.dart';
 
@@ -61,10 +62,8 @@ class AppMenuSheet {
     Color? headerAvatarColor,
     required List<List<AppMenuSheetItem>> itemGroups,
   }) {
-    return showModalBottomSheet(
-      context: context,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
+    return DialogHelper.showSheet(
+      context,
       isScrollControlled: true,
       builder: (ctx) => _AppMenuSheetContent(
         headerTitle: headerTitle,

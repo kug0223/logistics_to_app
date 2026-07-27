@@ -14,6 +14,7 @@ import '../../widgets/common/loading_widget.dart';
 import '../../widgets/user/cards/user_to_card.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/dialog_helper.dart';
 import '../../widgets/inputs/region_picker_sheet.dart';
 import '../../services/algolia_service.dart';
 import '../../widgets/pickers/date_picker_bottom_sheet.dart';
@@ -404,10 +405,8 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
   /// 정렬 바텀시트
   void _showSortSheet() {
     // [오탐 확인] shape 생략 — _SortSheet 내부 BoxDecoration이 borderRadius를 담당 (backgroundColor: transparent로 투시).
-    showModalBottomSheet(
-      context: context,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
+    DialogHelper.showSheet(
+      context,
       builder: (context) => _SortSheet(
         sortBy: _filter.sortBy,
         onChanged: (sort) => _onFilterChanged(_filter.copyWith(sortBy: sort)),
@@ -418,10 +417,8 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
   /// 근무유형 필터 바텀시트
   void _showTypeFilter() {
     // [오탐 확인] shape 생략 — _TypeFilterSheet 내부 BoxDecoration이 borderRadius를 담당.
-    showModalBottomSheet(
-      context: context,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
+    DialogHelper.showSheet(
+      context,
       builder: (context) => _TypeFilterSheet(
         selectedType: _filter.type,
         onChanged: (type) => _onFilterChanged(_filter.copyWith(

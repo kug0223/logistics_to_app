@@ -7,6 +7,7 @@ import '../../../models/ui/admin_to_list_ui_models.dart';
 import '../../../models/core/work_detail_data.dart';
 
 // Helper
+import '../../../utils/dialog_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/slot_status_util.dart';
 
@@ -104,12 +105,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
   bool _isExtending = false;
 
   Future<void> _handleExtend(BuildContext context, TOModel masterTO) async {
-    final selected = await showModalBottomSheet<int>(
-      context: context,
-      useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+    final selected = await DialogHelper.showSheet<int>(
+      context,
       builder: (ctx) => _ExtendDaysSheet(masterTO: masterTO),
     );
     if (selected == null) return;
@@ -1572,15 +1569,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
     if (slots.isEmpty) return null;
     if (slots.length == 1) return slots.first;
 
-    return showModalBottomSheet<TOItem>(
-      context: context,
-      useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+    return DialogHelper.showSheet<TOItem>(
+      context,
       builder: (ctx) {
-        // useSafeArea: true와 내부 SafeArea 이중 — Flutter가 자동으로 중복 패딩 방지
         return SafeArea(
+          top: false,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [

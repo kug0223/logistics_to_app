@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../models/core/business_model.dart';
 import '../providers/user_provider.dart';
 import '../services/firestore_service.dart';
+import '../utils/dialog_helper.dart';
 import '../utils/toast_helper.dart';
 import '../utils/responsive_helper.dart';
 import '../utils/image_helper.dart';
@@ -77,12 +78,8 @@ class BusinessPickerHelper {
     List<BusinessModel> businesses, {
     required String title,
   }) {
-    return showModalBottomSheet<BusinessModel>(
-      context: context,
-      useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+    return DialogHelper.showSheet<BusinessModel>(
+      context,
       builder: (ctx) => _BusinessPickerSheet(businesses: businesses, title: title),
     );
   }

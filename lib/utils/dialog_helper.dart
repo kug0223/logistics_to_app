@@ -1,4 +1,6 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'dart:math' show max;
+
+import 'package:flutter/material.dart';
 import 'responsive_helper.dart';
 import 'toast_helper.dart';
 import '../theme/app_colors.dart';
@@ -399,7 +401,13 @@ class DialogHelper {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: builder,
+      builder: (ctx) {
+        final safeBottom = max(8.0, MediaQuery.viewPaddingOf(ctx).bottom);
+        return Padding(
+          padding: EdgeInsets.only(bottom: safeBottom),
+          child: builder(ctx),
+        );
+      },
     );
   }
 

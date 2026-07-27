@@ -369,11 +369,9 @@ class _PayrollPaymentDashboardScreenState
   Future<void> _showDayCalendar() async {
     final firstDay = DateTime(_selectedYear, _selectedMonth, 1);
     final lastDay  = DateTime(_selectedYear, _selectedMonth + 1, 0);
-    final picked = await showModalBottomSheet<DateTime>(
-      context: context,
-      useSafeArea: true,
+    final picked = await DialogHelper.showSheet<DateTime>(
+      context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
       builder: (ctx) => Container(
         decoration: const BoxDecoration(
           color: Colors.white,
@@ -411,11 +409,9 @@ class _PayrollPaymentDashboardScreenState
 
   Future<void> _showPendingCalendar() async {
     final countByDate = _buildPendingCountByDate();
-    final picked = await showModalBottomSheet<DateTime>(
-      context: context,
-      useSafeArea: true,
+    final picked = await DialogHelper.showSheet<DateTime>(
+      context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
       builder: (ctx) => _PendingCalendarSheet(
         initialDate: _selectedTransferDate,
         countByDate: countByDate,

@@ -1801,11 +1801,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     final user = item.user;
     final name = user?.name ?? '이름 없음';
 
-    showModalBottomSheet(
-      context: context,
-      useSafeArea: true,
+    DialogHelper.showSheet(
+      context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
       builder: (context) {
         return Container(
           decoration: const BoxDecoration(

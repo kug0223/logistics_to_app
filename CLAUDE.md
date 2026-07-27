@@ -22,27 +22,31 @@
 
 ### 필수 규칙: 새 바텀시트/화면을 만들 때 반드시 적용
 
-#### 바텀시트 (`showModalBottomSheet`)
-`useSafeArea: true`를 항상 명시한다.
+#### 바텀시트 — `DialogHelper.showSheet()` 전용 (절대 금지: 직접 showModalBottomSheet 호출)
+
+모든 바텀시트는 반드시 `DialogHelper.showSheet()`를 사용한다.
+`showModalBottomSheet`를 직접 호출하면 shape·useSafeArea 누락으로 디자인이 틀어진다.
 
 ```dart
-// ✅ 올바른 패턴
-showModalBottomSheet(
-  context: context,
-  useSafeArea: true,          // 필수 — 하단 홈버튼 영역 자동 처리
+// ✅ 올바른 패턴 — 유일하게 허용되는 방식
+final result = await DialogHelper.showSheet<String>(
+  context,
   isScrollControlled: true,  // 키보드가 밀어올릴 때 필요 시 추가
-  shape: const RoundedRectangleBorder(
-    borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-  ),
   builder: (ctx) => MySheet(),
 );
 
-// ❌ 금지 — useSafeArea 누락
+// ❌ 절대 금지 — showModalBottomSheet 직접 호출
 showModalBottomSheet(
   context: context,
-  builder: (ctx) => MySheet(),  // 하단이 홈버튼과 겹칠 수 있음
+  builder: (ctx) => MySheet(),
 );
 ```
+
+`DialogHelper.showSheet()`는 내부적으로 다음을 보장한다:
+- `useSafeArea: true` (하단 홈버튼 자동 처리)
+- `shape: RoundedRectangleBorder(radius: 20)` (앱 통일 디자인)
+
+DraggableScrollableSheet처럼 `backgroundColor: transparent`가 필수인 특수 케이스에만 직접 호출을 허용한다.
 
 #### 커스텀 하단 바 (Scaffold bottomNavigationBar / 고정 버튼)
 `SafeArea(top: false)`로 감싼다.

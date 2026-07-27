@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 
 /// 지역(시/군/구 → 동) 2단계 선택 바텀시트
@@ -39,11 +40,9 @@ class RegionPickerSheet extends StatefulWidget {
     String? selectedCity,
     String? selectedDistrict,
   }) {
-    return showModalBottomSheet<RegionResult>(
-      context: context,
+    return DialogHelper.showSheet<RegionResult>(
+      context,
       isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
       builder: (_) => RegionPickerSheet(
         cities: cities,
         districtOf: districtOf,

@@ -8,6 +8,7 @@ import '../../../models/core/payroll_summary_model.dart';
 import '../../../providers/user_provider.dart';
 import '../../../services/firestore_service.dart';
 import '../../../theme/app_colors.dart';
+import '../../../utils/dialog_helper.dart';
 import '../../../utils/format_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/toast_helper.dart';
@@ -686,11 +687,9 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
       (_SortOrder.nameAsc,      '이름순',          Icons.sort_by_alpha),
       (_SortOrder.workDaysDesc, '근무일수 많은순',  Icons.calendar_today),
     ];
-    showModalBottomSheet(
-      context: context,
-      useSafeArea: true,
+    DialogHelper.showSheet(
+      context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
       builder: (ctx) {
         final theme = Theme.of(context);
         return Container(

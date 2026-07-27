@@ -14,6 +14,7 @@ import '../../../controllers/workforce_controller.dart';
 // Utils
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
+import '../../../utils/dialog_helper.dart';
 
 // Widgets
 import '../../../widgets/common/loading_widget.dart';
@@ -358,11 +359,9 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         .toList()
       ..sort();
 
-    showModalBottomSheet(
-      context: context,
+    DialogHelper.showSheet(
+      context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      useSafeArea: true,
       builder: (context) => FilterDialog(
         selectedBusiness: controller.selectedBusiness,
         selectedDateRange: controller.selectedDateRange,

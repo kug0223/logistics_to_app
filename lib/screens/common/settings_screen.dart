@@ -1166,11 +1166,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     bool isLoading = false;
     String? errorMsg;
 
-    await showModalBottomSheet(
-      context: context,
-      useSafeArea: true,
+    await DialogHelper.showSheet(
+      context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setModal) {
           Future<void> doDelete() async {

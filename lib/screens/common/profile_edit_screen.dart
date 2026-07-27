@@ -19,6 +19,7 @@ import '../../services/firestore_service.dart';
 import '../../services/auth_service.dart';
 
 // Utils
+import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 
@@ -88,12 +89,8 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   // ── 프로필 사진 ──────────────────────────────────────────────
 
   Future<void> _showPhotoPicker() async {
-    final source = await showModalBottomSheet<ImageSource>(
-      context: context,
-      useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      // useSafeArea: true 사용 중이므로 내부 SafeArea 제거 (D-L-1)
+    final source = await DialogHelper.showSheet<ImageSource>(
+      context,
       builder: (ctx) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Column(

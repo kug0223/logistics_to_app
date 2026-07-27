@@ -278,14 +278,9 @@ class _ContractSignScreenState extends State<ContractSignScreen> {
     // true 상태에 고착되는 버그 수정. await로 바텀시트 결과를 받고,
     // finally 블록에서 취소 시 락 해제, 서명 진행 시 _performSign finally에서 해제됨.
     // true = 저장 서명, false = 새 서명, null = 취소(드래그 다운 등)
-    final choice = await showModalBottomSheet<bool>(
-      context: context,
-      useSafeArea: true,
+    final choice = await DialogHelper.showSheet<bool>(
+      context,
       isScrollControlled: true, // 가로 모드에서 콘텐츠 잘림 방지
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      // [BUG-L1 수정 2026-07-15] useSafeArea: true 와 내부 SafeArea 이중 래핑 제거 (CLAUDE.md 규칙)
       builder: (ctx) => SingleChildScrollView(
           padding: EdgeInsets.fromLTRB(
             ResponsiveHelper.spacing(ctx, 24),

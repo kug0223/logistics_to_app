@@ -505,11 +505,9 @@ class ScheduleCard extends StatelessWidget {
   
   /// 상세 정보 다이얼로그
   void _showDetailDialog(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      useSafeArea: true,
+    DialogHelper.showSheet(
+      context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
       builder: (context) => ScheduleDetailDialog(application: application),
     );
   }

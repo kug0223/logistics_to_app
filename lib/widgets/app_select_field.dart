@@ -1,7 +1,6 @@
-import 'dart:math' show max;
-
 import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
+import '../utils/dialog_helper.dart';
 import '../utils/responsive_helper.dart';
 
 /// 공통 선택 필드 — 탭하면 바텀시트 목록이 열림
@@ -66,13 +65,9 @@ class AppSelectField<T> extends StatelessWidget {
 
   Future<void> _openSheet(BuildContext context) async {
     final theme = Theme.of(context);
-    final result = await showModalBottomSheet<T>(
-      context: context,
-      useSafeArea: true,
+    final result = await DialogHelper.showSheet<T>(
+      context,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
       builder: (ctx) => _AppSelectSheet<T>(
         title: sheetTitle,
         items: items,
@@ -346,9 +341,7 @@ class _AppSelectSheetState<T> extends State<_AppSelectSheet<T>> {
                   ),
           ),
 
-          // edge-to-edge 대응: viewPaddingOf는 SafeArea 소비 무관 물리적 인셋.
-          // max로 SafeArea 정상 동작 시 이중 합산 방지.
-          SizedBox(height: max(8.0, MediaQuery.viewPaddingOf(context).bottom)),
+          SizedBox(height: 8.0),
         ],
       ),
     );

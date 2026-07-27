@@ -1,5 +1,3 @@
-import 'dart:math' show max;
-
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
 import '../../services/admin_stats_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import 'admin_month_detail_screen.dart';
 import '../../widgets/common/gradient_scaffold.dart';
@@ -82,12 +81,8 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
   }
 
   void _showBizPicker() {
-    showModalBottomSheet(
-      context: context,
-      useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      // useSafeArea: true로 하단 safe area 처리 — 내부 SafeArea 중복 제거
+    DialogHelper.showSheet(
+      context,
       builder: (ctx) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -136,9 +131,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                   _loadStats();
                 },
               )),
-          // edge-to-edge 대응: viewPaddingOf는 SafeArea 소비 무관 물리적 인셋.
-          // max로 SafeArea 정상 동작 시 이중 합산 방지.
-          SizedBox(height: max(8.0, MediaQuery.viewPaddingOf(ctx).bottom)),
+          SizedBox(height: 8.0),
         ],
       ),
     );

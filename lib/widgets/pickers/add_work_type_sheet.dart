@@ -3,6 +3,7 @@ import 'dart:math' show max;
 import 'package:flutter/material.dart';
 import '../../models/core/business_work_type_model.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 import 'icon_picker_dialog.dart';
@@ -17,11 +18,9 @@ class AddWorkTypeSheet extends StatefulWidget {
     BuildContext context, {
     BusinessWorkTypeModel? editTarget,
   }) {
-    return showModalBottomSheet<Map<String, dynamic>>(
-      context: context,
+    return DialogHelper.showSheet<Map<String, dynamic>>(
+      context,
       isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
       builder: (_) => AddWorkTypeSheet._(editTarget: editTarget),
     );
   }
@@ -136,11 +135,11 @@ class _AddWorkTypeSheetState extends State<AddWorkTypeSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // edge-to-edge 대응: keyboard 높이 vs 홈 인디케이터 높이 중 큰 값 사용.
-    // viewPaddingOf는 SafeArea 소비 무관 물리적 인셋을 반환.
+    // DialogHelper가 viewPaddingOf.bottom(홈 인디케이터)을 처리하므로,
+    // 키보드가 홈 인디케이터보다 더 높이 올라온 초과분만 추가 패딩으로 사용.
     final bottom = max(
-      MediaQuery.viewInsetsOf(context).bottom,
-      MediaQuery.viewPaddingOf(context).bottom,
+      0.0,
+      MediaQuery.viewInsetsOf(context).bottom - MediaQuery.viewPaddingOf(context).bottom,
     );
 
     return Container(

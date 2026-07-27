@@ -1,7 +1,6 @@
 // lib/utils/image_helper.dart
 
 import 'dart:io';
-import 'dart:math' show max;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -9,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
+import 'dialog_helper.dart';
 import 'responsive_helper.dart';
 import 'toast_helper.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -120,16 +120,9 @@ class ImageHelper {
   static Future<ImageSource?> showImageSourceBottomSheet(BuildContext context) async {
     if (kIsWeb) return ImageSource.gallery;
 
-    return showModalBottomSheet<ImageSource>(
-      context: context,
-      useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+    return DialogHelper.showSheet<ImageSource>(
+      context,
       builder: (ctx) {
-        // edge-to-edge 대응: viewPaddingOf는 SafeArea 소비 무관 물리적 인셋.
-        // max로 SafeArea 정상 동작 시 이중 합산 방지.
-        final bottomInset = max(16.0, MediaQuery.viewPaddingOf(ctx).bottom);
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -216,7 +209,7 @@ class ImageHelper {
               ),
               onTap: () => Navigator.pop(ctx, ImageSource.gallery),
             ),
-            SizedBox(height: bottomInset),
+            SizedBox(height: 16.0),
           ],
         );
       },
