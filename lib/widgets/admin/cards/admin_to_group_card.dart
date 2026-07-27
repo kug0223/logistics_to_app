@@ -1582,63 +1582,115 @@ class _TOGroupCardState extends State<TOGroupCard> {
     return DialogHelper.showSheet<TOItem>(
       context,
       builder: (ctx) {
-        return SafeArea(
-          top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(ctx, 16)),
-                child: Text(
-                  '날짜를 선택하세요',
-                  style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.bold),
-                ),
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 핸들바
+            const SizedBox(height: 12),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.grey300,
+                borderRadius: BorderRadius.circular(2),
               ),
-              const Divider(height: 1),
-              Flexible(
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: slots.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (_, i) {
-                    final toItem = slots[i];
-                    final confirmed = toItem.confirmedCount;
-                    final required = toItem.totalRequired;
-                    final pending = toItem.pendingCount;
-                    return ListTile(
-                      leading: Icon(
-                        Icons.event,
-                        color: Theme.of(ctx).primaryColor,
-                        size: ResponsiveHelper.iconSize(ctx, 20),
-                      ),
-                      title: Text(
-                        FormatHelper.formatDate(toItem.slot?.date ?? toItem.to.date),
-                        style: ResponsiveHelper.bodyStyle(ctx).copyWith(fontWeight: FontWeight.w600),
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            '$confirmed/$required',
-                            style: ResponsiveHelper.bodyStyle(ctx, color: AppColors.infoDark)
-                                .copyWith(fontWeight: FontWeight.bold),
-                          ),
-                          if (pending > 0)
-                            Text(
-                              ' +$pending',
-                              style: ResponsiveHelper.smallStyle(ctx, color: AppColors.warningDark),
+            ),
+            const SizedBox(height: 16),
+
+            // 헤더
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(
+                children: [
+                  Text(
+                    '날짜 선택',
+                    style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.bold),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '총 ${slots.length}일',
+                    style: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey500),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Divider(height: 1, color: AppColors.grey100),
+            const SizedBox(height: 4),
+
+            // 날짜 목록
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final toItem in slots)
+                      Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: () => Navigator.pop(ctx, toItem),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: ResponsiveHelper.spacing(ctx, 44),
+                                  height: ResponsiveHelper.spacing(ctx, 44),
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(ctx).primaryColor.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                  child: Icon(
+                                    Icons.event,
+                                    color: Theme.of(ctx).primaryColor,
+                                    size: ResponsiveHelper.iconSize(ctx, 22),
+                                  ),
+                                ),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        FormatHelper.formatDate(toItem.slot?.date ?? toItem.to.date),
+                                        style: ResponsiveHelper.bodyStyle(ctx).copyWith(fontWeight: FontWeight.w600),
+                                      ),
+                                      if (toItem.pendingCount > 0)
+                                        Text(
+                                          '대기 ${toItem.pendingCount}명',
+                                          style: ResponsiveHelper.tinyStyle(ctx, color: AppColors.warningDark),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                Container(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: ResponsiveHelper.spacing(ctx, 8),
+                                    vertical: ResponsiveHelper.spacing(ctx, 3),
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.infoBg,
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: Text(
+                                    '${toItem.confirmedCount}/${toItem.totalRequired}',
+                                    style: ResponsiveHelper.smallStyle(ctx, color: AppColors.infoDark)
+                                        .copyWith(fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                const Icon(Icons.chevron_right, color: AppColors.grey300, size: 20),
+                              ],
                             ),
-                          SizedBox(width: ResponsiveHelper.spacing(ctx, 8)),
-                          Icon(Icons.chevron_right, size: ResponsiveHelper.iconSize(ctx, 18), color: AppColors.grey400),
-                        ],
+                          ),
+                        ),
                       ),
-                      onTap: () => Navigator.pop(ctx, toItem),
-                    );
-                  },
+                    const SizedBox(height: 12),
+                  ],
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         );
       },
     );
