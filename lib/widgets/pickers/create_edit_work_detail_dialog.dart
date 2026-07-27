@@ -235,10 +235,14 @@ class WorkDetailDialog {
         ),
       ),
     );
-    wageController.dispose();
-    countController.dispose();
-    baseHourlyWageController.dispose();
-    descriptionController.dispose();
+    // 다이얼로그 닫기 애니메이션(~300ms) 완료 후 dispose — 즉시 dispose 시
+    // StatefulBuilder builder가 애니메이션 도중 disposed controller를 참조해 crash 발생
+    Future<void>.delayed(const Duration(milliseconds: 400)).then((_) {
+      wageController.dispose();
+      countController.dispose();
+      baseHourlyWageController.dispose();
+      descriptionController.dispose();
+    });
     return result;
   }
   /// ✨ 업무 수정 다이얼로그 표시
@@ -478,10 +482,13 @@ class WorkDetailDialog {
         ),
       ),
     );
-    wageController.dispose();
-    countController.dispose();
-    baseHourlyWageController.dispose();
-    descriptionController.dispose();
+    // 다이얼로그 닫기 애니메이션(~300ms) 완료 후 dispose
+    Future<void>.delayed(const Duration(milliseconds: 400)).then((_) {
+      wageController.dispose();
+      countController.dispose();
+      baseHourlyWageController.dispose();
+      descriptionController.dispose();
+    });
     return result;
   }
 
