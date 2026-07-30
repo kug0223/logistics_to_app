@@ -283,34 +283,17 @@ class MemberService {
     });
   }
 
-  /// 멤버 제거 → user.subAdminBusinessIds에서 해당 사업장만 제거 (다른 사업장 권한 유지)
+  /// 멤버 제거 → [CF-MIGRATED] callableRemoveMember CF 경유
   ///
-  /// [TODO-CF] Trust Boundary Charter — subAdminBusinessIds는 _protectedUserFields.
-  /// acceptInvitation처럼 callableRemoveMember CF로 이전 예정.
-  /// 현재는 Firestore rules에서 BUSINESS_ADMIN의 자신 사업장 멤버에 대한 arrayRemove를 허용.
+  /// subAdminBusinessIds는 _protectedUserFields — 서버에서만 수정.
+  /// BUSINESS_ADMIN 전용 (SubAdmin 완전 제외 — CLAUDE.md 멤버 관리 방침).
   Future<void> removeMember({
     required String businessId,
     required String uid,
   }) async {
-    final memberRef = _members(businessId).doc(uid);
-    final userRef = _db.collection('users').doc(uid);
-
-    await _db.runTransaction((tx) async {
-      final userSnap = await tx.get(userRef);
-      tx.delete(memberRef);
-      // subAdminBusinessIds 배열에서 해당 사업장만 제거 (다른 사업장 권한 유지)
-      final data = userSnap.data();
-      if (data == null) return;
-      final ids = (data['subAdminBusinessIds'] as List?)?.cast<String>() ?? [];
-      final legacy = data['subAdminOf'] as String?;
-      final isSubAdminOfThisBiz =
-          ids.contains(businessId) || legacy == businessId;
-      if (isSubAdminOfThisBiz) {
-        tx.update(userRef, {
-          'subAdminBusinessIds': FieldValue.arrayRemove([businessId]),
-          'subAdminOf': FieldValue.delete(),
-        });
-      }
-    });
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableRemoveMember',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+    await callable.call({'businessId': businessId, 'uid': uid});
   }
 }
