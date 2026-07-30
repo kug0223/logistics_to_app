@@ -196,6 +196,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
     if (_isProcessing) return;
     final result = await showDialog<int>(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) => _TrustScoreDialog(
         name: user.name,
         currentScore: user.trustScore,
@@ -230,6 +231,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
   }) {
     return showDialog<String>(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) => _ReasonDialog(
         title: title,
         hint: hint,

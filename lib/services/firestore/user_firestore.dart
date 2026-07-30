@@ -9,11 +9,11 @@ extension UserFirestore on FirestoreService {
   /// 사용자 정보 저장
   Future<void> saveUser(UserModel user) async {
     try {
-      // [M-3] role 제거 — 권한 상승 경로 차단 (role 변경은 CF/SUPER_ADMIN 전용)
-      // [SEC-UF01] merge: true — CF가 설정한 trustScore/noShowCount/isBlacklisted/badges/restrictedUntil
-      //   등 서버 전용 필드를 로컬 캐시 기본값으로 덮어쓰지 않도록 방어.
-      //   회원가입(신규 문서) 시에는 merge 여부와 무관하게 모든 필드 초기값 설정됨.
-      final data = user.toMap()..remove('role');
+      // [SEC-UF01] _protectedUserFields 전체 제거 — role 포함 모든 서버 전용 필드를
+      //   클라이언트 기본값으로 덮어쓰지 않도록 방어 (merge:true여도 기존 값 덮어씀).
+      //   Firestore rules가 1차 차단, 코드에서 2차 차단. rules denylist와 반드시 동기화.
+      //   회원가입(신규 문서) 시 trustScore 등 초기값은 CF(callableRegister)가 별도 설정.
+      final data = user.toMap()..removeWhere((k, _) => _protectedUserFields.contains(k));
       await _firestore.collection('users').doc(user.uid).set(data, SetOptions(merge: true));
       _userCache.remove(user.uid);
       _userCacheTimestamps.remove(user.uid);
@@ -73,7 +73,7 @@ extension UserFirestore on FirestoreService {
   // CF/보안 규칙이 차단해야 하는 민감 필드 목록 (코드 레벨 2차 방어)
   // Firestore rules owner-update denylist와 반드시 동기화 유지
   static const _protectedUserFields = {
-    'role', 'isBlacklisted', 'subAdminOf', 'businessId',
+    'role', 'isBlacklisted', 'subAdminBusinessIds', 'subAdminOf', 'businessId',
     'blacklistReason', 'blacklistedBy', 'blacklistedAt',
     'unblacklistedBy', 'unblacklistedAt',
     'trustScore', 'noShowCount', 'lateCount', 'totalWorkDays', 'lastRestartAt',

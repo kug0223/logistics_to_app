@@ -168,15 +168,18 @@ class ConfirmCancelDialog extends StatelessWidget {
                 color: AppColors.grey600,
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Text(
-                workType,
-                style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
+              Flexible(
+                child: Text(
+                  workType,
+                  overflow: TextOverflow.ellipsis,
+                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
+                ),
               ),
             ],
           ),
-          
+
           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-          
+
           // 시간
           Row(
             children: [
@@ -390,9 +393,11 @@ class ConfirmCancelDialog extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    '현재 노쇼 횟수: ',
-                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+                  Flexible(
+                    child: Text(
+                      '현재 노쇼 횟수: ',
+                      style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+                    ),
                   ),
                   Text(
                     '$currentNoShowCount회',

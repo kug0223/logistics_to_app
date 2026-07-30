@@ -715,7 +715,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _buildSectionTitle(context, '업무 선택'),
+              Expanded(child: _buildSectionTitle(context, '업무 선택')),
               // ✅ 상세보기 버튼 추가
               InkWell(
                 onTap: () => _goToJobPosting(widget.mainTO, widget.workDetails),
@@ -2427,7 +2427,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         slotId: resolvedSlotId,
         desiredStartDate: _isLongTerm ? _desiredStartDate : null,
       );
-      if (!success) throw Exception('지원 처리에 실패했습니다');
+      if (!success) return; // 에러 메시지는 applyToTOWithWorkType 내부에서 이미 표시됨
 
       // 상태 새로고침
       await _refreshApplicationStatus(date ?? to.date, work.workType);
