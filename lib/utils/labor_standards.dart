@@ -67,6 +67,7 @@ class LaborStandards {
   }
   
   /// 주휴수당 포함 일급 계산
+  @Deprecated('주휴수당 자동계산 없음 설계 원칙(CLAUDE.md). 관리자 수동 입력 정책. 호출 금지.')
   static int calculateDailyWageWithHolidayPay(int hourlyWage, double workHours) {
     final baseWage = calculateDailyWage(hourlyWage, workHours);
     return (baseWage * (1 + weeklyHolidayPayRate)).round();
@@ -74,6 +75,7 @@ class LaborStandards {
   
   /// 월급을 시급으로 환산
   static int convertMonthlyToHourly(int monthlySalary, double monthlyHours) {
+    if (monthlyHours <= 0) return 0;
     return (monthlySalary / monthlyHours).round();
   }
   

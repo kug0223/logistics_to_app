@@ -68,7 +68,7 @@ class PayrollExcelHelper {
       final r = rows[i];
       _cell(sheet, 2 + i, 0, r.workerName);
       _cell(sheet, 2 + i, 1, r.bankName);
-      _cell(sheet, 2 + i, 2, r.accountNumber);
+      _cell(sheet, 2 + i, 2, r.accountNumber); // PAY-M3: TextCellValue가 수식 차단 보장 — _sanitizeField 불필요
       _cell(sheet, 2 + i, 3, r.accountHolder);
       _numCell(sheet, 2 + i, 4, r.netAmount);
       _cell(sheet, 2 + i, 5, r.memo);
@@ -247,6 +247,7 @@ class PayrollExcelHelper {
         await file.delete();
       }
     } catch (e) {
+      try { await file.delete(); } catch (_) {}
       if (context.mounted) ToastHelper.showError('엑셀 내보내기에 실패했습니다');
     }
   }

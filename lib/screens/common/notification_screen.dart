@@ -30,6 +30,7 @@ import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../business_admin/admin_review_list_screen.dart';
+import '../user/my_reviews_screen.dart';
 import '../business_admin/admin_contract_management_screen.dart';
 import '../../services/monthly_review_service.dart';
 import '../../models/core/review_request_model.dart';
@@ -40,6 +41,7 @@ import '../../models/core/business_model.dart';
 import '../../services/firestore_service.dart';
 import '../../services/auth_service.dart';
 import '../../widgets/dialogs/worker_detail_dialog.dart';
+import '../../widgets/dialogs/styled_dialog.dart';
 
 /// 알림 목록 화면 (전체 / 미읽음 탭)
 class NotificationScreen extends StatefulWidget {
@@ -86,6 +88,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isSubAdmin = context.read<UserProvider>().isSubAdmin;
     return Consumer<NotificationProvider>(
       builder: (context, provider, _) {
         if (provider.loadMoreFailed) {
@@ -97,9 +100,13 @@ class _NotificationScreenState extends State<NotificationScreen> {
           });
         }
         final unreadList = provider.notifications.where((n) => !n.isRead).toList();
+        // 서브어드민 전용: 관리자 알림만 필터링
+        final adminList = isSubAdmin
+            ? provider.notifications.where((n) => kAdminNotifTypes.contains(n.type)).toList()
+            : <NotificationModel>[];
 
         return DefaultTabController(
-          length: 2,
+          length: isSubAdmin ? 3 : 2,
           child: GradientScaffold(
             title: '알림',
             showNotificationBell: false,
@@ -126,6 +133,14 @@ class _NotificationScreenState extends State<NotificationScreen> {
                     urgent: provider.hasUnread,
                   ),
                 ),
+                if (isSubAdmin)
+                  Tab(
+                    child: AppTabLabel(
+                      label: '관리자',
+                      count: adminList.length,
+                      badgeColor: Colors.white,
+                    ),
+                  ),
               ],
             ),
             actions: [
@@ -156,7 +171,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
                   ),
                 ),
             ],
-            body: _buildBody(context, provider, unreadList),
+            body: _buildBody(context, provider, unreadList, adminList: adminList, isSubAdmin: isSubAdmin),
           ),
         );
       },
@@ -166,8 +181,10 @@ class _NotificationScreenState extends State<NotificationScreen> {
   Widget _buildBody(
     BuildContext context,
     NotificationProvider provider,
-    List<NotificationModel> unreadList,
-  ) {
+    List<NotificationModel> unreadList, {
+    List<NotificationModel> adminList = const [],
+    bool isSubAdmin = false,
+  }) {
     if (provider.isLoading) {
       return const LoadingWidget(message: '알림 불러오는 중...');
     }
@@ -197,6 +214,14 @@ class _NotificationScreenState extends State<NotificationScreen> {
           hasMore: false,
           showLoadMoreHint: provider.hasMore,
         ),
+        if (isSubAdmin)
+          _buildList(
+            context, provider, adminList,
+            grouped: _buildGroupedItems(adminList),
+            emptyMessage: '관리자 알림이 없습니다',
+            hasMore: false,
+            showLoadMoreHint: provider.hasMore,
+          ),
       ],
     );
   }
@@ -406,6 +431,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       // 관리자가 탭하면 WorkApplicantsDialog를 열고, 없으면 IntegratedWorkforceScreen 폴백.
       case NotificationType.confirmationCanceled:
         if (isUser) {
+          // 취소된 지원 내역 확인 → MyApplicationsScreen (FCMService case 'confirmationCanceled'와 동일)
           Navigator.push(
             context,
             MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
@@ -478,6 +504,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
               context,
               MaterialPageRoute(builder: (_) => const UserContractsScreen()),
             );
+          } else if (userProvider.isSubAdmin && !userProvider.can((p) => p.canManageContract)) {
+            ToastHelper.showWarning('계약서 관리 권한이 없습니다.');
           } else {
             final businessId = notification.data?['businessId']?.toString();
             if (businessId != null && businessId.isNotEmpty) {
@@ -536,7 +564,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       case NotificationType.contractRenewed:
       case NotificationType.contractTerminating:
-        // 계약 연장·종료 통보는 근무자(isUser)에게만 발송되므로 isUser 분기 불필요 — 의도된 설계.
+        // CF screen='mySchedule' — 갱신/종료 후 남은 근무 일정 확인 (FCMService와 동일)
         Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
@@ -583,6 +611,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
       // contractRequested: 근무자→관리자 방향 알림 — 수신자는 항상 관리자이므로
       //           isUser 분기 없이 IntegratedWorkforceScreen 단일 경로로 처리.
       case NotificationType.contractRequested:
+      // resignReminder: D+1/D+2 퇴사 미처리 알림 — 항상 관리자 수신 (CF screen='fixedWorker')
+      case NotificationType.resignReminder:
         Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
@@ -595,7 +625,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       // 신분증 열람 관련 알림
       // ═══════════════════════════════════════════════════════════
       case NotificationType.idCardAccessRequested:
-        // 이 알림은 관리자에게 전송됨 — 역할별 분기
+        // 이 알림은 근무자에게 전송됨 — 관리자가 신분증 열람 요청 시 근무자에게 발송
         if (isUser) {
           _showMyRequestsDialog(context, userProvider.currentUser?.uid);
         } else {
@@ -659,35 +689,29 @@ class _NotificationScreenState extends State<NotificationScreen> {
         break;
 
       // ═══════════════════════════════════════════════════════════
-      // 급여 관련 알림
-      // · wageConfirmed(확정) / wageCancelConfirmed / retroactiveDeductionAlert
-      //   → MyScheduleScreen: 근무 일정·확정 금액 확인 목적
-      // · wageTransferred(실송금 완료) → UserContractsScreen: 급여 내역·이체 확인 목적
-      //   [FCM-04 수정] fcm_service.dart M-001 수정(wageTransferred→UserContractsScreen)과
-      //   이 화면의 라우팅(MyScheduleScreen)이 불일치하던 버그 수정
+      // 급여 관련 알림 — 모두 MyScheduleScreen으로 통일
+      // · wageConfirmed / wageCancelConfirmed / retroactiveDeductionAlert / wageTransferred
+      //   → 근무 일정·확정 금액·송금 내역 확인 목적
       // ═══════════════════════════════════════════════════════════
       case NotificationType.wageConfirmed:
       case NotificationType.wageCancelConfirmed:
       case NotificationType.retroactiveDeductionAlert:
+      case NotificationType.wageTransferred:
         Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
         );
         break;
-      case NotificationType.wageTransferred:
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const UserContractsScreen()),
-        );
-        break;
 
       case NotificationType.reviewReceived:
-        // [B-10] 관리자에게 reviewReceived 발송 시 탭 무반응 버그 수정
         if (isUser) {
+          // "리뷰 받았습니다" → 내 근무 평가 화면에서 직접 확인
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
+            MaterialPageRoute(builder: (_) => const MyReviewsScreen()),
           );
+        } else if (userProvider.isSubAdmin && !userProvider.can((p) => p.canManageWorkers)) {
+          ToastHelper.showWarning('근무자 관리 권한이 없습니다.');
         } else {
           Navigator.push(
             context,
@@ -720,8 +744,26 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       case NotificationType.interimSettlementApproved:
       case NotificationType.interimSettlementRejected:
-        // 승인/거절 결과는 근로자의 내 요청 현황에서 확인
-        _showMyRequestsDialog(context, userProvider.currentUser?.uid);
+        // 승인/거절 결과 — MyScheduleScreen에서 급여·일정 확인 (FCM routing과 통일)
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
+        );
+        break;
+
+      // 공고 만료 임박 — 관리자에게만 발송
+      // USER가 혹시 수신한 경우 관리자 전용 화면 진입 차단
+      case NotificationType.toPostingExpiringTomorrow:
+        if (isUser) {
+          ToastHelper.showWarning('관리자 전용 알림입니다.');
+        } else {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+              initialBusinessId: notification.data?['businessId']?.toString(),
+            )),
+          );
+        }
         break;
 
       case NotificationType.systemNotice:
@@ -983,6 +1025,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (_) => MyRequestsDialog(
         applicantUid: uid,
         onChanged: () {},
@@ -1060,44 +1103,33 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       final result = await showDialog<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: Text('${invitation.businessName} 초대'),
+        barrierDismissible: false,
+        builder: (ctx) => StyledDialog(
+          title: '${invitation.businessName} 초대',
+          icon: Icons.person_add_outlined,
+          headerColor: AppColors.teal,
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('${invitation.invitedByName}님이 하위 관리자로 초대했습니다.'),
-              const SizedBox(height: 12),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.grey50,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '부여 권한',
-                      style: ResponsiveHelper.smallStyle(ctx, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(invitation.permissions.summaryText),
-                  ],
-                ),
+              Text(
+                '${invitation.invitedByName}님이 하위 관리자로 초대했습니다.',
+                style: ResponsiveHelper.bodyStyle(ctx),
+              ),
+              SizedBox(height: ResponsiveHelper.spacing(ctx, 12)),
+              StyledDialogInfoCard.info(
+                '부여 권한\n${invitation.permissions.summaryText}',
               ),
             ],
           ),
           actions: [
-            TextButton(
+            StyledDialogButton.cancel(
+              text: '거절',
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('거절'),
             ),
-            ElevatedButton(
+            StyledDialogButton.primary(
+              text: '수락',
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('수락'),
             ),
           ],
         ),
@@ -1117,10 +1149,28 @@ class _NotificationScreenState extends State<NotificationScreen> {
         await MemberService().acceptInvitation(invitation);
         if (navInvite2.canPop()) navInvite2.pop();
         if (!context.mounted) return;
-        // context.read<>()는 await 전 동기 호출이므로 안전 — await 후 context.mounted 체크로 보호
-        await context.read<UserProvider>().refreshUserData();
+
+        // onMemberInvitationAccepted CF 트리거가 subAdminBusinessIds를 기록하기 전에
+        // refreshUserData()를 호출하면 isSubAdmin=false 상태로 읽힘.
+        // UserProvider를 사전 캡처해 await 후에도 context 없이 접근 가능하게 함.
+        final userProvider = context.read<UserProvider>();
+        await userProvider.refreshUserData();
+
+        // CF 트리거 완료까지 최대 6초(4회 × 1.5초) 폴링 — isSubAdmin이 true가 되면 즉시 종료
+        if (!userProvider.isSubAdmin) {
+          for (int i = 0; i < 4; i++) {
+            await Future.delayed(const Duration(milliseconds: 1500));
+            await userProvider.refreshUserData();
+            if (userProvider.isSubAdmin) break;
+          }
+        }
+
         if (!context.mounted) return;
-        ToastHelper.showSuccess('초대를 수락했습니다. 잠시 후 관리자 모드를 사용할 수 있어요!');
+        ToastHelper.showSuccess(
+          userProvider.isSubAdmin
+              ? '초대를 수락했습니다. 홈 화면에서 관리자 모드 버튼을 누르세요!'
+              : '초대를 수락했습니다. 잠시 후 앱을 재시작하면 관리자 모드를 사용할 수 있어요.',
+        );
       } else {
         await MemberService().rejectInvitation(invitation);
         if (navInvite2.canPop()) navInvite2.pop();
@@ -1176,6 +1226,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       await showDialog<bool>(
         context: context,
+        barrierDismissible: false,
         builder: (_) => DayApplicantsDialog(
           date: date,
           businessIds: businesses.map((b) => b.id).toList(),
@@ -1324,6 +1375,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
             : null;
         await showDialog<WorkApplicantsDialogResult>(
           context: context,
+          barrierDismissible: false,
           builder: (_) => WorkApplicantsDialog(
             work: workDetail,
             toItem: toItem,

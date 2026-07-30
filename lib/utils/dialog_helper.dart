@@ -7,6 +7,33 @@ import '../theme/app_colors.dart';
 import '../widgets/dialogs/styled_dialog.dart';
 import '../widgets/common/loading_widget.dart';
 
+/// 바텀시트 닫힘 시 포커스 안전 해제 — barrier 터치/뒤로가기 모두 대응
+///
+/// deactivate()에서 unfocus를 먼저 수행하여 FocusNode-disposed 크래시를 방지한다.
+/// (PopScope.onPopInvokedWithResult의 didPop=true 경우 if(!didPop) 조건으로
+///  unfocus가 건너뛰어지는 문제의 근본 해결)
+class _SheetFocusSafeArea extends StatefulWidget {
+  final Widget child;
+  const _SheetFocusSafeArea({required this.child});
+
+  @override
+  State<_SheetFocusSafeArea> createState() => _SheetFocusSafeAreaState();
+}
+
+class _SheetFocusSafeAreaState extends State<_SheetFocusSafeArea> {
+  @override
+  void deactivate() {
+    // FocusScope.of(context) 사용 금지 — deactivate 시점에 FocusScope InheritedElement가
+    // 먼저 unmount되면 _dependents assertion('_dependents.isEmpty') 크래시 발생.
+    // FocusManager.instance로 직접 접근하면 InheritedWidget 탐색 없이 안전하게 해제됨.
+    FocusManager.instance.primaryFocus?.unfocus();
+    super.deactivate();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
 /// 공통 다이얼로그 헬퍼
 class DialogHelper {
   /// 확인 다이얼로그 (예/아니오)
@@ -293,7 +320,7 @@ class DialogHelper {
     String? title,
     required Widget content,
     List<Widget>? actions,
-    bool barrierDismissible = true,
+    bool barrierDismissible = false,
     IconData? icon,
     Color? iconColor,
   }) {
@@ -407,13 +434,17 @@ class DialogHelper {
           canPop: false,
           onPopInvokedWithResult: (didPop, result) {
             if (!didPop) {
-              FocusScope.of(ctx).unfocus();
+              // FocusScope.of(ctx) 금지 — InheritedWidget 탐색으로 _dependents 등록 후
+              // Navigator.pop()에 의한 FocusScope unmount 시 assertion 실패
+              FocusManager.instance.primaryFocus?.unfocus();
               Navigator.pop(ctx);
             }
           },
-          child: Padding(
-            padding: EdgeInsets.only(bottom: safeBottom),
-            child: builder(ctx),
+          child: _SheetFocusSafeArea(
+            child: Padding(
+              padding: EdgeInsets.only(bottom: safeBottom),
+              child: builder(ctx),
+            ),
           ),
         );
       },

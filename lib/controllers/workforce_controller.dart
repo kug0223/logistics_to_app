@@ -109,8 +109,8 @@ class WorkforceController extends ChangeNotifier {
       final List<String>? businessIds;
       if (user.isSuperAdmin) {
         businessIds = null;
-      } else if (user.isSubAdmin && user.subAdminOf != null) {
-        businessIds = [user.subAdminOf!];
+      } else if (user.isSubAdmin) {
+        businessIds = user.subAdminBusinessIds;
       } else {
         businessIds = user.managedBusinessIds;
       }
@@ -175,6 +175,8 @@ class WorkforceController extends ChangeNotifier {
   void _preloadFlexTOSlots() {
     for (final group in _items.where(
         (g) => g.masterTO.isFlexType && !g.isGroupDetailLoaded)) {
+      if (_loadingGroupIds.contains(group.id)) continue;
+      _loadingGroupIds.add(group.id);
       _service
           .loadGroupTOsLight(group.id, masterTO: group.masterTO)
           .then((toItems) {
@@ -186,6 +188,8 @@ class WorkforceController extends ChangeNotifier {
 
         // 모든 슬롯이 만료됐는데 TO가 여전히 ACTIVE면 Firestore cascade close
         _maybeCascadeCloseExpiredTO(group, toItems);
+      }).whenComplete(() {
+        _loadingGroupIds.remove(group.id);
       }).catchError((e) {
         debugPrint('❌ 슬롯 사전로드 실패 ${group.id}: $e');
       });

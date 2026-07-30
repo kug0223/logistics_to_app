@@ -195,6 +195,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _businessNameFocus.dispose();
     _ceoNameFocus.dispose();
     _accountNumberFocus.dispose();
+    // TMP-MEDIUM: 이미지 선택 후 이탈 시 압축 임시 파일 정리
+    for (final path in [_idCardImagePath, _bankbookImagePath, _businessLicenseImagePath]) {
+      if (path != null) {
+        try { File(path).deleteSync(); } catch (_) {}
+      }
+    }
     super.dispose();
   }
   // ============================================================
@@ -287,7 +293,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  /// 여권 생년월일로 만 18세 이상 여부 확인
   Future<void> _searchAddress() async {
     final result = await DaumAddressService.searchAddress(context);
     
@@ -651,8 +656,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (!mounted) return;
 
       // [AUTH-H3] 가입 완료 후 passToken 즉시 소비 (15분 재사용 차단)
+      // 별도 try-catch: 이 단계 실패는 계정 생성 자체와 무관.
+      // 실패해도 계정은 정상 생성됐으므로 재가입 루프를 유발하는 오탐 방지.
       if (_isKorean && _passAuthResult != null) {
-        await PassVerificationService.finalizeRegistration(_passAuthResult!.passToken);
+        try {
+          await PassVerificationService.finalizeRegistration(_passAuthResult!.passToken);
+        } catch (e) {
+          debugPrint('⚠️ finalizeRegistration 실패 (ciHash 미연동): $e');
+          // ciHash 연동 실패 — 계정 자체는 생성 완료, 슈퍼관리자 수동 처리 필요
+        }
       }
 
       if (!mounted) return;
@@ -663,10 +675,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     } catch (e) {
       debugPrint('❌ 회원가입 실패: $e');
       final errStr = e.toString();
-      // [TODO-DANAL] finalizeRegistration CF 호출 추가 후 passToken TTL(15분) 만료 시 이 분기 진입
-      // 현재는 mock PASS이므로 실제로 발생하지 않음
-      // 'passToken' 문자열을 포함하는 일반 예외도 이 분기 진입 가능 (오탐).
-      //           현재 mock PASS 환경에서는 실제 발생 없음; 다날 연동 후 에러 메시지 재검토 필요.
       if (_isKorean &&
           (errStr.contains('deadline-exceeded') ||
               errStr.contains('token-expired') ||
@@ -847,8 +855,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (!mounted) return;
 
       // [AUTH-H3] 가입 완료 후 passToken 즉시 소비 (15분 재사용 차단)
+      // 별도 try-catch: 이 단계 실패는 계정 생성 자체와 무관.
       if (_isKorean && _passAuthResult != null) {
-        await PassVerificationService.finalizeRegistration(_passAuthResult!.passToken);
+        try {
+          await PassVerificationService.finalizeRegistration(_passAuthResult!.passToken);
+        } catch (e) {
+          debugPrint('⚠️ finalizeRegistration 실패 (ciHash 미연동): $e');
+        }
       }
 
       if (!mounted) return;
@@ -1211,6 +1224,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<PassAuthResult?> _showPassManualInputDialog() {
     return showDialog<PassAuthResult>(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) => const _PassManualInputDialog(),
     );
   }

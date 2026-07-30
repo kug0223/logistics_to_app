@@ -140,11 +140,15 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         if (dayOnly.isBefore(startDay)) return false;
 
         // 종료일: rangeEnd 우선, 없으면 게시 만료일(postingExpiryDate) 사용
-        // createdAt으로 폴백하면 생성일 이후 날짜가 모두 제외되므로 직접 체크
         final effectiveEnd = to.rangeEnd ?? to.postingExpiryDate;
         if (effectiveEnd != null) {
           final endDay = DateTime(effectiveEnd.year, effectiveEnd.month, effectiveEnd.day);
           if (dayOnly.isAfter(endDay)) return false;
+        } else {
+          // 종료일 미설정 레거시 TO: 오늘 기준 1년 이후는 표시 안 함
+          final now = DateTime.now();
+          final cutoff = DateTime(now.year + 1, now.month, now.day);
+          if (dayOnly.isAfter(cutoff)) return false;
         }
 
         final workDays = to.workDays;
@@ -468,6 +472,8 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
   }
 
   Future<void> _openFixedWorkerManagement() async {
+    final up = Provider.of<UserProvider>(context, listen: false);
+    if (!up.can((p) => p.canManageWorkers)) return;
     try {
       final businesses = await _getAdminBusinesses();
       if (businesses.isEmpty) {
@@ -493,6 +499,13 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
   }
 
   Future<void> _openCloseManagement() async {
+    final up = Provider.of<UserProvider>(context, listen: false);
+    if (!up.can((p) => p.canManageWorkers)) return;
+    // [PERM-D1] 마감관리는 임금 확정과 연동 — canManageWage 추가 검증
+    if (!up.can((p) => p.canManageWage)) {
+      ToastHelper.showWarning('임금 관리 권한이 없습니다.');
+      return;
+    }
     final businesses = await _getAdminBusinesses();
     if (!mounted) return;
     if (businesses.isEmpty) {
@@ -502,6 +515,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
 
     final hasChanges = await showDialog<bool>(
       context: context,
+      barrierDismissible: false, // [REG-UI03-01] 배리어 클릭으로 _hasChanges=null 반환 방지
       builder: (context) => CloseManagementDialog(
         initialMonth: _focusedDay,
         businessIds: businesses.map((b) => b.id).toList(),
@@ -755,6 +769,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       if (!mounted) return;
       final hasChanges = await showDialog<bool>(
         context: context,
+        barrierDismissible: false,
         builder: (context) => DayApplicantsDialog(
           date: _selectedDay!,
           businessIds: businesses.map((b) => b.id).toList(),
@@ -789,8 +804,10 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       final currentBusinessId = userProvider.effectiveBusinessId;
 
       if (!mounted) return;
+      // UI-03: TextField 포커스 상태에서 배경 탭 시 크래시 방지
       final hasChanges = await showDialog<bool>(
         context: context,
+        barrierDismissible: false,
         builder: (context) => AttendanceStatusDialog(
           date: _selectedDay!,
           businessIds: businessIds,

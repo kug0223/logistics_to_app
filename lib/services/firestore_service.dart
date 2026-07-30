@@ -290,45 +290,6 @@ class FirestoreService {
     }
   }
 
-  /// TO 통계 재계산 (슈퍼어드민 전용)
-  ///
-  /// Firestore 콘솔 직접 수정이나 과거 race condition으로 드리프트된 경우
-  /// totalConfirmed / totalPending 을 실제 지원서 수 기준으로 재동기화.
-  Future<void> reconcileTOStats(String toId) async {
-    try {
-      // 실제 CONFIRMED/PENDING 지원서 수 집계
-      // [BUGFIX-WHEREIN] toId isEqualTo + status whereIn → PERMISSION_DENIED
-      // confirmedStatuses 각각 병렬 isEqualTo 쿼리로 대체 (whereIn 제거)
-      // [PERF] confirmed 쿼리 + pending 쿼리 단일 Future.wait으로 통합
-      final allCountResults = await Future.wait([
-        ...AppStatus.confirmedStatuses.map((s) => _firestore
-            .collection('applications')
-            .where('toId', isEqualTo: toId)
-            .where('status', isEqualTo: s)
-            .count()
-            .get()),
-        _firestore
-            .collection('applications')
-            .where('toId', isEqualTo: toId)
-            .where('status', isEqualTo: AppStatus.pending)
-            .count()
-            .get(),
-      ]);
-      final confirmedCount = allCountResults
-          .take(AppStatus.confirmedStatuses.length)
-          .fold<int>(0, (acc, r) => acc + (r.count ?? 0));
-      final pendingCount = allCountResults.last.count ?? 0;
-
-      await _firestore.collection('tos').doc(toId).update({
-        'totalConfirmed': confirmedCount,
-        'totalPending': pendingCount,
-      });
-      clearCache(toId: toId);
-      debugPrint('✅ TO 통계 재계산 완료: confirmed=$confirmedCount pending=$pendingCount ($toId)');
-    } catch (e) {
-      debugPrint('❌ TO 통계 재계산 실패: $e');
-    }
-  }
 
   /// TO 재오픈 (마감 취소) — CF callableUpdateTO 위임
   /// [BUG-REOPEN-FIX 2026-07-15] 클라이언트 직접 쓰기 → CF 이전
@@ -483,12 +444,14 @@ class FirestoreService {
   /// [masterTO] 전달 시 TO 문서 재조회 생략
   Future<List<TOItem>> loadGroupTOsLight(String toId, {TOModel? masterTO}) async {
     try {
+      // [PERF-F4] Source.server 제거(캐시 활용) + limit 500 (무제한 읽기 차단)
       final snap = await _firestore
           .collection('tos')
           .doc(toId)
           .collection('slots')
           .orderBy('date')
-          .get(const GetOptions(source: Source.server));
+          .limit(500)
+          .get();
       if (snap.docs.isEmpty) return [];
 
       final model = masterTO ?? await getTO(toId);
@@ -521,10 +484,12 @@ class FirestoreService {
     if (toIds.isEmpty) return {};
     try {
       final futures = toIds.map((toId) async {
+        // [PERF-F5] limit 500 — date 필드만 필요하나 select() 미지원으로 limit만 적용
         final snap = await _firestore
             .collection('tos')
             .doc(toId)
             .collection('slots')
+            .limit(500)
             .get();
         final dates = snap.docs
             .map((d) => (d.data()['date'] as Timestamp?)?.toDate().toLocal())
@@ -1110,10 +1075,11 @@ class FirestoreService {
         'limit': 200,
       });
       final raw = (result.data['applications'] as List? ?? []).whereType<Map>().toList();
-      final apps = raw.map((e) => ApplicationModel.tryFromMap(
-        Map<String, dynamic>.from(e),
-        e['id'] as String? ?? '',
-      )).whereType<ApplicationModel>().toList();
+      final apps = raw.map((e) {
+        final hydrated = _cfHydrate(Map<String, dynamic>.from(e));
+        final id = hydrated.remove('id') as String? ?? '';
+        return ApplicationModel.tryFromMap(hydrated, id);
+      }).whereType<ApplicationModel>().toList();
       // CF는 orderBy 미지원 — 클라이언트에서 resignRequestedAt 기준 정렬
       apps.sort((a, b) =>
           (b.resignRequestedAt ?? DateTime(0)).compareTo(a.resignRequestedAt ?? DateTime(0)));
