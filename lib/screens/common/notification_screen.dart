@@ -88,9 +88,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isSubAdmin = context.read<UserProvider>().isSubAdmin;
     return Consumer<NotificationProvider>(
       builder: (context, provider, _) {
+        final isSubAdmin = context.select<UserProvider, bool>((p) => p.isSubAdmin);
         if (provider.loadMoreFailed) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && provider.loadMoreFailed) {
@@ -821,9 +821,15 @@ class _NotificationScreenState extends State<NotificationScreen> {
       // fallback: contractId 없으면 계약서 조회 불가 (USER list 권한 없음)
       // contractId는 계약서 서명 요청 알림 생성 시 항상 포함되어야 함
       if (contract == null && applicationId != null && applicationId.isNotEmpty) {
-        // getByApplication은 USER 역할에서 PERMISSION_DENIED 발생 — 단건 get 불가, 안내만 제공
+        // contractId로 조회 실패 = 계약서 삭제됐거나 권한 없음 → 안내 + 내 지원 목록으로 이동
         if (nav.canPop()) nav.pop();
-        if (context.mounted) ToastHelper.showError('계약서 정보를 불러올 수 없습니다. 관리자에게 문의하세요.');
+        if (context.mounted) {
+          ToastHelper.showError('계약서를 찾을 수 없습니다. 삭제됐거나 권한이 없습니다.');
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
+          );
+        }
         return;
       }
 

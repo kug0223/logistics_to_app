@@ -21,9 +21,11 @@ class ContractPdfBuilder {
     bool? isLongTermOverride,
     String employerSealType = 'stamp',
   }) async {
+    // ownerNameOverride: 근무자 경로에서 스냅샷 ownerName이 없을 때 Firestore 조회값.
+    // 둘 다 없는 구형 계약서는 '(사업주)' fallback으로 PDF에서 빈 이름 방지.
     final effectiveOwnerName = snapshot.ownerName.isNotEmpty
         ? snapshot.ownerName
-        : (ownerNameOverride ?? '');
+        : (ownerNameOverride?.isNotEmpty == true ? ownerNameOverride! : '(사업주)');
     final doc = pw.Document();
 
     // 한글 폰트 로드 (번들 에셋 — 오프라인 가능)
