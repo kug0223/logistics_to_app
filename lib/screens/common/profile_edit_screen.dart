@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:intl/intl.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:cached_network_image/cached_network_image.dart' show CachedNetworkImageProvider;
+import 'package:cached_network_image/cached_network_image.dart';
 
 // Providers
 import '../../providers/user_provider.dart';
@@ -262,16 +262,21 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     int strength = 0;
     bool isChanging = false;
 
+    final pwLetterRe  = RegExp(r'[a-zA-Z]');
+    final pwDigitRe   = RegExp(r'[0-9]');
+    final pwSpecialRe = RegExp(r'[!@#$%^&*(),.?":{}|<>]');
+
     void calcStrength(String pw) {
       int s = 0;
       if (pw.length >= 8) s++;
-      if (RegExp(r'[a-zA-Z]').hasMatch(pw) && RegExp(r'[0-9]').hasMatch(pw)) s++;
-      if (RegExp(r'[!@#$%^&*(),.?":{}|<>]').hasMatch(pw)) s++;
+      if (pwLetterRe.hasMatch(pw) && pwDigitRe.hasMatch(pw)) s++;
+      if (pwSpecialRe.hasMatch(pw)) s++;
       strength = s;
     }
 
     final result = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDs) => StyledDialog(
           title: '비밀번호 변경',
@@ -541,30 +546,47 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                   border: Border.all(
                       color: theme.primaryColor.withValues(alpha: 0.25),
                       width: 1.5),
-                  image: hasPhoto
-                      ? DecorationImage(
-                          image: CachedNetworkImageProvider(user.profileImageUrl!),
-                          fit: BoxFit.cover)
-                      : null,
                 ),
-                child: _isUploadingPhoto
-                    ? Center(
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: theme.primaryColor))
-                    : !hasPhoto
-                        ? Center(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (hasPhoto)
+                      ClipOval(
+                        child: CachedNetworkImage(
+                          imageUrl: user.profileImageUrl!,
+                          width: avatarSize,
+                          height: avatarSize,
+                          fit: BoxFit.cover,
+                          placeholder: (_, __) => const SizedBox.shrink(),
+                          errorWidget: (_, __, ___) => Center(
                             child: Text(
-                              user.name.isNotEmpty
-                                  ? user.name[0].toUpperCase()
-                                  : '?',
+                              user.name.isNotEmpty ? user.name[0].toUpperCase() : '?',
                               style: TextStyle(
                                 fontSize: avatarSize * 0.4,
                                 fontWeight: FontWeight.bold,
                                 color: theme.primaryColor,
                               ),
                             ),
-                          )
-                        : null,
+                          ),
+                        ),
+                      ),
+                    if (_isUploadingPhoto)
+                      Center(
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: theme.primaryColor))
+                    else if (!hasPhoto)
+                      Center(
+                        child: Text(
+                          user.name.isNotEmpty ? user.name[0].toUpperCase() : '?',
+                          style: TextStyle(
+                            fontSize: avatarSize * 0.4,
+                            fontWeight: FontWeight.bold,
+                            color: theme.primaryColor,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
               Positioned(
                 bottom: 0, right: 0,

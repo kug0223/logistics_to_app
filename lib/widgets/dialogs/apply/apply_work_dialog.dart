@@ -184,12 +184,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     return to.endDate ?? to.date;
   }
 
-  /// 캘린더 표시 범위 최대일 (preset이면 1년 후, 아니면 rangeEnd)
-  DateTime get _calendarLastDay {
-    final to = widget.mainTO;
-    if (to.hasPresetPeriod) return DateTime.now().add(const Duration(days: 365));
-    return to.endDate ?? to.date;
-  }
+  /// 캘린더 표시 범위 최대일 (preset이면 1년 후, 아니면 rangeEnd) — initState에서 1회 계산
+  late final DateTime _calendarLastDay;
   
   // 🔥 이미 지원 완료 상태인지 체크
   bool get _hasActiveApplication {
@@ -219,6 +215,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   @override
   void initState() {
     super.initState();
+    final to = widget.mainTO;
+    _calendarLastDay = to.hasPresetPeriod
+        ? DateTime.now().add(const Duration(days: 365))
+        : to.endDate ?? to.date;
     // postFrameCallback: context 완전히 준비된 후 실행 (initState 내 직접 context 사용 방지)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _initializeData();
@@ -292,19 +292,23 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         // 그룹 TO: ✅ 모든 날짜의 지원 상태 로드 (마커 표시용)
         final allDates = widget.groupTOsByDate!.keys.toList();
         await Future.wait(allDates.map((date) => _loadDateApplications(date)));
-        
-        // 선택된 날짜의 충돌/스케줄 로드
+
+        // 선택된 날짜의 충돌/스케줄 로드 — 두 쿼리는 독립적이므로 병렬 실행
         if (_selectedDate != null) {
-          await _loadMyConfirmedSchedules(_selectedDate!);
-          await _loadConflictsForDate(_selectedDate!);
+          await Future.wait([
+            _loadMyConfirmedSchedules(_selectedDate!),
+            _loadConflictsForDate(_selectedDate!),
+          ]);
         }
       } else {
-        // 단일/장기 TO: 메인 TO의 지원 상태 로드
-        await _loadDateApplications(widget.mainTO.date);
-        await _loadMyConfirmedSchedules(widget.mainTO.date);
-        await _loadConflictsForDate(widget.mainTO.date);
-        
-        // ✅ 장기공고: 전체 기간 내 확정 날짜 로드
+        // 단일/장기 TO: 세 쿼리가 독립적이므로 병렬 실행
+        await Future.wait([
+          _loadDateApplications(widget.mainTO.date),
+          _loadMyConfirmedSchedules(widget.mainTO.date),
+          _loadConflictsForDate(widget.mainTO.date),
+        ]);
+
+        // ✅ 장기공고: _applicationsByDate 확인이 필요하므로 위 Future.wait 완료 후 실행
         if (_isLongTerm) {
           await _loadConfirmedDatesInRange();
         }
@@ -371,10 +375,16 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       // ✅ 장기공고: 확정된 application의 출퇴근 기록 확인
       // [CF-MIGRATED 2026-07-15] attendance list USER 직접 차단 → workerHasAttendanceRecord CF 경유
       if (_isLongTerm) {
-        for (final app in applications.where((a) => AppStatus.confirmedStatuses.contains(a.status))) {
-          final hasRecord = await _firestoreService.workerHasAttendanceRecord(app.id);
-          if (hasRecord) {
-            _hasAttendanceIds.add(app.id);
+        final confirmedApps = applications.where((a) => AppStatus.confirmedStatuses.contains(a.status)).toList();
+        if (confirmedApps.isNotEmpty) {
+          final checks = await Future.wait(
+            confirmedApps.map((app) async {
+              final hasRecord = await _firestoreService.workerHasAttendanceRecord(app.id);
+              return (app.id, hasRecord);
+            }),
+          );
+          for (final (id, hasRecord) in checks) {
+            if (hasRecord) _hasAttendanceIds.add(id);
           }
         }
 
@@ -536,7 +546,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         workDetails: workDetails,
       );
 
-      _conflictCache[_dateKey(date)] = conflicts;
+      if (mounted) {
+        setState(() => _conflictCache[_dateKey(date)] = conflicts);
+      }
     } catch (e) {
       debugPrint('❌ 충돌 정보 로드 실패: $e');
     }
@@ -1486,13 +1498,15 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
   /// 캘린더 섹션 (그룹 TO용)
   Widget _buildCalendarSection(
-    BuildContext context, 
+    BuildContext context,
     ThemeData theme,
     List<DateTime> availableDates,
   ) {
     // 캘린더 범위 설정 (등록된 날짜 기준)
     final firstDate = availableDates.first;
     final lastDate = availableDates.last;
+    final now = DateTime.now();
+    final todayOnly = DateTime(now.year, now.month, now.day);
     
     return Container(
       decoration: BoxDecoration(
@@ -1552,9 +1566,10 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
               
               // 해당 날짜 데이터 로드
               _loadDateApplications(selectedDay);
-              _loadMyConfirmedSchedules(selectedDay);
               _loadConflictsForDate(selectedDay);
-              
+              // _checkAndShowDateAlert 내부에서 _loadMyConfirmedSchedules를
+              // await하므로 여기서 중복 호출하지 않음 (race condition 방지)
+
               // ✅ 상황별 알림 다이얼로그 표시
               _checkAndShowDateAlert(selectedDay);
             },
@@ -1647,7 +1662,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                   day,
                   isAvailable: true,
                   isSelected: true,
-                  isToday: DateUtils.isSameDay(day, DateTime.now()),
+                  isToday: DateUtils.isSameDay(day, todayOnly),
                 );
               },
 

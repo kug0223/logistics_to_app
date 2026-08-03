@@ -35,22 +35,27 @@ class _UserContractsScreenState extends State<UserContractsScreen>
   final _scrollCtrl = ScrollController();
 
   // null = 전체, 순서 중요 (탭 인덱스와 대응)
+  // pendingEmployer 제거 — 계약서는 사업주 서명 시 최초 저장(pendingWorker)되므로 해당 탭은 항상 비어있음
   static const _tabs = <ContractStatus?>[
     null,
-    ContractStatus.pendingWorker,   // 내 서명 필요
-    ContractStatus.pendingEmployer, // 사업주 서명 대기
+    ContractStatus.pendingWorker, // 내 서명 필요
     ContractStatus.completed,
     ContractStatus.voided,
   ];
-  static const _tabLabels = ['전체', '서명 필요', '사업주 대기', '완료', '무효'];
+  static const _tabLabels = ['전체', '서명 필요', '완료', '무효'];
 
   late final TabController _tabCtrl;
 
   List<EmploymentContractModel> _items = [];
   bool _isLoading = true;
+  bool _fetchInProgress = false;
   bool _isLoadingMore = false;
   bool _hasMore = false;
+  bool _isContractOpening = false;
   String? _lastDocId;
+
+  // 탭별 캐시 — 동일 탭 재방문 시 CF 재호출 없이 즉시 표시
+  final Map<int, ({List<EmploymentContractModel> items, String? lastDocId, bool hasMore})> _tabCache = {};
 
   ContractStatus? get _currentFilter => _tabs[_tabCtrl.index];
 
@@ -59,10 +64,13 @@ class _UserContractsScreenState extends State<UserContractsScreen>
     super.initState();
     _tabCtrl = TabController(length: _tabs.length, vsync: this);
     _tabCtrl.addListener(() {
-      if (!_tabCtrl.indexIsChanging) _refresh();
+      if (!_tabCtrl.indexIsChanging) _load(); // 캐시 히트 시 CF 재호출 없이 즉시 표시
     });
     _scrollCtrl.addListener(_onScroll);
-    _load();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _load();
+    });
   }
 
   @override
@@ -84,13 +92,28 @@ class _UserContractsScreenState extends State<UserContractsScreen>
   String? get _uid =>
       Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
 
-  Future<void> _load() async {
+  Future<void> _load({bool useCache = true}) async {
+    if (!mounted || _fetchInProgress) return;
     final uid = _uid;
-    // uid null 시에도 _isLoading=false 필수 — 미처리 시 LoadingWidget이 영구 표시됨
-    // [특이사항] OR 조건으로 두 케이스를 한 줄 처리:
-    //   uid==null → mounted일 수도 있으므로 setState 가드 필요, !mounted → 내부 if(mounted)가 false라 setState 생략
-    if (uid == null || !mounted) { if (mounted) setState(() => _isLoading = false); return; }
-    setState(() { _isLoading = true; _items = []; _lastDocId = null; });
+    if (uid == null) { if (mounted) setState(() => _isLoading = false); return; }
+    final tabIdx = _tabCtrl.index;
+
+    // 캐시 히트: 스피너 없이 즉시 표시
+    if (useCache) {
+      final cached = _tabCache[tabIdx];
+      if (cached != null) {
+        setState(() {
+          _items     = List.from(cached.items);
+          _lastDocId = cached.lastDocId;
+          _hasMore   = cached.hasMore;
+          _isLoading = false;
+        });
+        return;
+      }
+    }
+
+    _fetchInProgress = true;
+    setState(() { _isLoading = true; _items = []; _lastDocId = null; _hasMore = false; });
     try {
       final result = await _contractService.getByWorkerPaged(
         uid,
@@ -102,15 +125,21 @@ class _UserContractsScreenState extends State<UserContractsScreen>
         _lastDocId = result.lastDocId;
         _hasMore   = result.hasMore;
       });
+      _tabCache[tabIdx] = (items: List.from(result.items), lastDocId: result.lastDocId, hasMore: result.hasMore);
     } catch (e) {
       debugPrint('❌ 계약 목록 로드 실패: $e');
       if (mounted) ToastHelper.showError('계약서 목록을 불러오지 못했습니다');
     } finally {
+      _fetchInProgress = false;
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  Future<void> _refresh() => _load();
+  // pull-to-refresh: 현재 탭 캐시만 무효화
+  Future<void> _refresh() {
+    _tabCache.remove(_tabCtrl.index);
+    return _load(useCache: false);
+  }
 
   Future<void> _loadMore() async {
     final uid = _uid;
@@ -129,6 +158,9 @@ class _UserContractsScreenState extends State<UserContractsScreen>
         _lastDocId = result.lastDocId;
         _hasMore   = result.hasMore;
       });
+      // 페이지네이션 결과도 캐시에 반영
+      final tabIdx = _tabCtrl.index;
+      _tabCache[tabIdx] = (items: List.from(_items), lastDocId: _lastDocId, hasMore: _hasMore);
     } catch (e) {
       debugPrint('❌ 계약 목록 추가 로드 실패: $e');
       if (mounted) ToastHelper.showError('계약서를 더 불러오지 못했습니다');
@@ -138,10 +170,34 @@ class _UserContractsScreenState extends State<UserContractsScreen>
   }
 
   Future<void> _openContract(EmploymentContractModel c) async {
-    await Navigator.of(context).push(MaterialPageRoute(
+    if (_isContractOpening || !mounted) return;
+    setState(() => _isContractOpening = true);
+    final nav = Navigator.of(context);
+    try {
+    await nav.push(MaterialPageRoute(
       builder: (_) => ContractSignScreen(contract: c, role: 'worker'),
     ));
-    if (mounted) await _refresh();
+    } finally {
+      if (mounted) setState(() => _isContractOpening = false);
+    }
+    if (!mounted) return;
+    // 단건 갱신 — 전체 탭 재조회 대신 해당 계약서만 업데이트
+    final updated = await _contractService.getById(c.id);
+    if (!mounted) return;
+    setState(() {
+      final idx = _items.indexWhere((item) => item.id == c.id);
+      if (idx < 0) return;
+      if (updated == null) {
+        _items.removeAt(idx);
+      } else if (_currentFilter != null && updated.status != _currentFilter) {
+        // 상태 변경으로 현재 탭 필터 조건에서 벗어남 — 목록에서 제거
+        _items.removeAt(idx);
+      } else {
+        _items[idx] = updated;
+      }
+    });
+    // 단건 변경을 캐시에도 반영
+    _tabCache[_tabCtrl.index] = (items: List.from(_items), lastDocId: _lastDocId, hasMore: _hasMore);
   }
 
   @override
@@ -153,8 +209,6 @@ class _UserContractsScreenState extends State<UserContractsScreen>
       onRefresh: _refresh,
       headerBottom: TabBar(
         controller: _tabCtrl,
-        isScrollable: true,
-        tabAlignment: TabAlignment.start,
         labelColor: Colors.white,
         unselectedLabelColor: Colors.white.withValues(alpha: 0.6),
         indicatorColor: Colors.white,
@@ -188,11 +242,11 @@ class _UserContractsScreenState extends State<UserContractsScreen>
 
   Widget _buildEmpty(BuildContext context) {
     final subtitle = switch (_currentFilter) {
-      null                           => '확정된 공고에서 계약서를 받으세요.',
-      ContractStatus.pendingWorker   => '서명이 필요한 계약서가 없습니다.',
-      ContractStatus.pendingEmployer => '사업주 서명을 기다리는 계약서가 없습니다.',
-      ContractStatus.completed       => '완료된 계약서가 없습니다.',
-      ContractStatus.voided          => '무효 처리된 계약서가 없습니다.',
+      null                         => '확정된 공고에서 계약서를 받으세요.',
+      ContractStatus.pendingWorker => '서명이 필요한 계약서가 없습니다.',
+      ContractStatus.completed     => '완료된 계약서가 없습니다.',
+      ContractStatus.voided        => '무효 처리된 계약서가 없습니다.',
+      _                            => '해당 계약서가 없습니다.',
     };
     return AppEmptyState(
       icon: Icons.description_outlined,
@@ -219,8 +273,7 @@ class _UserContractCard extends StatelessWidget {
     final needSign = status == ContractStatus.pendingWorker;
 
     return Container(
-      margin: EdgeInsets.only(
-          bottom: ResponsiveHelper.spacing(context, 10)),
+      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
@@ -243,44 +296,35 @@ class _UserContractCard extends StatelessWidget {
           onTap: onTap,
           borderRadius: BorderRadius.circular(14),
           child: Padding(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 14)),
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 14),
+              vertical: ResponsiveHelper.spacing(context, 10),
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 헤더: 사업장 + 상태
+                // 헤더: 사업장 · 업무 한 줄 + 상태 배지
                 Row(
                   children: [
                     Container(
-                      width: ResponsiveHelper.spacing(context, 38),
-                      height: ResponsiveHelper.spacing(context, 38),
+                      width: 26,
+                      height: 26,
                       decoration: BoxDecoration(
                         color: theme.primaryColor.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(7),
                       ),
                       child: Icon(Icons.business_outlined,
                           color: theme.primaryColor,
-                          size: ResponsiveHelper.iconSize(context, 20)),
+                          size: ResponsiveHelper.iconSize(context, 14)),
                     ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            contract.snapshot.businessName,
-                            style: ResponsiveHelper.bodyStyle(context)
-                                .copyWith(fontWeight: FontWeight.w700),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          SizedBox(
-                              height: ResponsiveHelper.spacing(context, 2)),
-                          Text(
-                            contract.snapshot.workType,
-                            style: ResponsiveHelper.tinyStyle(context,
-                                color: AppColors.grey500),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
+                      child: Text(
+                        '${contract.snapshot.businessName}  ·  ${contract.snapshot.workType}',
+                        style: ResponsiveHelper.bodyStyle(context)
+                            .copyWith(fontWeight: FontWeight.w700),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
                       ),
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -295,8 +339,7 @@ class _UserContractCard extends StatelessWidget {
                       ),
                       child: Text(
                         status.label,
-                        style: ResponsiveHelper.tinyStyle(context)
-                            .copyWith(
+                        style: ResponsiveHelper.tinyStyle(context).copyWith(
                           color: statusColor,
                           fontWeight: FontWeight.w600,
                         ),
@@ -305,13 +348,13 @@ class _UserContractCard extends StatelessWidget {
                   ],
                 ),
 
-                SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 const Divider(height: 1, color: AppColors.grey100),
-                SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
-                // 계약 정보
+                // 계약 정보 칩
                 Wrap(
-                  spacing: ResponsiveHelper.spacing(context, 14),
+                  spacing: ResponsiveHelper.spacing(context, 16),
                   runSpacing: ResponsiveHelper.spacing(context, 6),
                   children: [
                     _InfoChip(
@@ -323,56 +366,33 @@ class _UserContractCard extends StatelessWidget {
                       text: '${FormatHelper.formatNumber(contract.snapshot.wage)}원'
                           ' / ${_wageTypeLabel(contract.snapshot.wageType)}',
                     ),
+                    _InfoChip(
+                      icon: contract.isLongTerm
+                          ? Icons.date_range_outlined
+                          : Icons.today_outlined,
+                      text: contract.isLongTerm ? '장기 계약' : '단기 계약',
+                    ),
                   ],
                 ),
 
-                // 서명 필요 안내 배너
-                if (needSign) ...[
-                  SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-                  Container(
-                    width: double.infinity,
-                    padding: EdgeInsets.symmetric(
-                      horizontal: ResponsiveHelper.spacing(context, 12),
-                      vertical: ResponsiveHelper.spacing(context, 8),
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.infoBg,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.touch_app_outlined,
-                            size: ResponsiveHelper.iconSize(context, 14),
-                            color: AppColors.info),
-                        SizedBox(
-                            width: ResponsiveHelper.spacing(context, 6)),
-                        Expanded(
-                          child: Text(
-                            '서명이 필요합니다. 탭하여 계약서를 확인하고 서명하세요.',
-                            style: ResponsiveHelper.tinyStyle(context,
-                                color: AppColors.infoDark),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
-                // 완료 일자
-                if (status == ContractStatus.completed &&
-                    contract.workerSignedAt != null) ...[
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                // 서명 진행 바 (완료 날짜 포함)
+                _SignProgressBar(contract: contract),
+
+                // 서명 필요 안내 (pendingWorker만 — 한 줄 텍스트)
+                if (needSign) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                   Row(
                     children: [
-                      Icon(Icons.check_circle_outline,
-                          size: ResponsiveHelper.iconSize(context, 13),
-                          color: AppColors.success),
-                      SizedBox(
-                          width: ResponsiveHelper.spacing(context, 4)),
+                      Icon(Icons.touch_app_outlined,
+                          size: ResponsiveHelper.iconSize(context, 12),
+                          color: AppColors.info),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                       Text(
-                        '${FormatHelper.formatDateDot(contract.workerSignedAt!)} 서명 완료',
+                        '탭하여 계약서를 확인하고 서명하세요',
                         style: ResponsiveHelper.tinyStyle(context,
-                            color: AppColors.success),
+                            color: AppColors.infoDark),
                       ),
                     ],
                   ),
@@ -388,7 +408,6 @@ class _UserContractCard extends StatelessWidget {
   String _dateLabel(EmploymentContractModel c) {
     if (c.isLongTerm) return FormatHelper.formatDateDot(c.createdAt);
     if (c.slots.isNotEmpty) {
-      // isNotEmpty 가드 내부 — .first/.last 안전
       final first = c.slots.first.workDate;
       final last  = c.slots.last.workDate;
       return first == last ? first : '$first ~ $last';
@@ -421,6 +440,76 @@ class _UserContractCard extends StatelessWidget {
       case ContractStatus.completed:       return AppColors.successBg;
       case ContractStatus.voided:          return AppColors.grey100;
     }
+  }
+}
+
+// ─── 서명 진행 바 ─────────────────────────────────────────────────
+
+class _SignProgressBar extends StatelessWidget {
+  final EmploymentContractModel contract;
+  const _SignProgressBar({required this.contract});
+
+  String _shortDate(DateTime d) =>
+      FormatHelper.formatDateDot(d).substring(5); // "MM.dd"
+
+  @override
+  Widget build(BuildContext context) {
+    final employerDone = contract.employerSignatureUrl != null;
+    final workerDone   = contract.workerSignatureUrl != null;
+    final employerColor = employerDone ? AppColors.success : AppColors.grey400;
+    // 내 서명 대기 상태면 파란색으로 강조
+    final workerColor = workerDone
+        ? AppColors.success
+        : (contract.status == ContractStatus.pendingWorker
+            ? AppColors.info
+            : AppColors.grey400);
+
+    return Row(
+      children: [
+        Icon(
+          employerDone ? Icons.check_circle : Icons.radio_button_unchecked,
+          color: employerColor,
+          size: ResponsiveHelper.iconSize(context, 14),
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+        Text(
+          '사업주 서명',
+          style: ResponsiveHelper.tinyStyle(context, color: employerColor),
+        ),
+        if (employerDone && contract.employerSignedAt != null) ...[
+          SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+          Text(
+            _shortDate(contract.employerSignedAt!),
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+          ),
+        ],
+        Expanded(
+          child: Container(
+            height: 2,
+            margin: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 8)),
+            color: employerDone ? AppColors.success : AppColors.grey200,
+          ),
+        ),
+        Icon(
+          workerDone ? Icons.check_circle : Icons.radio_button_unchecked,
+          color: workerColor,
+          size: ResponsiveHelper.iconSize(context, 14),
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+        Text(
+          '내 서명',
+          style: ResponsiveHelper.tinyStyle(context, color: workerColor),
+        ),
+        if (workerDone && contract.workerSignedAt != null) ...[
+          SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+          Text(
+            _shortDate(contract.workerSignedAt!),
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+          ),
+        ],
+      ],
+    );
   }
 }
 

@@ -108,25 +108,8 @@ class _InterimSettlementRequestScreenState
   List<AttendanceModel> get _selectedRecords =>
       _records.where((a) => _selectedIds.contains(a.id)).toList();
 
-  int get _requestedAmount =>
-      _selectedRecords.fold(0, (s, a) => s + (a.wageDetail?.totalAmount ?? 0));
-
   int get _netAmount =>
       _selectedRecords.fold(0, (s, a) => s + (a.wageDetail?.effectiveNetWage ?? 0));
-
-  DateTime? get _periodStart {
-    if (_selectedRecords.isEmpty) return null;
-    return _selectedRecords
-        .map((a) => a.workDate)
-        .reduce((a, b) => a.isBefore(b) ? a : b);
-  }
-
-  DateTime? get _periodEnd {
-    if (_selectedRecords.isEmpty) return null;
-    return _selectedRecords
-        .map((a) => a.workDate)
-        .reduce((a, b) => a.isAfter(b) ? a : b);
-  }
 
   void _toggleAll(bool select) {
     setState(() {
@@ -149,23 +132,32 @@ class _InterimSettlementRequestScreenState
 
     setState(() => _isSubmitting = true);
     try {
+      final records = _selectedRecords;
+      final requestedAmount = records.fold<int>(0, (s, a) => s + (a.wageDetail?.totalAmount ?? 0));
+      final netAmount = records.fold<int>(0, (s, a) => s + (a.wageDetail?.effectiveNetWage ?? 0));
+      final dates = records.map((a) => a.workDate);
+      final periodStart = dates.reduce((a, b) => a.isBefore(b) ? a : b);
+      final periodEnd = dates.reduce((a, b) => a.isAfter(b) ? a : b);
       await _payService.requestInterimSettlement(
         applicationId: widget.app.id,
         businessId: widget.app.businessId,
         attendanceIds: _selectedIds.toList(),
-        requestedAmount: _requestedAmount,
-        netAmount: _netAmount,
+        requestedAmount: requestedAmount,
+        netAmount: netAmount,
         requestReason: _reasonController.text.trim().isNotEmpty
             ? _reasonController.text.trim()
             : null,
-        periodStart: _periodStart!,
-        periodEnd: _periodEnd!,
+        periodStart: periodStart,
+        periodEnd: periodEnd,
       );
       if (!mounted) return;
       ToastHelper.showSuccess('중간정산 요청이 접수되었습니다.');
       Navigator.pop(context, true);
     } catch (e) {
-      if (mounted) ToastHelper.showError('요청 실패: $e');
+      if (mounted) {
+        final msg = e.toString().replaceFirst('Exception: ', '');
+        ToastHelper.showError(msg.isNotEmpty ? msg : '중간정산 요청에 실패했습니다');
+      }
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -175,6 +167,7 @@ class _InterimSettlementRequestScreenState
 
   @override
   Widget build(BuildContext context) {
+    final netAmount = _netAmount;
     return GradientScaffold(
       title: '중간정산 요청 · ${widget.app.businessName}',
       onRefresh: _loadConfirmedAttendances,
@@ -240,7 +233,7 @@ class _InterimSettlementRequestScreenState
                     // 일괄 선택 바
                     AppBatchActionBar(
                       selectedCount: _selectedIds.length,
-                      selectedAmount: _netAmount,
+                      selectedAmount: netAmount,
                       onSelectAll: () => _toggleAll(true),
                       onDeselectAll: () => _toggleAll(false),
                       onAction: _selectedIds.isEmpty || _isSubmitting ? null : _submit,

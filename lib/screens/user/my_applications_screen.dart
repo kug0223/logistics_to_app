@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/gestures.dart';
 import 'dart:async' show unawaited;
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -13,7 +12,6 @@ import '../../models/core/monthly_review_model.dart';
 import '../../models/core/review_request_model.dart';
 import '../../models/core/to_model.dart';
 import '../../screens/contract/contract_sign_screen.dart';
-import '../../screens/user/user_contracts_screen.dart';
 import '../../screens/user/interim_settlement_request_screen.dart';
 import '../../screens/common/job_posting_screen.dart';
 import '../../services/contract_service.dart';
@@ -22,6 +20,7 @@ import '../../services/monthly_review_service.dart';
 import '../../widgets/dialogs/business_review_dialog.dart';
 import '../../providers/user_provider.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../../widgets/common/skeleton_widget.dart';
 import '../../widgets/work_type_icon.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
@@ -30,7 +29,7 @@ import '../../utils/format_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/app_empty_state.dart';
-import '../../widgets/common/app_filter_chip.dart';
+import '../../widgets/common/app_tab_label.dart';
 
 /// 내 지원 내역 화면 (리팩토링 버전)
 class MyApplicationsScreen extends StatefulWidget {
@@ -40,14 +39,35 @@ class MyApplicationsScreen extends StatefulWidget {
   State<MyApplicationsScreen> createState() => _MyApplicationsScreenState();
 }
 
-class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
+class _MyApplicationsScreenState extends State<MyApplicationsScreen>
+    with TickerProviderStateMixin {
+  static const _tabLabels = ['전체', '대기중', '확정', '계약대기', '거절', '취소'];
+  static const _tabFilters = [
+    'ALL',
+    AppStatus.pending,
+    AppStatus.confirmed,
+    AppStatus.contractPending,
+    AppStatus.rejected,
+    AppStatus.canceled,
+  ];
   final FirestoreService _firestoreService = FirestoreService();
   final ContractService _contractService = ContractService();
+  final MonthlyReviewService _reviewService = MonthlyReviewService(); // M-4: 매번 new 대신 재사용
   final ScrollController _scrollController = ScrollController();
 
   List<_ApplicationWithTO> _applications = [];
   Map<String, EmploymentContractModel> _contractMap = {};
   Map<String, MonthlyReviewModel?> _reviewMap = {};
+
+  // M-3: TO 화면 수준 캐시 — _loadMore마다 동일 TO 반복 서버 읽기 방지
+  final Map<String, TOModel> _toCache = {};
+  // H-4: 리뷰 key 캐시 — 같은 biz+month 리뷰를 여러 지원서가 공유할 때 중복 Firestore 읽기 방지
+  final Map<String, MonthlyReviewModel?> _reviewKeyCache = {};
+  // H-2: getByWorker(200건) 중복 호출 방지 — 초기 로드 후 _loadMore에서 재호출 차단
+  bool _contractsLoaded = false;
+  // M-2: _filteredApplications 매 build마다 O(N) 재계산 방지
+  List<_ApplicationWithTO>? _cachedFiltered;
+  int _cachedFilterIdx = -1;
 
   bool _isLoading = true;
   bool _fetchInProgress = false;
@@ -55,24 +75,42 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   bool _hasMore = true;
   String? _lastDocId;
 
-  String _selectedFilter = 'ALL';
+  late final TabController _tabCtrl;
   int _autoLoadCount = 0;
   static const int _maxAutoLoad = 5;
 
   final Set<String> _cancellingIds = {};
   final Set<String> _reviewDialogOpenIds = {};
+  bool _isContractSignOpening = false;
 
   static const int _pageSize = 20;
 
   @override
   void initState() {
     super.initState();
-    _loadApplications();
+    _tabCtrl = TabController(length: _tabLabels.length, vsync: this);
+    _tabCtrl.addListener(() {
+      if (!_tabCtrl.indexIsChanging) {
+        // M-1: 탭 전환은 클라이언트 필터 변경 — _hasMore는 서버 페이지 상태라 건드리지 않음
+        // M-2: 탭 인덱스 변경 시 필터 캐시 무효화
+        setState(() { _autoLoadCount = 0; _cachedFiltered = null; });
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _filteredApplications.isEmpty && _hasMore && !_isLoadingMore) {
+            _loadMore();
+          }
+        });
+      }
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _loadApplications();
+    });
     _scrollController.addListener(_onScroll);
   }
 
   @override
   void dispose() {
+    _tabCtrl.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -102,6 +140,11 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       _applications = [];
       _lastDocId = null;
       _hasMore = true;
+      // H-2: 전체 재로드 시 계약서·TO·리뷰 캐시 초기화
+      _contractsLoaded = false;
+      _toCache.clear();
+      _reviewKeyCache.clear();
+      _cachedFiltered = null;
     });
 
     try {
@@ -126,7 +169,6 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       final reviewMap   = initResults[1] as Map<String, MonthlyReviewModel?>;
 
       if (mounted) {
-        _fetchInProgress = false;
         setState(() {
           _applications = appWithTOs;
           _contractMap = contractMap;
@@ -134,15 +176,17 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           _lastDocId = page['lastDocId'] as String?;
           _hasMore = page['hasMore'] as bool;
           _isLoading = false;
+          _cachedFiltered = null; // M-2: 새 데이터 반영
         });
       }
     } catch (e) {
       debugPrint('❌ 지원 내역 로드 실패: $e');
       if (mounted) {
         ToastHelper.showError(_firestoreErrMsg(e, '지원 내역을 불러오는데 실패했습니다.'));
-        _fetchInProgress = false;
         setState(() => _isLoading = false);
       }
+    } finally {
+      _fetchInProgress = false; // L-1: mounted 여부와 무관하게 반드시 해제
     }
   }
 
@@ -166,6 +210,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
   Future<void> _loadMore() async {
     if (_isLoadingMore || !_hasMore || _lastDocId == null) return;
+    if (_fetchInProgress) return; // H-1: _loadApplications와 동시 실행 방지
     if (!mounted) return;
     final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
     if (uid == null) return;
@@ -177,10 +222,11 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       );
       final items = page['items'] as List<ApplicationModel>;
       final appWithTOs = await _attachTOInfo(items);
-      // 신규 확정 지원서에 대한 계약서만 추가 로드
-      // Future.wait — 한 쪽 실패 시 다른 쪽 결과 유실; outer catch가 에러 처리하므로 허용
+      // H-2: _contractsLoaded=true이면 계약서 200건 재호출 건너뜀 (TO 캐시와 동일 원칙)
       final moreResults = await Future.wait([
-        _loadContracts(uid, appWithTOs),
+        _contractsLoaded
+            ? Future.value(<String, EmploymentContractModel>{})
+            : _loadContracts(uid, appWithTOs),
         _loadWrittenReviews(uid, appWithTOs),
       ]);
       final newContracts = moreResults[0] as Map<String, EmploymentContractModel>;
@@ -194,13 +240,15 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           _lastDocId = page['lastDocId'] as String?;
           _hasMore = page['hasMore'] as bool;
           _isLoadingMore = false;
+          _cachedFiltered = null; // M-2: 새 항목 추가 시 캐시 무효화
         });
         final filtered = _filteredApplications;
         if (filtered.isEmpty && _hasMore && !_isLoadingMore &&
             _autoLoadCount < _maxAutoLoad) {
-          _autoLoadCount++;
+          // M-5: 실제 _loadMore() 호출 직전에 카운트 — 호출 전 체크와 카운트 사이 경합 제거
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && _filteredApplications.isEmpty && _hasMore && !_isLoadingMore) {
+              _autoLoadCount++;
               _loadMore();
             }
           });
@@ -208,8 +256,6 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
             _autoLoadCount >= _maxAutoLoad) {
           // [W-01 fix] 자동로드 5회 소진 후에도 필터 통과 항목 없음.
           // _hasMore=true 유지 시 _onScroll이 계속 _loadMore()를 호출하는 무한루프 발생.
-          // hasMore를 닫아 추가 로드 차단 — 실제 데이터가 더 있더라도 클라이언트 필터가
-          // 100건(5×20)을 전부 탈락시킨 것이므로 UX상 종료가 적절.
           setState(() => _hasMore = false);
         }
       }
@@ -228,12 +274,18 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   Future<List<_ApplicationWithTO>> _attachTOInfo(List<ApplicationModel> apps) async {
     final toIds = apps.map((a) => a.toId).whereType<String>().toSet().toList();
     if (toIds.isEmpty) return apps.map((a) => _ApplicationWithTO(application: a, to: null)).toList();
-    final toList = await Future.wait(toIds.map((id) => _firestoreService.getTO(id)));
-    final toMap = {for (final to in toList.whereType<TOModel>()) to.id: to};
+    // M-3: 이미 로드한 TO는 캐시에서 반환 — _loadMore마다 동일 TO 반복 서버 읽기 방지
+    final uncachedIds = toIds.where((id) => !_toCache.containsKey(id)).toList();
+    if (uncachedIds.isNotEmpty) {
+      final fetched = await Future.wait(uncachedIds.map((id) => _firestoreService.getTO(id)));
+      for (final to in fetched.whereType<TOModel>()) {
+        _toCache[to.id] = to;
+      }
+    }
     return apps
         .map((a) => _ApplicationWithTO(
               application: a,
-              to: a.toId != null ? toMap[a.toId!] : null, // TO 삭제 시 null로 폴백
+              to: a.toId != null ? _toCache[a.toId!] : null,
             ))
         .toList();
   }
@@ -256,6 +308,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
         if (id.isNotEmpty) result[id] = c;
       }
     }
+    _contractsLoaded = true; // H-2: 이후 _loadMore에서 재호출 차단
     return result;
   }
 
@@ -273,21 +326,42 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
 
     if (relevant.isEmpty) return {};
 
-    final reviewSvc = MonthlyReviewService();
-    final entries = await Future.wait(relevant.map((item) async {
+    // H-4: 같은 biz+month 리뷰를 여러 지원서가 공유할 수 있음 → key 기준으로 dedup 후 캐시
+    // key = businessId + reviewerId + year + month (MonthlyReview 식별자)
+    final keyToAppIds = <String, List<String>>{};
+    for (final item in relevant) {
       final app = item.application;
-      final rd = _reviewDate(app)!; // relevant 필터에서 null 제외됨
+      final rd = _reviewDate(app)!;
       final key = MonthlyReviewModel.generateKeyForBusiness(
         businessId: app.businessId,
         reviewerId: uid,
         year: rd.year,
         month: rd.month,
       );
-      final review = await reviewSvc.getReviewById(key);
-      return MapEntry(app.id, review);
-    }));
+      keyToAppIds.putIfAbsent(key, () => []).add(app.id);
+    }
 
-    return Map.fromEntries(entries);
+    // 이미 캐시된 key는 Firestore 읽기 생략
+    final uncachedKeys = keyToAppIds.keys
+        .where((k) => !_reviewKeyCache.containsKey(k))
+        .toList();
+    if (uncachedKeys.isNotEmpty) {
+      final fetched = await Future.wait(
+        uncachedKeys.map((key) => _reviewService.getReviewById(key)), // M-4: 필드 재사용
+      );
+      for (var i = 0; i < uncachedKeys.length; i++) {
+        _reviewKeyCache[uncachedKeys[i]] = fetched[i];
+      }
+    }
+
+    // appId → 리뷰 매핑 (캐시 활용)
+    final result = <String, MonthlyReviewModel?>{};
+    for (final entry in keyToAppIds.entries) {
+      for (final appId in entry.value) {
+        result[appId] = _reviewKeyCache[entry.key];
+      }
+    }
+    return result;
   }
 
   /// 리뷰 기준일: 단기=근무일, 장기=종료일(null이면 아직 재직 중 → 리뷰 불가)
@@ -299,20 +373,31 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     return app.workDate;
   }
 
+  String get _currentFilter => _tabFilters[_tabCtrl.index];
+
+  // M-2: build 사이클마다 O(N) 재계산 방지 — 탭/데이터 변경 시에만 재계산
   List<_ApplicationWithTO> get _filteredApplications {
-    if (_selectedFilter == 'ALL') return _applications;
+    final idx = _tabCtrl.index;
+    if (_cachedFiltered != null && _cachedFilterIdx == idx) return _cachedFiltered!;
+    _cachedFilterIdx = idx;
+    _cachedFiltered = _computeFilteredApplications();
+    return _cachedFiltered!;
+  }
+
+  List<_ApplicationWithTO> _computeFilteredApplications() {
+    if (_currentFilter == 'ALL') return _applications;
     return _applications.where((item) {
       final status = item.application.status;
-      if (_selectedFilter == AppStatus.canceled) {
+      if (_currentFilter == AppStatus.canceled) {
         return AppStatus.inactiveStates.contains(status) && status != AppStatus.rejected;
       }
-      if (_selectedFilter == AppStatus.confirmed) {
+      if (_currentFilter == AppStatus.confirmed) {
         return status == AppStatus.confirmed;
       }
-      if (_selectedFilter == AppStatus.contractPending) {
+      if (_currentFilter == AppStatus.contractPending) {
         return status == AppStatus.contractPending;
       }
-      return status == _selectedFilter;
+      return status == _currentFilter;
     }).toList();
   }
 
@@ -342,7 +427,24 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       final success = await _firestoreService.cancelApplication(applicationId, uid);
       if (!mounted) return;
       if (success) {
-        _loadApplications();
+        // H-3: 단건 취소 → 전체 재로드 대신 로컬 상태만 업데이트
+        final idx = _applications.indexWhere((item) => item.application.id == applicationId);
+        if (idx >= 0) {
+          final old = _applications[idx];
+          setState(() {
+            _applications = List.from(_applications)
+              ..[idx] = _ApplicationWithTO(
+                application: old.application.copyWith(status: AppStatus.canceled),
+                to: old.to,
+              );
+            _contractMap.remove(applicationId);
+            _cachedFiltered = null; // 필터 캐시 무효화
+            _cancellingIds.remove(applicationId);
+          });
+        } else {
+          // 리스트에 없으면 fallback으로 전체 재로드
+          _loadApplications();
+        }
       } else {
         ToastHelper.showError('취소에 실패했습니다.');
       }
@@ -350,7 +452,9 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       debugPrint('❌ 지원 취소 오류: $e');
       if (mounted) ToastHelper.showError('취소 중 오류가 발생했습니다.');
     } finally {
-      if (mounted) setState(() => _cancellingIds.remove(applicationId));
+      if (mounted && _cancellingIds.contains(applicationId)) {
+        setState(() => _cancellingIds.remove(applicationId));
+      }
     }
   }
 
@@ -359,97 +463,37 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     return GradientScaffold(
       title: '내 지원 내역',
       onRefresh: _loadApplications,
-      body: Column(
-        children: [
-          _buildFilterSection(),
-          Expanded(
-            child: _isLoading
-                ? const LoadingWidget(message: '지원 내역을 불러오는 중...')
-                : _filteredApplications.isEmpty
-                    ? _buildEmptyState()
-                    : RefreshIndicator(
-                        onRefresh: _loadApplications,
-                        child: ListView.builder(
-                          controller: _scrollController,
-                          padding: ResponsiveHelper.listPadding(context),
-                          // +1 for bottom loading indicator
-                          itemCount: _filteredApplications.length + (_hasMore ? 1 : 0),
-                          itemBuilder: (context, index) {
-                            if (index == _filteredApplications.length) {
-                              return _isLoadingMore
-                                  ? const LoadingWidget()
-                                  : const SizedBox.shrink();
-                            }
-                            return _buildApplicationCard(_filteredApplications[index]);
-                          },
-                        ),
-                      ),
-          ),
-        ],
+      headerBottom: TabBar(
+        controller: _tabCtrl,
+        isScrollable: true,
+        tabAlignment: TabAlignment.start,
+        labelColor: Colors.white,
+        unselectedLabelColor: Colors.white.withValues(alpha: 0.6),
+        indicatorColor: Colors.white,
+        indicatorWeight: 2.5,
+        dividerColor: Colors.transparent,
+        tabs: _tabLabels.map((l) => Tab(child: AppTabLabel(label: l))).toList(),
       ),
-    );
-  }
-
-  // ═══════════════════════════════════════════════════════════
-  // 필터 섹션
-  // ═══════════════════════════════════════════════════════════
-
-  Widget _buildFilterSection() {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        vertical: ResponsiveHelper.spacing(context, 10),
-      ),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(
-          bottom: BorderSide(color: AppColors.grey200, width: 1),
-        ),
-      ),
-      child: ScrollConfiguration(
-        behavior: ScrollConfiguration.of(context).copyWith(
-          dragDevices: {PointerDeviceKind.touch, PointerDeviceKind.mouse},
-        ),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 16),
-          ),
-          child: Row(
-            children: [
-              _buildFilterChip('전체', 'ALL', Icons.list_alt, AppColors.info),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              _buildFilterChip('대기중', AppStatus.pending, Icons.schedule, AppColors.warning),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              _buildFilterChip('확정', AppStatus.confirmed, Icons.check_circle, AppColors.success),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              _buildFilterChip('계약대기', AppStatus.contractPending, Icons.edit_document, AppColors.info),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              _buildFilterChip('거절', AppStatus.rejected, Icons.cancel, AppColors.error),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              _buildFilterChip('취소', AppStatus.canceled, Icons.remove_circle_outline, AppColors.grey500),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFilterChip(String label, String value, IconData icon, Color color) {
-    return AppFilterChip(
-      label: label,
-      isSelected: _selectedFilter == value,
-      onTap: () {
-        setState(() { _selectedFilter = value; _autoLoadCount = 0; if (_lastDocId != null) _hasMore = true; });
-        // 탭 필터는 클라이언트 필터 — 탭 변경 시 서버 재조회 없이 로드된 데이터 내에서만 필터링
-        // _loadMore 내 _lastDoc 가드로 커서 소실 방지 처리됨
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && _filteredApplications.isEmpty && _hasMore && !_isLoadingMore) {
-            _loadMore();
-          }
-        });
-      },
-      color: color,
-      leadingIcon: icon,
+      body: _isLoading
+          ? const ApplicationListSkeleton()
+          : _filteredApplications.isEmpty
+              ? _buildEmptyState()
+              : RefreshIndicator(
+                  onRefresh: _loadApplications,
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    padding: ResponsiveHelper.listPadding(context),
+                    itemCount: _filteredApplications.length + (_hasMore ? 1 : 0),
+                    itemBuilder: (context, index) {
+                      if (index == _filteredApplications.length) {
+                        return _isLoadingMore
+                            ? const LoadingWidget()
+                            : const SizedBox.shrink();
+                      }
+                      return _buildApplicationCard(_filteredApplications[index]);
+                    },
+                  ),
+                ),
     );
   }
 
@@ -460,7 +504,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   Widget _buildEmptyState() {
     return AppEmptyState(
       icon: Icons.assignment_outlined,
-      title: _selectedFilter == 'ALL' ? '지원 내역이 없습니다' : '해당 상태의 지원이 없습니다',
+      title: _currentFilter == 'ALL' ? '지원 내역이 없습니다' : '해당 상태의 지원이 없습니다',
       subtitle: 'TO에 지원해보세요!',
     );
   }
@@ -473,6 +517,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     final app = item.application;
     final to = item.to;
     final statusInfo = _getStatusInfo(app.status);
+    final now = DateTime.now(); // 카드당 한 번 — _buildDdayBadge·_buildActionStrip 공유
 
     // TO가 삭제된 경우 간소화 카드 표시
     if (to == null) {
@@ -543,56 +588,23 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 1줄: 사업장명 + 지원일 + 상태 배지
                 _buildCardHeader(app, to, statusInfo),
-
-                // 계약서 서명 상태 배지 — 액션 필요 시만 표시
-                if (app.status == AppStatus.confirmed ||
-                    app.status == AppStatus.contractPending)
-                  _buildContractStatusBadge(app),
-
                 SizedBox(height: ResponsiveHelper.spacing(context, 3)),
-
-                // TO 제목
                 Text(
                   to.title,
-                  style: ResponsiveHelper.bodyStyle(context).copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w600),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-
                 SizedBox(height: ResponsiveHelper.spacing(context, 3)),
-
-                // 근무일 · 근무시간
-                _buildDateTimeRow(app, to),
-
+                _buildDateTimeRow(app, to, now: now),
                 SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-
-                // 업무유형 · 급여
                 _buildWorkWageRow(app),
-
-                if (app.status == AppStatus.autoCanceled)
-                  _buildAutoCanceledInfo(app),
-
-                if (app.status == AppStatus.pending)
-                  _buildCancelButton(app),
-
-                if (app.status == AppStatus.confirmed ||
-                    app.status == AppStatus.contractPending)
-                  _buildContractSection(app),
-
-                if (app.status == AppStatus.confirmed && !app.isLongTermApplication && !app.workDate.isBefore(DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day)))
-                  _buildConfirmedCancelHint(app),
-
                 if (app.isLongTermApplication && AppStatus.confirmedStatuses.contains(app.status))
                   _buildLongTermStatusSection(app),
-
                 if (app.isLongTermApplication && AppStatus.confirmedStatuses.contains(app.status))
                   _buildInterimSettlementButton(app),
-
-                _buildReviewSection(app),
+                _buildActionStrip(app, now: now),
               ],
             ),
           ),
@@ -624,57 +636,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     );
   }
 
-  // 계약서 서명 상태 배지 — pendingWorker(강조)·pendingEmployer(조용) 만 표시
-  Widget _buildContractStatusBadge(ApplicationModel app) {
-    final contract = _contractMap[app.id];
-    if (contract == null) return const SizedBox.shrink();
-
-    final IconData icon;
-    final String label;
-    final Color color;
-
-    switch (contract.status) {
-      case ContractStatus.pendingWorker:
-        icon = Icons.draw_outlined;
-        label = '서명 필요';
-        color = AppColors.warning;
-      case ContractStatus.pendingEmployer:
-        icon = Icons.hourglass_top_outlined;
-        label = '사업주 서명 대기';
-        color = AppColors.grey500;
-      default:
-        return const SizedBox.shrink();
-    }
-
-    return Padding(
-      padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 2)),
-      child: Container(
-        padding: EdgeInsets.symmetric(
-          horizontal: ResponsiveHelper.spacing(context, 5),
-          vertical: ResponsiveHelper.spacing(context, 1),
-        ),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: color.withValues(alpha: 0.45)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 10, color: color),
-            SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-            Text(
-              label,
-              style: ResponsiveHelper.tinyStyle(context, color: color)
-                  .copyWith(fontWeight: FontWeight.bold),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDateTimeRow(ApplicationModel app, TOModel to) {
+  Widget _buildDateTimeRow(ApplicationModel app, TOModel to, {required DateTime now}) {
     final timeDisplay = (app.startTime.isNotEmpty && app.endTime.isNotEmpty)
         ? '${app.startTime} ~ ${app.endTime}'
         : '--:-- ~ --:--';
@@ -716,7 +678,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
             (app.status == AppStatus.confirmed || app.status == AppStatus.contractPending) &&
             effectiveEndDate != null) ...[
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          _buildDdayBadge(context, effectiveEndDate),
+          _buildDdayBadge(context, effectiveEndDate, now: now),
         ],
         if (!app.isLongTermApplication) ...[
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -739,8 +701,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     );
   }
 
-  Widget _buildDdayBadge(BuildContext context, DateTime endDate) {
-    final today = DateTime.now();
+  Widget _buildDdayBadge(BuildContext context, DateTime endDate, {required DateTime now}) {
+    final today = now;
     final end = DateTime(endDate.year, endDate.month, endDate.day);
     final todayOnly = DateTime(today.year, today.month, today.day);
     final remaining = end.difference(todayOnly).inDays;
@@ -856,316 +818,181 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
     );
   }
 
-  /// 자동 취소 충돌 정보 (간소화)
-  Widget _buildAutoCanceledInfo(ApplicationModel app) {
-    // [H-001 수정] cancelReason 기반 안내 문구 분기
-    // conflictingBusiness가 없는 마감·슬롯 만료 케이스도 사유 전달
-    final String reasonText;
-    final bool hasConflict = app.conflictingBusiness != null;
-    switch (app.cancelReason) {
-      case 'SLOT_WORK_DETAIL_EXPIRED':
-        reasonText = '슬롯 업무 마감으로 자동 취소됨';
-      case 'WORK_DETAIL_EXPIRED':
-        reasonText = '업무 마감으로 자동 취소됨';
-      case 'TO_EXPIRED':
-        reasonText = '공고 마감으로 자동 취소됨';
-      default:
-        reasonText = hasConflict ? '시간 충돌로 자동 취소됨' : '자동으로 취소되었습니다';
+  /// 액션 스트립 — 계약서·취소·리뷰를 칩으로 한 줄 표시
+  Widget _buildActionStrip(ApplicationModel app, {required DateTime now}) {
+    final chips = <Widget>[];
+
+    // 자동취소 사유 칩
+    if (app.status == AppStatus.autoCanceled) {
+      final String reasonText;
+      switch (app.cancelReason) {
+        case 'SLOT_WORK_DETAIL_EXPIRED':
+          reasonText = '슬롯 업무 마감으로 자동 취소됨';
+        case 'WORK_DETAIL_EXPIRED':
+          reasonText = '업무 마감으로 자동 취소됨';
+        case 'TO_EXPIRED':
+          reasonText = '공고 마감으로 자동 취소됨';
+        default:
+          reasonText = app.conflictingBusiness != null ? '시간 충돌로 자동 취소됨' : '자동으로 취소됨';
+      }
+      chips.add(_buildChip(icon: Icons.info_outline, label: reasonText, color: AppColors.warning));
     }
 
-    return Container(
-      margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 6)),
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 12),
-        vertical: ResponsiveHelper.spacing(context, 10),
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.warningBg,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.warningLight),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                Icons.info_outline,
-                size: ResponsiveHelper.iconSize(context, 16),
-                color: AppColors.warningDark,
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Flexible(
-                child: Text(
-                  reasonText,
-                  style: ResponsiveHelper.smallStyle(
-                    context,
-                    color: AppColors.warningDark,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                ),
-              ),
-            ],
-          ),
-          // 시간 충돌인 경우에만 충돌 공고 정보 표시
-          if (hasConflict) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-            Row(
-              children: [
-                Icon(
-                  Icons.business,
-                  size: ResponsiveHelper.iconSize(context, 12),
-                  color: AppColors.grey600,
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                Expanded(
-                  child: Text(
-                    [app.conflictingBusiness, app.conflictingTime]
-                        .where((s) => s != null && s.isNotEmpty)
-                        .join(' · '),
-                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey700),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 6),
-                    vertical: ResponsiveHelper.spacing(context, 2),
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.successBg,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    '확정됨',
-                    style: ResponsiveHelper.tinyStyle(
-                      context,
-                      color: AppColors.successDark,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ],
+    // 취소 칩 (대기중)
+    if (app.status == AppStatus.pending) {
+      chips.add(_buildChip(
+        icon: Icons.close,
+        label: '취소',
+        color: AppColors.error,
+        onTap: _cancellingIds.contains(app.id) ? null : () => _cancelApplication(app.id),
+      ));
+    }
+
+    // 계약서 칩 (확정 / 계약 대기)
+    if (app.status == AppStatus.confirmed || app.status == AppStatus.contractPending) {
+      final contract = _contractMap[app.id];
+      if (contract != null) {
+        switch (contract.status) {
+          case ContractStatus.pendingWorker:
+            chips.add(_buildChip(
+              icon: Icons.draw_outlined,
+              label: '서명 필요',
+              color: AppColors.warning,
+              onTap: () => _openContractSign(contract),
+              showArrow: true,
+            ));
+          case ContractStatus.pendingEmployer:
+            chips.add(_buildChip(
+              icon: Icons.hourglass_top_outlined,
+              label: '사업주 서명 대기',
+              color: AppColors.grey500,
+            ));
+          case ContractStatus.completed:
+            chips.add(_buildChip(
+              icon: Icons.verified_outlined,
+              label: '계약서 완료',
+              color: AppColors.success,
+            ));
+          case ContractStatus.voided:
+            chips.add(_buildChip(
+              icon: Icons.block_outlined,
+              label: '계약서 무효',
+              color: AppColors.grey500,
+            ));
+        }
+      }
+    }
+
+    // 리뷰 칩 (확정 + 근무 완료)
+    if (app.status == AppStatus.confirmed) {
+      final rd = _reviewDate(app);
+      if (rd != null) {
+        if (!rd.isAfter(now)) {
+          final review = _reviewMap[app.id];
+          if (review != null) {
+            chips.add(_buildReviewDoneChip(review));
+          } else {
+            final monthEnd = DateTime(rd.year, rd.month + 1, 0);
+            final withinWindow =
+                now.isBefore(monthEnd.add(const Duration(days: 15)));
+            if (withinWindow) {
+              chips.add(_buildChip(
+                icon: Icons.rate_review_outlined,
+                label: '리뷰 작성',
+                color: Theme.of(context).primaryColor,
+                onTap: () => _openReviewDialog(app, rd),
+                showArrow: true,
+              ));
+            }
+          }
+        }
+      }
+    }
+
+    if (chips.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 8)),
+      child: Wrap(
+        spacing: ResponsiveHelper.spacing(context, 6),
+        runSpacing: ResponsiveHelper.spacing(context, 4),
+        children: chips,
       ),
     );
   }
 
-  /// 취소 버튼
-  /// CONFIRMED 상태에서 취소 경로 안내 힌트
-  Widget _buildConfirmedCancelHint(ApplicationModel app) {
-    final workDate = app.workDate;
-    final isToday = workDate.year == DateTime.now().year &&
-        workDate.month == DateTime.now().month &&
-        workDate.day == DateTime.now().day;
-
-    return Container(
-      margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 8)),
+  Widget _buildChip({
+    required IconData icon,
+    required String label,
+    required Color color,
+    VoidCallback? onTap,
+    bool showArrow = false,
+  }) {
+    final inner = Container(
       padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 12),
-        vertical: ResponsiveHelper.spacing(context, 8),
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 4),
       ),
       decoration: BoxDecoration(
-        color: AppColors.grey50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.border),
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.info_outline,
-              size: ResponsiveHelper.iconSize(context, 14),
-              color: isToday ? AppColors.error : AppColors.grey500),
-          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          Expanded(
-            child: Text(
-              isToday
-                  ? '오늘 근무 취소는 노쇼 1회 패널티가 부과됩니다. 취소가 필요하다면 공고 상세를 탭해주세요.'
-                  : '취소가 필요하다면 이 카드를 탭해 공고 상세에서 확정 취소를 선택하세요.',
-              style: ResponsiveHelper.smallStyle(context).copyWith(
-                color: isToday ? AppColors.error : AppColors.grey500,
-              ),
-            ),
+          Icon(icon, size: ResponsiveHelper.iconSize(context, 12), color: color),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            label,
+            style: ResponsiveHelper.tinyStyle(context, color: color)
+                .copyWith(fontWeight: FontWeight.w600),
           ),
+          if (showArrow) ...[
+            SizedBox(width: ResponsiveHelper.spacing(context, 2)),
+            Icon(Icons.chevron_right,
+                size: ResponsiveHelper.iconSize(context, 12), color: color),
+          ],
         ],
       ),
     );
+    if (onTap == null) return inner;
+    return GestureDetector(onTap: onTap, child: inner);
   }
 
-  Widget _buildCancelButton(ApplicationModel app) {
+  Widget _buildReviewDoneChip(MonthlyReviewModel review) {
     return Container(
-      margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 10)),
-      width: double.infinity,
-      child: OutlinedButton.icon(
-        // [M-04-FIX] 취소 진행 중 버튼 비활성화 — 중복 탭으로 확인 다이얼로그 이중 열림 방지
-        onPressed: _cancellingIds.contains(app.id) ? null : () => _cancelApplication(app.id),
-        icon: Icon(
-          Icons.close,
-          size: ResponsiveHelper.iconSize(context, 16),
-        ),
-        label: Text(
-          '지원 취소',
-          style: ResponsiveHelper.smallStyle(context),
-        ),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: AppColors.error,
-          side: const BorderSide(color: AppColors.error),
-          padding: EdgeInsets.symmetric(
-            vertical: ResponsiveHelper.spacing(context, 8),
-          ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
-        ),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 8),
+        vertical: ResponsiveHelper.spacing(context, 4),
       ),
-    );
-  }
-
-  /// 계약서 섹션 (확정된 지원서용)
-  Widget _buildContractSection(ApplicationModel app) {
-    final contract = _contractMap[app.id];
-
-    if (contract == null) return const SizedBox.shrink();
-
-    if (contract.status == ContractStatus.pendingWorker) {
-      return Container(
-        margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 10)),
-        width: double.infinity,
-        child: ElevatedButton.icon(
-          onPressed: () => _openContractSign(contract),
-          icon: Icon(Icons.draw, size: ResponsiveHelper.iconSize(context, 16)),
-          label: Text(
-            '근로계약서 서명하기',
-            style: ResponsiveHelper.smallStyle(context).copyWith(
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Theme.of(context).primaryColor,
-            foregroundColor: Colors.white,
-            padding: EdgeInsets.symmetric(
-              vertical: ResponsiveHelper.spacing(context, 10),
-            ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-            elevation: 0,
-          ),
-        ),
-      );
-    }
-
-    if (contract.status == ContractStatus.completed) {
-      return Column(
+      decoration: BoxDecoration(
+        color: AppColors.grey100,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: AppColors.grey300),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-          Container(
-            width: double.infinity,
-            padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 12),
-              vertical: ResponsiveHelper.spacing(context, 10),
+          ...List.generate(
+            5,
+            (i) => Icon(
+              i < review.rating ? Icons.star_rounded : Icons.star_border_rounded,
+              size: ResponsiveHelper.iconSize(context, 11),
+              color: AppColors.amber,
             ),
-            decoration: BoxDecoration(
-              color: AppColors.successBg,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppColors.success.withValues(alpha: 0.3)),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.verified,
-                    size: ResponsiveHelper.iconSize(context, 14),
-                    color: AppColors.successDark),
-                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                Expanded(
-                  child: Text(
-                    '근로계약서 서명 완료',
-                    style: ResponsiveHelper.smallStyle(context,
-                            color: AppColors.successDark)
-                        .copyWith(fontWeight: FontWeight.w600),
-                  ),
-                ),
-                GestureDetector(
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => const UserContractsScreen()),
-                  ),
-                  child: Text(
-                    '전체 보기',
-                    style: ResponsiveHelper.tinyStyle(context,
-                        color: AppColors.infoDark),
-                  ),
-                ),
-              ],
-            ),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            review.isPublished ? '공개됨' : '검토 중',
+            style: ResponsiveHelper.tinyStyle(
+              context,
+              color: review.isPublished ? AppColors.successDark : AppColors.grey500,
+            ).copyWith(fontWeight: FontWeight.w500),
           ),
         ],
-      );
-    }
-
-    if (contract.status == ContractStatus.pendingEmployer) {
-      return Container(
-        margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 10)),
-        width: double.infinity,
-        padding: EdgeInsets.symmetric(
-          horizontal: ResponsiveHelper.spacing(context, 12),
-          vertical: ResponsiveHelper.spacing(context, 10),
-        ),
-        decoration: BoxDecoration(
-          color: AppColors.warningBg,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.warning.withValues(alpha: 0.3)),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.hourglass_top, size: ResponsiveHelper.iconSize(context, 14), color: AppColors.warningDark),
-            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-            Text(
-              '사업주 서명 대기 중',
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark),
-            ),
-          ],
-        ),
-      );
-    }
-
-    if (contract.status == ContractStatus.voided) {
-      return Container(
-        margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 10)),
-        width: double.infinity,
-        padding: EdgeInsets.symmetric(
-          horizontal: ResponsiveHelper.spacing(context, 12),
-          vertical: ResponsiveHelper.spacing(context, 10),
-        ),
-        decoration: BoxDecoration(
-          color: AppColors.grey100,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.grey300),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.block_outlined,
-                size: ResponsiveHelper.iconSize(context, 14),
-                color: AppColors.grey500),
-            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-            Expanded(
-              child: Text(
-                '계약서가 무효 처리되었습니다. 사업주에게 문의하세요.',
-                style: ResponsiveHelper.smallStyle(context,
-                    color: AppColors.grey500),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return const SizedBox.shrink();
+      ),
+    );
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -1348,117 +1175,26 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
   }
 
   Future<void> _openContractSign(EmploymentContractModel contract) async {
-    if (!mounted) return;
+    if (_isContractSignOpening || !mounted) return;
+    setState(() => _isContractSignOpening = true);
+    try {
     await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => ContractSignScreen(contract: contract, role: 'worker'),
       ),
     );
-    // 서명 완료 후 화면 갱신
-    if (mounted) _loadApplications();
-  }
-
-  // ═══════════════════════════════════════════════════════════
-  // 리뷰 섹션
-  // ═══════════════════════════════════════════════════════════
-
-  Widget _buildReviewSection(ApplicationModel app) {
-    if (app.status != AppStatus.confirmed) return const SizedBox.shrink();
-    final rd = _reviewDate(app);
-    // null = 아직 재직 중(장기 계약, 종료일 없음) — 리뷰 불가
-    if (rd == null || rd.isAfter(DateTime.now())) return const SizedBox.shrink();
-
-    final review = _reviewMap[app.id];
-    if (review != null) return _buildWrittenReviewBadge(review);
-
-    // 서버 _isWithinReviewWindow 기준: 근무월 말일 + 15일 (UI와 동일하게 맞춤)
-    final monthEnd = DateTime(rd.year, rd.month + 1, 0);
-    final withinWindow = DateTime.now().isBefore(monthEnd.add(const Duration(days: 15)));
-    if (withinWindow) return _buildWriteReviewButton(app, rd);
-
-    return const SizedBox.shrink();
-  }
-
-  Widget _buildWrittenReviewBadge(MonthlyReviewModel review) {
-    return Container(
-      margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 10)),
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 12),
-        vertical: ResponsiveHelper.spacing(context, 8),
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.grey50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.grey200),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.rate_review,
-              size: ResponsiveHelper.iconSize(context, 14),
-              color: AppColors.grey500),
-          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          Text(
-            '내 리뷰 작성 완료',
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600)
-                .copyWith(fontWeight: FontWeight.w600),
-          ),
-          const Spacer(),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: List.generate(
-              5,
-              (i) => Icon(
-                i < review.rating ? Icons.star_rounded : Icons.star_border_rounded,
-                size: ResponsiveHelper.iconSize(context, 12),
-                color: AppColors.amber,
-              ),
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          Container(
-            padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 6),
-              vertical: ResponsiveHelper.spacing(context, 2),
-            ),
-            decoration: BoxDecoration(
-              color: review.isPublished ? AppColors.successBg : AppColors.grey100,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              review.isPublished ? '공개됨' : '검토 중',
-              style: ResponsiveHelper.tinyStyle(
-                context,
-                color: review.isPublished ? AppColors.successDark : AppColors.grey500,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildWriteReviewButton(ApplicationModel app, DateTime reviewDate) {
-    return Container(
-      margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 10)),
-      width: double.infinity,
-      child: OutlinedButton.icon(
-        onPressed: () => _openReviewDialog(app, reviewDate),
-        icon: Icon(Icons.rate_review_outlined,
-            size: ResponsiveHelper.iconSize(context, 16)),
-        label: Text('사업장 리뷰 작성',
-            style: ResponsiveHelper.smallStyle(context)),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: Theme.of(context).primaryColor,
-          side: BorderSide(
-              color: Theme.of(context).primaryColor.withValues(alpha: 0.5)),
-          padding:
-              EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 8)),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
-      ),
-    );
+    } finally {
+      if (mounted) setState(() => _isContractSignOpening = false);
+    }
+    if (!mounted) return;
+    // H-3: 서명 후 계약서만 갱신 — 지원서·TO·리뷰 전체 재로드 불필요
+    final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
+    if (uid == null) return;
+    _contractsLoaded = false; // 재로드 허용
+    final updated = await _loadContracts(uid, _applications);
+    if (!mounted) return;
+    setState(() => _contractMap = {..._contractMap, ...updated});
   }
 
   Future<void> _openReviewDialog(ApplicationModel app, DateTime reviewDate) async {
@@ -1478,8 +1214,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
       ReviewRequestModel? reviewRequest;
       List<AttendanceModel> attendances = [];
       await Future.wait([
-        MonthlyReviewService().getReviewRequest(requestKey).then((r) => reviewRequest = r),
-        FirestoreService().getMyMonthlyAttendances(
+        _reviewService.getReviewRequest(requestKey).then((r) => reviewRequest = r),
+        _firestoreService.getMyMonthlyAttendances(
           userId: uid,
           year: reviewDate.year,
           month: reviewDate.month,
@@ -1510,7 +1246,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
           year: reviewDate.year,
           month: reviewDate.month,
         );
-        final review = await MonthlyReviewService().getReviewById(key);
+        final review = await _reviewService.getReviewById(key);
         if (!mounted) return;
         setState(() => _reviewMap[app.id] = review);
       }
