@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -16,7 +18,7 @@ import 'payroll_worker_detail_screen.dart';
 import 'payroll_payment_dashboard_screen.dart';
 import '../../../services/payroll_payment_service.dart';
 import '../../../widgets/common/gradient_scaffold.dart';
-import '../../../widgets/common/loading_widget.dart';
+import '../../../widgets/common/skeleton_widget.dart';
 import '../../../widgets/common/app_search_bar.dart';
 import '../../../widgets/common/app_empty_state.dart';
 import '../../../utils/business_picker_helper.dart';
@@ -224,11 +226,9 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
         );
       });
 
-      if (mounted) setState(() => _summaries = summaries);
+      if (mounted) setState(() { _summaries = summaries; _isLoading = false; });
     } catch (e) {
-      if (mounted) setState(() => _loadError = e.toString());
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() { _loadError = e.toString(); _isLoading = false; });
     }
   }
 
@@ -264,7 +264,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
       body: Column(
         children: [
           if (_isLoading)
-            const Expanded(child: LoadingWidget())
+            const Expanded(child: PayrollGridSkeleton())
           else if (_loadError != null || _summaries.length != 12)
             Expanded(
               child: AppEmptyState(
@@ -340,20 +340,30 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
 
   Widget _buildMonthGrid(ThemeData theme) {
     final now = DateTime.now();
-    return GridView.builder(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: ResponsiveHelper.spacing(context, 12),
-        mainAxisSpacing: ResponsiveHelper.spacing(context, 12),
-        childAspectRatio: 1.8,
-      ),
-      itemCount: 12,
-      itemBuilder: (context, i) {
-        final summary = _summaries[i];
-        final isFuture = _selectedYear > now.year ||
-            (_selectedYear == now.year && (i + 1) > now.month);
-        return _buildMonthCard(theme, summary, isFuture);
+    final gridPadding = ResponsiveHelper.spacing(context, 16);
+    final columnSpacing = ResponsiveHelper.spacing(context, 12);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final itemWidth = (constraints.maxWidth - gridPadding * 2 - columnSpacing) / 2;
+        // 미이체 행까지 포함한 최대 콘텐츠 높이를 dp로 고정 (기기 폭과 무관하게 일정)
+        const itemHeight = 100.0;
+        final ratio = itemWidth / itemHeight;
+        return GridView.builder(
+          padding: EdgeInsets.all(gridPadding),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            crossAxisSpacing: columnSpacing,
+            mainAxisSpacing: ResponsiveHelper.spacing(context, 12),
+            childAspectRatio: ratio,
+          ),
+          itemCount: 12,
+          itemBuilder: (context, i) {
+            final summary = _summaries[i];
+            final isFuture = _selectedYear > now.year ||
+                (_selectedYear == now.year && (i + 1) > now.month);
+            return _buildMonthCard(theme, summary, isFuture);
+          },
+        );
       },
     );
   }
@@ -480,6 +490,7 @@ class PayrollMonthScreen extends StatefulWidget {
 
 class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
   final _searchCtrl = TextEditingController();
+  Timer? _searchDebounce;
   String _searchQuery = '';
   _SortOrder _sortOrder = _SortOrder.amountDesc;
   List<PayrollWorkerSummary> _workers = [];
@@ -489,9 +500,12 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
   // 이체 취소 후 notTransferredCount가 변경될 수 있으므로 mutable로 유지
   late PayrollSummaryModel _liveSummary;
 
-  List<PayrollWorkerSummary> get _filteredWorkers {
-    final workers = List<PayrollWorkerSummary>.of(_workers);
+  // 필터·정렬 결과 캐시 — _workers/sort/search 변경 시 null로 무효화
+  List<PayrollWorkerSummary>? _cachedFiltered;
 
+  List<PayrollWorkerSummary> get _filteredWorkers {
+    if (_cachedFiltered != null) return _cachedFiltered!;
+    final workers = List<PayrollWorkerSummary>.of(_workers);
     switch (_sortOrder) {
       case _SortOrder.amountDesc:
         workers.sort((a, b) => b.totalPayout.compareTo(a.totalPayout));
@@ -502,10 +516,13 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
       case _SortOrder.workDaysDesc:
         workers.sort((a, b) => b.workDays.compareTo(a.workDays));
     }
-
-    if (_searchQuery.isEmpty) return workers;
+    if (_searchQuery.isEmpty) {
+      return _cachedFiltered = workers;
+    }
     final q = _searchQuery.toLowerCase();
-    return workers.where((w) => w.name.toLowerCase().contains(q)).toList();
+    return _cachedFiltered = workers
+        .where((w) => w.name.toLowerCase().contains(q))
+        .toList();
   }
 
   @override
@@ -513,7 +530,13 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
     super.initState();
     _liveSummary = widget.summary;
     _searchCtrl.addListener(() {
-      setState(() => _searchQuery = _searchCtrl.text.trim());
+      _searchDebounce?.cancel();
+      _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+        if (!mounted) return;
+        final q = _searchCtrl.text.trim();
+        if (q == _searchQuery) return;
+        setState(() { _searchQuery = q; _cachedFiltered = null; });
+      });
     });
     _loadWorkers();
   }
@@ -543,7 +566,7 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
         return PayrollWorkerSummary.tryFromMap(doc.id, doc.data());
       }).whereType<PayrollWorkerSummary>().toList();
       if (!mounted) return;
-      setState(() { _workers = loaded; _workersLoading = false; });
+      setState(() { _workers = loaded; _workersLoading = false; _cachedFiltered = null; });
     } catch (e) {
       // payroll_summaries 문서 미존재 시 workers 서브컬렉션 접근이 PERMISSION_DENIED 됨
       // → 에러 토스트 대신 조용히 실패 후 UI에서 "집계 데이터 복원" 버튼으로 처리
@@ -577,6 +600,7 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -619,7 +643,7 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
           ),
           Expanded(
             child: _workersLoading
-                ? const LoadingWidget()
+                ? const ApplicationListSkeleton(itemCount: 4)
                 : filtered.isEmpty
                     ? (_searchQuery.isEmpty && widget.summary.confirmedCount > 0
                         // payroll_summaries 문서 누락 — 집계 복원 버튼 노출
@@ -738,7 +762,7 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
                       color: Colors.transparent,
                       child: InkWell(
                         onTap: () {
-                          setState(() => _sortOrder = order);
+                          setState(() { _sortOrder = order; _cachedFiltered = null; });
                           Navigator.pop(ctx);
                         },
                         child: Padding(
@@ -806,7 +830,7 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
                     size: 16, color: AppColors.successDark),
                 SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                 Text(
-                  widget.summary.formattedTotalPayout,
+                  _liveSummary.formattedTotalPayout,
                   style: ResponsiveHelper.titleStyle(context,
                       color: AppColors.successDark),
                 ),
@@ -947,24 +971,17 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
             ),
           ],
         ),
-        clipBehavior: Clip.antiAlias,
-        child: IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // 좌측 상태 바
-              Container(
-                width: 4,
-                color: theme.primaryColor.withValues(alpha: 0.6),
+        clipBehavior: Clip.hardEdge,
+        child: Stack(
+          children: [
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                4 + ResponsiveHelper.spacing(context, 14),
+                ResponsiveHelper.spacing(context, 13),
+                ResponsiveHelper.spacing(context, 14),
+                ResponsiveHelper.spacing(context, 13),
               ),
-              // 본문
-              Expanded(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 14),
-                    vertical: ResponsiveHelper.spacing(context, 13),
-                  ),
-                  child: Row(
+              child: Row(
                     children: [
                       Expanded(
                         child: Column(
@@ -1005,10 +1022,15 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
                       ),
                     ],
                   ),
-                ),
+            ),
+            Positioned(
+              top: 0, left: 0, bottom: 0,
+              child: Container(
+                width: 4,
+                color: theme.primaryColor.withValues(alpha: 0.6),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

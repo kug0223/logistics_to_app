@@ -141,7 +141,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           _selectedBusinessId = saved;
         }
       }
-      _showBusinessSelector = true;
+      // 사업장 2개 이상일 때만 드롭다운 표시 (지원명단·당일명단과 동일 기준)
+      _showBusinessSelector = _businessIds.length > 1;
       if (widget.businesses != null) {
         _businessNameMap = {for (final b in widget.businesses!) b.id: b.name};
       } else {
@@ -318,8 +319,13 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
             _buildStatsBar(context),
 
             // 계약 만료 임박 경고 배너
-            if (!_isDateMode && !isLoading && _expiringWorkers.isNotEmpty)
-              _buildExpiringWarningBanner(context),
+            if (!_isDateMode && !isLoading)
+              Builder(builder: (context) {
+                final expiring = _expiringWorkers;
+                return expiring.isNotEmpty
+                    ? _buildExpiringWarningBanner(context, expiring.length)
+                    : const SizedBox.shrink();
+              }),
 
             // 검색바
             Padding(
@@ -737,6 +743,11 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// 대기 요청 승인 처리
   Future<void> _approvePendingRequest(
       ScheduleChangeRequestModel request) async {
+    // TO-06: 스케줄 변경 요청 승인 권한 확인
+    if (!context.read<UserProvider>().can((p) => p.canManageWorkers)) {
+      ToastHelper.showWarning('인력 관리 권한이 없습니다.');
+      return;
+    }
     if (_isProcessing) return;
     setState(() => _isProcessing = true);
     try {
@@ -761,6 +772,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// 대기 요청 거절 처리
   Future<void> _rejectPendingRequest(
       ScheduleChangeRequestModel request) async {
+    // BUG-004: _approvePendingRequest와 대칭 — 거절도 canManageWorkers 필요
+    final up = context.read<UserProvider>();
+    if (!up.can((p) => p.canManageWorkers)) {
+      ToastHelper.showWarning('인력 관리 권한이 없습니다.');
+      return;
+    }
     if (_isProcessing) return;
     setState(() => _isProcessing = true);
     try {
@@ -1137,18 +1154,24 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       textColor = AppColors.errorDark;
       icon = Icons.cancel_outlined;
       final requestedAt = app.terminationRequestedAt;
-      final daysLeft = requestedAt != null
-          ? 3 - DateTime.now().difference(requestedAt).inDays
-          : 0;
+      final daysLeft = () {
+        if (requestedAt == null) return 0;
+        final today = DateTime.now(); final t = DateTime(today.year, today.month, today.day);
+        final r = DateTime(requestedAt.year, requestedAt.month, requestedAt.day);
+        return (3 - t.difference(r).inDays).clamp(0, 3);
+      }();
       statusText = '계약해지 요청중 (${daysLeft > 0 ? '$daysLeft일 후 자동 해지' : '오늘 자동 해지'})';
     } else {
       bgColor = AppColors.warningBg;
       textColor = AppColors.warningDark;
       icon = Icons.exit_to_app;
       final requestedAt = app.resignRequestedAt;
-      final daysLeft = requestedAt != null
-          ? 3 - DateTime.now().difference(requestedAt).inDays
-          : 0;
+      final daysLeft = () {
+        if (requestedAt == null) return 0;
+        final today = DateTime.now(); final t = DateTime(today.year, today.month, today.day);
+        final r = DateTime(requestedAt.year, requestedAt.month, requestedAt.day);
+        return (3 - t.difference(r).inDays).clamp(0, 3);
+      }();
       statusText = '퇴사 요청중 (${daysLeft > 0 ? '$daysLeft일 후 자동 승인' : '오늘 자동 승인'})';
     }
 
@@ -1180,8 +1203,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   }
 
   /// 계약 만료 임박 경고 배너
-  Widget _buildExpiringWarningBanner(BuildContext context) {
-    final count = _expiringWorkers.length;
+  Widget _buildExpiringWarningBanner(BuildContext context, int count) {
     return Container(
       margin: EdgeInsets.fromLTRB(
         ResponsiveHelper.spacing(context, 16),
@@ -1273,6 +1295,11 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 만료 임박자 일괄 연장
   Future<void> _batchExtendExpiringWorkers() async {
+    // TO-06: 계약 일괄 연장 권한 확인
+    if (!context.read<UserProvider>().can((p) => p.canManageWorkers)) {
+      ToastHelper.showWarning('인력 관리 권한이 없습니다.');
+      return;
+    }
     final expiring = _expiringWorkers;
     if (expiring.isEmpty) return;
 
@@ -1698,7 +1725,13 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   Future<void> _processTermination(ApplicationModel app, UserModel? user) async {
     if (!mounted || isLoading) return;
     // async gap 이전에 미리 추출 — BuildContext across async gaps 오류 방지
-    final adminUID = context.read<UserProvider>().currentUser?.uid;
+    final up = context.read<UserProvider>();
+    // TO-06: 계약 해지 권한 확인
+    if (!up.can((p) => p.canManageWorkers)) {
+      ToastHelper.showWarning('인력 관리 권한이 없습니다.');
+      return;
+    }
+    final adminUID = up.currentUser?.uid;
     setLoading(true);
     try {
       // 1. renewalDecision = 'TERMINATE'

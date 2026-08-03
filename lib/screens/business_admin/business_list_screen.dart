@@ -131,6 +131,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       final urlsToDelete = <String>[
         if (business.mainImageUrl != null) business.mainImageUrl!,
         ...?business.imageUrls,
+        ...?business.transportImageUrls,
         for (final doc in workTypesSnapshot.docs) ...[
           if (doc.data()['thumbnailUrl'] != null) doc.data()['thumbnailUrl'] as String,
           ...List<String>.from(doc.data()['images'] ?? []),

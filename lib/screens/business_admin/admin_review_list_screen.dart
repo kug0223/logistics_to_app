@@ -1,5 +1,7 @@
 // lib/screens/business_admin/admin_review_list_screen.dart
 
+import 'dart:async';
+
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -32,6 +34,8 @@ import '../../widgets/common/app_tab_label.dart';
 import '../../widgets/common/app_filter_chip.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../utils/business_picker_helper.dart';
+
+enum _DividerMarker { expired }
 
 /// 관리자용 리뷰 목록 화면
 class AdminReviewListScreen extends StatefulWidget {
@@ -76,55 +80,78 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
   int _selectedYear = DateTime.now().year;
   int _selectedMonth = 0; // 0 = 전체
 
-  // 데이터 있는 연도 목록 (자동 추출)
-  List<int> get _availableYears {
+  // 파생 상태 (캐시) — _recomputeDerived()로 일괄 갱신
+  List<int> _availableYears = [];
+  Map<int, int> _availableMonths = {};
+  List<MonthlyReviewModel> _writtenReviews = [];
+  List<MonthlyReviewModel> _receivedReviews = [];
+  List<ReviewRequestModel> _pendingRequests = [];
+  bool _pendingIsUrgent = false;
+  // 검색+기한 파생값 — _recomputePendingFiltered()로 갱신
+  List<ReviewRequestModel> _filteredActivePending = [];
+  List<ReviewRequestModel> _filteredExpiredPending = [];
+  DateTime _pendingNow = DateTime.now();
+
+  /// raw 데이터 또는 필터(_selectedYear/_selectedMonth)가 바뀔 때마다 호출.
+  /// setState 밖에서 필드를 갱신하고, 호출부가 setState로 rebuild를 트리거한다.
+  void _recomputeDerived() {
+    final now = DateTime.now();
+
     final years = <int>{};
     for (final r in _rawWritten)  { years.add(r.reviewYear); }
     for (final r in _rawReceived) { years.add(r.reviewYear); }
     for (final r in _rawPending)  { years.add(r.reviewYear); }
-    if (years.isEmpty) years.add(DateTime.now().year);
-    return (years.toList()..sort()).reversed.toList();
-  }
+    if (years.isEmpty) years.add(now.year);
+    _availableYears = (years.toList()..sort()).reversed.toList();
 
-  // 선택된 연도에서 데이터 있는 월 목록 (건수 포함)
-  Map<int, int> get _availableMonths {
-    final map = <int, int>{};
+    final monthMap = <int, int>{};
     for (final r in _rawWritten) {
-      if (r.reviewYear == _selectedYear) {
-        map[r.reviewMonth] = (map[r.reviewMonth] ?? 0) + 1;
-      }
+      if (r.reviewYear == _selectedYear) monthMap[r.reviewMonth] = (monthMap[r.reviewMonth] ?? 0) + 1;
     }
     for (final r in _rawReceived) {
-      if (r.reviewYear == _selectedYear) {
-        map[r.reviewMonth] = (map[r.reviewMonth] ?? 0) + 1;
-      }
+      if (r.reviewYear == _selectedYear) monthMap[r.reviewMonth] = (monthMap[r.reviewMonth] ?? 0) + 1;
     }
     for (final r in _rawPending) {
-      if (r.reviewYear == _selectedYear) {
-        map[r.reviewMonth] = (map[r.reviewMonth] ?? 0) + 1;
-      }
+      if (r.reviewYear == _selectedYear) monthMap[r.reviewMonth] = (monthMap[r.reviewMonth] ?? 0) + 1;
     }
-    return map;
+    _availableMonths = monthMap;
+
+    _writtenReviews = _rawWritten
+        .where((r) => r.reviewYear == _selectedYear &&
+            (_selectedMonth == 0 || r.reviewMonth == _selectedMonth))
+        .toList();
+    _receivedReviews = _rawReceived
+        .where((r) => r.reviewYear == _selectedYear &&
+            (_selectedMonth == 0 || r.reviewMonth == _selectedMonth))
+        .toList();
+    _pendingRequests = _rawPending
+        .where((r) => r.reviewYear == _selectedYear &&
+            (_selectedMonth == 0 || r.reviewMonth == _selectedMonth))
+        .toList();
+
+    _pendingIsUrgent = _pendingRequests.any(
+      (r) => !r.isDeadlinePassed && r.deadline.difference(now).inDays <= 3,
+    );
+    _recomputePendingFiltered();
   }
 
-  // 현재 필터 적용된 리스트
-  List<MonthlyReviewModel> get _writtenReviews => _rawWritten
-      .where((r) => r.reviewYear == _selectedYear &&
-          (_selectedMonth == 0 || r.reviewMonth == _selectedMonth))
-      .toList();
-
-  List<MonthlyReviewModel> get _receivedReviews => _rawReceived
-      .where((r) => r.reviewYear == _selectedYear &&
-          (_selectedMonth == 0 || r.reviewMonth == _selectedMonth))
-      .toList();
-
-  List<ReviewRequestModel> get _pendingRequests => _rawPending
-      .where((r) => r.reviewYear == _selectedYear &&
-          (_selectedMonth == 0 || r.reviewMonth == _selectedMonth))
-      .toList();
+  void _recomputePendingFiltered() {
+    _pendingNow = DateTime.now();
+    final filtered = _searchQuery.isEmpty
+        ? _pendingRequests
+        : _pendingRequests.where((r) {
+            final name = r.workerName.isNotEmpty
+                ? r.workerName
+                : (_resolvedWorkerNames[r.workerId] ?? '');
+            return name.toLowerCase().contains(_searchQuery);
+          }).toList();
+    _filteredActivePending  = filtered.where((r) => !r.isDeadlinePassed).toList();
+    _filteredExpiredPending = filtered.where((r) =>  r.isDeadlinePassed).toList();
+  }
 
   // 검색
   final _searchCtrl = TextEditingController();
+  Timer? _searchDebounce;
   String _searchQuery = '';
 
   @override
@@ -132,7 +159,15 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     _searchCtrl.addListener(() {
-      setState(() => _searchQuery = _searchCtrl.text.trim().toLowerCase());
+      _searchDebounce?.cancel();
+      _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+        if (!mounted) return;
+        final q = _searchCtrl.text.trim().toLowerCase();
+        if (q == _searchQuery) return;
+        _searchQuery = q;
+        _recomputePendingFiltered();
+        setState(() {});
+      });
     });
     // addPostFrameCallback: 피커 등 UI 작업을 위해 첫 프레임 이후 로드
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadReviews());
@@ -140,6 +175,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _tabController.dispose();
     _searchCtrl.dispose();
     super.dispose();
@@ -275,14 +311,15 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
         for (final uid in ids) {
           resolvedMap.putIfAbsent(uid, () => '근무자');
         }
-        _resolvedWorkerNames = resolvedMap;
+        if (mounted) _resolvedWorkerNames = resolvedMap;
       }
 
-      // 선택된 연도가 데이터에 없으면 최신 연도로 자동 이동
-      final years = _availableYears;
-      if (years.isNotEmpty && !years.contains(_selectedYear)) {
-        _selectedYear = years.first;
+      // 파생 상태 선계산 (연도 자동 이동 전 _availableYears 확정 필요)
+      _recomputeDerived();
+      if (_availableYears.isNotEmpty && !_availableYears.contains(_selectedYear)) {
+        _selectedYear = _availableYears.first;
         _selectedMonth = 0;
+        _recomputeDerived(); // 연도/월 변경 후 재계산
       }
     } catch (e) {
       debugPrint('❌ 리뷰 로드 실패: $e');
@@ -311,6 +348,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
         _hasMoreWritten = page.hasMore;
         _isLoadingMoreWritten = false;
       });
+      _recomputeDerived();
     } catch (e) {
       debugPrint('❌ 리뷰 추가 로드 실패: $e');
       if (mounted) {
@@ -336,6 +374,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
         _hasMoreReceived = page.hasMore;
         _isLoadingMoreReceived = false;
       });
+      _recomputeDerived();
     } catch (e) {
       debugPrint('❌ 수신 리뷰 추가 로드 실패: $e');
       if (mounted) {
@@ -388,7 +427,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                           label: '미작성',
                           count: _pendingRequests.length,
                           badgeColor: AppColors.error,
-                          urgent: _pendingRequests.any((r) => !r.isDeadlinePassed && r.deadline.difference(DateTime.now()).inDays <= 3))),
+                          urgent: _pendingIsUrgent)),
                     ],
                   ),
                 ),
@@ -464,6 +503,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                     onTap: () => setState(() {
                       _selectedYear = years[yearIdx + 1];
                       _selectedMonth = 0;
+                      _recomputeDerived();
                     }),
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 16)),
@@ -479,6 +519,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                     onTap: () => setState(() {
                       _selectedYear = years[yearIdx - 1];
                       _selectedMonth = 0;
+                      _recomputeDerived();
                     }),
                   ),
                 ],
@@ -528,7 +569,10 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     return AppFilterChip(
       label: chipLabel,
       isSelected: isSelected,
-      onTap: () => setState(() => _selectedMonth = value),
+      onTap: () => setState(() {
+        _selectedMonth = value;
+        _recomputeDerived();
+      }),
     );
   }
 
@@ -652,58 +696,60 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
       );
     }
 
-    final filteredPending = _searchQuery.isEmpty
-        ? _pendingRequests
-        : _pendingRequests.where((r) {
-            final name = r.workerName.isNotEmpty
-                ? r.workerName
-                : (_resolvedWorkerNames[r.workerId] ?? '');
-            return name.toLowerCase().contains(_searchQuery);
-          }).toList();
+    final activePending  = _filteredActivePending;
+    final expiredPending = _filteredExpiredPending;
+    final now = _pendingNow;
 
-    final activePending = filteredPending.where((r) => !r.isDeadlinePassed).toList();
-    final expiredPending = filteredPending.where((r) => r.isDeadlinePassed).toList();
+    // 구분선 포함 전체 아이템 목록 사전 구성 — ListView.builder 에서 지연 렌더링
+    final items = <Object>[
+      ...activePending,
+      if (expiredPending.isNotEmpty) ...[
+        if (activePending.isNotEmpty) _DividerMarker.expired,
+        ...expiredPending,
+      ],
+    ];
 
     return RefreshIndicator(
       onRefresh: _loadReviews,
-      child: ListView(
+      child: ListView.builder(
         padding: ResponsiveHelper.listPadding(context),
-        children: [
-          ...activePending.map((req) => _buildPendingRequestCard(context, req)),
-          if (expiredPending.isNotEmpty) ...[
-            if (activePending.isNotEmpty)
-              Padding(
-                padding: EdgeInsets.symmetric(
-                    vertical: ResponsiveHelper.spacing(context, 8)),
-                child: Row(
-                  children: [
-                    const Expanded(child: Divider()),
-                    Padding(
-                      padding: EdgeInsets.symmetric(
-                          horizontal: ResponsiveHelper.spacing(context, 8)),
-                      child: Text(
-                        '기한 만료',
-                        style: ResponsiveHelper.tinyStyle(
-                            context, color: AppColors.grey400),
-                      ),
+        itemCount: items.length,
+        itemBuilder: (context, i) {
+          final item = items[i];
+          if (item == _DividerMarker.expired) {
+            return Padding(
+              padding: EdgeInsets.symmetric(
+                  vertical: ResponsiveHelper.spacing(context, 8)),
+              child: Row(
+                children: [
+                  const Expanded(child: Divider()),
+                  Padding(
+                    padding: EdgeInsets.symmetric(
+                        horizontal: ResponsiveHelper.spacing(context, 8)),
+                    child: Text(
+                      '기한 만료',
+                      style: ResponsiveHelper.tinyStyle(
+                          context, color: AppColors.grey400),
                     ),
-                    const Expanded(child: Divider()),
-                  ],
-                ),
+                  ),
+                  const Expanded(child: Divider()),
+                ],
               ),
-            ...expiredPending.map(
-                (req) => _buildPendingRequestCard(context, req, isExpired: true)),
-          ],
-        ],
+            );
+          }
+          final req = item as ReviewRequestModel;
+          return _buildPendingRequestCard(context, req,
+              now: now, isExpired: expiredPending.contains(req));
+        },
       ),
     );
   }
 
   Widget _buildPendingRequestCard(BuildContext context, ReviewRequestModel req,
-      {bool isExpired = false}) {
+      {bool isExpired = false, required DateTime now}) {
     final theme = Theme.of(context);
     final isDeadlineSoon =
-        !req.isDeadlinePassed && req.deadline.difference(DateTime.now()).inDays <= 3;
+        !req.isDeadlinePassed && req.deadline.difference(now).inDays <= 3;
     final displayName = req.workerName.isNotEmpty
         ? req.workerName
         : (_resolvedWorkerNames[req.workerId] ?? '근무자');

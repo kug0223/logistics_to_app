@@ -126,6 +126,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
+      // getSlots는 batchMode·slot 지정·contractType 케이스에서 불필요하므로
+      // 해당 조건이 아닌 경우에만 선제 시작하여 getBusinessWorkTypes와 병렬화
+      final slotsFuture = (!widget.isBatchMode && widget.slot == null && !widget.to.isContractType)
+          ? _firestoreService.getSlots(widget.to.id)
+          : null;
+
       final workTypes = await _firestoreService
           .getBusinessWorkTypes(widget.to.businessId);
 
@@ -160,8 +166,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       }
 
       DateTime? firstSlotDate;
-      if (!widget.to.isContractType) {
-        final slots = await _firestoreService.getSlots(widget.to.id);
+      if (slotsFuture != null) {
+        final slots = await slotsFuture; // 이미 병렬로 실행 중
         if (!mounted) return;
         if (slots.isNotEmpty) {
           slots.sort((a, b) => a.date.compareTo(b.date));
@@ -615,6 +621,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             .collection('slots').doc(slot.id);
         batch.update(slotRef, {
           'workDetails': WorkDetailData.listToFirestore(updatedWorkDetails),
+          'totalRequired': newTotalRequired,
           'applicationDeadline': slotDeadline != null
               ? Timestamp.fromDate(slotDeadline.toUtc())
               : FieldValue.delete(),

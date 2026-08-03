@@ -11,10 +11,12 @@
 // - (추후) 명단 출력
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:intl/intl.dart';
+import '../../../providers/user_provider.dart';
 // Models
 import '../../../models/core/application_model.dart';
 import '../../../models/core/attendance_model.dart';
@@ -80,7 +82,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   // ═══════════════════════════════════════════════════════════
   // 상태 변수
   // ═══════════════════════════════════════════════════════════
-  
+
+  static final _parenRe = RegExp(r'\(.*?\)');
+
   final FirestoreService _firestoreService = FirestoreService();
 
   // 데이터
@@ -144,9 +148,6 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     return count;
   }
 
-  /// 전체 처리 완료 여부 (마감 가능)
-  bool get _isAllProcessed => _confirmedWorkers.isNotEmpty && _processedCount == _confirmedWorkers.length;
-
   /// 선택된 최종확정 근무자 목록 (마감취소 대상)
   List<ApplicationModel> get _selectedFinalConfirmedApps {
     return _confirmedWorkers.where((app) {
@@ -156,9 +157,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     }).toList();
   }
 
+  late final String _dateStr;
+
   @override
   void initState() {
     super.initState();
+    _dateStr = DateFormat('MM월 dd일 (E)', 'ko_KR').format(widget.date);
     _tabController = TabController(length: 4, vsync: this);
     _selectedBusinessId = widget.initialBusinessId ??
         (widget.businessIds.isNotEmpty ? widget.businessIds.first : null);
@@ -624,7 +628,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
             var endAt = DateTime(workDay.year, workDay.month, workDay.day, endH, endM);
             final startParts = expectedStart.split(':');
             final startH = int.tryParse(startParts.first) ?? 0;
-            if (endH < startH) endAt = endAt.add(const Duration(days: 1));
+            final startM = startParts.length > 1 ? (int.tryParse(startParts[1]) ?? 0) : 0;
+            if (endH < startH || (endH == startH && endM < startM)) endAt = endAt.add(const Duration(days: 1));
             isOverdue = DateTime.now().isAfter(endAt);
           }
         }
@@ -771,6 +776,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         case 'checkout':
         case 'wage_confirmed':
         case 'final_confirmed':
+        case 'transferred':
           checkedIn++;
           checkedOut++;
           break;
@@ -824,11 +830,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final dateStr = DateFormat('MM월 dd일 (E)', 'ko_KR').format(widget.date);
+    final dateStr = _dateStr;
 
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
+        // [ATT-POPSCOPE-01] TextField 포커스 해제 — 배리어 tap(didPop=true)·back(didPop=false) 모두 처리
+        FocusScope.of(context).unfocus();
         if (!didPop) {
           Navigator.pop(context, _hasChanges);
         }
@@ -1161,6 +1169,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
   /// 일괄 처리 액션 바
   Widget _buildBatchActionBar(ThemeData theme) {
+    // 서브어드민 권한 체크 — canManageWorkers=false이면 모든 조작 버튼 비활성화
+    final canManage = Provider.of<UserProvider>(context, listen: false)
+        .can((p) => p.canManageWorkers);
+
     int checkInCount = 0;
     int adjustCount = 0;
     int checkOutCount = 0;
@@ -1243,15 +1255,15 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                 ),
               ),
               const Spacer(),
-              // 노쇼 칩 (검토 탭)
-              if (noShowTargets.isNotEmpty)
+              // 노쇼 칩 (검토 탭) — canManageWorkers 없는 서브어드민 숨김
+              if (noShowTargets.isNotEmpty && canManage)
                 _buildActionChip(
                   label: '노쇼 (${noShowTargets.length})',
                   color: AppColors.error,
                   onTap: () => _showBatchNoShowDialog(noShowTargets),
                 ),
               // 노쇼취소 칩 (완료 탭)
-              if (cancelNoShowTargets.isNotEmpty)
+              if (cancelNoShowTargets.isNotEmpty && canManage)
                 _buildActionChip(
                   label: '노쇼취소 (${cancelNoShowTargets.length})',
                   color: AppColors.info,
@@ -1358,16 +1370,16 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
-          // Row 2: 출근 / 조정 / 퇴근 / 리셋 — 4개 버튼
+          // Row 2: 출근 / 조정 / 퇴근 / 리셋 — canManage=false이면 모두 비활성화
           Row(
             children: [
-              Expanded(child: _buildActionButton(icon: Icons.login,    label: '출근', color: AppColors.success, count: checkInCount,  onPressed: checkInCount > 0  ? _showBatchCheckInDialog  : null)),
+              Expanded(child: _buildActionButton(icon: Icons.login,    label: '출근', color: AppColors.success, count: checkInCount,  onPressed: (checkInCount > 0  && canManage) ? _showBatchCheckInDialog   : null)),
               SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-              Expanded(child: _buildActionButton(icon: Icons.tune,     label: '조정', color: AppColors.info,    count: adjustCount,   onPressed: adjustCount > 0   ? _showBatchAdjustTimeDialog : null)),
+              Expanded(child: _buildActionButton(icon: Icons.tune,     label: '조정', color: AppColors.info,    count: adjustCount,   onPressed: (adjustCount > 0   && canManage) ? _showBatchAdjustTimeDialog : null)),
               SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-              Expanded(child: _buildActionButton(icon: Icons.logout,   label: '퇴근', color: AppColors.purple,  count: checkOutCount, onPressed: checkOutCount > 0 ? _showBatchCheckOutDialog : null)),
+              Expanded(child: _buildActionButton(icon: Icons.logout,   label: '퇴근', color: AppColors.purple,  count: checkOutCount, onPressed: (checkOutCount > 0 && canManage) ? _showBatchCheckOutDialog  : null)),
               SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-              Expanded(child: _buildActionButton(icon: Icons.refresh,  label: '리셋', color: AppColors.grey600, count: resetCount,    onPressed: resetCount > 0    ? _showBatchResetDialog   : null)),
+              Expanded(child: _buildActionButton(icon: Icons.refresh,  label: '리셋', color: AppColors.grey600, count: resetCount,    onPressed: (resetCount > 0    && canManage) ? _showBatchResetDialog    : null)),
             ],
           ),
         ],
@@ -1808,7 +1820,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     final effStart = WorkDetailHelper.effectiveStart(app, _workDetailTimeMap);
     final startParts = effStart.split(':');
     final startH = int.tryParse(startParts.first) ?? 0;
-    if (endH < startH) endAt = endAt.add(const Duration(days: 1));
+    final startM = startParts.length > 1 ? (int.tryParse(startParts[1]) ?? 0) : 0;
+    if (endH < startH || (endH == startH && endM < startM)) endAt = endAt.add(const Duration(days: 1));
     return DateTime.now().isAfter(endAt);
   }
 
@@ -2119,7 +2132,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       default:
         // wage_confirmed(조퇴) 같은 조합 텍스트에서 괄호 제거
         text = (statusInfo['text'] as String)
-            .replaceAll(RegExp(r'\(.*?\)'), '')
+            .replaceAll(_parenRe, '')
             .trim();
         color = statusInfo['color'] as Color;
     }
@@ -2591,23 +2604,25 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           top: BorderSide(color: AppColors.border),
         ),
       ),
-      child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // 처리현황 + 마감 버튼
-        _buildProgressRow(theme),
-        // 마감취소 버튼 (최종확정 근무자 선택 시 표시)
-        if (_selectedFinalConfirmedApps.isNotEmpty) ...[
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _batchCancelFinal,
-              icon: Icon(
-                Icons.lock_open_outlined,
-                size: ResponsiveHelper.iconSize(context, 18),
-              ),
-              label: Text('마감취소 (${_selectedFinalConfirmedApps.length}명)'),
+      child: Builder(builder: (context) {
+        final selectedFinal = _selectedFinalConfirmedApps;
+        return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 처리현황 + 마감 버튼
+          _buildProgressRow(theme),
+          // 마감취소 버튼 (최종확정 근무자 선택 시 표시)
+          if (selectedFinal.isNotEmpty) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _batchCancelFinal,
+                icon: Icon(
+                  Icons.lock_open_outlined,
+                  size: ResponsiveHelper.iconSize(context, 18),
+                ),
+                label: Text('마감취소 (${selectedFinal.length}명)'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.error,
                 foregroundColor: Colors.white,
@@ -2651,7 +2666,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           // 급여관리 버튼
           Expanded(
             child: ElevatedButton.icon(
-              onPressed: _confirmedWorkers.isNotEmpty ? _showWageConfirmDialog : null,
+              onPressed: _confirmedWorkers.isNotEmpty && context.read<UserProvider>().can((p) => p.canManageWage)
+                  ? _showWageConfirmDialog
+                  : null,
               icon: Icon(Icons.payments, size: ResponsiveHelper.iconSize(context, 18)),
               label: const Text('급여관리'),
               style: ElevatedButton.styleFrom(
@@ -2670,13 +2687,15 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
             ],
           ),
         ],
-      ),
+        );
+      }),
     );
   }
 
   /// 처리현황 Row
   Widget _buildProgressRow(ThemeData theme) {
-    final isAllProcessed = _isAllProcessed;
+    final processedCount = _processedCount;
+    final isAllProcessed = _confirmedWorkers.isNotEmpty && processedCount == _confirmedWorkers.length;
 
     return Row(
       children: [
@@ -2691,7 +2710,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
         ),
         Text(
-          '$_processedCount/${_confirmedWorkers.length}명',
+          '$processedCount/${_confirmedWorkers.length}명',
           style: ResponsiveHelper.bodyStyle(context).copyWith(
             fontWeight: FontWeight.bold,
             color: isAllProcessed ? AppColors.success : theme.primaryColor,
@@ -3672,11 +3691,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       final lateCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableReportLate',
               options: HttpsCallableOptions(timeout: const Duration(seconds: 10)));
-      for (final change in lateChanges) {
+      await Future.wait(lateChanges.map((change) async {
         final attendanceId = _attendanceMap[change.app.id]?.id;
         if (attendanceId == null) {
           debugPrint('⚠️ callableReportLate 건너뜀: attendanceId 없음 (appId=${change.app.id})');
-          continue;
+          return;
         }
         try {
           await lateCallable.call({
@@ -3688,7 +3707,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         } catch (cfErr) {
           debugPrint('⚠️ callableReportLate 실패 (무시): $cfErr');
         }
-      }
+      }));
 
       _hasChanges = true;
       await _loadData();
@@ -4401,26 +4420,26 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       final processed = result.data['processed'] as int? ?? 0;
 
       // 지각 신뢰도 연동 — CF 성공 후, 단건 실패는 무시
-      for (final app in lateApps) {
+      final lateCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableReportLate',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 10)));
+      await Future.wait(lateApps.map((app) async {
         final attendanceId = _attendanceMap[app.id]?.id;
         if (attendanceId == null) {
           debugPrint('⚠️ callableReportLate 건너뜀: attendanceId 없음 (appId=${app.id})');
-          continue;
+          return;
         }
         try {
-          await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-              .httpsCallable('callableReportLate',
-                  options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
-              .call({
-                'userId': app.uid,
-                'businessId': app.businessId,
-                'mode': 'late',
-                'attendanceId': attendanceId,
-              });
+          await lateCallable.call({
+            'userId': app.uid,
+            'businessId': app.businessId,
+            'mode': 'late',
+            'attendanceId': attendanceId,
+          });
         } catch (cfErr) {
           debugPrint('⚠️ callableReportLate 실패 (무시): $cfErr');
         }
-      }
+      }));
 
       if (!mounted) return;
       if (processed > 0) {
@@ -4565,26 +4584,26 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
         final processed = result.data['processed'] as int? ?? 0;
 
-        for (final app in lateApps) {
+        final lateCallableGroup = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('callableReportLate',
+                options: HttpsCallableOptions(timeout: const Duration(seconds: 10)));
+        await Future.wait(lateApps.map((app) async {
           final attendanceId = _attendanceMap[app.id]?.id;
           if (attendanceId == null) {
             debugPrint('⚠️ callableReportLate 건너뜀: attendanceId 없음 (appId=${app.id})');
-            continue;
+            return;
           }
           try {
-            await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-                .httpsCallable('callableReportLate',
-                    options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
-                .call({
-                  'userId': app.uid,
-                  'businessId': app.businessId,
-                  'mode': 'late',
-                  'attendanceId': attendanceId,
-                });
+            await lateCallableGroup.call({
+              'userId': app.uid,
+              'businessId': app.businessId,
+              'mode': 'late',
+              'attendanceId': attendanceId,
+            });
           } catch (cfErr) {
             debugPrint('⚠️ callableReportLate 실패 (무시): $cfErr');
           }
-        }
+        }));
 
         if (!mounted) return;
         if (processed > 0) {
@@ -4701,6 +4720,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   // 마감 취소는 선택된 wageConfirmed 근무자 대상으로 관리자가 수동 선택 후 실행하므로
   // 한 번에 수백 명을 선택하는 경우는 현실적으로 없다.
   Future<void> _batchCancelFinal() async {
+    // PERM-02: 마감취소 권한 확인
+    if (!context.read<UserProvider>().can((p) => p.canManageWorkers)) {
+      ToastHelper.showWarning('마감취소 권한이 없습니다.');
+      return;
+    }
     if (_isLoading) return;
     final targets = _selectedFinalConfirmedApps;
     if (targets.isEmpty) return;
@@ -4730,10 +4754,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       if (!mounted) return;
       final processed = result.data['processed'] as int? ?? 0;
 
-      // 알림 (TrustScore는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리)
-      for (final app in targets) {
+      // 알림 병렬 발송 (TrustScore는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리)
+      await Future.wait(targets.map((app) async {
         final attendance = _attendanceMap[app.id];
-        if (attendance == null) continue;
+        if (attendance == null) return;
         try {
           final businessName = _businessNameMap[app.businessId] ?? '';
           await _firestoreService.createNotification(
@@ -4748,7 +4772,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         } catch (e) {
           debugPrint('⚠️ 알림 발송 실패 (${app.uid}): $e');
         }
-      }
+      }));
 
       if (!mounted) return;
       _hasChanges = true;

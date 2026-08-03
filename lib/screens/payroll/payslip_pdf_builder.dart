@@ -170,7 +170,7 @@ class PayslipPdfBuilder {
   ) {
     final payDate = d.paymentDate != null
         ? FormatHelper.formatDateDot(d.paymentDate!)
-        : FormatHelper.formatDateDot(d.workDate);
+        : '미정';
 
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,

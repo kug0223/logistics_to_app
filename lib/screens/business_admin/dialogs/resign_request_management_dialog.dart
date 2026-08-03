@@ -120,13 +120,15 @@ class _ResignRequestManagementDialogState
                   ? const LoadingWidget()
                   : _requests.isEmpty
                       ? _buildEmptyState()
-                      : ListView.builder(
-                          padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
-                          itemCount: _requests.length,
-                          itemBuilder: (context, index) {
-                            return _buildRequestCard(_requests[index]);
-                          },
-                        ),
+                      : Builder(builder: (context) {
+                          final now = DateTime.now();
+                          return ListView.builder(
+                            padding: ResponsiveHelper.cardPadding(context),
+                            itemCount: _requests.length,
+                            itemBuilder: (context, index) =>
+                                RepaintBoundary(child: _buildRequestCard(_requests[index], now)),
+                          );
+                        }),
             ),
           ],
         ),
@@ -159,11 +161,14 @@ class _ResignRequestManagementDialogState
   }
 
   /// 요청 카드
-  Widget _buildRequestCard(_ResignRequestWithUser item) {
+  Widget _buildRequestCard(_ResignRequestWithUser item, DateTime now) {
     final app = item.application;
-    final daysLeft = app.resignRequestedAt != null
-        ? 3 - DateTime.now().difference(app.resignRequestedAt!).inDays
-        : 0;
+    final daysLeft = () {
+      if (app.resignRequestedAt == null) return 0;
+      final today = DateTime(now.year, now.month, now.day);
+      final reqDay = DateTime(app.resignRequestedAt!.year, app.resignRequestedAt!.month, app.resignRequestedAt!.day);
+      return (3 - today.difference(reqDay).inDays).clamp(0, 3);
+    }();
     final isUrgent = daysLeft <= 1;
 
     return Card(

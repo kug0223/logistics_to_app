@@ -46,7 +46,10 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
   @override
   void initState() {
     super.initState();
-    _loadWorkTypes();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _loadWorkTypes();
+    });
   }
 
   Future<void> _loadWorkTypes() async {
@@ -190,6 +193,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       if (affectedCount > 0) {
         final proceed = await showDialog<bool>(
           context: context,
+          barrierDismissible: false,
           builder: (ctx) => AlertDialog(
             title: const Text('활성 공고 있음'),
             content: Text(
@@ -213,6 +217,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
 
       final confirmed = await showDialog<bool>(
         context: context,
+        barrierDismissible: false,
         builder: (context) {
           return Dialog(
             backgroundColor: Colors.white,

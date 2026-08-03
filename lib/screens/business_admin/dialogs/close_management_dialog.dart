@@ -61,6 +61,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
   
   // 마감 현황 데이터: businessId -> List<DateCloseStatus>
   Map<String, List<DateCloseStatus>> _closeStatusByBusiness = {};
+  bool _hasClosed = false;
   
   // 요약 통계
   int _totalDays = 0;
@@ -136,6 +137,8 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
       }
     }
     _closeStatusByBusiness = statusByBusiness;
+    _hasClosed = _closeStatusByBusiness.values
+        .any((statuses) => statuses.any((s) => s.statusType == CloseStatusType.closed));
   }
 
   /// 사업장 1개의 마감 현황 계산
@@ -268,14 +271,17 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
           final attCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
               .httpsCallable('callableGetAttendanceForClosing',
                   options: HttpsCallableOptions(timeout: const Duration(seconds: 60)));
-          for (int i = 0; i < allAppIds.length; i += 500) {
-            final chunk = allAppIds.sublist(i, (i + 500).clamp(0, allAppIds.length));
-            final attResult = await attCallable.call({
-              'businessId': businessId,
-              'applicationIds': chunk,
-              'monthStartMs': monthStart.millisecondsSinceEpoch,
-              'monthEndExclusiveMs': monthEndExclusive.millisecondsSinceEpoch,
-            });
+          final chunks = [
+            for (int i = 0; i < allAppIds.length; i += 500)
+              allAppIds.sublist(i, (i + 500).clamp(0, allAppIds.length)),
+          ];
+          final chunkResults = await Future.wait(chunks.map((chunk) => attCallable.call({
+            'businessId': businessId,
+            'applicationIds': chunk,
+            'monthStartMs': monthStart.millisecondsSinceEpoch,
+            'monthEndExclusiveMs': monthEndExclusive.millisecondsSinceEpoch,
+          })));
+          for (final attResult in chunkResults) {
             for (final rec in (attResult.data['records'] as List? ?? [])) {
               final m = Map<String, dynamic>.from(rec as Map);
               final appId = m['applicationId'] as String? ?? '';
@@ -409,6 +415,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
   Future<void> _openAttendanceDialog(String businessId, DateTime date) async {
     final result = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => AttendanceStatusDialog(
         date: date,
         businessIds: [businessId],
@@ -678,8 +685,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
 
   /// 컨텐츠 (사업장별 목록)
   Widget _buildContent(ThemeData theme) {
-    final hasClosed = _closeStatusByBusiness.values
-        .any((statuses) => statuses.any((s) => s.statusType == CloseStatusType.closed));
+    final hasClosed = _hasClosed;
 
     return ListView(
       padding: ResponsiveHelper.cardPadding(context),

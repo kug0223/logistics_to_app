@@ -80,6 +80,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   final FirestoreService _firestoreService = FirestoreService();
 
   List<Map<String, dynamic>> _applicants = [];
+  List<Map<String, dynamic>> _pending = [];
+  List<Map<String, dynamic>> _confirmed = [];
   // 통계 계산용 전체 앱 목록 (_loadApplicants에서 캐시, _updateLocalStats에서 재사용)
   List<ApplicationModel> _allApplications = [];
 
@@ -317,6 +319,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       if (!mounted) return;
       setState(() {
         _applicants = applicantsWithUserInfo;
+        _groupApplicants();
         _idCardStatusMap = idCardStatusMap;
         _allApplications = apps; // 통계 계산용 캐시
         _starredIds
@@ -330,6 +333,14 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       });
   }, errorTag: '지원자 목록 로드');
 
+  void _groupApplicants() {
+    _pending = _applicants.where((item) =>
+        (item['application'] as ApplicationModel).status == AppStatus.pending).toList();
+    _confirmed = _applicants.where((item) {
+      final s = (item['application'] as ApplicationModel).status;
+      return AppStatus.confirmedStatuses.contains(s);
+    }).toList();
+  }
 
   /// 전체 선택/해제
   void _toggleSelectAll(bool? value) {
@@ -368,13 +379,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    // 상태별 분류
-    final pending = _applicants.where((item) =>
-      (item['application'] as ApplicationModel).status == AppStatus.pending).toList();
-    final confirmed = _applicants.where((item) {
-      final s = (item['application'] as ApplicationModel).status;
-      return AppStatus.confirmedStatuses.contains(s);
-    }).toList();
+    final pending = _pending;
+    final confirmed = _confirmed;
 
     return PopScope(
       canPop: false,
@@ -1099,13 +1105,14 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         }
         _isIdCardSelectMode = false;
         _selectedIdCardUserIds.clear();
+        _isProcessing = false;
       });
     }
     } catch (e) {
       debugPrint('❌ [_batchRequestIdCard] 신분증 요청 실패: $e');
       if (mounted) ToastHelper.showError('신분증 요청 중 오류가 발생했습니다');
     } finally {
-      if (mounted) setState(() => _isProcessing = false);
+      if (mounted && _isProcessing) setState(() => _isProcessing = false);
     }
   }
 
@@ -1780,7 +1787,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   String _formatAppliedTime(DateTime appliedAt) {
     final now = DateTime.now();
     final diff = now.difference(appliedAt);
-    
+
+    if (diff.isNegative || diff.inMinutes < 1) {
+      return '방금 전';
+    }
     if (diff.inMinutes < 60) {
       return '${diff.inMinutes}분 전';
     } else if (diff.inHours < 24) {
@@ -1794,20 +1804,19 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   /// 파트변경 다이얼로그
   Future<void> _showChangeWorkPartDialog(Map<String, dynamic> item) async {
     if (_isProcessing) return;
-    setState(() => _isProcessing = true);
     final app = item['application'] as ApplicationModel;
     final user = item['user'] as UserModel?;
     final workDetails = widget.toItem.workDetails;
-    
+
     // 현재 파트 제외한 다른 파트 목록 (id 기반 비교 — workType 이름 중복 방지)
     final currentWork = _getWorkForApp(app) ?? widget.work;
     final otherWorkDetails = workDetails.where((w) => w.id != (currentWork?.id ?? '')).toList();
-    
+
     if (otherWorkDetails.isEmpty) {
       ToastHelper.showWarning('변경 가능한 다른 파트가 없습니다');
-      if (mounted) setState(() => _isProcessing = false);
       return;
     }
+    setState(() => _isProcessing = true);
 
     // [C-1] 파트변경 전 급여 상태 확인 — confirmed: 완전 차단 / calculated: 경고 후 선택
     // [H-CF-1] callableGetWageStatusCount CF 경유 — assertBizAdmin 서버 교차검증
@@ -2974,10 +2983,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       // 순회 중 컬렉션 변경을 방지하기 위해 복사본으로 순회
       final idsToReject = List<String>.from(_selectedIds);
 
-      // [BUG-FIX] 부분 실패 시 나머지 처리 중단 방지 — 개별 try-catch로 성공/실패 카운팅
-      int successCount = 0;
-      int failCount = 0;
-      for (final appId in idsToReject) {
+      // 병렬 거절 처리 — 개별 try-catch로 성공/실패 카운팅
+      final rejectResults = await Future.wait(idsToReject.map((appId) async {
         try {
           await _firestoreService.updateApplicationStatus(
             applicationId: appId,
@@ -2985,12 +2992,14 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
             rejectedBy: adminUID,
             message: reason,
           );
-          successCount++;
+          return true;
         } catch (e) {
           debugPrint('❌ [_batchReject] 거절 실패 [$appId]: $e');
-          failCount++;
+          return false;
         }
-      }
+      }));
+      final successCount = rejectResults.where((r) => r).length;
+      final failCount = rejectResults.where((r) => !r).length;
 
       if (!mounted) return;
       if (successCount > 0) {

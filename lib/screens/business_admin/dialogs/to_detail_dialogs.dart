@@ -79,7 +79,7 @@ class TODetailDialogs {
                           child: Icon(Icons.person, color: AppColors.success),
                         ),
                         title: Text(
-                          applicant['userName'],
+                          applicant['userName'] as String? ?? '이름 없음',
                           style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
                             fontWeight: FontWeight.bold,
                           ),
@@ -90,7 +90,7 @@ class TODetailDialogs {
                             Row(children: [
                               const Icon(Icons.phone_outlined, size: 14, color: AppColors.grey600),
                               const SizedBox(width: 4),
-                              Text(applicant['userPhone']),
+                              Text(applicant['userPhone'] as String? ?? '-'),
                             ]),
                             Row(children: [
                               const Icon(Icons.work_outline, size: 14, color: AppColors.grey600),

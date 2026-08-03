@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:provider/provider.dart';
 import 'dart:io';
+
+// Providers
+import '../../providers/user_provider.dart';
 
 // Models
 import '../../models/core/business_work_type_model.dart';
@@ -126,7 +130,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
       child: GradientScaffold(
         title: _isEditing ? '업무유형 수정' : '업무유형 상세',
         actions: [
-          if (!_isEditing)
+          if (!_isEditing && context.select<UserProvider, bool>((p) => p.can((perm) => perm.canManageTo)))
             IconButton(
               icon: const Icon(Icons.edit, color: Colors.white),
               onPressed: () => setState(() => _isEditing = true),
@@ -433,6 +437,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
                             margin: EdgeInsets.only(
                               right: ResponsiveHelper.spacing(context, 8),
                             ),
+                            clipBehavior: Clip.hardEdge,
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(8),
                               border: Border.all(
@@ -442,10 +447,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
                                 width: 2,
                               ),
                             ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(6),
-                              child: _buildImageWidget(allImages[index], fit: BoxFit.cover),
-                            ),
+                            child: _buildImageWidget(allImages[index], fit: BoxFit.cover),
                           ),
                         );
                       },
@@ -941,9 +943,12 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
             .toList();
       }
 
-      for (var image in _newImages) {
-        if (!mounted) return;
-        final url = await _uploadImage(image, 'image');
+      // 이미지 업로드 병렬 실행
+      final uploadResults = await Future.wait(
+        _newImages.map((image) => _uploadImage(image, 'image')),
+      );
+      if (!mounted) return;
+      for (final url in uploadResults) {
         if (url != null) {
           imageUrls.add(url);
           newlyUploadedUrls.add(url);
@@ -987,15 +992,13 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
 
       // 3. Firestore 성공 후에만 Storage에서 구 이미지 삭제
       // 이유: Firestore 실패 시 Storage 삭제를 했다면 broken URL이 Firestore에 남음
-      for (var url in _imagesToDelete) {
+      await Future.wait(_imagesToDelete.map((url) async {
         try {
           await _storageService.deleteImageByUrl(url);
         } catch (e) {
-          // Storage 삭제 실패는 orphan 파일로 남을 수 있으나
-          // Firestore는 이미 업데이트 완료 — 기능에 영향 없음
           debugPrint('⚠️ Storage 구 이미지 삭제 실패 (orphan): $e');
         }
-      }
+      }));
 
       // 4. 로컬 상태 업데이트
       if (!mounted) return;
@@ -1021,9 +1024,9 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
       if (mounted) ToastHelper.showSuccess('업무유형이 수정되었습니다');
     } catch (e) {
       // Firestore 실패 시 이미 업로드된 신규 파일 롤백
-      for (final url in newlyUploadedUrls) {
+      await Future.wait(newlyUploadedUrls.map((url) async {
         try { await _storageService.deleteImageByUrl(url); } catch (_) {}
-      }
+      }));
       debugPrint('❌ 저장 실패: $e');
       if (mounted) ToastHelper.showError('저장에 실패했습니다');
     } finally {

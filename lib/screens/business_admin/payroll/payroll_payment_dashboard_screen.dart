@@ -1,4 +1,6 @@
 // lib/screens/business_admin/payroll/payroll_payment_dashboard_screen.dart
+// ignore_for_file: unused_import
+import 'dart:async';
 //
 // 급여 지급(송금) 현황 대시보드 — 연/월 자유 탐색, 통합 이체현황 탭
 // - 헤더: ← 년 → | ← 월 →
@@ -32,6 +34,7 @@ import '../../../widgets/common/app_search_bar.dart';
 import '../../../widgets/common/app_tab_label.dart';
 import '../../../widgets/common/app_batch_action_bar.dart';
 import '../../../widgets/common/app_filter_chip.dart';
+import '../../payroll/payslip_period_helper.dart';
 
 class PayrollPaymentDashboardScreen extends StatefulWidget {
   final String businessId;
@@ -90,6 +93,13 @@ class _PayrollPaymentDashboardScreenState
   // ── 검색
   final _searchCtrl = TextEditingController();
   String _searchQuery = '';
+  Timer? _searchDebounce;                        // H2: 검색 debounce
+
+  // ── H1: build()마다 탭 재계산 방지 — 파생 상태 캐시
+  List<MapEntry<String, List<AttendanceModel>>> _pendingGroups  = [];
+  List<MapEntry<String, List<AttendanceModel>>> _filteredGroups = [];
+  int  _pendingBadgeCount = 0;
+  bool _pendingIsUrgent   = false;
 
   // ── 계좌 정보 캐시
   final Map<String, Map<String, String>> _userBankCache = {};
@@ -112,13 +122,44 @@ class _PayrollPaymentDashboardScreenState
         });
       }
     });
-    _searchCtrl.addListener(() =>
-        setState(() => _searchQuery = _searchCtrl.text.trim()));
-    _load();
+    _searchCtrl.addListener(_onSearchChanged);
+    // PAY-M2: canManageWage 없는 서브어드민 진입 차단
+    final up = context.read<UserProvider>();
+    if (!up.can((p) => p.canManageWage)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Navigator.of(context).pop();
+      });
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _load();
+    });
+  }
+
+  void _onSearchChanged() {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+      final q = _searchCtrl.text.trim();
+      if (q == _searchQuery) return;
+      setState(() { _searchQuery = q; _recomputeDerived(); });
+    });
+  }
+
+  // H1: 파생 상태(필터링 결과·배지) 일괄 재계산 — setState 콜백 내에서 호출
+  void _recomputeDerived() {
+    _pendingGroups    = _getPendingGroups();
+    _filteredGroups   = _getFilteredGroups();
+    _pendingBadgeCount = _allRecords
+        .where((r) => r.wageStatus == AttendanceModel.wageConfirmed)
+        .map((r) => r.userId).toSet().length;
+    _pendingIsUrgent  = _pendingBadgeCount > 0;
   }
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _tabCtrl.dispose();
     _searchCtrl.dispose();
     super.dispose();
@@ -162,13 +203,17 @@ class _PayrollPaymentDashboardScreenState
         _settlementRequests = results[3] as List<InterimSettlementRequestModel>;
         _selectedIds.clear();
         _batchMode = false;
+        _recomputeDerived(); // H1: 파생 캐시 갱신
+        _isLoading = false;  // M3: finally setState와 병합
       });
     } catch (e) {
       debugPrint('❌ 급여 대시보드 로드 실패: $e');
-      if (mounted) ToastHelper.showError('데이터를 불러오지 못했습니다');
+      if (mounted) {
+        ToastHelper.showError('데이터를 불러오지 못했습니다');
+        setState(() => _isLoading = false);
+      }
     } finally {
       _fetchInProgress = false;
-      if (mounted) setState(() => _isLoading = false);
       // 연/월 변경으로 새 로드 요청이 밀린 경우 최신 상태로 재실행
       if (_pendingReload) _load();
     }
@@ -200,10 +245,8 @@ class _PayrollPaymentDashboardScreenState
   // ══════════════════════════════════════════════════════════
 
   void _changeYear(int delta) {
-    setState(() {
-      _selectedYear += delta;
-      _resetFilters();
-    });
+    // M3: _isLoading=true를 여기서 세팅 → _load() 내 중복 setState 방지
+    setState(() { _selectedYear += delta; _resetFilters(); _isLoading = true; });
     _load();
   }
 
@@ -214,6 +257,7 @@ class _PayrollPaymentDashboardScreenState
       if (m < 1)  { m = 12; _selectedYear--; }
       _selectedMonth = m;
       _resetFilters();
+      _isLoading = true; // M3
     });
     _load();
   }
@@ -224,6 +268,7 @@ class _PayrollPaymentDashboardScreenState
       _selectedWeek = null;
       _selectedDay  = null;
       _selectedIds.clear();
+      _recomputeDerived(); // H1
     });
   }
 
@@ -239,34 +284,27 @@ class _PayrollPaymentDashboardScreenState
   // 주차 계산 (월~일 기준)
   // ══════════════════════════════════════════════════════════
 
+  // ══════════════════════════════════════════════════════════
+  // 주차 계산 — PayslipPeriodHelper.weeksOfMonth와 반드시 동일 기준 유지
+  // ══════════════════════════════════════════════════════════
+  //
+  // 귀속 원칙: 월요일이 속한 달의 주차로 계산한다.
+  //   예) 6/29(월)~7/5(일) → 6월 5주차  (7월 1주차 ❌)
+  //       7/7(월)~7/13(일) → 7월 1주차
+  //
+  // ❌ 절대 금지: firstDay.subtract(...) 방식 — 이전 달 월요일까지 역산하면
+  //   해당 달에 속하지 않는 주가 1주차로 잘못 표기된다.
   static List<DateTimeRange> _calcWeekRanges(int year, int month) {
-    final lastDay = DateTime(year, month + 1, 0);
-
-    // 1일이 포함된 주의 월요일부터 시작 (첫째 주가 이전 달로 넘어갈 수 있음)
-    final firstDay = DateTime(year, month, 1);
-    final daysToMonday = (firstDay.weekday - 1) % 7; // 이전 월요일까지 역산
-    DateTime weekStart = firstDay.subtract(Duration(days: daysToMonday));
-
-    final ranges = <DateTimeRange>[];
-    while (!weekStart.isAfter(lastDay)) {
-      // 일요일까지 — 다음 달로 넘어가도 클립하지 않음 (주는 항상 월~일 전체)
-      final weekEnd = weekStart.add(const Duration(days: 6));
-      ranges.add(DateTimeRange(start: weekStart, end: weekEnd));
-      weekStart = weekStart.add(const Duration(days: 7));
-    }
-
-    while (ranges.length < 4) {
-      final next = ranges.last.start.add(const Duration(days: 7));
-      ranges.add(DateTimeRange(start: next, end: next.add(const Duration(days: 6))));
-    }
-    return ranges;
+    return PayslipPeriodHelper.weeksOfMonth(year, month)
+        .map((w) => DateTimeRange(start: w.start, end: w.end))
+        .toList();
   }
 
   static String _weekRangeLabel(DateTimeRange range, int baseMonth) {
     final s = range.start;
     final e = range.end;
-    final startLabel = '${s.day}';
-    final endLabel = e.month != baseMonth ? '${e.month}/${e.day}' : '${e.day}';
+    final startLabel = s.month != baseMonth ? '${s.month}/${s.day}' : '${s.day}';
+    final endLabel   = e.month != baseMonth ? '${e.month}/${e.day}' : '${e.day}';
     return '$startLabel~$endLabel';
   }
 
@@ -332,17 +370,23 @@ class _PayrollPaymentDashboardScreenState
     }
 
     // 5. 정렬: 미이체(연체→오늘→예정) → 이체완료
-    return map.entries.toList()
+    // M1: sort 비교자 내 _earliestDue() O(m) 중복 호출 제거 — 사전 계산
+    final entries = map.entries.toList();
+    final today = _today; // M2: DateTime.now() 반복 호출 방지
+    final dueCache     = {for (final e in entries) e.key: _earliestDue(e.value)};
+    final overdueMap   = {for (final e in entries) e.key: (dueCache[e.key]?.isBefore(today) ?? false)};
+    final dueTodayMap  = {for (final e in entries) e.key: (dueCache[e.key] == today)};
+    return entries
       ..sort((a, b) {
         final aXfer = a.value.every((r) => r.wageStatus == AttendanceModel.wageTransferred);
         final bXfer = b.value.every((r) => r.wageStatus == AttendanceModel.wageTransferred);
         if (!aXfer &&  bXfer) return -1;
         if ( aXfer && !bXfer) return 1;
         if (!aXfer) {
-          final aOver  = _groupIsOverdue(a.value);
-          final bOver  = _groupIsOverdue(b.value);
-          final aToday = _groupIsDueToday(a.value);
-          final bToday = _groupIsDueToday(b.value);
+          final aOver  = overdueMap[a.key]!;
+          final bOver  = overdueMap[b.key]!;
+          final aToday = dueTodayMap[a.key]!;
+          final bToday = dueTodayMap[b.key]!;
           if ( aOver && !bOver)  return -1;
           if (!aOver &&  bOver)  return 1;
           if ( aToday && !bToday) return -1;
@@ -403,7 +447,7 @@ class _PayrollPaymentDashboardScreenState
       ),
     );
     if (picked != null && mounted) {
-      setState(() => _selectedDay = picked);
+      setState(() { _selectedDay = picked; _recomputeDerived(); }); // H1
     }
   }
 
@@ -418,8 +462,10 @@ class _PayrollPaymentDashboardScreenState
       ),
     );
     if (picked != null && mounted) {
-      setState(() => _selectedTransferDate =
-          DateTime(picked.year, picked.month, picked.day));
+      setState(() {
+        _selectedTransferDate = DateTime(picked.year, picked.month, picked.day);
+        _recomputeDerived(); // H1: 날짜 변경 → pendingGroups 재계산
+      });
     }
   }
 
@@ -991,13 +1037,9 @@ class _PayrollPaymentDashboardScreenState
                   tabs: [
                     Tab(child: AppTabLabel(
                         label: '미이체',
-                        count: _allRecords
-                            .where((r) => r.wageStatus == AttendanceModel.wageConfirmed)
-                            .map((r) => r.userId)
-                            .toSet()
-                            .length,
+                        count: _pendingBadgeCount,   // H1: 캐시
                         badgeColor: AppColors.error,
-                        urgent: _allRecords.any((r) => r.wageStatus == AttendanceModel.wageConfirmed))),
+                        urgent: _pendingIsUrgent)),   // H1: 캐시
                     Tab(child: AppTabLabel(label: '이체현황')),
                     Tab(child: AppTabLabel(
                         label: '변경요청',
@@ -1055,7 +1097,7 @@ class _PayrollPaymentDashboardScreenState
 
   // ─── 미이체 탭 ───────────────────────────────────────────
   Widget _buildPendingTransferTab() {
-    final groups      = _getPendingGroups();
+    final groups      = _pendingGroups; // H1: 캐시 사용
     final pendingRecs = groups.expand((e) => e.value).toList();
     final totalNet    = _sumNet(pendingRecs);
     final allIds      = groups.expand((e) => e.value.map((r) => r.id)).toSet();
@@ -1224,13 +1266,13 @@ class _PayrollPaymentDashboardScreenState
                         final sdLabel = req.scheduledTransferDate != null
                             ? DateFormat('MM/dd').format(req.scheduledTransferDate!)
                             : '-';
-                        return _RequestCard(
+                        return RepaintBoundary(child: _RequestCard(
                           title:       '${req.workerName} · 중간정산',
                           subtitle:    '${req.periodLabel} · ${req.recordCount}건  ·  이체 예정일 $sdLabel',
                           detail:      '실수령: ${FormatHelper.formatWage(req.netAmount)}',
                           onProcess:   () => _processSettlement(req),
                           statusLabel: '이체 대기',
-                        );
+                        ));
                       }
                     }
 
@@ -1251,7 +1293,7 @@ class _PayrollPaymentDashboardScreenState
                         : '계좌 정보 없음';
 
                     final workerName = bank?['name'] ?? uid;
-                    return _WorkerPayCard(
+                    return RepaintBoundary(child: _WorkerPayCard(
                       workerName:    workerName,
                       bankInfo:      bankStr,
                       businessName:  recs.first.businessName,
@@ -1293,7 +1335,7 @@ class _PayrollPaymentDashboardScreenState
                         });
                       } : null,
                       onMarkTransferred: !_batchMode ? () => _markWorker(recs) : null,
-                    );
+                    ));
                   },
                 ),
               ),
@@ -1307,8 +1349,10 @@ class _PayrollPaymentDashboardScreenState
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       child: Row(children: [
         _NavArrow(
-          onTap: () => setState(() =>
-              _selectedTransferDate = d.subtract(const Duration(days: 1))),
+          onTap: () => setState(() {
+            _selectedTransferDate = d.subtract(const Duration(days: 1));
+            _recomputeDerived();
+          }),
           icon: Icons.chevron_left,
         ),
         Expanded(
@@ -1343,8 +1387,10 @@ class _PayrollPaymentDashboardScreenState
           ),
         ),
         _NavArrow(
-          onTap: () => setState(() =>
-              _selectedTransferDate = d.add(const Duration(days: 1))),
+          onTap: () => setState(() {
+            _selectedTransferDate = d.add(const Duration(days: 1));
+            _recomputeDerived();
+          }),
           icon: Icons.chevron_right,
         ),
       ]),
@@ -1353,7 +1399,7 @@ class _PayrollPaymentDashboardScreenState
 
   // ─── 이체현황 탭 ──────────────────────────────────────────
   Widget _buildTransferTab() {
-    final groups = _getFilteredGroups();
+    final groups = _filteredGroups; // H1: 캐시 사용
 
     final pendingGroups  = groups.where((e) =>
         !e.value.every((r) => r.wageStatus == AttendanceModel.wageTransferred)).toList();
@@ -1421,10 +1467,12 @@ class _PayrollPaymentDashboardScreenState
                     final schLabel   = _scheduleLabel(recs);
                     final daysUntil  = dueDate?.difference(_today).inDays;
 
-                    // 이체완료인 경우 bankInfo 대신 이체일 표시
+                    // 이체완료인 경우 bankInfo 대신 이체일 표시 (recs는 미정렬 → max transferDate 사용)
+                    final latestTransferDate = recs.where((r) => r.transferDate != null)
+                        .fold<DateTime?>(null, (m, r) => m == null || r.transferDate!.isAfter(m) ? r.transferDate : m);
                     final bankInfoStr = isXfer
-                        ? (recs.last.transferDate != null
-                            ? '이체: ${FormatHelper.formatDateDot(recs.last.transferDate!)}'
+                        ? (latestTransferDate != null
+                            ? '이체: ${FormatHelper.formatDateDot(latestTransferDate)}'
                             : '이체완료')
                         : isPartial
                             ? '부분이체 완료'
@@ -1432,7 +1480,7 @@ class _PayrollPaymentDashboardScreenState
                                 ? '${bank!['bankName']} ${bank['accountNumber']}'
                                 : '계좌 정보 없음');
 
-                    return _WorkerPayCard(
+                    return RepaintBoundary(child: _WorkerPayCard(
                       workerName:              bank?['name'] ?? uid,
                       bankInfo:                bankInfoStr,
                       businessName:            recs.first.businessName,
@@ -1464,7 +1512,7 @@ class _PayrollPaymentDashboardScreenState
                         );
                         if (result == true && mounted) _load();
                       },
-                    );
+                    ));
                   },
                 ),
               ),
@@ -1485,7 +1533,10 @@ class _PayrollPaymentDashboardScreenState
       };
     }).map((r) => r.userId).toSet().length;
 
-    final totalCount = countOf('monthly') + countOf('weekly') + countOf('daily');
+    final cMonthly   = countOf('monthly');
+    final cWeekly    = countOf('weekly');
+    final cDaily     = countOf('daily');
+    final totalCount = cMonthly + cWeekly + cDaily;
 
     return Padding(
       padding: EdgeInsets.symmetric(
@@ -1505,7 +1556,7 @@ class _PayrollPaymentDashboardScreenState
           const SizedBox(width: 6),
           AppFilterChip(
             label: '월급',
-            count: countOf('monthly'),
+            count: cMonthly,
             isSelected: _selectedPayType == 'monthly',
             color: AppColors.successDark,
             onTap: () => _setPayType('monthly'),
@@ -1513,7 +1564,7 @@ class _PayrollPaymentDashboardScreenState
           const SizedBox(width: 6),
           AppFilterChip(
             label: '주급',
-            count: countOf('weekly'),
+            count: cWeekly,
             isSelected: _selectedPayType == 'weekly',
             color: AppColors.infoDark,
             onTap: () => _setPayType('weekly'),
@@ -1521,7 +1572,7 @@ class _PayrollPaymentDashboardScreenState
           const SizedBox(width: 6),
           AppFilterChip(
             label: '일급',
-            count: countOf('daily'),
+            count: cDaily,
             isSelected: _selectedPayType == 'daily',
             color: AppColors.warningDark,
             onTap: () => _setPayType('daily'),
@@ -1555,6 +1606,7 @@ class _PayrollPaymentDashboardScreenState
                 color: AppColors.infoDark,
                 onTap: () => setState(() {
                   _selectedWeek = isSelected ? null : weekNum;
+                  _recomputeDerived(); // H1
                 }),
               ),
             );
@@ -1598,7 +1650,7 @@ class _PayrollPaymentDashboardScreenState
               if (_selectedDay != null) ...[
                 const SizedBox(width: 4),
                 GestureDetector(
-                  onTap: () => setState(() => _selectedDay = null),
+                  onTap: () => setState(() { _selectedDay = null; _recomputeDerived(); }),
                   child: const Icon(Icons.close, size: 13, color: AppColors.grey500),
                 ),
               ],
@@ -1615,15 +1667,19 @@ class _PayrollPaymentDashboardScreenState
       return const AppEmptyState(
           icon: Icons.swap_horiz_outlined, title: '지급방식 변경 요청이 없습니다');
     }
-    return ListView(
+    return ListView.builder(
       padding: ResponsiveHelper.listPadding(context),
-      children: _changeRequests.map((req) => _RequestCard(
-        title:     '${req.workerName} · 지급방식 변경',
-        subtitle:  req.changeDescription,
-        detail:    '효력: ${req.effectiveFrom}부터 · 사유: ${req.requestReason ?? '-'}',
-        onApprove: () => _approveChangeRequest(req),
-        onReject:  () => _rejectChangeRequest(req),
-      )).toList(),
+      itemCount: _changeRequests.length,
+      itemBuilder: (_, i) {
+        final req = _changeRequests[i];
+        return _RequestCard(
+          title:     '${req.workerName} · 지급방식 변경',
+          subtitle:  req.changeDescription,
+          detail:    '효력: ${req.effectiveFrom}부터 · 사유: ${req.requestReason ?? '-'}',
+          onApprove: () => _approveChangeRequest(req),
+          onReject:  () => _rejectChangeRequest(req),
+        );
+      },
     );
   }
 
@@ -1633,9 +1689,11 @@ class _PayrollPaymentDashboardScreenState
       return const AppEmptyState(
           icon: Icons.account_balance_wallet_outlined, title: '중간정산 요청이 없습니다');
     }
-    return ListView(
+    return ListView.builder(
       padding: ResponsiveHelper.listPadding(context),
-      children: _settlementRequests.map((req) {
+      itemCount: _settlementRequests.length,
+      itemBuilder: (_, i) {
+        final req = _settlementRequests[i];
         final scheduledLabel = req.scheduledTransferDate != null
             ? '이체 예정일: ${DateFormat('MM/dd').format(req.scheduledTransferDate!)}'
             : null;
@@ -1649,7 +1707,7 @@ class _PayrollPaymentDashboardScreenState
           onProcess:    req.isApproved ? () => _processSettlement(req)  : null,
           statusLabel:  req.statusLabel,
         );
-      }).toList(),
+      },
     );
   }
 }
@@ -1756,20 +1814,12 @@ class _WorkerPayCard extends StatelessWidget {
             ),
           ],
         ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // 왼쪽 컬러 인디케이터 (🔴/🟢 역할)
-                Container(width: 4, color: leftBarColor),
-
-                // 카드 본문
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    child: Row(
+        clipBehavior: Clip.hardEdge,
+        child: Stack(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+              child: Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         // 배치 체크박스
@@ -1836,24 +1886,20 @@ class _WorkerPayCard extends StatelessWidget {
                               // 2행: 사업장 · 계좌 + 건수
                               const SizedBox(height: 3),
                               Row(children: [
-                                Expanded(
-                                  child: Text(
-                                    [
+                                Expanded(child: () { // L3: 동일 리스트 2회 생성 방지
+                                    final infoLabel = [
                                       if (businessName != null && businessName!.isNotEmpty) businessName!,
                                       if (bankInfo.isNotEmpty) bankInfo,
-                                    ].join(' · ').isNotEmpty
-                                        ? [
-                                            if (businessName != null && businessName!.isNotEmpty) businessName!,
-                                            if (bankInfo.isNotEmpty) bankInfo,
-                                          ].join(' · ')
-                                        : '계좌 정보 없음',
-                                    style: ResponsiveHelper.tinyStyle(context,
-                                        color: bankInfo.isNotEmpty || isTransferred
-                                            ? AppColors.grey400
-                                            : AppColors.error),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
+                                    ].join(' · ');
+                                    return Text(
+                                      infoLabel.isNotEmpty ? infoLabel : '계좌 정보 없음',
+                                      style: ResponsiveHelper.tinyStyle(context,
+                                          color: bankInfo.isNotEmpty || isTransferred
+                                              ? AppColors.grey400
+                                              : AppColors.error),
+                                      overflow: TextOverflow.ellipsis,
+                                    );
+                                  }()),
                                 Text('$recordCount건',
                                     style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
                               ]),
@@ -1899,11 +1945,12 @@ class _WorkerPayCard extends StatelessWidget {
                         ),
                       ],
                     ),
-                  ),
-                ),
-              ],
             ),
-          ),
+            Positioned(
+              top: 0, left: 0, bottom: 0,
+              child: Container(width: 4, color: leftBarColor),
+            ),
+          ],
         ),
       ),
     );
@@ -2653,7 +2700,7 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
         // ── 요약 헤더
         Container(
           color: Colors.white,
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -2675,7 +2722,7 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
                       fontWeight: FontWeight.w700),
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 14),
               // 총액
               Text(
                 FormatHelper.formatWage(totalNet),
@@ -2690,7 +2737,7 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
               ),
               // 부분이체일 때만 이체/잔여 분리 표시
               if (isPartial) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: 10),
                 Row(children: [
                   const Icon(Icons.circle, size: 7, color: AppColors.success),
                   const SizedBox(width: 5),
@@ -2705,7 +2752,7 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
                           color: AppColors.warningDark, fontWeight: FontWeight.w600)),
                 ]),
               ],
-              const SizedBox(height: 12),
+              const SizedBox(height: 14),
               // 통계 한 줄 (• 구분자)
               Text(
                 [
@@ -2743,7 +2790,7 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
                 ]),
               ],
               // 공제 내역 접기/펼치기
-              const SizedBox(height: 12),
+              const SizedBox(height: 14),
               _buildDeductionSection(context, records),
             ],
           ),
@@ -2753,7 +2800,10 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
         // ── 레코드 목록 (섹션 헤더 포함)
         Expanded(
           child: ListView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            padding: EdgeInsets.fromLTRB(
+              16, 16, 16,
+              24 + MediaQuery.of(context).padding.bottom,
+            ),
             itemCount: items.length,
             itemBuilder: (ctx, i) {
               final item = items[i];

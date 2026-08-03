@@ -39,6 +39,7 @@ class _ScheduleRequestManagementDialogState
 
   List<_RequestWithUser> _allRequests = [];
   List<_RequestWithUser> _filteredRequests = [];
+  int _pendingCount = 0;
   String _selectedFilter = 'PENDING';
 
   @override
@@ -72,6 +73,7 @@ class _ScheduleRequestManagementDialogState
     if (mounted) {
       setState(() {
         _allRequests = results;
+        _pendingCount = results.where((r) => r.request.isPending).length;
         _applyFilter();
       });
     }
@@ -157,7 +159,7 @@ class _ScheduleRequestManagementDialogState
                             padding: ResponsiveHelper.cardPadding(context),
                             itemCount: _filteredRequests.length,
                             itemBuilder: (context, index) {
-                              return _buildRequestCard(_filteredRequests[index]);
+                              return RepaintBoundary(child: _buildRequestCard(_filteredRequests[index]));
                             },
                           ),
                         ),
@@ -170,7 +172,7 @@ class _ScheduleRequestManagementDialogState
 
   /// 필터 탭
   Widget _buildFilterTabs() {
-    final pendingCount = _allRequests.where((r) => r.request.isPending).length;
+    final pendingCount = _pendingCount;
     
     return Container(
       decoration: BoxDecoration(
@@ -604,6 +606,7 @@ class _ScheduleRequestManagementDialogState
   Future<void> _handleApprove(_RequestWithUser item) async {
     final confirmed = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StyledDialog(
         title: '요청 승인',
         icon: Icons.check_circle_outline,

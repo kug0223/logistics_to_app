@@ -85,6 +85,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
 
   // 신분증 일괄 요청 모드
   bool _isIdCardSelectMode = false;
+  bool _isBatchIdCardRequesting = false;
   final Set<String> _selectedIdCardUserIds = {};
 
   // 확정 취소 모드
@@ -523,15 +524,13 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
                   ],
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-                ClipRRect(
+                LinearProgressIndicator(
+                  value: progress,
+                  minHeight: 6,
                   borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value: progress,
-                    minHeight: 6,
-                    backgroundColor: AppColors.grey200,
-                    valueColor: AlwaysStoppedAnimation(
-                      isFull ? AppColors.success : AppColors.info,
-                    ),
+                  backgroundColor: AppColors.grey200,
+                  valueColor: AlwaysStoppedAnimation(
+                    isFull ? AppColors.success : AppColors.info,
                   ),
                 ),
               ],
@@ -1006,6 +1005,12 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
   }
 
   Future<void> _batchCancelConfirmation() async {
+    // BUG-003: 개별 확정취소(day_applicants_dialog)와 동일하게 canManageTo 기준으로 통일
+    final up = context.read<UserProvider>();
+    if (!up.can((p) => p.canManageTo)) {
+      ToastHelper.showWarning('확정 취소 권한이 없습니다.');
+      return;
+    }
     if (_selectedCancelAppIds.isEmpty) return;
 
     final cancelReason = await _showCancelReasonPicker();
@@ -1252,7 +1257,8 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
 
   /// 일괄 신분증 요청
   Future<void> _batchRequestIdCard() async {
-    if (_selectedIdCardUserIds.isEmpty) return;
+    if (_selectedIdCardUserIds.isEmpty || _isBatchIdCardRequesting) return;
+    setState(() => _isBatchIdCardRequesting = true);
 
     final userProvider = context.read<UserProvider>();
     final currentUser = userProvider.currentUser;
@@ -1280,8 +1286,9 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
     final businessId = widget.toItem.to.businessId;
     final business = await widget.firestoreService.getBusinessById(businessId);
 
-    if (!mounted) return;
+    if (!mounted) { _isBatchIdCardRequesting = false; return; }
     if (business == null) {
+      setState(() => _isBatchIdCardRequesting = false);
       ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
       return;
     }
@@ -1308,5 +1315,6 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
         _selectedIdCardUserIds.clear();
       });
     }
+    if (mounted) setState(() => _isBatchIdCardRequesting = false);
   }
 }

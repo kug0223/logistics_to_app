@@ -152,6 +152,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     String nameOf(ApplicationModel app) => widget.userMap[app.uid]?.name ?? '';
     _pendingWorkers.sort((a, b) => nameOf(a).compareTo(nameOf(b)));
 
+    // 급여 미리 계산 전 cache miss prefetch (중복 Firestore reads 방지)
+    await _prefetchMissingWorkDetails();
     // 급여 미리 계산 (async)
     await _calculateAllWages();
 
@@ -177,6 +179,48 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   /// 파트+시간대 그룹 키 생성
   String _getGroupKey(ApplicationModel app) =>
       '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
+
+  /// initState 시점 cache miss workDetail 일괄 prefetch
+  /// 동일 (toId, slotId)를 공유하는 N명이 있어도 Firestore 쿼리 1회로 제한
+  Future<void> _prefetchMissingWorkDetails() async {
+    final allWorkers = [..._pendingWorkers, ..._calculatedWorkers, ..._transferredWorkers];
+    final toPrefetch = <({String toId, String slotId})>{};
+    for (final app in allWorkers) {
+      if (WorkDetailHelper.resolve(app, widget.workDetailTimeMap) == null &&
+          app.toId != null && app.toId!.isNotEmpty) {
+        toPrefetch.add((toId: app.toId!, slotId: app.slotId ?? ''));
+      }
+    }
+    if (toPrefetch.isEmpty) return;
+    await Future.wait(toPrefetch.map((pair) async {
+      try {
+        List<dynamic> rawWorkDetails = [];
+        if (pair.slotId.isNotEmpty) {
+          final slotDoc = await FirebaseFirestore.instance
+              .collection('tos').doc(pair.toId)
+              .collection('slots').doc(pair.slotId).get();
+          if (slotDoc.exists) {
+            final slotWDs = slotDoc.data()?['workDetails'] as List<dynamic>?;
+            if (slotWDs != null && slotWDs.isNotEmpty) rawWorkDetails = slotWDs;
+          }
+        }
+        if (rawWorkDetails.isEmpty) {
+          final toDoc = await FirebaseFirestore.instance
+              .collection('tos').doc(pair.toId).get();
+          rawWorkDetails = toDoc.data()?['workDetails'] as List<dynamic>? ?? [];
+        }
+        String n(String? t) => (t ?? '').length >= 5 ? t!.substring(0, 5) : (t ?? '');
+        for (final wd in rawWorkDetails) {
+          final wdMap = Map<String, dynamic>.from(wd as Map);
+          final wdType = wdMap['workType'] as String? ?? '';
+          final key = '${wdType}_${n(wdMap['startTime'] as String?)}_${n(wdMap['endTime'] as String?)}';
+          widget.workDetailTimeMap.putIfAbsent(key, () => wdMap);
+        }
+      } catch (e) {
+        debugPrint('⚠️ WorkDetail prefetch 실패 (toId=${pair.toId}): $e');
+      }
+    }));
+  }
 
   /// 전체 급여 계산 — Future.wait으로 병렬 처리
   Future<void> _calculateAllWages() async {
@@ -254,11 +298,12 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       final groupKey = _getGroupKey(app);
       final groupExtra = _groupExtraBreakMinutes[groupKey] ?? 0;
       if (groupExtra > 0) {
-        setState(() => _workerExtraBreakMinutes[app.id] = groupExtra);
         final wage = await _calculateWageForWorker(app, extraBreakMinutes: groupExtra, forceRecalculate: true);
-        if (wage != null && mounted) {
-          setState(() => _calculatedWages[app.id] = wage);
-        }
+        if (!mounted) return;
+        setState(() {
+          _workerExtraBreakMinutes[app.id] = groupExtra;
+          if (wage != null) _calculatedWages[app.id] = wage;
+        });
       }
     }
   }
@@ -464,17 +509,25 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
     final adminUid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
 
-    // ── 8일 소급 사전 체크 ──────────────────────────────────────
+    // ── 8일 소급 사전 체크 (병렬) ──────────────────────────────
+      final day8AppIds = _pendingSelectedIds.where((id) {
+        final w = _calculatedWages[id];
+        final att = widget.attendanceMap[id];
+        return w != null && att != null &&
+            w.taxDeductionType == InsuranceRateModel.typeDailyAuto8;
+      }).toList();
+      final day8AllResults = <String, WageDetailModel>{};
       final day8Previews = <String, WageDetailModel>{};
-      for (var appId in _pendingSelectedIds) {
-        final w = _calculatedWages[appId];
-        final att = widget.attendanceMap[appId];
-        if (w == null || att == null) continue;
-        if (w.taxDeductionType != InsuranceRateModel.typeDailyAuto8) continue;
-
-        final preview = await _checkAndApplyRetroactive(att, w);
-        if (preview.retroactiveDeduction > 0) {
-          day8Previews[appId] = preview;
+      if (day8AppIds.isNotEmpty) {
+        final results = await Future.wait(
+          day8AppIds.map((id) => _checkAndApplyRetroactive(
+              widget.attendanceMap[id]!, _calculatedWages[id]!)),
+        );
+        for (int i = 0; i < day8AppIds.length; i++) {
+          day8AllResults[day8AppIds[i]] = results[i];
+          if (results[i].retroactiveDeduction > 0) {
+            day8Previews[day8AppIds[i]] = results[i];
+          }
         }
       }
 
@@ -501,67 +554,43 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       // ────────────────────────────────────────────────────────────
 
 
-      int successCount = 0;
-      int failCount = 0;
-      final confirmedIds = <String>{};
-      final failedNames = <String>[];
+      // ── payScheduleType 일괄 프리패치 (병렬) ──────────────────
+      final payScheduleCache = <String, (String?, int?)>{};
+      await Future.wait(_pendingSelectedIds.map((appId) async {
+        final app = widget.workers.where((w) => w.id == appId).firstOrNull;
+        if (app == null || app.toId == null) return;
+        final detail = WorkDetailHelper.resolve(app, widget.workDetailTimeMap);
+        if (detail != null && detail['payScheduleType'] != null) return;
+        payScheduleCache[appId] = await _fetchPayScheduleType(app);
+      }));
 
-      // [특이사항 2026-07-14] 루프 내부 await(CF call) 후 per-iteration mounted 체크 없음
-      // 현재는 루프 내부에서 setState 호출이 없고 로컬 변수/Map만 갱신하므로 실제 크래시 없음
-      // 루프 완료 후 line ~600에서 mounted 체크 + setState — 안전한 구조
-      for (var appId in _pendingSelectedIds) {
-        // 사전 계산된 8일 소급 결과 재사용, 없으면 원본 사용
-        var wage = day8Previews[appId] ?? _calculatedWages[appId];
+      // ── CF 확정 병렬 실행 ─────────────────────────────────────
+      final cfResults = await Future.wait(_pendingSelectedIds.map((appId) async {
         final attendance = widget.attendanceMap[appId];
+        final app = widget.workers.where((w) => w.id == appId).firstOrNull;
+        final wage = day8AllResults[appId] ?? _calculatedWages[appId];
 
         if (wage == null || attendance == null) {
-          failCount++;
-          final failApp = widget.workers.where((w) => w.id == appId).firstOrNull;
-          failedNames.add(widget.userMap[failApp?.uid]?.name ?? appId);
-          continue;
+          return (
+            success: false,
+            appId: appId,
+            wage: null as WageDetailModel?,
+            failedName: widget.userMap[app?.uid]?.name ?? appId,
+          );
         }
 
         try {
-          // daily_auto_8이지만 8일차가 아닌 경우(1~7일) 처리
-          if (_calculatedWages[appId]?.taxDeductionType == InsuranceRateModel.typeDailyAuto8
-              && !day8Previews.containsKey(appId)) {
-            wage = await _checkAndApplyRetroactive(attendance, _calculatedWages[appId]!);
-          }
-
-          final appIdx = widget.workers.indexWhere((w) => w.id == appId);
-          final app = appIdx >= 0 ? widget.workers[appIdx] : null;
-          final detail = app != null ? WorkDetailHelper.resolve(app, widget.workDetailTimeMap) : null;
+          final detail = app != null
+              ? WorkDetailHelper.resolve(app, widget.workDetailTimeMap)
+              : null;
           String? payScheduleType = detail?['payScheduleType'] as String?;
-          int?    payScheduleDay  = (detail?['payScheduleDay'] as num?)?.toInt();
+          int? payScheduleDay = (detail?['payScheduleDay'] as num?)?.toInt();
 
-          // 캐시에 payScheduleType 없으면 Firestore에서 직접 조회
-          if (payScheduleType == null && app != null && app.toId != null) {
-            try {
-              List<dynamic> rawWd = [];
-              if (app.slotId != null && app.slotId!.isNotEmpty) {
-                final slotDoc = await FirebaseFirestore.instance
-                    .collection('tos').doc(app.toId)
-                    .collection('slots').doc(app.slotId).get();
-                rawWd = slotDoc.data()?['workDetails'] as List<dynamic>? ?? [];
-              }
-              if (rawWd.isEmpty) {
-                final toDoc = await FirebaseFirestore.instance
-                    .collection('tos').doc(app.toId).get();
-                rawWd = toDoc.data()?['workDetails'] as List<dynamic>? ?? [];
-              }
-              for (var wd in rawWd) {
-                final wdMap = Map<String, dynamic>.from(wd as Map);
-                final wdType = wdMap['workType'] as String? ?? '';
-                if (wdType == app.selectedWorkType ||
-                    '${wdType}_${wdMap['startTime'] ?? ''}_${wdMap['endTime'] ?? ''}' == app.workDetailId) {
-                  payScheduleType = wdMap['payScheduleType'] as String?;
-                  payScheduleDay  = (wdMap['payScheduleDay'] as num?)?.toInt();
-                  debugPrint('✅ payScheduleType Firestore 폴백: $payScheduleType');
-                  break;
-                }
-              }
-            } catch (e) {
-              debugPrint('⚠️ payScheduleType 조회 실패: $e');
+          if (payScheduleType == null) {
+            final cached = payScheduleCache[appId];
+            if (cached != null) {
+              payScheduleType = cached.$1;
+              payScheduleDay = cached.$2;
             }
           }
 
@@ -570,13 +599,18 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             calculatedBy: adminUid,
             calculatedAt: DateTime.now(),
             payScheduleType: payScheduleType ?? wage.payScheduleType,
-            payScheduleDay:  payScheduleDay  ?? wage.payScheduleDay,
+            payScheduleDay: payScheduleDay ?? wage.payScheduleDay,
           );
 
-          // [Phase 2] 급여 확정 — CF callableCalculateAndConfirmWage 경유 (서버 재계산)
-          // 서버에서 파라미터로 재계산 → 8일 소급 자동 처리 → 원자적 저장
-          final params = _wageParams[appId];
-          if (params == null) throw StateError('계산 파라미터 없음: $appId');
+          var params = _wageParams[appId];
+          if (params == null && app != null) {
+            // early return(isCalculated)으로 _wageParams 미설정된 경우 — 재계산으로 복원
+            await _calculateWageForWorker(app, extraBreakMinutes: _workerExtraBreakMinutes[app.id] ?? 0, forceRecalculate: true);
+            params = _wageParams[appId];
+          }
+          if (params == null) {
+            return (success: false, appId: appId, wage: null as WageDetailModel?, failedName: widget.userMap[app?.uid]?.name ?? appId);
+          }
           final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
               .httpsCallable('callableCalculateAndConfirmWage',
                   options: HttpsCallableOptions(timeout: const Duration(seconds: 30)))
@@ -590,7 +624,6 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           final serverNetWage = (result.data['effectiveNetWage'] as num?)?.toInt()
               ?? calculatedWage.effectiveNetWage;
 
-          // 8일 소급 적용된 근로자에게 알림 발송 (클라이언트 사전 체크 결과 기반)
           if (calculatedWage.retroactiveDeduction > 0 && app != null) {
             _firestoreService.createNotification(
               NotificationModel.createRetroactiveDeductionAlert(
@@ -606,14 +639,36 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             );
           }
 
-          successCount++;
-          confirmedIds.add(appId);
-          _calculatedWages[appId] = calculatedWage;
+          return (
+            success: true,
+            appId: appId,
+            wage: calculatedWage,
+            failedName: null as String?,
+          );
         } catch (e) {
           debugPrint('❌ 급여 확정 실패 ($appId): $e');
+          return (
+            success: false,
+            appId: appId,
+            wage: null as WageDetailModel?,
+            failedName: widget.userMap[app?.uid]?.name ?? appId,
+          );
+        }
+      }));
+
+      // 결과 집계
+      int successCount = 0;
+      int failCount = 0;
+      final confirmedIds = <String>{};
+      final failedNames = <String>[];
+      for (final r in cfResults) {
+        if (r.success) {
+          successCount++;
+          confirmedIds.add(r.appId);
+          if (r.wage != null) _calculatedWages[r.appId] = r.wage!;
+        } else {
           failCount++;
-          final failApp = widget.workers.where((w) => w.id == appId).firstOrNull;
-          failedNames.add(widget.userMap[failApp?.uid]?.name ?? appId);
+          if (r.failedName != null) failedNames.add(r.failedName!);
         }
       }
 
@@ -670,6 +725,41 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   // ═══════════════════════════════════════════════════════════
 
   String _toYearMonth(DateTime date) => FormatHelper.formatYearMonthISO(date);
+
+  /// payScheduleType / payScheduleDay를 Firestore에서 조회 (캐시 미스 시 프리패치에서 호출)
+  Future<(String?, int?)> _fetchPayScheduleType(ApplicationModel app) async {
+    if (app.toId == null) return (null, null);
+    try {
+      List<dynamic> rawWd = [];
+      if (app.slotId != null && app.slotId!.isNotEmpty) {
+        final slotDoc = await FirebaseFirestore.instance
+            .collection('tos').doc(app.toId)
+            .collection('slots').doc(app.slotId).get();
+        rawWd = slotDoc.data()?['workDetails'] as List<dynamic>? ?? [];
+      }
+      if (rawWd.isEmpty) {
+        final toDoc = await FirebaseFirestore.instance
+            .collection('tos').doc(app.toId).get();
+        rawWd = toDoc.data()?['workDetails'] as List<dynamic>? ?? [];
+      }
+      for (final wd in rawWd) {
+        final wdMap = Map<String, dynamic>.from(wd as Map);
+        final wdType = wdMap['workType'] as String? ?? '';
+        if (wdType == app.selectedWorkType ||
+            '${wdType}_${wdMap['startTime'] ?? ''}_${wdMap['endTime'] ?? ''}' ==
+                app.workDetailId) {
+          debugPrint('✅ payScheduleType Firestore 폴백: ${wdMap['payScheduleType']}');
+          return (
+            wdMap['payScheduleType'] as String?,
+            (wdMap['payScheduleDay'] as num?)?.toInt(),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ payScheduleType 조회 실패: $e');
+    }
+    return (null, null);
+  }
 
   /// daily_auto_8 타입 근무자의 당일 순서(N번째 근무일)를 확인해 소급 계산 적용
   Future<WageDetailModel> _checkAndApplyRetroactive(
@@ -1006,7 +1096,12 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       );
 
       // [Phase 2] 급여 확정 — CF callableCalculateAndConfirmWage 경유 (서버 재계산)
-      final indivParams = _wageParams[app.id];
+      var indivParams = _wageParams[app.id];
+      if (indivParams == null) {
+        // early return(isCalculated)으로 _wageParams 미설정된 경우 — 재계산으로 복원
+        await _calculateWageForWorker(app, extraBreakMinutes: _workerExtraBreakMinutes[app.id] ?? 0, forceRecalculate: true);
+        indivParams = _wageParams[app.id];
+      }
       if (indivParams == null) throw StateError('계산 파라미터 없음: ${app.id}');
       final indivResult = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableCalculateAndConfirmWage',
@@ -1193,12 +1288,13 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     }
   }
 
-  /// 선택된 인원 일괄 급여 확정 취소
+  /// 선택된 인원 일괄 급여 확정 취소 (병렬)
+  ///
+  /// 개선: N 직렬 CF + 3N setState → N 병렬 CF + N 병렬 재계산 + 단일 setState
   Future<void> _cancelSelectedWages() async {
     if (_isProcessing) return;
     if (_calculatedSelectedIds.isEmpty) return;
 
-    // [BUG-FIX 2026-07-16] 확인 다이얼로그 중 중복 탭 방지용으로만 lock
     setState(() => _isProcessing = true);
     try {
       final count = _calculatedSelectedIds.length;
@@ -1211,27 +1307,79 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       if (!confirmed || !mounted) return;
 
       final ids = List<String>.from(_calculatedSelectedIds);
-      // 루프 전에 앱 스냅샷 확보 — _processWageCancel 내부 setState가 _calculatedWorkers를 수정하기 때문
       final appSnapshots = <String, ApplicationModel>{};
       for (final id in ids) {
         final matches = _calculatedWorkers.where((a) => a.id == id);
         if (matches.isNotEmpty) appSnapshots[id] = matches.first;
       }
 
-      // [BUG-FIX 2026-07-16] 루프 전 unlock — _processWageCancel이 자체적으로 _isProcessing을 관리.
-      //   기존: _isProcessing=true 유지 → _processWageCancel guard(if _isProcessing return)에서
-      //   즉시 return → 실제 CF 미호출 → 성공 토스트만 표시되는 완전 무동작 버그.
-      setState(() => _isProcessing = false);
-
-      for (final appId in ids) {
-        if (!mounted) break;
+      // ── CF 취소 병렬 실행 ─────────────────────────────────────
+      final cfCancelFn = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableWageCancel');
+      final cancelResults = await Future.wait(ids.map((appId) async {
         final app = appSnapshots[appId];
-        if (app == null) continue;
         final attendance = widget.attendanceMap[appId];
-        if (attendance == null) continue;
-        await _processWageCancel(app, attendance, showToast: false); // [B-8] 일괄 취소 시 개별 토스트 억제
+        if (app == null || attendance == null) {
+          return (success: false, appId: appId);
+        }
+        try {
+          await cfCancelFn.call({
+            'businessId': widget.businessId,
+            'attendanceId': attendance.id,
+          });
+          return (success: true, appId: appId);
+        } on FirebaseFunctionsException catch (e) {
+          debugPrint('❌ 급여 취소 CF 실패 ($appId): ${e.code} ${e.message}');
+          return (success: false, appId: appId);
+        } catch (e) {
+          debugPrint('❌ 급여 취소 실패 ($appId): $e');
+          return (success: false, appId: appId);
+        }
+      }));
+
+      if (!mounted) return;
+
+      final successIds =
+          cancelResults.where((r) => r.success).map((r) => r.appId).toList();
+      if (successIds.isEmpty) {
+        ToastHelper.showError('급여 확정 취소에 실패했습니다');
+        return;
       }
-      if (mounted) ToastHelper.showSuccess('$count명 급여 확정 취소 완료');
+
+      // ── 재계산 병렬 실행 ──────────────────────────────────────
+      final recalcResults = await Future.wait(successIds.map((appId) async {
+        final app = appSnapshots[appId]!;
+        final extra = _workerExtraBreakMinutes[app.id] ?? 0;
+        final newWage = await _calculateWageForWorker(
+            app, extraBreakMinutes: extra, forceRecalculate: true);
+        return (appId: appId, app: app, newWage: newWage);
+      }));
+
+      if (!mounted) return;
+      _hasChanges = true;
+      widget.onConfirmed?.call();
+
+      // ── 단일 setState로 UI 일괄 갱신 ─────────────────────────
+      setState(() {
+        for (final r in recalcResults) {
+          _calculatedWorkers.removeWhere((w) => w.id == r.appId);
+          _pendingWorkers.add(r.app);
+          _calculatedSelectedIds.remove(r.appId);
+          if (r.newWage != null) _calculatedWages[r.appId] = r.newWage!;
+          final oldAtt = widget.attendanceMap[r.appId];
+          if (oldAtt != null) {
+            widget.attendanceMap[r.appId] =
+                oldAtt.copyWith(wageStatus: AttendanceModel.wagePending);
+          }
+        }
+      });
+
+      final failCount = count - successIds.length;
+      if (failCount > 0) {
+        ToastHelper.showWarning('${successIds.length}명 취소 완료, $failCount명 실패');
+      } else {
+        ToastHelper.showSuccess('$count명 급여 확정 취소 완료');
+      }
     } catch (e) {
       debugPrint('❌ 일괄 급여 취소 실패: $e');
       if (mounted) ToastHelper.showError('급여 확정 취소에 실패했습니다');
@@ -1761,12 +1909,15 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       children: [
         _buildSelectionBar(context, theme, _pendingWorkers, _pendingSelectedIds, true),
         Expanded(
-          child: ListView(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-            children: groups.entries.map((entry) {
-              return _buildGroupSection(context, theme, entry.value, _pendingSelectedIds);
-            }).toList(),
-          ),
+          child: Builder(builder: (context) {
+            final groupEntries = groups.entries.toList();
+            return ListView.builder(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+              itemCount: groupEntries.length,
+              itemBuilder: (_, i) => _buildGroupSection(
+                  context, theme, groupEntries[i].value, _pendingSelectedIds),
+            );
+          }),
         ),
         _buildBottomSection(context, theme, _pendingSelectedIds, true),
       ],
@@ -1794,7 +1945,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               final app = _calculatedWorkers[index];
               final attendance = widget.attendanceMap[app.id];
               final isConfirmed = attendance?.wageStatus == AttendanceModel.wageConfirmed;
-              return Stack(
+              return RepaintBoundary(child: Stack(
                 children: [
                   _buildWorkerCard(context, theme, app, _calculatedSelectedIds, false),
                   if (isConfirmed)
@@ -1817,7 +1968,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                       ),
                     ),
                 ],
-              );
+              ));
             },
           ),
         ),
@@ -1903,7 +2054,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                   attendance?.wageStatus == AttendanceModel.wageConfirmed;
               final isSelected = _transferredSelectedIds.contains(app.id);
 
-              return GestureDetector(
+              return RepaintBoundary(child: GestureDetector(
                 onTap: () => _showWageDetailDialog(app, isCalculated: true),
                 child: Container(
                   margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
@@ -2028,7 +2179,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                     ),
                   ),
                 ),
-              );
+              ));
             },
           ),
         ),
