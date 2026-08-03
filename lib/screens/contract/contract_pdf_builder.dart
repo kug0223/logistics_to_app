@@ -39,9 +39,12 @@ class ContractPdfBuilder {
         final resp = await http.get(Uri.parse(employerSignatureUrl));
         if (resp.statusCode == 200) {
           employerSig = pw.MemoryImage(resp.bodyBytes);
+        } else {
+          throw Exception('사업주 서명 이미지 로드 실패 (HTTP ${resp.statusCode})');
         }
       } catch (e) {
         if (kDebugMode) debugPrint('사업주 서명 이미지 로드 실패: $e');
+        rethrow;
       }
     }
     if (workerSignatureBytes != null) {

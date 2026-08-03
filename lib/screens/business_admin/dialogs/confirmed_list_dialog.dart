@@ -1249,9 +1249,7 @@ class _ConfirmedListDialogWidgetState extends State<_ConfirmedListDialogWidget>
       ),
     );
 
-    Future<void>.delayed(const Duration(milliseconds: 400)).then((_) {
-      customController.dispose();
-    });
+    customController.dispose();
     return result;
   }
 
