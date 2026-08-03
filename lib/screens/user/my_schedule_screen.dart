@@ -30,13 +30,17 @@ class MyScheduleScreen extends StatefulWidget {
 }
 
 class _MyScheduleScreenState extends State<MyScheduleScreen> {
+  static final _fmt = NumberFormat('#,###');
   final FirestoreService _firestoreService = FirestoreService();
 
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
+  // 월 빠른 전환 시 stale 배치 무시 — _loadMonthlyAttendances와 세대 비교
+  int _monthGeneration = 0;
 
   List<ApplicationModel> _applications = [];
   bool _isLoading = true;
+  bool _initialLoadStarted = false;
 
   // 필터: ALL / CONFIRMED / PENDING
   String _selectedFilter = 'ALL';
@@ -54,9 +58,10 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   int _cachedTotalIncome = 0;
   int _cachedActualDays = 0;
   int _cachedConfirmedIncome = 0;
+  List<AttendanceModel> _cachedConfirmedWageRecords = []; // H2: getter 대신 캐시
+  List<ApplicationModel> _selectedDayEvents = []; // H1: 선택 날짜 이벤트 캐시 (정렬 포함)
 
   void _recomputeStats() {
-    // 날짜 인덱스 재빌드 (필터 변경 또는 데이터 갱신 시)
     _dateIndex = CalendarHelper.buildDateIndex(_applications, _selectedFilter);
 
     final thisMonth = CalendarHelper.getThisMonthApplications(_applications, _focusedDay);
@@ -66,6 +71,27 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     _cachedTotalIncome     = CalendarHelper.getTotalIncome(thisMonth, _focusedDay);
     _cachedActualDays      = CalendarHelper.getActualWorkDays(attendances, _focusedDay);
     _cachedConfirmedIncome = CalendarHelper.getConfirmedIncome(attendances, _focusedDay);
+    // H2: 확정 급여 기록 — 월 기준으로 필터링 후 캐시
+    final year = _focusedDay.year;
+    final month = _focusedDay.month;
+    _cachedConfirmedWageRecords = attendances.where((a) =>
+      a.workDate.year == year && a.workDate.month == month &&
+      (a.wageStatus == AttendanceModel.wageConfirmed ||
+       a.wageStatus == AttendanceModel.wageTransferred) &&
+      a.wageDetail != null,
+    ).toList();
+    _recomputeSelectedDayEvents(); // H1: dateIndex 갱신 후 선택 날짜 이벤트 재계산
+  }
+
+  // H1: 선택 날짜 이벤트를 캐싱 + 정렬 — _buildDayEventCount·_buildSliverScheduleList 공유
+  void _recomputeSelectedDayEvents() {
+    if (_selectedDay == null) {
+      _selectedDayEvents = [];
+      return;
+    }
+    final events = CalendarHelper.getEventsForDayFromIndex(_selectedDay!, _dateIndex);
+    events.sort((a, b) => _statusOrder(a.status).compareTo(_statusOrder(b.status)));
+    _selectedDayEvents = events;
   }
 
   @override
@@ -76,36 +102,36 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       _focusedDay.month,
       _focusedDay.day,
     );
-    _loadApplications();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_initialLoadStarted) {
+      _initialLoadStarted = true;
+      _loadApplications();
+    }
   }
 
   // ─── 데이터 로드 ────────────────────────────────────────────
 
   Future<void> _loadApplications() async {
     if (!mounted) return;
+    final uid = context.read<UserProvider>().currentUser?.uid;
+    if (uid == null) {
+      ToastHelper.showError('로그인이 필요합니다.');
+      setState(() => _isLoading = false);
+      return;
+    }
     setState(() => _isLoading = true);
+
+    // Phase 1: 지원 내역 먼저 로드 (1분 TTL 캐시 — 재방문 시 즉시 반환)
     try {
-      final uid = context.read<UserProvider>().currentUser?.uid;
-      if (uid == null) {
-        ToastHelper.showError('로그인이 필요합니다.');
-        setState(() => _isLoading = false);
-        return;
-      }
-
-      // Future.wait — 한 쪽 실패 시 outer catch(108행)가 처리, mounted 체크(103행)로 setState 안전
-      final results = await Future.wait([
-        _firestoreService.getMyApplications(uid),
-        _firestoreService.getMyMonthlyAttendances(
-          userId: uid,
-          year: _focusedDay.year,
-          month: _focusedDay.month,
-        ),
-      ]);
-
+      final applications = await _firestoreService.getMyApplications(uid);
       if (!mounted) return;
-      _applications  = results[0] as List<ApplicationModel>;
-      _attendanceMap = _buildAttendanceMap(results[1] as List<AttendanceModel>);
-      _recomputeStats(); // 데이터 확정 후 1회 계산
+      _applications = applications;
+      _attendanceMap = {};
+      _recomputeStats();
       setState(() => _isLoading = false);
     } catch (e) {
       debugPrint('❌ 지원 내역 로드 실패: $e');
@@ -113,6 +139,23 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         setState(() => _isLoading = false);
         ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
       }
+      return;
+    }
+
+    // Phase 2: 출근 기록 백그라운드 로드 (2분 TTL 캐시)
+    // 실패해도 스케줄 카드는 이미 표시되어 있으므로 토스트 없이 조용히 처리
+    try {
+      final attendances = await _firestoreService.getMyMonthlyAttendances(
+        userId: uid,
+        year: _focusedDay.year,
+        month: _focusedDay.month,
+      );
+      if (!mounted) return;
+      _attendanceMap = _buildAttendanceMap(attendances);
+      _recomputeStats();
+      setState(() {});
+    } catch (e) {
+      debugPrint('❌ 출근 기록 로드 실패: $e');
     }
   }
 
@@ -125,6 +168,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   /// 통계·캘린더 인덱스가 올바르게 갱신된다.
   Future<void> _loadMonthlyAttendances(DateTime focusedDay) async {
     if (!mounted) return;
+    final gen = _monthGeneration; // 빠른 전환 시 stale 배치 폐기용
     final uid = context.read<UserProvider>().currentUser?.uid;
     if (uid == null) return;
     try {
@@ -136,13 +180,12 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
           month: focusedDay.month,
         ),
       ]);
-      if (mounted) {
-        setState(() {
-          _applications  = results[0] as List<ApplicationModel>;
-          _attendanceMap = _buildAttendanceMap(results[1] as List<AttendanceModel>);
-          _recomputeStats();
-        });
-      }
+      if (!mounted || _monthGeneration != gen) return;
+      setState(() {
+        _applications  = results[0] as List<ApplicationModel>;
+        _attendanceMap = _buildAttendanceMap(results[1] as List<AttendanceModel>);
+        _recomputeStats();
+      });
     } catch (e) {
       debugPrint('❌ 월별 출근 기록 로드 실패: $e');
       if (mounted) ToastHelper.showError('출근 기록을 불러오지 못했습니다');
@@ -276,9 +319,11 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
                 setState(() {
                   _selectedDay = selectedDay;
                   _focusedDay  = focusedDay;
+                  _recomputeSelectedDayEvents(); // H1
                 });
               },
               onPageChanged: (focusedDay) {
+                _monthGeneration++;
                 setState(() => _focusedDay = focusedDay);
                 _loadMonthlyAttendances(focusedDay);
               },
@@ -386,10 +431,10 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
           Row(
             children: [
               Expanded(child: Center(child: _statItem(Icons.payments, '예상수입(세전)',
-                  '${NumberFormat('#,###').format(totalIncome)}원', AppColors.info))),
+                  '${_fmt.format(totalIncome)}원', AppColors.info))),
               _vDivider(),
               Expanded(child: Center(child: _statItem(Icons.paid, '확정수입',
-                  '${NumberFormat('#,###').format(confirmedIncome)}원',
+                  '${_fmt.format(confirmedIncome)}원',
                   AppColors.success))),
             ],
           ),
@@ -427,18 +472,8 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     );
   }
 
-  /// 확정 급여 출근 기록 (현재 월)
-  List<AttendanceModel> get _confirmedWageRecords {
-    final year  = _focusedDay.year;
-    final month = _focusedDay.month;
-    return _attendanceMap.values.where((a) =>
-      a.workDate.year  == year  &&
-      a.workDate.month == month &&
-      (a.wageStatus == AttendanceModel.wageConfirmed ||
-       a.wageStatus == AttendanceModel.wageTransferred) &&
-      a.wageDetail != null,
-    ).toList();
-  }
+  // H2: build()마다 _attendanceMap 재순회 방지 — _recomputeStats()에서 갱신
+  List<AttendanceModel> get _confirmedWageRecords => _cachedConfirmedWageRecords;
 
   bool _isGeneratingPayslip = false;
 
@@ -601,10 +636,8 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   }
 
   Widget _buildDayEventCount() {
-    final events = CalendarHelper.getEventsForDayFromIndex(
-      _selectedDay!, _dateIndex,
-    );
-    if (events.isEmpty) return const SizedBox.shrink();
+    // H1: 캐시된 _selectedDayEvents 사용 — getEventsForDayFromIndex 중복 호출 제거
+    if (_selectedDayEvents.isEmpty) return const SizedBox.shrink();
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
@@ -612,7 +645,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         borderRadius: BorderRadius.circular(10),
       ),
       child: Text(
-        '${events.length}건',
+        '${_selectedDayEvents.length}건',
         style: ResponsiveHelper.tinyStyle(
           context,
           color: Theme.of(context).primaryColor,
@@ -626,14 +659,8 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
 
   Widget _buildSliverScheduleList() {
     if (_selectedDay == null) return const SliverToBoxAdapter(child: SizedBox.shrink());
-
-    final events = CalendarHelper.getEventsForDayFromIndex(
-      _selectedDay!, _dateIndex,
-    );
-
-    if (events.isEmpty) return _buildEmptyState();
-
-    events.sort((a, b) => _statusOrder(a.status).compareTo(_statusOrder(b.status)));
+    // H1: 캐시된 _selectedDayEvents 사용 — 중복 조회·정렬 제거
+    if (_selectedDayEvents.isEmpty) return _buildEmptyState();
 
     return SliverPadding(
       padding: EdgeInsets.fromLTRB(
@@ -645,18 +672,20 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       sliver: SliverList(
         delegate: SliverChildBuilderDelegate(
           (context, index) {
-            final app = events[index];
+            final app = _selectedDayEvents[index];
             final key =
                 '${app.id}_${_selectedDay!.year}-${_selectedDay!.month}-${_selectedDay!.day}';
             final attendance = _attendanceMap[key];
-            return ScheduleCard(
-              application: app,
-              attendance: attendance,
-              onChanged: _loadApplications,
-              selectedDay: _selectedDay,
+            return RepaintBoundary( // L1: 카드별 GPU 재래스터 방지
+              child: ScheduleCard(
+                application: app,
+                attendance: attendance,
+                onChanged: _loadApplications,
+                selectedDay: _selectedDay,
+              ),
             );
           },
-          childCount: events.length,
+          childCount: _selectedDayEvents.length,
         ),
       ),
     );

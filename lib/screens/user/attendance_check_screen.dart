@@ -539,8 +539,10 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
     String loadingMsg = 'GPS 확인 중...',
     bool silent = false,
   }) async {
-    // GPS 권한/서비스 상세 체크 — 서비스 Off와 권한 거부 메시지 분기
-    final locationResult = await LocationHelper.checkAndRequestPermissionDetailed();
+    // GPS 권한/서비스 상세 체크 — silent 모드에서는 OS 팝업 억제(both 모드 폴백 분기)
+    final locationResult = await LocationHelper.checkAndRequestPermissionDetailed(
+      requestIfNeeded: !silent,
+    );
     if (locationResult != LocationCheckResult.ok) {
       if (!silent && mounted) {
         final isServiceOff  = locationResult == LocationCheckResult.serviceDisabled;

@@ -196,8 +196,10 @@ class _UserContractsScreenState extends State<UserContractsScreen>
         _items[idx] = updated;
       }
     });
-    // 단건 변경을 캐시에도 반영
-    _tabCache[_tabCtrl.index] = (items: List.from(_items), lastDocId: _lastDocId, hasMore: _hasMore);
+    // 단건 변경 — 현재 탭 캐시 갱신, 다른 탭은 상태 변경 여파로 stale → 클리어 후 재조회
+    final currentIdx = _tabCtrl.index;
+    _tabCache.clear();
+    _tabCache[currentIdx] = (items: List.from(_items), lastDocId: _lastDocId, hasMore: _hasMore);
   }
 
   @override

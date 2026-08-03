@@ -69,7 +69,12 @@ class BeaconHelper {
       final completer = Completer<bool>();
       StreamSubscription? sub;
 
-      FlutterBluePlus.startScan(timeout: timeout);
+      // startScan은 스캔 완료(timeout)까지 resolve하는 Future이므로 await 불가.
+      // 에러(BT off 등)만 completer로 전파하여 catch 없이 누수되지 않도록 처리.
+      FlutterBluePlus.startScan(timeout: timeout).catchError((Object e) {
+        debugPrint('❌ [Beacon] startScan 실패: $e');
+        if (!completer.isCompleted) completer.complete(false);
+      });
 
       sub = FlutterBluePlus.scanResults.listen(
         (results) {

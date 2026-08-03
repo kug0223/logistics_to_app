@@ -2527,12 +2527,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       if (mounted) ToastHelper.showError('지원 취소 후 상태 갱신에 실패했습니다');
     } finally {
       if (mounted) {
-        // ✅ 로딩 키 통일
-        final loadingKey = _makeWorkKey(
-          application.selectedWorkType,
-          application.startTime,
-          application.endTime,
-        );
         setState(() {
           _isSubmitting = false;
           _loadingWorkIds.remove(loadingKey);

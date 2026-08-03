@@ -99,11 +99,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
             }
           });
         }
-        final unreadList = provider.notifications.where((n) => !n.isRead).toList();
+        final unreadList = provider.unreadNotifications;
         // 서브어드민 전용: 관리자 알림만 필터링
-        final adminList = isSubAdmin
-            ? provider.notifications.where((n) => kAdminNotifTypes.contains(n.type)).toList()
-            : <NotificationModel>[];
+        final adminList = isSubAdmin ? provider.adminNotifications : <NotificationModel>[];
 
         return DefaultTabController(
           length: isSubAdmin ? 3 : 2,
@@ -192,9 +190,10 @@ class _NotificationScreenState extends State<NotificationScreen> {
       return _buildErrorState(context, provider);
     }
 
-    // [PERF-2026-07-16] rebuild당 _buildGroupedItems를 _buildBody에서 한 번만 계산
-    final groupedAll = _buildGroupedItems(provider.notifications);
-    final groupedUnread = _buildGroupedItems(unreadList);
+    // rebuild당 DateTime.now() 한 번만 계산 — _buildGroupedItems 3회 공유
+    final now = DateTime.now();
+    final groupedAll = _buildGroupedItems(provider.notifications, now);
+    final groupedUnread = _buildGroupedItems(unreadList, now);
 
     return TabBarView(
       children: [
@@ -217,7 +216,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
         if (isSubAdmin)
           _buildList(
             context, provider, adminList,
-            grouped: _buildGroupedItems(adminList),
+            grouped: _buildGroupedItems(adminList, now),
             emptyMessage: '관리자 알림이 없습니다',
             hasMore: false,
             showLoadMoreHint: provider.hasMore,
@@ -227,8 +226,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
   }
 
   /// 날짜 기준으로 섹션 헤더(String) + 알림(NotificationModel) 혼합 리스트 생성
-  List<Object> _buildGroupedItems(List<NotificationModel> notifications) {
-    final now = DateTime.now();
+  List<Object> _buildGroupedItems(List<NotificationModel> notifications, DateTime now) {
     final today = DateTime(now.year, now.month, now.day);
     final weekAgo = today.subtract(const Duration(days: 7));
 
@@ -803,7 +801,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const LoadingWidget(),
+      builder: (_) => const PopScope(canPop: false, child: LoadingWidget()),
     );
 
     try {
@@ -884,7 +882,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const LoadingWidget(),
+      builder: (_) => const PopScope(canPop: false, child: LoadingWidget()),
     );
 
     try {
@@ -1043,7 +1041,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const LoadingWidget(),
+      builder: (_) => const PopScope(canPop: false, child: LoadingWidget()),
     );
     try {
       final user = await AuthService().getUserData(workerId);
@@ -1081,7 +1079,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const LoadingWidget(),
+      builder: (_) => const PopScope(canPop: false, child: LoadingWidget()),
     );
 
     try {
@@ -1142,7 +1140,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (_) => const LoadingWidget(),
+        builder: (_) => const PopScope(canPop: false, child: LoadingWidget()),
       );
 
       if (result) {
@@ -1203,7 +1201,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const LoadingWidget(),
+      builder: (_) => const PopScope(canPop: false, child: LoadingWidget()),
     );
 
     try {
@@ -1295,7 +1293,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const LoadingWidget(),
+      builder: (_) => const PopScope(canPop: false, child: LoadingWidget()),
     );
 
     try {

@@ -62,12 +62,14 @@ extension AttendanceFirestore on FirestoreService {
         if (longitude != null) 'longitude': longitude,
         'method': method,
         if (scheduledStartTime != null) 'scheduledStartTime': scheduledStartTime,
+        if (scheduledEndTime != null) 'scheduledEndTime': scheduledEndTime,
         if (rulesMap != null) 'attendanceRules': rulesMap,
       });
 
       final data = result.data as Map<dynamic, dynamic>?;
       final attendanceId = data?['attendanceId'] as String?;
       debugPrint('✅ 출근 체크 완료 (CF): $attendanceId');
+      invalidateMyAttendanceCache(userId);
       return attendanceId;
     } on FirebaseFunctionsException catch (e) {
       debugPrint('❌ 출근 체크 실패 (CF): ${e.code} ${e.message}');
@@ -306,20 +308,27 @@ extension AttendanceFirestore on FirestoreService {
       endDate: dateEnd,
     );
   }
-  /// 사용자별 월별 출근 기록 조회 (CF 프록시)
+  /// 사용자별 월별 출근 기록 조회 (CF 프록시, 2분 TTL 캐시)
   /// attendance list 규칙에서 isUser() 제거 → CF로 auth.uid 기반 서버 검증
   Future<List<AttendanceModel>> getMyMonthlyAttendances({
     required String userId,
     required int year,
     required int month,
   }) async {
+    final cacheKey = '${userId}_${year}_$month';
+    final cached = _myAttendanceCache[cacheKey];
+    final ts = _myAttendanceCacheTimestamps[cacheKey];
+    if (cached != null && ts != null &&
+        DateTime.now().difference(ts) < FirestoreService._myAttendanceCacheTTL) {
+      return cached;
+    }
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('getMyMonthlyAttendances',
               options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
       final result = await callable.call({'year': year, 'month': month});
       final items = (result.data['items'] as List<dynamic>? ?? []);
-      return items
+      final list = items
           .whereType<Map>()
           .map((e) {
             final m = Map<String, dynamic>.from(e);
@@ -328,9 +337,12 @@ extension AttendanceFirestore on FirestoreService {
           })
           .whereType<AttendanceModel>()
           .toList();
+      _myAttendanceCache[cacheKey] = list;
+      _myAttendanceCacheTimestamps[cacheKey] = DateTime.now();
+      return list;
     } catch (e) {
       debugPrint('❌ 월별 출근 기록 조회 실패: $e');
-      return [];
+      return cached ?? [];
     }
   }
   /// 관리자용 출근 기록 목록 조회 (CF 프록시)

@@ -445,9 +445,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen>
           // 리스트에 없으면 fallback으로 전체 재로드
           _loadApplications();
         }
-      } else {
-        ToastHelper.showError('취소에 실패했습니다.');
       }
+      // else: cancelApplication 내부에서 이미 에러 Toast 표시 — 이중 Toast 방지
     } catch (e) {
       debugPrint('❌ 지원 취소 오류: $e');
       if (mounted) ToastHelper.showError('취소 중 오류가 발생했습니다.');

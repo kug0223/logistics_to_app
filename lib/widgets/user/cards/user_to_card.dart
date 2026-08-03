@@ -64,10 +64,14 @@ class _UserTOCardState extends State<UserTOCard> {
   bool _isFetching = false;
   bool _isFetchingSlots = false;
   bool _isApplyLoading = false;
+  DateTime _buildNow = DateTime.now();
 
   // 빌드마다 재계산 방지 — myApplications/to 변경 시에만 갱신
   late bool _cachedHasApplied;
   late String _cachedTimeAgo;
+  // M3: _hasAppliedForSlot O(n) → O(1) 조회용 사전 계산 Set
+  late Set<String> _appliedSlotIds;
+  late Set<String> _appliedDateKeys;
 
   List<WorkDetailModel> get _workDetails => widget.workDetails ?? const [];
   bool get _showLoading => _isFetching && _workDetails.isEmpty;
@@ -78,6 +82,26 @@ class _UserTOCardState extends State<UserTOCard> {
     super.initState();
     _cachedHasApplied = _computeHasApplied();
     _cachedTimeAgo    = _computeTimeAgo();
+    _rebuildAppliedSets();
+  }
+
+  // M3: 슬롯별 지원 여부를 O(1)로 조회하기 위한 Set 사전 계산
+  void _rebuildAppliedSets() {
+    final slotIds = <String>{};
+    final dateKeys = <String>{};
+    for (final app in widget.myApplications) {
+      if (AppStatus.inactiveStates.contains(app.status)) continue;
+      if (app.isLongTermApplication && app.isTerminationApproved) continue;
+      if (app.toId?.isNotEmpty == true && app.toId != widget.to.id) continue;
+      if (app.slotId?.isNotEmpty == true) {
+        slotIds.add(app.slotId!);
+      } else {
+        final d = app.workDate;
+        dateKeys.add('${d.year}-${d.month}-${d.day}');
+      }
+    }
+    _appliedSlotIds = slotIds;
+    _appliedDateKeys = dateKeys;
   }
 
   bool _computeHasApplied() => widget.myApplications.any((app) {
@@ -99,12 +123,14 @@ class _UserTOCardState extends State<UserTOCard> {
   @override
   void didUpdateWidget(UserTOCard oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _buildNow = DateTime.now(); // 위젯 갱신 시 시간 캐시 동기화 — build() 내 상태 변이 방지
     // 지원 목록 또는 TO가 바뀌면 캐시 갱신
     // identical 비교 외 length도 확인 — 같은 List 객체에 항목이 추가/제거된 경우 포착
     if (!identical(widget.myApplications, oldWidget.myApplications) ||
         widget.myApplications.length != oldWidget.myApplications.length ||
         widget.to.id != oldWidget.to.id) {
       _cachedHasApplied = _computeHasApplied();
+      _rebuildAppliedSets(); // M3
     }
     if (widget.to.createdAt != oldWidget.to.createdAt) {
       _cachedTimeAgo = _computeTimeAgo();
@@ -159,17 +185,11 @@ class _UserTOCardState extends State<UserTOCard> {
         app.workDate.day == to.date.day;
   }
 
+  // M3: O(n) → O(1) — _rebuildAppliedSets()로 사전 계산된 Set 조회
   bool _hasAppliedForSlot(SlotModel slot) {
-    final slotDate = DateTime(slot.date.year, slot.date.month, slot.date.day);
-    return widget.myApplications.any((app) {
-      if (AppStatus.inactiveStates.contains(app.status)) return false;
-      if (app.isLongTermApplication && app.isTerminationApproved) return false;
-      if (app.toId?.isNotEmpty == true && app.toId != widget.to.id) return false;
-      // slotId가 있으면 정확히 슬롯 단위로 매칭, 없으면 날짜 폴백 (레거시 지원서)
-      if (app.slotId?.isNotEmpty == true) return app.slotId == slot.id;
-      final appDate = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
-      return appDate == slotDate;
-    });
+    if (_appliedSlotIds.contains(slot.id)) return true;
+    final key = '${slot.date.year}-${slot.date.month}-${slot.date.day}';
+    return _appliedDateKeys.contains(key);
   }
 
   ApplicationModel? _appForWork(WorkDetailModel work) {
@@ -196,7 +216,7 @@ class _UserTOCardState extends State<UserTOCard> {
     // flex TO: 로드된 슬롯 중 24시간 내 마감 슬롯 존재 여부
     final slots = widget.slots;
     if (slots == null) return false;
-    final now = DateTime.now();
+    final now = _buildNow;
     return slots.any((s) {
       if (s.isEffectivelyClosed) return false;
       final dl = s.applicationDeadline;
@@ -258,10 +278,7 @@ class _UserTOCardState extends State<UserTOCard> {
     final to = widget.to;
     final barColor = to.isLongTerm ? AppColors.longTerm : AppColors.shortTerm;
 
-    return AnimatedOpacity(
-      opacity: widget.isAnyOtherExpanded ? 0.5 : 1.0,
-      duration: const Duration(milliseconds: 200),
-      child: Card(
+    final card = Card(
         margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
         elevation: widget.isSelected ? 3 : 1,
         shadowColor: Colors.black12,
@@ -333,7 +350,12 @@ class _UserTOCardState extends State<UserTOCard> {
             ),
           ],
         ),
-      ),
+    );
+    if (!widget.isAnyOtherExpanded) return card;
+    return AnimatedOpacity(
+      opacity: 0.5,
+      duration: const Duration(milliseconds: 200),
+      child: card,
     );
   }
 
@@ -650,7 +672,7 @@ class _UserTOCardState extends State<UserTOCard> {
     }
 
     final slots = widget.slots!;
-    final now = DateTime.now();
+    final now = _buildNow;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1152,7 +1174,10 @@ class _UserTOCardState extends State<UserTOCard> {
     }
 
     if (!mounted) return;
-    if (groupTOsByDate.isEmpty) return;
+    if (groupTOsByDate.isEmpty) {
+      ToastHelper.showInfo('지원 가능한 날짜가 모두 마감되었습니다.');
+      return;
+    }
 
     final result = await ApplyWorkDialog.show(
       context: context,
@@ -1204,7 +1229,8 @@ class _UserTOCardState extends State<UserTOCard> {
       businessName: widget.to.businessName,
       myApplications: widget.myApplications,
     );
-    if (result?.hasChanges == true && mounted) {
+    // result == null: 스와이프 닫기 → 변경 여부 불명이므로 안전하게 갱신 (1127 조건과 통일)
+    if (result?.hasChanges != false && mounted) {
       widget.onApplySuccess();
     }
   }

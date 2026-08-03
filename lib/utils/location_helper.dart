@@ -15,13 +15,17 @@ enum LocationCheckResult {
 
 class LocationHelper {
   /// GPS 권한 확인 및 요청 (결과 상세 반환)
-  static Future<LocationCheckResult> checkAndRequestPermissionDetailed() async {
+  /// [requestIfNeeded=false] 이면 OS 팝업 없이 현재 상태만 체크 — both 모드 silent 분기에서 사용
+  static Future<LocationCheckResult> checkAndRequestPermissionDetailed({
+    bool requestIfNeeded = true,
+  }) async {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) return LocationCheckResult.serviceDisabled;
 
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
+        if (!requestIfNeeded) return LocationCheckResult.permissionDenied;
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
           return LocationCheckResult.permissionDenied;
