@@ -55,7 +55,10 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _loadTodayWorks();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _loadTodayWorks();
+    });
   }
 
   @override
@@ -352,10 +355,10 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
           // 반경 + 50m 버퍼 (GPS 오차 보정)
           if (distance > radius + 50) {
             final lastAlert = _lastDepartureAlert[work.id];
-            final now = DateTime.now();
+            final alertNow = DateTime.now();
             if (lastAlert == null ||
-                now.difference(lastAlert).inMinutes >= 15) {
-              _lastDepartureAlert[work.id] = now;
+                alertNow.difference(lastAlert).inMinutes >= 15) {
+              _lastDepartureAlert[work.id] = alertNow;
               debugPrint('⚠️ [이탈 감지] ${work.businessName}: ${distance.toStringAsFixed(0)}m');
               await FCMService().showGeofenceAlert(work.businessName);
             }
@@ -428,7 +431,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
       } else if (type == 'beacon') {
         // ── 비콘 전용 ─────────────────────────────────────────
         final ok = await _verifyByBeacon(business);
-        if (!ok) return;
+        if (!ok || !mounted) return;
         // 비콘 성공 시 GPS 좌표는 null (위치 저장 불필요)
         usedMethod = 'beacon';
 
@@ -448,7 +451,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
           await Future.delayed(const Duration(milliseconds: 600));
           if (!mounted) return;
           final beaconOk = await _verifyByBeacon(business);
-          if (!beaconOk) return;
+          if (!beaconOk || !mounted) return;
           usedMethod = 'beacon';
         }
       }
@@ -456,8 +459,9 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
       // 3. Firestore 출근 기록 저장 (비콘 방식은 lat/lng null — 불필요)
       // 단기 근무: work.workDate 사용 — 야간 근무 자정 이후 체크인 시 docId가 다음 날로 밀리는 것 방지 [060]
       // 장기 근무: 오늘 날짜 사용 — work.workDate는 계약 시작일(고정값)이라 날짜별 docId 분리 불가
+      final todayDate = DateTime.now();
       final attendanceWorkDate = work.isLongTermApplication
-          ? DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day)
+          ? DateTime(todayDate.year, todayDate.month, todayDate.day)
           : work.workDate;
       final attendanceId = await _firestoreService.checkIn(
         applicationId: work.id,
@@ -495,9 +499,11 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
       // [BUG-M1 수정 2026-07-27] 에러 후에도 재조회 — 배치 선처리(NO_SHOW 등)로 상태가 바뀐 경우 UI 동기화
       if (mounted) await _loadTodayWorks();
     } finally {
-      // mounted 여부와 무관하게 상태값 리셋 (영구 잠금 방지)
-      _isProcessing = false;
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() => _isProcessing = false);
+      } else {
+        _isProcessing = false; // mounted 아닐 때도 잠금 해제
+      }
     }
   }
 
@@ -644,6 +650,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
       return false;
     }
 
+    final nav = Navigator.of(context);
     if (mounted) {
       DialogHelper.showLoading(context, message: '비콘 스캔 중...\n(최대 10초 소요)');
     }
@@ -655,7 +662,8 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
       rssiThreshold: business.beaconRssiThreshold,
     );
 
-    if (mounted) Navigator.pop(context); // 로딩 닫기
+    if (nav.canPop()) nav.pop(); // dispose 이후에도 로딩 다이얼로그 닫기 보장
+    if (!mounted) return false;
 
     if (result == null) {
       if (mounted) {
@@ -721,7 +729,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
       if (type == 'beacon') {
         // 비콘 전용: 근접 확인 (GPS 좌표 불필요)
         final ok = await _verifyByBeacon(business);
-        if (!ok) return;
+        if (!ok || !mounted) return;
         usedMethod = 'beacon';
       } else if (type == 'both') {
         // GPS + 비콘 병행: 출근과 동일하게 GPS 먼저, 실패 시 비콘 폴백
@@ -734,7 +742,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
           await Future.delayed(const Duration(milliseconds: 600));
           if (!mounted) return;
           final beaconOk = await _verifyByBeacon(business);
-          if (!beaconOk) return;
+          if (!beaconOk || !mounted) return;
           usedMethod = 'beacon';
         }
       } else {
@@ -762,6 +770,8 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
       );
 
       if (success && mounted) {
+        final uid = context.read<UserProvider>().currentUser?.uid;
+        if (uid != null) _firestoreService.invalidateMyAttendanceCache(uid);
         ToastHelper.showSuccess('퇴근이 완료되었습니다!');
         AnalyticsService.logCheckOut(method: usedMethod);
         await _loadTodayWorks();
@@ -960,20 +970,20 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
             decoration: BoxDecoration(
-              color: const Color(0xFFFFF3CD),
+              color: AppColors.yellowWarnBg,
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFFFFD966)),
+              border: Border.all(color: AppColors.yellowWarnBorder),
             ),
             child: Row(
               children: [
                 const Icon(Icons.warning_amber_rounded,
-                    color: Color(0xFF856404), size: 18),
+                    color: AppColors.yellowWarnDark, size: 18),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 Expanded(
                   child: Text(
                     '계약서 서명이 완료되지 않았습니다',
                     style: ResponsiveHelper.smallStyle(context).copyWith(
-                      color: const Color(0xFF664D03),
+                      color: AppColors.yellowWarnText,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -997,7 +1007,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
             icon: const Icon(Icons.draw_outlined, size: 18),
             label: const Text('작성하기'),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF856404),
+              backgroundColor: AppColors.yellowWarnDark,
               foregroundColor: Colors.white,
               minimumSize: const Size(double.infinity, 44),
               shape: RoundedRectangleBorder(

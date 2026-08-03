@@ -2,7 +2,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
 import 'package:provider/provider.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/core/to_model.dart';
 import '../../models/core/application_model.dart';
 import '../../models/core/to_filter_state.dart';
@@ -11,6 +10,7 @@ import '../../models/core/slot_model.dart';
 import '../../services/firestore_service.dart';
 import '../../providers/user_provider.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../../widgets/common/skeleton_widget.dart';
 import '../../widgets/user/cards/user_to_card.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/responsive_helper.dart';
@@ -51,10 +51,12 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
   List<String> _availableCities = [];
   Map<String, List<String>> _districtMap = {};
 
-  // 페이지네이션
-  DocumentSnapshot? _lastDoc;
+  // 페이지네이션 — [CF-MIGRATED D6-CP2] DocumentSnapshot → lastToId(String)
+  String? _lastToId;
   bool _hasMoreData = true;
   bool _isLoadingMore = false;
+  // 필터 변경 시 진행 중인 페이지네이션 배치를 버리기 위한 세대 카운터
+  int _generation = 0;
 
   // workDetails 캐시 (toId → List<WorkDetailModel>)
   final Map<String, List<WorkDetailModel>> _workDetailsCache = {};
@@ -67,12 +69,20 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
   // UI 상태
   bool _isLoading = true;
   bool _fetchInProgress = false;
+  bool _myApplicationsLoaded = false; // M4: 필터 변경 시 재호출 방지
   String? _selectedTOId;
+
+  // H2: 카드별 ValueNotifier — 슬롯/업무상세 로드 시 해당 카드만 리빌드
+  final Map<String, ValueNotifier<List<SlotModel>?>> _slotNotifiers = {};
+  final Map<String, ValueNotifier<List<WorkDetailModel>?>> _workDetailsNotifiers = {};
 
   @override
   void initState() {
     super.initState();
-    _loadAllTOs();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _loadAllTOs();
+    });
     _scrollController.addListener(_onScroll);
     _searchController.addListener(_onSearchChanged);
   }
@@ -80,6 +90,8 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
   @override
   void dispose() {
     _searchDebounce?.cancel();
+    for (final n in _slotNotifiers.values) { n.dispose(); }
+    for (final n in _workDetailsNotifiers.values) { n.dispose(); }
     _scrollController.dispose();
     _searchController.dispose();
     super.dispose();
@@ -107,29 +119,37 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
   }
 
   /// 첫 페이지 로드 (새로고침 포함)
-  Future<void> _loadAllTOs() async {
+  Future<void> _loadAllTOs({bool forceRefresh = false}) async {
     if (_fetchInProgress) return;
     _fetchInProgress = true;
+    _generation++;
     setState(() {
       _isLoading = true;
-      _lastDoc = null;
+      _lastToId = null;
       _hasMoreData = true;
       _allTOList = [];
       _workDetailsCache.clear();
       _slotsCache.clear();
+      // H2: 로딩 전환 시점에 notifier 해제 (이 시점 카드는 트리에서 제거됨)
+      for (final n in _slotNotifiers.values) { n.dispose(); }
+      _slotNotifiers.clear();
+      for (final n in _workDetailsNotifiers.values) { n.dispose(); }
+      _workDetailsNotifiers.clear();
       _selectedTOId = null;
+      if (forceRefresh) _myApplicationsLoaded = false; // M4
     });
 
     try {
       final userProvider = Provider.of<UserProvider>(context, listen: false);
       final uid = userProvider.currentUser?.uid;
 
-      final appsFuture = uid != null
+      // M4: 필터 변경 시 재호출 방지 — 이미 로드한 경우 기존 목록 재사용
+      final appsFuture = (uid != null && !_myApplicationsLoaded)
           ? _firestoreService.getMyApplications(uid)
-          : Future.value(<ApplicationModel>[]);
+          : Future.value(_myApplications);
 
       List<TOModel> toList;
-      DocumentSnapshot? lastDoc;
+      String? lastToId;
       bool hasMore;
 
       if (_filter.showFavoritesOnly) {
@@ -141,18 +161,18 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
         toList = favoriteIds.isEmpty
             ? []
             : await _firestoreService.getTOsByIds(favoriteIds);
-        lastDoc = null;
+        lastToId = null;
         hasMore = false;
       } else if (_filter.keyword?.isNotEmpty == true && AlgoliaService.isConfigured) {
         // Algolia 경로: 키워드 검색 → ID 목록 → Firestore batch fetch
         final ids = await AlgoliaService.searchTOIds(_filter.keyword!, filter: _filter);
         toList = await _firestoreService.getTOsByIds(ids);
-        lastDoc = null;
+        lastToId = null;
         hasMore = false;
       } else {
         final tosResult = await _firestoreService.getPublishedTOsPaged(filter: _filter);
         toList = tosResult['items'] as List<TOModel>;
-        lastDoc = tosResult['lastDoc'] as DocumentSnapshot?;
+        lastToId = tosResult['lastToId'] as String?;
         hasMore = tosResult['hasMore'] as bool;
       }
 
@@ -165,9 +185,10 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       _fetchInProgress = false;
       setState(() {
         _allTOList = toList;
-        _lastDoc = lastDoc;
+        _lastToId = lastToId;
         _hasMoreData = hasMore;
         _myApplications = myApps;
+        _myApplicationsLoaded = true; // M4
         _availableCities = regionResult.cities;
         _districtMap = regionResult.districtMap;
         _displayList = displayList;
@@ -192,20 +213,21 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
   /// 다음 페이지 로드
   Future<void> _loadMoreTOs() async {
     if (_isLoading || _isLoadingMore || !_hasMoreData) return;
-    // lastDoc 없으면 cursor를 잃은 상태 — 재로드 방지
-    if (_lastDoc == null) return;
+    // lastToId 없으면 cursor를 잃은 상태 — 재로드 방지
+    if (_lastToId == null) return;
     if (!mounted) return;
 
+    final gen = _generation;
     setState(() => _isLoadingMore = true);
 
     try {
       final tosResult = await _firestoreService.getPublishedTOsPaged(
-        startAfter: _lastDoc,
+        lastToId: _lastToId,
         filter: _filter,
       );
       final toList = tosResult['items'] as List<TOModel>;
 
-      if (!mounted) {
+      if (!mounted || _generation != gen) {
         _isLoadingMore = false;
         return;
       }
@@ -218,18 +240,31 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
         return;
       }
 
-      // 지역 옵션과 displayList를 미리 계산하여 단일 setState로 일괄 반영 (성능 최적화)
       final mergedList = [..._allTOList, ...toList];
-      final regionResult = _computeRegionOptions(mergedList);
+      // M5: 새 배치만 계산 후 기존 지역 옵션과 증분 병합 (전체 재계산 방지)
+      final newRegionResult = _computeRegionOptions(toList);
+      final mergedCities = {..._availableCities, ...newRegionResult.cities}.toList()..sort();
+      final mergedDistricts = <String, List<String>>{};
+      for (final city in mergedCities) {
+        final existing = _districtMap[city] ?? const [];
+        final added = newRegionResult.districtMap[city] ?? const [];
+        mergedDistricts[city] = ({...existing, ...added}).toList()..sort();
+      }
       final displayList = _computeDisplayList(mergedList);
       setState(() {
         _allTOList = mergedList;
-        _lastDoc = tosResult['lastDoc'] as DocumentSnapshot?;
+        _lastToId = tosResult['lastToId'] as String?;
         _hasMoreData = tosResult['hasMore'] as bool;
-        _availableCities = regionResult.cities;
-        _districtMap = regionResult.districtMap;
+        _availableCities = mergedCities;
+        _districtMap = mergedDistricts;
         _displayList = displayList;
         _isLoadingMore = false;
+      });
+      // H5: 클라이언트 필터 후 화면에 표시될 항목이 없으면 스크롤 없이 다음 페이지 자동 로드
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _displayList.isEmpty && _hasMoreData && !_isLoadingMore) {
+          _loadMoreTOs();
+        }
       });
     } catch (e) {
       debugPrint('❌ TO 추가 로드 실패: $e');
@@ -297,7 +332,18 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
         }
       }
 
-      // ── 2. 날짜 범위 필터 (설정된 경우만) ─────────────────
+      // ── 2. 키워드 클라이언트 폴백 (Algolia 미설정 시 — H3)
+      //    Algolia 설정 시에는 getTOsByIds로 이미 키워드 필터된 결과만 toList에 들어옴
+      final kw = _filter.keyword;
+      if (kw != null && kw.isNotEmpty && !AlgoliaService.isConfigured) {
+        final kwLower = kw.toLowerCase();
+        if (!to.title.toLowerCase().contains(kwLower) &&
+            !to.businessName.toLowerCase().contains(kwLower)) {
+          return false;
+        }
+      }
+
+      // ── 3. 날짜 범위 필터 (설정된 경우만) ─────────────────
       if (rangeStart != null && rangeEnd != null) {
         final toStart = DateTime(to.date.year, to.date.month, to.date.day);
         final toEndRaw = to.isLongTerm ? (to.endDate ?? to.date) : (to.rangeEnd ?? to.date);
@@ -317,10 +363,25 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
     return result;
   }
 
-  /// 필터 변경 — 서버에서 새로 fetch
+  /// 필터 변경 — 서버 필터 변경 시 재조회, 클라이언트 필터(sortBy/dateRange)는 로컬 재계산 (H1)
   void _onFilterChanged(TOFilterState newFilter) {
-    setState(() => _filter = newFilter);
-    _loadAllTOs();
+    final needsServerFetch =
+        newFilter.type != _filter.type ||
+        newFilter.city != _filter.city ||
+        newFilter.district != _filter.district ||
+        newFilter.keyword != _filter.keyword ||
+        newFilter.showFavoritesOnly != _filter.showFavoritesOnly;
+
+    if (needsServerFetch) {
+      _filter = newFilter; // H4: 필드만 갱신 — _loadAllTOs의 setState가 리빌드 담당
+      _loadAllTOs();
+    } else {
+      // sortBy / dateRange 변경만 → 서버 호출 없이 클라이언트 재정렬
+      setState(() {
+        _filter = newFilter;
+        _displayList = _computeDisplayList(_allTOList);
+      });
+    }
   }
 
   /// TO 선택/해제
@@ -336,7 +397,8 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
     if (_slotsCache.containsKey(toId)) return _slotsCache[toId]!;
     try {
       final slots = await _firestoreService.getSlots(toId, visibleOnly: true);
-      if (mounted) setState(() => _slotsCache[toId] = slots);
+      _slotsCache[toId] = slots;
+      if (mounted) _slotNotifiers[toId]?.value = slots; // H2: 해당 카드만 리빌드
       return slots;
     } catch (e) {
       debugPrint('❌ slots 로드 실패 ($toId): $e');
@@ -350,7 +412,8 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
     if (_workDetailsCache.containsKey(toId)) return _workDetailsCache[toId]!;
     try {
       final details = await _firestoreService.getWorkDetails(toId);
-      if (mounted) setState(() => _workDetailsCache[toId] = details);
+      _workDetailsCache[toId] = details;
+      if (mounted) _workDetailsNotifiers[toId]?.value = details; // H2: 해당 카드만 리빌드
       return details;
     } catch (e) {
       debugPrint('❌ workDetails 로드 실패 ($toId): $e');
@@ -433,7 +496,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
   Widget build(BuildContext context) {
     return GradientScaffold(
       title: '공고 찾기',
-      onRefresh: _loadAllTOs,
+      onRefresh: () => _loadAllTOs(forceRefresh: true),
       body: Column(
         children: [
                       // 검색바 + 필터 — 스크롤되지 않는 고정 영역 (흰 배경)
@@ -557,11 +620,11 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
                       // TO 목록 (스크롤)
                       Expanded(
                         child: _isLoading
-                            ? const LoadingWidget(message: '공고 목록을 불러오는 중...')
+                            ? const TOListSkeleton()
                             : _displayList.isEmpty
                                 ? _buildEmptyState()
                                 : RefreshIndicator(
-                                    onRefresh: _loadAllTOs,
+                                    onRefresh: () => _loadAllTOs(forceRefresh: true),
                                     child: ListView.builder(
                                       controller: _scrollController,
                                       padding:
@@ -583,24 +646,35 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
                                         final to = _displayList[index];
                                         final isSelected =
                                             _selectedTOId == to.id;
+                                        // H2: 카드별 notifier — 슬롯/업무상세 로드 시 해당 카드만 리빌드
+                                        final slotsN = _slotNotifiers.putIfAbsent(
+                                            to.id, () => ValueNotifier(_slotsCache[to.id]));
+                                        final detailsN = _workDetailsNotifiers.putIfAbsent(
+                                            to.id, () => ValueNotifier(_workDetailsCache[to.id]));
                                         return RepaintBoundary(
-                                          child: UserTOCard(
-                                            to: to,
-                                            isSelected: isSelected,
-                                            onTap: () =>
-                                                _toggleTOSelection(to.id),
-                                            myApplications: _myApplications,
-                                            onApplySuccess:
-                                                _refreshMyApplications,
-                                            workDetails:
-                                                _workDetailsCache[to.id],
-                                            onFetchWorkDetails:
-                                                _fetchWorkDetails,
-                                            slots: _slotsCache[to.id],
-                                            onFetchSlots: _fetchSlots,
-                                            isAnyOtherExpanded: _selectedTOId !=
-                                                    null &&
-                                                _selectedTOId != to.id,
+                                          child: ValueListenableBuilder<List<SlotModel>?>(
+                                            valueListenable: slotsN,
+                                            builder: (_, slots, __) =>
+                                                ValueListenableBuilder<List<WorkDetailModel>?>(
+                                              valueListenable: detailsN,
+                                              builder: (_, workDetails, __) => UserTOCard(
+                                                to: to,
+                                                isSelected: isSelected,
+                                                onTap: () =>
+                                                    _toggleTOSelection(to.id),
+                                                myApplications: _myApplications,
+                                                onApplySuccess:
+                                                    _refreshMyApplications,
+                                                workDetails: workDetails,
+                                                onFetchWorkDetails:
+                                                    _fetchWorkDetails,
+                                                slots: slots,
+                                                onFetchSlots: _fetchSlots,
+                                                isAnyOtherExpanded:
+                                                    _selectedTOId != null &&
+                                                        _selectedTOId != to.id,
+                                              ),
+                                            ),
                                           ),
                                         );
                                       },
