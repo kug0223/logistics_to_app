@@ -1,4 +1,5 @@
 import 'package:ALfit/screens/common/document_management_screen.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -760,7 +761,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                     )
                   : _mainImageUrl != null
                       ? DecorationImage(
-                          image: NetworkImage(_mainImageUrl!),
+                          image: CachedNetworkImageProvider(_mainImageUrl!),
                           fit: BoxFit.cover,
                         )
                       : null,
@@ -1722,7 +1723,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
               image: DecorationImage(
                 image: file != null
                     ? (kIsWeb ? NetworkImage(file.path) as ImageProvider : FileImage(file))
-                    : NetworkImage(networkUrl!),
+                    : CachedNetworkImageProvider(networkUrl!),
                 fit: BoxFit.cover,
               ),
             ),
@@ -1918,7 +1919,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         });
       }
     } else if (_currentStep == 2) {
-      _saveBusiness();
+      if (_validateStep3()) _saveBusiness();
     }
   }
 
@@ -1938,9 +1939,27 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   }
 
   bool _validateStep2() {
-    setState(() => _autoValidate = true);
     if (!(_formKey.currentState?.validate() ?? false)) {
+      setState(() => _autoValidate = true);
       return false;
+    }
+    return true;
+  }
+
+  bool _validateStep3() {
+    if (_attendanceType == 'beacon' || _attendanceType == 'both') {
+      final uuid = _beaconUUIDController.text.trim();
+      if (uuid.isEmpty) {
+        ToastHelper.showError('비콘 UUID를 입력해주세요');
+        return false;
+      }
+      final uuidRegex = RegExp(
+        r'^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$',
+      );
+      if (!uuidRegex.hasMatch(uuid.toUpperCase())) {
+        ToastHelper.showError('UUID 형식이 올바르지 않습니다\n(예: XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX)');
+        return false;
+      }
     }
     return true;
   }
