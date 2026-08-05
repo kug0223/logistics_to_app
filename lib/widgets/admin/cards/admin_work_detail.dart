@@ -127,22 +127,24 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
         child: InkWell(
           onTap: () => _showApplicantsDialog(context),
           borderRadius: BorderRadius.circular(10),
-          child: Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(10),
-              border: Border(
-                left: BorderSide(color: statusColor, width: 3),
-                top: BorderSide(color: AppColors.grey200),
-                right: BorderSide(color: AppColors.grey200),
-                bottom: BorderSide(color: AppColors.grey200),
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
+          child: Stack(
+            children: [
+              Container(
+                padding: EdgeInsets.fromLTRB(
+                  3 + ResponsiveHelper.spacing(context, 12),
+                  ResponsiveHelper.spacing(context, 12),
+                  ResponsiveHelper.spacing(context, 12),
+                  ResponsiveHelper.spacing(context, 12),
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppColors.grey200),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
                 // ① 업무명(소형아이콘 포함) + 지원자 칩
                 Row(
                   children: [
@@ -257,8 +259,25 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
                 SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                 // ⑤ 확정/대기/미충원 도트 + N/total
                 _buildPersonnelStatus(context, isFull, isClosed, missing),
-              ],
-            ),
+                  ],
+                ),
+              ),
+              Positioned(
+                left: 0,
+                top: 0,
+                bottom: 0,
+                child: Container(
+                  width: 3,
+                  decoration: BoxDecoration(
+                    color: statusColor,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(10),
+                      bottomLeft: Radius.circular(10),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),

@@ -254,9 +254,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
       statusBarColor = widget.groupItem.isLongTerm ? AppColors.longTerm : AppColors.shortTerm;
     }
 
-    // 이 카드가 활성 상태인지 — 단건 펼침 OR 멀티슬롯 날짜 칩 선택됨
+    // 이 카드가 활성 상태인지 — 단건 펼침 OR activeGroupKey가 이 카드를 가리킴
+    // _selectedChipDate 조건 제거: 접기를 해도 activeGroupKey가 유지되어야 함(버그 3 수정)
     final isThisGroupActive = widget.isExpanded ||
-        (widget.activeGroupKey == widget.groupItem.id && _selectedChipDate != null);
+        widget.activeGroupKey == widget.groupItem.id;
     final isDimmed = widget.isAnyExpanded && !isThisGroupActive;
 
     final cardContent = Container(
@@ -289,7 +290,12 @@ class _TOGroupCardState extends State<TOGroupCard> {
             children: [
               // ✨ 헤더 (클릭 가능)
               InkWell(
-                onTap: isMultiSlot ? null : widget.onToggleExpand,
+                // multiSlot: 비활성 상태(isDimmed)일 때 헤더 클릭 → 활성화(버그 2 수정)
+                onTap: isMultiSlot
+                    ? (isDimmed
+                        ? () => widget.onGroupActivated?.call(widget.groupItem.id)
+                        : null)
+                    : widget.onToggleExpand,
                 borderRadius: BorderRadius.only(
                   topLeft: Radius.circular(16),
                   topRight: Radius.circular(16),
@@ -1139,11 +1145,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 접기 행
+          // 접기 행 — _selectedChipDate만 해제, activeGroupKey는 유지(버그 3 수정)
           InkWell(
             onTap: () {
               setState(() => _selectedChipDate = null);
-              widget.onGroupDeactivated?.call();
             },
             borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
             child: Padding(
@@ -1172,7 +1177,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
             )
           else if (workDetails.isEmpty)
             Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
               child: Text(
                 toItem.needsWorkDetailLoad ? '데이터 불러오는 중...' : '업무 상세 없음',
                 style:
@@ -1180,19 +1185,25 @@ class _TOGroupCardState extends State<TOGroupCard> {
               ),
             )
           else
-            ...workDetails.map((work) {
-              final stats = toItem.workDetailStats?[work.id];
-              return WorkDetailRow(
-                work: work,
-                confirmedCount: stats?['confirmed'] ?? 0,
-                pendingCount: stats?['pending'] ?? 0,
-                toItem: toItem,
-                firestoreService: widget.firestoreService,
-                onChanged: widget.onChanged,
-                onLocalStatsChanged: () => setState(() {}),
-                onAffectedTOsChanged: widget.onAffectedTOsChanged,
-              );
-            }),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: workDetails.map((work) {
+                  final stats = toItem.workDetailStats?[work.id];
+                  return WorkDetailRow(
+                    work: work,
+                    confirmedCount: stats?['confirmed'] ?? 0,
+                    pendingCount: stats?['pending'] ?? 0,
+                    toItem: toItem,
+                    firestoreService: widget.firestoreService,
+                    onChanged: widget.onChanged,
+                    onLocalStatsChanged: () => setState(() {}),
+                    onAffectedTOsChanged: widget.onAffectedTOsChanged,
+                  );
+                }).toList(),
+              ),
+            ),
           // 명단 보기 버튼
           const Divider(height: 1, color: AppColors.grey200),
           InkWell(
