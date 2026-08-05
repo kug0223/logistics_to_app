@@ -111,6 +111,9 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     setState(() {
       _expandedGroups.clear();
       _expandedTOs.clear();
+      _loadingGroups.clear();
+      _loadingTOs.clear();
+      _activeGroupKey = null;
       _closedDisplayCount = _closedPageSize;
       _lastCachedItems = null; // H2: reload 시 캐시 즉시 무효화
     });
@@ -324,6 +327,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
             _selectedTab = tab;
             _expandedGroups.clear();
             _expandedTOs.clear();
+            _activeGroupKey = null;
             _closedDisplayCount = _closedPageSize;
           });
         }
@@ -402,10 +406,10 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         isUserMode: false,
         showTOTypeFilter: true,
         showPublishStatusFilter: true,
-        onBusinessChanged: controller.setBusinessFilter,
-        onDateRangeChanged: controller.setDateRangeFilter,
-        onTOTypeChanged: controller.setTOTypeFilter,
-        onPublishStatusChanged: controller.setPublishStatusFilter,
+        onBusinessChanged: (v) { setState(() => _activeGroupKey = null); controller.setBusinessFilter(v); },
+        onDateRangeChanged: (v) { setState(() => _activeGroupKey = null); controller.setDateRangeFilter(v); },
+        onTOTypeChanged: (v) { setState(() => _activeGroupKey = null); controller.setTOTypeFilter(v); },
+        onPublishStatusChanged: (v) { setState(() => _activeGroupKey = null); controller.setPublishStatusFilter(v); },
       ),
     );
   }
@@ -473,7 +477,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
                   _expandedGroups.clear();
                   _expandedTOs.clear();
                 }),
-                onGroupDeactivated: () => setState(() => _activeGroupKey = null),
+                onGroupDeactivated: () { if (_activeGroupKey != null) setState(() => _activeGroupKey = null); },
                 isLastCard: index == filteredItems.length - 1,
               ),
             ),
@@ -528,6 +532,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         }
       }
       // 단일 슬롯 flex TO: 업무 상세 통계도 로드 (다중 슬롯은 TOItemCard 개별 확장 시 로드)
+      if (!mounted) return;
       if (groupItem.groupTOs.length == 1 &&
           groupItem.groupTOs.first.needsWorkDetailLoad) {
         await controller.loadWorkDetails(groupItem.groupTOs.first);

@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 // Models
+import '../../../models/core/business_model.dart';
 import '../../../models/core/to_model.dart';
 import '../../../utils/close_state_utils.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
@@ -128,6 +131,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
   // 날짜 칩 선택 상태 (다중 슬롯 뷰)
   DateTime? _selectedChipDate;
   final GlobalKey _panelBottomKey = GlobalKey();
+  Timer? _scrollTimer;
 
   void _updateGroupCache() {
     _buildNow = DateTime.now();
@@ -156,6 +160,12 @@ class _TOGroupCardState extends State<TOGroupCard> {
   void initState() {
     super.initState();
     _updateGroupCache();
+  }
+
+  @override
+  void dispose() {
+    _scrollTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -236,8 +246,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
         multiSlotTimeExpired = masterTO.workDetails.every((d) {
           final parts = d.startTime.split(':');
           if (parts.length != 2) return false;
-          final deadline = DateTime(lastDate.year, lastDate.month, lastDate.day,
-              int.parse(parts[0]), int.parse(parts[1]))
+          final h = int.tryParse(parts[0]);
+          final m = int.tryParse(parts[1]);
+          if (h == null || m == null) return false;
+          final deadline = DateTime(lastDate.year, lastDate.month, lastDate.day, h, m)
               .subtract(Duration(hours: masterTO.hoursBeforeStart!));
           return now.isAfter(deadline);
         });
@@ -299,7 +311,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
                 onTap: isMultiSlot
                     ? (isDimmed
                         ? () => widget.onGroupActivated?.call(widget.groupItem.id)
-                        : () => setState(() => _selectedChipDate = null))
+                        : () {
+                            if (_selectedChipDate == null) return;
+                            setState(() => _selectedChipDate = null);
+                            widget.onGroupDeactivated?.call();
+                          })
                     : widget.onToggleExpand,
                 borderRadius: BorderRadius.only(
                   topLeft: Radius.circular(16),
@@ -707,6 +723,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
       ),
         );
     if (!widget.isAnyExpanded) return cardContent;
+    // 동일 위젯 타입 유지 → 카드 전환 시 0.45↔1.0 애니메이션 동작
     return AnimatedOpacity(
       opacity: isDimmed ? 0.45 : 1.0,
       duration: const Duration(milliseconds: 220),
@@ -730,15 +747,6 @@ class _TOGroupCardState extends State<TOGroupCard> {
         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
         child: const LoadingWidget(message: '불러오는 중...'),
       );
-    }
-
-    // 다중 슬롯 flex TO (리스트 모드)
-    final isMultiSlot = widget.displayMode == TOCardDisplayMode.list &&
-        !widget.groupItem.isLongTerm &&
-        widget.groupItem.groupTOs.length > 1;
-
-    if (isMultiSlot) {
-      return _buildMultiSlotLayout(context, theme, _getFilteredGroupTOs());
     }
 
     // 단건 슬롯 / 장기 / 캘린더 — 업무 상세
@@ -1236,7 +1244,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
       }
       // 마지막 카드일 때만 패널 하단이 보이도록 스크롤
       if (widget.isLastCard) {
-        Future.delayed(const Duration(milliseconds: 280), () {
+        _scrollTimer?.cancel();
+        _scrollTimer = Timer(const Duration(milliseconds: 280), () {
           if (!mounted) return;
           final ctx = _panelBottomKey.currentContext;
           if (ctx == null) return;
@@ -1252,13 +1261,21 @@ class _TOGroupCardState extends State<TOGroupCard> {
     final date = toItem.slot?.date ?? _selectedChipDate;
     if (date == null || !mounted) return;
     final masterTO = widget.groupItem.masterTO;
+
+    // DayApplicantsDialog 계약/신분증 기능을 위해 사업장 정보 로드
+    BusinessModel? biz;
+    try {
+      biz = await widget.firestoreService.getBusinessById(masterTO.businessId);
+    } catch (_) {}
+    if (!mounted) return;
+
     final hasChanges = await showDialog<bool>(
       context: this.context,
       barrierDismissible: false,
       builder: (_) => DayApplicantsDialog(
         date: date,
         businessIds: [masterTO.businessId],
-        businesses: const [],
+        businesses: biz != null ? [biz] : const [],
         filterToId: masterTO.id,
       ),
     );
@@ -1271,7 +1288,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
   /// 등록일 텍스트
   String _getCreatedAtText(DateTime created, DateTime now) {
     final diff = now.difference(created);
-    
+    if (diff.isNegative) return '방금 전';
     if (diff.inMinutes < 60) {
       return '${diff.inMinutes}분 전';
     } else if (diff.inHours < 24) {
@@ -1778,8 +1795,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
             closedBy: closeUid,
           );
           widget.firestoreService.clearCache(toId: masterTO.id);
-          widget.onChanged();
-          if (mounted) ToastHelper.showSuccess('${closeSlots.length}개 날짜가 마감되었습니다');
+          if (mounted) {
+            widget.onChanged();
+            ToastHelper.showSuccess('${closeSlots.length}개 날짜가 마감되었습니다');
+          }
         } catch (e) {
           if (mounted) ToastHelper.showError('마감 처리에 실패했습니다');
         }
@@ -1821,8 +1840,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
             businessId: masterTO.businessId,
           );
           widget.firestoreService.clearCache(toId: masterTO.id);
-          widget.onChanged();
-          if (mounted) ToastHelper.showSuccess('${reopenSlots.length}개 날짜가 재오픈되었습니다');
+          if (mounted) {
+            widget.onChanged();
+            ToastHelper.showSuccess('${reopenSlots.length}개 날짜가 재오픈되었습니다');
+          }
         } catch (e) {
           if (mounted) ToastHelper.showError('재오픈 처리에 실패했습니다');
         }
@@ -1874,12 +1895,17 @@ class _TOGroupCardState extends State<TOGroupCard> {
           if (deletesAll) {
             // 슬롯을 모두 삭제했으니 TO 문서도 삭제 (지원서·알림 포함)
             await widget.firestoreService.deleteTO(masterTO.id);
-            if (mounted) ToastHelper.showSuccess('공고가 삭제되었습니다');
+            if (mounted) {
+              widget.onChanged();
+              ToastHelper.showSuccess('공고가 삭제되었습니다');
+            }
           } else {
             widget.firestoreService.clearCache(toId: masterTO.id);
-            if (mounted) ToastHelper.showSuccess('${deleteSlots.length}개 날짜가 삭제되었습니다');
+            if (mounted) {
+              widget.onChanged();
+              ToastHelper.showSuccess('${deleteSlots.length}개 날짜가 삭제되었습니다');
+            }
           }
-          widget.onChanged();
         } catch (e) {
           if (mounted) ToastHelper.showError('삭제 처리에 실패했습니다');
         }
@@ -2202,7 +2228,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
     // 캘린더 모드: isGroupLoading으로만 판단
     if (widget.calendarSlot != null) return false;
     if (widget.groupItem.groupTOs.isNotEmpty) {
-      return widget.loadingTOs.contains(widget.groupItem.groupTOs.first.to.id);
+      final firstTO = widget.groupItem.groupTOs.first;
+      return widget.loadingTOs.contains(firstTO.slot?.id ?? firstTO.to.id);
     }
     return widget.loadingTOs.contains(widget.groupItem.id);
   }
@@ -2226,10 +2253,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
         if (d.applicationDeadline != null) return d;
         final parts = d.startTime.split(':');
         if (parts.length != 2) return d;
-        final deadline = DateTime(
-          refDate.year, refDate.month, refDate.day,
-          int.parse(parts[0]), int.parse(parts[1]),
-        ).subtract(Duration(hours: to.hoursBeforeStart!));
+        final h = int.tryParse(parts[0]);
+        final m = int.tryParse(parts[1]);
+        if (h == null || m == null) return d;
+        final deadline = DateTime(refDate.year, refDate.month, refDate.day, h, m)
+            .subtract(Duration(hours: to.hoursBeforeStart!));
         return d.copyWith(applicationDeadline: deadline);
       }).toList();
     }
@@ -2265,10 +2293,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
       if (d.applicationDeadline != null) return d;
       final parts = d.startTime.split(':');
       if (parts.length != 2) return d;
-      final deadline = DateTime(
-        refDate.year, refDate.month, refDate.day,
-        int.parse(parts[0]), int.parse(parts[1]),
-      ).subtract(Duration(hours: to.hoursBeforeStart!));
+      final h = int.tryParse(parts[0]);
+      final m = int.tryParse(parts[1]);
+      if (h == null || m == null) return d;
+      final deadline = DateTime(refDate.year, refDate.month, refDate.day, h, m)
+          .subtract(Duration(hours: to.hoursBeforeStart!));
       return d.copyWith(applicationDeadline: deadline);
     }).toList();
   }

@@ -106,12 +106,12 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
     final isEmergency = widget.work.isEmergencyOpen;
 
     Color statusColor;
-    if (isClosed) {
+    if (isFull) {
+      statusColor = AppColors.success;
+    } else if (isClosed) {
       statusColor = AppColors.grey400;
     } else if (isEmergency) {
       statusColor = AppColors.error;
-    } else if (isFull) {
-      statusColor = AppColors.success;
     } else {
       statusColor = widget.toItem.to.isLongTerm ? AppColors.longTerm : AppColors.shortTerm;
     }
@@ -353,7 +353,7 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
         Text(
           '$_confirmedCount/${widget.work.requiredCount}',
           style: ResponsiveHelper.smallStyle(context,
-                  color: isFull && !isClosed
+                  color: isFull
                       ? AppColors.successDark
                       : AppColors.grey600)
               .copyWith(fontWeight: FontWeight.w700),

@@ -1721,7 +1721,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       return;
     }
     final bizId = _selectedBusinessId ?? '';
-    if (bizId.isEmpty || widget.businesses.isEmpty) return;
+    if (bizId.isEmpty || widget.businesses.isEmpty) {
+      ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+      return;
+    }
     // [특이사항] orElse 폴백 제거 — bizId가 widget.businesses에 없으면 중단.
     // 폴백으로 첫 번째 사업장을 사용하면 잘못된 사업장 명의로 신분증 요청이 생성된다.
     final bizIdx = widget.businesses.indexWhere((b) => b.id == bizId);
@@ -1850,7 +1853,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     }
     if (_contractBatchGroupKey != null) return;
     final bizId = _selectedBusinessId ?? '';
-    if (bizId.isEmpty || widget.businesses.isEmpty) return;
+    if (bizId.isEmpty || widget.businesses.isEmpty) {
+      ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
+      return;
+    }
     // [특이사항] orElse 폴백 제거 — 잘못된 bizId 시 첫 번째 사업장 명의로 계약서가 생성되는 것을 방지.
     final bizIdx = widget.businesses.indexWhere((b) => b.id == bizId);
     if (bizIdx < 0) return;
