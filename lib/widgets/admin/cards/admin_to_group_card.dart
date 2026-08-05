@@ -123,6 +123,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
 
   // 날짜 칩 선택 상태 (다중 슬롯 뷰)
   DateTime? _selectedChipDate;
+  final GlobalKey _panelBottomKey = GlobalKey();
 
   void _updateGroupCache() {
     _buildNow = DateTime.now();
@@ -1180,9 +1181,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
                 }).toList(),
               ),
             ),
-          // 명단 보기 버튼
+          // 명단 보기 버튼 — _panelBottomKey: 칩 탭 시 이 위젯이 화면에 보이도록 스크롤
           const Divider(height: 1, color: AppColors.grey200),
           InkWell(
+            key: _panelBottomKey,
             onTap: () => _showSlotRoster(context, toItem),
             borderRadius:
                 const BorderRadius.vertical(bottom: Radius.circular(12)),
@@ -1231,6 +1233,14 @@ class _TOGroupCardState extends State<TOGroupCard> {
           !widget.expandedTOs.contains(itemKey)) {
         widget.onToggleTOExpand(itemKey);
       }
+      // AnimatedSize(200ms) 완료 후 패널 하단이 화면에 보이도록 스크롤
+      Future.delayed(const Duration(milliseconds: 280), () {
+        if (!mounted) return;
+        final ctx = _panelBottomKey.currentContext;
+        if (ctx == null) return;
+        // ignore: use_build_context_synchronously
+        Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+      });
     }
   }
 
