@@ -83,6 +83,8 @@ class TOGroupCard extends StatefulWidget {
   final void Function(String groupId)? onGroupActivated;
   /// 다중 슬롯 카드에서 날짜 칩이 해제될 때 부모에 비활성화 신호 전달
   final VoidCallback? onGroupDeactivated;
+  /// 리스트 맨 마지막 카드 여부 — 날짜 칩 펼침 시 자동 스크롤 적용
+  final bool isLastCard;
 
   const TOGroupCard({
     super.key,
@@ -104,6 +106,7 @@ class TOGroupCard extends StatefulWidget {
     this.activeGroupKey,
     this.onGroupActivated,
     this.onGroupDeactivated,
+    this.isLastCard = false,
   });
 
   @override
@@ -1233,20 +1236,16 @@ class _TOGroupCardState extends State<TOGroupCard> {
           !widget.expandedTOs.contains(itemKey)) {
         widget.onToggleTOExpand(itemKey);
       }
-      // 패널 하단이 화면 밖으로 벗어난 경우에만 스크롤 (상단/중단 카드는 그대로)
-      final screenHeight = MediaQuery.sizeOf(context).height;
-      Future.delayed(const Duration(milliseconds: 280), () {
-        if (!mounted) return;
-        final ctx = _panelBottomKey.currentContext;
-        if (ctx == null) return;
-        // ignore: use_build_context_synchronously
-        final renderBox = ctx.findRenderObject() as RenderBox?;
-        if (renderBox == null || !renderBox.attached) return;
-        final bottomEdge = renderBox.localToGlobal(Offset(0, renderBox.size.height)).dy;
-        if (bottomEdge <= screenHeight) return; // 이미 화면 안 — 스크롤 불필요
-        // ignore: use_build_context_synchronously
-        Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
-      });
+      // 마지막 카드일 때만 패널 하단이 보이도록 스크롤
+      if (widget.isLastCard) {
+        Future.delayed(const Duration(milliseconds: 280), () {
+          if (!mounted) return;
+          final ctx = _panelBottomKey.currentContext;
+          if (ctx == null) return;
+          // ignore: use_build_context_synchronously
+          Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+        });
+      }
     }
   }
 

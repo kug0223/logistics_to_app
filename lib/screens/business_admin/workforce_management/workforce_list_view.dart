@@ -474,6 +474,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
                   _expandedTOs.clear();
                 }),
                 onGroupDeactivated: () => setState(() => _activeGroupKey = null),
+                isLastCard: index == filteredItems.length - 1,
               ),
             ),
           );
