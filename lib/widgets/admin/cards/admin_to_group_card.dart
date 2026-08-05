@@ -290,11 +290,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
             children: [
               // ✨ 헤더 (클릭 가능)
               InkWell(
-                // multiSlot: 비활성 상태(isDimmed)일 때 헤더 클릭 → 활성화(버그 2 수정)
+                // multiSlot: 비활성(isDimmed)→활성화, 활성→날짜패널 접기
                 onTap: isMultiSlot
                     ? (isDimmed
                         ? () => widget.onGroupActivated?.call(widget.groupItem.id)
-                        : null)
+                        : () => setState(() => _selectedChipDate = null))
                     : widget.onToggleExpand,
                 borderRadius: BorderRadius.only(
                   topLeft: Radius.circular(16),
@@ -1145,30 +1145,6 @@ class _TOGroupCardState extends State<TOGroupCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 접기 행 — _selectedChipDate만 해제, activeGroupKey는 유지(버그 3 수정)
-          InkWell(
-            onTap: () {
-              setState(() => _selectedChipDate = null);
-            },
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  Text(
-                    '접기',
-                    style: ResponsiveHelper.smallStyle(context,
-                        color: AppColors.grey500),
-                  ),
-                  const SizedBox(width: 2),
-                  const Icon(Icons.keyboard_arrow_up,
-                      size: 16, color: AppColors.grey400),
-                ],
-              ),
-            ),
-          ),
-          const Divider(height: 1, color: AppColors.grey200),
           // 업무 상세 목록
           if (isLoading)
             const Padding(
