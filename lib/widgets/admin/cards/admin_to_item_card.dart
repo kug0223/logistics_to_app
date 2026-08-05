@@ -33,7 +33,6 @@ import '../../../screens/business_admin/to_management/edit_to_screen.dart';
 import '../../../screens/common/job_posting_screen.dart';
 
 // Dialogs
-import '../../../screens/business_admin/dialogs/confirmed_list_dialog.dart';
 import '../../../screens/business_admin/dialogs/work_detail_management_dialog.dart';
 import '../../../screens/business_admin/dialogs/to_list_dialogs.dart';
 
@@ -91,6 +90,16 @@ class TOItemCard extends StatefulWidget {
 }
 
 class _TOItemCardState extends State<TOItemCard> {
+  DateTime _buildNow = DateTime.now();
+
+  @override
+  void didUpdateWidget(TOItemCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.toItem != widget.toItem) {
+      _buildNow = DateTime.now();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final to = widget.toItem.to;
@@ -105,7 +114,7 @@ class _TOItemCardState extends State<TOItemCard> {
         : CloseStateUtils.isToItemClosed(
             widget.toItem,
             widget.groupItem.masterTO,
-            DateTime.now(),
+            _buildNow,
             localConfirmed: confirmed,
             localRequired: required,
           );
@@ -546,12 +555,6 @@ class _TOItemCardState extends State<TOItemCard> {
         ],
         [
           AppMenuSheetItem(
-            icon: Icons.check_circle_outline,
-            label: '확정명단',
-            color: AppColors.success,
-            onTap: () => _handleMenuAction(context, 'confirmedList'),
-          ),
-          AppMenuSheetItem(
             icon: Icons.assignment_turned_in,
             label: '업무별 마감',
             color: primaryColor,
@@ -624,41 +627,6 @@ class _TOItemCardState extends State<TOItemCard> {
 
       case 'delete':
         widget.dialogs.showDeleteTODialog(widget.toItem);
-        break;
-
-      case 'confirmedList':
-        if (!widget.toItem.isWorkDetailLoaded || widget.toItem.workDetails.isEmpty) {
-          showDialog(
-            context: context,
-            barrierDismissible: false,
-            builder: (_) => const Center(child: LoadingWidget()),
-          );
-          try {
-            final result = await widget.firestoreService.loadTOWorkDetails(widget.toItem.to, slotId: widget.toItem.slot?.id, slotWorkDetails: widget.toItem.slot?.workDetails);
-            widget.toItem.setWorkDetails(
-              result['workDetails'] as List<WorkDetailData>,
-              result['workStats'] as Map<String, Map<String, int>>,
-            );
-          } catch (e) {
-            if (!mounted) return;
-            Navigator.pop(this.context);
-            ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
-            return;
-          }
-          if (!mounted) return;
-          Navigator.pop(this.context);
-        }
-        if (!mounted) return;
-        ConfirmedListDialog(
-          context: this.context,
-          toItem: widget.toItem,
-          firestoreService: widget.firestoreService,
-          slotId: widget.toItem.slot?.id,
-          onLocalStatsChanged: () {
-            if (mounted) setState(() {});
-            widget.onLocalStatsChanged?.call();
-          },
-        ).show();
         break;
 
       case 'manageWorkDetails':

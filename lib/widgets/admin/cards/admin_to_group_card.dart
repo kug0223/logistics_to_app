@@ -31,7 +31,6 @@ import '../../common/slot_status_badge.dart';
 import '../../../screens/business_admin/to_management/edit_to_screen.dart';
 
 // Dialogs
-import '../../../screens/business_admin/dialogs/confirmed_list_dialog.dart';
 import '../../../screens/business_admin/dialogs/day_applicants_dialog.dart';
 import '../../../screens/business_admin/dialogs/to_list_dialogs.dart';
 import '../../../screens/business_admin/dialogs/slot_batch_select_dialog.dart';
@@ -1489,22 +1488,15 @@ class _TOGroupCardState extends State<TOGroupCard> {
               ),
             ],
           ],
-        // 확정명단 (읽기 전용 — 항상 표시) / 카드 제목 변경 (canManageTo)
-        [
-          AppMenuSheetItem(
-            icon: Icons.check_circle_outline,
-            label: '전체 확정명단',
-            color: AppColors.success,
-            onTap: () => _handleSingleTOMenuAction(context, 'confirmedList'),
-          ),
-          if (canManageTo)
+        if (canManageTo)
+          [
             AppMenuSheetItem(
               icon: Icons.drive_file_rename_outline,
               label: '카드 제목 변경',
               color: AppColors.purple,
               onTap: () => _handleSingleTOMenuAction(context, 'renameCard'),
             ),
-        ],
+          ],
         // 삭제 (BUSINESS_ADMIN 이상만)
         if (canDelete)
           [
@@ -1571,14 +1563,6 @@ class _TOGroupCardState extends State<TOGroupCard> {
                   onTap: () => _handleSingleTOMenuAction(context, 'close'),
                 ),
             ],
-          [
-            AppMenuSheetItem(
-              icon: Icons.check_circle_outline,
-              label: '전체 확정명단',
-              color: AppColors.success,
-              onTap: () => _handleSingleTOMenuAction(context, 'confirmedList'),
-            ),
-          ],
           if (canDelete)
             [
               AppMenuSheetItem(
@@ -1621,21 +1605,15 @@ class _TOGroupCardState extends State<TOGroupCard> {
                   onTap: () => _handleSingleTOMenuAction(context, 'delete'),
                 ),
             ],
-          [
-            AppMenuSheetItem(
-              icon: Icons.check_circle_outline,
-              label: '확정명단',
-              color: AppColors.success,
-              onTap: () => _handleSingleTOMenuAction(context, 'confirmedList'),
-            ),
-            if (canManageTo)
+          if (canManageTo)
+            [
               AppMenuSheetItem(
                 icon: Icons.assignment_turned_in,
                 label: '업무별 마감',
                 color: theme.primaryColor,
                 onTap: () => _handleSingleTOMenuAction(context, 'manageWorkDetails'),
               ),
-          ],
+            ],
         ],
       );
     }
@@ -1937,71 +1915,6 @@ class _TOGroupCardState extends State<TOGroupCard> {
         widget.dialogs.showDeleteTODialog(deleteTarget);
         break;
 
-      case 'confirmedList':
-        // 캘린더 슬롯 모드: 해당 슬롯 기준
-        final TOItem toItemForConfirmed;
-        if (widget.calendarSlot != null) {
-          toItemForConfirmed = widget.calendarSlot!;
-        } else if (widget.groupItem.groupTOs.isEmpty) {
-          // Contract TO: groupItem의 workDetailStats를 공유 참조로 전달
-          // → 확정명단에서 취소 시 in-place 갱신이 카드 확장 영역에도 즉시 반영됨
-          toItemForConfirmed = TOItem(
-            to: widget.groupItem.masterTO,
-            confirmedCount: widget.groupItem.totalConfirmed,
-            pendingCount: widget.groupItem.totalPending,
-            totalRequired: widget.groupItem.totalRequired,
-            workDetails: widget.groupItem.masterTO.workDetails,
-            workDetailStats: widget.groupItem.workDetailStats,
-            isWorkDetailLoaded: widget.groupItem.isWorkDetailLoaded,
-          );
-        } else {
-          final selected = await _selectTOItem(this.context);
-          if (selected == null || !mounted) return;
-          toItemForConfirmed = selected;
-        }
-
-        if (!toItemForConfirmed.isWorkDetailLoaded || toItemForConfirmed.workDetails.isEmpty) {
-          showDialog(
-            context: this.context,
-            barrierDismissible: false,
-            builder: (_) => const Center(child: LoadingWidget()),
-          );
-          try {
-            // toItemForConfirmed.slot 우선 사용 (리스트 뷰 날짜 선택 경로),
-            // 없을 때만 calendarSlot 폴백 (캘린더 뷰 직접 탭 경로)
-            final effectiveSlot = toItemForConfirmed.slot ?? widget.calendarSlot?.slot;
-            final result = effectiveSlot != null
-                ? await widget.firestoreService.loadTOWorkDetails(
-                    toItemForConfirmed.to,
-                    slotId: effectiveSlot.id,
-                    slotWorkDetails: effectiveSlot.workDetails,
-                  )
-                : await widget.firestoreService.loadTOWorkDetails(toItemForConfirmed.to);
-            toItemForConfirmed.setWorkDetails(
-              result['workDetails'] as List<WorkDetailData>,
-              result['workStats'] as Map<String, Map<String, int>>,
-            );
-          } catch (e) {
-            if (mounted) {
-              Navigator.pop(this.context);
-              ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
-            }
-            return;
-          }
-          if (mounted) Navigator.pop(this.context);
-        }
-
-        if (!mounted) return;
-        ConfirmedListDialog(
-          context: this.context,
-          toItem: toItemForConfirmed,
-          firestoreService: widget.firestoreService,
-          slotId: toItemForConfirmed.slot?.id ?? widget.calendarSlot?.slot?.id,
-          onLocalStatsChanged: () {
-            if (mounted) setState(() {});
-          },
-        ).show();
-
       case 'renameCard':
         final currentTitle = masterTO.groupTitle ?? masterTO.title;
         final controller = TextEditingController(text: currentTitle);
@@ -2096,130 +2009,6 @@ class _TOGroupCardState extends State<TOGroupCard> {
         ).show();
         break;
     }
-  }
-
-  /// 다중 슬롯 플렉스 TO에서 날짜 선택 다이얼로그
-  /// 슬롯이 1개면 바로 반환, 여러 개면 날짜 선택 시트 표시
-  Future<TOItem?> _selectTOItem(BuildContext context) async {
-    final slots = widget.groupItem.groupTOs;
-    if (slots.isEmpty) return null;
-    if (slots.length == 1) return slots.first;
-
-    return DialogHelper.showSheet<TOItem>(
-      context,
-      builder: (ctx) {
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 핸들바
-            const SizedBox(height: 12),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: AppColors.grey300,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // 헤더
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                children: [
-                  Text(
-                    '날짜 선택',
-                    style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.bold),
-                  ),
-                  const Spacer(),
-                  Text(
-                    '총 ${slots.length}일',
-                    style: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey500),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            Divider(height: 1, color: AppColors.grey100),
-            const SizedBox(height: 4),
-
-            // 날짜 목록
-            Flexible(
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    for (final toItem in slots)
-                      Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          onTap: () => Navigator.pop(ctx, toItem),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                            child: Row(
-                              children: [
-                                Container(
-                                  width: ResponsiveHelper.spacing(ctx, 44),
-                                  height: ResponsiveHelper.spacing(ctx, 44),
-                                  decoration: BoxDecoration(
-                                    color: Theme.of(ctx).primaryColor.withValues(alpha: 0.1),
-                                    borderRadius: BorderRadius.circular(14),
-                                  ),
-                                  child: Icon(
-                                    Icons.event,
-                                    color: Theme.of(ctx).primaryColor,
-                                    size: ResponsiveHelper.iconSize(ctx, 22),
-                                  ),
-                                ),
-                                const SizedBox(width: 16),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        FormatHelper.formatDate(toItem.slot?.date ?? toItem.to.date),
-                                        style: ResponsiveHelper.bodyStyle(ctx).copyWith(fontWeight: FontWeight.w600),
-                                      ),
-                                      if (toItem.pendingCount > 0)
-                                        Text(
-                                          '대기 ${toItem.pendingCount}명',
-                                          style: ResponsiveHelper.tinyStyle(ctx, color: AppColors.warningDark),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                                Container(
-                                  padding: EdgeInsets.symmetric(
-                                    horizontal: ResponsiveHelper.spacing(ctx, 8),
-                                    vertical: ResponsiveHelper.spacing(ctx, 3),
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.infoBg,
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  child: Text(
-                                    '${toItem.confirmedCount}/${toItem.totalRequired}',
-                                    style: ResponsiveHelper.smallStyle(ctx, color: AppColors.infoDark)
-                                        .copyWith(fontWeight: FontWeight.bold),
-                                  ),
-                                ),
-                                const SizedBox(width: 4),
-                                const Icon(Icons.chevron_right, color: AppColors.grey300, size: 20),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    const SizedBox(height: 12),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   /// 단건 TO 로딩 중 여부
