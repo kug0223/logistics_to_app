@@ -29,6 +29,7 @@ import '../../../screens/business_admin/to_management/edit_to_screen.dart';
 
 // Dialogs
 import '../../../screens/business_admin/dialogs/confirmed_list_dialog.dart';
+import '../../../screens/business_admin/dialogs/day_applicants_dialog.dart';
 import '../../../screens/business_admin/dialogs/to_list_dialogs.dart';
 import '../../../screens/business_admin/dialogs/slot_batch_select_dialog.dart';
 import '../../common/app_menu_sheet.dart';
@@ -1246,47 +1247,22 @@ class _TOGroupCardState extends State<TOGroupCard> {
     }
   }
 
-  /// 당일 확정명단 다이얼로그 표시
+  /// 당일 명단 다이얼로그 — DayApplicantsDialog를 해당 공고로 필터링해 표시
   Future<void> _showSlotRoster(BuildContext context, TOItem toItem) async {
-    if (!toItem.isWorkDetailLoaded || toItem.workDetails.isEmpty) {
-      if (!mounted) return;
-      showDialog(
-        context: this.context,
-        barrierDismissible: false,
-        builder: (_) => const Center(child: LoadingWidget()),
-      );
-      try {
-        final effectiveSlot = toItem.slot;
-        final result = effectiveSlot != null
-            ? await widget.firestoreService.loadTOWorkDetails(
-                toItem.to,
-                slotId: effectiveSlot.id,
-                slotWorkDetails: effectiveSlot.workDetails,
-              )
-            : await widget.firestoreService.loadTOWorkDetails(toItem.to);
-        toItem.setWorkDetails(
-          result['workDetails'] as List<WorkDetailData>,
-          result['workStats'] as Map<String, Map<String, int>>,
-        );
-      } catch (e) {
-        if (mounted) {
-          Navigator.pop(this.context);
-          ToastHelper.showError('명단을 불러오는데 실패했습니다.');
-        }
-        return;
-      }
-      if (mounted) Navigator.pop(this.context);
-    }
-    if (!mounted) return;
-    ConfirmedListDialog(
+    final date = toItem.slot?.date ?? _selectedChipDate;
+    if (date == null || !mounted) return;
+    final masterTO = widget.groupItem.masterTO;
+    final hasChanges = await showDialog<bool>(
       context: this.context,
-      toItem: toItem,
-      firestoreService: widget.firestoreService,
-      slotId: toItem.slot?.id,
-      onLocalStatsChanged: () {
-        if (mounted) setState(() {});
-      },
-    ).show();
+      barrierDismissible: false,
+      builder: (_) => DayApplicantsDialog(
+        date: date,
+        businessIds: [masterTO.businessId],
+        businesses: const [],
+        filterToId: masterTO.id,
+      ),
+    );
+    if (hasChanges == true && mounted) widget.onChanged();
   }
 
   // ═══════════════════════════════════════════════════════════════

@@ -3,6 +3,7 @@
 import 'dart:convert';
 import 'dart:math' show min;
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -86,12 +87,15 @@ class DayApplicantsDialog extends StatefulWidget {
   final DateTime date;
   final List<String> businessIds;
   final List<BusinessModel> businesses;
+  /// 특정 공고로 필터링 (TOGroupCard 명단 보기에서 사용). null이면 전체 표시.
+  final String? filterToId;
 
   const DayApplicantsDialog({
     super.key,
     required this.date,
     required this.businessIds,
     required this.businesses,
+    this.filterToId,
   });
 
   @override
@@ -110,6 +114,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   List<ApplicationModel> _pendingApps = [];
   List<ApplicationModel> _confirmedApps = [];
+  List<_GroupData> _cachedGroups = [];
   Map<String, UserModel> _userMap = {};
   Map<String, String?> _contractStatusMap = {};
   Map<String, int> _weeklyWorkCountMap = {};
@@ -193,8 +198,14 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         _svc.getConfirmedWorkersByDateAndBusiness(
             date: widget.date, businessId: bizId),
       ]);
-      final pending = phase1[0] as List<ApplicationModel>;
-      final confirmed = phase1[1] as List<ApplicationModel>;
+      var pending = phase1[0] as List<ApplicationModel>;
+      var confirmed = phase1[1] as List<ApplicationModel>;
+
+      // 특정 공고 필터 (TOGroupCard 명단 보기)
+      if (widget.filterToId != null) {
+        pending = pending.where((a) => a.toId == widget.filterToId).toList();
+        confirmed = confirmed.where((a) => a.toId == widget.filterToId).toList();
+      }
 
       if (!mounted || _selectedBusinessId != bizId) return;
 
@@ -208,23 +219,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         final allUids = allApps.map((a) => a.uid).toSet().toList();
         final allAppIds = allApps.map((a) => a.id).toList();
 
-        Map<String, int> workDetailCapacityMap = {};
-        final results = await Future.wait([
-          _svc.getUsersBatch(allUids, businessId: bizId),
-          _contractSvc.getContractStatusBatch(allAppIds, businessId: bizId),
-          _loadWeeklyCount(bizId),
-          _loadWorkDetailCapacities(allApps),
-        ]);
-        userMap = results[0] as Map<String, UserModel>;
-        contractMap = results[1] as Map<String, String?>;
-        weeklyMap = results[2] as Map<String, int>;
-        workDetailCapacityMap = results[3] as Map<String, int>;
-
-        // Phase 3: 신분증 상태 + 리뷰 작성 여부 (확정자만) + 관심표시 복원
+        // Phase 3 입력값은 Phase 1 결과만 필요 → Phase 2와 병렬로 선제 시작
         final confirmedUserIds = confirmed.map((a) => a.uid).toSet().toList();
         final currentUserId = FirebaseAuth.instance.currentUser?.uid ?? '';
 
-        // Phase 3: 독립 비동기 3개 동시 시작 (신분증·리뷰·근무여부 — 서로 의존성 없음)
         final idCardFuture = (confirmedUserIds.isNotEmpty && currentUserId.isNotEmpty)
             ? IdCardHelper.loadStatusBatch(
                 firestoreService: _svc,
@@ -250,6 +248,20 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             ? _svc.loadHasWorkedMap(businessId: bizId, date: widget.date)
             : Future.value(<String, bool>{});
 
+        // Phase 2: Phase 3 futures가 이미 실행 중인 상태에서 병렬로 처리됨
+        Map<String, int> workDetailCapacityMap = {};
+        final results = await Future.wait([
+          _svc.getUsersBatch(allUids, businessId: bizId),
+          _contractSvc.getContractStatusBatch(allAppIds, businessId: bizId),
+          _loadWeeklyCount(bizId),
+          _loadWorkDetailCapacities(allApps),
+        ]);
+        userMap = results[0] as Map<String, UserModel>;
+        contractMap = results[1] as Map<String, String?>;
+        weeklyMap = results[2] as Map<String, int>;
+        workDetailCapacityMap = results[3] as Map<String, int>;
+
+        // Phase 3 결과 수집 (Phase 2와 병렬로 이미 실행 완료됐을 가능성 높음)
         final idCardMap = await idCardFuture;
 
         final Map<String, bool> reviewMap = {};
@@ -274,6 +286,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           _starredIds.addAll(starredFromFirestore);
           _hasWorkedMap = hasWorkedMap; // [BUG-CANCEL-01]
           _isLoading = false;
+          _rebuildGroups();
         });
         return;
       }
@@ -287,6 +300,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         _weeklyWorkCountMap = weeklyMap;
         _hasWorkedMap = {}; // [BUG-CANCEL-01] 확정자 없으면 초기화
         _isLoading = false;
+        _rebuildGroups();
       });
     } catch (e) {
       debugPrint('❌ 지원명단 로드 실패: $e');
@@ -295,6 +309,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         _isLoading = false;
         _pendingApps = [];
         _confirmedApps = [];
+        _cachedGroups = [];
         _userMap = {};
         _contractStatusMap = {};
         _idCardStatusMap = {};
@@ -368,6 +383,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   }
 
   // ── Grouping ───────────────────────────────────────────────────────────────
+
+  void _rebuildGroups() => _cachedGroups = _buildGroups();
 
   List<_GroupData> _buildGroups() {
     final Map<String, _GroupData> groups = {};
@@ -585,17 +602,27 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             borderRadius: BorderRadius.circular(
                 ResponsiveHelper.spacing(context, 8)),
             child: InkWell(
-              onTap: () => setState(() {
-                _isBatchMode = !_isBatchMode;
+              onTap: () {
+                // BATCH-STRIP-01: 일괄 확정 진입 시 canManageTo 확인
                 if (!_isBatchMode) {
-                  _selectedIds.clear();
-                } else {
-                  // 다른 모드와 상호 배제
-                  _idCardSelectGroupKey = null;
-                  _selectedIdCardUserIds.clear();
-                  _contractBatchGroupKey = null;
+                  final up = Provider.of<UserProvider>(context, listen: false);
+                  if (!up.can((p) => p.canManageTo)) {
+                    ToastHelper.showWarning('일괄 확정 권한이 없습니다.');
+                    return;
+                  }
                 }
-              }),
+                setState(() {
+                  _isBatchMode = !_isBatchMode;
+                  if (!_isBatchMode) {
+                    _selectedIds.clear();
+                  } else {
+                    // 다른 모드와 상호 배제
+                    _idCardSelectGroupKey = null;
+                    _selectedIdCardUserIds.clear();
+                    _contractBatchGroupKey = null;
+                  }
+                });
+              },
               borderRadius: BorderRadius.circular(
                   ResponsiveHelper.spacing(context, 8)),
               child: Padding(
@@ -677,7 +704,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   }
 
   Widget _buildListBody(BuildContext context) {
-    final groups = _buildGroups();
+    final groups = _cachedGroups;
     if (groups.isEmpty) {
       return const AppEmptyState(
         icon: Icons.people_outline,
@@ -994,6 +1021,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     final isStarred = isPending && _starredIds.contains(app.id);
     final idCardStatus = _idCardStatusMap[user?.uid ?? ''] ?? 'none';
     final trustScore = TrustScoreHelper.calculate(user);
+    final up = Provider.of<UserProvider>(context, listen: false);
+    final canManageTo = up.can((p) => p.canManageTo);
+    final canManageContract = up.can((p) => p.canManageContract);
 
     final Color cardBg;
     final Color cardBorder;
@@ -1187,7 +1217,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                 if (user != null && user.averageRating > 0)
                   Row(mainAxisSize: MainAxisSize.min, children: [
                     const Icon(Icons.star_rounded,
-                        size: 11, color: Color(0xFFF59E0B)),
+                        size: 11, color: AppColors.amber),
                     const SizedBox(width: 2),
                     Text(
                       user.averageRating.toStringAsFixed(1),
@@ -1213,7 +1243,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             ),
 
             // ── Row 4: 액션 버튼 ──
-            if (isPending && !_isBatchMode) ...[
+            if (isPending && !_isBatchMode && canManageTo) ...[
               const SizedBox(height: 8),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
@@ -1236,11 +1266,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               ),
             ] else if (!isPending) ...[
               // [BUG-CANCEL-01] 계약서 작성·확정취소·파트변경 중 하나라도 표시할 때 Row 렌더링
-              if ((_contractStatusMap[app.id] == null ||
-                      _contractStatusMap[app.id]!.isEmpty ||
-                      _contractStatusMap[app.id] == 'voided') ||
-                  _canCancelConfirmation(app) ||
-                  (app.toId != null && hasMultipleParts)) ...[
+              if ((((_contractStatusMap[app.id] == null ||
+                          _contractStatusMap[app.id]!.isEmpty ||
+                          _contractStatusMap[app.id] == 'voided') &&
+                      canManageContract) ||
+                  (_canCancelConfirmation(app) && canManageTo) ||
+                  (app.toId != null && hasMultipleParts && canManageTo))) ...[
                 const SizedBox(height: 8),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
@@ -1248,7 +1279,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                     // 계약 미작성 시 개별 계약서 작성 버튼
                     if ((_contractStatusMap[app.id] == null ||
                         _contractStatusMap[app.id]!.isEmpty ||
-                        _contractStatusMap[app.id] == 'voided')) ...[
+                        _contractStatusMap[app.id] == 'voided') &&
+                        canManageContract) ...[
                       _actionButton(
                         context,
                         label: '계약서 작성',
@@ -1259,7 +1291,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                       const SizedBox(width: 8),
                     ],
                     // [BUG-CANCEL-01] 근무 완료·장기계약 시작 후에는 확정취소 버튼 숨김
-                    if (_canCancelConfirmation(app)) ...[
+                    if (_canCancelConfirmation(app) && canManageTo) ...[
                       _actionButton(
                         context,
                         label: '확정취소',
@@ -1269,7 +1301,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                       if (app.toId != null && hasMultipleParts) const SizedBox(width: 8),
                     ],
                     // 파트변경 버튼 — TO 소속이고 다른 파트가 있는 경우에만 표시
-                    if (app.toId != null && hasMultipleParts)
+                    if (app.toId != null && hasMultipleParts && canManageTo)
                       _actionButton(
                         context,
                         label: '파트변경',
@@ -1735,13 +1767,14 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           }
           _idCardSelectGroupKey = null;
           _selectedIdCardUserIds.clear();
+          _isProcessing = false;
         });
       }
     } catch (e) {
       debugPrint('❌ [day_batchRequestIdCard] 신분증 요청 실패: $e');
       if (mounted) ToastHelper.showError('신분증 요청 중 오류가 발생했습니다');
     } finally {
-      if (mounted) setState(() => _isProcessing = false);
+      if (mounted && _isProcessing) setState(() => _isProcessing = false);
     }
   }
 
@@ -1809,6 +1842,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   }
 
   Future<void> _batchCreateContracts(_GroupData g) async {
+    // BATCH-CONTRACT-01: 계약서 일괄작성 권한 확인
+    final up = Provider.of<UserProvider>(context, listen: false);
+    if (!up.can((p) => p.canManageContract)) {
+      ToastHelper.showWarning('계약서 관리 권한이 없습니다.');
+      return;
+    }
     if (_contractBatchGroupKey != null) return;
     final bizId = _selectedBusinessId ?? '';
     if (bizId.isEmpty || widget.businesses.isEmpty) return;
@@ -1836,22 +1875,27 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           await ContractTemplateSelectorDialog.show(context, businessId: bizId);
       if (articles == null || !mounted) return;
 
-      // 2. 인감 확인
-      final currentUser = context.read<UserProvider>().currentUser;
-      sealBase64 = currentUser?.sealBase64 ?? '';
-      sealType = currentUser?.sealType ?? 'stamp';
+      // 2. 인감 확인 — SubAdmin은 사업주(ownerId) 문서에서 날인 조회
+      final sealUid = up.isSubAdmin ? business.ownerId : (up.currentUser?.uid ?? '');
+      if (sealUid.isNotEmpty) {
+        final sealDoc = await FirebaseFirestore.instance.collection('users').doc(sealUid).get();
+        if (!mounted) return;
+        sealBase64 = sealDoc.data()?['sealBase64'] ?? '';
+        sealType = sealDoc.data()?['sealType'] ?? 'stamp';
+      }
       if (sealBase64.isEmpty) {
         if (!mounted) return;
         final goSettings = await DialogHelper.showConfirm(
           context,
           title: '사업주 날인 미등록',
-          message:
-              '일괄 계약 발송에는 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 또는 서명을 먼저 등록해주세요.',
-          confirmText: '설정으로 이동',
+          message: up.isSubAdmin
+              ? '일괄 계약 발송에는 사업주 날인이 필요합니다.\n사업주에게 날인 등록을 요청해주세요.'
+              : '일괄 계약 발송에는 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 또는 서명을 먼저 등록해주세요.',
+          confirmText: up.isSubAdmin ? '확인' : '설정으로 이동',
           cancelText: '취소',
         );
         if (!mounted) return;
-        if (goSettings) {
+        if (goSettings && !up.isSubAdmin) {
           Navigator.of(context, rootNavigator: true)
               .push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
         }
@@ -1982,7 +2026,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   }) {
     return showDialog<bool>(
       context: context,
-      barrierDismissible: true,
+      barrierDismissible: false, // CSN-06: 미리보기 중 실수 닫힘 방지 (취소 버튼으로만 닫기)
       builder: (ctx) => Dialog(
         insetPadding:
             const EdgeInsets.symmetric(horizontal: 12, vertical: 32),
@@ -2387,10 +2431,20 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       return;
     }
 
-    // 2. 인감 확인
-    final currentUser = context.read<UserProvider>().currentUser;
-    final sealBase64 = currentUser?.sealBase64 ?? '';
-    final sealType = currentUser?.sealType ?? 'stamp';
+    // 2. 인감 확인 — SubAdmin은 사업주(ownerId) 문서에서 날인 조회
+    final up = context.read<UserProvider>();
+    final sealUid = up.isSubAdmin ? business.ownerId : (up.currentUser?.uid ?? '');
+    String sealBase64 = '';
+    String sealType = 'stamp';
+    if (sealUid.isNotEmpty) {
+      final sealDoc = await FirebaseFirestore.instance.collection('users').doc(sealUid).get();
+      if (!mounted) {
+        setState(() => _isProcessing = false);
+        return;
+      }
+      sealBase64 = sealDoc.data()?['sealBase64'] ?? '';
+      sealType = sealDoc.data()?['sealType'] ?? 'stamp';
+    }
     if (sealBase64.isEmpty) {
       if (!mounted) {
         return;
@@ -2398,14 +2452,16 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       final goSettings = await DialogHelper.showConfirm(
         context,
         title: '사업주 날인 미등록',
-        message: '계약 발송에는 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 또는 서명을 먼저 등록해주세요.',
-        confirmText: '설정으로 이동',
+        message: up.isSubAdmin
+            ? '계약 발송에는 사업주 날인이 필요합니다.\n사업주에게 날인 등록을 요청해주세요.'
+            : '계약 발송에는 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 또는 서명을 먼저 등록해주세요.',
+        confirmText: up.isSubAdmin ? '확인' : '설정으로 이동',
         cancelText: '취소',
       );
       if (!mounted) {
         return;
       }
-      if (goSettings) {
+      if (goSettings && !up.isSubAdmin) {
         Navigator.of(context, rootNavigator: true)
             .push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
       }
@@ -2694,6 +2750,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   }
 
   Future<void> _batchApprove() async {
+    // PERM-01: 실행 시점 재확인 — UI 토글이 우회되더라도 서버 전 최후 방어
+    final up = Provider.of<UserProvider>(context, listen: false);
+    if (!up.can((p) => p.canManageTo)) {
+      ToastHelper.showWarning('일괄 확정 권한이 없습니다.');
+      return;
+    }
     if (_isProcessing || _selectedIds.isEmpty) return;
 
     // 정원 초과 검증 (TO별로 현재 확정 수 + 선택 수 > 정원이면 경고)
@@ -2742,11 +2804,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         confirmText: '일괄 확정',
       );
       if (!confirmed || !mounted) return;
-      int successCount = 0;
       final ids = _selectedIds.toList();
       final adminUID = FirebaseAuth.instance.currentUser?.uid;
-      for (final appId in ids) {
-        if (!mounted) break;
+      final results = await Future.wait(ids.map((appId) async {
         try {
           await _svc.updateApplicationStatus(
             applicationId: appId,
@@ -2754,13 +2814,15 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             status: AppStatus.contractPending,
             confirmedBy: adminUID,
           );
-          successCount++;
+          return true;
         } catch (e) {
           // [특이사항] PERMISSION_DENIED 포함 실패 사유를 로깅 — 크로스-사업장 접근 시도 감지용.
           // UI에는 최종 성공 카운트만 표시하되, 보안 이벤트는 디버그 로그에 남긴다.
           debugPrint('❌ [_batchApprove] 확정 실패 [$appId]: $e');
+          return false;
         }
-      }
+      }));
+      final successCount = results.where((r) => r).length;
       if (successCount > 0) _hasChanges = true;
       if (!mounted) return;
       // [DAY-2-FIX] successCount==0일 때 showSuccess 대신 showError — 모두 실패한 경우 안내
