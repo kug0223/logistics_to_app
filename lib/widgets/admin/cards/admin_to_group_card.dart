@@ -453,13 +453,12 @@ class _TOGroupCardState extends State<TOGroupCard> {
                             ),
                           ),
 
-                          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-
-                          // multiSlot: 상태 배지 인라인 / 단건: 인원 현황 배지
-                          if (isMultiSlot)
-                            _buildStatusBadge(context,
-                                allClosed: allClosed, targetTOs: targetTOs)
-                          else
+                          // multiSlot: 상태배지 인라인 / 단기 단건: 인원배지 / 고정: 도트 행에서 별도 표시
+                          if (isMultiSlot) ...[
+                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                            _buildStatusBadge(context, allClosed: allClosed, targetTOs: targetTOs),
+                          ] else if (!masterTO.isLongTerm) ...[
+                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                             _buildPersonnelBadge(
                               context,
                               confirmed: totalConfirmed,
@@ -467,6 +466,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                               pending: totalPending,
                               isFull: isFull,
                             ),
+                          ],
                         ],
                       ),
 
@@ -476,53 +476,34 @@ class _TOGroupCardState extends State<TOGroupCard> {
                         _buildMultiSlotRingRow(context),
                       ],
                       
-                      // 고정 공고 계약 기간
-                      if (masterTO.isLongTerm && masterTO.contractPeriodLabel.isNotEmpty) ...[
-                        Padding(
-                          padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 4)),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.assignment_outlined,
-                                size: ResponsiveHelper.iconSize(context, 13),
-                                color: AppColors.longTermDark,
-                              ),
-                              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                              Text(
-                                '계약 ${masterTO.contractPeriodLabel}',
-                                style: ResponsiveHelper.smallStyle(
-                                  context,
-                                  color: AppColors.longTermDark,
-                                ).copyWith(fontWeight: FontWeight.w600),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-
-                      // 장기공고 게시 마감일
-                      if (masterTO.isLongTerm && !allClosed) ...[
+                      // 고정 공고: 계약기간 + 공고마감 한 줄
+                      if (masterTO.isLongTerm) ...[
                         Builder(builder: (context) {
-                          final expiry = masterTO.formattedPostingExpiry;
-                          if (expiry == null) return const SizedBox.shrink(); // 무기한
+                          final hasContract = masterTO.contractPeriodLabel.isNotEmpty;
+                          final expiry = !allClosed ? masterTO.formattedPostingExpiry : null;
+                          final hasExpiry = expiry != null;
+                          if (!hasContract && !hasExpiry) return const SizedBox.shrink();
                           final isPast = masterTO.isPostingExpired;
                           return Padding(
-                            padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 6)),
+                            padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 4)),
                             child: Row(
                               children: [
-                                Icon(
-                                  Icons.calendar_month_outlined,
-                                  size: ResponsiveHelper.iconSize(context, 14),
-                                  color: isPast ? AppColors.grey500 : AppColors.warningDark,
-                                ),
-                                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                                Text(
-                                  '공고마감 $expiry',
-                                  style: ResponsiveHelper.smallStyle(
-                                    context,
-                                    color: isPast ? AppColors.grey500 : AppColors.warningDark,
-                                  ),
-                                ),
+                                if (hasContract) ...[
+                                  Icon(Icons.assignment_outlined, size: ResponsiveHelper.iconSize(context, 13), color: AppColors.longTermDark),
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                  Text('계약 ${masterTO.contractPeriodLabel}',
+                                    style: ResponsiveHelper.smallStyle(context, color: AppColors.longTermDark).copyWith(fontWeight: FontWeight.w600)),
+                                ],
+                                if (hasContract && hasExpiry) ...[
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                                  Text('·', style: ResponsiveHelper.smallStyle(context, color: AppColors.grey400)),
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                                ],
+                                if (hasExpiry) ...[
+                                  Icon(Icons.calendar_month_outlined, size: ResponsiveHelper.iconSize(context, 13), color: isPast ? AppColors.grey500 : AppColors.warningDark),
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                                  Text('공고마감 $expiry', style: ResponsiveHelper.smallStyle(context, color: isPast ? AppColors.grey500 : AppColors.warningDark)),
+                                ],
                               ],
                             ),
                           );
@@ -619,8 +600,24 @@ class _TOGroupCardState extends State<TOGroupCard> {
                         ),
                       ],
 
-                      // ✨ 상태 표시 — multiSlot은 날짜 옆 인라인 처리, 단건/고정만 여기서 표시
-                      if (!isMultiSlot) ...[
+                      // 고정: 확정/대기/미충원 도트 + 모집중 칩 한 줄
+                      if (masterTO.isLongTerm && !isMultiSlot) ...[
+                        SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                        Row(
+                          children: [
+                            _buildDot(context, AppColors.success, '확정 $totalConfirmed'),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                            _buildDot(context, AppColors.warning, '대기 $totalPending'),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                            _buildDot(context, AppColors.grey400,
+                                '미충원 ${(totalRequired - totalConfirmed - totalPending).clamp(0, totalRequired)}'),
+                            const Spacer(),
+                            _buildStatusBadge(context, allClosed: allClosed, targetTOs: targetTOs),
+                          ],
+                        ),
+                      ],
+                      // 단기 단건: 기존 상태 칩 유지
+                      if (!masterTO.isLongTerm && !isMultiSlot) ...[
                         SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                         _buildStatusBadge(context, allClosed: allClosed, targetTOs: targetTOs),
                       ],
@@ -1366,6 +1363,21 @@ class _TOGroupCardState extends State<TOGroupCard> {
   ///   - 슬롯 미로드: groupItem.isClosed (TOGroupItem getter — isManualClosed 포함)
   ///   - 슬롯 로드됨: CloseStateUtils.isToItemClosed 전체 판단
   /// 상태 분류 자체는 SlotStatusUtil.groupStatus에 위임.
+  Widget _buildDot(BuildContext context, Color color, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+        Text(label, style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600)),
+      ],
+    );
+  }
+
   Widget _buildStatusBadge(BuildContext context, {
     required bool allClosed,
     required List<TOItem> targetTOs,
