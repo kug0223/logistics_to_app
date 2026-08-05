@@ -47,6 +47,8 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   // 이중 토글 상태 관리
   final Set<String> _expandedGroups = {};
   final Set<String> _expandedTOs = {};
+  // 아코디언: 현재 활성화된 그룹 카드 ID
+  String? _activeGroupKey;
 
   // Lazy Loading 로컬 스피너 상태
   final Set<String> _loadingGroups = {};
@@ -56,6 +58,15 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   static const int _closedPageSize = 5;
   int _closedDisplayCount = _closedPageSize;
   final ScrollController _scrollController = ScrollController();
+
+  // H2: 필터 결과 캐시 — items·필터·탭이 바뀔 때만 재계산
+  List<TOGroupItem>? _lastCachedItems;
+  String? _lastCachedTab;
+  String? _lastCachedBusiness;
+  String? _lastCachedTOType;
+  String? _lastCachedPublishStatus;
+  DateTimeRange? _lastCachedDateRange;
+  List<TOGroupItem> _cachedFilteredItems = [];
 
   @override
   void initState() {
@@ -87,8 +98,8 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     if (_selectedTab != TOStatus.closed) return;
     final pos = _scrollController.position;
     if (pos.pixels >= pos.maxScrollExtent - 150) {
-      final controller = context.read<WorkforceController>();
-      final total = _getFilteredItems(controller.items).length;
+      // H1: 스크롤 이벤트마다 재계산 방지 — 마지막 build에서 채운 캐시 사용
+      final total = _cachedFilteredItems.length;
       if (_closedDisplayCount < total) {
         setState(() => _closedDisplayCount =
             (_closedDisplayCount + _closedPageSize).clamp(0, total));
@@ -100,15 +111,35 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     setState(() {
       _expandedGroups.clear();
       _expandedTOs.clear();
-      // 마감됨 탭 페이지네이션 리셋 — 재로드 시 처음 페이지부터 표시
       _closedDisplayCount = _closedPageSize;
+      _lastCachedItems = null; // H2: reload 시 캐시 즉시 무효화
     });
     context.read<WorkforceController>().reload(context);
   }
 
-  /// controller.items 에서 탭·사업장·날짜 필터 적용
+  /// 탭·필터가 바뀌지 않으면 이전 결과를 그대로 반환 (H2)
   List<TOGroupItem> _getFilteredItems(List<TOGroupItem> allItems) {
     final controller = context.read<WorkforceController>();
+    if (identical(allItems, _lastCachedItems) &&
+        _selectedTab == _lastCachedTab &&
+        controller.selectedBusiness == _lastCachedBusiness &&
+        controller.selectedTOType == _lastCachedTOType &&
+        controller.selectedPublishStatus == _lastCachedPublishStatus &&
+        controller.selectedDateRange == _lastCachedDateRange) {
+      return _cachedFilteredItems;
+    }
+    _lastCachedItems = allItems;
+    _lastCachedTab = _selectedTab;
+    _lastCachedBusiness = controller.selectedBusiness;
+    _lastCachedTOType = controller.selectedTOType;
+    _lastCachedPublishStatus = controller.selectedPublishStatus;
+    _lastCachedDateRange = controller.selectedDateRange;
+    _cachedFilteredItems = _computeFilteredItems(allItems, controller);
+    return _cachedFilteredItems;
+  }
+
+  /// controller.items 에서 탭·사업장·날짜 필터 적용
+  List<TOGroupItem> _computeFilteredItems(List<TOGroupItem> allItems, WorkforceController controller) {
     final selectedBusiness = controller.selectedBusiness;
     final selectedTOType = controller.selectedTOType;
     final selectedPublishStatus = controller.selectedPublishStatus;
@@ -224,15 +255,16 @@ class _WorkforceListViewState extends State<WorkforceListView> {
 
   @override
   Widget build(BuildContext context) {
+    final controller = context.watch<WorkforceController>();
     return Column(
       children: [
-        _buildTabBar(),
-        Expanded(child: _buildTOList()),
+        _buildTabBar(controller),
+        Expanded(child: _buildTOList(controller)),
       ],
     );
   }
 
-  Widget _buildTabBar() {
+  Widget _buildTabBar(WorkforceController controller) {
     final theme = Theme.of(context);
 
     return Container(
@@ -260,11 +292,11 @@ class _WorkforceListViewState extends State<WorkforceListView> {
               child: Row(
                 children: [
                   Expanded(
-                    child: _buildTab(TOStatus.active, '진행중', Icons.play_circle_outline),
+                    child: _buildTab(controller, TOStatus.active, '진행중', Icons.play_circle_outline),
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                   Expanded(
-                    child: _buildTab(TOStatus.closed, '마감됨', Icons.check_circle_outline),
+                    child: _buildTab(controller, TOStatus.closed, '마감됨', Icons.check_circle_outline),
                   ),
                 ],
               ),
@@ -275,10 +307,9 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     );
   }
 
-  Widget _buildTab(String tab, String label, IconData icon) {
+  Widget _buildTab(WorkforceController controller, String tab, String label, IconData icon) {
     final theme = Theme.of(context);
     final isSelected = _selectedTab == tab;
-    final controller = context.watch<WorkforceController>();
     final isActiveTab = tab == TOStatus.active;
     final activeCount = isActiveTab ? controller.activeToCount : null;
     final isMaxed = isActiveTab && (activeCount ?? 0) >= controller.maxActiveTOs;
@@ -379,8 +410,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     );
   }
 
-  Widget _buildTOList() {
-    final controller = context.watch<WorkforceController>();
+  Widget _buildTOList(WorkforceController controller) {
 
     if (controller.isLoading) {
       return const LoadingWidget(message: '공고 목록을 불러오는 중...');
@@ -436,7 +466,14 @@ class _WorkforceListViewState extends State<WorkforceListView> {
                 isGroupLoading: _loadingGroups.contains(groupItem.id),
                 loadingTOs: _loadingTOs,
                 onAffectedTOsChanged: (_) => _reload(),
-                isAnyExpanded: _expandedGroups.isNotEmpty,
+                isAnyExpanded: _expandedGroups.isNotEmpty || _activeGroupKey != null,
+                activeGroupKey: _activeGroupKey,
+                onGroupActivated: (groupId) => setState(() {
+                  _activeGroupKey = groupId;
+                  _expandedGroups.clear();
+                  _expandedTOs.clear();
+                }),
+                onGroupDeactivated: () => setState(() => _activeGroupKey = null),
               ),
             ),
           );
@@ -461,6 +498,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       setState(() {
         _expandedGroups.remove(key);
         _expandedTOs.clear();
+        _activeGroupKey = null;
       });
       return;
     }
@@ -470,6 +508,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       _expandedGroups.clear();
       _expandedTOs.clear();
       _expandedGroups.add(key);
+      _activeGroupKey = key;
     });
 
     final controller = context.read<WorkforceController>();
@@ -520,14 +559,13 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       return;
     }
 
-    // 먼저 expand → body 안 스피너가 즉시 표시됨
     setState(() {
       _expandedTOs.clear();
       _expandedTOs.add(key);
+      if (toItem.needsWorkDetailLoad) _loadingTOs.add(key);
     });
 
     if (toItem.needsWorkDetailLoad) {
-      setState(() => _loadingTOs.add(key));
       try {
         await context.read<WorkforceController>().loadWorkDetails(toItem);
       } catch (e) {

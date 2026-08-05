@@ -2,9 +2,7 @@ import 'package:flutter/material.dart';
 
 // Models
 import '../../../models/core/work_detail_model.dart';
-import '../../../models/core/insurance_rate_model.dart';
 import '../../../models/core/to_model.dart';
-import '../../common/tax_deduction_badge.dart';
 import '../../../models/ui/admin_to_list_ui_models.dart';
 
 // Services
@@ -58,7 +56,14 @@ class WorkDetailRow extends StatefulWidget {
 }
 
 class _WorkDetailRowState extends State<WorkDetailRow> {
-  
+  DateTime _buildNow = DateTime.now();
+
+  @override
+  void didUpdateWidget(WorkDetailRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.work != widget.work) _buildNow = DateTime.now();
+  }
+
   String get _netWorkTimeStr => FormatHelper.calcNetWorkTime(
         widget.work.startTime,
         widget.work.endTime,
@@ -111,299 +116,238 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
       statusColor = widget.toItem.to.isLongTerm ? AppColors.longTerm : AppColors.shortTerm;
     }
 
+    final wageColor = _wageColor(isClosed);
+    final totalApplicants = _confirmedCount + _pendingCount;
+    final missing = (widget.work.requiredCount - _confirmedCount).clamp(0, widget.work.requiredCount);
+
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // 좌측 상태 인디케이터
-            Container(
-              width: 3,
-              decoration: BoxDecoration(
-                color: statusColor,
-                borderRadius: BorderRadius.circular(2),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _showApplicantsDialog(context),
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(10),
+              border: Border(
+                left: BorderSide(color: statusColor, width: 3),
+                top: BorderSide(color: AppColors.grey200),
+                right: BorderSide(color: AppColors.grey200),
+                bottom: BorderSide(color: AppColors.grey200),
               ),
             ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-
-            Expanded(
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: () => _showApplicantsDialog(context),
-                  borderRadius: BorderRadius.circular(10),
-                  child: Container(
-                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: AppColors.grey200),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildWorkIcon(context),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-
-                        // 업무 정보 — Expanded로 가용 너비 최대화
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              // 업무명 — 전체 너비 사용
-                              Text(
-                                widget.work.workType,
-                                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                                  fontWeight: FontWeight.w600,
-                                  color: isClosed ? AppColors.grey500 : AppColors.textPrimary,
-                                ),
-                              ),
-                              SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                              // 근무시간 — Flexible로 긴 텍스트 overflow 방지
-                              Row(
-                                children: [
-                                  Icon(
-                                    Icons.access_time,
-                                    size: ResponsiveHelper.iconSize(context, 12),
-                                    color: AppColors.grey400,
-                                  ),
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-                                  Flexible(
-                                    child: Text.rich(
-                                      TextSpan(children: [
-                                        TextSpan(
-                                          text: '${widget.work.startTime} ~ ${widget.work.endTime}',
-                                          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                                        ),
-                                        if (_netWorkTimeStr.isNotEmpty)
-                                          TextSpan(
-                                            text: '  ($_netWorkTimeStr)',
-                                            style: ResponsiveHelper.tinyStyle(context).copyWith(
-                                              color: AppColors.grey500,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                      ]),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              // 마감시간 + 상태배지 (단기만)
-                              if (!widget.toItem.to.isLongTerm) ...[
-                                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                                Wrap(
-                                  spacing: ResponsiveHelper.spacing(context, 6),
-                                  runSpacing: ResponsiveHelper.spacing(context, 4),
-                                  crossAxisAlignment: WrapCrossAlignment.center,
-                                  children: [
-                                    if (_effectiveDeadline != null)
-                                      Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(
-                                            Icons.timer_off_outlined,
-                                            size: ResponsiveHelper.iconSize(context, 12),
-                                            color: isClosed ? AppColors.grey400 : AppColors.warningDark,
-                                          ),
-                                          SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-                                          Text(
-                                            '마감 ${FormatHelper.formatTime(_effectiveDeadline!)}',
-                                            style: ResponsiveHelper.smallStyle(
-                                              context,
-                                              color: isClosed ? AppColors.grey400 : AppColors.warningDark,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    _buildWorkStatusBadge(context, isClosed: isClosed),
-                                  ],
-                                ),
-                              ],
-                              SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                              // 급여 + 정산 주기
-                              Wrap(
-                                spacing: ResponsiveHelper.spacing(context, 6),
-                                runSpacing: ResponsiveHelper.spacing(context, 2),
-                                crossAxisAlignment: WrapCrossAlignment.center,
-                                children: [
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.paid,
-                                        size: ResponsiveHelper.iconSize(context, 12),
-                                        color: _wageColor(isClosed),
-                                      ),
-                                      SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                      Text(
-                                        '${widget.work.wageTypeLabel} ${FormatHelper.formatWage(widget.work.wage)}',
-                                        style: ResponsiveHelper.smallStyle(
-                                          context,
-                                          color: _wageColor(isClosed),
-                                        ).copyWith(fontWeight: FontWeight.w600),
-                                      ),
-                                    ],
-                                  ),
-                                  if (widget.work.payScheduleTypeLabel.isNotEmpty)
-                                    Container(
-                                      padding: EdgeInsets.symmetric(
-                                        horizontal: ResponsiveHelper.spacing(context, 6),
-                                        vertical: 1,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: _wageColor(isClosed).withValues(alpha: 0.1),
-                                        borderRadius: BorderRadius.circular(4),
-                                      ),
-                                      child: Text(
-                                        widget.work.payScheduleTypeLabel,
-                                        style: ResponsiveHelper.tinyStyle(
-                                          context,
-                                          color: _wageColor(isClosed),
-                                        ).copyWith(fontWeight: FontWeight.w600),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                              // 입금일 상세 (주급/월급일 때만)
-                              if (widget.work.payScheduleDetail.isNotEmpty) ...[
-                                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                                Row(
-                                  children: [
-                                    Icon(
-                                      Icons.account_balance_wallet_outlined,
-                                      size: ResponsiveHelper.iconSize(context, 12),
-                                      color: AppColors.grey500,
-                                    ),
-                                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                    Flexible(
-                                      child: Text(
-                                        '${widget.work.payScheduleDetail} 입금',
-                                        style: ResponsiveHelper.smallStyle(
-                                          context,
-                                          color: AppColors.grey600,
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                              if (widget.work.taxDeductionType != InsuranceRateModel.typeNone) ...[
-                                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                                TaxDeductionBadge.row(
-                                  taxDeductionType: widget.work.taxDeductionType,
-                                ),
-                              ],
-                              // 인원현황 — 텍스트 영역 안 마지막 줄로 이동
-                              SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-                              _buildPersonnelStatus(context, isFull, isClosed, statusColor),
-                            ],
-                          ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // ① 업무명(소형아이콘 포함) + 지원자 칩
+                Row(
+                  children: [
+                    Container(
+                      width: 20,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        color: FormatHelper.parseColor(widget.work.workTypeBackgroundColor),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Center(
+                        child: WorkTypeIcon.buildFromString(
+                          widget.work.workTypeIcon,
+                          color: FormatHelper.parseColor(widget.work.workTypeColor),
+                          size: 11,
                         ),
-
-                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                        // 오른쪽: 지원자 버튼만 (인원현황은 텍스트 영역으로 이동)
-                        _buildApplicantButton(context, theme),
-                      ],
+                      ),
                     ),
-                  ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                    Expanded(
+                      child: Text(
+                        widget.work.workType,
+                        style: ResponsiveHelper.bodyStyle(context).copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: isClosed ? AppColors.grey500 : AppColors.textPrimary,
+                        ),
+                      ),
+                    ),
+                    if (totalApplicants > 0) ...[
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: theme.primaryColor.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.people, size: 11, color: theme.primaryColor),
+                            const SizedBox(width: 3),
+                            Text(
+                              '지원자 $totalApplicants',
+                              style: ResponsiveHelper.tinyStyle(context,
+                                      color: theme.primaryColor)
+                                  .copyWith(fontWeight: FontWeight.w700),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
-              ),
+                // ② 데이터 바
+                SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                _buildProgressBar(isClosed),
+                SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                // ③ 시간 + 임금 (한 줄)
+                Row(
+                  children: [
+                    Icon(Icons.access_time,
+                        size: ResponsiveHelper.iconSize(context, 12),
+                        color: AppColors.grey400),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                    Flexible(
+                      child: Text.rich(
+                        TextSpan(children: [
+                          TextSpan(
+                            text: '${widget.work.startTime} ~ ${widget.work.endTime}',
+                            style: ResponsiveHelper.smallStyle(context,
+                                color: AppColors.grey600),
+                          ),
+                          if (_netWorkTimeStr.isNotEmpty)
+                            TextSpan(
+                              text: ' ($_netWorkTimeStr)',
+                              style: ResponsiveHelper.tinyStyle(context)
+                                  .copyWith(color: AppColors.grey500),
+                            ),
+                          TextSpan(
+                            text: '  ·  ${widget.work.wageTypeLabel} ${FormatHelper.formatWage(widget.work.wage)}',
+                            style: ResponsiveHelper.smallStyle(context,
+                                    color: wageColor)
+                                .copyWith(fontWeight: FontWeight.w600),
+                          ),
+                        ]),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+                // ④ 상태배지 + 마감시간 (단기만)
+                if (!widget.toItem.to.isLongTerm) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(context, 5)),
+                  Row(
+                    children: [
+                      _buildWorkStatusBadge(context, isClosed: isClosed),
+                      if (_effectiveDeadline != null) ...[
+                        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                        Icon(Icons.timer_off_outlined,
+                            size: ResponsiveHelper.iconSize(context, 12),
+                            color: isClosed ? AppColors.grey400 : AppColors.warningDark),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                        Text(
+                          '마감 ${FormatHelper.formatTime(_effectiveDeadline!)}',
+                          style: ResponsiveHelper.smallStyle(context,
+                              color: isClosed ? AppColors.grey400 : AppColors.warningDark),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+                SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                // ⑤ 확정/대기/미충원 도트 + N/total
+                _buildPersonnelStatus(context, isFull, isClosed, missing),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
   }
 
-  /// 업무 아이콘
-  Widget _buildWorkIcon(BuildContext context) {
-    return Container(
-      width: ResponsiveHelper.iconSize(context, 36),
-      height: ResponsiveHelper.iconSize(context, 36),
-      decoration: BoxDecoration(
-        color: FormatHelper.parseColor(widget.work.workTypeBackgroundColor),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Center(
-        child: WorkTypeIcon.buildFromString(
-          widget.work.workTypeIcon,
-          color: FormatHelper.parseColor(widget.work.workTypeColor),
-          size: ResponsiveHelper.iconSize(context, 18),
-        ),
-      ),
+  /// 확정(녹색) + 대기(앰버) + 잔여(회색) 수평 데이터 바
+  Widget _buildProgressBar(bool isClosed) {
+    final total = widget.work.requiredCount;
+    if (total <= 0) return const SizedBox.shrink();
+    final confirmedRatio = (_confirmedCount / total).clamp(0.0, 1.0);
+    final pendingRatio = ((_confirmedCount + _pendingCount) / total).clamp(0.0, 1.0);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth;
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(3),
+          child: SizedBox(
+            height: 5,
+            child: Stack(
+              children: [
+                Container(width: w, color: AppColors.grey100),
+                if (pendingRatio > 0)
+                  Container(
+                    width: w * pendingRatio,
+                    color: isClosed
+                        ? AppColors.grey300
+                        : AppColors.warning.withValues(alpha: 0.55),
+                  ),
+                if (confirmedRatio > 0)
+                  Container(
+                    width: w * confirmedRatio,
+                    color: isClosed ? AppColors.grey400 : AppColors.success,
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
-  /// 인원 현황 (항상 표시 + 상태별 색상)
+/// 인원 현황 — 확정/대기/미충원 컬러 도트 + N/total 우측 정렬
   Widget _buildPersonnelStatus(
     BuildContext context,
     bool isFull,
     bool isClosed,
-    Color statusColor,
+    int missing,
   ) {
-    // 상태별 색상: 마감=회색, 충족=초록, 진행중=파랑
-    Color displayColor;
-    if (isClosed) {
-      displayColor = AppColors.grey500;
-    } else if (isFull) {
-      displayColor = AppColors.successDark;
-    } else {
-      displayColor = AppColors.infoDark;
-    }
-    
+    final confirmedColor = isClosed ? AppColors.grey400 : AppColors.success;
+    final pendingColor = isClosed ? AppColors.grey400 : AppColors.warning;
+    final missingColor = AppColors.grey400;
+    final textColor = isClosed ? AppColors.grey500 : AppColors.grey700;
+
     return Row(
-      mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(
-          isFull ? Icons.check_circle : Icons.people_outline,
-          size: ResponsiveHelper.iconSize(context, 14),
-          color: displayColor,
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+        _buildDot(confirmedColor),
+        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+        Text('확정 $_confirmedCount',
+            style: ResponsiveHelper.tinyStyle(context, color: textColor)),
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+        _buildDot(pendingColor),
+        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+        Text('대기 $_pendingCount',
+            style: ResponsiveHelper.tinyStyle(context, color: textColor)),
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+        _buildDot(missingColor),
+        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+        Text('미충원 $missing',
+            style: ResponsiveHelper.tinyStyle(context, color: textColor)),
+        const Spacer(),
         Text(
           '$_confirmedCount/${widget.work.requiredCount}',
-          style: ResponsiveHelper.bodyStyle(
-            context,
-            color: displayColor,
-          ).copyWith(fontWeight: FontWeight.bold),
+          style: ResponsiveHelper.smallStyle(context,
+                  color: isFull && !isClosed
+                      ? AppColors.successDark
+                      : AppColors.grey600)
+              .copyWith(fontWeight: FontWeight.w700),
         ),
-        if (_pendingCount > 0) ...[
-          Text(
-            ' +$_pendingCount',
-            style: ResponsiveHelper.smallStyle(
-              context,
-              color: AppColors.warningDark,
-            ),
-          ),
-        ],
       ],
     );
   }
 
-  /// 지원자 보기 버튼
-  Widget _buildApplicantButton(BuildContext context, ThemeData theme) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () => _showApplicantsDialog(context),
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-          decoration: BoxDecoration(
-            color: theme.primaryColor.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(
-            Icons.people,
-            size: ResponsiveHelper.iconSize(context, 18),
-            color: theme.primaryColor,
-          ),
-        ),
-      ),
+  Widget _buildDot(Color color) {
+    return Container(
+      width: 7,
+      height: 7,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
     );
   }
   /// ✨ 업무 상태 배지 (마감/예약/모집중)
@@ -446,7 +390,7 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
     // 2. 예약 — slot.visibleFrom(슬롯 레벨) 또는 TO 레벨 스케줄
     // slot.visibleFrom은 슬롯 레벨 예약공개 — SlotStatusUtil과 동일 우선순위로 체크 필수
     // status='SCHEDULED'는 isPendingPublish와 별개 경로 — 둘 다 체크해야 예약 배지가 표시됨
-    final slotScheduled = slot?.visibleFrom != null && slot!.visibleFrom!.isAfter(DateTime.now());
+    final slotScheduled = slot?.visibleFrom != null && slot!.visibleFrom!.isAfter(_buildNow);
     if (slotScheduled || to.status == TOStatus.scheduled || to.isPendingPublish) {
       return Container(
         padding: EdgeInsets.symmetric(
