@@ -1233,11 +1233,17 @@ class _TOGroupCardState extends State<TOGroupCard> {
           !widget.expandedTOs.contains(itemKey)) {
         widget.onToggleTOExpand(itemKey);
       }
-      // AnimatedSize(200ms) 완료 후 패널 하단이 화면에 보이도록 스크롤
+      // 패널 하단이 화면 밖으로 벗어난 경우에만 스크롤 (상단/중단 카드는 그대로)
+      final screenHeight = MediaQuery.sizeOf(context).height;
       Future.delayed(const Duration(milliseconds: 280), () {
         if (!mounted) return;
         final ctx = _panelBottomKey.currentContext;
         if (ctx == null) return;
+        // ignore: use_build_context_synchronously
+        final renderBox = ctx.findRenderObject() as RenderBox?;
+        if (renderBox == null || !renderBox.attached) return;
+        final bottomEdge = renderBox.localToGlobal(Offset(0, renderBox.size.height)).dy;
+        if (bottomEdge <= screenHeight) return; // 이미 화면 안 — 스크롤 불필요
         // ignore: use_build_context_synchronously
         Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
       });
