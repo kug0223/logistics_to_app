@@ -315,7 +315,7 @@ class TODetailDialogs {
                 // 이름
                 Expanded(
                   child: Text(
-                    applicant['userName'],
+                    applicant['userName'] as String? ?? '이름 없음',
                     style: ResponsiveHelper.bodyStyle(ctx).copyWith(
                       fontWeight: FontWeight.bold,
                     ),
@@ -356,7 +356,7 @@ class TODetailDialogs {
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(ctx, 6)),
                 Text(
-                  applicant['userPhone'],
+                  applicant['userPhone'] as String? ?? '-',
                   style: ResponsiveHelper.smallStyle(
                     ctx,
                     color: Theme.of(ctx).textTheme.bodyMedium?.color,

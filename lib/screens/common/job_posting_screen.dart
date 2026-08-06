@@ -733,23 +733,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
               ),
             ),
 
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-            // 모집 현황 헤더
-            Row(
-              children: [
-                Icon(Icons.bar_chart, size: 16, color: AppColors.grey500),
-                const SizedBox(width: 6),
-                Text(
-                  '모집 현황',
-                  style: ResponsiveHelper.smallStyle(context).copyWith(
-                    color: AppColors.grey600,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
             // 마감 상태 안내
             if (isEffectivelyClosed) ...[
@@ -757,16 +741,16 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                 width: double.infinity,
                 padding: EdgeInsets.symmetric(
                   horizontal: ResponsiveHelper.spacing(context, 12),
-                  vertical: ResponsiveHelper.spacing(context, 10),
+                  vertical: ResponsiveHelper.spacing(context, 8),
                 ),
                 decoration: BoxDecoration(
                   color: AppColors.grey100,
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.lock_outline, size: 16, color: AppColors.grey500),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    Icon(Icons.lock_outline, size: 14, color: AppColors.grey500),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                     Text(
                       isSlotFull ? '인원이 모두 충족되어 마감되었습니다.' : '마감된 공고입니다.',
                       style: ResponsiveHelper.smallStyle(context).copyWith(
@@ -776,70 +760,31 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                   ],
                 ),
               ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             ],
 
-            // 모집 현황 (슬롯별 수치 우선, 없으면 마스터 TO 집계)
-            Row(
-              children: [
-                Expanded(
-                  child: _buildStatCard(
-                    context,
-                    Icons.people_outline,
-                    '모집 인원',
-                    '$effectiveRequired명',
-                    AppColors.info,
-                  ),
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                Expanded(
-                  child: _buildStatCard(
-                    context,
-                    Icons.check_circle_outline,
-                    '확정 인원',
-                    '$effectiveConfirmed명',
-                    AppColors.success,
-                  ),
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                Expanded(
-                  child: Builder(builder: (_) {
-                    final effectivePending = widget.slotPendingCount ?? _to!.totalPending;
-                    final rawRemaining = effectiveRequired - effectiveConfirmed;
-                    final remaining = (rawRemaining - effectivePending).clamp(0, effectiveRequired);
-                    final color = remaining > 0 ? AppColors.warning : AppColors.error;
-                    final valueText = remaining > 0
-                        ? '$remaining명'
-                        : (rawRemaining > 0 ? '대기 중' : '0명');
-                    return Container(
-                      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-                      decoration: BoxDecoration(
-                        color: color.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Column(
-                        children: [
-                          Icon(Icons.hourglass_empty,
-                              size: ResponsiveHelper.iconSize(context, 20), color: color),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                          Text(valueText,
-                              style: ResponsiveHelper.subtitleStyle(context)
-                                  .copyWith(fontWeight: FontWeight.bold, color: color)),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                          Text('남은 자리',
-                              style: ResponsiveHelper.tinyStyle(context)
-                                  .copyWith(color: AppColors.grey600)),
-                          if (effectivePending > 0 && rawRemaining > 0)
-                            Text('(대기 $effectivePending명)',
-                                style: ResponsiveHelper.tinyStyle(context)
-                                    .copyWith(color: AppColors.warning, fontSize: 9)),
-                        ],
-                      ),
-                    );
-                  }),
-                ),
-              ],
-            ),
+            // 모집 현황 — 컴팩트 3칩 (슬롯별 수치 우선, 없으면 마스터 TO 집계)
+            Builder(builder: (_) {
+              final effectivePending = _slot?.pendingCount ?? widget.slotPendingCount ?? _to!.totalPending;
+              final rawRemaining = effectiveRequired - effectiveConfirmed;
+              final remaining = (rawRemaining - effectivePending).clamp(0, effectiveRequired);
+              final remainColor = remaining > 0 ? AppColors.warning : AppColors.error;
+              final remainText = remaining > 0
+                  ? '$remaining명'
+                  : (rawRemaining > 0 ? '대기 중' : '0명');
+              final remainLabel = effectivePending > 0 && rawRemaining > 0
+                  ? '잔여 (대기 $effectivePending)'
+                  : '남은 자리';
+              return Row(
+                children: [
+                  _buildCompactStatChip(context, Icons.people_outline, '모집 인원', '$effectiveRequired명', AppColors.info),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  _buildCompactStatChip(context, Icons.check_circle_outline, '확정', '$effectiveConfirmed명', AppColors.success),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  _buildCompactStatChip(context, Icons.hourglass_empty, remainLabel, remainText, remainColor),
+                ],
+              );
+            }),
           ],
         ),
     );
@@ -1866,42 +1811,53 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
     );
   }
 
-  Widget _buildStatCard(
+  Widget _buildCompactStatChip(
     BuildContext context,
     IconData icon,
     String label,
     String value,
     Color color,
   ) {
-    return Container(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        children: [
-          Icon(
-            icon,
-            size: ResponsiveHelper.iconSize(context, 20),
-            color: color,
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-          Text(
-            value,
-            style: ResponsiveHelper.subtitleStyle(context).copyWith(
-              fontWeight: FontWeight.bold,
-              color: color,
+    return Expanded(
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 10),
+          vertical: ResponsiveHelper.spacing(context, 8),
+        ),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: ResponsiveHelper.iconSize(context, 14), color: color),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    value,
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: color,
+                      height: 1.2,
+                    ),
+                  ),
+                  Text(
+                    label,
+                    style: ResponsiveHelper.tinyStyle(context).copyWith(
+                      color: AppColors.grey600,
+                      height: 1.2,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
             ),
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-          Text(
-            label,
-            style: ResponsiveHelper.tinyStyle(context).copyWith(
-              color: AppColors.grey600,
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
