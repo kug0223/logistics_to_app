@@ -265,6 +265,24 @@ class _UserTOCardState extends State<UserTOCard> {
   }
 
   String? get _recruitText {
+    // Flex TO: 인원 합산은 의미 없음 (날짜별 인원이 다를 수 있음)
+    // → 공개된 날파 수로 표시
+    if (widget.to.isFlexType) {
+      final slots = widget.slots;
+      if (slots != null && slots.isNotEmpty) {
+        // 슬롯 로드됨: 현재 공개 + 비마감 날파 수
+        final now = DateTime.now();
+        final openCount = slots.where((s) =>
+          !s.isEffectivelyClosed &&
+          (s.visibleFrom == null || !s.visibleFrom!.isAfter(now))
+        ).length;
+        if (openCount > 0) return '$openCount개 날파';
+      }
+      // 슬롯 미로드: totalSlots(전체 날파 수) fallback
+      final total = widget.to.totalSlots;
+      return total > 0 ? '$total개 날파' : null;
+    }
+    // Contract TO: 기존 N/M명 표시
     final req = widget.to.totalRequired;
     if (req <= 0) return null;
     return '${widget.to.totalConfirmed}/$req명';

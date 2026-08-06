@@ -763,8 +763,32 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
               SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             ],
 
-            // 모집 현황 — 컴팩트 3칩 (슬롯별 수치 우선, 없으면 마스터 TO 집계)
+            // 모집 현황
+            // Flex TO + 날파 미선택: 날파 수 기반 표시 (인원 합산은 날짜별 인원이 달라 의미 없음)
+            // Contract TO 또는 날파 선택 후: 인원 기반 3칩
             Builder(builder: (_) {
+              if (_to!.isFlexType && _slot == null) {
+                final now = DateTime.now();
+                final openCount = _allSlots.isNotEmpty
+                    ? _allSlots.where((s) =>
+                        !s.isEffectivelyClosed &&
+                        (s.visibleFrom == null || !s.visibleFrom!.isAfter(now))
+                      ).length
+                    : _to!.totalSlots; // 슬롯 미로드 시 전체 날파 수 fallback
+                return Row(
+                  children: [
+                    _buildCompactStatChip(
+                      context, Icons.calendar_today_outlined,
+                      '날파 모집', '$openCount개', AppColors.info,
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    _buildCompactStatChip(
+                      context, Icons.check_circle_outline,
+                      '전체 확정', '${_to!.totalConfirmed}명', AppColors.success,
+                    ),
+                  ],
+                );
+              }
               final effectivePending = _slot?.pendingCount ?? widget.slotPendingCount ?? _to!.totalPending;
               final rawRemaining = effectiveRequired - effectiveConfirmed;
               final remaining = (rawRemaining - effectivePending).clamp(0, effectiveRequired);
