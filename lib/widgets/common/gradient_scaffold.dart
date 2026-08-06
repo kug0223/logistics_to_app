@@ -76,6 +76,7 @@ class GradientScaffold extends StatelessWidget {
           ),
         ),
         child: SafeArea(
+          bottom: false, // 하단은 각 화면의 listPadding(viewPaddingOf.bottom 포함)이 처리
           child: Column(
             children: [
               // ── 파란 헤더 영역
