@@ -298,8 +298,8 @@ class _UserTOCardState extends State<UserTOCard> {
 
     final card = Card(
         margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
-        elevation: widget.isSelected ? 3 : 1,
-        shadowColor: Colors.black12,
+        elevation: widget.isSelected ? 2 : 0.5,
+        shadowColor: Colors.black.withValues(alpha: 0.08),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
           side: BorderSide(
@@ -437,6 +437,7 @@ class _UserTOCardState extends State<UserTOCard> {
         Text(
           _timeAgo,
           style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+          overflow: TextOverflow.ellipsis,
         ),
         ..._statusBadgeWidgets(context),
         SizedBox(width: ResponsiveHelper.spacing(context, 4)),
@@ -489,10 +490,13 @@ class _UserTOCardState extends State<UserTOCard> {
             size: ResponsiveHelper.iconSize(context, 13),
             color: AppColors.grey500),
         SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-        Text(
-          _dateText,
-          style: ResponsiveHelper.smallStyle(context,
-              color: AppColors.grey700, fontWeight: FontWeight.w500),
+        Flexible(
+          child: Text(
+            _dateText,
+            style: ResponsiveHelper.smallStyle(context,
+                color: AppColors.grey700, fontWeight: FontWeight.w500),
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
         if (showTime) ...[
           _divider(context),
@@ -531,15 +535,24 @@ class _UserTOCardState extends State<UserTOCard> {
         _pill(context, _wageLabel, AppColors.successBg, AppColors.successDark,
             border: AppColors.successLight),
         SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-        Text(
-          _wageAmount,
-          style: ResponsiveHelper.subtitleStyle(context).copyWith(
-            color: AppColors.successDark,
-            fontWeight: FontWeight.bold,
+        Flexible(
+          child: Text(
+            _wageAmount,
+            style: ResponsiveHelper.subtitleStyle(context).copyWith(
+              color: AppColors.successDark,
+              fontWeight: FontWeight.bold,
+            ),
+            overflow: TextOverflow.ellipsis,
           ),
         ),
         if (hint != null) ...[
-          _divider(context),
+          Padding(
+            padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 6)),
+            child: Text('·',
+                style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.grey300)),
+          ),
           Expanded(
             child: Text(
               hint,
@@ -551,14 +564,15 @@ class _UserTOCardState extends State<UserTOCard> {
         ] else
           const Spacer(),
         if (recruit != null) ...[
-          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           Icon(Icons.people_outline,
               size: ResponsiveHelper.iconSize(context, 13),
-              color: AppColors.grey500),
-          SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+              color: AppColors.grey400),
+          SizedBox(width: ResponsiveHelper.spacing(context, 2)),
           Text(
             recruit,
-            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600),
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+            overflow: TextOverflow.ellipsis,
           ),
         ],
       ],
@@ -587,30 +601,38 @@ class _UserTOCardState extends State<UserTOCard> {
   }
 
   Widget _buildExpandBar(BuildContext context) {
-    final label = widget.isSelected
+    final theme = Theme.of(context);
+    final isSelected = widget.isSelected;
+    final label = isSelected
         ? '접기'
         : widget.to.isFlexType
             ? '날짜 선택'
             : '업무 상세';
 
     return Container(
-      color: AppColors.grey50,
+      color: isSelected
+          ? theme.primaryColor.withValues(alpha: 0.05)
+          : AppColors.grey50,
       padding: EdgeInsets.symmetric(
-          vertical: ResponsiveHelper.spacing(context, 5)),
+          vertical: ResponsiveHelper.spacing(context, 6)),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
+          Icon(
+            isSelected
+                ? Icons.keyboard_arrow_up
+                : widget.to.isFlexType
+                    ? Icons.calendar_today_outlined
+                    : Icons.expand_more,
+            size: ResponsiveHelper.iconSize(context, 13),
+            color: isSelected ? theme.primaryColor : AppColors.grey400,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           Text(
             label,
-            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-          Icon(
-            widget.isSelected
-                ? Icons.keyboard_arrow_up
-                : Icons.keyboard_arrow_down,
-            size: ResponsiveHelper.iconSize(context, 16),
-            color: AppColors.grey400,
+            style: ResponsiveHelper.tinyStyle(context,
+                color: isSelected ? theme.primaryColor : AppColors.grey500,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal),
           ),
         ],
       ),
@@ -839,6 +861,7 @@ class _UserTOCardState extends State<UserTOCard> {
                 return Text(
                   label,
                   style: ResponsiveHelper.tinyStyle(context, color: color),
+                  overflow: TextOverflow.ellipsis,
                 );
               }),
             ],

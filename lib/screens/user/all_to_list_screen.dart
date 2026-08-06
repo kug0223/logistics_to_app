@@ -513,15 +513,39 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
                                           (_hasMoreData ? 1 : 0),
                                       itemBuilder: (context, index) {
                                         if (index == _displayList.length) {
-                                          return Padding(
-                                            padding: EdgeInsets.symmetric(
-                                              vertical: ResponsiveHelper.spacing(
-                                                  context, 16),
-                                            ),
-                                            child: _isLoadingMore
-                                                ? const LoadingWidget()
-                                                : const SizedBox.shrink(),
-                                          );
+                                          if (_isLoadingMore) {
+                                            return Padding(
+                                              padding: EdgeInsets.symmetric(
+                                                vertical: ResponsiveHelper.spacing(context, 16),
+                                              ),
+                                              child: const LoadingWidget(),
+                                            );
+                                          }
+                                          if (_hasMoreData) {
+                                            return Padding(
+                                              padding: EdgeInsets.fromLTRB(
+                                                ResponsiveHelper.spacing(context, 16),
+                                                ResponsiveHelper.spacing(context, 4),
+                                                ResponsiveHelper.spacing(context, 16),
+                                                ResponsiveHelper.spacing(context, 16),
+                                              ),
+                                              child: OutlinedButton.icon(
+                                                onPressed: _loadMoreTOs,
+                                                icon: Icon(Icons.expand_more,
+                                                    size: ResponsiveHelper.iconSize(context, 18)),
+                                                label: const Text('더 많은 공고 보기'),
+                                                style: OutlinedButton.styleFrom(
+                                                  minimumSize: const Size(double.infinity, 44),
+                                                  side: BorderSide(color: AppColors.grey300),
+                                                  foregroundColor: AppColors.grey600,
+                                                  shape: RoundedRectangleBorder(
+                                                    borderRadius: BorderRadius.circular(10),
+                                                  ),
+                                                ),
+                                              ),
+                                            );
+                                          }
+                                          return const SizedBox.shrink();
                                         }
                                         final to = _displayList[index];
                                         final isSelected =
