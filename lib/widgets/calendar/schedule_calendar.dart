@@ -29,6 +29,9 @@ class ScheduleCalendar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final todayOnly = DateTime(now.year, now.month, now.day);
+
     return AppCalendar(
       focusedDay: focusedDay,
       selectedDay: selectedDay,
@@ -36,8 +39,6 @@ class ScheduleCalendar extends StatelessWidget {
       onPageChanged: onPageChanged,
       rowHeight: 36,
       enabledDayPredicate: (day) {
-        final today = DateTime.now();
-        final todayOnly = DateTime(today.year, today.month, today.day);
         final dayOnly = DateTime(day.year, day.month, day.day);
         if (!dayOnly.isBefore(todayOnly)) return true;
         final events = dateIndex != null

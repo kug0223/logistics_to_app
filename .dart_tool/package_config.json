@@ -14,6 +14,30 @@
       "languageVersion": "3.0"
     },
     {
+      "name": "app_links",
+      "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/app_links-6.4.1",
+      "packageUri": "lib/",
+      "languageVersion": "3.5"
+    },
+    {
+      "name": "app_links_linux",
+      "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/app_links_linux-1.0.3",
+      "packageUri": "lib/",
+      "languageVersion": "3.2"
+    },
+    {
+      "name": "app_links_platform_interface",
+      "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/app_links_platform_interface-2.0.2",
+      "packageUri": "lib/",
+      "languageVersion": "3.2"
+    },
+    {
+      "name": "app_links_web",
+      "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/app_links_web-1.0.4",
+      "packageUri": "lib/",
+      "languageVersion": "3.2"
+    },
+    {
       "name": "archive",
       "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/archive-3.6.1",
       "packageUri": "lib/",
@@ -602,6 +626,12 @@
       "languageVersion": "2.16"
     },
     {
+      "name": "gtk",
+      "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/gtk-2.2.0",
+      "packageUri": "lib/",
+      "languageVersion": "3.0"
+    },
+    {
       "name": "html",
       "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/html-0.15.6",
       "packageUri": "lib/",
@@ -618,6 +648,18 @@
       "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/http_parser-4.1.2",
       "packageUri": "lib/",
       "languageVersion": "3.4"
+    },
+    {
+      "name": "iamport_flutter",
+      "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/iamport_flutter-0.10.21",
+      "packageUri": "lib/",
+      "languageVersion": "2.17"
+    },
+    {
+      "name": "iamport_webview_flutter",
+      "rootUri": "file:///C:/Users/kug02/AppData/Local/Pub/Cache/hosted/pub.dev/iamport_webview_flutter-3.0.8",
+      "packageUri": "lib/",
+      "languageVersion": "2.14"
     },
     {
       "name": "image",

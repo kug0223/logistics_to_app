@@ -22,22 +22,17 @@ class AuthService {
 
   // 로그인 (아이디 기반)
   Future<UserModel?> signIn(String username, String password) async {
-    // 기존 세션 완전 정리 — 비밀번호 재설정 후 토큰이 무효화된 경우 stale 상태 방지
-    try { await _auth.signOut(); } catch (_) {}
-
+    // 로그인 화면은 항상 로그아웃 상태에서 도달하므로 사전 signOut() 불필요.
+    // 과거에 있던 signOut() 호출은 authStateChanges(null) 이벤트를 발생시켜
+    // UserProvider의 _isLoading을 리셋하는 부작용이 있었음 → 제거.
     try {
-      // 1. CF 경유: username → email 조회 (비인증 직접 쿼리 대신 CF 사용 — M-3 정책)
-      final emailCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetEmailByUsername',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
-      final emailResult = await emailCallable.call<Map<String, dynamic>>({'username': username});
-      final email = emailResult.data['email'] as String?;
+      // Firebase Auth는 이메일 기반이지만, 이 앱은 사용자에게 이메일을 노출하지 않는다.
+      // 회원가입 시 signUp()이 '$username@ALfit-system.com' 패턴으로 가상 이메일을 생성하므로
+      // 로그인 시 CF 호출 없이 동일 패턴으로 직접 계산 가능 → cold-start 1-3초 제거.
+      // (기존 callableGetEmailByUsername CF는 이 값을 Firestore에서 조회해 반환하던 것과 동일)
+      final email = '$username@ALfit-system.com';
 
-      if (email == null || email.isEmpty) {
-        throw Exception('아이디 또는 비밀번호가 올바르지 않습니다.');
-      }
-
-      // 2. 이메일로 Firebase Auth 로그인
+      // 1. Firebase Auth 로그인
       UserCredential result = await _auth.signInWithEmailAndPassword(
         email: email,
         password: password,
@@ -86,7 +81,7 @@ class AuthService {
               final message = isPermanent
                   ? '노쇼 누적으로 서비스 이용이 영구 제한되었습니다.\n해제를 원하시면 고객센터에 문의해 주세요.'
                   : '노쇼로 인해 ${restrictedDate.year}년 ${restrictedDate.month}월 ${restrictedDate.day}일까지 이용이 제한됩니다.\n'
-                    '(노쇼 1회=3일 · 2회=7일 · 3회=30일 제한)\n고객센터: 문의하기 메뉴 이용';
+                    '(최근 90일 3회 이상 노쇼 시 1일 제한)\n고객센터: 문의하기 메뉴 이용';
               throw Exception(message);
             }
           }
@@ -132,13 +127,10 @@ class AuthService {
       throw Exception(message);
 
     } on FirebaseException catch (e) {
-      // Firestore/Functions 예외 (FirebaseAuthException이 아닌 것)
+      // Firestore 예외 (블랙리스트·상태 조회 중 발생 가능)
       debugPrint('❌ [signIn] FirebaseException: ${e.code} / ${e.message}');
       String message;
-      if (e.code == 'not-found' || e.code == 'invalid-argument') {
-        // callableGetEmailByUsername이 username 미발견 시 not-found 반환 (사용자 열거 차단 설계)
-        message = '아이디 또는 비밀번호가 올바르지 않습니다.';
-      } else if (e.code == 'permission-denied' || e.code == 'unauthenticated') {
+      if (e.code == 'permission-denied' || e.code == 'unauthenticated') {
         message = '인증이 만료되었습니다. 다시 시도해주세요.';
       } else if (e.code == 'unavailable' || e.code == 'network-request-failed') {
         message = '네트워크 연결을 확인해주세요.';
@@ -533,11 +525,13 @@ class AuthService {
       try {
         final storageRef = FirebaseStorage.instance.ref('users/${user.uid}');
         final listResult = await storageRef.listAll();
-        for (final item in listResult.items) { await item.delete(); }
-        for (final prefix in listResult.prefixes) {
-          final sub = await prefix.listAll();
-          for (final item in sub.items) { await item.delete(); }
-        }
+        await Future.wait([
+          ...listResult.items.map((item) => item.delete()),
+          ...listResult.prefixes.map((prefix) async {
+            final sub = await prefix.listAll();
+            await Future.wait(sub.items.map((item) => item.delete()));
+          }),
+        ]);
       } catch (storageErr) {
         debugPrint('⚠️ Storage 파일 삭제 실패 (계속 진행): $storageErr');
       }

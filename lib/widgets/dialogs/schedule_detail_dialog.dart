@@ -36,6 +36,8 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
   BusinessModel? _business;
   TOModel? _to;
   BusinessWorkTypeModel? _workType;
+  WorkDetailData? _workDetail; // M2: getter 대신 필드로 1회만 계산
+  String _netTime = '';        // L2: build() 마다 재계산 방지
 
   @override
   void initState() {
@@ -45,31 +47,41 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
 
   Future<void> _load() async {
     try {
+      // H1: getBusinessWorkTypes를 Future.wait에 합류 — 직렬 네트워크 왕복 제거
       final results = await Future.wait([
         _firestoreService.getBusinessById(widget.application.businessId),
         _firestoreService.getTOByApplication(widget.application),
+        _firestoreService.getBusinessWorkTypes(widget.application.businessId),
       ]);
       final biz = results[0] as BusinessModel?;
-      final to = results[1] as TOModel?;
+      final to  = results[1] as TOModel?;
+      final wts = results[2] as List<BusinessWorkTypeModel>;
 
-      // 업무유형 상세 정보 로드
       BusinessWorkTypeModel? wt;
-      if (biz != null) {
-        try {
-          final wts = await _firestoreService.getBusinessWorkTypes(biz.id);
-          wt = wts.firstWhere(
-            (w) => w.name == widget.application.selectedWorkType,
-            orElse: () => wts.isEmpty ? throw StateError('empty') : wts.first,
-          );
-        // 업무유형 조회 실패 시 wt=null 유지 — UI가 null을 폴백으로 처리함
-        } catch (_) {}
-      }
+      try {
+        wt = wts.firstWhere(
+          (w) => w.name == widget.application.selectedWorkType,
+          orElse: () => wts.isEmpty ? throw StateError('empty') : wts.first,
+        );
+      // 업무유형 조회 실패 시 wt=null 유지 — UI가 null을 폴백으로 처리함
+      } catch (_) {}
+
+      // M2: _workDetail 1회 계산
+      final wd = _resolveWorkDetail(to);
+      // L2: netTime 1회 계산
+      final app = widget.application;
+      final nt = FormatHelper.calcNetWorkTime(
+        app.startTime, app.endTime,
+        breakMinutes: wd?.breakMinutes ?? 0,
+      );
 
       if (!mounted) return;
       setState(() {
         _business = biz;
         _to = to;
         _workType = wt;
+        _workDetail = wd;
+        _netTime = nt;
         _isLoading = false;
       });
     } catch (e) {
@@ -81,24 +93,30 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
   }
 
   // ─── 매칭 WorkDetail ───────────────────────────────────────
-  WorkDetailData? get _workDetail {
-    if (_to == null) return null;
+  WorkDetailData? _resolveWorkDetail(TOModel? to) {
+    if (to == null) return null;
     final app = widget.application;
-    return _to!.workDetails.firstWhere(
-      (d) => d.workType == app.selectedWorkType && d.startTime == app.startTime,
-      orElse: () => _to!.workDetails.firstWhere(
-        (d) => d.workType == app.selectedWorkType,
-        orElse: () => _to!.workDetails.isEmpty
-            ? WorkDetailData(
-                workType: app.selectedWorkType,
-                wage: app.wage,
-                wageType: app.wageType ?? 'daily',
-                requiredCount: 0,
-                startTime: app.startTime,
-                endTime: app.endTime,
-              )
-            : _to!.workDetails.first,
-      ),
+
+    // 1순위: workType + startTime 정확 매칭
+    final exact = to.workDetails
+        .where((d) => d.workType == app.selectedWorkType && d.startTime == app.startTime)
+        .firstOrNull;
+    if (exact != null) return exact;
+
+    // 2순위: 동일 workType이 하나뿐이면 사용 (startTime 미설정 레거시 대응)
+    final sameType = to.workDetails
+        .where((d) => d.workType == app.selectedWorkType)
+        .toList();
+    if (sameType.length == 1) return sameType.first;
+
+    // 3순위: 동일 workType이 복수이거나 없으면 지원 당시 저장된 값으로 복원
+    return WorkDetailData(
+      workType: app.selectedWorkType,
+      wage: app.wage,
+      wageType: app.wageType ?? 'daily',
+      requiredCount: 0,
+      startTime: app.startTime,
+      endTime: app.endTime,
     );
   }
 
@@ -275,11 +293,7 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
   Widget _buildWorkDetailCard(BuildContext context, ThemeData theme) {
     final app = widget.application;
     final wd = _workDetail;
-
-    final netTime = FormatHelper.calcNetWorkTime(
-      app.startTime, app.endTime,
-      breakMinutes: wd?.breakMinutes ?? 0,
-    );
+    final netTime = _netTime;
 
     final wageColor = app.wageType == 'daily'
         ? AppColors.warningDark
@@ -572,14 +586,13 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
                     width: 200,
                     margin: EdgeInsets.only(
                         right: ResponsiveHelper.spacing(context, 8)),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: ImageHelper.buildCachedImage(
-                        _business!.transportImageUrls![i],
-                        fit: BoxFit.cover,
-                        memCacheWidth: 600,
-                        memCacheHeight: 420,
-                      ),
+                    clipBehavior: Clip.hardEdge,
+                    decoration: BoxDecoration(borderRadius: BorderRadius.circular(10)),
+                    child: ImageHelper.buildCachedImage(
+                      _business!.transportImageUrls![i],
+                      fit: BoxFit.cover,
+                      memCacheWidth: 600,
+                      memCacheHeight: 420,
                     ),
                   ),
                 ),
@@ -745,6 +758,7 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => DraggableScrollableSheet(
+        expand: false,
         initialChildSize: 0.65,
         minChildSize: 0.4,
         maxChildSize: 0.95,
@@ -950,13 +964,12 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
           width: 240,
           margin: EdgeInsets.only(
               right: ResponsiveHelper.spacing(context, 12)),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: ImageHelper.buildCachedImage(images[i],
-                fit: BoxFit.cover,
-                memCacheWidth: 720,
-                memCacheHeight: 540),
-          ),
+          clipBehavior: Clip.hardEdge,
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(16)),
+          child: ImageHelper.buildCachedImage(images[i],
+              fit: BoxFit.cover,
+              memCacheWidth: 720,
+              memCacheHeight: 540),
         ),
       ),
     );

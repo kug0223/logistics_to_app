@@ -177,28 +177,22 @@ extension TOFirestore on FirestoreService {
     }
   }
 
-  /// 공개 공고 목록 (지원자용 — isPublished: true 만)
+  /// 공개 공고 목록 (지원자용) — [CF-MIGRATED D6-CP2] callableGetPublishedTOs
+  /// Admin SDK → isPublished + status 복합 필터 서버 강제, rules limit 루프홀 차단
   Future<List<TOModel>> getPublishedTOs() async {
     try {
-      // [BUGFIX-WHEREIN] isPublished isEqualTo + status whereIn → PERMISSION_DENIED
-      // status 서버 필터 제거, 클라이언트에서 active/full 필터링
-      // [SEC] tos list 규칙: USER에게 limit <= 50 강제 — limit(100)이면 PERMISSION_DENIED
-      // [BUGFIX-COMPOUND] orderBy('createdAt') 제거 — isPublished isEqualTo + orderBy createdAt 복합 인덱스 쿼리에서
-      //   request.query.filters.get('isPublished', false)가 null을 반환해 PERMISSION_DENIED 유발
-      //   orderBy 제거 후 클라이언트 정렬로 대체
-      final snap = await _firestore
-          .collection('tos')
-          .where('isPublished', isEqualTo: true)
-          .limit(50)
-          .get(const GetOptions(source: Source.server));
-
-      return (snap.docs
-          .map((d) => TOModel.tryFromMap(d.data(), d.id))
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetPublishedTOs',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+      final result = await callable.call<Map<String, dynamic>>({});
+      return (result.data['tos'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final d = Map<String, dynamic>.from(m);
+            final id = d.remove('id') as String? ?? '';
+            return TOModel.tryFromMap(d, id);
+          })
           .whereType<TOModel>()
-          .where((t) => t.status == TOStatus.active || t.status == TOStatus.full)
-          .toList()
-        ..sort((a, b) => b.createdAt.compareTo(a.createdAt)))
-          .take(50)
           .toList();
     } catch (e) {
       debugPrint('❌ [TO] 공개 공고 목록 조회 실패: $e');
@@ -206,55 +200,43 @@ extension TOFirestore on FirestoreService {
     }
   }
 
-  /// 공개 공고 페이지네이션 조회 (지원자용)
+  /// 공개 공고 페이지네이션 조회 (지원자용) — [CF-MIGRATED D6-CP2] callableGetPublishedTOsPaged
+  /// DocumentSnapshot 커서 → lastToId(String) 커서로 전환
+  /// [FIXED] orderBy('createdAt') 서버 정렬 복원 — CF(Admin SDK)는 rules 쿼리 필터 버그 없음
   Future<Map<String, dynamic>> getPublishedTOsPaged({
-    DocumentSnapshot? startAfter,
+    String? lastToId,
     int pageSize = 30,
     TOFilterState? filter,
   }) async {
-    // [BUGFIX-WHEREIN] isPublished isEqualTo + status whereIn → PERMISSION_DENIED
-    // status 서버 필터 제거, 페이지 수신 후 클라이언트에서 active/full 필터링
-    Query query = _firestore
-        .collection('tos')
-        .where('isPublished', isEqualTo: true);
-
-    if (filter?.type != null) {
-      query = query.where('type', isEqualTo: filter!.type);
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetPublishedTOsPaged',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'pageSize': pageSize,
+        if (lastToId != null) 'lastToId': lastToId,
+        if (filter?.type != null) 'type': filter!.type,
+        if (filter?.city != null) 'city': filter!.city,
+        if (filter?.district != null) 'district': filter!.district,
+      });
+      final items = (result.data['tos'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final d = Map<String, dynamic>.from(m);
+            final id = d.remove('id') as String? ?? '';
+            return TOModel.tryFromMap(d, id);
+          })
+          .whereType<TOModel>()
+          .toList();
+      return {
+        'items': items,
+        'lastToId': result.data['lastToId'] as String?,
+        'hasMore': result.data['hasMore'] as bool? ?? false,
+      };
+    } catch (e) {
+      debugPrint('❌ [TO] 공개 공고 페이지네이션 조회 실패: $e');
+      return {'items': <TOModel>[], 'lastToId': null, 'hasMore': false};
     }
-    if (filter?.city != null) {
-      query = query.where('businessCity', isEqualTo: filter!.city);
-      if (filter.district != null) {
-        query = query.where('businessDistrict', isEqualTo: filter.district);
-      }
-    }
-
-    // sortBy='date'(마감임박순)는 서버 정렬 미지원 — 클라이언트 후처리로만 동작
-    // [BUGFIX-COMPOUND] orderBy('createdAt') 제거 — isPublished isEqualTo + orderBy createdAt 복합 인덱스 쿼리에서
-    //   request.query.filters.get('isPublished', false)가 null을 반환해 PERMISSION_DENIED 유발
-    //   orderBy 제거 후 각 페이지 내 클라이언트 정렬. 페이지 간 정렬은 __name__ 기준이므로
-    //   마감임박순 등 createdAt 기준 전체 정렬은 여전히 미지원 (단일 페이지 내에서만 정렬됨).
-    // [HASMORE-FIX] limit+1 패턴: pageSize+1개 요청 후 pageSize 초과 여부로 hasMore 판단
-    query = query.limit(pageSize + 1);
-
-    if (startAfter != null) {
-      query = query.startAfterDocument(startAfter);
-    }
-
-    final snap = await query.get(const GetOptions(source: Source.server));
-    final hasMore = snap.docs.length > pageSize;
-    final docsToProcess = hasMore ? snap.docs.take(pageSize).toList() : snap.docs;
-    final items = docsToProcess
-        .map((d) => TOModel.tryFromMap(d.data() as Map<String, dynamic>, d.id))
-        .whereType<TOModel>()
-        // [BUGFIX-WHEREIN] status whereIn 제거로 클라이언트에서 active/full 필터링
-        .where((t) => t.status == TOStatus.active || t.status == TOStatus.full)
-        .toList()
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    return {
-      'items': items,
-      'lastDoc': docsToProcess.isNotEmpty ? docsToProcess.last : null,
-      'hasMore': hasMore,
-    };
   }
 
   /// ID 목록으로 공고 배치 조회 (Algolia 검색 결과 fetch용)
@@ -538,8 +520,12 @@ extension TOFirestore on FirestoreService {
   /// 관리자의 전체 사업장 합산 active TO 수가 제한 이상이면 예외를 던진다.
   /// draft TO를 즉시공개로 전환하기 직전에 호출한다.
   Future<void> assertActiveTOLimit(String uid) async {
-    final limit = await getMaxActiveTOLimit(adminUID: uid);
-    final totalActive = await countAllActiveTO(uid);
+    final results = await Future.wait([
+      getMaxActiveTOLimit(adminUID: uid),
+      countAllActiveTO(uid),
+    ]);
+    final limit = results[0] as int;
+    final totalActive = results[1] as int;
     if (totalActive >= limit) {
       throw Exception('MAX_ACTIVE_TO_LIMIT:$limit');
     }
@@ -726,10 +712,12 @@ extension TOFirestore on FirestoreService {
   /// [visibleOnly] true 면 visibleFrom <= 현재시각인 슬롯만 반환 (유저용)
   Future<List<SlotModel>> getSlots(String toId, {bool visibleOnly = false}) async {
     try {
+      // [PERF-F7] limit 500 — 무제한 슬롯 읽기 차단
       final snap = await _firestore
           .collection('tos').doc(toId)
           .collection('slots')
           .orderBy('date')
+          .limit(500)
           .get(const GetOptions(source: Source.server));
 
       final slots = snap.docs

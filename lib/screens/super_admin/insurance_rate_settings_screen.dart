@@ -392,6 +392,10 @@ class _YearPickerDialogState extends State<_YearPickerDialog> {
 
   void _submit() {
     final v = int.tryParse(_controller.text);
+    if (v == null || v < 2000 || v > 2100) {
+      ToastHelper.showError('2000~2100 사이의 연도를 입력해주세요');
+      return;
+    }
     FocusManager.instance.primaryFocus?.unfocus();
     Navigator.pop(context, v);
   }

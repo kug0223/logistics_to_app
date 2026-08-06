@@ -82,8 +82,7 @@ class JobPostingScreen extends StatefulWidget {
   State<JobPostingScreen> createState() => _JobPostingScreenState();
 }
 
-class _JobPostingScreenState extends State<JobPostingScreen>
-    with WidgetsBindingObserver {
+class _JobPostingScreenState extends State<JobPostingScreen> {
   final FirestoreService _firestoreService = FirestoreService();
   UserProvider? _userProvider; // dispose()에서 context.read() 대신 캐시 사용
 
@@ -105,49 +104,41 @@ class _JobPostingScreenState extends State<JobPostingScreen>
   String? _applyBlockReason;
   bool get _isApplyable => _applyBlockReason == null;
   bool _isApplying = false; // 지원 진행 중 이중 탭 방어
+  int _memCacheWidth = 800; // LOW-3: build마다 재계산 방지
 
   void _checkApplyEligibility() {
     if (!mounted) return;
     if (widget.mode != TODetailMode.applicant) return;
     final user = context.read<UserProvider>().currentUser;
+
+    // MEDIUM-3: UserProvider는 전역 리스너이므로 모든 notifyListeners()에 반응함.
+    // _applyBlockReason이 실제로 바뀔 때만 setState → KakaoMapWidget 등 불필요한 rebuild 방지
+    String? newReason;
     if (user == null) {
-      setState(() => _applyBlockReason = '로그인이 필요합니다');
-      return;
-    }
-    if (user.isBlacklisted) {
-      setState(() => _applyBlockReason = '이용 제한된 계정입니다');
-      return;
-    }
-    // isRestricted(노쇼 페널티)는 선결조건보다 먼저 체크 — 선결조건 완료 후에야 제한 안내가 뜨는 문제 방지
-    // restrictedUntil이 과거이면 제한 만료로 처리 (apply_prerequisites_screen._isRestricted와 동일 로직)
-    if (user.isRestricted) {
+      newReason = '로그인이 필요합니다';
+    } else if (user.isBlacklisted) {
+      newReason = '이용 제한된 계정입니다';
+    } else if (user.isRestricted) {
+      // restrictedUntil이 과거이면 제한 만료로 처리
       final remainDays = user.restrictedUntil!.difference(DateTime.now()).inDays + 1;
-      setState(() => _applyBlockReason = '무단 결근 페널티 ($remainDays일 제한)');
-      return;
-    }
-    if (!user.isPassVerified) {
-      setState(() => _applyBlockReason = 'PASS 인증이 필요합니다');
-      return;
-    }
-    if (user.idCardImageUrl == null || user.idCardImageUrl!.isEmpty) {
-      setState(() => _applyBlockReason = '신분증 등록이 필요합니다');
-      return;
-    }
-    // flex 공고는 신분증 인증(isIdVerified)까지 요구 (apply_prerequisites_screen과 동일 조건)
-    if (_to?.jobType == TOType.flex && !user.isIdVerified) {
-      setState(() => _applyBlockReason = '신분증 인증이 필요합니다');
-      return;
-    }
-    if (user.bankName == null || user.bankName!.isEmpty ||
+      newReason = '무단 결근 페널티 ($remainDays일 제한)';
+    } else if (!user.isPassVerified) {
+      newReason = 'PASS 인증이 필요합니다';
+    } else if (user.idCardImageUrl == null || user.idCardImageUrl!.isEmpty) {
+      newReason = '신분증 등록이 필요합니다';
+    } else if (_to?.jobType == TOType.flex && !user.isIdVerified) {
+      // flex 공고는 신분증 인증(isIdVerified)까지 요구
+      newReason = '신분증 인증이 필요합니다';
+    } else if (user.bankName == null || user.bankName!.isEmpty ||
         user.accountNumber == null || user.accountNumber!.isEmpty) {
-      setState(() => _applyBlockReason = '통장 정보 등록이 필요합니다');
-      return;
+      newReason = '통장 정보 등록이 필요합니다';
+    } else if (user.bankbookImageUrl == null || user.bankbookImageUrl!.isEmpty) {
+      newReason = '통장사본 등록이 필요합니다';
     }
-    if (user.bankbookImageUrl == null || user.bankbookImageUrl!.isEmpty) {
-      setState(() => _applyBlockReason = '통장사본 등록이 필요합니다');
-      return;
+
+    if (newReason != _applyBlockReason) {
+      setState(() => _applyBlockReason = newReason);
     }
-    setState(() => _applyBlockReason = null);
   }
 
   /// TO가 실질적으로 마감됐는지 (날짜 경과·정원 초과 포함)
@@ -207,9 +198,18 @@ class _JobPostingScreenState extends State<JobPostingScreen>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // LOW-3: 화면 크기 기반 memCacheWidth — build() 마다 재계산 방지
+    _memCacheWidth = (MediaQuery.sizeOf(context).width *
+            MediaQuery.devicePixelRatioOf(context))
+        .toInt()
+        .clamp(600, 1200);
+  }
+
+  @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _loadData();
     // UserProvider 변경 감지 — 다른 화면에서 사전조건 완료 후 돌아올 때 자동 갱신
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -223,7 +223,6 @@ class _JobPostingScreenState extends State<JobPostingScreen>
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _userProvider?.removeListener(_checkApplyEligibility);
     super.dispose();
   }
@@ -255,50 +254,59 @@ class _JobPostingScreenState extends State<JobPostingScreen>
         }
       }
 
-      // 직접 전달 시 business가 없을 수 있음
+      // [PERF] 직접 전달 시 business가 없으면, getBusinessById를 slotsFuture/appsFuture와 병렬 실행
+      // _loadWorkTypes만 business 완료 후 순차 실행 (businessId 필요)
       if (_business == null && _to != null) {
-        _business = await _firestoreService.getBusinessById(_to!.businessId);
+        await Future.wait([
+          _firestoreService.getBusinessById(_to!.businessId)
+              .then((biz) { _business = biz; }),
+          if (_to!.isFlexType) _loadSlots(),
+          if (widget.mode == TODetailMode.applicant && _applicantUid != null)
+            _firestoreService.getMyApplications(_applicantUid!)
+                .then((apps) { _myApplications = apps; }),
+        ]);
+        if (_business != null) await _loadWorkTypes();
+      } else {
+        // business 이미 확보 (toId 경로 또는 widget.business 전달)
+        await Future.wait([
+          if (_to != null && _to!.isFlexType) _loadSlots(),
+          if (_business != null) _loadWorkTypes(),
+          if (widget.mode == TODetailMode.applicant && _applicantUid != null)
+            _firestoreService.getMyApplications(_applicantUid!)
+                .then((apps) { _myApplications = apps; }),
+        ]);
       }
-
-      // flex TO: 슬롯 데이터 로드 (통계 + _applyTO 다중 지원)
-      if (_to != null && _to!.isFlexType) {
-        try {
-          final slots = await _firestoreService.getSlots(_to!.id, visibleOnly: false);
-          final now = DateTime.now();
-          _allSlots = slots
-              .where((s) => !s.isEffectivelyClosed)
-              .where((s) => s.visibleFrom == null || !s.visibleFrom!.isAfter(now))
-              .toList();
-
-          if (widget.slotDate != null) {
-            final sd = widget.slotDate!;
-            _slot = slots.where((s) =>
-                s.date.year == sd.year &&
-                s.date.month == sd.month &&
-                s.date.day == sd.day).firstOrNull;
-            // 슬롯의 workDetails를 사용 (caller가 전달 안 했을 때 대비)
-            if (_workDetails.isEmpty && _slot != null) {
-              _workDetails = _slot!.workDetails;
-            }
-          }
-        } catch (e) {
-          debugPrint('⚠️ 슬롯 로드 실패: $e');
-        }
-      }
-
-      // [PERF] 업무유형 + 내 지원목록 병렬 로드 (독립 작업)
-      await Future.wait([
-        if (_business != null) _loadWorkTypes(),
-        if (widget.mode == TODetailMode.applicant && _applicantUid != null)
-          _firestoreService.getMyApplications(_applicantUid!)
-              .then((apps) { _myApplications = apps; }),
-      ]);
 
     } catch (e) {
       debugPrint('❌ 데이터 로드 실패: $e');
       if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다');
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  /// flex TO 슬롯 로드 (_allSlots, _slot 세팅)
+  Future<void> _loadSlots() async {
+    try {
+      final slots = await _firestoreService.getSlots(_to!.id, visibleOnly: false);
+      final now = DateTime.now();
+      _allSlots = slots
+          .where((s) => !s.isEffectivelyClosed)
+          .where((s) => s.visibleFrom == null || !s.visibleFrom!.isAfter(now))
+          .toList();
+
+      if (widget.slotDate != null) {
+        final sd = widget.slotDate!;
+        _slot = slots.where((s) =>
+            s.date.year == sd.year &&
+            s.date.month == sd.month &&
+            s.date.day == sd.day).firstOrNull;
+        if (_workDetails.isEmpty && _slot != null) {
+          _workDetails = _slot!.workDetails;
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ 슬롯 로드 실패: $e');
     }
   }
 
@@ -433,7 +441,7 @@ class _JobPostingScreenState extends State<JobPostingScreen>
                     _business!.mainImageUrl!,
                     fit: BoxFit.cover,
                     fadeInDuration: const Duration(milliseconds: 150),
-                    memCacheWidth: (MediaQuery.sizeOf(context).width * MediaQuery.devicePixelRatioOf(context)).toInt().clamp(600, 1200),
+                    memCacheWidth: _memCacheWidth,
                   ),
                   // 그라데이션 오버레이
                   Container(
@@ -606,10 +614,11 @@ class _JobPostingScreenState extends State<JobPostingScreen>
     final isSlotFull = effectiveRequired > 0 && effectiveConfirmed >= effectiveRequired;
     // _isEffectivelyClosed getter 사용 — 날짜 경과 체크 포함 (슬롯 마감일 경과 포함)
     final isEffectivelyClosed = _isEffectivelyClosed;
+    final isSoonDeadline = !isEffectivelyClosed && _isAnySoonDeadline();
 
     final (statusLabel, statusColor) = isEffectivelyClosed
         ? ('마감', AppColors.grey500)
-        : _isAnySoonDeadline()
+        : isSoonDeadline
             ? ('마감임박', AppColors.warning)
             : ('모집중', AppColors.success);
 
@@ -720,16 +729,6 @@ class _JobPostingScreenState extends State<JobPostingScreen>
                     ),
 
                   // 출퇴근 반올림 규칙 요약
-                  if (_business != null) ...[
-                    SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                    _buildTOInfoRow(
-                      context,
-                      Icons.access_time_outlined,
-                      '출퇴근 규칙',
-                      (_business!.attendanceRules ?? AttendanceRules.defaults()).summary,
-                      AppColors.info,
-                    ),
-                  ],
                 ],
               ),
             ),
@@ -861,15 +860,25 @@ class _JobPostingScreenState extends State<JobPostingScreen>
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
-          // 업무 카드 목록
-          ..._workDetails.map((work) => _buildWorkDetailCard(context, theme, work)),
+          // 업무 카드 목록 — isOverallClosed를 한 번만 계산해 전달
+          Builder(builder: (_) {
+            final slotReq = _slot?.workDetails.fold(0, (s, wd) => s + wd.requiredCount);
+            final effReq = slotReq ?? widget.slotTotalRequired ?? _to!.totalRequired;
+            final effConf = _slot?.confirmedCount ?? widget.slotConfirmedCount ?? _to!.totalConfirmed;
+            final isOverallClosed = _to!.isClosed || (effReq > 0 && effConf >= effReq);
+            return Column(
+              children: _workDetails
+                  .map((work) => _buildWorkDetailCard(context, theme, work, isOverallClosed: isOverallClosed))
+                  .toList(),
+            );
+          }),
         ],
       ),
     );
   }
 
   /// 업무 상세 카드
-  Widget _buildWorkDetailCard(BuildContext context, ThemeData theme, WorkDetailModel work) {
+  Widget _buildWorkDetailCard(BuildContext context, ThemeData theme, WorkDetailModel work, {required bool isOverallClosed}) {
     final workType = _workTypeMap[work.workType];
 
     final workStats = widget.workDetailStats?[work.id];
@@ -879,14 +888,9 @@ class _JobPostingScreenState extends State<JobPostingScreen>
     final workAvailable = (workRequired - workConfirmed - workPending).clamp(0, workRequired);
     final hasWorkStats = widget.workDetailStats != null;
 
-    final slotRequired = _slot?.workDetails.fold(0, (sum, wd) => sum + wd.requiredCount);
-    final effectiveRequired = slotRequired ?? widget.slotTotalRequired ?? _to!.totalRequired;
-    final effectiveConfirmed = _slot?.confirmedCount ?? widget.slotConfirmedCount ?? _to!.totalConfirmed;
-    final isOverallClosed = _to!.isClosed ||
-        (effectiveRequired > 0 && effectiveConfirmed >= effectiveRequired);
     final isWorkFull = workConfirmed >= workRequired && workRequired > 0;
-    // isTimeExpired: 해당 업무의 지원 마감 시각 경과 여부
-    final isClosed = isOverallClosed || isWorkFull || work.isTimeExpired;
+    final isTimeExpired = work.isTimeExpired;
+    final isClosed = isOverallClosed || isWorkFull || isTimeExpired;
 
     final netWorkTimeStr = FormatHelper.calcNetWorkTime(
       work.startTime,
@@ -1013,14 +1017,14 @@ class _JobPostingScreenState extends State<JobPostingScreen>
                                     Icon(
                                       Icons.timer_off_outlined,
                                       size: ResponsiveHelper.iconSize(context, 13),
-                                      color: work.isTimeExpired ? AppColors.errorFaded : AppColors.warningDark,
+                                      color: isTimeExpired ? AppColors.errorFaded : AppColors.warningDark,
                                     ),
                                     SizedBox(width: ResponsiveHelper.spacing(context, 3)),
                                     Text(
                                       '마감 ${FormatHelper.formatTime(work.applicationDeadline!)}',
                                       style: ResponsiveHelper.smallStyle(
                                         context,
-                                        color: work.isTimeExpired ? AppColors.errorFaded : AppColors.warningDark,
+                                        color: isTimeExpired ? AppColors.errorFaded : AppColors.warningDark,
                                       ),
                                     ),
                                   ],
@@ -1136,15 +1140,13 @@ class _JobPostingScreenState extends State<JobPostingScreen>
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
         // 진행률 바
-        ClipRRect(
+        LinearProgressIndicator(
+          value: progress.clamp(0.0, 1.0),
+          minHeight: 5,
           borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: progress.clamp(0.0, 1.0),
-            minHeight: 5,
-            backgroundColor: AppColors.grey200,
-            valueColor: AlwaysStoppedAnimation<Color>(
-              progress >= 1.0 ? AppColors.success : AppColors.info,
-            ),
+          backgroundColor: AppColors.grey200,
+          valueColor: AlwaysStoppedAnimation<Color>(
+            progress >= 1.0 ? AppColors.success : AppColors.info,
           ),
         ),
       ],
@@ -1191,6 +1193,7 @@ class _JobPostingScreenState extends State<JobPostingScreen>
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => DraggableScrollableSheet(
+        expand: false,
         initialChildSize: 0.6,
         minChildSize: 0.4,
         maxChildSize: 0.95,
@@ -1684,10 +1687,9 @@ class _JobPostingScreenState extends State<JobPostingScreen>
                 // 지도
                 if (_business!.latitude != null && _business!.longitude != null) ...[
                   SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                  GestureDetector(
-                    onTap: () => _showFullMap(context),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
+                  RepaintBoundary( // H1: WebView 기반 지도 — 부모 rebuild 시 GPU 레이어 재활용
+                    child: GestureDetector(
+                      onTap: () => _showFullMap(context),
                       child: SizedBox(
                         height: 180,
                         child: KakaoMapWidget(
@@ -1755,6 +1757,7 @@ class _JobPostingScreenState extends State<JobPostingScreen>
 
   /// 하단 버튼 바
   Widget _buildBottomBar(BuildContext context, ThemeData theme) {
+    final isClosed = _isEffectivelyClosed;
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
       decoration: BoxDecoration(
@@ -1772,14 +1775,14 @@ class _JobPostingScreenState extends State<JobPostingScreen>
         child: widget.mode == TODetailMode.applicant
             ? CommonWidgets.primaryButton(
                 context: context,
-                text: _isEffectivelyClosed
+                text: isClosed
                     ? '마감된 공고입니다'
                     : !_isApplyable
                         // _isApplyable == (_applyBlockReason == null) 이므로 논리상 non-null이나, 향후 불일치 방지용 null-coalescing
                         ? _applyBlockReason ?? ''
                         : '지원하기',
-                onPressed: (_isEffectivelyClosed || !_isApplyable || _isApplying) ? null : () => _applyTO(),
-                icon: (_isEffectivelyClosed || !_isApplyable) ? Icons.block : _isApplying ? Icons.hourglass_empty : Icons.send,
+                onPressed: (isClosed || !_isApplyable || _isApplying) ? null : () => _applyTO(),
+                icon: (isClosed || !_isApplyable) ? Icons.block : _isApplying ? Icons.hourglass_empty : Icons.send,
               )
             : CommonWidgets.outlineButton(
                 context: context,
@@ -1800,16 +1803,47 @@ class _JobPostingScreenState extends State<JobPostingScreen>
     IconData icon,
     String label,
     String value,
-    Color color,
-  ) {
+    Color color, {
+    bool multiLine = false,
+  }) {
+    final iconSize = ResponsiveHelper.iconSize(context, 18);
+    final gap = ResponsiveHelper.spacing(context, 8);
+
+    if (multiLine) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: iconSize, color: AppColors.grey500),
+              SizedBox(width: gap),
+              Text(
+                label,
+                style: ResponsiveHelper.smallStyle(context).copyWith(
+                  color: AppColors.grey600,
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+          Padding(
+            padding: EdgeInsets.only(left: iconSize + gap),
+            child: Text(
+              value,
+              style: ResponsiveHelper.smallStyle(context).copyWith(
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
     return Row(
       children: [
-        Icon(
-          icon,
-          size: ResponsiveHelper.iconSize(context, 18),
-          color: color,
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+        Icon(icon, size: iconSize, color: color),
+        SizedBox(width: gap),
         Text(
           label,
           style: ResponsiveHelper.smallStyle(context).copyWith(
@@ -1824,6 +1858,7 @@ class _JobPostingScreenState extends State<JobPostingScreen>
               color: color,
             ),
             textAlign: TextAlign.end,
+            maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
         ),
@@ -2120,13 +2155,15 @@ class _JobPostingScreenState extends State<JobPostingScreen>
         try {
           details = await _firestoreService.getWorkDetails(_to!.id);
           if (!mounted) return;
-          setState(() => _workDetails = details);
+          // LOW-2: 3개 분산 setState → 1개로 병합
+          setState(() { _workDetails = details; _isLoading = false; });
         } catch (e) {
           debugPrint('❌ 업무 정보 로드 실패: $e');
-          if (mounted) ToastHelper.showError('업무 정보를 불러오지 못했습니다');
+          if (mounted) {
+            setState(() => _isLoading = false);
+            ToastHelper.showError('업무 정보를 불러오지 못했습니다');
+          }
           return;
-        } finally {
-          if (mounted) setState(() => _isLoading = false);
         }
         if (details.isEmpty) {
           if (mounted) ToastHelper.showError('업무 정보를 불러오지 못했습니다');

@@ -275,11 +275,13 @@ class _DaumPostcodeWebViewState extends State<_DaumPostcodeWebView> {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: Stack(
-        children: [
-          WebViewWidget(controller: _controller),
+    return RepaintBoundary(
+      child: Container(
+        clipBehavior: Clip.hardEdge,
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(12)),
+        child: Stack(
+          children: [
+            WebViewWidget(controller: _controller),
           
           // 로딩 오버레이
           if (_isLoading)
@@ -305,6 +307,7 @@ class _DaumPostcodeWebViewState extends State<_DaumPostcodeWebView> {
               ),
             ),
         ],
+        ),
       ),
     );
   }

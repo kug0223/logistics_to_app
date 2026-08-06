@@ -61,8 +61,10 @@ class UserModel {
   final int totalWorkHours;             // 총 근무 시간
   final double averageRating;           // 평균 평점 (0.0~5.0)
   final int reviewCount;                // 받은 리뷰 수
-  final int noShowCount;                // 무단 결근 횟수
-  final int lateCount;                  // 지각 횟수
+  final int noShowCount;                // 무단 결근 횟수 (누적 전체)
+  final int recentNoShowCount;          // 최근 90일 노쇼 횟수 (CF가 갱신, 없으면 noShowCount 폴백)
+  final int lateCount;                  // 지각 횟수 (누적 전체)
+  final int recentLateCount;            // 최근 90일 지각 횟수 (CF가 갱신, 없으면 lateCount 폴백)
   // ── 상태 정보 ──
   final bool isAvailable;               // 근무 가능 여부
   final String? unavailableReason;      // 불가 사유
@@ -81,8 +83,8 @@ class UserModel {
   final String? signatureBase64;         // 사전 등록 서명 이미지 (base64)
   final String? sealBase64;             // 사업주 날인 이미지 (base64, 전역)
   final String sealType;               // 날인 방식: 'stamp' | 'signature'
-  final String? subAdminOf;              // 하위 관리자로 참여 중인 사업장 ID
-  final DateTime? restrictedUntil;       // 제재 만료 시각 (noShow 2회 이상 시 3일 제재)
+  final List<String> subAdminBusinessIds; // 하위 관리자로 참여 중인 사업장 ID 목록 (복수 허용)
+  final DateTime? restrictedUntil;       // 제재 만료 시각 (최근 90일 3회 이상 노쇼 시 1일 제재)
   final Map<String, bool> notifPrefs;    // 알림 종류별 수신 설정 (기본 모두 true)
   final List<String> favoriteToIds;      // 즐겨찾기 TO ID 목록
   final int? maxActiveTOs;               // 슈퍼관리자가 설정한 이 관리자의 공고 최대 등록 수 (null이면 전역 기본값)
@@ -141,7 +143,9 @@ class UserModel {
     this.averageRating = 0.0,
     this.reviewCount = 0,
     this.noShowCount = 0,
+    this.recentNoShowCount = 0,
     this.lateCount = 0,
+    this.recentLateCount = 0,
     this.isAvailable = true,
     this.unavailableReason,
     this.availableFrom,
@@ -159,7 +163,7 @@ class UserModel {
     this.signatureBase64,
     this.sealBase64,
     this.sealType = 'stamp',
-    this.subAdminOf,
+    List<String>? subAdminBusinessIds,
     this.restrictedUntil,
     Map<String, bool>? notifPrefs,
     List<String>? favoriteToIds,
@@ -167,7 +171,8 @@ class UserModel {
   }) : notifPrefs = notifPrefs ?? defaultNotifPrefs,
        favoriteToIds = favoriteToIds ?? const [],
        managedBusinessIds = managedBusinessIds ??
-           (businessId != null ? [businessId] : const []);
+           (businessId != null ? [businessId] : const []),
+       subAdminBusinessIds = subAdminBusinessIds ?? const [];
 
 
   // ── 편의 메서드 ──
@@ -182,7 +187,10 @@ class UserModel {
   bool get isUser => role == UserRole.USER;
   
   /// 하위 관리자인지 (근무자이면서 특정 사업장 관리 권한 보유)
-  bool get isSubAdmin => role == UserRole.USER && subAdminOf != null;
+  bool get isSubAdmin => role == UserRole.USER && subAdminBusinessIds.isNotEmpty;
+
+  /// 특정 사업장의 하위 관리자인지
+  bool isSubAdminOf(String businessId) => subAdminBusinessIds.contains(businessId);
 
   /// 외국인 여부
   bool get isForeign => foreignIdNumber != null;
@@ -319,7 +327,11 @@ class UserModel {
       averageRating: (map['averageRating'] as num?)?.toDouble() ?? 0.0,
       reviewCount: (map['reviewCount'] as num?)?.toInt() ?? 0,
       noShowCount: (map['noShowCount'] as num?)?.toInt() ?? 0,
+      recentNoShowCount: (map['recentNoShowCount'] as num?)?.toInt() ??
+          (map['noShowCount'] as num?)?.toInt() ?? 0,
       lateCount: (map['lateCount'] as num?)?.toInt() ?? 0,
+      recentLateCount: (map['recentLateCount'] as num?)?.toInt() ??
+          (map['lateCount'] as num?)?.toInt() ?? 0,
       isAvailable: map['isAvailable'] ?? true,
       unavailableReason: map['unavailableReason'],
       availableFrom: _parseDateTime(map['availableFrom']),
@@ -337,7 +349,7 @@ class UserModel {
       signatureBase64: map['signatureBase64'],
       sealBase64: map['sealBase64'],
       sealType: map['sealType'] as String? ?? 'stamp',
-      subAdminOf: map['subAdminOf'],
+      subAdminBusinessIds: _parseSubAdminBusinessIds(map),
       restrictedUntil: _parseDateTime(map['restrictedUntil']),
       notifPrefs: map['notifPrefs'] != null
           ? Map<String, bool>.from(
@@ -391,7 +403,9 @@ class UserModel {
       'averageRating': averageRating,
       'reviewCount': reviewCount,
       'noShowCount': noShowCount,
+      'recentNoShowCount': recentNoShowCount,
       'lateCount': lateCount,
+      'recentLateCount': recentLateCount,
       'isAvailable': isAvailable,
       'unavailableReason': unavailableReason,
       'availableFrom': availableFrom != null 
@@ -413,7 +427,7 @@ class UserModel {
       'signatureBase64': signatureBase64,
       'sealBase64': sealBase64,
       'sealType': sealType,
-      'subAdminOf': subAdminOf,
+      'subAdminBusinessIds': subAdminBusinessIds,
       'restrictedUntil': restrictedUntil != null
           ? Timestamp.fromDate(restrictedUntil!)
           : null,
@@ -489,7 +503,9 @@ class UserModel {
     double? averageRating,
     int? reviewCount,
     int? noShowCount,
+    int? recentNoShowCount,
     int? lateCount,
+    int? recentLateCount,
     bool? isAvailable,
     String? unavailableReason,
     DateTime? availableFrom,
@@ -509,8 +525,7 @@ class UserModel {
     String? sealBase64,
     bool clearSeal = false,
     String? sealType,
-    String? subAdminOf,
-    bool clearSubAdminOf = false,
+    List<String>? subAdminBusinessIds,
     DateTime? restrictedUntil,
     bool clearRestriction = false,
     Map<String, bool>? notifPrefs,
@@ -555,7 +570,9 @@ class UserModel {
       averageRating: averageRating ?? this.averageRating,
       reviewCount: reviewCount ?? this.reviewCount,
       noShowCount: noShowCount ?? this.noShowCount,
+      recentNoShowCount: recentNoShowCount ?? this.recentNoShowCount,
       lateCount: lateCount ?? this.lateCount,
+      recentLateCount: recentLateCount ?? this.recentLateCount,
       isAvailable: isAvailable ?? this.isAvailable,
       unavailableReason: unavailableReason ?? this.unavailableReason,
       availableFrom: availableFrom ?? this.availableFrom,
@@ -573,13 +590,23 @@ class UserModel {
       signatureBase64: clearSignature ? null : (signatureBase64 ?? this.signatureBase64),
       sealBase64: clearSeal ? null : (sealBase64 ?? this.sealBase64),
       sealType: sealType ?? this.sealType,
-      subAdminOf: clearSubAdminOf ? null : (subAdminOf ?? this.subAdminOf),
+      subAdminBusinessIds: subAdminBusinessIds ?? this.subAdminBusinessIds,
       restrictedUntil: clearRestriction ? null : (restrictedUntil ?? this.restrictedUntil),
       notifPrefs: notifPrefs ?? this.notifPrefs,
       favoriteToIds: favoriteToIds ?? this.favoriteToIds,
       maxActiveTOs: clearMaxActiveTOs ? null : (maxActiveTOs ?? this.maxActiveTOs),
     );
   }
+  /// subAdminBusinessIds 파싱 — 구 subAdminOf(String) 하위 호환 읽기 포함
+  static List<String> _parseSubAdminBusinessIds(Map<String, dynamic> map) {
+    if (map['subAdminBusinessIds'] is List) {
+      return List<String>.from(map['subAdminBusinessIds']);
+    }
+    final old = map['subAdminOf'];
+    if (old is String && old.isNotEmpty) return [old];
+    return const [];
+  }
+
   /// 안전한 DateTime 파싱
   static DateTime? _parseDateTime(dynamic value) {
     if (value == null) return null;

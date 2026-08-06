@@ -40,6 +40,8 @@ class PayrollWorkerSummary {
 }
 
 class PayrollSummaryModel {
+  static final _commaRe = RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))');
+
   final String id; // {businessId}_{YYYY-MM}
   final String businessId;
   final String yearMonth; // 'YYYY-MM'
@@ -83,6 +85,8 @@ class PayrollSummaryModel {
     // [SAFETY] Firestore 내부 타입(_JsonMap)은 직접 as Map<String, dynamic> 캐스팅 실패 가능 — from()으로 안전 변환
     final workers = Map.fromEntries(
       workersRaw.entries.map((e) {
+        // [LOW-FIX] e.value가 Map이 아닌 원시값이면 as Map 캐스트 전에 TypeError 발생 → is 체크로 방어
+        if (e.value is! Map) return null;
         final s = PayrollWorkerSummary.tryFromMap(e.key, Map<String, dynamic>.from(e.value as Map));
         return s != null ? MapEntry(e.key, s) : null;
       }).whereType<MapEntry<String, PayrollWorkerSummary>>(),
@@ -157,7 +161,7 @@ class PayrollSummaryModel {
   String get formattedTotalPayout {
     if (totalPayout == 0) return '-';
     return '${totalPayout.toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      _commaRe,
       (m) => '${m[1]},',
     )}원';
   }

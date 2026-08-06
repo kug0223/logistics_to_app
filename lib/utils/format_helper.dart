@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 /// 포맷팅 및 파싱 유틸리티 클래스
 class FormatHelper {
+  static final _commaRe = RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))');
   // ============================================================
   // 색상 관련
   // ============================================================
@@ -150,20 +151,20 @@ class FormatHelper {
   static String formatWage(int wage) {
     // 음수 입력 시 부호를 분리해 처리 — 정규식이 '-' 기호를 건너뛰어 콤마 포맷이 미적용되는 버그 방지
     final abs = wage.abs().toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      _commaRe,
       (Match m) => '${m[1]},',
     );
     return '${wage < 0 ? '-' : ''}$abs원';
   }
 
   /// 금액을 천단위 콤마 형식으로 포맷팅 (단위 없이)
-  /// 
+  ///
   /// 예시:
   /// - formatNumber(10000) → '10,000'
   /// - formatNumber(1500000) → '1,500,000'
   static String formatNumber(int number) {
     final abs = number.abs().toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      _commaRe,
       (Match m) => '${m[1]},',
     );
     return '${number < 0 ? '-' : ''}$abs';

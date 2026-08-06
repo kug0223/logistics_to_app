@@ -51,7 +51,10 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
   @override
   void initState() {
     super.initState();
-    _loadData();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _loadData();
+    });
   }
 
   Future<void> _loadData() async {

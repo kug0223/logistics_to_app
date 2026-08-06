@@ -72,13 +72,44 @@ enum NotificationType {
   memberInvitationAccepted, // 초대 수락됨 (관리자에게)
   memberInvitationRejected, // 초대 거절됨 (관리자에게)
 
+  // 퇴사 리마인더 (관리자)
+  resignReminder,            // 퇴사 요청 미처리 D+1/D+2 알림 (관리자에게, CF: "resignReminder", screen:"fixedWorker")
+
+  // 공고 관련 (관리자)
+  toPostingExpiringTomorrow, // 공고 게시 만료 D-1 (관리자에게, CF: "toPostingExpiringTomorrow")
+
   // 시스템
   systemNotice,            // 시스템 공지
   other,                   // 기타
 }
 
+/// 서브어드민이 관리자로서 받는 알림 타입 집합 (알림 화면 필터용)
+const Set<NotificationType> kAdminNotifTypes = {
+  NotificationType.newApplication,
+  NotificationType.applicationCanceled,
+  NotificationType.contractSigned,
+  NotificationType.contractExpiringReminder,
+  NotificationType.terminationRequested,
+  NotificationType.resignRequested,
+  NotificationType.contractRequested,
+  NotificationType.scheduleChangeRequested,
+  NotificationType.idCardAccessApproved,
+  NotificationType.idCardAccessRejected,
+  NotificationType.memberInvitationAccepted,
+  NotificationType.memberInvitationRejected,
+  NotificationType.interimSettlementRequested,
+  NotificationType.reviewReceived,
+  NotificationType.reviewRequest,        // 관리자도 리뷰 작성 요청을 받을 수 있음
+  // FCM-BUG-B: 확정 취소 알림도 관리자 탭에 표시
+  NotificationType.confirmationCanceled,
+  NotificationType.resignReminder,
+  NotificationType.toPostingExpiringTomorrow,
+};
+
 /// 앱 내 알림 모델
 class NotificationModel {
+  static final _commaRe = RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))');
+
   final String id;
   final String userId;              // 알림 받는 사용자 UID
   final NotificationType type;      // 알림 유형
@@ -268,6 +299,12 @@ class NotificationModel {
         return 'how_to_reg';
       case NotificationType.memberInvitationRejected:
         return 'person_remove';
+      // 퇴사 리마인더
+      case NotificationType.resignReminder:
+        return 'alarm';
+      // 공고 관련
+      case NotificationType.toPostingExpiringTomorrow:
+        return 'event_note';
       // 시스템
       case NotificationType.systemNotice:
         return 'campaign';
@@ -351,6 +388,10 @@ class NotificationModel {
       case 'memberInvitationReceived': return NotificationType.memberInvitationReceived;
       case 'memberInvitationAccepted': return NotificationType.memberInvitationAccepted;
       case 'memberInvitationRejected': return NotificationType.memberInvitationRejected;
+      // 퇴사 리마인더
+      case 'resignReminder': return NotificationType.resignReminder;
+      // 공고 관련
+      case 'toPostingExpiringTomorrow': return NotificationType.toPostingExpiringTomorrow;
       // 시스템
       case 'systemNotice': return NotificationType.systemNotice;
       default: return NotificationType.other;
@@ -411,6 +452,10 @@ class NotificationModel {
       case NotificationType.memberInvitationReceived: return 'memberInvitationReceived';
       case NotificationType.memberInvitationAccepted: return 'memberInvitationAccepted';
       case NotificationType.memberInvitationRejected: return 'memberInvitationRejected';
+      // 퇴사 리마인더
+      case NotificationType.resignReminder: return 'resignReminder';
+      // 공고 관련
+      case NotificationType.toPostingExpiringTomorrow: return 'toPostingExpiringTomorrow';
       // 시스템
       case NotificationType.systemNotice: return 'systemNotice';
       case NotificationType.other: return 'other';
@@ -472,6 +517,7 @@ class NotificationModel {
     required String targetUserName,
     required String businessId,
     required String requestId,
+    required String workerId,
     String? rejectionReason,
   }) {
     return NotificationModel(
@@ -483,6 +529,7 @@ class NotificationModel {
       data: {
         'requestId': requestId,
         'businessId': businessId,
+        'workerId': workerId,
         'action': 'idCardAccessRejected',
       },
       createdAt: DateTime.now(),
@@ -1039,7 +1086,7 @@ class NotificationModel {
     required String applicationId,
   }) {
     final formattedWage = newWage.toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      _commaRe,
       (Match m) => '${m[1]},',
     );
     
@@ -1070,11 +1117,11 @@ class NotificationModel {
     required String attendanceId,
   }) {
     final retroFormatted = retroactiveAmount.toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      _commaRe,
       (Match m) => '${m[1]},',
     );
     final netFormatted = netWage.toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      _commaRe,
       (Match m) => '${m[1]},',
     );
     return NotificationModel(

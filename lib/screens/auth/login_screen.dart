@@ -1,6 +1,7 @@
 ﻿import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // Providers
 import '../../providers/user_provider.dart';
@@ -40,6 +41,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
+  bool _saveId = false;
 
   final _authService = AuthService();
   final _auth = FirebaseAuth.instance;
@@ -48,13 +50,38 @@ class _LoginScreenState extends State<LoginScreen> {
   final _usernameFocus = FocusNode();
   final _passwordFocus = FocusNode();
 
-  // 아이디찾기/비밀번호찾기 바텀시트용 FocusNode — 화면 lifecycle에서 관리하여
-  // addPostFrameCallback dispose가 위젯 deactivate보다 먼저 실행되는 타이밍 크래시 방지
+  // 바텀시트용 FocusNode + TextEditingController — 화면 lifecycle에서 관리
+  // dismiss 애니메이션(300ms)이 끝나기 전에 dispose되면 TextField crash 발생하므로
+  // addPostFrameCallback 대신 State.dispose()에서 일괄 정리
   final _findUsernameNameFocus = FocusNode();
   final _findUsernamePhoneFocus = FocusNode();
+  final _findUsernameNameController = TextEditingController();
+  final _findUsernamePhoneController = TextEditingController();
+
   final _findPasswordUsernameFocus = FocusNode();
   final _findPasswordNewPasswordFocus = FocusNode();
   final _findPasswordConfirmPasswordFocus = FocusNode();
+  final _findPasswordUsernameController = TextEditingController();
+  final _findPasswordNewPasswordController = TextEditingController();
+  final _findPasswordConfirmPasswordController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedId();
+  }
+
+  Future<void> _loadSavedId() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString('saved_username') ?? '';
+    // async gap 동안 사용자가 이미 타이핑했으면 덮어쓰지 않음
+    if (saved.isNotEmpty && mounted && _usernameController.text.isEmpty) {
+      setState(() {
+        _usernameController.text = saved;
+        _saveId = true;
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -64,15 +91,29 @@ class _LoginScreenState extends State<LoginScreen> {
     _passwordFocus.dispose();
     _findUsernameNameFocus.dispose();
     _findUsernamePhoneFocus.dispose();
+    _findUsernameNameController.dispose();
+    _findUsernamePhoneController.dispose();
     _findPasswordUsernameFocus.dispose();
     _findPasswordNewPasswordFocus.dispose();
     _findPasswordConfirmPasswordFocus.dispose();
+    _findPasswordUsernameController.dispose();
+    _findPasswordNewPasswordController.dispose();
+    _findPasswordConfirmPasswordController.dispose();
     super.dispose();
   }
 
   Future<void> _handleLogin() async {
     if (!_formKey.currentState!.validate()) return;
-    FocusScope.of(context).unfocus(); // 키보드 닫기 → toast가 키보드 뒤에 숨지 않도록
+    FocusScope.of(context).unfocus();
+
+    // 아이디 저장/삭제
+    final prefs = await SharedPreferences.getInstance();
+    if (_saveId) {
+      await prefs.setString('saved_username', _usernameController.text.trim());
+    } else {
+      await prefs.remove('saved_username');
+    }
+    if (!mounted) return;
 
     final userProvider = context.read<UserProvider>();
     if (userProvider.isLoading) return;
@@ -85,7 +126,6 @@ class _LoginScreenState extends State<LoginScreen> {
     if (success) {
       AnalyticsService.logLogin(userProvider.currentUser?.role.name ?? 'UNKNOWN');
     } else {
-      // signIn 실패 시 provider의 _error를 toast로 표시
       final err = userProvider.error;
       ToastHelper.showError(
         (err != null && err.isNotEmpty) ? err : '아이디 또는 비밀번호가 올바르지 않습니다.',
@@ -94,205 +134,185 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _showFindUsernameDialog() async {
-    final nameController = TextEditingController();
-    final phoneController = TextEditingController();
-    final nameFocus = _findUsernameNameFocus;
-    final phoneFocus = _findUsernamePhoneFocus;
-
+    // 이전 호출에서 남은 내용 초기화
+    _findUsernameNameController.clear();
+    _findUsernamePhoneController.clear();
     String? foundUsername;
     bool isSearching = false;
 
-    try {
     await DialogHelper.showSheet(
-      context,
-      isScrollControlled: true,
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (ctx, setSheetState) {
-          Future<void> search() async {
-            if (nameController.text.isEmpty) {
-              ToastHelper.showWarning('이름을 입력해주세요');
-              nameFocus.requestFocus();
-              return;
+        context,
+        isScrollControlled: true,
+        builder: (sheetContext) => PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop) {
+              FocusScope.of(sheetContext).unfocus();
+              Future.microtask(() {
+                if (sheetContext.mounted) Navigator.of(sheetContext).pop();
+              });
             }
-            if (phoneController.text.isEmpty) {
-              ToastHelper.showWarning('전화번호를 입력해주세요');
-              phoneFocus.requestFocus();
-              return;
-            }
-            setSheetState(() => isSearching = true);
-            final result = await _authService.findUsername(
-              name: nameController.text,
-              phone: phoneController.text,
-            );
-            if (!ctx.mounted) return;
-            setSheetState(() {
-              isSearching = false;
-              foundUsername = result ?? '';
-            });
-          }
+          },
+          child: StatefulBuilder(
+            builder: (ctx, setSheetState) {
+              Future<void> search() async {
+                if (_findUsernameNameController.text.isEmpty) {
+                  ToastHelper.showWarning('이름을 입력해주세요');
+                  _findUsernameNameFocus.requestFocus();
+                  return;
+                }
+                if (_findUsernamePhoneController.text.isEmpty) {
+                  ToastHelper.showWarning('전화번호를 입력해주세요');
+                  _findUsernamePhoneFocus.requestFocus();
+                  return;
+                }
+                setSheetState(() => isSearching = true);
+                final result = await _authService.findUsername(
+                  name: _findUsernameNameController.text,
+                  phone: _findUsernamePhoneController.text,
+                );
+                if (!ctx.mounted) return;
+                setSheetState(() {
+                  isSearching = false;
+                  foundUsername = result ?? '';
+                });
+              }
 
-          return Padding(
-            padding: EdgeInsets.only(
-              bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
-            ),
-            child: Container(
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-              ),
-              child: SingleChildScrollView(
-                padding: EdgeInsets.fromLTRB(24, 0, 24, 40 + MediaQuery.of(ctx).padding.bottom),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Center(
-                      child: Container(
-                        margin: const EdgeInsets.only(top: 12, bottom: 24),
-                        width: 40, height: 4,
-                        decoration: BoxDecoration(
-                          color: AppColors.grey300,
-                          borderRadius: BorderRadius.circular(2),
+              return Padding(
+                padding: EdgeInsets.only(bottom: MediaQuery.of(sheetContext).viewInsets.bottom),
+                child: Container(
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+                  ),
+                  child: SingleChildScrollView(
+                    padding: EdgeInsets.fromLTRB(24, 0, 24, 40 + MediaQuery.of(ctx).padding.bottom),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Center(
+                          child: Container(
+                            margin: const EdgeInsets.only(top: 12, bottom: 24),
+                            width: 40, height: 4,
+                            decoration: BoxDecoration(color: AppColors.grey300, borderRadius: BorderRadius.circular(2)),
+                          ),
                         ),
-                      ),
+                        if (foundUsername == null) ...[
+                          Text('아이디 찾기',
+                              style: ResponsiveHelper.titleStyle(ctx).copyWith(fontWeight: FontWeight.w700, color: AppColors.grey900)),
+                          const SizedBox(height: 6),
+                          Text('가입 시 입력한 이름과 전화번호를 입력해주세요',
+                              style: ResponsiveHelper.bodyStyle(ctx).copyWith(color: AppColors.grey500)),
+                          const SizedBox(height: 24),
+                          _buildSheetTextField(
+                            context: ctx,
+                            controller: _findUsernameNameController,
+                            focusNode: _findUsernameNameFocus,
+                            label: '이름', hint: '홍길동', icon: Icons.person_outline,
+                            onSubmitted: (_) => _findUsernamePhoneFocus.requestFocus(),
+                          ),
+                          const SizedBox(height: 12),
+                          _buildSheetTextField(
+                            context: ctx,
+                            controller: _findUsernamePhoneController,
+                            focusNode: _findUsernamePhoneFocus,
+                            label: '전화번호', hint: '01012345678', icon: Icons.phone_outlined,
+                            keyboardType: TextInputType.phone, maxLength: 11,
+                            onSubmitted: (_) => search(),
+                          ),
+                          const SizedBox(height: 24),
+                          ElevatedButton(
+                            onPressed: isSearching ? null : search,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Theme.of(ctx).primaryColor,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                              elevation: 0,
+                            ),
+                            child: isSearching
+                                ? const SizedBox(width: 20, height: 20,
+                                    child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                                : Text('찾기', style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w600)),
+                          ),
+                        ] else if (foundUsername!.isEmpty) ...[
+                          const SizedBox(height: 8),
+                          Icon(Icons.search_off_rounded, size: 60, color: AppColors.grey300),
+                          const SizedBox(height: 16),
+                          Text('일치하는 계정을 찾을 수 없어요',
+                              textAlign: TextAlign.center,
+                              style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w700, color: AppColors.grey900)),
+                          const SizedBox(height: 8),
+                          Text('입력하신 정보를 다시 확인해주세요',
+                              textAlign: TextAlign.center,
+                              style: ResponsiveHelper.bodyStyle(ctx).copyWith(color: AppColors.grey500)),
+                          const SizedBox(height: 28),
+                          OutlinedButton(
+                            onPressed: () => setSheetState(() => foundUsername = null),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              side: BorderSide(color: Theme.of(ctx).primaryColor),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                            ),
+                            child: Text('다시 찾기',
+                                style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w600, color: Theme.of(ctx).primaryColor)),
+                          ),
+                        ] else ...[
+                          const SizedBox(height: 8),
+                          Icon(Icons.check_circle_rounded, size: 60, color: Theme.of(ctx).primaryColor),
+                          const SizedBox(height: 16),
+                          Text('아이디를 찾았어요',
+                              textAlign: TextAlign.center,
+                              style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w700, color: AppColors.grey900)),
+                          const SizedBox(height: 20),
+                          Container(
+                            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 24),
+                            decoration: BoxDecoration(
+                              color: Theme.of(ctx).primaryColor.withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Text(
+                              foundUsername!.length > 4
+                                  ? '${foundUsername!.substring(0, 4)}${'*' * (foundUsername!.length - 4)}'
+                                  : foundUsername!,
+                              textAlign: TextAlign.center,
+                              style: ResponsiveHelper.titleStyle(ctx).copyWith(
+                                fontWeight: FontWeight.w800, color: Theme.of(ctx).primaryColor, letterSpacing: 2),
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          ElevatedButton(
+                            onPressed: () {
+                              FocusScope.of(ctx).unfocus();
+                              Navigator.pop(sheetContext);
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Theme.of(ctx).primaryColor,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                              elevation: 0,
+                            ),
+                            child: Text('확인', style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w600)),
+                          ),
+                        ],
+                      ],
                     ),
-
-                  if (foundUsername == null) ...[
-                    Text('아이디 찾기',
-                        style: ResponsiveHelper.titleStyle(ctx).copyWith(fontWeight: FontWeight.w700, color: AppColors.grey900)),
-                    const SizedBox(height: 6),
-                    Text('가입 시 입력한 이름과 전화번호를 입력해주세요',
-                        style: ResponsiveHelper.bodyStyle(ctx).copyWith(color: AppColors.grey500)),
-                    const SizedBox(height: 24),
-                    _buildSheetTextField(
-                      context: ctx,
-                      controller: nameController,
-                      focusNode: nameFocus,
-                      label: '이름',
-                      hint: '홍길동',
-                      icon: Icons.person_outline,
-                      onSubmitted: (_) => phoneFocus.requestFocus(),
-                    ),
-                    const SizedBox(height: 12),
-                    _buildSheetTextField(
-                      context: ctx,
-                      controller: phoneController,
-                      focusNode: phoneFocus,
-                      label: '전화번호',
-                      hint: '01012345678',
-                      icon: Icons.phone_outlined,
-                      keyboardType: TextInputType.phone,
-                      maxLength: 11,
-                      onSubmitted: (_) => search(),
-                    ),
-                    const SizedBox(height: 24),
-                    Semantics(
-                      enabled: !isSearching,
-                      hint: isSearching ? '검색 중입니다' : null,
-                      child: ElevatedButton(
-                      onPressed: isSearching ? null : search,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Theme.of(ctx).primaryColor,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                        elevation: 0,
-                      ),
-                      child: isSearching
-                          ? const SizedBox(width: 20, height: 20,
-                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                          : Text('찾기', style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w600)),
-                      ),
-                    ), // Semantics
-
-                  ] else if (foundUsername!.isEmpty) ...[
-                    const SizedBox(height: 8),
-                    Icon(Icons.search_off_rounded, size: ResponsiveHelper.iconSize(context, 60), color: AppColors.grey300),
-                    const SizedBox(height: 16),
-                    Text('일치하는 계정을 찾을 수 없어요',
-                        textAlign: TextAlign.center,
-                        style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w700, color: AppColors.grey900)),
-                    const SizedBox(height: 8),
-                    Text('입력하신 정보를 다시 확인해주세요',
-                        textAlign: TextAlign.center,
-                        style: ResponsiveHelper.bodyStyle(ctx).copyWith(color: AppColors.grey500)),
-                    const SizedBox(height: 28),
-                    OutlinedButton(
-                      onPressed: () => setSheetState(() => foundUsername = null),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        side: BorderSide(color: Theme.of(ctx).primaryColor),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                      ),
-                      child: Text('다시 찾기',
-                          style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w600, color: Theme.of(ctx).primaryColor)),
-                    ),
-                    const SizedBox(height: 8),
-
-                  ] else ...[
-                    const SizedBox(height: 8),
-                    Icon(Icons.check_circle_rounded, size: 60, color: Theme.of(ctx).primaryColor),
-                    const SizedBox(height: 16),
-                    Text('아이디를 찾았어요',
-                        textAlign: TextAlign.center,
-                        style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w700, color: AppColors.grey900)),
-                    const SizedBox(height: 20),
-                    Container(
-                      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 24),
-                      decoration: BoxDecoration(
-                        color: Theme.of(ctx).primaryColor.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Text(
-                        foundUsername!.length > 4
-                            ? '${foundUsername!.substring(0, 4)}${'*' * (foundUsername!.length - 4)}'
-                            : foundUsername!,
-                        textAlign: TextAlign.center,
-                        style: ResponsiveHelper.titleStyle(ctx).copyWith(
-                          fontWeight: FontWeight.w800,
-                          color: Theme.of(ctx).primaryColor,
-                          letterSpacing: 2,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    ElevatedButton(
-                      onPressed: () => Navigator.pop(sheetContext),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Theme.of(ctx).primaryColor,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                        elevation: 0,
-                      ),
-                      child: Text('확인', style: ResponsiveHelper.subtitleStyle(ctx).copyWith(fontWeight: FontWeight.w600)),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                ],
+                  ),
                 ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-    } finally {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        nameController.dispose();
-        phoneController.dispose();
-        // FocusNode는 _LoginScreenState.dispose()에서 해제 — 여기서 dispose 금지
-      });
-    }
+              );
+            },
+          ),
+        ),
+      );
   }
 
   Future<void> _showFindPasswordDialog() async {
-    final usernameController = TextEditingController();
-    final newPasswordController = TextEditingController();
-    final confirmPasswordController = TextEditingController();
-    final usernameFocus = _findPasswordUsernameFocus;
-    final newPasswordFocus = _findPasswordNewPasswordFocus;
-    final confirmPasswordFocus = _findPasswordConfirmPasswordFocus;
+    // 이전 호출에서 남은 내용 초기화
+    _findPasswordUsernameController.clear();
+    _findPasswordNewPasswordController.clear();
+    _findPasswordConfirmPasswordController.clear();
 
     // 0: 아이디 + PASS 인증, 1: 새 비밀번호 입력, 2: 완료
     int step = 0;
@@ -302,12 +322,21 @@ class _LoginScreenState extends State<LoginScreen> {
     bool obscureConfirm = true;
     String? customToken;
 
-    // _showFindUsernameDialog와 동일하게 try-finally로 dispose 보장
-    try {
     await DialogHelper.showSheet(
       context,
       isScrollControlled: true,
-      builder: (sheetContext) => StatefulBuilder(
+      builder: (sheetContext) => PopScope(
+        // barrier 탭 / 뒤로가기 가로채서 unfocus 먼저 → _dependents.isEmpty crash 방지
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) {
+            FocusScope.of(sheetContext).unfocus();
+            Future.microtask(() {
+              if (sheetContext.mounted) Navigator.of(sheetContext).pop();
+            });
+          }
+        },
+        child: StatefulBuilder(
         builder: (ctx, setSheetState) {
           // PASS 인증 → CF resetPasswordWithPass → customToken 확보 → step 1
           //
@@ -315,9 +344,9 @@ class _LoginScreenState extends State<LoginScreen> {
           //   passToken → ciHash 를 Firestore 에 저장해야 CI 매칭이 성공한다.
           //
           Future<void> doPassAuth() async {
-            if (usernameController.text.trim().isEmpty) {
+            if (_findPasswordUsernameController.text.trim().isEmpty) {
               ToastHelper.showWarning('아이디를 입력해주세요');
-              usernameFocus.requestFocus();
+              _findPasswordUsernameFocus.requestFocus();
               return;
             }
             setSheetState(() => isAuthenticating = true);
@@ -338,13 +367,13 @@ class _LoginScreenState extends State<LoginScreen> {
                   )
                   .call({
                 'passToken': passResult.passToken,
-                'username': usernameController.text.trim(),
+                'username': _findPasswordUsernameController.text.trim(),
               });
               if (!ctx.mounted) return;
               customToken = result.data['customToken'] as String?;
               setSheetState(() { isAuthenticating = false; step = 1; });
               Future.delayed(const Duration(milliseconds: 300), () {
-                if (ctx.mounted) newPasswordFocus.requestFocus();
+                if (ctx.mounted) _findPasswordNewPasswordFocus.requestFocus();
               });
             } on FirebaseFunctionsException catch (e) {
               if (!ctx.mounted) return;
@@ -359,16 +388,16 @@ class _LoginScreenState extends State<LoginScreen> {
 
           // Custom Token으로 재로그인 → 비밀번호 변경
           Future<void> resetPassword() async {
-            final pw = newPasswordController.text;
+            final pw = _findPasswordNewPasswordController.text;
             final pwRegex = RegExp(r'^(?=.*[a-zA-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>]).{8,}$');
             if (!pwRegex.hasMatch(pw)) {
               ToastHelper.showWarning('비밀번호는 8자 이상이며\n영문·숫자·특수문자를 포함해야 합니다');
-              newPasswordFocus.requestFocus();
+              _findPasswordNewPasswordFocus.requestFocus();
               return;
             }
-            if (pw != confirmPasswordController.text) {
+            if (pw != _findPasswordConfirmPasswordController.text) {
               ToastHelper.showWarning('비밀번호가 일치하지 않습니다');
-              confirmPasswordFocus.requestFocus();
+              _findPasswordConfirmPasswordFocus.requestFocus();
               return;
             }
             // customToken은 doPassAuth() 성공 시 설정된다.
@@ -460,8 +489,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     const SizedBox(height: 24),
                     _buildSheetTextField(
                       context: ctx,
-                      controller: newPasswordController,
-                      focusNode: newPasswordFocus,
+                      controller: _findPasswordNewPasswordController,
+                      focusNode: _findPasswordNewPasswordFocus,
                       label: '새 비밀번호',
                       hint: '8자 이상, 영문·숫자·특수문자 포함',
                       icon: Icons.lock_outline,
@@ -475,13 +504,13 @@ class _LoginScreenState extends State<LoginScreen> {
                               color: AppColors.grey400, size: 20),
                         ),
                       ),
-                      onSubmitted: (_) => confirmPasswordFocus.requestFocus(),
+                      onSubmitted: (_) => _findPasswordConfirmPasswordFocus.requestFocus(),
                     ),
                     const SizedBox(height: 12),
                     _buildSheetTextField(
                       context: ctx,
-                      controller: confirmPasswordController,
-                      focusNode: confirmPasswordFocus,
+                      controller: _findPasswordConfirmPasswordController,
+                      focusNode: _findPasswordConfirmPasswordFocus,
                       label: '비밀번호 확인',
                       hint: '비밀번호를 다시 입력해주세요',
                       icon: Icons.lock_outline,
@@ -523,8 +552,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     const SizedBox(height: 24),
                     _buildSheetTextField(
                       context: ctx,
-                      controller: usernameController,
-                      focusNode: usernameFocus,
+                      controller: _findPasswordUsernameController,
+                      focusNode: _findPasswordUsernameFocus,
                       label: '아이디',
                       hint: 'your_username',
                       icon: Icons.account_circle_outlined,
@@ -574,27 +603,22 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           );
         },
-      ),
+      ),      // StatefulBuilder
+      ),      // PopScope
     );
-    } finally {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        usernameController.dispose();
-        newPasswordController.dispose();
-        confirmPasswordController.dispose();
-        // FocusNode는 _LoginScreenState.dispose()에서 해제 — 여기서 dispose 금지
-      });
-    }
   }
 
   @override
   Widget build(BuildContext context) {
+    // sizeOf / paddingOf 는 키보드 상태와 무관 — 키보드 애니메이션 중 리빌드 없음
+    final size = MediaQuery.sizeOf(context);
+    final sysPadding = MediaQuery.paddingOf(context);
+
     return Scaffold(
       resizeToAvoidBottomInset: true,
       body: Builder(
-        builder: (context) {
-          final isLoading = context.select<UserProvider, bool>((p) => p.isLoading);
-          final size = MediaQuery.sizeOf(context);
-          final bottomPadding = MediaQuery.of(context).padding.bottom;
+        builder: (ctx) {
+          final isLoading = ctx.select<UserProvider, bool>((p) => p.isLoading);
           return LoadingOverlay(
             isLoading: isLoading,
             message: '로그인 중...',
@@ -605,12 +629,15 @@ class _LoginScreenState extends State<LoginScreen> {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [Theme.of(context).primaryColor, Theme.of(context).colorScheme.secondary],
+                  colors: [
+                    Theme.of(ctx).primaryColor,
+                    Theme.of(ctx).colorScheme.secondary,
+                  ],
                 ),
               ),
               child: Stack(
                 children: [
-                  // 스플래시와 동일한 빛번짐 — 상단 우측
+                  // 빛번짐 — 상단 우측 (스플래시 동일)
                   Positioned(
                     top: -size.height * 0.12,
                     right: -size.width * 0.15,
@@ -623,7 +650,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                   ),
-                  // 하단 좌측
+                  // 빛번짐 — 하단 좌측
                   Positioned(
                     bottom: -size.height * 0.08,
                     left: -size.width * 0.2,
@@ -636,110 +663,70 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                   ),
-                  // 메인 콘텐츠
+                  // 콘텐츠 — LayoutBuilder 없음
+                  // size.height 기반 고정 패딩 → 키보드 프레임마다 재계산 없음 → 부드러운 전환
                   Positioned.fill(
-                    child: SafeArea(
-                      bottom: false,
-                      child: SingleChildScrollView(
-                  physics: const ClampingScrollPhysics(),
-                  child: Column(
-                    children: [
-                      SizedBox(height: math.max(40.0, size.height * 0.07)),
-
-                      // 로고 영역
-                      Column(
-                        mainAxisSize: MainAxisSize.min,
+                    child: SingleChildScrollView(
+                      physics: const ClampingScrollPhysics(),
+                      padding: EdgeInsets.only(
+                        top: sysPadding.top + size.height * 0.16,
+                        bottom: math.max(24.0, sysPadding.bottom + 16),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          ClipOval(
-                            child: Image.asset(
-                              'assets/icons/app_icon.png',
-                              width: 60,
-                              height: 60,
+                          // 로고 — 좌측 정렬, 아이콘 없음
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 28),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  'ALfit',
+                                  style: TextStyle(
+                                    fontSize: ResponsiveHelper.titleStyle(ctx).fontSize! * 2.4,
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.white,
+                                    letterSpacing: 2,
+                                    height: 1,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  '나에게 딱 맞는 알바 매칭',
+                                  style: ResponsiveHelper.bodyStyle(ctx).copyWith(
+                                    color: Colors.white.withValues(alpha: 0.75),
+                                    letterSpacing: 0.2,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                          const SizedBox(height: 12),
-                          Text(
-                            'ALfit',
-                            style: TextStyle(
-                              fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 2.2,
-                              fontWeight: FontWeight.w800,
+
+                          SizedBox(height: size.height * 0.07),
+
+                          // 로그인 카드
+                          Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 20),
+                            padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+                            decoration: BoxDecoration(
                               color: Colors.white,
-                              letterSpacing: 1.5,
-                              height: 1,
+                              borderRadius: BorderRadius.circular(24),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: Color(0x2E000000),
+                                  blurRadius: 32,
+                                  offset: Offset(0, 10),
+                                ),
+                              ],
                             ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            '나에게 딱 맞는 알바 매칭',
-                            style: ResponsiveHelper.bodyStyle(context).copyWith(
-                              color: Colors.white.withValues(alpha: 0.75),
-                              letterSpacing: 0.3,
-                            ),
-                          ),
-                        ],
-                      ),
-
-                      SizedBox(height: math.max(28.0, size.height * 0.05)),
-
-                      // 로그인 카드 (floating)
-                      Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 20),
-                        padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(24),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.18),
-                              blurRadius: 32,
-                              offset: const Offset(0, 10),
-                            ),
-                          ],
-                        ),
-                        child: _buildForm(context, isLoading),
-                      ),
-
-                      const SizedBox(height: 24),
-
-                      // 회원가입 링크 (카드 밖, 파란 배경)
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            '계정이 없으신가요?',
-                            style: ResponsiveHelper.bodyStyle(context).copyWith(
-                              color: Colors.white.withValues(alpha: 0.8),
-                            ),
-                          ),
-                          TextButton(
-                            onPressed: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (_) => const RegisterScreen()),
-                            ),
-                            style: TextButton.styleFrom(
-                              minimumSize: Size.zero,
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                            child: Text(
-                              '회원가입',
-                              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white,
-                                decoration: TextDecoration.underline,
-                                decorationColor: Colors.white,
-                              ),
-                            ),
+                            child: _buildForm(ctx, isLoading),
                           ),
                         ],
                       ),
-
-                      SizedBox(height: math.max(24.0, bottomPadding + 16)),
-                    ],
+                    ),
                   ),
-                ),
-              ),
-            ),
                 ],
               ),
             ),
@@ -766,7 +753,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
 
-          const SizedBox(height: 28),
+          const SizedBox(height: 24),
 
           _buildTextField(
             context: context,
@@ -784,7 +771,7 @@ class _LoginScreenState extends State<LoginScreen> {
             },
           ),
 
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
 
           _buildTextField(
             context: context,
@@ -812,30 +799,52 @@ class _LoginScreenState extends State<LoginScreen> {
             },
           ),
 
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
 
-          // 아이디/비밀번호 찾기
+          // 아이디 저장 체크박스 + 아이디/비밀번호 찾기
           Row(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: Checkbox(
+                  value: _saveId,
+                  onChanged: (v) => setState(() => _saveId = v ?? false),
+                  activeColor: theme.primaryColor,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+              const SizedBox(width: 6),
+              GestureDetector(
+                onTap: () => setState(() => _saveId = !_saveId),
+                child: Text(
+                  '아이디 저장',
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                ),
+              ),
+              const Spacer(),
               TextButton(
                 onPressed: _showFindUsernameDialog,
                 style: TextButton.styleFrom(
                   foregroundColor: AppColors.grey500,
                   minimumSize: Size.zero,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
                 child: Text('아이디 찾기', style: ResponsiveHelper.smallStyle(context)),
               ),
-              Container(width: 1, height: 12, color: AppColors.grey300,
-                  margin: const EdgeInsets.symmetric(horizontal: 4)),
+              Container(
+                width: 1, height: 10,
+                color: AppColors.grey300,
+                margin: const EdgeInsets.symmetric(horizontal: 2),
+              ),
               TextButton(
                 onPressed: _showFindPasswordDialog,
                 style: TextButton.styleFrom(
                   foregroundColor: AppColors.grey500,
                   minimumSize: Size.zero,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
                 child: Text('비밀번호 찾기', style: ResponsiveHelper.smallStyle(context)),
@@ -843,13 +852,13 @@ class _LoginScreenState extends State<LoginScreen> {
             ],
           ),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
 
           // 로그인 버튼
           ElevatedButton(
             onPressed: isLoading ? null : _handleLogin,
             style: ElevatedButton.styleFrom(
-              backgroundColor: Theme.of(context).primaryColor,
+              backgroundColor: theme.primaryColor,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 16),
               shape: RoundedRectangleBorder(
@@ -863,12 +872,48 @@ class _LoginScreenState extends State<LoginScreen> {
               children: [
                 Text(
                   '로그인',
-                  style: ResponsiveHelper.subtitleStyle(context, color: Colors.white).copyWith(fontWeight: FontWeight.w600),
+                  style: ResponsiveHelper.subtitleStyle(context, color: Colors.white)
+                      .copyWith(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(width: 8),
                 const Icon(Icons.arrow_forward_rounded, size: 18, color: Colors.white),
               ],
             ),
+          ),
+
+          const SizedBox(height: 20),
+
+          Divider(color: AppColors.grey200, height: 1),
+
+          const SizedBox(height: 14),
+
+          // 회원가입 링크 — 카드 안
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                '계정이 없으신가요?',
+                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+              ),
+              TextButton(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const RegisterScreen()),
+                ),
+                style: TextButton.styleFrom(
+                  minimumSize: Size.zero,
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: Text(
+                  '회원가입',
+                  style: ResponsiveHelper.smallStyle(context).copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: theme.primaryColor,
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),

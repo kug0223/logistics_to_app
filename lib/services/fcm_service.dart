@@ -11,6 +11,8 @@ import '../screens/contract/contract_sign_screen.dart';
 import '../screens/user/my_applications_screen.dart';
 import '../screens/user/my_schedule_screen.dart';
 import '../screens/user/user_contracts_screen.dart';
+import '../screens/user/attendance_check_screen.dart';
+import '../screens/user/my_reviews_screen.dart';
 import 'contract_service.dart';
 import '../models/core/employment_contract_model.dart';
 
@@ -51,6 +53,23 @@ class FCMService {
     }
   }
 
+  /// USER 홈 데이터 갱신 콜백 (지원 확정/거절 등 근무자 관련 FCM 수신 시 호출)
+  final Set<VoidCallback> _userDataRefreshCallbacks = {};
+
+  void addUserDataRefreshListener(VoidCallback callback) {
+    _userDataRefreshCallbacks.add(callback);
+  }
+
+  void removeUserDataRefreshListener(VoidCallback callback) {
+    _userDataRefreshCallbacks.remove(callback);
+  }
+
+  void _notifyUserDataRefresh() {
+    for (final cb in _userDataRefreshCallbacks) {
+      cb();
+    }
+  }
+
   /// USER 미서명 계약서 갱신 콜백 (contractSignRequested FCM 수신 시 호출)
   final Set<VoidCallback> _userContractRefreshCallbacks = {};
 
@@ -74,6 +93,11 @@ class FCMService {
   /// Navigator Key 설정
   void setNavigatorKey(GlobalKey<NavigatorState> key) {
     _navigatorKey = key;
+  }
+
+  /// 서브어드민 모드 전환 시 알람 라우팅 기준 갱신 (initialize 재호출 없이 플래그만 변경)
+  void updateAdminStatus(bool isAdmin) {
+    _currentUserIsAdmin = isAdmin;
   }
 
   /// FCM 초기화 (로그인 후 호출)
@@ -264,7 +288,7 @@ class FCMService {
     final type = message.data['type'] as String? ?? '';
 
     // 지원/취소/계약서 서명 완료 알림 수신 시 관리자 화면 자동 갱신
-    const adminRefreshTypes = {'newApplication', 'applicationCanceled', 'contractSigned'};
+    const adminRefreshTypes = {'newApplication', 'applicationCanceled', 'contractSigned', 'confirmationCanceled'};
     if (adminRefreshTypes.contains(type)) {
       _notifyAdminRefresh();
     }
@@ -272,6 +296,12 @@ class FCMService {
     // 계약서 서명 요청 수신 시 USER 미서명 계약서 목록 갱신 (노란 바 즉시 표시)
     if (type == 'contractSignRequested') {
       _notifyUserContractRefresh();
+    }
+
+    // 지원 확정/거절·임금 확정 수신 시 USER 홈 데이터 갱신
+    const userRefreshTypes = {'applicationConfirmed', 'applicationRejected', 'wageConfirmed'};
+    if (userRefreshTypes.contains(type)) {
+      _notifyUserDataRefresh();
     }
   }
 
@@ -334,7 +364,10 @@ class FCMService {
   /// FCM data payload 기반 딥링크 라우팅
   void _navigateByPayload(Map<String, dynamic> data) {
     if (_navigatorKey?.currentState == null) return;
-    final screen = data['screen'] as String?;
+    // screen 필드 우선, 없으면 type 폴백 (일부 알림은 screen 없이 type만 포함)
+    final screen = (data['screen'] as String?) ?? (data['type'] as String?);
+    // BUG-5 수정: 다중 사업장 서브어드민이 알림 탭 시 올바른 사업장으로 이동하도록 businessId 추출
+    final notifBusinessId = data['businessId'] as String?;
     switch (screen) {
       // 계약서 서명 요청 — contractId로 계약서 직접 로드 후 서명 화면 이동 (B안: 최단 경로)
       case 'contractSign':
@@ -346,7 +379,7 @@ class FCMService {
       case 'contractSigned':
         if (_currentUserIsAdmin) {
           _navigatorKey!.currentState!.push(
-            MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId)),
           );
         } else {
           _navigatorKey!.currentState!.push(
@@ -359,17 +392,16 @@ class FCMService {
           MaterialPageRoute(builder: (_) => const UserContractsScreen()),
         );
         break;
-      case 'mySchedule': // contractRenewed·contractTerminating — 근무자 전용 알림
+      case 'mySchedule': // contractRenewed·contractTerminating·workReminder 등 일정 관련
         _navigatorKey!.currentState!.push(
           MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
         );
         break;
-      // [M-001 수정] wageTransferred → UserContractsScreen (계약·급여 내역)
-      // wageConfirmed(급여 확정)는 일정 확인 → MyScheduleScreen 유지
-      // wageTransferred(실송금 완료)는 급여 내역 확인 목적 → UserContractsScreen
+      // wageTransferred(실송금 완료) → MyScheduleScreen (wageConfirmed와 동일 목적지로 통일)
+      // UserContractsScreen은 계약서 화면이므로 급여 알림 목적지로 부적합
       case 'wageTransferred':
         _navigatorKey!.currentState!.push(
-          MaterialPageRoute(builder: (_) => const UserContractsScreen()),
+          MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
         );
         break;
       // [FCM-01 수정] fixedWorker screen → 인력 관리 화면 직접 이동 (관리자 퇴사 자동 승인 알림 딥링크)
@@ -377,7 +409,7 @@ class FCMService {
       case 'fixedWorker':
         if (_currentUserIsAdmin) {
           _navigatorKey!.currentState!.push(
-            MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId)),
           );
         } else {
           _navigateToNotificationScreen();
@@ -388,7 +420,7 @@ class FCMService {
       case 'contractRenewal':
         if (_currentUserIsAdmin) {
           _navigatorKey!.currentState!.push(
-            MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId)),
           );
         } else {
           _navigateToNotificationScreen();
@@ -397,9 +429,28 @@ class FCMService {
       // ─── 지원 확정/거부 (근무자 전용) ──────────────────────────
       case 'applicationConfirmed':
       case 'applicationRejected':
+      // callableConfirmApplication이 screen='applicationDetail'을 포함하므로
+      // data['screen']='applicationDetail' → type 폴백 없이 이 케이스로 직접 라우팅
+      case 'applicationDetail':
         _navigatorKey!.currentState!.push(
           MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
         );
+        break;
+      // ─── 파트변경 알림 (근무자 전용) ─────────────────────────
+      case 'workTypeChanged':
+        _navigatorKey!.currentState!.push(
+          MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
+        );
+        break;
+      // ─── 확정 취소 — 관리자:알림목록위임(WorkApplicantsDialog context 필요), 근무자:내지원내역 ───
+      case 'confirmationCanceled':
+        if (_currentUserIsAdmin) {
+          _navigateToNotificationScreen();
+        } else {
+          _navigatorKey!.currentState!.push(
+            MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
+          );
+        }
         break;
       // ─── 신규지원/지원취소 — 관리자:알림목록위임, 근무자:내지원내역 ───
       // WorkApplicantsDialog는 toId·context 필요 → 알림 탭에서 처리
@@ -413,6 +464,12 @@ class FCMService {
           );
         }
         break;
+      // ─── 리컨펌 출근 확인 요청 (근무자 전용) ──────────────────────
+      case 'attendanceCheck':
+        _navigatorKey!.currentState!.push(
+          MaterialPageRoute(builder: (_) => const AttendanceCheckScreen()),
+        );
+        break;
       // ─── 근무 알림 (근무자 전용) ─────────────────────────────────
       case 'workReminder':
       case 'workCanceled':
@@ -424,7 +481,7 @@ class FCMService {
       case 'scheduleChangeRequested':
         if (_currentUserIsAdmin) {
           _navigatorKey!.currentState!.push(
-            MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId)),
           );
         } else {
           _navigateToNotificationScreen(); // MyRequestsDialog는 알림 탭에서 열림
@@ -439,9 +496,11 @@ class FCMService {
       // ─── 계약해지·퇴사 신청 ──────────────────────────────────────
       case 'terminationRequested':
       case 'resignRequested':
+      // contractRequested: 근무자→관리자 방향 알림 — 관리자에게만 유효
+      case 'contractRequested':
         if (_currentUserIsAdmin) {
           _navigatorKey!.currentState!.push(
-            MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId)),
           );
         } else {
           _navigateToNotificationScreen();
@@ -453,12 +512,24 @@ class FCMService {
       case 'resignRejected':
         if (_currentUserIsAdmin) {
           _navigatorKey!.currentState!.push(
-            MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId)),
           );
         } else {
           _navigatorKey!.currentState!.push(
             MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
           );
+        }
+        break;
+      // ─── 멤버 초대 결과 — 관리자에게 발송 ──────────────────────
+      // memberInvitationReceived: 다이얼로그 처리 필요 → 알림 탭에서 처리 (케이스 없음 → default)
+      case 'memberInvitationAccepted':
+      case 'memberInvitationRejected':
+        if (_currentUserIsAdmin) {
+          _navigatorKey!.currentState!.push(
+            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId)),
+          );
+        } else {
+          _navigateToNotificationScreen();
         }
         break;
       // ─── 신분증 열람 ─────────────────────────────────────────────
@@ -469,7 +540,7 @@ class FCMService {
       case 'idCardAccessRejected':
         if (_currentUserIsAdmin) {
           _navigatorKey!.currentState!.push(
-            MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()),
+            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId)),
           );
         } else {
           _navigateToNotificationScreen();
@@ -482,12 +553,13 @@ class FCMService {
             MaterialPageRoute(builder: (_) => const AdminReviewListScreen()),
           );
         } else {
+          // "리뷰 받았습니다" → 내 근무 평가 화면에서 직접 확인
           _navigatorKey!.currentState!.push(
-            MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
+            MaterialPageRoute(builder: (_) => const MyReviewsScreen()),
           );
         }
         break;
-      case 'reviewRequest':
+      case 'REVIEW_REQUEST':
         _navigateToNotificationScreen(); // 리뷰 다이얼로그는 context 필요 → 알림 탭에서 처리
         break;
       // ─── 급여 확정/취소/소급 공제 (근무자 전용) ─────────────────
@@ -497,6 +569,31 @@ class FCMService {
         _navigatorKey!.currentState!.push(
           MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
         );
+        break;
+      // ─── 중간정산 (FCM-01) ────────────────────────────────────────
+      case 'interimSettlementAdmin': // 관리자 수신 — 인력 관리 화면으로
+        if (_currentUserIsAdmin) {
+          _navigatorKey!.currentState!.push(
+            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId)),
+          );
+        } else {
+          _navigateToNotificationScreen();
+        }
+        break;
+      case 'interimSettlement': // 근무자 수신 — 급여/일정 확인 화면으로
+        _navigatorKey!.currentState!.push(
+          MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
+        );
+        break;
+      // ─── 공고 만료 임박 (관리자 전용, CF masterScheduler) ────
+      case 'toDetail': // toPostingExpiringTomorrow 알림의 screen 필드 값
+        if (_currentUserIsAdmin) {
+          _navigatorKey!.currentState!.push(
+            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId)),
+          );
+        } else {
+          _navigateToNotificationScreen();
+        }
         break;
       default:
         _navigateToNotificationScreen();

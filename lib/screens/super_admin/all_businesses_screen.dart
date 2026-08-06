@@ -247,9 +247,17 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
 
   @override
   Widget build(BuildContext context) {
-    final pendingCount = _businesses.where((b) => !b.business.isApproved && !b.business.isDeactivated).length;
-    final activeCount = _businesses.where((b) => b.business.isApproved && !b.business.isDeactivated).length;
-    final deactivatedCount = _businesses.where((b) => b.business.isDeactivated).length;
+    int pendingCount = 0, activeCount = 0, deactivatedCount = 0;
+    for (final b in _businesses) {
+      if (b.business.isDeactivated) {
+        deactivatedCount++;
+      } else if (b.business.isApproved) {
+        activeCount++;
+      } else {
+        pendingCount++;
+      }
+    }
+    final filtered = _filtered;
 
     return GradientScaffold(
       title: '전체 사업장 관리',
@@ -261,7 +269,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
               : Column(
                   children: [
                     _buildFilterBar(pendingCount, activeCount, deactivatedCount),
-                    Expanded(child: _buildBusinessList()),
+                    Expanded(child: _buildBusinessList(filtered)),
                   ],
                 ),
     );
@@ -307,8 +315,7 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
     );
   }
 
-  Widget _buildBusinessList() {
-    final list = _filtered;
+  Widget _buildBusinessList(List<_BusinessWithOwner> list) {
     if (list.isEmpty) {
       return AppEmptyState(
         icon: Icons.business_outlined,

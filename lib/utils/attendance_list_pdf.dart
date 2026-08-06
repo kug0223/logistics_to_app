@@ -132,8 +132,12 @@ class AttendanceListPdf {
       final stopwatch = Stopwatch()..start();
       
       // ✅ Assets에서 로드 (네트워크 다운로드 없음 - 즉시!)
-      final regularData = await rootBundle.load('assets/fonts/NotoSansKR-Regular.ttf');
-      final boldData = await rootBundle.load('assets/fonts/NotoSansKR-Bold.ttf');
+      final fontResults = await Future.wait([
+        rootBundle.load('assets/fonts/NotoSansKR-Regular.ttf'),
+        rootBundle.load('assets/fonts/NotoSansKR-Bold.ttf'),
+      ]);
+      final regularData = fontResults[0];
+      final boldData = fontResults[1];
       
       _koreanFont = pw.Font.ttf(regularData);
       _koreanBoldFont = pw.Font.ttf(boldData);

@@ -53,7 +53,10 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
   @override
   void initState() {
     super.initState();
-    _loadRecords();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _loadRecords();
+    });
   }
 
   Future<void> _loadRecords() async {
@@ -88,12 +91,10 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
 
       if (mounted) {
         _computeTotals(records);
-        setState(() { _records = records; });
+        setState(() { _records = records; _isLoading = false; });
       }
     } catch (e) {
-      if (mounted) setState(() => _loadError = e.toString());
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() { _loadError = e.toString(); _isLoading = false; });
     }
   }
 

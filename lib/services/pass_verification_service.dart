@@ -1,13 +1,15 @@
-import 'dart:async';
-import 'dart:math';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+// iamport_flutter 0.10.21 API 구조:
+//   - IamportCertification.certification() static 메서드 없음
+//   - IamportCertification은 StatelessWidget — Navigator.push로 표시
+//   - callback 파라미터는 Map<String, String> (IamportResponse 클래스 없음)
+//     { 'success': 'true'|'false', 'imp_uid': '...', 'error_msg': '...' }
+import 'package:iamport_flutter/Iamport_certification.dart';
+import 'package:iamport_flutter/model/certification_data.dart';
+import 'package:iamport_flutter/model/url_data.dart';
+import '../utils/navigation_key.dart';
 import '../utils/toast_helper.dart';
-
-// TODO: 다날 계약 완료 후 아래 주석 해제 + pubspec.yaml에 iamport_flutter 추가
-// import 'package:iamport_flutter/iamport_flutter.dart';
-// import 'package:iamport_flutter/model/certification_data.dart';
-// import '../utils/navigation_key.dart';
 
 /// PASS 본인인증 결과 데이터
 class PassAuthResult {
@@ -26,73 +28,140 @@ class PassAuthResult {
   });
 }
 
-/// PASS 본인인증 서비스 — PortOne(포트원) SDK 기반
+/// PASS 본인인증 서비스 — PortOne(포트원) V1 SDK 기반
 ///
-/// [kDebugMode]에서는 mock 데이터를 반환합니다.
-/// 운영 환경에서는 iamport_flutter → verifyPassAuth CF → passToken 흐름으로 처리됩니다.
+/// 흐름:
+///   authenticate()
+///     → IamportCertification 위젯을 Navigator에 fullscreen push
+///     → KG이니시스 통합인증 V1 WebView 표시
+///     → 사용자 인증 완료 → callback(`Map<String, String>`) 호출 → pop
+///     → CF verifyPassAuth(imp_uid) → PassAuthResult 반환
+///
 class PassVerificationService {
   static final _fn = FirebaseFunctions.instanceFor(region: 'asia-northeast3');
 
-  /// PortOne 가맹점 식별코드 (포트원 콘솔 > 내 식별코드·API Keys)
-  /// 계약 후 실제 코드로 교체 필요
-  // ignore: unused_field
-  static const _portoneUserCode = 'imp00000000';
+  /// PortOne V1 고객사 식별코드 (포트원 콘솔 > 식별코드·API Keys > V1 API)
+  static const _portoneUserCode = 'imp73242783';
+
+  /// KG이니시스 본인인증 PG 코드
+  /// 테스트: 'inicis_unified.MIIiasTest'
+  /// 실연동: 계약 후 발급받은 MID로 교체 (예: 'inicis_unified.실제MID')
+  static const _pgCode = 'inicis_unified.MIIiasTest';
 
   /// PASS 인증 실행
   ///
   /// [purpose]: 'register' (가입) | 'resetPassword' (비밀번호 찾기)
-  /// [role]: 'USER' | 'BUSINESS_ADMIN' (가입 시 중복 체크에 사용)
+  /// [role]: 'USER' | 'BUSINESS_ADMIN' (가입 시 CF에서 중복 체크에 사용)
   ///
   /// 반환값이 null이면 사용자가 인증을 취소하거나 오류가 발생한 것입니다.
   static Future<PassAuthResult?> authenticate({
     required String purpose,
     String role = 'USER',
   }) async {
-    if (kDebugMode) {
-      return _mockAuthenticate(purpose: purpose);
+    final merchantUid = 'alfit_cert_${DateTime.now().millisecondsSinceEpoch}';
+
+    // navigatorKey가 아직 MaterialApp에 연결되지 않은 경우 무음 실패 방지
+    final navState = navigatorKey.currentState;
+    if (navState == null) {
+      ToastHelper.showError('화면 상태를 불러올 수 없습니다. 앱을 재시작해주세요');
+      return null;
     }
 
-    // TODO: 다날 계약 완료 후 아래 PortOne SDK 연동 코드로 교체
-    // 현재 iamport_flutter 패키지가 주석 처리되어 있으므로 운영 인증 불가
-    ToastHelper.showError('본인인증은 서비스 준비 중입니다.');
-    return null;
+    // IamportCertification 위젯을 Navigator에 push.
+    // callback이 호출되면 결과 Map을 pop()으로 반환하고 여기서 await 해제.
+    // 사용자가 뒤로가기로 취소하면 callback 미호출 → result == null 반환.
+    final result = await navState.push<Map<String, String>>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (context) => IamportCertification(
+          userCode: _portoneUserCode,
+          data: CertificationData(
+            pg: _pgCode,
+            merchantUid: merchantUid,
+            name: '',
+            phone: '',
+            minAge: 19,
+            // KG이니시스 통합인증 필수 파라미터.
+            // null이면 toJson()에서 키 자체가 생략되어 PG 측에서 에러 반환.
+            // iamport_flutter WebView가 이 URL을 감지해 콜백을 호출하므로
+            // 실제 HTTP 요청이 발생하지 않는 내부 인터셉트 URL.
+            mRedirectUrl: UrlData.redirectUrl,
+          ),
+          callback: (Map<String, String> response) {
+            // 인증 WebView 완료 후 호출됨. pop으로 result 전달.
+            navigatorKey.currentState?.pop(response);
+          },
+        ),
+      ),
+    );
 
-    // ── 계약 후 교체할 코드 (참고용) ──────────────────────────────────────
-    // final completer = Completer<PassAuthResult?>();
-    // final merchantUid = 'cert_${DateTime.now().millisecondsSinceEpoch}';
-    // IamportCertification.certification(
-    //   navigatorKey,
-    //   userCode: _portoneUserCode,
-    //   data: CertificationData(pg: 'danal', merchantUid: merchantUid, name: '', phone: '', minAge: 19),
-    //   callback: (IamportResponse response) async { ... },
-    // );
-    // return completer.future;
-  }
+    if (result == null) return null; // 사용자 취소
 
-  /// 비밀번호 찾기용 PASS 인증 후 Custom Token 발급
-  ///
-  /// [passToken]: authenticate()에서 받은 토큰
-  /// [username]: 비밀번호를 찾을 계정 아이디
-  ///
-  /// 반환값: Firebase Custom Token (앱에서 signInWithCustomToken 사용)
-  static Future<String?> getPasswordResetToken({
-    required String passToken,
-    required String username,
-  }) async {
-    if (kDebugMode) {
-      return 'mock-custom-token-for-debug';
+    final success = result['success'] == 'true';
+    if (!success) {
+      final errorMsg = result['error_msg'];
+      debugPrint('[PassAuth] WebView 인증 실패: error_msg=$errorMsg, result=$result');
+      if (errorMsg != null && errorMsg.isNotEmpty) {
+        ToastHelper.showError(errorMsg);
+      }
+      return null;
     }
 
+    final impUid = result['imp_uid'];
+    if (impUid == null || impUid.isEmpty) {
+      debugPrint('[PassAuth] imp_uid 없음: result=$result');
+      ToastHelper.showError('본인인증 결과를 받지 못했습니다');
+      return null;
+    }
+
+    // CF verifyPassAuth: PortOne imp_uid를 검증하고 passToken 발급
     try {
-      final result = await _fn
+      final cfResult = await _fn
           .httpsCallable(
-            'resetPasswordWithPass',
-            options: HttpsCallableOptions(timeout: const Duration(seconds: 15)),
+            'verifyPassAuth',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 20)),
           )
-          .call({'passToken': passToken, 'username': username});
-      return result.data['customToken'] as String?;
+          .call({
+        'imp_uid': impUid,
+        'purpose': purpose,
+        'role': role,
+      });
+
+      final data = Map<String, dynamic>.from(cfResult.data as Map);
+      final name        = data['name']      as String?;
+      final gender      = data['gender']    as String?;
+      final birthDateStr = data['birthDate'] as String?;
+      final phone       = data['phone']     as String?;
+      final passToken   = data['passToken'] as String?;
+
+      if (name == null || gender == null || birthDateStr == null ||
+          phone == null || passToken == null) {
+        debugPrint('[PassAuth] CF 응답 필드 누락: name=$name, gender=$gender, birthDate=$birthDateStr, phone=$phone, passToken=${passToken != null}');
+        ToastHelper.showError('본인인증 결과를 받지 못했습니다');
+        return null;
+      }
+
+      final birthDate = _parseBirthDate(birthDateStr);
+      if (birthDate == null) {
+        debugPrint('[PassAuth] 생년월일 파싱 실패: birthDateStr=$birthDateStr');
+        ToastHelper.showError('본인인증 결과를 받지 못했습니다');
+        return null;
+      }
+
+      return PassAuthResult(
+        name: name,
+        gender: gender,
+        birthDate: birthDate,
+        phone: phone,
+        passToken: passToken,
+      );
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('[PassAuth] CF 오류: code=${e.code}, message=${e.message}, details=${e.details}');
+      ToastHelper.showError(_mapCfError(e.code));
+      return null;
     } catch (e) {
-      debugPrint('❌ [PassVerificationService] resetPasswordWithPass 실패: $e');
+      debugPrint('[PassAuth] 예외: $e');
+      ToastHelper.showError('본인인증 처리 중 오류가 발생했습니다');
       return null;
     }
   }
@@ -116,45 +185,33 @@ class PassVerificationService {
 
   // ── 유틸 ───────────────────────────────────────────────────────────────────
 
-  /// YYYYMMDD → DateTime 변환 (포트원 계약 후 authenticate()에서 사용)
-  // ignore: unused_element
-  static DateTime _parseBirthDate(String yyyymmdd) {
-    final y = int.parse(yyyymmdd.substring(0, 4));
-    final m = int.parse(yyyymmdd.substring(4, 6));
-    final d = int.parse(yyyymmdd.substring(6, 8));
-    return DateTime(y, m, d);
+  /// YYYYMMDD → DateTime 변환. 형식 오류 시 null 반환.
+  static DateTime? _parseBirthDate(String yyyymmdd) {
+    try {
+      if (yyyymmdd.length < 8) return null;
+      final y = int.parse(yyyymmdd.substring(0, 4));
+      final m = int.parse(yyyymmdd.substring(4, 6));
+      final d = int.parse(yyyymmdd.substring(6, 8));
+      return DateTime(y, m, d);
+    } catch (_) {
+      return null;
+    }
   }
 
-  // ── Mock (개발/테스트용) ───────────────────────────────────────────────────
-
-  static final _rng = Random();
-
-  static const _mockNames = [
-    '김민준', '이서연', '박지호', '최수아', '정우진',
-    '강하은', '조민서', '윤도현', '임채원', '한소율',
-  ];
-
-  /// 포트원 계약 전 개발 테스트용 mock 데이터 — 매 호출마다 랜덤 값 반환
-  static Future<PassAuthResult?> _mockAuthenticate({
-    required String purpose,
-  }) async {
-    await Future.delayed(const Duration(milliseconds: 800));
-
-    final name = _mockNames[_rng.nextInt(_mockNames.length)];
-    final gender = _rng.nextBool() ? '남성' : '여성';
-    final year = 1975 + _rng.nextInt(25); // 1975~1999
-    final month = 1 + _rng.nextInt(12);
-    final day = 1 + _rng.nextInt(28);
-    final mid = (1000 + _rng.nextInt(9000)).toString();
-    final end = (1000 + _rng.nextInt(9000)).toString();
-    final phone = '010$mid$end';
-
-    return PassAuthResult(
-      name: name,
-      gender: gender,
-      birthDate: DateTime(year, month, day),
-      phone: phone,
-      passToken: 'mock-pass-token-${DateTime.now().millisecondsSinceEpoch}',
-    );
+  /// CF 오류 코드 → 사용자 메시지 변환
+  static String _mapCfError(String code) {
+    switch (code) {
+      case 'already-exists':
+        return '이미 가입된 계정이 있습니다';
+      case 'permission-denied':
+        return '본인인증 조건을 충족하지 않습니다 (미성년자 또는 재가입 제한)';
+      case 'not-found':
+        return '본인인증 세션을 찾을 수 없습니다. 다시 시도해주세요';
+      case 'deadline-exceeded':
+        return '본인인증 세션이 만료되었습니다. 다시 인증해주세요';
+      default:
+        return '본인인증에 실패했습니다. 다시 시도해주세요';
+    }
   }
+
 }

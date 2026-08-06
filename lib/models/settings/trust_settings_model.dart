@@ -264,10 +264,15 @@ class ReviewTagsModel {
 
 /// 배지 조건 타입
 enum BadgeConditionType {
-  minScore,     // 최소 신뢰도 점수
-  workDays,     // 근무 일수
-  consecutive,  // 연속 근무/무지각
-  monthlyPerfect, // 월간 100% 출근
+  minScore,          // 최소 신뢰도 점수
+  workDays,          // 총 근무 일수
+  consecutive,       // 연속 근무/무지각 횟수
+  monthlyPerfect,    // 월간 100% 출근 달성 횟수
+  sameBusinessRehire, // 같은 사업장 재고용 횟수
+  uniqueBusinesses,   // 다른 사업장 수 (다양성)
+  nightShiftCount,    // 야간(22시 이후) 출근 횟수
+  earlyBirdCount,     // 새벽(6시 이전) 출근 횟수
+  weekendCount,       // 주말·공휴일 근무 횟수
 }
 
 /// 배지 유형
@@ -275,7 +280,7 @@ enum BadgeType {
   trustScore,   // 신뢰도 기반 (레벨 배지)
   attendance,   // 근태 기반
   experience,   // 경험 기반 (총 근무량)
-  specialty,    // 업종 전문
+  specialty,    // 도전 배지 (업적)
 }
 
 /// 배지 모델
@@ -337,8 +342,7 @@ class BadgeModel {
       workType: map['workType'],
       isActive: map['isActive'] ?? true,
       order: (map['order'] as num?)?.toInt() ?? 0,
-      createdAt: (map['createdAt'] as Timestamp?)?.toDate().toLocal() ??
-          (throw ArgumentError('BadgeModel: createdAt is required')),
+      createdAt: (map['createdAt'] as Timestamp?)?.toDate().toLocal() ?? DateTime(2024, 1, 1),
       minWorkDaysRequired: (map['minWorkDaysRequired'] as num?)?.toInt(),
       maxNoShowAllowed: (map['maxNoShowAllowed'] as num?)?.toInt(),
       minRatingRequired: (map['minRatingRequired'] as num?)?.toDouble(),
@@ -353,7 +357,7 @@ class BadgeModel {
       'type': type.name,
       'conditionType': conditionType.name,
       'conditionValue': conditionValue,
-      'workType': workType,
+      if (workType != null) 'workType': workType,
       'isActive': isActive,
       'order': order,
       'createdAt': Timestamp.fromDate(createdAt),
@@ -365,8 +369,11 @@ class BadgeModel {
   }
 
   /// 기본 배지 목록 (Firestore 비어 있을 때 초기화용)
-  static List<BadgeModel> defaultBadges() {
-    final now = DateTime.now();
+  /// 호출마다 재생성되지 않도록 정적 캐시 — createdAt은 표시용 플레이스홀더이므로 고정값 사용
+  static List<BadgeModel>? _defaultBadgesCache;
+  static List<BadgeModel> defaultBadges() => _defaultBadgesCache ??= _buildDefaultBadges();
+  static List<BadgeModel> _buildDefaultBadges() {
+    final now = DateTime(2024, 1, 1);
     return [
       // ── 레벨 배지 (신뢰도 + 복합 조건) ───────────────────────
       BadgeModel(
@@ -423,6 +430,39 @@ class BadgeModel {
       ),
 
       // ── 경험 배지 (총 근무량) ───────────────────────────────────
+      BadgeModel(
+        id: 'badge_first_step',
+        name: '첫걸음',
+        icon: '🌱',
+        type: BadgeType.experience,
+        conditionType: BadgeConditionType.workDays,
+        conditionValue: 10,
+        benefit: '10일 근무 달성 · 알바 첫 경험 공식 인증 · 이력서 첫 경험 배지 표시',
+        order: 5,
+        createdAt: now,
+      ),
+      BadgeModel(
+        id: 'badge_growing',
+        name: '성장 중',
+        icon: '🌿',
+        type: BadgeType.experience,
+        conditionType: BadgeConditionType.workDays,
+        conditionValue: 30,
+        benefit: '30일 근무 달성 · 꾸준한 경험자 인증 · 성실 근무 이력 표시',
+        order: 6,
+        createdAt: now,
+      ),
+      BadgeModel(
+        id: 'badge_experienced',
+        name: '경험자',
+        icon: '💼',
+        type: BadgeType.experience,
+        conditionType: BadgeConditionType.workDays,
+        conditionValue: 50,
+        benefit: '50일 근무 달성 · 경험 쌓은 알바 근무자 인증 · 관리자 선호 경력자 표시',
+        order: 7,
+        createdAt: now,
+      ),
       BadgeModel(
         id: 'badge_veteran',
         name: '베테랑',
@@ -481,41 +521,82 @@ class BadgeModel {
         createdAt: now,
       ),
 
-      // ── 업종 전문 배지 ──────────────────────────────────────────
+      // ── 도전 배지 (Steam 업적 스타일) ──────────────────────────
       BadgeModel(
-        id: 'badge_picking_expert',
-        name: '피킹 전문가',
-        icon: '📦',
+        id: 'badge_night_warrior',
+        name: '야간 전사',
+        icon: '🌙',
         type: BadgeType.specialty,
-        conditionType: BadgeConditionType.workDays,
-        conditionValue: 30,
-        workType: 'PICK',
-        benefit: '피킹 업무 30일 이상 실력 공식 인증 · 동종 공고 검색 시 우선 표시 · 업무 숙련도 보유자 증명',
+        conditionType: BadgeConditionType.nightShiftCount,
+        conditionValue: 15,
+        benefit: '야간 근무(22시 이후) 15회 달성 · 야간 공고 우선 알림 수신',
         order: 20,
         createdAt: now,
       ),
       BadgeModel(
-        id: 'badge_loading_expert',
-        name: '상하차 전문가',
-        icon: '🏋️',
+        id: 'badge_early_bird',
+        name: '얼리버드',
+        icon: '🐦',
         type: BadgeType.specialty,
-        conditionType: BadgeConditionType.workDays,
-        conditionValue: 30,
-        workType: 'LOAD',
-        benefit: '상하차 업무 30일 이상 실력 공식 인증 · 동종 공고 검색 시 우선 표시 · 체력 및 숙련도 보유자 증명',
+        conditionType: BadgeConditionType.earlyBirdCount,
+        conditionValue: 20,
+        benefit: '새벽 6시 이전 출근 20회 달성 · 오전 공고 우선 알림 수신',
         order: 21,
         createdAt: now,
       ),
       BadgeModel(
-        id: 'badge_inspection_expert',
-        name: '검수 전문가',
-        icon: '🔍',
+        id: 'badge_regular',
+        name: '단골 근무자',
+        icon: '🏠',
         type: BadgeType.specialty,
-        conditionType: BadgeConditionType.workDays,
-        conditionValue: 30,
-        workType: 'INSPECT',
-        benefit: '검수 업무 30일 이상 실력 공식 인증 · 동종 공고 검색 시 우선 표시 · 꼼꼼한 품질 관리 역량 증명',
+        conditionType: BadgeConditionType.sameBusinessRehire,
+        conditionValue: 5,
+        benefit: '같은 사업장 5회 재고용 인증 · 단골 사업장 즉시 매칭 우선 적용',
         order: 22,
+        createdAt: now,
+      ),
+      BadgeModel(
+        id: 'badge_traveler',
+        name: '여행자',
+        icon: '🌍',
+        type: BadgeType.specialty,
+        conditionType: BadgeConditionType.uniqueBusinesses,
+        conditionValue: 3,
+        benefit: '3개 이상 사업장 근무 경험 인증 · 빠른 환경 적응력 보유자 표시',
+        order: 23,
+        createdAt: now,
+      ),
+      BadgeModel(
+        id: 'badge_weekend_warrior',
+        name: '주말 전사',
+        icon: '📅',
+        type: BadgeType.specialty,
+        conditionType: BadgeConditionType.weekendCount,
+        conditionValue: 20,
+        benefit: '주말·공휴일 근무 20회 달성 · 주말 공고 우선 알림 수신',
+        order: 24,
+        createdAt: now,
+      ),
+      BadgeModel(
+        id: 'badge_explorer',
+        name: '경험 부자',
+        icon: '🌏',
+        type: BadgeType.specialty,
+        conditionType: BadgeConditionType.uniqueBusinesses,
+        conditionValue: 7,
+        benefit: '7개 이상 사업장 경험 최고 등급 인증 · 매칭 시 최우선 추천 대상',
+        order: 25,
+        createdAt: now,
+      ),
+      BadgeModel(
+        id: 'badge_vip_partner',
+        name: 'VIP 파트너',
+        icon: '⭐',
+        type: BadgeType.specialty,
+        conditionType: BadgeConditionType.sameBusinessRehire,
+        conditionValue: 15,
+        benefit: '같은 사업장 15회 재고용 VIP 인증 · 사업장 직통 우선 연락 혜택',
+        order: 26,
         createdAt: now,
       ),
     ];

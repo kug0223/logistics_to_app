@@ -72,7 +72,7 @@ class CalendarHelper {
     DateTime day,
     Map<String, List<ApplicationModel>> index,
   ) {
-    return index[_dateKey(day)] ?? const [];
+    return index[_dateKey(day)] ?? [];
   }
 
   /// 특정 날짜의 지원 내역 가져오기 — 인덱스 없을 때 fallback (O(n))

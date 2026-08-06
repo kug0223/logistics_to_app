@@ -17,21 +17,17 @@ import 'package:flutter/foundation.dart';
 class BadgeService {
   /// uid 사용자의 배지 조건을 평가해 신규 획득 배지를 Firestore에 추가한다.
   /// 반환값: 이번 호출로 새로 획득된 배지 ID 목록 (기존 보유 배지 제외)
+  /// 실패 시 예외를 rethrow — 호출자가 처리 방식(무시/Toast/로그)을 결정한다.
   Future<List<String>> evaluateAndUpdateBadgesForUser(String uid) async {
-    try {
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableEvaluateAndUpdateBadges',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final result = await callable.call<Map<String, dynamic>>({'uid': uid});
-      final newBadges =
-          (result.data['newBadges'] as List?)?.cast<String>() ?? [];
-      if (newBadges.isNotEmpty) {
-        debugPrint('✅ [BadgeService] 신규 배지 획득 ($uid): $newBadges');
-      }
-      return newBadges;
-    } catch (e) {
-      debugPrint('⚠️ [BadgeService] 배지 평가 실패 ($uid): $e');
-      return [];
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableEvaluateAndUpdateBadges',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+    final result = await callable.call<Map<String, dynamic>>({'uid': uid});
+    final newBadges =
+        (result.data['newBadges'] as List?)?.cast<String>() ?? [];
+    if (newBadges.isNotEmpty) {
+      debugPrint('✅ [BadgeService] 신규 배지 획득 ($uid): $newBadges');
     }
+    return newBadges;
   }
 }

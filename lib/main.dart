@@ -1,6 +1,8 @@
+import 'dart:async' show unawaited;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'theme/app_colors.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
 import 'package:firebase_app_check/firebase_app_check.dart';
@@ -17,6 +19,7 @@ import 'providers/user_provider.dart';
 import 'providers/theme_provider.dart';
 import 'providers/notification_provider.dart';
 import 'providers/network_provider.dart';
+import 'providers/badge_provider.dart';
 import 'models/core/user_model.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/user/user_home_screen.dart';
@@ -25,7 +28,6 @@ import 'screens/business_admin/business_admin_home_screen.dart';
 import 'screens/common/splash_screen.dart';
 import 'screens/common/onboarding_screen.dart';
 import 'screens/common/settings_screen.dart';
-import 'utils/attendance_list_pdf.dart';
 import 'utils/wage_calculator.dart';
 import 'services/fcm_service.dart';
 import 'services/insurance_rate_service.dart';
@@ -44,7 +46,11 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 }
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  // preserve()는 ensureInitialized() 직후 가장 먼저 호출해야 함
+  // Firebase.initializeApp() 동안에도 네이티브 스플래시를 유지시켜
+  // SplashScreen 위젯이 준비된 후 remove()를 호출할 때까지 대기
+  final binding = WidgetsFlutterBinding.ensureInitialized();
+  FlutterNativeSplash.preserve(widgetsBinding: binding);
 
   // 세로 모드 고정 — 가로 회전 레이아웃 깨짐 방지
   await SystemChrome.setPreferredOrientations([
@@ -70,14 +76,15 @@ void main() async {
     // Firebase App Check — API 키 무단 사용 방지
     // 릴리즈: Play Integrity(Android) / DeviceCheck(iOS) 사용
     // 디버그: DebugProvider (Firebase 콘솔에서 디버그 토큰 등록 필요)
-    await FirebaseAppCheck.instance.activate(
+    // await 제거: 토큰은 첫 Firebase 요청 시 lazily 발급 — runApp() 블로킹 불필요
+    unawaited(FirebaseAppCheck.instance.activate(
       androidProvider: kDebugMode
           ? AndroidProvider.debug
           : AndroidProvider.playIntegrity,
       appleProvider: kDebugMode
           ? AppleProvider.debug
           : AppleProvider.deviceCheck,
-    );
+    ));
 
     // Firestore 캐시 설정 (서버 우선)
     FirebaseFirestore.instance.settings = const Settings(
@@ -108,16 +115,23 @@ void main() async {
     // SplashScreen → AuthWrapper가 로딩 상태를 표시하므로 사용자 UX는 유지된다.
     debugPrint('❌ Firebase 초기화 에러: $e');
   }
-  // ✅ PDF 한글 폰트 백그라운드 프리로드 (await 없이 - 병렬 실행)
-  AttendanceListPdf.preloadFonts();
-
   // 최저시급·보험료율 캐시 로드 (병렬, 실패해도 로컬 백업 사용)
   WageCalculator.loadMinimumWages();
   InsuranceRateService.loadRates();
 
   // 🔔 FCM에 Navigator Key 전달
   FCMService().setNavigatorKey(navigatorKey);
-  
+
+  // 로그아웃 후 로그인 화면 이동 콜백 등록
+  // goHome()이 (route)=>false로 AuthWrapper를 제거한 뒤 로그아웃해도
+  // AuthWrapper를 새로 push해 LoginScreen이 항상 표시되도록 한다.
+  setLoginRedirectCallback(() {
+    navigatorKey.currentState?.pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const AuthWrapper()),
+      (route) => false,
+    );
+  });
+
   runApp(const MyApp());
 }
 
@@ -145,6 +159,7 @@ class MyApp extends StatelessWidget {
         ),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => NetworkProvider()),
+        ChangeNotifierProvider(create: (_) => BadgeProvider()),
       ],
       child: Consumer<ThemeProvider>(
         builder: (context, themeProvider, child) {
@@ -225,8 +240,17 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<UserProvider>(
-      builder: (context, userProvider, _) {
+    // 라우팅 결정에 필요한 최소 필드만 구독 — isAdminMode 토글 등 무관한
+    // notifyListeners() 호출로 인한 불필요한 AuthWrapper 전체 리빌드 방지
+    return Selector<UserProvider, ({bool isLoading, bool isLoggedIn, String? uid, String? role})>(
+      selector: (_, p) => (
+        isLoading: p.isLoading,
+        isLoggedIn: p.isLoggedIn,
+        uid: p.currentUser?.uid,
+        role: p.currentUser?.roleString,
+      ),
+      builder: (context, _, __) {
+        final userProvider = context.read<UserProvider>();
         if (kDebugMode) {
           debugPrint('\n====== AuthWrapper 빌드 시작 ======');
           debugPrint('isLoading: ${userProvider.isLoading}');
@@ -243,18 +267,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
         // (LoginScreen 언마운트 → mounted=false → toast 미표시 방지)
         if (userProvider.isLoading && _isOnboardingCompleted == null && !_seenNotLoading) {
           if (kDebugMode) debugPrint('⏳ 로딩 중...');
-          return const Scaffold(
-            body: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text('로딩 중...'),
-                ],
-              ),
-            ),
-          );
+          return const SplashLoadingScreen();
         }
 
         // 🚫 로그인 안됨 (로딩 중이 아닌 경우에만 — 일시적 isLoading=true로 인한 오탐 방지)
@@ -343,7 +356,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'PASS 인증을 완료하면 더 많은 기능을 이용할 수 있어요',
+                        '휴대폰 본인인증을 완료하면 더 많은 기능을 이용할 수 있어요',
                         style: TextStyle(fontSize: 13),
                       ),
                     ),
@@ -380,11 +393,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
               return const BusinessAdminHomeScreen();
             
             case UserRole.USER:
-              // 하위 관리자이고 관리자 모드인 경우 → 관리자 홈
-              if (user.isSubAdmin && userProvider.isAdminMode) {
-                debugPrint('🎯 SUB_ADMIN(관리자 모드) → BusinessAdminHomeScreen으로 이동');
-                return const BusinessAdminHomeScreen();
-              }
+              // isAdminMode 모드 전환은 UserHomeScreen 내부에서 메뉴 그리드만 교체
               debugPrint('🎯 USER → UserHomeScreen으로 이동');
               return const UserHomeScreen();
           }

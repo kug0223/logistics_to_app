@@ -24,7 +24,7 @@ import '../../widgets/auth/pass_result_display.dart';
 
 import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuthException;
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import '../../theme/app_colors.dart';
 import '../../widgets/app_select_field.dart';
 import '../../widgets/common/common_widgets.dart';
@@ -39,6 +39,14 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
+  static final _pwLengthRe  = RegExp(r'.{8,}');
+  static final _pwLetterRe  = RegExp(r'[a-zA-Z]');
+  static final _pwDigitRe   = RegExp(r'[0-9]');
+  static final _pwSpecialRe = RegExp(r'[!@#$%^&*(),.?":{}|<>]');
+  static final _usernameRe  = RegExp(r'^[a-z0-9_]+$');
+  static final _korNameRe   = RegExp(r'^[가-힣a-zA-Z\s]+$');
+  static final _nonDigitRe  = RegExp(r'\D');
+
   final StorageService _storageService = StorageService();
   final FirestoreService _firestoreService = FirestoreService();
   final LegalTermsService _legalTermsService = LegalTermsService();
@@ -699,15 +707,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return '비밀번호는 8자 이상이어야 합니다';
     }
     
-    if (!RegExp(r'[a-zA-Z]').hasMatch(value)) {
+    if (!_pwLetterRe.hasMatch(value)) {
       return '영문을 포함해야 합니다';
     }
-    
-    if (!RegExp(r'[0-9]').hasMatch(value)) {
+
+    if (!_pwDigitRe.hasMatch(value)) {
       return '숫자를 포함해야 합니다';
     }
-    
-    if (!RegExp(r'[!@#$%^&*(),.?":{}|<>]').hasMatch(value)) {
+
+    if (!_pwSpecialRe.hasMatch(value)) {
       return '특수문자를 포함해야 합니다';
     }
     
@@ -1104,23 +1112,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
+  /// PortOne(포트원) PASS 본인인증 실행
+  ///
+  /// 흐름:
+  ///   PassVerificationService.authenticate()
+  ///     → iamport_flutter WebView (KG이니시스 통합인증 V1)
+  ///     → 사용자 PASS 인증 완료
+  ///     → CF verifyPassAuth(imp_uid) 호출
+  ///     → PassAuthResult { name, gender, birthDate, phone, passToken } 반환
+  ///
+  /// passToken 은 15분 유효. 가입 제출 시 CF finalizeRegistration() 에 전달하여
+  /// ciHash 를 Firestore 에 저장하고 토큰을 소진한다.
+  ///
   Future<void> _handlePassAuth() async {
     if (_isPassLoading) return;
     setState(() => _isPassLoading = true);
     try {
-      // [TODO-DANAL] kDebugMode 블록 전체는 다날 계약 후 실제 PASS 연동 시 제거.
-      // 그 시점에는 아래 PassVerificationService.authenticate() 흐름만 남긴다.
-      if (kDebugMode) {
-        final result = await _showPassMockDialog();
-        if (!mounted || result == null) return;
-        setState(() {
-          _passAuthResult = result;
-          _nameController.text = result.name;
-          _phoneController.text = result.phone;
-        });
-        return;
-      }
-
       final result = await PassVerificationService.authenticate(
         purpose: 'register',
         role: _selectedRole?.name ?? 'USER',
@@ -1139,94 +1146,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     } finally {
       if (mounted) setState(() => _isPassLoading = false);
     }
-  }
-
-  // [개발 전용] PASS 인증 mock 선택 다이얼로그 — [TODO-DANAL] 다날 연동 후 메서드 전체 삭제
-  Future<PassAuthResult?> _showPassMockDialog() async {
-    final choice = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: AppColors.infoBg,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(Icons.developer_mode, color: AppColors.info, size: 18),
-            ),
-            const SizedBox(width: 10),
-            Text('[개발] PASS 인증', style: ResponsiveHelper.subtitleStyle(ctx)),
-          ],
-        ),
-        content: Text(
-          '테스트 방식을 선택하세요.',
-          style: ResponsiveHelper.bodyStyle(ctx, color: AppColors.grey600),
-        ),
-        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        actions: [
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.grey600,
-                    side: const BorderSide(color: AppColors.grey300),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
-                  child: const Text('취소'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => Navigator.pop(ctx, 'random'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.info,
-                    side: const BorderSide(color: AppColors.info),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
-                  child: const Text('랜덤 생성'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pop(ctx, 'manual'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.info,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
-                  child: const Text('직접 입력'),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-    if (!mounted || choice == null) return null;
-    if (choice == 'random') {
-      return PassVerificationService.authenticate(
-        purpose: 'register',
-        role: _selectedRole?.name ?? 'USER',
-      );
-    }
-    return _showPassManualInputDialog();
-  }
-
-  // [개발 전용] PASS 인증 수동 입력 다이얼로그 — [TODO-DANAL] 다날 연동 후 메서드 전체 삭제
-  Future<PassAuthResult?> _showPassManualInputDialog() {
-    return showDialog<PassAuthResult>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => const _PassManualInputDialog(),
-    );
   }
 
   // ============================================================
@@ -1600,7 +1519,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     validator: (value) {
                       if (value == null || value.isEmpty) return '아이디를 입력해주세요';
                       if (value.length < 4) return '4자 이상 입력해주세요';
-                      if (!RegExp(r'^[a-z0-9_]+$').hasMatch(value)) {
+                      if (!_usernameRe.hasMatch(value)) {
                         return '영문 소문자, 숫자, _만 사용 가능';
                       }
                       if (!status.isAvailable) return '중복 확인을 해주세요';
@@ -1611,7 +1530,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       _usernameStatus.value = _UsernameStatus(hasText: value.isNotEmpty);
                       _usernameDebounce?.cancel();
                       if (value.trim().length >= 4 &&
-                          RegExp(r'^[a-z0-9_]+$').hasMatch(value.trim())) {
+                          _usernameRe.hasMatch(value.trim())) {
                         _usernameDebounce = Timer(
                           const Duration(milliseconds: 600),
                           _checkUsername,
@@ -1654,7 +1573,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         if (value == null || value.trim().isEmpty) return '이름을 입력해주세요';
                         if (value.trim().length < 2) return '이름은 2글자 이상 입력해주세요';
                         if (value.trim().length > 50) return '이름은 50자 이하로 입력해주세요';
-                        if (!RegExp(r'^[가-힣a-zA-Z\s]+$').hasMatch(value.trim())) {
+                        if (!_korNameRe.hasMatch(value.trim())) {
                           return '이름은 한글 또는 영문만 입력해주세요';
                         }
                       }
@@ -2061,10 +1980,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Widget _buildPasswordChecklist() {
     final pw = _passwordController.text;
     final checks = [
-      (RegExp(r'.{8,}').hasMatch(pw), '8자 이상'),
-      (RegExp(r'[a-zA-Z]').hasMatch(pw), '영문 포함'),
-      (RegExp(r'[0-9]').hasMatch(pw), '숫자 포함'),
-      (RegExp(r'[!@#\$%^&*(),.?":{}|<>]').hasMatch(pw), '특수문자 포함'),
+      (_pwLengthRe.hasMatch(pw),  '8자 이상'),
+      (_pwLetterRe.hasMatch(pw),  '영문 포함'),
+      (_pwDigitRe.hasMatch(pw),   '숫자 포함'),
+      (_pwSpecialRe.hasMatch(pw), '특수문자 포함'),
     ];
     final passed = checks.where((c) => c.$1).length;
 
@@ -2091,14 +2010,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
         Row(
           children: [
             Expanded(
-              child: ClipRRect(
+              child: LinearProgressIndicator(
+                value: passed / 4,
+                backgroundColor: AppColors.grey200,
                 borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: passed / 4,
-                  backgroundColor: AppColors.grey200,
-                  valueColor: AlwaysStoppedAnimation(strengthColor),
-                  minHeight: 5,
-                ),
+                valueColor: AlwaysStoppedAnimation(strengthColor),
+                minHeight: 5,
               ),
             ),
             const SizedBox(width: 8),
@@ -3053,7 +2970,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   /// 사업자등록번호 포맷팅
   String _formatBusinessNumber(String value) {
-    final digits = value.replaceAll(RegExp(r'\D'), '');
+    final digits = value.replaceAll(_nonDigitRe, '');
     if (digits.length != 10) return value;
     return '${digits.substring(0, 3)}-${digits.substring(3, 5)}-${digits.substring(5, 10)}';
   }
@@ -3527,180 +3444,3 @@ class _TermsViewerScreenState extends State<_TermsViewerScreen> {
   }
 }
 
-// [개발 전용] PASS 인증 수동 입력 다이얼로그 위젯 — [TODO-DANAL] 다날 연동 후 클래스 전체 삭제
-class _PassManualInputDialog extends StatefulWidget {
-  const _PassManualInputDialog();
-
-  @override
-  State<_PassManualInputDialog> createState() => _PassManualInputDialogState();
-}
-
-class _PassManualInputDialogState extends State<_PassManualInputDialog> {
-  final _formKey = GlobalKey<FormState>();
-  final _nameCtrl = TextEditingController();
-  final _phoneCtrl = TextEditingController();
-  final _rrFrontCtrl = TextEditingController();
-  final _rrBackCtrl = TextEditingController();
-
-  @override
-  void dispose() {
-    _nameCtrl.dispose();
-    _phoneCtrl.dispose();
-    _rrFrontCtrl.dispose();
-    _rrBackCtrl.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    if (!_formKey.currentState!.validate()) return;
-    final front = _rrFrontCtrl.text;
-    final backInt = int.parse(_rrBackCtrl.text);
-    final gender = (backInt == 1 || backInt == 3) ? '남성' : '여성';
-    final yy = int.parse(front.substring(0, 2));
-    final mm = int.parse(front.substring(2, 4));
-    final dd = int.parse(front.substring(4, 6));
-    final year = (backInt <= 2) ? 1900 + yy : 2000 + yy;
-    Navigator.pop(
-      context,
-      PassAuthResult(
-        name: _nameCtrl.text.trim(),
-        gender: gender,
-        birthDate: DateTime(year, mm, dd),
-        phone: _phoneCtrl.text.trim(),
-        passToken: 'mock-pass-token-manual-${DateTime.now().millisecondsSinceEpoch}',
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: AppColors.infoBg,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Icon(Icons.person_pin, color: AppColors.info, size: 18),
-          ),
-          const SizedBox(width: 10),
-          Text('[개발] 직접 입력', style: ResponsiveHelper.subtitleStyle(context)),
-        ],
-      ),
-      content: SingleChildScrollView(
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(
-                controller: _nameCtrl,
-                decoration: InputDecoration(
-                  labelText: '이름',
-                  prefixIcon: const Icon(Icons.person_outline, size: 20),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
-                textInputAction: TextInputAction.next,
-                validator: (v) => (v == null || v.trim().isEmpty) ? '이름을 입력하세요' : null,
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _phoneCtrl,
-                decoration: InputDecoration(
-                  labelText: '휴대폰번호',
-                  hintText: '01012345678',
-                  prefixIcon: const Icon(Icons.phone_outlined, size: 20),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
-                keyboardType: TextInputType.phone,
-                textInputAction: TextInputAction.next,
-                validator: (v) {
-                  if (v == null || v.isEmpty) return '전화번호를 입력하세요';
-                  if (!RegExp(r'^010\d{8}$').hasMatch(v)) return '010으로 시작하는 11자리';
-                  return null;
-                },
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _rrFrontCtrl,
-                decoration: InputDecoration(
-                  labelText: '주민번호 앞 6자리',
-                  hintText: 'YYMMDD',
-                  prefixIcon: const Icon(Icons.badge_outlined, size: 20),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                textInputAction: TextInputAction.next,
-                validator: (v) {
-                  if (v == null || v.length != 6) return '6자리를 입력하세요';
-                  if (!RegExp(r'^\d{6}$').hasMatch(v)) return '숫자만 입력하세요';
-                  return null;
-                },
-              ),
-              TextFormField(
-                controller: _rrBackCtrl,
-                decoration: InputDecoration(
-                  labelText: '주민번호 뒷자리 첫째',
-                  hintText: '1=남(90s)  2=여(90s)  3=남(00s)  4=여(00s)',
-                  prefixIcon: const Icon(Icons.pin_outlined, size: 20),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
-                keyboardType: TextInputType.number,
-                maxLength: 1,
-                textInputAction: TextInputAction.done,
-                onFieldSubmitted: (_) => _submit(),
-                validator: (v) {
-                  if (v == null || v.isEmpty) return '1자리를 입력하세요';
-                  if (!['1', '2', '3', '4'].contains(v)) return '1~4 중 하나';
-                  return null;
-                },
-              ),
-            ],
-          ),
-        ),
-      ),
-      actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      actions: [
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                onPressed: () => Navigator.pop(context),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.grey600,
-                  side: const BorderSide(color: AppColors.grey300),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-                child: const Text('취소'),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              flex: 2,
-              child: ElevatedButton(
-                onPressed: _submit,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.info,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-                child: const Text('인증 완료'),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}

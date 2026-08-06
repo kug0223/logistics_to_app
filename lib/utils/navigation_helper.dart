@@ -94,14 +94,14 @@ class NavigationHelper {
 
   /// 역할에 맞는 홈 화면으로 이동 — 기존 스택 전체 제거
   /// SuperAdmin → SuperAdminHomeScreen
-  /// BusinessAdmin / SubAdmin → BusinessAdminHomeScreen
-  /// 일반 사용자 → UserHomeScreen
+  /// BusinessAdmin → BusinessAdminHomeScreen
+  /// USER (서브어드민 포함) → UserHomeScreen (모드 전환은 UserHomeScreen 내부에서 처리)
   static Future<void> goHome(BuildContext context) async {
     final userProvider = Provider.of<UserProvider>(context, listen: false);
     final Widget home;
     if (userProvider.isSuperAdmin) {
       home = const AdminHomeScreen();
-    } else if (userProvider.isBusinessAdmin || userProvider.isSubAdmin) {
+    } else if (userProvider.isBusinessAdmin) {
       home = const BusinessAdminHomeScreen();
     } else {
       home = const UserHomeScreen();

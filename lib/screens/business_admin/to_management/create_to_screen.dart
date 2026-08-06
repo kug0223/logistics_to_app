@@ -155,18 +155,21 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         return;
       }
 
-      final effectiveBizId = userProvider.effectiveBusinessId;
       final List<BusinessModel> allBusinesses;
-      if (userProvider.isSubAdmin && effectiveBizId != null) {
-        final biz = await _firestoreService.getBusinessById(effectiveBizId);
-        allBusinesses = biz != null ? [biz] : [];
+      if (userProvider.isSubAdmin) {
+        final bizIds = userProvider.currentUser?.subAdminBusinessIds ?? [];
+        allBusinesses = bizIds.isNotEmpty
+            ? await _firestoreService.getBusinessesByIds(bizIds)
+            : [];
       } else {
         final managedIds = userProvider.currentUser?.managedBusinessIds ?? [];
         allBusinesses = await _firestoreService.getBusinessesByIds(managedIds);
       }
       final approvedBusinesses = allBusinesses.where((b) => b.isApproved).toList();
-      final bool hasLicense =
-          (userProvider.currentUser?.businessLicenseImageUrl?.isNotEmpty ?? false);
+      // 서브어드민은 사업장 소유자가 아니므로 사업자등록증 체크 불필요
+      final bool hasLicense = userProvider.isSubAdmin
+          ? true
+          : (userProvider.currentUser?.businessLicenseImageUrl?.isNotEmpty ?? false);
 
       if (!mounted) return;
 
@@ -277,11 +280,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         _businessWorkTypes = workTypes;
         _workTypesReady = workTypes.isNotEmpty;
         _contractTemplatesReady = allTemplates.isNotEmpty;
-        _hasLicense = (Provider.of<UserProvider>(context, listen: false)
-                .currentUser
-                ?.businessLicenseImageUrl
-                ?.isNotEmpty ??
-            false);
+        final up = Provider.of<UserProvider>(context, listen: false);
+        _hasLicense = up.isSubAdmin
+            ? true
+            : (up.currentUser?.businessLicenseImageUrl?.isNotEmpty ?? false);
         if (_allPrerequisitesMet) {
           _formUnlocked = true;
           _businessReadinessList = [];
@@ -414,10 +416,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
     return StatefulBuilder(
       builder: (context, setDialogState) {
+        // MEDIUM-2: searchQuery를 소문자로 보관 → 항목마다 toLowerCase() 호출 1회 절감
         final filteredTOs = searchQuery.isEmpty
             ? _recentTOsForLoad
             : _recentTOsForLoad
-                .where((to) => to.title.toLowerCase().contains(searchQuery.toLowerCase()))
+                .where((to) => to.title.toLowerCase().contains(searchQuery))
                 .toList();
 
         return StyledDialog(
@@ -448,7 +451,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     ),
                   ),
                   style: ResponsiveHelper.bodyStyle(context),
-                  onChanged: (v) => setDialogState(() => searchQuery = v),
+                  onChanged: (v) => setDialogState(() => searchQuery = v.toLowerCase()),
                 ),
               ),
               Expanded(
@@ -814,14 +817,16 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       return;
     }
 
+    // LOW-2: DateTime.now()를 메서드 진입 시점에 한 번만 캡처
+    final now = DateTime.now();
+    final todayOnly = DateTime(now.year, now.month, now.day);
+
     if (_selectedJobType == TOType.flex) {
       if (_selectedDates.isEmpty) {
         ToastHelper.showError('날짜를 선택해주세요');
         return;
       }
       // 과거 날짜 포함 여부 경고 — _someSlotExpired 조건과 독립적으로 항상 표시
-      final today = DateTime.now();
-      final todayOnly = DateTime(today.year, today.month, today.day);
       final hasPastDate = _selectedDates.any((d) =>
           DateTime(d.year, d.month, d.day).isBefore(todayOnly));
       if (hasPastDate && !_allSlotsExpired) {
@@ -843,7 +848,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         return;
       }
       if (_contractPeriodType == 'custom' && _rangeEnd != null) {
-        final todayOnly = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
         if (_rangeEnd!.isBefore(todayOnly)) {
           ToastHelper.showWarning('계약 종료일이 과거 날짜입니다. 즉시 마감 처리됩니다');
         }
@@ -851,7 +855,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       // [D-3 수정] custom 기간에서 rangeStart가 과거 날짜인 경우 경고
       // 저장 자체는 허용하나 관리자에게 의도 재확인 유도
       if (_contractPeriodType == 'custom' && _rangeStart != null) {
-        final todayOnly = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
         if (_rangeStart!.isBefore(todayOnly)) {
           ToastHelper.showWarning('계약 시작일이 과거 날짜입니다. 게시 즉시 활성 상태로 시작됩니다');
         }
@@ -895,10 +898,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       return;
     }
 
-    // 사업주 날인 미등록 차단 — 근로계약서 서명에 필요 (전역 체크)
+    // 사업주 날인 미등록 차단 — 근로계약서 서명에 필요 (BUSINESS_ADMIN 전용)
+    // SubAdmin은 날인이 없음: 계약서 서명 날인은 사업주(BUSINESS_ADMIN) 계정 기준으로 CF에서 처리
     final userProvider = Provider.of<UserProvider>(context, listen: false);
     final uid = userProvider.currentUser?.uid;
-
+    if (!userProvider.isSubAdmin) {
       if (uid != null) {
         // sealBase64는 users/{uid} 문서에만 저장 — businesses 문서 폴백 불필요
         final userDoc = await FirebaseFirestore.instance
@@ -921,6 +925,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           return;
         }
       }
+    }
 
       // flex 당일 슬롯 마감 경과 처리
       if (_selectedJobType == TOType.flex) {

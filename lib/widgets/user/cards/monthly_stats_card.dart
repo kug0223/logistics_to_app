@@ -8,6 +8,7 @@ import '../../../theme/app_colors.dart';
 
 /// 월별 통계 카드 (2행 레이아웃: 예정 + 완료)
 class MonthlyStatsCard extends StatelessWidget {
+  static final _fmt = NumberFormat('#,###');
   final List<ApplicationModel> applications;
   final List<AttendanceModel> attendances;
   final DateTime focusedDay;
@@ -70,7 +71,7 @@ class MonthlyStatsCard extends StatelessWidget {
                 context,
                 icon: Icons.attach_money,
                 label: '예상수입(세전)',
-                value: '${NumberFormat('#,###').format(totalIncome)}원',
+                value: '${_fmt.format(totalIncome)}원',
                 color: AppColors.info,
               ),
             ],
@@ -99,7 +100,7 @@ class MonthlyStatsCard extends StatelessWidget {
                   context,
                   icon: Icons.paid,
                   label: '확정 수입',
-                  value: '${NumberFormat('#,###').format(confirmedIncome)}원',
+                  value: '${_fmt.format(confirmedIncome)}원',
                   color: AppColors.success,
                 ),
               ],

@@ -41,6 +41,7 @@ class PayrollPaymentDashboardScreen extends StatefulWidget {
   final String? businessName;
   final int year;
   final int month;
+  final int initialTab;
 
   const PayrollPaymentDashboardScreen({
     super.key,
@@ -48,6 +49,7 @@ class PayrollPaymentDashboardScreen extends StatefulWidget {
     this.businessName,
     required this.year,
     required this.month,
+    this.initialTab = 0,
   });
 
   @override
@@ -113,7 +115,7 @@ class _PayrollPaymentDashboardScreenState
     _selectedMonth = widget.month;
     final now = DateTime.now();
     _selectedTransferDate = DateTime(now.year, now.month, now.day);
-    _tabCtrl = TabController(length: 4, vsync: this);
+    _tabCtrl = TabController(length: 4, vsync: this, initialIndex: widget.initialTab.clamp(0, 3));
     _tabCtrl.addListener(() {
       if (!_tabCtrl.indexIsChanging) {
         setState(() {

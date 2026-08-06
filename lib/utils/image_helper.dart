@@ -553,6 +553,7 @@ class ImageHelper {
     Widget? placeholder,
     Widget? errorWidget,
     BorderRadius? borderRadius,
+    String? cacheKey,
   }) {
     Widget imageWidget;
 
@@ -564,6 +565,7 @@ class ImageHelper {
     } else if (image is String && image.isNotEmpty) {
       imageWidget = CachedNetworkImage(
         imageUrl: image,
+        cacheKey: cacheKey,
         fit: fit,
         width: width ?? double.infinity,
         height: height,
@@ -615,9 +617,11 @@ class ImageHelper {
     Duration fadeInDuration = const Duration(milliseconds: 200),
     int? memCacheWidth,
     int? memCacheHeight,
+    String? cacheKey,
   }) {
     Widget imageWidget = CachedNetworkImage(
       imageUrl: imageUrl,
+      cacheKey: cacheKey,
       fit: fit,
       width: width ?? double.infinity,
       height: height,
@@ -853,6 +857,7 @@ class ImageHelper {
     String? imageUrl,
     File? imageFile,
     String? title,
+    String? cacheKey,
   }) async {
     if (imageUrl == null && imageFile == null) {
       ToastHelper.showError('이미지를 불러올 수 없습니다');
@@ -866,6 +871,7 @@ class ImageHelper {
         imageUrl: imageUrl,
         imageFile: imageFile,
         title: title,
+        cacheKey: cacheKey,
       ),
     );
   }
@@ -922,11 +928,13 @@ class _FullScreenImageViewer extends StatefulWidget {
   final String? imageUrl;
   final File? imageFile;
   final String? title;
+  final String? cacheKey;
 
   const _FullScreenImageViewer({
     this.imageUrl,
     this.imageFile,
     this.title,
+    this.cacheKey,
   });
 
   @override
@@ -1027,6 +1035,7 @@ class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
     if (widget.imageUrl != null) {
       return CachedNetworkImage(
         imageUrl: widget.imageUrl!,
+        cacheKey: widget.cacheKey,
         fit: BoxFit.contain,
         placeholder: (context, url) => const Center(
           child: CircularProgressIndicator(color: Colors.white),

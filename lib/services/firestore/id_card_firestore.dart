@@ -181,6 +181,7 @@ extension IdCardFirestore on FirestoreService {
             // requesterBusinessId는 createIdCardAccessRequest(line 67)에서 항상 저장 — '' 폴백 실제 발생 가능성 없음
             businessId: requestData!['requesterBusinessId'] as String? ?? '',
             requestId: requestId,
+            workerId: requestData!['targetUserId'] as String? ?? '',
             rejectionReason: reason,
           ),
         );
@@ -333,7 +334,9 @@ extension IdCardFirestore on FirestoreService {
 
   /// 신분증 이미지 서명 URL 발급 (ID-1 보안: 1시간 만료 Signed URL)
   /// CF callableGetIdCardSignedUrl 경유 — 승인 확인 + Storage Signed URL 반환
-  Future<String?> getIdCardSignedUrl(String targetUserId) async {
+  ///
+  /// [silent] true 이면 에러 Toast 표시 없이 null 반환 (병렬 선제 호출 시 사용)
+  Future<String?> getIdCardSignedUrl(String targetUserId, {bool silent = false}) async {
     try {
       debugPrint('🪪 [getIdCardSignedUrl] 요청: $targetUserId');
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
@@ -350,15 +353,17 @@ extension IdCardFirestore on FirestoreService {
       return signedUrl;
     } on FirebaseFunctionsException catch (e) {
       debugPrint('❌ [getIdCardSignedUrl] CF 오류: ${e.code} ${e.message}');
-      if (e.code == 'permission-denied') {
-        ToastHelper.showError('신분증 열람 권한이 없거나 만료되었습니다');
-      } else {
-        ToastHelper.showError('신분증 이미지 로드 실패');
+      if (!silent) {
+        if (e.code == 'permission-denied') {
+          ToastHelper.showError('신분증 열람 권한이 없거나 만료되었습니다');
+        } else {
+          ToastHelper.showError('신분증 이미지 로드 실패');
+        }
       }
       return null;
     } catch (e) {
       debugPrint('❌ [getIdCardSignedUrl] 실패: $e');
-      ToastHelper.showError('신분증 이미지 로드 실패');
+      if (!silent) ToastHelper.showError('신분증 이미지 로드 실패');
       return null;
     }
   }

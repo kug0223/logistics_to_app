@@ -45,6 +45,7 @@ MemberPermissions _perm({
 
 BusinessMemberModel _member({
   String uid = 'uid1',
+  String businessId = 'biz1',
   String name = '테스터',
   String? phone = '010-1234-5678',
   MemberPermissions? permissions,
@@ -52,6 +53,7 @@ BusinessMemberModel _member({
   String addedBy = 'admin1',
 }) => BusinessMemberModel(
   uid: uid,
+  businessId: businessId,
   name: name,
   phone: phone,
   permissions: permissions ?? MemberPermissions.none(),
@@ -95,7 +97,7 @@ UserModel _user({
   role: role,
   businessId: businessId,
   managedBusinessIds: managedBusinessIds,
-  subAdminOf: subAdminOf,
+  subAdminBusinessIds: subAdminOf != null ? [subAdminOf] : [],
 );
 
 // ════════════════════════════════════════════════════════════
@@ -186,8 +188,8 @@ void _runPermissionsTests() {
       test('A2-15 workers+wage+contract → "근무자 · 급여 · 계약서"', () {
         expect(_perm(workers: true, wage: true, contract: true).summaryText, '근무자 · 급여 · 계약서');
       });
-      test('A2-16 all=true → "공고 · 근무자 · 급여 · 계약서"', () {
-        expect(MemberPermissions.all().summaryText, '공고 · 근무자 · 급여 · 계약서');
+      test('A2-16 all=true → "공고 · 근무자 · 급여 · 계약서 · 이체취소"', () {
+        expect(MemberPermissions.all().summaryText, '공고 · 근무자 · 급여 · 계약서 · 이체취소');
       });
     });
 
@@ -697,12 +699,12 @@ void _runManagedBusinessIdsTests() {
       );
       expect(u.managedBusinessIds.length, 3);
     });
-    test('F-07 SUB_ADMIN: isSubAdmin=true, subAdminOf="biz1" → 컨트롤러에서 businessIds=["biz1"]', () {
+    test('F-07 SUB_ADMIN: isSubAdmin=true, subAdminBusinessIds=["biz1"] → 컨트롤러에서 businessIds=["biz1"]', () {
       final u = _user(role: UserRole.USER, subAdminOf: 'biz1');
       expect(u.isSubAdmin, isTrue);
-      expect(u.subAdminOf, 'biz1');
-      // WorkforceController: isSubAdmin && subAdminOf != null → businessIds = [subAdminOf]
-      final businessIds = u.isSubAdmin && u.subAdminOf != null ? [u.subAdminOf!] : null;
+      expect(u.subAdminBusinessIds.firstOrNull, 'biz1');
+      // WorkforceController: isSubAdmin → businessIds = subAdminBusinessIds
+      final businessIds = u.isSubAdmin ? u.subAdminBusinessIds : null;
       expect(businessIds, ['biz1']);
     });
     test('F-08 SUB_ADMIN, subAdminOf=null (비정상 상태) → businessIds = managedBusinessIds', () {
@@ -840,7 +842,7 @@ void _runCanCheckTests() {
 
 String? effectiveBusinessId(UserModel user) {
   if (user.isBusinessAdmin) return user.businessId;
-  if (user.isSubAdmin) return user.subAdminOf;
+  if (user.isSubAdmin) return user.subAdminBusinessIds.firstOrNull;
   return null;
 }
 
@@ -1075,39 +1077,39 @@ void _runInvitationWorkflowTests() {
       });
       test('J2-03 초대에 전체 권한 → 멤버도 전체 권한', () {
         final inv = _invite(permissions: MemberPermissions.all());
-        expect(inv.permissions.summaryText, '공고 · 근무자 · 급여 · 계약서');
+        expect(inv.permissions.summaryText, '공고 · 근무자 · 급여 · 계약서 · 이체취소');
       });
     });
 
     group('J3. CF 트리거 시뮬레이션 (onMemberInvitationAccepted)', () {
-      // before.status=pending AND after.status=accepted → subAdminOf 설정 대상
+      // before.status=pending AND after.status=accepted → subAdminBusinessIds에 businessId 추가 대상
 
-      bool shouldSetSubAdminOf(InvitationStatus before, InvitationStatus after) {
+      bool shouldAddToSubAdminBusinessIds(InvitationStatus before, InvitationStatus after) {
         return before == InvitationStatus.pending && after == InvitationStatus.accepted;
       }
 
-      test('J3-01 pending→accepted → subAdminOf 설정', () {
-        expect(shouldSetSubAdminOf(InvitationStatus.pending, InvitationStatus.accepted), isTrue);
+      test('J3-01 pending→accepted → subAdminBusinessIds에 businessId 추가 대상', () {
+        expect(shouldAddToSubAdminBusinessIds(InvitationStatus.pending, InvitationStatus.accepted), isTrue);
       });
-      test('J3-02 pending→rejected → 설정 안 함', () {
-        expect(shouldSetSubAdminOf(InvitationStatus.pending, InvitationStatus.rejected), isFalse);
+      test('J3-02 pending→rejected → 추가 안 함', () {
+        expect(shouldAddToSubAdminBusinessIds(InvitationStatus.pending, InvitationStatus.rejected), isFalse);
       });
-      test('J3-03 pending→cancelled → 설정 안 함', () {
-        expect(shouldSetSubAdminOf(InvitationStatus.pending, InvitationStatus.cancelled), isFalse);
+      test('J3-03 pending→cancelled → 추가 안 함', () {
+        expect(shouldAddToSubAdminBusinessIds(InvitationStatus.pending, InvitationStatus.cancelled), isFalse);
       });
-      test('J3-04 accepted→accepted (중복) → 설정 안 함', () {
-        expect(shouldSetSubAdminOf(InvitationStatus.accepted, InvitationStatus.accepted), isFalse);
+      test('J3-04 accepted→accepted (중복) → 추가 안 함', () {
+        expect(shouldAddToSubAdminBusinessIds(InvitationStatus.accepted, InvitationStatus.accepted), isFalse);
       });
-      test('J3-05 rejected→accepted → 설정 안 함', () {
-        expect(shouldSetSubAdminOf(InvitationStatus.rejected, InvitationStatus.accepted), isFalse);
+      test('J3-05 rejected→accepted → 추가 안 함', () {
+        expect(shouldAddToSubAdminBusinessIds(InvitationStatus.rejected, InvitationStatus.accepted), isFalse);
       });
     });
 
     group('J4. 멤버 제거 워크플로', () {
-      test('J4-01 제거 후 isSubAdmin=false (subAdminOf=null)', () {
-        // removeMember 후 user.subAdminOf = null → isSubAdmin=false
+      test('J4-01 제거 후 isSubAdmin=false (subAdminBusinessIds=[])', () {
+        // removeMember 후 user.subAdminBusinessIds = [] → isSubAdmin=false
         final userBefore = _user(role: UserRole.USER, subAdminOf: 'biz1');
-        final userAfter = userBefore.copyWith(clearSubAdminOf: true);
+        final userAfter = userBefore.copyWith(subAdminBusinessIds: []);
         expect(userBefore.isSubAdmin, isTrue);
         expect(userAfter.isSubAdmin, isFalse);
       });
@@ -1316,7 +1318,7 @@ void _runEdgeCaseTests() {
       });
       test('M1-02 all().copyWith() 반복 → 동일', () {
         final p = MemberPermissions.all().copyWith().copyWith();
-        expect(p.summaryText, '공고 · 근무자 · 급여 · 계약서');
+        expect(p.summaryText, '공고 · 근무자 · 급여 · 계약서 · 이체취소');
       });
       test('M1-03 fromMap 미지 키 → 무시 (기본값 사용)', () {
         final p = MemberPermissions.fromMap({'unknownField': true, 'canManageTo': true});
@@ -1365,16 +1367,16 @@ void _runEdgeCaseTests() {
     });
 
     group('M4. UserModel copyWith 엣지케이스', () {
-      test('M4-01 clearSubAdminOf=true → subAdminOf=null', () {
+      test('M4-01 subAdminBusinessIds=[] → isSubAdmin=false', () {
         final u = _user(role: UserRole.USER, subAdminOf: 'biz1');
-        final cleared = u.copyWith(clearSubAdminOf: true);
-        expect(cleared.subAdminOf, isNull);
+        final cleared = u.copyWith(subAdminBusinessIds: []);
+        expect(cleared.subAdminBusinessIds, isEmpty);
         expect(cleared.isSubAdmin, isFalse);
       });
-      test('M4-02 subAdminOf 변경', () {
+      test('M4-02 subAdminBusinessIds 변경', () {
         final u = _user(role: UserRole.USER, subAdminOf: 'biz1');
-        final changed = u.copyWith(subAdminOf: 'biz2');
-        expect(changed.subAdminOf, 'biz2');
+        final changed = u.copyWith(subAdminBusinessIds: ['biz2']);
+        expect(changed.subAdminBusinessIds.firstOrNull, 'biz2');
       });
       test('M4-03 role 변경 (USER→BUSINESS_ADMIN)', () {
         final u = _user(role: UserRole.USER, subAdminOf: 'biz1');
@@ -1425,6 +1427,165 @@ void _runEdgeCaseTests() {
 }
 
 // ════════════════════════════════════════════════════════════
+// N. 다중 사업장 SubAdmin — isSubAdminOf 및 사업장별 권한 격리
+// ════════════════════════════════════════════════════════════
+
+UserModel _multiSub(List<String> bizIds) => UserModel(
+  uid: 'uid-multi',
+  username: 'multi',
+  name: '다중담당자',
+  email: 'multi@alfit.kr',
+  role: UserRole.USER,
+  subAdminBusinessIds: bizIds,
+);
+
+void _runMultiBizSubAdminTests() {
+  group('N. 다중 사업장 SubAdmin — isSubAdminOf · 권한 격리', () {
+
+    // ── N1. isSubAdminOf getter ─────────────────────────────
+    group('N1. isSubAdminOf getter', () {
+      final sub = _multiSub(['biz1', 'biz2']);
+
+      test('N1-01 포함 사업장 → isSubAdminOf=true', () {
+        expect(sub.isSubAdminOf('biz1'), isTrue);
+        expect(sub.isSubAdminOf('biz2'), isTrue);
+      });
+      test('N1-02 미포함 사업장 → isSubAdminOf=false', () {
+        expect(sub.isSubAdminOf('biz3'), isFalse);
+      });
+      test('N1-03 단일 사업장 SubAdmin: 해당 사업장=true, 타 사업장=false', () {
+        final single = _user(role: UserRole.USER, subAdminOf: 'biz1');
+        expect(single.isSubAdminOf('biz1'), isTrue);
+        expect(single.isSubAdminOf('biz2'), isFalse);
+      });
+      test('N1-04 subAdminBusinessIds=[] → isSubAdminOf 항상 false', () {
+        final noSub = _user(role: UserRole.USER, subAdminOf: null);
+        expect(noSub.isSubAdminOf('biz1'), isFalse);
+      });
+    });
+
+    // ── N2. 다중 사업장 SubAdmin 기본 속성 ──────────────────
+    group('N2. 다중 사업장 SubAdmin 기본 속성', () {
+      final sub = _multiSub(['biz1', 'biz2']);
+
+      test('N2-01 isSubAdmin=true', () => expect(sub.isSubAdmin, isTrue));
+      test('N2-02 isAdmin=true', () => expect(sub.isAdmin, isTrue));
+      test('N2-03 isBusinessAdmin=false', () => expect(sub.isBusinessAdmin, isFalse));
+      test('N2-04 subAdminBusinessIds.length=2', () {
+        expect(sub.subAdminBusinessIds.length, 2);
+      });
+    });
+
+    // ── N3. effectiveBusinessId (firstOrNull) ────────────────
+    group('N3. 다중 사업장 effectiveBusinessId', () {
+      test('N3-01 [biz1, biz2] → effectiveBusinessId=biz1 (firstOrNull)', () {
+        expect(effectiveBusinessId(_multiSub(['biz1', 'biz2'])), 'biz1');
+      });
+      test('N3-02 [biz2, biz1] 순서 다르면 → effectiveBusinessId=biz2', () {
+        expect(effectiveBusinessId(_multiSub(['biz2', 'biz1'])), 'biz2');
+      });
+      test('N3-03 [] → effectiveBusinessId=null', () {
+        expect(effectiveBusinessId(_multiSub([])), isNull);
+      });
+    });
+
+    // ── N4. 사업장별 독립 권한 시나리오 ─────────────────────
+    group('N4. 사업장별 독립 권한', () {
+      // 같은 SubAdmin, biz1에서 공고 담당 / biz2에서 급여 담당
+      final sub = _multiSub(['biz1', 'biz2']);
+      final permBiz1 = _perm(to: true);
+      final permBiz2 = _perm(wage: true);
+
+      test('N4-01 biz1 컨텍스트: 공고 가능, 급여·근무자·계약서 불가', () {
+        expect(canCheck(sub, permBiz1, (p) => p.canManageTo), isTrue);
+        expect(canCheck(sub, permBiz1, (p) => p.canManageWage), isFalse);
+        expect(canCheck(sub, permBiz1, (p) => p.canManageWorkers), isFalse);
+        expect(canCheck(sub, permBiz1, (p) => p.canManageContract), isFalse);
+      });
+      test('N4-02 biz2 컨텍스트: 급여 가능, 공고·근무자·계약서 불가', () {
+        expect(canCheck(sub, permBiz2, (p) => p.canManageWage), isTrue);
+        expect(canCheck(sub, permBiz2, (p) => p.canManageTo), isFalse);
+        expect(canCheck(sub, permBiz2, (p) => p.canManageWorkers), isFalse);
+        expect(canCheck(sub, permBiz2, (p) => p.canManageContract), isFalse);
+      });
+      test('N4-03 두 사업장 권한이 서로 오염되지 않음', () {
+        // biz1 권한으로 biz2 기능 접근 불가
+        expect(canCheck(sub, permBiz1, (p) => p.canManageWage), isFalse);
+        // biz2 권한으로 biz1 기능 접근 불가
+        expect(canCheck(sub, permBiz2, (p) => p.canManageTo), isFalse);
+      });
+      test('N4-04 같은 사업장에 다른 SubAdmin → 권한 독립', () {
+        final sub2 = _user(role: UserRole.USER, subAdminOf: 'biz1');
+        final permSub2 = _perm(workers: true);
+        expect(canCheck(sub, permBiz1, (p) => p.canManageTo), isTrue);
+        expect(canCheck(sub2, permSub2, (p) => p.canManageTo), isFalse);
+        expect(canCheck(sub2, permSub2, (p) => p.canManageWorkers), isTrue);
+      });
+    });
+
+    // ── N5. 사업장 단계적 제거 ──────────────────────────────
+    group('N5. 사업장 단계적 제거', () {
+      final sub = _multiSub(['biz1', 'biz2']);
+
+      test('N5-01 biz2 제거 → biz1 유지, biz2 제거', () {
+        final after = sub.copyWith(subAdminBusinessIds: ['biz1']);
+        expect(after.isSubAdminOf('biz1'), isTrue);
+        expect(after.isSubAdminOf('biz2'), isFalse);
+      });
+      test('N5-02 biz2 제거 후 → isSubAdmin=true (biz1 남아있음)', () {
+        final after = sub.copyWith(subAdminBusinessIds: ['biz1']);
+        expect(after.isSubAdmin, isTrue);
+      });
+      test('N5-03 전체 제거 → isSubAdmin=false', () {
+        final after = sub.copyWith(subAdminBusinessIds: []);
+        expect(after.isSubAdmin, isFalse);
+      });
+      test('N5-04 전체 제거 → effectiveBusinessId=null', () {
+        final after = sub.copyWith(subAdminBusinessIds: []);
+        expect(effectiveBusinessId(after), isNull);
+      });
+      test('N5-05 biz3 추가 → 3개 사업장', () {
+        final after = sub.copyWith(subAdminBusinessIds: ['biz1', 'biz2', 'biz3']);
+        expect(after.subAdminBusinessIds.length, 3);
+        expect(after.isSubAdminOf('biz3'), isTrue);
+      });
+    });
+
+    // ── N6. 사업장 간 데이터 격리 ────────────────────────────
+    group('N6. 사업장 간 데이터 격리 (resolveBusinessIds)', () {
+      List<String> resolveSubAdminIds(UserModel user) => user.subAdminBusinessIds;
+
+      test('N6-01 단일 SubAdmin: biz1만 반환', () {
+        final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
+        expect(resolveSubAdminIds(sub), ['biz1']);
+        expect(resolveSubAdminIds(sub).contains('biz2'), isFalse);
+      });
+      test('N6-02 다중 SubAdmin: biz1·biz2 반환, biz3 미포함', () {
+        final sub = _multiSub(['biz1', 'biz2']);
+        final ids = resolveSubAdminIds(sub);
+        expect(ids, containsAll(['biz1', 'biz2']));
+        expect(ids.contains('biz3'), isFalse);
+      });
+      test('N6-03 서로 다른 사업장 SubAdmin 간 격리', () {
+        final subA = _user(role: UserRole.USER, subAdminOf: 'biz_a');
+        final subB = _user(role: UserRole.USER, subAdminOf: 'biz_b');
+        expect(resolveSubAdminIds(subA).contains('biz_b'), isFalse);
+        expect(resolveSubAdminIds(subB).contains('biz_a'), isFalse);
+      });
+      test('N6-04 SubAdmin A·B가 같은 사업장 담당 시 각자 독립적', () {
+        final subA = _user(role: UserRole.USER, subAdminOf: 'biz1');
+        final subB = _multiSub(['biz1', 'biz2']);
+        // A는 biz1만, B는 biz1+biz2
+        expect(resolveSubAdminIds(subA), ['biz1']);
+        expect(resolveSubAdminIds(subB), ['biz1', 'biz2']);
+        // A가 biz2에 접근 불가
+        expect(resolveSubAdminIds(subA).contains('biz2'), isFalse);
+      });
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════════
 // main
 // ════════════════════════════════════════════════════════════
 
@@ -1442,4 +1603,5 @@ void main() {
   _runMemberManagementScreenTests();
   _runParameterizedTests();
   _runEdgeCaseTests();
+  _runMultiBizSubAdminTests();
 }

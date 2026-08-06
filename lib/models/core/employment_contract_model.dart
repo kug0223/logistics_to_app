@@ -46,6 +46,8 @@ extension ContractStatusX on ContractStatus {
 // ─── 근무 슬롯 (계약서 내 개별 근무 일정) ──────────────────────
 
 class ContractSlot {
+  static final _commaRe = RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))');
+
   final String applicationId; // 해당 슬롯의 지원서 ID
   final String workDate;      // 'yyyy-MM-dd'
   final String startTime;     // 'HH:mm'
@@ -91,7 +93,7 @@ class ContractSlot {
 
   String get formattedWage {
     final s = wage.toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      _commaRe,
       (m) => '${m[1]},',
     );
     return '$s원';
@@ -101,6 +103,8 @@ class ContractSlot {
 // ─── 계약서 스냅샷 (서명 시점 데이터 고정) ────────────────────
 
 class ContractSnapshot {
+  static final _commaRe = RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))');
+
   // 사업주 정보
   final String businessName;
   final String businessNumber;
@@ -281,7 +285,7 @@ class ContractSnapshot {
 
   String get formattedWage {
     final s = wage.toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      _commaRe,
       (m) => '${m[1]},',
     );
     return '$s원';

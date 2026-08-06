@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -18,7 +17,6 @@ import '../../theme/app_colors.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 import '../../services/device_integrity_service.dart';
-import '../../services/fcm_service.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../screens/contract/contract_sign_screen.dart';
 import 'all_to_list_screen.dart';
@@ -31,30 +29,18 @@ class AttendanceCheckScreen extends StatefulWidget {
   State<AttendanceCheckScreen> createState() => _AttendanceCheckScreenState();
 }
 
-class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
-    with WidgetsBindingObserver {
+class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
   final FirestoreService _firestoreService = FirestoreService();
 
   List<ApplicationModel> _todayWorks = [];
   final Map<String, AttendanceModel?> _attendanceMap = {};
   bool _isLoading = true;
   bool _isProcessing = false;
-
-  // 위치 추적
-  bool _locationTrackingActive = false;
-  bool _isGrantingConsent = false;
-  bool _bannerDismissed = false;
-  Timer? _locationTimer;
-  final Map<String, double?> _businessLat = {};
-  final Map<String, double?> _businessLng = {};
-  // 근무지 이탈 경고 — 알림 스팸 방지 (workId → 마지막 경고 시각)
-  final Map<String, DateTime> _lastDepartureAlert = {};
-  final Map<String, double> _businessRadius = {};
+  bool _isReconfirming = false;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _loadTodayWorks();
@@ -63,24 +49,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _locationTimer?.cancel();
     super.dispose();
-  }
-
-  /// 앱 라이프사이클 변화 감지 — 포그라운드 복귀 시 타이머 재개
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && _locationTrackingActive) {
-      // 포그라운드 복귀 → 즉시 1회 갱신 + 타이머 재시작
-      debugPrint('📍 [위치추적] 포그라운드 복귀 → 타이머 재시작');
-      _startLocationTimer();
-    } else if (state == AppLifecycleState.paused) {
-      // 백그라운드 진입 → 타이머 일시 중지 (배터리 절약)
-      debugPrint('📍 [위치추적] 백그라운드 진입 → 타이머 일시 중지');
-      _locationTimer?.cancel();
-      _locationTimer = null;
-    }
   }
 
   /// 오늘 확정된 근무 조회
@@ -172,204 +141,12 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
       }
 
       debugPrint('✅ 오늘 근무: ${visibleWorks.length}개 (전체 후보: ${todayWorks.length}개)');
-      _checkAndStartTracking();
     } catch (e) {
       debugPrint('❌ 오늘 근무 조회 실패: $e');
       if (mounted) {
         setState(() => _isLoading = false);
         ToastHelper.showError('근무 정보를 불러오는데 실패했습니다.');
       }
-    }
-  }
-
-  // ─────────────────────────────────────────────────────────
-  // 위치 추적
-  // ─────────────────────────────────────────────────────────
-
-  /// 예정 출근 60분 전 ~ 출근 완료 후 2시간 구간인지 확인
-  ///
-  /// 야간 근무(자정 경계) 대응:
-  /// 현재 시각을 중심으로 ±3시간 범위의 오늘 날짜 기준 스케줄 시간을 비교.
-  /// 출근 시각이 자정 이후(예: 00:30)이면 workDate 기준일을 사용해 정확히 계산.
-  bool _isInTrackingWindow(ApplicationModel work) {
-    if (work.startTime.isEmpty) return false;
-    final parts = work.startTime.split(':');
-    if (parts.length < 2) return false;
-
-    final h = int.tryParse(parts[0]);
-    final m = int.tryParse(parts[1]);
-    if (h == null || m == null) return false;
-
-    final now = DateTime.now();
-
-    // 장기 근무는 오늘 날짜 기준, 단기 근무는 workDate 기준으로 scheduledStart 구성
-    final baseDate = work.isLongTermApplication ? now : work.workDate;
-    final scheduledStart = DateTime(
-      baseDate.year, baseDate.month, baseDate.day, h, m,
-    );
-
-    // h < 6 (자정 근처 새벽 근무)이면 workDate + 1일 기준으로도 체크
-    // ex: workDate = 5/30, startTime = "00:30" → scheduledStart = 5/30 00:30
-    final windowStart = scheduledStart.subtract(const Duration(minutes: 60));
-    // 야간 시프트(20:00~): 익일 새벽까지 체크인 가능 → 최대 08:00까지 = +10h
-    final windowEnd = h >= 20
-        ? scheduledStart.add(const Duration(hours: 10))
-        : scheduledStart.add(const Duration(hours: 2));
-
-    // 기본 체크
-    if (now.isAfter(windowStart) && now.isBefore(windowEnd)) return true;
-
-    // 야간 근무 보정: 전날 23시대 → baseDate의 자정 근처 체크
-    // (ex: 5/31 00:30 근무 → 5/30 23:30에 체크)
-    if (h <= 3) {
-      // day-1=0은 이전 달 말일로 해석됨 → subtract로 안전하게 처리
-      final prevDay = baseDate.subtract(const Duration(days: 1));
-      final prevDayStart = DateTime(prevDay.year, prevDay.month, prevDay.day, h, m);
-      final prevWindowStart = prevDayStart.subtract(const Duration(minutes: 60));
-      final prevWindowEnd   = prevDayStart.add(const Duration(hours: 2));
-      if (now.isAfter(prevWindowStart) && now.isBefore(prevWindowEnd)) return true;
-    }
-
-    return false;
-  }
-
-  /// 로드 후 / 체크인 후 호출 — 추적 윈도우 내 미출근 근무가 있으면 배너 표시,
-  /// 없으면 진행 중인 추적 중지
-  void _checkAndStartTracking() {
-    final hasActiveWork = _todayWorks.any((work) {
-      final attendance = _attendanceMap[work.id];
-      if (attendance?.hasCheckedIn ?? false) return false;
-      return _isInTrackingWindow(work);
-    });
-
-    if (!hasActiveWork) {
-      _stopLocationTracking();
-    }
-    // 배너 표시 여부는 build()에서 _isInTrackingWindow로 판단
-  }
-
-  /// 사용자가 위치 공유 허용을 누를 때
-  Future<void> _onLocationConsentGranted() async {
-    if (_isGrantingConsent) return;
-    _isGrantingConsent = true;
-    final userProvider = Provider.of<UserProvider>(context, listen: false);
-    final uid = userProvider.currentUser?.uid;
-    if (uid == null) { _isGrantingConsent = false; return; }
-
-    // try/finally로 예외 발생 시에도 _isGrantingConsent 잠금이 반드시 해제되도록 함
-    try {
-      // 사업장 좌표 + 반경 캐싱 (병렬)
-      final uncachedWorks = _todayWorks
-          .where((w) => !_businessLat.containsKey(w.businessId))
-          .toList();
-      final bizResults = await Future.wait(
-        uncachedWorks.map((w) => _firestoreService.getBusinessById(w.businessId)),
-      );
-      for (var i = 0; i < uncachedWorks.length; i++) {
-        final biz = bizResults[i];
-        final bid = uncachedWorks[i].businessId;
-        _businessLat[bid] = biz?.latitude;
-        _businessLng[bid] = biz?.longitude;
-        _businessRadius[bid] = biz?.gpsRadius.toDouble() ?? 100.0;
-      }
-
-      // Firestore에 동의 + 문서 생성 (병렬)
-      final now = DateTime.now();
-      final consentTargets = _todayWorks.where((work) {
-        final attendance = _attendanceMap[work.id];
-        return !(attendance?.hasCheckedIn ?? false) && _isInTrackingWindow(work);
-      }).toList();
-      await Future.wait(
-        consentTargets.map((work) => _firestoreService.grantLocationConsent(
-          applicationId: work.id,
-          userId: uid,
-          businessId: work.businessId,
-          workDate: now,
-          scheduledStart: work.startTime,
-        )),
-      );
-
-      if (!mounted) return;
-      setState(() => _locationTrackingActive = true);
-      _startLocationTimer();
-    } catch (e) {
-      debugPrint('⚠️ [AttendanceCheckScreen] 위치 공유 동의 실패: $e');
-      if (mounted) ToastHelper.showError('위치 공유 동의 저장에 실패했습니다. 다시 시도해주세요.');
-    } finally {
-      _isGrantingConsent = false;
-    }
-  }
-
-  void _startLocationTimer() {
-    _locationTimer?.cancel();
-    _pushLocationUpdate(); // 즉시 1회
-    _locationTimer = Timer.periodic(const Duration(minutes: 2), (_) {
-      _pushLocationUpdate();
-    });
-  }
-
-  void _stopLocationTracking() {
-    _locationTimer?.cancel();
-    _locationTimer = null;
-    if (mounted) {
-      setState(() {
-        _locationTrackingActive = false;
-      });
-    }
-  }
-
-  Future<void> _pushLocationUpdate() async {
-    if (!_locationTrackingActive || !mounted) return;
-    try {
-      final position = await LocationHelper.getCurrentPosition();
-      if (position == null || !mounted) return;
-
-      for (final work in _todayWorks) {
-        final attendance = _attendanceMap[work.id];
-        final lat = _businessLat[work.businessId];
-        final lng = _businessLng[work.businessId];
-
-        final double? distance = (lat != null && lng != null)
-            ? LocationHelper.calculateDistance(
-                lat1: position.latitude, lon1: position.longitude,
-                lat2: lat, lon2: lng,
-              )
-            : null;
-
-        // 출근 전: 위치 기록 전송
-        if (!(attendance?.hasCheckedIn ?? false) && _isInTrackingWindow(work)) {
-          await _firestoreService.updateWorkerLocation(
-            applicationId: work.id,
-            lat: position.latitude,
-            lng: position.longitude,
-            accuracy: position.accuracy,
-            distanceMeters: distance,
-          );
-        }
-
-        // 출근 후 퇴근 전: 근무지 이탈 감지 (15분 쿨다운)
-        if ((attendance?.hasCheckedIn ?? false) &&
-            !(attendance?.hasCheckedOut ?? false) &&
-            distance != null) {
-          final radius = _businessRadius[work.businessId] ?? 100.0;
-          // 반경 + 50m 버퍼 (GPS 오차 보정)
-          if (distance > radius + 50) {
-            final lastAlert = _lastDepartureAlert[work.id];
-            final alertNow = DateTime.now();
-            if (lastAlert == null ||
-                alertNow.difference(lastAlert).inMinutes >= 15) {
-              _lastDepartureAlert[work.id] = alertNow;
-              debugPrint('⚠️ [이탈 감지] ${work.businessName}: ${distance.toStringAsFixed(0)}m');
-              await FCMService().showGeofenceAlert(work.businessName);
-            }
-          } else {
-            // 복귀 시 쿨다운 초기화
-            _lastDepartureAlert.remove(work.id);
-          }
-        }
-      }
-    } catch (e) {
-      debugPrint('⚠️ [위치 갱신] 실패: $e');
     }
   }
 
@@ -481,12 +258,10 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
       if (attendanceId != null && mounted) {
         ToastHelper.showSuccess('출근이 완료되었습니다!');
         AnalyticsService.logCheckIn(method: usedMethod);
-        if (_locationTrackingActive) await _firestoreService.stopWorkerTracking(work.id);
         if (!mounted) return;
         await _loadTodayWorks();
         if (!mounted) return;
         _showRoundingFeedback(work.id, isCheckIn: true);
-        _checkAndStartTracking();
       }
     } catch (e) {
       debugPrint('❌ 출근 체크 실패: $e');
@@ -793,6 +568,29 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
     }
   }
 
+  /// 리컨펌 응답 처리 — confirmed: 출근 확인, declined: 취소 후 목록 갱신
+  Future<void> _respondToReconfirm(ApplicationModel work, String response) async {
+    if (_isReconfirming) return;
+    setState(() => _isReconfirming = true);
+    try {
+      final success = await _firestoreService.respondToReconfirm(
+        work.id,
+        response: response,
+      );
+      if (!mounted) return;
+      if (success) {
+        if (response == 'confirmed') {
+          ToastHelper.showSuccess('출근 확인이 완료되었습니다!');
+        } else {
+          ToastHelper.showInfo('근무가 취소되었습니다.');
+        }
+        await _loadTodayWorks();
+      }
+    } finally {
+      if (mounted) setState(() => _isReconfirming = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return GradientScaffold(
@@ -806,140 +604,14 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
                   onRefresh: _loadTodayWorks,
                   child: ListView.builder(
                     padding: ResponsiveHelper.listPadding(context),
-                    itemCount: _todayWorks.length + 1,
+                    itemCount: _todayWorks.length,
                     itemBuilder: (context, index) {
-                      if (index == 0) return _buildLocationBanner();
-                      final work = _todayWorks[index - 1];
+                      final work = _todayWorks[index];
                       final attendance = _attendanceMap[work.id];
                       return _buildWorkCard(work, attendance);
                     },
                   ),
                 ),
-    );
-  }
-
-  /// 위치 공유 배너 (동의 요청 또는 추적 중 표시)
-  Widget _buildLocationBanner() {
-    final hasTrackingWork = _todayWorks.any((work) {
-      final attendance = _attendanceMap[work.id];
-      if (attendance?.hasCheckedIn ?? false) return false;
-      return _isInTrackingWindow(work);
-    });
-
-    if (!hasTrackingWork && !_locationTrackingActive) return const SizedBox.shrink();
-
-    // 추적 중 상태
-    if (_locationTrackingActive) {
-      return Container(
-        margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
-        padding: EdgeInsets.symmetric(
-          horizontal: ResponsiveHelper.spacing(context, 16),
-          vertical: ResponsiveHelper.spacing(context, 10),
-        ),
-        decoration: BoxDecoration(
-          color: AppColors.infoBg,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.infoLight),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.location_on, color: AppColors.infoDark,
-                size: ResponsiveHelper.iconSize(context, 18)),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            Expanded(
-              child: Text(
-                '위치 공유 중 · 출근 완료 후 자동 중지됩니다',
-                style: ResponsiveHelper.smallStyle(context).copyWith(
-                  color: AppColors.infoDark,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-            TextButton(
-              onPressed: _stopLocationTracking,
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: Text(
-                '중지',
-                style: ResponsiveHelper.smallStyle(context)
-                    .copyWith(color: AppColors.grey600),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    // 동의 요청 배너 (dismissed면 숨김)
-    if (_bannerDismissed) return const SizedBox.shrink();
-
-    return Container(
-      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
-      padding: ResponsiveHelper.listPadding(context),
-      decoration: BoxDecoration(
-        color: AppColors.infoBg,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.infoLight),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.location_searching,
-                  color: AppColors.infoDark,
-                  size: ResponsiveHelper.iconSize(context, 20)),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              Text(
-                '위치 공유 요청',
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.infoDark,
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-          Text(
-            '출근 예정 시간이 다가오고 있습니다.\n관리자가 출근 전 위치를 확인할 수 있도록\n위치 공유를 허용해주세요.',
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(
-                onPressed: () => setState(() => _bannerDismissed = true),
-                child: Text(
-                  '나중에',
-                  style: ResponsiveHelper.smallStyle(context)
-                      .copyWith(color: AppColors.grey600),
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              ElevatedButton.icon(
-                onPressed: _onLocationConsentGranted,
-                icon: Icon(Icons.location_on,
-                    size: ResponsiveHelper.iconSize(context, 16)),
-                label: const Text('위치 공유 허용'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.infoDark,
-                  foregroundColor: Colors.white,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: ResponsiveHelper.spacing(context, 12),
-                    vertical: ResponsiveHelper.spacing(context, 8),
-                  ),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8)),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
     );
   }
 
@@ -1105,6 +777,12 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
               color: AppColors.dividerLight,
             ),
 
+            // 리컨펌 요청 섹션 (단기 미출근 + reconfirmStatus=='pending'일 때만)
+            if (!work.isLongTermApplication &&
+                !hasCheckedIn &&
+                work.reconfirmStatus == 'pending')
+              _buildReconfirmSection(work),
+
             // 출근 상태 정보
             if (hasCheckedIn) ...[
               _buildAttendanceInfo(attendance!),
@@ -1156,6 +834,103 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen>
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// 리컨펌 섹션 — 단기 근무 중 reconfirmStatus=='pending'이고 미출근일 때 카드 내 표시
+  Widget _buildReconfirmSection(ApplicationModel work) {
+    return Container(
+      width: double.infinity,
+      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 14)),
+      decoration: BoxDecoration(
+        color: AppColors.infoBg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.infoLight),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.help_outline_rounded,
+                color: AppColors.infoDark,
+                size: ResponsiveHelper.iconSize(context, 16),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+              Text(
+                '출근 확인 요청',
+                style: ResponsiveHelper.smallStyle(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.infoDark,
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          Text(
+            '오늘 근무에 출근하실 수 있으신가요?',
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _isReconfirming
+                      ? null
+                      : () async {
+                          final confirmed = await DialogHelper.showDangerConfirm(
+                            context,
+                            title: '근무 취소',
+                            message: '취소하면 TrustScore가 소폭 감점됩니다.\n정말 취소하시겠습니까?',
+                            confirmText: '취소하기',
+                          );
+                          if (confirmed && mounted) {
+                            await _respondToReconfirm(work, 'declined');
+                          }
+                        },
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.grey600,
+                    side: BorderSide(color: AppColors.grey300),
+                    padding: EdgeInsets.symmetric(
+                      vertical: ResponsiveHelper.spacing(context, 8),
+                    ),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: Text(
+                    '아니요, 취소할게요',
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                  ),
+                ),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              Expanded(
+                child: FilledButton(
+                  onPressed: _isReconfirming
+                      ? null
+                      : () => _respondToReconfirm(work, 'confirmed'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.infoDark,
+                    padding: EdgeInsets.symmetric(
+                      vertical: ResponsiveHelper.spacing(context, 8),
+                    ),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: Text(
+                    '네, 출근합니다',
+                    style: ResponsiveHelper.smallStyle(context)
+                        .copyWith(color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AlFit 개인정보 처리방침</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR', sans-serif;
+      font-size: 15px; line-height: 1.75; color: #1a1a1a;
+      background: #f8f9fa;
+    }
+    .header {
+      background: #1565C0; color: #fff;
+      padding: 28px 24px 24px;
+    }
+    .header h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+    .header p { font-size: 13px; opacity: 0.8; }
+    .container { max-width: 760px; margin: 0 auto; padding: 24px 20px 60px; }
+    .card {
+      background: #fff; border-radius: 10px;
+      padding: 24px; margin-bottom: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.08);
+    }
+    .content-text {
+      white-space: pre-wrap;
+      font-family: inherit;
+      font-size: 14px;
+      line-height: 1.8;
+      color: #333;
+    }
+    .loading { color: #888; font-size: 14px; }
+    .error { color: #c62828; font-size: 14px; }
+    .footer {
+      text-align: center; color: #888; font-size: 13px;
+      margin-top: 32px; padding-top: 20px;
+      border-top: 1px solid #e0e0e0;
+    }
+  </style>
+</head>
+<body>
+<div class="header">
+  <h1>AlFit 개인정보 처리방침</h1>
+  <p id="version-info">로딩 중...</p>
+</div>
+
+<div class="container">
+  <div class="card" id="content-card">
+    <p class="loading">내용을 불러오는 중입니다...</p>
+  </div>
+  <div class="footer">AlFit &copy; 2025</div>
+</div>
+
+<script>
+const TARGET_ID = 'privacy_policy';
+
+function parseValue(v) {
+  if (!v) return null;
+  if (v.stringValue !== undefined) return v.stringValue;
+  if (v.booleanValue !== undefined) return v.booleanValue;
+  if (v.integerValue !== undefined) return parseInt(v.integerValue, 10);
+  if (v.doubleValue !== undefined) return parseFloat(v.doubleValue);
+  if (v.nullValue !== undefined) return null;
+  if (v.arrayValue) return (v.arrayValue.values || []).map(parseValue);
+  if (v.mapValue) {
+    const obj = {};
+    for (const [k, w] of Object.entries(v.mapValue.fields || {})) obj[k] = parseValue(w);
+    return obj;
+  }
+  return null;
+}
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+async function load() {
+  const card = document.getElementById('content-card');
+  const verEl = document.getElementById('version-info');
+  try {
+    const cfg = await fetch('/__/firebase/init.json').then(r => r.json());
+    const url = `https://firestore.googleapis.com/v1/projects/${cfg.projectId}/databases/(default)/documents/app_settings/legal_terms?key=${cfg.apiKey}`;
+    const doc = await fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+    const items = parseValue(doc.fields.items) || [];
+    const item = items.find(i => i.id === TARGET_ID);
+    if (!item) throw new Error('항목 없음');
+    verEl.textContent = `버전: ${item.version || 'v2025.01'} | 시행일: 2025년 1월 1일`;
+    card.innerHTML = `<pre class="content-text">${esc(item.content)}</pre>`;
+  } catch (e) {
+    verEl.textContent = '시행일: 2025년 1월 1일';
+    card.innerHTML = `<p class="error">내용을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.<br><small>${esc(String(e))}</small></p>`;
+  }
+}
+load();
+</script>
+</body>
+</html>

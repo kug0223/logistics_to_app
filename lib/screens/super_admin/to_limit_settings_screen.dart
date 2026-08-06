@@ -141,6 +141,10 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
           _admins = items;
           _isLoadingAdmins = false;
         });
+      } else {
+        for (final item in items) {
+          item.ctrl.dispose();
+        }
       }
     } catch (e) {
       if (mounted) {

@@ -22,17 +22,29 @@ class ApplySummarySection extends StatelessWidget {
   const ApplySummarySection({
     super.key,
     required this.myApplications,
-    this.emptyMessage = '지원한 업무가 없습니다',
+    this.emptyMessage = '오늘 이후 예정된 지원 건이 없습니다',
     this.isLoadError = false,
   });
 
   // ─── 활성 지원만 필터 ───────────────────────────────────
-  List<ApplicationModel> get _active => myApplications.where((app) {
-    if (AppStatus.inactiveStates.contains(app.status)) return false;
-    // 장기 지원 중 퇴사 완료된 건 제외
-    if (app.isLongTermApplication && app.isTerminationApproved) return false;
-    return true;
-  }).toList();
+  List<ApplicationModel> get _active {
+    final today = DateTime.now();
+    final todayOnly = DateTime(today.year, today.month, today.day);
+
+    return myApplications.where((app) {
+      if (AppStatus.inactiveStates.contains(app.status)) return false;
+      // 장기 지원 중 퇴사 완료된 건 제외
+      if (app.isLongTermApplication && app.isTerminationApproved) return false;
+      // 단기 지원은 오늘 이전 날짜 제외 (장기는 계약 기간 내내 유지)
+      if (!app.isLongTermApplication) {
+        final workDateOnly = DateTime(
+          app.workDate.year, app.workDate.month, app.workDate.day,
+        );
+        if (workDateOnly.isBefore(todayOnly)) return false;
+      }
+      return true;
+    }).toList();
+  }
 
   // ─── 날짜별 그루핑 ─────────────────────────────────────
   /// workDate 기준으로 그루핑, 날짜 오름차순 정렬
@@ -92,12 +104,23 @@ class ApplySummarySection extends StatelessWidget {
             color: theme.primaryColor,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-          Text(
-            '내 지원 현황',
-            style: ResponsiveHelper.bodyStyle(context).copyWith(
-              fontWeight: FontWeight.bold,
-              color: theme.primaryColor,
-            ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '내 지원 현황',
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: theme.primaryColor,
+                ),
+              ),
+              Text(
+                '오늘 이후 예정 건만 표시',
+                style: ResponsiveHelper.tinyStyle(
+                  context, color: AppColors.grey500,
+                ),
+              ),
+            ],
           ),
           const Spacer(),
           if (dateCount > 0)

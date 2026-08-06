@@ -77,6 +77,7 @@ class MemberPermissions {
 /// businesses/{businessId}/members/{uid}
 class BusinessMemberModel {
   final String uid;
+  final String businessId; // 경로의 businesses/{businessId}에서 파생
   final String name;
   final String? phone;
   final MemberPermissions permissions;
@@ -88,6 +89,7 @@ class BusinessMemberModel {
 
   const BusinessMemberModel({
     required this.uid,
+    required this.businessId,
     required this.name,
     this.phone,
     required this.permissions,
@@ -104,6 +106,8 @@ class BusinessMemberModel {
     final d = raw as Map<String, dynamic>;
     return BusinessMemberModel(
       uid: doc.id,
+      // doc 경로: businesses/{businessId}/members/{uid} → parent.parent.id
+      businessId: doc.reference.parent.parent?.id ?? '',
       name: d['name'] ?? '',
       phone: d['phone'],
       permissions: MemberPermissions.fromMap(
@@ -148,6 +152,7 @@ class BusinessMemberModel {
   }) =>
       BusinessMemberModel(
         uid: uid,
+        businessId: businessId,
         name: name ?? this.name,
         phone: phone ?? this.phone,
         permissions: permissions ?? this.permissions,

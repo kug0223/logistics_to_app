@@ -55,6 +55,8 @@ class _PayslipViewScreenState extends State<PayslipViewScreen> {
   void initState() {
     super.initState();
     _dataFuture = _buildData();
+    // 데이터 준비 즉시 PDF 생성 시작 — FutureBuilder 리빌드를 기다리지 않고 파이프라인 처리
+    _pdfBytesFuture = _dataFuture!.then((data) => PayslipPdfBuilder.build(data));
   }
 
   Future<PayslipData> _buildData() async {

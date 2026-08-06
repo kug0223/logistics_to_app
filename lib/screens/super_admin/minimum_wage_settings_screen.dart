@@ -21,6 +21,7 @@ class MinimumWageSettingsScreen extends StatefulWidget {
 
 class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
   final _firestore = FirebaseFirestore.instance;
+  final int _currentYear = DateTime.now().year;
 
   bool _isLoading = true;
   bool _isSaving = false;
@@ -127,7 +128,7 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final currentYear = DateTime.now().year;
+    final currentYear = _currentYear;
     final sortedYears = _wages.keys.toList()..sort((a, b) => b.compareTo(a));
 
     return GradientScaffold(

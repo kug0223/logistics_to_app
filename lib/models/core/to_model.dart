@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
-import '../../../utils/format_helper.dart';
+import '../../utils/firestore_helper.dart';
+import '../../utils/format_helper.dart';
 import 'work_detail_data.dart';
 
 /// 공고(TO) 모델 — slots 구조 기반
@@ -159,15 +160,14 @@ class TOModel {
       // totalSlots=0 폴백 — 서버 FieldValue.increment 완료 전 순간 0으로 읽힐 수 있음
       // 크래시 없음, isFull 계산은 totalRequired 기준으로 별도 처리되므로 영향 없음
       totalSlots: (data['totalSlots'] as num?)?.toInt() ?? 0,
-      rangeStart: (data['rangeStart'] as Timestamp?)?.toDate().toLocal(),
-      rangeEnd: (data['rangeEnd'] as Timestamp?)?.toDate().toLocal(),
+      rangeStart: parseTimestampNullable(data['rangeStart']),
+      rangeEnd: parseTimestampNullable(data['rangeEnd']),
       workDays: data['workDays'] != null
           ? List<String>.from(data['workDays'] as List)
           : const [],
       deadlineType: data['deadlineType'] as String? ?? 'HOURS_BEFORE',
       hoursBeforeStart: (data['hoursBeforeStart'] as num?)?.toInt() ?? 2,
-      applicationDeadline:
-          (data['applicationDeadline'] as Timestamp?)?.toDate().toLocal(),
+      applicationDeadline: parseTimestampNullable(data['applicationDeadline']),
       contractPeriodType: data['contractPeriodType'] as String?,
       postingDurationDays: (data['postingDurationDays'] as num?)?.toInt(),
       postingExpiryDateServer:
@@ -176,21 +176,21 @@ class TOModel {
       totalConfirmed: (data['totalConfirmed'] as num?)?.toInt() ?? 0,
       totalPending: (data['totalPending'] as num?)?.toInt() ?? 0,
       status: data['status'] as String? ?? TOStatus.active,
-      statusUpdatedAt: (data['statusUpdatedAt'] as Timestamp?)?.toDate().toLocal(),
+      statusUpdatedAt: parseTimestampNullable(data['statusUpdatedAt']),
       isManualClosed: data['isManualClosed'] as bool? ?? false,
-      closedAt: (data['closedAt'] as Timestamp?)?.toDate().toLocal(),
+      closedAt: parseTimestampNullable(data['closedAt']),
       closedBy: data['closedBy'] as String?,
       closedReasonCode: data['closedReason'] as String?,
-      reopenedAt: (data['reopenedAt'] as Timestamp?)?.toDate().toLocal(),
+      reopenedAt: parseTimestampNullable(data['reopenedAt']),
       reopenedBy: data['reopenedBy'] as String?,
       publishMode: data['publishMode'] as String? ?? 'immediate',
-      publishAt: (data['publishAt'] as Timestamp?)?.toDate().toLocal(),
+      publishAt: parseTimestampNullable(data['publishAt']),
       isPublished: data['isPublished'] as bool? ?? true,
       publishDaysBefore: (data['publishDaysBefore'] as num?)?.toInt(),
       publishTime: data['publishTime'] as String?,
       creatorUID: data['creatorUID'] as String? ?? '',
       // createdAt 누락 시 DateTime.now() 폴백 — 서버 미저장 임시 객체나 마이그레이션 전 문서에서 발생 가능
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
+      createdAt: parseTimestampNullable(data['createdAt']) ?? DateTime.now(),
     );
   }
 
@@ -224,6 +224,7 @@ class TOModel {
         'statusUpdatedAt': Timestamp.fromDate(statusUpdatedAt!),
       'isManualClosed': isManualClosed,
       if (closedAt != null) 'closedAt': Timestamp.fromDate(closedAt!),
+      if (closedReasonCode != null) 'closedReason': closedReasonCode,
       'closedBy': closedBy,
       if (reopenedAt != null) 'reopenedAt': Timestamp.fromDate(reopenedAt!),
       'reopenedBy': reopenedBy,

@@ -84,6 +84,15 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                           children: [
                             Row(
                               children: [
+                                // A 마크 작은 로고
+                                ClipOval(
+                                  child: Image.asset(
+                                    'assets/icons/app_icon.png',
+                                    width: ResponsiveHelper.spacing(context, 26),
+                                    height: ResponsiveHelper.spacing(context, 26),
+                                  ),
+                                ),
+                                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                                 Stack(
                                   clipBehavior: Clip.none,
                                   children: [
@@ -98,19 +107,6 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                                                 1.3,
                                         fontWeight: FontWeight.w800,
                                         letterSpacing: 1.5,
-                                      ),
-                                    ),
-                                    Positioned(
-                                      right: -ResponsiveHelper.spacing(context, 3),
-                                      top: ResponsiveHelper.spacing(context, 5),
-                                      child: Container(
-                                        width: ResponsiveHelper.spacing(context, 4),
-                                        height: ResponsiveHelper.spacing(context, 4),
-                                        decoration: BoxDecoration(
-                                          color:
-                                              Colors.white.withValues(alpha: 0.8),
-                                          shape: BoxShape.circle,
-                                        ),
                                       ),
                                     ),
                                   ],
@@ -275,15 +271,24 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
 
                             // ── 메뉴 그리드 ────────────────────
                             Expanded(
-                              child: GridView.count(
-                                crossAxisCount: 2,
-                                crossAxisSpacing:
-                                    ResponsiveHelper.spacing(context, 16),
-                                mainAxisSpacing:
-                                    ResponsiveHelper.spacing(context, 16),
-                                children: [
+                              child: LayoutBuilder(
+                                builder: (context, constraints) {
+                                  const crossAxisCount = 2;
+                                  const rowCount = 4;
+                                  final gap = ResponsiveHelper.spacing(context, 12);
+                                  final cardWidth = (constraints.maxWidth - gap * (crossAxisCount - 1)) / crossAxisCount;
+                                  final cardHeight = (constraints.maxHeight - gap * (rowCount - 1)) / rowCount;
+                                  final aspectRatio = cardWidth / cardHeight;
+                                  return GridView.count(
+                                    crossAxisCount: crossAxisCount,
+                                    crossAxisSpacing: gap,
+                                    mainAxisSpacing: gap,
+                                    childAspectRatio: aspectRatio,
+                                    physics: const NeverScrollableScrollPhysics(),
+                                    children: [
                                   _buildMenuCard(
                                     context,
+                                    cardHeight: cardHeight,
                                     icon: Icons.business_center,
                                     title: '모든 사업장',
                                     subtitle: '전체 사업장 관리',
@@ -297,6 +302,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                                   ),
                                   _buildMenuCard(
                                     context,
+                                    cardHeight: cardHeight,
                                     icon: Icons.dashboard_outlined,
                                     title: '공고 모니터링',
                                     subtitle: '전체 공고 현황',
@@ -307,6 +313,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                                   ),
                                   _buildMenuCard(
                                     context,
+                                    cardHeight: cardHeight,
                                     icon: Icons.people_outline,
                                     title: '사용자 관리',
                                     subtitle: '회원 관리',
@@ -320,6 +327,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                                   ),
                                   _buildMenuCard(
                                     context,
+                                    cardHeight: cardHeight,
                                     icon: Icons.analytics_outlined,
                                     title: '통계',
                                     subtitle: '전체 통계 분석',
@@ -330,6 +338,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                                   ),
                                   _buildMenuCard(
                                     context,
+                                    cardHeight: cardHeight,
                                     icon: Icons.admin_panel_settings,
                                     title: '시스템 설정',
                                     subtitle: '규칙/태그/배지',
@@ -343,6 +352,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                                   ),
                                   _buildMenuCard(
                                     context,
+                                    cardHeight: cardHeight,
                                     icon: Icons.how_to_reg_outlined,
                                     title: '외국인 승인',
                                     subtitle: '가입 승인/거절',
@@ -356,6 +366,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                                   ),
                                   _buildMenuCard(
                                     context,
+                                    cardHeight: cardHeight,
                                     icon: Icons.settings_outlined,
                                     title: '설정',
                                     subtitle: '개인 설정',
@@ -367,7 +378,9 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                                               const SettingsScreen()),
                                     ),
                                   ),
-                                ],
+                                    ],
+                                  );
+                                },
                               ),
                             ),
                           ],
@@ -433,6 +446,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
 
   Widget _buildMenuCard(
     BuildContext context, {
+    required double cardHeight,
     required IconData icon,
     required String title,
     required String subtitle,
@@ -440,60 +454,67 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
     required VoidCallback onTap,
     bool isDisabled = false,
   }) {
+    // 모든 크기를 cardHeight 비율로 계산 → 기기 무관하게 overflow 없음
+    final iconCircle = cardHeight * 0.38;  // 아이콘 원형 지름
+    final iconPad    = iconCircle * 0.22;  // 원형 내부 패딩 (양쪽)
+    final iconSizePx = iconCircle - iconPad * 2;
+    final vPad       = cardHeight * 0.08;  // 카드 상하 패딩
+    final gap        = cardHeight * 0.07;  // 아이콘 ↔ 텍스트 간격
+    final titleSize  = (cardHeight * 0.13).clamp(11.0, 16.0);
+    final subSize    = (cardHeight * 0.10).clamp(9.0,  13.0);
+
     return Card(
-      elevation: isDisabled ? 0 : 3,
-      shadowColor: Colors.black.withValues(alpha: 0.1),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      elevation: isDisabled ? 0 : 2,
+      shadowColor: Colors.black.withValues(alpha: 0.08),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: InkWell(
         onTap: isDisabled ? null : onTap,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         child: Container(
           decoration: BoxDecoration(
             color: isDisabled ? AppColors.grey100 : Colors.white,
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(16),
           ),
-          child: Padding(
-            padding: ResponsiveHelper.cardPadding(context),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  padding:
-                      EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    icon,
-                    size: ResponsiveHelper.iconSize(context, 32),
-                    color: color,
-                  ),
+          padding: EdgeInsets.symmetric(
+            horizontal: cardHeight * 0.10,
+            vertical: vPad,
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: iconCircle,
+                height: iconCircle,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
                 ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                Text(
-                  title,
-                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: isDisabled ? AppColors.grey400 : null,
-                  ),
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+                child: Icon(icon, size: iconSizePx, color: color),
+              ),
+              SizedBox(height: gap),
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: titleSize,
+                  fontWeight: FontWeight.bold,
+                  color: isDisabled ? AppColors.grey400 : AppColors.textPrimary,
                 ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                Text(
-                  isDisabled ? '준비 중' : subtitle,
-                  style: ResponsiveHelper.smallStyle(
-                    context,
-                    color: isDisabled ? AppColors.grey300 : AppColors.grey600,
-                  ),
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              SizedBox(height: gap * 0.3),
+              Text(
+                isDisabled ? '준비 중' : subtitle,
+                style: TextStyle(
+                  fontSize: subSize,
+                  color: isDisabled ? AppColors.grey300 : AppColors.grey500,
                 ),
-              ],
-            ),
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
           ),
         ),
       ),

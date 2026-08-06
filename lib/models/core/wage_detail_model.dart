@@ -5,6 +5,7 @@ import '../../utils/firestore_helper.dart';
 /// 급여 상세 모델
 /// AttendanceModel에 임베디드되어 급여 계산 정보를 저장
 class WageDetailModel {
+  static final _commaRe = RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))');
   // ── 기본 정보 ──
   final String wageType;           // 'hourly' | 'daily'
   final int baseWage;              // 시급/일급 단가
@@ -381,7 +382,7 @@ class WageDetailModel {
   String get formattedNetWage {
     final n = effectiveNetWage;
     return '${n.toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      _commaRe,
       (Match m) => '${m[1]},',
     )}원';
   }
@@ -392,7 +393,7 @@ class WageDetailModel {
   /// 포맷팅된 총액 (예: "59,045원")
   String get formattedTotal {
     return '${totalAmount.toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      _commaRe,
       (Match m) => '${m[1]},',
     )}원';
   }

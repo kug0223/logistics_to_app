@@ -27,7 +27,8 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
   late TabController _tabController;
   
   bool _isLoading = true;
-  
+  bool _isSaving = false;
+
   // 태그 목록
   List<String> _positiveTags = [];
   List<String> _improvementTags = [];
@@ -105,6 +106,7 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
   }
 
   Future<void> _addTag(String type) async {
+    if (_isSaving) return;
     final controller = TextEditingController();
     try {
       final result = await showDialog<String>(
@@ -119,6 +121,7 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
       if (result != null && result.isNotEmpty) {
         if (!mounted) return;
         setState(() {
+          _isSaving = true;
           switch (type) {
             case 'positive':
               if (!_positiveTags.contains(result)) _positiveTags.add(result);
@@ -141,11 +144,13 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
       debugPrint('❌ 태그 추가 실패: $e');
       if (mounted) ToastHelper.showError('태그 추가 중 오류가 발생했습니다');
     } finally {
+      if (mounted) setState(() => _isSaving = false);
       WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
     }
   }
 
   Future<void> _removeTag(String type, String tag) async {
+    if (_isSaving) return;
     final confirmed = await DialogHelper.showConfirm(
       context,
       title: '태그 삭제',
@@ -156,6 +161,7 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
     if (!confirmed || !mounted) return;
 
     setState(() {
+      _isSaving = true;
       switch (type) {
         case 'positive':
           _positiveTags.remove(tag);
@@ -171,8 +177,12 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
           break;
       }
     });
-    if (!mounted) return;
-    await _saveTags();
+    try {
+      if (!mounted) return;
+      await _saveTags();
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   @override

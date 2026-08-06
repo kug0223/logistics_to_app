@@ -327,6 +327,12 @@ class AppColors {
   static const Color amberDark      = Color(0xFFFFA000);  // amber[700]
   static const Color yellowDark     = Color(0xFFFBC02D);  // yellow[700]
 
+  // --- 황색 경고 배너 (미서명 계약서 등) ---
+  static const Color yellowWarnBg     = Color(0xFFFFF3CD);  // 배경
+  static const Color yellowWarnBorder = Color(0xFFFFD966);  // 테두리
+  static const Color yellowWarnDark   = Color(0xFF856404);  // 아이콘·버튼
+  static const Color yellowWarnText   = Color(0xFF664D03);  // 텍스트
+
   // ═══════════════════════════════════════════════════════════
   // 🛠️ 헬퍼 메서드
   // ═══════════════════════════════════════════════════════════

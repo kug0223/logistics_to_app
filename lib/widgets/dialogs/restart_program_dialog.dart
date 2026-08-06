@@ -297,10 +297,10 @@ class _RestartProgramDialogState extends State<RestartProgramDialog> {
           
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
           
-          // 노쇼
+          // 노쇼 (90일 기준)
           _buildCompareRow(
             context,
-            label: '노쇼',
+            label: '노쇼(90일)',
             current: '${widget.noShowCount}회',
             after: '${(widget.noShowCount - 1).clamp(0, 999)}회',
             currentColor: widget.noShowCount > 0 ? AppColors.error : AppColors.grey600,
@@ -312,7 +312,7 @@ class _RestartProgramDialogState extends State<RestartProgramDialog> {
           // 지각
           _buildCompareRow(
             context,
-            label: '지각',
+            label: '지각(90일)',
             current: '${widget.lateCount}회',
             after: '${(widget.lateCount - 1).clamp(0, 999)}회',
             currentColor: widget.lateCount > 0 ? AppColors.warning : AppColors.grey600,

@@ -29,19 +29,23 @@ class KakaoMapWidget extends StatefulWidget {
 }
 
 class _KakaoMapWidgetState extends State<KakaoMapWidget> {
-  late final WebViewController _controller;
+  WebViewController? _controller;
   bool _isLoading = true;
+  bool _webViewReady = false;
 
   @override
   void initState() {
     super.initState();
-    _initializeWebView();
+    // 첫 프레임 렌더 완료 후 WebView 생성 — 화면 진입 애니메이션과 겹치는 jank 방지
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _initializeWebView();
+      setState(() => _webViewReady = true);
+    });
   }
 
   @override
   void dispose() {
-    _controller.clearCache();
-    _controller.clearLocalStorage();
     super.dispose();
   }
 
@@ -56,7 +60,12 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
           },
           onPageFinished: (String url) {
             if (kDebugMode) debugPrint('✅ 지도 로딩 완료: $url');
-            if (mounted) setState(() => _isLoading = false);
+            // 로드 완료 직후 KakaoMap 내부 애니메이션(타일 페이드인·마커팝업)이
+            // Flutter 프레임 속도보다 빠르게 렌더링 → SurfaceProducer 버퍼 포화
+            // 300ms 유지해 애니메이션이 끝난 뒤 스피너 해제
+            Future.delayed(const Duration(milliseconds: 300), () {
+              if (mounted) setState(() => _isLoading = false);
+            });
           },
           onWebResourceError: (WebResourceError error) {
             // baseUrl 'https://localhost' 설정 시 WebView가 favicon.ico 등
@@ -98,7 +107,7 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
     <!-- 카카오 개발자 콘솔에서 앱 번들 ID(com.alfit.app) 플랫폼 제한 설정 필수 — 미설정 시 키 도용 위험 -->
     <script type="text/javascript" src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=e635c28704a468da61d38e893139fe10"></script>
     <script>
-        // ✅ SDK 로드 완료 대기!
+        // ✅ SDK 로드 완료 대기
         window.onload = function() {
             if (typeof kakao === 'undefined') {
                 console.error('카카오맵 SDK 로드 실패');
@@ -191,30 +200,50 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
       );
     }
 
+    final mapDecoration = BoxDecoration(
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: theme.dividerColor, width: 1),
+      boxShadow: [
+        BoxShadow(
+          color: AppColors.grey500.withValues(alpha: 0.1),
+          blurRadius: 8,
+          offset: const Offset(0, 2),
+        ),
+      ],
+    );
+
+    // 첫 프레임 렌더 전: 장소명 플레이스홀더 (WebView 생성 대기)
+    if (!_webViewReady) {
+      return Container(
+        height: mapHeight,
+        decoration: mapDecoration,
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(theme.primaryColor),
+              ),
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+              Text(
+                widget.placeName,
+                style: ResponsiveHelper.bodyStyle(context)
+                    .copyWith(color: theme.textTheme.bodySmall?.color),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Container(
       height: mapHeight,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: theme.dividerColor,
-          width: 1,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.grey500.withValues(alpha: 0.1),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
+      decoration: mapDecoration,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(16),
         child: Stack(
           children: [
-            // 지도 WebView
-            WebViewWidget(controller: _controller),
-            
-            // 로딩 인디케이터 (개선)
+            WebViewWidget(controller: _controller!),
             if (_isLoading)
               Container(
                 color: Colors.white,
@@ -238,7 +267,6 @@ class _KakaoMapWidgetState extends State<KakaoMapWidget> {
                   ),
                 ),
               ),
-            
           ],
         ),
       ),

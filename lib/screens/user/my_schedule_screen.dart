@@ -549,44 +549,52 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       (AppStatus.confirmed, '확정', Icons.check_circle),
       (AppStatus.pending, '대기', Icons.schedule),
     ];
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: filters.map((f) {
-          final (value, label, icon) = f;
-          final selected = _selectedFilter == value;
-          return Padding(
-            padding:
-                EdgeInsets.only(right: ResponsiveHelper.spacing(context, 8)),
-            child: ChoiceChip(
-              avatar: Icon(icon,
-                  size: 14,
-                  color: selected ? Colors.white : AppColors.grey500),
-              label: Text(
-                label,
-                style: ResponsiveHelper.tinyStyle(context,
-                    color: selected ? Colors.white : AppColors.grey600)
-                    .copyWith(
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+    return Row(
+      children: filters.map((f) {
+        final (value, label, icon) = f;
+        final selected = _selectedFilter == value;
+        return Padding(
+          padding: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 8)),
+          child: GestureDetector(
+            onTap: () => setState(() {
+              _selectedFilter = value;
+              _recomputeStats();
+            }),
+            child: Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 12),
+                vertical: ResponsiveHelper.spacing(context, 6),
+              ),
+              decoration: BoxDecoration(
+                color: selected ? theme.primaryColor : Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: selected ? theme.primaryColor : AppColors.grey200,
                 ),
               ),
-              selected: selected,
-              selectedColor: theme.primaryColor,
-              backgroundColor: Colors.white,
-              side: BorderSide(
-                  color:
-                      selected ? theme.primaryColor : AppColors.grey200),
-              padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 4), vertical: 0),
-              onSelected: (_) => setState(() {
-                _selectedFilter = value;
-                _recomputeStats();
-              }),
-              showCheckmark: false,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    icon,
+                    size: ResponsiveHelper.spacing(context, 14),
+                    color: selected ? Colors.white : AppColors.grey500,
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                  Text(
+                    label,
+                    style: ResponsiveHelper.tinyStyle(context,
+                        color: selected ? Colors.white : AppColors.grey600)
+                        .copyWith(
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          );
-        }).toList(),
-      ),
+          ),
+        );
+      }).toList(),
     );
   }
 

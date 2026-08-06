@@ -744,4 +744,253 @@ extension AttendanceFirestore on FirestoreService {
     );
   }
 
+  // ══════════════════════════════════════════════════════════
+  // 홈 요약용 마감 미처리 카운트
+  // ══════════════════════════════════════════════════════════
+
+  /// 홈 요약용 마감 미처리 일수 카운트
+  /// CloseManagementDialog와 동일 로직 — 단기+장기 모두 포함
+  /// [PERF] 오늘 이전 날짜만 검사 (미래는 마감 불가)
+  Future<int> getUnclosedDaysCount({
+    required String businessId,
+    required DateTime month,
+  }) async {
+    try {
+      final monthStart = DateTime(month.year, month.month, 1);
+      final monthEndExclusive = DateTime(month.year, month.month + 1, 1);
+      final daysInMonth = DateTime(month.year, month.month + 1, 0).day;
+      final today = DateTime.now();
+      final todayOnly = DateTime(today.year, today.month, today.day);
+
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetApplicationsByBiz',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+
+      final callResults = await Future.wait([
+        callable.call<Map<String, dynamic>>({
+          'businessId': businessId,
+          'workDateGteMs': monthStart.millisecondsSinceEpoch,
+          'workDateLtMs': monthEndExclusive.millisecondsSinceEpoch,
+          'limit': 2000,
+        }),
+        callable.call<Map<String, dynamic>>({
+          'businessId': businessId,
+          'type': AppType.longTerm,
+          'limit': 2000,
+        }),
+      ]);
+
+      final Map<String, List<ApplicationModel>> appsByDate = {};
+
+      // 단기 확정자
+      for (final e in (callResults[0].data['applications'] as List? ?? [])) {
+        final m = Map<String, dynamic>.from(e as Map);
+        final docId = m.remove('id') as String? ?? '';
+        final app = ApplicationModel.tryFromMap(m, docId);
+        if (app == null) continue;
+        if (!AppStatus.confirmedStatuses.contains(app.status)) continue;
+        if (app.workDays != null && app.workDays!.isNotEmpty) continue;
+        final dateKey = _fmtDate(app.workDate);
+        if (!appsByDate.containsKey(dateKey)) appsByDate[dateKey] = [];
+        appsByDate[dateKey]!.add(app);
+      }
+
+      // 장기 확정자 — 해당 월 활성 날짜로 확장
+      for (final e in (callResults[1].data['applications'] as List? ?? [])) {
+        final m = Map<String, dynamic>.from(e as Map);
+        final docId = m.remove('id') as String? ?? '';
+        final app = ApplicationModel.tryFromMap(m, docId);
+        if (app == null) continue;
+        if (!AppStatus.confirmedStatuses.contains(app.status)) continue;
+        if (app.workDays == null || app.workDays!.isEmpty) continue;
+        final endDate = app.actualResignDate ?? app.workEndDate;
+        if (endDate == null && app.isTerminationApproved) continue;
+        final effectiveStart = app.desiredStartDate ?? app.workDate;
+        final startOnly = DateTime(effectiveStart.year, effectiveStart.month, effectiveStart.day);
+
+        for (int d = 1; d <= daysInMonth; d++) {
+          final date = DateTime(month.year, month.month, d);
+          if (date.isBefore(startOnly)) continue;
+          if (endDate != null) {
+            final endOnly = DateTime(endDate.year, endDate.month, endDate.day);
+            if (date.isAfter(endOnly)) continue;
+          }
+          if (app.leaveDates != null &&
+              app.leaveDates!.any((ld) =>
+                  ld.year == date.year && ld.month == date.month && ld.day == date.day)) {
+            continue;
+          }
+          final isExtra = app.extraWorkDates != null &&
+              app.extraWorkDates!.any((ed) =>
+                  ed.year == date.year && ed.month == date.month && ed.day == date.day);
+          final dateKey = _fmtDate(date);
+          if (isExtra) {
+            appsByDate.putIfAbsent(dateKey, () => []);
+            if (!appsByDate[dateKey]!.any((a) => a.id == app.id)) {
+              appsByDate[dateKey]!.add(app);
+            }
+            continue;
+          }
+          final dayWeekday = FormatHelper.weekday(date);
+          if (!app.workDays!.contains(dayWeekday)) continue;
+          appsByDate.putIfAbsent(dateKey, () => []);
+          if (!appsByDate[dateKey]!.any((a) => a.id == app.id)) {
+            appsByDate[dateKey]!.add(app);
+          }
+        }
+      }
+
+      if (appsByDate.isEmpty) return 0;
+
+      // attendance 조회
+      final allAppIds = appsByDate.values.expand((a) => a.map((x) => x.id)).toSet().toList();
+      final Map<String, Map<String, String?>> attendanceByKey = {};
+      final attCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetAttendanceForClosing',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 60)));
+      final chunks = [
+        for (int i = 0; i < allAppIds.length; i += 500)
+          allAppIds.sublist(i, (i + 500).clamp(0, allAppIds.length)),
+      ];
+      final chunkResults = await Future.wait(chunks.map((chunk) => attCallable.call({
+        'businessId': businessId,
+        'applicationIds': chunk,
+        'monthStartMs': monthStart.millisecondsSinceEpoch,
+        'monthEndExclusiveMs': monthEndExclusive.millisecondsSinceEpoch,
+      })));
+      for (final r in chunkResults) {
+        for (final rec in (r.data['records'] as List? ?? [])) {
+          final m = Map<String, dynamic>.from(rec as Map);
+          final appId = m['applicationId'] as String? ?? '';
+          final wdRaw = m['workDate'] as Map?;
+          if (wdRaw == null || appId.isEmpty) continue;
+          final seconds = (wdRaw['_seconds'] as num?)?.toInt() ?? 0;
+          final workDate = DateTime.fromMillisecondsSinceEpoch(seconds * 1000).toLocal();
+          final dateKey = _fmtDate(workDate);
+          attendanceByKey['${appId}_$dateKey'] = {
+            'status': m['status'] as String? ?? '',
+            'wageStatus': m['wageStatus'] as String?,
+          };
+        }
+      }
+
+      // 날짜별 마감 여부 판정 (오늘 이전만)
+      int unclosedCount = 0;
+      for (final entry in appsByDate.entries) {
+        final dateKey = entry.key;
+        final date = DateTime.parse(dateKey);
+        if (!date.isBefore(todayOnly)) continue; // 오늘 포함 미래는 제외
+        final apps = entry.value;
+        int totalConfirmed = apps.length;
+        int closedCount = 0;
+        for (final app in apps) {
+          final att = attendanceByKey['${app.id}_$dateKey'];
+          if (att == null) {
+            // 출근기록 없음 → 미마감으로 간주
+          } else if (att['status'] == AttendanceModel.statusNoShow) {
+            closedCount++;
+          } else if (att['wageStatus'] == AttendanceModel.wageConfirmed ||
+                     att['wageStatus'] == AttendanceModel.wageTransferred) {
+            closedCount++;
+          }
+        }
+        if (totalConfirmed > 0 && totalConfirmed != closedCount) unclosedCount++;
+      }
+      return unclosedCount;
+    } catch (e) {
+      debugPrint('❌ [마감미처리] 카운트 조회 실패: $e');
+      return 0;
+    }
+  }
+
+  /// 이번 주 일별 확정 근무자 수 반환 (일~토, 단기+장기 합산)
+  /// weekStart: 해당 주 일요일 자정 (DateTime)
+  Future<Map<String, int>> getWeeklyConfirmedCounts({
+    required String businessId,
+    required DateTime weekStart,
+  }) async {
+    final weekEnd = weekStart.add(const Duration(days: 6));
+
+    // 7일 키 초기화
+    final Map<String, int> counts = {};
+    for (int d = 0; d < 7; d++) {
+      counts[_fmtDate(weekStart.add(Duration(days: d)))] = 0;
+    }
+
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetApplicationsByBiz',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+
+      final results = await Future.wait([
+        // 단기: 해당 주 날짜 범위
+        callable.call({
+          'businessId': businessId,
+          'workDateGteMs': weekStart.millisecondsSinceEpoch,
+          'workDateLteMs': weekEnd
+              .add(const Duration(days: 1))
+              .subtract(const Duration(milliseconds: 1))
+              .millisecondsSinceEpoch,
+          'limit': 500,
+        }),
+        // 장기: 종료일이 주 시작 이후인 것 (활성 계약)
+        callable.call({
+          'businessId': businessId,
+          'workEndDateGteMs': weekStart.millisecondsSinceEpoch,
+          'limit': 500,
+        }),
+      ]);
+
+      // 단기 확정자
+      for (final e in (results[0].data['applications'] as List? ?? [])) {
+        final m = Map<String, dynamic>.from(e as Map);
+        final docId = m.remove('id') as String? ?? '';
+        final app = ApplicationModel.tryFromMap(m, docId);
+        if (app == null) continue;
+        if (!AppStatus.confirmedStatuses.contains(app.status)) continue;
+        if (app.workDays != null && app.workDays!.isNotEmpty) continue;
+        final key = _fmtDate(app.workDate);
+        if (counts.containsKey(key)) counts[key] = counts[key]! + 1;
+      }
+
+      // 장기 확정자 — 요일 매칭
+      for (final e in (results[1].data['applications'] as List? ?? [])) {
+        final m = Map<String, dynamic>.from(e as Map);
+        final docId = m.remove('id') as String? ?? '';
+        final app = ApplicationModel.tryFromMap(m, docId);
+        if (app == null) continue;
+        if (!AppStatus.confirmedStatuses.contains(app.status)) continue;
+        if (app.workDays == null || app.workDays!.isEmpty) continue;
+        final endDate = app.actualResignDate ?? app.workEndDate;
+        if (endDate == null && app.isTerminationApproved) continue;
+        final effectiveStart = app.desiredStartDate ?? app.workDate;
+        final startOnly = DateTime(
+            effectiveStart.year, effectiveStart.month, effectiveStart.day);
+
+        for (int d = 0; d < 7; d++) {
+          final date = weekStart.add(Duration(days: d));
+          if (date.isBefore(startOnly)) continue;
+          if (endDate != null) {
+            final endOnly =
+                DateTime(endDate.year, endDate.month, endDate.day);
+            if (date.isAfter(endOnly)) continue;
+          }
+          if (app.leaveDates != null &&
+              app.leaveDates!.any((ld) =>
+                  ld.year == date.year &&
+                  ld.month == date.month &&
+                  ld.day == date.day)) {
+            continue;
+          }
+          final dayWeekday = FormatHelper.weekday(date);
+          if (!app.workDays!.contains(dayWeekday)) { continue; }
+          final key = _fmtDate(date);
+          if (counts.containsKey(key)) counts[key] = counts[key]! + 1;
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ [주간근무] 카운트 조회 실패: $e');
+    }
+    return counts;
+  }
 }

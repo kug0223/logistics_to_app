@@ -72,15 +72,14 @@ class _AllUsersScreenState extends State<AllUsersScreen>
       final rawList = (result.data['users'] as List?) ?? [];
 
       if (!mounted) return;
-      setState(() {
-        _users = rawList.whereType<Map>().map((data) {
-          try {
-            final d = Map<String, dynamic>.from(data);
-            final uid = d['uid'] as String? ?? '';
-            return UserModel.fromMap(d, uid);
-          } catch (_) { return null; }
-        }).whereType<UserModel>().toList();
-      });
+      final users = rawList.whereType<Map>().map((data) {
+        try {
+          final d = Map<String, dynamic>.from(data);
+          final uid = d['uid'] as String? ?? '';
+          return UserModel.fromMap(d, uid);
+        } catch (_) { return null; }
+      }).whereType<UserModel>().toList();
+      setState(() { _users = users; });
       setLoading(false);
     } catch (e) {
       if (!mounted) return;
@@ -277,11 +276,11 @@ class _AllUsersScreenState extends State<AllUsersScreen>
           _buildSearchBar(),
           _buildRoleFilter(),
           Expanded(
-            child: isLoading
-                ? const LoadingWidget(message: '사용자 목록을 불러오는 중...')
-                : _filtered.isEmpty
-                    ? _buildEmptyState()
-                    : _buildUserList(),
+            child: Builder(builder: (context) {
+              if (isLoading) return const LoadingWidget(message: '사용자 목록을 불러오는 중...');
+              final filtered = _filtered;
+              return filtered.isEmpty ? _buildEmptyState() : _buildUserList(filtered);
+            }),
           ),
         ],
       ),
@@ -358,8 +357,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
     );
   }
 
-  Widget _buildUserList() {
-    final list = _filtered;
+  Widget _buildUserList(List<UserModel> list) {
     return RefreshIndicator(
       onRefresh: _loadAllUsers,
       child: ListView.builder(
@@ -754,7 +752,7 @@ class _UserDetailSheet extends StatelessWidget {
       ('신뢰도', '${user.trustScore}점', AppColors.amber),
       ('총 근무', '${user.totalWorkDays}일', AppColors.success),
       ('노쇼', '${user.noShowCount}회', user.noShowCount > 0 ? AppColors.error : AppColors.grey400),
-      ('지각', '${user.lateCount}회', user.lateCount > 3 ? AppColors.warning : AppColors.grey400),
+      ('지각(90일)', '${user.recentLateCount}회', user.recentLateCount > 3 ? AppColors.warning : AppColors.grey400),
       ('평점', user.averageRating > 0 ? '${user.averageRating.toStringAsFixed(1)}점' : '-', AppColors.purple),
       ('리뷰', '${user.reviewCount}건', AppColors.info),
     ];

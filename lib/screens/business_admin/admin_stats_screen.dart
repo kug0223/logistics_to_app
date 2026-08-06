@@ -25,6 +25,7 @@ class AdminStatsScreen extends StatefulWidget {
 class _AdminStatsScreenState extends State<AdminStatsScreen> {
   final _service = AdminStatsService();
 
+  DateTime _buildNow = DateTime.now();
   late int _selectedYear;
   String? _filterBusinessId; // null = 전체
   bool _isLoading = true;
@@ -71,12 +72,10 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
         filterBusinessId: _filterBusinessId,
         year: _selectedYear,
       );
-      if (mounted) setState(() { _data = data; _hasError = false; });
+      if (mounted) setState(() { _data = data; _hasError = false; _isLoading = false; _isFetching = false; _buildNow = DateTime.now(); });
     } catch (e) {
       debugPrint('❌ 연간 통계 로드 실패: $e');
-      if (mounted) setState(() => _hasError = true);
-    } finally {
-      if (mounted) setState(() { _isLoading = false; _isFetching = false; });
+      if (mounted) setState(() { _hasError = true; _isLoading = false; _isFetching = false; _buildNow = DateTime.now(); });
     }
   }
 
@@ -211,7 +210,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
   // ─── 헤더 (사업장 선택 + 연도) ───────────────────────────────
 
   Widget _buildHeader(ThemeData theme) {
-    final now = DateTime.now();
+    final now = _buildNow;
     return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -559,6 +558,9 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
     final theme = Theme.of(context);
     final trends = data.monthlyTrends;
     final maxWage = trends.map((t) => t.totalWage).fold(0, (a, b) => a > b ? a : b);
+    // _buildNow 는 build() 진입 시 한 번 캡처 — getTitlesWidget·barGroups·workCount Row 에서 재사용
+    final nowMonth = _buildNow.month;
+    final isCurrentYear = _selectedYear == _buildNow.year;
 
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
@@ -647,9 +649,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                                   return const SizedBox();
                                 }
                                 final m = idx + 1;
-                                final isCurrent =
-                                    m == DateTime.now().month &&
-                                        _selectedYear == DateTime.now().year;
+                                final isCurrent = m == nowMonth && isCurrentYear;
                                 return Padding(
                                   padding: const EdgeInsets.only(top: 4),
                                   child: Text(
@@ -677,8 +677,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                         borderData: FlBorderData(show: false),
                         barGroups: trends.asMap().entries.map((e) {
                           final isCurrent =
-                              e.value.month == DateTime.now().month &&
-                                  _selectedYear == DateTime.now().year;
+                              e.value.month == nowMonth && isCurrentYear;
                           final isTouched = touchedIdx == e.key;
                           return BarChartGroupData(
                             x: e.key,
@@ -708,8 +707,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: trends.map((t) {
-              final isCurrent = t.month == DateTime.now().month &&
-                  _selectedYear == DateTime.now().year;
+              final isCurrent = t.month == nowMonth && isCurrentYear;
               return Text(
                 t.workCount > 0 ? '${t.workCount}' : '',
                 textAlign: TextAlign.center,
@@ -772,14 +770,12 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                             .copyWith(fontWeight: FontWeight.w600)),
                   ]),
                   SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                  ClipRRect(
+                  LinearProgressIndicator(
+                    value: ratio,
+                    minHeight: 6,
                     borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: ratio,
-                      minHeight: 6,
-                      backgroundColor: AppColors.grey100,
-                      valueColor: AlwaysStoppedAnimation<Color>(color),
-                    ),
+                    backgroundColor: AppColors.grey100,
+                    valueColor: AlwaysStoppedAnimation<Color>(color),
                   ),
                 ],
               ),
@@ -860,14 +856,12 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                             .copyWith(fontWeight: FontWeight.w600)),
                   ]),
                   SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                  ClipRRect(
+                  LinearProgressIndicator(
+                    value: ratio,
+                    minHeight: 6,
                     borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: ratio,
-                      minHeight: 6,
-                      backgroundColor: AppColors.grey100,
-                      valueColor: AlwaysStoppedAnimation<Color>(g.$3),
-                    ),
+                    backgroundColor: AppColors.grey100,
+                    valueColor: AlwaysStoppedAnimation<Color>(g.$3),
                   ),
                 ],
               ),

@@ -34,14 +34,16 @@ class FullMapDialog extends StatelessWidget {
           children: [
             // 전체 화면 지도
             Positioned.fill(
-              child: business.latitude != null && business.longitude != null
-                  ? KakaoMapWidget(
-                      latitude: business.latitude!,
-                      longitude: business.longitude!,
-                      placeName: business.name,
-                      showControls: true,
-                    )
-                  : const Center(child: Text('위치 정보를 불러올 수 없습니다')),
+              child: RepaintBoundary(
+                child: business.latitude != null && business.longitude != null
+                    ? KakaoMapWidget(
+                        latitude: business.latitude!,
+                        longitude: business.longitude!,
+                        placeName: business.name,
+                        showControls: true,
+                      )
+                    : const Center(child: Text('위치 정보를 불러올 수 없습니다')),
+              ),
             ),
             
             // 상단: 닫기 버튼

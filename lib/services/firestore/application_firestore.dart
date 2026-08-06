@@ -142,6 +142,31 @@ extension ApplicationFirestore on FirestoreService {
     return map;
   }
 
+  /// 미발송 계약서 지원서 조회 — CF 단일 호출로 CONTRACT_PENDING + 계약서 존재 여부 통합 처리.
+  /// 기존 2-hop(getContractPendingByBusiness → getContractStatusBatch) 직렬 호출을 대체.
+  Future<List<ApplicationModel>> getUnsentApplicationsByBusiness(
+    String businessId,
+  ) async {
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetUnsentApplicationsByBiz',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({'businessId': businessId});
+      return (result.data['applications'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return ApplicationModel.tryFromMap(raw, id);
+          })
+          .whereType<ApplicationModel>()
+          .toList();
+    } catch (e) {
+      debugPrint('❌ 미발송 지원서 조회 실패: $e');
+      return [];
+    }
+  }
+
   /// 사업장별 전체 지원서 조회 (관리자용) — [CF 이전 2026-07-13] callableGetApplicationsByBiz
   Future<List<ApplicationModel>> getApplicationsByBusinessId(
     String businessId,
@@ -721,20 +746,18 @@ extension ApplicationFirestore on FirestoreService {
       }
       if (step2and3.isNotEmpty) await Future.wait(step2and3);
 
-      // 4. 취소 후 슬롯 상태('full'→'open') 재계산
-      if (toId != null && slotId != null) {
-        await _recalculateSlotStatus(toId, slotId);
-      }
-
-      // 5. 관련 데이터 정리
+      // 4+5. [PERF-F1] 슬롯 재계산 + 관련 데이터 정리 동시 실행 (2 RTT → 1 RTT)
       final cleanupBusinessId = isAdminCancel
           ? (businessId?.isEmpty ?? true) ? null : businessId
           : null;
-      await _cleanupApplicationRelatedData(
-        applicationId: applicationId,
-        uid: uid,
-        businessId: cleanupBusinessId,
-      );
+      await Future.wait([
+        if (toId != null && slotId != null) _recalculateSlotStatus(toId, slotId),
+        _cleanupApplicationRelatedData(
+          applicationId: applicationId,
+          uid: uid,
+          businessId: cleanupBusinessId,
+        ),
+      ]);
 
       // 6. 알림 발송
       if (isAdminCancel) {
@@ -752,16 +775,19 @@ extension ApplicationFirestore on FirestoreService {
         try {
           final bId = businessId ?? '';
           if (bId.isNotEmpty) {
-            final bizDoc = await _firestore.collection('businesses').doc(bId)
+            // [PERF-F2] bizDoc + workerDoc 동시 시작 (2 RTT → 1 RTT)
+            final bizDocFuture = _firestore.collection('businesses').doc(bId)
                 .get(const GetOptions(source: Source.server));
+            final workerDocFuture = _firestore.collection('users').doc(uid)
+                .get(const GetOptions(source: Source.server));
+            final bizDoc = await bizDocFuture;
             final adminIds = List<String>.from(bizDoc.data()?['adminIds'] as List? ?? []);
             if (adminIds.isEmpty) {
               final fallback = bizDoc.data()?['ownerId'] as String?;
               if (fallback != null && fallback.isNotEmpty) adminIds.add(fallback);
             }
             if (adminIds.isNotEmpty) {
-              final workerDoc = await _firestore.collection('users').doc(uid)
-                  .get(const GetOptions(source: Source.server));
+              final workerDoc = await workerDocFuture;
               final workerName = workerDoc.data()?['name'] as String? ?? '근무자';
               await Future.wait(adminIds.map((adminUid) => createNotification(
                 NotificationModel.createConfirmationCanceledByWorker(
@@ -799,6 +825,65 @@ extension ApplicationFirestore on FirestoreService {
     } catch (e) {
       debugPrint('❌ 확정 취소 실패: $e');
       ToastHelper.showError('확정 취소에 실패했습니다');
+      return false;
+    } finally {
+      GlobalLoadingController.hide();
+    }
+  }
+
+  /// 리컨펌(재확인) 알림 응답 — 단기 근무 전용
+  ///
+  /// [response]: 'confirmed' (출근 확인) | 'declined' (취소)
+  /// declined 시 CF에서 취소 처리 + TrustScore -1 적용 후 슬롯 감소.
+  Future<bool> respondToReconfirm(
+    String applicationId, {
+    required String response,
+  }) async {
+    NetworkChecker.instance.assertOnline('리컨펌 응답을 전송하려면 인터넷 연결이 필요합니다.');
+    GlobalLoadingController.show('처리 중...');
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableRespondToReconfirm',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+      final cfResult = await callable.call<Map<String, dynamic>>({
+        'applicationId': applicationId,
+        'response': response,
+      });
+      final cfData = Map<String, dynamic>.from(cfResult.data as Map);
+
+      if (response == 'declined') {
+        final toId = cfData['toId'] as String?;
+        final slotId = cfData['slotId'] as String?;
+        final selectedWorkType = cfData['selectedWorkType'] as String?;
+
+        if (toId != null) clearCache(toId: toId);
+
+        if (toId != null) {
+          try {
+            await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+                .httpsCallable('callableDecrementSlotConfirmed',
+                    options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
+                .call({
+              'applicationId': applicationId,
+              'toId': toId,
+              'slotId': slotId,
+              'workType': selectedWorkType,
+            });
+          } catch (e) {
+            debugPrint('⚠️ [리컨펌] slot confirmedCount 감소 실패 (syncTOStats 복구 예정): $e');
+          }
+        }
+      }
+
+      return true;
+    } on FirebaseFunctionsException catch (e) {
+      if (e.code == 'already-processed') return true;
+      debugPrint('❌ respondToReconfirm CF 실패: code=${e.code}, message=${e.message}');
+      ToastHelper.showError(e.message ?? '처리에 실패했습니다. 다시 시도해주세요.');
+      return false;
+    } catch (e) {
+      debugPrint('❌ respondToReconfirm 실패: $e');
+      ToastHelper.showError('처리에 실패했습니다. 다시 시도해주세요.');
       return false;
     } finally {
       GlobalLoadingController.hide();
@@ -1013,6 +1098,98 @@ extension ApplicationFirestore on FirestoreService {
     } catch (e) {
       debugPrint('❌ 지원자 조회 실패: $e');
       return [];
+    }
+  }
+
+  /// 특정 월 × 사업장의 단기 PENDING 지원서 목록 조회 (승인대기 캘린더용)
+  Future<List<ApplicationModel>> getPendingApplicationsByMonthAndBusiness({
+    required DateTime month,
+    required String businessId,
+  }) async {
+    final monthStart = DateTime(month.year, month.month, 1);
+    final monthEnd = DateTime(month.year, month.month + 1, 1);
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetApplicationsByBiz',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessId': businessId,
+        'workDateGteMs': monthStart.millisecondsSinceEpoch,
+        'workDateLtMs': monthEnd.millisecondsSinceEpoch,
+        'limit': 2000,
+      });
+      return (result.data['applications'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return ApplicationModel.tryFromMap(raw, id);
+          })
+          .whereType<ApplicationModel>()
+          .where((app) => app.status == AppStatus.pending && !app.isLongTermApplication)
+          .toList();
+    } catch (e) {
+      debugPrint('❌ [승인대기] 월별 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// 계약 종료 예정 장기 근무자 조회 (fromDate 이후 종료, 확정 상태)
+  Future<List<ApplicationModel>> getExpiringLongTermApplications({
+    required String businessId,
+    required DateTime fromDate,
+  }) async {
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetApplicationsByBiz',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessId': businessId,
+        'workEndDateGteMs': fromDate.millisecondsSinceEpoch,
+        'limit': 200,
+      });
+      return (result.data['applications'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return ApplicationModel.tryFromMap(raw, id);
+          })
+          .whereType<ApplicationModel>()
+          .where((app) =>
+              app.isLongTermApplication &&
+              app.status == AppStatus.confirmed &&
+              !app.isTerminationApproved)
+          .toList();
+    } catch (e) {
+      debugPrint('❌ [계약종료예정] 조회 실패: $e');
+      return [];
+    }
+  }
+
+  /// 홈 요약용 승인 대기 카운트 — 날짜 제한 없이 PENDING 단기 지원 건수만 반환
+  Future<int> getAllPendingApplicationsCount(String businessId) async {
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetApplicationsByBiz',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessId': businessId,
+        'limit': 500,
+      });
+      return (result.data['applications'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) {
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return ApplicationModel.tryFromMap(raw, id);
+          })
+          .whereType<ApplicationModel>()
+          .where((app) => app.status == AppStatus.pending && !app.isLongTermApplication)
+          .length;
+    } catch (e) {
+      debugPrint('❌ [승인대기] 카운트 조회 실패: $e');
+      return 0;
     }
   }
 

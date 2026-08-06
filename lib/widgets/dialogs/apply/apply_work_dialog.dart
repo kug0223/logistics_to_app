@@ -228,7 +228,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   Future<void> _initializeData() async {
     final userProvider = context.read<UserProvider>();
     _currentUserId = userProvider.currentUser?.uid;
-    _userNoShowCount = userProvider.currentUser?.noShowCount ?? 0;
+    _userNoShowCount = userProvider.currentUser?.recentNoShowCount ?? 0;
 
     if (_currentUserId == null) {
       ToastHelper.showError('로그인이 필요합니다');

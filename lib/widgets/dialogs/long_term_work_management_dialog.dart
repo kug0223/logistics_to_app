@@ -86,13 +86,15 @@ class _LongTermWorkManagementDialogState
             Expanded(
               child: longTermWorks.isEmpty
                   ? _buildEmptyState()
-                  : ListView.builder(
-                      padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
-                      itemCount: longTermWorks.length,
-                      itemBuilder: (context, index) {
-                        return _buildWorkCard(longTermWorks[index]);
-                      },
-                    ),
+                  : Builder(builder: (context) {
+                      final now = DateTime.now();
+                      return ListView.builder(
+                        padding: ResponsiveHelper.cardPadding(context),
+                        itemCount: longTermWorks.length,
+                        itemBuilder: (context, index) =>
+                            _buildWorkCard(longTermWorks[index], now),
+                      );
+                    }),
             ),
           ],
         ),
@@ -125,7 +127,7 @@ class _LongTermWorkManagementDialogState
   }
 
   /// 근무 카드
-  Widget _buildWorkCard(ApplicationModel app) {
+  Widget _buildWorkCard(ApplicationModel app, DateTime now) {
     final hasResignRequest = app.resignStatus != null;
     final isPending = app.resignStatus == AppStatus.pending;
     final isRejected = app.resignStatus == AppStatus.rejected;
@@ -207,7 +209,7 @@ class _LongTermWorkManagementDialogState
             // 퇴사 요청 상태 표시
             if (hasResignRequest) ...[
               SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
-              _buildResignStatusBanner(app),
+              _buildResignStatusBanner(app, now),
             ],
 
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
@@ -262,7 +264,7 @@ class _LongTermWorkManagementDialogState
   }
 
   /// 퇴사 상태 배너
-  Widget _buildResignStatusBanner(ApplicationModel app) {
+  Widget _buildResignStatusBanner(ApplicationModel app, DateTime now) {
     Color bgColor;
     Color textColor;
     IconData icon;
@@ -276,7 +278,7 @@ class _LongTermWorkManagementDialogState
         icon = Icons.schedule;
         statusText = '퇴사 승인 대기중';
         final requestDate = DateFormat('M월 d일').format(app.resignRequestDate ?? DateTime.now());
-        final daysLeft = 3 - DateTime.now().difference(app.resignRequestedAt ?? DateTime.now()).inDays;
+        final daysLeft = 3 - now.difference(app.resignRequestedAt ?? now).inDays;
         detailText = '$requestDate 퇴사 요청 ($daysLeft일 후 자동 승인)';
         break;
       case AppStatus.rejected:

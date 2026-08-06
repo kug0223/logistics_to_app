@@ -309,12 +309,42 @@ export const applyRestartProgram = onCall(
       const currentLate: number = (userData.lateCount as number) ?? 0;
       const previousScore: number = (userData.trustScore as number) ?? 50;
 
-      tx.update(userRef, {
+      const cutoff90d = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+
+      // ── 90일 노쇼 날짜 배열에서 오래된 항목부터 noshowReduction 개 제거 ──
+      const allDates = (userData.noShowDates as Timestamp[] | undefined) ?? [];
+      const sorted = [...allDates].sort((a, b) => a.toMillis() - b.toMillis()); // 오래된 순
+      const datesToRemove = sorted.slice(0, noshowReduction);
+      const remainingDates = sorted.slice(noshowReduction);
+      const newRecentNoShowCount = remainingDates.filter((t) => t.toDate() >= cutoff90d).length;
+
+      // ── 90일 지각 날짜 배열에서 오래된 항목부터 lateReduction 개 제거 ──
+      const allLateDates = (userData.lateDates as Timestamp[] | undefined) ?? [];
+      const sortedLate = [...allLateDates].sort((a, b) => a.toMillis() - b.toMillis());
+      const lateDatesToRemove = sortedLate.slice(0, lateReduction);
+      const remainingLateDates = sortedLate.slice(lateReduction);
+      const newRecentLateCount = remainingLateDates.filter((t) => t.toDate() >= cutoff90d).length;
+
+      const restartUpdates: Record<string, unknown> = {
         trustScore: resetScore,
         noShowCount: Math.max(0, currentNoShow - noshowReduction),
+        recentNoShowCount: newRecentNoShowCount,
         lateCount: Math.max(0, currentLate - lateReduction),
+        recentLateCount: newRecentLateCount,
         lastRestartAt: Timestamp.now(),
-      });
+      };
+      if (datesToRemove.length > 0) {
+        restartUpdates.noShowDates = admin.firestore.FieldValue.arrayRemove(...datesToRemove);
+      }
+      if (lateDatesToRemove.length > 0) {
+        restartUpdates.lateDates = admin.firestore.FieldValue.arrayRemove(...lateDatesToRemove);
+      }
+      // 3회 미만으로 감소 시 이용 제한 해제
+      if (newRecentNoShowCount < 3) {
+        restartUpdates.restrictedUntil = admin.firestore.FieldValue.delete();
+      }
+
+      tx.update(userRef, restartUpdates);
 
       const historyRef = db.collection("restart_program_history").doc();
       tx.set(historyRef, {
@@ -929,6 +959,15 @@ export const masterScheduler = onSchedule(
     }
 
     // ═══════════════════════════════════════════════════════
+    // ✅ 매 시간 실행 — 리컨펌(재확인) 알림 발송 (단기 확정 근무 전용)
+    // H-2: 근로자에게 출근 여부 확인 알림
+    // H-1: 미응답자의 사업장 관리자에게 경고 알림
+    // ═══════════════════════════════════════════════════════
+    try {
+      await sendReconfirmNotifications(timestamp);
+    } catch (e) { console.error("❌ [리컨펌 알림] 실패:", e); }
+
+    // ═══════════════════════════════════════════════════════
     // ✅ 매 시간 실행 — pending_token_revocations 재처리 (세션 무효화 실패 retry)
     // ═══════════════════════════════════════════════════════
     try {
@@ -980,6 +1019,114 @@ export const masterScheduler = onSchedule(
     console.log("✅ [마스터 스케줄러] 완료!");
   }
 );
+// ─── 리컨펌 알림 발송 헬퍼 ──────────────────────────────────
+// masterScheduler에서 매 정시 호출.
+// H-2 윈도우: workDate가 now+2h ~ now+3h → 근로자에게 1회 리컨펌 알림
+// H-1 윈도우: workDate가 now+1h ~ now+2h, reconfirmStatus=='pending' → 관리자 경고
+async function sendReconfirmNotifications(now: admin.firestore.Timestamp): Promise<void> {
+  const nowMs = now.toMillis();
+  const h1ms = nowMs + 1 * 60 * 60 * 1000;
+  const h2ms = nowMs + 2 * 60 * 60 * 1000;
+  const h3ms = nowMs + 3 * 60 * 60 * 1000;
+
+  const h2Start = admin.firestore.Timestamp.fromMillis(h2ms);
+  const h3Start = admin.firestore.Timestamp.fromMillis(h3ms);
+  const h1Start = admin.firestore.Timestamp.fromMillis(h1ms);
+  const serverNow = admin.firestore.FieldValue.serverTimestamp();
+
+  // ── H-2: 근로자 알림 ──────────────────────────────────────
+  const h2Snap = await db.collection("applications")
+    .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
+    .where("type", "==", "short")
+    .where("workDate", ">=", h2Start)
+    .where("workDate", "<", h3Start)
+    .get();
+
+  let h2Count = 0;
+  for (const doc of h2Snap.docs) {
+    const data = doc.data();
+    if (data.reconfirmSentAt != null) continue; // 이미 발송됨
+
+    // 멱등성 트랜잭션 — 동시 실행 시 중복 발송 차단
+    let shouldSend = false;
+    await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(doc.ref);
+      if (fresh.data()?.reconfirmSentAt != null) return;
+      tx.update(doc.ref, {
+        reconfirmStatus: "pending",
+        reconfirmSentAt: serverNow,
+      });
+      shouldSend = true;
+    });
+
+    if (!shouldSend) continue;
+
+    const workerUid = data.uid as string;
+    const toTitle = (data.toTitle as string | undefined) ?? "근무";
+    const startTime = (data.startTime as string | undefined) ?? "";
+
+    await db.collection("users").doc(workerUid).collection("notifications").add({
+      title: "오늘 근무 확인",
+      body: `${toTitle}(${startTime}) 근무 예정입니다. 출근하실 수 있으신가요?`,
+      type: "reconfirmRequest",
+      data: {screen: "attendanceCheck", applicationId: doc.id},
+      createdAt: serverNow,
+    });
+    h2Count++;
+  }
+
+  // ── H-1: 미응답자 관리자 경고 ─────────────────────────────
+  const h1Snap = await db.collection("applications")
+    .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
+    .where("type", "==", "short")
+    .where("reconfirmStatus", "==", "pending")
+    .where("workDate", ">=", h1Start)
+    .where("workDate", "<", h2Start)
+    .get();
+
+  let h1Count = 0;
+  for (const doc of h1Snap.docs) {
+    const data = doc.data();
+    const businessId = (data.businessId as string | undefined) ?? "";
+    if (!businessId) continue;
+
+    try {
+      const bizSnap = await db.collection("businesses").doc(businessId).get();
+      if (!bizSnap.exists) continue;
+      const bizData = bizSnap.data()!;
+      const adminUids: string[] = [];
+      if (bizData.ownerId) adminUids.push(bizData.ownerId as string);
+      if (Array.isArray(bizData.adminIds)) adminUids.push(...(bizData.adminIds as string[]));
+
+      const workerName = (data.applicantName as string | undefined) ?? "근로자";
+      const toTitle = (data.toTitle as string | undefined) ?? "근무";
+      const startTime = (data.startTime as string | undefined) ?? "";
+      const workDateTs = data.workDate as admin.firestore.Timestamp;
+      const dateStr = new Date(workDateTs.toMillis())
+        .toLocaleDateString("ko-KR", {month: "long", day: "numeric"});
+
+      await Promise.all(
+        [...new Set(adminUids)].map((adminUid) =>
+          db.collection("users").doc(adminUid).collection("notifications").add({
+            title: "출근 미확인 알림",
+            body: `${workerName}님이 ${dateStr} ${toTitle}(${startTime}) 출근 확인에 응답하지 않았습니다.`,
+            type: "reconfirmAdminWarning",
+            data: {screen: "fixedWorker", applicationId: doc.id, businessId},
+            createdAt: serverNow,
+          })
+        )
+      );
+      h1Count++;
+    } catch (e) {
+      console.error(`⚠️ [리컨펌 H-1] 관리자 알림 실패 appId=${doc.id}:`, e);
+    }
+  }
+
+  if (h2Count > 0 || h1Count > 0) {
+    console.log(`✅ [리컨펌] H-2 발송 ${h2Count}건, H-1 관리자 경고 ${h1Count}건`);
+  }
+}
+
 // ═══════════════════════════════════════════════════════════
   // 📦 리뷰 공개 처리 (매일 자정)
   // ═══════════════════════════════════════════════════════════
@@ -5431,7 +5578,7 @@ export const callableSaveUserSignature = onCall(
 // Output: { passToken, name, gender, birthDate, phone }
 // Secrets: PORTONE_IMP_KEY, PORTONE_IMP_SECRET (포트원 콘솔 > API Keys)
 export const verifyPassAuth = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: false},
   async (request) => {
     const {imp_uid, purpose, role = "USER"} = request.data as {
       imp_uid?: string;
@@ -5488,6 +5635,7 @@ export const verifyPassAuth = onCall(
       };
       const accessToken = tokenData.response?.access_token;
       if (!accessToken) {
+        console.error("[verifyPassAuth] PortOne 토큰 발급 실패", {tokenCode: tokenData.code});
         throw new HttpsError("internal", "PortOne 토큰 발급 실패.");
       }
 
@@ -5508,6 +5656,7 @@ export const verifyPassAuth = onCall(
       };
 
       if (certData.code !== 0 || !certData.response?.certified) {
+        console.error("[verifyPassAuth] PortOne 인증 조회 실패", {code: certData.code, certified: certData.response?.certified, imp_uid});
         throw new HttpsError("permission-denied", "본인인증에 실패했습니다.");
       }
 
@@ -5518,7 +5667,16 @@ export const verifyPassAuth = onCall(
       birthDateStr = (cert.birthday ?? "").replace(/-/g, ""); // YYYY-MM-DD → YYYYMMDD
       phone = (cert.phone ?? "").replace(/-/g, "");
 
+      // [DEV] 포트원 테스트 MID(MIIiasTest)는 CI(unique_key)를 반환하지 않음.
+      // dev 프로젝트에서만 phone 기반 임시 CI로 대체 — prod에서는 오류 유지.
+      // KG이니시스 실 MID 계약 완료 후 실제 CI가 반환되면 이 분기는 자동으로 사용 안 됨.
+      if (!ci && process.env.GCLOUD_PROJECT !== "alfit-prod") {
+        ci = `DEV-CI-${phone}`;
+        console.warn("[verifyPassAuth] CI 미수신 (테스트 MID 제한) → 임시 CI 사용", {phone});
+      }
+
       if (!ci || !name || birthDateStr.length !== 8 || !phone) {
+        console.error("[verifyPassAuth] 인증 데이터 불완전", {ci: !!ci, name: !!name, birthDateStr, phone: !!phone});
         throw new HttpsError("internal", "본인인증 데이터가 불완전합니다.");
       }
     }
@@ -5609,7 +5767,7 @@ export const verifyPassAuth = onCall(
 // Input:  { passToken }
 // Output: { success: true }
 export const finalizeRegistration = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: false},
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "로그인 필요");
@@ -8600,80 +8758,6 @@ export const callableGetIdCardSignedUrl = onCall(
   }
 );
 
-// ═══════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════
-// 📍 근로자 위치 일괄 조회 (크로스-사업장 방지)
-// ═══════════════════════════════════════════════════════════
-/**
- * applicationId 목록으로 worker_locations를 Admin SDK로 일괄 조회.
- *
- * 배경: 클라이언트 whereIn + FieldPath.documentId() 복합쿼리 시 Firestore 보안 규칙의
- *   request.query.filters가 null을 반환하여 businessId 필터 강제 불가.
- *   CF Admin SDK 경유로 전환하여 서버 사이드에서 businessId 소속 검증 후 조회.
- *
- * Input:  { applicationIds: string[], businessId: string }
- * Output: { locations: Record<applicationId, WorkerLocationData> }
- */
-export const callableGetLocationsForApplications = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
-  async (request) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "로그인 필요");
-    const uid = request.auth.uid;
-    const {applicationIds, businessId} = request.data as {
-      applicationIds?: unknown;
-      businessId?: unknown;
-    };
-
-    if (!businessId || typeof businessId !== "string" || businessId.length === 0) {
-      throw new HttpsError("invalid-argument", "businessId 필수");
-    }
-    if (!Array.isArray(applicationIds)) {
-      throw new HttpsError("invalid-argument", "applicationIds는 배열이어야 합니다");
-    }
-    if (applicationIds.length === 0) return {locations: {}};
-    if (applicationIds.length > 500) {
-      throw new HttpsError("invalid-argument", "applicationIds 최대 500개");
-    }
-
-    // 역할 검증: 해당 businessId의 BUSINESS_ADMIN 또는 SUB_ADMIN인지 확인
-    const bizSnap = await db.collection("businesses").doc(businessId).get();
-    if (!bizSnap.exists) throw new HttpsError("not-found", "사업장을 찾을 수 없습니다.");
-    const bizData = bizSnap.data() ?? {};
-    const isAdmin =
-      bizData["ownerId"] === uid ||
-      (Array.isArray(bizData["adminIds"]) && (bizData["adminIds"] as string[]).includes(uid));
-
-    if (!isAdmin) {
-      const userSnap = await db.collection("users").doc(uid).get();
-      const userData = userSnap.data() ?? {};
-      const isSuperAdmin = userData["role"] === "SUPER_ADMIN";
-      const isSub = ((userData["subAdminBusinessIds"] ?? []) as string[]).includes(businessId);
-      if (!isSuperAdmin && !isSub) {
-        throw new HttpsError("permission-denied", "해당 사업장의 관리자 권한이 없습니다.");
-      }
-    }
-
-    // Admin SDK로 개별 get() — whereIn+FieldPath.documentId() 대신 병렬 조회
-    const validIds = applicationIds.filter((id): id is string => typeof id === "string");
-    const snaps = await Promise.all(
-      validIds.map((id) => db.collection("worker_locations").doc(id).get())
-    );
-
-    const locations: Record<string, unknown> = {};
-    for (const snap of snaps) {
-      if (snap.exists) {
-        const data = snap.data() ?? {};
-        // businessId 불일치 문서 필터링 — 다른 사업장 데이터 유출 차단
-        if (data["businessId"] === businessId) {
-          locations[snap.id] = serializeFirestoreData(data);
-        }
-      }
-    }
-
-    return {locations};
-  }
-);
-
 // 👥 사용자 배치 조회 (서버 사이드 소속 검증)
 // ═══════════════════════════════════════════════════════════
 /**
@@ -8999,10 +9083,45 @@ export const onAttendanceWageStatusChanged = onDocumentWritten(
 
         const newScore = Math.min(maxScore, Math.max(0, currentScore + trustChange));
 
-        tx.update(userRef, {
+        const userUpdates: Record<string, unknown> = {
           noShowCount: newNoShowCount,
           trustScore: newScore,
-        });
+        };
+
+        const attRef2 = event.data?.after?.ref;
+        if (noshowOn) {
+          // ── 최근 90일 노쇼 카운트 (현재 이벤트 +1 포함) ──
+          const nowTs2 = admin.firestore.Timestamp.now();
+          const cutoff90d2 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+          const noShowDates2 = (userData.noShowDates as admin.firestore.Timestamp[] | undefined) ?? [];
+          const recent90dCount2 = noShowDates2.filter((t) => t.toDate() >= cutoff90d2).length + 1;
+          userUpdates.noShowDates = admin.firestore.FieldValue.arrayUnion(nowTs2);
+          userUpdates.recentNoShowCount = recent90dCount2;
+          // attendance 문서에 timestamp 저장 (noshowOff 시 noShowDates arrayRemove 근거)
+          if (attRef2) {
+            tx.update(attRef2, {noShowPenaltyTimestamp: nowTs2});
+          }
+          // 최근 90일 3회 이상 → 1일 지원 제한
+          const restriction2 = _compute90dRestriction(noShowDates2, true);
+          if (restriction2 !== null) {
+            userUpdates.restrictedUntil = admin.firestore.Timestamp.fromDate(restriction2);
+          }
+        } else {
+          // ── noshowOff: 관리자 노쇼 취소 → noShowDates 배열에서 해당 timestamp 제거 + 카운트 보정 ──
+          const currentRecent = (userData.recentNoShowCount as number | undefined) ?? 0;
+          const newRecentNoShowCount = Math.max(0, currentRecent - 1);
+          userUpdates.recentNoShowCount = newRecentNoShowCount;
+          // 저장된 timestamp로 noShowDates 정확히 제거 (구버전 호환: 없으면 배열 건드리지 않음)
+          const storedNoshowTs = after?.noShowPenaltyTimestamp as admin.firestore.Timestamp | undefined;
+          if (storedNoshowTs != null) {
+            userUpdates.noShowDates = admin.firestore.FieldValue.arrayRemove(storedNoshowTs);
+          }
+          if (newRecentNoShowCount < 3) {
+            userUpdates.restrictedUntil = admin.firestore.FieldValue.delete();
+          }
+        }
+
+        tx.update(userRef, userUpdates);
 
         const histRef = db.collection("trust_score_history").doc();
         tx.set(histRef, {
@@ -9230,16 +9349,19 @@ export const callableGetMyBusiness = onCall(
   }
 );
 
-// ─── 노쇼 제한 만료 계산 헬퍼 ─────────────────────────────
-function _noShowRestrictionUntilFromCount(count: number): Date | null {
-  if (count <= 0) return null;
-  const now = new Date();
-  switch (count) {
-    case 1: return new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
-    case 2: return new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-    case 3: return new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-    default: return new Date(9999, 11, 31); // 슈퍼관리자 수동 해제 전까지 영구
-  }
+// ─── 최근 90일 노쇼 제한 헬퍼 ─────────────────────────────
+// 정책: 최근 90일 3회 이상 → 새 노쇼 발생 시마다 1일 지원 제한
+// 1~2회: 신뢰도 감점만, 이용 제한 없음
+// 운영자는 callableResetPenalty 로 수동 해제 가능
+function _compute90dRestriction(
+  noShowDates: admin.firestore.Timestamp[],
+  includeCurrentEvent: boolean
+): Date | null {
+  const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  const recent = noShowDates.filter((t) => t.toDate() >= cutoff).length +
+    (includeCurrentEvent ? 1 : 0);
+  if (recent < 3) return null;
+  return new Date(Date.now() + 24 * 60 * 60 * 1000); // 1일 고정
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -9317,18 +9439,27 @@ export const callableApplyNoShowPenalty = onCall(
       const prev = (userData.noShowCount ?? 0) as number;
       const prevScore = (userData.trustScore ?? 50) as number;
       const newCount = prev + 1;
-      const restrictedUntil = _noShowRestrictionUntilFromCount(newCount);
+
+      // ── 최근 90일 노쇼 카운트 (현재 이벤트 +1 포함) ──
+      const nowTs = admin.firestore.Timestamp.now();
+      const cutoff90d = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+      const noShowDates = (userData.noShowDates as admin.firestore.Timestamp[] | undefined) ?? [];
+      const recent90dCount = noShowDates.filter((t) => t.toDate() >= cutoff90d).length + 1;
 
       const penaltyPoints = getNoshowPenaltyFromRules(newCount, decreaseRules);
       const newScore = Math.min(maxScore, Math.max(0, prevScore + penaltyPoints));
 
       const updates: Record<string, unknown> = {
         noShowCount: newCount,
+        recentNoShowCount: recent90dCount,
+        noShowDates: admin.firestore.FieldValue.arrayUnion(nowTs),
         trustScore: newScore,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
-      if (restrictedUntil !== null) {
-        updates.restrictedUntil = admin.firestore.Timestamp.fromDate(restrictedUntil);
+      // 최근 90일 3회 이상 → 1일 지원 제한 (매 노쇼 시 갱신)
+      const restriction = _compute90dRestriction(noShowDates, true);
+      if (restriction !== null) {
+        updates.restrictedUntil = admin.firestore.Timestamp.fromDate(restriction);
       }
       tx.update(userRef, updates);
       // 멱등성 플래그 기록
@@ -9490,6 +9621,183 @@ export const callableCancelConfirmedApplication = onCall(
       workDetailId: (appData.workDetailId as string | undefined) ?? null,
       isAdminCancel,
       cancelReasonCode,
+    };
+  },
+);
+
+// ═══════════════════════════════════════════════════════════
+// ✅ 리컨펌(재확인) 알림 응답 처리 — 단기 근무 전용
+//
+// confirmed: reconfirmStatus = 'confirmed' 저장 (출근 의사 확인)
+// declined:  취소 처리 + TrustScore -1 고정 (reconfirm_cancel, 누진 없음) + 관리자 알림
+//
+// 패널티 경감 근거: H-2 사전 통보이므로 무단취소(-5~-10 누진)보다 낮음.
+// 고정 -1로 근로자의 자발적 응답을 유도.
+// noShowCount는 건드리지 않음 — restrictedUntil 미적용.
+// ═══════════════════════════════════════════════════════════
+export const callableRespondToReconfirm = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {applicationId, response} = request.data as {
+      applicationId?: unknown;
+      response?: unknown;
+    };
+
+    if (!applicationId || typeof applicationId !== "string") {
+      throw new HttpsError("invalid-argument", "applicationId 필수");
+    }
+    if (response !== "confirmed" && response !== "declined") {
+      throw new HttpsError("invalid-argument", "response는 'confirmed' 또는 'declined'이어야 합니다");
+    }
+
+    const appRef = db.collection("applications").doc(applicationId);
+    const appSnap = await appRef.get();
+    if (!appSnap.exists) throw new HttpsError("not-found", "지원 정보를 찾을 수 없습니다.");
+    const appData = appSnap.data()!;
+
+    // 본인 확인
+    const workerUid = appData.uid as string;
+    if (workerUid !== callerUid) {
+      throw new HttpsError("permission-denied", "본인 지원만 처리할 수 있습니다.");
+    }
+
+    // 상태 확인 — CONFIRMED / CONTRACT_PENDING 상태만 허용
+    const appStatus = appData.status as string;
+    if (!["CONFIRMED", "CONTRACT_PENDING"].includes(appStatus)) {
+      throw new HttpsError(
+        "failed-precondition",
+        `리컨펌 응답 불가한 상태입니다 (현재: ${appStatus})`
+      );
+    }
+
+    // 단기 근무 확인 (isLongTermApplication getter와 동일 로직)
+    const applicationType = appData.type as string | undefined;
+    const workDays = appData.workDays as unknown[] | undefined;
+    const workEndDate = appData.workEndDate as admin.firestore.Timestamp | undefined;
+    const workDateTs = appData.workDate as admin.firestore.Timestamp | undefined;
+    const isLongTerm =
+      applicationType === "long_term" ||
+      (workDays && workDays.length > 0) ||
+      (workEndDate &&
+        workDateTs &&
+        workEndDate.toMillis() !== workDateTs.toMillis());
+    if (isLongTerm) {
+      throw new HttpsError("failed-precondition", "리컨펌은 단기 근무에만 적용됩니다.");
+    }
+
+    // 멱등성 가드 — 이미 응답된 경우 재처리 방지
+    const currentReconfirmStatus = appData.reconfirmStatus as string | undefined;
+    if (currentReconfirmStatus === "confirmed" || currentReconfirmStatus === "declined") {
+      return {success: true, action: response, alreadyProcessed: true};
+    }
+
+    const businessId = (appData.businessId as string | undefined) ?? "";
+    const businessName = (appData.businessName as string | undefined) ?? "";
+    const toId = (appData.toId as string | undefined) ?? null;
+    const slotId = (appData.slotId as string | undefined) ?? null;
+    const workDetailId = (appData.workDetailId as string | undefined) ?? null;
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    // ─── confirmed: 출근 의사 기록 ──────────────────────────────────
+    if (response === "confirmed") {
+      await appRef.update({
+        reconfirmStatus: "confirmed",
+        reconfirmRespondedAt: now,
+      });
+      return {success: true, action: "confirmed"};
+    }
+
+    // ─── declined: 취소 처리 + TrustScore -1 ───────────────────────
+    await db.runTransaction(async (tx) => {
+      // TOCTOU: 상태 재확인
+      const freshSnap = await tx.get(appRef);
+      const freshStatus = freshSnap.data()?.status as string | undefined;
+      if (!freshStatus || !["CONFIRMED", "CONTRACT_PENDING"].includes(freshStatus)) return;
+
+      const userRef = db.collection("users").doc(workerUid);
+      const userSnap = await tx.get(userRef);
+      if (!userSnap.exists) return;
+      const userData = userSnap.data()!;
+      const prevScore = (userData.trustScore ?? 50) as number;
+      const newScore = Math.min(100, Math.max(0, prevScore - 1));
+
+      // 취소 상태로 변경
+      tx.update(appRef, {
+        status: "CANCELED",
+        reconfirmStatus: "declined",
+        reconfirmRespondedAt: now,
+        canceledAt: now,
+        cancelReason: "RECONFIRM_CANCELED",
+        statusHistory: admin.firestore.FieldValue.arrayUnion({
+          status: "CANCELED",
+          reason: "RECONFIRM_CANCELED",
+          by: callerUid,
+          at: admin.firestore.Timestamp.now(),
+        }),
+      });
+
+      // TrustScore -1 (reconfirm_cancel) — noShowCount/restrictedUntil 미변경
+      tx.update(userRef, {
+        trustScore: newScore,
+        updatedAt: now,
+      });
+
+      const histRef = db.collection("trust_score_history").doc();
+      tx.set(histRef, {
+        userId: workerUid,
+        businessId,
+        previousScore: prevScore,
+        newScore,
+        change: -1,
+        reason: "reconfirm_cancel",
+        createdAt: now,
+      });
+    });
+
+    // 관리자 알림 (best-effort — 취소 처리에 영향 없음)
+    try {
+      const toTitle = (appData.toTitle as string | undefined) ?? "근무";
+      const workerName = (appData.applicantName as string | undefined) ?? "근로자";
+      const dateStr = workDateTs
+        ? new Date(workDateTs.toMillis()).toLocaleDateString("ko-KR", {month: "long", day: "numeric"})
+        : "";
+
+      const bizSnap = await db.collection("businesses").doc(businessId).get();
+      if (bizSnap.exists) {
+        const bizData = bizSnap.data()!;
+        const adminUids: string[] = [];
+        if (bizData.ownerId) adminUids.push(bizData.ownerId as string);
+        if (Array.isArray(bizData.adminIds)) {
+          adminUids.push(...(bizData.adminIds as string[]));
+        }
+
+        await Promise.all(
+          [...new Set(adminUids)].map((adminUid) =>
+            db.collection("users").doc(adminUid).collection("notifications").add({
+              title: "근무 취소 알림",
+              body: `${workerName}님이 ${dateStr} ${toTitle} 근무를 취소했습니다.`,
+              type: "reconfirmDeclined",
+              data: {screen: "fixedWorker", applicationId, businessId},
+              createdAt: now,
+            })
+          )
+        );
+      }
+    } catch (e) {
+      console.error("⚠️ [reconfirm] 관리자 알림 실패:", e);
+    }
+
+    return {
+      success: true,
+      action: "declined",
+      toId,
+      slotId,
+      workDetailId,
+      businessId,
+      businessName,
+      workerUid,
     };
   },
 );
@@ -9981,6 +10289,7 @@ export const callableReportLate = onCall(
       // [MEDIUM-1 수정 2026-07-15] storedLatePoints: 패널티 적용 시점 포인트를 attendance에 저장하여
       //   late_canceled 시 tier 역산이 아닌 실제 적용값으로 정확히 복원 (tier 불일치 인플레이션 방지)
       let storedLatePoints: number | undefined;
+      let storedLateTimestamp: admin.firestore.Timestamp | undefined;
       if (attSnap.exists) {
         const attData = attSnap.data()!;
         if (attData.userId !== userId || attData.businessId !== businessId) {
@@ -9990,6 +10299,7 @@ export const callableReportLate = onCall(
         if (mode === "late" && alreadyApplied === true) return;
         if (mode === "late_canceled" && alreadyApplied !== true) return;
         storedLatePoints = attData.latePenaltyPoints as number | undefined;
+        storedLateTimestamp = attData.latePenaltyTimestamp as admin.firestore.Timestamp | undefined;
       }
 
       const userSnap = await tx.get(userRef);
@@ -9997,13 +10307,22 @@ export const callableReportLate = onCall(
       const userData = userSnap.data()!;
       const currentScore = (userData.trustScore ?? 50) as number;
       const currentLateCount = (userData.lateCount ?? 0) as number;
+      const lateDates = (userData.lateDates as admin.firestore.Timestamp[] | undefined) ?? [];
+      const cutoff90dLate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
       let newLateCount: number;
+      let newRecentLateCount: number;
       let trustChange: number;
       let trustReason: string;
+      const lateUserUpdates: Record<string, unknown> = {};
 
       if (mode === "late") {
         newLateCount = currentLateCount + 1;
+        const nowTsLate = admin.firestore.Timestamp.now();
+        const recent90dLateCount = lateDates.filter((t) => t.toDate() >= cutoff90dLate).length + 1;
+        newRecentLateCount = recent90dLateCount;
+        lateUserUpdates.lateDates = admin.firestore.FieldValue.arrayUnion(nowTsLate);
+        lateUserUpdates.recentLateCount = newRecentLateCount;
         // [HIGH-03] 3단계 지각: 1~2회=late, 3~5회=late_repeat, 6회+=late_chronic
         if (newLateCount >= 6) {
           trustChange = lateChronicPoints;
@@ -10013,6 +10332,8 @@ export const callableReportLate = onCall(
           trustChange = latePoints;
         }
         trustReason = "late";
+        // attendance 문서에 timestamp 저장 (late_canceled 시 lateDates 정확히 제거하기 위해)
+        storedLateTimestamp = nowTsLate;
       } else {
         // [MEDIUM-1 수정 2026-07-15] 저장된 패널티 포인트 우선 사용 → tier mismatch 인플레이션 차단
         // 구버전 호환: storedLatePoints 없으면 currentLateCount 기준 역산 (하위호환)
@@ -10027,18 +10348,28 @@ export const callableReportLate = onCall(
           applied = latePoints;
         }
         newLateCount = Math.max(0, currentLateCount - 1);
+        const currentRecentLate = (userData.recentLateCount as number | undefined) ?? 0;
+        newRecentLateCount = Math.max(0, currentRecentLate - 1);
+        lateUserUpdates.recentLateCount = newRecentLateCount;
+        // lateDates 배열에서 해당 timestamp 제거 (구버전 호환: storedLateTimestamp 없으면 skip)
+        if (storedLateTimestamp != null) {
+          lateUserUpdates.lateDates = admin.firestore.FieldValue.arrayRemove(storedLateTimestamp);
+        }
         trustChange = -applied;
         trustReason = "late_canceled";
       }
 
       const newScore = Math.min(maxScore, Math.max(0, currentScore + trustChange));
 
-      tx.update(userRef, {lateCount: newLateCount, trustScore: newScore});
+      tx.update(userRef, {lateCount: newLateCount, trustScore: newScore, ...lateUserUpdates});
 
-      // 멱등성 플래그 갱신 + [MEDIUM-1] 적용 포인트 저장 (취소 시 정확한 복원 근거)
+      // 멱등성 플래그 갱신 + [MEDIUM-1] 적용 포인트·timestamp 저장 (취소 시 정확한 복원 근거)
       tx.update(attRef, {
         latePenaltyApplied: mode === "late",
-        ...(mode === "late" ? {latePenaltyPoints: trustChange} : {}),
+        ...(mode === "late" ? {
+          latePenaltyPoints: trustChange,
+          latePenaltyTimestamp: storedLateTimestamp,  // lateDates arrayRemove 근거
+        } : {}),
       });
 
       const histRef = db.collection("trust_score_history").doc();
@@ -18657,13 +18988,30 @@ export const callableGetOwnerInfosByIds = onCall(
 // 배지 정의 (Dart BadgeModel.defaultBadges()와 동기화 필수)
 type BadgeDef = {
   id: string;
-  conditionType: "minScore" | "workDays" | "consecutive" | "monthlyPerfect";
+  conditionType:
+    | "minScore"
+    | "workDays"
+    | "consecutive"
+    | "monthlyPerfect"
+    | "nightShiftCount"
+    | "earlyBirdCount"
+    | "weekendCount"
+    | "sameBusinessRehire"
+    | "uniqueBusinesses";
   conditionValue: number;
   minWorkDays?: number;
   maxNoShow?: number;
   minRating?: number;
-  workType?: string;
 };
+
+// attendance 전체 조회가 필요한 conditionType 집합
+const ATTENDANCE_FETCH_TYPES = new Set<BadgeDef["conditionType"]>([
+  "nightShiftCount",
+  "earlyBirdCount",
+  "weekendCount",
+  "sameBusinessRehire",
+  "uniqueBusinesses",
+]);
 
 const BADGE_DEFINITIONS: BadgeDef[] = [
   // 레벨 배지 (신뢰도 + 복합 조건)
@@ -18672,23 +19020,45 @@ const BADGE_DEFINITIONS: BadgeDef[] = [
   {id: "badge_gold", conditionType: "minScore", conditionValue: 85, minWorkDays: 50, maxNoShow: 0},
   {id: "badge_diamond", conditionType: "minScore", conditionValue: 95, minWorkDays: 100, maxNoShow: 0, minRating: 4.5},
   // 경험 배지 (총 근무일수)
+  {id: "badge_first_step", conditionType: "workDays", conditionValue: 10},
+  {id: "badge_growing", conditionType: "workDays", conditionValue: 30},
+  {id: "badge_experienced", conditionType: "workDays", conditionValue: 50},
   {id: "badge_veteran", conditionType: "workDays", conditionValue: 100},
   {id: "badge_master", conditionType: "workDays", conditionValue: 200},
   // 근태 배지
   {id: "badge_streak", conditionType: "consecutive", conditionValue: 15},
   {id: "badge_time_master", conditionType: "consecutive", conditionValue: 30},
   {id: "badge_perfect_attendance", conditionType: "monthlyPerfect", conditionValue: 1},
-  // 업종 전문 배지
-  {id: "badge_picking_expert", conditionType: "workDays", conditionValue: 30, workType: "PICK"},
-  {id: "badge_loading_expert", conditionType: "workDays", conditionValue: 30, workType: "LOAD"},
-  {id: "badge_inspection_expert", conditionType: "workDays", conditionValue: 30, workType: "INSPECT"},
+  // 도전 배지 (Steam 업적 스타일)
+  {id: "badge_night_warrior", conditionType: "nightShiftCount", conditionValue: 15},
+  {id: "badge_early_bird", conditionType: "earlyBirdCount", conditionValue: 20},
+  {id: "badge_regular", conditionType: "sameBusinessRehire", conditionValue: 5},
+  {id: "badge_traveler", conditionType: "uniqueBusinesses", conditionValue: 3},
+  {id: "badge_weekend_warrior", conditionType: "weekendCount", conditionValue: 20},
+  {id: "badge_explorer", conditionType: "uniqueBusinesses", conditionValue: 7},
+  {id: "badge_vip_partner", conditionType: "sameBusinessRehire", conditionValue: 15},
 ];
+
+// 도전 배지용 attendance 캐시 — 동일 평가 호출 내에서 여러 배지가 같은 쿼리를 중복 실행하지 않도록
+type AttendanceCache = {
+  docs: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData>[];
+};
+
+async function fetchAttendanceCache(uid: string): Promise<AttendanceCache> {
+  const snap = await db.collection("attendance")
+    .where("userId", "==", uid)
+    .where("status", "in", ["present", "late", "early_leave"])
+    .get();
+  return {docs: snap.docs};
+}
 
 async function evaluateBadge(
   uid: string,
   userData: FirebaseFirestore.DocumentData,
-  badge: BadgeDef
+  badge: BadgeDef,
+  attendanceCache: AttendanceCache | null
 ): Promise<boolean> {
+  const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
   const trustScore = (userData.trustScore as number | undefined) ?? 0;
   const totalWorkDays = (userData.totalWorkDays as number | undefined) ?? 0;
   const noShowCount = (userData.noShowCount as number | undefined) ?? 0;
@@ -18703,21 +19073,7 @@ async function evaluateBadge(
   }
 
   if (badge.conditionType === "workDays") {
-    if (!badge.workType) return totalWorkDays >= badge.conditionValue;
-    // 업종 전문 배지: attendance 컬렉션 집계
-    const PRESENT = ["present", "late", "early_leave"];
-    const counts = await Promise.all(
-      PRESENT.map((s) =>
-        db.collection("attendance")
-          .where("userId", "==", uid)
-          .where("workType", "==", badge.workType)
-          .where("status", "==", s)
-          .count()
-          .get()
-          .then((r) => r.data().count)
-      )
-    );
-    return counts.reduce((sum, c) => sum + c, 0) >= badge.conditionValue;
+    return totalWorkDays >= badge.conditionValue;
   }
 
   if (badge.conditionType === "consecutive") {
@@ -18741,7 +19097,6 @@ async function evaluateBadge(
   }
 
   if (badge.conditionType === "monthlyPerfect") {
-    const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
     const nowKST = new Date(new Date().getTime() + KST_OFFSET_MS);
     const kstYear = nowKST.getUTCFullYear();
     const kstMonth = nowKST.getUTCMonth();
@@ -18754,10 +19109,76 @@ async function evaluateBadge(
       .where("workDate", "<", Timestamp.fromDate(firstOfThisMonth))
       .get();
     if (snap.empty) return false;
+    // [DESIGN] late(지각)는 출근 인정 — 미출근(absent/NO_SHOW)만 제외
+    // consecutive 배지와 달리 monthlyPerfect는 지각도 "출근함"으로 허용
     return snap.docs.every((doc) => {
       const s = doc.data().status as string | undefined;
       return s !== "absent" && s !== "NO_SHOW";
     });
+  }
+
+  // ── 도전 배지 — attendanceCache 사용 (사전 패치, null이면 skip) ──────
+  if (!attendanceCache) return false;
+  const {docs} = attendanceCache;
+
+  if (badge.conditionType === "nightShiftCount") {
+    // 야간: 체크인 KST 시각 22:00 이상
+    let count = 0;
+    for (const doc of docs) {
+      const checkIn = doc.data().checkIn as {toDate: () => Date} | undefined;
+      if (!checkIn) continue;
+      const kstHour = (checkIn.toDate().getUTCHours() + 9) % 24;
+      if (kstHour >= 22) count++;
+    }
+    return count >= badge.conditionValue;
+  }
+
+  if (badge.conditionType === "earlyBirdCount") {
+    // 새벽: 체크인 KST 시각 06:00 미만
+    let count = 0;
+    for (const doc of docs) {
+      const checkIn = doc.data().checkIn as {toDate: () => Date} | undefined;
+      if (!checkIn) continue;
+      const kstHour = (checkIn.toDate().getUTCHours() + 9) % 24;
+      if (kstHour < 6) count++;
+    }
+    return count >= badge.conditionValue;
+  }
+
+  if (badge.conditionType === "weekendCount") {
+    // 주말: workDate KST 요일 0(일)·6(토)
+    // workDate는 KST midnight UTC 저장 → +9h 하면 KST midnight → UTC day = KST day
+    let count = 0;
+    for (const doc of docs) {
+      const workDate = doc.data().workDate as {toDate: () => Date} | undefined;
+      if (!workDate) continue;
+      const kstDate = new Date(workDate.toDate().getTime() + KST_OFFSET_MS);
+      const day = kstDate.getUTCDay();
+      if (day === 0 || day === 6) count++;
+    }
+    return count >= badge.conditionValue;
+  }
+
+  if (badge.conditionType === "sameBusinessRehire") {
+    // 같은 사업장 최다 출근일 ≥ conditionValue
+    const bizCounts = new Map<string, number>();
+    for (const doc of docs) {
+      const bizId = doc.data().businessId as string | undefined;
+      if (!bizId) continue;
+      bizCounts.set(bizId, (bizCounts.get(bizId) ?? 0) + 1);
+    }
+    const maxCount = bizCounts.size === 0 ? 0 : Math.max(...Array.from(bizCounts.values()));
+    return maxCount >= badge.conditionValue;
+  }
+
+  if (badge.conditionType === "uniqueBusinesses") {
+    // 서로 다른 사업장 수 ≥ conditionValue
+    const uniqueBizIds = new Set<string>();
+    for (const doc of docs) {
+      const bizId = doc.data().businessId as string | undefined;
+      if (bizId) uniqueBizIds.add(bizId);
+    }
+    return uniqueBizIds.size >= badge.conditionValue;
   }
 
   return false;
@@ -18782,6 +19203,40 @@ export const callableEvaluateAndUpdateBadges = onCall(
       }
     }
 
+    // Firestore badges 컬렉션에서 활성 배지 정의 로드 (슈퍼어드민 수정사항 반영)
+    // 컬렉션이 비어 있으면 하드코딩된 BADGE_DEFINITIONS로 폴백
+    const VALID_CONDITION_TYPES = new Set<BadgeDef["conditionType"]>([
+      "minScore", "workDays", "consecutive", "monthlyPerfect",
+      "nightShiftCount", "earlyBirdCount", "weekendCount",
+      "sameBusinessRehire", "uniqueBusinesses",
+    ]);
+    const badgeDefsSnap = await db.collection("badges").where("isActive", "==", true).get();
+    const badgeDefs: BadgeDef[] = badgeDefsSnap.empty
+      ? BADGE_DEFINITIONS
+      : badgeDefsSnap.docs
+          .map((doc) => {
+            const d = doc.data();
+            const ct = d.conditionType as string;
+            if (!VALID_CONDITION_TYPES.has(ct as BadgeDef["conditionType"])) {
+              console.warn(`[badges] 알 수 없는 conditionType "${ct}" (doc: ${doc.id}), 건너뜀`);
+              return null;
+            }
+            const cv = d.conditionValue as number | undefined;
+            if (typeof cv !== "number") {
+              console.warn(`[badges] conditionValue 누락 또는 비숫자 (doc: ${doc.id}), 건너뜀`);
+              return null;
+            }
+            return {
+              id: doc.id,
+              conditionType: ct as BadgeDef["conditionType"],
+              conditionValue: cv,
+              minWorkDays: d.minWorkDaysRequired as number | undefined,
+              maxNoShow: d.maxNoShowAllowed as number | undefined,
+              minRating: d.minRatingRequired as number | undefined,
+            } as BadgeDef;
+          })
+          .filter((b): b is BadgeDef => b !== null);
+
     const userSnap = await db.collection("users").doc(targetUid).get();
     if (!userSnap.exists) throw new HttpsError("not-found", "사용자를 찾을 수 없습니다.");
     const userData = userSnap.data()!;
@@ -18789,19 +19244,24 @@ export const callableEvaluateAndUpdateBadges = onCall(
     const currentBadges = new Set<string>(
       Array.isArray(userData.badges) ? (userData.badges as string[]) : []
     );
+
+    const pendingBadges = badgeDefs.filter((b) => !currentBadges.has(b.id));
+
+    // 도전 배지 중 미획득 항목이 있으면 attendance를 한 번만 조회 (중복 쿼리 방지)
+    const needsAttendanceCache = pendingBadges.some((b) => ATTENDANCE_FETCH_TYPES.has(b.conditionType));
+    const attendanceCache = needsAttendanceCache ? await fetchAttendanceCache(targetUid) : null;
+
     // [PERF-M11] 배지 평가 순차 루프 → Promise.allSettled 병렬화
     const evalResults = await Promise.allSettled(
-      BADGE_DEFINITIONS
-        .filter((badge) => !currentBadges.has(badge.id))
-        .map(async (badge) => {
-          const earned = await evaluateBadge(targetUid, userData, badge);
-          return earned ? badge.id : null;
-        })
+      pendingBadges.map(async (badge) => {
+        const earned = await evaluateBadge(targetUid, userData, badge, attendanceCache);
+        return earned ? badge.id : null;
+      })
     );
     const newlyEarned: string[] = evalResults
       .flatMap((r, i) => {
         if (r.status === "rejected") {
-          const badgeId = BADGE_DEFINITIONS.filter((b) => !currentBadges.has(b.id))[i]?.id ?? "?";
+          const badgeId = pendingBadges[i]?.id ?? "?";
           console.warn(`[callableEvaluateAndUpdateBadges] 배지 ${badgeId} 평가 실패 (건너뜀):`, r.reason);
           return [];
         }

@@ -57,6 +57,7 @@ class _LegalTermsManagementScreenState
   }
 
   Future<void> _editItem(LegalTermsItem item) async {
+    if (_isLoading) return;
     final result = await Navigator.push<LegalTermsItem>(
       context,
       MaterialPageRoute(
@@ -349,7 +350,17 @@ class _TermsEditScreenState extends State<_TermsEditScreen> {
         actions: [
           if (_hasChanges)
             TextButton(
-              onPressed: () => Navigator.pop(context, _buildResult()),
+              onPressed: () {
+                if (_titleCtrl.text.trim().isEmpty) {
+                  ToastHelper.showError('제목을 입력하세요');
+                  return;
+                }
+                if (_contentCtrl.text.trim().isEmpty) {
+                  ToastHelper.showError('내용을 입력하세요');
+                  return;
+                }
+                Navigator.pop(context, _buildResult());
+              },
               child: Text('저장',
                   style: ResponsiveHelper.bodyStyle(context,
                       color: Colors.white, fontWeight: FontWeight.bold)),

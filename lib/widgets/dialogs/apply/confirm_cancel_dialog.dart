@@ -395,7 +395,7 @@ class ConfirmCancelDialog extends StatelessWidget {
                 children: [
                   Flexible(
                     child: Text(
-                      '현재 노쇼 횟수: ',
+                      '노쇼 (최근 90일): ',
                       style: ResponsiveHelper.smallStyle(context, color: AppColors.grey700),
                     ),
                   ),
@@ -435,7 +435,7 @@ class ConfirmCancelDialog extends StatelessWidget {
             if (currentNoShowCount == 2) ...[
               SizedBox(height: ResponsiveHelper.spacing(context, 8)),
               Text(
-                '⚠️ 이 취소 후 3회가 되어 3일간 이용이 제한됩니다!',
+                '⚠️ 이 취소 후 90일 기준 3회가 되어 1일간 지원이 제한됩니다!',
                 style: ResponsiveHelper.smallStyle(context).copyWith(
                   fontWeight: FontWeight.bold,
                   color: AppColors.error,

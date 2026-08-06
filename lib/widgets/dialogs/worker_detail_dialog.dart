@@ -171,6 +171,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
         (widget.isConfirmed && app != null)
             ? ContractService().getByApplication(app.id, businessId: app.businessId)
             : Future.value(null),
+
+        // 7: 신분증 Signed URL 선제 발급 (확정자만, silent=true — checkIdCardAccess와 병렬)
+        //    CF 내부에서 권한 재검증. 권한 없으면 null 반환(토스트 없음). 권한 있으면 즉시 표시 가능
+        widget.isConfirmed
+            ? _firestoreService.getIdCardSignedUrl(widget.user.uid, silent: true)
+            : Future.value(null),
       ]);
 
       _businessHistory = results[0] as Map<String, dynamic>?;
@@ -180,13 +186,20 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       _workTime = results[4] as String?;
       _hasWrittenReview = results[5] as bool?;
       _contract = results[6] as EmploymentContractModel?;
+      final preloadedSignedUrl = results[7] as String?;
 
       // [M-10 수정 2026-07-17] Future.wait 완료 후 mounted 체크
       //   dispose 중 Future.wait가 완료되면 타이머가 생성되어 _WorkerDetailDialogState GC 불가 → 메모리 누수
       if (!mounted) return;
       if (_idCardAccess?.isValidAccess == true) {
         _startAccessRefreshTimer();
-        _loadIdCardSignedUrl();
+        if (preloadedSignedUrl != null) {
+          // checkIdCardAccess와 병렬로 이미 발급된 URL — 추가 CF 호출 없이 즉시 사용
+          _idCardSignedUrl = preloadedSignedUrl;
+        } else {
+          // 선제 호출이 null이면 (Signed URL 없음·신분증 미등록 등) 재시도
+          _loadIdCardSignedUrl();
+        }
       }
 
       if (mounted) setState(() => _isLoading = false);
@@ -377,18 +390,30 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
               CircleAvatar(
                 radius: ResponsiveHelper.spacing(context, 28),
                 backgroundColor: Colors.white,
-                backgroundImage: widget.user.profileImageUrl != null
-                    ? CachedNetworkImageProvider(widget.user.profileImageUrl!)
-                    : null,
-                child: widget.user.profileImageUrl == null
-                    ? Text(
+                child: widget.user.profileImageUrl != null
+                    ? ClipOval(
+                        child: CachedNetworkImage(
+                          imageUrl: widget.user.profileImageUrl!,
+                          width: ResponsiveHelper.spacing(context, 56),
+                          height: ResponsiveHelper.spacing(context, 56),
+                          fit: BoxFit.cover,
+                          placeholder: (_, __) => const SizedBox.shrink(),
+                          errorWidget: (_, __, ___) => Text(
+                            widget.user.name.isNotEmpty ? widget.user.name[0] : '?',
+                            style: ResponsiveHelper.titleStyle(context).copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: theme.primaryColor,
+                            ),
+                          ),
+                        ),
+                      )
+                    : Text(
                         widget.user.name.isNotEmpty ? widget.user.name[0] : '?',
                         style: ResponsiveHelper.titleStyle(context).copyWith(
                           fontWeight: FontWeight.bold,
                           color: theme.primaryColor,
                         ),
-                      )
-                    : null,
+                      ),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 12)),
               
@@ -711,10 +736,10 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                 child: _buildStatCard(
                   context,
                   icon: Icons.schedule_outlined,
-                  label: '지각',
-                  value: '${user.lateCount}회',
-                  color: user.lateCount > 0 ? AppColors.warning : AppColors.grey400,
-                  bgColor: user.lateCount > 0 ? AppColors.warningBg : AppColors.grey100,
+                  label: '지각(90일)',
+                  value: '${user.recentLateCount}회',
+                  color: user.recentLateCount > 0 ? AppColors.warning : AppColors.grey400,
+                  bgColor: user.recentLateCount > 0 ? AppColors.warningBg : AppColors.grey100,
                 ),
               ),
             ],
@@ -1220,6 +1245,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                           context,
                           imageUrl: _idCardSignedUrl,
                           title: '신분증',
+                          cacheKey: 'id_card_${widget.user.uid}',
                         ),
                         child: Stack(
                           children: [
@@ -1234,6 +1260,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                                 borderRadius: BorderRadius.circular(8),
                                 child: CachedNetworkImage(
                                   imageUrl: _idCardSignedUrl!,
+                                  // Signed URL은 호출마다 달라지므로 UID 기반 cacheKey로 이미지 캐시 재사용
+                                  cacheKey: 'id_card_${widget.user.uid}',
+                                  memCacheWidth: (MediaQuery.sizeOf(context).width * MediaQuery.devicePixelRatioOf(context)).round(),
                                   fit: BoxFit.contain,
                                   placeholder: (context, url) => const LoadingWidget(),
                                   errorWidget: (context, url, error) => Center(
@@ -2031,13 +2060,14 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
             status: IdCardAccessStatus.pending,
             requestedAt: DateTime.now(),
           );
+          _isLoading = false;
         });
       }
     } catch (e) {
       debugPrint('❌ 신분증 열람 요청 실패: $e');
       if (mounted) ToastHelper.showError('신분증 열람 요청 중 오류가 발생했습니다');
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted && _isLoading) setState(() => _isLoading = false);
     }
   }
 

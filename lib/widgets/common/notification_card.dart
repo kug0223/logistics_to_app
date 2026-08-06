@@ -33,6 +33,8 @@ class _NotificationCardState extends State<NotificationCard>
   static const double _revealWidth = 128.0;
 
   late final AnimationController _ctrl;
+  // (1 - value*4).clamp(0,1): value 0→0.25 구간에서 1→0으로 페이드
+  late final Animation<double> _badgeFade;
 
   @override
   void initState() {
@@ -41,6 +43,9 @@ class _NotificationCardState extends State<NotificationCard>
       vsync: this,
       duration: const Duration(milliseconds: 220),
     );
+    _badgeFade = Tween<double>(begin: 1.0, end: 0.0)
+        .chain(CurveTween(curve: const Interval(0.0, 0.25)))
+        .animate(_ctrl);
     widget.openCardIdNotifier?.addListener(_onOpenCardChanged);
   }
 
@@ -272,12 +277,8 @@ class _NotificationCardState extends State<NotificationCard>
 
                     // 미읽음 뱃지 — 스와이프 시 삭제 버튼과 겹치지 않도록 페이드아웃
                     if (isUnread)
-                      AnimatedBuilder(
-                        animation: _ctrl,
-                        builder: (_, child) => Opacity(
-                          opacity: (1.0 - _ctrl.value * 4).clamp(0.0, 1.0),
-                          child: child,
-                        ),
+                      FadeTransition(
+                        opacity: _badgeFade,
                         child: Container(
                           width: 8,
                           height: 8,
@@ -369,6 +370,8 @@ class _NotificationCardState extends State<NotificationCard>
         return Icons.how_to_reg;
       case NotificationType.memberInvitationRejected:
         return Icons.person_remove;
+      case NotificationType.resignReminder:
+        return Icons.alarm;
       case NotificationType.workTypeChanged:
         return Icons.swap_horiz;
       case NotificationType.interimSettlementRequested:
@@ -377,6 +380,8 @@ class _NotificationCardState extends State<NotificationCard>
         return Icons.account_balance_wallet;
       case NotificationType.interimSettlementRejected:
         return Icons.money_off;
+      case NotificationType.toPostingExpiringTomorrow:
+        return Icons.event_note;
       case NotificationType.systemNotice:
         return Icons.campaign;
       case NotificationType.other:
@@ -437,6 +442,8 @@ class _NotificationCardState extends State<NotificationCard>
         return AppColors.success;
       case NotificationType.memberInvitationRejected:
         return AppColors.grey500;
+      case NotificationType.resignReminder:
+        return AppColors.warning;
       case NotificationType.systemNotice:
         return AppColors.info;
       case NotificationType.workTypeChanged:
@@ -447,6 +454,8 @@ class _NotificationCardState extends State<NotificationCard>
         return AppColors.success;
       case NotificationType.interimSettlementRejected:
         return AppColors.error;
+      case NotificationType.toPostingExpiringTomorrow:
+        return AppColors.warning;
       case NotificationType.applicationCanceled:
       case NotificationType.other:
         return AppColors.grey500;

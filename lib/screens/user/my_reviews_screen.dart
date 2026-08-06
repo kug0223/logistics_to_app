@@ -33,7 +33,10 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
   @override
   void initState() {
     super.initState();
-    _loadReviews();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _loadReviews();
+    });
   }
 
   Future<void> _loadReviews() async {

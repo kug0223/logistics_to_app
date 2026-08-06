@@ -11,6 +11,8 @@ class NotificationProvider with ChangeNotifier {
   List<NotificationModel> _streamNotifications = [];
   // loadMore()로 추가 로드된 오래된 알림
   List<NotificationModel> _additionalNotifications = [];
+  // notifications 병합 결과 캐시 — 두 소스 중 하나가 바뀔 때만 재계산
+  List<NotificationModel>? _mergedCache;
 
   bool _isLoading = false;
   bool _hasError = false;
@@ -26,14 +28,18 @@ class NotificationProvider with ChangeNotifier {
 
   // ── Getters ───────────────────────────────────────────────
 
-  /// 스트림 + 추가 로드된 알림 병합 (중복 제거)
-  List<NotificationModel> get notifications {
+  /// 스트림 + 추가 로드된 알림 병합 (중복 제거) — 소스 변경 시에만 재계산
+  List<NotificationModel> get notifications => _mergedCache ??= _buildMerged();
+  List<NotificationModel> _buildMerged() {
     if (_additionalNotifications.isEmpty) return _streamNotifications;
     final streamIds = _streamNotifications.map((n) => n.id).toSet();
     final extra = _additionalNotifications.where((n) => !streamIds.contains(n.id));
     return [..._streamNotifications, ...extra];
   }
+  void _invalidateCache() => _mergedCache = null;
 
+  List<NotificationModel> get unreadNotifications => notifications.where((n) => !n.isRead).toList();
+  List<NotificationModel> get adminNotifications  => notifications.where((n) => kAdminNotifTypes.contains(n.type)).toList();
   int get unreadCount => notifications.where((n) => !n.isRead).length;
   bool get isLoading => _isLoading;
   bool get hasError => _hasError;
@@ -80,6 +86,7 @@ class NotificationProvider with ChangeNotifier {
     _userId = null;
     _streamNotifications = [];
     _additionalNotifications = [];
+    _invalidateCache();
     _hasMore = false;
     _isLoadingMore = false;
     _isLoading = false;
@@ -94,6 +101,7 @@ class NotificationProvider with ChangeNotifier {
     // 기존 구독 취소 + 페이지네이션 상태 초기화
     _stopListening();
     _additionalNotifications = [];
+    _invalidateCache();
     _hasMore = false;
     _isLoadingMore = false;
 
@@ -120,6 +128,7 @@ class NotificationProvider with ChangeNotifier {
               // additionalNotifications가 이미 로드된 경우 loadMore 결과를 유지
               if (_additionalNotifications.isEmpty) _hasMore = false;
             }
+            _invalidateCache();
             _isLoading = false;
             _hasError = false;
             notifyListeners();
@@ -166,6 +175,7 @@ class NotificationProvider with ChangeNotifier {
       // reload()가 _additionalNotifications를 이미 초기화한 경우 덮어쓰지 않음
       if (_disposed || genSnapshot != _generation) return;
       _additionalNotifications = [..._additionalNotifications, ...page.records];
+      _invalidateCache();
       _hasMore = page.hasMore;
     } catch (e) {
       debugPrint('❌ 알림 더 보기 실패: $e');
@@ -212,7 +222,7 @@ class NotificationProvider with ChangeNotifier {
         return n;
       }).toList();
     }
-    if (changed) notifyListeners();
+    if (changed) { _invalidateCache(); notifyListeners(); }
   }
 
   /// 모든 알림 읽음 처리 — true: 성공, false: 실패
@@ -226,6 +236,7 @@ class NotificationProvider with ChangeNotifier {
     if (_additionalNotifications.isNotEmpty) {
       _additionalNotifications =
           _additionalNotifications.map((n) => n.copyWith(isRead: true)).toList();
+      _invalidateCache();
       notifyListeners();
     }
     return success;

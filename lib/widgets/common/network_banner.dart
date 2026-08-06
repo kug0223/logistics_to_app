@@ -37,9 +37,9 @@ class _NetworkBannerState extends State<NetworkBanner>
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<NetworkProvider>(
-      builder: (context, network, child) {
-        final isOnline = network.isOnline;
+    return Selector<NetworkProvider, bool>(
+      selector: (_, p) => p.isOnline,
+      builder: (context, isOnline, child) {
 
         // 초기 오프라인 상태 또는 상태 변경 시 애니메이션
         if (_prevOnline != isOnline) {

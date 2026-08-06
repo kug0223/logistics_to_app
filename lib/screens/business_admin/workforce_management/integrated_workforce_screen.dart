@@ -10,7 +10,7 @@ import 'workforce_list_view.dart';
 import 'workforce_calendar_view.dart';
 import '../../../widgets/common/gradient_scaffold.dart';
 import '../../../widgets/common/app_empty_state.dart';
-import '../../../widgets/common/loading_widget.dart';
+import '../../../widgets/common/skeleton_widget.dart';
 import '../../../theme/app_colors.dart';
 import '../../../services/fcm_service.dart';
 import '../business_list_screen.dart';
@@ -46,7 +46,10 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _loadBusinessIds();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _loadBusinessIds();
+    });
     _fcmRefreshCallback = () { if (mounted) _controller.reload(context); };
     FCMService().addAdminRefreshListener(_fcmRefreshCallback);
   }
@@ -161,7 +164,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
       return GradientScaffold(
         title: '공고 관리',
         body: _isLoading
-            ? const LoadingWidget()
+            ? const WorkforceListSkeleton()
             : AppEmptyState(
                 icon: Icons.business_center,
                 title: '등록된 사업장이 없습니다',
@@ -234,17 +237,17 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
           ),
           const Spacer(),
           if (!_isCalendarView)
-            Consumer<WorkforceController>(
-              builder: (ctx, controller, _) => _buildFilterButton(ctx, controller),
+            Selector<WorkforceController, ({bool hasFilters, int count})>(
+              selector: (_, c) => (hasFilters: c.hasActiveFilters, count: c.activeFilterCount),
+              builder: (ctx, data, _) => _buildFilterButton(ctx, data.hasFilters, data.count),
             ),
         ],
       ),
     );
   }
 
-  Widget _buildFilterButton(BuildContext ctx, WorkforceController controller) {
+  Widget _buildFilterButton(BuildContext ctx, bool hasFilters, int filterCount) {
     final theme = Theme.of(ctx);
-    final hasFilters = controller.hasActiveFilters;
 
     return Material(
       color: hasFilters
@@ -252,7 +255,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
           : Colors.transparent,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
-        onTap: controller.requestShowFilter,
+        onTap: () => ctx.read<WorkforceController>().requestShowFilter(),
         borderRadius: BorderRadius.circular(12),
         child: Container(
           padding: EdgeInsets.symmetric(
@@ -296,7 +299,7 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
                     ),
                     child: Center(
                       child: Text(
-                        '${controller.activeFilterCount}',
+                        '$filterCount',
                         style: ResponsiveHelper.tinyStyle(
                           ctx,
                           color: Colors.white,

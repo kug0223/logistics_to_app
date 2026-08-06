@@ -1,5 +1,7 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:provider/provider.dart';
+import '../../../providers/user_provider.dart';
 
 import '../../../models/core/work_detail_model.dart';
 import '../../../services/firestore_service.dart';
@@ -461,6 +463,11 @@ class WorkDetailManagementDialog {
 
   // 일괄 마감
   Future<void> _handleBulkClose(List<WorkDetailModel> works) async {
+    // TO-05: 업무별 마감 권한 확인
+    if (!context.read<UserProvider>().can((p) => p.canManageTo)) {
+      ToastHelper.showWarning('TO 관리 권한이 없습니다.');
+      return;
+    }
     if (_isProcessing) return;
     _isProcessing = true;
     try {
@@ -481,16 +488,16 @@ class WorkDetailManagementDialog {
       }
       final now = DateTime.now();
       try {
-        for (var work in works) {
-          await firestoreService.closeWorkDetail(
-            toId: toItem.to.id,
-            workDetailId: work.id,
-            adminUID: adminUID,
-            slotId: toItem.slot?.id,
-          );
-          if (!context.mounted) return;
+        await Future.wait(works.map((work) => firestoreService.closeWorkDetail(
+          toId: toItem.to.id,
+          workDetailId: work.id,
+          adminUID: adminUID,
+          slotId: toItem.slot?.id,
+        )));
+        if (!context.mounted) return;
 
-          // ⭐ 로컬 데이터 업데이트
+        // ⭐ 로컬 데이터 일괄 업데이트
+        for (final work in works) {
           final index = toItem.workDetails.indexWhere((w) => w.id == work.id);
           if (index != -1) {
             toItem.workDetails[index] = work.copyWith(
@@ -523,6 +530,10 @@ class WorkDetailManagementDialog {
 
   // 일괄 재오픈
   Future<void> _handleBulkReopen(List<WorkDetailModel> works) async {
+    if (!context.read<UserProvider>().can((p) => p.canManageTo)) {
+      ToastHelper.showWarning('TO 관리 권한이 없습니다.');
+      return;
+    }
     if (_isProcessing) return;
     _isProcessing = true;
     try {
@@ -542,16 +553,16 @@ class WorkDetailManagementDialog {
         return;
       }
       try {
-        for (var work in works) {
-          await firestoreService.reopenWorkDetail(
-            toId: toItem.to.id,
-            workDetailId: work.id,
-            adminUID: adminUID,
-            slotId: toItem.slot?.id,
-          );
-          if (!context.mounted) return;
+        await Future.wait(works.map((work) => firestoreService.reopenWorkDetail(
+          toId: toItem.to.id,
+          workDetailId: work.id,
+          adminUID: adminUID,
+          slotId: toItem.slot?.id,
+        )));
+        if (!context.mounted) return;
 
-          // ⭐ 로컬 데이터 업데이트 (clearClosedAt 사용)
+        // ⭐ 로컬 데이터 일괄 업데이트 (clearClosedAt 사용)
+        for (final work in works) {
           final index = toItem.workDetails.indexWhere((w) => w.id == work.id);
           if (index != -1) {
             toItem.workDetails[index] = work.copyWith(clearClosedAt: true);
@@ -580,6 +591,10 @@ class WorkDetailManagementDialog {
 
   // 긴급모집 종료
   Future<void> _handleBulkStopEmergency(List<WorkDetailModel> works) async {
+    if (!context.read<UserProvider>().can((p) => p.canManageTo)) {
+      ToastHelper.showWarning('TO 관리 권한이 없습니다.');
+      return;
+    }
     if (_isProcessing) return;
     _isProcessing = true;
     try {
@@ -598,16 +613,16 @@ class WorkDetailManagementDialog {
         ToastHelper.showError('로그인 정보를 찾을 수 없습니다');
         return;
       }
-      for (var work in works) {
-        await firestoreService.stopEmergencyRecruitment(
-          toId: toItem.to.id,
-          workDetailId: work.id,
-          adminUID: adminUID,
-          slotId: toItem.slot?.id,
-        );
-        if (!context.mounted) return;
+      await Future.wait(works.map((work) => firestoreService.stopEmergencyRecruitment(
+        toId: toItem.to.id,
+        workDetailId: work.id,
+        adminUID: adminUID,
+        slotId: toItem.slot?.id,
+      )));
+      if (!context.mounted) return;
 
-        // ⭐ 로컬 데이터 업데이트 (clearEmergency 사용)
+      // ⭐ 로컬 데이터 일괄 업데이트 (clearEmergency 사용)
+      for (final work in works) {
         final index = toItem.workDetails.indexWhere((w) => w.id == work.id);
         if (index != -1) {
           toItem.workDetails[index] = work.copyWith(clearEmergency: true);

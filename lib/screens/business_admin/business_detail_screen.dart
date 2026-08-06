@@ -705,16 +705,15 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
                         width: 100,
                         height: 100,
                         margin: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 8)),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: ImageHelper.buildCachedImage(
-                            _currentBusiness.transportImageUrls![i],
-                            width: 100,
-                            height: 100,
-                            fit: BoxFit.cover,
-                            memCacheWidth: 200,
-                            fadeInDuration: const Duration(milliseconds: 150),
-                          ),
+                        clipBehavior: Clip.hardEdge,
+                        decoration: BoxDecoration(borderRadius: BorderRadius.circular(10)),
+                        child: ImageHelper.buildCachedImage(
+                          _currentBusiness.transportImageUrls![i],
+                          width: 100,
+                          height: 100,
+                          fit: BoxFit.cover,
+                          memCacheWidth: 200,
+                          fadeInDuration: const Duration(milliseconds: 150),
                         ),
                       ),
                     ),
@@ -769,14 +768,16 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
               // 지도 미리보기
               if (_currentBusiness.latitude != null && _currentBusiness.longitude != null) ...[
                 SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                GestureDetector(
-                  onTap: () => _showFullMap(context),
-                  child: KakaoMapWidget(
-                    latitude: _currentBusiness.latitude!,
-                    longitude: _currentBusiness.longitude!,
-                    placeName: _currentBusiness.name,
-                    height: ResponsiveHelper.spacing(context, 250),
-                    showControls: false,
+                RepaintBoundary(
+                  child: GestureDetector(
+                    onTap: () => _showFullMap(context),
+                    child: KakaoMapWidget(
+                      latitude: _currentBusiness.latitude!,
+                      longitude: _currentBusiness.longitude!,
+                      placeName: _currentBusiness.name,
+                      height: ResponsiveHelper.spacing(context, 250),
+                      showControls: false,
+                    ),
                   ),
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),

@@ -11,13 +11,16 @@
 //   F. canManageWorkers — 근무자 관리 기능 접근
 //   G. canManageWage — 급여·통계 기능 접근
 //   H. canManageContract — 계약서 기능 접근
-//   I. 멤버 관리 접근 불가 조건 (SubAdmin 역할 자체 차단)
+//   I. 멤버 관리 완전 숨김 (BUSINESS_ADMIN 전용, SubAdmin 접근 불가)
 //   J. 사업장 편집 불가 조건
 //   K. 관리자/근무자 모드 전환 로직
 //   L. 네비게이션 라우팅 (isAdminMode에 따른 화면 분기)
 //   M. 권한 조합 16가지 × 메뉴 전체 파라미터화
 //   N. 사업장 데이터 격리 (SubAdmin은 subAdminOf 사업장만)
 //   O. 엣지케이스 / 경계값
+//   AN. TO 삭제 권한 — SubAdmin canManageTo 이양 (동일 권한 위임 원칙)
+//   AO. 설정 화면 멤버 관리 메뉴 숨김 vs 사업장 설정 섹션 분리
+//   AP. 다중 사업장 SubAdmin — BusinessPickerHelper / create_to_screen
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ALfit/models/core/business_member_model.dart';
@@ -32,6 +35,7 @@ UserModel _user({
   String? businessId,
   List<String>? managedBusinessIds,
   String? subAdminOf,
+  List<String>? subAdminBizIds,
 }) => UserModel(
   uid: 'uid1',
   username: 'tester',
@@ -40,7 +44,7 @@ UserModel _user({
   role: role,
   businessId: businessId,
   managedBusinessIds: managedBusinessIds,
-  subAdminOf: subAdminOf,
+  subAdminBusinessIds: subAdminBizIds ?? (subAdminOf != null ? [subAdminOf] : []),
 );
 
 MemberPermissions _perm({
@@ -91,14 +95,14 @@ bool can(UserModel user, MemberPermissions? perms, bool Function(MemberPermissio
 /// UserProvider.effectiveBusinessId 재현
 String? effectiveBusinessId(UserModel user) {
   if (user.isBusinessAdmin) return user.businessId;
-  if (user.isSubAdmin) return user.subAdminOf;
+  if (user.isSubAdmin) return user.subAdminBusinessIds.firstOrNull;
   return null;
 }
 
 /// WorkforceController.businessIds 할당 로직 재현
 List<String>? resolveBusinessIds(UserModel user) {
   if (user.isSuperAdmin) return null;
-  if (user.isSubAdmin && user.subAdminOf != null) return [user.subAdminOf!];
+  if (user.isSubAdmin) return user.subAdminBusinessIds;
   return user.managedBusinessIds;
 }
 
@@ -120,8 +124,16 @@ bool showStats(UserModel u, MemberPermissions? p) =>
 
 bool showSettings(UserModel u) => true;  // 항상 표시
 
-/// 멤버 관리 접근 가능 조건 (settings_screen 로직)
-bool canAccessMemberManagement(UserModel user) => !(user.isSubAdmin);
+/// 멤버 관리 메뉴 노출 조건 (settings_screen: BUSINESS_ADMIN 전용)
+/// SubAdmin은 설정 화면에서도 멤버 관리 항목 완전 숨김 (관리자 위임 설계)
+bool canAccessMemberManagement(UserModel user) =>
+    user.role == UserRole.BUSINESS_ADMIN;
+
+/// TO 삭제 권한 (admin_to_group_card: isBusinessAdmin || isSuperAdmin || canManageTo 이양)
+/// SubAdmin만 canManageTo 위임 대상 — 일반 USER는 perms 미로드이므로 false
+bool canDeleteTO(UserModel user, MemberPermissions? perms) =>
+    user.isBusinessAdmin || user.isSuperAdmin ||
+    (user.isSubAdmin && can(user, perms, (p) => p.canManageTo));
 
 /// 사업장 편집 버튼 노출 조건
 bool canEditBusiness(UserModel user) => !user.isSubAdmin;
@@ -156,7 +168,10 @@ void _runSubAdminIdentificationTests() {
       test('A1-04 SUPER_ADMIN + subAdminOf="biz1" → isSubAdmin=false', () {
         expect(_user(role: UserRole.SUPER_ADMIN, subAdminOf: 'biz1').isSubAdmin, isFalse);
       });
-      test('A1-05 USER + subAdminOf="" → isSubAdmin=true (빈 문자열은 non-null)', () {
+      test('A1-05 USER + subAdminOf="" → isSubAdmin=true (헬퍼 내부에서 [""] 생성)', () {
+        // 헬퍼는 null/non-null만 구분 (빈 문자열 → [""] → isNotEmpty=true)
+        // 실제 Firestore: _parseSubAdminBusinessIds에서 isNotEmpty 조건으로 빈 문자열 필터 → []
+        // 직접 생성자 경로는 빈 문자열 필터링 미적용 (Firestore에서는 발생 불가한 케이스)
         expect(_user(role: UserRole.USER, subAdminOf: '').isSubAdmin, isTrue);
       });
     });
@@ -187,7 +202,7 @@ void _runSubAdminIdentificationTests() {
       });
       test('A3-03 SubAdmin 제거 후 isSubAdmin=false', () {
         final u = _user(role: UserRole.USER, subAdminOf: 'biz1');
-        final removed = u.copyWith(clearSubAdminOf: true);
+        final removed = u.copyWith(subAdminBusinessIds: []);
         expect(removed.isSubAdmin, isFalse);
       });
     });
@@ -645,39 +660,40 @@ void _runCanManageContractTests() {
 }
 
 // ════════════════════════════════════════════════════════════
-// I. 멤버 관리 접근 불가
+// I. 멤버 관리 화면 접근 조건
 // ════════════════════════════════════════════════════════════
 
 void _runMemberManagementAccessTests() {
-  group('I. 멤버 관리 접근 불가 (SubAdmin 역할 자체 차단)', () {
-    test('I-01 SubAdmin → 멤버 관리 불가', () {
+  group('I. 멤버 관리 메뉴 접근 조건 (SubAdmin 완전 차단)', () {
+    test('I-01 SubAdmin → 멤버 관리 메뉴 숨김 (접근 불가)', () {
       expect(canAccessMemberManagement(_subAll), isFalse);
     });
-    test('I-02 SubAdmin + 전체 권한 → 여전히 멤버 관리 불가', () {
+    test('I-02 SubAdmin + 전체 권한 보유라도 → 멤버 관리 메뉴 미표시', () {
       expect(canAccessMemberManagement(_user(role: UserRole.USER, subAdminOf: 'biz1')), isFalse);
     });
-    test('I-03 BUSINESS_ADMIN → 멤버 관리 가능', () {
+    test('I-03 BUSINESS_ADMIN → 멤버 관리 메뉴 표시', () {
       expect(canAccessMemberManagement(_bizAdmin), isTrue);
     });
-    test('I-04 SUPER_ADMIN → 멤버 관리 가능', () {
-      expect(canAccessMemberManagement(_superAdmin), isTrue);
+    test('I-04 SUPER_ADMIN → 별도 관리자 메뉴 사용 (멤버 관리 항목 없음)', () {
+      expect(canAccessMemberManagement(_superAdmin), isFalse);
     });
-    test('I-05 일반 USER(subAdminOf=null) → 멤버 관리 가능 (관리자 화면 자체 진입 불가)', () {
-      expect(canAccessMemberManagement(_regularUser), isTrue);
+    test('I-05 일반 USER(subAdminOf=null) → 멤버 관리 메뉴 미표시', () {
+      expect(canAccessMemberManagement(_regularUser), isFalse);
     });
-    test('I-06 SubAdmin에서 subAdminOf 제거 후 → 멤버 관리 가능', () {
-      final removed = _subAll.copyWith(clearSubAdminOf: true);
-      expect(canAccessMemberManagement(removed), isTrue);
+    test('I-06 SubAdmin에서 subAdminBusinessIds 제거 후 → 접근 불가 (isSubAdmin=false)', () {
+      final removed = _subAll.copyWith(subAdminBusinessIds: []);
+      expect(canAccessMemberManagement(removed), isFalse);
     });
-    test('I-07 멤버 초대 불가 (SubAdmin은 초대 발송 권한 없음)', () {
-      // isAdminOf(businessId) 체크 → SubAdmin은 해당 안 됨
+    test('I-07 SubAdmin → isBusinessAdmin=false (멤버 관리 메뉴 숨김 핵심 조건)', () {
       expect(_subAll.isSubAdmin, isTrue);
       expect(_subAll.isBusinessAdmin, isFalse);
-    });
-    test('I-08 멤버 권한 수정 불가 (BUSINESS_ADMIN만 가능)', () {
       expect(canAccessMemberManagement(_subAll), isFalse);
     });
-    test('I-09 멤버 제거 불가 (BUSINESS_ADMIN만 가능)', () {
+    test('I-08 SubAdmin → 사업장 설정 섹션은 접근 가능, 멤버 관리 항목만 숨김', () {
+      expect(canAccessMemberManagement(_subAll), isFalse); // 멤버 관리 메뉴 숨김
+      expect(_subAll.isSubAdmin, isTrue);                  // 설정 섹션 자체는 isSubAdmin 조건으로 표시
+    });
+    test('I-09 SubAdmin → 멤버 관리 메뉴 없음 (관리자 위임 설계: 멤버 관리 권한 미부여)', () {
       expect(canAccessMemberManagement(_subAll), isFalse);
     });
   });
@@ -897,7 +913,7 @@ void _runAdminComparisonTests() {
       test('N3-01 BUSINESS_ADMIN → 멤버 관리 가능', () {
         expect(canAccessMemberManagement(bizAdmin), isTrue);
       });
-      test('N3-02 SubAdmin → 멤버 관리 불가', () {
+      test('N3-02 SubAdmin → 멤버 관리 메뉴 없음 (설정 화면에서 숨김)', () {
         expect(canAccessMemberManagement(_user(role: UserRole.USER, subAdminOf: 'biz1')), isFalse);
       });
     });
@@ -937,7 +953,7 @@ void _runRealWorldScenarioTests() {
       expect(showToManage(sub, _permTo), isTrue);
       expect(showWage(sub, _permTo), isFalse);
       expect(showContract(sub, _permTo), isFalse);
-      expect(canAccessMemberManagement(sub), isFalse);
+      expect(canAccessMemberManagement(sub), isFalse); // 멤버 관리 메뉴 숨김
     });
 
     test('O-02 [현장 담당자] workers만 있는 서브관리자 → 공고관리만 가능(공고등록불가)', () {
@@ -966,13 +982,13 @@ void _runRealWorldScenarioTests() {
       expect(showContract(sub, _permToWorkers), isFalse);
     });
 
-    test('O-06 [종합 담당자] 전체 권한 → 멤버관리 제외 모두 가능', () {
+    test('O-06 [종합 담당자] 전체 권한 → 멤버관리 메뉴 숨김, 나머지 모두 가능', () {
       expect(showToCreate(sub, _permAll), isTrue);
       expect(showToManage(sub, _permAll), isTrue);
       expect(showWage(sub, _permAll), isTrue);
       expect(showContract(sub, _permAll), isTrue);
       expect(showStats(sub, _permAll), isTrue);
-      expect(canAccessMemberManagement(sub), isFalse); // 멤버관리는 여전히 불가
+      expect(canAccessMemberManagement(sub), isFalse); // 멤버 관리 메뉴 없음 (전체 권한 보유 무관)
     });
 
     test('O-07 [서브관리자 로그인] 기본 근무자 모드 → 관리자 홈 미표시', () {
@@ -991,7 +1007,7 @@ void _runRealWorldScenarioTests() {
     });
 
     test('O-10 [서브관리자 탈퇴] subAdminOf 제거 후 → 관리자 기능 전부 불가', () {
-      final removed = sub.copyWith(clearSubAdminOf: true);
+      final removed = sub.copyWith(subAdminBusinessIds: []);
       expect(removed.isSubAdmin, isFalse);
       expect(shouldShowAdminHome(removed, true), isFalse);
       expect(effectiveBusinessId(removed), isNull);
@@ -1000,7 +1016,7 @@ void _runRealWorldScenarioTests() {
 
     test('O-11 [다른 사업장 할당] subAdminOf 변경 → 새 사업장으로 데이터 격리', () {
       final before = _user(role: UserRole.USER, subAdminOf: 'biz_old');
-      final after = before.copyWith(subAdminOf: 'biz_new');
+      final after = before.copyWith(subAdminBusinessIds: ['biz_new']);
       expect(effectiveBusinessId(before), 'biz_old');
       expect(effectiveBusinessId(after), 'biz_new');
       expect(resolveBusinessIds(after), ['biz_new']);
@@ -1008,7 +1024,7 @@ void _runRealWorldScenarioTests() {
 
     test('O-12 [사업주 탈퇴 시뮬레이션] 서브관리자의 사업장이 삭제되면 subAdminOf 제거되어야 함', () {
       final sub = _user(role: UserRole.USER, subAdminOf: 'deleted_biz');
-      final orphaned = sub.copyWith(clearSubAdminOf: true);
+      final orphaned = sub.copyWith(subAdminBusinessIds: []);
       expect(orphaned.isSubAdmin, isFalse);
       expect(orphaned.isAdmin, isFalse);
     });
@@ -1078,18 +1094,18 @@ void _runEdgeCaseTests() {
       test('P3-01 USER → SubAdmin (subAdminOf 설정) 시 isAdmin 변경', () {
         final user = _user(role: UserRole.USER, subAdminOf: null);
         expect(user.isAdmin, isFalse);
-        final promoted = user.copyWith(subAdminOf: 'biz1');
+        final promoted = user.copyWith(subAdminBusinessIds: ['biz1']);
         expect(promoted.isAdmin, isTrue);
       });
       test('P3-02 SubAdmin → USER (subAdminOf 제거) 시 isAdmin 변경', () {
         final subAdmin = _user(role: UserRole.USER, subAdminOf: 'biz1');
         expect(subAdmin.isAdmin, isTrue);
-        final removed = subAdmin.copyWith(clearSubAdminOf: true);
+        final removed = subAdmin.copyWith(subAdminBusinessIds: []);
         expect(removed.isAdmin, isFalse);
       });
       test('P3-03 subAdminOf 변경 시 effectiveBusinessId 변경', () {
         final sub = _user(role: UserRole.USER, subAdminOf: 'biz_a');
-        final changed = sub.copyWith(subAdminOf: 'biz_b');
+        final changed = sub.copyWith(subAdminBusinessIds: ['biz_b']);
         expect(effectiveBusinessId(changed), 'biz_b');
         expect(resolveBusinessIds(changed), ['biz_b']);
       });
@@ -1478,7 +1494,7 @@ void _runSubAdminNullPermTests() {
     test('W-04 null → showContract false', () => expect(showContract(sub, null), isFalse));
     test('W-05 null → showStats false', () => expect(showStats(sub, null), isFalse));
     test('W-06 null → canToggleMode true (권한 무관)', () => expect(canToggleMode(sub), isTrue));
-    test('W-07 null → canAccessMemberManagement false', () => expect(canAccessMemberManagement(sub), isFalse));
+    test('W-07 null → canAccessMemberManagement false (SubAdmin 멤버 관리 메뉴 숨김)', () => expect(canAccessMemberManagement(sub), isFalse));
     test('W-08 null → canEditBusiness false', () => expect(canEditBusiness(sub), isFalse));
     test('W-09 none → showToCreate false', () => expect(showToCreate(sub, _permNone), isFalse));
     test('W-10 none → showToManage false', () => expect(showToManage(sub, _permNone), isFalse));
@@ -1515,7 +1531,7 @@ void _runSubAdminVsBizAdminRaceTests() {
       expect(showWage(bizAdmin, null), isTrue);
       expect(showWage(subAll, _permAll), isTrue);
     });
-    test('X-03 멤버관리 — BizAdmin만 가능', () {
+    test('X-03 멤버관리 메뉴 — BizAdmin만 노출, SubAdmin은 숨김', () {
       expect(canAccessMemberManagement(bizAdmin), isTrue);
       expect(canAccessMemberManagement(subAll), isFalse);
     });
@@ -1557,7 +1573,7 @@ void _runMultiSubAdminTests() {
       expect(showWage(sub1, _permTo), isFalse);
       expect(showWage(sub2, _permWage), isTrue);
     });
-    test('Y-03 둘 다 멤버관리 불가', () {
+    test('Y-03 둘 다 멤버관리 메뉴 없음 (SubAdmin 완전 차단)', () {
       expect(canAccessMemberManagement(sub1), isFalse);
       expect(canAccessMemberManagement(sub2), isFalse);
     });
@@ -1585,7 +1601,7 @@ void _runRoleTransitionTests() {
     group('Z1. 일반 USER → SubAdmin', () {
       test('Z1-01 subAdminOf 설정 시 isSubAdmin=true', () {
         final user = _user(role: UserRole.USER);
-        final promoted = user.copyWith(subAdminOf: 'biz1');
+        final promoted = user.copyWith(subAdminBusinessIds: ['biz1']);
         expect(promoted.isSubAdmin, isTrue);
       });
       test('Z1-02 전환 전 관리자 메뉴 숨김', () {
@@ -1598,7 +1614,7 @@ void _runRoleTransitionTests() {
         expect(showToCreate(promoted, _permTo), isTrue);
       });
       test('Z1-04 전환 후 effectiveBusinessId = subAdminOf', () {
-        final promoted = _user(role: UserRole.USER).copyWith(subAdminOf: 'new_biz');
+        final promoted = _user(role: UserRole.USER).copyWith(subAdminBusinessIds: ['new_biz']);
         expect(effectiveBusinessId(promoted), 'new_biz');
       });
     });
@@ -1606,23 +1622,23 @@ void _runRoleTransitionTests() {
     group('Z2. SubAdmin → 일반 USER (강등)', () {
       test('Z2-01 subAdminOf 제거 시 isSubAdmin=false', () {
         final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
-        final demoted = sub.copyWith(clearSubAdminOf: true);
+        final demoted = sub.copyWith(subAdminBusinessIds: []);
         expect(demoted.isSubAdmin, isFalse);
       });
       test('Z2-02 강등 후 effectiveBusinessId=null', () {
         final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
-        final demoted = sub.copyWith(clearSubAdminOf: true);
+        final demoted = sub.copyWith(subAdminBusinessIds: []);
         expect(effectiveBusinessId(demoted), isNull);
       });
       test('Z2-03 강등 후 관리자 모드 불가', () {
         final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
-        final demoted = sub.copyWith(clearSubAdminOf: true);
+        final demoted = sub.copyWith(subAdminBusinessIds: []);
         expect(canToggleMode(demoted), isFalse);
       });
-      test('Z2-04 강등 후 멤버관리 접근 가능 (isSubAdmin=false)', () {
+      test('Z2-04 강등 후 멤버관리 접근 불가 (isSubAdmin=false, isBusinessAdmin=false)', () {
         final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
-        final demoted = sub.copyWith(clearSubAdminOf: true);
-        expect(canAccessMemberManagement(demoted), isTrue);
+        final demoted = sub.copyWith(subAdminBusinessIds: []);
+        expect(canAccessMemberManagement(demoted), isFalse);
       });
     });
 
@@ -1655,13 +1671,13 @@ void _runRoleTransitionTests() {
     group('Z4. 사업장 재배정', () {
       test('Z4-01 subAdminOf 변경 시 새 사업장으로 전환', () {
         final sub = _user(role: UserRole.USER, subAdminOf: 'biz_old');
-        final reassigned = sub.copyWith(subAdminOf: 'biz_new');
+        final reassigned = sub.copyWith(subAdminBusinessIds: ['biz_new']);
         expect(effectiveBusinessId(reassigned), 'biz_new');
         expect(resolveBusinessIds(reassigned), ['biz_new']);
       });
       test('Z4-02 변경 후 이전 사업장 ID 없음', () {
         final sub = _user(role: UserRole.USER, subAdminOf: 'biz_old');
-        final reassigned = sub.copyWith(subAdminOf: 'biz_new');
+        final reassigned = sub.copyWith(subAdminBusinessIds: ['biz_new']);
         expect(resolveBusinessIds(reassigned)?.contains('biz_old'), isFalse);
       });
     });
@@ -1669,11 +1685,11 @@ void _runRoleTransitionTests() {
     group('Z5. 연속 전환', () {
       test('Z5-01 USER → Sub → USER → Sub → 최종 상태 확인', () {
         final user = _user(role: UserRole.USER);
-        final sub1 = user.copyWith(subAdminOf: 'biz1');
-        final user2 = sub1.copyWith(clearSubAdminOf: true);
-        final sub2 = user2.copyWith(subAdminOf: 'biz2');
+        final sub1 = user.copyWith(subAdminBusinessIds: ['biz1']);
+        final user2 = sub1.copyWith(subAdminBusinessIds: []);
+        final sub2 = user2.copyWith(subAdminBusinessIds: ['biz2']);
         expect(sub2.isSubAdmin, isTrue);
-        expect(sub2.subAdminOf, 'biz2');
+        expect(sub2.subAdminBusinessIds.firstOrNull, 'biz2');
         expect(effectiveBusinessId(sub2), 'biz2');
       });
       test('Z5-02 권한 부여 → 제거 → 재부여', () {
@@ -1744,6 +1760,1133 @@ void _runAllPermCanMatrixTests() {
 }
 
 // ════════════════════════════════════════════════════════════
+// AB. canCancelTransfer 전용 테스트 (5번째 권한)
+// ════════════════════════════════════════════════════════════
+
+MemberPermissions _permCancelTransfer() =>
+    const MemberPermissions(canCancelTransfer: true);
+
+MemberPermissions _permWithCancelTransfer({
+  bool to = false,
+  bool workers = false,
+  bool wage = false,
+  bool contract = false,
+}) => MemberPermissions(
+  canManageTo: to,
+  canManageWorkers: workers,
+  canManageWage: wage,
+  canManageContract: contract,
+  canCancelTransfer: true,
+);
+
+void _runCancelTransferTests() {
+  group('AB. canCancelTransfer 권한', () {
+    final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
+
+    group('AB1. canCancelTransfer 단독 권한', () {
+      test('AB1-01 cancelTransfer만 → hasAnyPermission=true', () {
+        expect(_permCancelTransfer().hasAnyPermission, isTrue);
+      });
+      test('AB1-02 cancelTransfer만 → canManageTo=false', () {
+        expect(_permCancelTransfer().canManageTo, isFalse);
+      });
+      test('AB1-03 cancelTransfer만 → canManageWorkers=false', () {
+        expect(_permCancelTransfer().canManageWorkers, isFalse);
+      });
+      test('AB1-04 cancelTransfer만 → canManageWage=false', () {
+        expect(_permCancelTransfer().canManageWage, isFalse);
+      });
+      test('AB1-05 cancelTransfer만 → canManageContract=false', () {
+        expect(_permCancelTransfer().canManageContract, isFalse);
+      });
+      test('AB1-06 cancelTransfer만 → canCancelTransfer=true', () {
+        expect(_permCancelTransfer().canCancelTransfer, isTrue);
+      });
+      test('AB1-07 cancelTransfer만 → 공고등록 메뉴 숨김', () {
+        // cancelTransfer는 메뉴 노출 조건에 영향 없음 — 기능 자체를 숨기지 않음
+        // 하지만 canManageTo=false이므로 공고등록 숨김
+        expect(showToCreate(sub, _permCancelTransfer()), isFalse);
+      });
+      test('AB1-08 cancelTransfer만 → 급여 메뉴 숨김 (wage 아님)', () {
+        expect(showWage(sub, _permCancelTransfer()), isFalse);
+      });
+      test('AB1-09 cancelTransfer만 → 모든 관리 메뉴 숨김', () {
+        final p = _permCancelTransfer();
+        expect(showToCreate(sub, p), isFalse);
+        expect(showToManage(sub, p), isFalse);
+        expect(showWage(sub, p), isFalse);
+        expect(showContract(sub, p), isFalse);
+        expect(showStats(sub, p), isFalse);
+      });
+      test('AB1-10 BUSINESS_ADMIN + cancelTransfer=false → can() 항상 true', () {
+        expect(can(_bizAdmin, _permNone, (p) => p.canCancelTransfer), isTrue);
+      });
+    });
+
+    group('AB2. all() 팩토리 canCancelTransfer 포함', () {
+      test('AB2-01 all().canCancelTransfer=true', () {
+        expect(MemberPermissions.all().canCancelTransfer, isTrue);
+      });
+      test('AB2-02 none().canCancelTransfer=false', () {
+        expect(MemberPermissions.none().canCancelTransfer, isFalse);
+      });
+      test('AB2-03 all() 5개 필드 모두 true', () {
+        final p = MemberPermissions.all();
+        expect(p.canManageTo, isTrue);
+        expect(p.canManageWorkers, isTrue);
+        expect(p.canManageWage, isTrue);
+        expect(p.canManageContract, isTrue);
+        expect(p.canCancelTransfer, isTrue);
+      });
+    });
+
+    group('AB3. toMap / fromMap canCancelTransfer 왕복', () {
+      test('AB3-01 cancelTransfer=true → toMap["canCancelTransfer"]=true', () {
+        final m = _permCancelTransfer().toMap();
+        expect(m['canCancelTransfer'], isTrue);
+      });
+      test('AB3-02 cancelTransfer=false → toMap["canCancelTransfer"]=false', () {
+        final m = MemberPermissions.none().toMap();
+        expect(m['canCancelTransfer'], isFalse);
+      });
+      test('AB3-03 fromMap({canCancelTransfer: true}) → canCancelTransfer=true', () {
+        final p = MemberPermissions.fromMap({'canCancelTransfer': true});
+        expect(p.canCancelTransfer, isTrue);
+        expect(p.canManageTo, isFalse);
+      });
+      test('AB3-04 all().toMap() → fromMap() 왕복 일치', () {
+        final original = MemberPermissions.all();
+        final restored = MemberPermissions.fromMap(original.toMap());
+        expect(restored.canCancelTransfer, original.canCancelTransfer);
+        expect(restored.canManageTo, original.canManageTo);
+      });
+      test('AB3-05 cancelTransfer만 있는 map → 나머지 false', () {
+        final p = MemberPermissions.fromMap({'canCancelTransfer': true});
+        expect(p.canManageTo, isFalse);
+        expect(p.canManageWorkers, isFalse);
+        expect(p.canManageWage, isFalse);
+        expect(p.canManageContract, isFalse);
+        expect(p.canCancelTransfer, isTrue);
+      });
+    });
+
+    group('AB4. copyWith canCancelTransfer', () {
+      test('AB4-01 none.copyWith(cancelTransfer: true)', () {
+        final p = MemberPermissions.none().copyWith(canCancelTransfer: true);
+        expect(p.canCancelTransfer, isTrue);
+        expect(p.canManageTo, isFalse);
+      });
+      test('AB4-02 all.copyWith(cancelTransfer: false)', () {
+        final p = MemberPermissions.all().copyWith(canCancelTransfer: false);
+        expect(p.canCancelTransfer, isFalse);
+        expect(p.canManageTo, isTrue);
+        expect(p.hasAnyPermission, isTrue);
+      });
+      test('AB4-03 cancelTransfer 제거 후 나머지 없으면 hasAnyPermission=false', () {
+        final p = _permCancelTransfer().copyWith(canCancelTransfer: false);
+        expect(p.canCancelTransfer, isFalse);
+        expect(p.hasAnyPermission, isFalse);
+      });
+    });
+
+    group('AB5. summaryText canCancelTransfer 포함', () {
+      test('AB5-01 cancelTransfer만 → summaryText="이체취소" 포함', () {
+        expect(_permCancelTransfer().summaryText, contains('이체취소'));
+      });
+      test('AB5-02 all → summaryText "이체취소" 포함', () {
+        expect(MemberPermissions.all().summaryText, contains('이체취소'));
+      });
+      test('AB5-03 none → summaryText="권한 없음"', () {
+        expect(MemberPermissions.none().summaryText, '권한 없음');
+      });
+      test('AB5-04 cancelTransfer+wage → summaryText에 "급여"·"이체취소" 모두 포함', () {
+        final p = MemberPermissions(canManageWage: true, canCancelTransfer: true);
+        expect(p.summaryText, contains('급여'));
+        expect(p.summaryText, contains('이체취소'));
+      });
+      test('AB5-05 wage+cancelTransfer summaryText 순서 — 급여 먼저', () {
+        final p = MemberPermissions(canManageWage: true, canCancelTransfer: true);
+        final text = p.summaryText;
+        final wageIdx = text.indexOf('급여');
+        final cancelIdx = text.indexOf('이체취소');
+        expect(wageIdx, lessThan(cancelIdx));
+      });
+    });
+
+    group('AB6. canCancelTransfer + 다른 권한 조합', () {
+      test('AB6-01 cancelTransfer+to → hasAnyPermission=true', () {
+        expect(_permWithCancelTransfer(to: true).hasAnyPermission, isTrue);
+      });
+      test('AB6-02 cancelTransfer+workers → 공고관리 가능', () {
+        expect(showToManage(sub, _permWithCancelTransfer(workers: true)), isTrue);
+      });
+      test('AB6-03 cancelTransfer+wage → 급여 가능', () {
+        expect(showWage(sub, _permWithCancelTransfer(wage: true)), isTrue);
+      });
+      test('AB6-04 cancelTransfer만 → 공고관리 불가', () {
+        expect(showToManage(sub, _permCancelTransfer()), isFalse);
+      });
+      test('AB6-05 cancelTransfer와 wage는 독립 — cancelTransfer가 wage 역할 대체 불가', () {
+        expect(showWage(sub, _permCancelTransfer()), isFalse);
+      });
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// AC. isSubAdminOf(businessId) 메서드 직접 테스트
+// ════════════════════════════════════════════════════════════
+
+void _runIsSubAdminOfTests() {
+  group('AC. isSubAdminOf(businessId) 메서드', () {
+    test('AC-01 subAdminBusinessIds=[biz1] → isSubAdminOf(biz1)=true', () {
+      final u = _user(role: UserRole.USER, subAdminOf: 'biz1');
+      expect(u.isSubAdminOf('biz1'), isTrue);
+    });
+    test('AC-02 subAdminBusinessIds=[biz1] → isSubAdminOf(biz2)=false', () {
+      final u = _user(role: UserRole.USER, subAdminOf: 'biz1');
+      expect(u.isSubAdminOf('biz2'), isFalse);
+    });
+    test('AC-03 subAdminBusinessIds=[] → isSubAdminOf(biz1)=false', () {
+      final u = _user(role: UserRole.USER, subAdminOf: null);
+      expect(u.isSubAdminOf('biz1'), isFalse);
+    });
+    test('AC-04 BUSINESS_ADMIN + subAdminOf="biz1" → isSubAdminOf("biz1")=true (fields-level)', () {
+      // role과 무관하게 필드 기반 체크 — isSubAdmin getter와 다름
+      final u = _user(role: UserRole.BUSINESS_ADMIN, subAdminOf: 'biz1');
+      expect(u.isSubAdminOf('biz1'), isTrue);
+    });
+    test('AC-05 isSubAdmin=true + isSubAdminOf("other")=false — 다른 사업장은 접근 불가', () {
+      final u = _user(role: UserRole.USER, subAdminOf: 'biz1');
+      expect(u.isSubAdmin, isTrue);
+      expect(u.isSubAdminOf('biz_other'), isFalse);
+    });
+    test('AC-06 다중 사업장: ["biz1","biz2"] → isSubAdminOf("biz1")=true', () {
+      final u = UserModel(
+        uid: 'u1', username: 'u', name: 'n', email: 'e',
+        role: UserRole.USER, subAdminBusinessIds: ['biz1', 'biz2'],
+      );
+      expect(u.isSubAdminOf('biz1'), isTrue);
+    });
+    test('AC-07 다중 사업장: ["biz1","biz2"] → isSubAdminOf("biz2")=true', () {
+      final u = UserModel(
+        uid: 'u1', username: 'u', name: 'n', email: 'e',
+        role: UserRole.USER, subAdminBusinessIds: ['biz1', 'biz2'],
+      );
+      expect(u.isSubAdminOf('biz2'), isTrue);
+    });
+    test('AC-08 다중 사업장: ["biz1","biz2"] → isSubAdminOf("biz3")=false', () {
+      final u = UserModel(
+        uid: 'u1', username: 'u', name: 'n', email: 'e',
+        role: UserRole.USER, subAdminBusinessIds: ['biz1', 'biz2'],
+      );
+      expect(u.isSubAdminOf('biz3'), isFalse);
+    });
+    test('AC-09 빈 문자열로 조회 → false', () {
+      final u = _user(role: UserRole.USER, subAdminOf: 'biz1');
+      expect(u.isSubAdminOf(''), isFalse);
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// AD. 다중 사업장 SubAdmin (subAdminBusinessIds 2개 이상)
+// ════════════════════════════════════════════════════════════
+
+UserModel _multiSubAdmin(List<String> bizIds) => UserModel(
+  uid: 'uid_multi',
+  username: 'multi_sub',
+  name: '다중 서브관리자',
+  email: 'multi@alfit.kr',
+  role: UserRole.USER,
+  subAdminBusinessIds: bizIds,
+);
+
+void _runMultiBusinessSubAdminTests() {
+  group('AD. 다중 사업장 SubAdmin', () {
+    final multiSub = _multiSubAdmin(['biz1', 'biz2', 'biz3']);
+
+    group('AD1. 기본 속성', () {
+      test('AD1-01 3개 사업장 → isSubAdmin=true', () {
+        expect(multiSub.isSubAdmin, isTrue);
+      });
+      test('AD1-02 isSubAdminOf("biz1")=true', () {
+        expect(multiSub.isSubAdminOf('biz1'), isTrue);
+      });
+      test('AD1-03 isSubAdminOf("biz2")=true', () {
+        expect(multiSub.isSubAdminOf('biz2'), isTrue);
+      });
+      test('AD1-04 isSubAdminOf("biz3")=true', () {
+        expect(multiSub.isSubAdminOf('biz3'), isTrue);
+      });
+      test('AD1-05 isSubAdminOf("biz4")=false', () {
+        expect(multiSub.isSubAdminOf('biz4'), isFalse);
+      });
+      test('AD1-06 subAdminBusinessIds.length=3', () {
+        expect(multiSub.subAdminBusinessIds.length, 3);
+      });
+    });
+
+    group('AD2. effectiveBusinessId — firstOrNull 반환', () {
+      test('AD2-01 다중 사업장 → effectiveBusinessId=firstOrNull=biz1', () {
+        expect(effectiveBusinessId(multiSub), 'biz1');
+      });
+      test('AD2-02 2개 사업장 → 첫 번째', () {
+        final u = _multiSubAdmin(['bizA', 'bizB']);
+        expect(effectiveBusinessId(u), 'bizA');
+      });
+      test('AD2-03 다중 사업장에서 특정 선택 시뮬레이션 (선택 후 firstOrNull 반환)', () {
+        // selectedSubAdminBusinessId = 'biz2' 선택한 경우
+        // 실제 UserProvider._selectedSubAdminBusinessId가 있으나 모델 레벨에선 first 반환
+        final selected = multiSub.copyWith(subAdminBusinessIds: ['biz2', 'biz1', 'biz3']);
+        expect(effectiveBusinessId(selected), 'biz2');
+      });
+    });
+
+    group('AD3. resolveBusinessIds — 전체 목록 반환', () {
+      test('AD3-01 3개 사업장 → resolveBusinessIds 길이=3', () {
+        expect(resolveBusinessIds(multiSub)?.length, 3);
+      });
+      test('AD3-02 모든 사업장 ID 포함', () {
+        final ids = resolveBusinessIds(multiSub)!;
+        expect(ids, containsAll(['biz1', 'biz2', 'biz3']));
+      });
+      test('AD3-03 CF/Firestore에선 현재 선택된 사업장 기준 필터링 (모델 레벨 시뮬레이션)', () {
+        // WorkforceController는 subAdminBusinessIds 전체로 공고 조회
+        final ids = resolveBusinessIds(multiSub)!;
+        expect(ids.contains('biz1'), isTrue);
+        expect(ids.contains('biz2'), isTrue);
+      });
+    });
+
+    group('AD4. 사업장 제거/추가 시나리오', () {
+      test('AD4-01 biz2 제거 → isSubAdminOf("biz2")=false', () {
+        final removed = multiSub.copyWith(subAdminBusinessIds: ['biz1', 'biz3']);
+        expect(removed.isSubAdminOf('biz2'), isFalse);
+        expect(removed.isSubAdminOf('biz1'), isTrue);
+      });
+      test('AD4-02 모든 사업장 제거 → isSubAdmin=false', () {
+        final removed = multiSub.copyWith(subAdminBusinessIds: []);
+        expect(removed.isSubAdmin, isFalse);
+        expect(removed.isAdmin, isFalse);
+      });
+      test('AD4-03 사업장 추가 → isSubAdminOf("biz_new")=true', () {
+        final added = multiSub.copyWith(subAdminBusinessIds: ['biz1', 'biz2', 'biz3', 'biz_new']);
+        expect(added.isSubAdminOf('biz_new'), isTrue);
+      });
+    });
+
+    group('AD5. 사업장별 독립 권한 — CF 레벨에서만 가능', () {
+      // 실제로는 businesses/{biz}/members/{uid}에 사업장별 독립 권한 저장
+      // 모델 레벨에선 "현재 선택된 사업장의 권한"만 사용
+      test('AD5-01 biz1에서 toPerms, biz2에서 wagePerms — 메뉴 독립성 (선택 사업장 기준)', () {
+        // biz1 선택 시 toPerms 로드
+        expect(showToCreate(multiSub, _permTo), isTrue);
+        expect(showWage(multiSub, _permTo), isFalse);
+        // biz2 선택 시 wagePerms 로드 (같은 user, 다른 perm)
+        expect(showWage(multiSub, _permWage), isTrue);
+        expect(showToCreate(multiSub, _permWage), isFalse);
+      });
+      test('AD5-02 두 사업장에서 각각 다른 역할 — isSubAdminOf로 구분', () {
+        expect(multiSub.isSubAdminOf('biz1'), isTrue);
+        expect(multiSub.isSubAdminOf('biz2'), isTrue);
+        expect(multiSub.isSubAdminOf('biz_other'), isFalse);
+      });
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// AE. 권한 상승 체인 차단 시뮬레이션 (SA-01-FIX)
+// ════════════════════════════════════════════════════════════
+
+/// SubAdmin이 초대 발송 시 본인 권한 이하로만 부여 가능
+/// Firestore rules: subAdminInvitePermissionsWithinBounds 재현
+bool subAdminCanGrantPermissions(
+    MemberPermissions grantor, MemberPermissions toGrant) {
+  if (toGrant.canManageTo && !grantor.canManageTo) return false;
+  if (toGrant.canManageWorkers && !grantor.canManageWorkers) return false;
+  if (toGrant.canManageWage && !grantor.canManageWage) return false;
+  if (toGrant.canManageContract && !grantor.canManageContract) return false;
+  if (toGrant.canCancelTransfer && !grantor.canCancelTransfer) return false;
+  return true;
+}
+
+void _runPermissionEscalationTests() {
+  group('AE. 권한 상승 체인 차단 (SA-01-FIX)', () {
+    group('AE1. 기본 차단 케이스', () {
+      test('AE1-01 to권한만 있는 SubAdmin → to+wage 권한 부여 불가 (wage 없음)', () {
+        expect(subAdminCanGrantPermissions(_permTo, _permToWage), isFalse);
+      });
+      test('AE1-02 to권한만 있는 SubAdmin → to 권한 부여 가능 (동일)', () {
+        expect(subAdminCanGrantPermissions(_permTo, _permTo), isTrue);
+      });
+      test('AE1-03 wage권한만 있는 SubAdmin → workers 권한 부여 불가', () {
+        expect(subAdminCanGrantPermissions(_permWage, _permWorkers), isFalse);
+      });
+      test('AE1-04 none 권한 SubAdmin → 어떠한 권한도 부여 불가', () {
+        expect(subAdminCanGrantPermissions(_permNone, _permTo), isFalse);
+        expect(subAdminCanGrantPermissions(_permNone, _permWorkers), isFalse);
+        expect(subAdminCanGrantPermissions(_permNone, _permWage), isFalse);
+        expect(subAdminCanGrantPermissions(_permNone, _permContract), isFalse);
+      });
+      test('AE1-05 none 권한 SubAdmin → none 권한 부여는 가능 (빈 권한)', () {
+        expect(subAdminCanGrantPermissions(_permNone, _permNone), isTrue);
+      });
+    });
+
+    group('AE2. 허용 케이스', () {
+      test('AE2-01 all 권한 SubAdmin → 모든 권한 부여 가능', () {
+        expect(subAdminCanGrantPermissions(_permAll, _permAll), isTrue);
+      });
+      test('AE2-02 all 권한 SubAdmin → 부분 권한 부여 가능', () {
+        expect(subAdminCanGrantPermissions(_permAll, _permTo), isTrue);
+        expect(subAdminCanGrantPermissions(_permAll, _permWage), isTrue);
+      });
+      test('AE2-03 toWorkers → to 권한 부여 가능', () {
+        expect(subAdminCanGrantPermissions(_permToWorkers, _permTo), isTrue);
+        expect(subAdminCanGrantPermissions(_permToWorkers, _permWorkers), isTrue);
+        expect(subAdminCanGrantPermissions(_permToWorkers, _permToWorkers), isTrue);
+      });
+      test('AE2-04 toWorkers → wage 부여 불가', () {
+        expect(subAdminCanGrantPermissions(_permToWorkers, _permWage), isFalse);
+      });
+    });
+
+    group('AE3. canCancelTransfer 체인 차단', () {
+      test('AE3-01 cancelTransfer 없는 SubAdmin → cancelTransfer 부여 불가', () {
+        expect(subAdminCanGrantPermissions(_permAll.copyWith(canCancelTransfer: false),
+            _permCancelTransfer()), isFalse);
+      });
+      test('AE3-02 cancelTransfer 있는 SubAdmin → cancelTransfer 부여 가능', () {
+        expect(subAdminCanGrantPermissions(_permAll, _permCancelTransfer()), isTrue);
+      });
+      test('AE3-03 cancelTransfer만 있는 SubAdmin → cancelTransfer 부여 가능, 나머지 불가', () {
+        final grantorCancelOnly = _permCancelTransfer();
+        expect(subAdminCanGrantPermissions(grantorCancelOnly, _permCancelTransfer()), isTrue);
+        expect(subAdminCanGrantPermissions(grantorCancelOnly, _permTo), isFalse);
+      });
+    });
+
+    group('AE4. 대칭성 — 자신과 동일한 권한은 항상 부여 가능', () {
+      for (final perm in [_permNone, _permTo, _permWorkers, _permWage, _permContract]) {
+        test('AE4 ${perm.summaryText.isEmpty ? "none" : perm.summaryText} → 자신과 동일 권한 부여 가능', () {
+          expect(subAdminCanGrantPermissions(perm, perm), isTrue);
+        });
+      }
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// AF. CF assertBizAdmin 로직 시뮬레이션
+// ════════════════════════════════════════════════════════════
+
+/// CF assertBizAdmin 재현:
+/// SUPER_ADMIN → adminIds → ownerId → subAdminBusinessIds 순으로 확인
+bool cfAssertBizAdmin({
+  required UserModel caller,
+  required String businessId,
+  required List<String> adminIds,
+  required String ownerId,
+}) {
+  if (caller.isSuperAdmin) return true;
+  if (adminIds.contains(caller.uid)) return true;
+  if (ownerId == caller.uid) return true;
+  if (caller.subAdminBusinessIds.contains(businessId)) return true;
+  return false;
+}
+
+void _runCFAssertBizAdminTests() {
+  group('AF. CF assertBizAdmin 로직 시뮬레이션', () {
+    const bizId = 'biz1';
+    const ownerId = 'owner_uid';
+    final adminIds = ['admin_uid1', 'admin_uid2'];
+
+    final superAdmin = _user(role: UserRole.SUPER_ADMIN)
+        .copyWith(uid: 'super_uid');
+
+    final bizAdminUser = UserModel(
+      uid: 'admin_uid1', username: 'a', name: 'a', email: 'a',
+      role: UserRole.BUSINESS_ADMIN,
+    );
+
+    final ownerUser = UserModel(
+      uid: ownerId, username: 'o', name: 'o', email: 'o',
+      role: UserRole.BUSINESS_ADMIN,
+    );
+
+    final subAdminUser = UserModel(
+      uid: 'sub_uid', username: 's', name: 's', email: 's',
+      role: UserRole.USER, subAdminBusinessIds: [bizId],
+    );
+
+    final outsiderUser = UserModel(
+      uid: 'outsider', username: 'x', name: 'x', email: 'x',
+      role: UserRole.USER,
+    );
+
+    test('AF-01 SUPER_ADMIN → 항상 통과', () {
+      expect(cfAssertBizAdmin(
+        caller: superAdmin, businessId: bizId,
+        adminIds: adminIds, ownerId: ownerId,
+      ), isTrue);
+    });
+    test('AF-02 adminIds에 포함된 BUSINESS_ADMIN → 통과', () {
+      expect(cfAssertBizAdmin(
+        caller: bizAdminUser, businessId: bizId,
+        adminIds: adminIds, ownerId: ownerId,
+      ), isTrue);
+    });
+    test('AF-03 ownerId 일치 → 통과', () {
+      expect(cfAssertBizAdmin(
+        caller: ownerUser, businessId: bizId,
+        adminIds: [], ownerId: ownerId,
+      ), isTrue);
+    });
+    test('AF-04 subAdminBusinessIds에 포함된 SubAdmin → 통과', () {
+      expect(cfAssertBizAdmin(
+        caller: subAdminUser, businessId: bizId,
+        adminIds: adminIds, ownerId: ownerId,
+      ), isTrue);
+    });
+    test('AF-05 아무 조건도 미충족 → 차단', () {
+      expect(cfAssertBizAdmin(
+        caller: outsiderUser, businessId: bizId,
+        adminIds: adminIds, ownerId: ownerId,
+      ), isFalse);
+    });
+    test('AF-06 SubAdmin이지만 다른 사업장 → 차단', () {
+      final wrongBizSub = UserModel(
+        uid: 'sub2', username: 's2', name: 's2', email: 's2',
+        role: UserRole.USER, subAdminBusinessIds: ['biz_other'],
+      );
+      expect(cfAssertBizAdmin(
+        caller: wrongBizSub, businessId: bizId,
+        adminIds: adminIds, ownerId: ownerId,
+      ), isFalse);
+    });
+    test('AF-07 adminIds 빈 배열 + ownerId 불일치 + SubAdmin 아님 → 차단', () {
+      expect(cfAssertBizAdmin(
+        caller: outsiderUser, businessId: bizId,
+        adminIds: [], ownerId: 'different_owner',
+      ), isFalse);
+    });
+    test('AF-08 SubAdmin은 adminIds에 없어도 subAdminBusinessIds로 통과', () {
+      // adminIds에 미포함인 서브관리자 — 3번째 조건(subAdminOf)으로 통과
+      final subNotInAdminIds = UserModel(
+        uid: 'sub_not_in_adminids', username: 's', name: 's', email: 's',
+        role: UserRole.USER, subAdminBusinessIds: [bizId],
+      );
+      expect(cfAssertBizAdmin(
+        caller: subNotInAdminIds, businessId: bizId,
+        adminIds: adminIds, // sub_not_in_adminids는 미포함
+        ownerId: ownerId,
+      ), isTrue);
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// AG. 알림 팬아웃 수신 조건 시뮬레이션
+//     (getSubAdminsWithPermission 재현)
+// ════════════════════════════════════════════════════════════
+
+/// SubAdmin이 특정 사업장의 특정 권한 알림을 받을 수 있는지 시뮬레이션
+bool wouldReceiveNotification({
+  required UserModel user,
+  required String businessId,
+  required bool Function(MemberPermissions) permCheck,
+  required MemberPermissions? perms,
+}) {
+  if (!user.subAdminBusinessIds.contains(businessId)) return false;
+  if (perms == null) return false;
+  return permCheck(perms);
+}
+
+void _runNotificationFanoutTests() {
+  group('AG. 알림 팬아웃 수신 조건 (getSubAdminsWithPermission 시뮬레이션)', () {
+    const bizId = 'biz1';
+    final sub = UserModel(
+      uid: 'sub1', username: 'sub', name: 'sub', email: 's',
+      role: UserRole.USER, subAdminBusinessIds: [bizId],
+    );
+    final otherBizSub = UserModel(
+      uid: 'sub2', username: 'sub2', name: 'sub2', email: 's2',
+      role: UserRole.USER, subAdminBusinessIds: ['biz2'],
+    );
+
+    test('AG-01 canManageWorkers=true → 근무자 관련 알림 수신', () {
+      expect(wouldReceiveNotification(
+        user: sub, businessId: bizId,
+        permCheck: (p) => p.canManageWorkers,
+        perms: _permWorkers,
+      ), isTrue);
+    });
+    test('AG-02 canManageWorkers=false → 근무자 알림 미수신', () {
+      expect(wouldReceiveNotification(
+        user: sub, businessId: bizId,
+        permCheck: (p) => p.canManageWorkers,
+        perms: _permWage,
+      ), isFalse);
+    });
+    test('AG-03 canManageTo=true → TO 지원 알림 수신', () {
+      expect(wouldReceiveNotification(
+        user: sub, businessId: bizId,
+        permCheck: (p) => p.canManageTo,
+        perms: _permTo,
+      ), isTrue);
+    });
+    test('AG-04 다른 사업장 SubAdmin → 해당 사업장 알림 미수신', () {
+      expect(wouldReceiveNotification(
+        user: otherBizSub, businessId: bizId,
+        permCheck: (p) => p.canManageWorkers,
+        perms: _permAll,
+      ), isFalse);
+    });
+    test('AG-05 perms=null → 알림 미수신 (권한 미로드)', () {
+      expect(wouldReceiveNotification(
+        user: sub, businessId: bizId,
+        permCheck: (p) => p.canManageTo,
+        perms: null,
+      ), isFalse);
+    });
+    test('AG-06 all 권한 → 모든 알림 수신', () {
+      for (final check in [
+        (MemberPermissions p) => p.canManageTo,
+        (MemberPermissions p) => p.canManageWorkers,
+        (MemberPermissions p) => p.canManageWage,
+        (MemberPermissions p) => p.canManageContract,
+      ]) {
+        expect(wouldReceiveNotification(
+          user: sub, businessId: bizId, permCheck: check, perms: _permAll,
+        ), isTrue);
+      }
+    });
+    test('AG-07 다중 사업장 SubAdmin → 해당 사업장 알림만 수신', () {
+      final multiSub = UserModel(
+        uid: 'msub', username: 'ms', name: 'ms', email: 'ms',
+        role: UserRole.USER, subAdminBusinessIds: ['biz1', 'biz2'],
+      );
+      expect(wouldReceiveNotification(
+        user: multiSub, businessId: 'biz1',
+        permCheck: (p) => p.canManageWorkers, perms: _permWorkers,
+      ), isTrue);
+      expect(wouldReceiveNotification(
+        user: multiSub, businessId: 'biz3',
+        permCheck: (p) => p.canManageWorkers, perms: _permWorkers,
+      ), isFalse);
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// AH. WorkforceCalendarView 이중/단일 권한 체크
+// ════════════════════════════════════════════════════════════
+
+/// 고정근무 관리: canManageWorkers 단독
+bool canOpenFixedWorkerManagement(MemberPermissions? perms) =>
+    perms != null && perms.canManageWorkers;
+
+/// 마감 관리: canManageWorkers AND canManageWage 이중 필요 (PERM-D1)
+bool canOpenCloseManagement(MemberPermissions? perms) =>
+    perms != null && perms.canManageWorkers && perms.canManageWage;
+
+void _runWorkforceCalendarPermTests() {
+  group('AH. WorkforceCalendarView 권한 체크', () {
+    group('AH1. 고정근무 관리 (canManageWorkers 단독)', () {
+      test('AH1-01 workers=true → 고정근무 관리 가능', () {
+        expect(canOpenFixedWorkerManagement(_permWorkers), isTrue);
+      });
+      test('AH1-02 workers=false → 고정근무 관리 불가', () {
+        expect(canOpenFixedWorkerManagement(_permNone), isFalse);
+      });
+      test('AH1-03 wage=true, workers=false → 불가', () {
+        expect(canOpenFixedWorkerManagement(_permWage), isFalse);
+      });
+      test('AH1-04 null → 불가', () {
+        expect(canOpenFixedWorkerManagement(null), isFalse);
+      });
+      test('AH1-05 to=true, workers=false → 불가', () {
+        expect(canOpenFixedWorkerManagement(_permTo), isFalse);
+      });
+    });
+
+    group('AH2. 마감 관리 (canManageWorkers AND canManageWage 이중 필요)', () {
+      test('AH2-01 workers=true, wage=true → 마감 관리 가능', () {
+        expect(canOpenCloseManagement(_permWorkersWage), isTrue);
+      });
+      test('AH2-02 workers=true, wage=false → 마감 관리 불가', () {
+        expect(canOpenCloseManagement(_permWorkers), isFalse);
+      });
+      test('AH2-03 workers=false, wage=true → 마감 관리 불가', () {
+        expect(canOpenCloseManagement(_permWage), isFalse);
+      });
+      test('AH2-04 none → 마감 관리 불가', () {
+        expect(canOpenCloseManagement(_permNone), isFalse);
+      });
+      test('AH2-05 all=true → 마감 관리 가능', () {
+        expect(canOpenCloseManagement(_permAll), isTrue);
+      });
+      test('AH2-06 null → 마감 관리 불가', () {
+        expect(canOpenCloseManagement(null), isFalse);
+      });
+      test('AH2-07 to+workers → 고정근무 가능, 마감 불가 (wage 없음)', () {
+        expect(canOpenFixedWorkerManagement(_permToWorkers), isTrue);
+        expect(canOpenCloseManagement(_permToWorkers), isFalse);
+      });
+      test('AH2-08 workers+contract → 고정근무 가능, 마감 불가', () {
+        expect(canOpenFixedWorkerManagement(_permWorkersContract), isTrue);
+        expect(canOpenCloseManagement(_permWorkersContract), isFalse);
+      });
+    });
+
+    group('AH3. 마감 관리 > 고정근무 관리 (이중 권한이 더 강한 조건)', () {
+      test('AH3-01 마감 가능하면 고정근무도 가능', () {
+        // workers+wage → 마감 가능 + 고정근무 가능
+        expect(canOpenCloseManagement(_permWorkersWage), isTrue);
+        expect(canOpenFixedWorkerManagement(_permWorkersWage), isTrue);
+      });
+      test('AH3-02 고정근무 가능이 마감 가능을 보장하지 않음 (workers만)', () {
+        expect(canOpenFixedWorkerManagement(_permWorkers), isTrue);
+        expect(canOpenCloseManagement(_permWorkers), isFalse);
+      });
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// AI. 퇴직/계약해지 시 SubAdmin 권한 자동 제거 시뮬레이션
+//     (SEC-SUBADMIN-CLEAR — arrayRemove(businessId))
+// ════════════════════════════════════════════════════════════
+
+/// CF SEC-SUBADMIN-CLEAR: 퇴직/계약해지 승인 시 해당 사업장 ID 제거
+UserModel removeSubAdminBiz(UserModel user, String businessId) {
+  final updated = user.subAdminBusinessIds.where((id) => id != businessId).toList();
+  return user.copyWith(subAdminBusinessIds: updated);
+}
+
+void _runAutoPermissionRemovalTests() {
+  group('AI. 퇴직/계약해지 시 SubAdmin 권한 자동 제거 (SEC-SUBADMIN-CLEAR)', () {
+    group('AI1. 단일 사업장 SubAdmin 퇴직', () {
+      test('AI1-01 단일 사업장 제거 → isSubAdmin=false', () {
+        final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
+        final removed = removeSubAdminBiz(sub, 'biz1');
+        expect(removed.isSubAdmin, isFalse);
+      });
+      test('AI1-02 제거 후 effectiveBusinessId=null', () {
+        final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
+        final removed = removeSubAdminBiz(sub, 'biz1');
+        expect(effectiveBusinessId(removed), isNull);
+      });
+      test('AI1-03 제거 후 관리 메뉴 표시 안됨', () {
+        final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
+        final removed = removeSubAdminBiz(sub, 'biz1');
+        expect(showToCreate(removed, _permAll), isTrue); // isSubAdmin=false이므로 true
+        // 하지만 실제 UI에서는 isAdmin=false → 관리자 홈 자체 표시 안됨
+        expect(removed.isAdmin, isFalse);
+      });
+      test('AI1-04 제거 후 isSubAdminOf("biz1")=false', () {
+        final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
+        final removed = removeSubAdminBiz(sub, 'biz1');
+        expect(removed.isSubAdminOf('biz1'), isFalse);
+      });
+    });
+
+    group('AI2. 다중 사업장 SubAdmin — 특정 사업장만 제거', () {
+      final multiSub = _multiSubAdmin(['biz1', 'biz2', 'biz3']);
+
+      test('AI2-01 biz2 퇴직 → biz2만 제거, biz1/biz3 유지', () {
+        final removed = removeSubAdminBiz(multiSub, 'biz2');
+        expect(removed.isSubAdminOf('biz1'), isTrue);
+        expect(removed.isSubAdminOf('biz2'), isFalse);
+        expect(removed.isSubAdminOf('biz3'), isTrue);
+      });
+      test('AI2-02 biz2 제거 후 isSubAdmin=true (다른 사업장 잔류)', () {
+        final removed = removeSubAdminBiz(multiSub, 'biz2');
+        expect(removed.isSubAdmin, isTrue);
+      });
+      test('AI2-03 모든 사업장 순차 제거 → 최종 isSubAdmin=false', () {
+        final step1 = removeSubAdminBiz(multiSub, 'biz1');
+        final step2 = removeSubAdminBiz(step1, 'biz2');
+        final step3 = removeSubAdminBiz(step2, 'biz3');
+        expect(step3.isSubAdmin, isFalse);
+        expect(step3.subAdminBusinessIds, isEmpty);
+      });
+      test('AI2-04 없는 사업장 제거 시도 → 변화 없음', () {
+        final removed = removeSubAdminBiz(multiSub, 'biz_nonexist');
+        expect(removed.subAdminBusinessIds.length, 3);
+        expect(removed.isSubAdmin, isTrue);
+      });
+    });
+
+    group('AI3. 퇴직 후 재입사 시나리오', () {
+      test('AI3-01 제거 후 재추가 → isSubAdmin 복원', () {
+        final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
+        final removed = removeSubAdminBiz(sub, 'biz1');
+        expect(removed.isSubAdmin, isFalse);
+        final rejoined = removed.copyWith(subAdminBusinessIds: ['biz1']);
+        expect(rejoined.isSubAdmin, isTrue);
+        expect(rejoined.isSubAdminOf('biz1'), isTrue);
+      });
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// AJ. summaryText 정확성 검증
+// ════════════════════════════════════════════════════════════
+
+void _runSummaryTextAccuracyTests() {
+  group('AJ. summaryText 정확성', () {
+    test('AJ-01 none → 정확히 "권한 없음"', () {
+      expect(MemberPermissions.none().summaryText, equals('권한 없음'));
+    });
+    test('AJ-02 to만 → "공고" 포함, "근무자" 미포함', () {
+      expect(_permTo.summaryText, contains('공고'));
+      expect(_permTo.summaryText, isNot(contains('근무자')));
+    });
+    test('AJ-03 workers만 → "근무자" 포함, "공고" 미포함', () {
+      expect(_permWorkers.summaryText, contains('근무자'));
+      expect(_permWorkers.summaryText, isNot(contains('공고')));
+    });
+    test('AJ-04 wage만 → "급여" 포함', () {
+      expect(_permWage.summaryText, contains('급여'));
+    });
+    test('AJ-05 contract만 → "계약서" 포함', () {
+      expect(_permContract.summaryText, contains('계약서'));
+    });
+    test('AJ-06 cancelTransfer만 → "이체취소" 포함', () {
+      expect(_permCancelTransfer().summaryText, contains('이체취소'));
+    });
+    test('AJ-07 all → 5개 키워드 모두 포함', () {
+      final text = MemberPermissions.all().summaryText;
+      expect(text, contains('공고'));
+      expect(text, contains('근무자'));
+      expect(text, contains('급여'));
+      expect(text, contains('계약서'));
+      expect(text, contains('이체취소'));
+    });
+    test('AJ-08 to+workers → 두 키워드 포함, 나머지 미포함', () {
+      final text = _permToWorkers.summaryText;
+      expect(text, contains('공고'));
+      expect(text, contains('근무자'));
+      expect(text, isNot(contains('급여')));
+      expect(text, isNot(contains('계약서')));
+      expect(text, isNot(contains('이체취소')));
+    });
+    test('AJ-09 summaryText 항목 구분자 "·" 확인 (다중 권한)', () {
+      final text = _permToWorkers.summaryText;
+      expect(text, contains('·'));
+    });
+    test('AJ-10 단일 권한 → 구분자 없음', () {
+      final text = _permTo.summaryText;
+      expect(text, isNot(contains('·')));
+    });
+    test('AJ-11 summaryText 순서 — 공고·근무자·급여·계약서·이체취소', () {
+      final text = MemberPermissions.all().summaryText;
+      final indices = [
+        text.indexOf('공고'),
+        text.indexOf('근무자'),
+        text.indexOf('급여'),
+        text.indexOf('계약서'),
+        text.indexOf('이체취소'),
+      ];
+      // 각 인덱스가 오름차순인지 확인
+      for (int i = 0; i < indices.length - 1; i++) {
+        expect(indices[i], lessThan(indices[i + 1]),
+            reason: 'summaryText 순서 불일치: 인덱스 $i > ${i+1}');
+      }
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// AK. 32가지 권한 조합 (2^5 — canCancelTransfer 포함)
+// ════════════════════════════════════════════════════════════
+
+void _run32PermCombinationsTests() {
+  group('AK. 32가지 권한 조합 (canCancelTransfer 포함)', () {
+    final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
+
+    // (to, workers, wage, contract, cancelTransfer)
+    final bool32 = <List<bool>>[];
+    for (int i = 0; i < 32; i++) {
+      bool32.add([
+        (i >> 4) & 1 == 1,
+        (i >> 3) & 1 == 1,
+        (i >> 2) & 1 == 1,
+        (i >> 1) & 1 == 1,
+        (i >> 0) & 1 == 1,
+      ]);
+    }
+
+    for (final bits in bool32) {
+      final to = bits[0], workers = bits[1], wage = bits[2],
+            contract = bits[3], cancel = bits[4];
+      final p = MemberPermissions(
+        canManageTo: to, canManageWorkers: workers,
+        canManageWage: wage, canManageContract: contract,
+        canCancelTransfer: cancel,
+      );
+      final label = 'to=$to w=$workers wa=$wage c=$contract ct=$cancel';
+
+      test('AK-hasAny[$label]', () {
+        final expected = to || workers || wage || contract || cancel;
+        expect(p.hasAnyPermission, expected ? isTrue : isFalse);
+      });
+
+      test('AK-toCreate[$label]', () {
+        expect(showToCreate(sub, p), to ? isTrue : isFalse);
+      });
+
+      test('AK-toManage[$label]', () {
+        expect(showToManage(sub, p), (to || workers) ? isTrue : isFalse);
+      });
+
+      test('AK-wage[$label]', () {
+        expect(showWage(sub, p), wage ? isTrue : isFalse);
+      });
+
+      test('AK-contract[$label]', () {
+        expect(showContract(sub, p), contract ? isTrue : isFalse);
+      });
+    }
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// AL. createTO 화면 사업자등록증 체크 우회 시뮬레이션
+//     SubAdmin은 hasLicense=true 처리 (create_to_screen.dart L169)
+// ════════════════════════════════════════════════════════════
+
+bool resolveHasLicense({required UserModel user, required bool? bizHasLicense}) {
+  if (user.isSubAdmin) return true; // SubAdmin은 항상 사업자등록증 체크 우회
+  return bizHasLicense ?? false;
+}
+
+void _runCreateTOLicenseCheckTests() {
+  group('AL. createTO 사업자등록증 체크 우회 (SubAdmin)', () {
+    test('AL-01 SubAdmin → hasLicense=true (라이선스 체크 우회)', () {
+      final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
+      expect(resolveHasLicense(user: sub, bizHasLicense: null), isTrue);
+    });
+    test('AL-02 SubAdmin + 사업장 라이선스 없음 → 여전히 true (우회)', () {
+      final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
+      expect(resolveHasLicense(user: sub, bizHasLicense: false), isTrue);
+    });
+    test('AL-03 BUSINESS_ADMIN + 라이선스 있음 → true', () {
+      expect(resolveHasLicense(user: _bizAdmin, bizHasLicense: true), isTrue);
+    });
+    test('AL-04 BUSINESS_ADMIN + 라이선스 없음 → false', () {
+      expect(resolveHasLicense(user: _bizAdmin, bizHasLicense: false), isFalse);
+    });
+    test('AL-05 BUSINESS_ADMIN + null → false (안전 기본값)', () {
+      expect(resolveHasLicense(user: _bizAdmin, bizHasLicense: null), isFalse);
+    });
+    test('AL-06 일반 USER → false', () {
+      expect(resolveHasLicense(user: _regularUser, bizHasLicense: null), isFalse);
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// AM. 설정 화면 사업장 설정 섹션 접근 조건
+//     (settings_screen.dart: isAdmin → 섹션 전체. 멤버 관리 항목은 isBusinessAdmin만)
+// ════════════════════════════════════════════════════════════
+
+bool canAccessBizSettingsSection(UserModel user) =>
+    user.isBusinessAdmin || user.isSubAdmin;
+
+void _runSettingsSectionTests() {
+  group('AM. 설정 화면 사업장 설정 섹션', () {
+    test('AM-01 BUSINESS_ADMIN → 사업장 설정 섹션 접근 가능', () {
+      expect(canAccessBizSettingsSection(_bizAdmin), isTrue);
+    });
+    test('AM-02 SubAdmin → 사업장 설정 섹션 접근 가능', () {
+      expect(canAccessBizSettingsSection(_user(role: UserRole.USER, subAdminOf: 'biz1')), isTrue);
+    });
+    test('AM-03 SUPER_ADMIN → 사업장 설정 섹션 접근 불가 (다른 경로 사용)', () {
+      expect(canAccessBizSettingsSection(_superAdmin), isFalse);
+    });
+    test('AM-04 일반 USER → 사업장 설정 섹션 접근 불가', () {
+      expect(canAccessBizSettingsSection(_regularUser), isFalse);
+    });
+    test('AM-05 SubAdmin + 권한 없음 → 여전히 섹션 접근 가능 (권한 무관)', () {
+      final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
+      expect(canAccessBizSettingsSection(sub), isTrue);
+    });
+    test('AM-06 SubAdmin 강등 후 → 섹션 접근 불가', () {
+      final demoted = _user(role: UserRole.USER, subAdminOf: 'biz1')
+          .copyWith(subAdminBusinessIds: []);
+      expect(canAccessBizSettingsSection(demoted), isFalse);
+    });
+    test('AM-07 사업장 설정 섹션 ≠ 멤버 관리 메뉴 (SubAdmin은 섹션 접근 가능, 멤버 관리 항목만 숨김)', () {
+      // BUSINESS_ADMIN: 섹션 접근 + 멤버 관리 모두 가능
+      expect(canAccessBizSettingsSection(_bizAdmin), isTrue);
+      expect(canAccessMemberManagement(_bizAdmin), isTrue);
+      // SubAdmin: 설정 섹션 자체는 표시, 멤버 관리 항목만 숨김
+      final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
+      expect(canAccessBizSettingsSection(sub), isTrue);   // 업무유형 관리 등 다른 항목 표시
+      expect(canAccessMemberManagement(sub), isFalse);    // 멤버 관리 항목만 숨김
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// AN. TO 삭제 권한 — SubAdmin canManageTo 이양 (동일 권한 위임 원칙)
+// ════════════════════════════════════════════════════════════
+
+void _runTODeletePermTests() {
+  group('AN. TO 삭제 권한 (canManageTo 이양)', () {
+    final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
+
+    test('AN-01 BUSINESS_ADMIN → TO 삭제 가능 (permissions 무관)', () {
+      expect(canDeleteTO(_bizAdmin, null), isTrue);
+      expect(canDeleteTO(_bizAdmin, _permNone), isTrue);
+    });
+    test('AN-02 SUPER_ADMIN → TO 삭제 가능', () {
+      expect(canDeleteTO(_superAdmin, null), isTrue);
+    });
+    test('AN-03 SubAdmin + canManageTo=true → TO 삭제 가능 (동일 권한 이양)', () {
+      expect(canDeleteTO(sub, _permTo), isTrue);
+      expect(canDeleteTO(sub, _permAll), isTrue);
+    });
+    test('AN-04 SubAdmin + canManageTo=false → TO 삭제 불가', () {
+      expect(canDeleteTO(sub, _permNone), isFalse);
+      expect(canDeleteTO(sub, _permWorkers), isFalse);
+      expect(canDeleteTO(sub, _permWage), isFalse);
+      expect(canDeleteTO(sub, _permContract), isFalse);
+    });
+    test('AN-05 SubAdmin + null permissions → TO 삭제 불가', () {
+      expect(canDeleteTO(sub, null), isFalse);
+    });
+    test('AN-06 일반 USER (SubAdmin 아님) → TO 삭제 불가', () {
+      expect(canDeleteTO(_regularUser, _permAll), isFalse);
+    });
+    test('AN-07 canDeleteTO == can(canManageTo) 동치 (SubAdmin 기준)', () {
+      expect(canDeleteTO(sub, _permTo), can(sub, _permTo, (p) => p.canManageTo));
+      expect(canDeleteTO(sub, _permNone), can(sub, _permNone, (p) => p.canManageTo));
+    });
+    test('AN-08 권한 이양 원칙: SubAdmin canManageTo → BUSINESS_ADMIN과 동일 삭제 권한', () {
+      expect(canDeleteTO(_bizAdmin, null), isTrue);
+      expect(canDeleteTO(sub, _permTo), isTrue);
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// AO. 설정 화면 멤버 관리 메뉴 숨김 vs 사업장 설정 섹션 분리
+// ════════════════════════════════════════════════════════════
+
+void _runMemberMenuHiddenTests() {
+  group('AO. 멤버 관리 메뉴 vs 사업장 설정 섹션 분리', () {
+    final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
+
+    test('AO-01 BUSINESS_ADMIN → 섹션 접근 가능 + 멤버 관리 메뉴 표시', () {
+      expect(canAccessBizSettingsSection(_bizAdmin), isTrue);
+      expect(canAccessMemberManagement(_bizAdmin), isTrue);
+    });
+    test('AO-02 SubAdmin → 섹션 접근 가능 + 멤버 관리 메뉴 숨김', () {
+      expect(canAccessBizSettingsSection(sub), isTrue);   // 업무유형 관리 등 다른 항목
+      expect(canAccessMemberManagement(sub), isFalse);   // 멤버 관리 항목만 숨김
+    });
+    test('AO-03 SubAdmin + 전체 권한 보유 → 멤버 관리 메뉴 여전히 숨김', () {
+      expect(canAccessMemberManagement(sub), isFalse);
+    });
+    test('AO-04 멤버 관리는 MemberPermissions 권한과 무관하게 BUSINESS_ADMIN 전용', () {
+      expect(canAccessMemberManagement(sub), isFalse); // canManageWorkers가 있어도 무관
+    });
+    test('AO-05 일반 USER → 섹션 자체 접근 불가', () {
+      expect(canAccessBizSettingsSection(_regularUser), isFalse);
+      expect(canAccessMemberManagement(_regularUser), isFalse);
+    });
+    test('AO-06 SubAdmin 강등 → 섹션 접근 불가 + 멤버 관리 불가', () {
+      final demoted = sub.copyWith(subAdminBusinessIds: []);
+      expect(canAccessBizSettingsSection(demoted), isFalse);
+      expect(canAccessMemberManagement(demoted), isFalse);
+    });
+    test('AO-07 멤버 관리 가능 ⊂ 사업장 설정 섹션 접근 (더 엄격한 조건)', () {
+      // 멤버 관리 가능 → 반드시 섹션 접근도 가능 (역은 성립 안 함)
+      for (final user in [_bizAdmin, _subAll, _regularUser, _superAdmin]) {
+        if (canAccessMemberManagement(user)) {
+          expect(canAccessBizSettingsSection(user), isTrue,
+              reason: '${user.role}: 멤버관리 가능이면 섹션도 접근 가능해야 함');
+        }
+      }
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// AP. 다중 사업장 SubAdmin — BusinessPickerHelper / create_to_screen
+// ════════════════════════════════════════════════════════════
+
+void _runMultiBizSubAdminPickerTests() {
+  group('AP. 다중 사업장 SubAdmin 피커 시뮬레이션', () {
+
+    test('AP-01 단일 사업장 SubAdmin → subAdminBusinessIds.length=1', () {
+      final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
+      expect(sub.subAdminBusinessIds.length, 1);
+      expect(sub.subAdminBusinessIds.first, 'biz1');
+    });
+    test('AP-02 다중 사업장 SubAdmin → subAdminBusinessIds.length=2', () {
+      final sub = _user(role: UserRole.USER, subAdminBizIds: ['biz1', 'biz2']);
+      expect(sub.subAdminBusinessIds.length, 2);
+      expect(sub.subAdminBusinessIds, containsAll(['biz1', 'biz2']));
+    });
+    test('AP-03 다중 사업장 SubAdmin → effectiveBusinessId = 첫 번째 사업장', () {
+      final sub = _user(role: UserRole.USER, subAdminBizIds: ['biz1', 'biz2']);
+      expect(effectiveBusinessId(sub), 'biz1');
+    });
+    test('AP-04 다중 사업장 SubAdmin → resolveBusinessIds = 전체 목록', () {
+      final sub = _user(role: UserRole.USER, subAdminBizIds: ['biz1', 'biz2', 'biz3']);
+      expect(resolveBusinessIds(sub), ['biz1', 'biz2', 'biz3']);
+      expect(resolveBusinessIds(sub)?.length, 3);
+    });
+    test('AP-05 단일 사업장 SubAdmin → 피커 불필요 (자동 선택)', () {
+      final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
+      expect(sub.subAdminBusinessIds.length == 1, isTrue);
+    });
+    test('AP-06 다중 사업장 SubAdmin (2개 이상) → 피커 표시 필요', () {
+      final sub = _user(role: UserRole.USER, subAdminBizIds: ['biz1', 'biz2']);
+      expect(sub.subAdminBusinessIds.length > 1, isTrue);
+    });
+    test('AP-07 create_to_screen: 단일 사업장 SubAdmin → 드롭다운 항목 1개', () {
+      final sub = _user(role: UserRole.USER, subAdminOf: 'biz1');
+      expect(sub.subAdminBusinessIds.length, 1);
+    });
+    test('AP-08 create_to_screen: 다중 사업장 SubAdmin → 드롭다운 항목 2개', () {
+      final sub = _user(role: UserRole.USER, subAdminBizIds: ['biz1', 'biz2']);
+      expect(sub.subAdminBusinessIds.length, 2);
+    });
+    test('AP-09 subAdminBusinessIds=[] → isSubAdmin=false (피커 진입 불가)', () {
+      final demoted = _user(role: UserRole.USER);
+      expect(demoted.isSubAdmin, isFalse);
+      expect(demoted.subAdminBusinessIds.isEmpty, isTrue);
+    });
+    test('AP-10 다중 사업장 SubAdmin의 멤버 관리 접근 → 사업장 수 무관하게 불가', () {
+      final sub2 = _user(role: UserRole.USER, subAdminBizIds: ['biz1', 'biz2']);
+      final sub3 = _user(role: UserRole.USER, subAdminBizIds: ['biz1', 'biz2', 'biz3']);
+      expect(canAccessMemberManagement(sub2), isFalse);
+      expect(canAccessMemberManagement(sub3), isFalse);
+    });
+    test('AP-11 다중 사업장 SubAdmin + canManageTo → TO 삭제 가능', () {
+      final sub = _user(role: UserRole.USER, subAdminBizIds: ['biz1', 'biz2']);
+      expect(canDeleteTO(sub, _permTo), isTrue);
+    });
+    test('AP-12 단일 vs 다중: 권한 판단은 사업장 수와 무관하고 permissions 기반', () {
+      final single = _user(role: UserRole.USER, subAdminOf: 'biz1');
+      final multi  = _user(role: UserRole.USER, subAdminBizIds: ['biz1', 'biz2']);
+      expect(can(single, _permTo, (p) => p.canManageTo), isTrue);
+      expect(can(multi,  _permTo, (p) => p.canManageTo), isTrue);
+      expect(can(single, _permNone, (p) => p.canManageTo), isFalse);
+      expect(can(multi,  _permNone, (p) => p.canManageTo), isFalse);
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════════
 // main
 // ════════════════════════════════════════════════════════════
 
@@ -1775,4 +2918,20 @@ void main() {
   _runMultiSubAdminTests();
   _runRoleTransitionTests();
   _runAllPermCanMatrixTests();
+  // ── 새로 추가된 섹션 ──
+  _runCancelTransferTests();       // AB: canCancelTransfer 전용
+  _runIsSubAdminOfTests();         // AC: isSubAdminOf() 메서드
+  _runMultiBusinessSubAdminTests(); // AD: 다중 사업장 SubAdmin
+  _runPermissionEscalationTests(); // AE: 권한 상승 체인 차단
+  _runCFAssertBizAdminTests();     // AF: CF assertBizAdmin 시뮬레이션
+  _runNotificationFanoutTests();   // AG: 알림 팬아웃 수신 조건
+  _runWorkforceCalendarPermTests(); // AH: 이중/단일 권한 체크
+  _runAutoPermissionRemovalTests(); // AI: 퇴직 시 자동 권한 제거
+  _runSummaryTextAccuracyTests();  // AJ: summaryText 정확성
+  _run32PermCombinationsTests();   // AK: 32가지 조합 (5개 권한)
+  _runCreateTOLicenseCheckTests(); // AL: createTO 라이선스 우회
+  _runSettingsSectionTests();      // AM: 설정 사업장 섹션 접근
+  _runTODeletePermTests();         // AN: TO 삭제 권한 (canManageTo 이양)
+  _runMemberMenuHiddenTests();     // AO: 멤버 관리 메뉴 숨김 vs 설정 섹션 분리
+  _runMultiBizSubAdminPickerTests(); // AP: 다중 사업장 SubAdmin 피커
 }

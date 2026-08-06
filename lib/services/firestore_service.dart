@@ -19,7 +19,6 @@ import '../models/core/review_model.dart';
 import '../models/core/monthly_review_model.dart';
 import '../models/core/id_card_access_request_model.dart';
 import '../models/core/notification_model.dart';
-import '../models/core/worker_location_model.dart';
 import '../models/core/to_filter_state.dart';
 import '../utils/week_helper.dart';
 import '../utils/wage_calculator.dart';
@@ -36,7 +35,6 @@ part 'firestore/attendance_firestore.dart';
 part 'firestore/notification_firestore.dart';
 part 'firestore/review_firestore.dart';
 part 'firestore/id_card_firestore.dart';
-part 'firestore/worker_location_firestore.dart';
 
 /// 배치 처리 결과
 /// failedIds로 부분 실패 시 재처리 대상 applicationId 특정 가능
@@ -116,6 +114,12 @@ Map<String, dynamic> _cfHydrate(Map<String, dynamic> m) {
   });
 }
 
+/// DateTime → 'yyyy-MM-dd' 문자열 (intl 없이 포매팅)
+String _fmtDate(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}-'
+    '${d.month.toString().padLeft(2, '0')}-'
+    '${d.day.toString().padLeft(2, '0')}';
+
 class FirestoreService {
   // 싱글톤: 앱 전체에서 인스턴스 하나만 사용 → 캐시 공유, Firestore 읽기 절감
   static final FirestoreService _instance = FirestoreService._internal();
@@ -132,6 +136,11 @@ class FirestoreService {
   final Map<String, List<ApplicationModel>> _myApplicationsCache = {};
   final Map<String, DateTime> _myApplicationsCacheTimestamps = {};
   static const Duration _myApplicationsCacheTTL = Duration(minutes: 1);
+
+  // 월별 출근 기록 캐시 ("${uid}_${year}_${month}" → List<AttendanceModel>)
+  final Map<String, List<AttendanceModel>> _myAttendanceCache = {};
+  final Map<String, DateTime> _myAttendanceCacheTimestamps = {};
+  static const Duration _myAttendanceCacheTTL = Duration(minutes: 2);
 
   // 확정 일정 날짜별 캐시 ("${uid}_${dateStr}" → List<ApplicationModel>)
   final Map<String, List<ApplicationModel>> _confirmedSchedulesCache = {};
@@ -163,6 +172,12 @@ class FirestoreService {
       _userCacheTimestamps.clear();
     }
     // toId 지정 시: TO별 메모리 캐시 없음 — no-op (설계 의도, 위 주석 참고)
+  }
+
+  /// 내 출근 기록 캐시 무효화 (체크인·체크아웃 후 호출)
+  void invalidateMyAttendanceCache(String uid) {
+    _myAttendanceCache.removeWhere((k, _) => k.startsWith('${uid}_'));
+    _myAttendanceCacheTimestamps.removeWhere((k, _) => k.startsWith('${uid}_'));
   }
 
   /// 내 지원 목록 캐시 무효화 (지원·취소·확정 후 호출)

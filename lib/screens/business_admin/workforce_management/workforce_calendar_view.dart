@@ -57,6 +57,13 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
   // 고정 TO용 synthetic TOItem 캐시 (reload 시 초기화)
   final Map<String, TOItem> _contractTOItems = {};
 
+  // build() 시 캡처된 현재 시각 — _getEventsForDay 콜백 내 DateTime.now() 반복 호출 방지
+  DateTime _buildNow = DateTime.now();
+
+  // H2: 날짜별 _getGroupItemsForDay 결과 캐시 — items 변경 시 초기화
+  List<TOGroupItem>? _lastControllerItems;
+  final Map<String, List<TOGroupItem>> _dayGroupCache = {};
+
   // 사업장 목록 캐시 — 버튼 탭마다 Firestore 재조회 방지
   List<BusinessModel>? _cachedBusinesses;
 
@@ -99,10 +106,12 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
   }
 
   void _reload() {
+    _buildNow = DateTime.now(); // 리로드 시점의 현재 시각 갱신 — build() 내 상태 변이 방지
     setState(() {
       _expandedSlots.clear();
       _contractTOItems.clear();
       _cachedBusinesses = null;
+      _dayGroupCache.clear(); // H2: reload 시 캐시 즉시 무효화
     });
     context.read<WorkforceController>().reload(context).then((_) {
       if (_selectedDay != null && mounted) {
@@ -125,8 +134,13 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     ));
   }
 
-  /// 특정 날짜의 TO 그룹 목록
+  /// 특정 날짜의 TO 그룹 목록 — H2: 캐시 래퍼 (같은 items 버전에서 날짜당 1회만 계산)
   List<TOGroupItem> _getGroupItemsForDay(DateTime day) {
+    final key = '${day.year}-${day.month}-${day.day}';
+    return _dayGroupCache.putIfAbsent(key, () => _computeGroupItemsForDay(day));
+  }
+
+  List<TOGroupItem> _computeGroupItemsForDay(DateTime day) {
     final allItems = context.read<WorkforceController>().items;
     return allItems.where((groupItem) {
       if (groupItem.isLongTerm) {
@@ -171,6 +185,13 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     final dayGroupItems = _getGroupItemsForDay(day);
     if (dayGroupItems.any((item) => item.isLongTerm)) events.add('long');
     if (dayGroupItems.any((item) => !item.isLongTerm)) events.add('single');
+    // H1: markerBuilder에서 _getGroupItemsForDay 재호출 방지 — 마감/과거 여부를 이벤트에 인코딩
+    if (events.isNotEmpty) {
+      final isPast = day.isBefore(_buildNow.subtract(const Duration(days: 1)));
+      if (isPast || dayGroupItems.every((item) => item.isClosed)) {
+        events.add('closed');
+      }
+    }
     return events;
   }
 
@@ -179,8 +200,14 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     final controller = context.watch<WorkforceController>();
 
     if (controller.isLoading) {
-      _groupDetailsTriggered = false; // 다음 로딩 완료 시 재트리거
+      _groupDetailsTriggered = false;
       return const LoadingWidget(message: '공고 목록을 불러오는 중...');
+    }
+
+    // H2: items 변경 시 날짜별 캐시 무효화
+    if (!identical(controller.items, _lastControllerItems)) {
+      _lastControllerItems = controller.items;
+      _dayGroupCache.clear();
     }
 
     // 컨트롤러 로딩 완료 직후 한 번만 그룹 상세 로드
@@ -268,11 +295,8 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
 
             final hasLong = events.contains('long');
             final hasSingle = events.contains('single');
-
-            final dayGroupItems = _getGroupItemsForDay(date);
-            final isPastOrClosed = date.isBefore(
-                    DateTime.now().subtract(const Duration(days: 1))) ||
-                dayGroupItems.every((item) => item.isClosed);
+            // H1: _getEventsForDay에서 인코딩된 값 사용 — O(n) 재호출 없음
+            final isPastOrClosed = events.contains('closed');
 
             final Color shortColor =
                 isPastOrClosed ? AppColors.grey400 : theme.primaryColor;
@@ -657,9 +681,9 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     setState(() {
       _expandedSlots.clear();
       _expandedSlots[key] = true;
+      if (!groupItem.isWorkDetailLoaded) _loadingSlots.add(key);
     });
     if (!groupItem.isWorkDetailLoaded) {
-      setState(() => _loadingSlots.add(key));
       try {
         final result = await _firestoreService.loadTOWorkDetails(groupItem.masterTO);
         final details = result['workDetails'] as List<WorkDetailData>;
@@ -704,9 +728,9 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     setState(() {
       _expandedSlots.clear();
       _expandedSlots[key] = true;
+      if (slot.needsWorkDetailLoad) _loadingSlots.add(key);
     });
     if (slot.needsWorkDetailLoad) {
-      setState(() => _loadingSlots.add(key));
       try {
         final result = await _firestoreService.loadTOWorkDetails(
           slot.to,

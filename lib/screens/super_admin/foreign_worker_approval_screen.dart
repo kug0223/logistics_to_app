@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
@@ -60,17 +61,16 @@ class _ForeignWorkerApprovalScreenState
 
       if (!mounted) return;
       final rawList = (result.data['users'] as List?) ?? [];
-      setState(() {
-        _pending = rawList
-            .whereType<Map>()
-            .map((m) {
-              final d = Map<String, dynamic>.from(m);
-              final uid = d.remove('uid') as String? ?? '';
-              return UserModel.tryFromMap(d, uid);
-            })
-            .whereType<UserModel>()
-            .toList();
-      });
+      final pending = rawList
+          .whereType<Map>()
+          .map((m) {
+            final d = Map<String, dynamic>.from(m);
+            final uid = d.remove('uid') as String? ?? '';
+            return UserModel.tryFromMap(d, uid);
+          })
+          .whereType<UserModel>()
+          .toList();
+      setState(() { _pending = pending; });
       setLoading(false);
     } catch (e) {
       if (!mounted) return;
@@ -654,16 +654,14 @@ class _ForeignWorkerApprovalScreenState
             ),
             ClipRRect(
               borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
-              child: Image.network(
-                signedUrl!,
+              child: CachedNetworkImage(
+                imageUrl: signedUrl!,
                 fit: BoxFit.contain,
-                loadingBuilder: (_, child, progress) => progress == null
-                    ? child
-                    : const SizedBox(
-                        height: 200,
-                        child: Center(child: CircularProgressIndicator()),
-                      ),
-                errorBuilder: (_, __, ___) => const SizedBox(
+                placeholder: (_, __) => const SizedBox(
+                  height: 200,
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+                errorWidget: (_, __, ___) => const SizedBox(
                   height: 200,
                   child: Center(
                     child: Text('이미지를 불러올 수 없습니다',

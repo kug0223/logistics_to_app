@@ -100,6 +100,12 @@ class ApplicationModel {
   /// getUsersBatch CF 미반환 시 폴백 표시용
   final String? applicantName;
 
+  // 리컨펌(재확인) 알림 — 단기 근무 전용
+  // null: 아직 알림 미발송 / 'pending': 발송 후 미응답 / 'confirmed': 출근 확인 / 'declined': 취소
+  final String? reconfirmStatus;
+  final DateTime? reconfirmSentAt;       // H-2 알림 발송 시각
+  final DateTime? reconfirmRespondedAt;  // 응답 시각
+
   ApplicationModel({
     required this.id,
     required this.businessId,
@@ -173,6 +179,9 @@ class ApplicationModel {
     this.isStarred = false,
     this.lastContractRequestedAt,
     this.applicantName,
+    this.reconfirmStatus,
+    this.reconfirmSentAt,
+    this.reconfirmRespondedAt,
   });
 
   static ApplicationModel? tryFromMap(Map<String, dynamic> data, String documentId) {
@@ -280,6 +289,9 @@ class ApplicationModel {
       isStarred: data['isStarred'] as bool? ?? false,
       lastContractRequestedAt: parseTimestampNullable(data['lastContractRequestedAt']),
       applicantName: data['applicantName'] as String?,
+      reconfirmStatus: data['reconfirmStatus'] as String?,
+      reconfirmSentAt: parseTimestampNullable(data['reconfirmSentAt']),
+      reconfirmRespondedAt: parseTimestampNullable(data['reconfirmRespondedAt']),
     );
   }
   
@@ -375,6 +387,9 @@ class ApplicationModel {
       'statusHistory': statusHistory,
       'type': applicationType,
       'isStarred': isStarred,
+      'reconfirmStatus': reconfirmStatus,
+      'reconfirmSentAt': reconfirmSentAt != null ? Timestamp.fromDate(reconfirmSentAt!) : null,
+      'reconfirmRespondedAt': reconfirmRespondedAt != null ? Timestamp.fromDate(reconfirmRespondedAt!) : null,
     };
   }
 
@@ -476,6 +491,9 @@ class ApplicationModel {
     bool? isStarred,
     DateTime? lastContractRequestedAt,
     String? applicantName,
+    String? reconfirmStatus,
+    DateTime? reconfirmSentAt,
+    DateTime? reconfirmRespondedAt,
   }) {
     return ApplicationModel(
       id: id ?? this.id,
@@ -547,6 +565,9 @@ class ApplicationModel {
       isStarred: isStarred ?? this.isStarred,
       lastContractRequestedAt: lastContractRequestedAt ?? this.lastContractRequestedAt,
       applicantName: applicantName ?? this.applicantName,
+      reconfirmStatus: reconfirmStatus ?? this.reconfirmStatus,
+      reconfirmSentAt: reconfirmSentAt ?? this.reconfirmSentAt,
+      reconfirmRespondedAt: reconfirmRespondedAt ?? this.reconfirmRespondedAt,
     );
   }
 

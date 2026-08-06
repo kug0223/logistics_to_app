@@ -23,7 +23,6 @@ import '../../../models/core/attendance_model.dart';
 import '../../../models/core/business_model.dart';
 import '../../../models/core/user_model.dart';
 import '../../../models/core/business_work_type_model.dart';
-import '../../../models/core/worker_location_model.dart';
 import '../../../models/core/notification_model.dart';
 
 // Services
@@ -94,7 +93,6 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   Map<String, String> _businessNameMap = {};
   Map<String, BusinessWorkTypeModel> _workTypeMap = {};  // 업무유형 정보
   Map<String, dynamic> _workDetailTimeMap = {};  // 업무별 근무시간 (WorkDetail)
-  Map<String, WorkerLocationModel> _locationMap = {};  // 근로자 위치
   Map<String, String?> _contractStatusMap = {};  // 계약서 서명 상태
   AttendanceRules? _attendanceRules;            // 현재 사업장 반올림 정책
   String? _rulesLoadedForBusinessId;           // 마지막으로 정책을 로드한 businessId (캐싱용)
@@ -255,16 +253,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       final step2Results = await Future.wait([
         _getAttendanceRecords(appIds),                              // [0] 출근 기록
         _firestoreService.getUsersBatch(uids, businessId: _selectedBusinessId ?? ''),                       // [1] 사용자 정보
-        _firestoreService.getLocationsForApplications(appIds, businessId: _selectedBusinessId ?? ''),       // [2] 위치 정보
-        _getWorkDetailTimes(confirmedWorkers),                        // [3] WorkDetail 시간 정보 (근무자 목록 전달)
-        ContractService().getContractStatusBatch(appIds, businessId: _selectedBusinessId ?? ''),  // [4] 계약 서명 상태
+        _getWorkDetailTimes(confirmedWorkers),                        // [2] WorkDetail 시간 정보 (근무자 목록 전달)
+        ContractService().getContractStatusBatch(appIds, businessId: _selectedBusinessId ?? ''),  // [3] 계약 서명 상태
       ]);
 
       final attendanceMap = step2Results[0] as Map<String, AttendanceModel>;
       final userMap = step2Results[1] as Map<String, UserModel>;
-      final locationMap = step2Results[2] as Map<String, WorkerLocationModel>;
-      final workDetailTimeMap = step2Results[3] as Map<String, dynamic>;
-      final contractStatusMap = step2Results[4] as Map<String, String?>;
+      final workDetailTimeMap = step2Results[2] as Map<String, dynamic>;
+      final contractStatusMap = step2Results[3] as Map<String, String?>;
 
       // 사업장이 바뀐 경우에만 반올림 정책 로드 (매 refresh마다 Firestore 읽지 않음)
       if (_rulesLoadedForBusinessId != _selectedBusinessId) {
@@ -285,7 +281,6 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         _userMap = userMap;
         _workTypeMap = workTypeMap;
         _workDetailTimeMap = workDetailTimeMap;
-        _locationMap = locationMap;
         _contractStatusMap = contractStatusMap;
         _isLoading = false;
         _rebuildStatusCache();
@@ -1955,14 +1950,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                         ],
                       ),
 
-                      // Row 2: 시간 정보 (시간 있거나 위치 배지 있을 때만 표시)
+                      // Row 2: 시간 정보
                       Builder(builder: (context) {
                         final timeText = statusInfo['timeText'] as String?;
-                        final locationBadge = _buildLocationBadge(app.id);
-                        final hasLocation = _locationMap[app.id]?.isActive == true &&
-                            _locationMap[app.id]?.consentGiven == true;
                         final attendance = _attendanceMap[app.id];
-                        if (timeText == null && !hasLocation) return const SizedBox.shrink();
+                        if (timeText == null) return const SizedBox.shrink();
                         return Padding(
                           padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 4)),
                           child: Column(
@@ -1976,15 +1968,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                                     color: AppColors.grey500,
                                   ),
                                   SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                  if (timeText != null)
-                                    Flexible(
-                                      child: Text(
-                                        timeText,
-                                        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
+                                  Flexible(
+                                    child: Text(
+                                      timeText,
+                                      style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                  locationBadge,
+                                  ),
                                 ],
                               ),
                               if (attendance != null &&
@@ -2016,6 +2006,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
                           // 계약서 서명 상태 배지 (미작성·서명대기만 표시)
                           _buildContractBadge(app.id),
+
+                          // 리컨펌 상태 배지 (출근확인/미응답)
+                          _buildReconfirmBadge(app),
 
                           // 추가 플래그 배지 (지각/조퇴/연장/심야)
                           ..._buildExtraBadges(app),
@@ -2089,6 +2082,51 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     } else {
       return const SizedBox.shrink();
     }
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 5),
+        vertical: ResponsiveHelper.spacing(context, 2),
+      ),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 9, color: color),
+          const SizedBox(width: 2),
+          Text(
+            label,
+            style: ResponsiveHelper.tinyStyle(context, color: color)
+                .copyWith(fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 리컨펌(재확인) 상태 배지 — confirmed(출근확인)/pending(미응답)만 표시
+  Widget _buildReconfirmBadge(ApplicationModel app) {
+    final status = app.reconfirmStatus;
+    if (status == null || status == 'declined') return const SizedBox.shrink();
+
+    final IconData icon;
+    final String label;
+    final Color color;
+
+    if (status == 'confirmed') {
+      icon = Icons.check_circle_outline_rounded;
+      label = '출근확인';
+      color = AppColors.successDark;
+    } else {
+      // 'pending' — H-2 알림 발송됨, 아직 미응답
+      icon = Icons.help_outline_rounded;
+      label = '미응답';
+      color = AppColors.warningDark;
+    }
+
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 5),
@@ -2288,54 +2326,6 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
             label,
             style: ResponsiveHelper.tinyStyle(context,
                 color: AppColors.error, fontWeight: FontWeight.w600),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 미출근 워커 위치 배지
-  Widget _buildLocationBadge(String applicationId) {
-    final loc = _locationMap[applicationId];
-    if (loc == null || !loc.isActive || !loc.consentGiven) {
-      return const SizedBox.shrink();
-    }
-
-    final distance = loc.distanceMeters;
-    final Color dotColor;
-    final String label;
-
-    // 거리 기준: 200m 이내=근처(초록), 500m 이내=주의(주황), 초과=멀리(빨강)
-    // WorkerLocationModel.isNearBusiness 와 동일 기준(200m) 사용
-    if (distance == null) {
-      dotColor = AppColors.grey400;
-      label = '위치확인중';
-    } else if (distance <= 200) {
-      dotColor = AppColors.successDark;
-      label = loc.formattedDistance;
-    } else if (distance <= 500) {
-      dotColor = AppColors.warningDark;
-      label = loc.formattedDistance;
-    } else {
-      dotColor = AppColors.errorDark;
-      label = loc.formattedDistance;
-    }
-
-    return Padding(
-      padding: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 4)),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 6,
-            height: 6,
-            decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-          Text(
-            label,
-            style: ResponsiveHelper.tinyStyle(context, color: dotColor)
-                .copyWith(fontWeight: FontWeight.w600),
           ),
         ],
       ),

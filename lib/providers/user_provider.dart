@@ -12,12 +12,15 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'notification_provider.dart';
 import '../services/fcm_service.dart';
 import '../services/firestore_service.dart';
+import '../utils/navigation_key.dart';
 
 class UserProvider with ChangeNotifier {
   final AuthService _authService = AuthService();
 
   UserModel? _currentUser;
   bool _isLoading = false;
+  // signIn/signUp 진행 중임을 표시 — auth 스트림의 null 이벤트가 _isLoading을 리셋하지 않도록 방어
+  bool _isSigningIn = false;
   String? _error;
 
   // 하위 관리자 모드
@@ -28,6 +31,7 @@ class UserProvider with ChangeNotifier {
   // 다중 사업장 하위관리자: 현재 선택된 사업장 (세션 내 유지)
   String? _selectedSubAdminBusinessId;
   Map<String, String> _subAdminBusinessNames = {};
+  Map<String, String> _subAdminBusinessNamesView = const {};
   // SA-01: switchToAdminMode 경쟁조건 방지용 세대 카운터
   int _switchGeneration = 0;
 
@@ -79,7 +83,7 @@ class UserProvider with ChangeNotifier {
   /// permissions 로드 완료 여부 — false이면 아직 로딩 중 또는 로드 실패
   bool get permissionsLoaded => _permissionsLoaded;
   String? get selectedSubAdminBusinessId => _selectedSubAdminBusinessId;
-  Map<String, String> get subAdminBusinessNames => Map.unmodifiable(_subAdminBusinessNames);
+  Map<String, String> get subAdminBusinessNames => _subAdminBusinessNamesView;
 
   static const _kSubAdminLastBizKey = 'alfit_subadmin_last_biz_id';
   static const _kSubAdminIsAdminModeKey = 'alfit_subadmin_is_admin_mode';
@@ -228,7 +232,9 @@ class UserProvider with ChangeNotifier {
         await _loadUserData(firebaseUser.uid);
       } else {
         _currentUser = null;
-        _isLoading = false;
+        // signIn/signUp 진행 중에 _auth.signOut() 또는 세션 교체로 null 이벤트가 오면
+        // _isLoading 을 리셋하지 않는다 — signIn() finally 블록이 정리를 담당한다.
+        if (!_isSigningIn) _isLoading = false;
         notifyListeners();
       }
     }, onError: (error) {
@@ -315,6 +321,7 @@ class UserProvider with ChangeNotifier {
           }
           _permissionsLoaded = true;
           _subAdminBusinessNames = await namesFuture;
+          _subAdminBusinessNamesView = Map.unmodifiable(_subAdminBusinessNames);
 
           // permissions 로드 완료 후 저장된 모드 상태를 FCM에 반영
           if (savedIsAdminMode) {
@@ -329,20 +336,24 @@ class UserProvider with ChangeNotifier {
             _startMemberPermsListener(activeBizId, uid);
           }
         } else {
-          await FCMService().initialize(user.uid, isAdmin: user.isAdmin);
-          if (_disposed) return;
           _memberPermissions = null;
           _isAdminMode = false;
-        }
 
-        // USER 역할: 미서명 계약서 목록 초기 로드 + FCM 실시간 갱신 등록
-        if (user.isUser) {
-          if (_contractFcmCallback == null) {
-            _contractFcmCallback = () => refreshPendingContracts();
-            FCMService().addUserContractRefreshListener(_contractFcmCallback!);
+          if (user.isUser) {
+            // FCM 초기화와 미서명 계약서 로드를 병렬 실행
+            if (_contractFcmCallback == null) {
+              _contractFcmCallback = () => refreshPendingContracts();
+              FCMService().addUserContractRefreshListener(_contractFcmCallback!);
+            }
+            await Future.wait([
+              FCMService().initialize(user.uid, isAdmin: false),
+              refreshPendingContracts(),
+            ]);
+            if (_disposed) return;
+          } else {
+            await FCMService().initialize(user.uid, isAdmin: user.isAdmin);
+            if (_disposed) return;
           }
-          await refreshPendingContracts();
-          if (_disposed) return;
         }
       }
 
@@ -485,6 +496,7 @@ class UserProvider with ChangeNotifier {
 
   // 로그인
   Future<bool> signIn(String username, String password) async {
+    _isSigningIn = true;
     try {
       _isLoading = true;
       _error = null;
@@ -506,6 +518,7 @@ class UserProvider with ChangeNotifier {
       debugPrint('❌ 로그인 실패: $e');
       return false;
     } finally {
+      _isSigningIn = false;
       // [BUG-수정] SP-M-1: _loadUserData() 성공 시 내부에서 이미 _isLoading=false + notifyListeners() 처리됨.
       // finally가 무조건 재호출하면 불필요한 이중 rebuild 발생 — _isLoading이 아직 true일 때만 정리.
       if (_isLoading) {
@@ -546,6 +559,7 @@ class UserProvider with ChangeNotifier {
       _isAdminMode = false;
       _selectedSubAdminBusinessId = null;
       _subAdminBusinessNames = {};
+      _subAdminBusinessNamesView = const {};
       _pendingContracts = [];
       _error = null;
       _isLoading = false;
@@ -558,6 +572,9 @@ class UserProvider with ChangeNotifier {
 
       debugPrint('✅ 로그아웃 성공');
       notifyListeners();
+      // goHome()이 AuthWrapper를 스택에서 제거한 경우에도 로그인 화면으로
+      // 이동하도록 popUntil 대신 AuthWrapper를 새로 push하는 방식 사용.
+      redirectToLogin();
     } catch (e) {
       debugPrint('❌ 로그아웃 실패: $e');
       // 로그아웃 실패해도 로컬 상태는 초기화
@@ -574,10 +591,12 @@ class UserProvider with ChangeNotifier {
       _isAdminMode = false;
       _selectedSubAdminBusinessId = null;
       _subAdminBusinessNames = {};
+      _subAdminBusinessNamesView = const {};
       _pendingContracts = [];
       _error = null;
       FirestoreService().clearCache();
       notifyListeners();
+      redirectToLogin();
     }
   }
 

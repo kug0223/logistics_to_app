@@ -10,7 +10,7 @@ import 'package:ALfit/models/core/user_model.dart';
 /// 최소 필드만 가진 UserModel 팩토리
 UserModel _make({
   UserRole role = UserRole.USER,
-  String? subAdminOf,
+  List<String>? subAdminBusinessIds,
   String? ci,
   DateTime? passVerifiedAt,
   String? foreignIdNumber,
@@ -25,7 +25,7 @@ UserModel _make({
     name: '홍길동',
     email: 'testuser@ALfit-system.com',
     role: role,
-    subAdminOf: subAdminOf,
+    subAdminBusinessIds: subAdminBusinessIds,
     ci: ci,
     passVerifiedAt: passVerifiedAt,
     foreignIdNumber: foreignIdNumber,
@@ -57,20 +57,20 @@ void main() {
       expect(m.isSubAdmin,      isFalse);
     });
 
-    test('USER(subAdminOf 없음) → isUser=true, isSubAdmin=false', () {
+    test('USER(subAdminBusinessIds 없음) → isUser=true, isSubAdmin=false', () {
       final m = _make(role: UserRole.USER);
       expect(m.isUser,     isTrue);
       expect(m.isSubAdmin, isFalse);
     });
 
-    test('USER + subAdminOf → isSubAdmin=true', () {
-      final m = _make(role: UserRole.USER, subAdminOf: 'biz-001');
+    test('USER + subAdminBusinessIds → isSubAdmin=true', () {
+      final m = _make(role: UserRole.USER, subAdminBusinessIds: ['biz-001']);
       expect(m.isUser,     isTrue);
       expect(m.isSubAdmin, isTrue);
     });
 
-    test('BUSINESS_ADMIN은 subAdminOf가 있어도 isSubAdmin=false (role 조건 불충족)', () {
-      final m = _make(role: UserRole.BUSINESS_ADMIN, subAdminOf: 'biz-001');
+    test('BUSINESS_ADMIN은 subAdminBusinessIds가 있어도 isSubAdmin=false (role 조건 불충족)', () {
+      final m = _make(role: UserRole.BUSINESS_ADMIN, subAdminBusinessIds: ['biz-001']);
       expect(m.isSubAdmin, isFalse);
     });
   });
@@ -88,7 +88,7 @@ void main() {
     });
 
     test('USER(SubAdmin) → isAdmin=true', () {
-      expect(_make(role: UserRole.USER, subAdminOf: 'biz-001').isAdmin, isTrue);
+      expect(_make(role: UserRole.USER, subAdminBusinessIds: ['biz-001']).isAdmin, isTrue);
     });
 
     test('일반 USER → isAdmin=false', () {

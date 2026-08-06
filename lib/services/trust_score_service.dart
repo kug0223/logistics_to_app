@@ -38,8 +38,12 @@ class TrustScoreService {
   /// 사용자 신뢰도 점수 계산 (실시간)
   Future<int> calculateTrustScore(String userId) async {
     try {
-      final settings = await _getSettings();
-      final userDoc = await _firestore.collection('users').doc(userId).get();
+      final results = await Future.wait([
+        _getSettings(),
+        _firestore.collection('users').doc(userId).get(),
+      ]);
+      final settings = results[0] as TrustSettingsModel;
+      final userDoc = results[1] as DocumentSnapshot<Map<String, dynamic>>;
       
       if (!userDoc.exists) return settings.startScore;
       
@@ -85,8 +89,12 @@ class TrustScoreService {
   /// 재시작 프로그램 신청 가능 여부 (쿨타임 체크 — 클라이언트 표시용)
   Future<({bool canRestart, String? reason, int? daysRemaining})> canApplyRestart(String userId) async {
     try {
-      final settings = await _getSettings();
-      final userDoc = await _firestore.collection('users').doc(userId).get();
+      final results = await Future.wait([
+        _getSettings(),
+        _firestore.collection('users').doc(userId).get(),
+      ]);
+      final settings = results[0] as TrustSettingsModel;
+      final userDoc = results[1] as DocumentSnapshot<Map<String, dynamic>>;
       
       if (!userDoc.exists) {
         return (canRestart: false, reason: '사용자 정보를 찾을 수 없습니다.', daysRemaining: null);

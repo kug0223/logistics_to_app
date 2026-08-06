@@ -27,7 +27,19 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
     with LoadingStateMixin {
   final _firestore = FirebaseFirestore.instance;
   List<BadgeModel> _badges = [];
+  List<BadgeModel> _trustBadges = [];
+  List<BadgeModel> _attendanceBadges = [];
+  List<BadgeModel> _specialtyBadges = [];
+  List<BadgeModel> _experienceBadges = [];
   bool _isAdding = false;
+  bool _isToggling = false;
+
+  void _groupBadges() {
+    _trustBadges      = _badges.where((b) => b.type == BadgeType.trustScore).toList();
+    _attendanceBadges = _badges.where((b) => b.type == BadgeType.attendance).toList();
+    _specialtyBadges  = _badges.where((b) => b.type == BadgeType.specialty).toList();
+    _experienceBadges = _badges.where((b) => b.type == BadgeType.experience).toList();
+  }
 
   @override
   void initState() {
@@ -62,10 +74,27 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
         _badges = snapshot.docs.map((doc) {
           try { return BadgeModel.fromMap(doc.data(), doc.id); } catch (_) { return null; }
         }).whereType<BadgeModel>().toList();
+
+        // 기본 배지 중 파싱 성공한 항목에 없는 ID만 추가 (손상 문서는 기존 ID 보유 상태로 방치하지 않음)
+        final existingIds = _badges.map((b) => b.id).toSet();
+        final missing = BadgeModel.defaultBadges()
+            .where((b) => !existingIds.contains(b.id))
+            .toList();
+        if (missing.isNotEmpty) {
+          final batch = _firestore.batch();
+          for (final badge in missing) {
+            batch.set(_firestore.collection('badges').doc(badge.id), badge.toMap());
+          }
+          await batch.commit();
+          _badges = [..._badges, ...missing]..sort((a, b) => a.order.compareTo(b.order));
+          debugPrint('✅ 누락 기본 배지 ${missing.length}개 동기화: ${missing.map((b) => b.id).join(', ')}');
+        }
       }
+      _groupBadges();
     } catch (e) {
       debugPrint('❌ 배지 로드 실패: $e');
       _badges = BadgeModel.defaultBadges();
+      _groupBadges();
       if (mounted) ToastHelper.showError('배지 정보를 불러오는 데 실패했습니다');
     } finally {
       if (mounted) setLoading(false);
@@ -73,6 +102,8 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
   }
 
   Future<void> _toggleBadgeActive(BadgeModel badge) async {
+    if (_isToggling) return;
+    setState(() => _isToggling = true);
     try {
       await _firestore.collection('badges').doc(badge.id).update({
         'isActive': !badge.isActive,
@@ -104,6 +135,8 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
       if (mounted) ToastHelper.showSuccess(badge.isActive ? '배지가 비활성화되었습니다' : '배지가 활성화되었습니다');
     } catch (e) {
       if (mounted) ToastHelper.showError('변경에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isToggling = false);
     }
   }
 
@@ -193,11 +226,10 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     
-    // 타입별 그룹화
-    final trustBadges = _badges.where((b) => b.type == BadgeType.trustScore).toList();
-    final attendanceBadges = _badges.where((b) => b.type == BadgeType.attendance).toList();
-    final specialtyBadges = _badges.where((b) => b.type == BadgeType.specialty).toList();
-    final experienceBadges = _badges.where((b) => b.type == BadgeType.experience).toList();
+    final trustBadges = _trustBadges;
+    final attendanceBadges = _attendanceBadges;
+    final specialtyBadges = _specialtyBadges;
+    final experienceBadges = _experienceBadges;
     
     return GradientScaffold(
       title: '배지 관리',
@@ -445,12 +477,15 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
   String _getConditionText(BadgeModel badge) {
     // 주 조건 텍스트
     final primary = switch (badge.conditionType) {
-      BadgeConditionType.minScore     => '신뢰도 ${badge.conditionValue}점 이상',
-      BadgeConditionType.workDays     => badge.workType != null
-          ? '${badge.workType} ${badge.conditionValue}일 이상'
-          : '총 근무 ${badge.conditionValue}일 이상',
-      BadgeConditionType.consecutive  => '${badge.conditionValue}회 연속 무지각',
-      BadgeConditionType.monthlyPerfect => '월간 100% 출근 ${badge.conditionValue}개월',
+      BadgeConditionType.minScore          => '신뢰도 ${badge.conditionValue}점 이상',
+      BadgeConditionType.workDays          => '총 근무 ${badge.conditionValue}일 이상',
+      BadgeConditionType.consecutive       => '${badge.conditionValue}회 연속 무지각',
+      BadgeConditionType.monthlyPerfect    => '월간 100% 출근',
+      BadgeConditionType.nightShiftCount   => '야간(22시 이후) 출근 ${badge.conditionValue}회',
+      BadgeConditionType.earlyBirdCount    => '새벽(6시 이전) 출근 ${badge.conditionValue}회',
+      BadgeConditionType.weekendCount      => '주말·공휴일 근무 ${badge.conditionValue}회',
+      BadgeConditionType.sameBusinessRehire => '같은 사업장 ${badge.conditionValue}회 재고용',
+      BadgeConditionType.uniqueBusinesses  => '${badge.conditionValue}개 이상 사업장 경험',
     };
 
     // 복합 조건 추가 텍스트
@@ -647,6 +682,10 @@ class _BadgeEditDialogState extends State<_BadgeEditDialog> {
               ToastHelper.showError('배지 이름을 입력하세요');
               return;
             }
+            if (_iconController.text.trim().isEmpty) {
+              ToastHelper.showError('아이콘을 입력하세요');
+              return;
+            }
             final parsedValue = int.tryParse(_valueController.text) ?? 0;
             if (parsedValue <= 0) {
               ToastHelper.showError('조건 값은 1 이상의 숫자여야 합니다');
@@ -702,6 +741,16 @@ class _BadgeEditDialogState extends State<_BadgeEditDialog> {
         return '연속 무지각';
       case BadgeConditionType.monthlyPerfect:
         return '월간 완벽 출근';
+      case BadgeConditionType.nightShiftCount:
+        return '야간 출근 횟수';
+      case BadgeConditionType.earlyBirdCount:
+        return '새벽 출근 횟수';
+      case BadgeConditionType.weekendCount:
+        return '주말 근무 횟수';
+      case BadgeConditionType.sameBusinessRehire:
+        return '동일 사업장 재고용';
+      case BadgeConditionType.uniqueBusinesses:
+        return '다양한 사업장 수';
     }
   }
 }

@@ -27,7 +27,8 @@ class AppVersionService {
         'update_url_android': '',
         'update_url_ios': '',
       });
-      await _rc.fetchAndActivate();
+      // fetchAndActivate는 check()에서 호출하므로 여기서는 생략
+      // → main()에서 await init()이 빠르게 완료되어 runApp() 진입 속도 개선
     } catch (e) {
       debugPrint('⚠️ Remote Config 초기화 실패: $e');
     }

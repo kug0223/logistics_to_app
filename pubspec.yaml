@@ -57,8 +57,8 @@ dependencies:
   # WebView (주소 검색용)
   webview_flutter: ^4.4.2
 
-  # 포트원(PortOne) 본인인증 SDK — 다날 계약 후 추가 예정
-  # iamport_flutter: ^0.10.21
+  # 포트원(PortOne) 본인인증 SDK
+  iamport_flutter: ^0.10.21
 
   # 캘린더
   table_calendar: ^3.1.2
@@ -100,27 +100,29 @@ dependencies:
   # 손글씨 서명 (근로계약서)
   signature: ^5.5.0
 
+  # 네이티브 스플래시 — preserve()/remove() 런타임 API 사용을 위해 dev 아닌 runtime dependency
+  flutter_native_splash: ^2.4.1
+
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
   flutter_launcher_icons: ^0.13.1
-  flutter_native_splash: ^2.4.1
 
 flutter_launcher_icons:
   android: true
   ios: true
   image_path: "assets/icons/app_icon.png"
-  adaptive_icon_background: "#1976D2"
+  adaptive_icon_background: "#1565C0"
   adaptive_icon_foreground: "assets/icons/app_icon_foreground.png"
   min_sdk_android: 21
 
 flutter_native_splash:
   color: "#1565C0"
-  image: assets/icons/app_icon.png
+  image: assets/icons/app_icon_foreground.png
   color_dark: "#1565C0"
-  image_dark: assets/icons/app_icon.png
+  image_dark: assets/icons/app_icon_foreground.png
   android: true
   ios: true
   android_12:

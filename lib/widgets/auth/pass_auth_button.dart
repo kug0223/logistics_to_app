@@ -73,7 +73,7 @@ class PassAuthButton extends StatelessWidget {
                   const Icon(Icons.verified_user, size: 20),
                   const SizedBox(width: 8),
                   Text(
-                    'PASS 본인인증',
+                    '휴대폰 본인인증',
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
                       color: Colors.white,
                       fontWeight: FontWeight.w600,

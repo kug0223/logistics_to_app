@@ -266,10 +266,12 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
   /// 날짜 그리드
   Widget _buildDaysGrid(BuildContext context, ThemeData theme) {
     final days = _generateDaysInMonth();
-    final cellSize = widget.compact 
+    final cellSize = widget.compact
         ? ResponsiveHelper.spacing(context, 36)
         : ResponsiveHelper.spacing(context, 44);
-    
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 8),
@@ -284,10 +286,10 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
                 if (index >= days.length) {
                   return Expanded(child: SizedBox(height: cellSize));
                 }
-                
+
                 final day = days[index];
                 return Expanded(
-                  child: _buildDayCell(context, theme, day, cellSize, dayIndex),
+                  child: _buildDayCell(context, theme, day, cellSize, dayIndex, today),
                 );
               }),
             );
@@ -304,16 +306,15 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
     DateTime? day,
     double cellSize,
     int weekdayIndex,
+    DateTime today,
   ) {
     if (day == null) {
       return SizedBox(height: cellSize);
     }
 
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
     final isToday = _isSameDay(day, today);
     final isCurrentMonth = day.month == _focusedMonth.month;
-    final isDisabled = _isDateDisabled(day);
+    final isDisabled = _isDateDisabled(day, today);
 
     // 선택 상태 확인
     final isSelected = _isDateSelected(day);
@@ -514,10 +515,7 @@ class _CarrotStyleCalendarState extends State<CarrotStyleCalendar> {
   }
 
   /// 날짜 비활성화 여부
-  bool _isDateDisabled(DateTime day) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    
+  bool _isDateDisabled(DateTime day, DateTime today) {
     // 과거 날짜 체크
     if (!widget.allowPastDates && day.isBefore(today)) {
       return true;

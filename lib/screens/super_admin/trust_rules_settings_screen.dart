@@ -117,8 +117,6 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
   Future<void> _saveSettings() async {
     if (!_validateInputs()) return;
     if (_isSaving) return;
-    setState(() => _isSaving = true);
-    try {
     final confirmed = await DialogHelper.showConfirm(
       context,
       title: '설정 저장',
@@ -126,6 +124,8 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
       confirmText: '저장',
     );
     if (!confirmed || !mounted) return;
+    setState(() => _isSaving = true);
+    try {
     if (_settings == null) return;
       // 증가 규칙 업데이트
       final updatedIncreaseRules = _settings!.increaseRules.map((rule) {
@@ -212,6 +212,14 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
         return false;
       }
 
+      for (final entry in _ruleControllers.entries) {
+        final v = int.tryParse(entry.value.text);
+        if (v == null || v < 0) {
+          ToastHelper.showError('규칙 점수는 0 이상의 숫자여야 합니다');
+          return false;
+        }
+      }
+
       return true;
     } catch (e) {
       ToastHelper.showError('숫자만 입력해주세요');
@@ -221,8 +229,6 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
 
   Future<void> _resetToDefaults() async {
     if (_isSaving) return;
-    setState(() => _isSaving = true);
-    try {
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
       title: '기본값 복원',
@@ -230,6 +236,8 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
       confirmText: '복원',
     );
     if (!confirmed || !mounted) return;
+    setState(() => _isSaving = true);
+    try {
       _settings = TrustSettingsModel.defaults();
       await _firestore.collection('settings').doc('trust_rules').set(_settings!.toMap());
       if (!mounted) return;

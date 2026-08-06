@@ -47,23 +47,19 @@
 		<true/>
 		<key>UIStatusBarHidden</key>
 		<false/>
-
 		<!-- 블루투스 권한 (비콘 출퇴근) -->
 		<key>NSBluetoothAlwaysUsageDescription</key>
 		<string>사업장 비콘 기기를 인식하여 출퇴근 체크에 사용합니다.</string>
 		<key>NSBluetoothPeripheralUsageDescription</key>
 		<string>사업장 비콘 기기를 인식하여 출퇴근 체크에 사용합니다.</string>
-
 		<!-- 위치 권한 (출근 체크인 GPS 검증) -->
 		<key>NSLocationWhenInUseUsageDescription</key>
 		<string>출근 체크 시 사업장 위치 확인을 위해 위치 정보가 필요합니다.</string>
 		<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 		<string>출근 체크 시 사업장 위치 확인을 위해 위치 정보가 필요합니다.</string>
-
 		<!-- 카메라 권한 (신분증·통장사본 촬영) -->
 		<key>NSCameraUsageDescription</key>
 		<string>신분증 및 통장사본 등록을 위해 카메라 접근이 필요합니다.</string>
-
 		<!-- 사진 라이브러리 권한 (서류 갤러리 선택) -->
 		<key>NSPhotoLibraryUsageDescription</key>
 		<string>신분증 및 통장사본 등록을 위해 사진 라이브러리 접근이 필요합니다.</string>

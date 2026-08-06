@@ -29,13 +29,12 @@ class BusinessPickerHelper {
 
     List<BusinessModel> businesses;
     if (userProvider.isSubAdmin) {
-      final bizId = userProvider.effectiveBusinessId;
-      if (bizId == null) {
+      final bizIds = userProvider.currentUser?.subAdminBusinessIds ?? [];
+      if (bizIds.isEmpty) {
         ToastHelper.showWarning('사업장 정보를 찾을 수 없습니다');
         return null;
       }
-      final biz = await FirestoreService().getBusinessById(bizId);
-      businesses = biz != null ? [biz] : [];
+      businesses = await FirestoreService().getBusinessesByIds(bizIds);
     } else {
       // CF callableGetMyBusiness 대신 UserProvider에 이미 있는 managedBusinessIds로
       // 병렬 doc.get — CF 콜드스타트(1–3초) 제거, Firestore 오프라인 캐시 활용

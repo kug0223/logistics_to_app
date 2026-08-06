@@ -643,7 +643,7 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
           ),
           Expanded(
             child: _workersLoading
-                ? const ApplicationListSkeleton(itemCount: 4)
+                ? const PayrollWorkerListSkeleton()
                 : filtered.isEmpty
                     ? (_searchQuery.isEmpty && widget.summary.confirmedCount > 0
                         // payroll_summaries 문서 누락 — 집계 복원 버튼 노출
