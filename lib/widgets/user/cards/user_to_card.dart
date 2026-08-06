@@ -333,7 +333,7 @@ class _UserTOCardState extends State<UserTOCard> {
                       Padding(
                         padding: EdgeInsets.fromLTRB(
                           ResponsiveHelper.spacing(context, 12),
-                          ResponsiveHelper.spacing(context, 12),
+                          ResponsiveHelper.spacing(context, 10),
                           ResponsiveHelper.spacing(context, 12),
                           0,
                         ),
@@ -384,7 +384,7 @@ class _UserTOCardState extends State<UserTOCard> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildTopRow(context, theme),
-        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        SizedBox(height: ResponsiveHelper.spacing(context, 6)),
         Text(
           widget.to.title,
           style: ResponsiveHelper.titleStyle(context).copyWith(
@@ -394,22 +394,25 @@ class _UserTOCardState extends State<UserTOCard> {
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
         ),
-        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        SizedBox(height: ResponsiveHelper.spacing(context, 6)),
         _buildDateTimeRow(context),
-        SizedBox(height: ResponsiveHelper.spacing(context, 5)),
-        _buildBusinessRow(context),
-        SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
         Container(height: 1, color: AppColors.grey100),
-        SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
         _buildWageRow(context),
-        SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
         _buildActionRow(context, theme),
-        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        SizedBox(height: ResponsiveHelper.spacing(context, 10)),
       ],
     );
   }
 
   Widget _buildTopRow(BuildContext context, ThemeData theme) {
+    // 위치 · 사업장명 합치기 (단기/고정 공통 — 별도 사업장명 행 제거)
+    final loc = _location.isNotEmpty ? _location : '위치 미정';
+    final biz = widget.to.businessName;
+    final locationBiz = biz.isNotEmpty ? '$loc · $biz' : loc;
+
     return Row(
       children: [
         _typeBadge(context),
@@ -420,14 +423,20 @@ class _UserTOCardState extends State<UserTOCard> {
         SizedBox(width: ResponsiveHelper.spacing(context, 3)),
         Expanded(
           child: Text(
-            _location.isNotEmpty ? _location : '위치 미정',
+            locationBiz,
             style: ResponsiveHelper.smallStyle(context).copyWith(
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.w500,
               color: theme.primaryColor,
             ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
+        ),
+        // 등록 시간 — 헤더 우측 (사업장명 행 제거로 이동)
+        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+        Text(
+          _timeAgo,
+          style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
         ),
         ..._statusBadgeWidgets(context),
         SizedBox(width: ResponsiveHelper.spacing(context, 4)),
@@ -513,26 +522,6 @@ class _UserTOCardState extends State<UserTOCard> {
     );
   }
 
-  Widget _buildBusinessRow(BuildContext context) => Row(
-        children: [
-          Icon(Icons.store_outlined,
-              size: ResponsiveHelper.iconSize(context, 13),
-              color: AppColors.grey400),
-          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-          Expanded(
-            child: Text(
-              widget.to.businessName,
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          Text(
-            _timeAgo,
-            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
-          ),
-        ],
-      );
 
   Widget _buildWageRow(BuildContext context) {
     final hint = _workHint;
