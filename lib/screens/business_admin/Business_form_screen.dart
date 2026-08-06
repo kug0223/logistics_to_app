@@ -1972,7 +1972,9 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     );
 
     if (!mounted || image == null) return;
+    final prev = _mainImage;
     setState(() => _mainImage = image);
+    prev?.delete().ignore(); // [WAGE-L2] 교체 전 임시 파일 삭제
   }
 
   Future<void> _pickAdditionalImages() async {

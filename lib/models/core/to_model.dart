@@ -171,7 +171,7 @@ class TOModel {
       contractPeriodType: data['contractPeriodType'] as String?,
       postingDurationDays: (data['postingDurationDays'] as num?)?.toInt(),
       postingExpiryDateServer:
-          (data['postingExpiryDate'] as Timestamp?)?.toDate().toLocal(),
+          parseTimestampNullable(data['postingExpiryDate']),
       totalRequired: (data['totalRequired'] as num?)?.toInt() ?? 0,
       totalConfirmed: (data['totalConfirmed'] as num?)?.toInt() ?? 0,
       totalPending: (data['totalPending'] as num?)?.toInt() ?? 0,
@@ -216,6 +216,8 @@ class TOModel {
         'applicationDeadline': Timestamp.fromDate(applicationDeadline!),
       if (contractPeriodType != null) 'contractPeriodType': contractPeriodType,
       if (postingDurationDays != null) 'postingDurationDays': postingDurationDays,
+      if (postingExpiryDateServer != null)
+        'postingExpiryDate': Timestamp.fromDate(postingExpiryDateServer!),
       'totalRequired': totalRequired,
       'totalConfirmed': totalConfirmed,
       'totalPending': totalPending,

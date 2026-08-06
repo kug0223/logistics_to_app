@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../utils/firestore_helper.dart';
 import '../../utils/format_helper.dart';
 import 'insurance_rate_model.dart';
 
@@ -112,7 +113,7 @@ class WorkDetailData {
       workTypeColor: map['workTypeColor'] as String? ?? '#2196F3',
       workTypeBackgroundColor: map['workTypeBackgroundColor'] as String? ?? '#E3F2FD',
       wage: (map['wage'] as num?)?.toInt() ?? 0,
-      wageType: const ['hourly', 'daily'].contains(map['wageType'])
+      wageType: const ['hourly', 'daily', 'monthly'].contains(map['wageType'])
           ? map['wageType'] as String
           : 'hourly',
       requiredCount: (map['requiredCount'] as num?)?.toInt() ?? 0,
@@ -133,13 +134,12 @@ class WorkDetailData {
           ? map['taxDeductionType'] as String
           : InsuranceRateModel.typeNone,
       description: map['description'] as String?,
-      applicationDeadline:
-          (map['applicationDeadline'] as Timestamp?)?.toDate().toLocal(),
+      applicationDeadline: parseTimestampNullable(map['applicationDeadline']),
       isManualClosed: map['isManualClosed'] as bool? ?? false,
       isEmergencyOpen: map['isEmergencyOpen'] as bool? ?? false,
-      closedAt: (map['closedAt'] as Timestamp?)?.toDate().toLocal(),
+      closedAt: parseTimestampNullable(map['closedAt']),
       closedBy: map['closedBy'] as String?,
-      emergencyOpenedAt: (map['emergencyOpenedAt'] as Timestamp?)?.toDate().toLocal(),
+      emergencyOpenedAt: parseTimestampNullable(map['emergencyOpenedAt']),
     );
   }
 

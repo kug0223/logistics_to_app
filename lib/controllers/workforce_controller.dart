@@ -87,6 +87,12 @@ class WorkforceController extends ChangeNotifier {
   void unregisterShowFilterCallback() => _showFilterCallback = null;
   void requestShowFilter() => _showFilterCallback?.call();
 
+  // ── 외부 reload 콜백 — FCM/lifecycle reload 시 WorkforceListView 확장 상태 초기화 ──
+  VoidCallback? _onExternalReloadCallback;
+
+  void registerOnExternalReload(VoidCallback cb) => _onExternalReloadCallback = cb;
+  void unregisterOnExternalReload() => _onExternalReloadCallback = null;
+
   // ── 초기 로드 / 재로드 ────────────────────────────────────
 
   /// [context]는 첫 번째 await 이전에 uid/role 추출에만 사용됩니다.
@@ -254,7 +260,10 @@ class WorkforceController extends ChangeNotifier {
   }
 
   /// 데이터 변경 후 호출 — 두 뷰가 동시 갱신된다
-  Future<void> reload(BuildContext context) => load(context);
+  Future<void> reload(BuildContext context) {
+    _onExternalReloadCallback?.call();
+    return load(context);
+  }
 
   // ── Lazy Loading ─────────────────────────────────────────
 

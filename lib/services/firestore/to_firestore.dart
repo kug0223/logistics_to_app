@@ -188,9 +188,9 @@ extension TOFirestore on FirestoreService {
       return (result.data['tos'] as List? ?? [])
           .whereType<Map>()
           .map((m) {
-            final d = Map<String, dynamic>.from(m);
-            final id = d.remove('id') as String? ?? '';
-            return TOModel.tryFromMap(d, id);
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return TOModel.tryFromMap(raw, id);
           })
           .whereType<TOModel>()
           .toList();
@@ -222,9 +222,9 @@ extension TOFirestore on FirestoreService {
       final items = (result.data['tos'] as List? ?? [])
           .whereType<Map>()
           .map((m) {
-            final d = Map<String, dynamic>.from(m);
-            final id = d.remove('id') as String? ?? '';
-            return TOModel.tryFromMap(d, id);
+            final raw = _cfHydrate(Map<String, dynamic>.from(m));
+            final id = raw.remove('id') as String? ?? '';
+            return TOModel.tryFromMap(raw, id);
           })
           .whereType<TOModel>()
           .toList();
@@ -458,11 +458,13 @@ extension TOFirestore on FirestoreService {
       final toRef = _firestore.collection('tos').doc(toId);
       debugPrint('✅ [TO] 공고 생성: $toId');
 
-      // flex: slots 생성 — 실패 시 부분 생성된 슬롯 + TO 문서 모두 롤백 삭제
+      // flex: slots 생성 — [TZ-FIX] callableCreateFlexSlots CF에서 KST 기준 서버 계산
+      // 실패 시 부분 생성된 슬롯 + TO 문서 모두 롤백 삭제
       if (type == TOType.flex && dates != null && dates.isNotEmpty) {
         try {
-          await _createSlots(
+          await _callCreateFlexSlots(
             toId: toId,
+            businessId: businessId,
             dates: dates,
             workDetails: workDetails,
             deadlineType: deadlineType,
@@ -767,10 +769,11 @@ extension TOFirestore on FirestoreService {
           if (deadlineType == 'HOURS_BEFORE') {
             final parts = newDef.startTime.split(':');
             if (parts.length >= 2) {
-              deadline = DateTime(
+              // startTime은 항상 KST — DateTime.utc()로 생성 후 KST→UTC(-9h) 변환
+              deadline = DateTime.utc(
                 slot.date.year, slot.date.month, slot.date.day,
                 int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0,
-              ).subtract(Duration(hours: hoursBeforeStart)).toUtc();
+              ).subtract(const Duration(hours: 9)).subtract(Duration(hours: hoursBeforeStart));
             }
           } else if (deadlineType == 'FIXED_TIME' && fixedDeadline != null) {
             deadline = fixedDeadline.toUtc();
@@ -1040,6 +1043,47 @@ extension TOFirestore on FirestoreService {
   // 내부 유틸
   // ───────────────────────────────────────────────────────
 
+  /// [TZ-FIX] CF callableCreateFlexSlots — KST 기준 서버 계산으로 기기 타임존 무관
+  /// dates를 "YYYY-MM-DD" 문자열로 전달 → CF에서 KST→UTC 명시 변환
+  Future<void> _callCreateFlexSlots({
+    required String toId,
+    required String businessId,
+    required List<DateTime> dates,
+    required List<WorkDetailData> workDetails,
+    required String deadlineType,
+    required int hoursBeforeStart,
+    DateTime? fixedDeadline,
+    String publishMode = 'immediate',
+    int? publishDaysBefore,
+    String? publishTime,
+    String? slotTitle,
+  }) async {
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableCreateFlexSlots',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 120)));
+
+    final dateStrings = dates.map((d) =>
+        '${d.year.toString().padLeft(4, '0')}-'
+        '${d.month.toString().padLeft(2, '0')}-'
+        '${d.day.toString().padLeft(2, '0')}').toList();
+
+    await callable.call({
+      'toId': toId,
+      'businessId': businessId,
+      'dates': dateStrings,
+      'workDetails': workDetails.map((w) => _sanitizeForCF(w.toMap())).toList(),
+      'deadlineType': deadlineType,
+      'hoursBeforeStart': hoursBeforeStart,
+      if (fixedDeadline != null) 'fixedDeadlineMs': fixedDeadline.toUtc().millisecondsSinceEpoch,
+      'publishMode': publishMode,
+      if (publishDaysBefore != null) 'publishDaysBefore': publishDaysBefore,
+      if (publishTime != null) 'publishTime': publishTime,
+      if (slotTitle != null && slotTitle.isNotEmpty) 'slotTitle': slotTitle,
+    });
+    debugPrint('✅ [TO] 슬롯 ${dates.length}개 생성 완료 (CF)');
+  }
+
+  // ignore: unused_element
   Future<void> _createSlots({
     required String toId,
     required List<DateTime> dates,
@@ -1072,10 +1116,11 @@ extension TOFirestore on FirestoreService {
         if (deadlineType == 'HOURS_BEFORE') {
           final parts = d.startTime.split(':');
           if (parts.length >= 2) {
-            deadline = DateTime(
+            // startTime은 항상 KST — DateTime.utc()로 생성 후 KST→UTC(-9h) 변환
+            deadline = DateTime.utc(
               date.year, date.month, date.day,
               int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0,
-            ).subtract(Duration(hours: hoursBeforeStart)).toUtc();
+            ).subtract(const Duration(hours: 9)).subtract(Duration(hours: hoursBeforeStart));
           }
         } else if (deadlineType == 'FIXED_TIME' && fixedDeadline != null) {
           deadline = fixedDeadline.toUtc();

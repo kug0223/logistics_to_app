@@ -735,9 +735,10 @@ export const onNotificationCreated = onDocumentCreated(
       // fcmTokens 배열 우선, 없으면 단일 fcmToken으로 폴백 (하위 호환)
       const tokenArray = userData?.fcmTokens as string[] | undefined;
       const singleToken = userData?.fcmToken as string | undefined;
-      const fcmTokens: string[] = tokenArray && tokenArray.length > 0
+      // [F004] 중복 토큰 제거 — 동일 기기 재등록 등으로 배열에 중복 항목이 있을 경우 전송 실패 방지
+      const fcmTokens: string[] = [...new Set(tokenArray && tokenArray.length > 0
         ? tokenArray
-        : (singleToken ? [singleToken] : []);
+        : (singleToken ? [singleToken] : []))];
 
       if (fcmTokens.length === 0) {
         console.log(`⚠️ [알림 트리거] FCM 토큰 없음: ${userId}`);
@@ -2780,6 +2781,7 @@ async function processSlotWorkDetailExpiry(now: Timestamp): Promise<void> {
   );
 
   // 3단계: 결과 집계
+  const totalRequiredDecrement = new Map<string, number>(); // [TO-M-06]
   for (let i = 0; i < pending.length; i++) {
     const {slotDoc, expiredItems, allDetailsClosed, toId} = pending[i];
     const result = results[i];
@@ -2794,6 +2796,9 @@ async function processSlotWorkDetailExpiry(now: Timestamp): Promise<void> {
       expiredItems.forEach((wd: any) =>
         console.log(`    → ${toId}/${slotDoc.id}/${wd.workType} 마감`)
       );
+      // [TO-M-06] 만료 workDetail의 requiredCount 합산 — TO.totalRequired 감소 대상
+      const delta = expiredItems.reduce((acc: number, wd: any) => acc + (Number(wd.requiredCount) || 0), 0);
+      if (delta > 0) totalRequiredDecrement.set(toId, (totalRequiredDecrement.get(toId) ?? 0) + delta);
     }
   }
 
@@ -2871,6 +2876,17 @@ async function processSlotWorkDetailExpiry(now: Timestamp): Promise<void> {
       }
     })
   );
+
+  // [TO-M-06] TO.totalRequired 감소 — 만료된 workDetail의 requiredCount 합산
+  if (totalRequiredDecrement.size > 0) {
+    await Promise.allSettled(
+      [...totalRequiredDecrement.entries()].map(([tid, delta]) =>
+        db.collection("tos").doc(tid).update({
+          totalRequired: admin.firestore.FieldValue.increment(-delta),
+        }).catch((err) => console.error(`[TO-M-06] TO ${tid} totalRequired 감소 실패:`, err))
+      )
+    );
+  }
 }
 
 /**
@@ -4019,8 +4035,20 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         isRead: false,
         createdAt: now,
       });
+      // [EC-M-02] D-0 자동연장: 갱신된 application에 대한 employment_contracts 문서 생성
+      // 관리자가 서명해야 하는 새 계약서 — pending_employer 상태로 생성
+      const newContractRef = db.collection("employment_contracts").doc();
+      renewBatch.set(newContractRef, {
+        businessId: app.businessId,
+        workerId: app.uid,
+        applicationId: newAppRef.id,
+        status: "pending_employer",
+        createdAt: now,
+        createdBy: "SYSTEM",
+        renewedFromApplicationId: doc.id,
+      });
       renewBatch.update(doc.ref, {renewalDecision: "EXTEND", renewedToApplicationId: newAppRef.id});
-      await renewBatch.commit(); // 새 application + 알림 + 기존 상태 변경 원자적 처리
+      await renewBatch.commit(); // 새 application + 계약서 + 알림 + 기존 상태 변경 원자적 처리
       return "ok";
     }));
     d0Count = d0Results.filter((r) => r.status === "fulfilled" && (r as PromiseFulfilledResult<string>).value === "ok").length;
@@ -4199,8 +4227,9 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
 
         // actualResignDate: 근무자가 희망한 날짜 or 요청일+1일
         let actualResignDate: Date;
-        if (app.resignRequestDate) {
-          actualResignDate = (app.resignRequestDate as Timestamp).toDate();
+        // [F003] resignRequestDate가 Timestamp가 아닌 값(string 등)일 경우 TypeError 방지
+        if (app.resignRequestDate instanceof Timestamp) {
+          actualResignDate = app.resignRequestDate.toDate();
         } else {
           actualResignDate = new Date(
             (app.resignRequestedAt as Timestamp).toDate().getTime() + 24 * 60 * 60 * 1000
@@ -5182,7 +5211,24 @@ export const onBusinessDeleted = onDocumentDeleted(
     // [M-3] 고아 데이터 cascade — 6개 컬렉션 병렬 삭제 (서로 독립)
     await Promise.allSettled([
       deleteByBusinessId("schedule_change_requests"),
-      deleteByBusinessId("employment_contracts"),
+      // [EC-M-01] employment_contracts: Firestore 삭제 + Storage 파일 정리
+      (async () => {
+        let last: FirebaseFirestore.DocumentSnapshot | undefined;
+        while (true) {
+          let q: FirebaseFirestore.Query = db.collection("employment_contracts")
+            .where("businessId", "==", businessId).limit(PAGE);
+          if (last) q = q.startAfter(last);
+          const snap = await q.get();
+          if (snap.empty) break;
+          const contractIds = snap.docs.map((d) => d.id);
+          const batch = db.batch();
+          snap.docs.forEach((d) => batch.delete(d.ref));
+          await batch.commit();
+          await Promise.allSettled(contractIds.map((id) => _cleanupContractFiles(id)));
+          if (snap.docs.length < PAGE) break;
+          last = snap.docs[snap.docs.length - 1];
+        }
+      })(),
       deleteByBusinessId("monthly_reviews"),
       deleteByBusinessId("payment_change_requests"),
       deleteByBusinessId("interim_settlement_requests"),
@@ -6120,14 +6166,28 @@ export const callableFinalizeEmployerSignature = onCall(
         // workerId가 해당 사업장의 확정/계약대기 지원자인지 검증 (임의 UID 주입 방지)
         const workerId = contractData["workerId"] as string | undefined;
         if (!workerId) throw new HttpsError("invalid-argument", "contractData.workerId가 필요합니다.");
-        const workerAppQuery = await db.collection("applications")
-          .where("businessId", "==", bizId)
-          .where("uid", "==", workerId)
-          .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
-          .limit(1)
-          .get();
-        if (workerAppQuery.empty) {
-          throw new HttpsError("permission-denied", "해당 근로자는 이 사업장의 확정된 지원자가 아닙니다.");
+        // [EC-L-01] applicationId가 전달된 경우 해당 문서 상태를 직접 검증
+        const targetAppId = contractData["applicationId"] as string | undefined;
+        if (targetAppId) {
+          const appSnap = await db.collection("applications").doc(targetAppId).get();
+          if (!appSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+          const appData = appSnap.data()!;
+          if ((appData.businessId as string) !== bizId || (appData.uid as string) !== workerId) {
+            throw new HttpsError("permission-denied", "지원서의 사업장/근로자 정보가 일치하지 않습니다.");
+          }
+          if (!["CONFIRMED", "CONTRACT_PENDING"].includes(appData.status as string)) {
+            throw new HttpsError("failed-precondition", "해당 지원서는 계약서 작성 가능한 상태가 아닙니다.");
+          }
+        } else {
+          const workerAppQuery = await db.collection("applications")
+            .where("businessId", "==", bizId)
+            .where("uid", "==", workerId)
+            .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
+            .limit(1)
+            .get();
+          if (workerAppQuery.empty) {
+            throw new HttpsError("permission-denied", "해당 근로자는 이 사업장의 확정된 지원자가 아닙니다.");
+          }
         }
 
         await db.runTransaction(async (tx) => {
@@ -6797,6 +6857,215 @@ export const callableCreateTO = onCall(
 
     const toRef = await db.collection("tos").add(finalData);
     return {toId: toRef.id};
+  }
+);
+
+// ── callableCreateFlexSlots ───────────────────────────────
+// flex TO 슬롯 생성 + applicationDeadline 서버 계산 (KST 기준, 기기 타임존 무관)
+// [TZ-FIX] startTime("09:00")은 항상 KST — 클라이언트 DateTime(y,m,d,h,m)은 기기 로컬로 해석되어
+// UTC 에뮬레이터에서 생성하면 마감시간이 +9h 오차 발생. 서버에서 KST→UTC 명시 변환으로 해결.
+// Input:  { toId, businessId, dates: ["YYYY-MM-DD",...], workDetails,
+//           deadlineType, hoursBeforeStart, fixedDeadlineMs?,
+//           publishMode?, publishDaysBefore?, publishTime?, slotTitle? }
+// Output: { slotCount: number }
+export const callableCreateFlexSlots = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {
+      toId,
+      businessId,
+      dates,
+      workDetails,
+      deadlineType,
+      hoursBeforeStart,
+      fixedDeadlineMs,
+      publishMode,
+      publishDaysBefore,
+      publishTime,
+      slotTitle,
+    } = request.data as {
+      toId: string;
+      businessId: string;
+      dates: string[];
+      workDetails: Record<string, unknown>[];
+      deadlineType: string;
+      hoursBeforeStart: number;
+      fixedDeadlineMs?: number;
+      publishMode?: string;
+      publishDaysBefore?: number;
+      publishTime?: string;
+      slotTitle?: string;
+    };
+
+    if (!toId || !businessId) throw new HttpsError("invalid-argument", "toId, businessId 필요");
+    if (!Array.isArray(dates) || dates.length === 0) throw new HttpsError("invalid-argument", "dates 필요");
+    if (!Array.isArray(workDetails) || workDetails.length === 0) throw new HttpsError("invalid-argument", "workDetails 필요");
+    // [TO-M-05] dates 입력 검증: YYYY-MM-DD 포맷 · 과거날짜 차단 · 중복 제거
+    {
+      const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+      const todayKST = new Date(Date.now() + 9 * 60 * 60 * 1000);
+      const todayStr = `${todayKST.getUTCFullYear()}-` +
+        `${String(todayKST.getUTCMonth() + 1).padStart(2, "0")}-` +
+        `${String(todayKST.getUTCDate()).padStart(2, "0")}`;
+      for (const dateStr of dates) {
+        if (typeof dateStr !== "string" || !DATE_RE.test(dateStr)) {
+          throw new HttpsError("invalid-argument", `날짜 포맷 오류: ${dateStr} (YYYY-MM-DD 형식 필요)`);
+        }
+        if (dateStr < todayStr) {
+          throw new HttpsError("invalid-argument", `과거 날짜는 등록할 수 없습니다: ${dateStr}`);
+        }
+      }
+    }
+    const uniqueDates: string[] = [...new Set(dates as string[])];
+    // TO-M-01: FIXED_TIME 타입인데 fixedDeadlineMs 미전달 시 마감 없는 슬롯 생성 방지
+    if (deadlineType === "FIXED_TIME" && (fixedDeadlineMs == null || fixedDeadlineMs === undefined)) {
+      throw new HttpsError("invalid-argument", "deadlineType=FIXED_TIME 일 때 fixedDeadlineMs 필수입니다.");
+    }
+    // TO-L-01: hoursBeforeStart 범위 검증 (HOURS_BEFORE 전용)
+    if (deadlineType === "HOURS_BEFORE" && (hoursBeforeStart <= 0 || hoursBeforeStart > 168)) {
+      throw new HttpsError("invalid-argument", "hoursBeforeStart는 1~168 사이여야 합니다.");
+    }
+    // [F005] FIXED_TIME: fixedDeadline이 슬롯 시작 시간 이후면 마감이 무의미 — 차단
+    if (deadlineType === "FIXED_TIME" && fixedDeadlineMs != null) {
+      for (const dateStr of uniqueDates) {
+        const [fy, fmo, fd] = dateStr.split("-").map(Number);
+        for (const wd of workDetails) {
+          if (typeof wd.startTime === "string") {
+            const [fh, fm] = (wd.startTime as string).split(":").map(Number);
+            const slotStartUtcMs = Date.UTC(fy, fmo - 1, fd, fh - 9, fm);
+            if (fixedDeadlineMs >= slotStartUtcMs) {
+              throw new HttpsError("invalid-argument",
+                `fixedDeadline이 슬롯 시작 시간(${dateStr} ${wd.startTime} KST) 이후입니다.`);
+            }
+          }
+        }
+      }
+    }
+
+    // 관리자 검증 + TO 소유권 검증 병렬 조회
+    const [callerSnap, toSnap] = await Promise.all([
+      db.collection("users").doc(callerUid).get(),
+      db.collection("tos").doc(toId).get(),
+    ]);
+    const callerData = callerSnap.data();
+    const role = callerData?.role as string;
+    const subAdminBusinessIds: string[] = (callerData?.subAdminBusinessIds ?? []) as string[];
+    if (role !== "BUSINESS_ADMIN" && role !== "SUPER_ADMIN" && !subAdminBusinessIds.includes(businessId)) {
+      throw new HttpsError("permission-denied", "관리자만 슬롯을 생성할 수 있습니다.");
+    }
+    if (!toSnap.exists || toSnap.data()?.businessId !== businessId) {
+      throw new HttpsError("not-found", "공고를 찾을 수 없거나 소속 사업장이 아닙니다.");
+    }
+
+    // KST startTime("HH:MM") → UTC Timestamp 변환
+    // Date.UTC의 hour에 h-9를 넣으면 음수도 자동으로 전날로 롤오버됨
+    // ex) "09:00" KST, 1h 전 → Date.UTC(y,m,d, 9-9, 0) - 1h = 23:00 UTC 전날 = 08:00 KST
+    function calcDeadlineMs(dateStr: string, startTime: string, hoursBefore: number): number {
+      const [y, mo, d] = dateStr.split("-").map(Number);
+      const [h, m] = startTime.split(":").map(Number);
+      const startUtcMs = Date.UTC(y, mo - 1, d, h - 9, m);
+      return startUtcMs - hoursBefore * 60 * 60 * 1000;
+    }
+
+    // publishTime("HH:MM") KST → UTC, daysBefore일 전
+    function calcVisibleFromMs(dateStr: string, daysBefore: number, pubTime: string): number {
+      const [y, mo, d] = dateStr.split("-").map(Number);
+      const [ph, pm] = pubTime.split(":").map(Number);
+      const pubDateMs = Date.UTC(y, mo - 1, d, ph - 9, pm);
+      return pubDateMs - daysBefore * 24 * 60 * 60 * 1000;
+    }
+
+    const fixedDeadline = fixedDeadlineMs != null
+      ? admin.firestore.Timestamp.fromMillis(fixedDeadlineMs)
+      : null;
+
+    const toRef = db.collection("tos").doc(toId);
+    let batch = db.batch();
+    let batchCount = 0;
+    let totalNewSlots = 0;
+    let totalNewRequired = 0;
+
+    for (const dateStr of uniqueDates) {
+      const [y, mo, d] = dateStr.split("-").map(Number);
+      // 날짜는 KST 자정 = UTC 전날 15:00
+      const slotDate = admin.firestore.Timestamp.fromMillis(Date.UTC(y, mo - 1, d, -9, 0));
+      const slotRef = toRef.collection("slots").doc();
+
+      // 업무별 마감 계산 (KST 기준 서버 계산)
+      const wdsWithDeadlines = workDetails.map((wd) => {
+        const newWd = {...wd};
+        if (deadlineType === "HOURS_BEFORE" && typeof wd.startTime === "string") {
+          newWd.applicationDeadline = admin.firestore.Timestamp.fromMillis(
+            calcDeadlineMs(dateStr, wd.startTime as string, hoursBeforeStart)
+          );
+        } else if (deadlineType === "FIXED_TIME" && fixedDeadline) {
+          newWd.applicationDeadline = fixedDeadline;
+        }
+        totalNewRequired += (wd.requiredCount as number ?? 0);
+        return newWd;
+      });
+
+      // 슬롯 레벨 마감 = 가장 이른 업무 마감
+      let slotDeadline: admin.firestore.Timestamp | null = null;
+      for (const wd of wdsWithDeadlines) {
+        const dl = wd.applicationDeadline as admin.firestore.Timestamp | null;
+        if (dl && (!slotDeadline || dl.toMillis() < slotDeadline.toMillis())) {
+          slotDeadline = dl;
+        }
+      }
+
+      // visibleFrom (publishTime도 KST → UTC 서버 변환)
+      let visibleFrom: admin.firestore.Timestamp | null = null;
+      if (publishMode === "scheduled" && publishDaysBefore != null && publishTime) {
+        visibleFrom = admin.firestore.Timestamp.fromMillis(
+          calcVisibleFromMs(dateStr, publishDaysBefore, publishTime)
+        );
+      }
+
+      // workTypeCounts 초기화
+      const workTypeCounts: Record<string, unknown> = {};
+      for (const wd of workDetails) {
+        workTypeCounts[wd.workType as string] = {confirmedCount: 0, pendingCount: 0};
+      }
+
+      const slotData: Record<string, unknown> = {
+        toId,
+        date: slotDate,
+        workDetails: wdsWithDeadlines,
+        workTypeCounts,
+        status: "open",
+        confirmedCount: 0,
+        pendingCount: 0,
+        isManualClosed: false,
+        closedBy: null,
+        reopenedBy: null,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      if (slotDeadline) slotData.applicationDeadline = slotDeadline;
+      if (visibleFrom) slotData.visibleFrom = visibleFrom;
+      if (slotTitle) slotData.title = slotTitle;
+
+      batch.set(slotRef, slotData);
+      batchCount++;
+      totalNewSlots++;
+
+      if (batchCount >= 499) {
+        await batch.commit();
+        batch = db.batch();
+        batchCount = 0;
+      }
+    }
+
+    // TO 카운터 업데이트를 마지막 배치에 포함 (원자적 커밋)
+    batch.update(toRef, {
+      totalSlots: admin.firestore.FieldValue.increment(totalNewSlots),
+      totalRequired: admin.firestore.FieldValue.increment(totalNewRequired),
+    });
+    await batch.commit();
+
+    return {slotCount: totalNewSlots};
   }
 );
 
@@ -8541,7 +8810,7 @@ export const onTODeleted = onDocumentDeleted(
     }
 
     // ── 3. attendance 삭제 (wageTransferred / wageConfirmed 보존) ──
-    const WAGE_DONE = ["wageTransferred", "wageConfirmed"];
+    const WAGE_DONE = ["wageTransferred", "wageConfirmed", "transferred", "confirmed"];
     for (let i = 0; i < appIds.length; i += 30) {
       const chunk = appIds.slice(i, i + 30);
       const attSnaps = await Promise.all(
@@ -9071,6 +9340,17 @@ export const onAttendanceWageStatusChanged = onDocumentWritten(
         let trustReason: string;
 
         if (noshowOn) {
+          // [F001-FIX] callableApplyNoShowPenalty와 이중 부과 방지
+          // 클라이언트가 자체 취소 후 callableApplyNoShowPenalty를 이미 호출했으면 스킵
+          const applicationId = after?.applicationId as string | undefined;
+          if (applicationId) {
+            const appSnap = await tx.get(db.collection("applications").doc(applicationId));
+            if (appSnap.data()?.noShowPenaltyAppliedAt) {
+              console.log(`ℹ️ [wageStatusChanged-noshow] callableApplyNoShowPenalty 이미 처리됨 — 스킵 (appId=${applicationId})`);
+              tx.set(processedRef, {processedAt: admin.firestore.FieldValue.serverTimestamp()});
+              return;
+            }
+          }
           newNoShowCount = currentNoShowCount + 1;
           trustChange = getNoshowPenaltyFromRules(newNoShowCount, decreaseRules);
           trustReason = "noshow";
@@ -10545,7 +10825,10 @@ function srvWageCalculate(p: {
 
   const schedStartMin = srvParseTime(p.scheduledStart) ?? 0;
   const actualStartMin = srvParseTime(p.actualStart) ?? 0;
-  const earlyArrivalMinutes = Math.max(0, schedStartMin - actualStartMin);
+  // [WAGE-L1] 자정 경계 보정: 야간교대(예: 예정 00:30 / 실제 23:50) 시 rawDiff가 -720분 미만이면
+  // 날짜 경계를 넘어선 조기 도착으로 판단하여 +1440 보정
+  const earlyRawDiff = schedStartMin - actualStartMin;
+  const earlyArrivalMinutes = Math.max(0, earlyRawDiff < -720 ? earlyRawDiff + 1440 : earlyRawDiff);
 
   let nightMinutes = 0;
   if (p.nightAllowanceApplied) {
@@ -10794,6 +11077,13 @@ export const callableCalculateAndConfirmWage = onCall(
     ]);
     if (!attSnap2.exists) throw new HttpsError("not-found", "출근 기록을 찾을 수 없습니다.");
     const attData2 = attSnap2.data()!;
+    // [WAGE-M1] 체크인 시 저장된 snapshotWage를 권위 있는 기준으로 사용
+    // 클라이언트 d.baseWage와 차이가 있으면 스냅샷 우선 (TO 레벨 고정 임금 보장)
+    const snapshotWage = attData2.snapshotWage as number | undefined;
+    const effectiveBaseWage = (snapshotWage != null && snapshotWage > 0) ? snapshotWage : d.baseWage;
+    if (snapshotWage != null && snapshotWage > 0 && snapshotWage !== d.baseWage) {
+      console.warn(`⚠️ [WAGE-M1] baseWage 불일치 — 체크인 스냅샷(${snapshotWage}) vs 클라이언트(${d.baseWage}). 스냅샷 기준으로 계산합니다.`);
+    }
     const businessId2 = attData2.businessId as string;
     const userId2 = attData2.userId as string;
     // 권한 확인
@@ -10838,9 +11128,9 @@ export const callableCalculateAndConfirmWage = onCall(
     const workYear2 = parseInt(d.workDate.substring(0, 4), 10);
     const minimumWage2 = srvGetMinimumWage(workYear2, fsMinWages);
     // [WAG-02] 시급제: baseWage가 해당 연도 법적 최저임금 미만이면 차단
-    if (d.wageType === "hourly" && minimumWage2 > 0 && d.baseWage < minimumWage2) {
+    if (d.wageType === "hourly" && minimumWage2 > 0 && effectiveBaseWage < minimumWage2) {
       throw new HttpsError("invalid-argument",
-        `시급(${d.baseWage}원)이 ${workYear2}년 최저임금(${minimumWage2}원) 미만입니다.`);
+        `시급(${effectiveBaseWage}원)이 ${workYear2}년 최저임금(${minimumWage2}원) 미만입니다.`);
     }
     // [WAG-03] 일급제: 소정근로시간 기준 최저일급(최저시급 × 소정근로시간) 미만이면 차단
     if (d.wageType === "daily" && minimumWage2 > 0) {
@@ -10853,9 +11143,9 @@ export const callableCalculateAndConfirmWage = onCall(
       const schedWorkMins2 = Math.max(0, scheduledTotalMins2 - schedBreakMins2);
       if (schedWorkMins2 > 0) {
         const minimumDailyWage = Math.ceil(minimumWage2 * schedWorkMins2 / 60);
-        if (d.baseWage < minimumDailyWage) {
+        if (effectiveBaseWage < minimumDailyWage) {
           throw new HttpsError("invalid-argument",
-            `일급(${d.baseWage}원)이 소정근로시간(${(schedWorkMins2 / 60).toFixed(1)}h) 기준 최저일급(${minimumDailyWage}원) 미만입니다.`);
+            `일급(${effectiveBaseWage}원)이 소정근로시간(${(schedWorkMins2 / 60).toFixed(1)}h) 기준 최저일급(${minimumDailyWage}원) 미만입니다.`);
         }
       }
     }
@@ -10864,7 +11154,7 @@ export const callableCalculateAndConfirmWage = onCall(
     const schedBreakMins = typeof d.scheduledBreakMinutes === "number" ? d.scheduledBreakMinutes : breakMins;
 
     const base2 = srvWageCalculate({
-      wageType: d.wageType, baseWage: d.baseWage, minimumWage: minimumWage2,
+      wageType: d.wageType, baseWage: effectiveBaseWage, minimumWage: minimumWage2,
       scheduledStart: d.scheduledStart, scheduledEnd: d.scheduledEnd,
       actualStart: d.actualStart, actualEnd: d.actualEnd,
       breakMinutes: breakMins, scheduledBreakMinutes: schedBreakMins,
@@ -12360,7 +12650,7 @@ export const callableDeleteTO = onCall(
     // 5. 고아 데이터 정리 (TO 삭제 완료 후 — 실패해도 무시)
     if (allAppIds.length > 0) {
       try {
-        const WAGE_DONE = ["wageTransferred", "wageConfirmed"];
+        const WAGE_DONE = ["wageTransferred", "wageConfirmed", "transferred", "confirmed"];
         for (let i = 0; i < allAppIds.length; i += 30) {
           const chunk = allAppIds.slice(i, i + 30);
 
@@ -12535,27 +12825,9 @@ export const callableCloseSlots = onCall(
     for (const slotId of slotIds) {
       const docs = pendingBySlot.get(slotId);
       if (!docs || docs.length === 0) continue;
-      let slotCanceled = 0;
+      const slotCanceled = docs.length;
       try {
-        let cancelBatch = db.batch();
-        let cancelCount = 0;
-        for (const doc of docs) {
-          cancelBatch.update(doc.ref, {
-            status: "REJECTED",
-            rejectedAt: now,
-            rejectMessage: "공고 슬롯이 마감되었습니다",
-          });
-          cancelCount++;
-          slotCanceled++;
-          if (cancelCount >= 499) {
-            await cancelBatch.commit();
-            cancelBatch = db.batch();
-            cancelCount = 0;
-          }
-        }
-        if (cancelCount > 0) await cancelBatch.commit();
-        totalCanceledPending += slotCanceled;
-
+        // [SLOT-005] wtDeltas를 루프 전에 계산해 slotUpdate를 마지막 batch에 포함 — 원자성 보장
         const wtDeltas = new Map<string, number>();
         for (const doc of docs) {
           const wt = doc.data().selectedWorkType as string | undefined;
@@ -12568,7 +12840,29 @@ export const callableCloseSlots = onCall(
           slotUpdate[`workTypeCounts.${wt}.pendingCount`] =
             admin.firestore.FieldValue.increment(-delta);
         }
-        await db.collection("tos").doc(toId).collection("slots").doc(slotId).update(slotUpdate);
+
+        let cancelBatch = db.batch();
+        let cancelCount = 0;
+        for (const doc of docs) {
+          cancelBatch.update(doc.ref, {
+            status: "REJECTED",
+            rejectedAt: now,
+            rejectMessage: "공고 슬롯이 마감되었습니다",
+          });
+          cancelCount++;
+          if (cancelCount >= 498) {  // [SLOT-005] 1 여유 — 마지막 batch에 slot update 포함
+            await cancelBatch.commit();
+            cancelBatch = db.batch();
+            cancelCount = 0;
+          }
+        }
+        // [SLOT-005] slot 카운터 업데이트를 마지막 batch에 포함 — REJECTED 처리와 원자적
+        cancelBatch.update(
+          db.collection("tos").doc(toId).collection("slots").doc(slotId),
+          slotUpdate
+        );
+        await cancelBatch.commit();
+        totalCanceledPending += slotCanceled;
 
         // 알림: applicationRejected
         for (const doc of docs) {
@@ -12816,7 +13110,7 @@ export const callableDeleteSlots = onCall(
         0
       );
       removedConfirmed += Number(d.confirmedCount) || 0;
-      removedPending += Number(d.pendingCount) || 0;
+      // [SLOT-002] removedPending은 stale pendingCount 대신 실제 쿼리 결과에서 계산 (아래에서 설정)
     }
 
     // 활성 지원서 조회 (slotId별 병렬)
@@ -12837,6 +13131,8 @@ export const callableDeleteSlots = onCall(
           allActiveDocs.push(doc);
       }
     }
+    // [SLOT-002] 실제 PENDING 지원서 수로 계산 (denormalized pendingCount는 stale 가능)
+    removedPending = allActiveDocs.filter((doc) => doc.data().status === "PENDING").length;
 
     // 활성 지원서 REJECTED 처리
     if (allActiveDocs.length > 0) {
@@ -14669,6 +14965,10 @@ export const callableConfirmApplication = onCall(
           const slotRef = db.collection("tos").doc(toIdFresh).collection("slots").doc(slotIdFresh);
           const slotFresh = await tx.get(slotRef);
           if (slotFresh.exists) {
+            // [SLOT-001] 마감된 슬롯에는 확정 불가
+            if (slotFresh.data()?.status === "closed") {
+              throw new HttpsError("failed-precondition", "마감된 슬롯에는 확정할 수 없습니다.");
+            }
             const rawWDs = (slotFresh.data()!.workDetails as Record<string, unknown>[] | undefined) ?? [];
             for (const wd of rawWDs) {
               if (wd.workType === selectedWorkType) {
@@ -17342,7 +17642,8 @@ export const callableApplyToTO = onCall(
     if (
       toData["isManualClosed"] === true ||
       toData["status"] === "CLOSED" ||
-      toData["status"] === "FULL"
+      toData["status"] === "FULL" ||
+      toData["status"] === "SCHEDULED"  // [APPLY-A-01] 미게시 예약 공고 지원 차단
     ) {
       throw new HttpsError("permission-denied", "마감된 공고입니다.");
     }
@@ -17366,6 +17667,11 @@ export const callableApplyToTO = onCall(
       const sd = slotSnap.data()!;
       if (sd["isManualClosed"] === true || sd["status"] === "closed") {
         throw new HttpsError("permission-denied", "해당 날짜는 마감되었습니다.");
+      }
+      // SLOT-003: workDate가 지난 슬롯은 applicationDeadline 유무 관계없이 차단
+      const slotWorkDateTs = sd["workDate"] as admin.firestore.Timestamp | undefined;
+      if (slotWorkDateTs && slotWorkDateTs.toDate() < new Date()) {
+        throw new HttpsError("permission-denied", "이미 지난 날짜의 슬롯에는 지원할 수 없습니다.");
       }
       const rawWD = (sd["workDetails"] as unknown[]) ?? [];
       const wd = (rawWD as Record<string, unknown>[]).find(
@@ -17822,6 +18128,33 @@ export const callableManageBusiness = onCall(
     await bizRef.update(updateData);
     console.log(`✅ [callableManageBusiness] action=${action} businessId=${businessId} by=${callerUid}`);
     return {success: true};
+  }
+);
+
+// ─── callableGetAllBusinesses ────────────────────────────────────────────────
+// [SA-01-CF] 슈퍼어드민 전용 사업장 목록 조회 — Admin SDK로 rate limiting 강제
+// Trust Boundary Charter: businesses 컬렉션에 adminIds(UID 목록) 포함 → CF 전용
+// ─────────────────────────────────────────────────────────────────────────────
+export const callableGetAllBusinesses = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const callerSnap = await db.collection("users").doc(callerUid).get();
+    if (!callerSnap.exists) throw new HttpsError("not-found", "호출자 정보를 찾을 수 없습니다.");
+    const callerRole = (callerSnap.data() as Record<string, unknown>)?.role as string | undefined;
+    if (callerRole !== "SUPER_ADMIN") {
+      throw new HttpsError("permission-denied", "슈퍼어드민만 사용할 수 있습니다.");
+    }
+
+    const snap = await db.collection("businesses")
+      .orderBy("createdAt", "desc")
+      .limit(300)
+      .get();
+
+    const businesses = snap.docs.map((doc) => ({id: doc.id, ...serializeFirestoreData(doc.data())}));
+    return {businesses};
   }
 );
 
@@ -19693,7 +20026,7 @@ export const callableGetPublishedTOs = onCall(
     // [index: (isPublished, status, createdAt DESC)] — firestore.indexes.json에 존재
     let q: FirebaseFirestore.Query = db.collection("tos")
       .where("isPublished", "==", true)
-      .where("status", "in", ["OPEN", "ACTIVE", "FULL"])
+      .where("status", "in", ["OPEN", "ACTIVE", "FULL", "SCHEDULED"])
       .orderBy("createdAt", "desc");
 
     // 필터 조합별 인덱스 모두 존재 (단, city+district+type 동시 적용 시 인덱스 없음)
@@ -19727,7 +20060,7 @@ export const callableGetPublishedTOsPaged = onCall(
 
     let q: FirebaseFirestore.Query = db.collection("tos")
       .where("isPublished", "==", true)
-      .where("status", "in", ["OPEN", "ACTIVE", "FULL"])
+      .where("status", "in", ["OPEN", "ACTIVE", "FULL", "SCHEDULED"])
       .orderBy("createdAt", "desc");
 
     if (type && !district) q = q.where("type", "==", type);
@@ -19736,7 +20069,10 @@ export const callableGetPublishedTOsPaged = onCall(
 
     if (lastToId) {
       const cursorSnap = await db.collection("tos").doc(lastToId).get();
-      if (cursorSnap.exists) q = q.startAfter(cursorSnap);
+      if (!cursorSnap.exists) {
+        return {tos: [], hasMore: false, lastToId: null};
+      }
+      q = q.startAfter(cursorSnap);
     }
 
     q = q.limit(pageSize + 1);

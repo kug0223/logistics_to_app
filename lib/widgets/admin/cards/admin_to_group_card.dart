@@ -130,6 +130,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
   // 날짜 칩 선택 상태 (다중 슬롯 뷰)
   DateTime? _selectedChipDate;
   final GlobalKey _panelBottomKey = GlobalKey();
+  final GlobalKey _expandedBottomKey = GlobalKey();
   Timer? _scrollTimer;
 
   void _updateGroupCache() {
@@ -183,6 +184,24 @@ class _TOGroupCardState extends State<TOGroupCard> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) setState(() => _selectedChipDate = null);
       });
+    }
+    // 고정공고/단건 단기: 마지막 카드 펼침 시 자동 스크롤
+    if (!old.isExpanded && widget.isExpanded && widget.isLastCard) {
+      final isMultiSlot = widget.displayMode == TOCardDisplayMode.list &&
+          !widget.groupItem.isLongTerm &&
+          widget.groupItem.groupTOs.length > 1;
+      if (!isMultiSlot) {
+        _scrollTimer?.cancel();
+        _scrollTimer = Timer(const Duration(milliseconds: 350), () {
+          if (!mounted) return;
+          final ctx = _expandedBottomKey.currentContext;
+          if (ctx == null) return;
+          // ignore: use_build_context_synchronously
+          Scrollable.ensureVisible(ctx,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOut);
+        });
+      }
     }
   }
 
@@ -693,6 +712,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                   child: _buildExpandedBodyContent(context, theme),
                                 ),
                               ),
+                              SizedBox(key: _expandedBottomKey, height: 0),
                             ],
                           ),
                         )

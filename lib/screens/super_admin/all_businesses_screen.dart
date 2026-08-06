@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/user_provider.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/core/business_model.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/styled_container.dart';
@@ -25,7 +24,9 @@ class AllBusinessesScreen extends StatefulWidget {
 
 class _AllBusinessesScreenState extends State<AllBusinessesScreen>
     with LoadingStateMixin {
-  final _firestore = FirebaseFirestore.instance;
+  final _listCF = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+      .httpsCallable('callableGetAllBusinesses',
+          options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
   final _bizCF = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
       .httpsCallable('callableManageBusiness',
           options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
@@ -61,14 +62,14 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
   Future<void> _loadAllBusinesses() async {
     setLoading(true);
     try {
-      final businessSnapshot = await _firestore
-          .collection('businesses')
-          .orderBy('createdAt', descending: true)
-          .limit(300)
-          .get();
+      // [SA-01-CF] 슈퍼어드민 businesses list → callableGetAllBusinesses (Admin SDK, rate limiting 강제)
+      final cfResult = await _listCF.call<Map<String, dynamic>>({});
+      final rawList = (cfResult.data['businesses'] as List? ?? []).whereType<Map>().toList();
 
-      final businesses = businessSnapshot.docs.map((doc) {
-        try { return BusinessModel.fromMap(doc.data(), doc.id); } catch (_) { return null; }
+      final businesses = rawList.map((raw) {
+        final id = raw['id'] as String? ?? '';
+        final data = Map<String, dynamic>.from(raw)..remove('id');
+        try { return BusinessModel.fromMap(data, id); } catch (_) { return null; }
       }).whereType<BusinessModel>().toList();
 
       // [CF-MIGRATED] USER list CF 정책 — callableGetOwnerInfosByIds

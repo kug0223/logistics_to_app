@@ -85,13 +85,25 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     // 컨트롤러에 필터 다이얼로그 콜백 등록 (IntegratedWorkforceScreen의 필터 버튼이 호출)
     _workforceController ??= context.read<WorkforceController>();
     _workforceController!.registerShowFilterCallback(_showFilterDialog);
+    _workforceController!.registerOnExternalReload(_clearExpansionState);
   }
 
   @override
   void dispose() {
     _workforceController?.unregisterShowFilterCallback();
+    _workforceController?.unregisterOnExternalReload();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _clearExpansionState() {
+    if (mounted) {
+      setState(() {
+        _expandedGroups.clear();
+        _expandedTOs.clear();
+        _activeGroupKey = null;
+      });
+    }
   }
 
   void _onScroll() {
@@ -107,7 +119,8 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     }
   }
 
-  void _reload() {
+  // [WF-UI-03] async로 변환 — RefreshIndicator의 onRefresh가 완료를 await할 수 있도록
+  Future<void> _reload() async {
     setState(() {
       _expandedGroups.clear();
       _expandedTOs.clear();
@@ -115,9 +128,9 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       _loadingTOs.clear();
       _activeGroupKey = null;
       _closedDisplayCount = _closedPageSize;
-      _lastCachedItems = null; // H2: reload 시 캐시 즉시 무효화
+      _lastCachedItems = null;
     });
-    context.read<WorkforceController>().reload(context);
+    await context.read<WorkforceController>().reload(context);
   }
 
   /// 탭·필터가 바뀌지 않으면 이전 결과를 그대로 반환 (H2)
@@ -406,10 +419,10 @@ class _WorkforceListViewState extends State<WorkforceListView> {
         isUserMode: false,
         showTOTypeFilter: true,
         showPublishStatusFilter: true,
-        onBusinessChanged: (v) { setState(() => _activeGroupKey = null); controller.setBusinessFilter(v); },
-        onDateRangeChanged: (v) { setState(() => _activeGroupKey = null); controller.setDateRangeFilter(v); },
-        onTOTypeChanged: (v) { setState(() => _activeGroupKey = null); controller.setTOTypeFilter(v); },
-        onPublishStatusChanged: (v) { setState(() => _activeGroupKey = null); controller.setPublishStatusFilter(v); },
+        onBusinessChanged: (v) { setState(() { _expandedGroups.clear(); _expandedTOs.clear(); _activeGroupKey = null; }); controller.setBusinessFilter(v); },
+        onDateRangeChanged: (v) { setState(() { _expandedGroups.clear(); _expandedTOs.clear(); _activeGroupKey = null; }); controller.setDateRangeFilter(v); },
+        onTOTypeChanged: (v) { setState(() { _expandedGroups.clear(); _expandedTOs.clear(); _activeGroupKey = null; }); controller.setTOTypeFilter(v); },
+        onPublishStatusChanged: (v) { setState(() { _expandedGroups.clear(); _expandedTOs.clear(); _activeGroupKey = null; }); controller.setPublishStatusFilter(v); },
       ),
     );
   }
@@ -437,7 +450,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       onRefresh: () async => _reload(),
       child: ListView.builder(
         controller: _scrollController,
-        padding: ResponsiveHelper.cardPadding(context),
+        padding: ResponsiveHelper.listPadding(context),
         itemCount: filteredItems.length + (hasMore ? 1 : 0),
         itemBuilder: (context, index) {
           if (index == filteredItems.length) {

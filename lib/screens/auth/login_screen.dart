@@ -143,17 +143,7 @@ class _LoginScreenState extends State<LoginScreen> {
     await DialogHelper.showSheet(
         context,
         isScrollControlled: true,
-        builder: (sheetContext) => PopScope(
-          canPop: false,
-          onPopInvokedWithResult: (didPop, _) {
-            if (!didPop) {
-              FocusScope.of(sheetContext).unfocus();
-              Future.microtask(() {
-                if (sheetContext.mounted) Navigator.of(sheetContext).pop();
-              });
-            }
-          },
-          child: StatefulBuilder(
+        builder: (sheetContext) => StatefulBuilder(
             builder: (ctx, setSheetState) {
               Future<void> search() async {
                 if (_findUsernameNameController.text.isEmpty) {
@@ -304,7 +294,6 @@ class _LoginScreenState extends State<LoginScreen> {
               );
             },
           ),
-        ),
       );
   }
 
@@ -325,18 +314,7 @@ class _LoginScreenState extends State<LoginScreen> {
     await DialogHelper.showSheet(
       context,
       isScrollControlled: true,
-      builder: (sheetContext) => PopScope(
-        // barrier 탭 / 뒤로가기 가로채서 unfocus 먼저 → _dependents.isEmpty crash 방지
-        canPop: false,
-        onPopInvokedWithResult: (didPop, _) {
-          if (!didPop) {
-            FocusScope.of(sheetContext).unfocus();
-            Future.microtask(() {
-              if (sheetContext.mounted) Navigator.of(sheetContext).pop();
-            });
-          }
-        },
-        child: StatefulBuilder(
+      builder: (sheetContext) => StatefulBuilder(
         builder: (ctx, setSheetState) {
           // PASS 인증 → CF resetPasswordWithPass → customToken 확보 → step 1
           //
@@ -604,7 +582,6 @@ class _LoginScreenState extends State<LoginScreen> {
           );
         },
       ),      // StatefulBuilder
-      ),      // PopScope
     );
   }
 
@@ -704,12 +681,12 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
 
-                          SizedBox(height: size.height * 0.07),
+                          SizedBox(height: size.height * 0.04),
 
                           // 로그인 카드
                           Container(
                             margin: const EdgeInsets.symmetric(horizontal: 20),
-                            padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+                            padding: const EdgeInsets.fromLTRB(24, 32, 24, 32),
                             decoration: BoxDecoration(
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(24),
@@ -753,7 +730,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: 28),
 
           _buildTextField(
             context: context,
@@ -771,7 +748,7 @@ class _LoginScreenState extends State<LoginScreen> {
             },
           ),
 
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
 
           _buildTextField(
             context: context,
@@ -799,7 +776,7 @@ class _LoginScreenState extends State<LoginScreen> {
             },
           ),
 
-          const SizedBox(height: 8),
+          const SizedBox(height: 14),
 
           // 아이디 저장 체크박스 + 아이디/비밀번호 찾기
           Row(
@@ -852,7 +829,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ],
           ),
 
-          const SizedBox(height: 20),
+          const SizedBox(height: 24),
 
           // 로그인 버튼
           ElevatedButton(
@@ -866,18 +843,10 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               elevation: 0,
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '로그인',
-                  style: ResponsiveHelper.subtitleStyle(context, color: Colors.white)
-                      .copyWith(fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(width: 8),
-                const Icon(Icons.arrow_forward_rounded, size: 18, color: Colors.white),
-              ],
+            child: Text(
+              '로그인',
+              style: ResponsiveHelper.subtitleStyle(context, color: Colors.white)
+                  .copyWith(fontWeight: FontWeight.w600),
             ),
           ),
 

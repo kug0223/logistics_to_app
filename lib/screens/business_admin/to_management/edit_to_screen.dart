@@ -365,7 +365,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           } else {
             if (mounted) ToastHelper.showError('공개 전환에 실패했습니다. 잠시 후 다시 시도해주세요');
           }
-          if (mounted) setState(() => _isSaving = false);
+          if (mounted) setState(() { _isSaving = false; _hasChanges = true; });
           return;
         }
         if (!mounted) return;
@@ -396,8 +396,9 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           // 저장 시 무조건 전체 동기화로 deadline 불일치 방지
           await _firestoreService.updateSlotsDeadlines(
             toId: widget.to.id,
-            deadlineType: 'HOURS_BEFORE',
+            deadlineType: widget.to.deadlineType,
             hoursBeforeStart: _hoursBeforeStart,
+            fixedDeadline: widget.to.deadlineType == 'FIXED_TIME' ? _fixedDeadline : null,
             newWorkDetails: _workDetails,
           );
         } catch (e) {
@@ -439,10 +440,11 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       final updatedWorkDetails = _workDetails.map((work) {
         final parts = work.startTime.split(':');
         if (parts.length != 2) return work;
-        final deadline = DateTime(
+        // startTime은 항상 KST — DateTime.utc()로 생성 후 KST→UTC(-9h) 변환
+        final deadline = DateTime.utc(
           slot.date.year, slot.date.month, slot.date.day,
           int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0,
-        ).subtract(Duration(hours: _hoursBeforeStart));
+        ).subtract(const Duration(hours: 9)).subtract(Duration(hours: _hoursBeforeStart));
         return work.copyWith(applicationDeadline: deadline);
       }).toList();
 
@@ -500,7 +502,10 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           cur.nightAllowanceApplied != orig.nightAllowanceApplied ||
           cur.nightIncluded != orig.nightIncluded ||
           cur.baseHourlyWage != orig.baseHourlyWage ||
-          cur.taxDeductionType != orig.taxDeductionType) {
+          cur.taxDeductionType != orig.taxDeductionType ||
+          cur.startTime != orig.startTime ||
+          cur.endTime != orig.endTime ||
+          cur.requiredCount != orig.requiredCount) {
         return true;
       }
     }
@@ -572,7 +577,10 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       }
 
       final firestore = FirebaseFirestore.instance;
-      final batch = firestore.batch();
+      const kMaxBatchOps = 499;
+      var currentBatch = firestore.batch();
+      int currentBatchOps = 0;
+      final allBatches = <WriteBatch>[];
       int totalRequiredDelta = 0;
 
       // [V7-FIX] 동시 편집 방지: 슬롯 workDetails를 Firestore에서 신선 조회해 정확한 delta 계산
@@ -597,10 +605,11 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         final updatedWorkDetails = _workDetails.map((work) {
           final parts = work.startTime.split(':');
           if (parts.length != 2) return work;
-          final deadline = DateTime(
+          // startTime은 항상 KST — DateTime.utc()로 생성 후 KST→UTC(-9h) 변환
+          final deadline = DateTime.utc(
             slot.date.year, slot.date.month, slot.date.day,
             int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0,
-          ).subtract(Duration(hours: _hoursBeforeStart));
+          ).subtract(const Duration(hours: 9)).subtract(Duration(hours: _hoursBeforeStart));
           return work.copyWith(applicationDeadline: deadline);
         }).toList();
 
@@ -619,7 +628,14 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         final slotRef = firestore
             .collection('tos').doc(widget.to.id)
             .collection('slots').doc(slot.id);
-        batch.update(slotRef, {
+
+        // 500-op/batch 제한 방어: 499개 초과 시 현재 배치를 저장하고 새 배치 시작
+        if (currentBatchOps >= kMaxBatchOps) {
+          allBatches.add(currentBatch);
+          currentBatch = firestore.batch();
+          currentBatchOps = 0;
+        }
+        currentBatch.update(slotRef, {
           'workDetails': WorkDetailData.listToFirestore(updatedWorkDetails),
           'totalRequired': newTotalRequired,
           'applicationDeadline': slotDeadline != null
@@ -628,6 +644,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           if (clearVisibleFrom) 'visibleFrom': FieldValue.delete()
           else if (visibleFrom != null) 'visibleFrom': Timestamp.fromDate(visibleFrom.toUtc()),
         });
+        currentBatchOps++;
 
         final currentRequired = freshSlotRequired[slot.id] ?? slot.totalRequired;
         if (currentRequired != newTotalRequired) {
@@ -635,14 +652,20 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         }
       }
 
-      // TO의 totalRequired 동기화
+      // TO의 totalRequired 동기화 — 마지막 배치에 포함
       if (totalRequiredDelta != 0) {
-        batch.update(firestore.collection('tos').doc(widget.to.id), {
+        if (currentBatchOps >= kMaxBatchOps) {
+          allBatches.add(currentBatch);
+          currentBatch = firestore.batch();
+        }
+        currentBatch.update(firestore.collection('tos').doc(widget.to.id), {
           'totalRequired': FieldValue.increment(totalRequiredDelta),
         });
       }
-
-      await batch.commit();
+      allBatches.add(currentBatch);
+      for (final b in allBatches) {
+        await b.commit();
+      }
 
       _firestoreService.clearCache(toId: widget.to.id);
       if (!mounted) return;
