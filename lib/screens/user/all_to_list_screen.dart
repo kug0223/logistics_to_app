@@ -20,7 +20,6 @@ import '../../services/algolia_service.dart';
 import '../../widgets/pickers/date_picker_bottom_sheet.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/app_search_bar.dart';
-import '../../widgets/common/app_filter_chip.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 
 /// 전체 TO 목록 화면 (지원자용)
@@ -435,59 +434,16 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
     }
   }
 
-  /// 지역 필터 바텀시트
-  Future<void> _showRegionPicker() async {
-    final result = await RegionPickerSheet.show(
-      context: context,
-      cities: _availableCities,
-      districtOf: (city) => _districtMap[city] ?? [],
-      selectedCity: _filter.city,
-      selectedDistrict: _filter.district,
-    );
-    if (result != null) {
-      _onFilterChanged(_filter.copyWith(city: result.city, district: result.district));
-    }
-  }
-
-  /// 날짜 범위 피커
-  Future<void> _showDateRangePicker() async {
-    final now = DateTime.now();
-    final picked = await DateRangePickerBottomSheet.show(
-      context: context,
-      initialStart: _filter.dateRange?.start,
-      initialEnd: _filter.dateRange?.end,
-      title: '날짜 범위 선택',
-      minDate: now,
-      maxDate: now.add(const Duration(days: 365)),
-    );
-    if (picked != null) {
-      _onFilterChanged(_filter.copyWith(dateRange: picked));
-    }
-  }
-
-  /// 정렬 바텀시트
-  void _showSortSheet() {
-    // [오탐 확인] shape 생략 — _SortSheet 내부 BoxDecoration이 borderRadius를 담당 (backgroundColor: transparent로 투시).
+  /// 통합 필터 바텀시트
+  void _showAllFilters() {
     DialogHelper.showSheet(
       context,
-      builder: (context) => _SortSheet(
-        sortBy: _filter.sortBy,
-        onChanged: (sort) => _onFilterChanged(_filter.copyWith(sortBy: sort)),
-      ),
-    );
-  }
-
-  /// 근무유형 필터 바텀시트
-  void _showTypeFilter() {
-    // [오탐 확인] shape 생략 — _TypeFilterSheet 내부 BoxDecoration이 borderRadius를 담당.
-    DialogHelper.showSheet(
-      context,
-      builder: (context) => _TypeFilterSheet(
-        selectedType: _filter.type,
-        onChanged: (type) => _onFilterChanged(_filter.copyWith(
-          type: type,
-          clearType: type == null,
-        )),
+      isScrollControlled: true,
+      builder: (_) => _AllFilterSheet(
+        initialFilter: _filter,
+        availableCities: _availableCities,
+        districtMap: _districtMap,
+        onApply: _onFilterChanged,
       ),
     );
   }
@@ -499,120 +455,44 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       onRefresh: () => _loadAllTOs(forceRefresh: true),
       body: Column(
         children: [
-                      // 검색바 + 필터 — 스크롤되지 않는 고정 영역 (흰 배경)
+                      // 검색바 + 필터 버튼 — 스크롤되지 않는 고정 영역 (흰 배경)
                       Container(
                         color: Colors.white,
                         child: Column(
                           children: [
-                            // 검색바
-                            AppSearchBar(
-                              controller: _searchController,
-                              hintText: '공고 제목, 사업장명 검색',
+                            Padding(
                               padding: EdgeInsets.fromLTRB(
                                 ResponsiveHelper.spacing(context, 16),
-                                ResponsiveHelper.spacing(context, 16),
-                                ResponsiveHelper.spacing(context, 16),
-                                ResponsiveHelper.spacing(context, 10),
+                                ResponsiveHelper.spacing(context, 12),
+                                ResponsiveHelper.spacing(context, 12),
+                                ResponsiveHelper.spacing(context, 12),
                               ),
-                              onClear: () {
-                                _searchDebounce?.cancel();
-                                _onFilterChanged(
-                                    _filter.copyWith(clearKeyword: true));
-                              },
-                              onSubmitted: (value) {
-                                _searchDebounce?.cancel();
-                                final keyword = value.trim();
-                                _onFilterChanged(keyword.isEmpty
-                                    ? _filter.copyWith(clearKeyword: true)
-                                    : _filter.copyWith(keyword: keyword));
-                              },
-                            ),
-                            // 필터 칩 행
-                            SizedBox(
-                              height: ResponsiveHelper.spacing(context, 40),
-                              child: ListView(
-                                scrollDirection: Axis.horizontal,
-                                padding: EdgeInsets.symmetric(
-                                  horizontal:
-                                      ResponsiveHelper.spacing(context, 16),
-                                ),
+                              child: Row(
                                 children: [
-                                  AppFilterChip(
-                                    label: '♥ 즐겨찾기',
-                                    isSelected: _filter.showFavoritesOnly,
-                                    solid: true,
-                                    onTap: () => _onFilterChanged(_filter.copyWith(
-                                        showFavoritesOnly: !_filter.showFavoritesOnly)),
-                                    onClear: _filter.showFavoritesOnly
-                                        ? () => _onFilterChanged(_filter.copyWith(
-                                            showFavoritesOnly: false))
-                                        : null,
+                                  Expanded(
+                                    child: AppSearchBar(
+                                      controller: _searchController,
+                                      hintText: '공고 제목, 사업장명 검색',
+                                      padding: EdgeInsets.zero,
+                                      onClear: () {
+                                        _searchDebounce?.cancel();
+                                        _onFilterChanged(_filter.copyWith(clearKeyword: true));
+                                      },
+                                      onSubmitted: (value) {
+                                        _searchDebounce?.cancel();
+                                        final keyword = value.trim();
+                                        _onFilterChanged(keyword.isEmpty
+                                            ? _filter.copyWith(clearKeyword: true)
+                                            : _filter.copyWith(keyword: keyword));
+                                      },
+                                    ),
                                   ),
-                                  SizedBox(
-                                      width: ResponsiveHelper.spacing(context, 8)),
-                                  AppFilterChip(
-                                    label: _filter.city != null
-                                        ? (_filter.district != null
-                                            ? '${_filter.city} ${_filter.district}'
-                                            : _filter.city!)
-                                        : '전체지역',
-                                    isSelected: _filter.city != null,
-                                    solid: true,
-                                    onTap: _showRegionPicker,
-                                    onClear: _filter.city != null
-                                        ? () => _onFilterChanged(
-                                            _filter.clearRegion())
-                                        : null,
-                                  ),
-                                  SizedBox(
-                                      width:
-                                          ResponsiveHelper.spacing(context, 8)),
-                                  AppFilterChip(
-                                    label: _filter.type == 'flex'
-                                        ? '단기'
-                                        : _filter.type == 'contract'
-                                            ? '장기'
-                                            : '전체유형',
-                                    isSelected: _filter.type != null,
-                                    solid: true,
-                                    onTap: _showTypeFilter,
-                                    onClear: _filter.type != null
-                                        ? () => _onFilterChanged(_filter
-                                            .copyWith(clearType: true))
-                                        : null,
-                                  ),
-                                  SizedBox(
-                                      width:
-                                          ResponsiveHelper.spacing(context, 8)),
-                                  AppFilterChip(
-                                    label: _filter.dateRange != null
-                                        ? '${_formatDate(_filter.dateRange!.start)}~${_formatDate(_filter.dateRange!.end)}'
-                                        : '날짜',
-                                    isSelected: _filter.dateRange != null,
-                                    solid: true,
-                                    onTap: _showDateRangePicker,
-                                    onClear: _filter.dateRange != null
-                                        ? () => _onFilterChanged(_filter
-                                            .copyWith(clearDateRange: true))
-                                        : null,
-                                  ),
-                                  SizedBox(
-                                      width:
-                                          ResponsiveHelper.spacing(context, 8)),
-                                  AppFilterChip(
-                                    label: _filter.sortBy == 'date'
-                                        ? '마감임박순'
-                                        : '최신순',
-                                    isSelected: _filter.sortBy == 'date',
-                                    solid: true,
-                                    onTap: _showSortSheet,
-                                  ),
+                                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                                  _buildFilterButton(context),
                                 ],
                               ),
                             ),
-                            const SizedBox(height: 8),
-                            const Divider(
-                                height: 1, thickness: 1, color: AppColors.grey100),
+                            const Divider(height: 1, thickness: 1, color: AppColors.grey100),
                           ],
                         ),
                       ),
@@ -686,7 +566,57 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       );
   }
 
-  String _formatDate(DateTime dt) => '${dt.month}/${dt.day}';
+  Widget _buildFilterButton(BuildContext context) {
+    final theme = Theme.of(context);
+    // sortBy=='date'도 배지에 포함 (기본값 'createdAt'과 다를 때)
+    final badgeCount = _filter.activeCount + (_filter.sortBy == 'date' ? 1 : 0);
+    final hasActive = badgeCount > 0;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Material(
+          color: hasActive ? theme.primaryColor : AppColors.grey100,
+          borderRadius: BorderRadius.circular(10),
+          child: InkWell(
+            onTap: _showAllFilters,
+            borderRadius: BorderRadius.circular(10),
+            child: Padding(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+              child: Icon(
+                Icons.tune,
+                color: hasActive ? Colors.white : AppColors.grey600,
+                size: ResponsiveHelper.iconSize(context, 22),
+              ),
+            ),
+          ),
+        ),
+        if (hasActive)
+          Positioned(
+            top: -5,
+            right: -5,
+            child: Container(
+              width: 17,
+              height: 17,
+              decoration: const BoxDecoration(
+                color: Colors.red,
+                shape: BoxShape.circle,
+              ),
+              child: Center(
+                child: Text(
+                  '$badgeCount',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    height: 1,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
 
   Widget _buildEmptyState() {
     if (_filter.showFavoritesOnly) {
@@ -720,92 +650,61 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
   }
 }
 
-// ── 정렬 선택 바텀시트 ────────────────────────────────────────
+// ── 통합 필터 바텀시트 ──────────────────────────────────────────
 
-class _SortSheet extends StatelessWidget {
-  const _SortSheet({required this.sortBy, required this.onChanged});
+class _AllFilterSheet extends StatefulWidget {
+  const _AllFilterSheet({
+    required this.initialFilter,
+    required this.onApply,
+    required this.availableCities,
+    required this.districtMap,
+  });
 
-  final String sortBy;
-  final ValueChanged<String> onChanged;
+  final TOFilterState initialFilter;
+  final ValueChanged<TOFilterState> onApply;
+  final List<String> availableCities;
+  final Map<String, List<String>> districtMap;
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(
-            child: Container(
-              width: 40,
-              height: 4,
-              margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 20)),
-              decoration: BoxDecoration(
-                color: AppColors.grey300,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          Text('정렬', style: ResponsiveHelper.titleStyle(context).copyWith(fontWeight: FontWeight.bold)),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          _sortOption(context, theme, 'createdAt', '최신순', Icons.fiber_new_outlined),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          _sortOption(context, theme, 'date', '마감임박순', Icons.timer_outlined),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-        ],
-      ),
-    );
-  }
-
-  Widget _sortOption(BuildContext context, ThemeData theme, String value, String label, IconData icon) {
-    final isSelected = sortBy == value;
-    return InkWell(
-      onTap: () {
-        Navigator.pop(context);
-        onChanged(value);
-      },
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-        decoration: BoxDecoration(
-          color: isSelected ? theme.primaryColor.withValues(alpha: 0.08) : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: isSelected ? theme.primaryColor : AppColors.grey200),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: isSelected ? theme.primaryColor : AppColors.grey500,
-                size: ResponsiveHelper.iconSize(context, 20)),
-            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-            Text(label, style: ResponsiveHelper.bodyStyle(context).copyWith(
-              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-              color: isSelected ? theme.primaryColor : null,
-            )),
-            if (isSelected) ...[
-              const Spacer(),
-              Icon(Icons.check, color: theme.primaryColor, size: ResponsiveHelper.iconSize(context, 18)),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
+  State<_AllFilterSheet> createState() => _AllFilterSheetState();
 }
 
-// ── 근무유형 선택 바텀시트 ──────────────────────────────────────
+class _AllFilterSheetState extends State<_AllFilterSheet> {
+  late TOFilterState _local;
 
-class _TypeFilterSheet extends StatelessWidget {
-  const _TypeFilterSheet({required this.selectedType, required this.onChanged});
+  @override
+  void initState() {
+    super.initState();
+    _local = widget.initialFilter;
+  }
 
-  final String? selectedType;
-  final ValueChanged<String?> onChanged;
+  Future<void> _pickRegion() async {
+    final result = await RegionPickerSheet.show(
+      context: context,
+      cities: widget.availableCities,
+      districtOf: (city) => widget.districtMap[city] ?? [],
+      selectedCity: _local.city,
+      selectedDistrict: _local.district,
+    );
+    if (result != null && mounted) {
+      setState(() => _local = _local.copyWith(city: result.city, district: result.district));
+    }
+  }
+
+  Future<void> _pickDateRange() async {
+    final now = DateTime.now();
+    final picked = await DateRangePickerBottomSheet.show(
+      context: context,
+      initialStart: _local.dateRange?.start,
+      initialEnd: _local.dateRange?.end,
+      title: '날짜 범위 선택',
+      minDate: now,
+      maxDate: now.add(const Duration(days: 365)),
+    );
+    if (picked != null && mounted) {
+      setState(() => _local = _local.copyWith(dateRange: picked));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -816,68 +715,278 @@ class _TypeFilterSheet extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
+      padding: EdgeInsets.fromLTRB(
+        ResponsiveHelper.spacing(context, 20),
+        ResponsiveHelper.spacing(context, 16),
+        ResponsiveHelper.spacing(context, 20),
+        ResponsiveHelper.spacing(context, 16),
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // 드래그 핸들
           Center(
             child: Container(
-              width: 40,
-              height: 4,
-              margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 20)),
-              decoration: BoxDecoration(
-                color: AppColors.grey300,
-                borderRadius: BorderRadius.circular(2),
+              width: 40, height: 4,
+              margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
+              decoration: BoxDecoration(color: AppColors.grey300, borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+          // 타이틀 + 초기화
+          Row(
+            children: [
+              Text('필터', style: ResponsiveHelper.titleStyle(context).copyWith(fontWeight: FontWeight.bold)),
+              const Spacer(),
+              TextButton(
+                onPressed: () => setState(() => _local = const TOFilterState()),
+                style: TextButton.styleFrom(
+                  padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 8)),
+                ),
+                child: Text('초기화', style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500)),
+              ),
+            ],
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+
+          // ─ 즐겨찾기
+          _sectionLabel(context, '즐겨찾기'),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          _toggleItem(
+            context, theme,
+            label: '♥ 즐겨찾기만 보기',
+            isSelected: _local.showFavoritesOnly,
+            onTap: () => setState(() => _local = _local.copyWith(showFavoritesOnly: !_local.showFavoritesOnly)),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+          // ─ 근무 유형
+          _sectionLabel(context, '근무 유형'),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          Row(
+            children: [
+              _typeChip(context, theme, null, '전체'),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              _typeChip(context, theme, 'flex', '단기'),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              _typeChip(context, theme, 'contract', '장기'),
+            ],
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+          // ─ 지역
+          _sectionLabel(context, '지역'),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          _rowSelector(
+            context, theme,
+            label: _local.city != null
+                ? (_local.district != null ? '${_local.city} ${_local.district}' : _local.city!)
+                : '전체 지역',
+            isSet: _local.city != null,
+            onTap: _pickRegion,
+            onClear: _local.city != null
+                ? () => setState(() => _local = _local.clearRegion())
+                : null,
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+          // ─ 날짜 범위
+          _sectionLabel(context, '날짜 범위'),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          _rowSelector(
+            context, theme,
+            label: _local.dateRange != null
+                ? '${_fmt(_local.dateRange!.start)} ~ ${_fmt(_local.dateRange!.end)}'
+                : '전체 날짜',
+            isSet: _local.dateRange != null,
+            onTap: _pickDateRange,
+            onClear: _local.dateRange != null
+                ? () => setState(() => _local = _local.copyWith(clearDateRange: true))
+                : null,
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+          // ─ 정렬
+          _sectionLabel(context, '정렬'),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          Row(
+            children: [
+              _sortChip(context, theme, 'createdAt', '최신순'),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              _sortChip(context, theme, 'date', '마감임박순'),
+            ],
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+
+          // ─ 적용 버튼
+          SafeArea(
+            top: false,
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  widget.onApply(_local);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: theme.primaryColor,
+                  foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 14)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  elevation: 0,
+                ),
+                child: Text(
+                  '적용하기',
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
               ),
             ),
           ),
-          Text('근무 유형', style: ResponsiveHelper.titleStyle(context).copyWith(fontWeight: FontWeight.bold)),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          _typeOption(context, theme, null, '전체', Icons.all_inclusive),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          _typeOption(context, theme, 'flex', '단기 (알바)', Icons.calendar_today),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          _typeOption(context, theme, 'contract', '장기 (고정)', Icons.work_outline),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
         ],
       ),
     );
   }
 
-  Widget _typeOption(BuildContext context, ThemeData theme, String? value, String label, IconData icon) {
-    final isSelected = selectedType == value;
-    return InkWell(
-      onTap: () {
-        Navigator.pop(context);
-        onChanged(value);
-      },
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-        decoration: BoxDecoration(
-          color: isSelected ? theme.primaryColor.withValues(alpha: 0.08) : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isSelected ? theme.primaryColor : AppColors.grey200,
+  Widget _sectionLabel(BuildContext context, String label) => Text(
+    label,
+    style: ResponsiveHelper.smallStyle(context).copyWith(
+      fontWeight: FontWeight.w600,
+      color: AppColors.grey600,
+    ),
+  );
+
+  // 즐겨찾기 토글 칩
+  Widget _toggleItem(BuildContext context, ThemeData theme, {
+    required String label,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) =>
+      GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 16),
+            vertical: ResponsiveHelper.spacing(context, 9),
+          ),
+          decoration: BoxDecoration(
+            color: isSelected ? theme.primaryColor : Colors.transparent,
+            border: Border.all(color: isSelected ? theme.primaryColor : AppColors.grey300),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            label,
+            style: ResponsiveHelper.smallStyle(context).copyWith(
+              color: isSelected ? Colors.white : AppColors.grey600,
+              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+            ),
           ),
         ),
-        child: Row(
-          children: [
-            Icon(icon, color: isSelected ? theme.primaryColor : AppColors.grey500,
-                size: ResponsiveHelper.iconSize(context, 20)),
-            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-            Text(label, style: ResponsiveHelper.bodyStyle(context).copyWith(
-              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-              color: isSelected ? theme.primaryColor : null,
-            )),
-            if (isSelected) ...[
-              const Spacer(),
-              Icon(Icons.check, color: theme.primaryColor, size: ResponsiveHelper.iconSize(context, 18)),
-            ],
-          ],
+      );
+
+  // 근무유형 칩 (Expanded row)
+  Widget _typeChip(BuildContext context, ThemeData theme, String? value, String label) {
+    final isSelected = _local.type == value;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _local = _local.copyWith(type: value, clearType: value == null)),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 10)),
+          decoration: BoxDecoration(
+            color: isSelected ? theme.primaryColor : Colors.transparent,
+            border: Border.all(color: isSelected ? theme.primaryColor : AppColors.grey300),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: ResponsiveHelper.smallStyle(context).copyWith(
+              color: isSelected ? Colors.white : AppColors.grey600,
+              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+            ),
+          ),
         ),
       ),
     );
   }
+
+  // 정렬 칩 (Expanded row)
+  Widget _sortChip(BuildContext context, ThemeData theme, String value, String label) {
+    final isSelected = _local.sortBy == value;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _local = _local.copyWith(sortBy: value)),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 10)),
+          decoration: BoxDecoration(
+            color: isSelected ? theme.primaryColor : Colors.transparent,
+            border: Border.all(color: isSelected ? theme.primaryColor : AppColors.grey300),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: ResponsiveHelper.smallStyle(context).copyWith(
+              color: isSelected ? Colors.white : AppColors.grey600,
+              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 지역·날짜 선택 행
+  Widget _rowSelector(
+    BuildContext context,
+    ThemeData theme, {
+    required String label,
+    required bool isSet,
+    required VoidCallback onTap,
+    VoidCallback? onClear,
+  }) =>
+      InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 14),
+            vertical: ResponsiveHelper.spacing(context, 12),
+          ),
+          decoration: BoxDecoration(
+            color: isSet ? theme.primaryColor.withValues(alpha: 0.06) : AppColors.grey50,
+            border: Border.all(
+              color: isSet ? theme.primaryColor.withValues(alpha: 0.4) : AppColors.grey200,
+            ),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  style: ResponsiveHelper.bodyStyle(context).copyWith(
+                    color: isSet ? theme.primaryColor : AppColors.grey600,
+                    fontWeight: isSet ? FontWeight.w600 : FontWeight.normal,
+                  ),
+                ),
+              ),
+              if (onClear != null)
+                GestureDetector(
+                  onTap: onClear,
+                  child: const Icon(Icons.close, size: 16, color: AppColors.grey400),
+                )
+              else
+                const Icon(Icons.chevron_right, size: 18, color: AppColors.grey400),
+            ],
+          ),
+        ),
+      );
+
+  String _fmt(DateTime dt) => '${dt.month}/${dt.day}';
 }
