@@ -636,10 +636,9 @@ abstract class TOStatus {
   /// 미공개(초안) — 관리자에게만 보이고 지원자에게 비공개
   static const String draft     = 'DRAFT';
 
-  /// 모집 중 상태 그룹 (Firestore whereIn 쿼리용)
+  /// 모집 중 상태 그룹 (Firestore whereIn 쿼리용 — 관리자 TO 목록용)
+  /// 주의: 지원자 공개 기준은 isPublished=true + [ACTIVE, FULL] — CF에서 처리
   static const List<String> openStates   = [active, full, scheduled];
   /// 마감 상태 그룹
   static const List<String> closedStates = [closed, expired];
-  /// 공개 상태 전체 (지원 가능)
-  static const List<String> publishedStates = [active, full, scheduled, closed, expired];
 }

@@ -20024,9 +20024,11 @@ export const callableGetPublishedTOs = onCall(
     };
 
     // [index: (isPublished, status, createdAt DESC)] — firestore.indexes.json에 존재
+    // isPublished=true인 경우 SCHEDULED는 서버에서 강제 차단되지만,
+    // 쿼리 필터를 ACTIVE|FULL로 한정해 이중 방어
     let q: FirebaseFirestore.Query = db.collection("tos")
       .where("isPublished", "==", true)
-      .where("status", "in", ["OPEN", "ACTIVE", "FULL", "SCHEDULED"])
+      .where("status", "in", ["ACTIVE", "FULL"])
       .orderBy("createdAt", "desc");
 
     // 필터 조합별 인덱스 모두 존재 (단, city+district+type 동시 적용 시 인덱스 없음)
@@ -20060,7 +20062,7 @@ export const callableGetPublishedTOsPaged = onCall(
 
     let q: FirebaseFirestore.Query = db.collection("tos")
       .where("isPublished", "==", true)
-      .where("status", "in", ["OPEN", "ACTIVE", "FULL", "SCHEDULED"])
+      .where("status", "in", ["ACTIVE", "FULL"])
       .orderBy("createdAt", "desc");
 
     if (type && !district) q = q.where("type", "==", type);
