@@ -833,6 +833,26 @@ class _UserTOCardState extends State<UserTOCard> {
                     )
                   : const SizedBox.shrink(),
             ),
+            // 인원 현황 — "확정/모집" 또는 "확정/모집 +대기" (예약 슬롯 미표시)
+            if (!isPending) ...[
+              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+              Builder(builder: (_) {
+                final req = slot.totalRequired;
+                if (req <= 0) return const SizedBox.shrink();
+                final conf = slot.confirmedCount;
+                final pend = slot.pendingCount;
+                final label = pend > 0 ? '$conf/$req +$pend' : '$conf/$req';
+                final color = slot.isFull
+                    ? AppColors.grey400
+                    : pend > 0
+                        ? AppColors.warning
+                        : AppColors.grey500;
+                return Text(
+                  label,
+                  style: ResponsiveHelper.tinyStyle(context, color: color),
+                );
+              }),
+            ],
             // 상태 칩
             SizedBox(width: ResponsiveHelper.spacing(context, 6)),
             _statusChip(context, statusLabel, statusBg, statusFg),
