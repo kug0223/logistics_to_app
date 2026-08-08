@@ -162,26 +162,13 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
 
   Future<void> _approveBusiness(_BusinessWithOwner item) async {
     if (_isProcessing) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('사업장 승인'),
-        content: Text('「${item.business.name}」을 승인하시겠습니까?\n'
-            '승인 후 관리자가 공고를 등록할 수 있습니다.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
-            child: const Text('승인', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: '사업장 승인',
+      message: '「${item.business.name}」을 승인하시겠습니까?\n승인 후 관리자가 공고를 등록할 수 있습니다.',
+      confirmText: '승인',
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
     setState(() => _isProcessing = true);
 
     try {
@@ -204,26 +191,13 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
 
   Future<void> _reactivateBusiness(_BusinessWithOwner item) async {
     if (_isProcessing) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('사업장 재활성화'),
-        content: Text('「${item.business.name}」을 재활성화하시겠습니까?\n'
-            '재활성화 후 다시 공고를 등록할 수 있습니다.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
-            child: const Text('재활성화', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: '사업장 재활성화',
+      message: '「${item.business.name}」을 재활성화하시겠습니까?\n재활성화 후 다시 공고를 등록할 수 있습니다.',
+      confirmText: '재활성화',
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
     setState(() => _isProcessing = true);
 
     try {
@@ -327,13 +301,12 @@ class _AllBusinessesScreenState extends State<AllBusinessesScreen>
         },
       );
     }
-    return RefreshIndicator(
-      onRefresh: _loadAllBusinesses,
-      child: ListView.builder(
-        padding: ResponsiveHelper.cardPadding(context),
-        itemCount: list.length,
-        itemBuilder: (context, index) => _buildBusinessCard(list[index]),
-      ),
+    // RefreshIndicator 제거: GradientScaffold.onRefresh와 중첩되면
+    // 내부 것이 제스처를 가로채 외부 콜백 무력화 또는 중복 실행 경쟁 발생
+    return ListView.builder(
+      padding: ResponsiveHelper.listPadding(context),
+      itemCount: list.length,
+      itemBuilder: (context, index) => _buildBusinessCard(list[index]),
     );
   }
 

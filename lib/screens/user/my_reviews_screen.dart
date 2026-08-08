@@ -41,6 +41,7 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
 
   Future<void> _loadReviews() async {
     if (!mounted) return;
+    if (_isLoading) return; // pull-to-refresh 재진입 방어
     final uid = context.read<UserProvider>().currentUser?.uid;
     if (uid == null) {
       if (mounted) setState(() => _isLoading = false);
@@ -168,6 +169,12 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
                             ),
                           ),
                         ),
+                      // 하단 홈버튼·네비게이션 바 높이 보장
+                      SliverToBoxAdapter(
+                        child: SizedBox(
+                          height: MediaQuery.viewPaddingOf(context).bottom,
+                        ),
+                      ),
                     ],
                   ),
                 ),

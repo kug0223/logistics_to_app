@@ -64,7 +64,7 @@ class _HelpScreenState extends State<HelpScreen> {
   Widget _buildFirestoreList(
       BuildContext context, ThemeData theme, List<HelpFaqModel> items) {
     return ListView.builder(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+      padding: ResponsiveHelper.listPadding(context),
       itemCount: items.length,
       itemBuilder: (context, i) {
         final item = items[i];
@@ -94,7 +94,7 @@ class _HelpScreenState extends State<HelpScreen> {
   Widget _buildLocalList(BuildContext context, ThemeData theme) {
     final items = _isAdmin ? _adminFaqs : _userFaqs;
     return ListView.builder(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+      padding: ResponsiveHelper.listPadding(context),
       itemCount: items.length,
       itemBuilder: (context, i) {
         final item = items[i];

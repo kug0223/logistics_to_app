@@ -35,12 +35,16 @@ class InterimSettlementRequestScreen extends StatefulWidget {
 
 class _InterimSettlementRequestScreenState
     extends State<InterimSettlementRequestScreen> {
+  // ─── 포맷터 캐싱 ─────────────────────────────────────────────
+  static final _timeFmt = DateFormat('HH:mm');
+
   final FirestoreService _firestoreService = FirestoreService();
   final PayrollPaymentService _payService = PayrollPaymentService();
   final TextEditingController _reasonController = TextEditingController();
 
   List<AttendanceModel> _records = [];
   final Set<String> _selectedIds = {};
+  int _cachedNetAmount = 0; // _selectedIds 변경 시 갱신 — build()마다 O(n) 재계산 방지
   bool _isLoading = true;
   bool _isSubmitting = false;
 
@@ -61,6 +65,7 @@ class _InterimSettlementRequestScreenState
 
   Future<void> _loadConfirmedAttendances() async {
     if (!mounted) return;
+    if (_isLoading) return; // pull-to-refresh 재진입 방어
     final uid = context.read<UserProvider>().currentUser?.uid;
     if (uid == null) {
       if (mounted) setState(() => _isLoading = false);
@@ -108,8 +113,11 @@ class _InterimSettlementRequestScreenState
   List<AttendanceModel> get _selectedRecords =>
       _records.where((a) => _selectedIds.contains(a.id)).toList();
 
-  int get _netAmount =>
-      _selectedRecords.fold(0, (s, a) => s + (a.wageDetail?.effectiveNetWage ?? 0));
+  /// setState 시점에 한 번만 계산 — build()마다 재계산하지 않음
+  void _recalcNetAmount() {
+    _cachedNetAmount = _selectedRecords
+        .fold(0, (s, a) => s + (a.wageDetail?.effectiveNetWage ?? 0));
+  }
 
   void _toggleAll(bool select) {
     setState(() {
@@ -118,6 +126,7 @@ class _InterimSettlementRequestScreenState
       } else {
         _selectedIds.clear();
       }
+      _recalcNetAmount();
     });
   }
 
@@ -167,7 +176,7 @@ class _InterimSettlementRequestScreenState
 
   @override
   Widget build(BuildContext context) {
-    final netAmount = _netAmount;
+    final netAmount = _cachedNetAmount;
     return GradientScaffold(
       title: '중간정산 요청 · ${widget.app.businessName}',
       onRefresh: _loadConfirmedAttendances,
@@ -219,26 +228,27 @@ class _InterimSettlementRequestScreenState
                     // 출근기록 목록
                     Expanded(
                       child: ListView.builder(
-                        padding: EdgeInsets.fromLTRB(
-                          ResponsiveHelper.spacing(context, 12),
-                          0,
-                          ResponsiveHelper.spacing(context, 12),
-                          ResponsiveHelper.spacing(context, 80),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: ResponsiveHelper.spacing(context, 12),
+                          vertical: ResponsiveHelper.spacing(context, 8),
                         ),
                         itemCount: _records.length,
                         itemBuilder: (ctx, i) => _buildAttendanceCard(_records[i]),
                       ),
                     ),
 
-                    // 일괄 선택 바
-                    AppBatchActionBar(
-                      selectedCount: _selectedIds.length,
-                      selectedAmount: netAmount,
-                      onSelectAll: () => _toggleAll(true),
-                      onDeselectAll: () => _toggleAll(false),
-                      onAction: _selectedIds.isEmpty || _isSubmitting ? null : _submit,
-                      actionLabel: _isSubmitting ? '요청 중...' : '중간정산 요청',
-                      actionIcon: Icons.account_balance_wallet,
+                    // 일괄 선택 바 — SafeArea(top:false)로 하단 홈버튼 영역 처리
+                    SafeArea(
+                      top: false,
+                      child: AppBatchActionBar(
+                        selectedCount: _selectedIds.length,
+                        selectedAmount: netAmount,
+                        onSelectAll: () => _toggleAll(true),
+                        onDeselectAll: () => _toggleAll(false),
+                        onAction: _selectedIds.isEmpty || _isSubmitting ? null : _submit,
+                        actionLabel: _isSubmitting ? '요청 중...' : '중간정산 요청',
+                        actionIcon: Icons.account_balance_wallet,
+                      ),
                     ),
                   ],
                 ),
@@ -288,6 +298,7 @@ class _InterimSettlementRequestScreenState
           } else {
             _selectedIds.add(att.id);
           }
+          _recalcNetAmount();
         });
       },
       child: AnimatedContainer(
@@ -385,11 +396,10 @@ class _InterimSettlementRequestScreenState
   }
 
   String _formatTimeRange(DateTime? checkIn, DateTime? checkOut) {
-    final fmt = DateFormat('HH:mm');
     if (checkIn != null && checkOut != null) {
-      return '${fmt.format(checkIn)} ~ ${fmt.format(checkOut)}';
+      return '${_timeFmt.format(checkIn)} ~ ${_timeFmt.format(checkOut)}';
     } else if (checkIn != null) {
-      return '출근 ${fmt.format(checkIn)}';
+      return '출근 ${_timeFmt.format(checkIn)}';
     }
     return '';
   }

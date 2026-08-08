@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show FilteringTextInputFormatter;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:provider/provider.dart';
@@ -276,6 +277,7 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
           TextField(
             controller: _globalCtrl,
             keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             decoration: InputDecoration(
               labelText: '새 기본 한도',
               hintText: '1 ~ 50',
@@ -329,7 +331,7 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
       );
     }
     return ListView.separated(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+      padding: ResponsiveHelper.listPadding(context),
       itemCount: _admins.length,
       separatorBuilder: (_, __) =>
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -399,6 +401,7 @@ class _TOLimitSettingsScreenState extends State<TOLimitSettingsScreen>
                 child: TextField(
                   controller: admin.ctrl,
                   keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   decoration: InputDecoration(
                     hintText: '비워두면 전역값($_globalLimit개) 사용',
                     suffixText: '개',

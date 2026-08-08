@@ -29,6 +29,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
   List<UserModel> _users = [];
   String _roleFilter = 'ALL';
   String _searchQuery = '';
+  List<UserModel> _cachedFiltered = []; // 필터 결과 캐시 — build()마다 재계산 방지
   bool _isProcessing = false;
   final _searchController = TextEditingController();
 
@@ -43,7 +44,10 @@ class _AllUsersScreenState extends State<AllUsersScreen>
   void initState() {
     super.initState();
     _searchController.addListener(() {
-      setState(() => _searchQuery = _searchController.text.trim().toLowerCase());
+      setState(() {
+        _searchQuery = _searchController.text.trim().toLowerCase();
+        _rebuildFilter();
+      });
     });
     // 방어 심층화: AuthWrapper 분기 외 2차 역할 확인 (context는 postFrameCallback에서만 안전하게 접근)
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -79,7 +83,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
           return UserModel.fromMap(d, uid);
         } catch (_) { return null; }
       }).whereType<UserModel>().toList();
-      setState(() { _users = users; });
+      setState(() { _users = users; _rebuildFilter(); });
       setLoading(false);
     } catch (e) {
       if (!mounted) return;
@@ -88,7 +92,8 @@ class _AllUsersScreenState extends State<AllUsersScreen>
     }
   }
 
-  List<UserModel> get _filtered {
+  /// _users / _roleFilter / _searchQuery 변경 시 호출 — build()마다 재계산하지 않음
+  void _rebuildFilter() {
     var list = _roleFilter == 'ALL'
         ? _users
         : _users.where((u) => u.role.name == _roleFilter).toList();
@@ -103,7 +108,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
             phone.contains(_searchQuery);
       }).toList();
     }
-    return list;
+    _cachedFiltered = list;
   }
 
   // ── 관리 액션 ───────────────────────────────────────────────────
@@ -243,9 +248,13 @@ class _AllUsersScreenState extends State<AllUsersScreen>
   // ── 사용자 상세 바텀시트 ────────────────────────────────────────
 
   void _showUserDetailSheet(UserModel user) {
-    DialogHelper.showSheet(
-      context,
+    // DraggableScrollableSheet는 backgroundColor: transparent 필수 →
+    // CLAUDE.md 허용 예외: showModalBottomSheet 직접 호출
+    showModalBottomSheet(
+      context: context,
       isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
       builder: (ctx) => _UserDetailSheet(
         user: user,
         onToggleBlacklist: () {
@@ -278,7 +287,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
           Expanded(
             child: Builder(builder: (context) {
               if (isLoading) return const LoadingWidget(message: '사용자 목록을 불러오는 중...');
-              final filtered = _filtered;
+              final filtered = _cachedFiltered;
               return filtered.isEmpty ? _buildEmptyState() : _buildUserList(filtered);
             }),
           ),
@@ -335,7 +344,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
               child: FilterChip(
                 label: Text('${e.value} ($count)'),
                 selected: active,
-                onSelected: (_) => setState(() => _roleFilter = e.key),
+                onSelected: (_) => setState(() { _roleFilter = e.key; _rebuildFilter(); }),
                 selectedColor: AppColors.errorDark.withValues(alpha: 0.15),
                 checkmarkColor: AppColors.errorDark,
                 labelStyle: ResponsiveHelper.smallStyle(
@@ -361,7 +370,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
     return RefreshIndicator(
       onRefresh: _loadAllUsers,
       child: ListView.builder(
-        padding: ResponsiveHelper.cardPadding(context),
+        padding: ResponsiveHelper.listPadding(context),
         itemCount: list.length,
         itemBuilder: (context, i) => _buildUserCard(list[i]),
       ),
@@ -444,11 +453,15 @@ class _AllUsersScreenState extends State<AllUsersScreen>
                     // 상태 칩 행
                     Row(
                       children: [
-                        Text(
-                          '신뢰도 ${user.trustScore}점 · ${user.totalWorkDays}일 근무',
-                          style: ResponsiveHelper.tinyStyle(
-                            context,
-                            color: Theme.of(context).textTheme.bodySmall?.color,
+                        // 신뢰도 텍스트: Flexible 필수 — 칩 3개 동시 표시 시 360dp overflow 방지
+                        Flexible(
+                          child: Text(
+                            '신뢰도 ${user.trustScore}점 · ${user.totalWorkDays}일 근무',
+                            style: ResponsiveHelper.tinyStyle(
+                              context,
+                              color: Theme.of(context).textTheme.bodySmall?.color,
+                            ),
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                         if (user.isBlacklisted) ...[
@@ -666,14 +679,16 @@ class _UserDetailSheet extends StatelessWidget {
                 _sectionTitle(context, '관리 액션'),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
-                _actionButton(
-                  context,
-                  icon: user.isBlacklisted ? Icons.lock_open : Icons.block,
-                  label: user.isBlacklisted ? '블랙리스트 해제' : '블랙리스트 등록',
-                  color: AppColors.error,
-                  onTap: onToggleBlacklist,
-                  outlined: user.isBlacklisted,
-                ),
+                // SUPER_ADMIN 계정에 블랙리스트 버튼 노출 금지 — 자기 자신 또는 동급 계정 차단 방지
+                if (user.role != UserRole.SUPER_ADMIN)
+                  _actionButton(
+                    context,
+                    icon: user.isBlacklisted ? Icons.lock_open : Icons.block,
+                    label: user.isBlacklisted ? '블랙리스트 해제' : '블랙리스트 등록',
+                    color: AppColors.error,
+                    onTap: onToggleBlacklist,
+                    outlined: user.isBlacklisted,
+                  ),
 
                 if (user.isRestricted) ...[
                   SizedBox(height: ResponsiveHelper.spacing(context, 8)),

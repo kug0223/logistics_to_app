@@ -50,6 +50,8 @@ class _ForeignWorkerApprovalScreenState
   }
 
   Future<void> _loadUsers() async {
+    // 재진입 방어: 처리 중 pull-to-refresh 시 CF 병렬 실행 → 오래된 결과 덮어쓰기 방지
+    if (isLoading) return;
     setLoading(true);
     try {
       // [CF-MIGRATED 2026-07-17] USER list = CF 정책 준수 (feedback_user_list_cf_pattern.md)
@@ -191,6 +193,7 @@ class _ForeignWorkerApprovalScreenState
   Future<void> _showTempPasswordDialog(String name, String tempPassword) async {
     await showDialog<void>(
       context: context,
+      barrierDismissible: false, // 텍스트필드 포커스 해제 전 닫히면 _dependents crash
       useSafeArea: true,
       builder: (ctx) => AlertDialog(
         title: const Text('임시 비밀번호 발급'),
@@ -244,6 +247,7 @@ class _ForeignWorkerApprovalScreenState
   }) async {
     final result = await showDialog<bool>(
       context: context,
+      barrierDismissible: false, // CLAUDE.MD: showDialog는 barrierDismissible:false 필수
       builder: (ctx) => AlertDialog(
         title: Text(title),
         content: Text(message),
@@ -299,7 +303,7 @@ class _ForeignWorkerApprovalScreenState
                             : '',
                       )
                     : ListView.builder(
-                        padding: const EdgeInsets.all(16),
+                        padding: ResponsiveHelper.listPadding(context),
                         itemCount: _filtered.length,
                         itemBuilder: (ctx, i) => _buildUserCard(_filtered[i]),
                       ),
@@ -639,6 +643,7 @@ class _ForeignWorkerApprovalScreenState
     if (!mounted || signedUrl == null) return;
     showDialog(
       context: context,
+      barrierDismissible: false, // CLAUDE.MD: showDialog는 barrierDismissible:false 필수
       builder: (ctx) => Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: Column(

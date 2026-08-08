@@ -87,7 +87,7 @@ class _BusinessApprovalSettingsScreenState
       body: isLoading
           ? const LoadingWidget(message: '설정을 불러오는 중...')
           : ListView(
-              padding: ResponsiveHelper.cardPadding(context),
+              padding: ResponsiveHelper.listPadding(context),
               children: [
                 _buildInfoCard(),
                 SizedBox(height: ResponsiveHelper.spacing(context, 24)),
@@ -133,7 +133,7 @@ class _BusinessApprovalSettingsScreenState
   Widget _buildToggleCard() {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(

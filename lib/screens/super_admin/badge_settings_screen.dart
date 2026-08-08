@@ -1,5 +1,6 @@
 ﻿// lib/screens/super_admin/badge_settings_screen.dart
 
+import 'dart:math' show max;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
@@ -130,8 +131,10 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
             benefit: badge.benefit,
           );
         }
+        // _groupBadges 필수: 미호출 시 그룹 리스트가 갱신되지 않아 토글 결과 화면 미반영
+        _groupBadges();
       });
-      
+
       if (mounted) ToastHelper.showSuccess(badge.isActive ? '배지가 비활성화되었습니다' : '배지가 활성화되었습니다');
     } catch (e) {
       if (mounted) ToastHelper.showError('변경에 실패했습니다');
@@ -152,7 +155,12 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
       try {
         await _firestore.collection('badges').doc(result.id).update(result.toMap());
         if (!mounted) return;
-        await _loadBadges();
+        // _loadBadges() 전체 재로드 대신 로컬 리스트만 갱신 (네트워크 절감)
+        setState(() {
+          final idx = _badges.indexWhere((b) => b.id == result.id);
+          if (idx >= 0) _badges[idx] = result;
+          _groupBadges();
+        });
         if (mounted) ToastHelper.showSuccess('배지가 수정되었습니다');
       } catch (e) {
         if (mounted) ToastHelper.showError('수정에 실패했습니다');
@@ -183,7 +191,9 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
             conditionValue: result.conditionValue,
             workType: result.workType,
             isActive: true,
-            order: _badges.length + 1,
+            // _badges.length+1은 삭제 후 재추가 시 중복 order 발생
+            // 예: [1,3] 남은 상태에서 length+1=3 → 기존 배지와 order 충돌
+            order: _badges.map((b) => b.order).fold(0, max) + 1,
             createdAt: DateTime.now(),
           );
 
@@ -242,7 +252,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
       body: isLoading
           ? const LoadingWidget()
           : ListView(
-              padding: ResponsiveHelper.cardPadding(context),
+              padding: ResponsiveHelper.listPadding(context),
               children: [
                 // 안내 카드
                 Container(
@@ -335,7 +345,7 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
@@ -415,11 +425,15 @@ class _BadgeSettingsScreenState extends State<BadgeSettingsScreen>
       ),
       title: Row(
         children: [
-          Text(
-            badge.name,
-            style: ResponsiveHelper.bodyStyle(context).copyWith(
-              fontWeight: FontWeight.w600,
-              color: badge.isActive ? null : AppColors.grey400,
+          // Flexible 필수: 긴 배지명 + '비활성' Container 조합 시 overflow 방지
+          Flexible(
+            child: Text(
+              badge.name,
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                fontWeight: FontWeight.w600,
+                color: badge.isActive ? null : AppColors.grey400,
+              ),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
           if (!badge.isActive) ...[

@@ -160,6 +160,7 @@ class _ContractTemplateEditScreenState
     if (!_hasChanges) return true;
     final result = await showDialog<bool>(
       context: ctx,
+      barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         title: const Text('편집 취소'),
         content: const Text('저장하지 않은 변경사항이 있습니다.\n나가시겠습니까?'),
@@ -204,8 +205,7 @@ class _ContractTemplateEditScreenState
       ],
       body: ListView(
         controller: _scrollCtrl,
-        padding:
-            EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+        padding: ResponsiveHelper.listPadding(context),
         children: [
           // 유형 배지
           _TypeBadge(templateType: _templateType),
@@ -412,7 +412,7 @@ class _ArticleCard extends StatelessWidget {
               ],
             ),
           ),
-          Divider(height: 1, color: AppColors.grey100),
+          const Divider(height: 1, color: AppColors.grey100),
           // 내용
           Padding(
             padding: EdgeInsets.all(

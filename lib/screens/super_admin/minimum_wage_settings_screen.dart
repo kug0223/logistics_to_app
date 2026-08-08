@@ -173,7 +173,7 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
                 ),
                 Expanded(
                   child: ListView.separated(
-                    padding: ResponsiveHelper.cardPadding(context),
+                    padding: ResponsiveHelper.listPadding(context),
                     itemCount: sortedYears.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 8),
                     itemBuilder: (context, i) {
@@ -184,7 +184,7 @@ class _MinimumWageSettingsScreenState extends State<MinimumWageSettingsScreen> {
 
                       return Container(
                         decoration: BoxDecoration(
-                          color: Colors.white,
+                          color: AppColors.surface,
                           borderRadius: BorderRadius.circular(14),
                           border: isCurrentYear
                               ? Border.all(color: theme.primaryColor, width: 2)

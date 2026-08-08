@@ -44,7 +44,7 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
     return GradientScaffold(
       title: '시스템 설정',
       body: ListView(
-        padding: ResponsiveHelper.cardPadding(context),
+        padding: ResponsiveHelper.listPadding(context),
         children: [
           // 안내 카드
           Container(
@@ -199,7 +199,7 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
         Container(
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: AppColors.surface,
             borderRadius: BorderRadius.circular(16),
             boxShadow: [
               BoxShadow(
