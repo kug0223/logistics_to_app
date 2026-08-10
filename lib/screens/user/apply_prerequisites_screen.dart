@@ -10,7 +10,6 @@ import '../../utils/toast_helper.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../common/document_management_screen.dart';
-import '../common/settings_screen.dart';
 
 /// 지원 전 준비사항 체크 전체 화면.
 ///
@@ -47,8 +46,6 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
   UserModel? get _user =>
       context.read<UserProvider>().currentUser;
 
-  bool get _passVerified => _user?.isPassVerified ?? false;
-
   bool get _idCardReady {
     final u = _user;
     return u != null && u.idCardImageUrl != null && u.idCardImageUrl!.isNotEmpty;
@@ -83,7 +80,6 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
 
   bool get _allPrerequisitesMet {
     if (_isBlacklisted || _isRestricted) return false;
-    if (!_passVerified) return false;
     if (!_idCardReady) return false;
     if (widget.isFlexType && !_idVerified) return false;
     if (!_accountReady) return false;
@@ -91,7 +87,7 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
     return true;
   }
 
-  int get _totalItemCount => widget.isFlexType ? 5 : 4;
+  int get _totalItemCount => widget.isFlexType ? 4 : 3;
 
   Future<void> _reCheck() async {
     if (_isLoading) return;
@@ -173,26 +169,9 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
 
                   SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
-                  // 1. 본인인증(PASS)
+                  // 1. 신분증 등록
                   _buildPrerequisiteCard(
                     index: 1,
-                    title: '휴대폰 본인인증',
-                    isReady: _passVerified,
-                    readyDescription: '본인인증이 완료되었습니다',
-                    notReadyDescription: '본인인증이 필요합니다.',
-                    actionLabel: '인증 하러 가기',
-                    onAction: () async {
-                      await NavigationHelper.push<void>(
-                          context, destination: const SettingsScreen());
-                      if (!mounted) return;
-                      await _reCheck();
-                    },
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-
-                  // 2. 신분증 등록
-                  _buildPrerequisiteCard(
-                    index: 2,
                     title: '신분증 등록',
                     isReady: _idCardReady,
                     readyDescription: '신분증이 등록되어 있습니다',
@@ -207,10 +186,10 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
                   ),
                   SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
-                  // 3. 신분증 인증 (단기 공고만)
+                  // 2. 신분증 인증 (단기 공고만)
                   if (widget.isFlexType) ...[
                     _buildPrerequisiteCard(
-                      index: 3,
+                      index: 2,
                       title: '신분증 인증',
                       isReady: _idVerified,
                       readyDescription: '신분증 인증이 완료되었습니다',
@@ -226,9 +205,9 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
                     SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                   ],
 
-                  // 계좌 정보 (flex: 4번 / contract: 3번)
+                  // 계좌 정보 (flex: 3번 / contract: 2번)
                   _buildPrerequisiteCard(
-                    index: widget.isFlexType ? 4 : 3,
+                    index: widget.isFlexType ? 3 : 2,
                     title: '계좌 정보 등록',
                     isReady: _accountReady,
                     readyDescription: '계좌 정보가 등록되어 있습니다',
@@ -243,9 +222,9 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
                   ),
                   SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
-                  // 통장사본 (flex: 5번 / contract: 4번)
+                  // 통장사본 (flex: 4번 / contract: 3번)
                   _buildPrerequisiteCard(
-                    index: widget.isFlexType ? 5 : 4,
+                    index: widget.isFlexType ? 4 : 3,
                     title: '통장사본 등록',
                     isReady: _bankbookReady,
                     readyDescription: '통장사본이 등록되어 있습니다',

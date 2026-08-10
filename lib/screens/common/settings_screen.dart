@@ -52,7 +52,6 @@ import 'tour_screen.dart';
 // Services
 import '../../services/auth_service.dart';
 import '../../services/firestore_service.dart';
-import '../../services/pass_verification_service.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../services/fcm_service.dart';
@@ -292,34 +291,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   MaterialPageRoute(builder: (_) => const ProfileEditScreen())),
             ),
           ]),
-          if (user?.role == UserRole.BUSINESS_ADMIN) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            _buildMenuGroup(context, [
-              _SettingsItem(
-                icon: Icons.verified_user_outlined,
-                iconColor: AppColors.infoDark,
-                title: '휴대폰 본인인증',
-                subtitle: (user?.isPassVerified ?? false) ? '완료' : '미완료',
-                subtitleColor: (user?.isPassVerified ?? false)
-                    ? AppColors.success
-                    : AppColors.warning,
-                onTap: () => _handlePassAuth(user!),
-              ),
-            ]),
-          ],
           if (showUserItems) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             _buildMenuGroup(context, [
-              _SettingsItem(
-                icon: Icons.verified_user_outlined,
-                iconColor: AppColors.infoDark,
-                title: '휴대폰 본인인증',
-                subtitle: (user?.isPassVerified ?? false) ? '완료' : '미완료',
-                subtitleColor: (user?.isPassVerified ?? false)
-                    ? AppColors.success
-                    : AppColors.warning,
-                onTap: () => _handlePassAuth(user!),
-              ),
               _buildDocumentMenuItem(context, user),
               _SettingsItem(
                 icon: Icons.star_rounded,
@@ -832,30 +806,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // (context.watch 사용 화면이므로 별도 setState 불필요)
   }
 
-
-  // ── 휴대폰 본인인증 ───────────────────────────────────────────────
-
-  Future<void> _handlePassAuth(UserModel user) async {
-    final result = await PassVerificationService.authenticate(purpose: 'reauth');
-
-    if (!mounted || result == null) return;
-
-    try {
-      // [H-5] CF Admin SDK 경유로 ciHash/passVerifiedAt 저장 — 클라이언트 직접 write 차단
-      // passVerifiedAt은 CF에서 serverTimestamp로 강제 (법적 타임스탬프 위조 불가)
-      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('finalizePassReauth',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
-          .call({'passToken': result.passToken});
-      if (!mounted) return;
-      await context.read<UserProvider>().refreshCurrentUser();
-      if (!mounted) return;
-      ToastHelper.showSuccess('본인인증이 완료되었습니다.');
-    } catch (e) {
-      if (!mounted) return;
-      ToastHelper.showError('본인인증 처리에 실패했습니다. 다시 시도해주세요.');
-    }
-  }
 
   Widget _buildSectionHeader(BuildContext context, String title, IconData icon) {
     return Padding(

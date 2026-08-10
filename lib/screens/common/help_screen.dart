@@ -216,9 +216,9 @@ class _HelpScreenState extends State<HelpScreen> {
     ),
     _FaqItem.header('👤 계정 & 서류'),
     _FaqItem(
-      question: '본인인증은 어디서 하나요?',
-      answer: '설정 → "휴대폰 본인인증"을 눌러 인증을 진행할 수 있습니다. '
-          '본인인증 완료 후 공고 지원 시 신뢰도가 높아집니다.',
+      question: '본인인증은 언제 하나요?',
+      answer: '회원가입 시 휴대폰 본인인증(KG이니시스)을 완료하면 가입이 완료됩니다. '
+          '별도로 인증을 다시 할 필요가 없습니다.',
     ),
     _FaqItem(
       question: '서류(신분증, 통장사본 등)는 어디서 등록하나요?',

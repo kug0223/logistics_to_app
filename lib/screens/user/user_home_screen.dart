@@ -1412,7 +1412,6 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     final user = up.currentUser;
     if (user == null) return const SizedBox.shrink();
     final missing = <String>[];
-    if (!user.isPassVerified) missing.add('본인인증');
     if (user.idCardImageUrl == null) missing.add('신분증');
     if (user.bankbookImageUrl == null) missing.add('통장사본');
     if (user.bankName == null || user.accountNumber == null) missing.add('통장 정보');

@@ -27,7 +27,6 @@ import 'screens/super_admin/super_admin_home_screen.dart';
 import 'screens/business_admin/business_admin_home_screen.dart';
 import 'screens/common/splash_screen.dart';
 import 'screens/common/onboarding_screen.dart';
-import 'screens/common/settings_screen.dart';
 import 'utils/wage_calculator.dart';
 import 'services/fcm_service.dart';
 import 'services/insurance_rate_service.dart';
@@ -204,7 +203,6 @@ class AuthWrapper extends StatefulWidget {
 
 class _AuthWrapperState extends State<AuthWrapper> {
   bool? _isOnboardingCompleted;
-  bool _emailBannerShown = false;
   bool _checkingOnboarding = false;
   // Firebase Auth 초기 상태 확인 완료 후 true → 이후 isLoading=true(signIn 등)에서
   // LoginScreen을 스피너로 교체하지 않기 위한 가드
@@ -281,13 +279,12 @@ class _AuthWrapperState extends State<AuthWrapper> {
         if (!userProvider.isLoggedIn && !userProvider.isLoading) {
           if (kDebugMode) debugPrint('🚫 로그인되지 않음 → LoginScreen');
           // 로그아웃 시 온보딩 상태·가드·배너 리셋 (다음 로그인 때 다시 체크)
-          if (_isOnboardingCompleted != null || _emailBannerShown) {
+          if (_isOnboardingCompleted != null) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (mounted) {
                 setState(() {
                   _isOnboardingCompleted = null;
                   _checkingOnboarding = false;
-                  _emailBannerShown = false;
                 });
               }
             });
@@ -347,45 +344,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
             role: user.roleString,
             onComplete: _completeOnboarding,
           );
-        }
-
-        // PASS 인증 안내 SnackBar (로그인 후 최초 1회) — 관리자 역할만
-        // USER(지원자)는 UserHomeScreen._buildOnboardingBanner에서 통합 처리
-        if (!user.isPassVerified && !_emailBannerShown && !user.isUser) {
-          _emailBannerShown = true;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            scaffoldMessengerKey.currentState?.showSnackBar(
-              SnackBar(
-                content: const Row(
-                  children: [
-                    Icon(Icons.verified_user_outlined,
-                        color: Colors.white, size: 18),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '휴대폰 본인인증을 완료하면 더 많은 기능을 이용할 수 있어요',
-                        style: TextStyle(fontSize: 13),
-                      ),
-                    ),
-                  ],
-                ),
-                backgroundColor: AppColors.warning,
-                duration: const Duration(seconds: 6),
-                behavior: SnackBarBehavior.floating,
-                action: SnackBarAction(
-                  label: '인증하기',
-                  textColor: Colors.white,
-                  onPressed: () {
-                    navigatorKey.currentState?.push(
-                      MaterialPageRoute(
-                        builder: (_) => const SettingsScreen(),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            );
-          });
         }
 
         // ✅ 권한별 화면 분기 (에러 핸들링 추가)
