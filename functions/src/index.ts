@@ -5650,7 +5650,7 @@ export const callableSaveUserSignature = onCall(
 // Output: { passToken, name, gender, birthDate, phone }
 // Secrets: PORTONE_IMP_KEY, PORTONE_IMP_SECRET (포트원 콘솔 > API Keys)
 export const verifyPassAuth = onCall(
-  {region: "asia-northeast3", enforceAppCheck: false, minInstances: 1},
+  {region: "asia-northeast3", enforceAppCheck: false},
   async (request) => {
     const {imp_uid, purpose, role = "USER"} = request.data as {
       imp_uid?: string;
@@ -11071,7 +11071,7 @@ async function srvGetMonthlyStatsTx(
 // Output: { success: true, effectiveNetWage: number }
 // ═══════════════════════════════════════════════════════════
 export const callableCalculateAndConfirmWage = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true, minInstances: 1},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
@@ -14957,7 +14957,7 @@ export const callableRejectApplication = onCall(
 // Input : { applicationId, message? }
 // Output: { success, alreadyConfirmed, capacityWarning?, workEndDate?, workDays? }
 export const callableConfirmApplication = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true, minInstances: 1},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
@@ -16767,7 +16767,7 @@ function _processCheckout(
 //   3. 반올림 계산 클라이언트에서 우회 가능 → 서버에서 강제 재계산
 //   4. originalCheckIn(원본 시각) 불변 보장 — 서버에서만 기록
 export const callableCheckIn = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true, minInstances: 1},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
@@ -17005,7 +17005,7 @@ export const callableCheckIn = onCall(
 //   3. wageStatus 보호(calculated/confirmed/transferred) 서버 재검증
 //   4. originalCheckOut 불변 보장 — 서버에서만 최초 기록
 export const callableCheckOut = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true, minInstances: 1},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
@@ -17542,7 +17542,7 @@ export const callableCancelScheduleChangeRequest = onCall(
 // 반환값: { success: true, applicationId: string, isReactivation: boolean }
 // ─────────────────────────────────────────────────────────
 export const callableApplyToTO = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true, minInstances: 1},
+  {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const uid = request.auth.uid;

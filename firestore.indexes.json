@@ -465,15 +465,6 @@
       ]
     },
     {
-      "collectionGroup": "attendance",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "userId", "order": "ASCENDING" },
-        { "fieldPath": "workType", "order": "ASCENDING" },
-        { "fieldPath": "status", "order": "ASCENDING" }
-      ]
-    },
-    {
       "collectionGroup": "idCardAccessRequests",
       "queryScope": "COLLECTION",
       "fields": [
@@ -557,14 +548,6 @@
       ]
     },
 
-    {
-      "collectionGroup": "passTokens",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "purpose", "order": "ASCENDING" },
-        { "fieldPath": "expiresAt", "order": "ASCENDING" }
-      ]
-    },
 
     {
       "collectionGroup": "applications",
@@ -607,15 +590,6 @@
         { "fieldPath": "displayOrder", "order": "ASCENDING" }
       ]
     },
-    {
-      "collectionGroup": "slots",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "date", "order": "ASCENDING" }
-      ]
-    }
-    ,
     {
       "collectionGroup": "attendance",
       "queryScope": "COLLECTION",
@@ -689,15 +663,6 @@
       "fields": [
         { "fieldPath": "businessId", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "worker_locations",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "businessId", "order": "ASCENDING" },
-        { "fieldPath": "workDate", "order": "ASCENDING" },
-        { "fieldPath": "isActive", "order": "ASCENDING" }
       ]
     },
     {
