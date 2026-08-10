@@ -8,6 +8,7 @@ import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/loading_widget.dart';
 import '../common/document_management_screen.dart';
 import '../common/settings_screen.dart';
 
@@ -110,7 +111,7 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
     return GradientScaffold(
       title: '지원하기',
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const LoadingWidget()
           : SingleChildScrollView(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
               child: Column(

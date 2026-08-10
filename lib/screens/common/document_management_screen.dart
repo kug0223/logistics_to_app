@@ -7,6 +7,7 @@ import '../../providers/user_provider.dart';
 import '../../models/core/user_model.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/common/common_widgets.dart';
+import '../../widgets/common/loading_widget.dart';
 import '../../utils/document_upload_helper.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/toast_helper.dart';
@@ -97,7 +98,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
       onBack: () => NavigationHelper.pop(context, changed: _hasChanges),
       onRefresh: _loadUserDocuments,
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const LoadingWidget()
           : ListView(
               padding: ResponsiveHelper.listPadding(context),
               children: [

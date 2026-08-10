@@ -29,6 +29,7 @@ import '../../widgets/inputs/daum_address_search.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/loading_widget.dart';
 
 /// 프로필 수정 화면
 class ProfileEditScreen extends StatefulWidget {
@@ -445,7 +446,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   @override
   Widget build(BuildContext context) {
     final user = context.select<UserProvider, UserModel?>((p) => p.currentUser);
-    if (user == null) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (user == null) return const Scaffold(body: LoadingWidget());
 
     return GradientScaffold(
       title: '프로필 수정',

@@ -751,10 +751,12 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                   children: [
                     Icon(Icons.lock_outline, size: 14, color: AppColors.grey500),
                     SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                    Text(
-                      isSlotFull ? '인원이 모두 충족되어 마감되었습니다.' : '마감된 공고입니다.',
-                      style: ResponsiveHelper.smallStyle(context).copyWith(
-                        color: AppColors.grey600,
+                    Flexible(
+                      child: Text(
+                        isSlotFull ? '인원이 모두 충족되어 마감되었습니다.' : '마감된 공고입니다.',
+                        style: ResponsiveHelper.smallStyle(context).copyWith(
+                          color: AppColors.grey600,
+                        ),
                       ),
                     ),
                   ],
@@ -1057,9 +1059,12 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                         color: AppColors.grey500,
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                      Text(
-                        '${work.payScheduleDetail} 입금',
-                        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                      Flexible(
+                        child: Text(
+                          '${work.payScheduleDetail} 입금',
+                          overflow: TextOverflow.ellipsis,
+                          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+                        ),
                       ),
                     ],
                   ),
@@ -1094,17 +1099,17 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
         // 통계 수치 행
         Row(
           children: [
-            _buildWorkStatChip(context, Icons.check_circle_outline, '확정', confirmed, AppColors.success),
+            Expanded(child: _buildWorkStatChip(context, Icons.check_circle_outline, '확정', confirmed, AppColors.success)),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            _buildWorkStatChip(context, Icons.hourglass_top_outlined, '대기', pending, AppColors.warning),
+            Expanded(child: _buildWorkStatChip(context, Icons.hourglass_top_outlined, '대기', pending, AppColors.warning)),
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            _buildWorkStatChip(
+            Expanded(child: _buildWorkStatChip(
               context,
               Icons.person_add_outlined,
               '남은',
               available,
               available > 0 ? AppColors.info : AppColors.error,
-            ),
+            )),
           ],
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -1134,11 +1139,14 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       children: [
         Icon(icon, size: ResponsiveHelper.iconSize(context, 13), color: color),
         SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-        Text(
-          '$label $count명',
-          style: ResponsiveHelper.tinyStyle(context).copyWith(
-            color: color,
-            fontWeight: FontWeight.w600,
+        Flexible(
+          child: Text(
+            '$label $count명',
+            overflow: TextOverflow.ellipsis,
+            style: ResponsiveHelper.tinyStyle(context).copyWith(
+              color: color,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
       ],
