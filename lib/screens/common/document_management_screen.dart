@@ -1331,7 +1331,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         context,
         user.name,
         expectedAccountNumber: (user.accountNumber?.isEmpty ?? true) ? null : user.accountNumber,
-        expectedBankName: user.bankName,
+        // expectedBankName 미사용: 스크린샷 내 은행명 표기가 다양해 오탐 가능성 높음
       );
 
       if (imagePath == null || !mounted) return; // finally가 _isLoading 초기화

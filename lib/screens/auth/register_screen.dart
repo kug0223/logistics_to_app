@@ -1311,7 +1311,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       expectedAccountNumber: _accountNumberController.text.trim().isEmpty
           ? null
           : _accountNumberController.text.trim(),
-      expectedBankName: _selectedBank,
+      // expectedBankName 미사용: 스크린샷 내 은행명 표기가 다양해 오탐 가능성 높음
     );
 
     if (imagePath != null && mounted) {
