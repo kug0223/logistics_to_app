@@ -69,11 +69,16 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
   bool _isLoading = true;
   bool _fetchInProgress = false;
   bool _myApplicationsLoaded = false; // M4: 필터 변경 시 재호출 방지
-  String? _selectedTOId;
+
+  // 카드 선택 상태 — ValueNotifier: 탭 시 해당 카드 2개만 rebuild, 전체 setState 없음
+  final ValueNotifier<String?> _selectedTOIdNotifier = ValueNotifier(null);
 
   // H2: 카드별 ValueNotifier — 슬롯/업무상세 로드 시 해당 카드만 리빌드
   final Map<String, ValueNotifier<List<SlotModel>?>> _slotNotifiers = {};
   final Map<String, ValueNotifier<List<WorkDetailModel>?>> _workDetailsNotifiers = {};
+
+  // 카드 확장 시 자동 스크롤 — RepaintBoundary GlobalKey로 카드 위치 추적
+  final Map<String, GlobalKey> _cardKeys = {};
 
   @override
   void initState() {
@@ -84,16 +89,43 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
     });
     _scrollController.addListener(_onScroll);
     _searchController.addListener(_onSearchChanged);
+    _selectedTOIdNotifier.addListener(_onCardSelected);
   }
+
+  // 카드 확장 자동 스크롤용 Timer — Future.then() 대신 Timer 사용 (lint 회피)
+  Timer? _cardScrollTimer;
 
   @override
   void dispose() {
     _searchDebounce?.cancel();
+    _cardScrollTimer?.cancel();
+    _selectedTOIdNotifier.removeListener(_onCardSelected);
+    _selectedTOIdNotifier.dispose();
     for (final n in _slotNotifiers.values) { n.dispose(); }
     for (final n in _workDetailsNotifiers.values) { n.dispose(); }
     _scrollController.dispose();
     _searchController.dispose();
     super.dispose();
+  }
+
+  /// 카드 선택(확장) 시 AnimatedSize(280ms) 완료 후 카드 하단이 화면에 보이도록 스크롤.
+  /// Timer 콜백은 lint가 async gap으로 추적하지 않으므로 GlobalKey.currentContext 사용 가능.
+  void _onCardSelected() {
+    _cardScrollTimer?.cancel();
+    final selectedId = _selectedTOIdNotifier.value;
+    if (selectedId == null) return; // 접힐 때(null)는 스크롤 불필요
+    final cardKey = _cardKeys[selectedId]; // GlobalKey 참조를 동기 구간에서 캡처
+    _cardScrollTimer = Timer(const Duration(milliseconds: 330), () {
+      if (!mounted) return;
+      final ctx = cardKey?.currentContext;
+      if (ctx == null) return; // 위젯이 트리에서 제거된 경우 skip
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+        alignment: 1.0, // 카드 하단이 뷰포트 하단에 맞춰지도록
+      );
+    });
   }
 
   void _onSearchChanged() {
@@ -122,6 +154,8 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
     if (_fetchInProgress) return;
     _fetchInProgress = true;
     _generation++;
+    // 선택 상태 초기화 — notifier 직접 변경 (setState 불필요)
+    _selectedTOIdNotifier.value = null;
     setState(() {
       _isLoading = true;
       _lastToId = null;
@@ -134,7 +168,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       _slotNotifiers.clear();
       for (final n in _workDetailsNotifiers.values) { n.dispose(); }
       _workDetailsNotifiers.clear();
-      _selectedTOId = null;
+      _cardKeys.clear(); // 데이터 재로드 시 이전 GlobalKey 폐기
       if (forceRefresh) _myApplicationsLoaded = false; // M4
     });
 
@@ -383,13 +417,6 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
     }
   }
 
-  /// TO 선택/해제
-  void _toggleTOSelection(String toId) {
-    setState(() {
-      _selectedTOId = _selectedTOId == toId ? null : toId;
-    });
-  }
-
   /// flex TO 슬롯 캐시 fetch (없을 때만 서버 호출)
   /// 반환값: 이번 호출에서 로드/이미 캐시된 슬롯 목록 (카드가 즉시 사용)
   Future<List<SlotModel>> _fetchSlots(String toId) async {
@@ -455,9 +482,9 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       onRefresh: () => _loadAllTOs(forceRefresh: true),
       body: Column(
         children: [
-                      // 검색바 + 필터 버튼 — 스크롤되지 않는 고정 영역 (흰 배경)
+                      // 검색바 + 필터 버튼 — 스크롤되지 않는 고정 영역
                       Container(
-                        color: Colors.white,
+                        color: AppColors.surface,
                         child: Column(
                           children: [
                             Padding(
@@ -548,14 +575,15 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
                                           return const SizedBox.shrink();
                                         }
                                         final to = _displayList[index];
-                                        final isSelected =
-                                            _selectedTOId == to.id;
                                         // H2: 카드별 notifier — 슬롯/업무상세 로드 시 해당 카드만 리빌드
                                         final slotsN = _slotNotifiers.putIfAbsent(
                                             to.id, () => ValueNotifier(_slotsCache[to.id]));
                                         final detailsN = _workDetailsNotifiers.putIfAbsent(
                                             to.id, () => ValueNotifier(_workDetailsCache[to.id]));
+                                        final cardKey = _cardKeys.putIfAbsent(
+                                            to.id, () => GlobalKey());
                                         return RepaintBoundary(
+                                          key: cardKey,
                                           child: ValueListenableBuilder<List<SlotModel>?>(
                                             valueListenable: slotsN,
                                             builder: (_, slots, __) =>
@@ -563,9 +591,8 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
                                               valueListenable: detailsN,
                                               builder: (_, workDetails, __) => UserTOCard(
                                                 to: to,
-                                                isSelected: isSelected,
-                                                onTap: () =>
-                                                    _toggleTOSelection(to.id),
+                                                // selectedNotifier 공유 — 탭 시 해당 카드 2개만 rebuild
+                                                selectedNotifier: _selectedTOIdNotifier,
                                                 myApplications: _myApplications,
                                                 onApplySuccess:
                                                     _refreshMyApplications,
@@ -574,9 +601,6 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
                                                     _fetchWorkDetails,
                                                 slots: slots,
                                                 onFetchSlots: _fetchSlots,
-                                                isAnyOtherExpanded:
-                                                    _selectedTOId != null &&
-                                                        _selectedTOId != to.id,
                                               ),
                                             ),
                                           ),
@@ -622,7 +646,7 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
               width: 17,
               height: 17,
               decoration: const BoxDecoration(
-                color: Colors.red,
+                color: AppColors.error,
                 shape: BoxShape.circle,
               ),
               child: Center(
@@ -736,7 +760,7 @@ class _AllFilterSheetState extends State<_AllFilterSheet> {
 
     return Container(
       decoration: const BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       padding: EdgeInsets.fromLTRB(
@@ -842,12 +866,10 @@ class _AllFilterSheetState extends State<_AllFilterSheet> {
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
-          // ─ 적용 버튼
-          SafeArea(
-            top: false,
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
+          // ─ 적용 버튼 (DialogHelper.showSheet가 useSafeArea:true 처리 — 내부 SafeArea 불필요)
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
                 onPressed: () {
                   Navigator.pop(context);
                   widget.onApply(_local);
@@ -868,7 +890,6 @@ class _AllFilterSheetState extends State<_AllFilterSheet> {
                 ),
               ),
             ),
-          ),
         ],
       ),
     );

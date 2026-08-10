@@ -115,23 +115,32 @@ class _UserContractsScreenState extends State<UserContractsScreen>
     _fetchInProgress = true;
     setState(() { _isLoading = true; _items = []; _lastDocId = null; _hasMore = false; });
     try {
+      final requestFilter = _currentFilter; // [FIX-MEDIUM] 호출 시점 필터 스냅샷
       final result = await _contractService.getByWorkerPaged(
         uid,
-        statusFilter: _currentFilter,
+        statusFilter: requestFilter,
       );
       if (!mounted) return;
-      setState(() {
-        _items     = result.items;
-        _lastDocId = result.lastDocId;
-        _hasMore   = result.hasMore;
-      });
+      // [FIX-MEDIUM] CF 호출 중 탭이 바뀐 경우 — 탭 1 결과를 탭 2 화면에 표시하는 stale 방지.
+      // 결과는 탭 1 캐시에만 저장하고, 현재 탭(tabIdx)이 요청 탭과 같을 때만 _items에 반영.
       _tabCache[tabIdx] = (items: List.from(result.items), lastDocId: result.lastDocId, hasMore: result.hasMore);
+      if (_tabCtrl.index == tabIdx) {
+        setState(() {
+          _items     = result.items;
+          _lastDocId = result.lastDocId;
+          _hasMore   = result.hasMore;
+        });
+      }
     } catch (e) {
       debugPrint('❌ 계약 목록 로드 실패: $e');
       if (mounted) ToastHelper.showError('계약서 목록을 불러오지 못했습니다');
     } finally {
       _fetchInProgress = false;
       if (mounted) setState(() => _isLoading = false);
+    }
+    // [FIX-MEDIUM] 탭이 바뀐 경우 현재 탭 데이터 재로드 (_fetchInProgress 해제 후 재진입 가능)
+    if (mounted && _tabCtrl.index != tabIdx) {
+      _load();
     }
   }
 
@@ -174,32 +183,34 @@ class _UserContractsScreenState extends State<UserContractsScreen>
     setState(() => _isContractOpening = true);
     final nav = Navigator.of(context);
     try {
-    await nav.push(MaterialPageRoute(
-      builder: (_) => ContractSignScreen(contract: c, role: 'worker'),
-    ));
+      await nav.push(MaterialPageRoute(
+        builder: (_) => ContractSignScreen(contract: c, role: 'worker'),
+      ));
+      if (!mounted) return;
+      // [FIX-MEDIUM] 단건 갱신을 try 블록 안으로 이동 — getById 완료 전까지 _isContractOpening=true 유지.
+      // 기존 finally가 nav.push() 직후 실행돼 잠금이 풀리면, getById 네트워크 I/O 동안
+      // 사용자가 같은 카드를 다시 탭해 ContractSignScreen이 중복으로 쌓히는 버그 방지.
+      final updated = await _contractService.getById(c.id);
+      if (!mounted) return;
+      setState(() {
+        final idx = _items.indexWhere((item) => item.id == c.id);
+        if (idx < 0) return;
+        if (updated == null) {
+          _items.removeAt(idx);
+        } else if (_currentFilter != null && updated.status != _currentFilter) {
+          // 상태 변경으로 현재 탭 필터 조건에서 벗어남 — 목록에서 제거
+          _items.removeAt(idx);
+        } else {
+          _items[idx] = updated;
+        }
+      });
+      // 단건 변경 — 현재 탭 캐시 갱신, 다른 탭은 상태 변경 여파로 stale → 클리어 후 재조회
+      final currentIdx = _tabCtrl.index;
+      _tabCache.clear();
+      _tabCache[currentIdx] = (items: List.from(_items), lastDocId: _lastDocId, hasMore: _hasMore);
     } finally {
       if (mounted) setState(() => _isContractOpening = false);
     }
-    if (!mounted) return;
-    // 단건 갱신 — 전체 탭 재조회 대신 해당 계약서만 업데이트
-    final updated = await _contractService.getById(c.id);
-    if (!mounted) return;
-    setState(() {
-      final idx = _items.indexWhere((item) => item.id == c.id);
-      if (idx < 0) return;
-      if (updated == null) {
-        _items.removeAt(idx);
-      } else if (_currentFilter != null && updated.status != _currentFilter) {
-        // 상태 변경으로 현재 탭 필터 조건에서 벗어남 — 목록에서 제거
-        _items.removeAt(idx);
-      } else {
-        _items[idx] = updated;
-      }
-    });
-    // 단건 변경 — 현재 탭 캐시 갱신, 다른 탭은 상태 변경 여파로 stale → 클리어 후 재조회
-    final currentIdx = _tabCtrl.index;
-    _tabCache.clear();
-    _tabCache[currentIdx] = (items: List.from(_items), lastDocId: _lastDocId, hasMore: _hasMore);
   }
 
   @override
@@ -232,9 +243,11 @@ class _UserContractsScreenState extends State<UserContractsScreen>
                         if (i == _items.length) {
                           return const LoadingWidget();
                         }
-                        return _UserContractCard(
-                          contract: _items[i],
-                          onTap: () => _openContract(_items[i]),
+                        return RepaintBoundary(
+                          child: _UserContractCard(
+                            contract: _items[i],
+                            onTap: () => _openContract(_items[i]),
+                          ),
                         );
                       },
                     ),
@@ -277,7 +290,7 @@ class _UserContractCard extends StatelessWidget {
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
           color: needSign ? AppColors.info : AppColors.grey200,
@@ -410,8 +423,11 @@ class _UserContractCard extends StatelessWidget {
   String _dateLabel(EmploymentContractModel c) {
     if (c.isLongTerm) return FormatHelper.formatDateDot(c.createdAt);
     if (c.slots.isNotEmpty) {
-      final first = c.slots.first.workDate;
-      final last  = c.slots.last.workDate;
+      // [FIX-LOW] 슬롯은 확정 순서(날짜순 X)로 저장 — 역순 날짜 표시 방지.
+      // 'yyyy-MM-dd' 형식은 사전식 정렬 = 날짜순이므로 String.compareTo 사용.
+      final sorted = [...c.slots]..sort((a, b) => a.workDate.compareTo(b.workDate));
+      final first = sorted.first.workDate;
+      final last  = sorted.last.workDate;
       return first == last ? first : '$first ~ $last';
     }
     return FormatHelper.formatDateDot(c.createdAt);

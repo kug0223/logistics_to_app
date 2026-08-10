@@ -769,6 +769,7 @@ Future<void> showMonthlyReviewViewDialog(
 }) {
   return showDialog<void>(
     context: context,
+    barrierDismissible: false,
     builder: (ctx) => _MonthlyReviewViewDialog(review: review),
   );
 }
@@ -781,7 +782,7 @@ class _MonthlyReviewViewDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Dialog(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       insetPadding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 16),

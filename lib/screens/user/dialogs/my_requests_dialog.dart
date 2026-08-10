@@ -156,7 +156,7 @@ class _MyRequestsDialogState extends State<MyRequestsDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       insetPadding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 16),

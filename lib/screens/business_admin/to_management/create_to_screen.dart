@@ -477,7 +477,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                             horizontal: ResponsiveHelper.spacing(context, 12)),
                         itemCount: filteredTOs.length,
                         separatorBuilder: (_, __) =>
-                            Divider(height: 1, color: AppColors.divider),
+                            const Divider(height: 1, color: AppColors.divider),
                         itemBuilder: (ctx, index) =>
                             _buildTOListTile(filteredTOs[index], ctx),
                       ),
@@ -1107,20 +1107,16 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           child: ListView(
             padding: ResponsiveHelper.listPadding(context),
             children: [
-              _buildBusinessSelector(),
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              // [UI-COMPACT] 사업장 + 근무 유형 통합 카드 (카드 2개 → 1개)
+              _buildBusinessAndTypeSection(),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
-              _buildJobTypeSelector(),
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-              TOTitleSection(titleController: _titleController),
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-              _buildGroupTitleField(context),
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              // [UI-COMPACT] 공고 제목 + 카드 제목 통합 카드 (카드 2개 → 1개)
+              _buildTitleAndGroupSection(),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
               _buildDateSelector(),
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
               TOWorkDetailsSection(
                 workDetailInputs: _workDetails,
@@ -1129,7 +1125,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 onRemoveWorkByIndex: _removeWorkDetail,
                 showNoWorkTypeWarning: _businessWorkTypes.isEmpty,
               ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
               // 단기(flex)만 지원마감 설정 — 고정근무(contract)는 게시기간이 곧 지원기간
               if (_selectedJobType != TOType.contract) ...[
@@ -1138,7 +1134,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                   hoursBeforeStart: _hoursBeforeStart,
                   onHoursChanged: (h) => setState(() { _hoursBeforeStart = h; _hasChanges = true; }),
                 ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
               ],
 
               TOPublishSection(
@@ -1156,10 +1152,10 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 onPostingDurationChanged: (d) => setState(() { _postingDurationDays = d; _hasChanges = true; }),
                 rangeEnd: _selectedJobType == TOType.contract ? _rangeEnd : null,
               ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
               TODescriptionSection(controller: _descriptionController),
-              SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+              SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
               TOActionButton.create(
                 onPressed: _isCreating ? null : _createTO,
@@ -1527,45 +1523,46 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     );
   }
 
-  Widget _buildBusinessSelector() {
-    return TOSectionContainer(
-      child: AppSelectField<BusinessModel>(
-        value: _selectedBusiness,
-        hintText: '사업장을 선택하세요',
-        sheetTitle: '사업장 선택',
-        items: _myBusinesses,
-        labelOf: (b) => b.name,
-        prefixIcon: Icons.business,
-        onChanged: (value) {
-          if (value != null) {
-            setState(() {
-              _selectedBusiness = value;
-              _workDetails.clear();
-              _hasChanges = true;
-            });
-            _loadWorkTypes();
-          }
-        },
-      ),
-    );
-  }
-
-  Widget _buildJobTypeSelector() {
+  /// [UI-COMPACT] 사업장 + 근무 유형 통합 카드 (카드 2개 → 1개)
+  Widget _buildBusinessAndTypeSection() {
     return TOSectionContainer(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // 사업장 선택
+          AppSelectField<BusinessModel>(
+            value: _selectedBusiness,
+            hintText: '사업장을 선택하세요',
+            sheetTitle: '사업장 선택',
+            items: _myBusinesses,
+            labelOf: (b) => b.name,
+            prefixIcon: Icons.business,
+            onChanged: (value) {
+              if (value != null) {
+                setState(() {
+                  _selectedBusiness = value;
+                  _workDetails.clear();
+                  _hasChanges = true;
+                });
+                _loadWorkTypes();
+              }
+            },
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          const Divider(height: 1, thickness: 0.5),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          // 근무 유형
           Text('근무 유형',
               style: ResponsiveHelper.subtitleStyle(context)
                   .copyWith(fontWeight: FontWeight.bold)),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          SizedBox(height: ResponsiveHelper.spacing(context, 10)),
           Row(
             children: [
               Expanded(
                 child: _buildJobTypeChip(
                     label: '단기 근무', value: TOType.flex, icon: Icons.today),
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              SizedBox(width: ResponsiveHelper.spacing(context, 10)),
               Expanded(
                 child: _buildJobTypeChip(
                     label: '고정 근무', value: TOType.contract, icon: Icons.event_note),
@@ -1577,6 +1574,108 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     );
   }
 
+  /// [UI-COMPACT] 공고 제목 + 카드 제목 통합 카드 (카드 2개 → 1개)
+  Widget _buildTitleAndGroupSection() {
+    final theme = Theme.of(context);
+    return TOSectionContainer(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 공고 제목
+          Text(
+            '공고 제목',
+            style: ResponsiveHelper.subtitleStyle(context).copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          TextFormField(
+            controller: _titleController,
+            style: ResponsiveHelper.bodyStyle(context),
+            decoration: InputDecoration(
+              hintText: '예: 분류작업, 피킹업무',
+              hintStyle: ResponsiveHelper.smallStyle(
+                context,
+                color: AppColors.grey400,
+              ),
+              prefixIcon: Icon(
+                Icons.title,
+                color: theme.primaryColor,
+                size: ResponsiveHelper.iconSize(context, 24),
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: AppColors.grey300),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: AppColors.grey300),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: theme.primaryColor, width: 2),
+              ),
+            ),
+            validator: (value) {
+              if (value == null || value.trim().isEmpty) {
+                return '공고 제목을 입력해주세요';
+              }
+              if (value.trim().length < 2) {
+                return '제목은 최소 2자 이상이어야 합니다';
+              }
+              if (value.trim().length > 100) {
+                return '제목은 100자 이내여야 합니다';
+              }
+              return null;
+            },
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          const Divider(height: 1, thickness: 0.5),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          // 카드 제목 (선택)
+          Text(
+            '공고 카드 제목 (선택)',
+            style: ResponsiveHelper.subtitleStyle(context).copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            '관리자 화면에서 표시할 카드 제목입니다. 비워두면 공고 제목이 사용됩니다.',
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+          TextFormField(
+            controller: _groupTitleController,
+            style: ResponsiveHelper.bodyStyle(context),
+            decoration: InputDecoration(
+              hintText: '예: 5월 분류작업 묶음',
+              hintStyle: ResponsiveHelper.smallStyle(context, color: AppColors.grey400),
+              prefixIcon: Icon(
+                Icons.label_outline,
+                color: theme.primaryColor,
+                size: ResponsiveHelper.iconSize(context, 24),
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: AppColors.grey300),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: AppColors.grey300),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: theme.primaryColor, width: 2),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 근무 유형 선택 칩 (단기/고정)
   Widget _buildJobTypeChip({
     required String label,
     required String value,
@@ -1586,8 +1685,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     return GestureDetector(
       onTap: () async => _onJobTypeChanged(value),
       child: Container(
+        // [UI-COMPACT] 수직 패딩 16→10: 칩 높이 축소
         padding:
-            EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 16)),
+            EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 10)),
         decoration: BoxDecoration(
           color: isSelected ? Theme.of(context).primaryColor : AppColors.grey100,
           borderRadius: BorderRadius.circular(12),
@@ -1619,54 +1719,6 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildGroupTitleField(BuildContext context) {
-    final theme = Theme.of(context);
-    return TOSectionContainer(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '공고 카드 제목 (선택)',
-            style: ResponsiveHelper.subtitleStyle(context).copyWith(
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-          Text(
-            '관리자 화면에서 표시할 카드 제목입니다. 비워두면 공고 제목이 사용됩니다.',
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-          TextFormField(
-            controller: _groupTitleController,
-            style: ResponsiveHelper.bodyStyle(context),
-            decoration: InputDecoration(
-              hintText: '예: 5월 분류작업 묶음',
-              hintStyle: ResponsiveHelper.smallStyle(context, color: AppColors.grey400),
-              prefixIcon: Icon(
-                Icons.label_outline,
-                color: theme.primaryColor,
-                size: ResponsiveHelper.iconSize(context, 24),
-              ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: AppColors.grey300),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: AppColors.grey300),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: theme.primaryColor, width: 2),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

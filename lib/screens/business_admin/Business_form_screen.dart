@@ -250,6 +250,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           final nav = Navigator.of(context);
           final confirmed = await showDialog<bool>(
             context: context,
+            barrierDismissible: false,
             builder: (context) => StyledDialog(
               title: '등록 취소',
               icon: Icons.exit_to_app,
@@ -277,6 +278,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           final nav = Navigator.of(context);
           final confirmed = await showDialog<bool>(
             context: context,
+            barrierDismissible: false,
             builder: (context) => StyledDialog(
               title: '수정 취소',
               icon: Icons.edit_off,

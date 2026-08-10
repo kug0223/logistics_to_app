@@ -1251,6 +1251,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
     final saved = await showDialog<bool>(
       context: context,
+      barrierDismissible: false, // [FIX-LOW] CLAUDE.md 규칙
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => StyledDialog(
           title: '통장 정보 입력',

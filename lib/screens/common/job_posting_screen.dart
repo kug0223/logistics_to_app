@@ -123,7 +123,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
       final remainDays = user.restrictedUntil!.difference(DateTime.now()).inDays + 1;
       newReason = '무단 결근 페널티 ($remainDays일 제한)';
     } else if (!user.isPassVerified) {
-      newReason = 'PASS 인증이 필요합니다';
+      newReason = '본인인증이 필요합니다';
     } else if (user.idCardImageUrl == null || user.idCardImageUrl!.isEmpty) {
       newReason = '신분증 등록이 필요합니다';
     } else if (_to?.jobType == TOType.flex && !user.isIdVerified) {
@@ -576,7 +576,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
           // 사업장 소개
           if (_business!.detailedDescription != null && _business!.detailedDescription!.isNotEmpty) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            Divider(height: 1, color: AppColors.grey200),
+            const Divider(height: 1, color: AppColors.grey200),
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1018,7 +1018,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                 ],
 
                 SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                Divider(height: 1, color: AppColors.grey200),
+                const Divider(height: 1, color: AppColors.grey200),
                 SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
                 // 급여 + 정산주기
@@ -1249,7 +1249,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                     ),
 
                     SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-                    Divider(height: 1, color: AppColors.grey200),
+                    const Divider(height: 1, color: AppColors.grey200),
                     SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
                     // 기본 근무 정보 (항상 표시)
@@ -1290,7 +1290,7 @@ class _JobPostingScreenState extends State<JobPostingScreen> {
                     // 업무유형 상세 정보 (등록된 경우)
                     if (hasDetailInfo) ...[
                       SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                      Divider(height: 1, color: AppColors.grey200),
+                      const Divider(height: 1, color: AppColors.grey200),
                       SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
                       if (workType.thumbnailUrl != null || workType.images?.isNotEmpty == true)

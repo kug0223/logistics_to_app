@@ -110,6 +110,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       if (!mounted) return;
       final goToDetail = await showDialog<bool>(
         context: context,
+        barrierDismissible: false,
         builder: (ctx) => StyledDialog(
           title: '등록 완료!',
           subtitle: '업무유형이 성공적으로 등록되었습니다',

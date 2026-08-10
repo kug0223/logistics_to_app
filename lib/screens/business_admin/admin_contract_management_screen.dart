@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
 import '../../models/core/application_model.dart';
@@ -348,13 +349,21 @@ class _AdminContractManagementScreenState
       if (articles == null || !mounted) return;
 
       // ②③④⑤ 모두 독립적 — 병렬 조회
+      // [SEC-FIX 2026-08-10] getUser(app.uid) 직접 호출 제거 →
+      //   callableGetWorkerBasicProfile CF 경유 (assertBizAdmin + 지원자 재검증)
       final toId = app.toId ?? '';
+      final workerProfileCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetWorkerBasicProfile');
+
       final fetchResults = await Future.wait([
         toId.isNotEmpty
             ? _firestoreService.getWorkDetails(toId)
             : Future<dynamic>.value(<WorkDetailData>[]),
         _firestoreService.getBusinessById(widget.businessId),
-        _firestoreService.getUser(app.uid),
+        workerProfileCallable.call<Map<String, dynamic>>({
+          'workerUid': app.uid,
+          'businessId': widget.businessId,
+        }),
         FirebaseFirestore.instance
             .collection('applications')
             .doc(app.id)
@@ -364,7 +373,22 @@ class _AdminContractManagementScreenState
 
       final workDetails = fetchResults[0] as List<WorkDetailData>;
       final business = fetchResults[1] as BusinessModel?;
-      final worker = fetchResults[2] as UserModel?;
+      final workerResult = fetchResults[2] as HttpsCallableResult<Map<String, dynamic>>;
+      final workerData = workerResult.data;
+      // CF 반환값으로 최소 UserModel 구성 (계약서 작성에 필요한 필드만)
+      final worker = UserModel(
+        uid: app.uid,
+        username: '',
+        email: '',
+        role: UserRole.USER,
+        name: (workerData['name'] as String?) ?? '',
+        phone: workerData['phone'] as String?,
+        birthDate: workerData['birthDateMs'] != null
+            ? DateTime.fromMillisecondsSinceEpoch(workerData['birthDateMs'] as int)
+            : null,
+        address: workerData['address'] as String?,
+        detailAddress: workerData['detailAddress'] as String?,
+      );
       final freshAppDoc = fetchResults[3] as DocumentSnapshot<Map<String, dynamic>>;
 
       if (workDetails.isEmpty) {
@@ -373,10 +397,6 @@ class _AdminContractManagementScreenState
       }
       if (business == null) {
         ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
-        return;
-      }
-      if (worker == null) {
-        ToastHelper.showError('근무자 정보를 불러올 수 없습니다');
         return;
       }
       if (!freshAppDoc.exists) throw Exception('지원서를 찾을 수 없습니다');
@@ -566,7 +586,7 @@ class _ContractCard extends StatelessWidget {
       margin: EdgeInsets.only(
           bottom: ResponsiveHelper.spacing(context, 10)),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppColors.grey200),
         boxShadow: [
@@ -884,7 +904,7 @@ class _UnsentAppCard extends StatelessWidget {
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppColors.grey200),
         boxShadow: [

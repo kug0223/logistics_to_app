@@ -91,15 +91,28 @@ class PayslipData {
 // ─── PDF 빌더 ────────────────────────────────────────────────────
 
 class PayslipPdfBuilder {
+  // [PERF-4] 폰트 static 캐시 — 앱 세션 내 최초 1회만 ByteData 파싱
+  static pw.Font? _cachedFontR;
+  static pw.Font? _cachedFontB;
+
+  // [PERF-9] 천단위 콤마 정규식 — 매 _fmtWon() 호출마다 생성 방지
+  static final _commaRe = RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))');
+
+  /// 폰트 사전 로드 및 캐시 — 호출 측에서 존재 확인 + build() 캐시 히트 보장
+  static Future<(pw.Font, pw.Font)> loadFonts() async {
+    _cachedFontR ??= pw.Font.ttf(
+        await rootBundle.load('assets/fonts/NotoSansKR-Regular.ttf'));
+    _cachedFontB ??= pw.Font.ttf(
+        await rootBundle.load('assets/fonts/NotoSansKR-Bold.ttf'));
+    return (_cachedFontR!, _cachedFontB!);
+  }
+
   /// 임금명세서 PDF 바이트 생성
   /// [data] - 표시할 급여 정보
   /// Returns: PDF 바이트 (share / print / download에 사용)
   static Future<Uint8List> build(PayslipData data) async {
-    // ── 폰트 로드 (번들 에셋) ──────────────────────────────────
-    final fontR = pw.Font.ttf(
-        await rootBundle.load('assets/fonts/NotoSansKR-Regular.ttf'));
-    final fontB = pw.Font.ttf(
-        await rootBundle.load('assets/fonts/NotoSansKR-Bold.ttf'));
+    // ── 폰트 로드 (캐시 사용) ──────────────────────────────────
+    final (fontR, fontB) = await loadFonts();
 
     // ── 스타일 헬퍼 ─────────────────────────────────────────────
     pw.TextStyle ts(double size, {bool bold = false, PdfColor? color}) =>
@@ -241,7 +254,7 @@ class PayslipPdfBuilder {
           ),
         _tableRow2Col(
           '업무 유형', d.workType,
-          '출근 방법', d.checkIn != null ? '${d.checkIn} 출근' : '-',
+          '출근 시각', d.checkIn != null ? '${d.checkIn} 출근' : '-',
           ts,
         ),
       ],
@@ -618,7 +631,7 @@ class PayslipPdfBuilder {
     if (amount == 0) return '0원';
     final abs = amount.abs();
     final formatted = abs.toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      _commaRe, // [PERF-9] static 캐시 사용
       (m) => '${m[1]},',
     );
     return amount < 0 ? '-$formatted원' : '$formatted원';
@@ -640,10 +653,8 @@ class PayslipPdfBuilder {
   /// 월간·주간 임금명세서 PDF 생성
   /// 1페이지: 집계 요약, 2페이지: 일별 상세 테이블
   static Future<Uint8List> buildAggregated(AggregatedPayslipData data) async {
-    final fontR = pw.Font.ttf(
-        await rootBundle.load('assets/fonts/NotoSansKR-Regular.ttf'));
-    final fontB = pw.Font.ttf(
-        await rootBundle.load('assets/fonts/NotoSansKR-Bold.ttf'));
+    // ── 폰트 로드 (캐시 사용) ──────────────────────────────────
+    final (fontR, fontB) = await loadFonts();
 
     pw.TextStyle ts(double size, {bool bold = false, PdfColor? color}) =>
         pw.TextStyle(font: bold ? fontB : fontR, fontSize: size, color: color);

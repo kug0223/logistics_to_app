@@ -14,10 +14,7 @@ import '../../../screens/payroll/payslip_period_helper.dart';
 import '../../../screens/payroll/payslip_pdf_builder.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/dialog_helper.dart';
-import '../../../models/core/interim_settlement_request_model.dart';
 import '../../../services/payroll_payment_service.dart';
-import '../../../providers/user_provider.dart';
-import 'package:provider/provider.dart';
 import 'package:printing/printing.dart';
 import '../../../widgets/common/gradient_scaffold.dart';
 import '../../../widgets/common/app_empty_state.dart';
@@ -261,33 +258,44 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
           // ── 3행: 근무일수 | 총 근무시간
+          // 외부 Row에 Flexible 없으면 장기근무(100시간+) 시 overflow 가능
           Row(children: [
-            Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.calendar_today_outlined,
-                  size: 12, color: theme.primaryColor),
-              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Text('${_records.length}일',
-                  style: ResponsiveHelper.smallStyle(context,
-                      color: theme.primaryColor, fontWeight: FontWeight.w600)),
-              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Text('근무일수',
-                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey700)),
-            ]),
+            Flexible(
+              fit: FlexFit.loose,
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.calendar_today_outlined,
+                    size: 12, color: theme.primaryColor),
+                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                Text('${_records.length}일',
+                    style: ResponsiveHelper.smallStyle(context,
+                        color: theme.primaryColor, fontWeight: FontWeight.w600),
+                    overflow: TextOverflow.ellipsis),
+                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                Text('근무일수',
+                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey700),
+                    overflow: TextOverflow.ellipsis),
+              ]),
+            ),
             Container(
                 width: 1, height: 14,
                 color: AppColors.grey200,
                 margin: EdgeInsets.symmetric(
                     horizontal: ResponsiveHelper.spacing(context, 12))),
-            Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.schedule_outlined, size: 12, color: theme.primaryColor),
-              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Text(workTimeStr,
-                  style: ResponsiveHelper.smallStyle(context,
-                      color: theme.primaryColor, fontWeight: FontWeight.w600)),
-              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-              Text('총 근무시간',
-                  style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey700)),
-            ]),
+            Flexible(
+              fit: FlexFit.loose,
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.schedule_outlined, size: 12, color: theme.primaryColor),
+                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                Text(workTimeStr,
+                    style: ResponsiveHelper.smallStyle(context,
+                        color: theme.primaryColor, fontWeight: FontWeight.w600),
+                    overflow: TextOverflow.ellipsis),
+                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                Text('총 근무시간',
+                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey700),
+                    overflow: TextOverflow.ellipsis),
+              ]),
+            ),
           ]),
         ],
       ),
@@ -317,7 +325,7 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
     }
 
     return ListView.separated(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+      padding: ResponsiveHelper.listPadding(context),
       itemCount: _records.length,
       separatorBuilder: (_, __) =>
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -362,6 +370,9 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
                       fontWeight: FontWeight.w600,
                     ),
+                    // 70px SizedBox 초과 시 2줄로 wrap → 행 높이 불일치 방지
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                   if (record.workType.isNotEmpty)
                     Text(
@@ -517,8 +528,6 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
     int totalNet = settleableRecords.fold(0, (acc, r) => acc + _netOf(r));
 
     setState(() => _isSettling = true);
-    // async gap 전에 uid 획득
-    final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid ?? 'UNKNOWN';
     try {
       final ok = await DialogHelper.showConfirm(
         ctx,
@@ -531,53 +540,17 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
         cancelText: '취소',
       );
       if (ok != true || !mounted) return;
+      // [CF-MIGRATION 2026-08-10] 클라이언트 직접 쓰기 → CF 경유로 전환
+      // attendance 이체 + 정산 문서 생성을 서버에서 원자적으로 처리
       final svc = PayrollPaymentService();
-      final req = InterimSettlementRequestModel(
-        id: '',
+      await svc.adminDirectSettlement(
+        businessId:    widget.businessId,
+        workerId:      widget.workerId,
+        workerName:    widget.workerName,
+        businessName:  settleableRecords.first.businessName,
         applicationId: settleableRecords.first.applicationId,
-        businessId: widget.businessId,
-        businessName: settleableRecords.first.businessName,
-        workerId: widget.workerId,
-        workerName: widget.workerName,
-        periodStart: settleableRecords.first.workDate,
-        periodEnd: settleableRecords.last.workDate,
         attendanceIds: settleableRecords.map((r) => r.id).toList(),
-        // [I-02] requestedAmount·netAmount는 화면 캐시(_records) 기준 집계.
-        // 승인 시 서버 재조회에서 wageConfirmed 항목만 실제 이체되므로
-        // 다른 관리자가 일부 항목을 취소한 상태라면 기록 금액 ≠ 실제 이체 금액이 될 수 있음.
-        // 실제 이중 이체는 방어되나 운영 감사 시 금액 불일치로 보일 수 있음.
-        requestedAmount: settleableRecords.fold(0,
-            (acc, r) => acc + (r.wageDetail?.totalAmount ?? 0)),
-        netAmount: totalNet,
-        requestReason: '관리자 중간정산 처리',
-        status: InterimSettlementRequestModel.statusPending,
-        createdAt: DateTime.now(),
-      );
-
-      // 생성 직후 즉시 승인: 관리자가 직접 요청하는 중간정산이므로
-      // 근무자 별도 동의 단계 없이 바로 이체완료 처리. 근무자가 요청하는 경우와 설계 다름.
-      final reqId = await svc.createInterimSettlementRequest(req);
-      if (!mounted) return;
-      final reqWithId = InterimSettlementRequestModel(
-        id: reqId,
-        applicationId:   req.applicationId,
-        businessId:      req.businessId,
-        businessName:    req.businessName,
-        workerId:        req.workerId,
-        workerName:      req.workerName,
-        periodStart:     req.periodStart,
-        periodEnd:       req.periodEnd,
-        attendanceIds:   req.attendanceIds,
-        requestedAmount: req.requestedAmount,
-        netAmount:       req.netAmount,
-        requestReason:   req.requestReason,
-        status:          req.status,
-        createdAt:       req.createdAt,
-      );
-      await svc.approveInterimSettlement(
-        req: reqWithId,
-        processedBy: uid,
-        transferNote: '중간정산 이체',
+        netAmount:     totalNet,
       );
 
       // [D-003] async gap 후 mounted 체크
@@ -652,16 +625,20 @@ class _PayslipIssueSheetState extends State<_PayslipIssueSheet> {
   PayslipIssueType _issueType = PayslipIssueType.monthly;
   int _selectedWeekNo = 1;
   bool _isGenerating = false;
+  // [PERF-8] 주차 목록·카운트를 initState에서 1회만 계산 — build()마다 weeksOfMonth·filterByWeek 반복 방지
+  late List<WeekPeriod> _weeks;
+  late Map<int, int> _weekRecordCounts; // weekNo → records.length
 
   @override
   void initState() {
     super.initState();
-    final weeks = PayslipPeriodHelper.weeksOfMonth(widget.year, widget.month);
-    if (weeks.isNotEmpty) _selectedWeekNo = weeks.first.weekNo;
+    _weeks = PayslipPeriodHelper.weeksOfMonth(widget.year, widget.month);
+    if (_weeks.isNotEmpty) _selectedWeekNo = _weeks.first.weekNo;
+    _weekRecordCounts = {
+      for (final w in _weeks)
+        w.weekNo: PayslipPeriodHelper.filterByWeek(widget.records, w).length,
+    };
   }
-
-  List<WeekPeriod> get _weeks =>
-      PayslipPeriodHelper.weeksOfMonth(widget.year, widget.month);
 
   List<AttendanceModel> get _filteredRecords {
     if (_issueType == PayslipIssueType.monthly) return widget.records;
@@ -782,7 +759,7 @@ class _PayslipIssueSheetState extends State<_PayslipIssueSheet> {
                 spacing: ResponsiveHelper.spacing(context, 8),
                 runSpacing: ResponsiveHelper.spacing(context, 8),
                 children: _weeks.map((w) {
-                  final cnt = PayslipPeriodHelper.filterByWeek(widget.records, w).length;
+                  final cnt = _weekRecordCounts[w.weekNo] ?? 0; // [PERF-8] 캐시 사용
                   return _TypeChip(
                     label: '${w.weekNo}주차',
                     selected: _selectedWeekNo == w.weekNo,

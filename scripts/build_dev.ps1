@@ -35,7 +35,7 @@ $DartDefineArgs = ($Defines.PSObject.Properties | ForEach-Object {
 # 3. 빌드
 $FlutterArgs = switch ($Target) {
     "run"        { "run $DartDefineArgs" }
-    "appbundle"  { "build appbundle --debug $DartDefineArgs" }
+    "appbundle"  { "build appbundle --release $DartDefineArgs" }
     default      { "build apk --debug $DartDefineArgs" }
 }
 

@@ -30,11 +30,12 @@ class AttendanceCheckScreen extends StatefulWidget {
 }
 
 class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
+  static final _fmt = NumberFormat('#,###'); // 카드 build마다 인스턴스 생성 방지
   final FirestoreService _firestoreService = FirestoreService();
 
   List<ApplicationModel> _todayWorks = [];
   final Map<String, AttendanceModel?> _attendanceMap = {};
-  bool _isLoading = true;
+  bool _isLoading = false; // 초기값 false — initState에서 _loadTodayWorks() 첫 호출 시 재진입 방어에 걸리지 않도록
   bool _isProcessing = false;
   bool _isReconfirming = false;
 
@@ -47,15 +48,11 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
     });
   }
 
-  @override
-  void dispose() {
-    super.dispose();
-  }
-
   /// 오늘 확정된 근무 조회
   // finally 블록 없음 — 정상 경로(149행)와 catch(160행) 양쪽에서 _isLoading=false 처리되어 실질 고착 없음
   Future<void> _loadTodayWorks() async {
     if (!mounted) return;
+    if (_isLoading) return; // [M-2] pull-to-refresh + 체크인 완료 후 자동 재조회 동시 재진입 방어
     setState(() => _isLoading = true);
 
     try {
@@ -109,15 +106,19 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
           tempMap[work.id] = attendance;
         }),
       );
-      _attendanceMap.addAll(tempMap);
+      // [FIX] addAll은 기존 키를 삭제하지 않음 — 재로드 시 이전 근무의 stale 데이터가 남아
+      // _showRoundingFeedback에서 잘못된 시간을 읽을 수 있으므로 clear() 후 교체.
+      // setState 내부로 이동해 _todayWorks와 원자적으로 반영.
 
       // [C-001] 어제 날짜 출근 기록이 퇴근 완료인 항목은 오늘 화면에서 제외 (stale 방지)
       // work.workDate 대신 att.workDate 기준으로 어제를 판단:
       //   - 단기: att.workDate = work.workDate (실제 근무일) → 동일하게 동작
       //   - 장기: work.workDate = 계약 시작일(고정값)이라 isSameDay(work.workDate, yesterday) 항상 false
       //           → att.workDate = checkIn 시점 오늘 날짜로 기록 → 어제 기록을 정확히 식별 가능
+      // [M-1 수정] tempMap 사용 — _attendanceMap은 아직 setState 전이라 이전 값(stale)을 가리킴
+      //   최초 로드 시 _attendanceMap={} → att=null → 어제 완료 기록이 필터 통과 → 오늘 목록에 표시됨
       final visibleWorks = todayWorks.where((work) {
-        final att = _attendanceMap[work.id];
+        final att = tempMap[work.id];
         if (att == null) return true;
         if (DateUtils.isSameDay(att.workDate, yesterday)) {
           // [G-3 수정] 어제 기록은 퇴근 완료 또는 missed_checkout 상태 모두 오늘 화면에서 숨김
@@ -135,6 +136,8 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
 
       if (mounted) {
         setState(() {
+          _attendanceMap.clear();       // stale 키 제거
+          _attendanceMap.addAll(tempMap);
           _todayWorks = visibleWorks;
           _isLoading = false;
         });
@@ -427,9 +430,15 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       return false;
     }
 
+    // [FIX-HIGH] getBusinessById 이후 unmount 가능 — mounted 체크 후 Navigator.of(context) 호출
+    if (!mounted) return false;
     final nav = Navigator.of(context);
+    // [FIX-HIGH] GPS와 동일하게 loadingShown 플래그 도입 — mounted=false 시 다이얼로그가
+    //            표시되지 않았음에도 nav.pop()이 실행돼 다른 라우트를 팝하는 버그 방지
+    bool loadingShown = false;
     if (mounted) {
       DialogHelper.showLoading(context, message: '비콘 스캔 중...\n(최대 10초 소요)');
+      loadingShown = true;
     }
 
     final result = await BeaconHelper.isBeaconNearby(
@@ -439,7 +448,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       rssiThreshold: business.beaconRssiThreshold,
     );
 
-    if (nav.canPop()) nav.pop(); // dispose 이후에도 로딩 다이얼로그 닫기 보장
+    if (loadingShown && nav.canPop()) nav.pop(); // 로딩 다이얼로그를 열었을 때만 닫기
     if (!mounted) return false;
 
     if (result == null) {
@@ -769,7 +778,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
             SizedBox(height: ResponsiveHelper.spacing(context, 4)),
             _buildInfoRow(
               Icons.payments_outlined,
-              '${NumberFormat('#,###').format(work.wage)}원/${work.wageType == 'daily' ? '일' : '시간'}',
+              '${_fmt.format(work.wage)}원/${work.wageType == 'daily' ? '일' : '시간'}',
             ),
 
             Divider(

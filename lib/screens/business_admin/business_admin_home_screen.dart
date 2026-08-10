@@ -1,8 +1,7 @@
-import 'dart:async' show unawaited;
+﻿import 'dart:async' show unawaited;
 
 import '../../services/fcm_service.dart';
 
-import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -11,7 +10,6 @@ import '../../providers/user_provider.dart';
 
 // Utils
 import '../../utils/navigation_helper.dart';
-import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/tour_helper.dart';
 import '../common/tour_screen.dart';
@@ -23,6 +21,7 @@ import '../../models/core/application_model.dart';
 
 // Screens
 import '../common/settings_screen.dart';
+import '../user/user_home_screen.dart';
 import 'to_management/create_to_screen.dart';
 import 'workforce_management/integrated_workforce_screen.dart';
 import '../common/notification_screen.dart';
@@ -145,12 +144,15 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   }
 
   Future<void> _loadApprovedBusinessStatus() async {
-    final userProvider = context.read<UserProvider>();
-    final uid = userProvider.currentUser?.uid;
-    if (uid == null) return;
+    final up = context.read<UserProvider>();
+    if (up.currentUser?.uid == null) return;
     try {
-      final managedIds = userProvider.currentUser?.managedBusinessIds ?? [];
-      final businesses = await _firestoreService.getBusinessesByIds(managedIds);
+      // SubAdmin: effectiveBusinessId 단일 ID 기준
+      // BUSINESS_ADMIN: managedBusinessIds 전체
+      final ids = up.currentUser?.isSubAdmin == true
+          ? [if (up.effectiveBusinessId != null) up.effectiveBusinessId!]
+          : (up.currentUser?.managedBusinessIds ?? []);
+      final businesses = await _firestoreService.getBusinessesByIds(ids);
       if (mounted) {
         setState(() {
           _hasApprovedBusiness = businesses.any((b) => b.isApproved);
@@ -183,10 +185,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final today = DateTime.now();
     final todayOnly = DateTime(today.year, today.month, today.day);
 
-    Future<int> safeCount(Future<int> Function() f) async {
+    Future<int> safeCount(Future<int> Function() f, {String label = ''}) async {
       try {
         return await f();
-      } catch (_) {
+      } catch (e) {
+        debugPrint('⚠️ 홈 대시보드 집계 실패${label.isNotEmpty ? " ($label)" : ""}: $e');
         return 0;
       }
     }
@@ -200,14 +203,14 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                 _firestoreService.getTOsByBusiness(id, activeOnly: true)),
           );
           return lists.expand((l) => l).where((t) => t.status == 'ACTIVE').length;
-        }),
+        }, label: '진행중 공고'),
         // 셀 2: 승인 대기
         safeCount(() async {
           final counts = await Future.wait<int>(
             bizIds.map((id) => _firestoreService.getAllPendingApplicationsCount(id)),
           );
           return counts.fold<int>(0, (a, b) => a + b);
-        }),
+        }, label: '승인 대기'),
         // 셀 3: 계약 미발송
         safeCount(() async {
           final lists = await Future.wait(
@@ -215,7 +218,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                 _firestoreService.getUnsentApplicationsByBusiness(id)),
           );
           return lists.fold<int>(0, (a, b) => a + b.length);
-        }),
+        }, label: '계약 미발송'),
         // 셀 4: 급여 미이체
         safeCount(() async {
           final counts = await Future.wait<int>(
@@ -224,7 +227,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                 .then((v) => v ?? 0)),
           );
           return counts.fold<int>(0, (a, b) => a + b);
-        }),
+        }, label: '급여 미이체'),
         // 셀 6: 계약 종료 예정 (D-15 이내)
         safeCount(() async {
           final lists = await Future.wait(
@@ -245,14 +248,14 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             bizIds.map((id) => _payrollService.getPendingChangeRequests(id)),
           );
           return lists.fold<int>(0, (a, b) => a + b.length);
-        }),
+        }, label: '급여 변경 요청'),
         // 셀 8: 중간정산 요청
         safeCount(() async {
           final lists = await Future.wait(
             bizIds.map((id) => _payrollService.getPendingSettlementRequests(id)),
           );
           return lists.fold<int>(0, (a, b) => a + b.length);
-        }),
+        }, label: '중간정산 요청'),
       ]);
 
       if (!mounted) return;
@@ -283,7 +286,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         try {
           total += await _firestoreService.getUnclosedDaysCount(
               businessId: biz.id, month: now);
-        } catch (_) {}
+        } catch (e) {
+          debugPrint('⚠️ 마감 미처리 조회 실패 (${biz.id}): $e');
+        }
       }
       if (!mounted) return;
       setState(() {
@@ -341,9 +346,12 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
   Future<List<BusinessModel>> _getBusinesses() async {
     if (_businesses.isNotEmpty) return _businesses;
-    final managedIds =
-        context.read<UserProvider>().currentUser?.managedBusinessIds ?? [];
-    final businesses = await _firestoreService.getBusinessesByIds(managedIds);
+    final up = context.read<UserProvider>();
+    // SubAdmin: effectiveBusinessId 단일 ID, BUSINESS_ADMIN: managedBusinessIds 전체
+    final ids = up.currentUser?.isSubAdmin == true
+        ? [if (up.effectiveBusinessId != null) up.effectiveBusinessId!]
+        : (up.currentUser?.managedBusinessIds ?? []);
+    final businesses = await _firestoreService.getBusinessesByIds(ids);
     _businesses = businesses; // 캐시만 갱신 — UI에 직접 영향 없으므로 setState 불필요
     return businesses;
   }
@@ -363,7 +371,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
   // ── 반응형 스케일 ──────────────────────────────────────────────
   double _s(BuildContext context) {
-    final w = MediaQuery.of(context).size.width;
+    final w = MediaQuery.sizeOf(context).width;
     if (w < 360) return 0.82;
     if (w < 400) return 0.92;
     if (w < 480) return 1.0;
@@ -468,7 +476,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           ),
         ),
         Padding(
-          padding: EdgeInsets.fromLTRB(20 * s, 14 * s, 20 * s, 20 * s),
+          padding: EdgeInsets.fromLTRB(20 * s, 12 * s, 20 * s, 10 * s),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -500,31 +508,42 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                       if (mounted) _loadApprovedBusinessStatus();
                     })),
               ]),
-              SizedBox(height: 16 * s),
+              SizedBox(height: 10 * s),
               Text('안녕하세요,',
                   style: TextStyle(
                       fontSize: 13 * s,
                       color: Colors.white.withValues(alpha: 0.85))),
-              SizedBox(height: 4 * s),
+              SizedBox(height: 2 * s),
               Row(children: [
                 Flexible(
                   child: Text('$name님!',
                       style: TextStyle(
-                          fontSize: 24 * s,
-                          fontWeight: FontWeight.w800,
+                          fontSize: 26 * s,
+                          fontWeight: FontWeight.bold,
+                          height: 1.1,
                           color: Colors.white,
                           letterSpacing: -0.5),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis),
                 ),
                 SizedBox(width: 8 * s),
-                _adminBadge(s),
+                up.currentUser?.isSubAdmin == true
+                    ? _subAdminBadge(s, up)
+                    : _adminBadge(s),
               ]),
               SizedBox(height: 4 * s),
               Text('오늘도 사업장을 스마트하게 관리해요',
                   style: TextStyle(
                       fontSize: 11.5 * s,
                       color: Colors.white.withValues(alpha: 0.65))),
+              // SubAdmin 전용: 지원자 모드 복귀 토글 (행 오른쪽 끝 정렬)
+              if (up.currentUser?.isSubAdmin == true) ...[
+                SizedBox(height: 10 * s),
+                Row(children: [
+                  const Spacer(),
+                  _buildSubAdminModeToggle(context, s, up),
+                ]),
+              ],
             ],
           ),
         ),
@@ -568,6 +587,77 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     );
   }
 
+  // ── 하위관리자 배지 ────────────────────────────────────────────
+  Widget _subAdminBadge(double s, UserProvider up) {
+    final bizIds = up.currentUser?.subAdminBusinessIds ?? [];
+    final isMulti = bizIds.length > 1;
+    final selId = up.effectiveBusinessId;
+    final bizName = selId != null ? up.subAdminBusinessNames[selId] : null;
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 10 * s, vertical: 4 * s),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.25), width: 1),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.admin_panel_settings_outlined, color: Colors.white, size: 12 * s),
+        SizedBox(width: 4 * s),
+        Text(
+          isMulti && bizName != null ? '$bizName ▼' : '하위관리자',
+          style: TextStyle(
+              color: Colors.white, fontSize: 11 * s, fontWeight: FontWeight.w600),
+        ),
+      ]),
+    );
+  }
+
+  // ── 하위관리자 전용 모드 토글 (지원자 ↔ 관리자) ────────────────
+  Widget _buildSubAdminModeToggle(BuildContext context, double s, UserProvider up) {
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.22), width: 1),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        _toggleOpt(s, label: '지원자', selected: false,
+            onTap: () {
+              up.toggleAdminMode(); // _isAdminMode = false
+              Navigator.pushReplacement(context,
+                  MaterialPageRoute(builder: (_) => const UserHomeScreen()));
+            }),
+        _toggleOpt(s, label: '관리자', selected: true, onTap: () {}),
+      ]),
+    );
+  }
+
+  Widget _toggleOpt(double s,
+      {required String label, required bool selected, required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: EdgeInsets.symmetric(horizontal: 10 * s, vertical: 4 * s),
+        decoration: BoxDecoration(
+          color: selected ? Colors.white : Colors.transparent,
+          borderRadius: BorderRadius.circular(9),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected
+                ? Theme.of(context).primaryColor
+                : Colors.white.withValues(alpha: 0.85),
+            fontSize: 12 * s,
+            fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
   // ── 섹션 헤더 ──────────────────────────────────────────────────
   Widget _sectionHeader(BuildContext context, double s, String title,
       {String? action, VoidCallback? onAction}) {
@@ -597,68 +687,78 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
   // ── 5아이콘 메뉴 행 ────────────────────────────────────────────
   Widget _buildMenuRow(BuildContext context, double s, ThemeData theme, UserProvider up) {
+    final isSub = up.currentUser?.isSubAdmin == true;
+    // SubAdmin: 권한 없는 메뉴 숨김 / BUSINESS_ADMIN: 전체 표시
     final items = [
-      (
-        icon: Icons.post_add_outlined,
-        label: '공고등록',
-        tap: () => _safeNavigate(() async {
-          final user = up.currentUser;
-          if (user == null || !context.mounted) return;
-          await NavigationHelper.push<bool>(context,
-              destination: const AdminCreateTOScreen(),
-              onReturn: (r) {
-                if (r == true) ToastHelper.showSuccess('공고가 등록되었습니다');
-              });
-        }),
-      ),
-      (
-        icon: Icons.people_alt_outlined,
-        label: '공고관리',
-        tap: () => _safeNavigate(() =>
-            _requireApprovedBusiness(context, () async {
-              await Navigator.push(context,
-                  MaterialPageRoute(
-                      builder: (_) => const IntegratedWorkforceScreen()));
-            })),
-      ),
-      (
-        icon: Icons.folder_copy_outlined,
-        label: '계약서',
-        tap: () => _safeNavigate(() =>
-            _requireApprovedBusiness(context, () async {
-              if (!up.can((p) => p.canManageContract)) {
-                ToastHelper.showWarning('계약서 관리 권한이 없습니다.');
-                return;
-              }
-              final biz = await BusinessPickerHelper.pick(context);
-              if (biz == null || !context.mounted) return;
-              await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => AdminContractManagementScreen(
-                          businessId: biz.id)));
-            })),
-      ),
-      (
-        icon: Icons.payments_outlined,
-        label: '급여정산',
-        tap: () => _safeNavigate(() =>
-            _requireApprovedBusiness(context, () async {
-              if (!up.can((p) => p.canManageWage)) {
-                ToastHelper.showWarning('급여 관리 권한이 없습니다.');
-                return;
-              }
-              await Navigator.push(context,
-                  MaterialPageRoute(
-                      builder: (_) => const PayrollOverviewScreen()));
-            })),
-      ),
-      (
-        icon: Icons.bar_chart_outlined,
-        label: '통계',
-        tap: () =>
-            _safeNavigate(() async => pushAdminStatsScreen(context)),
-      ),
+      if (!isSub || up.can((p) => p.canManageTo))
+        (
+          icon: Icons.post_add_outlined,
+          label: '공고등록',
+          tap: () => _safeNavigate(() async {
+            final user = up.currentUser;
+            if (user == null || !context.mounted) return;
+            await NavigationHelper.push<bool>(context,
+                destination: const AdminCreateTOScreen(),
+                onReturn: (r) {
+                  if (r == true) ToastHelper.showSuccess('공고가 등록되었습니다');
+                });
+          }),
+        ),
+      if (!isSub || up.can((p) => p.canManageTo || p.canManageWorkers))
+        (
+          icon: Icons.people_alt_outlined,
+          label: '공고관리',
+          tap: () => _safeNavigate(() =>
+              _requireApprovedBusiness(context, () async {
+                await Navigator.push(context,
+                    MaterialPageRoute(
+                        builder: (_) => const IntegratedWorkforceScreen()));
+              })),
+        ),
+      if (!isSub || up.can((p) => p.canManageContract))
+        (
+          icon: Icons.folder_copy_outlined,
+          label: '계약서',
+          tap: () => _safeNavigate(() =>
+              _requireApprovedBusiness(context, () async {
+                // SubAdmin은 이미 위에서 필터됨, BUSINESS_ADMIN은 기존 체크 유지
+                if (!up.can((p) => p.canManageContract)) {
+                  ToastHelper.showWarning('계약서 관리 권한이 없습니다.');
+                  return;
+                }
+                final bizId = isSub
+                    ? up.effectiveBusinessId
+                    : (await BusinessPickerHelper.pick(context))?.id;
+                if (bizId == null || !context.mounted) return;
+                await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => AdminContractManagementScreen(
+                            businessId: bizId)));
+              })),
+        ),
+      if (!isSub || up.can((p) => p.canManageWage))
+        (
+          icon: Icons.payments_outlined,
+          label: '급여정산',
+          tap: () => _safeNavigate(() =>
+              _requireApprovedBusiness(context, () async {
+                if (!up.can((p) => p.canManageWage)) {
+                  ToastHelper.showWarning('급여 관리 권한이 없습니다.');
+                  return;
+                }
+                await Navigator.push(context,
+                    MaterialPageRoute(
+                        builder: (_) => const PayrollOverviewScreen()));
+              })),
+        ),
+      if (!isSub || up.can((p) => p.canManageWorkers || p.canManageWage))
+        (
+          icon: Icons.bar_chart_outlined,
+          label: '통계',
+          tap: () =>
+              _safeNavigate(() async => pushAdminStatsScreen(context)),
+        ),
     ];
 
     final circleSize = 52.0 * s;
@@ -759,7 +859,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           padding: EdgeInsets.symmetric(horizontal: 20 * s),
           child: Container(
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: AppColors.surface,
               borderRadius: BorderRadius.circular(20),
               boxShadow: [
                 BoxShadow(
@@ -893,7 +993,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                       label: '급여 변경 요청',
                       value: '$wageChangeReqs건',
                       color: wageChangeReqs > 0
-                          ? const Color(0xFF7C3AED)
+                          ? AppColors.purple
                           : AppColors.grey400,
                       isLoading: _summaryLoading,
                       onTap: () => _safeNavigate(() => _requireApprovedBusiness(
@@ -904,7 +1004,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                       label: '중간정산 요청',
                       value: '$interimReqs건',
                       color: interimReqs > 0
-                          ? const Color(0xFF0EA5E9)
+                          ? AppColors.info
                           : AppColors.grey400,
                       isLoading: _summaryLoading,
                       onTap: () => _safeNavigate(() => _requireApprovedBusiness(
@@ -995,7 +1095,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           padding: EdgeInsets.symmetric(horizontal: 20 * s),
           child: Container(
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: AppColors.surface,
               borderRadius: BorderRadius.circular(20),
               boxShadow: [
                 BoxShadow(
@@ -1218,310 +1318,3 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
 }
 
-// ── 계약서 미발송 배지 카드 ────────────────────────────────────────
-class _UnsentContractBadgeCard extends StatefulWidget {
-  final double cardHeight;
-  final List<String> businessIds;
-  final void Function(VoidCallback reload) onTap;
-
-  const _UnsentContractBadgeCard({
-    required this.cardHeight,
-    required this.businessIds,
-    required this.onTap,
-  });
-
-  @override
-  State<_UnsentContractBadgeCard> createState() =>
-      _UnsentContractBadgeCardState();
-}
-
-class _UnsentContractBadgeCardState extends State<_UnsentContractBadgeCard> {
-  int _count = 0;
-  final _firestoreService = FirestoreService();
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _loadCount();
-    });
-  }
-
-  @override
-  void didUpdateWidget(_UnsentContractBadgeCard old) {
-    super.didUpdateWidget(old);
-    if (!listEquals(old.businessIds, widget.businessIds)) _loadCount();
-  }
-
-  Future<void> _loadCount() async {
-    if (widget.businessIds.isEmpty) return;
-    if (!context.read<UserProvider>().can((p) => p.canManageContract)) return;
-    final counts = await Future.wait(
-      widget.businessIds.map((bizId) async {
-        try {
-          final apps =
-              await _firestoreService.getUnsentApplicationsByBusiness(bizId);
-          return apps.length;
-        } catch (e) {
-          debugPrint('⚠️ 계약서 미발송 배지 조회 실패 ($bizId): $e');
-          return 0;
-        }
-      }),
-    );
-    final total = counts.fold<int>(0, (acc, n) => acc + n);
-    if (mounted) setState(() => _count = total);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final ch = widget.cardHeight;
-    final iconCircle = ch * 0.38;
-    final iconPad = iconCircle * 0.22;
-    final iconSizePx = iconCircle - iconPad * 2;
-    final vPad = ch * 0.08;
-    final gap1 = ch * 0.07;
-    final gap2 = ch * 0.03;
-    final titleSize = (ch * 0.13).clamp(11.0, 16.0);
-    final subSize = (ch * 0.10).clamp(9.0, 13.0);
-
-    final card = Card(
-      elevation: 3,
-      shadowColor: Colors.black.withValues(alpha: 0.1),
-      shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: InkWell(
-        onTap: () => widget.onTap(_loadCount),
-        borderRadius: BorderRadius.circular(20),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: 8, vertical: vPad),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  width: iconCircle,
-                  height: iconCircle,
-                  padding: EdgeInsets.all(iconPad),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context)
-                        .primaryColor
-                        .withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(Icons.folder_outlined,
-                      size: iconSizePx,
-                      color: Theme.of(context).primaryColor),
-                ),
-                SizedBox(height: gap1),
-                Text('계약서 관리',
-                    style: TextStyle(
-                        fontSize: titleSize, fontWeight: FontWeight.bold),
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis),
-                SizedBox(height: gap2),
-                Text('계약서 현황·서명',
-                    style:
-                        TextStyle(fontSize: subSize, color: AppColors.grey600),
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-
-    if (_count <= 0) return card;
-
-    return Stack(
-      clipBehavior: Clip.none,
-      fit: StackFit.expand,
-      children: [
-        card,
-        Positioned(
-          top: 10,
-          right: 10,
-          child: Semantics(
-            label: '계약서 미발송 ${_count > 99 ? '99명 이상' : '$_count명'}',
-            child: Container(
-              constraints:
-                  const BoxConstraints(minWidth: 20, minHeight: 20),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
-              decoration: BoxDecoration(
-                color: AppColors.error,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              alignment: Alignment.center,
-              child: ExcludeSemantics(
-                child: Text(
-                  _count > 99 ? '99+' : '$_count',
-                  style: ResponsiveHelper.tinyStyle(context,
-                      color: Colors.white, fontWeight: FontWeight.bold),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-// ── 오늘 지급 배지 카드 ──────────────────────────────────────────
-class _TodayPaymentBadgeCard extends StatefulWidget {
-  final double cardHeight;
-  final List<String> businessIds;
-  final void Function(VoidCallback reload) onTap;
-
-  const _TodayPaymentBadgeCard({
-    required this.cardHeight,
-    required this.businessIds,
-    required this.onTap,
-  });
-
-  @override
-  State<_TodayPaymentBadgeCard> createState() =>
-      _TodayPaymentBadgeCardState();
-}
-
-class _TodayPaymentBadgeCardState extends State<_TodayPaymentBadgeCard> {
-  int _count = 0;
-  final _payrollService = PayrollPaymentService();
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _loadCount();
-    });
-  }
-
-  @override
-  void didUpdateWidget(_TodayPaymentBadgeCard old) {
-    super.didUpdateWidget(old);
-    if (!listEquals(old.businessIds, widget.businessIds)) _loadCount();
-  }
-
-  Future<void> _loadCount() async {
-    if (widget.businessIds.isEmpty) return;
-    if (!context.read<UserProvider>().can((p) => p.canManageWage)) return;
-    try {
-      final counts = await Future.wait(widget.businessIds
-          .map((id) => _payrollService.getTotalNotTransferredCount(businessId: id)));
-      final total = counts.fold<int>(0, (acc, n) => acc + (n ?? 0));
-      if (mounted) setState(() => _count = total);
-    } catch (e) {
-      debugPrint('⚠️ 미이체 배지 조회 실패: $e');
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final ch = widget.cardHeight;
-    final iconCircle = ch * 0.38;
-    final iconPad = iconCircle * 0.22;
-    final iconSizePx = iconCircle - iconPad * 2;
-    final vPad = ch * 0.08;
-    final gap1 = ch * 0.07;
-    final gap2 = ch * 0.03;
-    final titleSize = (ch * 0.13).clamp(11.0, 16.0);
-    final subSize = (ch * 0.10).clamp(9.0, 13.0);
-
-    final card = Card(
-      elevation: 3,
-      shadowColor: Colors.black.withValues(alpha: 0.1),
-      shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: InkWell(
-        onTap: () => widget.onTap(_loadCount),
-        borderRadius: BorderRadius.circular(20),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: 8, vertical: vPad),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  width: iconCircle,
-                  height: iconCircle,
-                  padding: EdgeInsets.all(iconPad),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context)
-                        .primaryColor
-                        .withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(Icons.account_balance_wallet_outlined,
-                      size: iconSizePx,
-                      color: Theme.of(context).primaryColor),
-                ),
-                SizedBox(height: gap1),
-                Text('급여 관리',
-                    style: TextStyle(
-                        fontSize: titleSize, fontWeight: FontWeight.bold),
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis),
-                SizedBox(height: gap2),
-                Text('월별 급여·지급 현황',
-                    style:
-                        TextStyle(fontSize: subSize, color: AppColors.grey600),
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-
-    if (_count <= 0) return card;
-
-    return Stack(
-      clipBehavior: Clip.none,
-      fit: StackFit.expand,
-      children: [
-        card,
-        Positioned(
-          top: 10,
-          right: 10,
-          child: Semantics(
-            label: '미이체 ${_count > 99 ? '99명 이상' : '$_count명'}',
-            child: Container(
-              constraints:
-                  const BoxConstraints(minWidth: 20, minHeight: 20),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
-              decoration: BoxDecoration(
-                color: AppColors.error,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              alignment: Alignment.center,
-              child: ExcludeSemantics(
-                child: Text(
-                  _count > 99 ? '99+' : '$_count',
-                  style: ResponsiveHelper.tinyStyle(context,
-                      color: Colors.white, fontWeight: FontWeight.bold),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}

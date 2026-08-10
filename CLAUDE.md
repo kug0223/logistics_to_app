@@ -246,9 +246,27 @@ D+3 자동 승인 유지 (민법상 1개월 기준보다 관대). 관리자에�
 불리한 것은 근로자 TrustScore이므로 사용자가 자신에게 패널티 미부과하는 것이 경미한 이슈.
 관리자 물리 노쇼(`callableBatchSetNoShow`)는 별도 경로로 status=NO_SHOW + finalWage=0만 처리 — TrustScore 연동은 의도적 미구현.
 
+### [DESIGN-TO-T1] TO 레벨 minTrustScore 지원 차단 — 미구현 (의도적)
+TO에 신뢰도 최솟값 필드를 추가해 미달 근로자의 지원을 시스템에서 차단하는 기능은 구현하지 않는다.
+이유: 신뢰도 점수는 관리자가 지원서 검토 시 참고하는 정보이며, 채용 여부는 관리자 재량이다.
+시스템이 자동 차단하면 오히려 유연성이 떨어진다.
+
+### [DESIGN-SLOT-S4] updateSlotFull — 기존 지원서 시간 소급 변경 미구현 (의도적)
+슬롯 시간 변경 시 이미 PENDING/CONFIRMED 상태인 지원서의 startTime/endTime을 소급 업데이트하지 않는다.
+이유: CONFIRMED는 해당 시간으로 계약이 성립된 상태이므로 소급 변경은 계약 내용 변경에 해당하고,
+PENDING도 근로자가 그 시간을 보고 자발적으로 지원한 것이므로 몰래 바꾸면 부당하다.
+슬롯 시간을 새 값으로 운영하려면 기존 지원서를 취소 후 재지원 받는 것이 올바른 절차다.
+
 ### [DESIGN-STORAGE-EMPLOYER] contracts/signature_employer.png 소속 검증 없음
 Storage rules에서 동적 경로 체이닝 불가(employment_contracts→businessId→businesses).
 보완: contractId = Firebase auto-id(무작위), update: if false 덮어쓰기 차단. 실질 위험 낮음.
+
+### [DESIGN-SLOT-PENDING] 슬롯 대기인원(PENDING) — 정원(requiredCount)과 무관 (재탐색 금지)
+대기인원(PENDING 상태 지원자)은 정원과 무관하게 제한 없이 지원 가능하다.
+예: 정원 5명인 슬롯에 10명이 동시에 PENDING 지원 → 정상 동작, 이슈 아님.
+callableApplyToTO는 `confirmedCount >= requiredCount` 조건에서만 throw — CONFIRMED 추가를 차단할 뿐이다.
+"waitlist 기능 없음" / "대기 미구현"은 **잘못된 탐지**이다.
+PENDING 자체가 대기 상태이며, 관리자가 PENDING 인원 중에서 선발·확정하는 것이 설계 의도다.
 
 ---
 

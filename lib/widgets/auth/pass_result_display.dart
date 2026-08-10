@@ -30,7 +30,7 @@ class PassResultDisplay extends StatelessWidget {
               const Icon(Icons.verified_user, color: AppColors.success, size: 16),
               const SizedBox(width: 6),
               Text(
-                'PASS 인증 완료',
+                '본인인증 완료',
                 style: ResponsiveHelper.smallStyle(context).copyWith(
                   color: AppColors.successDark,
                   fontWeight: FontWeight.w600,
@@ -45,7 +45,7 @@ class PassResultDisplay extends StatelessWidget {
           _infoRow(context, '휴대폰', phoneFormatted),
           const SizedBox(height: 4),
           Text(
-            '위 정보는 PASS 인증으로 확정되어 수정할 수 없습니다.',
+            '위 정보는 본인인증으로 확정되어 수정할 수 없습니다.',
             style: ResponsiveHelper.smallStyle(
               context,
               color: AppColors.grey500,

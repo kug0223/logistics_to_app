@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../models/core/application_model.dart';
 import '../../../models/core/attendance_model.dart';
@@ -30,9 +30,10 @@ class MonthlyStatsCard extends StatelessWidget {
     final pendingCount = CalendarHelper.getPendingCount(thisMonth);
     final totalIncome = CalendarHelper.getTotalIncome(thisMonth, focusedDay);
     
-    // 완료 통계
-    final actualWorkDays = CalendarHelper.getActualWorkDays(attendances, focusedDay);
-    final confirmedIncome = CalendarHelper.getConfirmedIncome(attendances, focusedDay);
+    // 완료 통계 — 단일 순회로 두 값 동시 계산
+    final attStats = CalendarHelper.getAttendanceStats(attendances, focusedDay);
+    final actualWorkDays = attStats.actualWorkDays;
+    final confirmedIncome = attStats.confirmedIncome;
     
     // 완료 데이터 존재 여부
     final hasCompletedData = actualWorkDays > 0 || confirmedIncome > 0;
@@ -40,7 +41,7 @@ class MonthlyStatsCard extends StatelessWidget {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
@@ -82,7 +83,7 @@ class MonthlyStatsCard extends StatelessWidget {
           // ═══════════════════════════════════════════════════════
           if (hasCompletedData) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            Divider(color: AppColors.grey200, height: 1),
+            const Divider(color: AppColors.grey200, height: 1),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             _buildSectionHeader(context, '✅ 완료', AppColors.successDark),
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -113,16 +114,15 @@ class MonthlyStatsCard extends StatelessWidget {
   
   /// 섹션 헤더
   Widget _buildSectionHeader(BuildContext context, String title, Color color) {
-    return Row(
-      children: [
-        Text(
-          title,
-          style: ResponsiveHelper.smallStyle(
-            context,
-            color: color,
-          ).copyWith(fontWeight: FontWeight.bold),
-        ),
-      ],
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Text(
+        title,
+        style: ResponsiveHelper.smallStyle(
+          context,
+          color: color,
+        ).copyWith(fontWeight: FontWeight.bold),
+      ),
     );
   }
   

@@ -151,9 +151,10 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         month: _focusedDay.month,
       );
       if (!mounted) return;
-      _attendanceMap = _buildAttendanceMap(attendances);
-      _recomputeStats();
-      setState(() {});
+      setState(() {
+        _attendanceMap = _buildAttendanceMap(attendances);
+        _recomputeStats();
+      });
     } catch (e) {
       debugPrint('❌ 출근 기록 로드 실패: $e');
     }
@@ -288,8 +289,12 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
           // 일정 리스트
           _buildSliverScheduleList(),
 
+          // 카드·빈 상태·에러 등 모든 경우에 홈 인디케이터 + 여백 보장
           SliverToBoxAdapter(
-            child: SizedBox(height: ResponsiveHelper.spacing(context, 32)),
+            child: SizedBox(
+              height: MediaQuery.of(context).padding.bottom +
+                  ResponsiveHelper.spacing(context, 16),
+            ),
           ),
         ],
       ),
@@ -300,7 +305,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   /// 카드 효과(margin/radius/shadow) 없이 풀너비로 배치 → 스크롤 매끄러움
   Widget _buildWhiteZone() {
     return Container(
-      color: Colors.white,
+      color: AppColors.surface,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -675,7 +680,7 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         ResponsiveHelper.spacing(context, 16),
         ResponsiveHelper.spacing(context, 4),
         ResponsiveHelper.spacing(context, 16),
-        ResponsiveHelper.spacing(context, 4) + MediaQuery.of(context).padding.bottom,
+        ResponsiveHelper.spacing(context, 4), // 하단은 마지막 SliverToBoxAdapter에서 일괄 처리
       ),
       sliver: SliverList(
         delegate: SliverChildBuilderDelegate(

@@ -140,8 +140,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (mounted) _nameFocus.requestFocus();
     });
     _loadTerms();
-    // 사업자등록번호 입력 시 업로드 카드 활성화 반영
-    _businessNumberController.addListener(() { if (mounted) setState(() {}); });
+    // 사업자등록번호 의존 UI는 ValueListenableBuilder로 격리 — 전체 rebuild 불필요
   }
 
   Future<void> _loadTerms() async {
@@ -327,7 +326,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (_isKorean) {
       // 내국인: PASS 인증 완료 여부 확인
       if (_passAuthResult == null) {
-        ToastHelper.showWarning('PASS 본인인증을 완료해주세요');
+        ToastHelper.showWarning('본인인증을 완료해주세요');
         return false;
       }
     } else {
@@ -688,7 +687,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               errStr.contains('token-expired') ||
               errStr.contains('passToken'))) {
         if (mounted) setState(() => _passAuthResult = null);
-        if (mounted) ToastHelper.showError('PASS 인증 세션이 만료되었습니다.\n화면 상단의 PASS 인증을 다시 진행해주세요.');
+        if (mounted) ToastHelper.showError('본인인증 세션이 만료되었습니다.\n화면 상단의 본인인증을 다시 진행해주세요.');
       } else {
         if (mounted) ToastHelper.showError('회원가입에 실패했습니다');
       }
@@ -1139,6 +1138,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
           _nameController.text = result.name;
           _phoneController.text = result.phone;
         });
+      } else {
+        // 취소 또는 실패 — 이전 인증 결과 초기화 (재시도 시 구 결과 잔류 방지)
+        if (_passAuthResult != null) {
+          setState(() => _passAuthResult = null);
+        }
       }
     } catch (e) {
       if (!mounted) return;
@@ -1519,6 +1523,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     validator: (value) {
                       if (value == null || value.isEmpty) return '아이디를 입력해주세요';
                       if (value.length < 4) return '4자 이상 입력해주세요';
+                      if (value.length > 20) return '아이디는 20자 이하로 입력해주세요';
                       if (!_usernameRe.hasMatch(value)) {
                         return '영문 소문자, 숫자, _만 사용 가능';
                       }
@@ -1725,7 +1730,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     context: context,
                     controller: _phoneController,
                     label: '전화번호',
-                    hint: 'PASS 인증 후 자동 입력',
+                    hint: '본인인증 후 자동 입력',
                     icon: Icons.phone_outlined,
                     readOnly: true,
                   ),
@@ -2825,19 +2830,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
         // 서류 업로드 섹션
         _buildSectionLabel('사업자등록증', Icons.business_outlined),
 
-        Builder(builder: (context) {
-          final bizReady = _businessNumberController.text.replaceAll('-', '').length == 10;
-          return _buildDocumentUploadCard(
-            title: '사업자등록증',
-            description: bizReady
-                ? '사업자등록증을 촬영해주세요'
-                : '사업자등록번호를 먼저 입력해주세요',
-            icon: Icons.business,
-            imagePath: _businessLicenseImagePath,
-            color: bizReady ? theme.primaryColor : AppColors.grey400,
-            onTap: _pickBusinessLicenseImage,
-          );
-        }),
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: _businessNumberController,
+          builder: (context, value, _) {
+            final bizReady = value.text.replaceAll('-', '').length == 10;
+            return _buildDocumentUploadCard(
+              title: '사업자등록증',
+              description: bizReady
+                  ? '사업자등록증을 촬영해주세요'
+                  : '사업자등록번호를 먼저 입력해주세요',
+              icon: Icons.business,
+              imagePath: _businessLicenseImagePath,
+              color: bizReady ? theme.primaryColor : AppColors.grey400,
+              onTap: _pickBusinessLicenseImage,
+            );
+          },
+        ),
         
         SizedBox(height: ResponsiveHelper.spacing(context, 16)),
         
@@ -2903,20 +2911,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
           },
         ),
         
-        if (_businessNumberController.text.length == 10)
-          Padding(
-            padding: EdgeInsets.only(
-              top: ResponsiveHelper.spacing(context, 6),
-              left: ResponsiveHelper.spacing(context, 12),
-            ),
-            child: Text(
-              '형식: ${_formatBusinessNumber(_businessNumberController.text)}',
-              style: ResponsiveHelper.tinyStyle(
-                context,
-                color: AppColors.successDark,
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: _businessNumberController,
+          builder: (context, value, _) {
+            if (value.text.length != 10) return const SizedBox.shrink();
+            return Padding(
+              padding: EdgeInsets.only(
+                top: ResponsiveHelper.spacing(context, 6),
+                left: ResponsiveHelper.spacing(context, 12),
               ),
-            ),
-          ),
+              child: Text(
+                '형식: ${_formatBusinessNumber(value.text)}',
+                style: ResponsiveHelper.tinyStyle(
+                  context,
+                  color: AppColors.successDark,
+                ),
+              ),
+            );
+          },
+        ),
       ],
     );
   }
@@ -3167,7 +3180,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ],
             ),
             const SizedBox(height: 8),
-            Divider(color: AppColors.grey200, height: 1),
+            const Divider(color: AppColors.grey200, height: 1),
             const SizedBox(height: 6),
             ...features.map((feature) => Padding(
               padding: const EdgeInsets.only(bottom: 3),

@@ -213,7 +213,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
         bottom: ResponsiveHelper.spacing(context, 16),
       ),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(

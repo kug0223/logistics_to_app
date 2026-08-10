@@ -1,6 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
 
 // Models
 import '../../../models/core/business_model.dart';
@@ -26,6 +29,7 @@ import '../../../utils/format_helper.dart';
 import '../../../theme/app_colors.dart';
 import '../../common/loading_widget.dart';
 import '../../common/slot_status_badge.dart';
+import '../../common/common_widgets.dart';
 
 // Screens
 import '../../../screens/business_admin/to_management/edit_to_screen.dart';
@@ -34,6 +38,7 @@ import '../../../screens/business_admin/to_management/edit_to_screen.dart';
 import '../../../screens/business_admin/dialogs/day_applicants_dialog.dart';
 import '../../../screens/business_admin/dialogs/to_list_dialogs.dart';
 import '../../../screens/business_admin/dialogs/slot_batch_select_dialog.dart';
+import '../../../screens/business_admin/dialogs/invite_worker_dialog.dart';
 import '../../common/app_menu_sheet.dart';
 
 // Providers
@@ -126,6 +131,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
   late int _totalRequired;
   late bool _isFull;
   DateTime _buildNow = DateTime.now();
+  // [PERF-2] _getEarliestDeadline() 결과 캐시 — build()마다 workDetails 순회 방지
+  // _updateGroupCache() 호출 시 갱신 (groupItem/selectedDate/calendarSlot 변경 시)
+  DateTime? _cachedEarliestDeadline;
 
   // 날짜 칩 선택 상태 (다중 슬롯 뷰)
   DateTime? _selectedChipDate;
@@ -154,6 +162,30 @@ class _TOGroupCardState extends State<TOGroupCard> {
       _totalRequired  = r;
       _isFull = _targetTOs.every((t) => t.resolvedIsFull);
     }
+    // [PERF-2] 마감시간 캐시 갱신
+    _cachedEarliestDeadline = _computeEarliestDeadline();
+  }
+
+  /// [PERF-2] _getEarliestDeadline() 순수 계산 로직 — _updateGroupCache()에서만 호출
+  DateTime? _computeEarliestDeadline() {
+    final to = widget.groupItem.masterTO;
+    if (to.isLongTerm) return null;
+    if (widget.calendarSlot == null) {
+      final effectiveCount = widget.groupItem.isGroupDetailLoaded &&
+              widget.groupItem.groupTOs.isNotEmpty
+          ? widget.groupItem.groupTOs.length
+          : to.totalSlots;
+      if (effectiveCount > 1) return null;
+    }
+    final workDetails = _getSingleTOWorkDetails();
+    DateTime? earliest;
+    for (final d in workDetails) {
+      if (d.applicationDeadline == null) continue;
+      if (earliest == null || d.applicationDeadline!.isBefore(earliest)) {
+        earliest = d.applicationDeadline;
+      }
+    }
+    return earliest;
   }
 
   @override
@@ -172,7 +204,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
   void didUpdateWidget(TOGroupCard old) {
     super.didUpdateWidget(old);
     if (!identical(widget.groupItem, old.groupItem) ||
-        widget.selectedDate != old.selectedDate) {
+        widget.selectedDate != old.selectedDate ||
+        widget.calendarSlot != old.calendarSlot) {
       _updateGroupCache();
     } else {
       _buildNow = DateTime.now();
@@ -381,37 +414,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                           // 플렉스 TO: 날짜 슬롯 수 뱃지 (리스트 모드만)
                           if (!widget.groupItem.isLongTerm &&
                               widget.displayMode == TOCardDisplayMode.list) ...[
-                            Builder(builder: (context) {
-                              final effectiveCount = widget.groupItem.isGroupDetailLoaded &&
-                                      widget.groupItem.groupTOs.isNotEmpty
-                                  ? widget.groupItem.groupTOs.length
-                                  : masterTO.totalSlots;
-                              if (effectiveCount < 1) return const SizedBox.shrink();
-                              return Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                  Container(
-                                    padding: EdgeInsets.symmetric(
-                                      horizontal: ResponsiveHelper.spacing(context, 6),
-                                      vertical: ResponsiveHelper.spacing(context, 3),
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: AppColors.infoBg,
-                                      borderRadius: BorderRadius.circular(6),
-                                      border: Border.all(color: AppColors.infoLight),
-                                    ),
-                                    child: Text(
-                                      '$effectiveCount일',
-                                      style: ResponsiveHelper.smallStyle(
-                                        context,
-                                        color: AppColors.infoDark,
-                                      ).copyWith(fontWeight: FontWeight.bold),
-                                    ),
-                                  ),
-                                ],
-                              );
-                            }),
+                            _buildSlotCountBadge(context, masterTO),
                           ],
 
                           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -513,78 +516,12 @@ class _TOGroupCardState extends State<TOGroupCard> {
                       
                       // 고정 공고: 계약기간 + 공고마감 한 줄
                       if (masterTO.isLongTerm) ...[
-                        Builder(builder: (context) {
-                          final hasContract = masterTO.contractPeriodLabel.isNotEmpty;
-                          final expiry = !allClosed ? masterTO.formattedPostingExpiry : null;
-                          final hasExpiry = expiry != null;
-                          if (!hasContract && !hasExpiry) return const SizedBox.shrink();
-                          final isPast = masterTO.isPostingExpired;
-                          return Padding(
-                            padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 4)),
-                            child: Row(
-                              children: [
-                                if (hasContract) ...[
-                                  Icon(Icons.assignment_outlined, size: ResponsiveHelper.iconSize(context, 13), color: AppColors.longTermDark),
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                  Text('계약 ${masterTO.contractPeriodLabel}',
-                                    style: ResponsiveHelper.smallStyle(context, color: AppColors.longTermDark).copyWith(fontWeight: FontWeight.w600)),
-                                ],
-                                if (hasContract && hasExpiry) ...[
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                                  Text('·', style: ResponsiveHelper.smallStyle(context, color: AppColors.grey400)),
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                                ],
-                                if (hasExpiry) ...[
-                                  Icon(Icons.calendar_month_outlined, size: ResponsiveHelper.iconSize(context, 13), color: isPast ? AppColors.grey500 : AppColors.warningDark),
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                  Text('공고마감 $expiry', style: ResponsiveHelper.smallStyle(context, color: isPast ? AppColors.grey500 : AppColors.warningDark)),
-                                ],
-                              ],
-                            ),
-                          );
-                        }),
+                        _buildLongTermMeta(context, masterTO, allClosed),
                       ],
 
                       // 단기 단일슬롯 공고: 지원 마감시간
                       if (!masterTO.isLongTerm && !allClosed) ...[
-                        Builder(builder: (context) {
-                          final deadline = _getEarliestDeadline();
-                          if (deadline == null) return const SizedBox.shrink();
-                          final isPast = deadline.isBefore(now);
-                          final remaining = deadline.difference(now);
-                          final isSoon = !isPast && remaining.inHours < 2;
-                          final label = isPast
-                              ? '지원마감 ${FormatHelper.formatTime(deadline)}'
-                              : isSoon
-                                  ? '마감까지 ${_formatRemaining(remaining)}'
-                                  : '지원마감 ${FormatHelper.formatTime(deadline)}';
-                          return Padding(
-                            padding: EdgeInsets.only(
-                              top: ResponsiveHelper.spacing(context, 6),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.timer_off_outlined,
-                                  size: ResponsiveHelper.iconSize(context, 14),
-                                  color: isPast ? AppColors.grey500 : AppColors.warningDark,
-                                ),
-                                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                                Text(
-                                  label,
-                                  style: ResponsiveHelper.smallStyle(
-                                    context,
-                                    color: isPast ? AppColors.grey500 : AppColors.warningDark,
-                                  ),
-                                ),
-                                if (isSoon) ...[
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                                  _buildUrgentBadge(context),
-                                ],
-                              ],
-                            ),
-                          );
-                        }),
+                        _buildDeadlineMeta(context, now),
                       ],
                       
                       // 장기 TO 게시만료 — 연장하기 버튼
@@ -640,12 +577,16 @@ class _TOGroupCardState extends State<TOGroupCard> {
                         SizedBox(height: ResponsiveHelper.spacing(context, 6)),
                         Row(
                           children: [
-                            _buildDot(context, AppColors.success, '확정 $totalConfirmed'),
+                            // Flexible: 3자리 숫자 등 긴 라벨 시 Row overflow 방지
+                            Flexible(fit: FlexFit.loose, child: _buildDot(context, AppColors.success, '확정 $totalConfirmed')),
                             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                            _buildDot(context, AppColors.warning, '대기 $totalPending'),
+                            Flexible(fit: FlexFit.loose, child: _buildDot(context, AppColors.warning, '대기 $totalPending')),
                             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                            _buildDot(context, AppColors.grey400,
-                                '미충원 ${(totalRequired - totalConfirmed - totalPending).clamp(0, totalRequired)}'),
+                            Flexible(
+                              fit: FlexFit.loose,
+                              child: _buildDot(context, AppColors.grey400,
+                                  '미충원 ${(totalRequired - totalConfirmed - totalPending).clamp(0, totalRequired)}'),
+                            ),
                             const Spacer(),
                             _buildStatusBadge(context, allClosed: allClosed, targetTOs: targetTOs),
                           ],
@@ -697,7 +638,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Divider(height: 1, color: AppColors.grey200),
+                              const Divider(height: 1, color: AppColors.grey200),
                               Container(
                                 decoration: BoxDecoration(
                                   color: AppColors.grey50,
@@ -741,13 +682,15 @@ class _TOGroupCardState extends State<TOGroupCard> {
         ],
       ),
         );
-    if (!widget.isAnyExpanded) return cardContent;
-    // 동일 위젯 타입 유지 → 카드 전환 시 0.45↔1.0 애니메이션 동작
+    // [PERF-1] 항상 같은 위젯 타입 유지 — isAnyExpanded 전환 시 RenderObject 재생성 방지.
+    // 이전: isAnyExpanded=false면 cardContent(Container) 반환,
+    //       isAnyExpanded=true면 AnimatedOpacity(AnimatedScale(...)) 반환 → 타입 변경 → 전체 카드 rebuild
+    // 수정: 항상 AnimatedOpacity(AnimatedScale(...)) 래퍼 유지, opacity/scale 값만 변경
     return AnimatedOpacity(
-      opacity: isDimmed ? 0.45 : 1.0,
+      opacity: (widget.isAnyExpanded && isDimmed) ? 0.45 : 1.0,
       duration: const Duration(milliseconds: 220),
       child: AnimatedScale(
-        scale: isDimmed ? 0.98 : 1.0,
+        scale: (widget.isAnyExpanded && isDimmed) ? 0.98 : 1.0,
         duration: const Duration(milliseconds: 220),
         alignment: Alignment.topCenter,
         child: cardContent,
@@ -775,61 +718,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
         // 단기 단일슬롯: 슬롯 개별 제목 (있는 경우)
         if (!widget.groupItem.isLongTerm &&
             widget.groupItem.groupTOs.isNotEmpty)
-          Builder(builder: (context) {
-            final toItem = widget.groupItem.groupTOs.first;
-            final slotTitle = toItem.slot?.title;
-            if (slotTitle == null || slotTitle.isEmpty) {
-              return const SizedBox.shrink();
-            }
-            return Padding(
-              padding: EdgeInsets.only(
-                  bottom: ResponsiveHelper.spacing(context, 12)),
-              child: Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 10),
-                  vertical: ResponsiveHelper.spacing(context, 8),
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppColors.grey200),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: ResponsiveHelper.spacing(context, 8),
-                        vertical: ResponsiveHelper.spacing(context, 4),
-                      ),
-                      decoration: BoxDecoration(
-                        color: theme.primaryColor.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        FormatHelper.formatDate(toItem.slot!.date),
-                        style: ResponsiveHelper.smallStyle(
-                          context,
-                          color: theme.primaryColor,
-                        ).copyWith(fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-                    Expanded(
-                      child: Text(
-                        slotTitle,
-                        style: ResponsiveHelper.bodyStyle(context).copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textPrimary,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }),
+          _buildSingleSlotTitle(context, theme),
         // 업무 상세 헤더
         Row(
           children: [
@@ -1282,10 +1171,13 @@ class _TOGroupCardState extends State<TOGroupCard> {
     final masterTO = widget.groupItem.masterTO;
 
     // DayApplicantsDialog 계약/신분증 기능을 위해 사업장 정보 로드
+    // 실패 시 businesses:[] 로 열림 — 계약서·신분증 기능 비활성되므로 로그 필수
     BusinessModel? biz;
     try {
       biz = await widget.firestoreService.getBusinessById(masterTO.businessId);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('⚠️ DayApplicantsDialog 사업장 정보 로드 실패 (${masterTO.businessId}): $e');
+    }
     if (!mounted) return;
 
     final hasChanges = await showDialog<bool>(
@@ -1385,7 +1277,15 @@ class _TOGroupCardState extends State<TOGroupCard> {
           decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
         SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-        Text(label, style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600)),
+        // Flexible: 외부에서 Flexible로 감싸면 bounded constraint 전달 → ellipsis 동작
+        Flexible(
+          child: Text(
+            label,
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
+        ),
       ],
     );
   }
@@ -1517,6 +1417,22 @@ class _TOGroupCardState extends State<TOGroupCard> {
               onTap: () => _handleSingleTOMenuAction(context, 'renameCard'),
             ),
           ],
+        // 근로자 초대 / 보낸 초대 관리 (canManageTo)
+        if (canManageTo)
+          [
+            AppMenuSheetItem(
+              icon: Icons.person_add_outlined,
+              label: '근로자 초대',
+              color: AppColors.success,
+              onTap: () => _showInviteWorkerDialog(context),
+            ),
+            AppMenuSheetItem(
+              icon: Icons.mail_outline,
+              label: '보낸 초대 관리',
+              color: AppColors.info,
+              onTap: () => _showSentInvitesSheet(context),
+            ),
+          ],
         // 삭제 (BUSINESS_ADMIN 이상만)
         if (canDelete)
           [
@@ -1583,6 +1499,21 @@ class _TOGroupCardState extends State<TOGroupCard> {
                   onTap: () => _handleSingleTOMenuAction(context, 'close'),
                 ),
             ],
+          if (canManageTo)
+            [
+              AppMenuSheetItem(
+                icon: Icons.person_add_outlined,
+                label: '근로자 초대',
+                color: AppColors.success,
+                onTap: () => _showInviteWorkerDialog(context),
+              ),
+              AppMenuSheetItem(
+                icon: Icons.mail_outline,
+                label: '보낸 초대 관리',
+                color: AppColors.info,
+                onTap: () => _showSentInvitesSheet(context),
+              ),
+            ],
           if (canDelete)
             [
               AppMenuSheetItem(
@@ -1628,6 +1559,21 @@ class _TOGroupCardState extends State<TOGroupCard> {
           if (canManageTo)
             [
               AppMenuSheetItem(
+                icon: Icons.person_add_outlined,
+                label: '근로자 초대',
+                color: AppColors.success,
+                onTap: () => _showInviteWorkerDialog(context),
+              ),
+              AppMenuSheetItem(
+                icon: Icons.mail_outline,
+                label: '보낸 초대 관리',
+                color: AppColors.info,
+                onTap: () => _showSentInvitesSheet(context),
+              ),
+            ],
+          if (canManageTo)
+            [
+              AppMenuSheetItem(
                 icon: Icons.assignment_turned_in,
                 label: '업무별 마감',
                 color: theme.primaryColor,
@@ -1637,6 +1583,33 @@ class _TOGroupCardState extends State<TOGroupCard> {
         ],
       );
     }
+  }
+
+  /// 근로자 초대 다이얼로그
+  void _showInviteWorkerDialog(BuildContext context) {
+    final masterTO = widget.groupItem.masterTO;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => InviteWorkerDialog(
+        groupItem: widget.groupItem,
+        businessId: masterTO.businessId,
+        businessName: widget.groupItem.businessName,
+      ),
+    );
+  }
+
+  /// 보낸 초대 관리 바텀시트 — INVITED 상태 지원서 목록 + 취소 버튼
+  Future<void> _showSentInvitesSheet(BuildContext context) async {
+    final toId = widget.groupItem.masterTO.id;
+    final businessId = widget.groupItem.masterTO.businessId;
+    if (toId.isEmpty || businessId.isEmpty) return;
+
+    await DialogHelper.showSheet<void>(
+      context,
+      isScrollControlled: true,
+      builder: (ctx) => _SentInvitesSheet(toId: toId, businessId: businessId),
+    );
   }
 
   /// 단일 TO 메뉴 액션
@@ -1767,6 +1740,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
         if (closeSlots == null || closeSlots.isEmpty || !mounted) return;
         final confirmed = await showDialog<bool>(
           context: this.context,
+          barrierDismissible: false,
           builder: (dialogCtx) => StyledDialog(
             title: '일괄 마감',
             subtitle: '선택한 ${closeSlots.length}개 날짜를 마감하시겠습니까?',
@@ -1814,6 +1788,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
         if (reopenSlots == null || reopenSlots.isEmpty || !mounted) return;
         final reopenConfirmed = await showDialog<bool>(
           context: this.context,
+          barrierDismissible: false,
           builder: (dialogCtx) => StyledDialog(
             title: '일괄 재오픈',
             subtitle: '선택한 ${reopenSlots.length}개 날짜를 재오픈하시겠습니까?',
@@ -1864,6 +1839,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
 
         final deleteConfirmed = await showDialog<bool>(
           context: this.context,
+          barrierDismissible: false,
           builder: (dialogCtx) => StyledDialog(
             title: '일괄 삭제',
             subtitle: deletesAll
@@ -2120,29 +2096,180 @@ class _TOGroupCardState extends State<TOGroupCard> {
     return '$m분';
   }
 
-  /// 단기 단일슬롯 공고의 가장 이른 지원 마감시간 반환
-  /// 슬롯이 2개 이상이면 null (슬롯별로 달라서 헤더에 표시 의미 없음)
-  DateTime? _getEarliestDeadline() {
-    final to = widget.groupItem.masterTO;
-    if (to.isLongTerm) return null;
-    // 캘린더 슬롯 모드: 이 슬롯 하나만 표시하므로 effectiveCount 검사 불필요
-    if (widget.calendarSlot == null) {
-      final effectiveCount = widget.groupItem.isGroupDetailLoaded &&
-              widget.groupItem.groupTOs.isNotEmpty
-          ? widget.groupItem.groupTOs.length
-          : to.totalSlots;
-      if (effectiveCount > 1) return null;
-    }
-    final workDetails = _getSingleTOWorkDetails();
-    DateTime? earliest;
-    for (final d in workDetails) {
-      if (d.applicationDeadline == null) continue;
-      if (earliest == null || d.applicationDeadline!.isBefore(earliest)) {
-        earliest = d.applicationDeadline;
-      }
-    }
-    return earliest;
+  /// 단기 단일슬롯 공고의 가장 이른 지원 마감시간 반환 (캐시 사용)
+  /// 실제 계산은 _computeEarliestDeadline() — _updateGroupCache()에서 갱신됨
+  DateTime? _getEarliestDeadline() => _cachedEarliestDeadline;
+
+  // ─── [PERF-3] Builder → private helper 메서드 ────────────────────────────
+
+  /// 플렉스 TO: 날짜 슬롯 수 뱃지 (리스트 모드만)
+  Widget _buildSlotCountBadge(BuildContext context, TOModel masterTO) {
+    final effectiveCount = widget.groupItem.isGroupDetailLoaded &&
+            widget.groupItem.groupTOs.isNotEmpty
+        ? widget.groupItem.groupTOs.length
+        : masterTO.totalSlots;
+    if (effectiveCount < 1) return const SizedBox.shrink();
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+        Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 6),
+            vertical: ResponsiveHelper.spacing(context, 3),
+          ),
+          decoration: BoxDecoration(
+            color: AppColors.infoBg,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: AppColors.infoLight),
+          ),
+          child: Text(
+            '$effectiveCount일',
+            style: ResponsiveHelper.smallStyle(
+              context,
+              color: AppColors.infoDark,
+            ).copyWith(fontWeight: FontWeight.bold),
+          ),
+        ),
+      ],
+    );
   }
+
+  /// 고정 공고: 계약기간 + 공고마감 한 줄
+  Widget _buildLongTermMeta(BuildContext context, TOModel masterTO, bool allClosed) {
+    final hasContract = masterTO.contractPeriodLabel.isNotEmpty;
+    final expiry = !allClosed ? masterTO.formattedPostingExpiry : null;
+    final hasExpiry = expiry != null;
+    if (!hasContract && !hasExpiry) return const SizedBox.shrink();
+    final isPast = masterTO.isPostingExpired;
+    return Padding(
+      padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 4)),
+      child: Row(
+        children: [
+          if (hasContract) ...[
+            Icon(Icons.assignment_outlined,
+                size: ResponsiveHelper.iconSize(context, 13),
+                color: AppColors.longTermDark),
+            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+            Text('계약 ${masterTO.contractPeriodLabel}',
+                style: ResponsiveHelper.smallStyle(context,
+                        color: AppColors.longTermDark)
+                    .copyWith(fontWeight: FontWeight.w600)),
+          ],
+          if (hasContract && hasExpiry) ...[
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            Text('·',
+                style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.grey400)),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          ],
+          if (hasExpiry) ...[
+            Icon(Icons.calendar_month_outlined,
+                size: ResponsiveHelper.iconSize(context, 13),
+                color: isPast ? AppColors.grey500 : AppColors.warningDark),
+            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+            Text('공고마감 $expiry',
+                style: ResponsiveHelper.smallStyle(context,
+                    color: isPast ? AppColors.grey500 : AppColors.warningDark)),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 단기 단일슬롯 공고: 지원 마감시간 표시
+  Widget _buildDeadlineMeta(BuildContext context, DateTime now) {
+    final deadline = _getEarliestDeadline();
+    if (deadline == null) return const SizedBox.shrink();
+    final isPast = deadline.isBefore(now);
+    final remaining = deadline.difference(now);
+    final isSoon = !isPast && remaining.inHours < 2;
+    final label = isPast
+        ? '지원마감 ${FormatHelper.formatTime(deadline)}'
+        : isSoon
+            ? '마감까지 ${_formatRemaining(remaining)}'
+            : '지원마감 ${FormatHelper.formatTime(deadline)}';
+    return Padding(
+      padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 6)),
+      child: Row(
+        children: [
+          Icon(
+            Icons.timer_off_outlined,
+            size: ResponsiveHelper.iconSize(context, 14),
+            color: isPast ? AppColors.grey500 : AppColors.warningDark,
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+          Text(
+            label,
+            style: ResponsiveHelper.smallStyle(
+              context,
+              color: isPast ? AppColors.grey500 : AppColors.warningDark,
+            ),
+          ),
+          if (isSoon) ...[
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            _buildUrgentBadge(context),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 단기 단일슬롯: 슬롯 개별 제목 (있는 경우)
+  Widget _buildSingleSlotTitle(BuildContext context, ThemeData theme) {
+    final toItem = widget.groupItem.groupTOs.first;
+    final slotTitle = toItem.slot?.title;
+    if (slotTitle == null || slotTitle.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 10),
+          vertical: ResponsiveHelper.spacing(context, 8),
+        ),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.grey200),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 8),
+                vertical: ResponsiveHelper.spacing(context, 4),
+              ),
+              decoration: BoxDecoration(
+                color: theme.primaryColor.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                FormatHelper.formatDate(toItem.slot!.date),
+                style: ResponsiveHelper.smallStyle(
+                  context,
+                  color: theme.primaryColor,
+                ).copyWith(fontWeight: FontWeight.bold),
+              ),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+            Expanded(
+              child: Text(
+                slotTitle,
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
 
   /// 단건 TO의 work별 통계
   Map<String, int>? _getSingleTOStats(String workId) {
@@ -2342,6 +2469,269 @@ class PersonnelBadge extends StatelessWidget {
                 color: AppColors.warningDark,
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 보낸 초대 관리 바텀시트
+// ────────────────────────────────────────────────────────────────────────────
+
+class _SentInvitesSheet extends StatefulWidget {
+  final String toId;
+  final String businessId;
+
+  const _SentInvitesSheet({required this.toId, required this.businessId});
+
+  @override
+  State<_SentInvitesSheet> createState() => _SentInvitesSheetState();
+}
+
+class _SentInvitesSheetState extends State<_SentInvitesSheet> {
+  // ─── 포맷터 캐싱 (itemBuilder 항목마다 재생성 방지) ──────────
+  static final _expiryFmt = DateFormat('MM/dd HH:mm');
+
+  bool _isLoading = true;
+  List<Map<String, dynamic>> _invites = [];
+  String? _cancelingId;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadInvites();
+  }
+
+  Future<void> _loadInvites() async {
+    // [BUG-07 수정] Firestore 직접 list → CF 경유 (SuperAdmin 전용 규칙 우회)
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetApplicationsByBiz');
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessId': widget.businessId,
+        'toId': widget.toId,
+        'status': 'INVITED',
+        'limit': 100,
+      });
+
+      if (!mounted) return;
+      final raw = (result.data['applications'] as List? ?? [])
+          .whereType<Map>()
+          .map((m) => Map<String, dynamic>.from(m))
+          .toList();
+
+      setState(() {
+        _invites = raw;
+        _isLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      ToastHelper.showError('초대 목록을 불러오지 못했습니다.');
+    }
+  }
+
+  Future<void> _cancelInvite(String applicationId) async {
+    final confirmed = await DialogHelper.showDangerConfirm(
+      context,
+      title: '초대 취소',
+      message: '이 근로자의 초대를 취소하시겠습니까?',
+      confirmText: '취소하기',
+    );
+    if (!confirmed) return;
+
+    setState(() => _cancelingId = applicationId);
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableCancelTOInvitation');
+      await callable.call({'applicationId': applicationId});
+
+      if (!mounted) return;
+      ToastHelper.showSuccess('초대가 취소되었습니다.');
+      setState(() {
+        _invites.removeWhere((inv) => inv['id'] == applicationId);
+        _cancelingId = null;
+      });
+    } on FirebaseFunctionsException catch (e) {
+      if (!mounted) return;
+      setState(() => _cancelingId = null);
+      ToastHelper.showError(e.message ?? '초대 취소에 실패했습니다.');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _cancelingId = null);
+      ToastHelper.showError('초대 취소에 실패했습니다.');
+    }
+  }
+
+  String _formatExpiry(dynamic expiresAt) {
+    if (expiresAt == null) return '';
+    try {
+      DateTime dt;
+      if (expiresAt is Timestamp) {
+        dt = expiresAt.toDate().toLocal();
+      } else if (expiresAt is Map) {
+        // CF serializeFirestoreData → {_seconds, _nanoseconds}
+        final seconds = (expiresAt['_seconds'] as num?)?.toInt() ?? 0;
+        dt = DateTime.fromMillisecondsSinceEpoch(seconds * 1000, isUtc: true).toLocal();
+      } else {
+        return '';
+      }
+      return '만료: ${_expiryFmt.format(dt)}';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.only(
+        top: 20,
+        left: 16,
+        right: 16,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 헤더
+          Row(
+            children: [
+              Icon(Icons.mail_outline, color: AppColors.info, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '보낸 초대 관리',
+                  style: ResponsiveHelper.bodyStyle(context)
+                      .copyWith(fontWeight: FontWeight.bold),
+                ),
+              ),
+              if (!_isLoading)
+                Text(
+                  '${_invites.length}건',
+                  style: ResponsiveHelper.smallStyle(
+                    context,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '수락 대기 중인 초대 목록입니다. 만료 전 취소할 수 있습니다.',
+            style: ResponsiveHelper.smallStyle(
+              context,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // 본문
+          if (_isLoading)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 32),
+                child: CircularProgressIndicator(),
+              ),
+            )
+          else if (_invites.isEmpty)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 32),
+                child: Text(
+                  '대기 중인 초대가 없습니다.',
+                  style: ResponsiveHelper.bodyStyle(
+                    context,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+            )
+          else
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.sizeOf(context).height * 0.45,
+              ),
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: _invites.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (ctx, i) {
+                  final inv = _invites[i];
+                  final appId = inv['id'] as String? ?? '';
+                  final uid = inv['uid'] as String? ?? '';
+                  final workerName = inv['applicantName'] as String? ?? uid; // [BUG-02 수정] CF 저장 필드명 applicantName
+                  final expiryLabel = _formatExpiry(inv['inviteExpiresAt']);
+                  final isCanceling = _cancelingId == appId;
+
+                  return Container(
+                    decoration: CommonWidgets.compactCardDecoration(),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                workerName,
+                                style: ResponsiveHelper.bodyStyle(context)
+                                    .copyWith(fontWeight: FontWeight.w600),
+                              ),
+                              if (expiryLabel.isNotEmpty) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  expiryLabel,
+                                  style: ResponsiveHelper.smallStyle(
+                                    context,
+                                    color: AppColors.warning,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        isCanceling
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : TextButton(
+                                onPressed: () => _cancelInvite(appId),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: AppColors.error,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 6,
+                                  ),
+                                  minimumSize: Size.zero,
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
+                                child: Text(
+                                  '취소',
+                                  style: ResponsiveHelper.smallStyle(
+                                    context,
+                                    color: AppColors.error,
+                                  ).copyWith(fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          const SizedBox(height: 8),
         ],
       ),
     );

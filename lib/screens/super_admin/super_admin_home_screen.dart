@@ -9,9 +9,11 @@ import 'foreign_worker_approval_screen.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../common/settings_screen.dart';
+import '../common/notification_screen.dart';
 import 'system_settings_screen.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/toast_helper.dart';
+import '../../widgets/common/notification_badge.dart';
 
 /// 최고관리자(SUPER_ADMIN) 홈 화면
 class AdminHomeScreen extends StatefulWidget {
@@ -21,10 +23,34 @@ class AdminHomeScreen extends StatefulWidget {
   State<AdminHomeScreen> createState() => _AdminHomeScreenState();
 }
 
-class _AdminHomeScreenState extends State<AdminHomeScreen> {
-  late final Future<_SuperAdminStats> _statsFuture = _loadStats();
+class _AdminHomeScreenState extends State<AdminHomeScreen>
+    with WidgetsBindingObserver {
+  bool _isLoading = true;
+  _SuperAdminStats? _stats;
 
-  Future<_SuperAdminStats> _loadStats() async {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _loadStats();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 앱이 백그라운드에서 복귀할 때 통계 갱신
+    if (state == AppLifecycleState.resumed) {
+      _loadStats();
+    }
+  }
+
+  Future<void> _loadStats() async {
+    setState(() => _isLoading = true);
     try {
       final results = await Future.wait([
         FirebaseFirestore.instance.collection('users').count().get(),
@@ -35,26 +61,35 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
             .count()
             .get(),
       ]);
-      return _SuperAdminStats(
-        totalUsers: results[0].count ?? 0,
-        totalBusinesses: results[1].count ?? 0,
-        pendingApprovals: results[2].count ?? 0,
-      );
-    } catch (_) {
-      return const _SuperAdminStats(
-          totalUsers: 0, totalBusinesses: 0, pendingApprovals: 0);
+      if (!mounted) return;
+      setState(() {
+        _stats = _SuperAdminStats(
+          totalUsers: results[0].count ?? 0,
+          totalBusinesses: results[1].count ?? 0,
+          pendingApprovals: results[2].count ?? 0,
+        );
+        _isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('❌ 슈퍼관리자 통계 로드 실패: $e');
+      if (!mounted) return;
+      setState(() {
+        _stats = const _SuperAdminStats(
+            totalUsers: 0, totalBusinesses: 0, pendingApprovals: 0);
+        _isLoading = false;
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // [PERF-2026-07-16] 이름 1개만 필요 → Selector로 rebuild 범위 축소
     return Selector<UserProvider, String?>(
+      // [PERF] 이름 1개만 구독 — 다른 UserProvider 변경 시 rebuild 방지
       selector: (_, p) => p.currentUser?.name,
       builder: (context, userName, _) {
         final theme = Theme.of(context);
         final isLandscape =
-            MediaQuery.of(context).orientation == Orientation.landscape;
+            MediaQuery.orientationOf(context) == Orientation.landscape;
 
         return Scaffold(
           body: Container(
@@ -66,146 +101,14 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
               ),
             ),
             child: SafeArea(
+              bottom: false,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   // ── 상단 헤더 ──────────────────────────────────
-                  Padding(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: ResponsiveHelper.spacing(context, 24),
-                      vertical: ResponsiveHelper.spacing(
-                          context, isLandscape ? 8 : 20),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Row(
-                              children: [
-                                // A 마크 작은 로고
-                                ClipOval(
-                                  child: Image.asset(
-                                    'assets/icons/app_icon.png',
-                                    width: ResponsiveHelper.spacing(context, 26),
-                                    height: ResponsiveHelper.spacing(context, 26),
-                                  ),
-                                ),
-                                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                                Stack(
-                                  clipBehavior: Clip.none,
-                                  children: [
-                                    Text(
-                                      'ALfit',
-                                      style: ResponsiveHelper.titleStyle(context)
-                                          .copyWith(
-                                        color: Colors.white,
-                                        fontSize:
-                                            ResponsiveHelper.titleStyle(context)
-                                                    .fontSize! *
-                                                1.3,
-                                        fontWeight: FontWeight.w800,
-                                        letterSpacing: 1.5,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                SizedBox(
-                                    width:
-                                        ResponsiveHelper.spacing(context, 12)),
-                                Container(
-                                  padding: EdgeInsets.symmetric(
-                                    horizontal:
-                                        ResponsiveHelper.spacing(context, 10),
-                                    vertical:
-                                        ResponsiveHelper.spacing(context, 5),
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withValues(alpha: 0.2),
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.admin_panel_settings,
-                                        color: Colors.white,
-                                        size: ResponsiveHelper.iconSize(
-                                            context, 14),
-                                      ),
-                                      SizedBox(
-                                          width: ResponsiveHelper.spacing(
-                                              context, 4)),
-                                      Text(
-                                        '최고',
-                                        style: ResponsiveHelper.tinyStyle(
-                                          context,
-                                          color: Colors.white,
-                                        ).copyWith(fontWeight: FontWeight.w600),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                            Material(
-                              color: Colors.white.withValues(alpha: 0.2),
-                              borderRadius: BorderRadius.circular(12),
-                              child: InkWell(
-                                onTap: () async {
-                                  final confirmed =
-                                      await DialogHelper.showLogoutConfirm(
-                                          context);
-                                  if (confirmed && context.mounted) {
-                                    context.read<ThemeProvider>().reset();
-                                    await context.read<UserProvider>().signOut();
-                                  }
-                                },
-                                borderRadius: BorderRadius.circular(12),
-                                child: Padding(
-                                  padding: EdgeInsets.all(
-                                      ResponsiveHelper.spacing(context, 8)),
-                                  child: Icon(
-                                    Icons.logout,
-                                    color: Colors.white,
-                                    size: ResponsiveHelper.iconSize(context, 24),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        if (!isLandscape) ...[
-                          SizedBox(
-                              height: ResponsiveHelper.spacing(context, 24)),
-                          Text(
-                            '안녕하세요,',
-                            style: ResponsiveHelper.bodyStyle(
-                              context,
-                              color: Colors.white.withValues(alpha: 0.95),
-                            ),
-                          ),
-                          SizedBox(
-                              height: ResponsiveHelper.spacing(context, 8)),
-                          Text(
-                            '${userName ?? '관리자'}님',
-                            style: ResponsiveHelper.titleStyle(context).copyWith(
-                              color: Colors.white,
-                              fontSize:
-                                  ResponsiveHelper.titleStyle(context).fontSize! *
-                                      1.5,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
+                  _buildHeader(context, theme, isLandscape, userName),
 
-                  // ── 메뉴 영역 ──────────────────────────────────
+                  // ── 스크롤 가능 콘텐츠 영역 ────────────────────
                   Expanded(
                     child: Container(
                       decoration: BoxDecoration(
@@ -215,176 +118,9 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                           topRight: Radius.circular(32),
                         ),
                       ),
-                      child: Padding(
-                        padding: EdgeInsets.all(
-                            ResponsiveHelper.spacing(context, 20)),
-                        child: Column(
-                          children: [
-                            // ── 통계 요약 카드 ──────────────────
-                            FutureBuilder<_SuperAdminStats>(
-                              future: _statsFuture,
-                              builder: (context, snap) {
-                                final stats = snap.data;
-                                return Row(
-                                  children: [
-                                    _buildStatCard(
-                                      context,
-                                      label: '전체 회원',
-                                      value: stats != null
-                                          ? '${stats.totalUsers}명'
-                                          : '-',
-                                      icon: Icons.people_outline,
-                                      color: theme.primaryColor,
-                                    ),
-                                    SizedBox(
-                                        width: ResponsiveHelper.spacing(
-                                            context, 8)),
-                                    _buildStatCard(
-                                      context,
-                                      label: '전체 사업장',
-                                      value: stats != null
-                                          ? '${stats.totalBusinesses}개'
-                                          : '-',
-                                      icon: Icons.business_outlined,
-                                      color: AppColors.purple,
-                                    ),
-                                    SizedBox(
-                                        width: ResponsiveHelper.spacing(
-                                            context, 8)),
-                                    _buildStatCard(
-                                      context,
-                                      label: '승인 대기',
-                                      value: stats != null
-                                          ? '${stats.pendingApprovals}명'
-                                          : '-',
-                                      icon: Icons.pending_outlined,
-                                      color: (stats?.pendingApprovals ?? 0) > 0
-                                          ? AppColors.warning
-                                          : AppColors.grey400,
-                                    ),
-                                  ],
-                                );
-                              },
-                            ),
-                            SizedBox(
-                                height: ResponsiveHelper.spacing(context, 16)),
-
-                            // ── 메뉴 그리드 ────────────────────
-                            Expanded(
-                              child: LayoutBuilder(
-                                builder: (context, constraints) {
-                                  const crossAxisCount = 2;
-                                  const rowCount = 4;
-                                  final gap = ResponsiveHelper.spacing(context, 12);
-                                  final cardWidth = (constraints.maxWidth - gap * (crossAxisCount - 1)) / crossAxisCount;
-                                  final cardHeight = (constraints.maxHeight - gap * (rowCount - 1)) / rowCount;
-                                  final aspectRatio = cardWidth / cardHeight;
-                                  return GridView.count(
-                                    crossAxisCount: crossAxisCount,
-                                    crossAxisSpacing: gap,
-                                    mainAxisSpacing: gap,
-                                    childAspectRatio: aspectRatio,
-                                    physics: const NeverScrollableScrollPhysics(),
-                                    children: [
-                                  _buildMenuCard(
-                                    context,
-                                    cardHeight: cardHeight,
-                                    icon: Icons.business_center,
-                                    title: '모든 사업장',
-                                    subtitle: '전체 사업장 관리',
-                                    color: theme.primaryColor,
-                                    onTap: () => Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                          builder: (_) =>
-                                              const AllBusinessesScreen()),
-                                    ),
-                                  ),
-                                  _buildMenuCard(
-                                    context,
-                                    cardHeight: cardHeight,
-                                    icon: Icons.dashboard_outlined,
-                                    title: '공고 모니터링',
-                                    subtitle: '전체 공고 현황',
-                                    color: AppColors.grey400,
-                                    isDisabled: true,
-                                    onTap: () => ToastHelper.showInfo(
-                                        '공고 모니터링 기능은 준비 중입니다'),
-                                  ),
-                                  _buildMenuCard(
-                                    context,
-                                    cardHeight: cardHeight,
-                                    icon: Icons.people_outline,
-                                    title: '사용자 관리',
-                                    subtitle: '회원 관리',
-                                    color: theme.primaryColor,
-                                    onTap: () => Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                          builder: (_) =>
-                                              const AllUsersScreen()),
-                                    ),
-                                  ),
-                                  _buildMenuCard(
-                                    context,
-                                    cardHeight: cardHeight,
-                                    icon: Icons.analytics_outlined,
-                                    title: '통계',
-                                    subtitle: '전체 통계 분석',
-                                    color: AppColors.grey400,
-                                    isDisabled: true,
-                                    onTap: () => ToastHelper.showInfo(
-                                        '통계 기능은 준비 중입니다'),
-                                  ),
-                                  _buildMenuCard(
-                                    context,
-                                    cardHeight: cardHeight,
-                                    icon: Icons.admin_panel_settings,
-                                    title: '시스템 설정',
-                                    subtitle: '규칙/태그/배지',
-                                    color: theme.primaryColor,
-                                    onTap: () => Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                          builder: (_) =>
-                                              const SystemSettingsScreen()),
-                                    ),
-                                  ),
-                                  _buildMenuCard(
-                                    context,
-                                    cardHeight: cardHeight,
-                                    icon: Icons.how_to_reg_outlined,
-                                    title: '외국인 승인',
-                                    subtitle: '가입 승인/거절',
-                                    color: AppColors.warning,
-                                    onTap: () => Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                          builder: (_) =>
-                                              const ForeignWorkerApprovalScreen()),
-                                    ),
-                                  ),
-                                  _buildMenuCard(
-                                    context,
-                                    cardHeight: cardHeight,
-                                    icon: Icons.settings_outlined,
-                                    title: '설정',
-                                    subtitle: '개인 설정',
-                                    color: AppColors.grey600,
-                                    onTap: () => Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                          builder: (_) =>
-                                              const SettingsScreen()),
-                                    ),
-                                  ),
-                                    ],
-                                  );
-                                },
-                              ),
-                            ),
-                          ],
-                        ),
+                      child: RefreshIndicator(
+                        onRefresh: _loadStats,
+                        child: _buildBody(context, theme, isLandscape),
                       ),
                     ),
                   ),
@@ -397,22 +133,343 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
     );
   }
 
+  // ────────────────────────────────────────────────────────────
+  //  헤더
+  // ────────────────────────────────────────────────────────────
+
+  Widget _buildHeader(
+    BuildContext context,
+    ThemeData theme,
+    bool isLandscape,
+    String? userName,
+  ) {
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 24),
+        vertical: ResponsiveHelper.spacing(context, isLandscape ? 8 : 20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 1행: 로고 + 뱃지 + 알림·로그아웃
+          Row(
+            children: [
+              // 로고 + ALfit 텍스트
+              ClipOval(
+                child: Image.asset(
+                  'assets/icons/app_icon.png',
+                  width: ResponsiveHelper.spacing(context, 26),
+                  height: ResponsiveHelper.spacing(context, 26),
+                ),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+              Text(
+                'ALfit',
+                style: ResponsiveHelper.titleStyle(context).copyWith(
+                  color: Colors.white,
+                  fontSize:
+                      ResponsiveHelper.titleStyle(context).fontSize! * 1.3,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.5,
+                ),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              // 최고관리자 뱃지
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 10),
+                  vertical: ResponsiveHelper.spacing(context, 5),
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.admin_panel_settings,
+                      color: Colors.white,
+                      size: ResponsiveHelper.iconSize(context, 14),
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                    Text(
+                      '최고',
+                      style: ResponsiveHelper.tinyStyle(
+                        context,
+                        color: Colors.white,
+                      ).copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+              ),
+
+              const Spacer(),
+
+              // 알림 벨
+              NotificationBadge(
+                child: Material(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(12),
+                  child: InkWell(
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => const NotificationScreen()),
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                    child: Padding(
+                      padding:
+                          EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                      child: Icon(
+                        Icons.notifications_outlined,
+                        color: Colors.white,
+                        size: ResponsiveHelper.iconSize(context, 22),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+
+              // 로그아웃
+              Material(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(12),
+                child: InkWell(
+                  onTap: () async {
+                    final confirmed =
+                        await DialogHelper.showLogoutConfirm(context);
+                    if (confirmed && context.mounted) {
+                      // signOut 먼저: 실패 시 ThemeProvider.reset() 호출 방지
+                      await context.read<UserProvider>().signOut();
+                      if (context.mounted) {
+                        context.read<ThemeProvider>().reset();
+                      }
+                    }
+                  },
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding:
+                        EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+                    child: Icon(
+                      Icons.logout,
+                      color: Colors.white,
+                      size: ResponsiveHelper.iconSize(context, 22),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          // 2행: 인사말 (가로 모드에서는 생략)
+          if (!isLandscape) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+            Text(
+              '안녕하세요,',
+              style: ResponsiveHelper.bodyStyle(
+                context,
+                color: Colors.white.withValues(alpha: 0.9),
+              ),
+            ),
+            SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+            Text(
+              '${userName ?? '관리자'}님',
+              style: ResponsiveHelper.titleStyle(context).copyWith(
+                color: Colors.white,
+                fontSize:
+                    ResponsiveHelper.titleStyle(context).fontSize! * 1.5,
+                fontWeight: FontWeight.bold,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ────────────────────────────────────────────────────────────
+  //  메인 스크롤 바디
+  // ────────────────────────────────────────────────────────────
+
+  Widget _buildBody(
+    BuildContext context,
+    ThemeData theme,
+    bool isLandscape,
+  ) {
+    final pending = _stats?.pendingApprovals ?? 0;
+
+    return ListView(
+      // listPadding: 하단 홈 인디케이터 높이를 자동 추가
+      padding: ResponsiveHelper.listPadding(context,
+          extra: ResponsiveHelper.spacing(context, 8)),
+      children: [
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+
+        // ── 통계 요약 ──────────────────────────────────────
+        _buildStatsRow(context, theme),
+        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+
+        // ── 관리 섹션 ──────────────────────────────────────
+        _buildSectionLabel(context, '관리'),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        _buildMenuTile(
+          context,
+          icon: Icons.business_center_outlined,
+          color: theme.primaryColor,
+          title: '모든 사업장',
+          subtitle: '전체 사업장 현황 및 관리',
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const AllBusinessesScreen()),
+          ),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        _buildMenuTile(
+          context,
+          icon: Icons.people_outline,
+          color: theme.primaryColor,
+          title: '사용자 관리',
+          subtitle: '회원 목록 조회 및 정보 관리',
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const AllUsersScreen()),
+          ),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        _buildMenuTile(
+          context,
+          icon: Icons.how_to_reg_outlined,
+          color: AppColors.warning,
+          title: '외국인 승인',
+          subtitle: '가입 승인 및 거절 처리',
+          // 대기 건수가 있으면 뱃지 표시
+          badge: pending > 0 ? '$pending' : null,
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) => const ForeignWorkerApprovalScreen()),
+          ),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+
+        // ── 시스템 섹션 ────────────────────────────────────
+        _buildSectionLabel(context, '시스템'),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        _buildMenuTile(
+          context,
+          icon: Icons.admin_panel_settings_outlined,
+          color: AppColors.purple,
+          title: '시스템 설정',
+          subtitle: '신뢰도 규칙·배지·임금·공고 설정 관리',
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const SystemSettingsScreen()),
+          ),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+
+        // ── 개인 섹션 ──────────────────────────────────────
+        _buildSectionLabel(context, '개인'),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        _buildMenuTile(
+          context,
+          icon: Icons.settings_outlined,
+          color: AppColors.grey600,
+          title: '설정',
+          subtitle: '개인 설정 및 테마',
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const SettingsScreen()),
+          ),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+
+        // ── 준비 중 섹션 ──────────────────────────────────
+        _buildSectionLabel(context, '준비 중'),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        _buildMenuTile(
+          context,
+          icon: Icons.dashboard_outlined,
+          color: AppColors.grey400,
+          title: '공고 모니터링',
+          subtitle: '전체 공고 현황 분석',
+          isDisabled: true,
+          onTap: () => ToastHelper.showInfo('공고 모니터링 기능은 준비 중입니다'),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        _buildMenuTile(
+          context,
+          icon: Icons.analytics_outlined,
+          color: AppColors.grey400,
+          title: '전체 통계',
+          subtitle: '플랫폼 전체 통계 분석',
+          isDisabled: true,
+          onTap: () => ToastHelper.showInfo('통계 기능은 준비 중입니다'),
+        ),
+      ],
+    );
+  }
+
+  // ────────────────────────────────────────────────────────────
+  //  통계 행
+  // ────────────────────────────────────────────────────────────
+
+  Widget _buildStatsRow(BuildContext context, ThemeData theme) {
+    final pending = _stats?.pendingApprovals ?? 0;
+    return Row(
+      children: [
+        _buildStatCard(
+          context,
+          label: '전체 회원',
+          value: _isLoading ? '-' : '${_stats?.totalUsers ?? 0}명',
+          icon: Icons.people_outline,
+          color: theme.primaryColor,
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+        _buildStatCard(
+          context,
+          label: '전체 사업장',
+          value: _isLoading ? '-' : '${_stats?.totalBusinesses ?? 0}개',
+          icon: Icons.business_outlined,
+          color: AppColors.purple,
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+        _buildStatCard(
+          context,
+          label: '승인 대기',
+          value: _isLoading ? '-' : '$pending명',
+          icon: Icons.pending_outlined,
+          color: pending > 0 ? AppColors.warning : AppColors.grey400,
+          highlight: !_isLoading && pending > 0,
+        ),
+      ],
+    );
+  }
+
   Widget _buildStatCard(
     BuildContext context, {
     required String label,
     required String value,
     required IconData icon,
     required Color color,
+    bool highlight = false,
   }) {
     return Expanded(
       child: Container(
         padding: EdgeInsets.symmetric(
           vertical: ResponsiveHelper.spacing(context, 12),
-          horizontal: ResponsiveHelper.spacing(context, 8),
+          horizontal: ResponsiveHelper.spacing(context, 6),
         ),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: highlight ? color.withValues(alpha: 0.07) : Colors.white,
           borderRadius: BorderRadius.circular(14),
+          border: highlight
+              ? Border.all(color: color.withValues(alpha: 0.25))
+              : null,
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.05),
@@ -424,7 +481,8 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: ResponsiveHelper.iconSize(context, 22), color: color),
+            Icon(icon,
+                size: ResponsiveHelper.iconSize(context, 22), color: color),
             SizedBox(height: ResponsiveHelper.spacing(context, 4)),
             Text(
               value,
@@ -435,7 +493,8 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
             ),
             Text(
               label,
-              style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+              style:
+                  ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
               textAlign: TextAlign.center,
             ),
           ],
@@ -444,76 +503,125 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
     );
   }
 
-  Widget _buildMenuCard(
+  // ────────────────────────────────────────────────────────────
+  //  섹션 레이블
+  // ────────────────────────────────────────────────────────────
+
+  Widget _buildSectionLabel(BuildContext context, String title) {
+    return Padding(
+      padding: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 4)),
+      child: Text(
+        title,
+        style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)
+            .copyWith(
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+
+  // ────────────────────────────────────────────────────────────
+  //  메뉴 타일 (리스트 카드)
+  // ────────────────────────────────────────────────────────────
+
+  Widget _buildMenuTile(
     BuildContext context, {
-    required double cardHeight,
     required IconData icon,
+    required Color color,
     required String title,
     required String subtitle,
-    required Color color,
     required VoidCallback onTap,
+    String? badge,
     bool isDisabled = false,
   }) {
-    // 모든 크기를 cardHeight 비율로 계산 → 기기 무관하게 overflow 없음
-    final iconCircle = cardHeight * 0.38;  // 아이콘 원형 지름
-    final iconPad    = iconCircle * 0.22;  // 원형 내부 패딩 (양쪽)
-    final iconSizePx = iconCircle - iconPad * 2;
-    final vPad       = cardHeight * 0.08;  // 카드 상하 패딩
-    final gap        = cardHeight * 0.07;  // 아이콘 ↔ 텍스트 간격
-    final titleSize  = (cardHeight * 0.13).clamp(11.0, 16.0);
-    final subSize    = (cardHeight * 0.10).clamp(9.0,  13.0);
-
-    return Card(
-      elevation: isDisabled ? 0 : 2,
-      shadowColor: Colors.black.withValues(alpha: 0.08),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    return Material(
+      color: isDisabled ? AppColors.grey100 : Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      elevation: isDisabled ? 0 : 1.5,
+      shadowColor: Colors.black.withValues(alpha: 0.07),
       child: InkWell(
-        onTap: isDisabled ? null : onTap,
+        onTap: onTap,
         borderRadius: BorderRadius.circular(16),
-        child: Container(
-          decoration: BoxDecoration(
-            color: isDisabled ? AppColors.grey100 : Colors.white,
-            borderRadius: BorderRadius.circular(16),
-          ),
+        child: Padding(
           padding: EdgeInsets.symmetric(
-            horizontal: cardHeight * 0.10,
-            vertical: vPad,
+            horizontal: ResponsiveHelper.spacing(context, 16),
+            vertical: ResponsiveHelper.spacing(context, 14),
           ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+          child: Row(
             children: [
+              // 아이콘 원형
               Container(
-                width: iconCircle,
-                height: iconCircle,
+                width: ResponsiveHelper.spacing(context, 44),
+                height: ResponsiveHelper.spacing(context, 44),
                 decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.1),
+                  color: color.withValues(alpha: isDisabled ? 0.06 : 0.1),
                   shape: BoxShape.circle,
                 ),
-                child: Icon(icon, size: iconSizePx, color: color),
-              ),
-              SizedBox(height: gap),
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: titleSize,
-                  fontWeight: FontWeight.bold,
-                  color: isDisabled ? AppColors.grey400 : AppColors.textPrimary,
+                child: Icon(
+                  icon,
+                  size: ResponsiveHelper.iconSize(context, 22),
+                  color: isDisabled ? AppColors.grey400 : color,
                 ),
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
               ),
-              SizedBox(height: gap * 0.3),
-              Text(
-                isDisabled ? '준비 중' : subtitle,
-                style: TextStyle(
-                  fontSize: subSize,
-                  color: isDisabled ? AppColors.grey300 : AppColors.grey500,
+              SizedBox(width: ResponsiveHelper.spacing(context, 14)),
+
+              // 텍스트
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      title,
+                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: isDisabled
+                            ? AppColors.grey400
+                            : AppColors.textPrimary,
+                      ),
+                    ),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                    Text(
+                      isDisabled ? '준비 중' : subtitle,
+                      style: ResponsiveHelper.tinyStyle(context,
+                          color: AppColors.grey500),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
                 ),
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
               ),
+
+              // 대기 건수 뱃지 (외국인 승인 등)
+              if (badge != null) ...[
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 8),
+                    vertical: ResponsiveHelper.spacing(context, 3),
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.warning,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    badge,
+                    style: ResponsiveHelper.tinyStyle(
+                      context,
+                      color: Colors.white,
+                    ).copyWith(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              ],
+
+              // 화살표 (비활성 항목은 숨김)
+              if (!isDisabled)
+                Icon(
+                  Icons.chevron_right,
+                  color: AppColors.grey300,
+                  size: ResponsiveHelper.iconSize(context, 20),
+                ),
             ],
           ),
         ),
@@ -521,6 +629,10 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
     );
   }
 }
+
+// ──────────────────────────────────────────────────────────────
+//  데이터 모델
+// ──────────────────────────────────────────────────────────────
 
 class _SuperAdminStats {
   final int totalUsers;

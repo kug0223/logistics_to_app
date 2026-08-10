@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
@@ -133,7 +133,7 @@ class _AppMenuSheetContent extends StatelessWidget {
                 avatarColor: headerAvatarColor ?? Theme.of(context).primaryColor,
               ),
               const SizedBox(height: 16),
-              Divider(height: 1, color: AppColors.grey100),
+              const Divider(height: 1, color: AppColors.grey100),
               const SizedBox(height: 8),
             ],
 
@@ -146,7 +146,7 @@ class _AppMenuSheetContent extends StatelessWidget {
                     for (int i = 0; i < itemGroups.length; i++) ...[
                       if (i > 0) ...[
                         const SizedBox(height: 4),
-                        Divider(height: 1, color: AppColors.grey100, indent: 20, endIndent: 20),
+                        const Divider(height: 1, color: AppColors.grey100, indent: 20, endIndent: 20),
                         const SizedBox(height: 4),
                       ],
                       for (final item in itemGroups[i])

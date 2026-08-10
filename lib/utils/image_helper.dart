@@ -560,7 +560,12 @@ class ImageHelper {
     if (image is File) {
       // 웹에서는 path가 blob URL이므로 Image.network로 처리
       imageWidget = kIsWeb
-          ? Image.network(image.path, fit: fit, width: width ?? double.infinity, height: height)
+          ? Image.network(
+              image.path, fit: fit,
+              width: width ?? double.infinity, height: height,
+              cacheWidth: width != null ? (width * 2).toInt() : 800,
+              cacheHeight: height != null ? (height * 2).toInt() : null,
+            )
           : Image.file(image, fit: fit, width: width ?? double.infinity, height: height);
     } else if (image is String && image.isNotEmpty) {
       imageWidget = CachedNetworkImage(
@@ -671,7 +676,12 @@ class ImageHelper {
   }) {
     if (image is File) {
       Widget imageWidget = kIsWeb
-          ? Image.network(image.path, fit: fit, width: width ?? double.infinity, height: height)
+          ? Image.network(
+              image.path, fit: fit,
+              width: width ?? double.infinity, height: height,
+              cacheWidth: width != null ? (width * 2).toInt() : 800,
+              cacheHeight: height != null ? (height * 2).toInt() : null,
+            )
           : Image.file(image, fit: fit, width: width ?? double.infinity, height: height);
 
       if (borderRadius != null) {

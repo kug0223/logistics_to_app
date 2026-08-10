@@ -45,7 +45,7 @@ class _InterimSettlementRequestScreenState
   List<AttendanceModel> _records = [];
   final Set<String> _selectedIds = {};
   int _cachedNetAmount = 0; // _selectedIds 변경 시 갱신 — build()마다 O(n) 재계산 방지
-  bool _isLoading = true;
+  bool _isLoading = false; // 초기값 false — initState에서 _loadConfirmedAttendances() 첫 호출 시 재진입 방어에 걸리지 않도록
   bool _isSubmitting = false;
 
   // 로드 대상 최근 개월 수 (최대 3개월치)

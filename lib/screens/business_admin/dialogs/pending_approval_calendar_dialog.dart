@@ -36,6 +36,10 @@ class PendingApprovalCalendarDialog extends StatefulWidget {
 
 class _PendingApprovalCalendarDialogState
     extends State<PendingApprovalCalendarDialog> with LoadingStateMixin {
+  // ─── 포맷터 캐싱 (build마다 재생성 방지) ─────────────────────
+  static final _monthFmt  = DateFormat('yyyy년 M월');
+  static final _dateFmtKo = DateFormat('M/d(E)', 'ko_KR');
+
   late DateTime _currentMonth;
   String? _selectedBusinessId; // null = 전체 사업장
 
@@ -141,7 +145,7 @@ class _PendingApprovalCalendarDialogState
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final monthStr = DateFormat('yyyy년 M월').format(_currentMonth);
+    final monthStr = _monthFmt.format(_currentMonth);
 
     return Dialog(
       backgroundColor: Colors.white,
@@ -459,7 +463,7 @@ class _PendingApprovalCalendarDialogState
           urgencyLabel = '';
         }
 
-        final dateStr = DateFormat('M/d(E)', 'ko_KR').format(date);
+        final dateStr = _dateFmtKo.format(date);
 
         return InkWell(
           onTap: () => _openDayApplicants(date),

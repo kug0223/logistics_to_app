@@ -196,6 +196,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
   Future<void> _saveChanges() async {
     if (_isSaving) return; // WAGE-GUARD 다이얼로그 대기 중 중복 저장 방지
+    // [UX-FIX 2026-08-10] 키보드 포커스 해제 — unfocus 없으면 Navigator.pop 후 _dependents.isEmpty crash
+    FocusScope.of(context).unfocus();
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
     // 공통 업무상세 검증 (슬롯/TO 모두)
@@ -538,6 +540,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     if (!mounted) return false;
     final result = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) => StyledDialog(
         title: '급여 계산 조건 변경',
         subtitle: '이 공고에 확정된 근무자가 있습니다',
@@ -652,19 +655,25 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         }
       }
 
-      // TO의 totalRequired 동기화 — 마지막 배치에 포함
-      if (totalRequiredDelta != 0) {
-        if (currentBatchOps >= kMaxBatchOps) {
-          allBatches.add(currentBatch);
-          currentBatch = firestore.batch();
-        }
-        currentBatch.update(firestore.collection('tos').doc(widget.to.id), {
-          'totalRequired': FieldValue.increment(totalRequiredDelta),
-        });
-      }
       allBatches.add(currentBatch);
       for (final b in allBatches) {
         await b.commit();
+      }
+
+      // [CF-MIGRATION 2026-08-10] 클라이언트 FieldValue.increment → CF 전면 재계산으로 교체
+      // 경합 조건(동시 편집)에서 delta 누락 없이 항상 정확한 totalRequired 보장
+      if (totalRequiredDelta != 0) {
+        try {
+          await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable(
+                'callableRecalcToTotalRequired',
+                options: HttpsCallableOptions(timeout: const Duration(seconds: 30)),
+              )
+              .call({'businessId': widget.to.businessId, 'toId': widget.to.id});
+        } catch (e) {
+          // 재계산 실패는 슬롯 수정 자체에 영향 없음 — 경고만 출력
+          debugPrint('⚠️ totalRequired 재계산 CF 실패 (슬롯 수정은 완료): $e');
+        }
       }
 
       _firestoreService.clearCache(toId: widget.to.id);
@@ -811,12 +820,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             children: [
               if (widget.isBatchMode) ...[
                 _buildBatchInfoBanner(context),
-                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
               ],
               // 슬롯 개별 공고 제목 (단일 슬롯 수정)
               if (widget.slot != null) ...[
                 _buildSlotTitleField(context),
-                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
               ],
               if (!widget.isSlotMode) ...[
                 TODateSelector(
@@ -827,9 +836,9 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                   displayWorkDays: widget.to.workDays,
                   contractPeriodType: widget.to.contractPeriodType,
                 ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                 TOTitleSection(titleController: _titleController),
-                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
               ],
 
               TOWorkDetailsSection(
@@ -838,7 +847,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                 onEditWorkData: _showEditWorkDialog,
                 onDeleteWorkData: _deleteWork,
               ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
               if (!widget.to.isContractType) ...[
                 TODeadlineSection(
@@ -849,7 +858,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                   onFixedDeadlineChanged: (dt) => setState(() => _fixedDeadline = dt),
                   rangeStartDate: null,
                 ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
               ],
 
               if (!widget.isSlotMode) ...[
@@ -870,9 +879,9 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                       setState(() => _postingDurationDays = d),
                   rangeEnd: widget.to.isContractType ? widget.to.rangeEnd : null,
                 ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
                 TODescriptionSection(controller: _descriptionController),
-                SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 20)),
               ],
 
               // 슬롯 모드: 개별/일괄 슬롯 공개 설정
@@ -903,7 +912,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                       : (widget.slot != null ? [widget.slot!.date] : []),
                   isLongTerm: false,
                 ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 20)),
               ],
 
               TOActionButton.save(
@@ -1086,6 +1095,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   Future<bool?> _showDeleteConfirmDialog(WorkDetailData work) {
     return showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StyledDialog(
         title: '업무 삭제',
         subtitle: '${work.workType} 업무를 삭제하시겠습니까?',

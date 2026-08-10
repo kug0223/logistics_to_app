@@ -811,6 +811,7 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
 
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => FullMapDialog(business: _currentBusiness),
     );
   }

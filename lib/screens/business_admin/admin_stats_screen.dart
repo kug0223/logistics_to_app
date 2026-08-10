@@ -1,4 +1,4 @@
-import 'package:fl_chart/fl_chart.dart';
+﻿import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -313,7 +313,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
     final hasAnyData = data.totalWorkCount > 0;
 
     return ListView(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+      padding: ResponsiveHelper.listPadding(context),
       children: [
         // 데이터 없음 안내
         if (!hasAnyData) ...[
@@ -399,7 +399,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
             ResponsiveHelper.spacing(context, 16),
           ),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: AppColors.surface,
             borderRadius: BorderRadius.circular(14),
             boxShadow: [BoxShadow(
                 color: Colors.black.withValues(alpha: 0.05),
@@ -442,7 +442,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
         // ── 보조 그리드: 근무건수 · 출근율 · 노쇼율 · 재고용
         Container(
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: AppColors.surface,
             borderRadius: BorderRadius.circular(14),
             boxShadow: [BoxShadow(
                 color: Colors.black.withValues(alpha: 0.05),
@@ -565,7 +565,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
@@ -605,8 +605,9 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                           style: ResponsiveHelper.smallStyle(context,
                               color: AppColors.grey400)),
                     )
-                  : BarChart(
-                      BarChartData(
+                  : RepaintBoundary(
+                      child: BarChart(
+                        BarChartData(
                         alignment: BarChartAlignment.spaceAround,
                         maxY: maxWage * 1.3,
                         barTouchData: BarTouchData(
@@ -700,6 +701,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                         }).toList(),
                       ),
                     ),
+                  ),
             ),
           ),
           // 근무 건수 서브 행
@@ -739,7 +741,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(14),
         boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))],
       ),
@@ -813,7 +815,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(14),
         boxShadow: [BoxShadow(
             color: Colors.black.withValues(alpha: 0.04),

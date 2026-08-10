@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../services/fcm_service.dart';
@@ -13,17 +13,14 @@ import '../../theme/app_colors.dart';
 import '../../utils/attendance_list_pdf.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/toast_helper.dart';
 import '../../utils/tour_helper.dart';
 import '../../widgets/auth/account_status_banner.dart';
 import '../../widgets/common/notification_badge.dart';
 import '../../widgets/work_type_icon.dart';
-import '../business_admin/admin_contract_management_screen.dart';
-import '../business_admin/admin_stats_screen.dart';
-import '../business_admin/payroll/payroll_overview_screen.dart';
-import '../business_admin/to_management/create_to_screen.dart';
-import '../business_admin/workforce_management/integrated_workforce_screen.dart';
 import '../common/notification_screen.dart';
 import '../common/settings_screen.dart';
+import '../business_admin/business_admin_home_screen.dart';
 import '../common/tour_screen.dart';
 import 'all_to_list_screen.dart';
 import 'attendance_check_screen.dart';
@@ -52,16 +49,49 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   List<ApplicationModel> _applications = [];
   List<AttendanceModel> _attendances = [];
   bool _isLoadingData = false;
-  late DateTime _selectedDay;
 
-  // ── 이번 달 실수입 (임금확정/이체 완료된 합계) ─────────────────────
-  int get _actualIncome => _attendances
-      .where((a) => a.isWageConfirmed || a.isWageTransferred)
-      .fold(0, (sum, a) => sum + (a.finalWage ?? 0));
+  // 날짜 탭 시 주간 일정 섹션만 rebuild — setState 없이 처리
+  late final ValueNotifier<DateTime> _selectedDayNotifier;
 
-  // ── 이번 달 예상수입 (근태 기록된 전체 임금 합계, 미확정 포함) ──────
-  int get _expectedIncome => _attendances
-      .fold(0, (sum, a) => sum + (a.wageDetail?.effectiveNetWage ?? 0));
+  // ── 초대 카운트 (INVITED 상태 지원서 수) ────────────────────────
+  int get _invitedCount =>
+      _applications.where((a) => a.status == AppStatus.invited).length;
+
+  // ── 캐시 필드 — _applications/_attendances 변경 시에만 재계산 ────────
+  // build 중 getter가 매번 재계산되던 비용 제거 (날짜 탭 시에도 불필요하게 실행됐음)
+  int _cachedActualIncome = 0;
+  int _cachedExpectedIncome = 0;
+  Set<DateTime> _cachedThisWeekEntryDates = {};
+  List<ApplicationModel> _cachedRecentApplications = [];
+
+  void _rebuildCaches() {
+    _cachedActualIncome = _attendances
+        .where((a) => a.isWageConfirmed || a.isWageTransferred)
+        .fold(0, (sum, a) => sum + (a.finalWage ?? 0));
+    _cachedExpectedIncome = _attendances
+        .fold(0, (sum, a) => sum + (a.wageDetail?.effectiveNetWage ?? 0));
+
+    final sorted = [..._applications]
+      ..sort((a, b) => b.workDate.compareTo(a.workDate));
+    _cachedRecentApplications = sorted.take(3).toList();
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final endDate = today.add(const Duration(days: 6));
+    final dates = <DateTime>{};
+    for (final app in _applications) {
+      if (!AppStatus.confirmedStatuses.contains(app.status)) continue;
+      if (!app.isLongTermApplication) {
+        final wd = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
+        if (!wd.isBefore(today) && !wd.isAfter(endDate)) dates.add(wd);
+      } else {
+        for (var d = today; !d.isAfter(endDate); d = d.add(const Duration(days: 1))) {
+          if (app.isWorkingOnDate(d)) dates.add(d);
+        }
+      }
+    }
+    _cachedThisWeekEntryDates = dates;
+  }
 
   // ── 이번 주 선택된 날의 출근 목록 ────────────────────────────────
   List<_WeekEntry> _entriesForDay(DateTime day) {
@@ -76,34 +106,6 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       }
     }
     return results;
-  }
-
-  // ── 이번 주 전체 출근 날짜 집합 (dot 표시용) ─────────────────────
-  Set<DateTime> get _thisWeekEntryDates {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final endDate = today.add(const Duration(days: 6));
-    final dates = <DateTime>{};
-
-    for (final app in _applications) {
-      if (!AppStatus.confirmedStatuses.contains(app.status)) continue;
-      if (!app.isLongTermApplication) {
-        final wd = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
-        if (!wd.isBefore(today) && !wd.isAfter(endDate)) dates.add(wd);
-      } else {
-        for (var d = today; !d.isAfter(endDate); d = d.add(const Duration(days: 1))) {
-          if (app.isWorkingOnDate(d)) dates.add(d);
-        }
-      }
-    }
-    return dates;
-  }
-
-  // ── 최근 지원 (workDate 최신순) ──────────────────────────────────
-  List<ApplicationModel> get _recentApplications {
-    final sorted = [..._applications]
-      ..sort((a, b) => b.workDate.compareTo(a.workDate));
-    return sorted.take(3).toList();
   }
 
   // ── 오른쪽 상태 텍스트 + 색상 (사용자가 가장 궁금한 정보) ──────────
@@ -134,11 +136,13 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   @override
   void initState() {
     super.initState();
+    // [CRASH-7 수정] _selectedDayNotifier를 addObserver/addListener보다 먼저 초기화
+    // addObserver 직후 dispose()가 호출되는 극단적 타이밍에 LateInitializationError 방지
+    final now = DateTime.now();
+    _selectedDayNotifier = ValueNotifier(DateTime(now.year, now.month, now.day));
     WidgetsBinding.instance.addObserver(this);
     _onFcmRefresh = () { if (mounted) _autoRefresh(); };
     FCMService().addUserDataRefreshListener(_onFcmRefresh);
-    final now = DateTime.now();
-    _selectedDay = DateTime(now.year, now.month, now.day);
     AttendanceListPdf.preloadFonts();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
@@ -153,6 +157,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     FCMService().removeUserDataRefreshListener(_onFcmRefresh);
+    _selectedDayNotifier.dispose();
     super.dispose();
   }
 
@@ -188,13 +193,19 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         _appFirestore.getMyMonthlyAttendances(userId: uid, year: now.year, month: now.month),
       ]);
       if (!mounted) return;
-      setState(() {
-        _applications = results[0] as List<ApplicationModel>;
-        _attendances  = results[1] as List<AttendanceModel>;
-        _isLoadingData = false;
-      });
-    } catch (_) {
-      if (mounted) setState(() => _isLoadingData = false);
+      final apps = results[0] as List<ApplicationModel>;
+      final atts = results[1] as List<AttendanceModel>;
+      // 캐시는 setState 전에 계산 — build 중 재계산 없이 준비된 값 사용
+      _applications = apps;
+      _attendances  = atts;
+      _rebuildCaches();
+      setState(() => _isLoadingData = false);
+    } catch (e) {
+      debugPrint('❌ 홈 데이터 로드 실패: $e');
+      if (mounted) {
+        setState(() => _isLoadingData = false);
+        ToastHelper.showError('데이터를 불러오지 못했습니다. 새로고침을 시도해주세요.');
+      }
     } finally {
       _isLoadingHomeData = false;
     }
@@ -202,7 +213,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
   // ── 반응형 스케일: 화면 너비 기준 ──────────────────────────────
   double _s(BuildContext context) {
-    final w = MediaQuery.of(context).size.width;
+    final w = MediaQuery.sizeOf(context).width;
     if (w < 360) return 0.82;
     if (w < 400) return 0.92;
     if (w < 480) return 1.0;
@@ -229,7 +240,9 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         final user = data.user;
 
         return Scaffold(
-          bottomNavigationBar: const _PendingContractBar(),
+          // SubAdmin은 미서명 계약서 배너 불필요 (hasPendingContract 항상 false)
+          // + maintainSize:true 공간이 관리자 홈과 높이 차이를 만드므로 제외
+          bottomNavigationBar: data.isSubAdmin ? null : const _PendingContractBar(),
           body: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -269,9 +282,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                                   topRight: Radius.circular(28),
                                 ),
                               ),
-                              child: (data.isAdminMode && data.isSubAdmin)
-                                  ? _buildAdminBody(context, s, up, theme)
-                                  : _buildUserBody(context, s, up, theme),
+                              child: _buildUserBody(context, s, up, theme),
                             ),
                           ),
                         ),
@@ -390,17 +401,15 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   ),
                   SizedBox(width: 8 * s),
                   _buildRoleBadge(context, s, up),
-                  if (up.isSubAdmin) ...[
-                    SizedBox(width: 6 * s),
-                    _buildModeToggle(context, s, up),
-                  ],
                 ],
               ),
               SizedBox(height: 4 * s),
 
               // 서브타이틀
               Text(
-                '오늘도 딱 맞는 일자리를 찾아드릴게요',
+                up.isAdminMode
+                    ? '오늘도 사업장을 스마트하게 관리해요'
+                    : '오늘도 딱 맞는 일자리를 찾아드릴게요',
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: 0.60),
                   fontSize: 11.5 * s,
@@ -409,8 +418,15 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
               SizedBox(height: 10 * s),
 
-              // 신뢰점수 칩
-              if (user != null) _buildTrustChip(context, s, user),
+              // 신뢰점수 칩 + 모드 토글
+              Row(
+                children: [
+                  if (user != null && !up.isAdminMode)
+                    _buildTrustChip(context, s, user),
+                  const Spacer(),
+                  if (up.isSubAdmin) _buildModeToggle(context, s, up),
+                ],
+              ),
             ],
           ),
         ),
@@ -494,7 +510,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
         border: Border.all(color: Colors.white.withValues(alpha: 0.22), width: 1),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        _toggleOpt(context, s, label: '근무자', selected: !isAdmin,
+        _toggleOpt(context, s, label: '지원자', selected: !isAdmin,
             onTap: () { if (isAdmin) up.toggleAdminMode(); }),
         _toggleOpt(context, s, label: '관리자', selected: isAdmin,
             onTap: () { if (!isAdmin) _switchToAdminMode(context, up); }),
@@ -568,7 +584,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
               SizedBox(height: 22 * s),
               _buildOnboardingBanner(context, s, up),
               _buildMenuRow(context, s, theme),
-              SizedBox(height: 28 * s),
+              _buildInviteBanner(context, s, theme), // 초대 있으면 배너, 없으면 28px 간격
               _buildIncomeSection(context, s, theme),
               SizedBox(height: 24 * s),
               _buildRecentApplications(context, s, theme),
@@ -577,6 +593,82 @@ class _UserHomeScreenState extends State<UserHomeScreen>
               SizedBox(height: 36 * s),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  // ── 초대 배너 (INVITED 있을 때만 표시) ─────────────────────────
+  Widget _buildInviteBanner(BuildContext context, double s, ThemeData theme) {
+    final count = _invitedCount;
+    // 초대 없음 → 원래 섹션 간격(28px)을 대신 제공
+    if (count == 0) return SizedBox(height: 28 * s);
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(20 * s, 14 * s, 20 * s, 20 * s),
+      child: GestureDetector(
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            // 초대 탭(index 6) 바로 오픈
+            builder: (_) => const MyApplicationsScreen(initialTabIndex: 6),
+          ),
+        ).then((_) { if (mounted) _loadHomeData(); }),
+        child: Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: 16 * s, vertical: 13 * s),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [AppColors.success, AppColors.successDark],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.success.withValues(alpha: 0.30),
+                blurRadius: 8,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(children: [
+            Container(
+              width: 38 * s,
+              height: 38 * s,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.20),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.mail_outlined,
+                  color: Colors.white, size: 20 * s),
+            ),
+            SizedBox(width: 12 * s),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '업무 초대가 $count개 도착했어요!',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14 * s,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: 2 * s),
+                  Text(
+                    '24시간 내 수락하지 않으면 자동 만료됩니다',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.85),
+                      fontSize: 11 * s,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: Colors.white, size: 20 * s),
+          ]),
         ),
       ),
     );
@@ -694,8 +786,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     }).length;
     final pending = _applications.where((a) => a.status == AppStatus.pending).length;
 
-    final ratio = (_expectedIncome > 0)
-        ? (_actualIncome / _expectedIncome).clamp(0.0, 1.0)
+    final ratio = (_cachedExpectedIncome > 0)
+        ? (_cachedActualIncome / _cachedExpectedIncome).clamp(0.0, 1.0)
         : 0.0;
 
     return Column(
@@ -746,7 +838,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                                   color: theme.primaryColor.withValues(alpha: 0.4),
                                   backgroundColor: theme.primaryColor.withValues(alpha: 0.1)))
                           : Text(
-                              FormatHelper.formatWage(_expectedIncome),
+                              FormatHelper.formatWage(_cachedExpectedIncome),
                               style: TextStyle(
                                   fontSize: 17 * s,
                                   fontWeight: FontWeight.w800,
@@ -811,21 +903,21 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                                   color: AppColors.success.withValues(alpha: 0.4),
                                   backgroundColor: AppColors.success.withValues(alpha: 0.1)))
                           : Text(
-                              FormatHelper.formatWage(_actualIncome),
+                              FormatHelper.formatWage(_cachedActualIncome),
                               style: TextStyle(
                                   fontSize: 17 * s,
                                   fontWeight: FontWeight.w800,
-                                  color: _actualIncome > 0
+                                  color: _cachedActualIncome > 0
                                       ? AppColors.success
                                       : AppColors.grey400,
                                   letterSpacing: -0.5),
                             ),
                       const Spacer(),
                       Text(
-                        _actualIncome > 0 ? '이번 달 지급 완료' : '지급 내역 없음',
+                        _cachedActualIncome > 0 ? '이번 달 지급 완료' : '지급 내역 없음',
                         style: TextStyle(
                             fontSize: 10.5 * s,
-                            color: _actualIncome > 0
+                            color: _cachedActualIncome > 0
                                 ? AppColors.success
                                 : AppColors.grey400),
                       ),
@@ -856,7 +948,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
   // ── 최근 지원 내역 ────────────────────────────────────────────
   Widget _buildRecentApplications(BuildContext context, double s, ThemeData theme) {
-    final recent = _recentApplications;
+    final recent = _cachedRecentApplications;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1014,15 +1106,25 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
 
   // ── 이번 주 출근 일정 (날짜 선택 인터랙티브) ──────────────────────
+  // ValueListenableBuilder: 날짜 탭 시 이 섹션만 rebuild — 전체 setState 없음
   Widget _buildThisWeekSchedule(BuildContext context, double s, ThemeData theme) {
+    return ValueListenableBuilder<DateTime>(
+      valueListenable: _selectedDayNotifier,
+      builder: (context, selectedDay, _) =>
+          _buildThisWeekScheduleContent(context, s, theme, selectedDay),
+    );
+  }
+
+  Widget _buildThisWeekScheduleContent(
+      BuildContext context, double s, ThemeData theme, DateTime selectedDay) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final weekStart = today.subtract(Duration(days: today.weekday - 1));
     final weekDays = List.generate(7, (i) => weekStart.add(Duration(days: i)));
 
-    final entryDates = _thisWeekEntryDates;          // Set<DateTime>
-    final selectedEntries = _entriesForDay(_selectedDay);
-    final isSelectedToday = _selectedDay == today;
+    final entryDates = _cachedThisWeekEntryDates;    // 캐시 — data 변경 시에만 재계산
+    final selectedEntries = _entriesForDay(selectedDay);
+    final isSelectedToday = selectedDay == today;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1054,7 +1156,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   child: Row(
                     children: weekDays.map((day) {
                       final isToday      = day == today;
-                      final isSelected   = day == _selectedDay;
+                      final isSelected   = day == selectedDay;
                       final hasEntry     = entryDates.contains(day);
                       final isSat        = day.weekday == 6;
                       final isSun        = day.weekday == 7;
@@ -1062,9 +1164,9 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                       final textColor = isSelected
                           ? (isToday ? Colors.white : theme.primaryColor)
                           : isSat
-                              ? const Color(0xFF4A90D9)
+                              ? AppColors.info
                               : isSun
-                                  ? const Color(0xFFE05252)
+                                  ? AppColors.error
                                   : AppColors.grey400;
 
                       BoxDecoration? circleDeco;
@@ -1085,7 +1187,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
                       return Expanded(
                         child: GestureDetector(
-                          onTap: () => setState(() => _selectedDay = day),
+                          onTap: () => _selectedDayNotifier.value = day,
                           behavior: HitTestBehavior.opaque,
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
@@ -1155,7 +1257,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   child: Text(
                     isSelectedToday
                         ? '오늘 출근 일정'
-                        : '${_selectedDay.month}/${_selectedDay.day}(${_dayLabel(_selectedDay)}) 출근 일정',
+                        : '${selectedDay.month}/${selectedDay.day}(${_dayLabel(selectedDay)}) 출근 일정',
                     style: TextStyle(
                       fontSize: 12 * s,
                       color: AppColors.textSecondary,
@@ -1310,7 +1412,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     final user = up.currentUser;
     if (user == null) return const SizedBox.shrink();
     final missing = <String>[];
-    if (!user.isPassVerified) missing.add('PASS 인증');
+    if (!user.isPassVerified) missing.add('본인인증');
     if (user.idCardImageUrl == null) missing.add('신분증');
     if (user.bankbookImageUrl == null) missing.add('통장사본');
     if (user.bankName == null || user.accountNumber == null) missing.add('통장 정보');
@@ -1356,131 +1458,6 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     );
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // 관리자 바디 (서브어드민 전용)
-  // ─────────────────────────────────────────────────────────────
-  Widget _buildAdminBody(BuildContext context, double s, UserProvider up, ThemeData theme) {
-    if (!up.permissionsLoaded) {
-      return Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          CircularProgressIndicator(color: theme.primaryColor),
-          SizedBox(height: 12 * s),
-          Text('권한 정보를 불러오는 중...',
-              style: TextStyle(fontSize: 13 * s, color: AppColors.grey600)),
-        ]),
-      );
-    }
-
-    final biz = up.effectiveBusinessId;
-    final canTo       = up.can((p) => p.canManageTo);
-    final canWorkers  = up.can((p) => p.canManageTo || p.canManageWorkers);
-    final canWage     = up.can((p) => p.canManageWage);
-    final canContract = up.can((p) => p.canManageContract) && biz != null;
-    final canStats    = up.can((p) => p.canManageWorkers || p.canManageWage) && biz != null;
-
-    const cols = 2;
-    const rows = 3;
-
-    return Padding(
-      padding: EdgeInsets.all(20 * s),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final sp  = 16.0 * s;
-          final cw  = (constraints.maxWidth  - sp * (cols - 1)) / cols;
-          final ch  = (constraints.maxHeight - sp * (rows - 1)) / rows;
-          final ar  = (cw / ch).clamp(0.75, double.infinity);
-
-          final items = <Widget>[
-            if (canTo)
-              _adminCard(context, ch, Icons.post_add, '공고 등록', '새 공고 작성',
-                  theme.primaryColor,
-                  () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminCreateTOScreen()))),
-            if (canWorkers)
-              _adminCard(context, ch, Icons.work_outline, '공고 관리', '지원자 · 공고 현황',
-                  theme.primaryColor,
-                  () => Navigator.push(context, MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen()))),
-            if (canWage)
-              _adminCard(context, ch, Icons.payments_outlined, '급여 관리', '월별 급여·지급 현황',
-                  theme.primaryColor,
-                  () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PayrollOverviewScreen()))),
-            if (canContract)
-              _adminCard(context, ch, Icons.folder_outlined, '계약서 관리', '계약서 현황·서명',
-                  theme.primaryColor,
-                  () => Navigator.push(context, MaterialPageRoute(builder: (_) => AdminContractManagementScreen(businessId: biz)))),
-            if (canStats)
-              _adminCard(context, ch, Icons.bar_chart_outlined, '통계', '근태 · 급여 · 리뷰',
-                  theme.primaryColor,
-                  () => Navigator.push(context, MaterialPageRoute(builder: (_) => AdminStatsScreen(businessIds: [biz])))),
-            _adminCard(context, ch, Icons.settings_outlined, '설정', '앱 설정',
-                AppColors.grey600,
-                () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()))),
-          ];
-
-          return GridView.count(
-            crossAxisCount: cols,
-            crossAxisSpacing: sp,
-            mainAxisSpacing: sp,
-            childAspectRatio: ar,
-            physics: const NeverScrollableScrollPhysics(),
-            children: items,
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _adminCard(BuildContext context, double ch, IconData icon, String title,
-      String subtitle, Color color, VoidCallback onTap) {
-    final ic  = ch * 0.38;
-    final ip  = ic * 0.22;
-    final is_ = ic - ip * 2;
-    final vp  = ch * 0.08;
-    final g1  = ch * 0.07;
-    final g2  = ch * 0.03;
-    final ts  = (ch * 0.13).clamp(11.0, 16.0);
-    final ss  = (ch * 0.10).clamp(9.0, 13.0);
-
-    return Card(
-      elevation: 3,
-      shadowColor: Colors.black.withValues(alpha: 0.1),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: Container(
-          decoration: BoxDecoration(
-              color: Colors.white, borderRadius: BorderRadius.circular(20)),
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: vp * 1.2, vertical: vp),
-            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Container(
-                width: ic, height: ic, padding: EdgeInsets.all(ip),
-                decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.1), shape: BoxShape.circle),
-                child: Icon(icon, size: is_, color: color),
-              ),
-              SizedBox(height: g1),
-              Text(title,
-                  style: TextStyle(
-                      fontSize: ts,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary),
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis),
-              SizedBox(height: g2),
-              Text(subtitle,
-                  style: TextStyle(fontSize: ss, color: AppColors.grey600),
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis),
-            ]),
-          ),
-        ),
-      ),
-    );
-  }
-
   // ── 네비게이션 헬퍼 ─────────────────────────────────────────
   Future<void> _switchToAdminMode(BuildContext context, UserProvider up) async {
     final bizIds = up.currentUser?.subAdminBusinessIds ?? [];
@@ -1499,6 +1476,12 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     }
     if (selected == null || !context.mounted) return;
     await up.switchToAdminMode(selected);
+    if (!context.mounted) return;
+    // 관리자 홈으로 화면 교체 — 뒤로가기 없이 전환
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => const BusinessAdminHomeScreen()),
+    );
   }
 
   Future<void> _switchBusiness(BuildContext context, UserProvider up) async {
@@ -1619,3 +1602,4 @@ class _BusinessSelectorSheet extends StatelessWidget {
     );
   }
 }
+

@@ -31,6 +31,8 @@ class PayrollOverviewScreen extends StatefulWidget {
 }
 
 class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
+  // [PERF-7] DateTime.now()를 필드에 1회만 캡처 — _buildMonthGrid build()마다 재생성 방지
+  final DateTime _now = DateTime.now();
   int _selectedYear = DateTime.now().year;
   String? _businessId;
   bool _isLoading = true;
@@ -70,8 +72,8 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
       }
       if (!mounted) return;
       if (businesses.isEmpty) {
+        // setState 전에 mounted는 이미 위에서 보장됨 — 중복 체크 제거
         setState(() => _isLoading = false);
-        if (!mounted) return;
         ToastHelper.showWarning('사업장을 먼저 등록해주세요');
         Navigator.pop(context);
         return;
@@ -339,7 +341,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
   }
 
   Widget _buildMonthGrid(ThemeData theme) {
-    final now = DateTime.now();
+    final now = _now; // [PERF-7] 캐시된 필드 사용
     final gridPadding = ResponsiveHelper.spacing(context, 16);
     final columnSpacing = ResponsiveHelper.spacing(context, 12);
     return LayoutBuilder(
@@ -349,7 +351,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
         const itemHeight = 100.0;
         final ratio = itemWidth / itemHeight;
         return GridView.builder(
-          padding: EdgeInsets.all(gridPadding),
+          padding: ResponsiveHelper.listPadding(context),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
             crossAxisSpacing: columnSpacing,
@@ -386,7 +388,7 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
             },
       child: Container(
         decoration: BoxDecoration(
-          color: isEmpty ? AppColors.grey100 : Colors.white,
+          color: isEmpty ? AppColors.grey100 : AppColors.surface,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: isEmpty ? AppColors.grey200 : theme.primaryColor.withValues(alpha: 0.2),
@@ -552,7 +554,10 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
       final fresh = PayrollSummaryModel.tryFromFirestore(snap);
       if (fresh == null) return;
       setState(() => _liveSummary = fresh);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('❌ 급여 요약 새로고침 실패: $e');
+      if (mounted) ToastHelper.showError('새로고침에 실패했습니다');
+    }
   }
 
   Future<void> _loadWorkers() async {
@@ -718,7 +723,7 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
         final theme = Theme.of(context);
         return Container(
           decoration: const BoxDecoration(
-            color: Colors.white,
+            color: AppColors.surface,
             borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
           ),
           child: Column(
@@ -961,7 +966,7 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
       ),
       child: Container(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.surface,
           borderRadius: BorderRadius.circular(10),
           boxShadow: [
             BoxShadow(

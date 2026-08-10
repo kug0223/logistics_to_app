@@ -20,6 +20,7 @@ class TrustScoreInfoDialog extends StatefulWidget {
   static Future<void> show(BuildContext context) {
     return showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => const TrustScoreInfoDialog(),
     );
   }
@@ -273,7 +274,7 @@ class _TrustScoreInfoDialogState extends State<TrustScoreInfoDialog> {
                 pointColor: AppColors.success,
                 subText: '10일↑: +4 / 20일↑: +8 / 40일↑: +12 / 60일↑: +15',
               ),
-              Divider(height: 1, indent: 44, color: AppColors.grey100),
+              const Divider(height: 1, indent: 44, color: AppColors.grey100),
               _buildRuleItem(
                 context,
                 emoji: '⭐',
@@ -282,7 +283,7 @@ class _TrustScoreInfoDialogState extends State<TrustScoreInfoDialog> {
                 pointColor: AppColors.success,
                 subText: '평점 3.0 기준, 리뷰 5개 이상이면 풀반영',
               ),
-              Divider(height: 1, indent: 44, color: AppColors.grey100),
+              const Divider(height: 1, indent: 44, color: AppColors.grey100),
               _buildRuleItem(
                 context,
                 emoji: '👍',
@@ -328,7 +329,7 @@ class _TrustScoreInfoDialogState extends State<TrustScoreInfoDialog> {
                 pointColor: AppColors.warning,
                 subText: '1~2회: $late1점/회 · 3~5회: $late2점/회 · 6회+: $late3점/회',
               ),
-              Divider(height: 1, indent: 44, color: AppColors.grey100),
+              const Divider(height: 1, indent: 44, color: AppColors.grey100),
               _buildRuleItem(
                 context,
                 emoji: '🚫',
@@ -337,7 +338,7 @@ class _TrustScoreInfoDialogState extends State<TrustScoreInfoDialog> {
                 pointColor: AppColors.error,
                 subText: '1회: $noshow1점 · 2회: $noshow2점 · 3회+: $noshow3점씩 누진',
               ),
-              Divider(height: 1, indent: 44, color: AppColors.grey100),
+              const Divider(height: 1, indent: 44, color: AppColors.grey100),
               _buildRuleItem(
                 context,
                 emoji: '📉',

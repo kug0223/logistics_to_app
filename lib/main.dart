@@ -1,4 +1,4 @@
-import 'dart:async' show unawaited;
+import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -76,15 +76,22 @@ void main() async {
     // Firebase App Check — API 키 무단 사용 방지
     // 릴리즈: Play Integrity(Android) / DeviceCheck(iOS) 사용
     // 디버그: DebugProvider (Firebase 콘솔에서 디버그 토큰 등록 필요)
-    // await 제거: 토큰은 첫 Firebase 요청 시 lazily 발급 — runApp() 블로킹 불필요
-    unawaited(FirebaseAppCheck.instance.activate(
+    // activate() 후 getToken()으로 토큰을 미리 발급해 캐시에 저장:
+    // 앱 시작 시 여러 CF가 동시에 호출되면 각각이 토큰을 요청하면서
+    // SDK 내부 "Too many attempts" 에러가 발생하고 CF에 깨진 토큰이 전달됨.
+    // 미리 토큰을 받아두면 이후 모든 CF 호출은 캐시된 토큰을 사용함.
+    await FirebaseAppCheck.instance.activate(
       androidProvider: kDebugMode
           ? AndroidProvider.debug
           : AndroidProvider.playIntegrity,
       appleProvider: kDebugMode
           ? AppleProvider.debug
           : AppleProvider.deviceCheck,
-    ));
+    );
+    // 토큰 미리 발급 (실패해도 앱 시작 차단 안 함)
+    // 앱 시작 시 여러 CF가 동시에 호출되면 각각이 토큰을 요청하면서
+    // SDK 내부 "Too many attempts" 에러 방지 — 캐시에 미리 저장
+    await FirebaseAppCheck.instance.getToken().catchError((_) => null);
 
     // Firestore 캐시 설정 (서버 우선)
     FirebaseFirestore.instance.settings = const Settings(

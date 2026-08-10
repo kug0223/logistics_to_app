@@ -24,10 +24,11 @@ class TOSectionContainer extends StatelessWidget {
         color: backgroundColor ?? Colors.white,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
+          // [PERF] blurRadius 15→8: 스크롤 중 8~9개 카드 동시 페인트 부하 경감
           BoxShadow(
-            color: AppColors.grey500.withValues(alpha: 0.15),
-            blurRadius: 15,
-            offset: const Offset(0, 4),
+            color: AppColors.grey500.withValues(alpha: 0.08),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
         ],
       ),

@@ -538,6 +538,16 @@ extension ApplicationFirestore on FirestoreService {
           applicationId: applicationId,
           cancelReason: message,
         ));
+      } else if (prevStatus == AppStatus.pending && status == AppStatus.contractPending) {
+        // 승인 → 계약서 대기 전환 시 근로자에게 알림
+        await createNotification(NotificationModel.createApplicationConfirmed(
+          userId: applicantUid,
+          businessName: appData['businessName'] as String? ?? '',
+          businessId: appData['businessId'] as String? ?? '',
+          workType: appData['selectedWorkType'] as String? ?? '',
+          workDate: (appData['workDate'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
+          applicationId: applicationId,
+        ));
       } else if (prevStatus == AppStatus.pending && status == AppStatus.rejected) {
         await createNotification(NotificationModel.createApplicationRejected(
           userId: applicantUid,
@@ -1193,30 +1203,6 @@ extension ApplicationFirestore on FirestoreService {
     }
   }
 
-  /// 지원자 거절 처리 + 근무자 알림 발송 (지원명단 다이얼로그용)
-  ///
-  /// [D-04 수정] 알림 중복 발송 제거:
-  /// updateApplicationStatus() 내부에서 PENDING→REJECTED 전이 시
-  /// createNotification(createApplicationRejected(...))를 이미 호출하므로,
-  /// 이전에 존재하던 직접 Firestore 쓰기(중복 경로)를 제거했다.
-  /// rejectReason은 message 파라미터로 updateApplicationStatus()에 전달한다.
-  Future<void> rejectApplicationWithNotification({
-    required String applicationId,
-    required String workerUid,
-    required String businessId,
-    required String businessName,
-    required String workType,
-    required DateTime workDate,
-    required String rejectedBy,
-    String? rejectReason,
-  }) async {
-    await updateApplicationStatus(
-      applicationId: applicationId,
-      status: AppStatus.rejected,
-      rejectedBy: rejectedBy,
-      message: rejectReason,
-    );
-  }
 
   /// 특정 날짜 × 사업장의 확정 근무자 조회 (단기 + 장기 병합)
   /// [CF 이전 2026-07-13] callableGetApplicationsByBiz (workDateGteMs/LtMs, workEndDateGteMs)

@@ -140,7 +140,8 @@ class _InsuranceRateSettingsScreenState
         IconButton(
           icon: const Icon(Icons.add, color: Colors.white),
           tooltip: '연도 추가',
-          onPressed: _addYear,
+          // 저장 중 탭 시 _selectedYear 변경 → 저장 데이터 덮어쓰기 방지
+          onPressed: _isSaving ? null : _addYear,
         ),
       ],
       body: _isLoading
@@ -204,7 +205,7 @@ class _InsuranceRateSettingsScreenState
             style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-          _buildSection('4대보험 요율 (%) — 2026년 기준', [
+          _buildSection('4대보험 요율 (%) — $_selectedYear년 기준', [
             _field('국민연금', _ctrl.pension, '4.75'),   // 2026: 9.5% × 1/2
             _field('건강보험', _ctrl.health, '3.595'),   // 2026: 7.19% × 1/2
             _field('장기요양 (건보료 대비 %)', _ctrl.ltc, '13.14'), // 2026: 0.9448/7.19×100

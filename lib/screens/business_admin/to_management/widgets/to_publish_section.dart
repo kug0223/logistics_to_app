@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../../utils/responsive_helper.dart';
 import '../../../../utils/format_helper.dart';
@@ -9,6 +9,9 @@ import '../../../../widgets/app_select_field.dart';
 /// ✨ TO 공개 설정 섹션
 /// create_to_screen, edit_to_screen에서 공통으로 사용
 class TOPublishSection extends StatelessWidget {
+  // ─── 포맷터 캐싱 (.map() 루프 안 재생성 방지) ────────────────
+  static final _publishFmt = DateFormat('M/d (E) HH:mm', 'ko_KR');
+
   /// 공개 모드: 'immediate' (즉시) | 'scheduled' (예약) | 'draft' (미공개)
   final String publishMode;
   final void Function(String mode) onPublishModeChanged;
@@ -119,7 +122,7 @@ class TOPublishSection extends StatelessWidget {
 
           if (isLongTerm && onPostingDurationChanged != null) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            Divider(color: AppColors.grey200),
+            const Divider(color: AppColors.grey200),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             _buildPostingDurationSection(context, theme),
           ],
@@ -326,8 +329,7 @@ class TOPublishSection extends StatelessWidget {
           
           ...displayDates.map((date) {
             final publishAt = _calculatePublishAt(date);
-            final publishFormat = DateFormat('M/d (E) HH:mm', 'ko_KR');
-            
+
             return Padding(
               padding: EdgeInsets.only(
                 bottom: ResponsiveHelper.spacing(context, 4),
@@ -346,7 +348,7 @@ class TOPublishSection extends StatelessWidget {
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Text(
-                    '${publishFormat.format(publishAt)} 공개',
+                    '${_publishFmt.format(publishAt)} 공개',
                     style: ResponsiveHelper.smallStyle(
                       context,
                       color: AppColors.warningDark,

@@ -170,6 +170,7 @@ class TOListDialogs {
     
     final confirmed = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StyledDialog(
         title: '공고 재오픈',
         icon: Icons.lock_open,
@@ -232,6 +233,7 @@ class TOListDialogs {
   void _showTimeExpiredDialog(TOModel to) {
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StyledDialog(
         title: '재오픈 불가',
         icon: Icons.error_outline,

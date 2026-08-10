@@ -299,7 +299,7 @@ class TOWorkDetailCard extends StatelessWidget {
           ),
 
           // ── 구분선 ────────────────────────────────────────────
-          Divider(height: 1, color: AppColors.grey100),
+          const Divider(height: 1, color: AppColors.grey100),
 
           // ── 메인 스탯: 급여 + 인원 ────────────────────────────
           Padding(

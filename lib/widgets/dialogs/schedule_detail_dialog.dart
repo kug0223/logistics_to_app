@@ -356,7 +356,7 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
           ),
 
           SizedBox(height: ResponsiveHelper.spacing(context, 14)),
-          Divider(height: 1, color: AppColors.grey100),
+          const Divider(height: 1, color: AppColors.grey100),
           SizedBox(height: ResponsiveHelper.spacing(context, 14)),
 
           // 근무 시간
@@ -558,7 +558,7 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
           // 찾아오는 방법 (교통편 사진 + 상세설명)
           if (_hasTransportInfo) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            Divider(height: 1, color: AppColors.grey100),
+            const Divider(height: 1, color: AppColors.grey100),
             SizedBox(height: ResponsiveHelper.spacing(context, 14)),
             Row(
               children: [
@@ -825,7 +825,7 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
                       ],
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(ctx, 20)),
-                    Divider(height: 1, color: AppColors.grey200),
+                    const Divider(height: 1, color: AppColors.grey200),
                     SizedBox(height: ResponsiveHelper.spacing(ctx, 20)),
 
                     // 근무 시간
@@ -857,7 +857,7 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
                     // 업무유형 상세 (등록된 경우)
                     if (hasDetail) ...[
                       SizedBox(height: ResponsiveHelper.spacing(ctx, 24)),
-                      Divider(height: 1, color: AppColors.grey200),
+                      const Divider(height: 1, color: AppColors.grey200),
                       SizedBox(height: ResponsiveHelper.spacing(ctx, 20)),
                       _buildWorkTypeImages(ctx, wt),
                       if (wt.description != null) ...[

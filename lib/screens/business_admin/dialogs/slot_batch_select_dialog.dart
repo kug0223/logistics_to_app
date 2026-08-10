@@ -42,6 +42,7 @@ class SlotBatchSelectDialog extends StatefulWidget {
   }) {
     return showDialog<List<SlotModel>>(
       context: context,
+      barrierDismissible: false,
       builder: (_) => SlotBatchSelectDialog(
         to: to,
         firestoreService: firestoreService,

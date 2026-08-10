@@ -193,12 +193,20 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════
     match /users/{userId} {
 
-      // get: 본인·슈퍼어드민은 전체, 사업장관리자·하위관리자는 근무자(USER)만 조회
-      // (타 관리자의 FCM 토큰·은행계좌 등 민감정보 교차 접근 방지)
+      // get: 본인·슈퍼어드민만 직접 조회 허용
+      // [SEC-FIX 2026-08-10] 관리자 GET 제거 — 소속 검증 불가(users 문서에 businessId 없음)
+      //   이전: (isBusinessAdmin() || isSubAdmin()) && role == 'USER' → 타 사업장 근로자까지 조회 가능 취약점
+      //   이후: 관리자의 근로자 조회는 반드시 CF callableGetWorkerBasicProfile / callableGetUsersBatch 경유
+      //         CF: assertBizAdmin(칼러Uid, businessId) + applications 컬렉션 소속 검증 → 타 사업장 차단
+      //
+      //   영향 없는 기능 목록 (이미 CF 전환 완료):
+      //     · admin_contract_management_screen — callableGetWorkerBasicProfile
+      //     · 모든 관리자 배치 조회 — callableGetUsersBatch (businessId 서버 검증)
+      //     · fixed_worker_management_dialog — applicantName 직접 사용 (DB 조회 제거)
+      //     · schedule_card.dart — 근로자가 자신(isOwner) 문서 조회 (영향 없음)
       allow get: if isLoggedIn() && (
                    isOwner(userId) ||
-                   isSuperAdmin() ||
-                   ((isBusinessAdmin() || isSubAdmin()) && resource.data.get('role', '') == 'USER')
+                   isSuperAdmin()
                  );
 
       // 쿼리(LIST):
@@ -949,7 +957,14 @@ service cloud.firestore {
                        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
                         request.resource.data.get('status', '') in
                           ['scheduled', 'checked_in', 'checked_out', 'absent', 'NO_SHOW'])) ||
-                      isSuperAdmin()
+                      // [H-1 수정 2026-08-07] isSuperAdmin 단독 OR 분기에도 transferred 보호 적용
+                      //   기존: isSuperAdmin()이면 ADMIN_BRANCH 조건(945-947) 없이 통과
+                      //   → REST API 직접 호출로 transferred 기록의 finalWage 위변조 가능
+                      //   수정: 슈퍼어드민도 지급 완료 임금은 변경 불가 — 급여 증빙 위변조 방지
+                      (isSuperAdmin() &&
+                       !(resource.data.get('wageStatus', '') == 'transferred' &&
+                         request.resource.data.diff(resource.data).affectedKeys()
+                           .hasAny(['finalWage', 'wageDetail'])))
                     );
 
       // 관리자: 소속 사업장 출근 기록 삭제 허용 (TO 삭제 시 고아 데이터 정리)
@@ -2060,6 +2075,16 @@ service cloud.firestore {
     match /help_faqs/{docId} {
       allow read: if isLoggedIn();
       allow write: if isSuperAdmin();
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // worker_locations — CF Admin SDK 전용 (GPS 위치 기록)
+    // [M-8 수정 2026-08-07] 와일드카드 catch-all 의존 대신 명시적 차단 규칙 추가
+    //   firestore.indexes.json에 인덱스가 정의된 실 사용 컬렉션이므로
+    //   향후 rules 리팩토링 시 실수로 노출될 위험 차단
+    // ═══════════════════════════════════════════════════════════
+    match /worker_locations/{locationId} {
+      allow read, write: if false;
     }
 
     // ═══════════════════════════════════════════════════════════

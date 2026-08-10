@@ -208,11 +208,15 @@ class _LegalTermsManagementScreenState
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(children: [
-                  Text(
-                    item.title,
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: isActive ? null : AppColors.grey400,
+                  // Flexible 필수: 긴 약관 제목 + 필수/선택 배지 조합 시 overflow 방지
+                  Flexible(
+                    child: Text(
+                      item.title,
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: isActive ? null : AppColors.grey400,
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 6)),
@@ -339,34 +343,27 @@ class _TermsEditScreenState extends State<_TermsEditScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: theme.primaryColor,
-        foregroundColor: Colors.white,
-        title: Text('약관 편집',
-            style: ResponsiveHelper.subtitleStyle(context,
-                color: Colors.white)),
-        actions: [
-          if (_hasChanges)
-            TextButton(
-              onPressed: () {
-                if (_titleCtrl.text.trim().isEmpty) {
-                  ToastHelper.showError('제목을 입력하세요');
-                  return;
-                }
-                if (_contentCtrl.text.trim().isEmpty) {
-                  ToastHelper.showError('내용을 입력하세요');
-                  return;
-                }
-                Navigator.pop(context, _buildResult());
-              },
-              child: Text('저장',
-                  style: ResponsiveHelper.bodyStyle(context,
-                      color: Colors.white, fontWeight: FontWeight.bold)),
-            ),
-        ],
-      ),
+    return GradientScaffold(
+      title: '약관 편집',
+      actions: [
+        if (_hasChanges)
+          TextButton(
+            onPressed: () {
+              if (_titleCtrl.text.trim().isEmpty) {
+                ToastHelper.showError('제목을 입력하세요');
+                return;
+              }
+              if (_contentCtrl.text.trim().isEmpty) {
+                ToastHelper.showError('내용을 입력하세요');
+                return;
+              }
+              Navigator.pop(context, _buildResult());
+            },
+            child: Text('저장',
+                style: ResponsiveHelper.bodyStyle(context,
+                    color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+      ],
       body: ListView(
         padding: ResponsiveHelper.listPadding(context),
         children: [

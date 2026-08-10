@@ -410,12 +410,24 @@ extension AttendanceFirestore on FirestoreService {
       final docRef = await _firestore.collection('schedule_change_requests').add(scrMap);
       debugPrint('✅ 스케줄 변경 요청 생성 완료: ${docRef.id}');
 
-      // 🔔 알림 생성 (관리자에게) - 지원자가 요청한 경우 (fire-and-forget)
+      // 🔔 알림 생성 (fire-and-forget)
       if (request.requestedBy == RequesterType.APPLICANT) {
+        // 지원자가 요청한 경우 → 관리자에게 알림
         // ignore: unawaited_futures
         _sendScheduleChangeRequestNotification(
           businessId: request.businessId,
           requesterName: request.applicantName,
+          requestType: request.requestType.name,
+          targetDate: request.targetDate,
+          requestId: docRef.id,
+          reason: request.reason,
+        );
+      } else if (request.requestedBy == RequesterType.ADMIN) {
+        // 관리자가 요청한 경우 (NO_WORK·EXTRA_WORK 등) → 근로자에게 알림
+        // ignore: unawaited_futures
+        _sendScheduleChangeRequestToWorkerNotification(
+          applicantUid: request.applicantUid,
+          businessId: request.businessId,
           requestType: request.requestType.name,
           targetDate: request.targetDate,
           requestId: docRef.id,
@@ -648,6 +660,40 @@ extension AttendanceFirestore on FirestoreService {
       debugPrint('🔔 스케줄 변경 요청 알림 전송 완료 → 관리자: ${adminIds.length}명');
     } catch (e) {
       debugPrint('⚠️ 스케줄 변경 요청 알림 전송 실패: $e');
+    }
+  }
+
+  /// 🔔 스케줄 변경 요청 알림 전송 (근로자에게) — 관리자가 NO_WORK·EXTRA_WORK 요청한 경우
+  Future<void> _sendScheduleChangeRequestToWorkerNotification({
+    required String applicantUid,
+    required String businessId,
+    required String requestType,
+    required DateTime targetDate,
+    required String requestId,
+    String? reason,
+  }) async {
+    try {
+      final businessDoc = await _firestore
+          .collection('businesses')
+          .doc(businessId)
+          .get(const GetOptions(source: Source.server));
+      if (!businessDoc.exists) return;
+      final businessName = businessDoc.data()?['name'] as String? ?? '사업장';
+
+      await createNotification(
+        NotificationModel.createScheduleChangeRequested(
+          userId: applicantUid,
+          requesterName: businessName,
+          requestType: requestType,
+          targetDate: targetDate,
+          requestId: requestId,
+          businessId: businessId,
+          reason: reason,
+        ),
+      );
+      debugPrint('🔔 스케줄 변경 요청 알림 전송 완료 → 근로자: $applicantUid');
+    } catch (e) {
+      debugPrint('⚠️ 스케줄 변경 요청 근로자 알림 전송 실패: $e');
     }
   }
 

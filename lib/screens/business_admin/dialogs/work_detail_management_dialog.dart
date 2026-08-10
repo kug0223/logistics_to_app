@@ -45,6 +45,7 @@ class WorkDetailManagementDialog {
 
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           // 선택된 상태 확인

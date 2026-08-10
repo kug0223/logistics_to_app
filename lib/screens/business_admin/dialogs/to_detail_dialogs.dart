@@ -46,6 +46,7 @@ class TODetailDialogs {
 
     await showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StyledDialog(
         title: '${dateFormat.format(date)} 확정 명단 (${confirmedList.length}명)',
         icon: Icons.list_alt,
@@ -142,6 +143,7 @@ class TODetailDialogs {
   ) async {
     await showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StyledDialog(
         title: '${work.workDetail.workType} 지원자 (${work.totalApplicants}명)',
         icon: Icons.people,

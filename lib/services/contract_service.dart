@@ -155,20 +155,9 @@ class ContractService {
       updatedAt: now,
     );
 
-    // 근무자에게 서명 요청 알림
-    try {
-      await _firestoreService.createNotification(
-        NotificationModel.createContractSignRequested(
-          userId: contract.workerId,
-          businessName: contract.snapshot.businessName,
-          businessId: contract.businessId,
-          contractId: contract.id,
-          applicationId: contract.applicationId,
-        ),
-      );
-    } catch (e) {
-      debugPrint('계약서 알림 발송 실패: $e');
-    }
+    // [FCM-FIX 2026-08-10] 클라이언트 알림 발송 제거 — callableFinalizeEmployerSignature CF 내부로 이전
+    // CF가 계약서 저장 직후 notifications 문서를 직접 write하므로 원자성 보장됨
+    // (이전 클라이언트 createNotification 호출은 CF 반환 후 크래시 시 영구 누락 위험이 있었음)
 
     return updated;
   }

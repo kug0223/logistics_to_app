@@ -285,7 +285,7 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
     }
 
     return ListView(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+      padding: ResponsiveHelper.listPadding(context),
       children: [
         // 근태 현황 + 리뷰 인라인 통합
         _buildAttendanceSummary(data),
@@ -532,7 +532,7 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
   // ─── 유틸 ─────────────────────────────────────────────────
 
   BoxDecoration _cardDecoration() => BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(

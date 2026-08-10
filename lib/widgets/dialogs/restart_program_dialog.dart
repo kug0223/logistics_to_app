@@ -1,4 +1,4 @@
-﻿// lib/widgets/dialogs/restart_program_dialog.dart
+// lib/widgets/dialogs/restart_program_dialog.dart
 
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
@@ -282,7 +282,7 @@ class _RestartProgramDialogState extends State<RestartProgramDialog> {
           ),
           
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-          Divider(height: 1),
+          const Divider(height: 1),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           
           // 신뢰도

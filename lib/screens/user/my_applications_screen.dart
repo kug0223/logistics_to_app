@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 import '../../models/core/application_model.dart';
 import '../../models/core/attendance_model.dart';
@@ -13,6 +14,7 @@ import '../../models/core/review_request_model.dart';
 import '../../models/core/to_model.dart';
 import '../../screens/contract/contract_sign_screen.dart';
 import '../../screens/user/interim_settlement_request_screen.dart';
+import '../../widgets/dialogs/long_term_work_management_dialog.dart';
 import '../../screens/common/job_posting_screen.dart';
 import '../../services/contract_service.dart';
 import '../../services/firestore_service.dart';
@@ -33,7 +35,9 @@ import '../../widgets/common/app_tab_label.dart';
 
 /// 내 지원 내역 화면 (리팩토링 버전)
 class MyApplicationsScreen extends StatefulWidget {
-  const MyApplicationsScreen({super.key});
+  /// 초기 탭 인덱스 — 홈화면 초대 배너 탭 이동 시 6('초대' 탭) 전달
+  final int initialTabIndex;
+  const MyApplicationsScreen({super.key, this.initialTabIndex = 0});
 
   @override
   State<MyApplicationsScreen> createState() => _MyApplicationsScreenState();
@@ -41,7 +45,12 @@ class MyApplicationsScreen extends StatefulWidget {
 
 class _MyApplicationsScreenState extends State<MyApplicationsScreen>
     with TickerProviderStateMixin {
-  static const _tabLabels = ['전체', '대기중', '확정', '계약대기', '거절', '취소'];
+  // ─── 포맷터 캐싱 (itemBuilder마다 재생성 방지) ───────────────
+  static final _appliedFmt = DateFormat('yy.MM.dd HH:mm');
+  static final _mdhmFmt    = DateFormat('MM.dd HH:mm');
+  static final _mdFmt      = DateFormat('MM.dd');
+
+  static const _tabLabels = ['전체', '대기중', '확정', '계약대기', '거절', '취소', '초대'];
   static const _tabFilters = [
     'ALL',
     AppStatus.pending,
@@ -49,6 +58,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen>
     AppStatus.contractPending,
     AppStatus.rejected,
     AppStatus.canceled,
+    'INVITE', // INVITED + EXPIRED 상태 통합 탭
   ];
   final FirestoreService _firestoreService = FirestoreService();
   final ContractService _contractService = ContractService();
@@ -80,6 +90,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen>
   static const int _maxAutoLoad = 5;
 
   final Set<String> _cancellingIds = {};
+  final Set<String> _acceptingIds = {};
+  final Set<String> _decliningIds = {};
   final Set<String> _reviewDialogOpenIds = {};
   bool _isContractSignOpening = false;
 
@@ -88,7 +100,11 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen>
   @override
   void initState() {
     super.initState();
-    _tabCtrl = TabController(length: _tabLabels.length, vsync: this);
+    _tabCtrl = TabController(
+      length: _tabLabels.length,
+      vsync: this,
+      initialIndex: widget.initialTabIndex.clamp(0, _tabLabels.length - 1),
+    );
     _tabCtrl.addListener(() {
       if (!_tabCtrl.indexIsChanging) {
         // M-1: 탭 전환은 클라이언트 필터 변경 — _hasMore는 서버 페이지 상태라 건드리지 않음
@@ -386,10 +402,19 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen>
 
   List<_ApplicationWithTO> _computeFilteredApplications() {
     if (_currentFilter == 'ALL') return _applications;
+    // 초대 탭: INVITED + EXPIRED 통합 표시
+    if (_currentFilter == 'INVITE') {
+      return _applications
+          .where((item) => AppStatus.inviteStates.contains(item.application.status))
+          .toList();
+    }
     return _applications.where((item) {
       final status = item.application.status;
       if (_currentFilter == AppStatus.canceled) {
-        return AppStatus.inactiveStates.contains(status) && status != AppStatus.rejected;
+        // 초대 관련 상태(INVITED/EXPIRED)는 '취소' 탭에서 제외 — '초대' 탭 전용
+        return AppStatus.inactiveStates.contains(status)
+            && status != AppStatus.rejected
+            && !AppStatus.inviteStates.contains(status);
       }
       if (_currentFilter == AppStatus.confirmed) {
         return status == AppStatus.confirmed;
@@ -399,6 +424,74 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen>
       }
       return status == _currentFilter;
     }).toList();
+  }
+
+  /// 초대 수락 — CF callableAcceptTOInvitation
+  Future<void> _acceptInvite(String applicationId) async {
+    if (_acceptingIds.contains(applicationId)) return;
+    final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
+    if (uid == null) { ToastHelper.showError('로그인이 필요합니다.'); return; }
+
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: '초대 수락',
+      message: '이 업무에 참여하시겠습니까?\n수락 후 일정 충돌이 없으면 확정됩니다.',
+      confirmText: '수락',
+      cancelText: '취소',
+      icon: Icons.check_circle_outline,
+      confirmColor: AppColors.success,
+    );
+    if (!confirmed || !mounted) return;
+
+    setState(() => _acceptingIds.add(applicationId));
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableAcceptTOInvitation');
+      await callable.call({'applicationId': applicationId});
+      if (!mounted) return;
+      ToastHelper.showSuccess('초대를 수락했습니다!');
+      _loadApplications();
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('❌ 초대 수락 오류: ${e.code} — ${e.message}');
+      if (mounted) ToastHelper.showError(e.message ?? '수락 중 오류가 발생했습니다.');
+    } catch (e) {
+      debugPrint('❌ 초대 수락 오류: $e');
+      if (mounted) ToastHelper.showError('수락 중 오류가 발생했습니다.');
+    } finally {
+      if (mounted) setState(() => _acceptingIds.remove(applicationId));
+    }
+  }
+
+  /// 초대 거절 — CF callableDeclineTOInvitation
+  Future<void> _declineInvite(String applicationId) async {
+    if (_decliningIds.contains(applicationId)) return;
+    final uid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
+    if (uid == null) { ToastHelper.showError('로그인이 필요합니다.'); return; }
+
+    final confirmed = await DialogHelper.showCancelConfirm(
+      context,
+      title: '초대 거절',
+      message: '초대를 거절하시겠습니까?',
+    );
+    if (!confirmed || !mounted) return;
+
+    setState(() => _decliningIds.add(applicationId));
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableDeclineTOInvitation');
+      await callable.call({'applicationId': applicationId});
+      if (!mounted) return;
+      ToastHelper.showInfo('초대를 거절했습니다.');
+      _loadApplications();
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('❌ 초대 거절 오류: ${e.code} — ${e.message}');
+      if (mounted) ToastHelper.showError(e.message ?? '거절 중 오류가 발생했습니다.');
+    } catch (e) {
+      debugPrint('❌ 초대 거절 오류: $e');
+      if (mounted) ToastHelper.showError('거절 중 오류가 발생했습니다.');
+    } finally {
+      if (mounted) setState(() => _decliningIds.remove(applicationId));
+    }
   }
 
   Future<void> _cancelApplication(String applicationId) async {
@@ -473,26 +566,33 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen>
         dividerColor: Colors.transparent,
         tabs: _tabLabels.map((l) => Tab(child: AppTabLabel(label: l))).toList(),
       ),
-      body: _isLoading
-          ? const ApplicationListSkeleton()
-          : _filteredApplications.isEmpty
-              ? _buildEmptyState()
-              : RefreshIndicator(
-                  onRefresh: _loadApplications,
-                  child: ListView.builder(
-                    controller: _scrollController,
-                    padding: ResponsiveHelper.listPadding(context),
-                    itemCount: _filteredApplications.length + (_hasMore ? 1 : 0),
-                    itemBuilder: (context, index) {
-                      if (index == _filteredApplications.length) {
-                        return _isLoadingMore
-                            ? const LoadingWidget()
-                            : const SizedBox.shrink();
-                      }
-                      return _buildApplicationCard(_filteredApplications[index]);
-                    },
-                  ),
-                ),
+      body: _buildBody(),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // body — filteredApplications를 한 번만 읽어 itemBuilder 클로저에 전달
+  // ═══════════════════════════════════════════════════════════
+
+  Widget _buildBody() {
+    if (_isLoading) return const ApplicationListSkeleton();
+    final filtered = _filteredApplications; // getter를 단 한 번만 호출
+    if (filtered.isEmpty) return _buildEmptyState();
+    return RefreshIndicator(
+      onRefresh: _loadApplications,
+      child: ListView.builder(
+        controller: _scrollController,
+        padding: ResponsiveHelper.listPadding(context),
+        itemCount: filtered.length + (_hasMore ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (index == filtered.length) {
+            return _isLoadingMore
+                ? const LoadingWidget()
+                : const SizedBox.shrink();
+          }
+          return _buildApplicationCard(filtered[index]);
+        },
+      ),
     );
   }
 
@@ -501,10 +601,15 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen>
   // ═══════════════════════════════════════════════════════════
 
   Widget _buildEmptyState() {
+    final isInviteTab = _currentFilter == 'INVITE';
     return AppEmptyState(
-      icon: Icons.assignment_outlined,
-      title: _currentFilter == 'ALL' ? '지원 내역이 없습니다' : '해당 상태의 지원이 없습니다',
-      subtitle: 'TO에 지원해보세요!',
+      icon: isInviteTab ? Icons.mail_outline : Icons.assignment_outlined,
+      title: _currentFilter == 'ALL'
+          ? '지원 내역이 없습니다'
+          : isInviteTab
+              ? '받은 초대가 없습니다'
+              : '해당 상태의 지원이 없습니다',
+      subtitle: isInviteTab ? '관리자의 초대를 기다려보세요!' : 'TO에 지원해보세요!',
     );
   }
 
@@ -552,7 +657,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen>
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 6)),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: statusInfo.color.withValues(alpha: 0.3),
@@ -603,6 +708,11 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen>
                   _buildLongTermStatusSection(app),
                 if (app.isLongTermApplication && AppStatus.confirmedStatuses.contains(app.status))
                   _buildInterimSettlementButton(app),
+                if (app.isLongTermApplication &&
+                    AppStatus.confirmedStatuses.contains(app.status) &&
+                    !app.isTerminationApproved &&
+                    app.resignStatus != 'PENDING')
+                  _buildResignButton(app),
                 _buildActionStrip(app, now: now),
               ],
             ),
@@ -623,7 +733,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen>
         SizedBox(width: ResponsiveHelper.spacing(context, 4)),
         Expanded(
           child: Text(
-            '${to.businessName}  ·  ${DateFormat('yy.MM.dd HH:mm').format(app.appliedAt)}',
+            '${to.businessName}  ·  ${_appliedFmt.format(app.appliedAt)}',
             style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -821,6 +931,39 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen>
   Widget _buildActionStrip(ApplicationModel app, {required DateTime now}) {
     final chips = <Widget>[];
 
+    // ── 초대받음: 수락 / 거절 ───────────────────────────────
+    if (app.status == AppStatus.invited) {
+      chips.add(_buildChip(
+        icon: Icons.check_circle_outline,
+        label: '수락',
+        color: AppColors.success,
+        onTap: _acceptingIds.contains(app.id) ? null : () => _acceptInvite(app.id),
+        showArrow: true,
+      ));
+      chips.add(_buildChip(
+        icon: Icons.close,
+        label: '거절',
+        color: AppColors.error,
+        onTap: _decliningIds.contains(app.id) ? null : () => _declineInvite(app.id),
+      ));
+      if (app.inviteExpiresAt != null) {
+        chips.add(_buildChip(
+          icon: Icons.timer_outlined,
+          label: '~${_mdhmFmt.format(app.inviteExpiresAt!)} 만료',
+          color: AppColors.grey500,
+        ));
+      }
+    }
+
+    // 만료된 초대
+    if (app.status == AppStatus.expired) {
+      chips.add(_buildChip(
+        icon: Icons.timer_off_outlined,
+        label: '초대 만료됨',
+        color: AppColors.grey500,
+      ));
+    }
+
     // 자동취소 사유 칩
     if (app.status == AppStatus.autoCanceled) {
       final String reasonText;
@@ -1016,7 +1159,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen>
             AppColors.warningDark,
             AppColors.warningBg,
             app.resignRequestDate != null
-                ? '퇴사 신청 중 · 희망일 ${DateFormat('MM.dd').format(app.resignRequestDate!)}'
+                ? '퇴사 신청 중 · 희망일 ${_mdFmt.format(app.resignRequestDate!)}'
                 : '퇴사 신청 중',
           ),
         'APPROVED' || 'AUTO_APPROVED' => (
@@ -1024,7 +1167,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen>
             AppColors.successDark,
             AppColors.successBg,
             app.actualResignDate != null
-                ? '퇴사 확정 · ${DateFormat('MM.dd').format(app.actualResignDate!)}'
+                ? '퇴사 확정 · ${_mdFmt.format(app.actualResignDate!)}'
                 : '퇴사 확정',
           ),
         'REJECTED' => (
@@ -1087,7 +1230,7 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen>
             AppColors.infoDark,
             AppColors.infoBg,
             app.terminationEffectiveDate != null
-                ? '계약해지 완료 · ${DateFormat('MM.dd').format(app.terminationEffectiveDate!)}'
+                ? '계약해지 완료 · ${_mdFmt.format(app.terminationEffectiveDate!)}'
                 : '계약해지 완료',
           ),
         'REJECTED' => (
@@ -1162,6 +1305,44 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen>
         style: OutlinedButton.styleFrom(
           foregroundColor: AppColors.tealDark,
           side: BorderSide(color: AppColors.teal),
+          padding: EdgeInsets.symmetric(
+            vertical: ResponsiveHelper.spacing(context, 8),
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── 퇴사 신청 버튼 (장기근무 확정 카드, 미승인·미신청 상태) ───────────
+  Widget _buildResignButton(ApplicationModel app) {
+    final isRejected = app.resignStatus == 'REJECTED';
+    return Container(
+      margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 6)),
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: () async {
+          final allApps = _applications.map((a) => a.application).toList();
+          await showDialog<void>(
+            context: context,
+            barrierDismissible: false, // 텍스트필드 unfocus 크래시 방지
+            builder: (_) => LongTermWorkManagementDialog(
+              applications: allApps,
+              onChanged: _loadApplications,
+            ),
+          );
+        },
+        icon: Icon(Icons.logout_outlined,
+            size: ResponsiveHelper.iconSize(context, 15)),
+        label: Text(
+          isRejected ? '퇴사 재신청' : '퇴사 신청',
+          style: ResponsiveHelper.smallStyle(context),
+        ),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.error,
+          side: BorderSide(color: AppColors.error.withValues(alpha: 0.6)),
           padding: EdgeInsets.symmetric(
             vertical: ResponsiveHelper.spacing(context, 8),
           ),
@@ -1298,6 +1479,18 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen>
           label: '자동 취소',
           color: AppColors.warningDark,
           bgColor: AppColors.warningBg,
+        );
+      case AppStatus.invited:
+        return _StatusInfo(
+          label: '초대받음',
+          color: AppColors.successDark,
+          bgColor: AppColors.successBg,
+        );
+      case AppStatus.expired:
+        return _StatusInfo(
+          label: '초대 만료',
+          color: AppColors.grey600,
+          bgColor: AppColors.grey200,
         );
       default:
         return _StatusInfo(

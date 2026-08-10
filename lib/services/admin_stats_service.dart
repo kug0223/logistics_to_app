@@ -256,18 +256,16 @@ class AdminStatsService {
     final prevYearStart = DateTime(year - 1, 1, 1);
     final prevYearEnd = DateTime(year, 1, 1);
 
+    // [PERF] 전년도 리뷰(results[3])는 실제로 사용되지 않으므로 CF 호출 1회 절감
     final results = await Future.wait([
       _queryAttendance(ids, yearStart, yearEnd),
       _queryAttendance(ids, prevYearStart, prevYearEnd),
       _queryReviews(ids, year),
-      _queryReviews(ids, year - 1),
     ]);
 
     final thisYearAtt = results[0] as List<AttendanceModel>;
     final prevYearAtt = results[1] as List<AttendanceModel>;
     final thisYearReviews = results[2] as List<MonthlyReviewModel>;
-    // ignore: unused_local_variable
-    final prevYearReviews = results[3] as List<MonthlyReviewModel>;
 
     // 월별 집계
     final trendMap = <int, List<AttendanceModel>>{};

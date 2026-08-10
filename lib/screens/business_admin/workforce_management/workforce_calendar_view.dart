@@ -54,6 +54,9 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
   final Map<String, bool> _expandedSlots = {};
   final Set<String> _loadingSlots = {};
 
+  // 카드 펼침 시 자동 스크롤용
+  final ScrollController _scrollController = ScrollController();
+
   // 고정 TO용 synthetic TOItem 캐시 (reload 시 초기화)
   final Map<String, TOItem> _contractTOItems = {};
 
@@ -103,6 +106,29 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       firestoreService: _firestoreService,
       onChanged: _reload,
     );
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  /// 카드 펼침 후 맨 아래로 스크롤
+  /// — postFrameCallback을 2단계 중첩: 1단계(레이아웃 예약) → 2단계(레이아웃 완료 후 스크롤)
+  /// — setState로 인한 레이아웃 변경과 같은 프레임에서 maxScrollExtent가 아직 반영되지 않는
+  ///   타이밍 문제를 방지하기 위해 중첩 사용
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_scrollController.hasClients) return;
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOut,
+        );
+      });
+    });
   }
 
   void _reload() {
@@ -159,9 +185,8 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           final endDay = DateTime(effectiveEnd.year, effectiveEnd.month, effectiveEnd.day);
           if (dayOnly.isAfter(endDay)) return false;
         } else {
-          // 종료일 미설정 레거시 TO: 오늘 기준 1년 이후는 표시 안 함
-          final now = DateTime.now();
-          final cutoff = DateTime(now.year + 1, now.month, now.day);
+          // 종료일 미설정 레거시 TO: 오늘 기준 1년 이후는 표시 안 함 (_buildNow로 일관성 유지)
+          final cutoff = DateTime(_buildNow.year + 1, _buildNow.month, _buildNow.day);
           if (dayOnly.isAfter(cutoff)) return false;
         }
 
@@ -204,10 +229,11 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       return const LoadingWidget(message: '공고 목록을 불러오는 중...');
     }
 
-    // H2: items 변경 시 날짜별 캐시 무효화
+    // H2: items 변경 시 날짜별 캐시 무효화 + _buildNow 갱신
     if (!identical(controller.items, _lastControllerItems)) {
       _lastControllerItems = controller.items;
       _dayGroupCache.clear();
+      _buildNow = DateTime.now(); // isPast 판정 stale 방지
     }
 
     // 컨트롤러 로딩 완료 직후 한 번만 그룹 상세 로드
@@ -221,9 +247,10 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       });
     }
 
-    final bottomPadding = MediaQuery.paddingOf(context).bottom;
+    final bottomPadding = MediaQuery.viewPaddingOf(context).bottom;
 
     return CustomScrollView(
+      controller: _scrollController,
       slivers: [
         SliverToBoxAdapter(child: _buildCalendar()),
         SliverToBoxAdapter(child: _buildLegendSection()),
@@ -261,7 +288,10 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
             ],
           ),
         ),
-        Container(height: 8, color: AppColors.grey100),
+        const ColoredBox(
+          color: AppColors.grey100,
+          child: SizedBox(height: 8, width: double.infinity),
+        ),
       ],
     );
   }
@@ -619,14 +649,14 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     return SliverPadding(
       padding: ResponsiveHelper.cardPadding(context),
       sliver: SliverList(
-        delegate: SliverChildListDelegate([
-          for (final card in cards)
-            Padding(
-              padding: EdgeInsets.only(
-                  bottom: ResponsiveHelper.spacing(context, 16)),
-              child: card,
-            ),
-        ]),
+        delegate: SliverChildBuilderDelegate(
+          (context, index) => Padding(
+            padding: EdgeInsets.only(
+                bottom: ResponsiveHelper.spacing(context, 16)),
+            child: cards[index],
+          ),
+          childCount: cards.length,
+        ),
       ),
     );
   }
@@ -683,6 +713,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       _expandedSlots[key] = true;
       if (!groupItem.isWorkDetailLoaded) _loadingSlots.add(key);
     });
+    _scrollToBottom();
     if (!groupItem.isWorkDetailLoaded) {
       try {
         final result = await _firestoreService.loadTOWorkDetails(groupItem.masterTO);
@@ -695,7 +726,10 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         debugPrint('❌ 고정근무 업무 상세 로드 실패: $e');
         if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
       } finally {
-        if (mounted) setState(() => _loadingSlots.remove(key));
+        if (mounted) {
+          setState(() => _loadingSlots.remove(key));
+          _scrollToBottom(); // 데이터 로드 완료 후 카드 높이 증가에 대응
+        }
       }
     } else {
       // groupItem.isWorkDetailLoaded = true이지만 캐시된 TOItem은 workDetails가 없을 수 있음
@@ -713,7 +747,10 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           debugPrint('❌ 고정근무 업무 상세 로드 실패 (재시도): $e');
           if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
         } finally {
-          if (mounted) setState(() => _loadingSlots.remove(key));
+          if (mounted) {
+            setState(() => _loadingSlots.remove(key));
+            _scrollToBottom(); // 데이터 로드 완료 후 카드 높이 증가에 대응
+          }
         }
       }
     }
@@ -730,6 +767,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       _expandedSlots[key] = true;
       if (slot.needsWorkDetailLoad) _loadingSlots.add(key);
     });
+    _scrollToBottom();
     if (slot.needsWorkDetailLoad) {
       try {
         final result = await _firestoreService.loadTOWorkDetails(
@@ -745,7 +783,10 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
         debugPrint('❌ 슬롯 업무 상세 로드 실패: $e');
         if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
       } finally {
-        if (mounted) setState(() => _loadingSlots.remove(key));
+        if (mounted) {
+          setState(() => _loadingSlots.remove(key));
+          _scrollToBottom(); // 데이터 로드 완료 후 카드 높이 증가에 대응
+        }
       }
     }
   }

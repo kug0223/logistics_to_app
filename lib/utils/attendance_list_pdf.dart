@@ -295,15 +295,17 @@ class AttendanceListPdf {
     final dir = await getTemporaryDirectory();
     final fileName =
         '${data.businessName}_근무명단_${FormatHelper.formatDateStamp(data.date)}.xlsx';
+    // [L-6] writeAsBytes 포함 전체를 try-finally로 감쌈
+    // — writeAsBytes 실패(디스크 용량·퍼미션 오류) 시에도 finally 실행 보장
     final file = File('${dir.path}/$fileName');
-    await file.writeAsBytes(bytes);
     try {
+      await file.writeAsBytes(bytes);
       await Share.shareXFiles(
         [XFile(file.path, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')],
         subject: '${data.businessName} 근무명단',
       );
     } finally {
-      await file.delete();
+      try { await file.delete(); } catch (_) {} // 파일이 없을 수도 있으므로 delete 실패 무시
     }
   }
 

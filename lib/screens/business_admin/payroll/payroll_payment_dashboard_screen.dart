@@ -102,6 +102,13 @@ class _PayrollPaymentDashboardScreenState
   List<MapEntry<String, List<AttendanceModel>>> _filteredGroups = [];
   int  _pendingBadgeCount = 0;
   bool _pendingIsUrgent   = false;
+  // [PERF-2] 급여형태별 인원 수 — build()마다 3회 순회 방지
+  int _cMonthly = 0;
+  int _cWeekly  = 0;
+  int _cDaily   = 0;
+  // [PERF-3] 이체현황 탭 요약헤더 금액 — build()마다 4회 순회 방지
+  int _cachedConfirmedNet   = 0;
+  int _cachedTransferredNet = 0;
 
   // ── 계좌 정보 캐시
   final Map<String, Map<String, String>> _userBankCache = {};
@@ -157,6 +164,25 @@ class _PayrollPaymentDashboardScreenState
         .where((r) => r.wageStatus == AttendanceModel.wageConfirmed)
         .map((r) => r.userId).toSet().length;
     _pendingIsUrgent  = _pendingBadgeCount > 0;
+
+    // [PERF-2] 급여형태별 인원 수 캐시 — _buildPayTypeChips() build()마다 3회 순회 방지
+    _cMonthly = _allRecords
+        .where((r) => r.wageDetail?.payScheduleType == 'monthly')
+        .map((r) => r.userId).toSet().length;
+    _cWeekly = _allRecords
+        .where((r) => r.wageDetail?.payScheduleType == 'weekly')
+        .map((r) => r.userId).toSet().length;
+    _cDaily = _allRecords.where((r) {
+      final t = r.wageDetail?.payScheduleType;
+      return t == 'same_day' || t == 'next_day';
+    }).map((r) => r.userId).toSet().length;
+
+    // [PERF-3] 이체현황 탭 요약헤더 금액 캐시 — build()마다 4회 순회 방지
+    final allFiltered = _filteredGroups.expand((e) => e.value).toList();
+    _cachedConfirmedNet   = _sumNet(allFiltered
+        .where((r) => r.wageStatus == AttendanceModel.wageConfirmed).toList());
+    _cachedTransferredNet = _sumNet(allFiltered
+        .where((r) => r.wageStatus == AttendanceModel.wageTransferred).toList());
   }
 
   @override
@@ -420,7 +446,7 @@ class _PayrollPaymentDashboardScreenState
       isScrollControlled: true,
       builder: (ctx) => Container(
         decoration: const BoxDecoration(
-          color: Colors.white,
+          color: AppColors.surface,
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
@@ -715,7 +741,7 @@ class _PayrollPaymentDashboardScreenState
                 child: Column(children: [
                   Container(
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: AppColors.surface,
                       borderRadius: BorderRadius.circular(12),
                       boxShadow: [BoxShadow(
                           color: Colors.black.withValues(alpha: 0.05),
@@ -907,7 +933,7 @@ class _PayrollPaymentDashboardScreenState
   Future<void> _rejectSettlement(InterimSettlementRequestModel req) async {
     if (_isTransferring) return;
     final ctrl = TextEditingController();
-    setState(() => _isTransferring = true);
+    // [BUG-4] _isTransferring은 서비스 호출 직전에 설정 — dialog 표시 중 다른 버튼 비활성화 방지
     try {
       final reason = await showDialog<String>(
         context: context,
@@ -929,6 +955,7 @@ class _PayrollPaymentDashboardScreenState
         ),
       );
       if (reason == null || reason.isEmpty || !mounted) return;
+      setState(() => _isTransferring = true); // 실제 서비스 호출 직전에 설정
       await _payService.rejectInterimSettlement(
           req: req, processedBy: _uid, rejectReason: reason);
       if (mounted) { ToastHelper.showSuccess('거절 처리되었습니다'); _load(); }
@@ -1024,7 +1051,7 @@ class _PayrollPaymentDashboardScreenState
               AppSearchBar(controller: _searchCtrl, hintText: '근무자 이름으로 검색'),
               // ── 탭바
               Container(
-                color: Colors.white,
+                color: AppColors.surface,
                 child: TabBar(
                   controller: _tabCtrl,
                   isScrollable: false,
@@ -1428,8 +1455,9 @@ class _PayrollPaymentDashboardScreenState
       // 부분이체 근로자: wageTransferred/wageConfirmed 기록이 혼재하므로
       // 상태별로 직접 필터링해야 정확한 금액이 나온다.
       _DashboardSummaryHeader(
-        pendingAmount:     _sumNet(allFilteredRecs.where((r) => r.wageStatus == AttendanceModel.wageConfirmed).toList()),
-        transferredAmount: _sumNet(allFilteredRecs.where((r) => r.wageStatus == AttendanceModel.wageTransferred).toList()),
+        // [PERF-3] 캐시된 금액 사용 — _recomputeDerived()에서 갱신됨
+        pendingAmount:     _cachedConfirmedNet,
+        transferredAmount: _cachedTransferredNet,
         pendingCount:      pendingGroups.length,
         completedCount:    completedGroups.length,
         overdueCount:      overdueCount,
@@ -1463,11 +1491,13 @@ class _PayrollPaymentDashboardScreenState
                     final isXfer     = recs.every((r) => r.wageStatus == AttendanceModel.wageTransferred);
                     final isPartial  = !isXfer && recs.any((r) => r.wageStatus == AttendanceModel.wageTransferred);
                     final net        = _sumNet(recs);
+                    // [PERF-1] dueDate 계산 1회 후 재사용 — _groupIsOverdue/_groupIsDueToday의 _earliestDue 중복 제거
                     final dueDate    = _dueDateFromKey(groupKey) ?? _earliestDue(recs);
-                    final isOverdue  = !isXfer && _groupIsOverdue(recs);
-                    final isDueToday = !isXfer && _groupIsDueToday(recs);
+                    final today      = _today; // static getter 1회만 호출
+                    final isOverdue  = !isXfer && dueDate != null && dueDate.isBefore(today);
+                    final isDueToday = !isXfer && dueDate == today;
                     final schLabel   = _scheduleLabel(recs);
-                    final daysUntil  = dueDate?.difference(_today).inDays;
+                    final daysUntil  = dueDate?.difference(today).inDays;
 
                     // 이체완료인 경우 bankInfo 대신 이체일 표시 (recs는 미정렬 → max transferDate 사용)
                     final latestTransferDate = recs.where((r) => r.transferDate != null)
@@ -1524,20 +1554,10 @@ class _PayrollPaymentDashboardScreenState
 
   // ─── 급여형태 필터 칩 ─────────────────────────────────────
   Widget _buildPayTypeChips(List<AttendanceModel> filtered) {
-    // 각 유형 카운트 — 인원 수(distinct userId) 기준
-    int countOf(String payType) => _allRecords.where((r) {
-      final t = r.wageDetail?.payScheduleType;
-      return switch (payType) {
-        'monthly' => t == 'monthly',
-        'weekly'  => t == 'weekly',
-        'daily'   => t == 'same_day' || t == 'next_day',
-        _         => false,
-      };
-    }).map((r) => r.userId).toSet().length;
-
-    final cMonthly   = countOf('monthly');
-    final cWeekly    = countOf('weekly');
-    final cDaily     = countOf('daily');
+    // [PERF-2] 카운트는 _recomputeDerived()에서 캐시된 값 사용 — build()마다 3회 순회 방지
+    final cMonthly   = _cMonthly;
+    final cWeekly    = _cWeekly;
+    final cDaily     = _cDaily;
     final totalCount = cMonthly + cWeekly + cDaily;
 
     return Padding(
@@ -1799,7 +1819,7 @@ class _WorkerPayCard extends StatelessWidget {
               ? theme.primaryColor.withValues(alpha: 0.05)
               : isOverdue && !isTransferred
                   ? AppColors.errorBg.withValues(alpha: 0.4)
-                  : Colors.white,
+                  : AppColors.surface,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: isSelected
@@ -1986,7 +2006,7 @@ class _RequestCard extends StatelessWidget {
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 14)),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.grey200),
         boxShadow: [
@@ -2694,14 +2714,14 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
         title: Text('$workerName · $titleSuffix',
             style: ResponsiveHelper.subtitleStyle(context,
                 fontWeight: FontWeight.bold)),
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.surface,
         foregroundColor: AppColors.textPrimary,
         elevation: 0,
       ),
       body: Column(children: [
         // ── 요약 헤더
         Container(
-          color: Colors.white,
+          color: AppColors.surface,
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2847,7 +2867,7 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
                 margin: const EdgeInsets.only(bottom: 12),
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: AppColors.surface,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
                     color: isXfer ? AppColors.successBg : AppColors.grey200),

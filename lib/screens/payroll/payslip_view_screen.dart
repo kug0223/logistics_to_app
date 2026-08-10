@@ -63,9 +63,9 @@ class _PayslipViewScreenState extends State<PayslipViewScreen> {
     if (widget.attendance.wageDetail == null) {
       throw Exception('급여 정보가 없습니다. 관리자에게 문의해주세요.');
     }
-    // 폰트 로딩 포함 — rootBundle 접근 실패 방어
+    // [PERF-5] 폰트 사전 로드 + 캐시 — build() 호출 시 캐시 히트로 재파싱 방지
     try {
-      await rootBundle.load('assets/fonts/NotoSansKR-Regular.ttf');
+      await PayslipPdfBuilder.loadFonts();
     } catch (e) {
       throw Exception('PDF 생성에 필요한 폰트를 로드할 수 없습니다: $e');
     }

@@ -216,8 +216,8 @@ class _HelpScreenState extends State<HelpScreen> {
     ),
     _FaqItem.header('👤 계정 & 서류'),
     _FaqItem(
-      question: 'PASS 본인인증은 어디서 하나요?',
-      answer: '설정 → "본인인증 (PASS)"을 눌러 인증을 진행할 수 있습니다. '
+      question: '본인인증은 어디서 하나요?',
+      answer: '설정 → "휴대폰 본인인증"을 눌러 인증을 진행할 수 있습니다. '
           '본인인증 완료 후 공고 지원 시 신뢰도가 높아집니다.',
     ),
     _FaqItem(

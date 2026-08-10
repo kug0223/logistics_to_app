@@ -736,16 +736,6 @@
     },
 
     {
-      "collectionGroup": "reviews",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "isPublished", "order": "ASCENDING" },
-        { "fieldPath": "targetUserId", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
-      ]
-    },
-
-    {
       "collectionGroup": "applications",
       "queryScope": "COLLECTION",
       "fields": [
@@ -765,16 +755,6 @@
         { "fieldPath": "workDetailId", "order": "ASCENDING" },
         { "fieldPath": "workerId", "order": "ASCENDING" },
         { "fieldPath": "isLongTerm", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
-      ]
-    },
-
-    {
-      "collectionGroup": "reviews",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "targetUserId", "order": "ASCENDING" },
-        { "fieldPath": "businessId", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
     },
@@ -823,6 +803,14 @@
         { "fieldPath": "type", "order": "ASCENDING" },
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "postingExpiryDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "applications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "inviteExpiresAt", "order": "ASCENDING" }
       ]
     }
   ],

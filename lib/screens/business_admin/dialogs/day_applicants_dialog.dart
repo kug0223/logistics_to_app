@@ -2236,6 +2236,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
     final selectedWorkId = await showDialog<String>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StyledDialog(
         title: '파트변경',
         icon: Icons.swap_horiz,

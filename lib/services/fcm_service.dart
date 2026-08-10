@@ -426,6 +426,28 @@ class FCMService {
           _navigateToNotificationScreen();
         }
         break;
+      // ─── TO 초대 알림 ────────────────────────────────────────────
+      // toInvite: 근무자가 초대 수신 → 내 지원내역(초대 탭)으로 이동
+      case 'toInvite':
+      // toInviteCanceled: 관리자가 초대 취소 → 근무자가 수신 → 내 지원내역으로
+      case 'toInviteCanceled':
+        _navigatorKey!.currentState!.push(
+          MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
+        );
+        break;
+      // toInviteAccepted/Declined: 관리자가 수신 → 인력 관리 화면으로 이동
+      case 'toInviteAccepted':
+      case 'toInviteDeclined':
+        if (_currentUserIsAdmin) {
+          _navigatorKey!.currentState!.push(
+            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId)),
+          );
+        } else {
+          _navigatorKey!.currentState!.push(
+            MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
+          );
+        }
+        break;
       // ─── 지원 확정/거부 (근무자 전용) ──────────────────────────
       case 'applicationConfirmed':
       case 'applicationRejected':

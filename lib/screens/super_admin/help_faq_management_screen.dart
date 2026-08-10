@@ -164,6 +164,8 @@ class _HelpFaqManagementScreenState extends State<HelpFaqManagementScreen>
   }
 
   Future<void> _toggleActive(HelpFaqModel item) async {
+    // 재진입 방어: 연속 탭 시 updateItem 병렬 실행 → 최종 상태 비결정적 방지
+    if (_isSaving) return;
     setState(() => _isSaving = true);
     try {
       await _service.updateItem(item.copyWith(isActive: !item.isActive));
@@ -177,6 +179,7 @@ class _HelpFaqManagementScreenState extends State<HelpFaqManagementScreen>
   }
 
   Future<void> _reorder(String role, int oldIndex, int newIndex) async {
+    if (_isSaving) return; // _toggleActive / _delete 진행 중 재진입 방지
     final items = role == 'user' ? _userItems : _adminItems;
     final original = List<HelpFaqModel>.from(items);
     if (newIndex > oldIndex) newIndex--;

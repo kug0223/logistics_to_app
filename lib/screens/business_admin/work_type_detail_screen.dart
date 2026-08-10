@@ -184,7 +184,10 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
                       _buildSaveButton(context),
                     ],
 
-                    SizedBox(height: ResponsiveHelper.spacing(context, 32)),
+                    SizedBox(
+                      height: ResponsiveHelper.spacing(context, 32) +
+                          MediaQuery.viewPaddingOf(context).bottom,
+                    ),
                   ],
                 ),
               ),
@@ -877,6 +880,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
   Future<void> _confirmDiscardChanges() async {
     final ok = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         title: const Text('변경사항 취소'),
         content: const Text('저장하지 않은 변경사항이 있습니다.\n나가시겠습니까?'),

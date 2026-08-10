@@ -23,7 +23,7 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
 
   List<MonthlyReviewModel> _reviews = [];
   double _avgRating = 0.0;
-  bool _isLoading = true;
+  bool _isLoading = false; // 초기값 false — postFrameCallback 첫 호출 시 재진입 방어에 걸리지 않도록
   String? _loadError;
 
   String? _cursor;

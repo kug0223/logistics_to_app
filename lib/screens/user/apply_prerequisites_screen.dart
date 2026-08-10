@@ -175,10 +175,10 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
                   // 1. 본인인증(PASS)
                   _buildPrerequisiteCard(
                     index: 1,
-                    title: '본인인증(PASS)',
+                    title: '휴대폰 본인인증',
                     isReady: _passVerified,
                     readyDescription: '본인인증이 완료되었습니다',
-                    notReadyDescription: '본인인증(PASS)이 필요합니다.',
+                    notReadyDescription: '본인인증이 필요합니다.',
                     actionLabel: '인증 하러 가기',
                     onAction: () async {
                       await NavigationHelper.push<void>(

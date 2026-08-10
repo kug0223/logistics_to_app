@@ -181,12 +181,38 @@ class CalendarHelper {
         });
   }
 
+  /// 출근기록에서 실근무일수·확정수입을 단일 순회로 계산 (O(n) 1회)
+  ///
+  /// [actualWorkDays] 실근무일수: checkIn != null인 날짜 수 (같은 날 2잡도 1일)
+  /// [confirmedIncome] 확정수입: wageStatus=='confirmed'|'transferred'인 finalWage 합산
+  static ({int actualWorkDays, int confirmedIncome}) getAttendanceStats(
+    List<AttendanceModel> attendances,
+    DateTime focusedDay,
+  ) {
+    final uniqueDates = <String>{};
+    var income = 0;
+    for (final att in attendances) {
+      if (att.workDate.year != focusedDay.year ||
+          att.workDate.month != focusedDay.month) { continue; }
+      if (att.checkIn != null) {
+        uniqueDates.add('${att.workDate.year}-${att.workDate.month}-${att.workDate.day}');
+      }
+      if ((att.wageStatus == 'confirmed' || att.wageStatus == 'transferred') &&
+          att.finalWage != null) {
+        income += att.finalWage!;
+      }
+    }
+    return (actualWorkDays: uniqueDates.length, confirmedIncome: income);
+  }
+
   /// 실근무일수 계산 (출근 기록 있는 날짜 수, 같은 날 2잡도 1일로 카운트)
   ///
   /// · checkIn != null 조건: 출근 미완료(생성만 된 attendance) 제외
   /// · `Set<String>` 중복 제거: 같은 날 A사·B사 동시 근무여도 1일로 집계
   /// · 야간 근무(11/30 23:50 checkIn): workDate=11/30으로 저장 → 11월에 카운트 (논리적으로 올바름)
   /// · _buildAttendanceMap의 key 포맷과 일치: 'year-month-day' (미패딩) — 변경 시 함께 수정
+  ///
+  /// 대부분의 경우 [getAttendanceStats]를 사용해 두 값을 단일 순회로 계산하는 것을 권장.
   static int getActualWorkDays(List<AttendanceModel> attendances, DateTime focusedDay) {
     final uniqueDates = <String>{};
     for (var att in attendances) {
@@ -206,6 +232,8 @@ class CalendarHelper {
   /// · 'confirmed': 관리자가 확정한 금액 — 집계 포함
   /// · 'transferred': 이체 완료 — 집계 포함
   /// · finalWage=null 체크: confirmed인데 finalWage 없는 비정상 데이터 graceful 처리
+  ///
+  /// 대부분의 경우 [getAttendanceStats]를 사용해 두 값을 단일 순회로 계산하는 것을 권장.
   static int getConfirmedIncome(List<AttendanceModel> attendances, DateTime focusedDay) {
     final confirmedList = attendances.where((att) =>
       att.workDate.year == focusedDay.year &&
@@ -218,18 +246,6 @@ class CalendarHelper {
   }
 
   // ─── Private helpers ──────────────────────────────────────────────────────
-
-  /// 일용직 근로소득세 적용 후 세후 일당 반환
-  ///
-  /// ⚠️ Deprecated — getTotalIncome이 세전으로 전환(2026-05)되어 더 이상 사용되지 않음.
-  /// 세후 계산이 필요한 경우에만 직접 호출.
-  @Deprecated('세전 집계로 전환. 세후 계산 필요 시에만 직접 사용.')
-  static int calculateNetDailyWage(int grossWage) {
-    if (grossWage <= 150000) return grossWage;
-    final taxableAmount = grossWage - 150000;
-    final tax = (taxableAmount * 0.06 * 0.45).round();
-    return grossWage - tax;
-  }
 
   /// 시급/일급을 일당으로 환산
   ///

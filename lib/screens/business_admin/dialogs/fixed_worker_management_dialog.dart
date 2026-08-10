@@ -971,7 +971,14 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           ),
           ...inactive.map((w) => Padding(
                 padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
-                child: Opacity(opacity: 0.5, child: _buildWorkerCard(w)),
+                // ColorFiltered: 정적 불투명도 — Opacity(0.5)와 달리 compositing layer 미생성
+                child: ColorFiltered(
+                  colorFilter: ColorFilter.mode(
+                    Colors.white.withValues(alpha: 0.5),
+                    BlendMode.srcATop,
+                  ),
+                  child: _buildWorkerCard(w),
+                ),
               )),
         ],
       ],
@@ -1799,11 +1806,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
       decoration: BoxDecoration(
         color: Colors.white,
+        // [CRASH-3 수정] Border(top:...) + borderRadius 동시 사용 → Border.paint 크래시
+        // 부모 Sheet가 이미 Radius:20으로 클리핑하므로 하단 바 borderRadius 제거
         border: Border(top: BorderSide(color: AppColors.border)),
-        borderRadius: const BorderRadius.only(
-          bottomLeft: Radius.circular(20),
-          bottomRight: Radius.circular(20),
-        ),
       ),
       child: SizedBox(
         width: double.infinity,
@@ -1899,7 +1904,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                 ),
 
                 SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-                Divider(height: 1, color: AppColors.border),
+                const Divider(height: 1, color: AppColors.border),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
                 // 메뉴 항목들
@@ -2251,9 +2256,10 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     }
 
     try {
-      final worker = await _firestoreService.getUser(app.uid);
-      if (!mounted) return;
-      final workerName = worker?.name ?? '이름 없음';
+      // [SEC-FIX 2026-08-10] getUser(타 사업장 uid) 직접 호출 제거 — applicantName 사용
+      final workerName = (app.applicantName?.isNotEmpty == true)
+          ? app.applicantName!
+          : '이름 없음';
 
       final request = ScheduleChangeRequestModel(
         id: '',
@@ -2431,9 +2437,10 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     }
 
     try {
-      final worker = await _firestoreService.getUser(app.uid);
-      if (!mounted) return;
-      final workerName = worker?.name ?? '이름 없음';
+      // [SEC-FIX 2026-08-10] getUser(타 사업장 uid) 직접 호출 제거 — applicantName 사용
+      final workerName = (app.applicantName?.isNotEmpty == true)
+          ? app.applicantName!
+          : '이름 없음';
 
       final request = ScheduleChangeRequestModel(
         id: '',

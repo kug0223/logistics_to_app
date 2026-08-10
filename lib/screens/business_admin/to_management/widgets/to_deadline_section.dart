@@ -99,57 +99,11 @@ class TODeadlineSection extends StatelessWidget {
     );
   }
 
-  /// 단기 TO: N시간 전 마감
+  /// 단기 TO: N시간 전 마감 [UI-COMPACT] 안내 박스 제거 — 헤더 subtitle로 충분
   Widget _buildHoursBeforeDeadline(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 안내 메시지
-        Container(
-          padding: ResponsiveHelper.cardPadding(context),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                AppColors.infoBg,
-                AppColors.infoBg.withValues(alpha: 0.5),
-              ],
-            ),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: AppColors.infoLight,
-              width: 1,
-            ),
-          ),
-          child: Row(
-            children: [
-              Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
-                decoration: BoxDecoration(
-                  color: AppColors.info.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(
-                  Icons.info_outline,
-                  color: AppColors.infoDark,
-                  size: ResponsiveHelper.iconSize(context, 18),
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Expanded(
-                child: Text(
-                  '각 업무별로 시작 시간 기준으로 자동 마감됩니다',
-                  style: ResponsiveHelper.smallStyle(context).copyWith(
-                    color: AppColors.infoDark,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        
-        SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-        
         AppSelectField<int>(
           value: hoursBeforeStart,
           hintText: '마감 기준 시간 선택',
@@ -163,37 +117,15 @@ class TODeadlineSection extends StatelessWidget {
             if (value != null) onHoursChanged!(value);
           },
         ),
-        
-        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-        
-        // 예시 안내
-        Container(
-          padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 12),
-            vertical: ResponsiveHelper.spacing(context, 8),
-          ),
-          decoration: BoxDecoration(
-            color: AppColors.grey100,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                Icons.lightbulb_outline,
-                color: AppColors.textSecondary,
-                size: ResponsiveHelper.iconSize(context, 16),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              Expanded(
-                child: Text(
-                  '예: 09:00 시작 업무 → $hoursBeforeStart시간 전인 ${_getExampleTime(hoursBeforeStart)}에 마감',
-                  style: ResponsiveHelper.smallStyle(
-                    context,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-              ),
-            ],
+        SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+        Padding(
+          padding: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 4)),
+          child: Text(
+            '예: 09:00 시작 → ${_getExampleTime(hoursBeforeStart)} 마감 ($hoursBeforeStart시간 전)',
+            style: ResponsiveHelper.smallStyle(
+              context,
+              color: AppColors.textSecondary,
+            ),
           ),
         ),
       ],

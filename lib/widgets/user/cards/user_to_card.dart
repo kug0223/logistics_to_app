@@ -28,20 +28,19 @@ class UserTOCard extends StatefulWidget {
   const UserTOCard({
     super.key,
     required this.to,
-    required this.isSelected,
-    required this.onTap,
+    required this.selectedNotifier,
     required this.myApplications,
     required this.onApplySuccess,
     required this.onFetchWorkDetails,
     this.workDetails,
     this.slots,
     this.onFetchSlots,
-    this.isAnyOtherExpanded = false,
   });
 
   final TOModel to;
-  final bool isSelected;
-  final VoidCallback onTap;
+  /// 화면 전체 공유 선택 상태 — value == to.id 이면 이 카드가 펼쳐짐
+  /// ValueNotifier 방식: 탭 시 setState 없이 해당 카드 2개만 rebuild
+  final ValueNotifier<String?> selectedNotifier;
   final List<ApplicationModel> myApplications;
   final VoidCallback onApplySuccess;
 
@@ -52,9 +51,6 @@ class UserTOCard extends StatefulWidget {
   // flex TO용 슬롯
   final List<SlotModel>? slots;
   final Future<List<SlotModel>> Function(String toId)? onFetchSlots;
-
-  // 다른 카드가 펼쳐진 상태 → 반투명 처리
-  final bool isAnyOtherExpanded;
 
   @override
   State<UserTOCard> createState() => _UserTOCardState();
@@ -77,12 +73,34 @@ class _UserTOCardState extends State<UserTOCard> {
   bool get _showLoading => _isFetching && _workDetails.isEmpty;
   bool get _showSlotsLoading => _isFetchingSlots && (widget.slots == null || widget.slots!.isEmpty);
 
+  // ValueNotifier 기반 선택 상태 — 탭 시 전체 화면 setState 없이 이 카드만 rebuild
+  bool get _isSelected => widget.selectedNotifier.value == widget.to.id;
+
+  void _onSelectionChanged() {
+    if (_isSelected) {
+      // 이 카드가 선택됨 → 필요 시 데이터 fetch
+      if (widget.to.isFlexType) {
+        if (widget.slots == null) _fetchSlots();
+      } else {
+        if (widget.workDetails == null) _fetch();
+      }
+    }
+    // ValueListenableBuilder가 rebuild를 처리하므로 setState 불필요
+  }
+
   @override
   void initState() {
     super.initState();
     _cachedHasApplied = _computeHasApplied();
     _cachedTimeAgo    = _computeTimeAgo();
     _rebuildAppliedSets();
+    widget.selectedNotifier.addListener(_onSelectionChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.selectedNotifier.removeListener(_onSelectionChanged);
+    super.dispose();
   }
 
   // M3: 슬롯별 지원 여부를 O(1)로 조회하기 위한 Set 사전 계산
@@ -135,13 +153,7 @@ class _UserTOCardState extends State<UserTOCard> {
     if (widget.to.createdAt != oldWidget.to.createdAt) {
       _cachedTimeAgo = _computeTimeAgo();
     }
-    if (widget.isSelected && !oldWidget.isSelected) {
-      if (widget.to.isFlexType) {
-        if (widget.slots == null) _fetchSlots();
-      } else {
-        if (widget.workDetails == null) _fetch();
-      }
-    }
+    // 선택 상태 변경 시 fetch는 _onSelectionChanged 리스너에서 처리
     // 부모 캐시에서 데이터가 들어옴 → 로딩 종료
     if (widget.workDetails != null && oldWidget.workDetails == null && _isFetching) {
       setState(() => _isFetching = false);
@@ -290,21 +302,42 @@ class _UserTOCardState extends State<UserTOCard> {
 
   // ── Build ──────────────────────────────────────────────
 
+  // 탭 시 선택 토글 — selectedNotifier.value 변경만으로 ValueListenableBuilder가 rebuild 처리
+  void _toggleSelection() {
+    final id = widget.to.id;
+    widget.selectedNotifier.value =
+        widget.selectedNotifier.value == id ? null : id;
+  }
+
   @override
   Widget build(BuildContext context) {
+    // ValueListenableBuilder: 선택 상태가 바뀔 때 이 카드(2개 최대)만 rebuild
+    return ValueListenableBuilder<String?>(
+      valueListenable: widget.selectedNotifier,
+      builder: (context, selectedId, _) {
+        final isSelected = selectedId == widget.to.id;
+        final isAnyOtherExpanded =
+            selectedId != null && selectedId != widget.to.id;
+        return _buildCard(context, isSelected, isAnyOtherExpanded);
+      },
+    );
+  }
+
+  Widget _buildCard(
+      BuildContext context, bool isSelected, bool isAnyOtherExpanded) {
     final theme = Theme.of(context);
     final to = widget.to;
     final barColor = to.isLongTerm ? AppColors.longTerm : AppColors.shortTerm;
 
     final card = Card(
         margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
-        elevation: widget.isSelected ? 2 : 0.5,
+        elevation: isSelected ? 2 : 0.5,
         shadowColor: Colors.black.withValues(alpha: 0.08),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
           side: BorderSide(
-            color: widget.isSelected ? theme.primaryColor : AppColors.border,
-            width: widget.isSelected ? 1.5 : 0.8,
+            color: isSelected ? theme.primaryColor : AppColors.border,
+            width: isSelected ? 1.5 : 0.8,
           ),
         ),
         clipBehavior: Clip.antiAlias,
@@ -321,11 +354,11 @@ class _UserTOCardState extends State<UserTOCard> {
             Padding(
               padding: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 5)),
               child: InkWell(
-                onTap: widget.onTap,
+                onTap: _toggleSelection,
                 child: Container(
-                  color: widget.isSelected
+                  color: isSelected
                       ? theme.primaryColor.withValues(alpha: 0.02)
-                      : Colors.white,
+                      : AppColors.surface,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -340,14 +373,14 @@ class _UserTOCardState extends State<UserTOCard> {
                         child: _buildCollapsed(context, theme),
                       ),
                       // 펼치기 바
-                      _buildExpandBar(context),
+                      _buildExpandBar(context, isSelected),
                       // 펼친 영역
                       AnimatedSize(
                         duration: const Duration(milliseconds: 280),
                         curve: Curves.easeInOutCubic,
                         alignment: Alignment.topCenter,
                         clipBehavior: Clip.antiAlias,
-                        child: widget.isSelected
+                        child: isSelected
                             ? TweenAnimationBuilder<double>(
                                 tween: Tween(begin: 0.0, end: 1.0),
                                 duration: const Duration(milliseconds: 180),
@@ -355,7 +388,7 @@ class _UserTOCardState extends State<UserTOCard> {
                                 builder: (context, opacity, child) =>
                                     Opacity(opacity: opacity, child: child!),
                                 child: Column(children: [
-                                  Divider(height: 1, color: AppColors.grey100),
+                                  const Divider(height: 1, color: AppColors.grey100),
                                   _buildExpanded(context),
                                 ]),
                               )
@@ -369,7 +402,7 @@ class _UserTOCardState extends State<UserTOCard> {
           ],
         ),
     );
-    if (!widget.isAnyOtherExpanded) return card;
+    if (!isAnyOtherExpanded) return card;
     return AnimatedOpacity(
       opacity: 0.5,
       duration: const Duration(milliseconds: 200),
@@ -433,11 +466,15 @@ class _UserTOCardState extends State<UserTOCard> {
           ),
         ),
         // 등록 시간 — 헤더 우측 (사업장명 행 제거로 이동)
+        // Flexible 필수: overflow:ellipsis는 bounded constraint에서만 동작
         SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-        Text(
-          _timeAgo,
-          style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
-          overflow: TextOverflow.ellipsis,
+        Flexible(
+          fit: FlexFit.loose,
+          child: Text(
+            _timeAgo,
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
         ..._statusBadgeWidgets(context),
         SizedBox(width: ResponsiveHelper.spacing(context, 4)),
@@ -600,9 +637,8 @@ class _UserTOCardState extends State<UserTOCard> {
     );
   }
 
-  Widget _buildExpandBar(BuildContext context) {
+  Widget _buildExpandBar(BuildContext context, bool isSelected) {
     final theme = Theme.of(context);
-    final isSelected = widget.isSelected;
     final label = isSelected
         ? '접기'
         : widget.to.isFlexType
@@ -801,7 +837,7 @@ class _UserTOCardState extends State<UserTOCard> {
               ? AppColors.infoBg
               : isDisabled
                   ? AppColors.grey50
-                  : Colors.white,
+                  : AppColors.surface,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
             color: hasApplied
@@ -847,23 +883,27 @@ class _UserTOCardState extends State<UserTOCard> {
             // 인원 현황 — "확정/모집" 또는 "확정/모집 +대기" (예약 슬롯 미표시)
             if (!isPending) ...[
               SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Builder(builder: (_) {
-                final req = slot.totalRequired;
-                if (req <= 0) return const SizedBox.shrink();
-                final conf = slot.confirmedCount;
-                final pend = slot.pendingCount;
-                final label = pend > 0 ? '$conf/$req +$pend' : '$conf/$req';
-                final color = slot.isFull
-                    ? AppColors.grey400
-                    : pend > 0
-                        ? AppColors.warning
-                        : AppColors.grey500;
-                return Text(
-                  label,
-                  style: ResponsiveHelper.tinyStyle(context, color: color),
-                  overflow: TextOverflow.ellipsis,
-                );
-              }),
+              // Flexible 필수: Row 내 무한 제약 → overflow: ellipsis 미동작 방지
+              Flexible(
+                fit: FlexFit.loose,
+                child: Builder(builder: (_) {
+                  final req = slot.totalRequired;
+                  if (req <= 0) return const SizedBox.shrink();
+                  final conf = slot.confirmedCount;
+                  final pend = slot.pendingCount;
+                  final label = pend > 0 ? '$conf/$req +$pend' : '$conf/$req';
+                  final color = slot.isFull
+                      ? AppColors.grey400
+                      : pend > 0
+                          ? AppColors.warning
+                          : AppColors.grey500;
+                  return Text(
+                    label,
+                    style: ResponsiveHelper.tinyStyle(context, color: color),
+                    overflow: TextOverflow.ellipsis,
+                  );
+                }),
+              ),
             ],
             // 상태 칩
             SizedBox(width: ResponsiveHelper.spacing(context, 6)),

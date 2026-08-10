@@ -115,6 +115,12 @@ class ApplyWorkDialog extends StatefulWidget {
 }
 
 class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
+  // ─── 포맷터 캐싱 (build 헬퍼마다 재생성 방지) ────────────────
+  static final _mdeFmt  = DateFormat('M/d (E)', 'ko_KR');   // M월 d일 (요일) — 단기·스케줄
+  static final _mdeKoFmt = DateFormat('M월 d일 (E)', 'ko_KR'); // M월 d일 (요일) — 상세
+  static final _mdFmt   = DateFormat('M/d', 'ko_KR');       // M/d — 기간 표시
+  static final _isoFmt  = DateFormat('yyyy-MM-dd');          // ISO 날짜 파싱용
+
   final FirestoreService _firestoreService = FirestoreService();
   final ScheduleConflictService _conflictService = ScheduleConflictService();
 
@@ -591,7 +597,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           _buildHeader(context, theme),
           
           // 구분선
-          Divider(height: 1, color: AppColors.divider),
+          const Divider(height: 1, color: AppColors.divider),
           
           // 내용
           Expanded(
@@ -621,7 +627,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   }
 
   Widget _buildHeader(BuildContext context, ThemeData theme) {
-    final dateFormat = DateFormat('M/d (E)', 'ko_KR');
+    final dateFormat = _mdeFmt;
 
     return Padding(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
@@ -851,7 +857,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
   Widget _buildSingleDateInfo(BuildContext context, ThemeData theme) {
     final to = widget.mainTO;
-    final dateFormat = DateFormat('M월 d일 (E)', 'ko_KR');
+    final dateFormat = _mdeKoFmt;
 
     // 모든 업무 시간이 동일하면 시간 표시, 다르면 업무 수 표시
     String timeText;
@@ -1274,7 +1280,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                     Expanded(
                       child: Text(
                         _desiredStartDate != null
-                            ? '${DateFormat('M/d (E)', 'ko_KR').format(_desiredStartDate!)}부터 ${DateFormat('M/d', 'ko_KR').format(_effectiveEndDate)}까지 일괄 지원됩니다.\n${widget.mainTO.workDaysLabel}'
+                            ? '${_mdeFmt.format(_desiredStartDate!)}부터 ${_mdFmt.format(_effectiveEndDate)}까지 일괄 지원됩니다.\n${widget.mainTO.workDaysLabel}'
                             : '희망 시작일을 선택하면 해당일부터 ${widget.mainTO.hasPresetPeriod ? widget.mainTO.contractPeriodLabel : "종료일"}까지 일괄 지원됩니다.\n${widget.mainTO.workDaysLabel}',
                         style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
                       ),
@@ -1892,7 +1898,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
   /// 내 확정 스케줄 경고
   Widget _buildMyScheduleWarning(BuildContext context, ThemeData theme) {
-    final dateFormat = DateFormat('M/d (E)', 'ko_KR');
+    final dateFormat = _mdeFmt;
     final targetDate = _isGroupTO ? _selectedDate : widget.mainTO.date;
     // 그룹TO에서 날짜 미선택(_selectedDate=null) 상태이면 경고 표시 대상이 없음
     if (targetDate == null) return const SizedBox.shrink();
@@ -1974,7 +1980,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     ThemeData theme,
     DateTime date,
   ) {
-    final dateFormat = DateFormat('M/d (E)', 'ko_KR');
+    final dateFormat = _mdeFmt;
     final dateKey = DateTime(date.year, date.month, date.day);
     final to = widget.groupTOsByDate![dateKey];
     final workDetails = widget.groupWorkDetailsByDate?[dateKey] ?? [];
@@ -2255,7 +2261,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   }
 
   String _dateKey(DateTime date) {
-    return DateFormat('yyyy-MM-dd').format(date);
+    return _isoFmt.format(date);
   }
 
   String _makeWorkKey(String workType, String startTime, String endTime) {
@@ -2792,7 +2798,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
   /// 예약 대기 알림
   Future<void> _showScheduledAlert(DateTime date, TOModel to) async {
-    final dateStr = DateFormat('M/d (E)', 'ko_KR').format(date);
+    final dateStr = _mdeFmt.format(date);
     final publishAt = to.publishAt;
     final publishStr = publishAt != null
         ? FormatHelper.formatDateTime(publishAt)
@@ -2810,7 +2816,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
   /// 전체 마감 알림
   Future<void> _showClosedAlert(DateTime date) async {
-    final dateStr = DateFormat('M/d (E)', 'ko_KR').format(date);
+    final dateStr = _mdeFmt.format(date);
 
     await _showAlertDialog(
       icon: Icons.lock,
@@ -2827,7 +2833,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     DateTime date, 
     List<ApplicationModel> confirmedSchedules,
   ) async {
-    final dateStr = DateFormat('M/d (E)', 'ko_KR').format(date);
+    final dateStr = _mdeFmt.format(date);
     
     final scheduleInfo = confirmedSchedules.map((app) {
       return '${app.businessName} ${app.startTime}~${app.endTime}';
@@ -2846,7 +2852,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
   /// 부분 마감 알림
   Future<void> _showPartialClosedAlert(DateTime date) async {
-    final dateStr = DateFormat('M/d (E)', 'ko_KR').format(date);
+    final dateStr = _mdeFmt.format(date);
 
     await _showAlertDialog(
       icon: Icons.info_outline,
@@ -2894,6 +2900,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     if (!mounted) return;
     await showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(ctx, 20)),

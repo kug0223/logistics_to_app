@@ -1,4 +1,4 @@
-import {onSchedule} from "firebase-functions/v2/scheduler";
+﻿import {onSchedule} from "firebase-functions/v2/scheduler";
 import {
   onDocumentCreated,
   onDocumentUpdated,
@@ -566,6 +566,33 @@ export const createNotification = onCall(
       }
     }
 
+    // [M-7 수정 2026-08-07] 발신자별 알림 rate limit — 5분 윈도우 30건 초과 차단
+    // contractRequested는 위에서 이미 24h 쿨다운으로 처리, 이중 적용 방지를 위해 제외
+    if (rawType !== "contractRequested") {
+      const rateLimitRef = db.collection("rate_limits").doc(`notifications_${callerUid}`);
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(rateLimitRef);
+        const now = Date.now();
+        const windowMs = 5 * 60 * 1000; // 5분
+        const maxCount = 30;
+        if (snap.exists) {
+          const windowStart = (snap.data()?.windowStart as FirebaseFirestore.Timestamp)?.toMillis() ?? 0;
+          const count = (snap.data()?.count as number) ?? 0;
+          if (now - windowStart < windowMs) {
+            if (count >= maxCount) {
+              throw new HttpsError("resource-exhausted", "알림 발송 한도를 초과했습니다. 잠시 후 다시 시도하세요.");
+            }
+            tx.update(rateLimitRef, {count: count + 1});
+          } else {
+            // 새 윈도우 시작
+            tx.set(rateLimitRef, {windowStart: admin.firestore.Timestamp.fromMillis(now), count: 1});
+          }
+        } else {
+          tx.set(rateLimitRef, {windowStart: admin.firestore.Timestamp.fromMillis(now), count: 1});
+        }
+      });
+    }
+
     const payload: Record<string, unknown> = {
       userId,
       title: rawTitle,
@@ -852,14 +879,15 @@ export const masterScheduler = onSchedule(
 
     // [PERF-2026-07-21] 매 시간 4개 태스크 순차 → Promise.allSettled 병렬 실행
     // 각 태스크는 서로 다른 컬렉션을 대상으로 하며 순서 의존성 없음
-    console.log("⏰ [시간 작업] 병렬 실행 시작 (예약공개·WorkDetail마감·슬롯마감·TO마감)...");
+    console.log("⏰ [시간 작업] 병렬 실행 시작 (예약공개·WorkDetail마감·슬롯마감·TO마감·초대만료)...");
     const hourlyResults = await Promise.allSettled([
       processScheduledPublish(timestamp),
       processWorkDetailExpiry(timestamp),
       processSlotWorkDetailExpiry(timestamp),
       processTOExpiry(timestamp),
+      processExpiredTOInvitations(timestamp),
     ]);
-    const hourlyNames = ["예약 공개", "WorkDetail 마감", "슬롯 WorkDetail 마감", "TO 마감"];
+    const hourlyNames = ["예약 공개", "WorkDetail 마감", "슬롯 WorkDetail 마감", "TO 마감", "초대 만료"];
     hourlyResults.forEach((r, i) => {
       if (r.status === "rejected") console.error(`❌ [${hourlyNames[i]}] 실패:`, r.reason);
       else console.log(`✅ [${hourlyNames[i]}] 완료`);
@@ -4119,14 +4147,12 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       await Promise.all(d1Snap.docs.map(async (d1Doc) => {
         try {
           const app = d1Doc.data();
-          // 트랜잭션으로 플래그 체크+설정 원자화 — 스케줄러 재시도 시 중복 알림 발송 방지
-          const alreadyNotified = await db.runTransaction(async (tx) => {
-            const fresh = await tx.get(d1Doc.ref);
-            if (fresh.data()?.d1NotifiedAt != null) return true;
-            tx.update(d1Doc.ref, {d1NotifiedAt: admin.firestore.FieldValue.serverTimestamp()});
-            return false;
-          });
-          if (alreadyNotified) return;
+          // [FCM-FIX 2026-08-10] 플래그 체크→알림 write→플래그 설정 순서로 수정
+          // 이전: 트랜잭션에서 플래그 선설정 → 알림 write 실패 시 플래그 이미 커밋 → 영구 누락
+          // 이후: 알림 write 성공 확인 후 플래그 설정 (매우 드문 재시도 중복 발송이 영구 누락보다 양호)
+          const freshD1 = await d1Doc.ref.get();
+          if (freshD1.data()?.d1NotifiedAt != null) return;
+
           const bizSnap = d1BizMap.get(app.businessId as string);
           const bizData = bizSnap?.exists ? bizSnap.data() : undefined;
           const adminIds: string[] = (() => {
@@ -4146,6 +4172,8 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
               createdAt: now,
             })
           ));
+          // 알림 write 성공 후 플래그 설정 (실패 시 catch로 이동 → 플래그 미설정 → 다음 스케줄 재시도)
+          await d1Doc.ref.update({d1NotifiedAt: admin.firestore.FieldValue.serverTimestamp()});
         } catch (e) {
           console.error(`[D+1 퇴사 알림] 실패 ${d1Doc.id}:`, e);
         }
@@ -4169,14 +4197,10 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       await Promise.all(d2Snap.docs.map(async (d2Doc) => {
         try {
           const app = d2Doc.data();
-          // 트랜잭션으로 플래그 체크+설정 원자화 — 스케줄러 재시도 시 중복 알림 발송 방지
-          const alreadyNotified = await db.runTransaction(async (tx) => {
-            const fresh = await tx.get(d2Doc.ref);
-            if (fresh.data()?.d2NotifiedAt != null) return true;
-            tx.update(d2Doc.ref, {d2NotifiedAt: admin.firestore.FieldValue.serverTimestamp()});
-            return false;
-          });
-          if (alreadyNotified) return;
+          // [FCM-FIX 2026-08-10] D+1과 동일 순서 수정 — 알림 write 성공 후 플래그 설정
+          const freshD2 = await d2Doc.ref.get();
+          if (freshD2.data()?.d2NotifiedAt != null) return;
+
           const bizSnap = d2BizMap.get(app.businessId as string);
           const bizData = bizSnap?.exists ? bizSnap.data() : undefined;
           const adminIds: string[] = (() => {
@@ -4196,6 +4220,8 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
               createdAt: now,
             })
           ));
+          // 알림 write 성공 후 플래그 설정
+          await d2Doc.ref.update({d2NotifiedAt: admin.firestore.FieldValue.serverTimestamp()});
         } catch (e) {
           console.error(`[D+2 퇴사 알림] 실패 ${d2Doc.id}:`, e);
         }
@@ -5624,7 +5650,7 @@ export const callableSaveUserSignature = onCall(
 // Output: { passToken, name, gender, birthDate, phone }
 // Secrets: PORTONE_IMP_KEY, PORTONE_IMP_SECRET (포트원 콘솔 > API Keys)
 export const verifyPassAuth = onCall(
-  {region: "asia-northeast3", enforceAppCheck: false},
+  {region: "asia-northeast3", enforceAppCheck: false, minInstances: 1},
   async (request) => {
     const {imp_uid, purpose, role = "USER"} = request.data as {
       imp_uid?: string;
@@ -6259,6 +6285,40 @@ export const callableFinalizeEmployerSignature = onCall(
         try { await sigFile.delete(); } catch (_) {}
       }
       throw e;
+    }
+
+    // [FCM-FIX 2026-08-10] 근로자 서명 요청 알림 — CF 내부 발송으로 원자성 확보
+    // 이전: CF 반환 후 클라이언트 Dart에서 createNotification 호출 → 크래시/네트워크 오류 시 영구 누락
+    // 이후: CF 트랜잭션 성공 직후 Firestore notifications 직접 write → onNotificationCreated 트리거 → FCM
+    try {
+      const notifSnap = await contractRef.get();
+      const nd = notifSnap.data() ?? {};
+      const notifWorkerId  = nd["workerId"]     as string | undefined;
+      const notifBizId     = nd["businessId"]   as string | undefined;
+      const notifBizName   = nd["businessName"] as string | undefined;
+      const notifAppId     = nd["applicationId"] as string | undefined;
+      if (notifWorkerId) {
+        await db.collection("users").doc(notifWorkerId).collection("notifications").add({
+          userId:  notifWorkerId,
+          type:    "contractSignRequested",
+          title:   "근로계약서 서명 요청",
+          body:    notifBizName
+            ? `[${notifBizName}] 근로계약서를 확인하고 서명해 주세요.`
+            : "근로계약서를 확인하고 서명해 주세요.",
+          isRead:  false,
+          data: {
+            contractId,
+            ...(notifBizId  ? {businessId: notifBizId}     : {}),
+            ...(notifAppId  ? {applicationId: notifAppId}  : {}),
+            screen: "contractSign",
+          },
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          readAt:    null,
+        });
+      }
+    } catch (notifErr) {
+      // 알림 실패는 계약서 저장 성공에 영향 없음 (근로자는 앱 열면 pending_worker 상태로 확인 가능)
+      console.error("[callableFinalizeEmployerSignature] 근로자 서명 요청 알림 실패:", notifErr);
     }
 
     return {success: true, employerSignatureUrl: url};
@@ -11011,7 +11071,7 @@ async function srvGetMonthlyStatsTx(
 // Output: { success: true, effectiveNetWage: number }
 // ═══════════════════════════════════════════════════════════
 export const callableCalculateAndConfirmWage = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: true, minInstances: 1},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
@@ -11324,7 +11384,7 @@ export const callableGetApplicationsByBiz = onCall(
       throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
     }
     // [APP-WHITELIST] status/type/resignStatus 허용 목록 — 임의 값 Firestore 쿼리 조작 차단
-    const VALID_APP_STATUSES = new Set(["PENDING", "CONTRACT_PENDING", "CONFIRMED", "REJECTED", "CANCELED", "AUTO_CANCELED"]);
+    const VALID_APP_STATUSES = new Set(["PENDING", "CONTRACT_PENDING", "CONFIRMED", "REJECTED", "CANCELED", "AUTO_CANCELED", "INVITED", "EXPIRED"]); // [BUG-08 수정] 초대 상태 추가
     const VALID_APP_TYPES = new Set(["long_term", "short", "contract", "flex"]);
     const VALID_RESIGN_STATUSES = new Set(["PENDING", "APPROVED", "REJECTED", "AUTO_APPROVED"]);
     if (status !== undefined && !VALID_APP_STATUSES.has(status)) {
@@ -12553,21 +12613,23 @@ export const callableDeleteTO = onCall(
     const now = Timestamp.now();
 
     // 1. slots 서브컬렉션 삭제 (flex TO)
+    // [OOM-FIX 2026-08-10] 무제한 .get() → 499건 페이지네이션으로 교체 — 슬롯 수천 건 시 OOM 방지
     if (isFlexType) {
-      const slotsSnap = await db.collection("tos").doc(toId).collection("slots").get();
-      if (!slotsSnap.empty) {
-        let batch = db.batch();
-        let count = 0;
-        for (const slotDoc of slotsSnap.docs) {
-          batch.delete(slotDoc.ref);
-          count++;
-          if (count >= 499) {
-            await batch.commit();
-            batch = db.batch();
-            count = 0;
-          }
+      let lastSlotDoc: FirebaseFirestore.DocumentSnapshot | undefined;
+      while (true) {
+        let q: FirebaseFirestore.Query = db
+          .collection("tos").doc(toId).collection("slots")
+          .limit(499);
+        if (lastSlotDoc) q = q.startAfter(lastSlotDoc);
+        const pageSnap = await q.get();
+        if (pageSnap.empty) break;
+        const slotBatch = db.batch();
+        for (const slotDoc of pageSnap.docs) {
+          slotBatch.delete(slotDoc.ref);
         }
-        if (count > 0) await batch.commit();
+        await slotBatch.commit();
+        if (pageSnap.size < 499) break;
+        lastSlotDoc = pageSnap.docs[pageSnap.docs.length - 1];
       }
     }
 
@@ -14895,7 +14957,7 @@ export const callableRejectApplication = onCall(
 // Input : { applicationId, message? }
 // Output: { success, alreadyConfirmed, capacityWarning?, workEndDate?, workDays? }
 export const callableConfirmApplication = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: true, minInstances: 1},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
@@ -16705,7 +16767,7 @@ function _processCheckout(
 //   3. 반올림 계산 클라이언트에서 우회 가능 → 서버에서 강제 재계산
 //   4. originalCheckIn(원본 시각) 불변 보장 — 서버에서만 기록
 export const callableCheckIn = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: true, minInstances: 1},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
@@ -16943,7 +17005,7 @@ export const callableCheckIn = onCall(
 //   3. wageStatus 보호(calculated/confirmed/transferred) 서버 재검증
 //   4. originalCheckOut 불변 보장 — 서버에서만 최초 기록
 export const callableCheckOut = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: true, minInstances: 1},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
@@ -17480,7 +17542,7 @@ export const callableCancelScheduleChangeRequest = onCall(
 // 반환값: { success: true, applicationId: string, isReactivation: boolean }
 // ─────────────────────────────────────────────────────────
 export const callableApplyToTO = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: true, minInstances: 1},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const uid = request.auth.uid;
@@ -18318,6 +18380,476 @@ export const callableAcceptInvitation = onCall(
         });
       }
     } catch (_) { /* 알림 실패는 수락 결과에 영향 없음 */ }
+
+    return {success: true};
+  }
+);
+
+// ════════════════════════════════════════════════════════════════════════════
+// 🎫 근로자 TO 초대 시스템
+//    processExpiredTOInvitations  — 시간별 스케줄러: INVITED → EXPIRED 자동 만료
+//    callableInviteWorker         — 관리자가 근로자에게 특정 TO 초대 발송
+//    callableAcceptTOInvitation   — 근로자가 초대 수락 (INVITED → CONFIRMED)
+//    callableDeclineTOInvitation  — 근로자가 초대 거절 (INVITED → REJECTED)
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── processExpiredTOInvitations ───────────────────────────────────────────────
+// masterScheduler 시간별 작업: inviteExpiresAt <= now 인 INVITED 지원서 → EXPIRED
+async function processExpiredTOInvitations(now: admin.firestore.Timestamp): Promise<void> {
+  const snap = await db.collection("applications")
+    .where("status", "==", "INVITED")
+    .where("inviteExpiresAt", "<=", now)
+    .limit(200)
+    .get();
+  if (snap.empty) { console.log("✅ [초대 만료] 처리할 항목 없음"); return; }
+
+  const batch = db.batch();
+  const expiredAt = admin.firestore.Timestamp.now();
+  for (const doc of snap.docs) {
+    batch.update(doc.ref, {
+      status: "EXPIRED",
+      expiredAt,
+      statusHistory: admin.firestore.FieldValue.arrayUnion({
+        status: "EXPIRED",
+        at: expiredAt,
+        by: null,
+        action: "AUTO_EXPIRE",
+      }),
+    });
+  }
+  await batch.commit();
+  console.log(`✅ [초대 만료] ${snap.size}건 EXPIRED 처리 완료`);
+}
+
+// ── callableInviteWorker ──────────────────────────────────────────────────────
+// 관리자가 특정 근로자에게 TO 근무 초대를 발송한다.
+// Input:
+//   toId         string   — 공고 ID
+//   businessId   string   — 사업장 ID
+//   targetUid    string   — 초대 대상 근로자 UID
+//   slotId?      string   — 단기 TO 슬롯 ID
+//   workDate     string   — 단기: 근무일 ISO / 장기: 첫 출근일 ISO
+//   workEndDate? string   — 장기 TO 종료일 ISO
+//   workDays?    string[] — 장기 TO 근무 요일 (TO.workDays 그대로)
+// Output: { success, applicationId }
+export const callableInviteWorker = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {toId, businessId, targetUid, slotId, workDate, workEndDate, workDays} =
+      request.data as {
+        toId: string;
+        businessId: string;
+        targetUid: string;
+        slotId?: string;
+        workDate: string;
+        workEndDate?: string;
+        workDays?: string[];
+      };
+
+    if (!toId || typeof toId !== "string") throw new HttpsError("invalid-argument", "toId가 필요합니다.");
+    if (!businessId || typeof businessId !== "string") throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    if (!targetUid || typeof targetUid !== "string") throw new HttpsError("invalid-argument", "targetUid가 필요합니다.");
+    if (!workDate || typeof workDate !== "string") throw new HttpsError("invalid-argument", "workDate가 필요합니다.");
+
+    // ── 1. 관리자 권한 검증 ──────────────────────────────────────────────────
+    const {bizData: invBizData} = await assertBizAdmin(callerUid, businessId);
+
+    // ── 2. 자기 자신 초대 차단 (서버 재검증) ────────────────────────────────
+    if (targetUid === callerUid) {
+      throw new HttpsError("invalid-argument", "자기 자신에게는 초대를 보낼 수 없습니다.");
+    }
+
+    // ── 3. 대상 근로자 존재 및 역할 확인 ─────────────────────────────────────
+    const targetSnap = await db.collection("users").doc(targetUid).get();
+    if (!targetSnap.exists) throw new HttpsError("not-found", "대상 사용자를 찾을 수 없습니다.");
+    const targetData = targetSnap.data()!;
+    const targetName = (targetData.name as string | undefined) ?? "근로자";
+
+    // [M-3 수정] 관리자·슈퍼어드민에게 초대 발송 차단 — USER 역할만 허용
+    const targetRole = (targetData.role as string | undefined) ?? "";
+    if (targetRole !== "USER") {
+      throw new HttpsError("invalid-argument", "근로자(USER) 역할의 사용자에게만 초대를 보낼 수 있습니다.");
+    }
+
+    // ── 4. TO 존재 및 상태 확인 ─────────────────────────────────────────────
+    const toRef = db.collection("tos").doc(toId);
+    const toSnap = await toRef.get();
+    if (!toSnap.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
+    const toData = toSnap.data()!;
+
+    // businessId 교차검증
+    if ((toData.businessId as string | undefined) !== businessId) {
+      throw new HttpsError("permission-denied", "공고가 해당 사업장에 속하지 않습니다.");
+    }
+
+    const toStatus = (toData.status as string | undefined) ?? "";
+    const closedStatuses = ["CLOSED", "POSTING_EXPIRED", "DELETED"];
+    if (closedStatuses.includes(toStatus)) {
+      throw new HttpsError("failed-precondition", "마감된 공고에는 초대를 보낼 수 없습니다.");
+    }
+    // [BUG-09 수정] FULL 상태에서도 초대 차단 — 수락 시 totalConfirmed 오버부킹 방지
+    // callableApplyToTO는 FULL을 차단하지만 callableInviteWorker에는 없었음
+    if (toStatus === "FULL") {
+      throw new HttpsError("failed-precondition", "정원이 마감된 공고에는 초대를 보낼 수 없습니다.");
+    }
+
+    // ── 5. 슬롯 정보 조회 (단기 TO — 시간 정보 추출) ────────────────────────
+    let startTime = (toData.startTime as string | undefined) ?? "";
+    let endTime   = (toData.endTime   as string | undefined) ?? "";
+
+    if (slotId) {
+      const slotSnap = await db.collection("tos").doc(toId).collection("slots").doc(slotId).get();
+      if (slotSnap.exists) {
+        startTime = (slotSnap.data()!.startTime as string | undefined) ?? startTime;
+        endTime   = (slotSnap.data()!.endTime   as string | undefined) ?? endTime;
+        if ((slotSnap.data()!.status as string | undefined) === "closed") {
+          throw new HttpsError("failed-precondition", "마감된 슬롯에는 초대를 보낼 수 없습니다.");
+        }
+      }
+    }
+
+    // ── 6. 중복 초대 방지 (동일 TO + targetUid에 이미 INVITED or CONFIRMED/CONTRACT_PENDING) ─
+    // INVITED: 이미 발송된 초대 중복 방지
+    // CONFIRMED/CONTRACT_PENDING: 이미 확정된 근로자에게 재초대 방지 (totalConfirmed 이중 증가 위험)
+    const dupSnap = await db.collection("applications")
+      .where("toId", "==", toId)
+      .where("uid", "==", targetUid)
+      .where("status", "in", ["INVITED", "CONFIRMED", "CONTRACT_PENDING"])
+      .limit(1)
+      .get();
+    if (!dupSnap.empty) {
+      const dupStatus = dupSnap.docs[0].data().status as string;
+      if (dupStatus === "INVITED") {
+        throw new HttpsError("already-exists", "이미 이 공고에 초대가 발송된 근로자입니다.");
+      }
+      throw new HttpsError("already-exists", "이미 이 공고에 확정된 근로자입니다.");
+    }
+
+    // ── 7. INVITED 지원서 생성 ───────────────────────────────────────────────
+    const inviteTime = admin.firestore.Timestamp.now();
+    const expiresAt  = admin.firestore.Timestamp.fromMillis(
+      inviteTime.toMillis() + 24 * 60 * 60 * 1000  // +24시간
+    );
+
+    const workDateTs    = admin.firestore.Timestamp.fromDate(new Date(workDate));
+    const workEndDateTs = workEndDate
+      ? admin.firestore.Timestamp.fromDate(new Date(workEndDate))
+      : null;
+    // [BUG-12 수정] workDays 빈 배열 장기 TO 오분류 방지
+    // workEndDate가 있거나 workDays 요일이 있으면 장기 TO로 판별
+    const isLong = !slotId && (
+      (typeof workEndDate === "string" && workEndDate.length > 0) ||
+      (Array.isArray(workDays) && workDays.length > 0)
+    );
+
+    const appData: Record<string, unknown> = {
+      toId,
+      businessId,
+      businessName: (invBizData?.name as string | undefined) ?? "",
+      toTitle:      (toData.title     as string | undefined) ?? "",
+      uid:          targetUid,
+      applicantName: targetName,
+      status:        "INVITED",
+      type: isLong ? "long_term" : "short",  // [BUG-01 수정] applicationType(X)→type(O), "longTerm"→"long_term", "shortTerm"→"short"
+      startTime,
+      endTime,
+      workDate: workDateTs,
+      ...(workEndDateTs && {workEndDate: workEndDateTs}),
+      ...(Array.isArray(workDays) && workDays.length > 0 && {workDays}),
+      ...(slotId && {slotId}),
+      invitedBy:       callerUid,
+      invitedAt:       inviteTime,
+      inviteExpiresAt: expiresAt,
+      appliedAt:       inviteTime,
+      statusHistory: [{
+        status: "INVITED",
+        at: inviteTime,
+        by: callerUid,
+        action: "INVITE_SENT",
+      }],
+    };
+
+    const newAppRef = db.collection("applications").doc();
+    await newAppRef.set(appData);
+
+    // ── 8. FCM 알림 발송 (근로자에게) ───────────────────────────────────────
+    const bizName = (invBizData?.name as string | undefined) ?? "";
+    const toTitle = (toData.title     as string | undefined) ?? "업무";
+    db.collection("users").doc(targetUid).collection("notifications").add({
+      userId:    targetUid,
+      type:      "toInvite",
+      title:     "업무 초대가 도착했어요! 🎉",
+      body:      `${bizName}에서 '${toTitle}' 근무에 초대했습니다. 24시간 내 수락해주세요.`,
+      data:      {applicationId: newAppRef.id, businessId, action: "inviteDetail"},
+      isRead:    false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      readAt:    null,
+    }).catch((err) => console.error("[callableInviteWorker] 알림 실패:", err));
+
+    return {success: true, applicationId: newAppRef.id};
+  }
+);
+
+// ── callableAcceptTOInvitation ────────────────────────────────────────────────
+// 근로자가 TO 초대를 수락한다. INVITED → CONFIRMED (스케줄 충돌 검증 포함)
+// Input : { applicationId }
+// Output: { success, alreadyConfirmed? }
+export const callableAcceptTOInvitation = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {applicationId} = request.data as {applicationId: string};
+    if (!applicationId || typeof applicationId !== "string") {
+      throw new HttpsError("invalid-argument", "applicationId가 필요합니다.");
+    }
+
+    const appRef  = db.collection("applications").doc(applicationId);
+    const appSnap = await appRef.get();
+    if (!appSnap.exists) throw new HttpsError("not-found", "초대를 찾을 수 없습니다.");
+    const appData = appSnap.data()!;
+
+    // ── 1. 초대 대상 본인 검증 ───────────────────────────────────────────────
+    if ((appData.uid as string | undefined) !== callerUid) {
+      throw new HttpsError("permission-denied", "본인의 초대만 수락할 수 있습니다.");
+    }
+
+    // ── 2. 상태 검증 ─────────────────────────────────────────────────────────
+    const currentStatus = appData.status as string | undefined;
+    if (currentStatus === "CONFIRMED") return {success: true, alreadyConfirmed: true};
+    if (currentStatus === "EXPIRED") {
+      throw new HttpsError("failed-precondition", "만료된 초대는 수락할 수 없습니다.");
+    }
+    if (currentStatus === "REJECTED") {
+      throw new HttpsError("failed-precondition", "이미 거절한 초대입니다.");
+    }
+    if (currentStatus !== "INVITED") {
+      throw new HttpsError("failed-precondition", `수락할 수 없는 상태입니다: ${currentStatus}`);
+    }
+
+    // ── 3. 만료 시각 서버 재검증 ─────────────────────────────────────────────
+    const inviteExpiresAt = appData.inviteExpiresAt as admin.firestore.Timestamp | undefined;
+    if (inviteExpiresAt && inviteExpiresAt.toMillis() <= admin.firestore.Timestamp.now().toMillis()) {
+      const nowTs = admin.firestore.Timestamp.now(); // [WARN-01 수정] 단일 Timestamp로 일관성 보장
+      await appRef.update({
+        status:    "EXPIRED",
+        expiredAt: nowTs,
+        statusHistory: admin.firestore.FieldValue.arrayUnion({
+          status: "EXPIRED", at: nowTs, by: null, action: "AUTO_EXPIRE",
+        }),
+      });
+      throw new HttpsError("failed-precondition", "초대 수락 가능 시간이 지났습니다.");
+    }
+
+    // ── 4. 스케줄 충돌 검증 ──────────────────────────────────────────────────
+    const startTime     = (appData.startTime  as string | undefined) ?? "";
+    const endTime       = (appData.endTime    as string | undefined) ?? "";
+    const workDateTs    = appData.workDate    as admin.firestore.Timestamp | undefined;
+    const workEndDateTs = appData.workEndDate as admin.firestore.Timestamp | undefined;
+    const workDays      = (appData.workDays   as string[] | undefined) ?? [];
+    // [BUG-12 수정] type 필드 우선 — workDays 빈 배열 장기 TO도 정확하게 판별
+    const appType       = (appData.type as string | undefined) ?? "";
+    const isLong        = appType === "long_term" || workDays.length > 0;
+    const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+    const weekdayNames  = ["일", "월", "화", "수", "목", "금", "토"];
+
+    if (startTime && endTime && workDateTs) {
+      const [confirmedSnap, contractSnap] = await Promise.all([
+        db.collection("applications").where("uid", "==", callerUid).where("status", "==", "CONFIRMED").limit(200).get(),
+        db.collection("applications").where("uid", "==", callerUid).where("status", "==", "CONTRACT_PENDING").limit(200).get(),
+      ]);
+      const confirmedApps: Array<Record<string, unknown>> = [...confirmedSnap.docs, ...contractSnap.docs]
+        .map((d) => ({id: d.id, ...(d.data() as Record<string, unknown>)}));
+
+      const workDateDate = workDateTs.toDate();
+      const toDateOnly   = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+
+      for (const app of confirmedApps) {
+        const appStart = (app["startTime"] as string | undefined) ?? "";
+        const appEnd   = (app["endTime"]   as string | undefined) ?? "";
+        if (!_hasTimeOverlap(startTime, endTime, appStart, appEnd)) continue;
+
+        const appWorkDateTs = app["workDate"] as admin.firestore.Timestamp | undefined;
+        if (!appWorkDateTs) continue;
+        const appWorkDate = appWorkDateTs.toDate();
+        const appIsLong   = Array.isArray(app["workDays"]) && (app["workDays"] as string[]).length > 0;
+        const appWorkDays = (app["workDays"] as string[] | undefined) ?? [];
+
+        if (isLong) {
+          const newStart = toDateOnly(workDateDate);
+          const newEnd   = workEndDateTs ? toDateOnly(workEndDateTs.toDate()) : new Date(9999, 11, 31);
+          if (appIsLong) {
+            const appEndTs = app["workEndDate"] as admin.firestore.Timestamp | undefined;
+            const sStart   = toDateOnly(appWorkDate);
+            const sEnd     = toDateOnly(appEndTs?.toDate() ?? new Date(9999, 11, 31));
+            if (newEnd < sStart || newStart > sEnd) continue;
+            const conflictDay = workDays.find((d) => appWorkDays.includes(d));
+            if (!conflictDay) continue;
+            throw new HttpsError("permission-denied", `매주 ${conflictDay}에 ${appStart}~${appEnd} 확정된 근무가 있어 수락할 수 없습니다.`);
+          } else {
+            const sDate = toDateOnly(appWorkDate);
+            if (sDate < newStart || sDate > newEnd) continue;
+            const kst     = new Date(appWorkDate.getTime() + KST_OFFSET_MS);
+            const weekday = weekdayNames[kst.getUTCDay()];
+            if (!workDays.includes(weekday)) continue;
+            throw new HttpsError("permission-denied", `${kst.getUTCMonth() + 1}/${kst.getUTCDate()}에 ${appStart}~${appEnd} 확정된 근무가 있어 수락할 수 없습니다.`);
+          }
+        } else {
+          const workDateOnly = toDateOnly(workDateDate);
+          if (appIsLong) {
+            const appEndTs = app["workEndDate"] as admin.firestore.Timestamp | undefined;
+            const sStart   = toDateOnly(appWorkDate);
+            const sEnd     = toDateOnly(appEndTs?.toDate() ?? new Date(9999, 11, 31));
+            if (workDateOnly < sStart || workDateOnly > sEnd) continue;
+            const kst     = new Date(workDateDate.getTime() + KST_OFFSET_MS);
+            const weekday = weekdayNames[kst.getUTCDay()];
+            if (!appWorkDays.includes(weekday)) continue;
+            throw new HttpsError("permission-denied", `이미 ${appStart}~${appEnd}에 확정된 근무가 있습니다.`);
+          } else {
+            if (toDateOnly(appWorkDate).getTime() !== workDateOnly.getTime()) continue;
+            throw new HttpsError("permission-denied", `해당 날짜 ${appStart}~${appEnd}에 이미 확정된 근무가 있습니다.`);
+          }
+        }
+      }
+    }
+
+    // ── 5. INVITED → CONFIRMED 트랜잭션 ─────────────────────────────────────
+    const toId        = appData.toId   as string | undefined;
+    const slotId      = appData.slotId as string | undefined;
+    const confirmedAt = admin.firestore.Timestamp.now();
+
+    await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(appRef);
+      if (!fresh.exists) throw new HttpsError("not-found", "초대를 찾을 수 없습니다.");
+      const freshStatus = fresh.data()!.status as string;
+      if (freshStatus === "CONFIRMED") return;
+      if (freshStatus !== "INVITED") throw new HttpsError("failed-precondition", "수락 가능한 상태가 아닙니다.");
+
+      // [BUG-10 수정] 수락 시점에 TO 상태 재검증 — 초대 발송 후 TO가 삭제/마감된 경우 차단
+      // [BUG-11 수정] FULL 상태도 차단 — callableInviteWorker(BUG-09)와 동일 정책 적용
+      if (toId) {
+        const freshTo = await tx.get(db.collection("tos").doc(toId));
+        if (!freshTo.exists) {
+          throw new HttpsError("failed-precondition", "공고가 삭제되어 초대를 수락할 수 없습니다.");
+        }
+        const freshToStatus = (freshTo.data()!.status as string | undefined) ?? "";
+        const invalidStatuses = ["CLOSED", "POSTING_EXPIRED", "DELETED", "FULL"];
+        if (invalidStatuses.includes(freshToStatus)) {
+          throw new HttpsError("failed-precondition", "마감 또는 정원 초과된 공고의 초대는 수락할 수 없습니다.");
+        }
+      }
+
+      tx.update(appRef, {
+        status:      "CONFIRMED",
+        confirmedAt,
+        statusHistory: admin.firestore.FieldValue.arrayUnion({
+          status: "CONFIRMED", at: confirmedAt, by: callerUid, action: "INVITE_ACCEPTED",
+        }),
+      });
+
+      if (toId) {
+        tx.update(db.collection("tos").doc(toId), {
+          totalConfirmed: admin.firestore.FieldValue.increment(1),
+        });
+        if (slotId) {
+          tx.update(db.collection("tos").doc(toId).collection("slots").doc(slotId), {
+            confirmedCount: admin.firestore.FieldValue.increment(1),
+          });
+        }
+      }
+    });
+
+    // ── 6. 관리자에게 수락 알림 ─────────────────────────────────────────────
+    try {
+      const invitedBy  = appData.invitedBy  as string | undefined;
+      const toTitle    = (appData.toTitle   as string | undefined) ?? (toId ?? "업무");
+      const workerName = (appData.applicantName as string | undefined) ?? "근로자";
+      if (invitedBy) {
+        db.collection("users").doc(invitedBy).collection("notifications").add({
+          userId:    invitedBy,
+          type:      "toInviteAccepted",
+          title:     "초대를 수락했습니다 ✅",
+          body:      `${workerName}님이 '${toTitle}' 근무 초대를 수락했습니다.`,
+          data:      {applicationId, businessId: appData.businessId, action: "applicationDetail"},
+          isRead:    false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          readAt:    null,
+        }).catch((err) => console.error("[callableAcceptTOInvitation] 관리자 알림 실패:", err));
+      }
+    } catch (_) { /* 알림 실패는 수락 결과에 영향 없음 */ }
+
+    return {success: true};
+  }
+);
+
+// ── callableDeclineTOInvitation ───────────────────────────────────────────────
+// 근로자가 TO 초대를 거절한다. INVITED → REJECTED
+// Input : { applicationId }
+// Output: { success }
+export const callableDeclineTOInvitation = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {applicationId} = request.data as {applicationId: string};
+    if (!applicationId || typeof applicationId !== "string") {
+      throw new HttpsError("invalid-argument", "applicationId가 필요합니다.");
+    }
+
+    const appRef  = db.collection("applications").doc(applicationId);
+    const appSnap = await appRef.get();
+    if (!appSnap.exists) throw new HttpsError("not-found", "초대를 찾을 수 없습니다.");
+    const appData = appSnap.data()!;
+
+    // ── 1. 초대 대상 본인 검증 ───────────────────────────────────────────────
+    if ((appData.uid as string | undefined) !== callerUid) {
+      throw new HttpsError("permission-denied", "본인의 초대만 거절할 수 있습니다.");
+    }
+
+    // ── 2. 상태 검증 ─────────────────────────────────────────────────────────
+    const currentStatus = appData.status as string | undefined;
+    if (currentStatus === "REJECTED") return {success: true};
+    if (currentStatus === "CONFIRMED") {
+      throw new HttpsError("failed-precondition", "이미 수락된 초대는 거절할 수 없습니다.");
+    }
+    if (currentStatus !== "INVITED" && currentStatus !== "EXPIRED") {
+      throw new HttpsError("failed-precondition", `처리할 수 없는 상태입니다: ${currentStatus}`);
+    }
+
+    // ── 3. INVITED/EXPIRED → REJECTED ────────────────────────────────────────
+    const rejectedAt = admin.firestore.Timestamp.now();
+    await appRef.update({
+      status:     "REJECTED",
+      rejectedAt,
+      statusHistory: admin.firestore.FieldValue.arrayUnion({
+        status: "REJECTED", at: rejectedAt, by: callerUid, action: "INVITE_DECLINED",
+      }),
+    });
+
+    // ── 4. 관리자에게 거절 알림 ─────────────────────────────────────────────
+    try {
+      const invitedBy  = appData.invitedBy     as string | undefined;
+      const toId       = appData.toId          as string | undefined;
+      const toTitle    = (appData.toTitle      as string | undefined) ?? (toId ?? "업무");
+      const workerName = (appData.applicantName as string | undefined) ?? "근로자";
+      if (invitedBy) {
+        db.collection("users").doc(invitedBy).collection("notifications").add({
+          userId:    invitedBy,
+          type:      "toInviteDeclined",
+          title:     "초대를 거절했습니다",
+          body:      `${workerName}님이 '${toTitle}' 근무 초대를 거절했습니다.`,
+          data:      {applicationId, businessId: appData.businessId, action: "applicationDetail"},
+          isRead:    false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          readAt:    null,
+        }).catch((err) => console.error("[callableDeclineTOInvitation] 관리자 알림 실패:", err));
+      }
+    } catch (_) { /* 알림 실패는 거절 결과에 영향 없음 */ }
 
     return {success: true};
   }
@@ -20156,5 +20688,352 @@ export const callableRemoveMember = onCall(
     });
 
     return {success: true};
+  }
+);
+
+// ── callableCancelTOInvitation ────────────────────────────────────────────────
+// 관리자가 발송한 TO 초대를 철회한다. INVITED → CANCELED
+// 초대를 보낸 관리자(invitedBy) 또는 사업장 관리자만 취소 가능.
+// Input : { applicationId }
+// Output: { success }
+export const callableCancelTOInvitation = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {applicationId} = request.data as {applicationId: string};
+    if (!applicationId || typeof applicationId !== "string") {
+      throw new HttpsError("invalid-argument", "applicationId가 필요합니다.");
+    }
+
+    const appRef  = db.collection("applications").doc(applicationId);
+    const appSnap = await appRef.get();
+    if (!appSnap.exists) throw new HttpsError("not-found", "초대를 찾을 수 없습니다.");
+    const appData = appSnap.data()!;
+
+    // ── 1. 권한 검증: invitedBy 본인 또는 사업장 관리자 ─────────────────────
+    const businessId = appData.businessId as string | undefined;
+    const invitedBy  = appData.invitedBy  as string | undefined;
+    if (!businessId) throw new HttpsError("internal", "초대 문서에 businessId가 없습니다.");
+
+    // assertBizAdmin으로 관리자 권한 확인 (SUPER_ADMIN 포함 처리됨)
+    await assertBizAdmin(callerUid, businessId);
+
+    // ── 2. 상태 검증 ─────────────────────────────────────────────────────────
+    const currentStatus = appData.status as string | undefined;
+    if (currentStatus === "CANCELED") return {success: true};
+    if (currentStatus === "CONFIRMED") {
+      throw new HttpsError("failed-precondition", "이미 수락된 초대는 취소할 수 없습니다.");
+    }
+    if (currentStatus !== "INVITED" && currentStatus !== "EXPIRED") {
+      throw new HttpsError("failed-precondition", `취소할 수 없는 상태입니다: ${currentStatus}`);
+    }
+
+    // ── 3. INVITED/EXPIRED → CANCELED ────────────────────────────────────────
+    const canceledAt = admin.firestore.Timestamp.now();
+    await appRef.update({
+      status:     "CANCELED",
+      canceledAt,
+      canceledBy: callerUid,
+      statusHistory: admin.firestore.FieldValue.arrayUnion({
+        status: "CANCELED", at: canceledAt, by: callerUid, action: "INVITE_CANCELED",
+      }),
+    });
+
+    // ── 4. 근로자에게 취소 알림 ─────────────────────────────────────────────
+    try {
+      const targetUid = appData.uid          as string | undefined;
+      const toTitle   = (appData.toTitle     as string | undefined) ?? "";
+      const bizName   = (appData.businessName as string | undefined) ?? "";
+      if (targetUid) {
+        const body = bizName
+          ? `${bizName}에서 '${toTitle}' 근무 초대를 취소했습니다.`
+          : `'${toTitle}' 근무 초대가 취소되었습니다.`;
+        db.collection("users").doc(targetUid).collection("notifications").add({
+          userId:    targetUid,
+          type:      "toInviteCanceled",
+          title:     "초대가 취소되었습니다",
+          body,
+          data:      {businessId, action: "myApplications"},
+          isRead:    false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          readAt:    null,
+        }).catch((err) => console.error("[callableCancelTOInvitation] 근로자 알림 실패:", err));
+      }
+    } catch (_) { /* 알림 실패는 취소 결과에 영향 없음 */ }
+
+    // suppress unused-variable warning
+    void invitedBy;
+    return {success: true};
+  }
+);
+
+// ─── callableAdminDirectInterimSettlement ─────────────────────────────────────
+// 관리자가 직접 중간정산을 생성 + 즉시 처리(PROCESSED)하는 CF
+// [Trust Boundary] 클라이언트가 interim_settlement_requests 직접 쓰기를 대체
+// - 권한: assertBizAdmin 검증 (서브어드민 canManageWage 포함)
+// - 원자성: Firestore 트랜잭션으로 attendance 이체 + 요청 문서 생성 동시 처리
+// - 멱등: 이미 transferred인 attendance는 건너뜀
+export const callableAdminDirectInterimSettlement = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {
+      businessId, workerId, workerName, businessName,
+      applicationId, attendanceIds, netAmount,
+    } = request.data as {
+      businessId: string;
+      workerId: string;
+      workerName: string;
+      businessName: string;
+      applicationId: string;
+      attendanceIds: string[];
+      netAmount: number;
+    };
+
+    if (!businessId) throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    if (!workerId)   throw new HttpsError("invalid-argument", "workerId가 필요합니다.");
+    if (!applicationId) throw new HttpsError("invalid-argument", "applicationId가 필요합니다.");
+    if (!Array.isArray(attendanceIds) || attendanceIds.length === 0) {
+      throw new HttpsError("invalid-argument", "attendanceIds가 필요합니다.");
+    }
+    if (attendanceIds.length > 200) {
+      throw new HttpsError("invalid-argument", "최대 200건까지 처리 가능합니다.");
+    }
+
+    // 권한 검증
+    const {callerData: adminCallerData} = await assertBizAdmin(callerUid, businessId);
+    const isSubAdmin = ((adminCallerData?.subAdminBusinessIds ?? []) as string[]).includes(businessId);
+    if (isSubAdmin) {
+      const memberSnap = await db.collection("businesses").doc(businessId)
+        .collection("members").doc(callerUid).get();
+      const perms = (memberSnap.data()?.permissions ?? {}) as Record<string, boolean>;
+      if (perms.canManageWage !== true) {
+        throw new HttpsError("permission-denied", "급여 관리 권한이 없습니다.");
+      }
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const nowTs = admin.firestore.Timestamp.now();
+
+    // 처리할 attendanceIds 필터링 (wageConfirmed만, 타 근로자 제외, 이미 transferred 멱등 처리)
+    const attSnaps = await Promise.all(
+      attendanceIds.map(id => db.collection("attendance").doc(id).get())
+    );
+
+    const idsToTransfer: string[] = [];
+    let actualNetAmount = 0;
+    for (const snap of attSnaps) {
+      if (!snap.exists) continue;
+      const d = snap.data()!;
+      if (d.businessId !== businessId) continue; // 타 사업장 차단
+      if (d.userId !== workerId) continue;         // 타 근로자 차단
+      const ws = d.wageStatus as string | undefined;
+      if (ws === "transferred") {
+        // 이미 이체된 건 — 금액 합산만 (멱등)
+        actualNetAmount += ((d.finalWage as number | undefined) ?? 0);
+        continue;
+      }
+      if (ws !== "confirmed") continue; // confirmed만 이체 가능
+      idsToTransfer.push(snap.id);
+      actualNetAmount += ((d.finalWage as number | undefined) ?? 0);
+    }
+
+    if (idsToTransfer.length === 0 && attSnaps.every(s => {
+      const ws = s.data()?.wageStatus as string | undefined;
+      return ws === "transferred";
+    })) {
+      throw new HttpsError("failed-precondition", "모든 항목이 이미 이체 처리되었습니다.");
+    }
+
+    // 정산 기간: attendanceIds 중 workDate 기준 min/max
+    let periodStart = nowTs;
+    let periodEnd   = nowTs;
+    {
+      const dates = attSnaps
+        .filter(s => s.exists)
+        .map(s => s.data()!.workDate as admin.firestore.Timestamp | undefined)
+        .filter((d): d is admin.firestore.Timestamp => !!d);
+      if (dates.length > 0) {
+        dates.sort((a, b) => a.seconds - b.seconds);
+        periodStart = dates[0];
+        periodEnd   = dates[dates.length - 1];
+      }
+    }
+
+    // 트랜잭션: attendance 이체 + interim_settlement_requests 문서 생성
+    const settlementRef = db.collection("interim_settlement_requests").doc();
+
+    await db.runTransaction(async (tx) => {
+      // attendance 상태 전환
+      for (const id of idsToTransfer) {
+        const ref = db.collection("attendance").doc(id);
+        tx.update(ref, {
+          wageStatus:     "transferred",
+          transferDate:   now,
+          transferredBy:  callerUid,
+          updatedAt:      now,
+          transferNote:   "중간정산 이체",
+          cancelNote:        admin.firestore.FieldValue.delete(),
+          cancelledTransferAt: admin.firestore.FieldValue.delete(),
+          cancelledTransferBy: admin.firestore.FieldValue.delete(),
+        });
+      }
+
+      // interim_settlement_requests 문서 생성 (PROCESSED 상태로 직접 기록)
+      tx.set(settlementRef, {
+        businessId,
+        businessName:    businessName ?? "",
+        workerId,
+        workerName:      workerName ?? "",
+        applicationId,
+        attendanceIds,
+        requestedAmount: netAmount ?? actualNetAmount,
+        netAmount:       actualNetAmount,
+        requestReason:   "관리자 중간정산 처리",
+        status:          "PROCESSED",
+        createdAt:       now,
+        processedAt:     now,
+        processedBy:     callerUid,
+        transferNote:    "중간정산 이체",
+        periodStart,
+        periodEnd,
+      });
+    });
+
+    // FCM 알림 (실패해도 이체에 영향 없음)
+    try {
+      if (actualNetAmount > 0) {
+        await db.collection("users").doc(workerId).collection("notifications").add({
+          userId:   workerId,
+          type:     "interimSettlementCompleted",
+          title:    "중간정산이 완료되었습니다",
+          body:     `[${businessName ?? ""}] 중간정산 ${actualNetAmount.toLocaleString()}원이 처리되었습니다.`,
+          isRead:   false,
+          data: {
+            businessId,
+            screen: "interimSettlement",
+            settlementRequestId: settlementRef.id,
+          },
+          createdAt: now,
+          readAt:    null,
+        });
+      }
+    } catch (e) {
+      console.error("[callableAdminDirectInterimSettlement] 알림 발송 실패:", e);
+    }
+
+    return {success: true, settlementId: settlementRef.id, netAmount: actualNetAmount};
+  }
+);
+
+// ─── callableRecalcToTotalRequired ────────────────────────────────────────────
+// 슬롯 totalRequired 필드 합산으로 TO.totalRequired를 서버에서 재계산
+// [Trust Boundary] 클라이언트 FieldValue.increment(delta) 경합 조건 대체
+// - 슬롯 수천 건에 대응: 499건 페이지네이션
+// - 원자성: 최종 합산값만 TO 문서에 1회 업데이트
+export const callableRecalcToTotalRequired = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {businessId, toId} = request.data as {businessId: string; toId: string};
+
+    if (!businessId) throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    if (!toId)       throw new HttpsError("invalid-argument", "toId가 필요합니다.");
+
+    // 권한 검증
+    await assertBizAdmin(callerUid, businessId);
+
+    // TO 소속 검증
+    const toSnap = await db.collection("tos").doc(toId).get();
+    if (!toSnap.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
+    if (toSnap.data()?.businessId !== businessId) {
+      throw new HttpsError("permission-denied", "해당 공고에 대한 권한이 없습니다.");
+    }
+
+    // 슬롯 전체 순회 — 499건 페이지네이션
+    let totalRequired = 0;
+    let lastSlot: FirebaseFirestore.DocumentSnapshot | undefined;
+    while (true) {
+      let q: FirebaseFirestore.Query = db
+        .collection("tos").doc(toId).collection("slots")
+        .limit(499);
+      if (lastSlot) q = q.startAfter(lastSlot);
+      const pageSnap = await q.get();
+      if (pageSnap.empty) break;
+      for (const doc of pageSnap.docs) {
+        totalRequired += ((doc.data().totalRequired as number | undefined) ?? 0);
+      }
+      if (pageSnap.size < 499) break;
+      lastSlot = pageSnap.docs[pageSnap.docs.length - 1];
+    }
+
+    // TO.totalRequired 업데이트
+    await db.collection("tos").doc(toId).update({
+      totalRequired,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return {success: true, totalRequired};
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+// 🔒 [SEC-FIX 2026-08-10] callableGetWorkerBasicProfile
+//    관리자/서브관리자가 계약서 작성 등을 위해 근무자 기본 정보 조회
+//    - assertBizAdmin(callerUid, businessId) 검증 (BUSINESS_ADMIN + SubAdmin 포함)
+//    - 해당 근무자가 해당 사업장의 지원자인지 applications 컬렉션으로 재검증
+//    - 민감 필드(residentNumber, ci, foreignIdNumber, accountNumber) 제외하고 반환
+// ═══════════════════════════════════════════════════════════
+export const callableGetWorkerBasicProfile = onCall(
+  {region: "asia-northeast3"},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {workerUid, businessId} = request.data as {workerUid?: string; businessId?: string};
+
+    if (!workerUid || !businessId) {
+      throw new HttpsError("invalid-argument", "workerUid, businessId가 필요합니다.");
+    }
+
+    // 1. 권한 검증 — BUSINESS_ADMIN(ownerId/adminIds) + SubAdmin(subAdminBusinessIds) 모두 허용
+    await assertBizAdmin(callerUid, businessId);
+
+    // 2. 해당 근무자가 해당 사업장 지원자인지 확인 (applications 컬렉션)
+    const appSnap = await db
+      .collection("applications")
+      .where("uid", "==", workerUid)
+      .where("businessId", "==", businessId)
+      .limit(1)
+      .get();
+
+    if (appSnap.empty) {
+      throw new HttpsError(
+        "permission-denied",
+        "해당 사업장의 지원자 정보에 접근할 권한이 없습니다."
+      );
+    }
+
+    // 3. 민감 필드 제외한 기본 정보만 반환
+    const workerDoc = await db.collection("users").doc(workerUid).get();
+    if (!workerDoc.exists) {
+      throw new HttpsError("not-found", "근무자 정보를 찾을 수 없습니다.");
+    }
+
+    const wd = workerDoc.data()!;
+    const birthDateTs = wd["birthDate"] as admin.firestore.Timestamp | undefined;
+
+    return {
+      name:          (wd["name"]          as string | undefined) ?? null,
+      phone:         (wd["phone"]         as string | undefined) ?? null,
+      birthDateMs:   birthDateTs ? birthDateTs.toMillis() : null,
+      address:       (wd["address"]       as string | undefined) ?? null,
+      detailAddress: (wd["detailAddress"] as string | undefined) ?? null,
+    };
   }
 );

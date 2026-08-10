@@ -398,19 +398,9 @@ class PayrollPaymentService {
   // 중간정산 요청
   // ══════════════════════════════════════════════════════════
 
-  /// 중간정산 요청 생성
-  // [특이사항] 동일 attendanceIds로 중복 요청이 생성될 수 있음.
-  // approveInterimSettlement()에서 이미 transferred인 건은 skip하므로
-  // 이중 지급은 방어되지만, 불필요한 중복 요청이 pending 상태로 남을 수 있음.
-  // UI 레이어에서 동일 기간의 미완료 요청이 있으면 생성을 차단한다.
-  Future<String> createInterimSettlementRequest(
-      InterimSettlementRequestModel req) async {
-    final ref = _db.collection('interim_settlement_requests').doc();
-    final data = req.toMap()
-      ..['createdAt'] = FieldValue.serverTimestamp();
-    await ref.set(data);
-    return ref.id;
-  }
+  // [CF-MIGRATION 2026-08-10] createInterimSettlementRequest 제거
+  // → 관리자 직접 정산은 callableAdminDirectInterimSettlement CF 경유
+  // → 근로자 요청은 callableRequestInterimSettlement CF 경유 (requestInterimSettlement 참고)
 
   /// 중간정산 요청 생성 (CF 경유) — [SECURITY-1 수정] 서버사이드 ownership 검증
   Future<String> requestInterimSettlement({
@@ -533,152 +523,34 @@ class PayrollPaymentService {
     }
   }
 
-  /// 중간정산 승인 → 해당 출근기록 일괄 이체 완료 처리
-  Future<void> approveInterimSettlement({
-    required InterimSettlementRequestModel req,
-    required String processedBy,
-    String? transferNote,
+  // [CF-MIGRATION 2026-08-10] approveInterimSettlement 제거
+  // → 관리자 직접 정산 경로는 adminDirectSettlement()로 일원화
+  // → 근로자 요청 승인 경로는 PayrollPaymentDashboard에서 callableApproveInterimSettlement 직접 호출
+
+  /// 관리자 직접 중간정산 — CF callableAdminDirectInterimSettlement 경유
+  /// [Trust Boundary] attendance 이체 + 정산 문서 생성을 서버에서 원자적으로 처리
+  Future<void> adminDirectSettlement({
+    required String businessId,
+    required String workerId,
+    required String workerName,
+    required String businessName,
+    required String applicationId,
+    required List<String> attendanceIds,
+    required int netAmount,
   }) async {
-    // [087] 멱등성 보호 — 이미 처리된 요청 이중 처리 방지
-    final reqSnap = await _db
-        .collection('interim_settlement_requests')
-        .doc(req.id)
-        .get(const GetOptions(source: Source.server));
-    if (!reqSnap.exists) {
-      throw Exception('중간정산 요청을 찾을 수 없습니다.');
-    }
-    final currentStatus = reqSnap.data()!['status'] as String?;
-    // [BUG-수정] S-1: APPROVED 상태도 멱등성 체크에 포함 — 재호출 시 1단계 중복 실행 방지
-    if (currentStatus == InterimSettlementRequestModel.statusProcessed ||
-        currentStatus == InterimSettlementRequestModel.statusApproved ||
-        currentStatus == InterimSettlementRequestModel.statusRejected) {
-      // [D-002] silent return 대신 exception throw — 호출자가 성공으로 오인하는 버그 수정
-      throw Exception('이미 처리된 중간정산 요청입니다. 중복 처리가 차단되었습니다.');
-    }
-
-    if (req.attendanceIds.isEmpty) {
-      throw Exception('중간정산 요청에 출근기록이 없습니다. 처리할 항목이 없습니다.');
-    }
-
-    // [BUG-수정] S-2: 2단계 실패 후 재시도 시 복구 경로
-    // 1단계 성공 + 2단계 실패 → status=PENDING 잔류 상태에서 관리자가 재승인 시
-    // attendanceIds 중 이미 transferred인 건이 있으면 1단계를 건너뛰고 status만 PROCESSED로 갱신
-    //
-    // 요청 생성 후 승인 전에 관리자가 일부 항목을 취소(wagePending 복원)하면
-    // 원래 req.attendanceIds를 그대로 쓸 경우 취소된 항목도 wageTransferred로 덮어쓰는 버그.
-    // 현재 wageStatus를 서버 조회 후 wageConfirmed 항목만 필터링해서 이체.
-    bool skipMarkTransferred = false;
-    bool zeroTransfer = false; // 실질 이체 0건(모든 항목 취소) 여부
-    List<String> idsToTransfer = List.from(req.attendanceIds);
-
-    // attendanceIds의 현재 wageStatus를 서버에서 조회 (L454에서 isEmpty 시 throw하므로 항상 비어있지 않음)
-    final attSnaps = await Future.wait(
-      req.attendanceIds.map(
-        (id) => _db
-            .collection('attendance')
-            .doc(id)
-            .get(const GetOptions(source: Source.server)),
-      ),
+    final callable = _cf.httpsCallable(
+      'callableAdminDirectInterimSettlement',
+      options: HttpsCallableOptions(timeout: const Duration(seconds: 30)),
     );
-    {
-      // [HIGH-BUG1] userId 교차검증 — 요청의 workerId와 attendance.userId 일치 여부 검사
-      // 다른 워커의 attendanceId가 포함된 경우 필터링
-      final validSnaps = attSnaps
-          .where((s) => s.data()?['userId'] == req.workerId)
-          .toList();
-      final allTransferred = validSnaps.isNotEmpty &&
-          validSnaps.every((s) => s.data()?['wageStatus'] == AttendanceModel.wageTransferred);
-      if (allTransferred) {
-        // 모든 항목이 이미 transferred → 1단계 건너뛰고 status만 PROCESSED로 복구
-        skipMarkTransferred = true;
-        // [BUG-FIX-A006] allTransferred=true 시 idsToTransfer를 validSnaps 기반으로 갱신
-        // 초기값 List.from(req.attendanceIds)는 타 워커 attendanceId를 포함할 수 있어
-        // FCM 금액 계산(아래 actualNetAmount)에서 타 워커 finalWage가 합산되는 버그
-        idsToTransfer = validSnaps.map((s) => s.id).toList();
-      } else {
-        // wageConfirmed 항목만 이체 처리 — 취소된(wagePending 등) 항목 및 타 워커 항목 제외
-        idsToTransfer = validSnaps
-            .where((s) => s.data()?['wageStatus'] == AttendanceModel.wageConfirmed)
-            .map((s) => s.id)
-            .toList();
-        if (idsToTransfer.isEmpty) { skipMarkTransferred = true; zeroTransfer = true; }
-      }
-    }
-    // [I-01] skipMarkTransferred=true 시 이체 0건인데도 status=PROCESSED 마킹됨.
-    // 요청 생성 후 관리자가 모든 attendances를 wagePending으로 취소한 케이스가 해당.
-    // UI 레이어(payroll_worker_detail_screen)에서 settleableRecords 차단이 있으나
-    // 서비스 직접 호출 경로에서는 방어 없음. 운영상 발생 빈도 낮음.
-
-    // 1단계: 출근기록 이체 처리 먼저 — attendance 성공 후 요청 상태 변경
-    // (역순 시 실패 모드: attendance=미이체인데 status=processed → 미지급 상태 숨김)
-    // ⚠️ 원자성 없음: 1단계 성공 + 2단계 실패 시 attendance=transferred, status=pending 불일치 발생.
-    // 단, markTransferredBatch는 멱등(이미 transferred인 건을 덮어써도 안전)하므로,
-    // 재시도 시 1단계가 재실행되어도 중복 이체 없이 2단계까지 정상 완료된다.
-    if (!skipMarkTransferred) {
-      await markTransferredBatch(
-        attendanceIds: idsToTransfer,
-        businessId: req.businessId,
-        transferNote: transferNote ?? '중간정산 처리',
-      );
-    }
-
-    // 2단계: 요청 상태 변경 (트랜잭션) — 동시 승인 경합 시 FCM 중복 발송 방지
-    // ⚠️ 1단계 성공 후 여기서 실패하면 attendance=transferred, status=pending 불일치.
-    //   단, 멱등 재시도로 안전하게 복구되므로 관리자에게 "재시도 안내" 메시지 전달.
-    // [MEDIUM-FIX] 동시 승인: 두 번째 관리자는 트랜잭션 내에서 statusTransitioned=false로
-    //   종료 → 3단계 FCM 발송 건너뜀 (이미 처리된 경우)
-    bool statusTransitioned = false;
-    try {
-      final docRef = _db.collection('interim_settlement_requests').doc(req.id);
-      await _db.runTransaction((tx) async {
-        final snap = await tx.get(docRef);
-        final current = snap.data()?['status'] as String?;
-        if (current == InterimSettlementRequestModel.statusProcessed) return;
-        tx.update(docRef, {
-          'status':      InterimSettlementRequestModel.statusProcessed,
-          'processedBy': processedBy,
-          'processedAt': FieldValue.serverTimestamp(),
-          if (transferNote != null) 'transferNote': transferNote,
-          'updatedAt':   FieldValue.serverTimestamp(),
-        });
-        statusTransitioned = true;
-      });
-    } catch (e) {
-      // 이체 자체는 완료됐으므로 재시도 시 중복 이체 없이 안전하게 복구됨
-      throw Exception(
-        '이체는 완료되었으나 상태 업데이트에 실패했습니다.\n'
-        '다시 시도하면 안전하게 처리됩니다. ($e)',
-      );
-    }
-
-    // 3단계: 근로자에게 중간정산 완료 알림 발송 (실패해도 이체 자체에 영향 없음)
-    try {
-      // 동시 승인 경합에서 두 번째 승인자 또는 실질 이체 0건 — FCM 발송 생략
-      if (!statusTransitioned || zeroTransfer) return;
-
-      // 실제 이체된 항목의 finalWage 합산 — req.netAmount(요청 시점 추정치)보다 정확
-      final actualNetAmount = idsToTransfer.isNotEmpty
-          ? attSnaps
-              .where((s) => idsToTransfer.contains(s.id))
-              .fold<int>(0, (acc, s) => acc + ((s.data()?['finalWage'] as num?)?.toInt() ?? 0))
-          : req.netAmount; // 전부 이미 transferred인 재시도 케이스 — req.netAmount 재사용
-      final notification = NotificationModel.createInterimSettlementCompleted(
-        userId: req.workerId,
-        workerName: req.workerName,
-        businessName: req.businessName,
-        businessId: req.businessId,
-        netAmount: actualNetAmount,
-        periodStart: req.periodStart,
-        periodEnd: req.periodEnd,
-        settlementRequestId: req.id,
-      );
-      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('createNotification',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
-          .call(notification.toMap());
-    } catch (e) {
-      debugPrint('⚠️ 중간정산 완료 알림 발송 실패 (이체는 완료): $e');
-    }
+    await callable.call<Map<String, dynamic>>({
+      'businessId':    businessId,
+      'workerId':      workerId,
+      'workerName':    workerName,
+      'businessName':  businessName,
+      'applicationId': applicationId,
+      'attendanceIds': attendanceIds,
+      'netAmount':     netAmount,
+    });
   }
 
   /// 중간정산 거절

@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../../../utils/responsive_helper.dart';
 import '../../../../utils/format_helper.dart';
 import '../../../../theme/app_colors.dart';
@@ -774,7 +774,7 @@ class _TODateSelectorState extends State<TODateSelector> {
           ],
 
           SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-          Divider(color: AppColors.grey300),
+          const Divider(color: AppColors.grey300),
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
           Text(

@@ -103,14 +103,18 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
     _noshowReductionController.text = _settings!.restartProgram.noshowReduction.toString();
     _lateReductionController.text = _settings!.restartProgram.lateReduction.toString();
     
-    // 증가 규칙 컨트롤러
+    // 증가 규칙 컨트롤러 — 'increase_TYPE' 키 사용
+    // ⚠️ rule.type을 그냥 키로 쓰면 같은 type이 증가/감소에 모두 있을 때
+    //    감소 루프가 증가 컨트롤러를 덮어써서 dispose 없이 교체됨 → 메모리 누수 + 저장 오류
     for (final rule in _settings!.increaseRules) {
-      _ruleControllers[rule.type] = TextEditingController(text: rule.points.toString());
+      _ruleControllers['increase_${rule.type}'] =
+          TextEditingController(text: rule.points.toString());
     }
-    
-    // 감소 규칙 컨트롤러
+
+    // 감소 규칙 컨트롤러 — 'decrease_TYPE' 키 사용
     for (final rule in _settings!.decreaseRules) {
-      _ruleControllers[rule.type] = TextEditingController(text: rule.points.abs().toString());
+      _ruleControllers['decrease_${rule.type}'] =
+          TextEditingController(text: rule.points.abs().toString());
     }
   }
 
@@ -124,12 +128,12 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
       confirmText: '저장',
     );
     if (!confirmed || !mounted) return;
+    if (_settings == null) return; // null guard: setState 이전에 체크해야 _isSaving이 false로 유지됨
     setState(() => _isSaving = true);
     try {
-    if (_settings == null) return;
       // 증가 규칙 업데이트
       final updatedIncreaseRules = _settings!.increaseRules.map((rule) {
-        final controller = _ruleControllers[rule.type];
+        final controller = _ruleControllers['increase_${rule.type}'];
         final newPoints = int.tryParse(controller?.text ?? '') ?? rule.points;
         return TrustRule(
           type: rule.type,
@@ -138,10 +142,10 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
           condition: rule.condition,
         );
       }).toList();
-      
+
       // 감소 규칙 업데이트 (음수로 저장 — .abs()로 음수 입력 방어)
       final updatedDecreaseRules = _settings!.decreaseRules.map((rule) {
-        final controller = _ruleControllers[rule.type];
+        final controller = _ruleControllers['decrease_${rule.type}'];
         final newPoints = (int.tryParse(controller?.text ?? '') ?? rule.points.abs()).abs();
         return TrustRule(
           type: rule.type,
@@ -246,6 +250,9 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
       for (final c in _ruleControllers.values) { c.dispose(); }
       _ruleControllers.clear();
       _populateControllers();
+      // setState 필수: 위젯 트리가 재빌드되지 않으면 기존 TextField가
+      // dispose된 구 컨트롤러를 참조 → Flutter assertion error 크래시
+      setState(() {});
 
       if (mounted) ToastHelper.showSuccess('기본값으로 복원되었습니다');
     } catch (e) {
@@ -331,16 +338,16 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
                       return _buildNumberField(
                         context,
                         label: rule.description,
-                        controller: _ruleControllers[rule.type]!,
+                        controller: _ruleControllers['increase_${rule.type}']!,
                         prefix: '+',
                         suffix: '점',
                         prefixColor: AppColors.success,
                       );
                     }).toList(),
                   ),
-                  
+
                   SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-                  
+
                   // 감소 규칙
                   _buildSection(
                     context,
@@ -351,7 +358,7 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
                       return _buildNumberField(
                         context,
                         label: rule.description,
-                        controller: _ruleControllers[rule.type]!,
+                        controller: _ruleControllers['decrease_${rule.type}']!,
                         prefix: '-',
                         suffix: '점',
                         prefixColor: AppColors.error,
@@ -453,7 +460,7 @@ class _TrustRulesSettingsScreenState extends State<TrustRulesSettingsScreen> {
     
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(

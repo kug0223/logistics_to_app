@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 // Models
@@ -332,7 +332,7 @@ class _TOItemCardState extends State<TOItemCard> {
                     child: widget.isExpanded
                         ? Column(
                             children: [
-                              Divider(height: 1, color: AppColors.grey200),
+                              const Divider(height: 1, color: AppColors.grey200),
                               Container(
                                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                                 decoration: BoxDecoration(
@@ -387,7 +387,8 @@ class _TOItemCardState extends State<TOItemCard> {
                                               firestoreService: widget.firestoreService,
                                               onChanged: widget.onChanged,
                                               onLocalStatsChanged: () {
-                                                setState(() {});
+                                                // 자식 다이얼로그의 로컬 통계 변경 → 카드 UI 갱신
+                                                if (mounted) setState(() {});
                                                 widget.onLocalStatsChanged?.call();
                                               },
                                               onAffectedTOsChanged: widget.onAffectedTOsChanged,  // 🔥 추가

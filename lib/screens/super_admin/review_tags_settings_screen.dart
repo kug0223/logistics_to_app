@@ -68,6 +68,8 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
       } else {
         // 기본값 설정
         _setDefaultTags();
+        // mounted 체크 필수: await 이후 위젯 dispose 시 Firestore 쓰기 방지
+        if (!mounted) return;
         await _saveTags(showToast: false); // [BUG-수정] 초기화 경로에서 Toast 오발화 방지
       }
     } catch (e) {
@@ -138,7 +140,22 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
           }
         });
         if (!mounted) return;
-        await _saveTags();
+        try {
+          await _saveTags();
+        } catch (e) {
+          // 저장 실패 시 optimistic update 롤백
+          if (mounted) {
+            setState(() {
+              switch (type) {
+                case 'positive': _positiveTags.remove(result); break;
+                case 'improvement': _improvementTags.remove(result); break;
+                case 'businessPositive': _businessPositiveTags.remove(result); break;
+                case 'businessImprovement': _businessImprovementTags.remove(result); break;
+              }
+            });
+          }
+          rethrow;
+        }
       }
     } catch (e) {
       debugPrint('❌ 태그 추가 실패: $e');
@@ -291,7 +308,7 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
@@ -398,11 +415,15 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            tag,
-            style: ResponsiveHelper.bodyStyle(context).copyWith(
-              color: color,
-              fontWeight: FontWeight.w500,
+          // Flexible 필수: 30자 이상 긴 태그명 시 Wrap 내 칩 overflow 방지
+          Flexible(
+            child: Text(
+              tag,
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                color: color,
+                fontWeight: FontWeight.w500,
+              ),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),

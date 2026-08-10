@@ -1,4 +1,4 @@
-﻿import 'dart:math' as math;
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -525,7 +525,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     Text('비밀번호 찾기',
                         style: ResponsiveHelper.titleStyle(ctx).copyWith(fontWeight: FontWeight.w700, color: AppColors.grey900)),
                     const SizedBox(height: 6),
-                    Text('아이디 입력 후 PASS 본인인증으로 신원을 확인합니다',
+                    Text('아이디 입력 후 본인인증으로 신원을 확인합니다',
                         style: ResponsiveHelper.bodyStyle(ctx).copyWith(color: AppColors.grey500)),
                     const SizedBox(height: 24),
                     _buildSheetTextField(
@@ -852,7 +852,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
           const SizedBox(height: 20),
 
-          Divider(color: AppColors.grey200, height: 1),
+          const Divider(color: AppColors.grey200, height: 1),
 
           const SizedBox(height: 14),
 

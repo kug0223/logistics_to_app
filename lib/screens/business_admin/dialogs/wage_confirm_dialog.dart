@@ -1455,22 +1455,28 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       }
 
       // 지원자 알림 (TrustScore는 onAttendanceWageStatusChanged CF 트리거에서 서버 자동 처리)
+      // [FCM-FIX 2026-08-10] fire-and-forget → await + 개별 에러 처리로 수정
+      // 알림 실패는 급여 확정 결과에 영향 없음 (알림만 개별 catch)
       for (final app in processedApps) {
         final att = widget.attendanceMap[app.id];
         if (att != null) {
           // att.finalWage는 다이얼로그 오픈 시점 스냅샷이므로 0일 수 있음.
           // 방금 계산한 _calculatedWages 값을 우선 사용하고, 없으면 att.finalWage로 fallback.
           final wageAmount = _calculatedWages[app.id]?.effectiveNetWage ?? att.finalWage ?? 0;
-          _firestoreService.createNotification(
-            NotificationModel.createWageConfirmed(
-              userId: app.uid,
-              businessName: widget.businessName,
-              businessId: widget.businessId,
-              workDate: att.workDate,
-              totalWage: wageAmount,
-              attendanceId: att.id,
-            ),
-          );
+          try {
+            await _firestoreService.createNotification(
+              NotificationModel.createWageConfirmed(
+                userId: app.uid,
+                businessName: widget.businessName,
+                businessId: widget.businessId,
+                workDate: att.workDate,
+                totalWage: wageAmount,
+                attendanceId: att.id,
+              ),
+            );
+          } catch (e) {
+            debugPrint('⚠️ 급여 확정 알림 발송 실패 (${app.uid}): $e');
+          }
         }
       }
     } catch (e) {

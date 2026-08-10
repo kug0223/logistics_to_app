@@ -49,6 +49,10 @@ class CloseManagementDialog extends StatefulWidget {
 
 class _CloseManagementDialogState extends State<CloseManagementDialog>
     with LoadingStateMixin {
+  // ─── 포맷터 캐싱 (build/itemBuilder마다 재생성 방지) ─────────
+  static final _monthFmt  = DateFormat('yyyy년 M월');
+  static final _dateFmtKo = DateFormat('M/d(E)', 'ko_KR');
+
   // ═══════════════════════════════════════════════════════════
   // 상태 변수
   // ═══════════════════════════════════════════════════════════
@@ -437,7 +441,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final monthStr = DateFormat('yyyy년 M월').format(_currentMonth);
+    final monthStr = _monthFmt.format(_currentMonth);
 
     return PopScope(
       canPop: false,
@@ -833,7 +837,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
 
   /// 날짜별 행
   Widget _buildDateRow(ThemeData theme, String businessId, DateCloseStatus status) {
-    final dateStr = DateFormat('M/d(E)', 'ko_KR').format(status.date);
+    final dateStr = _dateFmtKo.format(status.date);
     final isClosed = status.statusType == CloseStatusType.closed;
     // [DESIGN] 미래 날짜도 탭 가능 — 사전 마감 허용이 의도된 설계. 비활성화 복원 금지.
     final indicatorColor = isClosed ? AppColors.success : AppColors.error;
@@ -927,10 +931,9 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
         color: AppColors.grey50,
-        borderRadius: BorderRadius.only(
-          bottomLeft: Radius.circular(24),
-          bottomRight: Radius.circular(24),
-        ),
+        // [CRASH-3 수정] Border(top:...) + borderRadius 동시 사용 → Flutter Border.paint 크래시 (40건)
+        // DialogHelper.showSheet(useSafeArea:true, shape:Radius20)가 하단 모서리를 이미 클리핑하므로
+        // 하단 바에서 borderRadius 별도 지정 불필요 → 제거하여 크래시 해소
         border: Border(
           top: BorderSide(color: AppColors.border),
         ),

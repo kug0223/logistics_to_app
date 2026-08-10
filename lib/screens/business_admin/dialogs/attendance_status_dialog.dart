@@ -98,7 +98,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   String? _rulesLoadedForBusinessId;           // 마지막으로 정책을 로드한 businessId (캐싱용)
   Map<String, ApplicationModel> _workerIdMap = {};   // id → worker (O(1) 조회용)
   Map<String, Map<String, dynamic>> _statusCache = {};  // _computeStatus 결과 캐시
-  
+  List<List<ApplicationModel>> _tabWorkers = List.generate(4, (_) => []); // 탭별 근로자 캐시
+
   // UI 상태
   bool _isLoading = true;
   String? _selectedBusinessId;
@@ -284,6 +285,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         _contractStatusMap = contractStatusMap;
         _isLoading = false;
         _rebuildStatusCache();
+        _rebuildTabWorkers();
       });
 
       debugPrint('✅ 당일명단 로드 완료: ${confirmedWorkers.length}명');
@@ -517,6 +519,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     _statusCache = {
       for (final app in _confirmedWorkers) app.id: _computeStatus(app),
     };
+  }
+
+  /// 탭별 근로자 캐시 재빌드 — _rebuildStatusCache() 직후 항상 호출
+  void _rebuildTabWorkers() {
+    _tabWorkers = List.generate(4, (i) => _workersByTab(i));
   }
 
   /// 출퇴근 상태 실제 계산 (UI 레벨 — DB status와 별개)
@@ -994,10 +1001,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   /// 메인 콘텐츠
   Widget _buildContent(ThemeData theme) {
     final padding = ResponsiveHelper.cardPadding(context);
-    final needsReview = _workersByTab(0);
-    final normal = _workersByTab(1);
-    final adminConfirmedWorkers = _workersByTab(2);
-    final done = _workersByTab(3);
+    final needsReview = _tabWorkers[0];
+    final normal = _tabWorkers[1];
+    final adminConfirmedWorkers = _tabWorkers[2];
+    final done = _tabWorkers[3];
 
     return Column(
         mainAxisSize: MainAxisSize.min,
@@ -1191,7 +1198,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     }
 
     // 탭별 조건부 칩
-    final tabWorkers = _workersByTab(_currentTabIndex);
+    final tabWorkers = _tabWorkers[_currentTabIndex];
     final noShowTargets = _currentTabIndex == 0
         ? tabWorkers.where((a) => _getAttendanceStatus(a)['status'] == 'pending').toList()
         : <ApplicationModel>[];
@@ -1323,7 +1330,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           if (_currentTabIndex == 0) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 6)),
             Builder(builder: (ctx) {
-              final reviewWorkers = _workersByTab(0);
+              final reviewWorkers = _tabWorkers[0];
               final pendingList = reviewWorkers.where((a) => _getAttendanceStatus(a)['status'] == 'pending').toList();
               final lateList    = reviewWorkers.where((a) => _getAttendanceStatus(a)['status'] == 'late').toList();
               final missedList  = reviewWorkers.where((a) => _getAttendanceStatus(a)['status'] == 'missed_checkout').toList();
@@ -2384,6 +2391,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         _selectedIds.remove(app.id);
         _hasChanges = true;
         _rebuildStatusCache();
+        _rebuildTabWorkers();
       });
     } catch (e) {
       debugPrint('❌ 확인 처리 실패: $e');
@@ -2407,6 +2415,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         _attendanceMap[app.id] = attendance.copyWith(adminConfirmed: false);
         _hasChanges = true;
         _rebuildStatusCache();
+        _rebuildTabWorkers();
       });
     } catch (e) {
       debugPrint('❌ 확인 취소 실패: $e');
@@ -2418,7 +2427,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
   /// 선택 인원 기반 확인/취소 고정 바 — 선택된 근무자 중 대상이 있을 때만 표시
   Widget _buildSelectionConfirmBar(ThemeData theme) {
-    final tabWorkers = _workersByTab(_currentTabIndex);
+    final tabWorkers = _tabWorkers[_currentTabIndex];
     final selectedWorkers = tabWorkers.where((a) => _selectedIds.contains(a.id)).toList();
 
     final confirmable = selectedWorkers.where((a) {
@@ -2535,6 +2544,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         _isLoading = false;
         _hasChanges = true;
         _rebuildStatusCache();
+        _rebuildTabWorkers();
       });
     } catch (e) {
       debugPrint('❌ 그룹 전체 확인 실패: $e');
@@ -2574,6 +2584,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         _isLoading = false;
         _hasChanges = true;
         _rebuildStatusCache();
+        _rebuildTabWorkers();
       });
     } catch (e) {
       debugPrint('❌ 그룹 전체 취소 실패: $e');
@@ -2745,9 +2756,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       if (mounted) setState(() => _isLoading = false);
     }
     _rebuildStatusCache();
+    _rebuildTabWorkers();
 
     final hasChanges = await showDialog<bool>(
       context: context,
+      barrierDismissible: false, // [M-3] 외부 탭으로 null 반환 시 부모 _hasChanges 미갱신 → 목록 UI 미반영 버그
       builder: (context) => WageConfirmDialog(
         date: widget.date,
         businessId: _selectedBusinessId!,
@@ -2983,7 +2996,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       _selectAll = value;
       if (value) {
         _selectedIds.clear();
-        final tabWorkers = _workersByTab(_currentTabIndex);
+        final tabWorkers = _tabWorkers[_currentTabIndex];
         final visibleWorkers = _nameFilter.isEmpty
             ? tabWorkers
             : tabWorkers.where((app) {
@@ -3182,7 +3195,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         _selectedIds.add(appId);
         // selectableCount는 _confirmedWorkers 전체가 아닌 현재 탭 기준으로 산정.
         //           _toggleSelectAll()과 동일한 기준을 써야 _selectAll 동기화가 정확함.
-        final tabWorkers = _workersByTab(_currentTabIndex);
+        final tabWorkers = _tabWorkers[_currentTabIndex];
         final selectableCount = tabWorkers.where((app) {
           final status = _getAttendanceStatus(app);
           return status['status'] != 'noshow';
@@ -3307,7 +3320,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                 ),
 
                 SizedBox(height: ResponsiveHelper.spacing(ctx, 8)),
-                Divider(color: AppColors.border),
+                const Divider(color: AppColors.border),
                 SizedBox(height: ResponsiveHelper.spacing(ctx, 8)),
 
                 // 안내

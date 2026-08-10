@@ -106,6 +106,13 @@ class ApplicationModel {
   final DateTime? reconfirmSentAt;       // H-2 알림 발송 시각
   final DateTime? reconfirmRespondedAt;  // 응답 시각
 
+  // 🎫 초대 시스템 — status=INVITED일 때 사용
+  // 단기 초대: slotId + workDate 기존 필드 재활용
+  // 장기 초대: desiredStartDate(시작일) + workEndDate(종료일) 기존 필드 재활용
+  final String? invitedBy;         // 초대한 관리자 UID
+  final DateTime? invitedAt;       // 초대 발송 시각 (만료 계산 기준)
+  final DateTime? inviteExpiresAt; // 초대 만료 시각 (CF에서 invitedAt + 24h 계산 저장)
+
   ApplicationModel({
     required this.id,
     required this.businessId,
@@ -182,6 +189,10 @@ class ApplicationModel {
     this.reconfirmStatus,
     this.reconfirmSentAt,
     this.reconfirmRespondedAt,
+    // 🎫 초대 시스템
+    this.invitedBy,
+    this.invitedAt,
+    this.inviteExpiresAt,
   });
 
   static ApplicationModel? tryFromMap(Map<String, dynamic> data, String documentId) {
@@ -292,6 +303,10 @@ class ApplicationModel {
       reconfirmStatus: data['reconfirmStatus'] as String?,
       reconfirmSentAt: parseTimestampNullable(data['reconfirmSentAt']),
       reconfirmRespondedAt: parseTimestampNullable(data['reconfirmRespondedAt']),
+      // 🎫 초대 시스템
+      invitedBy: data['invitedBy'] as String?,
+      invitedAt: parseTimestampNullable(data['invitedAt']),
+      inviteExpiresAt: parseTimestampNullable(data['inviteExpiresAt']),
     );
   }
   
@@ -390,6 +405,10 @@ class ApplicationModel {
       'reconfirmStatus': reconfirmStatus,
       'reconfirmSentAt': reconfirmSentAt != null ? Timestamp.fromDate(reconfirmSentAt!) : null,
       'reconfirmRespondedAt': reconfirmRespondedAt != null ? Timestamp.fromDate(reconfirmRespondedAt!) : null,
+      // 🎫 초대 시스템
+      'invitedBy': invitedBy,
+      'invitedAt': invitedAt != null ? Timestamp.fromDate(invitedAt!) : null,
+      'inviteExpiresAt': inviteExpiresAt != null ? Timestamp.fromDate(inviteExpiresAt!) : null,
     };
   }
 
@@ -402,6 +421,8 @@ class ApplicationModel {
       case 'REJECTED':          return '거절';
       case 'CANCELED':          return '취소됨';
       case 'AUTO_CANCELED':     return '자동 취소됨';
+      case 'INVITED':           return '초대받음';
+      case 'EXPIRED':           return '초대 만료';
       default:                  return '알 수 없음';
     }
   }
@@ -494,6 +515,10 @@ class ApplicationModel {
     String? reconfirmStatus,
     DateTime? reconfirmSentAt,
     DateTime? reconfirmRespondedAt,
+    // 🎫 초대 시스템
+    String? invitedBy,
+    DateTime? invitedAt,
+    DateTime? inviteExpiresAt,
   }) {
     return ApplicationModel(
       id: id ?? this.id,
@@ -568,6 +593,10 @@ class ApplicationModel {
       reconfirmStatus: reconfirmStatus ?? this.reconfirmStatus,
       reconfirmSentAt: reconfirmSentAt ?? this.reconfirmSentAt,
       reconfirmRespondedAt: reconfirmRespondedAt ?? this.reconfirmRespondedAt,
+      // 🎫 초대 시스템
+      invitedBy: invitedBy ?? this.invitedBy,
+      invitedAt: invitedAt ?? this.invitedAt,
+      inviteExpiresAt: inviteExpiresAt ?? this.inviteExpiresAt,
     );
   }
 
@@ -790,6 +819,9 @@ abstract class AppStatus {
   static const String rejected         = 'REJECTED';
   static const String canceled         = 'CANCELED';
   static const String autoCanceled     = 'AUTO_CANCELED';
+  // 🎫 초대 시스템
+  static const String invited          = 'INVITED';          // 관리자 초대 발송 후 근로자 미응답
+  static const String expired          = 'EXPIRED';          // 초대 24h 미응답으로 자동 만료
 
   /// 퇴사·계약해지 하위 상태 (resignStatus / terminationStatus 필드용)
   static const String approved    = 'APPROVED';
@@ -800,11 +832,14 @@ abstract class AppStatus {
   static const String renewalTerminate = 'TERMINATE';
 
   /// 활성 상태 그룹 (CONTRACT_PENDING도 활성으로 취급)
+  /// INVITED는 수락 전이므로 미포함 — 충돌 체크 대상에서 제외
   static const List<String> activeStates   = [pending, contractPending, confirmed];
   /// 확정 완료 상태 그룹 (Firestore whereIn 쿼리 및 in-memory 체크에 사용)
   static const List<String> confirmedStatuses = [confirmed, contractPending];
   /// 비활성 상태 그룹
   static const List<String> inactiveStates = [rejected, canceled, autoCanceled];
+  /// 초대 관련 상태 그룹 (근로자 초대 탭 필터용)
+  static const List<String> inviteStates   = [invited, expired];
 }
 
 /// 지원서 타입 상수 (applications 컬렉션 type 필드)

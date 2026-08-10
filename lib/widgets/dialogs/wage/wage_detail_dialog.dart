@@ -940,7 +940,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                 isFirst: true,
               ),
               if (absenceDeduction > 0) ...[
-                Divider(height: 1, color: AppColors.grey100),
+                const Divider(height: 1, color: AppColors.grey100),
                 _buildWageLineItem(
                   context,
                   label: '미근무 공제',
@@ -952,7 +952,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                 ),
               ],
               if (_wage.overtimeAmount > 0) ...[
-                Divider(height: 1, color: AppColors.grey100),
+                const Divider(height: 1, color: AppColors.grey100),
                 _buildWageLineItem(
                   context,
                   label: '연장수당',
@@ -963,7 +963,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                 ),
               ],
               if (_wage.nightAmount > 0) ...[
-                Divider(height: 1, color: AppColors.grey100),
+                const Divider(height: 1, color: AppColors.grey100),
                 _buildWageLineItem(
                   context,
                   label: '야간수당',
@@ -974,7 +974,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                 ),
               ],
               if (_wage.additionalAmount > 0) ...[
-                Divider(height: 1, color: AppColors.grey100),
+                const Divider(height: 1, color: AppColors.grey100),
                 _buildWageLineItem(
                   context,
                   label: '추가수당',
@@ -984,7 +984,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                 ),
               ],
               if (_wage.deductionAmount > 0) ...[
-                Divider(height: 1, color: AppColors.grey100),
+                const Divider(height: 1, color: AppColors.grey100),
                 _buildWageLineItem(
                   context,
                   label: '추가공제',
@@ -995,7 +995,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                 ),
               ],
               if (_wage.weeklyHolidayAmount > 0) ...[
-                Divider(height: 1, color: AppColors.grey100),
+                const Divider(height: 1, color: AppColors.grey100),
                 _buildWageLineItem(
                   context,
                   label: '주휴수당',
@@ -1013,7 +1013,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                    _wage.additionalAmount > 0 ||
                    _wage.deductionAmount > 0 ||
                    _wage.weeklyHolidayAmount > 0)) ...[
-                Divider(height: 1, color: AppColors.grey200),
+                const Divider(height: 1, color: AppColors.grey200),
                 Container(
                   decoration: BoxDecoration(
                     color: AppColors.grey50,
@@ -1091,7 +1091,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
             ),
             // 펼쳐진 상세 항목
             if (_isDeductionExpanded) ...[
-              Divider(height: 1, color: AppColors.errorLight),
+              const Divider(height: 1, color: AppColors.errorLight),
               if (_wage.employmentInsuranceDeduction > 0) ...[
                 _buildWageLineItem(context,
                     label: '고용보험',
@@ -1099,7 +1099,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                     color: AppColors.errorDark,
                     icon: Icons.work_outline,
                     isDeduction: true),
-                Divider(height: 1, color: AppColors.grey100),
+                const Divider(height: 1, color: AppColors.grey100),
               ],
               if (_wage.nationalPensionDeduction > 0) ...[
                 _buildWageLineItem(context,
@@ -1108,7 +1108,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                     color: AppColors.errorDark,
                     icon: Icons.savings,
                     isDeduction: true),
-                Divider(height: 1, color: AppColors.grey100),
+                const Divider(height: 1, color: AppColors.grey100),
               ],
               if (_wage.healthInsuranceDeduction > 0) ...[
                 _buildWageLineItem(context,
@@ -1117,7 +1117,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                     color: AppColors.errorDark,
                     icon: Icons.favorite_border,
                     isDeduction: true),
-                Divider(height: 1, color: AppColors.grey100),
+                const Divider(height: 1, color: AppColors.grey100),
               ],
               if (_wage.ltcInsuranceDeduction > 0) ...[
                 _buildWageLineItem(context,
@@ -1126,7 +1126,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                     color: AppColors.errorDark,
                     icon: Icons.elderly,
                     isDeduction: true),
-                Divider(height: 1, color: AppColors.grey100),
+                const Divider(height: 1, color: AppColors.grey100),
               ],
               if (_wage.incomeTaxDeduction > 0) ...[
                 _buildWageLineItem(context,
@@ -1135,7 +1135,7 @@ class _WageDetailDialogState extends State<WageDetailDialog> {
                     color: AppColors.errorDark,
                     icon: Icons.account_balance,
                     isDeduction: true),
-                Divider(height: 1, color: AppColors.grey100),
+                const Divider(height: 1, color: AppColors.grey100),
               ],
               if (_wage.retroactiveDeduction > 0)
                 _buildWageLineItem(context,

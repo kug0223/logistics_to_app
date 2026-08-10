@@ -1386,7 +1386,7 @@ class WorkDetailDialog {
                   ],
                 ),
               ),
-              Divider(height: 1, color: AppColors.grey200),
+              const Divider(height: 1, color: AppColors.grey200),
               Expanded(
                 child: CupertinoPicker(
                   scrollController: FixedExtentScrollController(
@@ -2604,7 +2604,7 @@ class WorkDetailDialog {
                 ],
               ),
             ),
-            Divider(height: 1, color: AppColors.grey200),
+            const Divider(height: 1, color: AppColors.grey200),
             Expanded(
               child: CupertinoPicker(
                 scrollController:

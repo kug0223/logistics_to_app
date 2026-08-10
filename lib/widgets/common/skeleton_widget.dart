@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:shimmer/shimmer.dart';
 import '../../utils/responsive_helper.dart';
 
@@ -76,7 +76,7 @@ class TOListSkeleton extends StatelessWidget {
   Widget build(BuildContext context) {
     // TO카드 높이(~260dp) + margin(12dp) ≈ 272dp 기준, +2로 마지막 카드 반쪽 노출
     final s = ResponsiveHelper.spacing(context, 1);
-    final availableHeight = MediaQuery.of(context).size.height;
+    final availableHeight = MediaQuery.sizeOf(context).height;
     final cardHeight = s * 272;
     final count = (availableHeight / cardHeight).ceil() + 2;
 
@@ -219,7 +219,7 @@ class ApplicationListSkeleton extends StatelessWidget {
     // 카드 높이(~94dp) + 구분선(6dp) = 100dp 기준으로 화면을 채우는 개수 계산
     // +2: 상하 패딩 여유 + 마지막 카드 반쪽 노출(나오다가 마는 효과)
     final s = ResponsiveHelper.spacing(context, 1);
-    final availableHeight = MediaQuery.of(context).size.height;
+    final availableHeight = MediaQuery.sizeOf(context).height;
     final cardHeight = s * 100;
     final count = (availableHeight / cardHeight).ceil() + 2;
 
@@ -313,7 +313,7 @@ class WorkforceListSkeleton extends StatelessWidget {
   Widget build(BuildContext context) {
     // TOGroupCard 접힌 높이(~170dp) + margin(4dp) ≈ 174dp 기준, +2로 마지막 카드 반쪽 노출
     final s = ResponsiveHelper.spacing(context, 1);
-    final availableHeight = MediaQuery.of(context).size.height;
+    final availableHeight = MediaQuery.sizeOf(context).height;
     final cardHeight = s * 174;
     final count = (availableHeight / cardHeight).ceil() + 2;
 
@@ -501,7 +501,7 @@ class PayrollWorkerListSkeleton extends StatelessWidget {
   Widget build(BuildContext context) {
     // WorkerTile 높이(~54dp) + 구분선(8dp) ≈ 62dp 기준, +2로 마지막 카드 반쪽 노출
     final s = ResponsiveHelper.spacing(context, 1);
-    final availableHeight = MediaQuery.of(context).size.height;
+    final availableHeight = MediaQuery.sizeOf(context).height;
     final cardHeight = s * 62;
     final count = (availableHeight / cardHeight).ceil() + 2;
 
@@ -581,3 +581,4 @@ class _PayrollWorkerTileSkeleton extends StatelessWidget {
     );
   }
 }
+

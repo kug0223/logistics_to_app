@@ -900,7 +900,7 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
           ),
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-        Divider(height: 1, color: AppColors.grey200),
+        const Divider(height: 1, color: AppColors.grey200),
       ],
     );
   }
