@@ -642,6 +642,22 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     );
   }
 
+  /// 신분증/통장 검증용 주민번호 앞자리 계산
+  /// 반환 형식: "YYMMDD-G" (예: 1990년 1월 1일 남성 → "900101-1")
+  /// 내국인은 residentNumber가 저장되지 않으므로 birthDate + gender로 재계산.
+  /// 성별 코드: 2000년 이전 남성=1, 여성=2 / 2000년 이후 남성=3, 여성=4
+  String? _buildExpectedResidentNumber(UserModel user) {
+    if (user.birthDate == null || user.gender == null) return null;
+    final birth = user.birthDate!;
+    final yy = (birth.year % 100).toString().padLeft(2, '0');
+    final mm = birth.month.toString().padLeft(2, '0');
+    final dd = birth.day.toString().padLeft(2, '0');
+    final front = '$yy$mm$dd';
+    final isMale = user.gender == '남성';
+    final genderCode = birth.year >= 2000 ? (isMale ? 3 : 4) : (isMale ? 1 : 2);
+    return '$front-$genderCode';
+  }
+
   /// 신분증 업로드
   Future<void> _uploadIdCard() async {
     if (_isLoading) return;
@@ -653,11 +669,8 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
 
     String? newIdCardUrl; // [M-19] CF 실패 시 Storage orphan 방지
     try {
-      // 주민번호 앞 7자리 조합
-      String? residentNumber;
-      if (user.residentNumber != null && user.residentNumber!.length >= 8) {
-        residentNumber = user.residentNumber!.substring(0, 8); // "990101-1"
-      }
+      // 주민번호 앞자리 계산: birthDate + gender (내국인 residentNumber는 저장 안 됨)
+      final residentNumber = _buildExpectedResidentNumber(user);
 
       final imagePath = await DocumentUploadHelper.pickAndVerifyIdCard(
         context,
@@ -1318,6 +1331,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
         context,
         user.name,
         expectedAccountNumber: (user.accountNumber?.isEmpty ?? true) ? null : user.accountNumber,
+        expectedBankName: user.bankName,
       );
 
       if (imagePath == null || !mounted) return; // finally가 _isLoading 초기화

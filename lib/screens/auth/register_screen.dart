@@ -1263,11 +1263,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   /// 신분증 이미지 선택
   Future<void> _pickIdCardImage() async {
-    // 여권은 OCR 번호 비교 없이 이미지만 업로드
     String? residentNumber;
-    if (!_isKorean &&
+    if (_isKorean && _passAuthResult != null) {
+      // 내국인: PASS 인증 완료 → 생년월일+성별로 주민번호 앞자리 계산
+      residentNumber = _buildExpectedResidentNumber(
+        _passAuthResult!.birthDate,
+        _passAuthResult!.gender,
+      );
+    } else if (!_isKorean &&
         _residentNumber1Controller.text.isNotEmpty &&
         _residentNumber2Controller.text.isNotEmpty) {
+      // 외국인: 직접 입력한 등록번호 사용
       residentNumber = '${_residentNumber1Controller.text}-${_residentNumber2Controller.text[0]}';
     }
 
@@ -1276,10 +1282,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _nameController.text.trim(),
       expectedResidentNumber: residentNumber,
     );
-    
+
     if (imagePath != null && mounted) {
       setState(() => _idCardImagePath = imagePath);
     }
+  }
+
+  /// PASS 인증 결과 또는 유저 정보에서 신분증 검증용 주민번호 앞자리 계산
+  /// 반환 형식: "YYMMDD-G" (예: 1990년 1월 1일 남성 → "900101-1")
+  /// 성별 코드: 2000년 이전 남성=1, 여성=2 / 2000년 이후 남성=3, 여성=4
+  String _buildExpectedResidentNumber(DateTime birthDate, String gender) {
+    final yy = (birthDate.year % 100).toString().padLeft(2, '0');
+    final mm = birthDate.month.toString().padLeft(2, '0');
+    final dd = birthDate.day.toString().padLeft(2, '0');
+    final front = '$yy$mm$dd';
+    final isMale = gender == '남성';
+    final genderCode = birthDate.year >= 2000
+        ? (isMale ? 3 : 4)
+        : (isMale ? 1 : 2);
+    return '$front-$genderCode';
   }
 
   /// 통장사본 이미지 선택
