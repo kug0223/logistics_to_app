@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
@@ -40,6 +41,8 @@ import '../business_admin/business_list_screen.dart';
 import '../super_admin/all_businesses_screen.dart';
 import '../super_admin/all_users_screen.dart';
 import '../super_admin/legal_terms_management_screen.dart';
+import '../../services/legal_terms_service.dart';
+import '../../models/core/legal_terms_model.dart';
 import '../super_admin/help_faq_management_screen.dart';
 
 // Tour
@@ -81,6 +84,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _sealType = 'stamp';
   String? _resolvedBusinessId;
   bool _isSealLoading = true;
+  // [PERF] base64 디코딩 캐시 — build마다 재디코딩 방지
+  Uint8List? _cachedSignatureBytes;
+  String? _cachedSignatureBase64;
+  Uint8List? _cachedSealBytes;
+  String? _cachedSealBase64;
 
   @override
   void initState() {
@@ -312,33 +320,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     : AppColors.warning,
                 onTap: () => _handlePassAuth(user!),
               ),
-              _SettingsItem(
-                icon: Icons.folder_special_outlined,
-                iconColor: AppColors.successDark,
-                title: '내 서류 관리',
-                subtitle: () {
-                  final idDone = user?.idCardImageUrl?.isNotEmpty ?? false;
-                  final accDone = (user?.bankName?.isNotEmpty ?? false) &&
-                      (user?.accountNumber?.isNotEmpty ?? false);
-                  final bookDone = user?.bankbookImageUrl?.isNotEmpty ?? false;
-                  final done = [idDone, accDone, bookDone].where((v) => v).length;
-                  if (done == 3) return '신분증 · 계좌 · 통장사본 모두 완료';
-                  if (done == 0) return '신분증 · 계좌 · 통장사본 미등록';
-                  return '서류 $done/3 완료';
-                }(),
-                subtitleColor: () {
-                  final idDone = user?.idCardImageUrl?.isNotEmpty ?? false;
-                  final accDone = (user?.bankName?.isNotEmpty ?? false) &&
-                      (user?.accountNumber?.isNotEmpty ?? false);
-                  final bookDone = user?.bankbookImageUrl?.isNotEmpty ?? false;
-                  final done = [idDone, accDone, bookDone].where((v) => v).length;
-                  if (done == 3) return AppColors.success;
-                  if (done == 0) return AppColors.error;
-                  return AppColors.warning;
-                }(),
-                onTap: () => NavigationHelper.push<bool>(context,
-                    destination: const DocumentManagementScreen()),
-              ),
+              _buildDocumentMenuItem(context, user),
               _SettingsItem(
                 icon: Icons.star_rounded,
                 iconColor: AppColors.warning,
@@ -547,6 +529,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 // ignore: use_build_context_synchronously
                 await pushTourScreen(context, role: role);
               },
+            ),
+          ]),
+          SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+
+          // ── 법적 고지 ─────────────────────────────────────────
+          // [LEGAL-FIX 2026-08-10] 사용자가 약관을 언제든 열람할 수 있도록 추가
+          // 개인정보보호법 제35조(열람 요구권) + Google Play 정책 요구사항
+          _buildSectionHeader(context, '법적 고지', Icons.policy_outlined),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          _buildMenuGroup(context, [
+            _SettingsItem(
+              icon: Icons.article_outlined,
+              iconColor: AppColors.grey600,
+              title: '서비스 이용약관',
+              onTap: () => _showTermsInApp(context, 'service_terms', '서비스 이용약관'),
+            ),
+            _SettingsItem(
+              icon: Icons.privacy_tip_outlined,
+              iconColor: AppColors.infoDark,
+              title: '개인정보 처리방침',
+              onTap: () => _showTermsInApp(context, 'privacy_policy', '개인정보 처리방침'),
+            ),
+            _SettingsItem(
+              icon: Icons.location_on_outlined,
+              iconColor: AppColors.successDark,
+              title: '위치정보 이용 동의',
+              onTap: () => _showTermsInApp(context, 'location_terms', '위치정보 이용 동의'),
             ),
           ]),
           SizedBox(height: ResponsiveHelper.spacing(context, 24)),
@@ -867,6 +876,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  /// [PERF] 내 서류 관리 메뉴 아이템 — subtitle·subtitleColor 중복 계산 방지
+  _SettingsItem _buildDocumentMenuItem(BuildContext context, UserModel? user) {
+    final idDone = user?.idCardImageUrl?.isNotEmpty ?? false;
+    final accDone = (user?.bankName?.isNotEmpty ?? false) &&
+        (user?.accountNumber?.isNotEmpty ?? false);
+    final bookDone = user?.bankbookImageUrl?.isNotEmpty ?? false;
+    final done = [idDone, accDone, bookDone].where((v) => v).length;
+    return _SettingsItem(
+      icon: Icons.folder_special_outlined,
+      iconColor: AppColors.successDark,
+      title: '내 서류 관리',
+      subtitle: done == 3
+          ? '신분증 · 계좌 · 통장사본 모두 완료'
+          : done == 0
+              ? '신분증 · 계좌 · 통장사본 미등록'
+              : '서류 $done/3 완료',
+      subtitleColor: done == 3
+          ? AppColors.success
+          : done == 0
+              ? AppColors.error
+              : AppColors.warning,
+      onTap: () => NavigationHelper.push<bool>(context,
+          destination: const DocumentManagementScreen()),
+    );
+  }
+
   /// 여러 메뉴 항목을 하나의 카드로 묶는 그룹 위젯
   Widget _buildMenuGroup(BuildContext context, List<_SettingsItem?> items) {
     final valid = items.whereType<_SettingsItem>().toList();
@@ -1166,6 +1201,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // ── 약관 앱 내 뷰어 ─────────────────────────────────────────────
+  // [LEGAL-FIX 2026-08-10] 개인정보보호법 제35조 열람 요구권 + Google Play 정책 대응
+  // Firestore에서 해당 termId 항목을 로드 후 전체화면으로 표시
+  Future<void> _showTermsInApp(BuildContext ctx, String termId, String fallbackTitle) async {
+    LegalTermsItem? item;
+    try {
+      final terms = await LegalTermsService().getTerms();
+      item = terms.items.where((t) => t.id == termId).firstOrNull;
+    } catch (_) {
+      item = null;
+    }
+    if (!mounted) return;
+    // ignore: use_build_context_synchronously
+    final nav = Navigator.of(ctx);
+    await nav.push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _TermsReadOnlyScreen(
+          title: item?.title ?? fallbackTitle,
+          content: item?.content ?? '약관을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.',
+          version: item?.version,
+        ),
+      ),
+    );
+  }
+
   Widget _buildLogoutButton(BuildContext context, UserProvider userProvider) {
     return Container(
       width: double.infinity,
@@ -1236,6 +1297,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setModal) {
           Future<void> doDelete() async {
+            // [FIX-MEDIUM] 텍스트필드 포커스 → 다이얼로그 전환 시 _dependents.isEmpty 크래시 방지
+            FocusScope.of(ctx).unfocus();
             final pw = passwordCtrl.text.trim();
             if (pw.isEmpty) {
               setModal(() => errorMsg = '비밀번호를 입력해주세요');
@@ -1268,6 +1331,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               if (hasActiveTo) {
                 final proceed = await showDialog<bool>(
                   context: ctx,
+                  barrierDismissible: false, // [FIX-LOW] CLAUDE.md 규칙
                   builder: (dCtx) => AlertDialog(
                     title: const Text('활성 공고 있음'),
                     content: const Text(
@@ -1545,6 +1609,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final signatureBase64 = user?.signatureBase64;
     final hasSignature = signatureBase64 != null && signatureBase64.isNotEmpty;
 
+    // [PERF-FIX] base64 변경 시에만 재디코딩 — build마다 decode 방지
+    if (hasSignature && signatureBase64 != _cachedSignatureBase64) {
+      _cachedSignatureBase64 = signatureBase64;
+      _cachedSignatureBytes = base64Decode(signatureBase64);
+    } else if (!hasSignature) {
+      _cachedSignatureBase64 = null;
+      _cachedSignatureBytes = null;
+    }
+
     return Container(
       decoration: CommonWidgets.compactCardDecoration(),
       child: Padding(
@@ -1597,7 +1670,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: Image.memory(
-                    base64Decode(signatureBase64),
+                    _cachedSignatureBytes!,
                     fit: BoxFit.contain,
                   ),
                 ),
@@ -1791,6 +1864,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final hasSeal = _businessSealBase64 != null && _businessSealBase64!.isNotEmpty;
     final isStamp = _sealType == 'stamp';
 
+    // [PERF-FIX] base64 변경 시에만 재디코딩 — build마다 decode 방지
+    if (hasSeal && _businessSealBase64 != _cachedSealBase64) {
+      _cachedSealBase64 = _businessSealBase64;
+      _cachedSealBytes = base64Decode(_businessSealBase64!);
+    } else if (!hasSeal) {
+      _cachedSealBase64 = null;
+      _cachedSealBytes = null;
+    }
+
     return Container(
       decoration: CommonWidgets.compactCardDecoration(),
       child: Padding(
@@ -1876,7 +1958,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: Image.memory(
-                    base64Decode(_businessSealBase64!),
+                    _cachedSealBytes!,
                     fit: BoxFit.contain,
                   ),
                 ),
@@ -2044,6 +2126,74 @@ class _SettingsItem {
     this.subtitleColor,
     required this.onTap,
   });
+}
+
+// ── 약관 읽기 전용 뷰어 ──────────────────────────────────────────────
+// [LEGAL-FIX 2026-08-10] 개인정보보호법 제35조 열람 요구권 대응
+// 동의 버튼 없이 읽기만 가능 (register_screen의 _TermsViewerScreen과 달리)
+class _TermsReadOnlyScreen extends StatelessWidget {
+  final String title;
+  final String content;
+  final String? version;
+
+  const _TermsReadOnlyScreen({
+    required this.title,
+    required this.content,
+    this.version,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        backgroundColor: AppColors.background,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.close),
+          color: AppColors.grey700,
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        title: Text(
+          title,
+          style: ResponsiveHelper.bodyStyle(context,
+              color: AppColors.grey900, fontWeight: FontWeight.w600),
+        ),
+        centerTitle: true,
+      ),
+      body: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            if (version != null)
+              Container(
+                width: double.infinity,
+                color: AppColors.grey100,
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 16),
+                  vertical: ResponsiveHelper.spacing(context, 8),
+                ),
+                child: Text(
+                  '버전 $version',
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: AppColors.grey500),
+                ),
+              ),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
+                child: SelectableText(
+                  content,
+                  style: ResponsiveHelper.bodyStyle(context,
+                      color: AppColors.grey800),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 // ── 날인 방식 선택 탭 버튼 ──────────────────────────────────────────

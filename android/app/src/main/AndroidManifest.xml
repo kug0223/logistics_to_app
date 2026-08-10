@@ -1,8 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 위치 권한 -->
+    <!-- 위치 권한 (출퇴근 체크 시 1회 측정 — 앱 사용 중에만) -->
+    <!-- ACCESS_BACKGROUND_LOCATION 미선언: 앱이 포그라운드 상태에서만 위치 수집 -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     
     <!-- 인터넷 권한 -->
     <uses-permission android:name="android.permission.INTERNET" />
