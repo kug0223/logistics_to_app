@@ -672,6 +672,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
           debugPrint('⚠️ finalizeRegistration 실패 (ciHash 미연동): $e');
           // ciHash 연동 실패 — 계정 자체는 생성 완료, 슈퍼관리자 수동 처리 필요
         }
+        // [FIX] signUp() 내부 _loadUserData()는 finalizeRegistration 이전에 실행되므로
+        // passVerifiedAt이 캐시에 반영되지 않음. CF 성공 여부와 무관하게 캐시 갱신.
+        if (mounted) {
+          await context.read<UserProvider>().refreshUserData();
+        }
       }
 
       if (!mounted) return;
@@ -868,6 +873,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
           await PassVerificationService.finalizeRegistration(_passAuthResult!.passToken);
         } catch (e) {
           debugPrint('⚠️ finalizeRegistration 실패 (ciHash 미연동): $e');
+        }
+        // [FIX] signUp() 내부 _loadUserData()는 finalizeRegistration 이전에 실행되므로
+        // passVerifiedAt이 캐시에 반영되지 않음. CF 성공 여부와 무관하게 캐시 갱신.
+        if (mounted) {
+          await context.read<UserProvider>().refreshUserData();
         }
       }
 

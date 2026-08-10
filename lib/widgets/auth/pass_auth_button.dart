@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
 
-/// PASS 본인인증 버튼
+/// 휴대폰 본인인증 버튼 (KG이니시스 통합인증)
 ///
-/// 내국인 가입, 비밀번호 찾기 등 PASS 인증이 필요한 모든 화면에서 사용.
+/// 내국인 가입, 비밀번호 찾기 등 본인인증이 필요한 모든 화면에서 사용.
 class PassAuthButton extends StatelessWidget {
   final VoidCallback? onPressed;
   final bool isLoading;
@@ -52,7 +52,7 @@ class PassAuthButton extends StatelessWidget {
       child: ElevatedButton(
         onPressed: isLoading ? null : onPressed,
         style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF005BAC), // PASS 공식 색상
+          backgroundColor: const Color(0xFF1565C0), // AppColors primary blue (RoleTheme._primary)
           foregroundColor: Colors.white,
           padding: const EdgeInsets.symmetric(vertical: 14),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
