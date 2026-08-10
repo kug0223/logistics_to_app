@@ -40,7 +40,7 @@ class OcrVerificationHelper {
         final matches = residentPattern.allMatches(rawText);
         // matches.first 사용 — 텍스트 내 첫 번째 '6자리+1자리' 패턴을 주민번호로 간주
         // 계좌번호·전화번호 등 유사 패턴이 앞에 있으면 오인식하여 isResidentNumberValid=false 처리됨
-        // PASS 본인인증 도입 후 OCR 의존도 감소 시 "주민" 키워드 컨텍스트 강화 방식으로 개선 예정
+        // 향후 "주민" 키워드 컨텍스트 강화 방식으로 개선 예정 (계좌번호·전화번호 오인식 방지)
         if (matches.isNotEmpty) {
           final match = matches.first;
           final front = match.group(1);

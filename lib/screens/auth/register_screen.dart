@@ -324,7 +324,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (!(_formKey.currentState?.validate() ?? false)) return false;
 
     if (_isKorean) {
-      // 내국인: PASS 인증 완료 여부 확인
+      // 내국인: 본인인증 완료 여부 확인
       if (_passAuthResult == null) {
         ToastHelper.showWarning('본인인증을 완료해주세요');
         return false;
@@ -549,7 +549,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         //   users/{uid}.ciHash 저장 필요. ciHash가 없으면 비밀번호 찾기 CI 매칭 실패.
         residentNumber: _isKorean ? null : '${_residentNumber1Controller.text}-X******',
         foreignIdNumber: _isKorean ? null : '${_residentNumber1Controller.text}-X${_residentNumber2Controller.text}*****',
-        // 내국인: PASS 인증 완료이므로 즉시 active. 외국인: 슈퍼관리자 승인 전까지 pending.
+        // 내국인: 본인인증 완료이므로 즉시 active. 외국인: 슈퍼관리자 승인 전까지 pending.
         accountStatus: _isKorean ? 'active' : 'pending',
         address: _addressController.text.trim(),
         detailAddress: _detailAddressController.text.trim(),
@@ -1126,7 +1126,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   /// 흐름:
   ///   PassVerificationService.authenticate()
   ///     → iamport_flutter WebView (KG이니시스 통합인증 V1)
-  ///     → 사용자 PASS 인증 완료
+  ///     → 사용자 본인인증 완료 (KG이니시스)
   ///     → CF verifyPassAuth(imp_uid) 호출
   ///     → PassAuthResult { name, gender, birthDate, phone, passToken } 반환
   ///
@@ -1265,7 +1265,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _pickIdCardImage() async {
     String? residentNumber;
     if (_isKorean && _passAuthResult != null) {
-      // 내국인: PASS 인증 완료 → 생년월일+성별로 주민번호 앞자리 계산
+      // 내국인: 본인인증 완료 → 생년월일+성별로 주민번호 앞자리 계산
       residentNumber = _buildExpectedResidentNumber(
         _passAuthResult!.birthDate,
         _passAuthResult!.gender,
@@ -1288,7 +1288,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  /// PASS 인증 결과 또는 유저 정보에서 신분증 검증용 주민번호 앞자리 계산
+  /// 본인인증(KG이니시스) 결과에서 신분증 검증용 주민번호 앞자리 계산
   /// 반환 형식: "YYMMDD-G" (예: 1990년 1월 1일 남성 → "900101-1")
   /// 성별 코드: 2000년 이전 남성=1, 여성=2 / 2000년 이후 남성=3, 여성=4
   String _buildExpectedResidentNumber(DateTime birthDate, String gender) {
@@ -1578,7 +1578,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
                 const SizedBox(height: 10),
 
-                // 내국인: PASS 인증 버튼 → 완료 시 결과 표시 (이름/성별/생년월일/전화번호)
+                // 내국인: 본인인증 버튼 → 완료 시 결과 표시 (이름/성별/생년월일/전화번호)
                 if (_isKorean) ...[
                   PassAuthButton(
                     onPressed: _handlePassAuth,
@@ -1591,7 +1591,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ],
                 ],
 
-                // 외국인: 이름 직접 입력 (내국인은 PASS 인증에서 자동 입력)
+                // 외국인: 이름 직접 입력 (내국인은 본인인증에서 자동 입력)
                 if (!_isKorean) ...[
                   const SizedBox(height: 10),
                   CommonWidgets.textField(
