@@ -76,7 +76,7 @@ class GradientScaffold extends StatelessWidget {
           ),
         ),
         child: SafeArea(
-          bottom: false, // 하단은 각 화면의 listPadding(viewPaddingOf.bottom 포함)이 처리
+          bottom: false, // 하단은 내부 흰 Container의 SafeArea(top:false)가 처리
           child: Column(
             children: [
               // ── 파란 헤더 영역
@@ -140,7 +140,15 @@ class GradientScaffold extends StatelessWidget {
                       topRight: Radius.circular(32),
                     ),
                   ),
-                  child: body,
+                  // SafeArea(top: false): 홈버튼/내비게이션 바 영역 clearance 보장
+                  // viewPaddingOf.bottom 대신 paddingOf.bottom 기반으로 동작하므로
+                  // listPadding과 이중으로 처리되지 않음 (listPadding이 paddingOf 사용)
+                  child: SafeArea(
+                    top: false,
+                    left: false,
+                    right: false,
+                    child: body,
+                  ),
                 ),
               ),
             ],

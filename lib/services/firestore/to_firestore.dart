@@ -130,7 +130,11 @@ extension TOFirestore on FirestoreService {
     try {
       final doc = await _firestore.collection('tos').doc(toId).get(const GetOptions(source: Source.server));
       if (!doc.exists) return null;
-      return TOModel.tryFromMap(doc.data()!, doc.id);
+      final model = TOModel.tryFromMap(doc.data()!, doc.id);
+      // [BUG-SOFT FIX] 소프트 삭제 TO 단건 조회 차단 — FCM 딥링크·공유 링크로 삭제 공고 접근 시 null 반환
+      // getTOsByIds(복수), getPublishedTOs 등 다른 조회 메서드의 isSoftDeleted 필터와 동작 통일
+      if (model?.isSoftDeleted == true) return null;
+      return model;
     } catch (e) {
       debugPrint('❌ [TO] 공고 조회 실패: $e');
       return null;
@@ -164,6 +168,7 @@ extension TOFirestore on FirestoreService {
             return TOModel.tryFromMap(raw, id);
           })
           .whereType<TOModel>()
+          .where((t) => !t.isSoftDeleted) // [BUG-SOFT FIX] 소프트 삭제 공고 관리자 목록 제외
           .toList();
       if (activeOnly) {
         models = models.where((t) => TOStatus.openStates.contains(t.status)).toList();
@@ -264,7 +269,7 @@ extension TOFirestore on FirestoreService {
         .where((snap) => snap.exists)
         .map((snap) => TOModel.tryFromMap(snap.data()!, snap.id))
         .whereType<TOModel>()
-        .where((to) => to.isPublished && !to.isClosed)
+        .where((to) => to.isPublished && !to.isClosed && !to.isSoftDeleted)
         .toList();
   }
 
@@ -292,6 +297,7 @@ extension TOFirestore on FirestoreService {
             return TOModel.tryFromMap(raw, id);
           })
           .whereType<TOModel>()
+          .where((t) => !t.isSoftDeleted) // [BUG-SOFT FIX] 소프트 삭제 공고 '기존 공고 연결' 목록 제외
           .toList();
     } catch (e) {
       debugPrint('❌ [TO] 최근 공고 조회 실패: $e');

@@ -399,6 +399,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               ),
             ),
             child: SafeArea(
+              bottom: false, // 하단은 SingleChildScrollView의 padding이 처리
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -420,6 +421,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                         child: RefreshIndicator(
                           onRefresh: _refresh,
                           child: SingleChildScrollView(
+                            padding: EdgeInsets.only(
+                                bottom: MediaQuery.viewPaddingOf(context).bottom),
                             physics: const AlwaysScrollableScrollPhysics(
                                 parent: BouncingScrollPhysics()),
                             child: Column(

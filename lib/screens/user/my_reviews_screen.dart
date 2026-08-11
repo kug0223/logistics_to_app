@@ -170,9 +170,12 @@ class _MyReviewsScreenState extends State<MyReviewsScreen> {
                           ),
                         ),
                       // 하단 홈버튼·네비게이션 바 높이 보장
+                      // [BUG-PAD FIX] GradientScaffold 내부 SafeArea(top:false)가 paddingOf.bottom을
+                      // 이미 소비하므로 viewPaddingOf(물리값) 사용 시 이중 패딩 발생 → paddingOf로 통일
+                      // (SafeArea 내부에서 paddingOf.bottom = 0, 시각적으로 중복 제거됨)
                       SliverToBoxAdapter(
                         child: SizedBox(
-                          height: MediaQuery.viewPaddingOf(context).bottom,
+                          height: MediaQuery.paddingOf(context).bottom,
                         ),
                       ),
                     ],

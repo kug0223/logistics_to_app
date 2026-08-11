@@ -243,55 +243,65 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           // SubAdmin은 미서명 계약서 배너 불필요 (hasPendingContract 항상 false)
           // + maintainSize:true 공간이 관리자 홈과 높이 차이를 만드므로 제외
           bottomNavigationBar: data.isSubAdmin ? null : const _PendingContractBar(),
-          body: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (user != null)
-                AccountStatusBanner(
-                  accountStatus: user.accountStatus,
-                  rejectedReason: user.rejectionReason,
-                ),
-              Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        theme.primaryColor,
-                        Color.lerp(theme.primaryColor, theme.colorScheme.secondary, 0.65)!,
-                      ],
-                    ),
+          body: SafeArea(
+            bottom: false,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (user != null)
+                  AccountStatusBanner(
+                    accountStatus: user.accountStatus,
+                    rejectedReason: user.rejectionReason,
                   ),
-                  child: SafeArea(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _buildHeader(context, s, user, up, theme),
-                        Expanded(
-                          child: AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 280),
-                            switchInCurve: Curves.easeOut,
-                            switchOutCurve: Curves.easeIn,
-                            child: Container(
-                              key: ValueKey(data.isAdminMode),
-                              decoration: const BoxDecoration(
-                                color: AppColors.grey50,
-                                borderRadius: BorderRadius.only(
-                                  topLeft: Radius.circular(28),
-                                  topRight: Radius.circular(28),
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          theme.primaryColor,
+                          Color.lerp(theme.primaryColor, theme.colorScheme.secondary, 0.65)!,
+                        ],
+                      ),
+                    ),
+                    child: SafeArea(
+                      top: false,    // 상단은 외부 SafeArea가 처리
+                      bottom: false, // 하단은 흰 Container 내부 SafeArea(top:false)가 처리
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _buildHeader(context, s, user, up, theme),
+                          Expanded(
+                            child: AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 280),
+                              switchInCurve: Curves.easeOut,
+                              switchOutCurve: Curves.easeIn,
+                              child: Container(
+                                key: ValueKey(data.isAdminMode),
+                                decoration: const BoxDecoration(
+                                  color: AppColors.grey50,
+                                  borderRadius: BorderRadius.only(
+                                    topLeft: Radius.circular(28),
+                                    topRight: Radius.circular(28),
+                                  ),
+                                ),
+                                child: SafeArea(
+                                  top: false,
+                                  left: false,
+                                  right: false,
+                                  child: _buildUserBody(context, s, up, theme),
                                 ),
                               ),
-                              child: _buildUserBody(context, s, up, theme),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         );
       },

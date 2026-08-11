@@ -26,9 +26,11 @@ class ResponsiveHelper {
 
   /// ListView / CustomScrollView 전용 패딩
   /// 하단에 홈 인디케이터·네비게이션 바 높이를 자동으로 더해 마지막 항목 잘림 방지
+  /// paddingOf.bottom 사용: SafeArea가 이미 소비한 경우 0, 미소비 시 내비게이션 바 높이
+  /// → GradientScaffold(내부 SafeArea(top:false) 포함)와 이중 패딩 없이 동작
   static EdgeInsets listPadding(BuildContext context, {double extra = 0}) {
     final scale  = getScale(context);
-    final bottom = MediaQuery.viewPaddingOf(context).bottom;
+    final bottom = MediaQuery.paddingOf(context).bottom;
     return EdgeInsets.fromLTRB(
       16 * scale, 16 * scale, 16 * scale,
       16 * scale + bottom + extra,

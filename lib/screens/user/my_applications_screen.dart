@@ -623,7 +623,39 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen>
     final statusInfo = _getStatusInfo(app.status);
     final now = DateTime.now(); // 카드당 한 번 — _buildDdayBadge·_buildActionStrip 공유
 
-    // TO가 삭제된 경우 간소화 카드 표시
+    // TO가 소프트 삭제된 경우: 실제 제목 표시 + 탭 비활성
+    if (to != null && to.isSoftDeleted) {
+      return Container(
+        margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+        decoration: BoxDecoration(
+          color: AppColors.grey50,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.grey200),
+        ),
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 14),
+          vertical: ResponsiveHelper.spacing(context, 10),
+        ),
+        child: Row(children: [
+          Icon(Icons.info_outline, color: AppColors.grey400,
+              size: ResponsiveHelper.iconSize(context, 18)),
+          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(to.title,
+                  style: ResponsiveHelper.bodyStyle(context,
+                      color: AppColors.grey600),
+                  overflow: TextOverflow.ellipsis),
+              Text('${to.businessName} · ${statusInfo.label} · 공고 삭제됨',
+                  style: ResponsiveHelper.tinyStyle(context,
+                      color: AppColors.grey400)),
+            ]),
+          ),
+        ]),
+      );
+    }
+
+    // TO가 하드 삭제된 경우(문서 없음) 간소화 카드 표시
     if (to == null) {
       return Container(
         margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
@@ -974,6 +1006,8 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen>
           reasonText = '업무 마감으로 자동 취소됨';
         case 'TO_EXPIRED':
           reasonText = '공고 마감으로 자동 취소됨';
+        case 'TO_DELETED':
+          reasonText = '공고 삭제로 자동 취소됨';
         default:
           reasonText = app.conflictingBusiness != null ? '시간 충돌로 자동 취소됨' : '자동으로 취소됨';
       }

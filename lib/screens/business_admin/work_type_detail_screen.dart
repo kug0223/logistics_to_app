@@ -184,9 +184,10 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
                       _buildSaveButton(context),
                     ],
 
+                    // [BUG-PAD FIX] GradientScaffold SafeArea가 paddingOf.bottom 소비 → viewPaddingOf 이중 패딩
                     SizedBox(
                       height: ResponsiveHelper.spacing(context, 32) +
-                          MediaQuery.viewPaddingOf(context).bottom,
+                          MediaQuery.paddingOf(context).bottom,
                     ),
                   ],
                 ),

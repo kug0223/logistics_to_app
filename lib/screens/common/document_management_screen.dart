@@ -1262,58 +1262,104 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
   /// 통장 정보 수정 다이얼로그
   Future<void> _showBankEditDialog() async {
     String? localBank = _selectedBank;
+    // '기타 (직접 입력)' 선택 시 직접 입력한 금융기관명
+    final customBankCtrl = TextEditingController();
 
-    final saved = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false, // [FIX-LOW] CLAUDE.md 규칙
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => StyledDialog(
-          title: '통장 정보 입력',
-          subtitle: '급여 수령에 사용할 계좌 정보를 입력하세요',
-          icon: Icons.account_balance_wallet,
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AppSelectField<String>(
-                value: localBank,
-                hintText: '은행을 선택하세요',
-                sheetTitle: '은행 선택',
-                items: const [
-                  'KB국민은행', '신한은행', 'NH농협은행', '우리은행', '하나은행',
-                  'IBK기업은행', 'SC제일은행', '씨티은행', '카카오뱅크', '토스뱅크',
-                  'KEB하나은행', '경남은행', '광주은행', '대구은행', '부산은행',
-                  '전북은행', '제주은행', '케이뱅크', '새마을금고', '신협',
-                  '저축은행', '우체국',
+    try {
+      final saved = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setDialogState) => StyledDialog(
+            title: '통장 정보 입력',
+            subtitle: '급여 수령에 사용할 계좌 정보를 입력하세요',
+            icon: Icons.account_balance_wallet,
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AppSelectField<String>(
+                  value: localBank,
+                  hintText: '은행 / 증권사를 선택하세요',
+                  sheetTitle: '금융기관 선택',
+                  items: const [
+                    // ── 주요 은행 ──────────────────────────────────────────────
+                    'KB국민은행', '신한은행', 'NH농협은행', '우리은행', '하나은행',
+                    'IBK기업은행', '카카오뱅크', '토스뱅크', '케이뱅크',
+                    // ── 지방·특수 은행 ─────────────────────────────────────────
+                    'SC제일은행', '씨티은행', 'KDB산업은행', '수협은행',
+                    '경남은행', '광주은행', '대구은행', '부산은행', '전북은행', '제주은행',
+                    '새마을금고', '신협', '저축은행', '우체국',
+                    // ── 증권사 CMA ─────────────────────────────────────────────
+                    '미래에셋증권', '삼성증권', 'NH투자증권', 'KB증권', '한국투자증권',
+                    '키움증권', '신한투자증권', '대신증권', '메리츠증권', '하나증권',
+                    '교보증권', '현대차증권', '유안타증권',
+                    // ── 기타 ──────────────────────────────────────────────────
+                    '기타 (직접 입력)',
+                  ],
+                  labelOf: (b) => b,
+                  prefixIcon: Icons.account_balance,
+                  onChanged: (value) => setDialogState(() {
+                    localBank = value;
+                    if (value != '기타 (직접 입력)') customBankCtrl.clear();
+                  }),
+                ),
+                // '기타' 선택 시 직접 입력 필드 표시
+                if (localBank == '기타 (직접 입력)') ...[
+                  SizedBox(height: ResponsiveHelper.spacing(ctx, 12)),
+                  CommonWidgets.textField(
+                    context: ctx,
+                    controller: customBankCtrl,
+                    label: '금융기관명 직접 입력',
+                    hint: '예: OO저축은행, OO캐피탈',
+                    icon: Icons.edit_outlined,
+                  ),
                 ],
-                labelOf: (b) => b,
-                prefixIcon: Icons.account_balance,
-                onChanged: (value) => setDialogState(() => localBank = value),
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(ctx, 16)),
-              CommonWidgets.textField(
-                context: ctx,
-                controller: _accountNumberController,
-                label: '계좌번호',
-                hint: '- 없이 숫자만 입력',
-                icon: Icons.credit_card,
-                keyboardType: TextInputType.number,
+                SizedBox(height: ResponsiveHelper.spacing(ctx, 16)),
+                CommonWidgets.textField(
+                  context: ctx,
+                  controller: _accountNumberController,
+                  label: '계좌번호',
+                  hint: '- 없이 숫자만 입력',
+                  icon: Icons.credit_card,
+                  keyboardType: TextInputType.number,
+                ),
+              ],
+            ),
+            actions: [
+              StyledDialogButton.cancel(onPressed: () => Navigator.pop(ctx, false)),
+              StyledDialogButton.primary(
+                text: '저장',
+                onPressed: () => Navigator.pop(ctx, true),
               ),
             ],
           ),
-          actions: [
-            StyledDialogButton.cancel(onPressed: () => Navigator.pop(ctx, false)),
-            StyledDialogButton.primary(
-              text: '저장',
-              onPressed: () => Navigator.pop(ctx, true),
-            ),
-          ],
         ),
-      ),
-    );
+      );
 
-    if (saved != true || !mounted) return;
-    setState(() => _selectedBank = localBank);
-    _saveBankInfo();
+      if (saved != true || !mounted) return;
+
+      // '기타 (직접 입력)' 선택 시 직접 입력한 텍스트를 실제 은행명으로 사용
+      final effectiveBank = localBank == '기타 (직접 입력)'
+          ? customBankCtrl.text.trim()
+          : localBank;
+
+      if (effectiveBank == null || effectiveBank.isEmpty) {
+        ToastHelper.showWarning('금융기관명을 입력해주세요');
+        return;
+      }
+
+      final previousBank = _selectedBank; // [BUG-ROLLBACK] 실패 시 롤백용 이전 은행명 보존
+      setState(() => _selectedBank = effectiveBank); // 낙관적 업데이트
+      try {
+        // [BUG-ROLLBACK FIX] CLAUDE.md '낙관적 업데이트 실패 시 롤백 필수' 준수
+        // 기존: fire-and-forget → 저장 실패 시 화면은 새 값, DB는 이전 값 불일치
+        await _saveBankInfo();
+      } catch (_) {
+        if (mounted) setState(() => _selectedBank = previousBank);
+      }
+    } finally {
+      customBankCtrl.dispose();
+    }
   }
 
   /// 통장사본 업로드

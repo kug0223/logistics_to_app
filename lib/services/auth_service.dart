@@ -2,13 +2,11 @@ import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import '../models/core/user_model.dart';
 import '../utils/toast_helper.dart';
 import '../utils/encryption_helper.dart';
 import 'fcm_service.dart';
 import 'firestore_service.dart';
-import 'storage_service.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -400,35 +398,6 @@ class AuthService {
       // 삭제 후 clearToken() 호출 시 users 문서가 없어 update() 오류 발생하던 문제 수정
       await FCMService().clearToken();
 
-      // 2. 탈퇴 기록 저장 (재가입 30일 제한용)
-      // [AUTH-H2] deleted_accounts 직접 쓰기 → CF(Admin SDK) 경유로 전환
-      //   CF가 users 문서에서 ciHash·phone을 직접 읽어 서버에서 처리하므로
-      //   클라이언트 EncryptionHelper 복호화 불필요.
-      try {
-        await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-            .httpsCallable('recordDeletedAccount',
-                options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
-            .call();
-      } catch (e) {
-        debugPrint('⚠️ 탈퇴 기록 저장 실패 (계속 진행): $e');
-        // best-effort — 기록 실패해도 계정 삭제는 진행
-      }
-
-      // [M-01 fix] 스텝 11(BUSINESS_ADMIN 사업장 정리)에서 users 문서가 필요하므로
-      // 삭제 전에 role·businessId를 미리 읽어둔다.
-      // 삭제 후 재조회하면 exists=false → 사업장 비활성화 로직이 실행되지 않는 버그.
-      String? preDeleteRole;
-      String? preDeleteBusinessId;
-      try {
-        final preDoc = await _firestore.collection('users').doc(user.uid).get();
-        preDeleteRole = preDoc.data()?['role'] as String?;
-        preDeleteBusinessId = preDoc.data()?['businessId'] as String?;
-      } catch (e) {
-        // pre-read 실패 시 사업장 비활성화 누락 위험 — 탈퇴 중단
-        debugPrint('❌ [탈퇴] pre-read 실패: $e');
-        throw Exception('계정 정보를 확인하는데 실패했습니다. 잠시 후 다시 시도해주세요.');
-      }
-
       // 3-pre~3-pre3/3-pre6/3-pre7: 개인정보 익명화 & 연관 문서 삭제
       // [CF-MIGRATED 2026-07-15] callableDeleteAccountPreData CF 이전 (병렬 처리)
       //   · review_requests workerId 익명화 (SEC-88)
@@ -445,6 +414,12 @@ class AuthService {
         final data = Map<String, dynamic>.from(result.data as Map? ?? {});
         final failed = List<String>.from(data['failedOps'] as List? ?? []);
         if (failed.isNotEmpty) debugPrint('⚠️ 계정 삭제: 사전정리 일부 실패 ($failed)');
+      } on FirebaseFunctionsException catch (e) {
+        // [BUG-SEC FIX] CF 의도적 실패(code='internal'): 블랙리스트 deleted_accounts 기록 실패
+        //   → rethrow로 탈퇴 전체 중단 — 블랙리스트 사용자가 ciHash/phoneHash 없이 재가입 가능해지는 보안 우회 차단
+        //   네트워크 오류(unavailable/deadline-exceeded)는 best-effort로 계속 진행 (사전정리는 비필수)
+        if (e.code == 'internal') rethrow;
+        debugPrint('⚠️ 계정 삭제: 개인정보 사전정리 네트워크 오류 (계속 진행): $e');
       } catch (e) {
         debugPrint('⚠️ 계정 삭제: 개인정보 사전정리 실패 (계속 진행): $e');
       }
@@ -458,215 +433,36 @@ class AuthService {
         final deleteAppsCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
             .httpsCallable('callableDeleteAccountApplications',
                 options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-        final result = await deleteAppsCallable.call<Map<String, dynamic>>({});
-        final data = Map<String, dynamic>.from(result.data as Map? ?? {});
-
-        // PENDING totalPending 개별 트랜잭션 감소 (rules ±1 제한 준수 — CF Admin SDK도 rules 우회 가능하나 기존 패턴 유지)
-        //   [M-5A 수정] flex TO에서 동일 TO에 다른 workType으로 PENDING 복수 지원 가능
-        //   → Map<toId, count> + increment(-N) 패턴은 rules ±1 제한 위반 → 건별 트랜잭션 유지
-        final pendingToIds = List<String>.from(data['pendingToIds'] as List? ?? []);
-        if (pendingToIds.isNotEmpty) {
-          await Future.wait(pendingToIds.map((toId) async {
-            try {
-              await _firestore.collection('tos').doc(toId).update({'totalPending': FieldValue.increment(-1)});
-            } catch (e) {
-              debugPrint('⚠️ totalPending 감소 실패 ($toId): $e');
-            }
-          }));
-        }
-
-        // CONFIRMED/CONTRACT_PENDING: slot 카운터 감소 (callableDecrementSlotConfirmed CF 경유)
-        final confirmedApps = (data['confirmedApps'] as List? ?? [])
-            .whereType<Map>()
-            .map((m) => Map<String, dynamic>.from(m))
-            .toList();
-        if (confirmedApps.isNotEmpty) {
-          final decrementCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-              .httpsCallable('callableDecrementSlotConfirmed',
-                  options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
-          await Future.wait(confirmedApps.map((app) async {
-            try {
-              await decrementCallable.call<Map<String, dynamic>>({
-                'applicationId': app['id'],
-                'toId': app['toId'],
-                'slotId': app['slotId'],
-                'workType': app['workType'],
-              });
-            } catch (e) {
-              debugPrint('⚠️ totalConfirmed 감소 실패 (${app['id']}): $e');
-            }
-          }));
-        }
+        await deleteAppsCallable.call<Map<String, dynamic>>({});
+        // [CF-MERGED 2026-08-10] pendingToIds·confirmedApps 카운터 감소:
+        //   CF 내부(Admin SDK)로 통합 — 기존 N+1 CF 호출 제거
+        //   전체 deleteAccountWithPassword: CF 4→3건 최적화
       } catch (e) {
         debugPrint('⚠️ 계정 삭제: applications/attendance 정리 실패 (계속 진행): $e');
       }
 
-      // 3-pre5. worker_locations 전체 삭제 — users 문서 삭제 전 처리 필수 (SEC-94)
-      // 위치정보: 개인정보보호법 제21조 (법령 보존 근거 없음 — 즉시 파기 대상)
-      // [CF-MIGRATED 2026-07-15] callableDeleteWorkerLocations CF 이전
-      //   · worker_locations LIST USER 직접 쿼리 제거 → Admin SDK 경유
+      // [CF-MIGRATED 2026-08-10] callableDeleteAccountFinal:
+      //   users 문서 삭제 → Storage(users/) 정리 → notifications 정리
+      //   → BUSINESS_ADMIN: adminIds array-contains 쿼리로 복수 사업장 전체 처리
+      //   → Firebase Auth 삭제(Admin SDK) — 마지막에 실행해 재시도 가능
+      // [M-01 fix] businessId 단수 → adminIds array-contains 쿼리 (복수 사업장 모두 처리)
+      final deleteFinalCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableDeleteAccountFinal',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 300)));
       try {
-        final deleteLocsCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-            .httpsCallable('callableDeleteWorkerLocations',
-                options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-        await deleteLocsCallable.call<Map<String, dynamic>>({});
-      } catch (e) {
-        debugPrint('⚠️ 계정 삭제: worker_locations 삭제 실패 (계속 진행): $e');
-      }
-
-      // 3-pre6/3-pre7: [CF-MIGRATED 2026-07-15] callableDeleteAccountPreData에서 처리 완료
-      // trust_score_history + member_invitations 모두 3-pre 단계에서 병렬 처리됨
-
-      // 3. Firestore 사용자 문서 삭제 — 개인정보보호법 제21조
-      // Storage URL 참조를 먼저 제거해야 broken URL 방지 (CLAUDE.md 삭제 순서 규칙)
-      await _firestore.collection('users').doc(user.uid).delete();
-
-      // 4. Storage 사용자 파일 삭제 — 개인정보보호법 제21조 (민감정보: 신분증·통장사본)
-      try {
-        final storageRef = FirebaseStorage.instance.ref('users/${user.uid}');
-        final listResult = await storageRef.listAll();
-        await Future.wait([
-          ...listResult.items.map((item) => item.delete()),
-          ...listResult.prefixes.map((prefix) async {
-            final sub = await prefix.listAll();
-            await Future.wait(sub.items.map((item) => item.delete()));
-          }),
-        ]);
-      } catch (storageErr) {
-        debugPrint('⚠️ Storage 파일 삭제 실패 (계속 진행): $storageErr');
-      }
-
-      // 5. notifications 서브컬렉션 전체 삭제 — 개인정보보호법 제21조
-      // 경로: users/{uid}/notifications/{id}
-      // [J-003] 실패 시 계정 삭제는 계속 진행
-      try {
-        bool hasMore = true;
-        while (hasMore) {
-          final snap = await _firestore
-              .collection('users')
-              .doc(user.uid)
-              .collection('notifications')
-              .limit(200)
-              .get();
-          if (snap.docs.isEmpty) break;
-          hasMore = snap.docs.length == 200;
-          final batch = _firestore.batch();
-          for (final doc in snap.docs) { batch.delete(doc.reference); }
-          await batch.commit();
+        await deleteFinalCallable.call<Map<String, dynamic>>({});
+      } on FirebaseFunctionsException catch (e) {
+        // [BUG-AUTH FIX] 응답 유실(deadline-exceeded/unavailable): 서버에서 Auth 계정 삭제가
+        //   완료됐을 가능성 → 로컬 세션 강제 정리 (permission-denied 루프 / 유효 JWT 방치 방지)
+        // 'internal'·'failed-precondition': CF 의도적 실패 → Auth 미삭제이므로 세션 유지
+        if (e.code != 'internal' && e.code != 'failed-precondition') {
+          await _auth.signOut().catchError((_) {});
         }
-      } catch (e) {
-        debugPrint('⚠️ 계정 삭제: notifications 삭제 실패 (계속 진행): $e');
+        rethrow;
       }
 
-      // 11. BUSINESS_ADMIN 전용 사업장 데이터 정리
-      // ──────────────────────────────────────────────────────────────
-      // 사업주 탈퇴 시 처리 원칙:
-      //
-      //   [공동 관리자 있음] adminIds에서 본인 uid만 제거. 사업장은 계속 운영.
-      //
-      //   [단독 관리자] businesses 문서에 deactivatedAt 기록 후:
-      //     - 활성 TO(ACTIVE/FULL/SCHEDULED) → CLOSED (orphan 방지)
-      //     - 활성 TO 하위 PENDING 지원서 → REJECTED(BUSINESS_DEACTIVATED)
-      //       (근로기준법 보존 의무 없는 미확정 지원서이므로 즉시 처리)
-      //     - CONFIRMED/CONTRACT_PENDING 지원서는 이미 급여 데이터 포함 가능 →
-      //       cancelReason: 'BUSINESS_DEACTIVATED'로 CANCELED 처리
-      //       (근로기준법 제42조: 해당 기록은 3년 보존 — 삭제 금지)
-      //   [점검] businesses Storage(로고·사진)는 개인정보가 아니므로 보존.
-      //          슈퍼관리자가 비활성 사업장 일괄 정리 시 삭제 예정.
-      // ──────────────────────────────────────────────────────────────
-      // [M-01 fix] 스텝 3에서 users 문서를 삭제했으므로 재조회 불가.
-      // 삭제 전에 미리 읽어둔 preDeleteRole·preDeleteBusinessId 사용.
-      if (preDeleteRole == 'BUSINESS_ADMIN' && preDeleteBusinessId != null) {
-        final businessId = preDeleteBusinessId;
-        try {
-            final bizRef = _firestore.collection('businesses').doc(businessId);
-            final bizDoc = await bizRef.get();
-
-            if (bizDoc.exists) {
-              final adminIds = List<String>.from(bizDoc.data()?['adminIds'] ?? []);
-              // adminIds가 비어있는 비정상 상태(Firestore 데이터 불일치)에서는
-              // 단독 관리자로 처리하지 않음 — 자신의 uid가 목록에 포함된 경우에만 단독 판단.
-              // 이전 코드: length <= 1 → 빈 배열([])도 단독 관리자로 오인하는 버그 존재.
-              final isSoleAdmin = adminIds.length == 1 && adminIds.contains(user.uid);
-
-              if (isSoleAdmin) {
-                // ── 단독 관리자 → 사업장 비활성화 ────────────────────────
-                // Firestore 문서에 deactivatedAt 기록.
-                // sealBase64는 businesses 문서에서 제거됨 — users/{uid} 문서에만 저장.
-                // users 문서의 sealBase64는 하단 계정 삭제 단계에서 파기된다.
-                await bizRef.update({
-                  'deactivatedAt': FieldValue.serverTimestamp(),
-                });
-
-                // [CF 위임] 활성 TO 자동 CLOSED + PENDING 지원서 REJECTED 처리는
-                // onBusinessDeactivated Cloud Function(index.ts)이 담당한다.
-                // deactivatedAt 필드 추가 → Firestore 트리거 → 1~5초 내 자동 실행.
-                // Admin SDK 사용으로 Firestore 보안 규칙 우회 가능.
-
-                // ── Storage 이미지 삭제 ────────────────────────────────────
-                // businesses 문서에 저장된 URL 기반으로 삭제.
-                // mainImageUrl: 대표 이미지 1장
-                // imageUrls: 사업장 사진 최대 5장
-                // 비활성 사업장 이미지는 앱에서 더 이상 표시되지 않으므로
-                // Storage 비용 방지를 위해 탈퇴 시 즉시 삭제.
-                // employment_contracts 내 서명 이미지는 근로기준법 3년 보존 대상 — 삭제 금지.
-                //
-                // 삭제 순서: Firestore URL 필드 먼저 → Storage 나중 (CLAUDE.md 규칙)
-                // Firestore 업데이트 실패 시 Storage는 건드리지 않아 broken URL 잔존 방지.
-                // Storage 삭제 실패는 개별 try/catch로 포획 — Firestore가 이미 정리됐으므로
-                // 앱 동작에는 영향 없음 (Storage orphan은 주기적 정리로 처리 예정).
-                try {
-                  final bizData = bizDoc.data()!;
-                  final mainImageUrl = bizData['mainImageUrl'] as String?;
-                  final imageUrlsRaw = bizData['imageUrls'] as List<dynamic>?;
-                  final imageUrls = imageUrlsRaw?.cast<String>() ?? [];
-                  // [MEDIUM-1 수정] transportImageUrls 누락으로 교통편 사진 고아 발생
-                  final transportUrlsRaw = bizData['transportImageUrls'] as List<dynamic>?;
-                  final transportUrls = transportUrlsRaw?.cast<String>() ?? [];
-
-                  final allUrls = [
-                    if (mainImageUrl != null && mainImageUrl.isNotEmpty) mainImageUrl,
-                    ...imageUrls.where((u) => u.isNotEmpty),
-                    ...transportUrls.where((u) => u.isNotEmpty),
-                  ];
-
-                  if (allUrls.isNotEmpty) {
-                    // 1단계: Firestore URL 필드 먼저 제거 (실패 시 Storage 건드리지 않음)
-                    await bizRef.update({
-                      'mainImageUrl': FieldValue.delete(),
-                      'imageUrls': FieldValue.delete(),
-                      'transportImageUrls': FieldValue.delete(),
-                    });
-
-                    // 2단계: Storage 이미지 삭제 — businesses/ 경로는 storage.rules allow delete: if false
-                    // → 직접 삭제 불가. callableDeleteBusinessImage CF 경유(StorageService 내부 처리).
-                    await StorageService().deleteMultipleByUrls(allUrls);
-                  }
-                } catch (e) {
-                  debugPrint('⚠️ 사업장 Storage 정리 실패 (계속 진행): $e');
-                }
-
-                // ── TO·지원서·계약서 정리 → onBusinessDeactivated CF 위임 ─
-                // [CF 이전 2026-07-13] 클라이언트 직접 쿼리 전량 제거.
-                // onBusinessDeactivated 트리거(Admin SDK)가 1~5초 내 자동 처리:
-                //   ACTIVE/FULL/SCHEDULED TO → CLOSED
-                //   PENDING 지원서 → REJECTED
-                //   CONFIRMED/CONTRACT_PENDING 지원서 → CANCELED
-                //   employment_contracts (pending_*) → voided
-              } else {
-                // 공동 관리자 있음 → adminIds에서 본인 uid만 제거
-                await bizRef.update({
-                  'adminIds': FieldValue.arrayRemove([user.uid]),
-                });
-              }
-            }
-          } catch (e) {
-            debugPrint('⚠️ 계정 삭제: 사업장 정리 실패 (계속 진행): $e');
-          }
-        }
-
-      // 12. Firebase Auth 계정 삭제 — 개인정보보호법 제21조 (이메일·로그인 정보)
-      await user.delete();
+      // CF에서 Firebase Auth 계정 삭제 완료 → 로컬 세션 정리
+      await _auth.signOut();
 
       return null; // 성공
     } on FirebaseAuthException catch (e) {

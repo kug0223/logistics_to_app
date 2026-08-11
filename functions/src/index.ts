@@ -18805,7 +18805,9 @@ export const callableGetMyReviewRequests = onCall(
 // ─── callableDeleteAccountApplications ───────────────────────────────────────
 // 탈퇴 처리 3-pre4: 활성 지원서 일괄 취소 + scheduled 출근 기록 absent 처리
 // Admin SDK로 실행 → applications LIST 직접 쿼리 / USER update 규칙 불필요
-// 반환: pendingToIds(클라이언트에서 totalPending -1), confirmedApps(callableDecrementSlotConfirmed 호출용)
+// 반환: pendingToIds·confirmedApps (하위 호환 유지 — CF 내부 통합 후 클라이언트 미사용)
+// [CF-MERGED 2026-08-10] totalPending·totalConfirmed 카운터 감소 → CF 내부 처리 완료
+//   클라이언트가 반환값으로 카운터 직접 업데이트하는 코드 제거됨
 export const callableDeleteAccountApplications = onCall(
   {region: "asia-northeast3", enforceAppCheck: true, timeoutSeconds: 120},
   async (request) => {
@@ -18869,18 +18871,29 @@ export const callableDeleteAccountApplications = onCall(
     //   · 기존: PENDING → 클라이언트가 Firestore 개별 update, CONFIRMED → callableDecrementSlotConfirmed N번
     //   · 변경: Admin SDK로 직접 처리. 클라이언트 pendingToIds·confirmedApps 처리 코드 제거.
 
-    // (A) PENDING totalPending: toId 그룹화 후 Admin SDK batch (rules ±1 우회 가능하나 음수 방지 floor 적용)
+    // (A) PENDING totalPending: toId 그룹화 후 Admin SDK batch (음수 방지 GET → Math.min — section B 패턴 통일)
     if (pendingToIds.length > 0) {
       try {
         const pendingCountByToId = new Map<string, number>();
         for (const toId of pendingToIds) {
           pendingCountByToId.set(toId, (pendingCountByToId.get(toId) ?? 0) + 1);
         }
+        // [BUG-DATA FIX] 음수 방지: GET 없이 increment(-count) → 재처리·데이터 불일치 시 음수 저장
+        // section B 패턴(병렬 GET → Math.min(count, currentValue) → batch)과 통일
+        const pendingEntries = [...pendingCountByToId.entries()];
+        const pendingToSnaps = await Promise.all(
+          pendingEntries.map(([toId]) => db.collection("tos").doc(toId).get())
+        );
         const pendingBatch = db.batch();
-        for (const [toId, count] of pendingCountByToId.entries()) {
-          pendingBatch.update(db.collection("tos").doc(toId), {
-            totalPending: admin.firestore.FieldValue.increment(-count),
-          });
+        for (let pi = 0; pi < pendingEntries.length; pi++) {
+          const [toId, count] = pendingEntries[pi];
+          const currentPending = (pendingToSnaps[pi].data()?.totalPending as number) ?? 0;
+          const actualDecrement = Math.min(count, Math.max(0, currentPending));
+          if (actualDecrement > 0) {
+            pendingBatch.update(db.collection("tos").doc(toId), {
+              totalPending: admin.firestore.FieldValue.increment(-actualDecrement),
+            });
+          }
         }
         await pendingBatch.commit();
       } catch (e) {

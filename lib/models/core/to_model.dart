@@ -87,6 +87,11 @@ class TOModel {
   final int? publishDaysBefore;
   final String? publishTime;
 
+  // ── 소프트 삭제 ──────────────────────────────────
+  /// true이면 관리자가 삭제 처리한 공고. 문서·기록은 Firestore에 보존됨.
+  final bool isDeleted;
+  final DateTime? deletedAt;
+
   // ── 메타 ─────────────────────────────────────────
   final String creatorUID;
   final DateTime createdAt;
@@ -129,6 +134,8 @@ class TOModel {
     this.isPublished = true,
     this.publishDaysBefore,
     this.publishTime,
+    this.isDeleted = false,
+    this.deletedAt,
     required this.creatorUID,
     required this.createdAt,
   });
@@ -188,6 +195,8 @@ class TOModel {
       isPublished: data['isPublished'] as bool? ?? true,
       publishDaysBefore: (data['publishDaysBefore'] as num?)?.toInt(),
       publishTime: data['publishTime'] as String?,
+      isDeleted: data['isDeleted'] as bool? ?? false,
+      deletedAt: parseTimestampNullable(data['deletedAt']),
       creatorUID: data['creatorUID'] as String? ?? '',
       // createdAt 누락 시 DateTime.now() 폴백 — 서버 미저장 임시 객체나 마이그레이션 전 문서에서 발생 가능
       createdAt: parseTimestampNullable(data['createdAt']) ?? DateTime.now(),
@@ -235,6 +244,8 @@ class TOModel {
       'isPublished': isPublished,
       'publishDaysBefore': publishDaysBefore,
       'publishTime': publishTime,
+      'isDeleted': isDeleted,
+      if (deletedAt != null) 'deletedAt': Timestamp.fromDate(deletedAt!),
       'creatorUID': creatorUID,
       'createdAt': Timestamp.fromDate(createdAt),
     };
@@ -284,6 +295,9 @@ class TOModel {
     bool clearPostingExpiryDateServer = false,
     String? creatorUID,
     DateTime? createdAt,
+    bool? isDeleted,
+    DateTime? deletedAt,
+    bool clearDeletedAt = false,
   }) {
     return TOModel(
       id: id ?? this.id,
@@ -325,6 +339,8 @@ class TOModel {
       postingExpiryDateServer: clearPostingExpiryDateServer ? null : (postingExpiryDateServer ?? this.postingExpiryDateServer),
       creatorUID: creatorUID ?? this.creatorUID,
       createdAt: createdAt ?? this.createdAt,
+      isDeleted: isDeleted ?? this.isDeleted,
+      deletedAt: clearDeletedAt ? null : (deletedAt ?? this.deletedAt),
     );
   }
 
@@ -332,6 +348,9 @@ class TOModel {
 
   bool get isFlexType => type == TOType.flex;
   bool get isContractType => type == TOType.contract;
+
+  /// 소프트 삭제 여부 — isDeleted == true이면 관리자가 삭제 처리한 공고
+  bool get isSoftDeleted => isDeleted;
 
   /// 관리자 카드에 표시할 제목 (groupTitle 없으면 title 사용)
   String get displayGroupTitle =>
