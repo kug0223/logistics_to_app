@@ -5779,8 +5779,11 @@ export const verifyPassAuth = onCall(
           .where("ciHash", "==", ciHash)
           .where("role", "==", role)
           .limit(1).get(),
+        // [BUG-FIX] orderBy("deletedAt", "desc") — 최신 레코드를 먼저 반환
+        // 무정렬 limit(1)은 구버전 isBlacklisted=false 레코드를 먼저 반환해 블랙리스트 우회 가능
         db.collection("deleted_accounts")
           .where("ciHash", "==", ciHash)
+          .orderBy("deletedAt", "desc")
           .limit(1).get(),
       ]);
       if (!dupSnap.empty) {
@@ -5791,9 +5794,18 @@ export const verifyPassAuth = onCall(
       }
 
       if (!deletedSnap.empty) {
-        const deletedAt = (
-          deletedSnap.docs[0].data().deletedAt as Timestamp
-        ).toDate();
+        const deletedData = deletedSnap.docs[0].data();
+
+        // [BUG-FIX] isBlacklisted → 영구 재가입 차단 (30일 제한과 별개)
+        // 기존: canReregisterAt 30일만 체크 → 블랙리스트도 30일 후 재가입 가능한 버그
+        if (deletedData.isBlacklisted === true) {
+          throw new HttpsError(
+            "permission-denied",
+            "이용 정책 위반으로 재가입이 영구 제한된 계정입니다."
+          );
+        }
+
+        const deletedAt = (deletedData.deletedAt as Timestamp).toDate();
         const oneMonthAgo = new Date();
         oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
         if (deletedAt > oneMonthAgo) {
@@ -11512,8 +11524,11 @@ export const callableGetTOsByBiz = onCall(
     q = q.limit(cap);
     const snap = await q.get();
 
+    // [소프트 삭제 2026-08-10] isDeleted:true TO 제외 — 필드 없는 기존 TO는 포함(마이그레이션 불필요)
+    const activeDocs = snap.docs.filter((d) => d.data().isDeleted !== true);
+
     return {
-      tos: snap.docs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
+      tos: activeDocs.map((d) => ({id: d.id, ...serializeFirestoreData(d.data())})),
     };
   }
 );
@@ -12579,7 +12594,6 @@ export const callableDeleteTO = onCall(
     if (!toSnap.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
     const toData = toSnap.data()!;
     const businessId = toData.businessId as string;
-    const isFlexType = (toData.type as string | undefined) === "flex";
     const businessName = (toData.businessName as string) ?? "";
     const toTitle = (toData.title as string) ?? "";
 
@@ -12612,35 +12626,14 @@ export const callableDeleteTO = onCall(
     const ACTIVE_STATUSES = ["PENDING", "CONFIRMED", "CONTRACT_PENDING"];
     const now = Timestamp.now();
 
-    // 1. slots 서브컬렉션 삭제 (flex TO)
-    // [OOM-FIX 2026-08-10] 무제한 .get() → 499건 페이지네이션으로 교체 — 슬롯 수천 건 시 OOM 방지
-    if (isFlexType) {
-      let lastSlotDoc: FirebaseFirestore.DocumentSnapshot | undefined;
-      while (true) {
-        let q: FirebaseFirestore.Query = db
-          .collection("tos").doc(toId).collection("slots")
-          .limit(499);
-        if (lastSlotDoc) q = q.startAfter(lastSlotDoc);
-        const pageSnap = await q.get();
-        if (pageSnap.empty) break;
-        const slotBatch = db.batch();
-        for (const slotDoc of pageSnap.docs) {
-          slotBatch.delete(slotDoc.ref);
-        }
-        await slotBatch.commit();
-        if (pageSnap.size < 499) break;
-        lastSlotDoc = pageSnap.docs[pageSnap.docs.length - 1];
-      }
-    }
-
-    // 2. applications 처리: 활성 → AUTO_CANCELED, 나머지 → 삭제
+    // [소프트 삭제 2026-08-10] slots·attendance·contracts 삭제 제거 — 모든 기록 보존
+    // 1. applications 처리: 활성 → AUTO_CANCELED, 비활성은 보존 (지원 이력 유지)
     // [M-7 수정 2026-07-15] 무제한 .get() → while 루프 페이지네이션으로 교체
     const notifyTargets: Array<{
       uid: string;
       status: string;
       workDate?: admin.firestore.Timestamp;
     }> = [];
-    const allAppIds: string[] = [];
     {
       let lastDelApp: FirebaseFirestore.DocumentSnapshot | undefined;
       while (true) {
@@ -12654,10 +12647,10 @@ export const callableDeleteTO = onCall(
         let batch = db.batch();
         let count = 0;
         for (const doc of pageSnap.docs) {
-          allAppIds.push(doc.id);
           const d = doc.data();
           const status = d.status as string | undefined;
           if (status && ACTIVE_STATUSES.includes(status)) {
+            // 활성 지원서 → AUTO_CANCELED (근로자에게 공고 취소 알림)
             batch.update(doc.ref, {
               status: "AUTO_CANCELED",
               canceledAt: now,
@@ -12671,9 +12664,8 @@ export const callableDeleteTO = onCall(
                 workDate: d.workDate as admin.firestore.Timestamp | undefined,
               });
             }
-          } else {
-            batch.delete(doc.ref);
           }
+          // 비활성 지원서(REJECTED, CANCELED 등)는 그대로 보존 — 지원 이력 유지
           count++;
         }
         if (count > 0) await batch.commit();
@@ -12682,10 +12674,17 @@ export const callableDeleteTO = onCall(
       }
     }
 
-    // 3. TO 문서 삭제
-    await db.collection("tos").doc(toId).delete();
+    // 2. TO 소프트 삭제 — 문서 보존 + isDeleted 플래그 + isPublished 비활성화
+    // [소프트 삭제 2026-08-10] Firestore 문서 삭제 → 플래그 업데이트로 전환
+    // 이유: 지원자 지원 이력, 출근 기록, 임금 정산, 계약서 등 법적 기록 보존 (근로기준법 제42조)
+    // attendance·schedule_change_requests·employment_contracts 완전 보존
+    await db.collection("tos").doc(toId).update({
+      isDeleted: true,
+      deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+      isPublished: false,
+    });
 
-    // 4. 알림 발송 (fire-and-forget)
+    // 3. 알림 발송 (fire-and-forget)
     for (const target of notifyTargets) {
       const statusText = CONFIRMED_STATUSES.includes(target.status) ? "확정된 근무" : "지원";
       let dateStr = "";
@@ -12707,112 +12706,6 @@ export const callableDeleteTO = onCall(
         .catch((e) =>
           console.error(`[callableDeleteTO] 알림 발송 실패 (uid=${target.uid}):`, e)
         );
-    }
-
-    // 5. 고아 데이터 정리 (TO 삭제 완료 후 — 실패해도 무시)
-    if (allAppIds.length > 0) {
-      try {
-        const WAGE_DONE = ["wageTransferred", "wageConfirmed", "transferred", "confirmed"];
-        for (let i = 0; i < allAppIds.length; i += 30) {
-          const chunk = allAppIds.slice(i, i + 30);
-
-          const attSnaps = await Promise.all(
-            chunk.map((appId) =>
-              db.collection("attendance")
-                .where("applicationId", "==", appId)
-                .where("businessId", "==", businessId)
-                .get()
-            )
-          );
-          const attDocs = attSnaps.flatMap((s) => s.docs);
-          if (attDocs.length > 0) {
-            let batch = db.batch();
-            let count = 0;
-            for (const d of attDocs) {
-              const wageStatus = d.data().wageStatus as string | undefined;
-              if (wageStatus && WAGE_DONE.includes(wageStatus)) continue;
-              batch.delete(d.ref);
-              count++;
-              if (count >= 499) {
-                await batch.commit();
-                batch = db.batch();
-                count = 0;
-              }
-            }
-            if (count > 0) await batch.commit();
-          }
-
-          const reqSnaps = await Promise.all(
-            chunk.map((appId) =>
-              db.collection("schedule_change_requests")
-                .where("applicationId", "==", appId)
-                .where("businessId", "==", businessId)
-                .get()
-            )
-          );
-          const reqDocs = reqSnaps.flatMap((s) => s.docs);
-          if (reqDocs.length > 0) {
-            let batch = db.batch();
-            let count = 0;
-            for (const d of reqDocs) {
-              batch.delete(d.ref);
-              count++;
-              if (count >= 499) {
-                await batch.commit();
-                batch = db.batch();
-                count = 0;
-              }
-            }
-            if (count > 0) await batch.commit();
-          }
-
-          const contractSnaps = await Promise.all(
-            chunk.map((appId) =>
-              db.collection("employment_contracts")
-                .where("applicationId", "==", appId)
-                .where("businessId", "==", businessId)
-                .get()
-            )
-          );
-          const contractDocs1 = contractSnaps.flatMap((s) => s.docs);
-          const foundDocIds = new Set(contractDocs1.map((d) => d.id));
-          const allContractDocs = [...contractDocs1];
-
-          for (let j = 0; j < chunk.length; j += 10) {
-            const subChunk = chunk.slice(j, j + 10);
-            const bundleSnap = await db.collection("employment_contracts")
-              .where("businessId", "==", businessId)
-              .where("applicationIds", "array-contains-any", subChunk)
-              .get();
-            for (const doc of bundleSnap.docs) {
-              if (!foundDocIds.has(doc.id)) {
-                foundDocIds.add(doc.id);
-                allContractDocs.push(doc);
-              }
-            }
-          }
-
-          if (allContractDocs.length > 0) {
-            let batch = db.batch();
-            let count = 0;
-            for (const c of allContractDocs) {
-              // [H-3-FIX] "active"(양방 서명 완료) 계약도 보존 — 법적 증거 파기 방지
-              const cStatus = c.data().status as string | undefined;
-              if (cStatus === "completed" || cStatus === "active") continue;
-              batch.delete(c.ref);
-              count++;
-              if (count >= 499) {
-                await batch.commit();
-                batch = db.batch();
-                count = 0;
-              }
-            }
-            if (count > 0) await batch.commit();
-          }
-        }
-      } catch (cleanupErr) {
-        console.error("[callableDeleteTO] 고아 데이터 정리 실패 (TO 삭제는 완료됨):", cleanupErr);
-      }
     }
 
     return {success: true};
@@ -18914,7 +18807,7 @@ export const callableGetMyReviewRequests = onCall(
 // Admin SDK로 실행 → applications LIST 직접 쿼리 / USER update 규칙 불필요
 // 반환: pendingToIds(클라이언트에서 totalPending -1), confirmedApps(callableDecrementSlotConfirmed 호출용)
 export const callableDeleteAccountApplications = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: true, timeoutSeconds: 120},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
@@ -18932,13 +18825,16 @@ export const callableDeleteAccountApplications = onCall(
     const confirmedApps: { id: string; toId: string | null; slotId: string | null; workType: string | null }[] = [];
 
     const now = admin.firestore.FieldValue.serverTimestamp();
-    const batch = db.batch();
+
+    // 상태 분류 + 배치 쓰기용 업데이트 목록 구성
+    type DocUpdate = {ref: FirebaseFirestore.DocumentReference; data: Record<string, unknown>};
+    const allUpdates: DocUpdate[] = [];
 
     for (const doc of allAppDocs) {
       const d = doc.data();
       const status = d.status as string;
       const toId = (d.toId as string | undefined) ?? null;
-      batch.update(doc.ref, { status: "CANCELED", canceledAt: now, cancelReason: "USER_DELETED" });
+      allUpdates.push({ref: doc.ref, data: {status: "CANCELED", canceledAt: now, cancelReason: "USER_DELETED"}});
       if (status === "PENDING" && toId) {
         pendingToIds.push(toId);
       } else if ((status === "CONFIRMED" || status === "CONTRACT_PENDING") && toId) {
@@ -18952,14 +18848,217 @@ export const callableDeleteAccountApplications = onCall(
     }
 
     for (const doc of attSnap.docs) {
-      batch.update(doc.ref, { status: "absent", absentReason: "USER_DELETED", updatedAt: now });
+      allUpdates.push({ref: doc.ref, data: {status: "absent", absentReason: "USER_DELETED", updatedAt: now}});
     }
 
-    if (allAppDocs.length > 0 || attSnap.docs.length > 0) await batch.commit();
+    // [BUG-C027 FIX] Batch 500건 한도 초과 방지 — 499건씩 청크 분할
+    //   지원서(최대 ~300) + 출근부(최대 ~수백) 합계 501건 이상 시 단일 batch.commit() 크래시
+    if (allUpdates.length > 0) {
+      const CHUNK = 499;
+      for (let i = 0; i < allUpdates.length; i += CHUNK) {
+        const chunkBatch = db.batch();
+        for (const {ref, data} of allUpdates.slice(i, i + CHUNK)) {
+          chunkBatch.update(ref, data);
+        }
+        await chunkBatch.commit();
+      }
+    }
+
+    // ── Counter 감소 내장 ────────────────────────────────────────────────────
+    // [CF-MERGED] 기존 클라이언트 처리 2종 → CF 내부로 통합 (CF 호출 N+1건 절약)
+    //   · 기존: PENDING → 클라이언트가 Firestore 개별 update, CONFIRMED → callableDecrementSlotConfirmed N번
+    //   · 변경: Admin SDK로 직접 처리. 클라이언트 pendingToIds·confirmedApps 처리 코드 제거.
+
+    // (A) PENDING totalPending: toId 그룹화 후 Admin SDK batch (rules ±1 우회 가능하나 음수 방지 floor 적용)
+    if (pendingToIds.length > 0) {
+      try {
+        const pendingCountByToId = new Map<string, number>();
+        for (const toId of pendingToIds) {
+          pendingCountByToId.set(toId, (pendingCountByToId.get(toId) ?? 0) + 1);
+        }
+        const pendingBatch = db.batch();
+        for (const [toId, count] of pendingCountByToId.entries()) {
+          pendingBatch.update(db.collection("tos").doc(toId), {
+            totalPending: admin.firestore.FieldValue.increment(-count),
+          });
+        }
+        await pendingBatch.commit();
+      } catch (e) {
+        console.error(`callableDeleteAccountApplications: totalPending decrement failed:`, e);
+      }
+    }
+
+    // (B) CONFIRMED/CONTRACT_PENDING totalConfirmed: 병렬 GET + 단일 batch (음수방지 + 멱등)
+    //     [PERF] 기존 직렬 트랜잭션 K건 → 병렬 GET + batch 1회로 전환 (K=50: 7.5s → ~0.1s)
+    //     Admin SDK 환경: rules ±1 제한 없음 → 트랜잭션 불필요, batch로 충분
+    //     멱등: 재시도 시 applications가 이미 CANCELED → 초기 쿼리에서 제외 → 이 블록 자체 미실행
+    if (confirmedApps.length > 0) {
+      try {
+        // 1. toId별 그룹화 (같은 TO에 여러 지원 집계)
+        const toGroups = new Map<string, {
+          totalDecrement: number;
+          slots: Map<string, {decrement: number; workTypeCounts: Map<string, number>}>;
+          flexWorkTypes: Map<string, number>;
+        }>();
+
+        for (const app of confirmedApps) {
+          if (!toGroups.has(app.toId!)) {
+            toGroups.set(app.toId!, {totalDecrement: 0, slots: new Map(), flexWorkTypes: new Map()});
+          }
+          const group = toGroups.get(app.toId!)!;
+          group.totalDecrement += 1;
+
+          if (app.slotId) {
+            if (!group.slots.has(app.slotId)) {
+              group.slots.set(app.slotId, {decrement: 0, workTypeCounts: new Map()});
+            }
+            const slotGroup = group.slots.get(app.slotId)!;
+            slotGroup.decrement += 1;
+            if (app.workType) {
+              slotGroup.workTypeCounts.set(
+                app.workType,
+                (slotGroup.workTypeCounts.get(app.workType) ?? 0) + 1
+              );
+            }
+          } else if (app.workType) {
+            group.flexWorkTypes.set(
+              app.workType,
+              (group.flexWorkTypes.get(app.workType) ?? 0) + 1
+            );
+          }
+        }
+
+        // 2. 모든 TO 병렬 GET (음수방지용 현재값 확인)
+        const toEntries = [...toGroups.entries()];
+        const toSnaps = await Promise.all(
+          toEntries.map(([toId]) => db.collection("tos").doc(toId).get())
+        );
+
+        // 3. 슬롯이 있는 경우 슬롯도 병렬 GET
+        type SlotFetch = {
+          toId: string; slotId: string;
+          ref: FirebaseFirestore.DocumentReference;
+        };
+        const slotFetches: SlotFetch[] = [];
+        for (const [toId, group] of toGroups) {
+          for (const slotId of group.slots.keys()) {
+            slotFetches.push({
+              toId, slotId,
+              ref: db.collection("tos").doc(toId).collection("slots").doc(slotId),
+            });
+          }
+        }
+        const slotSnaps = slotFetches.length > 0
+          ? await Promise.all(slotFetches.map((sf) => sf.ref.get()))
+          : [];
+        const slotSnapMap = new Map<string, FirebaseFirestore.DocumentSnapshot>();
+        slotFetches.forEach((sf, i) => slotSnapMap.set(`${sf.toId}/${sf.slotId}`, slotSnaps[i]));
+
+        // 4. 단일 batch로 모든 카운터 업데이트 (최대 500 ops — 사실상 미도달)
+        const counterBatch = db.batch();
+
+        for (let i = 0; i < toEntries.length; i++) {
+          const [toId, group] = toEntries[i];
+          const toSnap = toSnaps[i];
+          const toRef = db.collection("tos").doc(toId);
+          const currentConfirmed = (toSnap.data()?.totalConfirmed as number) ?? 0;
+          const actualDecrement = Math.min(group.totalDecrement, currentConfirmed);
+
+          if (actualDecrement > 0) {
+            const toUpdate: Record<string, unknown> = {
+              totalConfirmed: admin.firestore.FieldValue.increment(-actualDecrement),
+            };
+            // flex TO workType 서브카운터 (슬롯 없는 TO)
+            for (const [wt, cnt] of group.flexWorkTypes.entries()) {
+              const wtCounts =
+                (toSnap.data()?.workTypeConfirmedCounts as Record<string, number> | undefined) ?? {};
+              const actualWtDecrement = Math.min(cnt, wtCounts[wt] ?? 0);
+              if (actualWtDecrement > 0) {
+                toUpdate[`workTypeConfirmedCounts.${wt}`] =
+                  admin.firestore.FieldValue.increment(-actualWtDecrement);
+              }
+            }
+            counterBatch.update(toRef, toUpdate);
+          }
+
+          // 슬롯별 confirmedCount + workTypeCounts 업데이트
+          for (const [slotId, slotGroup] of group.slots.entries()) {
+            const slotSnap = slotSnapMap.get(`${toId}/${slotId}`);
+            const slotRef = toRef.collection("slots").doc(slotId);
+            const slotConfirmed = (slotSnap?.data()?.confirmedCount as number) ?? 0;
+            const actualSlotDecrement = Math.min(slotGroup.decrement, slotConfirmed);
+
+            if (actualSlotDecrement > 0) {
+              const slotUpdate: Record<string, unknown> = {
+                confirmedCount: admin.firestore.FieldValue.increment(-actualSlotDecrement),
+              };
+              for (const [wt, cnt] of slotGroup.workTypeCounts.entries()) {
+                const slotWtCounts =
+                  (slotSnap?.data()?.workTypeCounts as
+                    Record<string, {confirmedCount: number}> | undefined) ?? {};
+                const actualSlotWtDecrement = Math.min(cnt, slotWtCounts[wt]?.confirmedCount ?? 0);
+                if (actualSlotWtDecrement > 0) {
+                  slotUpdate[`workTypeCounts.${wt}.confirmedCount`] =
+                    admin.firestore.FieldValue.increment(-actualSlotWtDecrement);
+                }
+              }
+              counterBatch.update(slotRef, slotUpdate);
+            }
+          }
+        }
+
+        // 멱등 마킹 (재시도 대비 — 이미 CANCELED된 앱이므로 재진입 시 이 블록 자체 미실행)
+        const decNow = admin.firestore.FieldValue.serverTimestamp();
+        for (const app of confirmedApps) {
+          counterBatch.update(db.collection("applications").doc(app.id), {
+            confirmedDecrementedAt: decNow,
+          });
+        }
+
+        await counterBatch.commit();
+      } catch (e) {
+        console.error(`callableDeleteAccountApplications: confirmedDecrement batch failed:`, e);
+      }
+    }
+
+    // ── PENDING 변경 요청 취소 ─────────────────────────────────────────────────
+    // [BUG-05 FIX] schedule_change_requests / payment_change_requests PENDING 고아
+    //   기존: 미처리 → 관리자 화면에 탈퇴 사용자 요청 잔류, 처리 시 users 조회 실패 가능
+    //   변경: 탈퇴 시 PENDING 상태 요청을 canceled(USER_DELETED)로 처리
+    try {
+      const [schedSnap, payChgSnap] = await Promise.all([
+        db.collection("schedule_change_requests")
+          .where("applicantUid", "==", callerUid)
+          .where("status", "==", "pending")
+          .get(),
+        db.collection("payment_change_requests")
+          .where("workerId", "==", callerUid)
+          .where("status", "==", "pending")
+          .get(),
+      ]);
+      const changeReqDocs = [...schedSnap.docs, ...payChgSnap.docs];
+      if (changeReqDocs.length > 0) {
+        const CHUNK = 499;
+        for (let i = 0; i < changeReqDocs.length; i += CHUNK) {
+          const reqBatch = db.batch();
+          for (const doc of changeReqDocs.slice(i, i + CHUNK)) {
+            reqBatch.update(doc.ref, {
+              status: "canceled",
+              cancelReason: "USER_DELETED",
+              canceledAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          }
+          await reqBatch.commit();
+        }
+      }
+    } catch (e) {
+      console.error(`callableDeleteAccountApplications: change request cancellation failed (${callerUid}):`, e);
+    }
 
     return {
       canceledCount: allAppDocs.length,
       attendanceCount: attSnap.docs.length,
+      // pendingToIds · confirmedApps: 클라이언트 CF 통합 후 참조 불필요 (하위 호환 유지용)
       pendingToIds,
       confirmedApps,
     };
@@ -19045,14 +19144,75 @@ export const callableCleanupApplicationData = onCall(
 );
 
 // ─── callableDeleteAccountPreData ────────────────────────────────────────────
-// 탈퇴 처리 3-pre~3-pre3/3-pre6/3-pre7: 개인정보 익명화 & 연관 문서 삭제 (병렬)
+// 탈퇴 처리: 탈퇴기록 저장 + 개인정보 익명화 & 연관 문서 삭제 (병렬)
+// [CF-MERGED] recordDeletedAccount 통합 — CF 호출 1건 절약 (클라이언트 4→3 CF 호출)
 // Admin SDK → 각 컬렉션 LIST 규칙 isSuperAdmin only 제한 우회
 export const callableDeleteAccountPreData = onCall(
-  {region: "asia-northeast3", enforceAppCheck: true},
+  {region: "asia-northeast3", enforceAppCheck: true, timeoutSeconds: 120},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const uid = request.auth.uid;
     const fvDel = admin.firestore.FieldValue.delete;
+
+    // [CF-MERGED] recordDeletedAccount 로직 — users 문서가 아직 존재할 때 선행 실행
+    // users 문서는 callableDeleteAccountFinal에서 삭제 → 이 단계에서 ciHash/phone 읽기 가능
+    // [AUTH-H2] Admin SDK → deleted_accounts if false 규칙 우회 (클라이언트 직접 쓰기 차단 유지)
+    // [BUG-H023 FIX] 블랙리스트 사용자 기록 실패 시 throw (영구 차단 보장)
+    //   일반 사용자: best-effort(30일 제한 실패 허용)
+    //   블랙리스트: 기록 실패 시 탈퇴 자체를 차단 → 재가입 허점 원천 차단
+    {
+      let isBlacklisted = false;
+      try {
+        const userSnapForRecord = await db.collection("users").doc(uid).get();
+        if (userSnapForRecord.exists) {
+          const userData = userSnapForRecord.data() ?? {};
+          const ciHash = userData["ciHash"] as string | undefined;
+          const phone = userData["phone"] as string | undefined;
+          const phoneHash = phone
+            ? crypto.createHash("sha256").update(phone).digest("hex")
+            : undefined;
+          isBlacklisted = userData["isBlacklisted"] === true;
+          if (ciHash || phoneHash) {
+            // [E-015/H-019 FIX] 멱등 체크 — 재시도 시 deleted_accounts 중복 생성 방지
+            //   PreData CF 재시도 시 동일 uid로 add()가 두 번 실행되어 레코드가 복수 생성됨
+            //   → uid 기준 기존 레코드 확인 후 없을 때만 생성
+            const existingSnap = await db.collection("deleted_accounts")
+              .where("uid", "==", uid)
+              .limit(1)
+              .get();
+            if (!existingSnap.empty) {
+              console.info(`callableDeleteAccountPreData: deleted_accounts already exists (${uid}), skip`);
+            } else {
+              const recordDocData: Record<string, unknown> = {
+                uid,
+                deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+                isBlacklisted,
+                noShowCount: userData["noShowCount"] ?? 0,
+                role: userData["role"] ?? "USER",
+              };
+              if (ciHash) recordDocData["ciHash"] = ciHash;
+              if (phoneHash) recordDocData["phoneHash"] = phoneHash;
+              if (!isBlacklisted) {
+                recordDocData["canReregisterAt"] = admin.firestore.Timestamp.fromDate(
+                  new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+                );
+              }
+              await db.collection("deleted_accounts").add(recordDocData);
+            }
+          }
+        }
+      } catch (e) {
+        console.error(`callableDeleteAccountPreData: recordDeletedAccount failed (${uid}):`, e);
+        if (isBlacklisted) {
+          // 블랙리스트 사용자: 재가입 영구 차단 레코드가 없으면 탈퇴 자체 차단
+          throw new HttpsError(
+            "internal",
+            "탈퇴 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+          );
+        }
+        // 일반 사용자: best-effort — 30일 재가입 제한 실패는 허용
+      }
+    }
 
     const paginateUpdate = async (col: string, field: string, data: Record<string, unknown>) => {
       let hasMore = true;
@@ -19079,7 +19239,9 @@ export const callableDeleteAccountPreData = onCall(
 
     const results = await Promise.allSettled([
       // 3-pre: review_requests workerId 익명화 (SEC-88)
-      paginateUpdate("review_requests", "workerId", {workerName: "탈퇴한 회원"}),
+      // [BUG-E007 FIX] workerId: fvDel() 추가 — 누락 시 100건 초과 페이지네이션 무한루프
+      //   workerId가 남아 있으면 다음 while 반복에서 동일 문서가 계속 조회됨
+      paginateUpdate("review_requests", "workerId", {workerName: "탈퇴한 회원", workerId: fvDel()}),
       // 3-pre2a: monthly_reviews 대상자 익명화 (SEC-92)
       paginateUpdate("monthly_reviews", "targetUserId", {
         targetUserName: "탈퇴한 회원", targetUserId: fvDel(), comment: fvDel(),
@@ -19107,6 +19269,220 @@ export const callableDeleteAccountPreData = onCall(
       }
     });
     return {success: true, failedOps: failed};
+  }
+);
+
+// ─── callableDeleteAccountFinal ──────────────────────────────────────────────
+// 탈퇴 최종 단계: users 문서 삭제 → Storage 정리 → notifications 정리 → businesses 정리 → Auth 삭제
+// 반드시 callableDeleteAccountPreData / callableDeleteAccountApplications /
+// callableDeleteWorkerLocations 완료 후 마지막에 호출
+//
+// [CF-FINAL] 핵심 안전 보장:
+//   · Admin SDK auth.deleteUser() 실행 전 모든 cleanup 완료 → 불완전 탈퇴 방지
+//   · adminIds array-contains 쿼리로 복수 사업장 전체 처리 (기존 client단 단수 처리 한계 해소)
+//   · auth_time 체크로 재인증 최근성 보장 (10분)
+//   · 멱등 처리: 재시도 시 이미 삭제된 상태도 안전하게 진행
+export const callableDeleteAccountFinal = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true, timeoutSeconds: 300},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+
+    // 재인증 최근성 검증 (10분 이내) — 계정 삭제 고위험 작업
+    const authTime = (request.auth.token as Record<string, unknown>)["auth_time"] as number | undefined;
+    if (authTime !== undefined) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (nowSec - authTime > 600) {
+        throw new HttpsError(
+          "failed-precondition",
+          "재인증 후 10분이 초과되었습니다. 다시 시도해주세요."
+        );
+      }
+    }
+
+    // 0+1. worker_locations 삭제 + users 문서 조회 병렬 실행 (상호 독립)
+    //      [PERF] worker_locations 삭제를 users GET과 병렬화 — ~0.3s 단축
+    const userRef = db.collection("users").doc(uid);
+    const [, userSnap] = await Promise.all([
+      // 0. worker_locations 전체 삭제 (SEC-94 위치정보 즉시 파기)
+      //    [CF-MERGED] callableDeleteWorkerLocations 통합 — CF 호출 1건 절약
+      //    위치정보: 개인정보보호법 제21조 (법령 보존 근거 없음 — 즉시 파기 대상)
+      (async () => {
+        try {
+          let wlHasMore = true;
+          while (wlHasMore) {
+            const wlSnap = await db.collection("worker_locations")
+              .where("userId", "==", uid)
+              .limit(100)
+              .get();
+            if (wlSnap.docs.length === 0) break;
+            wlHasMore = wlSnap.docs.length === 100;
+            const wlBatch = db.batch();
+            for (const doc of wlSnap.docs) wlBatch.delete(doc.ref);
+            await wlBatch.commit();
+          }
+        } catch (e) {
+          console.error(`callableDeleteAccountFinal: worker_locations cleanup failed (${uid}):`, e);
+          // best-effort — 위치정보 정리 실패도 Auth 삭제는 진행
+        }
+      })(),
+      // 1. users 문서 조회 (role 파악 — BUSINESS_ADMIN 분기용)
+      //    멱등: 이미 삭제된 경우 role = "" 로 진행
+      userRef.get(),
+    ]);
+
+    let role = userSnap.exists
+      ? ((userSnap.data()!["role"] as string | undefined) ?? "")
+      : "";
+
+    // [BUG-01 FIX] 재시도 시 users 문서가 이미 삭제된 경우 → deleted_accounts에서 role 복구
+    // 재시도 케이스: users 삭제 성공 → businesses 정리 실패 → Auth 삭제 실패 → 재시도
+    //   이 시점에서 userSnap.exists = false → role = "" → BUSINESS_ADMIN 분기 미실행
+    // 대응: PreData CF가 deleted_accounts.role을 저장하므로 여기서 참조 (uid 인덱스 활용)
+    if (!userSnap.exists) {
+      try {
+        const deletedAccSnap = await db.collection("deleted_accounts")
+          .where("uid", "==", uid)
+          .limit(1)
+          .get();
+        if (!deletedAccSnap.empty) {
+          role = (deletedAccSnap.docs[0].data()["role"] as string | undefined) ?? "";
+          console.info(`callableDeleteAccountFinal: role recovered from deleted_accounts (${uid}): ${role}`);
+        }
+      } catch (e) {
+        console.warn(`callableDeleteAccountFinal: role recovery from deleted_accounts failed (${uid}):`, e);
+      }
+    }
+
+    // 2-PRE. members 서브컬렉션 orphan 전수 정리 (best-effort)
+    //   Auth 삭제 후 businesses/members 도큐먼트가 잔류해도 보안 위험 없음(인증 불가)
+    //   그러나 관리자 멤버 목록에 유령 항목이 남으므로 데이터 위생 차원에서 정리.
+    // [BUG-03 FIX] 기존: subAdminBusinessIds 배열 기준(서브관리자 only) → 일반 멤버 고아 미정리
+    //   변경: collectionGroup("members").where("uid", "==", uid) 전수 정리
+    //   callableAcceptInvitation이 members 문서에 uid 필드를 저장하므로 쿼리 가능
+    //   userSnap 존재 여부와 무관하게 실행 → 재시도 시에도 안전 (BUG-01 연계)
+    try {
+      const memberGroupSnap = await db.collectionGroup("members")
+        .where("uid", "==", uid)
+        .get();
+      if (memberGroupSnap.docs.length > 0) {
+        const MEMBER_CHUNK = 499;
+        for (let i = 0; i < memberGroupSnap.docs.length; i += MEMBER_CHUNK) {
+          const memberBatch = db.batch();
+          for (const doc of memberGroupSnap.docs.slice(i, i + MEMBER_CHUNK)) {
+            memberBatch.delete(doc.ref);
+          }
+          await memberBatch.commit();
+        }
+      }
+    } catch (e) {
+      console.error(`[callableDeleteAccountFinal] members collectionGroup cleanup failed (${uid}):`, e);
+    }
+
+    // 2-PRE2. trust_settings/{uid} 삭제 (개인정보보호법 §21, best-effort)
+    // [BUG-04 FIX] trust_settings 문서는 uid가 문서 ID — 기존 탈퇴 CF에서 누락
+    await db.collection("trust_settings").doc(uid).delete().catch((e) =>
+      console.error(`callableDeleteAccountFinal: trust_settings cleanup failed (${uid}):`, e)
+    );
+
+    // 2. users Firestore 문서 삭제 (개인정보보호법 §21)
+    if (userSnap.exists) {
+      await userRef.delete();
+    }
+
+    // 3+4. Storage 정리 + notifications 삭제 병렬 실행 (상호 독립, best-effort)
+    //      [PERF] 두 paginated 작업을 병렬화 — ~0.5s 단축
+    await Promise.all([
+      // 3. Storage users/ 정리 (신분증·서명 이미지)
+      (async () => {
+        try {
+          const bucket = admin.storage().bucket();
+          const [files] = await bucket.getFiles({prefix: `users/${uid}/`});
+          if (files.length > 0) {
+            await Promise.all(
+              files.map((f) =>
+                f.delete().catch((e) => {
+                  console.warn(`callableDeleteAccountFinal: Storage file skip (${f.name}):`, e);
+                })
+              )
+            );
+          }
+        } catch (e) {
+          console.error(`callableDeleteAccountFinal: Storage cleanup failed (${uid}):`, e);
+          // continue — 파일 고아 잔류는 허용, Auth 삭제 우선
+        }
+      })(),
+      // 4. notifications 서브컬렉션 삭제 (paginated 200건씩)
+      //    Firestore: 상위 document 삭제 후에도 서브컬렉션 독립 접근 가능 → 순서 무관
+      (async () => {
+        try {
+          const notifRef = db.collection("users").doc(uid).collection("notifications");
+          let hasMore = true;
+          while (hasMore) {
+            const snap = await notifRef.limit(200).get();
+            if (snap.empty) break;
+            hasMore = snap.docs.length === 200;
+            const batch = db.batch();
+            for (const doc of snap.docs) batch.delete(doc.ref);
+            await batch.commit();
+          }
+        } catch (e) {
+          console.error(`callableDeleteAccountFinal: Notifications cleanup failed (${uid}):`, e);
+        }
+      })(),
+    ]);
+
+    // 5. BUSINESS_ADMIN 사업장 정리
+    //    [M-01 수정] adminIds array-contains 쿼리 → 복수 사업장 전체 처리
+    //    (기존 클라이언트: businessId 단수 필드만 → 공동 관리 사업장 누락 버그)
+    if (role === "BUSINESS_ADMIN" || role === "SUPER_ADMIN") {
+      try {
+        const bizSnap = await db
+          .collection("businesses")
+          .where("adminIds", "array-contains", uid)
+          .get();
+
+        for (const bizDoc of bizSnap.docs) {
+          if (bizDoc.data()["deactivatedAt"]) continue; // 이미 비활성화 — 멱등
+          const adminIds =
+            (bizDoc.data()["adminIds"] as string[] | undefined) ?? [];
+          const isSoleAdmin =
+            adminIds.length === 1 && adminIds.includes(uid);
+
+          if (isSoleAdmin) {
+            // 단독 관리자 → 사업장 비활성화
+            // onBusinessDeactivated CF가 활성 TO CLOSED + PENDING 지원서 처리를 자동으로 수행
+            await bizDoc.ref.update({
+              deactivatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          } else {
+            // 공동 관리자 → adminIds에서 본인 uid만 제거
+            await bizDoc.ref.update({
+              adminIds: admin.firestore.FieldValue.arrayRemove(uid),
+            });
+          }
+        }
+      } catch (e) {
+        console.error(`callableDeleteAccountFinal: Businesses cleanup failed (${uid}):`, e);
+        // continue — 사업장 정리 부분 실패도 Auth 삭제는 진행
+      }
+    }
+
+    // 6. Firebase Auth 계정 삭제 (Admin SDK) — 마지막, 멱등
+    //    auth.deleteUser()가 마지막이므로: 앞 단계 실패 시 사용자가 재시도 가능
+    try {
+      await admin.auth().deleteUser(uid);
+    } catch (authErr: unknown) {
+      const errCode = (authErr as {code?: string}).code;
+      if (errCode === "auth/user-not-found") {
+        // 이미 삭제됨 — 멱등 OK
+        console.info(`callableDeleteAccountFinal: Auth already deleted (${uid})`);
+      } else {
+        throw authErr; // 예상치 못한 오류 → 클라이언트 전달
+      }
+    }
+
+    return {success: true};
   }
 );
 
@@ -19351,6 +19727,218 @@ export const callableDeleteWorkerLocations = onCall(
       deletedCount += snap.docs.length;
     }
     return { deletedCount };
+  }
+);
+
+// ─── callableGetWithdrawBlockers ──────────────────────────────────────────────
+// 탈퇴 전 차단/경고 조건 서버 체크 — 관리자·근로자 공통
+// BUSINESS_ADMIN: 미확정/미이체 급여, 중간정산 대기, 확정 근무자 있는 진행 중 TO
+// USER: 미서명 계약서, 미이체 급여, 진행 중 장기 근무
+// 반환: { hardBlocks: [{type, count}], warnings: [{type, count}] }
+export const callableGetWithdrawBlockers = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const role = (request.auth.token["role"] as string) || "";
+
+    const hardBlocks: Array<{type: string; count: number}> = [];
+    const warnings: Array<{type: string; count: number}> = [];
+
+    if (role === "BUSINESS_ADMIN" || role === "SUPER_ADMIN") {
+      // 관리자가 속한 모든 활성 사업장 (managedBusinessIds 아닌 Firestore 직접 쿼리)
+      const bizSnap = await db.collection("businesses")
+        .where("adminIds", "array-contains", callerUid)
+        .get();
+      const bizIds = bizSnap.docs
+        .filter((d) => !d.data()["deactivatedAt"])
+        .map((d) => d.id);
+
+      if (bizIds.length === 0) {
+        return {hardBlocks: [], warnings: []};
+      }
+
+      // whereIn 최대 30개 배치 처리
+      const CHUNK = 30;
+      const batches: string[][] = [];
+      for (let i = 0; i < bizIds.length; i += CHUNK) {
+        batches.push(bizIds.slice(i, i + CHUNK));
+      }
+
+      // 병렬 체크
+      // [NOTE] Firestore 이중 in 연산자 금지 → 각 wageStatus/status 별 분리 쿼리 또는 in-memory 필터
+      const ACTIVE_TO_STATUSES = ["ACTIVE", "FULL", "SCHEDULED"];
+
+      const [wageCount, interimCount, toData, contractCount] = await Promise.all([
+        // 1. 미확정(calculated) + 미이체(confirmed) 출근기록 — BLOCK
+        // [FIX] in+in 금지 → wageStatus별 분리 쿼리 (businessId in batch × 1 in 씩)
+        // [PERF] 직렬 for-loop → Promise.all 병렬 쿼리 전환 (2 × B → 1 라운드)
+        // [A-010 FIX] limit(100) → count() 집계 — 100건 초과 시 과소보고 방지
+        //   count()는 문서를 읽지 않고 건수만 반환 → 비용 절약 + 정확도 개선
+        (async () => {
+          const allCounts = await Promise.all(
+            (["calculated", "confirmed"] as const).flatMap((ws) =>
+              batches.map((batch) =>
+                db.collection("attendance")
+                  .where("businessId", "in", batch)
+                  .where("wageStatus", "==", ws)
+                  .count()
+                  .get()
+              )
+            )
+          );
+          return allCounts.reduce((total, snap) => total + snap.data().count, 0);
+        })(),
+
+        // 2. 중간정산 승인 대기 — BLOCK
+        // [PERF] 직렬 for-loop → Promise.all 병렬 쿼리 전환
+        (async () => {
+          const allSnaps = await Promise.all(
+            batches.map((batch) =>
+              db.collection("interim_settlement_requests")
+                .where("businessId", "in", batch)
+                .where("status", "==", "PENDING")
+                .get()
+            )
+          );
+          return allSnaps.reduce((count, snap) => count + snap.size, 0);
+        })(),
+
+        // 3. 진행 중 TO — totalConfirmed 있으면 BLOCK, totalPending만 있으면 WARNING
+        // [FIX] in+in 금지 → businessId in batch 단독 조회 후 status in-memory 필터
+        // [PERF] 직렬 for-loop → Promise.all 병렬 쿼리 전환
+        (async () => {
+          let confirmedWorkers = 0;
+          let pendingApplicants = 0;
+          let emptyActiveTos = 0; // confirmed/pending 없는 활성 TO
+          const allSnaps = await Promise.all(
+            batches.map((batch) =>
+              db.collection("tos")
+                .where("businessId", "in", batch)
+                .get()
+            )
+          );
+          for (const snap of allSnaps) {
+            for (const doc of snap.docs) {
+              const d = doc.data();
+              if (d["isDeleted"] === true) continue;
+              if (!ACTIVE_TO_STATUSES.includes(d["status"] as string)) continue;
+              const conf = (d["totalConfirmed"] as number) || 0;
+              const pend = (d["totalPending"] as number) || 0;
+              confirmedWorkers += conf;
+              pendingApplicants += pend;
+              if (conf === 0 && pend === 0) emptyActiveTos++;
+            }
+          }
+          return {confirmedWorkers, pendingApplicants, emptyActiveTos};
+        })(),
+
+        // 4. 고정계약(isLongTerm) 근로자 활성 계약 — BLOCK
+        // 서명 전(pending_*) · 서명 완료(completed) 모두 포함 — voided/expired 제외
+        // [NOTE] in+equality 복합 인덱스 불확실 → businessId 단독 조회 후 in-memory 필터
+        (async () => {
+          const activeStatuses = ["pending_employer", "pending_worker", "completed"];
+          const allSnaps = await Promise.all(
+            batches.map((batch) =>
+              db.collection("employment_contracts")
+                .where("businessId", "in", batch)
+                .where("isLongTerm", "==", true)
+                .get()
+            )
+          );
+          return allSnaps.reduce((count, snap) =>
+            count + snap.docs.filter((d) =>
+              activeStatuses.includes(d.data()["status"] as string)
+            ).length
+          , 0);
+        })(),
+      ]);
+
+      // BLOCK 조건
+      if (wageCount > 0) {
+        hardBlocks.push({type: "UNPAID_WAGES", count: wageCount});
+      }
+      if (interimCount > 0) {
+        hardBlocks.push({type: "INTERIM_PENDING", count: interimCount});
+      }
+      if (toData.confirmedWorkers > 0) {
+        hardBlocks.push({type: "CONFIRMED_WORKERS", count: toData.confirmedWorkers});
+      }
+      if (contractCount > 0) {
+        hardBlocks.push({type: "ACTIVE_CONTRACTS", count: contractCount});
+      }
+
+      // WARNING 조건
+      if (toData.pendingApplicants > 0) {
+        warnings.push({type: "PENDING_APPLICANTS", count: toData.pendingApplicants});
+      }
+      if (toData.emptyActiveTos > 0) {
+        warnings.push({type: "ACTIVE_TOS", count: toData.emptyActiveTos});
+      }
+
+    } else {
+      // USER 역할
+      const [unsignedCount, pendingWageCount, confirmedWorkCount, subAdminBizCount] = await Promise.all([
+        // 1. 미서명 계약서 — BLOCK
+        // VOID/EXPIRED 제외: EXPIRED는 서명 불가 상태이므로 영구 해소 불가능한 BLOCK 방지
+        (async () => {
+          const snap = await db.collection("employment_contracts")
+            .where("workerId", "==", callerUid)
+            .where("workerSignedAt", "==", null)
+            .get();
+          const blockedStatuses = ["VOID", "EXPIRED"];
+          return snap.docs.filter(
+            (d) => !blockedStatuses.includes(d.data()["status"] as string)
+          ).length;
+        })(),
+
+        // 2. 미확정/미이체 급여 — WARNING (근로자 본인이 해결 불가)
+        // [FIX] 'workerId' → 'userId' (Firestore 실제 필드명)
+        // [FIX] in+equality → in-memory 필터 (userId+wageStatus 복합 인덱스 없음)
+        (async () => {
+          const snap = await db.collection("attendance")
+            .where("userId", "==", callerUid)
+            .get();
+          return snap.docs.filter((d) =>
+            ["calculated", "confirmed"].includes(d.data()["wageStatus"] as string)
+          ).length;
+        })(),
+
+        // 3. 진행 중 장기 근무 확정 — WARNING
+        // [FIX] 'applicantId' → 'uid' (Firestore 실제 필드명)
+        // [FIX] 'type' == 'long_term' → 'isLongTermApplication' == true (인덱스 있음)
+        (async () => {
+          const snap = await db.collection("applications")
+            .where("uid", "==", callerUid)
+            .where("status", "==", "CONFIRMED")
+            .where("isLongTermApplication", "==", true)
+            .get();
+          return snap.size;
+        })(),
+
+        // 4. 서브관리자 등록 사업장 수 — BLOCK (회원탈퇴 전 서브관리자 직책 해제 필요)
+        (async () => {
+          const snap = await db.collection("users").doc(callerUid).get();
+          const ids = (snap.data()?.subAdminBusinessIds ?? []) as string[];
+          return ids.length;
+        })(),
+      ]);
+
+      if (unsignedCount > 0) {
+        hardBlocks.push({type: "UNSIGNED_CONTRACT", count: unsignedCount});
+      }
+      if (pendingWageCount > 0) {
+        warnings.push({type: "PENDING_WAGES", count: pendingWageCount});
+      }
+      if (confirmedWorkCount > 0) {
+        warnings.push({type: "CONFIRMED_WORK", count: confirmedWorkCount});
+      }
+      if (subAdminBizCount > 0) {
+        hardBlocks.push({type: "SUBADMIN_MEMBERSHIP", count: subAdminBizCount});
+      }
+    }
+
+    return {hardBlocks, warnings};
   }
 );
 
@@ -20685,6 +21273,49 @@ export const callableRemoveMember = onCall(
           subAdminOf: admin.firestore.FieldValue.delete(),
         });
       }
+    });
+
+    return {success: true};
+  }
+);
+
+// ── callableLeaveAsSubAdmin ───────────────────────────────────────────────────
+// 서브관리자가 특정 사업장에서 스스로 직책 해제 (회원탈퇴 차단 해소 경로)
+// Trust Boundary: 타인(businesses/members) + 자신의 _protected 필드 수정 → CF 필수
+// Input : { businessId }
+// Output: { success }
+export const callableLeaveAsSubAdmin = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {businessId} = request.data as {businessId: string};
+    if (!businessId) throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+
+    const userRef  = db.collection("users").doc(callerUid);
+    const memberRef = db.collection("businesses").doc(businessId)
+                       .collection("members").doc(callerUid);
+
+    await db.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      if (!userSnap.exists) throw new HttpsError("not-found", "사용자를 찾을 수 없습니다.");
+
+      const subAdminIds = (userSnap.data()?.subAdminBusinessIds ?? []) as string[];
+      if (!subAdminIds.includes(businessId)) {
+        // 이미 해제된 상태이면 멱등 처리 (에러 없이 성공 반환)
+        return;
+      }
+
+      // 1. members 서브컬렉션 삭제 (존재하지 않아도 무해)
+      const memberSnap = await tx.get(memberRef);
+      if (memberSnap.exists) {
+        tx.delete(memberRef);
+      }
+
+      // 2. users.subAdminBusinessIds 에서 해당 businessId 제거
+      tx.update(userRef, {
+        subAdminBusinessIds: admin.firestore.FieldValue.arrayRemove(businessId),
+      });
     });
 
     return {success: true};

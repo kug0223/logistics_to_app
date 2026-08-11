@@ -11,13 +11,10 @@ class MemberService {
   final _db = FirebaseFirestore.instance;
   final _firestoreService = FirestoreService();
 
-  CollectionReference _members(String businessId) => _db
-      .collection('businesses')
-      .doc(businessId)
-      .collection('members');
+  CollectionReference _members(String businessId) =>
+      _db.collection('businesses').doc(businessId).collection('members');
 
-  CollectionReference get _invitations =>
-      _db.collection('member_invitations');
+  CollectionReference get _invitations => _db.collection('member_invitations');
 
   // ── 초대 발송 ─────────────────────────────────────────────────
 
@@ -28,8 +25,10 @@ class MemberService {
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableGetUserByPhone',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
-      final result = await callable.call<Map<String, dynamic>>({'phone': phone});
+              options:
+                  HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+      final result =
+          await callable.call<Map<String, dynamic>>({'phone': phone});
       final uid = result.data['uid'] as String?;
       if (uid == null) return null;
       return {
@@ -56,7 +55,8 @@ class MemberService {
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableCheckPendingInvitation',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+              options:
+                  HttpsCallableOptions(timeout: const Duration(seconds: 15)));
       final result = await callable.call<Map<String, dynamic>>({
         'businessId': businessId,
         'targetUid': targetUid,
@@ -126,8 +126,10 @@ class MemberService {
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableAcceptInvitation',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
-      await callable.call<Map<String, dynamic>>({'invitationId': invitation.id});
+              options:
+                  HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+      await callable
+          .call<Map<String, dynamic>>({'invitationId': invitation.id});
     } catch (e) {
       // FirebaseFunctionsException.message를 Exception으로 래핑 — 호출부 catch 호환
       debugPrint('초대 수락 CF 실패: $e');
@@ -180,7 +182,8 @@ class MemberService {
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableGetMyInvitations',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+              options:
+                  HttpsCallableOptions(timeout: const Duration(seconds: 15)));
       final result = await callable.call<Map<String, dynamic>>({});
       final expiry = DateTime.now().subtract(const Duration(days: 3));
       return (result.data['invitations'] as List? ?? [])
@@ -202,12 +205,15 @@ class MemberService {
 
   /// 관리자가 해당 사업장에 발송한 pending 초대 목록 (3일 이내만)
   /// [CF 이전 2026-07-27] member_invitations list 쿼리 PERMISSION_DENIED → callableGetSentPendingInvitations
-  Future<List<MemberInvitationModel>> getSentPendingInvitations(String businessId) async {
+  Future<List<MemberInvitationModel>> getSentPendingInvitations(
+      String businessId) async {
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableGetSentPendingInvitations',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
-      final result = await callable.call<Map<String, dynamic>>({'businessId': businessId});
+              options:
+                  HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+      final result =
+          await callable.call<Map<String, dynamic>>({'businessId': businessId});
       final expiry = DateTime.now().subtract(const Duration(days: 3));
       return (result.data['invitations'] as List? ?? [])
           .whereType<Map>()
@@ -247,7 +253,10 @@ class MemberService {
           .orderBy('addedAt', descending: false)
           .limit(200)
           .get();
-      return snap.docs.map(BusinessMemberModel.tryFromFirestore).whereType<BusinessMemberModel>().toList();
+      return snap.docs
+          .map(BusinessMemberModel.tryFromFirestore)
+          .whereType<BusinessMemberModel>()
+          .toList();
     } catch (e) {
       // return [] 시 Firestore 오류를 "멤버 없음"으로 오판 — 호출자에게 전파
       debugPrint('멤버 목록 조회 실패: $e');
@@ -293,7 +302,19 @@ class MemberService {
   }) async {
     final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
         .httpsCallable('callableRemoveMember',
-            options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+            options:
+                HttpsCallableOptions(timeout: const Duration(seconds: 15)));
     await callable.call({'businessId': businessId, 'uid': uid});
+  }
+
+  /// 서브관리자 직책 해제 → [CF] callableLeaveAsSubAdmin 경유
+  ///
+  /// subAdminBusinessIds는 _protectedUserFields — 서버에서만 수정.
+  Future<void> leaveAsSubAdmin(String businessId) async {
+    final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable('callableLeaveAsSubAdmin',
+            options:
+                HttpsCallableOptions(timeout: const Duration(seconds: 15)));
+    await callable.call({'businessId': businessId});
   }
 }

@@ -777,6 +777,41 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "inviteExpiresAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "deleted_accounts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ciHash", "order": "ASCENDING" },
+        { "fieldPath": "deletedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "applications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "uid", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "isLongTermApplication", "order": "ASCENDING" }
+      ]
+    },
+
+    {
+      "collectionGroup": "employment_contracts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "workerId", "order": "ASCENDING" },
+        { "fieldPath": "workerSignedAt", "order": "ASCENDING" }
+      ]
+    },
+
+    {
+      "collectionGroup": "deleted_accounts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "uid", "order": "ASCENDING" },
+        { "fieldPath": "deletedAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

@@ -11,7 +11,6 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 // Models
 import '../../models/core/user_model.dart';
-import '../../models/core/to_model.dart';
 
 // Providers
 import '../../providers/user_provider.dart';
@@ -38,6 +37,11 @@ import 'help_screen.dart';
 import '../user/my_reviews_screen.dart';
 import 'profile_edit_screen.dart';
 import '../business_admin/business_list_screen.dart';
+import '../business_admin/admin_contract_management_screen.dart';
+import '../business_admin/payroll/payroll_payment_dashboard_screen.dart';
+import '../business_admin/business_admin_home_screen.dart';
+import '../user/my_applications_screen.dart';
+import '../user/subadmin_leave_screen.dart';
 import '../super_admin/all_businesses_screen.dart';
 import '../super_admin/all_users_screen.dart';
 import '../super_admin/legal_terms_management_screen.dart';
@@ -119,8 +123,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // effectiveBusinessId가 null(BUSINESS_ADMIN 멀티사업장)이면 CF로 사업장 조회 (UI 블로킹 없음)
     if (_resolvedBusinessId == null) {
       try {
-        final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-            .httpsCallable('callableGetMyBusiness');
+        final callable =
+            FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+                .httpsCallable('callableGetMyBusiness');
         final response = await callable.call<Map<String, dynamic>>({});
         final list = (response.data['businesses'] as List?) ?? [];
         if (list.isNotEmpty && mounted) {
@@ -259,294 +264,347 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Selector<UserProvider, ({UserModel? user, bool isAdminMode})>(
       selector: (_, p) => (user: p.currentUser, isAdminMode: p.isAdminMode),
       builder: (context, data, _) {
-    final user = data.user;
-    final userProvider = context.read<UserProvider>();
-    final theme = Theme.of(context);
-    final isSubAdminInAdminMode = (user?.isSubAdmin ?? false) && data.isAdminMode;
-    final isSubAdminInUserMode  = (user?.isSubAdmin ?? false) && !data.isAdminMode;
-    final showUserItems = user?.role == UserRole.USER || isSubAdminInUserMode;
-    final showAdminSection = user?.role == UserRole.BUSINESS_ADMIN || isSubAdminInAdminMode;
+        final user = data.user;
+        final userProvider = context.read<UserProvider>();
+        final theme = Theme.of(context);
+        final isSubAdminInAdminMode =
+            (user?.isSubAdmin ?? false) && data.isAdminMode;
+        final isSubAdminInUserMode =
+            (user?.isSubAdmin ?? false) && !data.isAdminMode;
+        final showUserItems =
+            user?.role == UserRole.USER || isSubAdminInUserMode;
+        final showAdminSection =
+            user?.role == UserRole.BUSINESS_ADMIN || isSubAdminInAdminMode;
 
-    return GradientScaffold(
-      title: '설정',
-      headerContent: _buildHeaderProfile(context, userProvider),
-      body: ListView(
-        padding: ResponsiveHelper.listPadding(context),
-        children: [
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        return GradientScaffold(
+          title: '설정',
+          headerContent: _buildHeaderProfile(context, userProvider),
+          body: ListView(
+            padding: ResponsiveHelper.listPadding(context),
+            children: [
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
-          // UX-04: 설정 화면에 필수/선택 항목 구분 없음
-          // 근로자 기준 공고 지원 필수 항목: PASS 본인인증, 신분증, 통장사본, 계좌 등록
-          // 현재는 '내 서류 관리' 안에 모두 섞여 있어 신규 사용자가 무엇을 먼저 해야 하는지 파악 어려움
-          // 개선 방향: 미완료 필수 항목에 빨간 뱃지 표시, 또는 상단에 "완료 N/4" 진행 바 추가
-          // ── 내 정보 ──────────────────────────────────────────
-          _buildSectionHeader(context, '내 정보', Icons.person_outline),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          _buildMenuGroup(context, [
-            _SettingsItem(
-              icon: Icons.edit_outlined,
-              iconColor: theme.primaryColor,
-              title: '프로필 수정',
-              onTap: () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const ProfileEditScreen())),
-            ),
-          ]),
-          if (showUserItems) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            _buildMenuGroup(context, [
-              _buildDocumentMenuItem(context, user),
-              _SettingsItem(
-                icon: Icons.star_rounded,
-                iconColor: AppColors.warning,
-                title: '내 평가 확인',
-                onTap: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const MyReviewsScreen())),
-              ),
-            ]),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            _buildSignatureCard(context, user),
-          ],
-
-          SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-
-          // ── 사업장 설정 (관리자) ─────────────────────────────
-          if (showAdminSection) ...[
-            _buildSectionHeader(context, '사업장 설정', Icons.business_outlined),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            // BUSINESS_ADMIN만: 내 서류 관리 (SubAdmin은 '내 정보' 섹션에서 이미 표시됨)
-            if (user?.isBusinessAdmin == true) ...[
+              // UX-04: 설정 화면에 필수/선택 항목 구분 없음
+              // 근로자 기준 공고 지원 필수 항목: PASS 본인인증, 신분증, 통장사본, 계좌 등록
+              // 현재는 '내 서류 관리' 안에 모두 섞여 있어 신규 사용자가 무엇을 먼저 해야 하는지 파악 어려움
+              // 개선 방향: 미완료 필수 항목에 빨간 뱃지 표시, 또는 상단에 "완료 N/4" 진행 바 추가
+              // ── 내 정보 ──────────────────────────────────────────
+              _buildSectionHeader(context, '내 정보', Icons.person_outline),
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
               _buildMenuGroup(context, [
                 _SettingsItem(
-                  icon: Icons.description_outlined,
-                  iconColor: AppColors.successDark,
-                  title: '내 서류 관리',
-                  onTap: () => NavigationHelper.push<bool>(context,
-                      destination: const DocumentManagementScreen()),
+                  icon: Icons.edit_outlined,
+                  iconColor: theme.primaryColor,
+                  title: '프로필 수정',
+                  onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => const ProfileEditScreen())),
                 ),
               ]),
-              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            ],
-            // 날인 카드: BUSINESS_ADMIN 항상 / SubAdmin은 계약서 관리 권한 있을 때만
-            if (user?.isBusinessAdmin == true ||
-                userProvider.can((p) => p.canManageContract)) ...[
-              _buildSealCard(context, user),
-              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            ],
-            _buildMenuGroup(context, [
-              _SettingsItem(
-                icon: Icons.business_outlined,
-                iconColor: AppColors.purpleDark,
-                title: '사업장 정보',
-                onTap: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const BusinessListScreen())),
-              ),
-              user?.isBusinessAdmin == true ||
-                      userProvider.can((p) => p.canManageTo)
-                  ? _SettingsItem(
-                      icon: Icons.work_outline,
-                      iconColor: AppColors.warningDark,
-                      title: '업무 유형 관리',
-                      onTap: () async {
-                        final nav = Navigator.of(context);
-                        final biz = await BusinessPickerHelper.pick(context);
-                        if (biz == null || !mounted) return;
-                        nav.push(MaterialPageRoute(
-                            builder: (_) => WorkTypeManagementScreen(
-                                businessId: biz.id, businessName: biz.name)));
-                      },
-                    )
-                  : null,
-              user?.isBusinessAdmin == true ||
-                      userProvider.can((p) => p.canManageContract)
-                  ? _SettingsItem(
-                      icon: Icons.article_outlined,
-                      iconColor: AppColors.infoDark,
-                      title: '근로계약서 관리',
-                      onTap: () async {
-                        final nav = Navigator.of(context);
-                        final biz = await BusinessPickerHelper.pick(context);
-                        if (biz == null || !mounted) return;
-                        if (kDebugMode) debugPrint('📋 [settings/contractTemplate] businessId=${biz.id}');
-                        nav.push(MaterialPageRoute(
+              if (showUserItems) ...[
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                _buildMenuGroup(context, [
+                  _buildDocumentMenuItem(context, user),
+                  _SettingsItem(
+                    icon: Icons.star_rounded,
+                    iconColor: AppColors.warning,
+                    title: '내 평가 확인',
+                    onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const MyReviewsScreen())),
+                  ),
+                ]),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                _buildSignatureCard(context, user),
+              ],
+
+              // ── 서브관리자 관리 ─────────────────────────────────
+              if (user?.isSubAdmin == true) ...[
+                SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+                _buildSectionHeader(
+                    context, '서브관리자 관리', Icons.admin_panel_settings_outlined),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                _buildMenuGroup(context, [
+                  _SettingsItem(
+                    icon: Icons.logout_outlined,
+                    iconColor: AppColors.error,
+                    title: '서브관리자 탈퇴',
+                    subtitle: '${user!.subAdminBusinessIds.length}개 사업장',
+                    subtitleColor: AppColors.grey500,
+                    onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const SubadminLeaveScreen())),
+                  ),
+                ]),
+              ],
+
+              SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+
+              // ── 사업장 설정 (관리자) ─────────────────────────────
+              if (showAdminSection) ...[
+                _buildSectionHeader(context, '사업장 설정', Icons.business_outlined),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                // BUSINESS_ADMIN만: 내 서류 관리 (SubAdmin은 '내 정보' 섹션에서 이미 표시됨)
+                if (user?.isBusinessAdmin == true) ...[
+                  _buildMenuGroup(context, [
+                    _SettingsItem(
+                      icon: Icons.description_outlined,
+                      iconColor: AppColors.successDark,
+                      title: '내 서류 관리',
+                      onTap: () => NavigationHelper.push<bool>(context,
+                          destination: const DocumentManagementScreen()),
+                    ),
+                  ]),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                ],
+                // 날인 카드: BUSINESS_ADMIN 항상 / SubAdmin은 계약서 관리 권한 있을 때만
+                if (user?.isBusinessAdmin == true ||
+                    userProvider.can((p) => p.canManageContract)) ...[
+                  _buildSealCard(context, user),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                ],
+                _buildMenuGroup(context, [
+                  _SettingsItem(
+                    icon: Icons.business_outlined,
+                    iconColor: AppColors.purpleDark,
+                    title: '사업장 정보',
+                    onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const BusinessListScreen())),
+                  ),
+                  user?.isBusinessAdmin == true ||
+                          userProvider.can((p) => p.canManageTo)
+                      ? _SettingsItem(
+                          icon: Icons.work_outline,
+                          iconColor: AppColors.warningDark,
+                          title: '업무 유형 관리',
+                          onTap: () async {
+                            final nav = Navigator.of(context);
+                            final biz =
+                                await BusinessPickerHelper.pick(context);
+                            if (biz == null || !mounted) return;
+                            nav.push(MaterialPageRoute(
+                                builder: (_) => WorkTypeManagementScreen(
+                                    businessId: biz.id,
+                                    businessName: biz.name)));
+                          },
+                        )
+                      : null,
+                  user?.isBusinessAdmin == true ||
+                          userProvider.can((p) => p.canManageContract)
+                      ? _SettingsItem(
+                          icon: Icons.article_outlined,
+                          iconColor: AppColors.infoDark,
+                          title: '근로계약서 관리',
+                          onTap: () async {
+                            final nav = Navigator.of(context);
+                            final biz =
+                                await BusinessPickerHelper.pick(context);
+                            if (biz == null || !mounted) return;
+                            if (kDebugMode) {
+                              debugPrint(
+                                  '📋 [settings/contractTemplate] businessId=${biz.id}');
+                            }
+                            nav.push(MaterialPageRoute(
+                                builder: (_) => ContractTemplateListScreen(
+                                    businessId: biz.id)));
+                          },
+                        )
+                      : null,
+                  user?.isBusinessAdmin == true
+                      ? _SettingsItem(
+                          icon: Icons.group_outlined,
+                          iconColor: theme.primaryColor,
+                          title: '멤버 관리',
+                          onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) =>
+                                      const MemberManagementScreen())),
+                        )
+                      : null,
+                  user?.isBusinessAdmin == true ||
+                          userProvider.can((p) => p.canManageWorkers)
+                      ? _SettingsItem(
+                          icon: Icons.rate_review_outlined,
+                          iconColor: AppColors.warningDark,
+                          title: '리뷰 관리',
+                          onTap: () async {
+                            final nav = Navigator.of(context);
+                            final biz =
+                                await BusinessPickerHelper.pick(context);
+                            if (biz == null || !mounted) return;
+                            nav.push(MaterialPageRoute(
+                                builder: (_) =>
+                                    AdminReviewListScreen(businessId: biz.id)));
+                          },
+                        )
+                      : null,
+                ]),
+                SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+              ],
+
+              // ── 관리자 메뉴 (슈퍼) ──────────────────────────────
+              if (user?.role == UserRole.SUPER_ADMIN) ...[
+                _buildSectionHeader(
+                    context, '관리자 메뉴', Icons.admin_panel_settings_outlined),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                _buildMenuGroup(context, [
+                  _SettingsItem(
+                    icon: Icons.people_outline,
+                    iconColor: AppColors.errorDark,
+                    title: '전체 사용자 관리',
+                    onTap: () => NavigationHelper.push(context,
+                        destination: const AllUsersScreen()),
+                  ),
+                  _SettingsItem(
+                    icon: Icons.business_center_outlined,
+                    iconColor: AppColors.purpleDark,
+                    title: '전체 사업장 관리',
+                    onTap: () => NavigationHelper.push(context,
+                        destination: const AllBusinessesScreen()),
+                  ),
+                  _SettingsItem(
+                    icon: Icons.gavel_outlined,
+                    iconColor: AppColors.infoDark,
+                    title: '약관 관리',
+                    onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
                             builder: (_) =>
-                                ContractTemplateListScreen(businessId: biz.id)));
-                      },
-                    )
-                  : null,
-              user?.isBusinessAdmin == true
-                  ? _SettingsItem(
-                      icon: Icons.group_outlined,
-                      iconColor: theme.primaryColor,
-                      title: '멤버 관리',
-                      onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => const MemberManagementScreen())),
-                    )
-                  : null,
-              user?.isBusinessAdmin == true ||
-                      userProvider.can((p) => p.canManageWorkers)
-                  ? _SettingsItem(
-                      icon: Icons.rate_review_outlined,
-                      iconColor: AppColors.warningDark,
-                      title: '리뷰 관리',
-                      onTap: () async {
-                        final nav = Navigator.of(context);
-                        final biz = await BusinessPickerHelper.pick(context);
-                        if (biz == null || !mounted) return;
-                        nav.push(MaterialPageRoute(
-                            builder: (_) =>
-                                AdminReviewListScreen(businessId: biz.id)));
-                      },
-                    )
-                  : null,
-            ]),
-            SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-          ],
+                                const LegalTermsManagementScreen())),
+                  ),
+                  _SettingsItem(
+                    icon: Icons.help_outline_rounded,
+                    iconColor: AppColors.successDark,
+                    title: '도움말 FAQ 관리',
+                    onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const HelpFaqManagementScreen())),
+                  ),
+                ]),
+                SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+                _buildSectionHeader(
+                    context, '개발자 도구', Icons.developer_mode_outlined),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                _buildMenuGroup(context, [
+                  _SettingsItem(
+                    icon: Icons.sync,
+                    iconColor: AppColors.warningDark,
+                    title: 'Application 마이그레이션',
+                    onTap: () => _runApplicationMigration(context),
+                  ),
+                ]),
+                SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+              ],
 
-          // ── 관리자 메뉴 (슈퍼) ──────────────────────────────
-          if (user?.role == UserRole.SUPER_ADMIN) ...[
-            _buildSectionHeader(context, '관리자 메뉴', Icons.admin_panel_settings_outlined),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            _buildMenuGroup(context, [
-              _SettingsItem(
-                icon: Icons.people_outline,
-                iconColor: AppColors.errorDark,
-                title: '전체 사용자 관리',
-                onTap: () => NavigationHelper.push(context, destination: const AllUsersScreen()),
-              ),
-              _SettingsItem(
-                icon: Icons.business_center_outlined,
-                iconColor: AppColors.purpleDark,
-                title: '전체 사업장 관리',
-                onTap: () => NavigationHelper.push(context, destination: const AllBusinessesScreen()),
-              ),
-              _SettingsItem(
-                icon: Icons.gavel_outlined,
-                iconColor: AppColors.infoDark,
-                title: '약관 관리',
-                onTap: () => Navigator.push(context, MaterialPageRoute(
-                    builder: (_) => const LegalTermsManagementScreen())),
-              ),
-              _SettingsItem(
-                icon: Icons.help_outline_rounded,
-                iconColor: AppColors.successDark,
-                title: '도움말 FAQ 관리',
-                onTap: () => Navigator.push(context, MaterialPageRoute(
-                    builder: (_) => const HelpFaqManagementScreen())),
-              ),
-            ]),
-            SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-            _buildSectionHeader(context, '개발자 도구', Icons.developer_mode_outlined),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            _buildMenuGroup(context, [
-              _SettingsItem(
-                icon: Icons.sync,
-                iconColor: AppColors.warningDark,
-                title: 'Application 마이그레이션',
-                onTap: () => _runApplicationMigration(context),
-              ),
-            ]),
-            SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-          ],
+              // ── 알림 ─────────────────────────────────────────────
+              _buildSectionHeader(context, '알림', Icons.notifications_outlined),
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+              _buildNotificationToggleCard(context),
+              if (_isPushEnabled) ...[
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                _buildNotifExpandTile(context,
+                    isEffectiveAdmin:
+                        showAdminSection || user?.role == UserRole.SUPER_ADMIN),
+              ],
+              SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+              _buildMenuGroup(context, [
+                _SettingsItem(
+                  icon: Icons.settings_applications_outlined,
+                  iconColor: AppColors.grey600,
+                  title: '시스템 알림 설정',
+                  onTap: () async => openAppSettings(),
+                ),
+              ]),
+              SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
-          // ── 알림 ─────────────────────────────────────────────
-          _buildSectionHeader(context, '알림', Icons.notifications_outlined),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          _buildNotificationToggleCard(context),
-          if (_isPushEnabled) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            _buildNotifExpandTile(context, isEffectiveAdmin: showAdminSection || user?.role == UserRole.SUPER_ADMIN),
-          ],
-          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-          _buildMenuGroup(context, [
-            _SettingsItem(
-              icon: Icons.settings_applications_outlined,
-              iconColor: AppColors.grey600,
-              title: '시스템 알림 설정',
-              onTap: () async => openAppSettings(),
-            ),
-          ]),
-          SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+              // ── 앱 정보 ──────────────────────────────────────────
+              _buildSectionHeader(context, '앱 정보', Icons.info_outline),
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+              _buildInfoCard(context, items: [
+                {
+                  'icon': Icons.phone_android,
+                  'title': '앱 버전',
+                  'value': _appVersion.isEmpty ? '...' : _appVersion,
+                },
+              ]),
+              SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
-          // ── 앱 정보 ──────────────────────────────────────────
-          _buildSectionHeader(context, '앱 정보', Icons.info_outline),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          _buildInfoCard(context, items: [
-            {
-              'icon': Icons.phone_android,
-              'title': '앱 버전',
-              'value': _appVersion.isEmpty ? '...' : _appVersion,
-            },
-          ]),
-          SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+              // ── 도움말 ───────────────────────────────────────────
+              _buildSectionHeader(context, '도움말', Icons.help_outline),
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+              _buildMenuGroup(context, [
+                _SettingsItem(
+                  icon: Icons.help_outline,
+                  iconColor: AppColors.infoDark,
+                  title: '도움말 (Q&A)',
+                  onTap: () => Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => const HelpScreen())),
+                ),
+                _SettingsItem(
+                  icon: Icons.tour_outlined,
+                  iconColor: AppColors.purpleDark,
+                  title: '가이드 다시 보기',
+                  onTap: () async {
+                    final role =
+                        context.read<UserProvider>().currentUser?.role.name ??
+                            'USER';
+                    await TourHelper.resetAll();
+                    if (!mounted) return;
+                    // ignore: use_build_context_synchronously
+                    await pushTourScreen(context, role: role);
+                  },
+                ),
+              ]),
+              SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
-          // ── 도움말 ───────────────────────────────────────────
-          _buildSectionHeader(context, '도움말', Icons.help_outline),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          _buildMenuGroup(context, [
-            _SettingsItem(
-              icon: Icons.help_outline,
-              iconColor: AppColors.infoDark,
-              title: '도움말 (Q&A)',
-              onTap: () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const HelpScreen())),
-            ),
-            _SettingsItem(
-              icon: Icons.tour_outlined,
-              iconColor: AppColors.purpleDark,
-              title: '가이드 다시 보기',
-              onTap: () async {
-                final role = context.read<UserProvider>().currentUser?.role.name ?? 'USER';
-                await TourHelper.resetAll();
-                if (!mounted) return;
-                // ignore: use_build_context_synchronously
-                await pushTourScreen(context, role: role);
-              },
-            ),
-          ]),
-          SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+              // ── 법적 고지 ─────────────────────────────────────────
+              // [LEGAL-FIX 2026-08-10] 사용자가 약관을 언제든 열람할 수 있도록 추가
+              // 개인정보보호법 제35조(열람 요구권) + Google Play 정책 요구사항
+              _buildSectionHeader(context, '법적 고지', Icons.policy_outlined),
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+              _buildMenuGroup(context, [
+                _SettingsItem(
+                  icon: Icons.article_outlined,
+                  iconColor: AppColors.grey600,
+                  title: '서비스 이용약관',
+                  onTap: () =>
+                      _showTermsInApp(context, 'service_terms', '서비스 이용약관'),
+                ),
+                _SettingsItem(
+                  icon: Icons.privacy_tip_outlined,
+                  iconColor: AppColors.infoDark,
+                  title: '개인정보 처리방침',
+                  onTap: () =>
+                      _showTermsInApp(context, 'privacy_policy', '개인정보 처리방침'),
+                ),
+                _SettingsItem(
+                  icon: Icons.location_on_outlined,
+                  iconColor: AppColors.successDark,
+                  title: '위치정보 이용 동의',
+                  onTap: () =>
+                      _showTermsInApp(context, 'location_terms', '위치정보 이용 동의'),
+                ),
+              ]),
+              SizedBox(height: ResponsiveHelper.spacing(context, 24)),
 
-          // ── 법적 고지 ─────────────────────────────────────────
-          // [LEGAL-FIX 2026-08-10] 사용자가 약관을 언제든 열람할 수 있도록 추가
-          // 개인정보보호법 제35조(열람 요구권) + Google Play 정책 요구사항
-          _buildSectionHeader(context, '법적 고지', Icons.policy_outlined),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          _buildMenuGroup(context, [
-            _SettingsItem(
-              icon: Icons.article_outlined,
-              iconColor: AppColors.grey600,
-              title: '서비스 이용약관',
-              onTap: () => _showTermsInApp(context, 'service_terms', '서비스 이용약관'),
-            ),
-            _SettingsItem(
-              icon: Icons.privacy_tip_outlined,
-              iconColor: AppColors.infoDark,
-              title: '개인정보 처리방침',
-              onTap: () => _showTermsInApp(context, 'privacy_policy', '개인정보 처리방침'),
-            ),
-            _SettingsItem(
-              icon: Icons.location_on_outlined,
-              iconColor: AppColors.successDark,
-              title: '위치정보 이용 동의',
-              onTap: () => _showTermsInApp(context, 'location_terms', '위치정보 이용 동의'),
-            ),
-          ]),
-          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-          // ── 로그아웃 / 회원탈퇴 ─────────────────────────────
-          _buildLogoutButton(context, userProvider),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          _buildDeleteAccountButton(context, userProvider),
-          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-        ],
-      ),
-    );
+              // ── 로그아웃 / 회원탈퇴 ─────────────────────────────
+              _buildLogoutButton(context, userProvider),
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+              _buildDeleteAccountButton(context, userProvider),
+              SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+            ],
+          ),
+        );
       },
     );
   }
-  
-  
 
   /// ✨ 세련된 프로필 카드
   /// 파란 헤더 — 가로 compact 프로필 (공간 최소화)
@@ -700,8 +758,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     child: Text(user.trustGrade,
                         style: ResponsiveHelper.tinyStyle(context,
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600)),
+                            color: Colors.white, fontWeight: FontWeight.w600)),
                   ),
                   GestureDetector(
                     onTap: () => TrustScoreInfoDialog.show(context),
@@ -716,8 +773,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const Spacer(),
                   // 통계 4개 inline
                   _miniStat(context, '근무', '${user.totalWorkDays}일'),
-                  _miniStat(context, '평점',
-                      user.averageRating.toStringAsFixed(1)),
+                  _miniStat(
+                      context, '평점', user.averageRating.toStringAsFixed(1)),
                   _miniStat(context, '지각(90일)', '${user.recentLateCount}회'),
                   _miniStat(context, '노쇼(90일)', '${user.recentNoShowCount}회'),
                 ],
@@ -746,8 +803,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.3)),
+                    border:
+                        Border.all(color: Colors.white.withValues(alpha: 0.3)),
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -788,8 +845,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
- /// 🆕 재시작 프로그램 다이얼로그 표시
-  Future<void> _showRestartProgramDialog(BuildContext context, UserModel user) async {
+  /// 🆕 재시작 프로그램 다이얼로그 표시
+  Future<void> _showRestartProgramDialog(
+      BuildContext context, UserModel user) async {
     await showRestartProgramDialog(
       context,
       userId: user.uid,
@@ -801,13 +859,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         context.read<UserProvider>().refreshUserData();
       },
     );
-    
+
     // refreshUserData() 호출 후 UserProvider가 notifyListeners() → 자동 rebuild
     // (context.watch 사용 화면이므로 별도 setState 불필요)
   }
 
-
-  Widget _buildSectionHeader(BuildContext context, String title, IconData icon) {
+  Widget _buildSectionHeader(
+      BuildContext context, String title, IconData icon) {
     return Padding(
       padding: EdgeInsets.only(left: ResponsiveHelper.spacing(context, 4)),
       child: Row(
@@ -967,13 +1025,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ]),
             ),
-            if (!isLast)
-              const Divider(height: 1, indent: 52, thickness: 0.5),
+            if (!isLast) const Divider(height: 1, indent: 52, thickness: 0.5),
           ]);
         }),
       ),
     );
   }
+
   Widget _buildNotificationToggleCard(BuildContext context) {
     final theme = Theme.of(context);
     const iconColor = AppColors.amber;
@@ -993,8 +1051,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(Icons.notifications_active,
-                color: iconColor,
-                size: ResponsiveHelper.iconSize(context, 18)),
+                color: iconColor, size: ResponsiveHelper.iconSize(context, 18)),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           Expanded(
@@ -1028,22 +1085,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _buildNotifExpandTile(BuildContext context, {bool isEffectiveAdmin = false}) {
+  Widget _buildNotifExpandTile(BuildContext context,
+      {bool isEffectiveAdmin = false}) {
     final theme = Theme.of(context);
     final items = isEffectiveAdmin
         ? [
-            (UserModel.notifReviewAlert,   '리뷰 요청 알림',  Icons.rate_review_outlined),
-            (UserModel.notifContractAlert, '계약 알림',       Icons.description_outlined),
-            (UserModel.notifWageAlert,     '임금 확정 알림',  Icons.payments_outlined),
+            (
+              UserModel.notifReviewAlert,
+              '리뷰 요청 알림',
+              Icons.rate_review_outlined
+            ),
+            (UserModel.notifContractAlert, '계약 알림', Icons.description_outlined),
+            (UserModel.notifWageAlert, '임금 확정 알림', Icons.payments_outlined),
           ]
         : [
-            (UserModel.notifWorkReminder,      '근무 리마인더',   Icons.schedule_outlined),
-            (UserModel.notifApplicationUpdate, '지원 결과 알림',  Icons.check_circle_outline),
-            (UserModel.notifReviewAlert,       '리뷰 요청 알림',  Icons.rate_review_outlined),
-            (UserModel.notifContractAlert,     '계약 알림',       Icons.description_outlined),
-            (UserModel.notifWageAlert,         '임금 확정 알림',  Icons.payments_outlined),
+            (UserModel.notifWorkReminder, '근무 리마인더', Icons.schedule_outlined),
+            (
+              UserModel.notifApplicationUpdate,
+              '지원 결과 알림',
+              Icons.check_circle_outline
+            ),
+            (
+              UserModel.notifReviewAlert,
+              '리뷰 요청 알림',
+              Icons.rate_review_outlined
+            ),
+            (UserModel.notifContractAlert, '계약 알림', Icons.description_outlined),
+            (UserModel.notifWageAlert, '임금 확정 알림', Icons.payments_outlined),
           ];
-    final enabledCount = items.where((item) => _notifPrefs[item.$1] ?? true).length;
+    final enabledCount =
+        items.where((item) => _notifPrefs[item.$1] ?? true).length;
 
     return Container(
       decoration: CommonWidgets.compactCardDecoration(),
@@ -1068,7 +1139,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       style: ResponsiveHelper.bodyStyle(context)),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
                     color: theme.primaryColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
@@ -1105,16 +1177,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           children: [
                             Padding(
                               padding: EdgeInsets.symmetric(
-                                horizontal: ResponsiveHelper.spacing(context, 16),
+                                horizontal:
+                                    ResponsiveHelper.spacing(context, 16),
                                 vertical: ResponsiveHelper.spacing(context, 10),
                               ),
                               child: Row(children: [
                                 Icon(icon,
-                                    size: ResponsiveHelper.iconSize(context, 18),
+                                    size:
+                                        ResponsiveHelper.iconSize(context, 18),
                                     color: enabled
                                         ? theme.primaryColor
                                         : AppColors.grey400),
-                                SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                                SizedBox(
+                                    width:
+                                        ResponsiveHelper.spacing(context, 12)),
                                 Expanded(
                                   child: Text(label,
                                       style: ResponsiveHelper.bodyStyle(context)
@@ -1154,7 +1230,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // ── 약관 앱 내 뷰어 ─────────────────────────────────────────────
   // [LEGAL-FIX 2026-08-10] 개인정보보호법 제35조 열람 요구권 + Google Play 정책 대응
   // Firestore에서 해당 termId 항목을 로드 후 전체화면으로 표시
-  Future<void> _showTermsInApp(BuildContext ctx, String termId, String fallbackTitle) async {
+  Future<void> _showTermsInApp(
+      BuildContext ctx, String termId, String fallbackTitle) async {
     LegalTermsItem? item;
     try {
       final terms = await LegalTermsService().getTerms();
@@ -1222,16 +1299,367 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildDeleteAccountButton(
       BuildContext context, UserProvider userProvider) {
     return TextButton(
-      onPressed: () => _showDeleteAccountSheet(context, userProvider),
+      onPressed: () => _showWithdrawalChecklist(context, userProvider),
       child: Text(
         '회원탈퇴',
-        style: ResponsiveHelper.smallStyle(context,
-            color: AppColors.grey400).copyWith(
+        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey400)
+            .copyWith(
           decoration: TextDecoration.underline,
           decorationColor: AppColors.grey400,
         ),
       ),
     );
+  }
+
+  // ━━━ 탈퇴 전 체크리스트 ━━━
+  // callableGetWithdrawBlockers CF로 BLOCK/WARNING 조건 확인 후 비밀번호 시트로 이동
+  Future<void> _showWithdrawalChecklist(
+      BuildContext context, UserProvider userProvider) async {
+    String? navTarget; // 네비게이션 목적지 (null = 이동 없음)
+
+    final shouldProceed = await DialogHelper.showSheet<bool>(
+      context,
+      isScrollControlled: true,
+      builder: (outerCtx) {
+        // StatefulBuilder 외부에 선언 → 한 번만 초기화
+        bool isLoading = true;
+        List<Map<String, dynamic>> hardBlocks = [];
+        List<Map<String, dynamic>> warnings = [];
+        String? cfError;
+        bool cfStarted = false; // CF 중복 호출 방지
+
+        return StatefulBuilder(builder: (ctx, setSheet) {
+          // CF 최초 1회만 호출
+          if (!cfStarted) {
+            cfStarted = true;
+            Future.microtask(() async {
+              try {
+                final callable =
+                    FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+                        .httpsCallable('callableGetWithdrawBlockers',
+                            options: HttpsCallableOptions(
+                                timeout: const Duration(seconds: 20)));
+                final result = await callable.call<Map<String, dynamic>>({});
+                if (!ctx.mounted) return;
+                setSheet(() {
+                  isLoading = false;
+                  hardBlocks = List<Map<String, dynamic>>.from(
+                      (result.data['hardBlocks'] as List? ?? [])
+                          .map((e) => Map<String, dynamic>.from(e as Map)));
+                  warnings = List<Map<String, dynamic>>.from(
+                      (result.data['warnings'] as List? ?? [])
+                          .map((e) => Map<String, dynamic>.from(e as Map)));
+                });
+              } catch (_) {
+                if (!ctx.mounted) return;
+                setSheet(() {
+                  isLoading = false;
+                  cfError = '확인 중 오류가 발생했습니다. 다시 시도해 주세요.';
+                });
+              }
+            });
+          }
+
+          // ── 로컬 헬퍼 ──────────────────────────────────────────────────
+          Widget blockRow({
+            required Color color,
+            required Color bgColor,
+            required IconData icon,
+            required String label,
+            required String? navKey,
+          }) {
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: bgColor,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: color.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                children: [
+                  Icon(icon, size: 16, color: color),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(label,
+                        style: ResponsiveHelper.tinyStyle(ctx, color: color)
+                            .copyWith(height: 1.4)),
+                  ),
+                  if (navKey != null)
+                    TextButton(
+                      onPressed: () {
+                        navTarget = navKey;
+                        Navigator.pop(ctx, null);
+                      },
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 2),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        foregroundColor: color,
+                      ),
+                      child:
+                          const Text('확인하기 →', style: TextStyle(fontSize: 11)),
+                    ),
+                ],
+              ),
+            );
+          }
+
+          String blockLabel(Map<String, dynamic> b) {
+            final n = (b['count'] as num?)?.toInt() ?? 0;
+            return switch (b['type'] as String? ?? '') {
+              'UNPAID_WAGES' => '미확정/미이체 급여 $n건',
+              'INTERIM_PENDING' => '중간정산 승인 대기 $n건',
+              'CONFIRMED_WORKERS' => '확정 근무자 $n명이 있는 진행 중 공고',
+              'UNSIGNED_CONTRACT' => '미서명 계약서 $n건',
+              'SUBADMIN_MEMBERSHIP' => '서브관리자로 등록된 사업장 $n곳 — 탈퇴 전 해제 필요',
+              'ACTIVE_CONTRACTS' => '고정계약 근로자 $n명 — 탈퇴 전 계약 종료 필요',
+              final t => t,
+            };
+          }
+
+          String warnLabel(Map<String, dynamic> w) {
+            final n = (w['count'] as num?)?.toInt() ?? 0;
+            return switch (w['type'] as String? ?? '') {
+              'PENDING_APPLICANTS' => '대기 중 지원자 $n명 — 탈퇴 시 자동 취소',
+              'ACTIVE_TOS' => '활성 공고 $n개 — 탈퇴 시 자동 마감',
+              'PENDING_WAGES' => '미확정/미이체 급여 $n건 — 탈퇴 전 관리자 확인 권장',
+              'CONFIRMED_WORK' => '진행 중 장기 근무 $n건 — 탈퇴 전 관리자에게 퇴사 신청 권장',
+              final t => t,
+            };
+          }
+
+          String? blockNavKey(Map<String, dynamic> b) =>
+              switch (b['type'] as String? ?? '') {
+                'UNPAID_WAGES' => 'payroll_unpaid',
+                'INTERIM_PENDING' => 'payroll_interim',
+                'CONFIRMED_WORKERS' => 'to_management',
+                'UNSIGNED_CONTRACT' => 'my_applications',
+                'SUBADMIN_MEMBERSHIP' => 'subadmin_leave',
+                'ACTIVE_CONTRACTS' => 'contract_management',
+                _ => null,
+              };
+
+          String? warnNavKey(Map<String, dynamic> w) =>
+              switch (w['type'] as String? ?? '') {
+                'PENDING_APPLICANTS' || 'ACTIVE_TOS' => 'to_management',
+                _ => 'my_applications',
+              };
+          // ───────────────────────────────────────────────────────────────
+
+          return Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 28),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 핸들
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.grey300,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Text('탈퇴 전 확인',
+                      style: ResponsiveHelper.titleStyle(ctx)
+                          .copyWith(fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 4),
+                  Text('처리 필요 항목을 먼저 완료해 주세요',
+                      style: ResponsiveHelper.smallStyle(ctx,
+                          color: AppColors.grey500)),
+                  const SizedBox(height: 20),
+
+                  if (isLoading)
+                    const Center(
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(vertical: 32),
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  else if (cfError != null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      child: Text(cfError!,
+                          style: ResponsiveHelper.smallStyle(ctx,
+                              color: AppColors.error)),
+                    )
+                  else ...[
+                    if (hardBlocks.isNotEmpty) ...[
+                      Text('처리 필요 항목',
+                          style: ResponsiveHelper.smallStyle(ctx,
+                              color: AppColors.errorDeep,
+                              fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 8),
+                      for (final b in hardBlocks)
+                        blockRow(
+                          color: AppColors.error,
+                          bgColor: AppColors.errorBg,
+                          icon: Icons.block_rounded,
+                          label: blockLabel(b),
+                          navKey: blockNavKey(b),
+                        ),
+                      const SizedBox(height: 12),
+                    ],
+                    if (warnings.isNotEmpty) ...[
+                      Text('확인 권장 사항',
+                          style: ResponsiveHelper.smallStyle(ctx,
+                              color: const Color(0xFFB45309),
+                              fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 8),
+                      for (final w in warnings)
+                        blockRow(
+                          color: const Color(0xFFB45309),
+                          bgColor: const Color(0xFFFFFBEB),
+                          icon: Icons.warning_amber_rounded,
+                          label: warnLabel(w),
+                          navKey: warnNavKey(w),
+                        ),
+                      const SizedBox(height: 12),
+                    ],
+                    if (hardBlocks.isEmpty && warnings.isEmpty)
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF0FDF4),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFBBF7D0)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.check_circle_outline,
+                                size: 18, color: Color(0xFF16A34A)),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text('탈퇴 가능한 상태입니다.',
+                                  style: ResponsiveHelper.smallStyle(ctx,
+                                      color: const Color(0xFF166534))),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(ctx, null),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: const Text('닫기'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: (hardBlocks.isEmpty &&
+                                  !isLoading &&
+                                  cfError == null)
+                              ? () => Navigator.pop(ctx, true)
+                              : null,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.error,
+                            disabledBackgroundColor: AppColors.grey300,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: Text('탈퇴 진행',
+                              style: ResponsiveHelper.bodyStyle(ctx).copyWith(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w600)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        });
+      },
+    );
+
+    if (!context.mounted) return;
+
+    // 항목 네비게이션 처리 (탈퇴 flow는 종료)
+    if (navTarget != null) {
+      switch (navTarget) {
+        case 'payroll_unpaid':
+          // 미이체 탭(0) — 사업장 선택 후 당월 급여 지급현황으로 이동
+          final bizUnpaid = await BusinessPickerHelper.pick(context);
+          if (bizUnpaid == null || !context.mounted) return;
+          final nowUnpaid = DateTime.now();
+          await Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (_) => PayrollPaymentDashboardScreen(
+                        businessId: bizUnpaid.id,
+                        businessName: bizUnpaid.name,
+                        year: nowUnpaid.year,
+                        month: nowUnpaid.month,
+                        initialTab: 0,
+                      )));
+        case 'payroll_interim':
+          // 중간정산 탭(3) — 사업장 선택 후 당월 급여 지급현황으로 이동
+          final bizInterim = await BusinessPickerHelper.pick(context);
+          if (bizInterim == null || !context.mounted) return;
+          final nowInterim = DateTime.now();
+          await Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (_) => PayrollPaymentDashboardScreen(
+                        businessId: bizInterim.id,
+                        businessName: bizInterim.name,
+                        year: nowInterim.year,
+                        month: nowInterim.month,
+                        initialTab: 3,
+                      )));
+        case 'to_management':
+          await Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (_) => const BusinessAdminHomeScreen()));
+        case 'my_applications':
+          await Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const MyApplicationsScreen()));
+        case 'subadmin_leave':
+          await Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const SubadminLeaveScreen()));
+        case 'contract_management':
+          // 고정계약 근로자 계약 관리 — 사업장 선택 후 계약 관리 화면으로 이동
+          final bizContract = await BusinessPickerHelper.pick(context);
+          if (bizContract == null || !context.mounted) return;
+          await Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (_) => AdminContractManagementScreen(
+                        businessId: bizContract.id,
+                        businessName: bizContract.name,
+                      )));
+      }
+      return;
+    }
+
+    // 탈퇴 진행 → 비밀번호 확인 시트
+    if (shouldProceed == true && context.mounted) {
+      await _showDeleteAccountSheet(context, userProvider);
+    }
   }
 
   Future<void> _showDeleteAccountSheet(
@@ -1253,55 +1681,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             if (pw.isEmpty) {
               setModal(() => errorMsg = '비밀번호를 입력해주세요');
               return;
-            }
-
-            // BUSINESS_ADMIN: 모든 사업장의 활성 TO 사전 확인
-            final currentUser = userProvider.currentUser;
-            final currentBusinessIds = currentUser?.managedBusinessIds ?? [];
-            if (currentUser?.isBusinessAdmin == true &&
-                currentBusinessIds.isNotEmpty) {
-              setModal(() { isLoading = true; errorMsg = null; });
-              // [CF 이전 2026-07-13] callableGetTOsByBiz — tos 직접 쿼리 대체
-              final toCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-                  .httpsCallable('callableGetTOsByBiz',
-                      options: HttpsCallableOptions(timeout: const Duration(seconds: 15)));
-              final toCheckResults = await Future.wait(currentBusinessIds.map((bizId) async {
-                final result = await toCallable.call<Map<String, dynamic>>({
-                  'businessId': bizId,
-                  'statuses': [TOStatus.active, TOStatus.full, TOStatus.scheduled],
-                  'limit': 1,
-                });
-                final tosRaw = result.data['tos'] as List? ?? [];
-                return tosRaw.isNotEmpty;
-              }));
-              final hasActiveTo = toCheckResults.any((r) => r);
-              setModal(() => isLoading = false);
-              if (!ctx.mounted) return;
-
-              if (hasActiveTo) {
-                final proceed = await showDialog<bool>(
-                  context: ctx,
-                  barrierDismissible: false, // [FIX-LOW] CLAUDE.md 규칙
-                  builder: (dCtx) => AlertDialog(
-                    title: const Text('활성 공고 있음'),
-                    content: const Text(
-                      '현재 활성 공고가 있습니다.\n탈퇴하면 공고·계약·근무자 데이터가 모두 삭제됩니다.\n계속하시겠습니까?',
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(dCtx, false),
-                        child: const Text('취소'),
-                      ),
-                      TextButton(
-                        onPressed: () => Navigator.pop(dCtx, true),
-                        style: TextButton.styleFrom(foregroundColor: AppColors.error),
-                        child: const Text('탈퇴 진행'),
-                      ),
-                    ],
-                  ),
-                );
-                if (proceed != true || !ctx.mounted) return;
-              }
             }
 
             // 최종 재확인
@@ -1344,7 +1723,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
             ),
             padding: EdgeInsets.fromLTRB(
-              24, 16, 24,
+              24,
+              16,
+              24,
               MediaQuery.of(ctx).viewInsets.bottom + 24,
             ),
             child: SingleChildScrollView(
@@ -1355,7 +1736,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   // 핸들 바
                   Center(
                     child: Container(
-                      width: 40, height: 4,
+                      width: 40,
+                      height: 4,
                       decoration: BoxDecoration(
                         color: AppColors.grey300,
                         borderRadius: BorderRadius.circular(2),
@@ -1367,8 +1749,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   // 제목
                   Text(
                     '회원탈퇴',
-                    style: ResponsiveHelper.titleStyle(ctx).copyWith(
-                        fontWeight: FontWeight.w700),
+                    style: ResponsiveHelper.titleStyle(ctx)
+                        .copyWith(fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -1413,7 +1795,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 Expanded(
                                   child: Text(text,
                                       style: ResponsiveHelper.tinyStyle(ctx,
-                                          color: AppColors.errorDeep)
+                                              color: AppColors.errorDeep)
                                           .copyWith(height: 1.4)),
                                 ),
                               ],
@@ -1427,8 +1809,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   // 비밀번호 입력
                   Text(
                     '비밀번호 확인',
-                    style: ResponsiveHelper.bodyStyle(ctx).copyWith(
-                        fontWeight: FontWeight.w600),
+                    style: ResponsiveHelper.bodyStyle(ctx)
+                        .copyWith(fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 8),
                   TextField(
@@ -1456,7 +1838,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     children: [
                       Expanded(
                         child: OutlinedButton(
-                          onPressed: isLoading ? null : () => Navigator.pop(ctx),
+                          onPressed:
+                              isLoading ? null : () => Navigator.pop(ctx),
                           style: OutlinedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             shape: RoundedRectangleBorder(
@@ -1477,15 +1860,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ),
                           child: isLoading
                               ? const SizedBox(
-                                  width: 18, height: 18,
+                                  width: 18,
+                                  height: 18,
                                   child: CircularProgressIndicator(
                                       strokeWidth: 2, color: Colors.white),
                                 )
                               : Text(
                                   '탈퇴하기',
-                                  style: ResponsiveHelper.bodyStyle(context).copyWith(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w600),
+                                  style: ResponsiveHelper.bodyStyle(context)
+                                      .copyWith(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w600),
                                 ),
                         ),
                       ),
@@ -1508,8 +1893,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context,
       title: 'Application 마이그레이션',
       message: '기존 지원서에 누락된 workDetailId, toId, groupId를 채웁니다.\n\n'
-               '⚠️ 데이터가 많으면 시간이 걸릴 수 있습니다.\n'
-               '계속하시겠습니까?',
+          '⚠️ 데이터가 많으면 시간이 걸릴 수 있습니다.\n'
+          '계속하시겠습니까?',
       confirmText: '실행',
       cancelText: '취소',
       icon: Icons.sync,
@@ -1523,7 +1908,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       // 마이그레이션 실행
       final result = await FirestoreService().migrateApplicationWorkDetailIds();
-      
+
       // 로딩 닫기
       if (context.mounted) Navigator.pop(context);
 
@@ -1540,8 +1925,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             context,
             title: '마이그레이션 완료',
             message: '✅ 마이그레이션: $migrated개\n'
-                     '⏭️ 스킵 (이미 있음): $skipped개\n'
-                     '❌ 실패: $failed개',
+                '⏭️ 스킵 (이미 있음): $skipped개\n'
+                '❌ 실패: $failed개',
           );
         }
       }
@@ -1599,7 +1984,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         style: ResponsiveHelper.bodyStyle(context)
                             .copyWith(fontWeight: FontWeight.w600)),
                     Text(
-                      hasSignature ? '등록됨 · 계약서 서명 시 자동 사용' : '미등록 · 계약서 서명에 사용됩니다',
+                      hasSignature
+                          ? '등록됨 · 계약서 서명 시 자동 사용'
+                          : '미등록 · 계약서 서명에 사용됩니다',
                       style: ResponsiveHelper.tinyStyle(context,
                           color: AppColors.grey500),
                     ),
@@ -1727,7 +2114,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
         child: Center(
           child: SizedBox(
-            width: 20, height: 20,
+            width: 20,
+            height: 20,
             child: CircularProgressIndicator(
               strokeWidth: 2,
               color: Theme.of(context).primaryColor,
@@ -1767,11 +2155,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text('사업주 날인',
-                          style: ResponsiveHelper.bodyStyle(context)
-                              .copyWith(fontWeight: FontWeight.w600, color: AppColors.grey500)),
+                          style: ResponsiveHelper.bodyStyle(context).copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.grey500)),
                       SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                       Text('사업장 등록 후 설정 가능합니다',
-                          style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
+                          style: ResponsiveHelper.tinyStyle(context,
+                              color: AppColors.grey400)),
                     ],
                   ),
                 ),
@@ -1811,7 +2201,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
     }
 
-    final hasSeal = _businessSealBase64 != null && _businessSealBase64!.isNotEmpty;
+    final hasSeal =
+        _businessSealBase64 != null && _businessSealBase64!.isNotEmpty;
     final isStamp = _sealType == 'stamp';
 
     // [PERF-FIX] base64 변경 시에만 재디코딩 — build마다 decode 방지
@@ -2005,7 +2396,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _registerBusinessSignature(BuildContext context, UserModel? user) async {
+  Future<void> _registerBusinessSignature(
+      BuildContext context, UserModel? user) async {
     if (user == null) return;
 
     final userProvider = context.read<UserProvider>();
@@ -2199,8 +2591,7 @@ class _SealTypeTab extends StatelessWidget {
                   context,
                   color: selected ? AppColors.warningDark : AppColors.grey500,
                 ).copyWith(
-                  fontWeight:
-                      selected ? FontWeight.w600 : FontWeight.normal,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
                 ),
               ),
             ],
