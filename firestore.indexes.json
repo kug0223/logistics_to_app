@@ -176,6 +176,14 @@
       ]
     },
     {
+      "collectionGroup": "attendance",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "wageStatus", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "schedule_change_requests",
       "queryScope": "COLLECTION",
       "fields": [

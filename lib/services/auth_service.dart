@@ -437,6 +437,12 @@ class AuthService {
         // [CF-MERGED 2026-08-10] pendingToIds·confirmedApps 카운터 감소:
         //   CF 내부(Admin SDK)로 통합 — 기존 N+1 CF 호출 제거
         //   전체 deleteAccountWithPassword: CF 4→3건 최적화
+      } on FirebaseFunctionsException catch (e) {
+        // [L-2 FIX] CF 오류 구분 로깅 — 카운터 오염 여부 사후 추적 가능
+        // internal: counterBatch 실패 등 CF 내부 오류 (앱 취소 완료 + 카운터 미감소 가능)
+        // deadline-exceeded: 타임아웃 → 부분 청크 반영 후 중단 가능성
+        // 계속 진행은 유지 — Applications 실패로 Auth 삭제 차단 시 영구 탈퇴 불가 위험
+        debugPrint('⚠️ 계정 삭제: applications CF 오류 [${e.code}] (계속 진행): $e');
       } catch (e) {
         debugPrint('⚠️ 계정 삭제: applications/attendance 정리 실패 (계속 진행): $e');
       }
