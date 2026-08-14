@@ -3051,6 +3051,7 @@ async function processTOExpiry(now: Timestamp): Promise<void> {
       closedAt: now,
       closedReason: "TIME_EXPIRED",
       statusUpdatedAt: now,
+      isPublished: false, // 쿼터 카운트(isPublished==true 기준)에서 제외 — 누락 버그 수정
     };
     if (workDetails.length > 0) {
       const hasOpenItems = workDetails.some(
@@ -6614,6 +6615,89 @@ export const callableDeleteIdCard = onCall(
   }
 );
 
+// ── callableMarkBankbookVerified ─────────────────────────
+// 통장사본 이미지 Storage 업로드 완료 후 호출 — 본인 경로 URL 검증 후 Firestore 업데이트
+// isBankbookVerified/bankbookVerifiedAt은 CF Admin SDK로만 설정 — 클라이언트 직접 쓰기 차단
+// Input:  { imageUrl: string }  — Storage 다운로드 URL (본인 경로만 허용)
+// Output: { success: true }
+export const callableMarkBankbookVerified = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+    const {imageUrl} = request.data as {imageUrl?: string};
+
+    if (!imageUrl || typeof imageUrl !== "string" || imageUrl.length > 2048) {
+      throw new HttpsError("invalid-argument", "imageUrl이 필요합니다.");
+    }
+    // [M-01-FIX] includes()는 쿼리 파라미터/프래그먼트에도 매칭 → 경로 우회 가능
+    //   → /o/{encoded_path} 부분만 추출 후 startsWith로 정확히 검증
+    const pathMatch = imageUrl.match(/\/o\/([^?#]+)/);
+    if (!pathMatch) {
+      throw new HttpsError("invalid-argument", "유효하지 않은 Storage URL 형식입니다.");
+    }
+    const storagePath = decodeURIComponent(pathMatch[1]);
+    if (!storagePath.startsWith(`users/${callerUid}/`)) {
+      throw new HttpsError("permission-denied", "본인 통장사본 이미지만 등록 가능합니다.");
+    }
+    // Storage 파일 실제 존재 검증 — 존재하지 않는 URL로 isBankbookVerified 설정 차단
+    const [fileExists] = await admin.storage().bucket().file(storagePath).exists();
+    if (!fileExists) {
+      throw new HttpsError("not-found", "Storage에 해당 통장사본 파일이 존재하지 않습니다.");
+    }
+
+    await db.collection("users").doc(callerUid).update({
+      bankbookImageUrl: imageUrl,
+      isBankbookVerified: true,
+      bankbookVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return {success: true};
+  }
+);
+
+// ── callableDeleteBankInfo ────────────────────────────────
+// 급여정보(통장사본 + 계좌 정보) 삭제 — Firestore 먼저 업데이트(Admin SDK), 이후 Storage best-effort 삭제
+// 클라이언트에서 직접 쓸 수 없는 isBankbookVerified/bankbookVerifiedAt을 포함하여 초기화
+// Input:  {}
+// Output: { success: true }
+export const callableDeleteBankInfo = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    // 삭제 전 기존 URL 수집
+    const userSnap = await db.collection("users").doc(callerUid).get();
+    const oldImageUrl = userSnap.data()?.bankbookImageUrl as string | undefined;
+
+    // 1. Firestore 먼저 업데이트 (실패 시 Storage 건드리지 않음 — 설계 원칙 준수)
+    await db.collection("users").doc(callerUid).update({
+      bankName: admin.firestore.FieldValue.delete(),
+      accountNumber: admin.firestore.FieldValue.delete(),
+      accountHolder: admin.firestore.FieldValue.delete(),
+      bankbookImageUrl: admin.firestore.FieldValue.delete(),
+      isBankbookVerified: false,
+      bankbookVerifiedAt: admin.firestore.FieldValue.delete(),
+    });
+
+    // 2. Storage 삭제 best-effort (Firestore 성공 후)
+    if (oldImageUrl) {
+      try {
+        const pathMatch = oldImageUrl.match(/\/o\/(.+?)(\?|$)/);
+        if (pathMatch) {
+          const filePath = decodeURIComponent(pathMatch[1]);
+          await admin.storage().bucket().file(filePath).delete();
+        }
+      } catch (e) {
+        console.warn(`[callableDeleteBankInfo] Storage 삭제 실패 (무시): ${e}`);
+      }
+    }
+
+    return {success: true};
+  }
+);
+
 // ── callableDeleteBusinessImage ──────────────────────────
 // [LOW-STORAGE] businesses/ 경로 삭제 소속 검증 — 로그인 사용자 누구나 삭제 가능한 취약점 차단
 // Storage rules에서 Firestore 읽기 불가(프로젝트 특이사항)이므로 CF Admin SDK로 소속 검증 후 삭제
@@ -6815,9 +6899,10 @@ export const callableCreateTO = onCall(
     // [HIGH-05-MITIGATE] TOCTOU 완전 방어는 카운터 문서 필요 — 현재는 businessId 직접 쿼리로
     //   managedBusinessIds 의존성 제거 + 단일 사업장 기준으로 단순화
     if (publishMode !== "draft") {
+      // status 기준으로 카운트 — isPublished 기준은 자동만료 시 isPublished 미해제 버그 영향을 받으므로 status 사용
       const quotaSnap = await db.collection("tos")
         .where("businessId", "==", businessId)
-        .where("isPublished", "==", true)
+        .where("status", "in", ["ACTIVE", "FULL"])
         .limit(101)
         .get();
       const totalActive = quotaSnap.size;
@@ -7211,8 +7296,9 @@ export const callablePublishTO = onCall(
       if (!freshTo.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
       if (freshTo.data()!.isPublished === true) { alreadyPublished = true; return; }
 
+      // status 기준으로 카운트 (isPublished 기준 버그 우회)
       const quotaSnap = await tx.get(
-        db.collection("tos").where("businessId", "==", businessId).where("isPublished", "==", true).limit(limit + 1)
+        db.collection("tos").where("businessId", "==", businessId).where("status", "in", ["ACTIVE", "FULL"]).limit(limit + 1)
       );
       if (quotaSnap.size >= limit) {
         throw new HttpsError("resource-exhausted", `MAX_ACTIVE_TO_LIMIT:${limit}`);
@@ -7566,9 +7652,9 @@ export const callableExtendTOPosting = onCall(
         throw new HttpsError("failed-precondition", "이미 연장되었거나 상태가 변경되었습니다.");
       }
 
-      // 활성 TO 개수 재확인 (동시 연장 TOCTOU 차단)
+      // 활성 TO 개수 재확인 (동시 연장 TOCTOU 차단, status 기준으로 정확히 카운트)
       const quotaSnap = await tx.get(
-        db.collection("tos").where("businessId", "==", businessId).where("isPublished", "==", true).limit(limit + 1)
+        db.collection("tos").where("businessId", "==", businessId).where("status", "in", ["ACTIVE", "FULL"]).limit(limit + 1)
       );
       if (quotaSnap.size >= limit) {
         throw new HttpsError("resource-exhausted", `MAX_ACTIVE_TO_LIMIT:${limit}`);
@@ -9355,6 +9441,10 @@ export const onAttendanceWageStatusChanged = onDocumentWritten(
       const workDayDelta = wageConfirmedOn ? 1 : -1;
       const trustChange = wageConfirmedOn ? workCompletePoints : -workCompletePoints;
       const trustReason = wageConfirmedOn ? "work_complete" : "work_complete_canceled";
+      // 성능: attendance 문서에 이미 저장된 값 사용 — 추가 Firestore 읽기 없음
+      const workHours = Math.round((after.workHours as number | undefined) ?? 0);
+      const workType = ((after.workType as string | undefined) ?? '').trim();
+      const hoursDelta = wageConfirmedOn ? workHours : -workHours;
 
       await db.runTransaction(async (tx) => {
         // 멱등성 체크 — 이미 처리된 이벤트 스킵
@@ -9368,8 +9458,16 @@ export const onAttendanceWageStatusChanged = onDocumentWritten(
         const currentScore = (userSnap.data()?.trustScore ?? 50) as number;
         const newScore = Math.min(maxScore, Math.max(0, currentScore + trustChange));
 
+        // workTypeStats: 업무 유형별 완료 횟수 누적 (동적 맵 필드)
+        const workTypeUpdate: Record<string, admin.firestore.FieldValue> = {};
+        if (workType) {
+          workTypeUpdate[`workTypeStats.${workType}`] = admin.firestore.FieldValue.increment(workDayDelta);
+        }
+
         tx.update(userRef, {
           totalWorkDays: admin.firestore.FieldValue.increment(workDayDelta),
+          totalWorkHours: admin.firestore.FieldValue.increment(hoursDelta),
+          ...workTypeUpdate,
           trustScore: newScore,
         });
 
