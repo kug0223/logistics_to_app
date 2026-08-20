@@ -347,6 +347,7 @@ extension ApplicationFirestore on FirestoreService {
         if (workEndDate != null) 'workEndDateMs': workEndDate.millisecondsSinceEpoch,
         if (workDays != null) 'workDays': workDays,
         if (desiredStartDate != null) 'desiredStartDateMs': desiredStartDate.millisecondsSinceEpoch,
+        'idCardConsentGiven': true, // [ID-CONSENT] 지원자가 지원 확인 다이얼로그에서 동의
       });
       final data = result.data;
       final isReactivation = data['isReactivation'] as bool? ?? false;
@@ -456,6 +457,7 @@ extension ApplicationFirestore on FirestoreService {
       final updates = <String, dynamic>{'status': status};
       if (status == AppStatus.canceled) {
         updates['canceledAt'] = FieldValue.serverTimestamp();
+        updates['cancelReason'] = 'ADMIN_CANCELED'; // [GAP-02] 관리자 취소 root 감사 trail (USER 경로는 cancelApplication에서 'USER_CANCELED' 별도 기록)
         // canceledBy는 rules에서 admin 경로 직접 쓰기 차단 — statusHistory.by로 감사 로그 대체
         // statusHistory.at: Firestore 배열 요소 내부에서 serverTimestamp() 미지원
         // → 클라이언트 시계 사용이 불가피. 법적 근거는 루트 canceledAt(serverTimestamp)을 사용.

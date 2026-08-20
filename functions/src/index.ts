@@ -6729,14 +6729,35 @@ export const callableDeleteIdCard = onCall(
     const oldImagePath = userSnap.data()?.idCardImagePath as string | undefined;
     const oldImageUrl = userSnap.data()?.idCardImageUrl as string | undefined;
 
-    // 1. Firestore 먼저 업데이트 (실패 시 Storage 건드리지 않음 — 설계 원칙 준수)
+    // [GAP-01] 신분증 삭제 전 해당 USER의 active idCard grant 일괄 pre-fetch
+    // targetUserId == callerUid & status == 'approved' (auto_{appId} + personal grant 모두 포함)
+    // 타 USER grant / 타 사업장 grant는 targetUserId 스코프에 의해 오염 없음
+    const activeGrantsSnap = await db.collection("idCardAccessRequests")
+      .where("targetUserId", "==", callerUid)
+      .where("status", "==", "approved")
+      .get();
+
+    // 1. Firestore batch: 신분증 삭제 + active grant revoke 원자성 처리
     // [BUG-ID-01] idCardImagePath도 함께 삭제
-    await db.collection("users").doc(callerUid).update({
+    const idDeleteBatch = db.batch();
+    idDeleteBatch.update(db.collection("users").doc(callerUid), {
       idCardImageUrl: admin.firestore.FieldValue.delete(),
       idCardImagePath: admin.firestore.FieldValue.delete(),
       isIdVerified: false,
       idCardVerifiedAt: admin.firestore.FieldValue.delete(),
     });
+    const idDeleteNow = admin.firestore.FieldValue.serverTimestamp();
+    for (const grantDoc of activeGrantsSnap.docs) {
+      idDeleteBatch.update(grantDoc.ref, {
+        status: "revoked",
+        revokedAt: idDeleteNow,
+        revokeReason: "ID_CARD_DELETED",
+      });
+    }
+    await idDeleteBatch.commit();
+    if (activeGrantsSnap.docs.length > 0) {
+      console.info(`[callableDeleteIdCard] active grant ${activeGrantsSnap.docs.length}개 revoke (uid=${callerUid})`);
+    }
 
     // 2. Storage 삭제 best-effort (Firestore 성공 후)
     // [BUG-ID-01] idCardImagePath 우선 사용, 없으면 URL 파싱 폴백
@@ -6903,6 +6924,8 @@ export const callableUpdateBankAccount = onCall(
       bankbookImageUrl: admin.firestore.FieldValue.delete(), // 구 통장사본 연결 차단
       isBankbookVerified: false,
       bankbookVerifiedAt: admin.firestore.FieldValue.delete(),
+      bankReviewedAt: admin.firestore.FieldValue.delete(),   // [TD-03] 이전 계좌 검토 기록 stale 제거
+      bankReviewedBy: admin.firestore.FieldValue.delete(),   // [TD-03]
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
