@@ -27,6 +27,7 @@ import '../../../utils/payroll_excel_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../widgets/calendar/carrot_style_calendar.dart';
 import '../../../utils/payment_due_date_calculator.dart';
+import '../../../widgets/dialogs/styled_dialog.dart' show DialogFocusSafeArea;
 import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/common/gradient_scaffold.dart';
 import '../../../widgets/common/app_empty_state.dart';
@@ -257,10 +258,11 @@ class _PayrollPaymentDashboardScreenState
         final user = userMap[uid];
         if (user == null) continue;
         _userBankCache[uid] = {
-          'name':          user.name,
-          'bankName':      user.bankName      ?? '',
-          'accountNumber': user.accountNumber ?? '',
-          'accountHolder': user.accountHolder ?? user.name,
+          'name':                   user.name,
+          'bankName':               user.bankName      ?? '',
+          'accountNumber':          user.accountNumber ?? '',
+          'accountHolder':          user.accountHolder ?? user.name,
+          'bankVerificationStatus': user.bankVerificationStatus ?? '', // [PD-3]
         };
       }
     } catch (e) {
@@ -623,13 +625,16 @@ class _PayrollPaymentDashboardScreenState
       } else {
         final nameByUid = Map.fromEntries(
           _userBankCache.entries.map((e) => MapEntry(e.key, e.value['name'] ?? e.key)));
-        await _payService.markTransferredBatch(
+        final skipped = await _payService.markTransferredBatch(
           attendanceIds:     recs.map((r) => r.id).toList(),
           businessId:        recs.first.businessId,
           transferNote:      note,
           notificationInfos: buildTransferNotificationInfos(
             records: recs, workerNameByUid: nameByUid),
         );
+        if (skipped.isNotEmpty && mounted) {
+          ToastHelper.showWarning('${skipped.length}명은 계좌 정보 미확인으로 송금에서 제외되었습니다.');
+        }
       }
       if (mounted) {
         ToastHelper.showSuccess('${recs.length}건 송금 처리되었습니다');
@@ -670,13 +675,16 @@ class _PayrollPaymentDashboardScreenState
       final nameByUid = Map.fromEntries(
         _userBankCache.entries.map((e) => MapEntry(e.key, e.value['name'] ?? e.key)));
 
-      await _payService.markTransferredBatch(
+      final batchSkipped = await _payService.markTransferredBatch(
         attendanceIds:     _selectedIds.toList(),
         businessId:        selectedRecords.first.businessId,
         transferNote:      note,
         notificationInfos: buildTransferNotificationInfos(
           records: selectedRecords, workerNameByUid: nameByUid),
       );
+      if (batchSkipped.isNotEmpty && mounted) {
+        ToastHelper.showWarning('${batchSkipped.length}건은 계좌 정보 미확인으로 이체에서 제외되었습니다.');
+      }
       if (mounted) {
         ToastHelper.showSuccess('${_selectedIds.length}건 이체 완료 처리되었습니다');
         _load();
@@ -691,111 +699,14 @@ class _PayrollPaymentDashboardScreenState
   }
 
   Future<String?> _showTransferNoteDialog() async {
-    final ctrl = TextEditingController(text: _lastTransferNote);
-    final primaryColor = Theme.of(context).primaryColor;
+    // [FC-PAY-03 OWNERSHIP FIX] _TransferNoteDialog(StatefulWidget)이 ctrl을
+    // 직접 소유하고 State.dispose()에서 해제한다.
+    // addPostFrameCallback dispose 패턴 제거.
     final note = await showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Container(
-                padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [primaryColor, primaryColor.withValues(alpha: 0.85)],
-                    begin: Alignment.topLeft, end: Alignment.bottomRight,
-                  ),
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-                ),
-                child: Row(children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(Icons.edit_note_rounded, color: Colors.white, size: 20),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text('이체 메모',
-                          style: ResponsiveHelper.subtitleStyle(ctx)
-                              .copyWith(color: Colors.white, fontWeight: FontWeight.bold)),
-                      Text('선택 입력',
-                          style: ResponsiveHelper.tinyStyle(ctx,
-                              color: Colors.white.withValues(alpha: 0.75))),
-                    ]),
-                  ),
-                ]),
-              ),
-              Container(
-                color: AppColors.grey50,
-                padding: const EdgeInsets.all(20),
-                child: Column(children: [
-                  Container(
-                    decoration: BoxDecoration(
-                      color: AppColors.surface,
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.05),
-                          blurRadius: 6, offset: const Offset(0, 2))],
-                    ),
-                    child: TextField(
-                      controller: ctrl,
-                      autofocus: true,
-                      maxLines: 3,
-                      textInputAction: TextInputAction.done,
-                      onSubmitted: (v) { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(ctx, v.trim()); },
-                      style: ResponsiveHelper.bodyStyle(ctx),
-                      decoration: InputDecoration(
-                        hintText: _lastTransferNote.isNotEmpty
-                            ? '이전: $_lastTransferNote'
-                            : '이체 번호, 참고사항 등 자유롭게 입력',
-                        hintStyle: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey400),
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.all(14),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(ctx, ctrl.text.trim()); },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: primaryColor,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
-                      child: Text('확인',
-                          style: ResponsiveHelper.bodyStyle(ctx)
-                              .copyWith(color: Colors.white, fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx, ''),
-                    child: Text('건너뛰기',
-                        style: ResponsiveHelper.smallStyle(ctx, color: AppColors.grey400)),
-                  ),
-                ]),
-              ),
-            ],
-          ),
-        ),
-      ),
+      builder: (ctx) => _TransferNoteDialog(initialNote: _lastTransferNote),
     );
-    WidgetsBinding.instance.addPostFrameCallback((_) => ctrl.dispose());
     final result = (note == null || note.isEmpty) ? null : note;
     if (result != null) _lastTransferNote = result;
     return result;
@@ -932,26 +843,17 @@ class _PayrollPaymentDashboardScreenState
 
   Future<void> _rejectSettlement(InterimSettlementRequestModel req) async {
     if (_isTransferring) return;
-    final ctrl = TextEditingController();
+    // [FC-PAY-01 OWNERSHIP FIX] _RejectReasonDialog(StatefulWidget)이 ctrl을
+    // 직접 소유하고 State.dispose()에서 해제한다.
+    // addPostFrameCallback dispose 패턴 제거.
     // [BUG-4] _isTransferring은 서비스 호출 직전에 설정 — dialog 표시 중 다른 버튼 비활성화 방지
     try {
       final reason = await showDialog<String>(
         context: context,
         barrierDismissible: false,
-        builder: (ctx) => AlertDialog(
-          title: const Text('중간정산 거절'),
-          content: TextField(
-            controller: ctrl,
-            decoration: const InputDecoration(hintText: '거절 사유를 입력하세요'),
-            autofocus: true,
-          ),
-          actions: [
-            TextButton(onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(ctx); }, child: const Text('취소')),
-            TextButton(
-              onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(ctx, ctrl.text.trim()); },
-              child: const Text('거절'),
-            ),
-          ],
+        builder: (ctx) => const _RejectReasonDialog(
+          title: '중간정산 거절',
+          hintText: '거절 사유를 입력하세요',
         ),
       );
       if (reason == null || reason.isEmpty || !mounted) return;
@@ -962,7 +864,6 @@ class _PayrollPaymentDashboardScreenState
     } catch (e) {
       if (mounted) ToastHelper.showError('처리에 실패했습니다\n$e');
     } finally {
-      WidgetsBinding.instance.addPostFrameCallback((_) => ctrl.dispose());
       if (mounted) setState(() => _isTransferring = false);
     }
   }
@@ -993,26 +894,17 @@ class _PayrollPaymentDashboardScreenState
 
   Future<void> _rejectChangeRequest(PaymentChangeRequestModel req) async {
     if (_isTransferring) return;
-    final ctrl = TextEditingController();
+    // [FC-PAY-02 OWNERSHIP FIX] _RejectReasonDialog(StatefulWidget)이 ctrl을
+    // 직접 소유하고 State.dispose()에서 해제한다.
+    // addPostFrameCallback dispose 패턴 제거.
     setState(() => _isTransferring = true);
     try {
       final reason = await showDialog<String>(
         context: context,
         barrierDismissible: false,
-        builder: (ctx) => AlertDialog(
-          title: const Text('지급방식 변경 거절'),
-          content: TextField(
-            controller: ctrl,
-            decoration: const InputDecoration(hintText: '거절 사유'),
-            autofocus: true,
-          ),
-          actions: [
-            TextButton(onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(ctx); }, child: const Text('취소')),
-            TextButton(
-              onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(ctx, ctrl.text.trim()); },
-              child: const Text('거절'),
-            ),
-          ],
+        builder: (ctx) => const _RejectReasonDialog(
+          title: '지급방식 변경 거절',
+          hintText: '거절 사유',
         ),
       );
       if (reason == null || reason.isEmpty || !mounted) return;
@@ -1022,7 +914,6 @@ class _PayrollPaymentDashboardScreenState
     } catch (e) {
       if (mounted) ToastHelper.showError('처리에 실패했습니다\n$e');
     } finally {
-      WidgetsBinding.instance.addPostFrameCallback((_) => ctrl.dispose());
       if (mounted) setState(() => _isTransferring = false);
     }
   }
@@ -1323,20 +1214,21 @@ class _PayrollPaymentDashboardScreenState
 
                     final workerName = bank?['name'] ?? uid;
                     return RepaintBoundary(child: _WorkerPayCard(
-                      workerName:    workerName,
-                      bankInfo:      bankStr,
-                      businessName:  recs.first.businessName,
-                      netAmount:     net,
-                      recordCount:   recs.length,
-                      isTransferred: false,
-                      isPending:     true,
-                      isBatchMode:   _batchMode,
-                      isSelected:    allSel,
-                      isOverdue:     isOver,
-                      isDueToday:    isToday2,
-                      dueDate:       dueDate,
-                      scheduleLabel: schLabel,
-                      daysUntilDue:  daysUntil,
+                      workerName:               workerName,
+                      bankInfo:                 bankStr,
+                      businessName:             recs.first.businessName,
+                      netAmount:                net,
+                      recordCount:              recs.length,
+                      isTransferred:            false,
+                      isPending:                true,
+                      isBatchMode:              _batchMode,
+                      isSelected:               allSel,
+                      isOverdue:                isOver,
+                      isDueToday:               isToday2,
+                      dueDate:                  dueDate,
+                      scheduleLabel:            schLabel,
+                      daysUntilDue:             daysUntil,
+                      bankVerificationStatus:   bank?['bankVerificationStatus'], // [PD-3]
                       onCardTap: !_batchMode ? () async {
                         final up = Provider.of<UserProvider>(context, listen: false);
                         final canCancel = up.isBusinessAdmin ||
@@ -1769,6 +1661,8 @@ class _WorkerPayCard extends StatelessWidget {
   final DateTime? dueDate;
   final String? scheduleLabel;
   final int? daysUntilDue;
+  /// [PD-3] 계좌 검증 상태 — null이면 표시 안 함 (이체완료 카드 등)
+  final String? bankVerificationStatus;
   final VoidCallback? onSelect;
   final VoidCallback? onMarkTransferred;
   final VoidCallback? onCardTap;
@@ -1789,6 +1683,7 @@ class _WorkerPayCard extends StatelessWidget {
     this.dueDate,
     this.scheduleLabel,
     this.daysUntilDue,
+    this.bankVerificationStatus,
     this.onSelect,
     this.onMarkTransferred,
     this.onCardTap,
@@ -1905,7 +1800,7 @@ class _WorkerPayCard extends StatelessWidget {
                                             color: AppColors.grey400)),
                                   ),
                               ]),
-                              // 2행: 사업장 · 계좌 + 건수
+                              // 2행: 사업장 · 계좌 + [계좌상태칩] + 건수
                               const SizedBox(height: 3),
                               Row(children: [
                                 Expanded(child: () { // L3: 동일 리스트 2회 생성 방지
@@ -1922,6 +1817,12 @@ class _WorkerPayCard extends StatelessWidget {
                                       overflow: TextOverflow.ellipsis,
                                     );
                                   }()),
+                                // [PD-3] 계좌 검증 상태 배지 — verified는 표시 생략
+                                if (!isTransferred && bankVerificationStatus != null &&
+                                    bankVerificationStatus! != 'verified') ...[
+                                  const SizedBox(width: 4),
+                                  _BankStatusChip(status: bankVerificationStatus!),
+                                ],
                                 Text('$recordCount건',
                                     style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
                               ]),
@@ -2378,6 +2279,36 @@ class _DueDateChip extends StatelessWidget {
               overflow: TextOverflow.ellipsis),
         ),
       ]),
+    );
+  }
+}
+
+// ─── 계좌 검증 상태 배지 [PD-3] ──────────────────────────────────────
+class _BankStatusChip extends StatelessWidget {
+  final String status;
+  const _BankStatusChip({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color, bg) = switch (status) {
+      'pending'  => ('검토 중',      AppColors.warning,  AppColors.warningBg),
+      'rejected' => ('재확인 필요',  AppColors.error,    AppColors.errorBg),
+      _          => ('미등록',       AppColors.grey400,  AppColors.grey100),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Text(
+        label,
+        style: ResponsiveHelper.tinyStyle(
+          context,
+          color: color,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
     );
   }
 }
@@ -3001,6 +2932,219 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
           ),
         ),
       ]),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FC-PAY-01/02 — 거절 사유 입력 다이얼로그
+// AlertDialog + TextEditingController 소유권: State가 직접 소유·해제
+// ══════════════════════════════════════════════════════════════════════════════
+class _RejectReasonDialog extends StatefulWidget {
+  final String title;
+  final String hintText;
+  const _RejectReasonDialog({
+    required this.title,
+    this.hintText = '거절 사유를 입력하세요',
+  });
+
+  @override
+  State<_RejectReasonDialog> createState() => _RejectReasonDialogState();
+}
+
+class _RejectReasonDialogState extends State<_RejectReasonDialog> {
+  final _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: TextField(
+        controller: _ctrl,
+        decoration: InputDecoration(hintText: widget.hintText),
+        autofocus: true,
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            FocusManager.instance.primaryFocus?.unfocus();
+            Navigator.pop(context);
+          },
+          child: const Text('취소'),
+        ),
+        TextButton(
+          onPressed: () {
+            FocusManager.instance.primaryFocus?.unfocus();
+            Navigator.pop(context, _ctrl.text.trim());
+          },
+          child: const Text('거절'),
+        ),
+      ],
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FC-PAY-03 — 이체 메모 입력 다이얼로그
+// DialogFocusSafeArea + TextEditingController 소유권: State가 직접 소유·해제
+// ══════════════════════════════════════════════════════════════════════════════
+class _TransferNoteDialog extends StatefulWidget {
+  final String initialNote;
+  const _TransferNoteDialog({this.initialNote = ''});
+
+  @override
+  State<_TransferNoteDialog> createState() => _TransferNoteDialogState();
+}
+
+class _TransferNoteDialogState extends State<_TransferNoteDialog> {
+  late final TextEditingController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: widget.initialNote);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final primaryColor = Theme.of(context).primaryColor;
+    return DialogFocusSafeArea(
+      child: Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 그라디언트 헤더
+              Container(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [primaryColor, primaryColor.withValues(alpha: 0.85)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius:
+                      const BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                child: Row(children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.edit_note_rounded,
+                        color: Colors.white, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('이체 메모',
+                            style: ResponsiveHelper.subtitleStyle(context)
+                                .copyWith(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold)),
+                        Text('선택 입력',
+                            style: ResponsiveHelper.tinyStyle(context,
+                                color: Colors.white.withValues(alpha: 0.75))),
+                      ],
+                    ),
+                  ),
+                ]),
+              ),
+              // 바디
+              Container(
+                color: AppColors.grey50,
+                padding: const EdgeInsets.all(20),
+                child: Column(children: [
+                  Container(
+                    decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.05),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2),
+                        )
+                      ],
+                    ),
+                    child: TextField(
+                      controller: _ctrl,
+                      autofocus: true,
+                      maxLines: 3,
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (v) {
+                        FocusManager.instance.primaryFocus?.unfocus();
+                        Navigator.pop(context, v.trim());
+                      },
+                      style: ResponsiveHelper.bodyStyle(context),
+                      decoration: InputDecoration(
+                        hintText: widget.initialNote.isNotEmpty
+                            ? '이전: ${widget.initialNote}'
+                            : '이체 번호, 참고사항 등 자유롭게 입력',
+                        hintStyle: ResponsiveHelper.smallStyle(context,
+                            color: AppColors.grey400),
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.all(14),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        FocusManager.instance.primaryFocus?.unfocus();
+                        Navigator.pop(context, _ctrl.text.trim());
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: primaryColor,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: Text('확인',
+                          style: ResponsiveHelper.bodyStyle(context).copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: () {
+                      FocusManager.instance.primaryFocus?.unfocus();
+                      Navigator.pop(context, '');
+                    },
+                    child: Text('건너뛰기',
+                        style: ResponsiveHelper.smallStyle(context,
+                            color: AppColors.grey400)),
+                  ),
+                ]),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

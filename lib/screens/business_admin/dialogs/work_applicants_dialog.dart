@@ -1347,14 +1347,14 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                         runSpacing: ResponsiveHelper.spacing(context, 3),
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          if (user?.phone != null && (user?.phone ?? '').isNotEmpty)
+                          if (user?.effectivePhone != null && (user?.effectivePhone ?? '').isNotEmpty)
                             Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Icon(Icons.phone, size: ResponsiveHelper.iconSize(context, 11), color: AppColors.grey400),
                                 SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                                 Text(
-                                  FormatHelper.formatPhone(user?.phone ?? ''),
+                                  FormatHelper.formatPhone(user?.effectivePhone ?? ''),
                                   style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
                                 ),
                               ],
@@ -1501,8 +1501,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                         ),
                       ],
 
-                      // 대기 중 액션 버튼 (파트변경 / 거절 / 승인) — 마감/인원충족 TO에서는 숨김
-                      if (isPending && !_isBatchMode && !widget.toItem.to.isClosed) ...[
+                      // 대기 중 액션 버튼 (파트변경 / 거절 / 승인) — 마감/인원충족 TO, 권한 없음 시 숨김
+                      if (isPending && !_isBatchMode && !widget.toItem.to.isClosed &&
+                          context.read<UserProvider>().can((p) => p.canManageTo)) ...[
                         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.end,
@@ -2014,6 +2015,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   /// 개별 승인
   Future<void> _approveApplication(Map<String, dynamic> item) async {
     if (_isProcessing) return;
+    // [HIGH-02] 지원서 승인은 canManageTo 권한 필요
+    if (!context.read<UserProvider>().can((p) => p.canManageTo)) {
+      ToastHelper.showWarning('지원서 처리 권한이 없습니다.');
+      return;
+    }
     final app = item['application'] as ApplicationModel;
     final user = item['user'] as UserModel?;
     final userProvider = context.read<UserProvider>();
@@ -2074,6 +2080,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   /// 개별 거절
   Future<void> _rejectApplication(Map<String, dynamic> item) async {
     if (_isProcessing) return;
+    // [HIGH-02] 지원서 거절은 canManageTo 권한 필요
+    if (!context.read<UserProvider>().can((p) => p.canManageTo)) {
+      ToastHelper.showWarning('지원서 처리 권한이 없습니다.');
+      return;
+    }
     final app = item['application'] as ApplicationModel;
     final user = item['user'] as UserModel?;
     final userProvider = context.read<UserProvider>();
@@ -2118,6 +2129,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   /// 확정취소 (단기)
   Future<void> _cancelConfirmation(Map<String, dynamic> item) async {
     if (_isProcessing) return;
+    // [HIGH-02] 확정 취소는 canManageTo 권한 필요
+    if (!context.read<UserProvider>().can((p) => p.canManageTo)) {
+      ToastHelper.showWarning('확정 취소 권한이 없습니다.');
+      return;
+    }
     setState(() => _isProcessing = true);  // 사유 선택 다이얼로그 중 재진입 방지
     final app = item['application'] as ApplicationModel;
     final user = item['user'] as UserModel?;
@@ -2341,6 +2357,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   /// 일괄 승인 (계약서 생성 + 인감 날인 + 근무자 발송)
   Future<void> _batchApprove() async {
     if (_selectedIds.isEmpty || _isProcessing) return;
+    // [HIGH-02] 일괄 승인은 canManageTo 권한 필요
+    if (!context.read<UserProvider>().can((p) => p.canManageTo)) {
+      ToastHelper.showWarning('지원서 처리 권한이 없습니다.');
+      return;
+    }
 
     // 인원 체크 (일괄 승인은 단일 업무 모드에서만 실행됨)
     if (widget.work != null) {
@@ -2964,6 +2985,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   /// 일괄 거절
   Future<void> _batchReject() async {
     if (_selectedIds.isEmpty || _isProcessing) return;
+    // [HIGH-02] 일괄 거절은 canManageTo 권한 필요
+    if (!context.read<UserProvider>().can((p) => p.canManageTo)) {
+      ToastHelper.showWarning('지원서 처리 권한이 없습니다.');
+      return;
+    }
     setState(() => _isProcessing = true);
 
     final userProvider = context.read<UserProvider>();

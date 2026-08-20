@@ -4723,8 +4723,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   // 마감 취소는 선택된 wageConfirmed 근무자 대상으로 관리자가 수동 선택 후 실행하므로
   // 한 번에 수백 명을 선택하는 경우는 현실적으로 없다.
   Future<void> _batchCancelFinal() async {
-    // PERM-02: 마감취소 권한 확인
-    if (!context.read<UserProvider>().can((p) => p.canManageWorkers)) {
+    // PERM-02: 마감취소 권한 확인 — 급여 관련이므로 canManageWage
+    if (!context.read<UserProvider>().can((p) => p.canManageWage)) {
       ToastHelper.showWarning('마감취소 권한이 없습니다.');
       return;
     }

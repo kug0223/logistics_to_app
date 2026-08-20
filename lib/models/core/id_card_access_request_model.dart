@@ -16,6 +16,7 @@ enum IdCardAccessStatus {
   approved,  // 승인됨
   rejected,  // 거절됨
   expired,   // 만료됨
+  revoked,   // 폐기됨 (확정 취소 / TO 삭제 / Slot 삭제 시 자동 폐기)
 }
 
 /// 신분증 열람 요청 모델
@@ -169,6 +170,8 @@ class IdCardAccessRequestModel {
         return '거절됨';
       case IdCardAccessStatus.expired:
         return '만료됨';
+      case IdCardAccessStatus.revoked:
+        return '열람 권한 폐기됨';
     }
   }
 
@@ -215,6 +218,8 @@ class IdCardAccessRequestModel {
       case 'approved': return IdCardAccessStatus.approved;
       case 'rejected': return IdCardAccessStatus.rejected;
       case 'expired': return IdCardAccessStatus.expired;
+      case 'revoked': return IdCardAccessStatus.revoked;
+      // 알 수 없는 상태는 rejected로 fallback — pending 오표시 방지
       default: return IdCardAccessStatus.pending;
     }
   }
@@ -225,6 +230,7 @@ class IdCardAccessRequestModel {
       case IdCardAccessStatus.approved: return 'approved';
       case IdCardAccessStatus.rejected: return 'rejected';
       case IdCardAccessStatus.expired: return 'expired';
+      case IdCardAccessStatus.revoked: return 'revoked';
     }
   }
 }

@@ -1203,12 +1203,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               runSpacing: 3,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                if (user?.phone != null && user!.phone!.isNotEmpty)
+                if (user?.effectivePhone != null && user!.effectivePhone!.isNotEmpty)
                   Row(mainAxisSize: MainAxisSize.min, children: [
                     Icon(Icons.phone_outlined,
                         size: 10, color: AppColors.grey400),
                     const SizedBox(width: 2),
-                    Text(user.phone!,
+                    Text(FormatHelper.formatPhone(user.effectivePhone!),
                         style: ResponsiveHelper.tinyStyle(context,
                             color: AppColors.grey600)),
                   ]),

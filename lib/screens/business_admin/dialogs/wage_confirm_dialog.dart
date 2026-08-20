@@ -507,6 +507,20 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     );
     if (confirmed != true || !mounted) return;
 
+    // [WageConfirm] 계좌 미인증 근무자 경고 — 비차단, 이체 전 확인 권장
+    final unverifiedCount = _pendingWorkers
+        .where((app) => _pendingSelectedIds.contains(app.id))
+        .where((app) {
+          final user = widget.userMap[app.uid];
+          return user != null && user.bankVerificationStatus != 'verified';
+        })
+        .length;
+    if (unverifiedCount > 0 && mounted) {
+      ToastHelper.showWarning(
+        '계좌 미인증 근무자 $unverifiedCount명이 포함됩니다. 이체 전 계좌 확인을 권장합니다.',
+      );
+    }
+
     final adminUid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
 
     // ── 8일 소급 사전 체크 (병렬) ──────────────────────────────

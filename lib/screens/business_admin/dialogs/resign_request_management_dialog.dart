@@ -53,7 +53,7 @@ class _ResignRequestManagementDialogState
       return _ResignRequestWithUser(
         application: app,
         userName: user?.name ?? '이름 없음',
-        userPhone: user?.phone ?? '전화번호 없음',
+        userPhone: user?.effectivePhone ?? '전화번호 없음',
       );
     }).toList();
 

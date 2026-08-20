@@ -518,16 +518,16 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                 Icon(Icons.phone, size: ResponsiveHelper.iconSize(context, 16), color: Colors.white),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 Text(
-                  widget.user.phone ?? '-',
+                  widget.user.effectivePhone ?? '-',
                   style: ResponsiveHelper.bodyStyle(context, color: Colors.white),
                 ),
-                if (widget.user.phone != null && widget.user.phone!.isNotEmpty) ...[
+                if (widget.user.effectivePhone != null && widget.user.effectivePhone!.isNotEmpty) ...[
                   SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                   Material(
                     color: Colors.white.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(20),
                     child: InkWell(
-                      onTap: () => _makePhoneCall(widget.user.phone),
+                      onTap: () => _makePhoneCall(widget.user.effectivePhone),
                       borderRadius: BorderRadius.circular(20),
                       child: Padding(
                         padding: EdgeInsets.symmetric(
@@ -575,26 +575,21 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   }
 
   // H-8: 주민번호 복사 시 감사 로그 기록 (개인정보보호법 접근 기록)
+  // [GAP-ID-02] 클라이언트 Firestore 직접 write → CF 서버 사이드 기록으로 전환.
+  //   악의적 관리자가 로그를 생략하거나 위변조하는 경로 제거.
+  //   주민번호 원문은 CF에서도 기록하지 않음 (WHO/WHOSE/WHERE/WHEN만).
   // [SEC-LOG-COPY] 로그 실패 시 false 반환 → 호출자가 복사 차단
   Future<bool> _logResidentNumberCopy() async {
     try {
-      final viewerId = context.read<UserProvider>().currentUser?.uid;
-      if (viewerId == null) return false;
-      // [SEC-84] bizId 폴백: widget 파라미터가 모두 null일 경우 UserProvider에서 보완
-      //   isAdminOf('')==false → 로그 미기록 silently fail 방지
       final userProv = context.read<UserProvider>();
       final managedIds = userProv.currentUser?.managedBusinessIds;
       final bizId = widget.businessId ??
           widget.toItem?.to.businessId ??
           userProv.effectiveBusinessId ??
           (managedIds != null && managedIds.isNotEmpty ? managedIds.first : '');
-      await FirebaseFirestore.instance.collection('id_card_copy_logs').add({
-        'viewerId': viewerId,
-        'targetUserId': widget.user.uid,
-        'businessId': bizId,
-        'createdAt': FieldValue.serverTimestamp(),
-        'action': 'resident_number_copy',
-      });
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableLogResidentNumberCopy')
+          .call({'targetUserId': widget.user.uid, 'businessId': bizId});
       return true;
     } catch (e) {
       debugPrint('⚠️ [H-8] 주민번호 복사 감사 로그 기록 실패: $e');
@@ -985,8 +980,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     );
   }
 
-  /// 급여 정보 (확정자만)
+  /// 급여 정보 (확정자 + canManageWage 권한자만)
   Widget _buildPaymentInfo(BuildContext context) {
+    // [SEC-01] 계좌 정보는 급여 담당 권한자만 열람 가능
+    if (!context.read<UserProvider>().can((p) => p.canManageWage)) {
+      return const SizedBox.shrink();
+    }
     return _buildSection(
       context,
       title: '급여 정보',
@@ -1245,7 +1244,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                           context,
                           imageUrl: _idCardSignedUrl,
                           title: '신분증',
-                          cacheKey: 'id_card_${widget.user.uid}',
+                          // [BUG-ID-01] cacheKey 제거 + noCache:true — disk cache 없이 memory-only
+                          noCache: true,
                         ),
                         child: Stack(
                           children: [
@@ -1258,14 +1258,19 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                               ),
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
-                                child: CachedNetworkImage(
-                                  imageUrl: _idCardSignedUrl!,
-                                  // Signed URL은 호출마다 달라지므로 UID 기반 cacheKey로 이미지 캐시 재사용
-                                  cacheKey: 'id_card_${widget.user.uid}',
-                                  memCacheWidth: (MediaQuery.sizeOf(context).width * MediaQuery.devicePixelRatioOf(context)).round(),
+                                // [BUG-ID-01] CachedNetworkImage → Image.network
+                                //   신분증은 persistent disk cache 금지 — memory-only 렌더링.
+                                //   CachedNetworkImage(cacheKey: 'id_card_uid')는 Signed URL
+                                //   만료 후에도 disk에 이미지가 잔류하는 보안 위험이 있음.
+                                child: Image.network(
+                                  _idCardSignedUrl!,
+                                  cacheWidth: (MediaQuery.sizeOf(context).width * MediaQuery.devicePixelRatioOf(context)).round(),
                                   fit: BoxFit.contain,
-                                  placeholder: (context, url) => const LoadingWidget(),
-                                  errorWidget: (context, url, error) => Center(
+                                  loadingBuilder: (context, child, progress) {
+                                    if (progress == null) return child;
+                                    return const LoadingWidget();
+                                  },
+                                  errorBuilder: (context, error, stackTrace) => Center(
                                     child: Column(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
@@ -2010,6 +2015,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   Future<void> _showIdCardAccessRequestDialog() async {
     if (_isLoading) return;
     final userProvider = context.read<UserProvider>();
+    // [SEC-01] 신분증 요청은 급여 담당 권한자만 가능
+    if (!userProvider.can((p) => p.canManageWage)) {
+      ToastHelper.showWarning('신분증 열람 요청 권한이 없습니다.');
+      return;
+    }
     final currentUser = userProvider.currentUser;
     if (currentUser == null) {
       ToastHelper.showError('로그인이 필요합니다');

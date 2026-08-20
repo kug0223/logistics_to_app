@@ -66,7 +66,7 @@ class _ScheduleRequestManagementDialogState
       return _RequestWithUser(
         request: request,
         userName: user?.name ?? '이름 없음',
-        userPhone: user?.phone ?? '전화번호 없음',
+        userPhone: user?.effectivePhone ?? '전화번호 없음',
       );
     }).toList();
 
@@ -683,57 +683,20 @@ class _ScheduleRequestManagementDialogState
   /// 거절 처리
   // LoadingButton이 onPressed Future를 await해 _internalLoading=true 유지 — 이중 탭 자동 방지됨
   Future<void> _handleReject(_RequestWithUser item) async {
-    final reasonController = TextEditingController();
-
-    final confirmed = await showDialog<bool>(
+    // [FC-SCH-01 OWNERSHIP FIX] _RejectScheduleDialog(StatefulWidget)이 ctrl을
+    // 직접 소유하고 State.dispose()에서 해제한다.
+    // addPostFrameCallback dispose 패턴 제거.
+    final result = await showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => StyledDialog(
-        title: '요청 거절',
-        icon: Icons.cancel_outlined,
-        headerColor: AppColors.error,
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${item.userName}님의 ${item.request.requestTypeLabel}을 거절하시겠습니까?',
-              style: ResponsiveHelper.bodyStyle(context),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            Text(
-              '거절 사유',
-              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            TextField(
-              controller: reasonController,
-              decoration: const InputDecoration(
-                hintText: '거절 사유를 입력하세요',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 3,
-            ),
-          ],
-        ),
-        actions: [
-          StyledDialogButton.cancel(
-            onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(context, false); },
-          ),
-          StyledDialogButton.danger(
-            text: '거절',
-            onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(context, true); },
-          ),
-        ],
+      builder: (ctx) => _RejectScheduleDialog(
+        workerName: item.userName,
+        requestTypeLabel: item.request.requestTypeLabel,
       ),
     );
-
-    final rejectReason = reasonController.text.trim().isEmpty ? null : reasonController.text.trim();
-    WidgetsBinding.instance.addPostFrameCallback((_) => reasonController.dispose());
-    if (confirmed != true) return;
+    if (result == null) return; // null = 취소
     if (!mounted) return;
+    final rejectReason = result.isEmpty ? null : result;
 
     try {
       final uid = context.read<UserProvider>().currentUser?.uid;
@@ -761,6 +724,81 @@ class _ScheduleRequestManagementDialogState
         ToastHelper.showError('거절 처리 중 오류가 발생했습니다');
       }
     }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FC-SCH-01 — 일정 변경 요청 거절 다이얼로그
+// StyledDialog(DFSA 활성) + TextEditingController 소유권: State가 직접 소유·해제
+// ══════════════════════════════════════════════════════════════════════════════
+class _RejectScheduleDialog extends StatefulWidget {
+  final String workerName;
+  final String requestTypeLabel;
+  const _RejectScheduleDialog({
+    required this.workerName,
+    required this.requestTypeLabel,
+  });
+
+  @override
+  State<_RejectScheduleDialog> createState() => _RejectScheduleDialogState();
+}
+
+class _RejectScheduleDialogState extends State<_RejectScheduleDialog> {
+  final _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StyledDialog(
+      title: '요청 거절',
+      icon: Icons.cancel_outlined,
+      headerColor: AppColors.error,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${widget.workerName}님의 ${widget.requestTypeLabel}을 거절하시겠습니까?',
+            style: ResponsiveHelper.bodyStyle(context),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          Text(
+            '거절 사유',
+            style: ResponsiveHelper.bodyStyle(context)
+                .copyWith(fontWeight: FontWeight.bold),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          TextField(
+            controller: _ctrl,
+            decoration: const InputDecoration(
+              hintText: '거절 사유를 입력하세요',
+              border: OutlineInputBorder(),
+            ),
+            maxLines: 3,
+          ),
+        ],
+      ),
+      actions: [
+        StyledDialogButton.cancel(
+          onPressed: () {
+            FocusManager.instance.primaryFocus?.unfocus();
+            Navigator.pop(context); // null = 취소
+          },
+        ),
+        StyledDialogButton.danger(
+          text: '거절',
+          onPressed: () {
+            FocusManager.instance.primaryFocus?.unfocus();
+            Navigator.pop(context, _ctrl.text.trim()); // String = 확인
+          },
+        ),
+      ],
+    );
   }
 }
 

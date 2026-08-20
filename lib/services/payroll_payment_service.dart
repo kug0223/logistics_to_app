@@ -109,7 +109,8 @@ class PayrollPaymentService {
   /// 일괄 이체 완료 처리 — callableMarkTransferredBatch(최대 200건/청크) 위임
   // 재시도 시: 이미 transferred된 건은 CF에서 멱등 처리(processed++ 후 skip)
   // 알림은 첫 번째 청크에만 포함 (알림은 attendanceIds 순서와 무관)
-  Future<void> markTransferredBatch({
+  /// [반환값] CF가 계좌 정보 미확인으로 건너뛴 attendanceId 목록 (비어 있으면 전원 이체 완료)
+  Future<List<String>> markTransferredBatch({
     required List<String> attendanceIds,
     required String businessId,
     String? transferNote,
@@ -130,6 +131,7 @@ class PayrollPaymentService {
 
     bool notificationsSent = false;
     final List<String> chunkErrors = [];
+    final List<String> allSkipped = [];   // 계좌 미확인으로 건너뛴 attendanceId
     for (int i = 0; i < attendanceIds.length; i += 200) {
       final chunk = attendanceIds.skip(i).take(200).toList();
       // [FIX] 알림 포함 여부를 await 이전에 결정·잠금:
@@ -138,7 +140,7 @@ class PayrollPaymentService {
       // [BUG-FIX] null 체크만으로는 빈 배열([])도 통과 → 0건 알림 발송 버그
       final bool sendNotifs = !notificationsSent && (allNotifications?.isNotEmpty ?? false);
       try {
-        await _cf.httpsCallable('callableMarkTransferredBatch').call({
+        final result = await _cf.httpsCallable('callableMarkTransferredBatch').call({
           'businessId': businessId,
           'attendanceIds': chunk,
           if (transferNote != null && transferNote.isNotEmpty) 'transferNote': transferNote,
@@ -147,6 +149,10 @@ class PayrollPaymentService {
         // [BUG-FIX] notificationsSent = true를 await 성공 후로 이동
         // await 이전에 설정하면 첫 청크 실패 시 이후 청크에서 알림을 전혀 발송하지 않음
         if (sendNotifs) notificationsSent = true;
+        // CF 응답에서 계좌 미확인 skip 목록 수집
+        final data = result.data as Map<dynamic, dynamic>? ?? {};
+        final skipped = (data['skipped'] as List?)?.cast<String>() ?? [];
+        allSkipped.addAll(skipped);
       } catch (e) {
         final msg = e is FirebaseFunctionsException
             ? (e.message ?? e.code)
@@ -158,6 +164,7 @@ class PayrollPaymentService {
     if (chunkErrors.isNotEmpty) {
       throw Exception('이체 일괄처리 실패 (${chunkErrors.length}개 청크):\n${chunkErrors.join('\n')}');
     }
+    return allSkipped;
   }
 
   /// 이체 취소 — transferred → confirmed (CF callableCancelTransfer 경유)

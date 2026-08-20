@@ -626,7 +626,7 @@ class AdminStatsService {
           map[e.key] = UserInfo(
             name: e.value.name.isNotEmpty ? e.value.name : '알 수 없음',
             gender: e.value.gender,
-            phone: e.value.phone,
+            phone: e.value.effectivePhone,
           );
         }
       } catch (e) {
