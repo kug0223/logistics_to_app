@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import '../../utils/encryption_helper.dart';
 import '../../utils/trust_score_helper.dart';
+import 'user_region.dart';
 
 // 사용자 권한 enum
 enum UserRole {
@@ -40,16 +41,31 @@ class UserModel {
   final String? rejectionReason;
 
   // ── 신분증 정보 ──
-  final String? idCardImageUrl;         // 신분증 앞면 이미지 URL
+  final String? idCardImageUrl;         // 신분증 앞면 이미지 URL (legacy — 신규 flow는 idCardImagePath 사용)
+  final String? idCardImagePath;        // [BUG-ID-01] authoritative Storage path (신규 flow)
   final DateTime? idCardVerifiedAt;     // 신분증 인증 시각
   final bool isIdVerified;              // 신분증 인증 여부
   
+  // ── 전화번호 시스템 ──
+  /// PASS 인증 시 통신사에서 확인된 전화번호 (= 기존 phone 역할 승계)
+  final String? authPhone;
+  /// 'identity_verified' (PASS 본인인증) | 'otp_verified' (OTP만)
+  final String? phoneVerificationLevel;
+  /// 연락처 전화번호 — OTP 인증 후 callableVerifyAndUpdatePhone CF로만 갱신
+  final String? contactPhone;
+
   // ── 급여 통장 정보 ──
   final String? bankName;               // 은행명
   final String? accountNumber;          // 계좌번호 (암호화 저장)
   final String? accountHolder;          // 예금주
   final String? bankbookImageUrl;
-  
+  final bool isBankbookVerified;       // 통장사본 검증 여부 (CF Admin SDK로만 설정) — legacy, bankVerificationStatus로 대체 예정
+  final DateTime? bankbookVerifiedAt;  // 통장사본 검증 시각 — legacy
+  /// 계좌 인증 상태: 'verified' | 'review_required' | 'mismatch' | null(미등록)
+  final String? bankVerificationStatus;
+  /// 통장사본 최초 업로드 시각 (callableMarkBankbookVerified가 기록)
+  final DateTime? bankbookUploadedAt;
+
   // ── 프로필 & 경력 ──
   final String? profileImageUrl;        // 프로필 사진 URL
   final String? bio;                    // 자기소개
@@ -64,6 +80,7 @@ class UserModel {
   final int noShowCount;                // 무단 결근 횟수 (누적 전체)
   final int recentNoShowCount;          // 최근 90일 노쇼 횟수 (CF가 갱신, 없으면 noShowCount 폴백)
   final int lateCount;                  // 지각 횟수 (누적 전체)
+  final Map<String, int> workTypeStats; // 업무 유형별 완료 횟수 (CF 누적, 나의 ALfit 표시용)
   final int recentLateCount;            // 최근 90일 지각 횟수 (CF가 갱신, 없으면 lateCount 폴백)
   // ── 상태 정보 ──
   final bool isAvailable;               // 근무 가능 여부
@@ -88,6 +105,14 @@ class UserModel {
   final Map<String, bool> notifPrefs;    // 알림 종류별 수신 설정 (기본 모두 true)
   final List<String> favoriteToIds;      // 즐겨찾기 TO ID 목록
   final int? maxActiveTOs;               // 슈퍼관리자가 설정한 이 관리자의 공고 최대 등록 수 (null이면 전역 기본값)
+
+  // ── 지역 정보 (추천 기능용) ──
+  /// 집 주소 기반 지역 (address 파싱 — bootstrap 시 자동 생성)
+  final UserRegion? homeRegion;
+  /// 선호 근무 지역 목록 (실제 지원/근무로만 추가됨)
+  final List<UserRegion> preferredJobRegions;
+  /// 마지막으로 선택한 탐색 지역 (일자리 탭 필터용)
+  final UserRegion? lastSelectedJobRegion;
 
   // 알림 카테고리 키 상수
   static const String notifWorkReminder    = 'workReminder';
@@ -121,6 +146,10 @@ class UserModel {
     this.foreignIdNumber,
     this.accountStatus = 'active',
     this.rejectionReason,
+    // 전화번호 시스템
+    this.authPhone,
+    this.phoneVerificationLevel,
+    this.contactPhone,
     // 신규 필드
     this.gender,
     this.birthDate,
@@ -128,12 +157,17 @@ class UserModel {
     this.address,
     this.detailAddress,
     this.idCardImageUrl,
+    this.idCardImagePath,
     this.idCardVerifiedAt,
     this.isIdVerified = false,
     this.bankName,
     this.accountNumber,
     this.accountHolder,
     this.bankbookImageUrl,
+    this.isBankbookVerified = false,
+    this.bankbookVerifiedAt,
+    this.bankVerificationStatus,
+    this.bankbookUploadedAt,
     this.profileImageUrl,
     this.bio,
     this.skills,
@@ -146,6 +180,7 @@ class UserModel {
     this.recentNoShowCount = 0,
     this.lateCount = 0,
     this.recentLateCount = 0,
+    this.workTypeStats = const {},
     this.isAvailable = true,
     this.unavailableReason,
     this.availableFrom,
@@ -168,11 +203,16 @@ class UserModel {
     Map<String, bool>? notifPrefs,
     List<String>? favoriteToIds,
     this.maxActiveTOs,
+    // ── 지역 정보 ──
+    this.homeRegion,
+    List<UserRegion>? preferredJobRegions,
+    this.lastSelectedJobRegion,
   }) : notifPrefs = notifPrefs ?? defaultNotifPrefs,
        favoriteToIds = favoriteToIds ?? const [],
        managedBusinessIds = managedBusinessIds ??
            (businessId != null ? [businessId] : const []),
-       subAdminBusinessIds = subAdminBusinessIds ?? const [];
+       subAdminBusinessIds = subAdminBusinessIds ?? const [],
+       preferredJobRegions = preferredJobRegions ?? const [];
 
 
   // ── 편의 메서드 ──
@@ -195,11 +235,37 @@ class UserModel {
   /// 외국인 여부
   bool get isForeign => foreignIdNumber != null;
 
+  // ── 전화번호 getter ──
+
+  /// 실제 연락처 — OTP 인증 contactPhone 우선, 없으면 PASS 인증 authPhone, 없으면 legacy phone
+  String? get effectivePhone => contactPhone ?? authPhone ?? phone;
+
+  /// PASS 인증으로 확인된 전화번호 — authPhone 우선, 없으면 legacy phone
+  String? get effectiveAuthPhone => authPhone ?? phone;
+
+  /// PASS 인증(본인확인)으로 전화번호가 검증되었는지
+  bool get isPhoneIdentityVerified => phoneVerificationLevel == 'identity_verified';
+
+  /// PASS recovery 필요 여부 (내국인 활성 계정 + passVerifiedAt 없음)
+  /// Restricted State: 공고 조회/홈은 허용, 지원 생성은 서버 gate로 차단
+  bool get needsPassAuthRecovery =>
+      role == UserRole.USER &&
+      accountStatus == 'active' &&
+      !isForeign &&
+      passVerifiedAt == null;
+
   /// PASS 인증 완료 여부 (내국인)
   /// SUPER_ADMIN은 시스템 계정이므로 항상 true
   /// [FIX] ci(암호화 원문)는 CF가 저장하지 않음 — ciHash(해시)만 저장.
   ///   passVerifiedAt만 체크하도록 수정 (finalizeRegistration/finalizePassReauth CF가 저장)
   bool get isPassVerified => isSuperAdmin || passVerifiedAt != null;
+
+  /// 신분증 서류 등록 여부.
+  /// 신규 flow(idCardImagePath)와 legacy(idCardImageUrl) 양쪽을 모두 허용한다.
+  /// CF(callableApplyToTO 등)도 동일한 OR 조건을 사용한다.
+  bool get hasIdDocument =>
+      (idCardImagePath != null && idCardImagePath!.isNotEmpty) ||
+      (idCardImageUrl != null && idCardImageUrl!.isNotEmpty);
 
   /// 가입 승인 대기 중 (외국인)
   bool get isPending => accountStatus == 'pending';
@@ -303,6 +369,15 @@ class UserModel {
       foreignIdNumber: EncryptionHelper.decrypt(map['foreignIdNumber']),
       accountStatus: map['accountStatus'] ?? 'active',
       rejectionReason: map['rejectionReason'] as String?,
+      // 전화번호 시스템
+      authPhone: map['authPhone'] as String?,
+      // MIGRATION-TEMP: phoneVerificationLevel 없는 기존 사용자 추론
+      // passVerifiedAt이 있으면 PASS 본인인증 완료 → identity_verified
+      // 없으면 OTP만 또는 알 수 없음 → otp_verified
+      // migration 완료 후 fallback 제거 (null 허용)
+      phoneVerificationLevel: map['phoneVerificationLevel'] as String?
+          ?? (map['passVerifiedAt'] != null ? 'identity_verified' : 'otp_verified'),
+      contactPhone: map['contactPhone'] as String?,
       // 신규 필드
       gender: map['gender'],
       birthDate: _parseDateTime(map['birthDate']),
@@ -310,12 +385,17 @@ class UserModel {
       address: map['address'],
       detailAddress: map['detailAddress'],
       idCardImageUrl: map['idCardImageUrl'],
+      idCardImagePath: map['idCardImagePath'],
       idCardVerifiedAt: _parseDateTime(map['idCardVerifiedAt']),
       isIdVerified: map['isIdVerified'] ?? false,
       bankName: map['bankName'],
       accountNumber: EncryptionHelper.decrypt(map['accountNumber']),
       accountHolder: map['accountHolder'],
       bankbookImageUrl: map['bankbookImageUrl'],
+      isBankbookVerified: map['isBankbookVerified'] ?? false,
+      bankbookVerifiedAt: _parseDateTime(map['bankbookVerifiedAt']),
+      bankVerificationStatus: map['bankVerificationStatus'] as String?,
+      bankbookUploadedAt: _parseDateTime(map['bankbookUploadedAt']),
       profileImageUrl: map['profileImageUrl'],
       bio: map['bio'],
       skills: map['skills'] != null ? List<String>.from(map['skills']) : null,
@@ -330,6 +410,9 @@ class UserModel {
       recentNoShowCount: (map['recentNoShowCount'] as num?)?.toInt() ??
           (map['noShowCount'] as num?)?.toInt() ?? 0,
       lateCount: (map['lateCount'] as num?)?.toInt() ?? 0,
+      workTypeStats: (map['workTypeStats'] as Map<Object?, Object?>?)
+              ?.map((k, v) => MapEntry(k.toString(), (v as num?)?.toInt() ?? 0)) ??
+          const {},
       recentLateCount: (map['recentLateCount'] as num?)?.toInt() ??
           (map['lateCount'] as num?)?.toInt() ?? 0,
       isAvailable: map['isAvailable'] ?? true,
@@ -359,6 +442,13 @@ class UserModel {
           ? List<String>.from(map['favoriteToIds'])
           : null,
       maxActiveTOs: (map['maxActiveTOs'] as num?)?.toInt(),
+      // ── 지역 정보 ──
+      homeRegion: UserRegion.tryFromMap(map['homeRegion']),
+      preferredJobRegions: (map['preferredJobRegions'] as List? ?? [])
+          .map(UserRegion.tryFromMap)
+          .whereType<UserRegion>()
+          .toList(),
+      lastSelectedJobRegion: UserRegion.tryFromMap(map['lastSelectedJobRegion']),
     );
   }
 
@@ -374,6 +464,10 @@ class UserModel {
       'managedBusinessIds': managedBusinessIds,
       'createdAt': createdAt != null ? Timestamp.fromDate(createdAt!) : null,
       'lastLoginAt': lastLoginAt != null ? Timestamp.fromDate(lastLoginAt!) : null,
+      // 전화번호 시스템
+      'authPhone': authPhone,
+      'phoneVerificationLevel': phoneVerificationLevel,
+      'contactPhone': contactPhone,
       // 신규 필드
       'gender': gender,
       'birthDate': birthDate != null ? Timestamp.fromDate(birthDate!) : null,
@@ -386,6 +480,7 @@ class UserModel {
       'accountStatus': accountStatus,
       'rejectionReason': rejectionReason,
       'idCardImageUrl': idCardImageUrl,
+      'idCardImagePath': idCardImagePath,
       'idCardVerifiedAt': idCardVerifiedAt != null
           ? Timestamp.fromDate(idCardVerifiedAt!)
           : null,
@@ -393,7 +488,15 @@ class UserModel {
       'bankName': bankName,
       'accountNumber': EncryptionHelper.encrypt(accountNumber),
       'accountHolder': accountHolder,
-      'bankbookImageUrl': bankbookImageUrl, 
+      'bankbookImageUrl': bankbookImageUrl,
+      'isBankbookVerified': isBankbookVerified,
+      'bankbookVerifiedAt': bankbookVerifiedAt != null
+          ? Timestamp.fromDate(bankbookVerifiedAt!)
+          : null,
+      'bankVerificationStatus': bankVerificationStatus,
+      'bankbookUploadedAt': bankbookUploadedAt != null
+          ? Timestamp.fromDate(bankbookUploadedAt!)
+          : null,
       'profileImageUrl': profileImageUrl,
       'bio': bio,
       'skills': skills,
@@ -406,6 +509,7 @@ class UserModel {
       'recentNoShowCount': recentNoShowCount,
       'lateCount': lateCount,
       'recentLateCount': recentLateCount,
+      'workTypeStats': workTypeStats,
       'isAvailable': isAvailable,
       'unavailableReason': unavailableReason,
       'availableFrom': availableFrom != null 
@@ -434,6 +538,11 @@ class UserModel {
       'notifPrefs': notifPrefs,
       'favoriteToIds': favoriteToIds,
       'maxActiveTOs': maxActiveTOs,
+      // ── 지역 정보 ──
+      if (homeRegion != null) 'homeRegion': homeRegion!.toMap(),
+      'preferredJobRegions': preferredJobRegions.map((r) => r.toMap()).toList(),
+      if (lastSelectedJobRegion != null)
+        'lastSelectedJobRegion': lastSelectedJobRegion!.toMap(),
     };
   }
 
@@ -478,6 +587,9 @@ class UserModel {
     String? foreignIdNumber,
     String? accountStatus,
     String? rejectionReason,
+    String? authPhone,
+    String? phoneVerificationLevel,
+    String? contactPhone,
     String? businessId,
     List<String>? managedBusinessIds,
     DateTime? createdAt,
@@ -488,12 +600,17 @@ class UserModel {
     String? address,
     String? detailAddress,
     String? idCardImageUrl,
+    String? idCardImagePath,
     DateTime? idCardVerifiedAt,
     bool? isIdVerified,
     String? bankName,
     String? accountNumber,
     String? accountHolder,
     String? bankbookImageUrl,
+    bool? isBankbookVerified,
+    DateTime? bankbookVerifiedAt,
+    String? bankVerificationStatus,
+    DateTime? bankbookUploadedAt,
     String? profileImageUrl,
     String? bio,
     List<String>? skills,
@@ -506,6 +623,7 @@ class UserModel {
     int? recentNoShowCount,
     int? lateCount,
     int? recentLateCount,
+    Map<String, int>? workTypeStats,
     bool? isAvailable,
     String? unavailableReason,
     DateTime? availableFrom,
@@ -532,6 +650,12 @@ class UserModel {
     List<String>? favoriteToIds,
     int? maxActiveTOs,
     bool clearMaxActiveTOs = false,
+    // ── 지역 정보 ──
+    UserRegion? homeRegion,
+    bool clearHomeRegion = false,
+    List<UserRegion>? preferredJobRegions,
+    UserRegion? lastSelectedJobRegion,
+    bool clearLastSelectedJobRegion = false,
   }) {
     return UserModel(
       uid: uid ?? this.uid,
@@ -545,6 +669,9 @@ class UserModel {
       foreignIdNumber: foreignIdNumber ?? this.foreignIdNumber,
       accountStatus: accountStatus ?? this.accountStatus,
       rejectionReason: rejectionReason ?? this.rejectionReason,
+      authPhone: authPhone ?? this.authPhone,
+      phoneVerificationLevel: phoneVerificationLevel ?? this.phoneVerificationLevel,
+      contactPhone: contactPhone ?? this.contactPhone,
       businessId: businessId ?? this.businessId,
       managedBusinessIds: managedBusinessIds ?? this.managedBusinessIds,
       createdAt: createdAt ?? this.createdAt,
@@ -555,12 +682,17 @@ class UserModel {
       address: address ?? this.address,
       detailAddress: detailAddress ?? this.detailAddress,
       idCardImageUrl: idCardImageUrl ?? this.idCardImageUrl,
+      idCardImagePath: idCardImagePath ?? this.idCardImagePath,
       idCardVerifiedAt: idCardVerifiedAt ?? this.idCardVerifiedAt,
       isIdVerified: isIdVerified ?? this.isIdVerified,
       bankName: bankName ?? this.bankName,
       accountNumber: accountNumber ?? this.accountNumber,
       accountHolder: accountHolder ?? this.accountHolder,
       bankbookImageUrl: bankbookImageUrl ?? this.bankbookImageUrl,
+      isBankbookVerified: isBankbookVerified ?? this.isBankbookVerified,
+      bankbookVerifiedAt: bankbookVerifiedAt ?? this.bankbookVerifiedAt,
+      bankVerificationStatus: bankVerificationStatus ?? this.bankVerificationStatus,
+      bankbookUploadedAt: bankbookUploadedAt ?? this.bankbookUploadedAt,
       profileImageUrl: profileImageUrl ?? this.profileImageUrl,
       bio: bio ?? this.bio,
       skills: skills ?? this.skills,
@@ -573,6 +705,7 @@ class UserModel {
       recentNoShowCount: recentNoShowCount ?? this.recentNoShowCount,
       lateCount: lateCount ?? this.lateCount,
       recentLateCount: recentLateCount ?? this.recentLateCount,
+      workTypeStats: workTypeStats ?? this.workTypeStats,
       isAvailable: isAvailable ?? this.isAvailable,
       unavailableReason: unavailableReason ?? this.unavailableReason,
       availableFrom: availableFrom ?? this.availableFrom,
@@ -595,6 +728,12 @@ class UserModel {
       notifPrefs: notifPrefs ?? this.notifPrefs,
       favoriteToIds: favoriteToIds ?? this.favoriteToIds,
       maxActiveTOs: clearMaxActiveTOs ? null : (maxActiveTOs ?? this.maxActiveTOs),
+      // ── 지역 정보 ──
+      homeRegion: clearHomeRegion ? null : (homeRegion ?? this.homeRegion),
+      preferredJobRegions: preferredJobRegions ?? this.preferredJobRegions,
+      lastSelectedJobRegion: clearLastSelectedJobRegion
+          ? null
+          : (lastSelectedJobRegion ?? this.lastSelectedJobRegion),
     );
   }
   /// subAdminBusinessIds 파싱 — 구 subAdminOf(String) 하위 호환 읽기 포함

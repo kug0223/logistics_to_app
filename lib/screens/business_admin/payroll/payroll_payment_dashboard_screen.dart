@@ -2291,9 +2291,9 @@ class _BankStatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (label, color, bg) = switch (status) {
-      'pending'  => ('검토 중',      AppColors.warning,  AppColors.warningBg),
-      'rejected' => ('재확인 필요',  AppColors.error,    AppColors.errorBg),
-      _          => ('미등록',       AppColors.grey400,  AppColors.grey100),
+      'review_required' => ('검토 중',     AppColors.warning, AppColors.warningBg),
+      'mismatch'        => ('재확인 필요', AppColors.error,   AppColors.errorBg),
+      _                 => ('미등록',      AppColors.grey400, AppColors.grey100),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),

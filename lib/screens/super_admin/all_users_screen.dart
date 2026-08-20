@@ -102,7 +102,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
       list = list.where((u) {
         final name = u.name.toLowerCase();
         final username = u.username.toLowerCase();
-        final phone = u.phone?.toLowerCase() ?? '';
+        final phone = u.effectivePhone?.toLowerCase() ?? '';
         return name.contains(_searchQuery) ||
             username.contains(_searchQuery) ||
             phone.contains(_searchQuery);
@@ -442,9 +442,9 @@ class _AllUsersScreenState extends State<AllUsersScreen>
                       ],
                     ),
                     SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                    if (user.phone != null)
+                    if (user.effectivePhone != null)
                       Text(
-                        user.phone!,
+                        user.effectivePhone!,
                         style: ResponsiveHelper.smallStyle(
                           context,
                           color: Theme.of(context).textTheme.bodyMedium?.color,
@@ -619,7 +619,7 @@ class _UserDetailSheet extends StatelessWidget {
               children: [
                 // 기본 정보
                 _sectionTitle(context, '기본 정보'),
-                _infoRow(context, Icons.phone_outlined, '연락처', user.phone ?? '-'),
+                _infoRow(context, Icons.phone_outlined, '연락처', user.effectivePhone ?? '-'),
                 _infoRow(context, Icons.cake_outlined, '생년월일',
                   user.birthDate != null ? FormatHelper.formatDateISO(user.birthDate!) : '-'),
                 _infoRow(context, Icons.person_outline, '성별', user.gender ?? '-'),
@@ -925,6 +925,8 @@ class _TrustScoreDialogState extends State<_TrustScoreDialog> {
       ToastHelper.showError('0~100 사이의 숫자를 입력하세요');
       return;
     }
+    // [FC-05 FIX] autofocus: true — pop 전 반드시 unfocus (FocusScope teardown 크래시 방지)
+    FocusManager.instance.primaryFocus?.unfocus();
     Navigator.pop(context, v);
   }
 
@@ -959,7 +961,11 @@ class _TrustScoreDialogState extends State<_TrustScoreDialog> {
         ],
       ),
       actions: [
-        StyledDialogButton.cancel(onPressed: () => Navigator.pop(context)),
+        // [FC-05 FIX] autofocus: true — cancel도 unfocus 필수
+        StyledDialogButton.cancel(onPressed: () {
+          FocusManager.instance.primaryFocus?.unfocus();
+          Navigator.pop(context);
+        }),
         StyledDialogButton.primary(text: '저장', onPressed: _submit),
       ],
     );
@@ -1015,7 +1021,11 @@ class _ReasonDialogState extends State<_ReasonDialog> {
         autofocus: true,
       ),
       actions: [
-        StyledDialogButton.cancel(onPressed: () => Navigator.pop(context)),
+        // [FC-06 FIX] autofocus: true — cancel도 unfocus 필수
+        StyledDialogButton.cancel(onPressed: () {
+          FocusManager.instance.primaryFocus?.unfocus();
+          Navigator.pop(context);
+        }),
         StyledDialogButton(
           text: widget.confirmLabel,
           onPressed: () {
@@ -1023,6 +1033,8 @@ class _ReasonDialogState extends State<_ReasonDialog> {
               ToastHelper.showError('사유를 입력하세요');
               return;
             }
+            // [FC-06 FIX] confirm도 unfocus 후 pop
+            FocusManager.instance.primaryFocus?.unfocus();
             Navigator.pop(context, _controller.text.trim());
           },
           backgroundColor: widget.confirmColor,
