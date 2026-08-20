@@ -10371,6 +10371,15 @@ export const callableGetUsersBatch = onCall(
       throw new HttpsError("permission-denied", "해당 사업장 조회 권한이 없습니다.");
     }
 
+    // [SEC-BANK-FILTER] SubAdmin은 canManageWage 권한에 따라 계좌정보 필드 필터링
+    // BUSINESS_ADMIN/SUPER_ADMIN은 급여 지급 목적으로 계좌정보 열람 허용 (SEC-41)
+    // SubAdmin canManageWage=false는 UI에서도 숨기지만 CF 응답에서도 제외 (data-level 보호)
+    let callerCanManageWage = !isSubAdmin; // admin/superAdmin은 기본 허용
+    if (isSubAdmin) {
+      const wageMemberSnap = await db.collection("businesses").doc(businessId).collection("members").doc(callerUid).get();
+      callerCanManageWage = (wageMemberSnap.data()?.permissions as Record<string, boolean> | undefined)?.canManageWage === true;
+    }
+
     // Admin SDK 배치 조회 (Firestore 보안 규칙 우회 — 서버 검증으로 대체)
     const refs = uids.map((uid) => db.collection("users").doc(uid));
     const snaps = await db.getAll(...refs);
@@ -10385,8 +10394,11 @@ export const callableGetUsersBatch = onCall(
       "passwordHistory",  // 비밀번호 해시 이력 — 오프라인 딕셔너리 공격에 활용 가능
       "ciHash",           // CI 해시 — 개인식별정보
       "phoneHash",        // 전화번호 해시 — 개인정보
-      // accountNumber: 관리자는 급여 지급을 위해 열람 허용 (SEC-41 예외)
+      // accountNumber/bankName/accountHolder/bankVerificationStatus:
+      // BUSINESS_ADMIN/SUPER_ADMIN 허용 (SEC-41), SubAdmin은 canManageWage 여부로 분기 (아래 BANK_ONLY_FIELDS 참고)
     ]);
+    // SubAdmin canManageWage=false 시 추가 필터링 대상 — 급여 운영 전용 필드
+    const BANK_ONLY_FIELDS = new Set(["accountNumber", "bankName", "accountHolder", "bankVerificationStatus"]);
 
     const users: Record<string, Record<string, unknown>> = {};
     for (const snap of snaps) {
@@ -10402,7 +10414,10 @@ export const callableGetUsersBatch = onCall(
       // 민감 필드 제거 후 반환
       const safeData: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(data)) {
-        if (!SENSITIVE_FIELDS.has(key)) safeData[key] = value;
+        if (SENSITIVE_FIELDS.has(key)) continue;
+        // [SEC-BANK-FILTER] canManageWage=false SubAdmin은 계좌정보 제외 (data minimization)
+        if (!callerCanManageWage && BANK_ONLY_FIELDS.has(key)) continue;
+        safeData[key] = value;
       }
       users[snap.id] = safeData;
     }
@@ -11152,18 +11167,32 @@ export const callableCancelConfirmedApplication = onCall(
     if (isAdminCancel && cancelReason) updateData.cancelMessage = cancelReason;
     if (isAdminCancel) updateData.canceledBy = callerUid; // 서버 강제
 
-    // [TOCTOU-FIX + FIX-4] Application 취소와 Grant revoke를 동일 transaction에서 처리
+    // [TOCTOU-FIX + FIX-4 + FIX-5] Application 취소, auto grant, personal grant revoke를 단일 transaction에서 atomic 처리
     // reads 먼저 → writes 순서 준수 (Firestore transaction 규칙)
+    // personal grant는 transaction 내부 쿼리 불가 제약 → 이전 pre-fetch 후 tx.get으로 fresh 재확인
     const grantRefForCancel = db.collection("idCardAccessRequests").doc(`auto_${applicationId}`);
+
+    // [FIX-5] personal grant pre-fetch (transaction 이전) — tx 내에서 fresh 재확인 후 atomic revoke
+    // 이 applicationId + targetUserId 스코프에만 한정 (다른 Application Grant 절대 건드리지 않음)
+    const prePersonalGrantSnap = await db.collection("idCardAccessRequests")
+      .where("applicationId", "==", applicationId)
+      .where("targetUserId", "==", workerUid)
+      .where("status", "==", "approved")
+      .get();
+    const prePersonalGrantRefs = prePersonalGrantSnap.docs
+      .filter((doc) => doc.id !== `auto_${applicationId}`)
+      .map((doc) => doc.ref);
+
     await db.runTransaction(async (tx) => {
-      const [freshSnap, grantSnapForCancel] = await Promise.all([
+      const [freshSnap, grantSnapForCancel, ...freshPersonalGrants] = await Promise.all([
         tx.get(appRef),
         tx.get(grantRefForCancel),
+        ...prePersonalGrantRefs.map((ref) => tx.get(ref)),
       ]);
       const freshStatus = (freshSnap.data()?.status as string | undefined) ?? "";
       if (!CONFIRMED_STATUSES.includes(freshStatus)) return; // 이미 취소됨 — 멱등
       tx.update(appRef, updateData);
-      // [FIX-4] Grant revoke: Application 취소와 atomic — 다른 Application Grant는 절대 건드리지 않음
+      // auto grant revoke (applicationId 전용 자동 grant)
       if (grantSnapForCancel.exists && grantSnapForCancel.data()?.status === "approved") {
         tx.update(grantRefForCancel, {
           status: "revoked",
@@ -11172,34 +11201,23 @@ export const callableCancelConfirmedApplication = onCall(
         });
         console.info(`[cancelConfirmedApplication] ID-CONSENT auto-grant transaction-revoked: app=${applicationId}`);
       }
-    });
-
-    // [개인 grant revoke] auto_${applicationId} 외의 applicationId 스코프 수동 grant 폐기
-    // Transaction 이후 별도 처리 (Transaction 내부에서 쿼리 불가)
-    try {
-      const personalGrantSnap = await db.collection("idCardAccessRequests")
-        .where("applicationId", "==", applicationId)
-        .where("targetUserId", "==", workerUid)
-        .where("status", "==", "approved")
-        .get();
-      const personalGrantsToRevoke = personalGrantSnap.docs.filter(
-        (doc) => doc.id !== `auto_${applicationId}`
-      );
-      if (personalGrantsToRevoke.length > 0) {
-        await Promise.all(
-          personalGrantsToRevoke.map((doc) =>
-            doc.ref.update({
-              status: "revoked",
-              revokedAt: admin.firestore.FieldValue.serverTimestamp(),
-              revokeReason: "APPLICATION_CANCELED",
-            })
-          )
-        );
-        console.info(`[cancelConfirmedApplication] ID-CONSENT personal-grant ${personalGrantsToRevoke.length}개 revoked (appId=${applicationId})`);
+      // [FIX-5] personal grant revoke — auto와 동일 transaction, 에러 삼킴 없음
+      let personalRevokedCount = 0;
+      for (const freshPersonalGrant of freshPersonalGrants) {
+        if (freshPersonalGrant.exists && freshPersonalGrant.data()?.status === "approved") {
+          tx.update(freshPersonalGrant.ref, {
+            status: "revoked",
+            revokedAt: admin.firestore.FieldValue.serverTimestamp(),
+            revokeReason: "APPLICATION_CANCELED",
+          });
+          personalRevokedCount++;
+        }
       }
-    } catch (e) {
-      console.warn("[cancelConfirmedApplication] 개인 grant revoke 실패 (무시):", e);
-    }
+      if (personalRevokedCount > 0) {
+        console.info(`[cancelConfirmedApplication] ID-CONSENT personal-grant ${personalRevokedCount}개 transaction-revoked: app=${applicationId}`);
+      }
+    });
+    // [FIX-5] post-transaction 에러 삼킴 personal grant revoke 제거 완료 — 위 transaction에서 atomic 처리됨
 
     // 6-A. 취소된 지원서의 출근 기록 canceledWithApplication=true 설정
     //     → 자정 processMissedCheckouts가 missed_checkout으로 잘못 마킹하지 않도록 방지
@@ -13953,13 +13971,11 @@ export const callableDeleteTO = onCall(
       status: string;
       workDate?: admin.firestore.Timestamp;
     }> = [];
-    // appId → workerUid 매핑 (개인 grant revoke용) — while 루프 전체에서 누적
-    const personalGrantCheckMap = new Map<string, string>();
     {
-      // [FIX-2] TO 삭제 시 Application AUTO_CANCELED + auto-grant revoke를 동일 batch에서 처리
-      // (fire-and-forget 제거 — Grant revoke가 보장되지 않으면 함수 실패로 처리)
-      // limit 249: Application update + Grant revoke = 최대 2 writes/doc → 249×2 = 498 < 500
-      const TO_DELETE_PAGE_LIMIT = 249;
+      // [FIX-2] TO 삭제 시 Application AUTO_CANCELED + auto/personal grant revoke를 동일 batch에서 atomic 처리
+      // [FIX-6] personal grant를 batch 내부에서 처리 — 에러 삼킴 제거, post-loop try-catch 폐기
+      // limit 150: app update + auto grant + personal grant = 최대 3 writes/CONFIRMED doc → 150×3 = 450 < 500
+      const TO_DELETE_PAGE_LIMIT = 150;
       let lastDelApp: FirebaseFirestore.DocumentSnapshot | undefined;
       while (true) {
         let q: FirebaseFirestore.Query = db.collection("applications")
@@ -13990,6 +14006,29 @@ export const callableDeleteTO = onCall(
           }
         }
 
+        // [FIX-6] personal grant pre-fetch — auto grant와 동일 batch에서 atomic revoke (에러 삼킴 제거)
+        // workerUid는 이미 읽은 pageSnap.docs에서 재활용 (추가 읽기 없음)
+        const workerUidForGrant: Record<string, string> = {};
+        for (const doc of pageSnap.docs) {
+          if (grantCheckIds.includes(doc.id)) {
+            const uid = doc.data().uid as string | undefined;
+            if (uid) workerUidForGrant[doc.id] = uid;
+          }
+        }
+        const personalGrantDocsMap: Record<string, FirebaseFirestore.QueryDocumentSnapshot[]> = {};
+        if (Object.keys(workerUidForGrant).length > 0) {
+          await Promise.all(
+            Object.entries(workerUidForGrant).map(async ([appId, wUid]) => {
+              const pSnap = await db.collection("idCardAccessRequests")
+                .where("applicationId", "==", appId)
+                .where("targetUserId", "==", wUid)
+                .where("status", "==", "approved")
+                .get();
+              personalGrantDocsMap[appId] = pSnap.docs.filter((d) => d.id !== `auto_${appId}`);
+            })
+          );
+        }
+
         const batch = db.batch();
         let count = 0;
         let revokedCount = 0;
@@ -14011,12 +14050,20 @@ export const callableDeleteTO = onCall(
                 workDate: d.workDate as admin.firestore.Timestamp | undefined,
               });
             }
-            // [FIX-2] Grant revoke를 Application update와 동일 batch에 포함 — atomic 보장
+            // [FIX-2+6] auto + personal grant revoke를 동일 batch에서 atomic 처리 (에러 삼킴 없음)
             if (status === "CONFIRMED" || status === "CONTRACT_PENDING") {
-              if (applicantUid) personalGrantCheckMap.set(doc.id, applicantUid);
               const grantSnap = grantSnapMap[doc.id];
               if (grantSnap?.exists && grantSnap.data()?.status === "approved") {
                 batch.update(grantSnap.ref, {
+                  status: "revoked",
+                  revokedAt: now,
+                  revokeReason: "APPLICATION_AUTO_CANCELED",
+                });
+                revokedCount++;
+              }
+              // [FIX-6] personal grant도 동일 batch에서 atomic revoke
+              for (const pDoc of personalGrantDocsMap[doc.id] ?? []) {
+                batch.update(pDoc.ref, {
                   status: "revoked",
                   revokedAt: now,
                   revokeReason: "APPLICATION_AUTO_CANCELED",
@@ -14037,36 +14084,7 @@ export const callableDeleteTO = onCall(
       }
     }
 
-    // [개인 grant revoke] auto_${appId} 외의 applicationId 스코프 수동 grant 폐기
-    // while 루프 전체에서 누적된 CONFIRMED/CONTRACT_PENDING appId들에 대해 처리
-    if (personalGrantCheckMap.size > 0) {
-      try {
-        await Promise.all(
-          Array.from(personalGrantCheckMap.entries()).map(async ([appId, workerUid]) => {
-            const personalGrantSnap = await db.collection("idCardAccessRequests")
-              .where("applicationId", "==", appId)
-              .where("targetUserId", "==", workerUid)
-              .where("status", "==", "approved")
-              .get();
-            const toRevoke = personalGrantSnap.docs.filter((doc) => doc.id !== `auto_${appId}`);
-            if (toRevoke.length > 0) {
-              await Promise.all(
-                toRevoke.map((doc) =>
-                  doc.ref.update({
-                    status: "revoked",
-                    revokedAt: admin.firestore.FieldValue.serverTimestamp(),
-                    revokeReason: "APPLICATION_AUTO_CANCELED",
-                  })
-                )
-              );
-            }
-          })
-        );
-        console.info(`[deleteTO] ID-CONSENT personal-grant revoke 완료 (toId=${toId})`);
-      } catch (e) {
-        console.warn("[deleteTO] 개인 grant revoke 실패 (무시):", e);
-      }
-    }
+    // [FIX-6] post-loop 에러 삼킴 personal grant revoke 제거 완료 — while 루프 batch에서 atomic 처리됨
 
     // 2. TO 소프트 삭제 — 문서 보존 + isDeleted 플래그 + isPublished 비활성화
     // [소프트 삭제 2026-08-10] Firestore 문서 삭제 → 플래그 업데이트로 전환
@@ -14485,10 +14503,10 @@ export const callableDeleteSlots = onCall(
 
     // 활성 지원서 REJECTED 처리
     if (allActiveDocs.length > 0) {
-      // [FIX-3] 슬롯 삭제 시 Application REJECTED + auto-grant revoke를 동일 batch에서 처리
-      // (fire-and-forget 제거 — Grant revoke 실패 시 함수 실패로 처리)
-      // limit 249: Application update + Grant revoke = 최대 2 writes/doc → 249×2 = 498 < 500
-      const SLOT_BATCH_LIMIT = 249;
+      // [FIX-3] 슬롯 삭제 시 Application REJECTED + auto/personal grant revoke를 동일 batch에서 atomic 처리
+      // [FIX-6] personal grant를 batch 내부에서 처리 — 에러 삼킴 제거, post-batch try-catch 폐기
+      // limit 150: app update + auto grant + personal grant = 최대 3 writes/CONFIRMED doc → 150×3 = 450 < 500
+      const SLOT_BATCH_LIMIT = 150;
 
       // CONFIRMED/CONTRACT_PENDING 지원서의 Grant docs를 먼저 bulk read (writes 전에)
       const slotGrantCheckIds: string[] = [];
@@ -14510,6 +14528,26 @@ export const callableDeleteSlots = onCall(
         }
       }
 
+      // [FIX-6] personal grant pre-fetch — auto grant와 동일 batch에서 atomic revoke (에러 삼킴 제거)
+      // allActiveDocs는 이미 읽혀 있으므로 추가 Firestore 읽기 없이 workerUid 재활용
+      const slotPersonalGrantDocsMap: Record<string, FirebaseFirestore.QueryDocumentSnapshot[]> = {};
+      if (slotGrantCheckIds.length > 0) {
+        await Promise.all(
+          allActiveDocs
+            .filter((doc) => slotGrantCheckIds.includes(doc.id))
+            .map(async (doc) => {
+              const workerUid = doc.data().uid as string | undefined;
+              if (!workerUid) return;
+              const pSnap = await db.collection("idCardAccessRequests")
+                .where("applicationId", "==", doc.id)
+                .where("targetUserId", "==", workerUid)
+                .where("status", "==", "approved")
+                .get();
+              slotPersonalGrantDocsMap[doc.id] = pSnap.docs.filter((d) => d.id !== `auto_${doc.id}`);
+            })
+        );
+      }
+
       let cancelBatch = db.batch();
       let cancelCount = 0;
       let slotRevokedCount = 0;
@@ -14520,11 +14558,20 @@ export const callableDeleteSlots = onCall(
           rejectedAt: now,
           rejectMessage: "공고 슬롯이 삭제되었습니다",
         });
-        // [FIX-3] Grant revoke를 Application update와 동일 batch에 포함 — atomic 보장
+        // [FIX-3+6] auto + personal grant revoke를 동일 batch에서 atomic 처리 (에러 삼킴 없음)
         if (docStatus === "CONFIRMED" || docStatus === "CONTRACT_PENDING") {
           const grantSnap = slotGrantSnapMap[doc.id];
           if (grantSnap?.exists && grantSnap.data()?.status === "approved") {
             cancelBatch.update(grantSnap.ref, {
+              status: "revoked",
+              revokedAt: now,
+              revokeReason: "APPLICATION_SLOT_DELETED",
+            });
+            slotRevokedCount++;
+          }
+          // [FIX-6] personal grant도 동일 batch에서 atomic revoke
+          for (const pDoc of slotPersonalGrantDocsMap[doc.id] ?? []) {
+            cancelBatch.update(pDoc.ref, {
               status: "revoked",
               revokedAt: now,
               revokeReason: "APPLICATION_SLOT_DELETED",
@@ -14545,44 +14592,7 @@ export const callableDeleteSlots = onCall(
       }
       // [FIX-3] fire-and-forget revoke 제거 완료 — 위 batch에서 atomic 처리됨
 
-      // [개인 grant revoke] auto_${appId} 외의 applicationId 스코프 수동 grant 폐기
-      if (slotGrantCheckIds.length > 0) {
-        // appId → workerUid 매핑 구성 (allActiveDocs에서 이미 읽은 데이터 재활용)
-        const slotPersonalGrantMap = new Map<string, string>();
-        for (const doc of allActiveDocs) {
-          const s = (doc.data().status as string) ?? "";
-          if (s === "CONFIRMED" || s === "CONTRACT_PENDING") {
-            const uid = doc.data().uid as string | undefined;
-            if (uid) slotPersonalGrantMap.set(doc.id, uid);
-          }
-        }
-        try {
-          await Promise.all(
-            Array.from(slotPersonalGrantMap.entries()).map(async ([appId, workerUid]) => {
-              const personalGrantSnap = await db.collection("idCardAccessRequests")
-                .where("applicationId", "==", appId)
-                .where("targetUserId", "==", workerUid)
-                .where("status", "==", "approved")
-                .get();
-              const toRevoke = personalGrantSnap.docs.filter((doc) => doc.id !== `auto_${appId}`);
-              if (toRevoke.length > 0) {
-                await Promise.all(
-                  toRevoke.map((doc) =>
-                    doc.ref.update({
-                      status: "revoked",
-                      revokedAt: admin.firestore.FieldValue.serverTimestamp(),
-                      revokeReason: "APPLICATION_SLOT_DELETED",
-                    })
-                  )
-                );
-              }
-            })
-          );
-          console.info(`[deleteSlots] ID-CONSENT personal-grant revoke 완료`);
-        } catch (e) {
-          console.warn("[deleteSlots] 개인 grant revoke 실패 (무시):", e);
-        }
-      }
+      // [FIX-6] post-batch 에러 삼킴 personal grant revoke 제거 완료 — cancelBatch에서 atomic 처리됨
 
       // 알림: 상태별 분기
       for (const doc of allActiveDocs) {
@@ -16305,6 +16315,23 @@ export const callableRejectApplication = onCall(
     if (!businessId) throw new HttpsError("invalid-argument", "businessId가 없는 지원서입니다.");
 
     await assertBizAdmin(callerUid, businessId);
+
+    // [SUBADMIN-PERM-REJECT] 서브어드민 canManageTo 세부 권한 검증 — callableConfirmApplication과 동일 정책
+    const [rejectCallerSnap, rejectBizSnap] = await Promise.all([
+      db.collection("users").doc(callerUid).get(),
+      db.collection("businesses").doc(businessId).get(),
+    ]);
+    const rejectBizData = rejectBizSnap.data();
+    const rejectBizAdminIds = (rejectBizData?.adminIds as string[] | undefined) ?? [];
+    if (
+      (rejectCallerSnap.data()?.role as string | undefined) !== "SUPER_ADMIN" &&
+      !rejectBizAdminIds.includes(callerUid) &&
+      (rejectBizData?.ownerId as string | undefined) !== callerUid
+    ) {
+      const rejectMemberSnap = await db.collection("businesses").doc(businessId).collection("members").doc(callerUid).get();
+      const rejectPerms = (rejectMemberSnap.data()?.permissions as Record<string, boolean>) ?? {};
+      if (!rejectPerms.canManageTo) throw new HttpsError("permission-denied", "TO 관리 권한이 없습니다.");
+    }
 
     const prevStatus = (appData.status as string | undefined) ?? "";
 
@@ -21500,6 +21527,24 @@ export const callableCreateIdCardAccessRequest = onCall(
     // [SEC-FIX 2026-07-16] requesterBusinessId 소속 검증 — 클라이언트 위조 방지
     //   타 사업장 ID를 주입해 해당 사업장 관리자로 위장하는 것을 차단
     await assertBizAdmin(callerUid, requesterBusinessId);
+
+    // [SUBADMIN-PERM-ID-REQ] 서브어드민 canManageWage 세부 권한 검증 — UI gate와 동일 정책
+    // SubAdmin이 CF를 직접 호출해도 canManageWage=false면 신분증 요청 불가
+    const [idReqCallerSnap, idReqBizSnap] = await Promise.all([
+      db.collection("users").doc(callerUid).get(),
+      db.collection("businesses").doc(requesterBusinessId).get(),
+    ]);
+    const idReqBizData = idReqBizSnap.data();
+    const idReqBizAdminIds = (idReqBizData?.adminIds as string[] | undefined) ?? [];
+    if (
+      (idReqCallerSnap.data()?.role as string | undefined) !== "SUPER_ADMIN" &&
+      !idReqBizAdminIds.includes(callerUid) &&
+      (idReqBizData?.ownerId as string | undefined) !== callerUid
+    ) {
+      const idReqMemberSnap = await db.collection("businesses").doc(requesterBusinessId).collection("members").doc(callerUid).get();
+      const idReqPerms = (idReqMemberSnap.data()?.permissions as Record<string, boolean>) ?? {};
+      if (!idReqPerms.canManageWage) throw new HttpsError("permission-denied", "급여/신분증 관리 권한이 없습니다.");
+    }
 
     // [L-2-FIX] targetUserId가 requesterBusinessId 소속인지 검증 — 무관한 사용자에게 신분증 요청 스팸 차단
     const targetAppSnap = await db.collection("applications")
