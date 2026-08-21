@@ -113,6 +113,18 @@ class ApplicationModel {
   final DateTime? invitedAt;       // 초대 발송 시각 (만료 계산 기준)
   final DateTime? inviteExpiresAt; // 초대 만료 시각 (CF에서 invitedAt + 24h 계산 저장)
 
+  // [ID-CONSENT] 신분증 열람 사전동의 — CF 서버 타임스탬프로 기록 (legacy, 하위 호환 유지)
+  final bool idCardConsentGiven;       // 지원 시 동의 여부 (항상 true, 미동의 시 지원 불가)
+  final DateTime? idCardConsentAt;     // 동의 시각 (serverTimestamp)
+  final String? idCardConsentVersion;  // 동의 버전 (예: "2026-08-v1")
+
+  // [DOCUMENT-CONSENT] 소득신고·급여처리 목적 서류 접근 통합 동의 — V3 신규
+  // 신분증 + 급여계좌 + 통장사본을 권한 있는 관리자가 확인할 수 있음에 동의.
+  // idCardConsentGiven은 legacy 신분증 접근 호환용으로 별도 유지.
+  final bool documentAccessConsentGiven;    // 동의 여부 (지원 시 항상 true)
+  final DateTime? documentAccessConsentAt;  // 동의 시각 (serverTimestamp)
+  final String? documentAccessConsentVersion; // 동의 버전 (예: "2026-08-v1")
+
   ApplicationModel({
     required this.id,
     required this.businessId,
@@ -193,6 +205,14 @@ class ApplicationModel {
     this.invitedBy,
     this.invitedAt,
     this.inviteExpiresAt,
+    // [ID-CONSENT] 신분증 열람 사전동의 (legacy)
+    this.idCardConsentGiven = false,
+    this.idCardConsentAt,
+    this.idCardConsentVersion,
+    // [DOCUMENT-CONSENT] 소득신고·급여처리 목적 서류 통합 동의 (V3 신규)
+    this.documentAccessConsentGiven = false,
+    this.documentAccessConsentAt,
+    this.documentAccessConsentVersion,
   });
 
   static ApplicationModel? tryFromMap(Map<String, dynamic> data, String documentId) {
@@ -307,9 +327,17 @@ class ApplicationModel {
       invitedBy: data['invitedBy'] as String?,
       invitedAt: parseTimestampNullable(data['invitedAt']),
       inviteExpiresAt: parseTimestampNullable(data['inviteExpiresAt']),
+      // [ID-CONSENT] 신분증 열람 사전동의 (legacy)
+      idCardConsentGiven: data['idCardConsentGiven'] as bool? ?? false,
+      idCardConsentAt: parseTimestampNullable(data['idCardConsentAt']),
+      idCardConsentVersion: data['idCardConsentVersion'] as String?,
+      // [DOCUMENT-CONSENT] 소득신고·급여처리 목적 서류 통합 동의 (V3 신규)
+      documentAccessConsentGiven: data['documentAccessConsentGiven'] as bool? ?? false,
+      documentAccessConsentAt: parseTimestampNullable(data['documentAccessConsentAt']),
+      documentAccessConsentVersion: data['documentAccessConsentVersion'] as String?,
     );
   }
-  
+
   /// Firestore DocumentSnapshot에서 변환
   factory ApplicationModel.fromFirestore(DocumentSnapshot doc) {
     final raw = doc.data();
@@ -409,6 +437,14 @@ class ApplicationModel {
       'invitedBy': invitedBy,
       'invitedAt': invitedAt != null ? Timestamp.fromDate(invitedAt!) : null,
       'inviteExpiresAt': inviteExpiresAt != null ? Timestamp.fromDate(inviteExpiresAt!) : null,
+      // [ID-CONSENT] 신분증 열람 사전동의 — legacy (읽기 전용 — CF가 serverTimestamp로 기록)
+      'idCardConsentGiven': idCardConsentGiven,
+      'idCardConsentAt': idCardConsentAt != null ? Timestamp.fromDate(idCardConsentAt!) : null,
+      'idCardConsentVersion': idCardConsentVersion,
+      // [DOCUMENT-CONSENT] 소득신고·급여처리 목적 서류 통합 동의 (읽기 전용 — CF 기록)
+      'documentAccessConsentGiven': documentAccessConsentGiven,
+      'documentAccessConsentAt': documentAccessConsentAt != null ? Timestamp.fromDate(documentAccessConsentAt!) : null,
+      'documentAccessConsentVersion': documentAccessConsentVersion,
     };
   }
 
@@ -519,6 +555,14 @@ class ApplicationModel {
     String? invitedBy,
     DateTime? invitedAt,
     DateTime? inviteExpiresAt,
+    // [ID-CONSENT] 신분증 열람 사전동의 (legacy)
+    bool? idCardConsentGiven,
+    DateTime? idCardConsentAt,
+    String? idCardConsentVersion,
+    // [DOCUMENT-CONSENT] 소득신고·급여처리 목적 서류 통합 동의 (V3 신규)
+    bool? documentAccessConsentGiven,
+    DateTime? documentAccessConsentAt,
+    String? documentAccessConsentVersion,
   }) {
     return ApplicationModel(
       id: id ?? this.id,
@@ -597,6 +641,14 @@ class ApplicationModel {
       invitedBy: invitedBy ?? this.invitedBy,
       invitedAt: invitedAt ?? this.invitedAt,
       inviteExpiresAt: inviteExpiresAt ?? this.inviteExpiresAt,
+      // [ID-CONSENT] 신분증 열람 사전동의 (legacy)
+      idCardConsentGiven: idCardConsentGiven ?? this.idCardConsentGiven,
+      idCardConsentAt: idCardConsentAt ?? this.idCardConsentAt,
+      idCardConsentVersion: idCardConsentVersion ?? this.idCardConsentVersion,
+      // [DOCUMENT-CONSENT] 소득신고·급여처리 목적 서류 통합 동의 (V3 신규)
+      documentAccessConsentGiven: documentAccessConsentGiven ?? this.documentAccessConsentGiven,
+      documentAccessConsentAt: documentAccessConsentAt ?? this.documentAccessConsentAt,
+      documentAccessConsentVersion: documentAccessConsentVersion ?? this.documentAccessConsentVersion,
     );
   }
 

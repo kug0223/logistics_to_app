@@ -34,17 +34,46 @@ class UserModel {
   // ── PASS 본인인증 정보 ──
   final String? ci;                     // PASS CI값 (암호화 저장, 내국인 전용)
   final DateTime? passVerifiedAt;       // PASS 인증 시각 (내국인 전용)
-  final String? foreignIdNumber;        // 외국인등록번호 (암호화 저장, 외국인 전용)
+  final String? foreignIdNumber;        // 외국인등록번호 레거시 sentinel (backward-compat 전용)
+  final String? foreignIdentityFingerprint; // HMAC-SHA256(전체 외국인등록번호, 서버 시크릿) — 고유성 식별 키 (서버 기록)
+  // [TODO-FOREIGN-ENCRYPT] 향후 원천징수영수증/근로소득 지급명세서 기능 구현 시 활성화 예정.
+  // 현재 CF에서 미기록(TODO 주석), toMap()에도 미포함 → DB에 이 값이 저장된 계정 없음.
+  // 실제 기능에서 사용 전까지 불필요한 전체번호 저장 없음 (Legal/Tax requirement 확정 후 구현).
+  final String? foreignIdNumberEncrypted;
   // 'active' | 'pending' | 'rejected' — 외국인은 가입 후 pending, 슈퍼관리자 승인 시 active
   final String accountStatus;
   // CF rejectForeignWorker가 저장하는 필드명('rejectionReason')과 반드시 일치해야 함
   final String? rejectionReason;
 
+  // ── V3 외국인 Document-First 필드 ──
+  /// 외국인등록증에 기재된 공식 이름 (OCR + 사용자 최종 확인).
+  /// 공식 계약서·임금명세서에서 외국인의 경우 name 대신 이 값 우선 사용.
+  /// OCR 실패 시 USER 직접 입력. "외국인등록증 진위 인증 완료"와 무관.
+  final String? legalName;
+
+  /// 앱 표시용 한국어 이름 (선택 입력).
+  /// 예: 외국인등록증 이름 NGUYEN VAN AN → 한국어 이름 응우옌반안.
+  /// displayName getter에서 legalName보다 우선 표시됨.
+  final String? koreanName;
+
+  /// 체류자격 / 비자 종류 (예: E-9, F-4, H-2).
+  /// 외국인등록증 OCR + 사용자 확인. 법무부 조회 아님.
+  /// "취업자격 인증 완료" 의미 없음.
+  final String? visaType;
+
+  /// 체류기간 만료일 (외국인등록증 기재 정보. 법무부 실시간 조회 아님).
+  final DateTime? stayExpiryDate;
+
   // ── 신분증 정보 ──
   final String? idCardImageUrl;         // 신분증 앞면 이미지 URL (legacy — 신규 flow는 idCardImagePath 사용)
   final String? idCardImagePath;        // [BUG-ID-01] authoritative Storage path (신규 flow)
   final DateTime? idCardVerifiedAt;     // 신분증 인증 시각
-  final bool isIdVerified;              // 신분증 인증 여부
+  // [PRODUCT-POLICY] isIdVerified
+  //   "USER가 자신의 허용된 Storage 경로에 신분증 이미지를 정상 업로드했다"는 상태.
+  //   SUPER_ADMIN의 신분증 진위 심사 결과가 아니다.
+  //   단기(슬롯 있는) 공고 지원 시 서버 gate로 사용됨 (callableApplyToTO).
+  //   장기(슬롯 없는) 공고에는 이 gate가 적용되지 않는다.
+  final bool isIdVerified;
   
   // ── 전화번호 시스템 ──
   /// PASS 인증 시 통신사에서 확인된 전화번호 (= 기존 phone 역할 승계)
@@ -58,10 +87,36 @@ class UserModel {
   final String? bankName;               // 은행명
   final String? accountNumber;          // 계좌번호 (암호화 저장)
   final String? accountHolder;          // 예금주
-  final String? bankbookImageUrl;
+  final String? bankbookImageUrl;       // legacy Download URL (V3 이전 방식)
+  /// [V3] 통장사본 Storage 경로 — Signed URL 발급(callableGetBankbookSignedUrl)에 사용.
+  /// V3 이전 등록 사용자는 null이며 bankbookImageUrl을 통해 접근.
+  final String? bankbookImagePath;
   final bool isBankbookVerified;       // 통장사본 검증 여부 (CF Admin SDK로만 설정) — legacy, bankVerificationStatus로 대체 예정
   final DateTime? bankbookVerifiedAt;  // 통장사본 검증 시각 — legacy
-  /// 계좌 인증 상태: 'verified' | 'review_required' | 'mismatch' | null(미등록)
+  // [PRODUCT-POLICY] bankVerificationStatus — canonical 상태 정의
+  //
+  //   null
+  //     계좌 미등록 상태, 또는 계좌 변경(callableUpdateBankAccount) 후 초기화된 상태.
+  //
+  //   'review_required'
+  //     계좌/통장사본 제출 완료.
+  //     현재 금융기관 자동 명의확인 API가 없어 SUPER_ADMIN 육안 검토가 진행 중인 상태.
+  //     [PRODUCT-POLICY] 신규 Application 지원 가능 — review_required = 정상 제출 완료로 간주.
+  //     hasWageDocumentsReady getter 참고 (review_required ≠ 지원 차단).
+  //
+  //   'verified'
+  //     현재 정책상 SUPER_ADMIN이 통장사본을 확인하고 승인한 상태.
+  //     신규 Application 지원 가능 (review_required와 동일).
+  //     [PRODUCT-POLICY][CURRENT] 현재는 SUPER_ADMIN manual review 경로만 존재.
+  //     향후 금융기관 API 도입 시 자동 verified 경로 추가 가능.
+  //
+  //   'mismatch'
+  //     SUPER_ADMIN이 통장사본 명의 불일치 판정.
+  //     USER가 통장사본을 재업로드해야 한다.
+  //     신규 Application 지원 불가.
+  //
+  // stale 값 주의: 'pending', 'approved', 'rejected' 등은 canonical 상태가 아니다.
+  // isBankbookVerified(bool)는 legacy 필드 — bankVerificationStatus로 대체됨.
   final String? bankVerificationStatus;
   /// 통장사본 최초 업로드 시각 (callableMarkBankbookVerified가 기록)
   final DateTime? bankbookUploadedAt;
@@ -144,8 +199,15 @@ class UserModel {
     this.ci,
     this.passVerifiedAt,
     this.foreignIdNumber,
+    this.foreignIdentityFingerprint,
+    this.foreignIdNumberEncrypted,
     this.accountStatus = 'active',
     this.rejectionReason,
+    // V3 외국인 Document-First 필드
+    this.legalName,
+    this.koreanName,
+    this.visaType,
+    this.stayExpiryDate,
     // 전화번호 시스템
     this.authPhone,
     this.phoneVerificationLevel,
@@ -164,6 +226,7 @@ class UserModel {
     this.accountNumber,
     this.accountHolder,
     this.bankbookImageUrl,
+    this.bankbookImagePath,
     this.isBankbookVerified = false,
     this.bankbookVerifiedAt,
     this.bankVerificationStatus,
@@ -232,8 +295,18 @@ class UserModel {
   /// 특정 사업장의 하위 관리자인지
   bool isSubAdminOf(String businessId) => subAdminBusinessIds.contains(businessId);
 
-  /// 외국인 여부
-  bool get isForeign => foreignIdNumber != null;
+  /// 외국인 여부 — 신규: foreignIdentityFingerprint(CF 기록), 레거시: foreignIdNumber 폴백
+  bool get isForeign => foreignIdentityFingerprint != null || foreignIdNumber != null;
+
+  /// 앱 표시용 이름 — koreanName → legalName → name 순서.
+  /// 기존 name 필드 사용처의 호환성을 위해 직접 변경 대신 이 getter 사용 권장.
+  String get displayName => koreanName ?? legalName ?? name;
+
+  /// 공식 서류(계약서·임금명세서)에 사용할 이름.
+  /// 외국인: legalName 우선, 없으면 name. 내국인: name.
+  String get officialName => (isForeign && legalName != null && legalName!.isNotEmpty)
+      ? legalName!
+      : name;
 
   // ── 전화번호 getter ──
 
@@ -267,8 +340,58 @@ class UserModel {
       (idCardImagePath != null && idCardImagePath!.isNotEmpty) ||
       (idCardImageUrl != null && idCardImageUrl!.isNotEmpty);
 
-  /// 가입 승인 대기 중 (외국인)
-  bool get isPending => accountStatus == 'pending';
+  // ─────────────────────────────────────────────────────────────────
+  // [PRODUCT-POLICY 2026-08-21] Canonical 지원 준비 Getter
+  //
+  // 목적: 각 화면이 서로 다른 기준으로 계산하던 "지원 준비 완료"를
+  //       단일 위치에서 정의하여 정책 불일치를 방지한다.
+  //
+  // bankVerificationStatus 의미:
+  //   null            → 미제출 상태
+  //   'review_required' → 정상 제출, background 관리자 검토 중 → 지원 가능
+  //   'verified'      → 관리자 검토 완료 → 지원 가능
+  //   'mismatch'      → 관리자가 명시적 문제 발견 → 재등록 전 지원 차단
+  //
+  // isIdVerified 의미:
+  //   PASS 본인인증 완료 사용자가 신분증 이미지를 정상 업로드했음.
+  //   SUPER_ADMIN 사전 승인이 아님. callableMarkIdCardVerified가 업로드 후 설정.
+  //
+  // OCR:
+  //   금융기관 실명조회가 아님. 입력 정보와 이미지의 1차 일치 확인 보조 수단.
+  // ─────────────────────────────────────────────────────────────────
+
+  /// 급여계좌 기본 정보 등록 여부 (bankName + accountNumber 존재).
+  /// 계좌번호는 암호화 저장이지만 null 여부로만 확인한다.
+  bool get hasBankAccount =>
+      (bankName != null && bankName!.isNotEmpty) &&
+      (accountNumber != null && accountNumber!.isNotEmpty);
+
+  /// 통장사본 제출 여부 (bankbookImagePath 또는 bankbookImageUrl 중 하나 이상 존재).
+  /// V3 이후: bankbookImagePath 우선. V3 이전 사용자: bankbookImageUrl 폴백.
+  bool get hasBankbookDocument =>
+      (bankbookImagePath != null && bankbookImagePath!.isNotEmpty) ||
+      (bankbookImageUrl != null && bankbookImageUrl!.isNotEmpty);
+
+  /// [PRODUCT-POLICY] 지원자 관점에서 급여정보 준비 완료 여부.
+  /// review_required = 정상 제출 완료 → 준비됨.
+  /// mismatch만 재등록 필요 → 미준비.
+  /// Canonical 기준: callableApplyToTO mismatch gate와 동일 논리.
+  bool get hasWageDocumentsReady =>
+      hasBankAccount && hasBankbookDocument && bankVerificationStatus != 'mismatch';
+
+  /// [PRODUCT-POLICY] 신규 지원에 필요한 서류 준비 완료 여부.
+  /// 장기 공고: hasIdDocument + hasWageDocumentsReady
+  /// 단기(슬롯) 공고는 isIdVerified 추가 필요 — 이 getter는 공통 기반값.
+  ///
+  /// TODO: job_posting_screen, apply_prerequisites_screen을 이 getter로 통일할 것.
+  bool get hasApplicationDocumentsReady => hasIdDocument && hasWageDocumentsReady;
+
+  /// 가입 승인 대기 중 (레거시 'pending' 또는 V3 'registration_pending')
+  bool get isPending => accountStatus == 'pending' || accountStatus == 'registration_pending';
+
+  /// V3 Document-First 가입 미완료 상태.
+  /// registration_pending 상태 = Auth 계정 생성됐으나 외국인등록증 등록 or fingerprint or termsConsent 미완료.
+  bool get isRegistrationPending => accountStatus == 'registration_pending';
 
   /// 가입 거절됨 (외국인)
   bool get isRejected => accountStatus == 'rejected';
@@ -367,8 +490,15 @@ class UserModel {
       ci: EncryptionHelper.decrypt(map['ci']),
       passVerifiedAt: _parseDateTime(map['passVerifiedAt']),
       foreignIdNumber: EncryptionHelper.decrypt(map['foreignIdNumber']),
+      foreignIdentityFingerprint: map['foreignIdentityFingerprint'] as String?,
+      foreignIdNumberEncrypted: map['foreignIdNumberEncrypted'] as String?,
       accountStatus: map['accountStatus'] ?? 'active',
       rejectionReason: map['rejectionReason'] as String?,
+      // V3 외국인 Document-First 필드
+      legalName: map['legalName'] as String?,
+      koreanName: map['koreanName'] as String?,
+      visaType: map['visaType'] as String?,
+      stayExpiryDate: _parseDateTime(map['stayExpiryDate']),
       // 전화번호 시스템
       authPhone: map['authPhone'] as String?,
       // MIGRATION-TEMP: phoneVerificationLevel 없는 기존 사용자 추론
@@ -392,6 +522,7 @@ class UserModel {
       accountNumber: EncryptionHelper.decrypt(map['accountNumber']),
       accountHolder: map['accountHolder'],
       bankbookImageUrl: map['bankbookImageUrl'],
+      bankbookImagePath: map['bankbookImagePath'],
       isBankbookVerified: map['isBankbookVerified'] ?? false,
       bankbookVerifiedAt: _parseDateTime(map['bankbookVerifiedAt']),
       bankVerificationStatus: map['bankVerificationStatus'] as String?,
@@ -479,6 +610,11 @@ class UserModel {
       'foreignIdNumber': EncryptionHelper.encrypt(foreignIdNumber),
       'accountStatus': accountStatus,
       'rejectionReason': rejectionReason,
+      // V3 외국인 Document-First 필드
+      'legalName': legalName,
+      'koreanName': koreanName,
+      'visaType': visaType,
+      'stayExpiryDate': stayExpiryDate != null ? Timestamp.fromDate(stayExpiryDate!) : null,
       'idCardImageUrl': idCardImageUrl,
       'idCardImagePath': idCardImagePath,
       'idCardVerifiedAt': idCardVerifiedAt != null
@@ -489,6 +625,7 @@ class UserModel {
       'accountNumber': EncryptionHelper.encrypt(accountNumber),
       'accountHolder': accountHolder,
       'bankbookImageUrl': bankbookImageUrl,
+      'bankbookImagePath': bankbookImagePath,
       'isBankbookVerified': isBankbookVerified,
       'bankbookVerifiedAt': bankbookVerifiedAt != null
           ? Timestamp.fromDate(bankbookVerifiedAt!)
@@ -587,6 +724,14 @@ class UserModel {
     String? foreignIdNumber,
     String? accountStatus,
     String? rejectionReason,
+    // V3 외국인 Document-First
+    String? legalName,
+    bool clearLegalName = false,
+    String? koreanName,
+    bool clearKoreanName = false,
+    String? visaType,
+    DateTime? stayExpiryDate,
+    bool clearStayExpiryDate = false,
     String? authPhone,
     String? phoneVerificationLevel,
     String? contactPhone,
@@ -607,6 +752,7 @@ class UserModel {
     String? accountNumber,
     String? accountHolder,
     String? bankbookImageUrl,
+    String? bankbookImagePath,
     bool? isBankbookVerified,
     DateTime? bankbookVerifiedAt,
     String? bankVerificationStatus,
@@ -669,6 +815,10 @@ class UserModel {
       foreignIdNumber: foreignIdNumber ?? this.foreignIdNumber,
       accountStatus: accountStatus ?? this.accountStatus,
       rejectionReason: rejectionReason ?? this.rejectionReason,
+      legalName: clearLegalName ? null : (legalName ?? this.legalName),
+      koreanName: clearKoreanName ? null : (koreanName ?? this.koreanName),
+      visaType: visaType ?? this.visaType,
+      stayExpiryDate: clearStayExpiryDate ? null : (stayExpiryDate ?? this.stayExpiryDate),
       authPhone: authPhone ?? this.authPhone,
       phoneVerificationLevel: phoneVerificationLevel ?? this.phoneVerificationLevel,
       contactPhone: contactPhone ?? this.contactPhone,
@@ -689,6 +839,7 @@ class UserModel {
       accountNumber: accountNumber ?? this.accountNumber,
       accountHolder: accountHolder ?? this.accountHolder,
       bankbookImageUrl: bankbookImageUrl ?? this.bankbookImageUrl,
+      bankbookImagePath: bankbookImagePath ?? this.bankbookImagePath,
       isBankbookVerified: isBankbookVerified ?? this.isBankbookVerified,
       bankbookVerifiedAt: bankbookVerifiedAt ?? this.bankbookVerifiedAt,
       bankVerificationStatus: bankVerificationStatus ?? this.bankVerificationStatus,

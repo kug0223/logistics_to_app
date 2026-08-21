@@ -347,7 +347,10 @@ extension ApplicationFirestore on FirestoreService {
         if (workEndDate != null) 'workEndDateMs': workEndDate.millisecondsSinceEpoch,
         if (workDays != null) 'workDays': workDays,
         if (desiredStartDate != null) 'desiredStartDateMs': desiredStartDate.millisecondsSinceEpoch,
-        'idCardConsentGiven': true, // [ID-CONSENT] 지원자가 지원 확인 다이얼로그에서 동의
+        'idCardConsentGiven': true, // [ID-CONSENT] 신분증 열람 사전동의 — legacy 호환 유지
+        // [DOCUMENT-CONSENT] 소득신고·급여처리 목적 서류 통합 동의 — V3 신규
+        // 신분증 + 급여계좌 + 통장사본을 권한 있는 관리자가 확인할 수 있음에 동의
+        'documentAccessConsentGiven': true,
       });
       final data = result.data;
       final isReactivation = data['isReactivation'] as bool? ?? false;

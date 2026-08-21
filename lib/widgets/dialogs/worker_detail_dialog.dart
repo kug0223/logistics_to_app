@@ -111,6 +111,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   // ID-1 보안: 직접 URL 대신 CF 발급 1시간 만료 Signed URL 캐시
   String? _idCardSignedUrl;
   bool _idCardSignedUrlLoading = false;
+  // [V3 BANKBOOK-SECURE-ACCESS] 통장사본 Signed URL 상태 (1시간 만료, 매 열람 시 재발급)
+  bool _bankbookLoading = false;
   bool? _hasAttendance;  // 출퇴근 기록 여부 (null=로딩중, true=있음, false=없음)
   bool? _hasWrittenReview;     // 리뷰 작성 여부 (null=미확인)
   EmploymentContractModel? _contract;
@@ -221,6 +223,51 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
       _idCardSignedUrl = url;
       _idCardSignedUrlLoading = false;
     });
+  }
+
+  /// [V3 BANKBOOK-SECURE-ACCESS] 통장사본 열람
+  /// - 매 호출 시 CF callableGetBankbookSignedUrl로 1시간 Signed URL 발급
+  /// - 캐싱 없음 (보안 목적) — 신분증과 달리 URL을 상태 변수에 저장하지 않는다
+  Future<void> _viewBankbook() async {
+    final appId = widget.application?.id;
+    if (appId == null || appId.isEmpty) {
+      ToastHelper.showError('지원서 정보가 없습니다.');
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _bankbookLoading = true);
+    try {
+      final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableGetBankbookSignedUrl')
+          .call({'applicationId': appId});
+      if (!mounted) return;
+      final signedUrl = result.data['signedUrl'] as String?;
+      if (signedUrl == null || signedUrl.isEmpty) {
+        ToastHelper.showError('통장사본 URL을 가져오지 못했습니다.');
+        return;
+      }
+      await ImageHelper.showFullScreenViewer(
+        context,
+        imageUrl: signedUrl,
+        title: '통장사본',
+        noCache: true, // [BANKBOOK-SEC] Signed URL — disk cache 금지
+      );
+    } on FirebaseFunctionsException catch (e) {
+      if (!mounted) return;
+      final msg = switch (e.code) {
+        'permission-denied' => '열람 권한이 없습니다.',
+        'not-found' => '통장사본 파일을 찾을 수 없습니다.',
+        'failed-precondition' => e.message ?? '열람 조건을 충족하지 않습니다.',
+        _ => '통장사본 열람에 실패했습니다: ${e.message}',
+      };
+      ToastHelper.showError(msg);
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showError('통장사본 열람에 실패했습니다.');
+      debugPrint('⚠️ [BANKBOOK] _viewBankbook error: $e');
+    } finally {
+      if (mounted) setState(() => _bankbookLoading = false);
+    }
   }
 
   void _startAccessRefreshTimer() {
@@ -986,15 +1033,52 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     if (!context.read<UserProvider>().can((p) => p.canManageWage)) {
       return const SizedBox.shrink();
     }
+
+    // [V3 BANKBOOK-SECURE-ACCESS] 통장사본 버튼 표시 조건:
+    //   1) 확정(CONFIRMED) 지원서가 있어야 함
+    //   2) documentAccessConsentGiven == true (V3) 또는 idCardConsentGiven == true (legacy)
+    //   3) 통장사본 파일이 존재해야 함 (bankbookImagePath OR bankbookImageUrl)
+    final app = widget.application;
+    final isConfirmedApp = app != null &&
+        AppStatus.confirmedStatuses.contains(app.status);
+    // [V3] 통장사본은 documentAccessConsentGiven 전용 — idCardConsentGiven(legacy)는 신분증 접근만 허용
+    // CF callableGetBankbookSignedUrl도 documentAccessConsentGiven만 검증하므로 UI와 일치시킴
+    final hasConsent = app != null && app.documentAccessConsentGiven;
+    final hasBankbookFile = widget.user.hasBankbookDocument;
+    final canViewBankbook = isConfirmedApp && hasConsent && hasBankbookFile;
+
     return _buildSection(
       context,
       title: '급여 정보',
       icon: Icons.account_balance,
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildInfoRow(context, '은행', widget.user.bankName ?? '-'),
           _buildInfoRow(context, '계좌번호', widget.user.accountNumber ?? '-'),
           _buildInfoRow(context, '예금주', widget.user.accountHolder ?? widget.user.name),
+          // [V3] 통장사본 보기 — bankbookImageUrl 직접 노출 금지, Signed URL 전용
+          if (canViewBankbook) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _bankbookLoading ? null : _viewBankbook,
+                icon: _bankbookLoading
+                    ? SizedBox(
+                        width: ResponsiveHelper.iconSize(context, 16),
+                        height: ResponsiveHelper.iconSize(context, 16),
+                        child: const CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(Icons.account_balance_wallet_outlined,
+                        size: ResponsiveHelper.iconSize(context, 16)),
+                label: Text(
+                  _bankbookLoading ? '불러오는 중...' : '통장사본 보기',
+                  style: ResponsiveHelper.bodyStyle(context),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
