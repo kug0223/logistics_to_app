@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
@@ -731,6 +732,9 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
   }
 
   /// 통장 정보 저장
+  /// [RC-01 FIX] callableUpdateBankAccount CF 경유 — RC-01 Firestore Rules 차단 우회
+  /// bankName/accountNumber/accountHolder는 isOwner update 블록리스트에 있어 직접 write 불가.
+  /// CF Admin SDK를 경유하며, 계좌 변경 시 bankVerificationStatus도 원자적 초기화.
   Future<void> _saveBankInfo() async {
     if (_selectedBank == null || _accountNumberController.text.trim().isEmpty) {
       ToastHelper.showWarning('은행과 계좌번호를 입력해주세요');
@@ -738,30 +742,44 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     }
 
     final userProvider = context.read<UserProvider>();
-    final user = userProvider.currentUser;
-
-    if (user == null) return;
+    if (userProvider.currentUser == null) return;
 
     setState(() => _isLoading = true);
 
     try {
-      await _firestoreService.updateUserDocument(
-        user.uid,
-        {
-          'bankName': _selectedBank,
-          'accountNumber': _accountNumberController.text.trim(),
-          'accountHolder': user.name,
-        },
-      );
+      // [RC-01 FIX] CF callableUpdateBankAccount — Admin SDK 경유로 RC-01 차단 우회
+      //   accountHolder는 서버가 users/{uid}.name에서 읽어 주입 (클라이언트 전달 불가)
+      //   accountNumber: EncryptionHelper.encrypt()로 AES 암호화 후 전달
+      final encryptedAccount = EncryptionHelper.encrypt(_accountNumberController.text.trim())
+          ?? _accountNumberController.text.trim(); // ENCRYPT_KEY 미설정 시 plain text 폴백
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableUpdateBankAccount')
+          .call({
+        'bankName': _selectedBank,
+        'accountNumber': encryptedAccount,
+      });
 
       await userProvider.refreshCurrentUser();
       if (!mounted) return;
 
-      ToastHelper.showSuccess('통장 정보가 저장되었습니다');
-      _hasChanges = true;  // ✅ 추가
-    } catch (e) {
-      // Firestore 업데이트 중 화면 pop 시 unmounted 가능 → mounted 체크 필수
-      if (mounted) ToastHelper.showError('통장 정보 저장에 실패했습니다');
+      ToastHelper.showSuccess('급여정보가 저장되었습니다');
+      _hasChanges = true;
+    } catch (e, stack) {
+      final code = e is FirebaseFunctionsException ? e.code : null;
+      FirebaseCrashlytics.instance.recordError(
+        e, stack,
+        reason: 'callableUpdateBankAccount 실패 (code=$code)',
+        fatal: false,
+      );
+      if (mounted) {
+        final msg = switch (code) {
+          'unauthenticated' => '인증에 실패했습니다. 앱을 재시작 후 다시 시도해 주세요.',
+          'permission-denied' => '권한이 없습니다. 지원자 계정으로 로그인 후 이용해 주세요.',
+          'failed-precondition' => '계정 정보가 완전하지 않습니다. 이름을 먼저 등록해 주세요.',
+          _ => '급여정보 저장에 실패했습니다',
+        };
+        ToastHelper.showError(msg);
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
