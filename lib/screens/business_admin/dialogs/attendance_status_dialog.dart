@@ -10,6 +10,7 @@
 // - 지각 자동 감지
 // - (추후) 명단 출력
 
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -301,6 +302,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   Future<List<ApplicationModel>> _getConfirmedWorkersForDate() async {
     final dateStart = DateTime(widget.date.year, widget.date.month, widget.date.day);
     final dateEnd = dateStart.add(const Duration(days: 1));
+    // 날짜 비교용 — startDateOnly/endDateOnly와 동일한 UTC-midnight(KST) 포맷
+    final dateKeyKst = FormatHelper.toKstDate(widget.date);
     
     final result = <ApplicationModel>[];
     final seenIds = <String>{};  // 단기/장기 중복 entry 방어
@@ -356,27 +359,23 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       // 🔥 시작일 계산: desiredStartDate 우선 → confirmedAt → workDate
       DateTime effectiveStartDate = app.desiredStartDate ?? app.workDate;
       if (app.confirmedAt != null && app.desiredStartDate == null) {
-        final confirmedDate = DateTime(
-          app.confirmedAt!.year,
-          app.confirmedAt!.month,
-          app.confirmedAt!.day,
-        );
-        if (confirmedDate.isAfter(app.workDate)) {
+        final confirmedDate = FormatHelper.toKstDate(app.confirmedAt!);
+        if (confirmedDate.isAfter(FormatHelper.toKstDate(app.workDate))) {
           effectiveStartDate = confirmedDate;
         }
       }
 
       // 기간 체크 (시간 제거하고 날짜만 비교)
-      final startDateOnly = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
+      final startDateOnly = FormatHelper.toKstDate(effectiveStartDate);
 
       if (endDate != null) {
-        final endDateOnly = DateTime(endDate.year, endDate.month, endDate.day);
-        if (dateStart.isBefore(startDateOnly) || dateStart.isAfter(endDateOnly)) {
+        final endDateOnly = FormatHelper.toKstDate(endDate);
+        if (dateKeyKst.isBefore(startDateOnly) || dateKeyKst.isAfter(endDateOnly)) {
           continue;
         }
       } else {
         // 퇴사일 없음 = 오픈 엔드 계약, 시작일 이후는 모두 포함
-        if (dateStart.isBefore(startDateOnly)) {
+        if (dateKeyKst.isBefore(startDateOnly)) {
           continue;
         }
         // 퇴사/계약해지 승인 완료 근무자 제외
@@ -384,18 +383,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       }
 
       // 🔥 휴무일 체크 - 휴무일이면 제외
-      if (app.leaveDates != null && app.leaveDates!.isNotEmpty) {
-        final isLeaveDay = app.leaveDates!.any((leaveDate) =>
-            leaveDate.year == dateStart.year &&
-            leaveDate.month == dateStart.month &&
-            leaveDate.day == dateStart.day);
-        if (isLeaveDay) continue;
-      }
+      if (app.isLeaveDateOn(dateKeyKst)) continue;
 
       // extraWorkDates 우선 확인 — 추가 근무 승인일은 정규 요일 외에도 포함
-      final isExtraWorkDay = app.isExtraWorkDateOn(dateStart);
+      final isExtraWorkDay = app.isExtraWorkDateOn(dateKeyKst);
       // 요일 체크 — workDays가 없으면 요일 불문 포함 (스케줄 미지정 고정근무자)
-      final dayWeekday = FormatHelper.weekday(dateStart);
+      final dayWeekday = FormatHelper.weekday(dateKeyKst);
       if (isExtraWorkDay || app.workDays == null || app.workDays!.isEmpty || app.workDays!.contains(dayWeekday)) {
         if (seenIds.add(app.id)) {
           result.add(app);
@@ -1258,7 +1251,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
               ),
               const Spacer(),
               // 노쇼 칩 (검토 탭) — canManageWorkers 없는 서브어드민 숨김
-              if (noShowTargets.isNotEmpty && canManage)
+              // [5A.1] 미래 날짜 노쇼 차단 — server future guard defense-in-depth
+              if (noShowTargets.isNotEmpty && canManage &&
+                  !widget.date.isAfter(DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day)))
                 _buildActionChip(
                   label: '노쇼 (${noShowTargets.length})',
                   color: AppColors.error,
@@ -1372,18 +1367,35 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
-          // Row 2: 출근 / 조정 / 퇴근 / 리셋 — canManage=false이면 모두 비활성화
-          Row(
-            children: [
-              Expanded(child: _buildActionButton(icon: Icons.login,    label: '출근', color: AppColors.success, count: checkInCount,  onPressed: (checkInCount > 0  && canManage) ? _showBatchCheckInDialog   : null)),
-              SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-              Expanded(child: _buildActionButton(icon: Icons.tune,     label: '조정', color: AppColors.info,    count: adjustCount,   onPressed: (adjustCount > 0   && canManage) ? _showBatchAdjustTimeDialog : null)),
-              SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-              Expanded(child: _buildActionButton(icon: Icons.logout,   label: '퇴근', color: AppColors.purple,  count: checkOutCount, onPressed: (checkOutCount > 0 && canManage) ? _showBatchCheckOutDialog  : null)),
-              SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-              Expanded(child: _buildActionButton(icon: Icons.refresh,  label: '리셋', color: AppColors.grey600, count: resetCount,    onPressed: (resetCount > 0    && canManage) ? _showBatchResetDialog    : null)),
-            ],
-          ),
+          // Row 2: 출근 / 조정 / 퇴근 / 리셋 — canManage=false·미래 날짜면 모두 비활성화
+          // [5A.1] 미래 날짜 UX guard — server authority defense-in-depth
+          Builder(builder: (ctx2) {
+            final today = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
+            final isFutureDate = widget.date.isAfter(today);
+            return Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(child: _buildActionButton(icon: Icons.login,    label: '출근', color: AppColors.success, count: checkInCount,  onPressed: (checkInCount > 0  && canManage && !isFutureDate) ? _showBatchCheckInDialog   : null)),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+                    Expanded(child: _buildActionButton(icon: Icons.tune,     label: '조정', color: AppColors.info,    count: adjustCount,   onPressed: (adjustCount > 0   && canManage && !isFutureDate) ? _showBatchAdjustTimeDialog : null)),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+                    Expanded(child: _buildActionButton(icon: Icons.logout,   label: '퇴근', color: AppColors.purple,  count: checkOutCount, onPressed: (checkOutCount > 0 && canManage && !isFutureDate) ? _showBatchCheckOutDialog  : null)),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+                    Expanded(child: _buildActionButton(icon: Icons.refresh,  label: '리셋', color: AppColors.grey600, count: resetCount,    onPressed: (resetCount > 0    && canManage) ? _showBatchResetDialog    : null)),
+                  ],
+                ),
+                if (isFutureDate) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                  Text(
+                    '근무일 당일부터 근태 처리가 가능합니다.',
+                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ],
+            );
+          }),
         ],
       ),
     );
@@ -2794,6 +2806,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       return;
     }
 
+    final rootNav = Navigator.of(context, rootNavigator: true);
+
     // 로딩 다이얼로그 표시
     showDialog(
       context: context,
@@ -2823,12 +2837,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       ),
     );
 
+    AttendanceListData? data;
+    Uint8List? pdfBytes;
     try {
       // 사업장 이름 가져오기
       final businessName = _businessNameMap[_selectedBusinessId] ?? '사업장';
 
       // 데이터 변환 (이미 로드된 _workDetailTimeMap 사용)
-      final data = AttendanceListPdf.convertFromDialogData(
+      data = AttendanceListPdf.convertFromDialogData(
         businessName: businessName,
         date: widget.date,
         confirmedWorkers: _confirmedWorkers,
@@ -2837,29 +2853,29 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       );
 
       // ✅ PDF 생성 (폰트는 generatePdf 내부에서 자동 로드)
-      final pdfBytes = await AttendanceListPdf.generatePdf(data);
-
-      // 로딩 닫기
-      if (mounted) Navigator.pop(context);
-      await Future<void>.delayed(Duration.zero);
-
-      // ✅ 미리 생성된 PDF로 바로 미리보기 표시
-      if (mounted) {
-        await AttendanceListPdf.showPreviewWithBytes(
-          context: context,
-          data: data,
-          pdfBytes: pdfBytes,
-          confirmedWorkers: _confirmedWorkers,
-          userMap: _userMap,
-          businessName: businessName,
-          date: widget.date,
-        );
-      }
+      pdfBytes = await AttendanceListPdf.generatePdf(data);
     } catch (e, stack) {
-      if (mounted) Navigator.pop(context);
       debugPrint('❌ 명단 출력 실패: $e\n$stack');
-      // [BUG-12 수정] Navigator.pop mounted 체크 후 ToastHelper도 mounted 확인
       if (mounted) ToastHelper.showError('명단 출력 실패');
+    } finally {
+      if (rootNav.mounted && rootNav.canPop()) rootNav.pop();
+    }
+
+    if (data == null || pdfBytes == null) return;
+
+    await Future<void>.delayed(Duration.zero);
+
+    // ✅ 미리 생성된 PDF로 바로 미리보기 표시
+    if (mounted) {
+      await AttendanceListPdf.showPreviewWithBytes(
+        context: context,
+        data: data,
+        pdfBytes: pdfBytes,
+        confirmedWorkers: _confirmedWorkers,
+        userMap: _userMap,
+        businessName: data.businessName,
+        date: widget.date,
+      );
     }
   }
 
