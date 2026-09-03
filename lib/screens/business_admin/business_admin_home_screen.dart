@@ -1276,9 +1276,12 @@ Future<void> _loadWeeklyRosterCounts() async {
                 value: '$_summaryActiveTO건',
                 isLoading: _summaryLoading,
                 color: theme.primaryColor,
+                // [PATCH-R1] ADMIN.POSTING.ROUTE-INTEGRITY-01
+                // Home "진행 공고" → canonical 공고 탭 전환 (JobsRootScreen)
+                // Navigator.push(IntegratedWorkforceScreen) 제거 — bottom nav 불일치 해소
                 onTap: () => _safeNavigate(() => _requireApprovedBusiness(
-                  context, () async => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const IntegratedWorkforceScreen())),
+                  context, () async =>
+                    AdminTabSwitcher.instance.switchToTab(AdminTabSwitcher.jobsTab),
                 )),
               ),
               Container(width: 1, height: 36 * s, color: AppColors.divider),
