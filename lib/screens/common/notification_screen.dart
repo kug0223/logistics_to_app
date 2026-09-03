@@ -927,9 +927,14 @@ class _NotificationScreenState extends State<NotificationScreen> {
       // contractRequested: 근무자→관리자 계약서 작성 요청 — 항상 관리자 수신
       // USER 수신 시 에러 토스트 (navigation 없음)
       // [PATCH-NOTIF-A1-CONTRACT] IWS → AdminContractManagementScreen(Tab 1 = 미발송)
+      // [GAPFIX-NOTIF-CONTRACTREQUESTED-NULL-BIZ-01] businessId null/empty 명시 차단
       case NotificationType.contractRequested:
         {
           final contractReqBusinessId = notification.data?['businessId']?.toString();
+          if (contractReqBusinessId == null || contractReqBusinessId.isEmpty) {
+            ToastHelper.showWarning('알림 정보를 확인할 수 없습니다.');
+            return;
+          }
           final access = await _validateAdminNotificationAccess(
             context,
             businessId: contractReqBusinessId,
@@ -940,7 +945,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
             Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => AdminContractManagementScreen(
-                businessId: contractReqBusinessId ?? '',
+                businessId: contractReqBusinessId,
                 initialTab: 1,
               )),
             );
