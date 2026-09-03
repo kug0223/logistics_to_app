@@ -891,10 +891,56 @@ class _NotificationScreenState extends State<NotificationScreen> {
         }
         break;
 
+      // [PATCH-NOTIF-B2] 계약해지/퇴사 완료 결과 — 최종 상태, 추가 관리자 액션 없음
+      // 완료된 결과를 보여주는 canonical screen 없음 → 피드백만 제공 후 종료 (no navigation)
       case NotificationType.terminationApproved:
       case NotificationType.resignApproved:
-      // terminationRejected: 계약해지 거절 전용 타입 — resignRejected와 라우팅은 같지만 알림 표시 분리
+        if (isUser) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
+          );
+        } else {
+          final outcomeBizId = notification.data?['businessId']?.toString();
+          final access = await _validateAdminNotificationAccess(
+            context,
+            businessId: outcomeBizId,
+            requiredPermission: (p) => p.canManageWorkers,
+          );
+          if (!context.mounted) return;
+          if (_handleAdminAccess(access)) {
+            ToastHelper.showSuccess(
+              notification.type == NotificationType.terminationApproved
+                  ? '계약해지가 완료되었습니다.'
+                  : '퇴사 요청이 승인되었습니다.',
+            );
+          }
+        }
+        break;
+
+      // [PATCH-NOTIF-B2] 계약해지 거절 결과 — 거절 사유는 알림 카드 body에 포함됨 (no navigation)
       case NotificationType.terminationRejected:
+        if (isUser) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
+          );
+        } else {
+          final rejBizId = notification.data?['businessId']?.toString();
+          final access = await _validateAdminNotificationAccess(
+            context,
+            businessId: rejBizId,
+            requiredPermission: (p) => p.canManageWorkers,
+          );
+          if (!context.mounted) return;
+          if (_handleAdminAccess(access)) {
+            ToastHelper.showWarning('계약해지 요청이 거절되었습니다.');
+          }
+        }
+        break;
+
+      // [PATCH-NOTIF-B2] resignRejected — DEAD_ADMIN_HANDLER: callableRejectResignation은 workerUid에게만 발송
+      // 관리자는 정상 경로에서 이 알림을 수신하지 않음 — 혹시 수신 시 안전 처리
       case NotificationType.resignRejected:
         if (isUser) {
           Navigator.push(
@@ -902,22 +948,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
             MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
           );
         } else {
-          // [F-11-3 수정] 권한 회수 후 탭 시 무효화 — resignRequested와 동일 패턴
-          final access = await _validateAdminNotificationAccess(
-            context,
-            businessId: notification.data?['businessId']?.toString(),
-            requiredPermission: (p) => p.canManageWorkers,
-          );
-          if (!context.mounted) return;
-          if (_handleAdminAccess(access)) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-                initialBusinessId: notification.data?['businessId']?.toString(),
-                notificationType: notification.type.name,
-              )),
-            );
-          }
+          // DEAD_ADMIN_HANDLER: validator 불필요 — business context 없음, 안전 피드백 후 종료
+          ToastHelper.showWarning('현재 처리할 수 없는 알림입니다.');
         }
         break;
 
