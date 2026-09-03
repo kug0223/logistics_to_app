@@ -666,15 +666,16 @@ class FCMService {
           _navigateToNotificationScreen();
         }
         break;
+      // ─── 고용 생애주기 결과 알림 ─────────────────────────────────
+      // [PATCH-FCM-A1C] FCM-BRANCH6-DEAD-ADMIN: admin path는 producer상 dead legacy.
+      // 관리자 수신 이벤트는 screen='fixedWorker'로 Branch 2에서 처리됨.
+      // 예상치 못한 legacy payload에 대한 admin safe fallback: NotificationScreen.
       case 'terminationApproved':
       case 'terminationRejected':
       case 'resignApproved':
       case 'resignRejected':
         if (_currentUserIsAdmin) {
-          _pushFcmScreen(
-            destinationKey: iwKey,
-            builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId, notificationType: screen),
-          );
+          _navigateToNotificationScreen();
         } else {
           _pushFcmScreen(
             destinationKey: 'my_applications',
