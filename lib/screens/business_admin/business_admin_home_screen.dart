@@ -22,7 +22,7 @@ import '../../utils/attendance_list_pdf.dart';
 // Screens
 import '../common/settings_screen.dart';
 import 'to_management/create_to_screen.dart';
-import 'workforce_management/integrated_workforce_screen.dart';
+import 'workforce_management/workforce_root_screen.dart';
 import '../common/notification_screen.dart';
 import '../../widgets/common/notification_badge.dart';
 import 'admin_stats_screen.dart';
@@ -1806,12 +1806,22 @@ Future<void> _loadWeeklyRosterCounts() async {
       children: [
         _sectionHeader(context, s, '이번 주 근무',
             action: '전체 보기',
+            // [PATCH-R2A1] ADMIN.POSTING.ROUTE-INTEGRITY-01
+            // Home "이번 주 근무" → canonical 인력 탭 전환 (WorkforceRootScreen)
+            // Shell active: workforceTab 전환 / Shell 미활성: WorkforceRootScreen standalone push
             onAction: () => _safeNavigate(() => _requireApprovedBusiness(
                 context,
-                () async => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => const IntegratedWorkforceScreen()))))),
+                () async {
+                  if (!AdminTabSwitcher.instance.switchToTab(
+                      AdminTabSwitcher.workforceTab)) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const WorkforceRootScreen(),
+                      ),
+                    );
+                  }
+                }))),
         SizedBox(height: 12 * s),
         Padding(
           padding: EdgeInsets.symmetric(horizontal: 20 * s),
