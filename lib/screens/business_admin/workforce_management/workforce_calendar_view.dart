@@ -37,7 +37,15 @@ import '../../../widgets/admin/cards/admin_to_item_card.dart';
 
 /// 인력 관리 - 캘린더 뷰
 class WorkforceCalendarView extends StatefulWidget {
-  const WorkforceCalendarView({super.key});
+  /// true이면 '마감관리' 액션을 숨긴다.
+  /// WorkforceRootScreen(5탭 인력 Root)에서 사용.
+  /// IntegratedWorkforceScreen 등 legacy 진입점은 false(기본값)로 4개 액션 유지.
+  final bool hideCloseManagement;
+
+  const WorkforceCalendarView({
+    super.key,
+    this.hideCloseManagement = false,
+  });
 
   @override
   State<WorkforceCalendarView> createState() => _WorkforceCalendarViewState();
@@ -226,7 +234,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
 
     if (controller.isLoading) {
       _groupDetailsTriggered = false;
-      return const LoadingWidget(message: '공고 목록을 불러오는 중...');
+      return const LoadingWidget(message: '인력 정보를 불러오는 중...');
     }
 
     // H2: items 변경 시 날짜별 캐시 무효화 + _buildNow 갱신
@@ -247,7 +255,9 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
       });
     }
 
-    final bottomPadding = MediaQuery.viewPaddingOf(context).bottom;
+    // paddingOf: Scaffold+BottomNav 환경에서는 0, standalone 화면에서는 시스템 인셋 반환
+    // (viewPaddingOf는 Scaffold가 흡수해도 항상 원본 값 반환 → 이중 padding 발생)
+    final bottomPadding = MediaQuery.paddingOf(context).bottom;
 
     return CustomScrollView(
       controller: _scrollController,
@@ -362,163 +372,139 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
     );
   }
 
+  // ── 날짜 헤더 (선택 날짜 + 인력 액션) ─────────────────────────────────
+  // 기존 gradient 블루 헤더 → white/neutral 디자인.
+  // 액션: 지원자 / 근무 현황 / 고정 근로자 (+ 마감관리는 hideCloseManagement=false일 때만).
   Widget _buildDateHeader() {
     final theme = Theme.of(context);
 
     final month = _selectedDay!.month;
     final day = _selectedDay!.day;
     final dateStr = '$month월 $day일(${FormatHelper.weekday(_selectedDay!)})';
+    final isToday = DateUtils.isSameDay(_selectedDay, _buildNow);
 
     return Container(
-      padding: EdgeInsets.symmetric(
-        vertical: ResponsiveHelper.spacing(context, 12),
-        horizontal: ResponsiveHelper.spacing(context, 16),
-      ),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            theme.primaryColor.withValues(alpha: 0.12),
-            theme.primaryColor.withValues(alpha: 0.06),
-          ],
-        ),
-        border: Border(
-          bottom: BorderSide(
-            color: theme.primaryColor.withValues(alpha: 0.3),
-            width: 1.5,
-          ),
-        ),
-      ),
+      color: Colors.white,
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              Icon(Icons.event,
-                  color: theme.primaryColor,
-                  size: ResponsiveHelper.iconSize(context, 16)),
-              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Text(
-                dateStr,
-                style: ResponsiveHelper.smallStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: theme.primaryColor,
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-          // 2×2 버튼 그리드
-          Column(
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildActionButton(
-                      icon: Icons.people_outlined,
-                      label: '지원명단',
-                      isEnabled: true,
-                      backgroundColor: AppColors.infoBg,
-                      foregroundColor: AppColors.infoDark,
-                      borderColor: AppColors.info.withValues(alpha: 0.35),
-                      onTap: _openApplicantsDialog,
-                    ),
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  Expanded(
-                    child: _buildActionButton(
-                      icon: Icons.how_to_reg,
-                      label: '당일명단',
-                      isEnabled: true,
-                      backgroundColor: theme.primaryColor.withValues(alpha: 0.1),
-                      foregroundColor: theme.primaryColor,
-                      borderColor: theme.primaryColor.withValues(alpha: 0.35),
-                      onTap: _showAttendancePopup,
-                    ),
-                  ),
-                ],
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildActionButton(
-                      icon: Icons.settings,
-                      label: '고정관리',
-                      isEnabled: true,
-                      backgroundColor: AppColors.longTermLight,
-                      foregroundColor: AppColors.longTermDark,
-                      borderColor: AppColors.longTerm.withValues(alpha: 0.3),
-                      onTap: _openFixedWorkerManagement,
-                    ),
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  Expanded(
-                    child: _buildActionButton(
-                      icon: Icons.lock_outline,
-                      label: '마감관리',
-                      isEnabled: true,
-                      backgroundColor: AppColors.warningBg,
-                      foregroundColor: AppColors.warningDark,
-                      borderColor: AppColors.warning.withValues(alpha: 0.35),
-                      onTap: _openCloseManagement,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildActionButton({
-    required IconData icon,
-    required String label,
-    required bool isEnabled,
-    Color? backgroundColor,
-    required Color? foregroundColor,
-    Color? borderColor,
-    VoidCallback? onTap,
-  }) {
-    return Container(
-      decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(10),
-        border: borderColor != null ? Border.all(color: borderColor) : null,
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(10),
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 8),
-              vertical: ResponsiveHelper.spacing(context, 10),
+          // 날짜 chip
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              ResponsiveHelper.spacing(context, 16),
+              ResponsiveHelper.spacing(context, 12),
+              ResponsiveHelper.spacing(context, 16),
+              ResponsiveHelper.spacing(context, 8),
             ),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(icon,
-                    size: ResponsiveHelper.iconSize(context, 16),
-                    color: foregroundColor),
-                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                Icon(
+                  Icons.calendar_today_outlined,
+                  size: ResponsiveHelper.iconSize(context, 14),
+                  color: isToday ? theme.primaryColor : AppColors.grey500,
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                 Flexible(
                   child: Text(
-                    label,
+                    isToday ? '오늘 · $dateStr' : dateStr,
                     style: ResponsiveHelper.smallStyle(context).copyWith(
-                      color: foregroundColor,
-                      fontWeight: FontWeight.bold,
+                      fontWeight: FontWeight.w700,
+                      color: isToday ? theme.primaryColor : AppColors.textPrimary,
                     ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],
             ),
+          ),
+          // 인력 액션 목록
+          _buildActionRow(
+            icon: Icons.people_outlined,
+            label: '지원자',
+            subtitle: '지원 내역 확인',
+            onTap: _openApplicantsDialog,
+          ),
+          const Divider(height: 1, indent: 16, endIndent: 16, color: AppColors.grey100),
+          _buildActionRow(
+            icon: Icons.how_to_reg,
+            label: '근무 현황',
+            subtitle: '확정·출퇴근 상태 확인',
+            onTap: _showAttendancePopup,
+          ),
+          const Divider(height: 1, indent: 16, endIndent: 16, color: AppColors.grey100),
+          _buildActionRow(
+            icon: Icons.settings,
+            label: '고정 근로자',
+            subtitle: '장기 근로자 관리',
+            onTap: _openFixedWorkerManagement,
+          ),
+          // 마감관리: IntegratedWorkforceScreen에서만 표시 (WorkforceRootScreen에서는 숨김)
+          if (!widget.hideCloseManagement) ...[
+            const Divider(height: 1, indent: 16, endIndent: 16, color: AppColors.grey100),
+            _buildActionRow(
+              icon: Icons.lock_outline,
+              label: '마감관리',
+              subtitle: '근무 마감 처리',
+              onTap: _openCloseManagement,
+            ),
+          ],
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        ],
+      ),
+    );
+  }
+
+  /// compact 액션 행 — 아이콘 + 제목 + 부제목 + chevron
+  Widget _buildActionRow({
+    required IconData icon,
+    required String label,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 16),
+            vertical: ResponsiveHelper.spacing(context, 10),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                icon,
+                size: ResponsiveHelper.iconSize(context, 18),
+                color: AppColors.grey500,
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      label,
+                      style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    Text(
+                      subtitle,
+                      style: ResponsiveHelper.tinyStyle(
+                          context, color: AppColors.grey500),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                size: ResponsiveHelper.iconSize(context, 18),
+                color: AppColors.grey400,
+              ),
+            ],
           ),
         ),
       ),
@@ -617,6 +603,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
           isExpanded: _expandedSlots[key] == true,
           onToggleExpand: () => _handleGroupToggle(groupItem),
           isLoading: _loadingSlots.contains(key),
+          showManagementActions: false, // WorkforceRoot: TO 관리 액션 제외
         ));
       } else {
         final isLoadingGroup = controller.isGroupLoading(groupItem.id);
@@ -638,6 +625,7 @@ class _WorkforceCalendarViewState extends State<WorkforceCalendarView> {
               isExpanded: _expandedSlots[key] == true,
               onToggleExpand: () => _handleSlotGroupToggle(groupItem, slot, key),
               isLoading: _loadingSlots.contains(key),
+              showManagementActions: false, // WorkforceRoot: TO 관리 액션 제외
             ));
           }
         }

@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'wage_detail_model.dart';
 import '../../utils/firestore_helper.dart';
+import '../../utils/encryption_helper.dart';
 
 /// 출근 기록 모델
 ///
@@ -103,6 +104,19 @@ class AttendanceModel {
   final int? snapshotWage;
   final String? snapshotWageType;
 
+  // ── 급여 이체 계좌 스냅샷 ─────────────────────────────────────
+  // callableConfirmFinalWage 시점에 User 문서에서 복사 (복호화 없음, AES 암호문 그대로)
+  // 이후 User 계좌 변경과 무관하게 확정 시점 계좌로 이체 처리 가능
+  final String? wageAccountBankName;
+  /// AES-CBC 암호문 — 클라이언트 EncryptionHelper.decrypt()로만 복호화 가능
+  final String? wageAccountNumberEncrypted;
+  final String? wageAccountHolder;
+  /// 스냅샷 시점 계좌 인증 상태: 'verified' | 'review_required'
+  final String? wageAccountVerificationStatus;
+  final DateTime? wageAccountSnapshotAt;
+  /// [BATCH-1B] SUPER_ADMIN이 snapshot 계좌를 현재 사용자 계좌와 대조 승격한 시각
+  final DateTime? wageAccountVerifiedAt;
+
   final DateTime createdAt;
   final DateTime? updatedAt;
 
@@ -150,6 +164,13 @@ class AttendanceModel {
     this.checkInDistance,
     this.snapshotWage,
     this.snapshotWageType,
+    // 급여 이체 계좌 스냅샷
+    this.wageAccountBankName,
+    this.wageAccountNumberEncrypted,
+    this.wageAccountHolder,
+    this.wageAccountVerificationStatus,
+    this.wageAccountSnapshotAt,
+    this.wageAccountVerifiedAt,
   });
 
   // ── 표시용 "HH:mm" getter ───────────────────────────────────
@@ -158,6 +179,24 @@ class AttendanceModel {
   static String _fmt(DateTime dt) {
     final kst = dt.toUtc().add(_kst);
     return '${kst.hour.toString().padLeft(2, '0')}:${kst.minute.toString().padLeft(2, '0')}';
+  }
+
+  // ── 급여 이체 계좌 getter ────────────────────────────────────
+
+  /// 복호화된 계좌번호 (클라이언트 전용 — ENCRYPT_KEY 필요)
+  String? get wageAccountNumberDecrypted =>
+      wageAccountNumberEncrypted != null
+          ? EncryptionHelper.decrypt(wageAccountNumberEncrypted!)
+          : null;
+
+  /// 마스킹된 계좌번호 (UI 표시용) — 끝 4자리만 표시
+  String? get wageAccountNumberMasked {
+    final full = wageAccountNumberDecrypted;
+    if (full == null) return null;
+    final digits = full.replaceAll(RegExp(r'\D'), '');
+    return digits.length >= 4
+        ? '****${digits.substring(digits.length - 4)}'
+        : '****';
   }
 
   /// 최종 출근 시각 "HH:mm" (UI 표시용)
@@ -270,6 +309,13 @@ class AttendanceModel {
       checkInDistance:   (map['checkInDistance'] as num?)?.toInt(),
       snapshotWage:      (map['snapshotWage']     as num?)?.toInt(),
       snapshotWageType:  map['snapshotWageType']  as String?,
+      // 급여 이체 계좌 스냅샷
+      wageAccountBankName:             map['wageAccountBankName']             as String?,
+      wageAccountNumberEncrypted:      map['wageAccountNumberEncrypted']      as String?,
+      wageAccountHolder:               map['wageAccountHolder']               as String?,
+      wageAccountVerificationStatus:   map['wageAccountVerificationStatus']   as String?,
+      wageAccountSnapshotAt:           parseTimestampNullable(map['wageAccountSnapshotAt']),
+      wageAccountVerifiedAt:           parseTimestampNullable(map['wageAccountVerifiedAt']),
     );
   }
 
@@ -377,6 +423,13 @@ class AttendanceModel {
       if (checkInDistance != null) 'checkInDistance':   checkInDistance,
       if (snapshotWage != null)    'snapshotWage':      snapshotWage,
       if (snapshotWageType != null)'snapshotWageType':  snapshotWageType,
+      // 급여 이체 계좌 스냅샷
+      if (wageAccountBankName != null)           'wageAccountBankName':           wageAccountBankName,
+      if (wageAccountNumberEncrypted != null)    'wageAccountNumberEncrypted':    wageAccountNumberEncrypted,
+      if (wageAccountHolder != null)             'wageAccountHolder':             wageAccountHolder,
+      if (wageAccountVerificationStatus != null) 'wageAccountVerificationStatus': wageAccountVerificationStatus,
+      if (wageAccountSnapshotAt != null)         'wageAccountSnapshotAt':         Timestamp.fromDate(wageAccountSnapshotAt!),
+      if (wageAccountVerifiedAt != null)         'wageAccountVerifiedAt':         Timestamp.fromDate(wageAccountVerifiedAt!),
     };
   }
 
@@ -476,6 +529,13 @@ class AttendanceModel {
     int? checkInDistance,
     int? snapshotWage,
     String? snapshotWageType,
+    // 급여 이체 계좌 스냅샷
+    String? wageAccountBankName,
+    String? wageAccountNumberEncrypted,
+    String? wageAccountHolder,
+    String? wageAccountVerificationStatus,
+    DateTime? wageAccountSnapshotAt,
+    DateTime? wageAccountVerifiedAt,
   }) {
     return AttendanceModel(
       id:            id            ?? this.id,
@@ -521,6 +581,12 @@ class AttendanceModel {
       checkInDistance:   checkInDistance   ?? this.checkInDistance,
       snapshotWage:      snapshotWage      ?? this.snapshotWage,
       snapshotWageType:  snapshotWageType  ?? this.snapshotWageType,
+      wageAccountBankName:           wageAccountBankName           ?? this.wageAccountBankName,
+      wageAccountNumberEncrypted:    wageAccountNumberEncrypted    ?? this.wageAccountNumberEncrypted,
+      wageAccountHolder:             wageAccountHolder             ?? this.wageAccountHolder,
+      wageAccountVerificationStatus: wageAccountVerificationStatus ?? this.wageAccountVerificationStatus,
+      wageAccountSnapshotAt:         wageAccountSnapshotAt         ?? this.wageAccountSnapshotAt,
+      wageAccountVerifiedAt:         wageAccountVerifiedAt         ?? this.wageAccountVerifiedAt,
     );
   }
 }

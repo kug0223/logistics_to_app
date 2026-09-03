@@ -20,7 +20,6 @@ import '../../utils/image_helper.dart';
 
 // Widgets
 import '../../widgets/common/common_widgets.dart';
-import '../common/document_management_screen.dart';
 import '../../utils/navigation_helper.dart';
 
 // Screen
@@ -508,9 +507,12 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
 
   Future<void> _handleCreateTO(BuildContext context, BusinessModel business) async {
     if (!context.mounted) return;
+    // [HOTFIX HOME.POSTING.ENTRY.1-R1] BusinessList는 이미 특정 사업장 컨텍스트 —
+    // 해당 사업장을 CreateTO 초기 선택으로 전달한다.
     await NavigationHelper.push<bool>(
       context,
-      destination: const AdminCreateTOScreen(),
+      destination: AdminCreateTOScreen(initialBusinessId: business.id),
+      useRootNavigator: true,
       onReturn: (result) {
         if (result == true && mounted) _loadBusinesses(forceServer: true);
       },
@@ -579,25 +581,10 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
       return;
     }
 
-    // 사업자등록증 미등록 시 다이얼로그
-    if (user.businessLicenseImageUrl == null) {
-      final shouldNavigate = await DialogHelper.showDocumentRequired(
-        context,
-        title: '사업자등록증 등록 필요',
-        missingDocuments: ['사업자등록증'],
-      );
-      if (!mounted) return;
-
-      if (shouldNavigate) {
-        NavigationHelper.push<bool>(
-          context,
-          destination: const DocumentManagementScreen(),
-        );
-      }
-      return;
-    }
-
-    // 사업자등록증 있음 → 사업장 등록 화면으로
+    // 사업자등록증 체크 제거 — BusinessFormScreen._validateStep2()에서
+    // 신규 등록 시 사업자등록증 업로드를 강제하므로 여기서 사전 차단 불필요.
+    // 신규: business.businessLicenseImageUrl (Form 내 업로드)
+    // legacy: user.businessLicenseImageUrl (서류관리 화면 유지)
     await NavigationHelper.push<bool>(
       context,
       destination: const BusinessFormScreen(),

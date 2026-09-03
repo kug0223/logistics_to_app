@@ -109,15 +109,14 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
 
   Future<void> _addTag(String type) async {
     if (_isSaving) return;
-    final controller = TextEditingController();
+    // [FC-TAG-01 OWNERSHIP FIX] _TagInputDialog(StatefulWidget)이 ctrl을
+    // 직접 소유하고 State.dispose()에서 해제한다.
+    // addPostFrameCallback dispose 패턴 제거.
     try {
       final result = await showDialog<String>(
         context: context,
         barrierDismissible: false,
-        builder: (context) => _TagInputDialog(
-          title: '태그 추가',
-          controller: controller,
-        ),
+        builder: (context) => const _TagInputDialog(title: '태그 추가'),
       );
 
       if (result != null && result.isNotEmpty) {
@@ -162,7 +161,7 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
       if (mounted) ToastHelper.showError('태그 추가 중 오류가 발생했습니다');
     } finally {
       if (mounted) setState(() => _isSaving = false);
-      WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
+      // controller.dispose() 제거 — _TagInputDialog.State가 직접 처리
     }
   }
 
@@ -446,28 +445,37 @@ class _ReviewTagsSettingsScreenState extends State<ReviewTagsSettingsScreen>
 }
 
 /// 태그 입력 다이얼로그
-class _TagInputDialog extends StatelessWidget {
+/// [FC-TAG-01 OWNERSHIP FIX] controller를 외부에서 받지 않고 State가 직접 소유·해제
+class _TagInputDialog extends StatefulWidget {
   final String title;
-  final TextEditingController controller;
+  const _TagInputDialog({required this.title});
 
-  const _TagInputDialog({
-    required this.title,
-    required this.controller,
-  });
+  @override
+  State<_TagInputDialog> createState() => _TagInputDialogState();
+}
+
+class _TagInputDialogState extends State<_TagInputDialog> {
+  final _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    
+
     return StyledDialog(
-      title: title,
+      title: widget.title,
       icon: Icons.label_outline,
       headerColor: theme.primaryColor,
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           StyledDialogTextField(
-            controller: controller,
+            controller: _ctrl,
             labelText: '태그 이름',
             hintText: '예: 성실함',
             prefixIcon: Icons.tag,
@@ -484,7 +492,7 @@ class _TagInputDialog extends StatelessWidget {
         StyledDialogButton.primary(
           text: '추가',
           onPressed: () {
-            final text = controller.text.trim();
+            final text = _ctrl.text.trim();
             if (text.isEmpty) {
               ToastHelper.showError('태그 이름을 입력하세요');
               return;

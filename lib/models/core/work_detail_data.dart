@@ -8,6 +8,11 @@ import 'insurance_rate_model.dart';
 /// WorkDetailModel(Firestore 서브컬렉션)을 대체.
 /// TOModel.workDetails 배열의 원소로 사용되며 별도 문서를 생성하지 않음.
 class WorkDetailData {
+  /// [8.1E.1] workDetail immutable ID — Firestore에 영구 저장, 생성 후 변경 금지.
+  /// null: Phase 8.1E.1 이전에 생성된 legacy 슬롯.
+  /// workDetailCounts map key = wdId (new canonical) 또는 composite id (legacy fallback).
+  final String? wdId;
+
   final String workType;
   final String workTypeIcon;
   final String workTypeColor;
@@ -70,12 +75,13 @@ class WorkDetailData {
   final String? closedBy;
   final DateTime? emergencyOpenedAt;
 
-  /// 슬롯 workTypeCounts 기반 정원 충족 여부 — 다이얼로그 구성 시 주입
+  /// [8.1E.4] workDetail 단위 정원 충족 여부 — 다이얼로그 구성 시 주입 (isWorkDetailFull 기준)
   /// Firestore에 저장하지 않음; `isFull` getter가 이 값을 반환
   final bool runtimeFull;
 
   const WorkDetailData({
     required this.workType,
+    this.wdId,
     this.workTypeIcon = '📋',
     this.workTypeColor = '#2196F3',
     this.workTypeBackgroundColor = '#E3F2FD',
@@ -109,6 +115,7 @@ class WorkDetailData {
   factory WorkDetailData.fromMap(Map<String, dynamic> map, [String? id]) {
     return WorkDetailData(
       workType: map['workType'] as String? ?? id ?? '',
+      wdId: map['wdId'] as String?,
       workTypeIcon: map['workTypeIcon'] as String? ?? '📋',
       workTypeColor: map['workTypeColor'] as String? ?? '#2196F3',
       workTypeBackgroundColor: map['workTypeBackgroundColor'] as String? ?? '#E3F2FD',
@@ -145,6 +152,7 @@ class WorkDetailData {
 
   Map<String, dynamic> toMap() => {
     'workType': workType,
+    if (wdId != null) 'wdId': wdId,
     'workTypeIcon': workTypeIcon,
     'workTypeColor': workTypeColor,
     'workTypeBackgroundColor': workTypeBackgroundColor,
@@ -178,6 +186,7 @@ class WorkDetailData {
 
   WorkDetailData copyWith({
     String? workType,
+    String? wdId,
     String? workTypeIcon,
     String? workTypeColor,
     String? workTypeBackgroundColor,
@@ -217,6 +226,7 @@ class WorkDetailData {
   }) {
     return WorkDetailData(
       workType: workType ?? this.workType,
+      wdId: wdId ?? this.wdId, // [8.1E.1] immutable — 명시적 override만 허용
       workTypeIcon: workTypeIcon ?? this.workTypeIcon,
       workTypeColor: workTypeColor ?? this.workTypeColor,
       workTypeBackgroundColor: workTypeBackgroundColor ?? this.workTypeBackgroundColor,
@@ -303,7 +313,13 @@ class WorkDetailData {
   // ── 하위 호환성 getters (구 WorkDetailModel 기반 화면용) ──────
 
   /// 합성 ID — workType + 시간 조합 (같은 업무명 다른 시간대 구분)
+  /// [8.1E.1] 레거시 identity — 변경하지 않음. 새 코드는 canonicalId 사용.
   String get id => '${workType}_${startTime}_$endTime';
+
+  /// [8.1E.1] Canonical capacity counter key
+  /// - wdId 있으면: wdId (immutable, workDetailCounts map key)
+  /// - wdId 없으면: composite id fallback (legacy slot, workTypeCounts 사용)
+  String get canonicalId => wdId ?? id;
 
   /// 구 workType 전용 ID — stats 키 등 레거시 호환용
   String get legacyId => workType;
@@ -321,8 +337,7 @@ class WorkDetailData {
   bool isEffectivelyClosed(DateTime slotDate) {
     if (isClosed || isTimeExpired) return true;
     final today = DateTime.now();
-    return DateTime(slotDate.year, slotDate.month, slotDate.day)
-        .isBefore(DateTime(today.year, today.month, today.day));
+    return FormatHelper.toKstDate(slotDate).isBefore(FormatHelper.toKstDate(today));
   }
 
   /// 인원 충족 여부 — SlotModel.workTypeCounts 기반으로 다이얼로그 구성 시 주입
@@ -359,4 +374,18 @@ class WorkDetailData {
 
   static List<Map<String, dynamic>> listToFirestore(List<WorkDetailData> list) =>
       list.map((e) => e.toMap()).toList();
+
+  /// [4H.0C-CF-SERIAL] CF 전달용 직렬화 — Firestore Timestamp → milliseconds 변환
+  /// callableUpdateSlotWorkDetails 호출 시 사용.
+  static List<Map<String, dynamic>> listToCFPayload(List<WorkDetailData> list) {
+    return listToFirestore(list).map((m) {
+      final result = Map<String, dynamic>.from(m);
+      final ts = result['applicationDeadline'];
+      if (ts is Timestamp) {
+        result.remove('applicationDeadline');
+        result['applicationDeadlineMs'] = ts.millisecondsSinceEpoch;
+      }
+      return result;
+    }).toList();
+  }
 }

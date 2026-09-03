@@ -68,6 +68,10 @@ class TOItemCard extends StatefulWidget {
   final DateTime? dateOverride;
   /// false면 좌측 그룹 연결선을 숨김 (캘린더 모드 등 독립 카드 표시 시)
   final bool showConnector;
+  /// false이면 공고 상세보기만 유지, 수정/삭제/업무별마감 숨김
+  /// WorkforceRoot: false (인력 관점 — TO 관리 액션 불필요)
+  /// JobsRoot / Legacy: true (기본값)
+  final bool showManagementActions;
 
   const TOItemCard({
     super.key,
@@ -83,6 +87,7 @@ class TOItemCard extends StatefulWidget {
     this.onAffectedTOsChanged,
     this.dateOverride,
     this.showConnector = true,
+    this.showManagementActions = true,
   });
 
   @override
@@ -506,7 +511,25 @@ class _TOItemCardState extends State<TOItemCard> {
     final scheduledAt = slot != null
         ? SlotStatusUtil.slotScheduledAt(slot, to)
         : to.publishAt;
-    return SlotStatusBadge(status: status, scheduledAt: scheduledAt, compact: true);
+    // [4I.1A] group card와 badge parity — closed 상태 contextual 레이블 동기화
+    String? closedLabel;
+    if (status == SlotDisplayStatus.closed) {
+      if (to.isFull) {
+        closedLabel = '모집 완료';
+      } else if (slot?.isManualClosed == true || to.isManualClosed) {
+        closedLabel = '종료';
+      } else if (to.closedReasonCode == 'TIME_EXPIRED') {
+        closedLabel = '지원 마감';
+      } else if (to.closedReasonCode == 'POSTING_EXPIRED') {
+        closedLabel = '공고 만료';
+      }
+    }
+    return SlotStatusBadge(
+      status: status,
+      scheduledAt: scheduledAt,
+      compact: true,
+      closedLabel: closedLabel,
+    );
   }
 
   /// 팝업 메뉴
@@ -527,40 +550,50 @@ class _TOItemCardState extends State<TOItemCard> {
     final primaryColor = Theme.of(context).primaryColor;
     final user = context.read<UserProvider>().currentUser;
     final canDelete = user?.isBusinessAdmin == true || user?.isSuperAdmin == true;
+    // [4H.0C-CLOSED-01] slot 레벨 우선, 없으면 TO 레벨 isClosed 사용
+    final slotIsClosed =
+        widget.toItem.slot?.isClosed ?? widget.toItem.to.isClosed;
     AppMenuSheet.show(
       context: context,
       itemGroups: [
+        // 공고 상세보기 — 항상 표시 (인력 맥락에서도 공고 조건 확인 필요)
         [
           AppMenuSheetItem(
             icon: Icons.visibility,
-            label: '공고 상세보기',
+            label: '지원자 화면 미리보기',
             color: AppColors.info,
             onTap: () => _handleMenuAction(context, 'preview'),
           ),
         ],
-        [
-          AppMenuSheetItem(
-            icon: Icons.edit,
-            label: '수정',
-            color: AppColors.warning,
-            onTap: () => _handleMenuAction(context, 'edit'),
-          ),
-          if (canDelete)
+        // 수정/삭제/업무별마감 — Jobs 맥락(showManagementActions=true)에서만 표시
+        // WorkforceRoot: false — TO 관리는 공고 탭 canonical route
+        if (widget.showManagementActions) ...[
+          [
+            // [4H.0C-CLOSED-01] 마감된 TO/슬롯은 수정 항목 숨김 (재오픈 후 수정)
+            if (!slotIsClosed)
+              AppMenuSheetItem(
+                icon: Icons.edit,
+                label: '수정',
+                color: AppColors.warning,
+                onTap: () => _handleMenuAction(context, 'edit'),
+              ),
+            if (canDelete)
+              AppMenuSheetItem(
+                icon: Icons.delete,
+                label: '삭제',
+                color: AppColors.error,
+                isDanger: true,
+                onTap: () => _handleMenuAction(context, 'delete'),
+              ),
+          ],
+          [
             AppMenuSheetItem(
-              icon: Icons.delete,
-              label: '삭제',
-              color: AppColors.error,
-              isDanger: true,
-              onTap: () => _handleMenuAction(context, 'delete'),
+              icon: Icons.assignment_turned_in,
+              label: '업무별 마감',
+              color: primaryColor,
+              onTap: () => _handleMenuAction(context, 'manageWorkDetails'),
             ),
-        ],
-        [
-          AppMenuSheetItem(
-            icon: Icons.assignment_turned_in,
-            label: '업무별 마감',
-            color: primaryColor,
-            onTap: () => _handleMenuAction(context, 'manageWorkDetails'),
-          ),
+          ],
         ],
       ],
     );
@@ -571,6 +604,7 @@ class _TOItemCardState extends State<TOItemCard> {
     switch (value) {
       case 'preview':
         if (!widget.toItem.isWorkDetailLoaded || widget.toItem.workDetails.isEmpty) {
+          final rootNav = Navigator.of(context, rootNavigator: true);
           showDialog(
             context: context,
             barrierDismissible: false,
@@ -583,13 +617,11 @@ class _TOItemCardState extends State<TOItemCard> {
               result['workStats'] as Map<String, Map<String, int>>,
             );
           } catch (e) {
-            if (!mounted) return;
-            Navigator.pop(this.context);
-            ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+            if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
             return;
+          } finally {
+            if (rootNav.mounted && rootNav.canPop()) rootNav.pop();
           }
-          if (!mounted) return;
-          Navigator.pop(this.context);
         }
         if (!mounted) return;
         final resolvedStats = widget.toItem.resolveStats();
@@ -613,6 +645,7 @@ class _TOItemCardState extends State<TOItemCard> {
       case 'edit':
         await NavigationHelper.push<bool>(
           context,
+          useRootNavigator: true,
           destination: AdminEditTOScreen(
             to: widget.toItem.to,
             slot: widget.toItem.slot,
@@ -632,6 +665,7 @@ class _TOItemCardState extends State<TOItemCard> {
 
       case 'manageWorkDetails':
         if (!widget.toItem.isWorkDetailLoaded || widget.toItem.workDetails.isEmpty) {
+          final rootNav = Navigator.of(context, rootNavigator: true);
           showDialog(
             context: context,
             barrierDismissible: false,
@@ -644,13 +678,11 @@ class _TOItemCardState extends State<TOItemCard> {
               result['workStats'] as Map<String, Map<String, int>>,
             );
           } catch (e) {
-            if (!mounted) return;
-            Navigator.pop(this.context);
-            ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+            if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
             return;
+          } finally {
+            if (rootNav.mounted && rootNav.canPop()) rootNav.pop();
           }
-          if (!mounted) return;
-          Navigator.pop(this.context);
         }
         if (!mounted) return;
         WorkDetailManagementDialog(

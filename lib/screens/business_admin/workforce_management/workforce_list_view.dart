@@ -11,6 +11,12 @@ import '../../../services/firestore_service.dart';
 // Controllers
 import '../../../controllers/workforce_controller.dart';
 
+// Providers
+import '../../../providers/user_provider.dart';
+
+// Utils
+import '../../../utils/format_helper.dart';
+
 // Utils
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
@@ -192,12 +198,12 @@ class _WorkforceListViewState extends State<WorkforceListView> {
       }
 
       if (selectedDateRange != null) {
-        final filterStart = DateTime(
+        final filterStart = DateTime.utc(
           selectedDateRange.start.year,
           selectedDateRange.start.month,
           selectedDateRange.start.day,
         );
-        final filterEnd = DateTime(
+        final filterEnd = DateTime.utc(
           selectedDateRange.end.year,
           selectedDateRange.end.month,
           selectedDateRange.end.day,
@@ -214,7 +220,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
               : groupItem.slotDates;
           if (slotDates.isNotEmpty) {
             final hasMatch = slotDates.any((d) {
-              final day = DateTime(d.year, d.month, d.day);
+              final day = FormatHelper.toKstDate(d);
               return !day.isBefore(filterStart) && !day.isAfter(filterEnd);
             });
             if (!hasMatch) return false;
@@ -251,21 +257,25 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   /// 날짜 범위 체크 (장기/단기 공고 모두 고려)
   bool _isDateInRange(TOModel to, DateTime filterStart, DateTime filterEnd) {
     if (!to.isLongTerm) {
-      final toDate = DateTime(to.date.year, to.date.month, to.date.day);
+      final toDate = FormatHelper.toKstDate(to.date);
       return !toDate.isBefore(filterStart) && !toDate.isAfter(filterEnd);
     }
 
-    if (to.endDate == null) {
-      final toDate = DateTime(to.date.year, to.date.month, to.date.day);
-      return !toDate.isBefore(filterStart) && !toDate.isAfter(filterEnd);
-    }
+    // contract TO 시작일 결정: 신규 preset → workStartAvailableFrom / custom·legacy → rangeStart
+    final DateTime rawStart = to.hasWorkStartAvailableRange
+        ? to.workStartAvailableFrom!
+        : (to.rangeStart ?? to.date);
+    // contract TO 종료일 결정: 신규 preset → workStartAvailableUntil / custom·legacy → endDate(=rangeEnd)
+    final DateTime? rawEnd = to.hasWorkStartAvailableRange
+        ? to.workStartAvailableUntil
+        : to.endDate;
 
-    final toStart = DateTime(to.date.year, to.date.month, to.date.day);
-    final toEnd = DateTime(
-      to.endDate!.year,
-      to.endDate!.month,
-      to.endDate!.day,
-    );
+    final toStart = FormatHelper.toKstDate(rawStart);
+    if (rawEnd == null) {
+      // 종료일 미설정 (구 데이터): 시작일 단일점으로 체크
+      return !toStart.isBefore(filterStart) && !toStart.isAfter(filterEnd);
+    }
+    final toEnd = FormatHelper.toKstDate(rawEnd);
     return !(filterEnd.isBefore(toStart) || filterStart.isAfter(toEnd));
   }
 
@@ -281,36 +291,23 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   }
 
   Widget _buildTabBar(WorkforceController controller) {
-    final theme = Theme.of(context);
-
     return Container(
       padding: ResponsiveHelper.symmetricPadding(context, horizontal: 12, vertical: 8),
       child: Row(
         children: [
           Expanded(
             child: Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 3)),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    theme.primaryColor.withValues(alpha: 0.08),
-                    theme.primaryColor.withValues(alpha: 0.05),
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: theme.primaryColor.withValues(alpha: 0.2),
-                  width: 1.5,
-                ),
+                color: AppColors.grey100,
+                borderRadius: BorderRadius.circular(14),
               ),
               child: Row(
                 children: [
                   Expanded(
                     child: _buildTab(controller, TOStatus.active, '진행중', Icons.play_circle_outline),
                   ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 3)),
                   Expanded(
                     child: _buildTab(controller, TOStatus.closed, '마감됨', Icons.check_circle_outline),
                   ),
@@ -329,8 +326,20 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     final isActiveTab = tab == TOStatus.active;
     final activeCount = isActiveTab ? controller.activeToCount : null;
     final isMaxed = isActiveTab && (activeCount ?? 0) >= controller.maxActiveTOs;
+    // 분모(/N) 표시 여부는 "현재 scope가 단일 사업장인가"로 판단 (item 기반 추론 금지).
+    // canonical source: UserProvider.managedBusinessIds.length (jobs_root_screen._computeScopeLabel 동일 기준)
+    //   - SubAdmin → effectiveBusinessId 고정 → 단일 → 분모 표시
+    //   - managedBusinessIds.length == 1 → 단일 → 분모 표시
+    //   - managedBusinessIds.length >= 2 + no business filter → 멀티 전체 scope → 분모 숨김
+    //   - managedBusinessIds.length >= 2 + business filter 선택 → 단일 필터 → 분모 표시
+    final up = context.read<UserProvider>();
+    final isBusinessFiltered = controller.selectedBusiness != null;
+    final managedCount = up.currentUser?.managedBusinessIds.length ?? 1;
+    final showDenominator = up.isSubAdmin || managedCount <= 1 || isBusinessFiltered;
     final displayLabel = isActiveTab && activeCount != null
-        ? '$label ($activeCount/${controller.maxActiveTOs})'
+        ? showDenominator
+            ? '$label ($activeCount/${controller.maxActiveTOs})'
+            : '$label ($activeCount)'
         : label;
 
     return GestureDetector(
@@ -350,24 +359,14 @@ class _WorkforceListViewState extends State<WorkforceListView> {
           vertical: ResponsiveHelper.spacing(context, 9),
         ),
         decoration: BoxDecoration(
-          gradient: isSelected
-              ? LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    theme.primaryColor,
-                    theme.primaryColor.withValues(alpha: 0.85),
-                  ],
-                )
-              : null,
-          color: isSelected ? null : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
+          color: isSelected ? Colors.white : Colors.transparent,
+          borderRadius: BorderRadius.circular(11),
           boxShadow: isSelected
               ? [
                   BoxShadow(
-                    color: theme.primaryColor.withValues(alpha: 0.4),
-                    blurRadius: 8,
-                    offset: const Offset(0, 3),
+                    color: Colors.black.withValues(alpha: 0.06),
+                    blurRadius: 4,
+                    offset: const Offset(0, 1),
                   ),
                 ]
               : null,
@@ -377,19 +376,22 @@ class _WorkforceListViewState extends State<WorkforceListView> {
           children: [
             Icon(
               icon,
-              size: ResponsiveHelper.iconSize(context, 18),
+              size: ResponsiveHelper.iconSize(context, 16),
               color: isSelected
-                  ? Colors.white
-                  : (isMaxed ? AppColors.error : theme.primaryColor.withValues(alpha: 0.7)),
+                  ? (isMaxed ? AppColors.error : theme.primaryColor)
+                  : AppColors.grey500,
             ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-            Text(
-              displayLabel,
-              style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                fontWeight: FontWeight.bold,
-                color: isSelected
-                    ? Colors.white
-                    : (isMaxed ? AppColors.error : theme.primaryColor.withValues(alpha: 0.7)),
+            SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+            Flexible(
+              child: Text(
+                displayLabel,
+                style: ResponsiveHelper.smallStyle(context).copyWith(
+                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                  color: isSelected
+                      ? (isMaxed ? AppColors.error : theme.primaryColor)
+                      : AppColors.grey500,
+                ),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],
@@ -410,6 +412,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     DialogHelper.showSheet(
       context,
       isScrollControlled: true,
+      useRootNavigator: true,
       builder: (context) => FilterDialog(
         selectedBusiness: controller.selectedBusiness,
         selectedDateRange: controller.selectedDateRange,
@@ -487,7 +490,8 @@ class _WorkforceListViewState extends State<WorkforceListView> {
                 activeGroupKey: _activeGroupKey,
                 onGroupActivated: (groupId) => setState(() {
                   _activeGroupKey = groupId;
-                  _expandedGroups.clear();
+                  // Phase 4C.1+: expand/collapse는 onToggleExpand(_handleGroupExpand)에서 관리.
+                  // 여기서 _expandedGroups를 clear하면 chip 탭 시 card가 collapse됨 (4D.1 회귀 수정).
                   _expandedTOs.clear();
                 }),
                 onGroupDeactivated: () { if (_activeGroupKey != null) setState(() => _activeGroupKey = null); },

@@ -3,8 +3,8 @@ import 'package:provider/provider.dart';
 import '../../providers/notification_provider.dart';
 import '../../models/core/notification_model.dart';
 import '../../widgets/common/notification_card.dart';
-import '../../widgets/common/app_tab_label.dart';
 import '../../utils/responsive_helper.dart';
+import '../../utils/format_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../providers/user_provider.dart';
 // 네비게이션 대상 화면들
@@ -26,7 +26,6 @@ import '../../models/core/employment_contract_model.dart';
 import '../../services/contract_service.dart';
 import '../../services/member_service.dart';
 import '../../theme/app_colors.dart';
-import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../business_admin/admin_review_list_screen.dart';
@@ -42,6 +41,30 @@ import '../../services/firestore_service.dart';
 import '../../services/auth_service.dart';
 import '../../widgets/dialogs/worker_detail_dialog.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
+import '../user/attendance_check_screen.dart';
+import '../../models/core/business_member_model.dart';
+import '../user/all_to_list_screen.dart';               // [Phase 8.1C] toMatch fallback
+import 'job_posting_screen.dart';                       // [Phase 8.1C] toMatch 공고 상세
+import '../business_admin/payroll/payroll_payment_dashboard_screen.dart'; // [FCM-ROUTE-01]
+import '../../utils/admin_tab_switcher.dart';           // [FCM-ROUTE-01] Settlement tab canonical routing
+
+// ════════════════════════════════════════════════════════════════════════
+// 관리자 알림 접근 검증 결과 — 클릭 시점에 멤버십·권한을 재확인한다.
+//
+// [설계] 알림은 최대 30일 보존되므로 "알림 발송 시 권한" ≠ "클릭 시 권한".
+// 4-layer defense:
+//   1. 알림 category 분류 (Phase 2 explicit field)
+//   2. 알림함 탭별 필터 (개인/관리 탭)
+//   3. 클릭 시점 멤버십 + Permission 재검증 (이 enum·헬퍼가 담당)
+//   4. 각 화면 내부 Firestore rules (최종 방어)
+// ════════════════════════════════════════════════════════════════════════
+enum _AdminAccessResult {
+  allowed,           // 접근 허용
+  noBusinessAccess,  // businessId가 현재 subAdminBusinessIds에 없음
+  noPermission,      // 멤버십 있으나 현재 MemberPermissions 없음
+  noBusinessId,      // businessId 필수이나 알림 data에 누락
+  invalidContext,    // 순수 USER가 관리자 전용 알림을 탭
+}
 
 /// 알림 목록 화면 (전체 / 미읽음 탭)
 class NotificationScreen extends StatefulWidget {
@@ -54,6 +77,8 @@ class NotificationScreen extends StatefulWidget {
 class _NotificationScreenState extends State<NotificationScreen> {
   bool _isHandlingTap = false;
   bool _isMarkingAllRead = false;
+  /// 미읽음만 보기 토글 — 탭이 아닌 필터 칩으로 전역 적용
+  bool _showUnreadOnly = false;
 
   /// 현재 열려 있는 카드의 ID를 공유하는 노티파이어.
   /// 값이 바뀌면 해당 ID가 아닌 모든 카드가 listener를 통해 자동으로 닫힌다.
@@ -99,89 +124,155 @@ class _NotificationScreenState extends State<NotificationScreen> {
             }
           });
         }
-        final unreadList = provider.unreadNotifications;
-        // 서브어드민 전용: 관리자 알림만 필터링
-        final adminList = isSubAdmin ? provider.adminNotifications : <NotificationModel>[];
 
-        return DefaultTabController(
-          length: isSubAdmin ? 3 : 2,
-          child: GradientScaffold(
-            title: '알림',
-            showNotificationBell: false,
-            headerBottom: TabBar(
-              labelColor: Colors.white,
-              unselectedLabelColor: Colors.white60,
-              indicatorColor: Colors.white,
-              indicatorWeight: 2.5,
-              dividerColor: Colors.transparent,
-              tabs: [
-                Tab(
-                  child: AppTabLabel(
-                    label: '전체',
-                    count: provider.notifications.length,
-                    countSuffix: provider.hasMore ? '+' : '',
-                    badgeColor: Colors.white,
+        // 모두 읽음 액션 버튼 — 흰색 배경이므로 Primary 색상으로
+        final markAllReadAction = provider.hasUnread
+            ? TextButton(
+                onPressed: _isMarkingAllRead
+                    ? null
+                    : () async {
+                        setState(() => _isMarkingAllRead = true);
+                        try {
+                          final ok = await provider.markAllAsRead();
+                          if (!mounted) return;
+                          if (ok) {
+                            ToastHelper.showSuccess('모든 알림을 읽음 처리했습니다');
+                          } else {
+                            ToastHelper.showError('읽음 처리에 실패했습니다');
+                          }
+                        } catch (e) {
+                          debugPrint('❌ 전체 읽음 처리 오류: $e');
+                          if (mounted) ToastHelper.showError('읽음 처리에 실패했습니다');
+                        } finally {
+                          if (mounted) setState(() => _isMarkingAllRead = false);
+                        }
+                      },
+                child: Text(
+                  '모두 읽음',
+                  style: ResponsiveHelper.smallStyle(
+                    context,
+                    color: Theme.of(context).primaryColor,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-                Tab(
-                  child: AppTabLabel(
-                    label: '미읽음',
-                    count: provider.unreadCount,
-                    badgeColor: AppColors.error,
-                    urgent: provider.hasUnread,
-                  ),
-                ),
-                if (isSubAdmin)
-                  Tab(
-                    child: AppTabLabel(
-                      label: '관리자',
-                      count: adminList.length,
-                      badgeColor: Colors.white,
+              )
+            : null;
+
+        // 공통 AppBar 빌더
+        AppBar buildAppBar({Widget? bottom}) => AppBar(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+          scrolledUnderElevation: 1,
+          shadowColor: AppColors.grey200,
+          iconTheme: const IconThemeData(color: AppColors.textPrimary),
+          title: Text(
+            '알림',
+            style: ResponsiveHelper.titleStyle(context, color: AppColors.textPrimary),
+          ),
+          titleSpacing: 4,
+          actions: [
+            if (markAllReadAction != null) markAllReadAction,
+            const SizedBox(width: 4),
+          ],
+          bottom: bottom as PreferredSizeWidget?,
+        );
+
+        // ── SubAdmin: 3탭 (전체 / 내 알림 / 관리 알림) ───────────────────
+        if (isSubAdmin) {
+          final unreadPersonal = provider.unreadNotifications
+              .where((n) => n.resolvedCategory != NotificationCategory.admin)
+              .length;
+          final unreadAdmin = provider.unreadNotifications
+              .where((n) => n.resolvedCategory == NotificationCategory.admin)
+              .length;
+
+          return DefaultTabController(
+            length: 3,
+            child: Scaffold(
+              backgroundColor: AppColors.grey50,
+              appBar: buildAppBar(
+                bottom: PreferredSize(
+                  preferredSize: const Size.fromHeight(48),
+                  child: ColoredBox(
+                    color: Colors.white,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TabBar(
+                          labelColor: Theme.of(context).primaryColor,
+                          unselectedLabelColor: AppColors.grey500,
+                          indicatorColor: Theme.of(context).primaryColor,
+                          indicatorWeight: 2.0,
+                          indicatorSize: TabBarIndicatorSize.tab,
+                          dividerColor: Colors.transparent,
+                          labelStyle: ResponsiveHelper.smallStyle(
+                            context,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          unselectedLabelStyle: ResponsiveHelper.smallStyle(context),
+                          tabs: [
+                            _buildTab('전체', provider.unreadCount),
+                            _buildTab('내 알림', unreadPersonal),
+                            _buildTab('관리 알림', unreadAdmin),
+                          ],
+                        ),
+                        Divider(height: 1, color: AppColors.grey200),
+                      ],
                     ),
                   ),
-              ],
-            ),
-            actions: [
-              if (provider.hasUnread)
-                TextButton(
-                  onPressed: _isMarkingAllRead
-                      ? null
-                      : () async {
-                          setState(() => _isMarkingAllRead = true);
-                          try {
-                            final ok = await provider.markAllAsRead();
-                            if (!mounted) return;
-                            if (ok) {
-                              ToastHelper.showSuccess('모든 알림을 읽음 처리했습니다');
-                            } else {
-                              ToastHelper.showError('읽음 처리에 실패했습니다');
-                            }
-                          } catch (e) {
-                            debugPrint('❌ 전체 읽음 처리 오류: $e');
-                            if (mounted) ToastHelper.showError('읽음 처리에 실패했습니다');
-                          } finally {
-                            if (mounted) setState(() => _isMarkingAllRead = false);
-                          }
-                        },
-                  child: Text(
-                    '모두 읽음',
-                    style: ResponsiveHelper.smallStyle(context, color: Colors.white),
-                  ),
                 ),
-            ],
-            body: _buildBody(context, provider, unreadList, adminList: adminList, isSubAdmin: isSubAdmin),
-          ),
+              ),
+              body: _buildBody(context, provider, isSubAdmin: true),
+            ),
+          );
+        }
+
+        // ── Pure USER / BUSINESS_ADMIN: 단일 목록, 탭 없음 ───────────────
+        return Scaffold(
+          backgroundColor: AppColors.grey50,
+          appBar: buildAppBar(),
+          body: _buildBody(context, provider, isSubAdmin: false),
         );
       },
     );
   }
 
+  /// 미읽음 수 배지가 붙은 탭 위젯 — count 0이면 배지 표시 안 함
+  Widget _buildTab(String label, int unreadCount) {
+    return Tab(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label),
+          if (unreadCount > 0) ...[
+            const SizedBox(width: 4),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(
+                color: AppColors.error,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                '$unreadCount',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  height: 1.2,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildBody(
     BuildContext context,
-    NotificationProvider provider,
-    List<NotificationModel> unreadList, {
-    List<NotificationModel> adminList = const [],
-    bool isSubAdmin = false,
+    NotificationProvider provider, {
+    required bool isSubAdmin,
   }) {
     if (provider.isLoading) {
       return const LoadingWidget(message: '알림 불러오는 중...');
@@ -190,47 +281,137 @@ class _NotificationScreenState extends State<NotificationScreen> {
       return _buildErrorState(context, provider);
     }
 
-    // rebuild당 DateTime.now() 한 번만 계산 — _buildGroupedItems 3회 공유
+    // rebuild당 DateTime.now() 한 번만 계산
     final now = DateTime.now();
-    final groupedAll = _buildGroupedItems(provider.notifications, now);
-    final groupedUnread = _buildGroupedItems(unreadList, now);
 
-    return TabBarView(
-      children: [
-        _buildList(
-          context, provider, provider.notifications,
-          grouped: groupedAll,
-          hasMore: provider.hasMore,
-          isLoadingMore: provider.isLoadingMore,
-          onLoadMore: provider.loadMore,
-        ),
-        _buildList(
-          context, provider, unreadList,
-          grouped: groupedUnread,
-          emptyMessage: '미읽음 알림이 없습니다',
-          // 미읽음 탭은 클라이언트 필터 결과 — 별도 페이지네이션 없음
-          // 전체 탭에 더 불러올 알림이 있으면 안내 문구만 표시
-          hasMore: false,
-          showLoadMoreHint: provider.hasMore,
-        ),
-        if (isSubAdmin)
-          _buildList(
-            context, provider, adminList,
-            grouped: _buildGroupedItems(adminList, now),
-            emptyMessage: '관리자 알림이 없습니다',
-            hasMore: false,
-            showLoadMoreHint: provider.hasMore,
+    // 미읽음 필터 토글 칩
+    final toggleChip = _buildUnreadToggle(context, provider.unreadCount);
+
+    if (isSubAdmin) {
+      // ── SubAdmin: 3탭 (전체 / 내 알림 / 관리 알림) + 미읽음 토글 ───────
+      // 전체 풀에 미읽음 필터 먼저 적용 후 탭별 분기
+      final base = _showUnreadOnly ? provider.unreadNotifications : provider.notifications;
+      final personalNotifs = base
+          .where((n) => n.resolvedCategory != NotificationCategory.admin)
+          .toList();
+      final adminNotifs = base
+          .where((n) => n.resolvedCategory == NotificationCategory.admin)
+          .toList();
+
+      return Column(
+        children: [
+          toggleChip,
+          Expanded(
+            child: TabBarView(
+              children: [
+                _buildList(
+                  context, provider, base,
+                  grouped: _buildGroupedItems(base, now),
+                  emptyMessage: _showUnreadOnly ? '새로운 알림이 없습니다' : '알림이 없습니다',
+                  emptySubtitle: _showUnreadOnly
+                      ? '모든 알림을 확인했어요.'
+                      : '새로운 알림이 오면 여기에서 확인할 수 있어요.',
+                  hasMore: _showUnreadOnly ? false : provider.hasMore,
+                  isLoadingMore: _showUnreadOnly ? false : provider.isLoadingMore,
+                  onLoadMore: _showUnreadOnly ? null : provider.loadMore,
+                  showLoadMoreHint: _showUnreadOnly && provider.hasMore,
+                ),
+                _buildList(
+                  context, provider, personalNotifs,
+                  grouped: _buildGroupedItems(personalNotifs, now),
+                  emptyMessage: _showUnreadOnly ? '새로운 알림이 없습니다' : '개인 알림이 없습니다',
+                  emptySubtitle: _showUnreadOnly ? '모든 알림을 확인했어요.' : null,
+                  hasMore: false,
+                  showLoadMoreHint: provider.hasMore,
+                ),
+                _buildList(
+                  context, provider, adminNotifs,
+                  grouped: _buildGroupedItems(adminNotifs, now),
+                  emptyMessage: _showUnreadOnly ? '새로운 알림이 없습니다' : '관리 알림이 없습니다',
+                  emptySubtitle: _showUnreadOnly ? '모든 알림을 확인했어요.' : null,
+                  hasMore: false,
+                  showLoadMoreHint: provider.hasMore,
+                ),
+              ],
+            ),
           ),
+        ],
+      );
+    }
+
+    // ── Pure USER / BUSINESS_ADMIN: 단일 목록 + 미읽음 토글 ─────────────
+    final notifs = _showUnreadOnly ? provider.unreadNotifications : provider.notifications;
+
+    return Column(
+      children: [
+        toggleChip,
+        Expanded(
+          child: _buildList(
+            context, provider, notifs,
+            grouped: _buildGroupedItems(notifs, now),
+            emptyMessage: _showUnreadOnly ? '새로운 알림이 없습니다' : '알림이 없습니다',
+            emptySubtitle: _showUnreadOnly
+                ? '모든 알림을 확인했어요.'
+                : '새로운 알림이 오면 여기에서 확인할 수 있어요.',
+            hasMore: _showUnreadOnly ? false : provider.hasMore,
+            isLoadingMore: _showUnreadOnly ? false : provider.isLoadingMore,
+            onLoadMore: _showUnreadOnly ? null : provider.loadMore,
+            showLoadMoreHint: _showUnreadOnly && provider.hasMore,
+          ),
+        ),
       ],
+    );
+  }
+
+  /// 미읽음만 보기 필터 칩 — 모든 역할에서 탭 대신 사용
+  Widget _buildUnreadToggle(BuildContext context, int unreadCount) {
+    return Padding(
+      padding: EdgeInsets.only(
+        left: ResponsiveHelper.spacing(context, 12),
+        right: ResponsiveHelper.spacing(context, 12),
+        top: ResponsiveHelper.spacing(context, 6),
+        bottom: ResponsiveHelper.spacing(context, 2),
+      ),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: FilterChip(
+          label: const Text('미읽음만'),
+          selected: _showUnreadOnly,
+          onSelected: (val) => setState(() => _showUnreadOnly = val),
+          // 활성 시 Blue 체크 + 연한 Blue 배경 — 빨간색(삭제/오류 의미)은 사용하지 않음
+          showCheckmark: true,
+          checkmarkColor: AppColors.workTypeBlue,
+          backgroundColor: Colors.white,
+          selectedColor: const Color(0xFFE3F2FD),
+          side: BorderSide(
+            color: _showUnreadOnly
+                ? AppColors.workTypeBlue
+                : const Color(0xFFE0E0E0),
+          ),
+          labelStyle: ResponsiveHelper.smallStyle(
+            context,
+            color: _showUnreadOnly
+                ? AppColors.workTypeBlue
+                : const Color(0xFF757575),
+            fontWeight: _showUnreadOnly ? FontWeight.w600 : FontWeight.w400,
+          ),
+          padding: EdgeInsets.symmetric(
+            horizontal: ResponsiveHelper.spacing(context, 4),
+          ),
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ),
     );
   }
 
   /// 날짜 기준으로 섹션 헤더(String) + 알림(NotificationModel) 혼합 리스트 생성
   List<Object> _buildGroupedItems(List<NotificationModel> notifications, DateTime now) {
-    final today = DateTime(now.year, now.month, now.day);
+    final today = FormatHelper.toKstDate(now);
+    final yesterday = today.subtract(const Duration(days: 1));
     final weekAgo = today.subtract(const Duration(days: 7));
 
     final todayItems = <NotificationModel>[];
+    final yesterdayItems = <NotificationModel>[];
     final thisWeekItems = <NotificationModel>[];
     final olderItems = <NotificationModel>[];
 
@@ -238,6 +419,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
       final date = DateTime(n.createdAt.year, n.createdAt.month, n.createdAt.day);
       if (!date.isBefore(today)) {
         todayItems.add(n);
+      } else if (date == yesterday) {
+        yesterdayItems.add(n);
       } else if (date.isAfter(weekAgo)) {
         thisWeekItems.add(n);
       } else {
@@ -249,6 +432,10 @@ class _NotificationScreenState extends State<NotificationScreen> {
     if (todayItems.isNotEmpty) {
       result.add('오늘');
       result.addAll(todayItems);
+    }
+    if (yesterdayItems.isNotEmpty) {
+      result.add('어제');
+      result.addAll(yesterdayItems);
     }
     if (thisWeekItems.isNotEmpty) {
       result.add('이번 주');
@@ -266,7 +453,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       padding: EdgeInsets.only(
         left: ResponsiveHelper.spacing(context, 16),
         right: ResponsiveHelper.spacing(context, 16),
-        top: ResponsiveHelper.spacing(context, 16),
+        top: ResponsiveHelper.spacing(context, 8),
         bottom: ResponsiveHelper.spacing(context, 6),
       ),
       child: Text(
@@ -283,6 +470,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     List<NotificationModel> notifications, {
     required List<Object> grouped,
     String emptyMessage = '알림이 없습니다',
+    String? emptySubtitle,
     bool hasMore = false,
     bool isLoadingMore = false,
     VoidCallback? onLoadMore,
@@ -292,6 +480,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       return AppEmptyState(
         icon: Icons.notifications_none,
         title: emptyMessage,
+        subtitle: emptySubtitle,
       );
     }
 
@@ -308,7 +497,13 @@ class _NotificationScreenState extends State<NotificationScreen> {
         },
         child: ListView.builder(
           itemCount: grouped.length + (hasMore || showLoadMoreHint ? 1 : 0),
-          padding: ResponsiveHelper.listPadding(context),
+          // top은 FilterChip이 바로 위에 있어 4px만으로 충분
+          padding: EdgeInsets.fromLTRB(
+            ResponsiveHelper.spacing(context, 16),
+            ResponsiveHelper.spacing(context, 4),
+            ResponsiveHelper.spacing(context, 16),
+            ResponsiveHelper.spacing(context, 16) + MediaQuery.paddingOf(context).bottom,
+          ),
           itemBuilder: (context, index) {
             if (index == grouped.length) {
               if (hasMore) {
@@ -427,15 +622,34 @@ class _NotificationScreenState extends State<NotificationScreen> {
       //   createConfirmationCanceled        → 지원자에게 (data에 toId/workDetailId 없음)
       //   createConfirmationCanceledByWorker → 관리자에게 (data에 toId/workDetailId 포함)
       // 관리자가 탭하면 WorkApplicantsDialog를 열고, 없으면 IntegratedWorkforceScreen 폴백.
+      //
+      // [FCM vs 알림함 라우팅 불일치 — 의도적 유지]
+      // FCMService의 confirmationCanceled는 screen: "mySchedule" 데이터를 받아 MyScheduleScreen으로 이동.
+      // 알림함 탭은 MyApplicationsScreen으로 이동한다.
+      //
+      // 이 불일치는 의도적으로 유지한다:
+      //   - 취소된 확정 지원(CONFIRMED→CANCELED)은 MyScheduleScreen에서 보이지 않는다.
+      //     MyScheduleScreen은 PENDING/CONFIRMED/SCHEDULE_CHANGE 상태만 표시한다.
+      //   - MyApplicationsScreen은 취소된 지원 내역을 포함하므로 근로자가 실제 내역을 확인할 수 있다.
+      //   - FCM의 "mySchedule" 데이터 필드는 CF가 설정하지만 해당 화면에 해당 정보가 없으므로
+      //     알림함은 더 적절한 MyApplicationsScreen을 사용한다.
       case NotificationType.confirmationCanceled:
         if (isUser) {
-          // 취소된 지원 내역 확인 → MyApplicationsScreen (FCMService case 'confirmationCanceled'와 동일)
+          // 취소된 지원 내역 확인 → MyApplicationsScreen (MyScheduleScreen은 취소 건 미표시)
           Navigator.push(
             context,
             MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
           );
         } else {
-          await _openWorkApplicantsFromNotification(context, notification);
+          final access = await _validateAdminNotificationAccess(
+            context,
+            businessId: notification.data?['businessId']?.toString(),
+            requiredPermission: (p) => p.canManageTo,
+          );
+          if (!context.mounted) return;
+          if (_handleAdminAccess(access)) {
+            await _openWorkApplicantsFromNotification(context, notification);
+          }
         }
         break;
 
@@ -448,32 +662,87 @@ class _NotificationScreenState extends State<NotificationScreen> {
         break;
 
       // newApplication/applicationCanceled는 관리자에게만 발송되는 알림.
-      // USER가 이 타입의 알림을 수신한 경우(데이터 불일치 등) 관리자 다이얼로그 접근 차단.
+      // USER가 이 타입의 알림을 수신한 경우 → 에러 토스트 (MyApplicationsScreen 폴백 금지).
       case NotificationType.newApplication:
       case NotificationType.applicationCanceled:
         if (isUser) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
-          );
+          ToastHelper.showWarning('현재 처리할 수 없는 알림입니다.');
         } else {
-          await _openWorkApplicantsFromNotification(context, notification);
+          final access = await _validateAdminNotificationAccess(
+            context,
+            businessId: notification.data?['businessId']?.toString(),
+            requiredPermission: (p) => p.canManageTo,
+          );
+          if (!context.mounted) return;
+          if (_handleAdminAccess(access)) {
+            await _openWorkApplicantsFromNotification(context, notification);
+          }
+        }
+        break;
+
+      // ═══════════════════════════════════════════════════════════
+      // TO 초대 관련 알림
+      // ═══════════════════════════════════════════════════════════
+      // toInvite/toInviteCanceled — 초대받은 근로자에게 발송, 내 지원 현황에서 확인
+      case NotificationType.toInvite:
+      case NotificationType.toInviteCanceled:
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
+        );
+        break;
+
+      // toInviteAccepted/Declined — 초대한 관리자에게 발송
+      // USER(근로자)가 수신한 경우 → 에러 토스트 (관리자 화면 진입 차단).
+      case NotificationType.toInviteAccepted:
+      case NotificationType.toInviteDeclined:
+        if (isUser) {
+          ToastHelper.showWarning('현재 처리할 수 없는 알림입니다.');
+        } else {
+          // [AUDIT.2R2] TO 초대 응답은 TO 관리 도메인 — canManageTo 필요.
+          // BUSINESS_ADMIN(OWNER)은 _validateAdminNotificationAccess 내부에서 자동 통과.
+          final access = await _validateAdminNotificationAccess(
+            context,
+            businessId: notification.data?['businessId']?.toString(),
+            requiredPermission: (p) => p.canManageTo,
+          );
+          if (!context.mounted) return;
+          if (_handleAdminAccess(access)) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+                initialBusinessId: notification.data?['businessId']?.toString(),
+                notificationType: notification.type.name,
+              )),
+            );
+          }
         }
         break;
 
       // ═══════════════════════════════════════════════════════════
       // 스케줄 변경 관련 알림
       // ═══════════════════════════════════════════════════════════
+      // scheduleChangeRequested: 근로자→관리자 발송 — ADMIN_ONLY
+      // USER 수신은 데이터 불일치. 개인 화면으로 이동 금지.
       case NotificationType.scheduleChangeRequested:
         if (isUser) {
-          _showMyRequestsDialog(context, userProvider.currentUser?.uid);
+          ToastHelper.showWarning('현재 처리할 수 없는 알림입니다.');
         } else {
-          Navigator.push(
+          final access = await _validateAdminNotificationAccess(
             context,
-            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-              initialBusinessId: notification.data?['businessId']?.toString(),
-            )),
+            businessId: notification.data?['businessId']?.toString(),
+            requiredPermission: (p) => p.canManageWorkers,
           );
+          if (!context.mounted) return;
+          if (_handleAdminAccess(access)) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+                initialBusinessId: notification.data?['businessId']?.toString(),
+                notificationType: notification.type.name,
+              )),
+            );
+          }
         }
         break;
 
@@ -492,34 +761,37 @@ class _NotificationScreenState extends State<NotificationScreen> {
         await _openContractSignFromNotification(context, notification);
         break;
 
-      // 근무자 서명 완료 — 관리자에게만 발송, 해당 사업장 계약서 관리 화면으로 이동
-      // USER가 이 알림을 수신한 경우(데이터 불일치 등) 관리자 화면 접근 차단.
-      // USER는 UserContractsScreen으로 폴백한다.
+      // contractSigned: 근무자 서명 완료 → 관리자에게만 발송 — ADMIN_ONLY
+      // USER 수신 시 에러 토스트 (UserContractsScreen 폴백 금지 — 관리자 전용 알림).
       case NotificationType.contractSigned:
         {
           if (isUser) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const UserContractsScreen()),
-            );
-          } else if (userProvider.isSubAdmin && !userProvider.can((p) => p.canManageContract)) {
-            ToastHelper.showWarning('계약서 관리 권한이 없습니다.');
+            ToastHelper.showWarning('현재 처리할 수 없는 알림입니다.');
           } else {
             final businessId = notification.data?['businessId']?.toString();
-            if (businessId != null && businessId.isNotEmpty) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => AdminContractManagementScreen(businessId: businessId),
-                ),
-              );
-            } else {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-                  initialBusinessId: notification.data?['businessId']?.toString(),
-                )),
-              );
+            final access = await _validateAdminNotificationAccess(
+              context,
+              businessId: businessId,
+              requiredPermission: (p) => p.canManageContract,
+            );
+            if (!context.mounted) return;
+            if (_handleAdminAccess(access)) {
+              if (businessId != null && businessId.isNotEmpty) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => AdminContractManagementScreen(businessId: businessId),
+                  ),
+                );
+              } else {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+                    initialBusinessId: businessId,
+                    notificationType: notification.type.name,
+                  )),
+                );
+              }
             }
           }
         }
@@ -535,25 +807,37 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       case NotificationType.contractExpiringReminder:
         {
-          // 알림 data의 businessId 우선 — 다중 사업장 관리자가 다른 사업장 선택 중일 때 정확한 대화상자 표시
+          // 관리자 전용 알림 — SubAdmin 권한 재검증 후 이동
           final notifBusinessId = notification.data?['businessId']?.toString();
+          final access = await _validateAdminNotificationAccess(
+            context,
+            businessId: notifBusinessId,
+            requiredPermission: (p) => p.canManageContract,
+          );
+          if (!context.mounted) return;
+          if (!_handleAdminAccess(access)) break;
+          // 알림 data의 businessId 우선 — 다중 사업장 관리자가 다른 사업장 선택 중일 때 정확한 대화상자 표시
           final businessId = (notifBusinessId != null && notifBusinessId.isNotEmpty)
               ? notifBusinessId
               : userProvider.effectiveBusinessId;
           if (businessId != null) {
+            // [5B.3B] applicationId 전달 — notification 경유 시 해당 근로자 자동 포커스
+            final notifApplicationId = notification.data?['applicationId']?.toString();
             showDialog(
               context: context,
               barrierDismissible: false,
               builder: (_) => FixedWorkerManagementDialog(
                 initialBusinessId: businessId,
                 onChanged: () {},
+                initialApplicationId: notifApplicationId?.isNotEmpty == true ? notifApplicationId : null,
               ),
             );
           } else {
             Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-                initialBusinessId: notification.data?['businessId']?.toString(),
+                initialBusinessId: notifBusinessId,
+                notificationType: notification.type.name,
               )),
             );
           }
@@ -576,12 +860,22 @@ class _NotificationScreenState extends State<NotificationScreen> {
         if (isUser) {
           _showMyRequestsDialog(context, userProvider.currentUser?.uid);
         } else {
-          Navigator.push(
+          // [F-11-3 수정] 권한 회수 후 탭 시 무효화 — resignRequested와 동일 패턴
+          final access = await _validateAdminNotificationAccess(
             context,
-            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-              initialBusinessId: notification.data?['businessId']?.toString(),
-            )),
+            businessId: notification.data?['businessId']?.toString(),
+            requiredPermission: (p) => p.canManageWorkers,
           );
+          if (!context.mounted) return;
+          if (_handleAdminAccess(access)) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+                initialBusinessId: notification.data?['businessId']?.toString(),
+                notificationType: notification.type.name,
+              )),
+            );
+          }
         }
         break;
 
@@ -596,27 +890,68 @@ class _NotificationScreenState extends State<NotificationScreen> {
             MaterialPageRoute(builder: (_) => const MyApplicationsScreen()),
           );
         } else {
-          Navigator.push(
+          // [F-11-3 수정] 권한 회수 후 탭 시 무효화 — resignRequested와 동일 패턴
+          final access = await _validateAdminNotificationAccess(
             context,
-            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-              initialBusinessId: notification.data?['businessId']?.toString(),
-            )),
+            businessId: notification.data?['businessId']?.toString(),
+            requiredPermission: (p) => p.canManageWorkers,
           );
+          if (!context.mounted) return;
+          if (_handleAdminAccess(access)) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+                initialBusinessId: notification.data?['businessId']?.toString(),
+                notificationType: notification.type.name,
+              )),
+            );
+          }
         }
         break;
 
+      // resignRequested: 근로자→관리자 퇴직 요청, resignReminder: D+1/D+2 미처리 경고
+      // 두 타입 모두 항상 관리자 수신 — USER 수신 시 에러 토스트 (navigation 없음)
       case NotificationType.resignRequested:
-      // contractRequested: 근무자→관리자 방향 알림 — 수신자는 항상 관리자이므로
-      //           isUser 분기 없이 IntegratedWorkforceScreen 단일 경로로 처리.
-      case NotificationType.contractRequested:
-      // resignReminder: D+1/D+2 퇴사 미처리 알림 — 항상 관리자 수신 (CF screen='fixedWorker')
       case NotificationType.resignReminder:
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-            initialBusinessId: notification.data?['businessId']?.toString(),
-          )),
-        );
+        {
+          final access = await _validateAdminNotificationAccess(
+            context,
+            businessId: notification.data?['businessId']?.toString(),
+            requiredPermission: (p) => p.canManageWorkers,
+          );
+          if (!context.mounted) return;
+          if (_handleAdminAccess(access)) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+                initialBusinessId: notification.data?['businessId']?.toString(),
+                notificationType: notification.type.name,
+              )),
+            );
+          }
+        }
+        break;
+
+      // contractRequested: 근무자→관리자 계약서 작성 요청 — 항상 관리자 수신
+      // USER 수신 시 에러 토스트 (navigation 없음)
+      case NotificationType.contractRequested:
+        {
+          final access = await _validateAdminNotificationAccess(
+            context,
+            businessId: notification.data?['businessId']?.toString(),
+            requiredPermission: (p) => p.canManageContract,
+          );
+          if (!context.mounted) return;
+          if (_handleAdminAccess(access)) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+                initialBusinessId: notification.data?['businessId']?.toString(),
+                notificationType: notification.type.name,
+              )),
+            );
+          }
+        }
         break;
 
       // ═══════════════════════════════════════════════════════════
@@ -627,32 +962,53 @@ class _NotificationScreenState extends State<NotificationScreen> {
         if (isUser) {
           _showMyRequestsDialog(context, userProvider.currentUser?.uid);
         } else {
-          Navigator.push(
+          // [F-11-3 수정] 예외적으로 관리자가 수신한 경우에도 권한 재검증
+          final access = await _validateAdminNotificationAccess(
             context,
-            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-              initialBusinessId: notification.data?['businessId']?.toString(),
-            )),
+            businessId: notification.data?['businessId']?.toString(),
+            requiredPermission: (p) => p.canManageWorkers,
           );
+          if (!context.mounted) return;
+          if (_handleAdminAccess(access)) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+                initialBusinessId: notification.data?['businessId']?.toString(),
+                notificationType: notification.type.name,
+              )),
+            );
+          }
         }
         break;
 
       case NotificationType.idCardAccessApproved:
       case NotificationType.idCardAccessRejected:
       case NotificationType.idCardAccessExpiringSoon:
+      case NotificationType.idCardConsentGranted: // [ID-CONSENT] 사전동의 Grant 활성화 → 내 지원 목록
         if (isUser) {
           _showMyRequestsDialog(context, userProvider.currentUser?.uid);
         } else {
-          final workerId = notification.data?['workerId']?.toString();
+          // [F-11-3 수정] 관리자 수신 시 권한 재검증 — canManageWorkers
           final businessId = notification.data?['businessId']?.toString();
-          if (workerId != null && workerId.isNotEmpty) {
-            await _openWorkerDetailFromNotification(context, workerId, businessId);
-          } else {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-                initialBusinessId: businessId,
-              )),
-            );
+          final access = await _validateAdminNotificationAccess(
+            context,
+            businessId: businessId,
+            requiredPermission: (p) => p.canManageWorkers,
+          );
+          if (!context.mounted) return;
+          if (_handleAdminAccess(access)) {
+            final workerId = notification.data?['workerId']?.toString();
+            if (workerId != null && workerId.isNotEmpty) {
+              await _openWorkerDetailFromNotification(context, workerId, businessId);
+            } else {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+                  initialBusinessId: businessId,
+                  notificationType: notification.type.name,
+                )),
+              );
+            }
           }
         }
         break;
@@ -669,6 +1025,43 @@ class _NotificationScreenState extends State<NotificationScreen> {
         break;
 
       // ═══════════════════════════════════════════════════════════
+      // 출퇴근 재확인 관련 알림 (근무 당일 H-2/H-1 스케줄러)
+      // ═══════════════════════════════════════════════════════════
+      // reconfirmRequest: 근로자에게 오늘 근무 확인 요청
+      // [E-1 수정] FCMService와 동일하게 AttendanceCheckScreen으로 이동.
+      // 이전: MyScheduleScreen (FCM과 불일치). 수정 후: AttendanceCheckScreen (일관성 확보).
+      // 스테일 방어: reconfirmRespondedAt != null → "이미 처리된 요청" 안내 후 MyScheduleScreen 이동
+      case NotificationType.reconfirmRequest:
+        await _openReconfirmFromNotification(context, notification);
+        break;
+
+      // reconfirmAdminWarning: 출근 미확인 경고 → 관리자에게만 발송 — ADMIN_ONLY
+      // reconfirmDeclined: 재확인 거절(근무 취소) → 관리자에게만 발송 — ADMIN_ONLY
+      // USER 수신 시 에러 토스트 (MyScheduleScreen 폴백 금지)
+      case NotificationType.reconfirmAdminWarning:
+      case NotificationType.reconfirmDeclined:
+        if (isUser) {
+          ToastHelper.showWarning('현재 처리할 수 없는 알림입니다.');
+        } else {
+          final access = await _validateAdminNotificationAccess(
+            context,
+            businessId: notification.data?['businessId']?.toString(),
+            requiredPermission: (p) => p.canManageWorkers,
+          );
+          if (!context.mounted) return;
+          if (_handleAdminAccess(access)) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+                initialBusinessId: notification.data?['businessId']?.toString(),
+                notificationType: notification.type.name,
+              )),
+            );
+          }
+        }
+        break;
+
+      // ═══════════════════════════════════════════════════════════
       // 멤버 초대 관련 알림
       // ═══════════════════════════════════════════════════════════
       case NotificationType.memberInvitationReceived:
@@ -678,12 +1071,23 @@ class _NotificationScreenState extends State<NotificationScreen> {
       case NotificationType.memberInvitationAccepted:
       case NotificationType.memberInvitationRejected:
         // 초대 수락/거절 결과는 통합 인력 관리 화면에서 확인 — 의도된 설계.
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-            initialBusinessId: notification.data?['businessId']?.toString(),
-          )),
-        );
+        // SubAdmin은 알림 발송 후 권한이 취소됐을 수 있으므로 businessId 멤버십 재검증.
+        {
+          final access = await _validateAdminNotificationAccess(
+            context,
+            businessId: notification.data?['businessId']?.toString(),
+          );
+          if (!context.mounted) return;
+          if (_handleAdminAccess(access)) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+                initialBusinessId: notification.data?['businessId']?.toString(),
+                notificationType: notification.type.name,
+              )),
+            );
+          }
+        }
         break;
 
       // ═══════════════════════════════════════════════════════════
@@ -708,13 +1112,21 @@ class _NotificationScreenState extends State<NotificationScreen> {
             context,
             MaterialPageRoute(builder: (_) => const MyReviewsScreen()),
           );
-        } else if (userProvider.isSubAdmin && !userProvider.can((p) => p.canManageWorkers)) {
-          ToastHelper.showWarning('근무자 관리 권한이 없습니다.');
         } else {
-          Navigator.push(
+          // AdminReviewListScreen은 별도 businessId 파라미터 없이 목록 조회 — businessIdRequired: false
+          final access = await _validateAdminNotificationAccess(
             context,
-            MaterialPageRoute(builder: (_) => const AdminReviewListScreen()),
+            businessId: notification.data?['businessId']?.toString(),
+            requiredPermission: (p) => p.canManageWorkers,
+            businessIdRequired: false,
           );
+          if (!context.mounted) return;
+          if (_handleAdminAccess(access)) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const AdminReviewListScreen()),
+            );
+          }
         }
         break;
 
@@ -727,16 +1139,39 @@ class _NotificationScreenState extends State<NotificationScreen> {
       // · interimSettlementRequested → 관리자에게 발송
       // · interimSettlementApproved / Rejected → 근로자에게 발송
       // ═══════════════════════════════════════════════════════════
+      // interimSettlementRequested: 근로자→관리자 발송 — ADMIN_ONLY
+      // USER 수신 시 에러 토스트 (MyRequestsDialog 폴백 금지)
+      // [FCM-ROUTE-01] destination 교체: IntegratedWorkforceScreen → PayrollPaymentDashboardScreen(tab 3)
       case NotificationType.interimSettlementRequested:
         if (isUser) {
-          _showMyRequestsDialog(context, userProvider.currentUser?.uid);
+          ToastHelper.showWarning('현재 처리할 수 없는 알림입니다.');
         } else {
-          Navigator.push(
+          final targetBusinessId = notification.data?['businessId']?.toString();
+          final access = await _validateAdminNotificationAccess(
             context,
-            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-              initialBusinessId: notification.data?['businessId']?.toString(),
-            )),
+            businessId: targetBusinessId,
+            requiredPermission: (p) => p.canManageWage,
           );
+          if (!context.mounted) return;
+          if (_handleAdminAccess(access)) {
+            // 중간정산 관리 canonical destination: 급여 지급 현황 대시보드 tab 3
+            // year/month: settlement tab query는 businessId 기준(month-free), DateTime.now() fallback 안전.
+            final now = DateTime.now();
+            final route = MaterialPageRoute<void>(
+              builder: (_) => PayrollPaymentDashboardScreen(
+                businessId: targetBusinessId ?? '',
+                year: now.year,
+                month: now.month,
+                initialTab: 3,
+                showPendingSettlementOnly: true,
+              ),
+            );
+            // Settlement tab canonical routing (Back: Dashboard → PayrollOverview)
+            if (!AdminTabSwitcher.instance.switchToTabAndPush(AdminTabSwitcher.payrollTab, route)) {
+              // Shell 미등록 fallback (NotificationScreen은 통상 Shell 내부라 비상용)
+              Navigator.push(context, route);
+            }
+          }
         }
         break;
 
@@ -749,18 +1184,56 @@ class _NotificationScreenState extends State<NotificationScreen> {
         );
         break;
 
-      // 공고 만료 임박 — 관리자에게만 발송
+      // 중간정산 완료 (관리자 직접 처리 경로) — 근로자에게 발송
+      case NotificationType.interimSettlementCompleted:
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
+        );
+        break;
+
+      // 공고 만료 임박/만료됨 — 관리자(creatorUID)에게만 발송
       // USER가 혹시 수신한 경우 관리자 전용 화면 진입 차단
       case NotificationType.toPostingExpiringTomorrow:
+      case NotificationType.toPostingExpired:
         if (isUser) {
           ToastHelper.showWarning('관리자 전용 알림입니다.');
         } else {
-          Navigator.push(
+          final access = await _validateAdminNotificationAccess(
             context,
-            MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-              initialBusinessId: notification.data?['businessId']?.toString(),
-            )),
+            businessId: notification.data?['businessId']?.toString(),
+            requiredPermission: (p) => p.canManageTo,
           );
+          if (!context.mounted) return;
+          if (_handleAdminAccess(access)) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
+                initialBusinessId: notification.data?['businessId']?.toString(),
+              )),
+            );
+          }
+        }
+        break;
+
+      // ═══════════════════════════════════════════════════════════
+      // 일자리 발견 알림 — [Phase 8.1C] toMatch
+      // FCMService와 동일: toId 있으면 공고 상세 직접 진입, 없으면 전체 공고 목록 폴백
+      // ═══════════════════════════════════════════════════════════
+      case NotificationType.toMatch:
+        {
+          final toMatchToId = notification.data?['toId']?.toString();
+          if (toMatchToId != null && toMatchToId.isNotEmpty) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => JobPostingScreen(toId: toMatchToId)),
+            );
+          } else {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const AllTOListScreen()),
+            );
+          }
         }
         break;
 
@@ -796,7 +1269,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
     // async gap 이전에 context 의존 값 추출
     final currentUser = context.read<UserProvider>().currentUser;
-    final nav = Navigator.of(context); // 언마운트 후에도 다이얼로그 닫기 위해 사전 캡처
+    final nav = Navigator.of(context, rootNavigator: true); // 언마운트 후에도, showDialog와 동일한 루트 내비게이터로 팝
 
     showDialog(
       context: context,
@@ -845,6 +1318,26 @@ class _NotificationScreenState extends State<NotificationScreen> {
         return;
       }
 
+      // [D-1 수정] 계약서 현재 상태 재확인 — 알림 발송 후 상태가 변경된 경우 방어
+      // 알림이 발송된 뒤 관리자가 계약서를 취소/수정했거나 근무자가 이미 서명한 경우를 처리
+      if (contract.status == ContractStatus.voided) {
+        ToastHelper.showWarning('취소된 계약서입니다. 계약서 목록에서 확인하세요.');
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const UserContractsScreen()),
+        );
+        return;
+      }
+      if (!contract.needsWorkerSignature) {
+        // pendingEmployer(관리자 서명 대기) 또는 completed(이미 양쪽 서명 완료) 상태
+        ToastHelper.showInfo('이미 서명이 완료된 계약서입니다. 계약서 목록에서 확인하세요.');
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const UserContractsScreen()),
+        );
+        return;
+      }
+
       // [B-5] 서명 완료 후 알림 읽음 처리 — pop 반환값으로 서명 완료 여부 확인
       final nonNullContract = contract; // null 체크 통과 후 — 람다 내 타입 승격 불가 우회
       final notifProvider = context.read<NotificationProvider>(); // async gap 전 참조 고정
@@ -862,6 +1355,56 @@ class _NotificationScreenState extends State<NotificationScreen> {
       if (nav.canPop()) nav.pop();
       if (context.mounted) ToastHelper.showError('계약서를 불러오는데 실패했습니다');
     }
+  }
+
+  /// [E-1 수정] 재확인 요청 알림 탭 — AttendanceCheckScreen으로 이동
+  ///
+  /// 스테일 방어: applicationId로 현재 지원 상태를 재조회해
+  /// `reconfirmRespondedAt`이 이미 설정된 경우 "이미 처리된 요청" 안내 후 MyScheduleScreen으로 이동.
+  ///
+  /// FCMService의 `reconfirmRequest` 케이스도 AttendanceCheckScreen으로 이동하므로,
+  /// 이 메서드와 동일한 목적지를 사용해 FCM 탭 / 알림함 탭 일관성을 보장한다.
+  Future<void> _openReconfirmFromNotification(
+    BuildContext context,
+    NotificationModel notification,
+  ) async {
+    final applicationId = notification.data?['applicationId']?.toString();
+
+    // applicationId가 있으면 스테일 상태 체크 (없으면 바로 AttendanceCheckScreen 이동)
+    if (applicationId != null && applicationId.isNotEmpty) {
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('applications')
+            .doc(applicationId)
+            .get();
+
+        if (!context.mounted) return;
+
+        if (doc.exists) {
+          final data = doc.data();
+          final respondedAt = data?['reconfirmRespondedAt'];
+          if (respondedAt != null) {
+            // 이미 처리된 요청 — 안내 후 MyScheduleScreen 이동
+            ToastHelper.showInfo('이미 처리된 근무 확인 요청입니다.');
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const MyScheduleScreen()),
+            );
+            return;
+          }
+        }
+      } catch (e) {
+        // Firestore 조회 실패 시 스테일 체크 생략 — AttendanceCheckScreen 계속 진행
+        debugPrint('[_openReconfirmFromNotification] applicationId 조회 실패: $e');
+      }
+    }
+
+    if (!context.mounted) return;
+    // 처리되지 않은 요청 → AttendanceCheckScreen (오늘 근무 로드, 재확인 UI 포함)
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const AttendanceCheckScreen()),
+    );
   }
 
   /// 리뷰 작성 요청 알림 탭 — requestKey로 review_requests 조회 후 다이얼로그 직접 표시
@@ -883,7 +1426,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       return;
     }
 
-    final navReview = Navigator.of(context); // 언마운트 후에도 다이얼로그 닫기 위해 사전 캡처
+    final navReview = Navigator.of(context, rootNavigator: true); // 언마운트 후에도, showDialog와 동일한 루트 내비게이터로 팝
 
     showDialog(
       context: context,
@@ -911,6 +1454,18 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       if (!context.mounted) {
         if (navReview.canPop()) navReview.pop();
+        return;
+      }
+
+      // [G-13 UX guard] 이미 작성한 리뷰 알림을 재탭했을 때 빈 폼이 열리지 않도록 클라이언트 차단.
+      // 서버는 결정론적 reviewKey + Firestore 트랜잭션으로 중복 생성을 원천 차단함.
+      // 여기서의 차단은 UX 개선 레이어이며 서버 검증을 대체하지 않는다.
+      final bool alreadySubmitted = isUser
+          ? req.workerStatus == ReviewPartyStatus.submitted
+          : req.adminStatus == ReviewPartyStatus.submitted;
+      if (alreadySubmitted) {
+        if (navReview.canPop()) navReview.pop();
+        if (context.mounted) ToastHelper.showInfo('이미 작성한 리뷰입니다.');
         return;
       }
 
@@ -1043,30 +1598,36 @@ class _NotificationScreenState extends State<NotificationScreen> {
     String workerId,
     String? businessId,
   ) async {
-    final nav = Navigator.of(context);
+    final nav = Navigator.of(context, rootNavigator: true);
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (_) => const PopScope(canPop: false, child: LoadingWidget()),
     );
+    UserModel? user;
+    Object? loadError;
     try {
-      final user = await AuthService().getUserData(workerId);
-      if (!context.mounted) return;
-      if (nav.canPop()) nav.pop();
-      if (user == null) {
-        ToastHelper.showError('근무자 정보를 불러올 수 없습니다');
-        return;
-      }
-      await WorkerDetailDialog.show(
-        context: context,
-        user: user,
-        businessId: businessId,
-      );
+      user = await AuthService().getUserData(workerId);
     } catch (e) {
-      if (!context.mounted) return;
-      if (nav.canPop()) nav.pop();
-      ToastHelper.showError('근무자 정보를 불러오는 중 오류가 발생했습니다');
+      loadError = e;
+    } finally {
+      if (nav.mounted && nav.canPop()) nav.pop();
     }
+
+    if (loadError != null) {
+      if (context.mounted) ToastHelper.showError('근무자 정보를 불러오는 중 오류가 발생했습니다');
+      return;
+    }
+    if (!context.mounted) return;
+    if (user == null) {
+      ToastHelper.showError('근무자 정보를 불러올 수 없습니다');
+      return;
+    }
+    await WorkerDetailDialog.show(
+      context: context,
+      user: user,
+      businessId: businessId,
+    );
   }
 
   /// 하위 관리자 초대 수락/거절 처리
@@ -1080,7 +1641,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       return;
     }
 
-    final navInvite = Navigator.of(context); // 언마운트 후에도 다이얼로그 닫기 위해 사전 캡처
+    final navInvite = Navigator.of(context, rootNavigator: true); // 언마운트 후에도, showDialog와 동일한 루트 내비게이터로 팝
 
     showDialog(
       context: context,
@@ -1097,10 +1658,10 @@ class _NotificationScreenState extends State<NotificationScreen> {
       // [BUG-M-01 수정] 만료 초대도 여기서 차단 — acceptInvitation 서버 레이어도 막지만
       // 팝업을 보여준 뒤 오류 토스트로 끝나는 불필요한 UX를 방지
       final isExpired = invitation != null &&
-          DateTime.now().isAfter(invitation.createdAt.add(const Duration(days: 30)));
+          DateTime.now().isAfter(invitation.createdAt.add(const Duration(days: 3)));
       if (invitation == null || !invitation.isPending || isExpired) {
         ToastHelper.showError(
-          isExpired ? '초대 유효기간(30일)이 만료되었습니다.' : '이미 처리된 초대입니다',
+          isExpired ? '초대 유효기간(3일)이 만료되었습니다.' : '이미 처리된 초대입니다',
         );
         return;
       }
@@ -1141,7 +1702,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       if (result == null || !context.mounted) return;
 
-      final navInvite2 = Navigator.of(context); // 두 번째 다이얼로그용 사전 캡처
+      final navInvite2 = Navigator.of(context, rootNavigator: true); // 두 번째 다이얼로그용 사전 캡처
 
       showDialog(
         context: context,
@@ -1170,11 +1731,38 @@ class _NotificationScreenState extends State<NotificationScreen> {
         }
 
         if (!context.mounted) return;
-        ToastHelper.showSuccess(
-          userProvider.isSubAdmin
-              ? '초대를 수락했습니다. 홈 화면에서 관리자 모드 버튼을 누르세요!'
-              : '초대를 수락했습니다. 잠시 후 앱을 재시작하면 관리자 모드를 사용할 수 있어요.',
-        );
+        if (userProvider.isSubAdmin) {
+          // [PD-01] 초대 수락 완료 → 관리자 모드 전환 CTA 다이얼로그
+          final switchNow = await showDialog<bool>(
+            context: context,
+            barrierDismissible: false,
+            builder: (ctx) => StyledDialog(
+              title: '초대 수락 완료',
+              icon: Icons.admin_panel_settings_outlined,
+              headerColor: AppColors.teal,
+              content: Text(
+                '${invitation.businessName} 관리자로 초대를 수락했습니다.\n지금 관리자 모드로 전환하시겠습니까?',
+                style: ResponsiveHelper.bodyStyle(ctx),
+              ),
+              actions: [
+                StyledDialogButton.cancel(
+                  text: '나중에',
+                  onPressed: () => Navigator.pop(ctx, false),
+                ),
+                StyledDialogButton.primary(
+                  text: '관리자 모드로 전환',
+                  onPressed: () => Navigator.pop(ctx, true),
+                ),
+              ],
+            ),
+          );
+          if (switchNow == true && context.mounted) {
+            await userProvider.switchToAdminMode(invitation.businessId);
+            // switchToAdminMode → notifyListeners() → AuthWrapper 반응형 라우팅 → BusinessAdminShell
+          }
+        } else {
+          ToastHelper.showSuccess('초대를 수락했습니다. 잠시 후 앱을 재시작하면 관리자 모드를 사용할 수 있어요.');
+        }
       } else {
         await MemberService().rejectInvitation(invitation);
         if (navInvite2.canPop()) navInvite2.pop();
@@ -1203,7 +1791,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     final uid = up.currentUser?.uid;
     if (uid == null) return;
 
-    final nav = Navigator.of(context);
+    final nav = Navigator.of(context, rootNavigator: true);
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -1250,6 +1838,94 @@ class _NotificationScreenState extends State<NotificationScreen> {
     }
   }
 
+  // ══════════════════════════════════════════════════════════════════
+  // 관리자 알림 접근 검증 헬퍼
+  // ══════════════════════════════════════════════════════════════════
+
+  /// 관리자 알림 탭 시 접근 권한을 3단계로 재검증한다.
+  ///
+  /// 검증 순서:
+  ///   1. 순수 USER(SubAdmin 아님) 차단 → invalidContext
+  ///   2. businessId 필수이나 누락 → noBusinessId
+  ///   3. BUSINESS_ADMIN → 항상 허용
+  ///   4. SubAdmin: businessId가 현재 subAdminBusinessIds에 포함되는지 → noBusinessAccess
+  ///   5. SubAdmin: 해당 사업장의 현재 MemberPermissions 확인 → noPermission
+  ///      * 현재 선택된 사업장과 일치하고 권한이 로드됐으면 캐시 사용
+  ///      * 다른 사업장이거나 캐시 미로드 → Firestore에서 직접 조회 (다중 사업장 정확도 보장)
+  ///
+  /// [requiredPermission] null이면 멤버십만 확인하고 permission 체크 생략.
+  /// [businessIdRequired] false면 businessId 누락 시에도 허용.
+  Future<_AdminAccessResult> _validateAdminNotificationAccess(
+    BuildContext context, {
+    required String? businessId,
+    bool Function(MemberPermissions p)? requiredPermission,
+    bool businessIdRequired = true,
+  }) async {
+    final up = context.read<UserProvider>();
+
+    // 1. 순수 USER(SubAdmin 아님) → invalidContext
+    if (up.isUser && !up.isSubAdmin) return _AdminAccessResult.invalidContext;
+
+    // 2. businessId 필수이나 누락 → noBusinessId
+    if (businessIdRequired && (businessId == null || businessId.isEmpty)) {
+      return _AdminAccessResult.noBusinessId;
+    }
+
+    // 3. BUSINESS_ADMIN → 항상 허용 (권한 재검증 불필요)
+    if (!up.isSubAdmin) return _AdminAccessResult.allowed;
+
+    // 4. SubAdmin: businessId 멤버십 재검증
+    if (businessId != null && businessId.isNotEmpty) {
+      final inList = up.currentUser?.subAdminBusinessIds.contains(businessId) ?? false;
+      if (!inList) return _AdminAccessResult.noBusinessAccess;
+    }
+
+    // 5. SubAdmin: 해당 사업장 현재 Permission 재검증
+    if (requiredPermission != null && businessId != null && businessId.isNotEmpty) {
+      final uid = up.currentUser?.uid;
+      if (uid == null) return _AdminAccessResult.noPermission;
+
+      // 현재 선택된 사업장 = 알림 사업장이고 권한이 이미 로드됐으면 캐시 사용 (네트워크 절약)
+      if (up.permissionsLoaded && up.selectedSubAdminBusinessId == businessId) {
+        if (!up.can(requiredPermission)) return _AdminAccessResult.noPermission;
+      } else {
+        // 다른 사업장이거나 캐시 미로드 → Firestore 직접 조회 (다중 사업장 정확도 보장)
+        try {
+          final perms = await MemberService().getMemberPermissions(businessId, uid);
+          if (perms == null || !requiredPermission(perms)) {
+            return _AdminAccessResult.noPermission;
+          }
+        } catch (e) {
+          debugPrint('[_validateAdminNotificationAccess] 권한 조회 실패: $e');
+          return _AdminAccessResult.noPermission;
+        }
+      }
+    }
+
+    return _AdminAccessResult.allowed;
+  }
+
+  /// 검증 결과에 따른 사용자 메시지 표시 후 접근 허용 여부 반환.
+  /// true → 화면 이동 진행, false → 차단.
+  bool _handleAdminAccess(_AdminAccessResult result) {
+    switch (result) {
+      case _AdminAccessResult.allowed:
+        return true;
+      case _AdminAccessResult.noBusinessAccess:
+        ToastHelper.showWarning('해당 사업장에 대한 관리자 권한이 없습니다.');
+        return false;
+      case _AdminAccessResult.noPermission:
+        ToastHelper.showWarning('이 업무를 처리할 권한이 없습니다.');
+        return false;
+      case _AdminAccessResult.noBusinessId:
+        ToastHelper.showWarning('알림 정보를 확인할 수 없습니다.');
+        return false;
+      case _AdminAccessResult.invalidContext:
+        ToastHelper.showWarning('현재 처리할 수 없는 알림입니다.');
+        return false;
+    }
+  }
+
   Future<void> _openWorkApplicantsFromNotification(
     BuildContext context,
     NotificationModel notification,
@@ -1259,6 +1935,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     // SubAdmin은 role==USER이지만 관리자 알림을 수신하므로 통과 (isSubAdmin 제외 필수)
     final up = context.read<UserProvider>();
     if (up.isUser && !up.isSubAdmin) return;
+
 
     final data = notification.data;
     final fallbackBusinessId = data?['businessId']?.toString();
@@ -1294,7 +1971,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       return;
     }
 
-    final navWA = Navigator.of(context); // 언마운트 후에도 다이얼로그 닫기 위해 사전 캡처
+    final navWA = Navigator.of(context, rootNavigator: true); // 언마운트 후에도, showDialog와 동일한 루트 내비게이터로 팝
 
     showDialog(
       context: context,

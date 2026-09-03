@@ -349,6 +349,7 @@ class AdminStatsService {
       }
     }
     final fsService = FirestoreService();
+    // [5A.2A] trustScore 시스템 제거 — workerTrustScores는 빈 맵으로 유지 (AnnualStatsData 구조 보존)
     final trustScores = <String, int>{};
     final nameMap = <String, String>{};
     await Future.wait(workerGrouped.entries.map((entry) async {
@@ -356,11 +357,11 @@ class AdminStatsService {
         final userMap = await fsService.getUsersBatch(
           entry.value.toList(), businessId: entry.key);
         for (final e in userMap.entries) {
-          trustScores[e.key] = e.value.trustScore;
+          // trustScore 제거 — trustScores[e.key] = e.value.trustScore 삭제
           nameMap[e.key] = e.value.name.isNotEmpty ? e.value.name : '알 수 없음';
         }
       } catch (e) {
-        debugPrint('⚠️ trustScore 조회 실패 (${entry.key}): $e');
+        debugPrint('⚠️ 사용자 조회 실패 (${entry.key}): $e');
       }
     }));
 

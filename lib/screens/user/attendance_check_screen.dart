@@ -349,12 +349,17 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
     }
 
     bool loadingDialogShown = false;
+    NavigatorState? loadingNav;
     if (!silent && mounted) {
+      loadingNav = Navigator.of(context, rootNavigator: true);
       DialogHelper.showLoading(context, message: loadingMsg);
       loadingDialogShown = true;
     }
     final position = await LocationHelper.getCurrentPosition().whenComplete(() {
-      if (loadingDialogShown && mounted) Navigator.pop(context);
+      if (loadingDialogShown && loadingNav != null &&
+          loadingNav.mounted && loadingNav.canPop()) {
+        loadingNav.pop();
+      }
     });
 
     if (position == null) {
@@ -432,7 +437,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
 
     // [FIX-HIGH] getBusinessById 이후 unmount 가능 — mounted 체크 후 Navigator.of(context) 호출
     if (!mounted) return false;
-    final nav = Navigator.of(context);
+    final nav = Navigator.of(context, rootNavigator: true);
     // [FIX-HIGH] GPS와 동일하게 loadingShown 플래그 도입 — mounted=false 시 다이얼로그가
     //            표시되지 않았음에도 nav.pop()이 실행돼 다른 라우트를 팝하는 버그 방지
     bool loadingShown = false;

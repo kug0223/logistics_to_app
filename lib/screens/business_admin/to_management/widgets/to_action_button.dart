@@ -54,22 +54,8 @@ class TOActionButton extends StatelessWidget {
       width: double.infinity,
       height: ResponsiveHelper.spacing(context, 56),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            bgColor,
-            bgColor.withValues(alpha: 0.8),
-          ],
-        ),
+        color: bgColor,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: bgColor.withValues(alpha: 0.4),
-            blurRadius: 12,
-            offset: const Offset(0, 6),
-          ),
-        ],
       ),
       child: Material(
         color: Colors.transparent,

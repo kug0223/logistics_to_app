@@ -15,6 +15,7 @@ import '../../widgets/user/cards/user_to_card.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/dialog_helper.dart';
+import '../../utils/format_helper.dart';
 import '../../widgets/inputs/region_picker_sheet.dart';
 import '../../services/algolia_service.dart';
 import '../../widgets/pickers/date_picker_bottom_sheet.dart';
@@ -337,15 +338,16 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
   /// 만료 체크와 날짜 범위 필터를 단일 순회(O(n))로 처리.
   List<TOModel> _computeDisplayList(List<TOModel> toList) {
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
+    // [TZ-FIX] device-local DateTime(y,m,d)는 UTC+12에서 하루 밀림 → KST 고정 calendar date 사용
+    final today = FormatHelper.toKstDate(now);
 
     // 날짜 범위 필터 경계값 — 루프 밖에서 한 번만 계산
     final dr = _filter.dateRange;
     final rangeStart = dr != null
-        ? DateTime(dr.start.year, dr.start.month, dr.start.day)
+        ? FormatHelper.toKstDate(dr.start)
         : null;
     final rangeEnd = dr != null
-        ? DateTime(dr.end.year, dr.end.month, dr.end.day)
+        ? FormatHelper.toKstDate(dr.end)
         : null;
 
     final result = toList.where((to) {
@@ -355,12 +357,12 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
       // ── 1. 만료 체크 ─────────────────────────────────────
       if (!to.isLongTerm) {
         if (to.rangeEnd == null) return false; // 구 데이터: 날짜 미상 → 표시 제외
-        final toEnd = DateTime(to.rangeEnd!.year, to.rangeEnd!.month, to.rangeEnd!.day);
+        final toEnd = FormatHelper.toKstDate(to.rangeEnd!);
         if (toEnd.isBefore(today)) return false;
       } else {
         if (to.isPostingExpired || to.isDeadlinePassed) return false;
         if (to.endDate != null) {
-          final end = DateTime(to.endDate!.year, to.endDate!.month, to.endDate!.day);
+          final end = FormatHelper.toKstDate(to.endDate!);
           if (end.isBefore(today)) return false;
         }
       }
@@ -378,9 +380,14 @@ class _AllTOListScreenState extends State<AllTOListScreen> {
 
       // ── 3. 날짜 범위 필터 (설정된 경우만) ─────────────────
       if (rangeStart != null && rangeEnd != null) {
-        final toStart = DateTime(to.date.year, to.date.month, to.date.day);
-        final toEndRaw = to.isLongTerm ? (to.endDate ?? to.date) : (to.rangeEnd ?? to.date);
-        final toEnd = DateTime(toEndRaw.year, toEndRaw.month, toEndRaw.day);
+        final toStart = FormatHelper.toKstDate(to.date);
+        // 신규 preset: workStartAvailableUntil / custom·legacy: endDate(=rangeEnd) / flex: rangeEnd
+        final toEndRaw = to.isLongTerm
+            ? (to.hasWorkStartAvailableRange
+                ? to.workStartAvailableUntil!
+                : (to.endDate ?? to.date))
+            : (to.rangeEnd ?? to.date);
+        final toEnd = FormatHelper.toKstDate(toEndRaw);
         // 기간이 선택 범위와 겹치지 않으면 제외
         if (toStart.isAfter(rangeEnd) || toEnd.isBefore(rangeStart)) return false;
       }

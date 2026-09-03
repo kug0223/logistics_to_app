@@ -59,6 +59,8 @@ class FixedWorkerManagementDialog extends StatefulWidget {
   final DateTime? focusDate;        // 날짜 모드 (캘린더에서 날짜 선택 후 열 때)
   // [B-3] 특정 근무자 uid → 로드 후 해당 근무자로 자동 검색 포커스
   final String? initialWorkerUid;
+  // [5B.3B] applicationId 우선 포커스 — uid보다 정확. 동명이인·uid매칭 실패 방지.
+  final String? initialApplicationId;
 
   const FixedWorkerManagementDialog({
     super.key,
@@ -68,6 +70,7 @@ class FixedWorkerManagementDialog extends StatefulWidget {
     required this.onChanged,
     this.focusDate,
     this.initialWorkerUid,
+    this.initialApplicationId,
   });
 
   @override
@@ -209,11 +212,11 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           final focus = widget.focusDate!;
           final start = app.desiredStartDate ?? app.workDate;
           final end = app.actualResignDate ?? app.workEndDate;
-          final focusOnly = DateTime(focus.year, focus.month, focus.day);
-          final startOnly = DateTime(start.year, start.month, start.day);
+          final focusOnly = DateTime.utc(focus.year, focus.month, focus.day);
+          final startOnly = FormatHelper.toKstDate(start);
           if (focusOnly.isBefore(startOnly)) return false;
           if (end != null) {
-            final endOnly = DateTime(end.year, end.month, end.day);
+            final endOnly = FormatHelper.toKstDate(end);
             if (focusOnly.isAfter(endOnly)) return false;
           }
           return true;
@@ -274,18 +277,30 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         _fixedWorkers = results;
       });
 
-      // [B-3] 특정 근무자 uid가 지정된 경우 해당 근무자 이름으로 자동 검색
-      // uid 매칭 실패 시(목록에 없는 경우) 검색창을 채우지 않음 — 엉뚱한 사람 포커스 방지
-      if (widget.initialWorkerUid != null && results.isNotEmpty && mounted) {
-        final matches = results.where(
-          (item) => item.application.uid == widget.initialWorkerUid,
-        ).toList();
-        if (matches.isNotEmpty) {
-          final name = matches.first.user?.name ?? '';
+      // [5B.3B] applicationId 우선 포커스 → uid fallback
+      // applicationId가 있으면 정확한 매칭, 동명이인 문제 없음
+      if (results.isNotEmpty && mounted) {
+        _FixedWorkerItem? focusTarget;
+        if (widget.initialApplicationId != null) {
+          // applicationId 우선 — notification 등에서 직접 전달 시
+          final matches = results.where(
+            (item) => item.application.id == widget.initialApplicationId,
+          ).toList();
+          if (matches.isNotEmpty) focusTarget = matches.first;
+        }
+        if (focusTarget == null && widget.initialWorkerUid != null) {
+          // [B-3] uid fallback — 기존 호출자 호환
+          final matches = results.where(
+            (item) => item.application.uid == widget.initialWorkerUid,
+          ).toList();
+          if (matches.isNotEmpty) focusTarget = matches.first;
+        }
+        if (focusTarget != null) {
+          final name = focusTarget.user?.name ?? '';
           if (name.isNotEmpty) {
             _searchController.text = name;
             // TextEditingController.text setter는 addListener 콜백을 트리거하지 않음.
-            //           _filteredFixedWorkers가 _searchQuery를 기준으로 필터링하므로 setState로 동기화 필수.
+            // _filteredFixedWorkers가 _searchQuery를 기준으로 필터링하므로 setState로 동기화 필수.
             setState(() => _searchQuery = name);
           }
         }
@@ -296,126 +311,65 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      insetPadding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 16),
-        vertical: AppDialogSize.insetV,
-      ),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
+    return AppModalShell(
+      children: [
+        // 헤더
+        _buildHeader(context, theme),
+
+        // 날짜 모드 서브헤더
+        if (_isDateMode) _buildDateModeSubHeader(context),
+
+        // 통계 바
+        _buildStatsBar(context),
+
+        // 계약 만료 임박 경고 배너
+        if (!_isDateMode && !isLoading)
+          Builder(builder: (context) {
+            final expiring = _expiringWorkers;
+            return expiring.isNotEmpty
+                ? _buildExpiringWarningBanner(context, expiring.length)
+                : const SizedBox.shrink();
+          }),
+
+        // 검색바
+        Padding(
+          padding: EdgeInsets.fromLTRB(
+            ResponsiveHelper.spacing(context, 16),
+            ResponsiveHelper.spacing(context, 8),
+            ResponsiveHelper.spacing(context, 16),
+            0,
+          ),
+          child: AppSearchBar(
+            controller: _searchController,
+            hintText: '이름으로 검색...',
+            padding: EdgeInsets.zero,
+          ),
         ),
-        child: Column(
-          children: [
-            // 헤더
-            _buildHeader(context, theme),
 
-            // 날짜 모드 서브헤더
-            if (_isDateMode) _buildDateModeSubHeader(context),
-
-            // 통계 바
-            _buildStatsBar(context),
-
-            // 계약 만료 임박 경고 배너
-            if (!_isDateMode && !isLoading)
-              Builder(builder: (context) {
-                final expiring = _expiringWorkers;
-                return expiring.isNotEmpty
-                    ? _buildExpiringWarningBanner(context, expiring.length)
-                    : const SizedBox.shrink();
-              }),
-
-            // 검색바
-            Padding(
-              padding: EdgeInsets.fromLTRB(
-                ResponsiveHelper.spacing(context, 16),
-                ResponsiveHelper.spacing(context, 8),
-                ResponsiveHelper.spacing(context, 16),
-                0,
-              ),
-              child: AppSearchBar(
-                controller: _searchController,
-                hintText: '이름으로 검색...',
-                padding: EdgeInsets.zero,
-              ),
-            ),
-
-            // 목록
-            Expanded(
-              child: isLoading
-                  ? const LoadingWidget(message: '고정근무자 로딩 중...')
-                  : _fixedWorkers.isEmpty
-                      ? _buildEmptyState(context)
-                      : _buildWorkerList(context),
-            ),
-
-            // 하단 버튼
-            _buildBottomBar(context),
-          ],
+        // 목록
+        Expanded(
+          child: isLoading
+              ? const LoadingWidget(message: '고정근무자 로딩 중...')
+              : _fixedWorkers.isEmpty
+                  ? _buildEmptyState(context)
+                  : _buildWorkerList(context),
         ),
-      ),
+
+        // 하단 버튼
+        _buildBottomBar(context),
+      ],
     );
   }
 
   /// 헤더
   Widget _buildHeader(BuildContext context, ThemeData theme) {
-    return Container(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-      decoration: BoxDecoration(
-        color: AppColors.longTermDark,
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(ResponsiveHelper.spacing(context, 20)),
-          topRight: Radius.circular(ResponsiveHelper.spacing(context, 20)),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 제목 행
-          Row(
-            children: [
-              Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.manage_accounts,
-                  color: Colors.white,
-                  size: ResponsiveHelper.iconSize(context, 24),
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Expanded(
-                child: Text(
-                  '고정근무자 관리',
-                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              // 닫기 버튼
-              IconButton(
-                onPressed: () {
-                  FocusScope.of(context).unfocus();
-                  Navigator.pop(context);
-                },
-                icon: const Icon(Icons.close, color: Colors.white),
-              ),
-            ],
-          ),
-          
-          // 사업장 드롭다운 (여러 사업장일 때만 표시)
-          if (_showBusinessSelector) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            _buildBusinessDropdown(context),
-          ],
-        ],
-      ),
+    return AppModalHeader(
+      title: '고정근무자 관리',
+      onClose: () {
+        FocusScope.of(context).unfocus();
+        Navigator.pop(context);
+      },
+      trailing: _showBusinessSelector ? _buildBusinessDropdown(context) : null,
     );
   }
 
@@ -568,15 +522,15 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   /// 특정 근무자의 해당 날짜 상태 계산
   _WorkerDayStatus _getWorkerDayStatus(ApplicationModel app) {
     final date = widget.focusDate!;
-    final today = DateTime(date.year, date.month, date.day);
+    final today = DateTime.utc(date.year, date.month, date.day);
 
     // 계약 기간 확인
     final startDate = app.desiredStartDate ?? app.workDate;
     final endDate = app.actualResignDate ?? app.workEndDate;
-    final start = DateTime(startDate.year, startDate.month, startDate.day);
+    final start = FormatHelper.toKstDate(startDate);
     if (today.isBefore(start)) return _WorkerDayStatus.notInPeriod;
     if (endDate != null) {
-      final end = DateTime(endDate.year, endDate.month, endDate.day);
+      final end = FormatHelper.toKstDate(endDate);
       if (today.isAfter(end)) return _WorkerDayStatus.notInPeriod;
     }
 
@@ -618,25 +572,25 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     switch (status) {
       case _WorkerDayStatus.normalWork:
         bg = AppColors.successBg; fg = AppColors.successDark;
-        icon = Icons.check_circle_outline; label = '출근 예정';
+        icon = Icons.check_circle_outline; label = '근무일';
       case _WorkerDayStatus.leaveApproved:
         bg = AppColors.warningBg; fg = AppColors.warningDark;
-        icon = Icons.beach_access_outlined; label = '휴무 승인';
+        icon = Icons.beach_access_outlined; label = '휴무';
       case _WorkerDayStatus.leavePending:
         bg = AppColors.warningBg; fg = AppColors.warningDark;
-        icon = Icons.hourglass_top_outlined; label = '휴무 대기';
+        icon = Icons.hourglass_top_outlined; label = '휴무 요청 중';
       case _WorkerDayStatus.extraWorkApproved:
         bg = AppColors.tealBg; fg = AppColors.tealDark;
         icon = Icons.add_circle_outline; label = '추가근무';
       case _WorkerDayStatus.extraWorkPending:
         bg = AppColors.tealBg; fg = AppColors.tealDark;
-        icon = Icons.hourglass_top_outlined; label = '추가 대기';
+        icon = Icons.hourglass_top_outlined; label = '추가근무 요청 중';
       case _WorkerDayStatus.notWorkingDay:
         bg = AppColors.grey100; fg = AppColors.grey500;
         icon = Icons.remove_circle_outline; label = '비근무일';
       case _WorkerDayStatus.notInPeriod:
         bg = AppColors.grey100; fg = AppColors.grey400;
-        icon = Icons.event_busy_outlined; label = '기간 외';
+        icon = Icons.event_busy_outlined; label = '계약기간 외';
     }
 
     return Container(
@@ -972,9 +926,10 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           ...inactive.map((w) => Padding(
                 padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
                 // ColorFiltered: 정적 불투명도 — Opacity(0.5)와 달리 compositing layer 미생성
+                // [5B.3B] 0.5→0.7: 비근무자도 읽어야 할 정보이므로 최소 contrast 확보
                 child: ColorFiltered(
                   colorFilter: ColorFilter.mode(
-                    Colors.white.withValues(alpha: 0.5),
+                    Colors.white.withValues(alpha: 0.7),
                     BlendMode.srcATop,
                   ),
                   child: _buildWorkerCard(w),
@@ -1106,8 +1061,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                           if (effectiveEndDate != null &&
                               !app.isTerminationApproved) {
                             final todayOnly = DateTime.now();
-                            final today = DateTime(todayOnly.year, todayOnly.month, todayOnly.day);
-                            final end = DateTime(effectiveEndDate.year, effectiveEndDate.month, effectiveEndDate.day);
+                            final today = FormatHelper.toKstDate(todayOnly);
+                            final end = FormatHelper.toKstDate(effectiveEndDate);
                             final diff = end.difference(today).inDays;
                             if (diff >= 0) daysLeft = diff;
                           }
@@ -1163,8 +1118,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       final requestedAt = app.terminationRequestedAt;
       final daysLeft = () {
         if (requestedAt == null) return 0;
-        final today = DateTime.now(); final t = DateTime(today.year, today.month, today.day);
-        final r = DateTime(requestedAt.year, requestedAt.month, requestedAt.day);
+        final t = FormatHelper.toKstDate(DateTime.now());
+        final r = FormatHelper.toKstDate(requestedAt);
         return (3 - t.difference(r).inDays).clamp(0, 3);
       }();
       statusText = '계약해지 요청중 (${daysLeft > 0 ? '$daysLeft일 후 자동 해지' : '오늘 자동 해지'})';
@@ -1175,8 +1130,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       final requestedAt = app.resignRequestedAt;
       final daysLeft = () {
         if (requestedAt == null) return 0;
-        final today = DateTime.now(); final t = DateTime(today.year, today.month, today.day);
-        final r = DateTime(requestedAt.year, requestedAt.month, requestedAt.day);
+        final t = FormatHelper.toKstDate(DateTime.now());
+        final r = FormatHelper.toKstDate(requestedAt);
         return (3 - t.difference(r).inDays).clamp(0, 3);
       }();
       statusText = '퇴사 요청중 (${daysLeft > 0 ? '$daysLeft일 후 자동 승인' : '오늘 자동 승인'})';
@@ -1354,8 +1309,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     final endDate = app.actualResignDate ?? app.workEndDate;
     if (endDate == null) return false;
     final today = DateTime.now();
-    final todayOnly = DateTime(today.year, today.month, today.day);
-    final endOnly = DateTime(endDate.year, endDate.month, endDate.day);
+    final todayOnly = FormatHelper.toKstDate(today);
+    final endOnly = FormatHelper.toKstDate(endDate);
     final diff = endOnly.difference(todayOnly).inDays;
     return diff >= 0 && diff <= days;
   }
@@ -1366,8 +1321,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     final endDate = app.actualResignDate ?? app.workEndDate;
     if (endDate == null) return const SizedBox.shrink();
     final today = DateTime.now();
-    final todayOnly = DateTime(today.year, today.month, today.day);
-    final endOnly = DateTime(endDate.year, endDate.month, endDate.day);
+    final todayOnly = FormatHelper.toKstDate(today);
+    final endOnly = FormatHelper.toKstDate(endDate);
     final daysLeft = endOnly.difference(todayOnly).inDays;
 
     return Container(
@@ -1476,7 +1431,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     );
   }
 
-  /// 계약서 서명 대기 배너 (연장 후 근무자 미서명)
+  /// 계약 처리 필요 배너 (CONTRACT_PENDING — 계약서 미작성 또는 서명 미완료)
+  // [4J.1] 계약서 존재 여부에 따라 "미작성"/"서명대기"가 다르지만, 이 화면에서는
+  //        계약 문서 상태를 별도 로드하지 않으므로 두 케이스를 포괄하는 문구를 사용한다.
   Widget _buildContractPendingBanner(BuildContext context) {
     return Container(
       width: double.infinity,
@@ -1494,10 +1451,21 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         children: [
           Icon(Icons.draw_outlined, size: ResponsiveHelper.iconSize(context, 14), color: AppColors.infoDark),
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-          Text(
-            '계약서 서명 대기 중',
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark)
-                .copyWith(fontWeight: FontWeight.w600),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '계약 처리 필요',
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark)
+                      .copyWith(fontWeight: FontWeight.w600),
+                ),
+                Text(
+                  '계약서를 작성하거나 계약 진행 상태를 확인해 주세요.',
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -1623,6 +1591,11 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
   }
 
   Future<ApplicationModel?> _processRenewal(ApplicationModel app, UserModel? user, {required DateTime newEndDate}) async {
+    // [FC-FW-PERM] canManageWorkers guard — 계약 연장도 인력 관리 권한 필요
+    if (!context.read<UserProvider>().can((p) => p.canManageWorkers)) {
+      ToastHelper.showWarning('인력 관리 권한이 없습니다.');
+      return null;
+    }
     if (!mounted || isLoading) return null;
     setLoading(true);
     try {
@@ -1764,8 +1737,8 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       final endDate = app.workEndDate;
       if (endDate != null) {
         final today = DateTime.now();
-        final endDateOnly = DateTime(endDate.year, endDate.month, endDate.day);
-        final todayOnly = DateTime(today.year, today.month, today.day);
+        final endDateOnly = FormatHelper.toKstDate(endDate);
+        final todayOnly = FormatHelper.toKstDate(today);
         if (!endDateOnly.isAfter(todayOnly)) {
           // 이미 만료됐거나 오늘이 종료일인 경우 — 즉시 CANCELED 처리
           // [C-H4-FIX] 반환값 체크 — false 반환 시(이미 취소됨·찾을 수 없음) 후속 처리 스킵
@@ -1802,14 +1775,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 하단 버튼
   Widget _buildBottomBar(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        // [CRASH-3 수정] Border(top:...) + borderRadius 동시 사용 → Border.paint 크래시
-        // 부모 Sheet가 이미 Radius:20으로 클리핑하므로 하단 바 borderRadius 제거
-        border: Border(top: BorderSide(color: AppColors.border)),
-      ),
+    return AppModalFooter(
       child: SizedBox(
         width: double.infinity,
         child: OutlinedButton(
@@ -1819,7 +1785,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
           },
           style: OutlinedButton.styleFrom(
             foregroundColor: AppColors.grey600,
-            side: BorderSide(color: AppColors.grey300),
+            side: const BorderSide(color: AppColors.grey300),
             padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 14)),
           ),
           child: const Text('닫기'),
@@ -1907,7 +1873,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                 const Divider(height: 1, color: AppColors.border),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 
-                // 메뉴 항목들
+                // ── 상세 정보 (neutral row) ─────────────────────────────
                 _buildActionItem(
                   context,
                   icon: Icons.person_outline,
@@ -1920,10 +1886,24 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                   },
                 ),
 
+                // ── 그룹: 근무 일정 ──────────────────────────────────────
+                Padding(
+                  padding: EdgeInsets.only(
+                    top: ResponsiveHelper.spacing(context, 12),
+                    bottom: ResponsiveHelper.spacing(context, 4),
+                  ),
+                  child: Text('근무 일정',
+                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)
+                        .copyWith(fontWeight: FontWeight.w600, letterSpacing: 0.5),
+                  ),
+                ),
+                const Divider(height: 1, color: AppColors.border),
+                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+
                 _buildActionItem(
                   context,
                   icon: Icons.add_circle_outline,
-                  title: '추가 근무 요청',
+                  title: '추가근무 요청',
                   subtitle: '휴무일에 추가 근무 요청',
                   color: AppColors.success,
                   onTap: () {
@@ -1935,7 +1915,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                 _buildActionItem(
                   context,
                   icon: Icons.remove_circle_outline,
-                  title: '미출근 요청',
+                  title: '휴무 요청',
                   subtitle: '특정 날짜 근무 제외 요청',
                   color: AppColors.warning,
                   onTap: () {
@@ -1944,38 +1924,24 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                   },
                 ),
 
-                // 계약해지 요청 (퇴사 요청이 없을 때만)
-                if (app.resignStatus != AppStatus.pending && app.terminationStatus != AppStatus.pending)
-                  _buildActionItem(
-                    context,
-                    icon: Icons.cancel_outlined,
-                    title: '계약해지 요청',
-                    subtitle: '고정 근무 계약 해지 요청',
-                    color: AppColors.error,
-                    onTap: () {
-                      Navigator.pop(context);
-                      WidgetsBinding.instance.addPostFrameCallback((_) => _showTerminationRequestDialog(item));
-                    },
-                  ),
-
-                // 해지 요청 취소 (요청 중일 때만)
-                if (app.terminationStatus == AppStatus.pending)
-                  _buildActionItem(
-                    context,
-                    icon: Icons.undo,
-                    title: '해지 요청 취소',
-                    subtitle: '계약해지 요청 철회',
-                    color: AppColors.grey600,
-                    onTap: () {
-                      Navigator.pop(context);
-                      WidgetsBinding.instance.addPostFrameCallback((_) => _cancelTerminationRequest(app));
-                    },
-                  ),
-
-                // 계약 연장 (종료일 있고 갱신 미결정일 때)
+                // ── 그룹: 계약 ───────────────────────────────────────────
                 if (app.workEndDate != null &&
                     app.renewalDecision == null &&
-                    !app.isTerminationApproved)
+                    !app.isTerminationApproved) ...[
+                  Padding(
+                    padding: EdgeInsets.only(
+                      top: ResponsiveHelper.spacing(context, 12),
+                      bottom: ResponsiveHelper.spacing(context, 4),
+                    ),
+                    child: Text('계약',
+                      style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)
+                          .copyWith(fontWeight: FontWeight.w600, letterSpacing: 0.5),
+                    ),
+                  ),
+                  const Divider(height: 1, color: AppColors.border),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+
+                  // 계약 연장
                   _buildActionItem(
                     context,
                     icon: Icons.autorenew,
@@ -1988,21 +1954,65 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
                     },
                   ),
 
-                // 계약 종료 통보 (종료일 있고 갱신 미결정일 때)
-                if (app.workEndDate != null &&
-                    app.renewalDecision == null &&
-                    !app.isTerminationApproved)
-                  _buildActionItem(
-                    context,
-                    icon: Icons.stop_circle_outlined,
-                    title: '계약 종료 통보',
-                    subtitle: '만료일에 계약을 종료합니다',
-                    color: AppColors.error,
-                    onTap: () {
-                      Navigator.pop(context);
-                      WidgetsBinding.instance.addPostFrameCallback((_) => _showRenewalDecisionDialog(app, user, extend: false));
-                    },
+                  // 계약 만료 후 종료
+                  // [FC-FW-TERM-RACE] terminationStatus==PENDING 시 숨김 — 두 종료 경로 동시 진행 차단
+                  if (app.terminationStatus != AppStatus.pending)
+                    _buildActionItem(
+                      context,
+                      icon: Icons.stop_circle_outlined,
+                      title: '계약 만료 후 종료',
+                      subtitle: '현재 계약 종료일에 근무를 종료합니다.',
+                      color: AppColors.grey700,
+                      onTap: () {
+                        Navigator.pop(context);
+                        WidgetsBinding.instance.addPostFrameCallback((_) => _showRenewalDecisionDialog(app, user, extend: false));
+                      },
+                    ),
+                ],
+
+                // ── 그룹: 중도 해지 (destructive) ───────────────────────
+                if (app.resignStatus != AppStatus.pending || app.terminationStatus == AppStatus.pending) ...[
+                  Padding(
+                    padding: EdgeInsets.only(
+                      top: ResponsiveHelper.spacing(context, 12),
+                      bottom: ResponsiveHelper.spacing(context, 4),
+                    ),
+                    child: Text('기타',
+                      style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)
+                          .copyWith(fontWeight: FontWeight.w600, letterSpacing: 0.5),
+                    ),
                   ),
+                  const Divider(height: 1, color: AppColors.border),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+
+                  // 중도 계약 해지 요청 (퇴사·해지 요청 없을 때만)
+                  if (app.resignStatus != AppStatus.pending && app.terminationStatus != AppStatus.pending)
+                    _buildActionItem(
+                      context,
+                      icon: Icons.cancel_outlined,
+                      title: '중도 계약 해지 요청',
+                      subtitle: '계약 종료일 전 해지를 요청합니다. 근로자 응답이 없으면 3일 후 자동 처리됩니다.',
+                      color: AppColors.error,
+                      onTap: () {
+                        Navigator.pop(context);
+                        WidgetsBinding.instance.addPostFrameCallback((_) => _showTerminationRequestDialog(item));
+                      },
+                    ),
+
+                  // 해지 요청 취소 (요청 중일 때만)
+                  if (app.terminationStatus == AppStatus.pending)
+                    _buildActionItem(
+                      context,
+                      icon: Icons.undo,
+                      title: '해지 요청 취소',
+                      subtitle: '중도 계약 해지 요청을 철회합니다',
+                      color: AppColors.grey600,
+                      onTap: () {
+                        Navigator.pop(context);
+                        WidgetsBinding.instance.addPostFrameCallback((_) => _cancelTerminationRequest(app));
+                      },
+                    ),
+                ],
 
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
               ],
@@ -2101,6 +2111,11 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 추가 근무 요청 다이얼로그
   Future<void> _showExtraWorkRequestDialog(ApplicationModel app) async {
+    // [FC-FW-PERM] canManageWorkers guard — Firestore rules 중복 방어, UX 오류 방지
+    if (!context.read<UserProvider>().can((p) => p.canManageWorkers)) {
+      ToastHelper.showWarning('인력 관리 권한이 없습니다.');
+      return;
+    }
     // 🔥 실제 근무 기간 계산 (희망시작일/퇴사일 우선)
     final effectiveStartDate = app.desiredStartDate ?? app.workDate;
     final effectiveEndDate = app.actualResignDate ?? app.workEndDate;
@@ -2113,9 +2128,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     // 선택 가능한 첫 날짜 찾기
     DateTime? findFirstSelectableDate() {
       final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
-      final workStart = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
-      final workEnd = DateTime(effectiveEndDate.year, effectiveEndDate.month, effectiveEndDate.day);
+      final today = FormatHelper.toKstDate(now);
+      final workStart = FormatHelper.toKstDate(effectiveStartDate);
+      final workEnd = FormatHelper.toKstDate(effectiveEndDate);
 
       DateTime checkDate = now.isAfter(workStart) ? today : workStart;
 
@@ -2129,11 +2144,11 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
         if (!isOriginalWorkDay) {
           final alreadyExtra = app.extraWorkDates?.any((d) =>
-              d.year == checkDate.year && d.month == checkDate.month && d.day == checkDate.day) ?? false;
+              FormatHelper.toKstDate(d) == checkDate) ?? false;
           if (!alreadyExtra) return checkDate;
         } else if (app.leaveDates != null) {
           final isLeaveDay = app.leaveDates!.any((d) =>
-              d.year == checkDate.year && d.month == checkDate.month && d.day == checkDate.day);
+              FormatHelper.toKstDate(d) == checkDate);
           if (isLeaveDay) return checkDate;
         }
 
@@ -2157,9 +2172,10 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       minDate: DateTime.now(),
       maxDate: effectiveEndDate,
       enabledDayPredicate: (date) {
-        final workStart = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
-        final workEnd = DateTime(effectiveEndDate.year, effectiveEndDate.month, effectiveEndDate.day);
-        if (date.isBefore(workStart) || date.isAfter(workEnd)) return false;
+        final dateKey = DateTime.utc(date.year, date.month, date.day);
+        final workStart = FormatHelper.toKstDate(effectiveStartDate);
+        final workEnd = FormatHelper.toKstDate(effectiveEndDate);
+        if (dateKey.isBefore(workStart) || dateKey.isAfter(workEnd)) return false;
 
         bool isOriginalWorkDay = false;
         if (app.workDays != null && app.workDays!.isNotEmpty) {
@@ -2170,12 +2186,12 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
         if (isOriginalWorkDay) {
           return app.leaveDates?.any((d) =>
-              d.year == date.year && d.month == date.month && d.day == date.day) ?? false;
+              FormatHelper.toKstDate(d) == dateKey) ?? false;
         }
 
         if (app.extraWorkDates != null) {
           final alreadyExtra = app.extraWorkDates!.any((d) =>
-              d.year == date.year && d.month == date.month && d.day == date.day);
+              FormatHelper.toKstDate(d) == dateKey);
           if (alreadyExtra) return false;
         }
 
@@ -2185,62 +2201,23 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
     if (selectedDate == null || !mounted) return;
 
-    final reasonController = TextEditingController();
-
-    final confirmed = await showDialog<bool>(
+    // [FC-FW-02 OWNERSHIP FIX] _WorkReasonDialog(StatefulWidget)이 ctrl을
+    // 직접 소유하고 State.dispose()에서 해제한다.
+    // addPostFrameCallback dispose 패턴 제거.
+    final reason = await showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => StyledDialog(
+      builder: (ctx) => _WorkReasonDialog(
         title: '추가 근무 요청',
         icon: Icons.add_circle_outline,
         headerColor: AppColors.success,
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            StyledDialogInfoCard.success(
-              FormatHelper.formatDateLong(selectedDate),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            Text(
-              '요청 사유 (선택)',
-              style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.bold),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            TextField(
-              controller: reasonController,
-              maxLength: 200,
-              decoration: InputDecoration(
-                hintText: '추가 근무 요청 사유를 입력하세요',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                counterText: '',
-              ),
-              maxLines: 2,
-            ),
-          ],
-        ),
-        actions: [
-          StyledDialogButton.cancel(
-            onPressed: () {
-              FocusManager.instance.primaryFocus?.unfocus();
-              Navigator.pop(context, false);
-            },
-          ),
-          StyledDialogButton.primary(
-            text: '요청',
-            onPressed: () {
-              FocusManager.instance.primaryFocus?.unfocus();
-              Navigator.pop(context, true);
-            },
-          ),
-        ],
+        isSuccessCard: true,
+        dateLabel: FormatHelper.formatDateLong(selectedDate),
+        reasonLabel: '요청 사유 (선택)',
+        hintText: '추가 근무 요청 사유를 입력하세요',
       ),
     );
-
-    final reason = reasonController.text.trim();
-    WidgetsBinding.instance.addPostFrameCallback((_) => reasonController.dispose());
-
-    if (confirmed != true || !mounted) return;
+    if (reason == null || !mounted) return; // null = 취소
 
     await _submitExtraWorkRequest(app, selectedDate, reason);
   }
@@ -2267,7 +2244,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         applicationId: app.id,
         applicantUid: app.uid,
         applicantName: workerName,
-        targetDate: DateTime(date.year, date.month, date.day),
+        targetDate: DateTime.utc(date.year, date.month, date.day),
         requestType: RequestType.EXTRA_WORK,
         requestedBy: RequesterType.ADMIN,
         requestedByUid: adminUid,
@@ -2294,6 +2271,11 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 미출근 요청 다이얼로그
   Future<void> _showNoWorkRequestDialog(ApplicationModel app) async {
+    // [FC-FW-PERM] canManageWorkers guard — Firestore rules 중복 방어, UX 오류 방지
+    if (!context.read<UserProvider>().can((p) => p.canManageWorkers)) {
+      ToastHelper.showWarning('인력 관리 권한이 없습니다.');
+      return;
+    }
     // 🔥 실제 근무 기간 계산 (희망시작일/퇴사일 우선)
     final effectiveStartDate = app.desiredStartDate ?? app.workDate;
     final effectiveEndDate = app.actualResignDate ?? app.workEndDate;
@@ -2306,9 +2288,9 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     // 선택 가능한 첫 날짜 찾기
     DateTime? findFirstSelectableDate() {
       final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
-      final workStart = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
-      final workEnd = DateTime(effectiveEndDate.year, effectiveEndDate.month, effectiveEndDate.day);
+      final today = FormatHelper.toKstDate(now);
+      final workStart = FormatHelper.toKstDate(effectiveStartDate);
+      final workEnd = FormatHelper.toKstDate(effectiveEndDate);
 
       DateTime checkDate = now.isAfter(workStart) ? today : workStart;
 
@@ -2322,7 +2304,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
         if (isWorkDay) {
           final isLeaveDay = app.leaveDates?.any((d) =>
-              d.year == checkDate.year && d.month == checkDate.month && d.day == checkDate.day) ?? false;
+              FormatHelper.toKstDate(d) == checkDate) ?? false;
           if (!isLeaveDay) return checkDate;
         }
 
@@ -2346,9 +2328,10 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
       minDate: DateTime.now(),
       maxDate: effectiveEndDate,
       enabledDayPredicate: (date) {
-        final workStart = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
-        final workEnd = DateTime(effectiveEndDate.year, effectiveEndDate.month, effectiveEndDate.day);
-        if (date.isBefore(workStart) || date.isAfter(workEnd)) return false;
+        final dateKey = DateTime.utc(date.year, date.month, date.day);
+        final workStart = FormatHelper.toKstDate(effectiveStartDate);
+        final workEnd = FormatHelper.toKstDate(effectiveEndDate);
+        if (dateKey.isBefore(workStart) || dateKey.isAfter(workEnd)) return false;
 
         bool isWorkDay = false;
         if (app.workDays != null && app.workDays!.isNotEmpty) {
@@ -2360,68 +2343,29 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         if (!isWorkDay) return false;
 
         return !(app.leaveDates?.any((d) =>
-            d.year == date.year && d.month == date.month && d.day == date.day) ?? false);
+            FormatHelper.toKstDate(d) == dateKey) ?? false);
       },
     );
 
     if (selectedDate == null || !mounted) return;
 
-    final reasonController = TextEditingController();
-
-    final confirmed = await showDialog<bool>(
+    // [FC-FW-03 OWNERSHIP FIX] _WorkReasonDialog(StatefulWidget)이 ctrl을
+    // 직접 소유하고 State.dispose()에서 해제한다.
+    // addPostFrameCallback dispose 패턴 제거.
+    final noWorkReason = await showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => StyledDialog(
+      builder: (ctx) => _WorkReasonDialog(
         title: '미출근 요청',
         icon: Icons.remove_circle_outline,
         headerColor: AppColors.warning,
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            StyledDialogInfoCard.warning(
-              FormatHelper.formatDateLong(selectedDate),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            Text(
-              '요청 사유',
-              style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.bold),
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-            TextField(
-              controller: reasonController,
-              maxLength: 200,
-              decoration: InputDecoration(
-                hintText: '미출근 요청 사유를 입력하세요',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                counterText: '',
-              ),
-              maxLines: 2,
-            ),
-          ],
-        ),
-        actions: [
-          StyledDialogButton.cancel(
-            onPressed: () {
-              FocusManager.instance.primaryFocus?.unfocus();
-              Navigator.pop(context, false);
-            },
-          ),
-          StyledDialogButton.primary(
-            text: '요청',
-            onPressed: () {
-              FocusManager.instance.primaryFocus?.unfocus();
-              Navigator.pop(context, true);
-            },
-          ),
-        ],
+        isSuccessCard: false,
+        dateLabel: FormatHelper.formatDateLong(selectedDate),
+        reasonLabel: '요청 사유',
+        hintText: '미출근 요청 사유를 입력하세요',
       ),
     );
-
-    final noWorkReason = reasonController.text.trim();
-    WidgetsBinding.instance.addPostFrameCallback((_) => reasonController.dispose());
-
-    if (confirmed != true || !mounted) return;
+    if (noWorkReason == null || !mounted) return; // null = 취소
 
     await _submitNoWorkRequest(app, selectedDate, noWorkReason);
   }
@@ -2448,7 +2392,7 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
         applicationId: app.id,
         applicantUid: app.uid,
         applicantName: workerName,
-        targetDate: DateTime(date.year, date.month, date.day),
+        targetDate: DateTime.utc(date.year, date.month, date.day),
         requestType: RequestType.NO_WORK,
         requestedBy: RequesterType.ADMIN,
         requestedByUid: adminUid,
@@ -2479,237 +2423,26 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 계약해지 요청 다이얼로그
   Future<void> _showTerminationRequestDialog(_FixedWorkerItem item) async {
-    final app = item.application;
-    final user = item.user;
-    final name = user?.name ?? '이름 없음';
-
-    String? selectedReason;
-    final customReasonController = TextEditingController();
-
-    final reasons = [
-      '업무 능력 부족',
-      '근태 불량 (지각/결근)',
-      '업무 태도 불량',
-      '인력 구조 조정',
-      '계약 조건 불일치',
-      '기타',
-    ];
-
+    // [FC-FW-PERM] canManageWorkers guard — CF 호출 전 UX 오류 방지 (서버도 assertBizAdmin)
+    if (!context.read<UserProvider>().can((p) => p.canManageWorkers)) {
+      ToastHelper.showWarning('인력 관리 권한이 없습니다.');
+      return;
+    }
+    // [FC-FW-01 OWNERSHIP FIX] _TerminationRequestDialog(StatefulWidget)이
+    // customReasonController와 selectedReason 상태를 직접 소유한다.
+    // Future.delayed(400ms) 패턴 제거 — State.dispose()에서 안전하게 해제.
     final result = await showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          return Dialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            child: Container(
-              width: double.maxFinite,
-              constraints: const BoxConstraints(maxWidth: 400),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // 헤더
-                  Container(
-                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-                    decoration: BoxDecoration(
-                      color: AppColors.error,
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(16),
-                        topRight: Radius.circular(16),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.cancel_outlined,
-                          color: Colors.white,
-                          size: ResponsiveHelper.iconSize(context, 24),
-                        ),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '계약해지 요청',
-                                style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              Text(
-                                '$name님',
-                                style: ResponsiveHelper.smallStyle(context, color: Colors.white.withValues(alpha: 0.7)),
-                              ),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          icon: Icon(Icons.close, color: Colors.white, size: ResponsiveHelper.iconSize(context, 24)),
-                          onPressed: () {
-                            FocusManager.instance.primaryFocus?.unfocus();
-                            Navigator.pop(context);
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // 안내
-                  Container(
-                    margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-                    decoration: BoxDecoration(
-                      color: AppColors.infoBg,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.info_outline, size: ResponsiveHelper.iconSize(context, 20), color: AppColors.infoDark),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                        Expanded(
-                          child: Text(
-                            '근무자가 3일 이내 승인/거절하지 않으면\n자동으로 계약이 해지됩니다.',
-                            style: ResponsiveHelper.smallStyle(context, color: AppColors.infoDark),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // 사유 선택
-                  Padding(
-                    padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 16)),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '해지 사유를 선택해주세요',
-                          style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w600),
-                        ),
-                        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-
-                        ...reasons.map((reason) => Padding(
-                          padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
-                          child: InkWell(
-                            onTap: () => setDialogState(() => selectedReason = reason),
-                            borderRadius: BorderRadius.circular(8),
-                            child: Container(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: ResponsiveHelper.spacing(context, 12),
-                                vertical: ResponsiveHelper.spacing(context, 12),
-                              ),
-                              decoration: BoxDecoration(
-                                color: selectedReason == reason ? AppColors.errorBg : AppColors.grey100,
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                  color: selectedReason == reason ? AppColors.error : AppColors.grey300,
-                                ),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    selectedReason == reason
-                                        ? Icons.radio_button_checked
-                                        : Icons.radio_button_off,
-                                    color: selectedReason == reason ? AppColors.error : AppColors.grey400,
-                                    size: ResponsiveHelper.iconSize(context, 20),
-                                  ),
-                                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                                  Text(reason, style: ResponsiveHelper.bodyStyle(context)),
-                                ],
-                              ),
-                            ),
-                          ),
-                        )),
-
-                        // 기타 사유 입력
-                        if (selectedReason == '기타') ...[
-                          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                          TextField(
-                            controller: customReasonController,
-                            maxLength: 200,
-                            decoration: InputDecoration(
-                              hintText: '상세 사유를 입력하세요',
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                              contentPadding: EdgeInsets.symmetric(
-                                horizontal: ResponsiveHelper.spacing(context, 12),
-                                vertical: ResponsiveHelper.spacing(context, 12),
-                              ),
-                              counterText: '',
-                            ),
-                            style: ResponsiveHelper.bodyStyle(context),
-                            maxLines: 2,
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-
-                  SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-
-                  // 하단 버튼
-                  Container(
-                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-                    decoration: BoxDecoration(
-                      border: Border(top: BorderSide(color: AppColors.border)),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () {
-                              FocusManager.instance.primaryFocus?.unfocus();
-                              Navigator.pop(context);
-                            },
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: AppColors.grey600,
-                              side: BorderSide(color: AppColors.grey300),
-                              padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
-                            ),
-                            child: const Text('취소'),
-                          ),
-                        ),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: selectedReason != null
-                                ? () {
-                                    final reason = selectedReason == '기타' &&
-                                            customReasonController.text.trim().isNotEmpty
-                                        ? customReasonController.text.trim()
-                                        : selectedReason;
-                                    FocusManager.instance.primaryFocus?.unfocus();
-                                    Navigator.pop(context, reason);
-                                  }
-                                : null,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.error,
-                              foregroundColor: Colors.white,
-                              padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
-                            ),
-                            child: const Text('해지 요청'),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
+      builder: (ctx) => _TerminationRequestDialog(
+        workerName: item.user?.name ?? '이름 없음',
       ),
     );
 
-    Future<void>.delayed(const Duration(milliseconds: 400)).then((_) {
-      customReasonController.dispose();
-    });
-
     if (result == null || !mounted) return;
-
-    await _submitTerminationRequest(app, result);
+    await _submitTerminationRequest(item.application, result);
   }
+
 
   /// 계약해지 요청 제출
   Future<void> _submitTerminationRequest(ApplicationModel app, String reason) async {
@@ -2744,6 +2477,11 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
 
   /// 해지 요청 취소
   Future<void> _cancelTerminationRequest(ApplicationModel app) async {
+    // [FC-FW-PERM] canManageWorkers guard — CF 호출 전 UX 오류 방지 (CF callableCancelTermination 내부 검증)
+    if (!context.read<UserProvider>().can((p) => p.canManageWorkers)) {
+      ToastHelper.showWarning('인력 관리 권한이 없습니다.');
+      return;
+    }
     final confirmed = await DialogHelper.showConfirm(
       context,
       title: '해지 요청 취소',
@@ -2772,6 +2510,356 @@ class _FixedWorkerManagementDialogState extends State<FixedWorkerManagementDialo
     }
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FC-FW-01 OWNERSHIP FIX: _TerminationRequestDialog
+// customReasonController + selectedReason 상태를 Dialog State가 직접 소유.
+// Future.delayed(400ms) 패턴 제거 — State.dispose()에서 안전하게 해제.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _TerminationRequestDialog extends StatefulWidget {
+  final String workerName;
+  const _TerminationRequestDialog({required this.workerName});
+
+  @override
+  State<_TerminationRequestDialog> createState() =>
+      _TerminationRequestDialogState();
+}
+
+class _TerminationRequestDialogState
+    extends State<_TerminationRequestDialog> {
+  String? _selectedReason;
+  final _customReasonCtrl = TextEditingController();
+
+  static const _reasons = [
+    '업무 능력 부족',
+    '근태 불량 (지각/결근)',
+    '업무 태도 불량',
+    '인력 구조 조정',
+    '계약 조건 불일치',
+    '기타',
+  ];
+
+  @override
+  void dispose() {
+    _customReasonCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Container(
+        width: double.maxFinite,
+        constraints: const BoxConstraints(maxWidth: 400),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 헤더
+            Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+              decoration: const BoxDecoration(
+                color: AppColors.error,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(16),
+                  topRight: Radius.circular(16),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.cancel_outlined,
+                    color: Colors.white,
+                    size: ResponsiveHelper.iconSize(context, 24),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '계약해지 요청',
+                          style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          '${widget.workerName}님',
+                          style: ResponsiveHelper.smallStyle(context,
+                              color: Colors.white.withValues(alpha: 0.7)),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.close,
+                        color: Colors.white,
+                        size: ResponsiveHelper.iconSize(context, 24)),
+                    onPressed: () {
+                      FocusManager.instance.primaryFocus?.unfocus();
+                      Navigator.pop(context);
+                    },
+                  ),
+                ],
+              ),
+            ),
+
+            // 안내
+            Container(
+              margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+              decoration: BoxDecoration(
+                color: AppColors.infoBg,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline,
+                      size: ResponsiveHelper.iconSize(context, 20),
+                      color: AppColors.infoDark),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  Expanded(
+                    child: Text(
+                      '근무자가 3일 이내 승인/거절하지 않으면\n자동으로 계약이 해지됩니다.',
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.infoDark),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // 사유 선택
+            Padding(
+              padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 16)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '해지 사유를 선택해주세요',
+                    style: ResponsiveHelper.bodyStyle(context)
+                        .copyWith(fontWeight: FontWeight.w600),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+
+                  ..._reasons.map((reason) => Padding(
+                        padding: EdgeInsets.only(
+                            bottom: ResponsiveHelper.spacing(context, 8)),
+                        child: InkWell(
+                          onTap: () =>
+                              setState(() => _selectedReason = reason),
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: ResponsiveHelper.spacing(context, 12),
+                              vertical: ResponsiveHelper.spacing(context, 12),
+                            ),
+                            decoration: BoxDecoration(
+                              color: _selectedReason == reason
+                                  ? AppColors.errorBg
+                                  : AppColors.grey100,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: _selectedReason == reason
+                                    ? AppColors.error
+                                    : AppColors.grey300,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  _selectedReason == reason
+                                      ? Icons.radio_button_checked
+                                      : Icons.radio_button_off,
+                                  color: _selectedReason == reason
+                                      ? AppColors.error
+                                      : AppColors.grey400,
+                                  size: ResponsiveHelper.iconSize(context, 20),
+                                ),
+                                SizedBox(
+                                    width:
+                                        ResponsiveHelper.spacing(context, 12)),
+                                Text(reason,
+                                    style: ResponsiveHelper.bodyStyle(context)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      )),
+
+                  // 기타 사유 직접 입력
+                  if (_selectedReason == '기타') ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                    TextField(
+                      controller: _customReasonCtrl,
+                      maxLength: 200,
+                      decoration: InputDecoration(
+                        hintText: '상세 사유를 입력하세요',
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: ResponsiveHelper.spacing(context, 12),
+                          vertical: ResponsiveHelper.spacing(context, 12),
+                        ),
+                        counterText: '',
+                      ),
+                      style: ResponsiveHelper.bodyStyle(context),
+                      maxLines: 2,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+
+            // 하단 버튼
+            Container(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+              decoration: BoxDecoration(
+                border: Border(top: BorderSide(color: AppColors.border)),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () {
+                        FocusManager.instance.primaryFocus?.unfocus();
+                        Navigator.pop(context);
+                      },
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.grey600,
+                        side: BorderSide(color: AppColors.grey300),
+                        padding: EdgeInsets.symmetric(
+                            vertical: ResponsiveHelper.spacing(context, 12)),
+                      ),
+                      child: const Text('취소'),
+                    ),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _selectedReason != null
+                          ? () {
+                              final reason = _selectedReason == '기타' &&
+                                      _customReasonCtrl.text.trim().isNotEmpty
+                                  ? _customReasonCtrl.text.trim()
+                                  : _selectedReason;
+                              FocusManager.instance.primaryFocus?.unfocus();
+                              Navigator.pop(context, reason);
+                            }
+                          : null,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.error,
+                        foregroundColor: Colors.white,
+                        padding: EdgeInsets.symmetric(
+                            vertical: ResponsiveHelper.spacing(context, 12)),
+                      ),
+                      child: const Text('해지 요청'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// FC-FW-02/03 — 추가근무/미출근 요청 사유 입력 다이얼로그 (공용)
+// StyledDialog(DFSA 활성) + TextEditingController 소유권: State가 직접 소유·해제
+// ──────────────────────────────────────────────────────────────────────────────
+class _WorkReasonDialog extends StatefulWidget {
+  final String title;
+  final IconData icon;
+  final Color headerColor;
+  final bool isSuccessCard; // true → StyledDialogInfoCard.success, false → .warning
+  final String dateLabel;
+  final String reasonLabel;
+  final String hintText;
+
+  const _WorkReasonDialog({
+    required this.title,
+    required this.icon,
+    required this.headerColor,
+    required this.isSuccessCard,
+    required this.dateLabel,
+    required this.reasonLabel,
+    required this.hintText,
+  });
+
+  @override
+  State<_WorkReasonDialog> createState() => _WorkReasonDialogState();
+}
+
+class _WorkReasonDialogState extends State<_WorkReasonDialog> {
+  final _reasonCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _reasonCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StyledDialog(
+      title: widget.title,
+      icon: widget.icon,
+      headerColor: widget.headerColor,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          widget.isSuccessCard
+              ? StyledDialogInfoCard.success(widget.dateLabel)
+              : StyledDialogInfoCard.warning(widget.dateLabel),
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          Text(
+            widget.reasonLabel,
+            style: ResponsiveHelper.bodyStyle(context)
+                .copyWith(fontWeight: FontWeight.bold),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          TextField(
+            controller: _reasonCtrl,
+            maxLength: 200,
+            decoration: InputDecoration(
+              hintText: widget.hintText,
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8)),
+              counterText: '',
+            ),
+            maxLines: 2,
+          ),
+        ],
+      ),
+      actions: [
+        StyledDialogButton.cancel(
+          onPressed: () {
+            FocusManager.instance.primaryFocus?.unfocus();
+            Navigator.pop(context); // null = 취소
+          },
+        ),
+        StyledDialogButton.primary(
+          text: '요청',
+          onPressed: () {
+            FocusManager.instance.primaryFocus?.unfocus();
+            Navigator.pop(context, _reasonCtrl.text.trim()); // String = 확인
+          },
+        ),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _FixedWorkerItem {
   final ApplicationModel application;

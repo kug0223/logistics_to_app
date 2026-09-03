@@ -18,37 +18,46 @@ import '../../dialogs/apply/apply_work_dialog.dart';
 
 /// 지원자용 TO 카드
 ///
-/// 접힌 상태: 급여·날짜+시간·위치·모집현황 한눈에
-/// 펼친 상태:
-///   - flex TO → 날짜별 슬롯 목록 (슬롯별 지원 버튼)
-///   - contract TO → 공고 설명 + 업무 목록
+/// [compact = false] 기본 모드:
+///   접힌 상태: 급여·날짜+시간·위치·모집현황 한눈에
+///   펼친 상태:
+///     - flex TO → 날짜별 슬롯 목록 (슬롯별 지원 버튼)
+///     - contract TO → 공고 설명 + 업무 목록
+///   카드 상호 비활성화: isAnyOtherExpanded=true 시 반투명 처리
 ///
-/// 카드 상호 비활성화: isAnyOtherExpanded=true 시 반투명 처리
+/// [compact = true] 탐색 전용 모드 (일자리 탭 목록):
+///   왼쪽 컬러바·펼침 없음. 카드 전체 탭 → JobPostingScreen 이동.
+///   selectedNotifier / onFetchWorkDetails / onFetchSlots 불필요.
 class UserTOCard extends StatefulWidget {
   const UserTOCard({
     super.key,
     required this.to,
-    required this.selectedNotifier,
     required this.myApplications,
     required this.onApplySuccess,
-    required this.onFetchWorkDetails,
+    this.compact = false,
+    this.selectedNotifier,
+    this.onFetchWorkDetails,
     this.workDetails,
     this.slots,
     this.onFetchSlots,
   });
 
   final TOModel to;
-  /// 화면 전체 공유 선택 상태 — value == to.id 이면 이 카드가 펼쳐짐
-  /// ValueNotifier 방식: 탭 시 setState 없이 해당 카드 2개만 rebuild
-  final ValueNotifier<String?> selectedNotifier;
   final List<ApplicationModel> myApplications;
   final VoidCallback onApplySuccess;
 
-  // contract TO용
-  final List<WorkDetailModel>? workDetails;
-  final Future<List<WorkDetailModel>> Function(String toId) onFetchWorkDetails;
+  /// true: 탐색 전용 컴팩트 카드 — 확장 없음, 카드 탭 시 상세 화면으로 이동
+  final bool compact;
 
-  // flex TO용 슬롯
+  /// 화면 전체 공유 선택 상태 — value == to.id 이면 이 카드가 펼쳐짐
+  /// compact=false 일 때만 사용. ValueNotifier 방식: 탭 시 해당 카드 2개만 rebuild
+  final ValueNotifier<String?>? selectedNotifier;
+
+  // contract TO용 (compact=false)
+  final List<WorkDetailModel>? workDetails;
+  final Future<List<WorkDetailModel>> Function(String toId)? onFetchWorkDetails;
+
+  // flex TO용 슬롯 (compact=false)
   final List<SlotModel>? slots;
   final Future<List<SlotModel>> Function(String toId)? onFetchSlots;
 
@@ -74,7 +83,9 @@ class _UserTOCardState extends State<UserTOCard> {
   bool get _showSlotsLoading => _isFetchingSlots && (widget.slots == null || widget.slots!.isEmpty);
 
   // ValueNotifier 기반 선택 상태 — 탭 시 전체 화면 setState 없이 이 카드만 rebuild
-  bool get _isSelected => widget.selectedNotifier.value == widget.to.id;
+  // compact=true 이면 selectedNotifier가 null → 항상 false
+  bool get _isSelected =>
+      widget.selectedNotifier?.value == widget.to.id;
 
   void _onSelectionChanged() {
     if (_isSelected) {
@@ -94,12 +105,17 @@ class _UserTOCardState extends State<UserTOCard> {
     _cachedHasApplied = _computeHasApplied();
     _cachedTimeAgo    = _computeTimeAgo();
     _rebuildAppliedSets();
-    widget.selectedNotifier.addListener(_onSelectionChanged);
+    // compact 모드에서는 selectedNotifier가 null — addListener 생략
+    if (!widget.compact) {
+      widget.selectedNotifier?.addListener(_onSelectionChanged);
+    }
   }
 
   @override
   void dispose() {
-    widget.selectedNotifier.removeListener(_onSelectionChanged);
+    if (!widget.compact) {
+      widget.selectedNotifier?.removeListener(_onSelectionChanged);
+    }
     super.dispose();
   }
 
@@ -167,7 +183,7 @@ class _UserTOCardState extends State<UserTOCard> {
     if (_isFetching) return widget.workDetails ?? const [];
     setState(() => _isFetching = true);
     try {
-      return await widget.onFetchWorkDetails(widget.to.id);
+      return await widget.onFetchWorkDetails!(widget.to.id);
     } finally {
       if (mounted) setState(() => _isFetching = false);
     }
@@ -242,10 +258,29 @@ class _UserTOCardState extends State<UserTOCard> {
 
   String get _dateText {
     final to = widget.to;
-    if (to.isLongTerm && to.startDate != null && to.endDate != null) {
-      return '${FormatHelper.formatDateCompact(to.startDate!)} ~ '
-          '${FormatHelper.formatDateCompact(to.endDate!)}';
+    if (!to.isLongTerm) return FormatHelper.formatDateCompact(to.date);
+
+    // custom: 관리자가 직접 지정한 고정 기간
+    if (to.contractPeriodType == 'custom') {
+      if (to.rangeStart != null && to.rangeEnd != null) {
+        return '${FormatHelper.formatDateCompact(to.rangeStart!)} ~ '
+            '${FormatHelper.formatDateCompact(to.rangeEnd!)}';
+      }
+      return FormatHelper.formatDateCompact(to.date);
     }
+
+    // preset 신규 정책: 근무 시작 가능기간 표시
+    if (to.hasWorkStartAvailableRange) {
+      return '${FormatHelper.formatDateCompact(to.workStartAvailableFrom!)} ~ '
+          '${FormatHelper.formatDateCompact(to.workStartAvailableUntil!)}';
+    }
+
+    // legacy: rangeStart ~ rangeEnd (구 데이터 호환)
+    if (to.rangeStart != null && to.rangeEnd != null) {
+      return '${FormatHelper.formatDateCompact(to.rangeStart!)} ~ '
+          '${FormatHelper.formatDateCompact(to.rangeEnd!)}';
+    }
+
     return FormatHelper.formatDateCompact(to.date);
   }
 
@@ -300,20 +335,116 @@ class _UserTOCardState extends State<UserTOCard> {
     return '${widget.to.totalConfirmed}/$req명';
   }
 
+  // ── compact 모드 전용 표시 ──────────────────────────────
+
+  /// compact 모드 날짜 텍스트
+  /// flex TO 복수 날파: "8/12(수) 외 9일"
+  /// flex TO 단일: "8/12(수)"
+  /// contract TO custom: "8/12(수) ~ 9/30(화)" (고정 기간)
+  /// contract TO preset 신규: "8/12(수) ~ 9/30(화)" (시작 가능기간)
+  /// contract TO legacy: "8/12(수) ~ 9/30(화)"
+  String get _compactDateText {
+    final to = widget.to;
+    if (!to.isLongTerm) {
+      // flex TO
+      final total = to.totalSlots;
+      final first = FormatHelper.formatDateCompact(to.date);
+      if (total <= 1) return first;
+      return '$first 외 ${total - 1}일';
+    }
+
+    // custom: 고정 기간
+    if (to.contractPeriodType == 'custom') {
+      if (to.rangeStart != null && to.rangeEnd != null) {
+        return '${FormatHelper.formatDateCompact(to.rangeStart!)} ~ '
+            '${FormatHelper.formatDateCompact(to.rangeEnd!)}';
+      }
+      return FormatHelper.formatDateCompact(to.date);
+    }
+
+    // preset 신규 정책: 근무 시작 가능기간
+    if (to.hasWorkStartAvailableRange) {
+      return '${FormatHelper.formatDateCompact(to.workStartAvailableFrom!)} ~ '
+          '${FormatHelper.formatDateCompact(to.workStartAvailableUntil!)}';
+    }
+
+    // legacy
+    if (to.rangeStart != null && to.rangeEnd != null) {
+      return '${FormatHelper.formatDateCompact(to.rangeStart!)} ~ '
+          '${FormatHelper.formatDateCompact(to.rangeEnd!)}';
+    }
+
+    return FormatHelper.formatDateCompact(to.date);
+  }
+
+  /// compact 모드 시간 텍스트
+  /// 업무 없거나 모두 같은 시간 → "09:00 ~ 18:00" 반환
+  /// 시간이 다르면 null → _compactWorkSuffix 사용
+  String? get _compactTimeText {
+    final wds = widget.to.workDetails;
+    if (wds.isEmpty) {
+      final tr = widget.to.timeRange;
+      return tr.startsWith('--') ? null : tr;
+    }
+    if (wds.length == 1) return wds.first.timeRange;
+    final first = wds.first;
+    final allSame = wds.every(
+        (wd) => wd.startTime == first.startTime && wd.endTime == first.endTime);
+    if (allSame) return first.timeRange;
+    return null;
+  }
+
+  /// 업무·시간이 여러 종류일 때 대체 문구 (ex. "업무 2종")
+  String? get _compactWorkSuffix {
+    final wds = widget.to.workDetails;
+    if (wds.length <= 1) return null;
+    final first = wds.first;
+    final allSame = wds.every(
+        (wd) => wd.startTime == first.startTime && wd.endTime == first.endTime);
+    if (allSame) return null;
+    return '업무 ${wds.length}종';
+  }
+
+  /// compact 모드 모집 현황 텍스트
+  /// flex TO: null (날짜 텍스트가 날파 수 표현)
+  /// contract TO: "잔여 N명" / "모집 마감"
+  String? get _compactRecruitText {
+    if (widget.to.isFlexType) return null;
+    final req = widget.to.totalRequired;
+    if (req <= 0) return null;
+    final remaining = req - widget.to.totalConfirmed;
+    if (remaining <= 0) return '모집 마감';
+    return '잔여 $remaining명';
+  }
+
+  /// compact 모드 급여 표시
+  /// 여러 업무 급여가 다르면 최솟값 기준 "70,000원~"
+  String get _compactWageAmount {
+    final to = widget.to;
+    if (to.maxWage == null) return '-';
+    if (to.minWage == null || to.minWage == to.maxWage) {
+      return FormatHelper.formatWage(to.maxWage!);
+    }
+    return '${FormatHelper.formatNumber(to.minWage!)}원~';
+  }
+
   // ── Build ──────────────────────────────────────────────
 
   // 탭 시 선택 토글 — selectedNotifier.value 변경만으로 ValueListenableBuilder가 rebuild 처리
   void _toggleSelection() {
     final id = widget.to.id;
-    widget.selectedNotifier.value =
-        widget.selectedNotifier.value == id ? null : id;
+    final notifier = widget.selectedNotifier!;
+    notifier.value = notifier.value == id ? null : id;
   }
 
   @override
   Widget build(BuildContext context) {
-    // ValueListenableBuilder: 선택 상태가 바뀔 때 이 카드(2개 최대)만 rebuild
+    // compact 모드: 컴팩트 카드 바로 반환 (ValueListenableBuilder 불필요)
+    if (widget.compact) return _buildCompactCard(context);
+
+    // 일반 모드: ValueListenableBuilder — 선택 상태가 바뀔 때 이 카드(2개 최대)만 rebuild
     return ValueListenableBuilder<String?>(
-      valueListenable: widget.selectedNotifier,
+      valueListenable: widget.selectedNotifier!,
       builder: (context, selectedId, _) {
         final isSelected = selectedId == widget.to.id;
         final isAnyOtherExpanded =
@@ -322,6 +453,201 @@ class _UserTOCardState extends State<UserTOCard> {
       },
     );
   }
+
+  // ── 컴팩트 카드 (탐색 전용, compact=true) ─────────────────────────────
+
+  Widget _buildCompactCard(BuildContext context) {
+    final to = widget.to;
+    final theme = Theme.of(context);
+
+    // 위치·사업장명
+    final loc = _location.isNotEmpty ? _location : '위치 미정';
+    final biz = to.businessName;
+    final locationBiz = biz.isNotEmpty ? '$loc · $biz' : loc;
+
+    // 근무유형 · 급여유형 인라인 텍스트
+    final typeStr = to.isLongTerm ? '장기' : '단기';
+
+    // compact 모드 전용 — 날짜·시간·업무종류·모집현황·급여
+    final compactTime = _compactTimeText;
+    final workSuffix = _compactWorkSuffix;
+    final recruitText = _compactRecruitText;
+
+    return Card(
+      margin: EdgeInsets.only(
+          bottom: ResponsiveHelper.spacing(context, 7)),
+      color: Colors.white,
+      elevation: 0,
+      shadowColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppColors.borderLight, width: 1),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: _goToDetailCompact,
+        child: Padding(
+          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── 상단 행: 위치·사업장명 / 시간ago + 상태칩 + ♡ ──
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Icon(Icons.location_on,
+                      size: ResponsiveHelper.iconSize(context, 12),
+                      color: theme.primaryColor),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                  Expanded(
+                    child: Text(
+                      locationBiz,
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.textSecondary,
+                          fontWeight: FontWeight.w500),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  // 상태 배지: 시간ago 앞 배치 — 마감임박 등 긴급 상태를 먼저 인지
+                  // (SizedBox는 _statusBadgeWidgets 내부에 포함)
+                  ..._statusBadgeWidgets(context),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                  Text(
+                    _timeAgo,
+                    style: ResponsiveHelper.tinyStyle(context,
+                        color: AppColors.grey500),
+                  ),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                  _buildFavoriteButton(context),
+                ],
+              ),
+
+              SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+
+              // ── 공고 제목 ──
+              Text(
+                to.title,
+                style: ResponsiveHelper.titleStyle(context).copyWith(
+                  fontWeight: FontWeight.w700,
+                  height: 1.3,
+                  letterSpacing: -0.3,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+
+              SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+
+              // ── 근무유형 · 급여유형 ──
+              Text(
+                '$typeStr · $_wageLabel',
+                style: ResponsiveHelper.smallStyle(context,
+                    color: AppColors.grey500),
+              ),
+
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+
+              // ── 날짜 · 시간/업무종류 행 ──
+              // flex TO 복수 날파: "8/12(수) 외 9일"
+              // 시간이 다른 업무: 시간 대신 "업무 N종" 표시
+              Row(
+                children: [
+                  Icon(Icons.calendar_today,
+                      size: ResponsiveHelper.iconSize(context, 12),
+                      color: AppColors.grey400),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                  Flexible(
+                    child: Text(
+                      _compactDateText,
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.grey700,
+                          fontWeight: FontWeight.w500),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (compactTime != null) ...[
+                    _divider(context),
+                    Icon(Icons.schedule,
+                        size: ResponsiveHelper.iconSize(context, 12),
+                        color: AppColors.grey400),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                    Flexible(
+                      child: Text(
+                        compactTime,
+                        style: ResponsiveHelper.smallStyle(context,
+                            color: AppColors.grey600),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ] else if (workSuffix != null) ...[
+                    _divider(context),
+                    Text(
+                      workSuffix,
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.grey500),
+                    ),
+                  ],
+                ],
+              ),
+
+              SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+              Container(height: 1, color: AppColors.grey100),
+              SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+
+              // ── 급여 · 모집현황 행 ──
+              // [일급/시급] Badge 제거 — 상단 "단기 · 일급" 텍스트와 중복
+              // 모집현황: "잔여 N명" / "모집 마감" (contract TO만, flex TO는 날짜로 표현)
+              Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      _compactWageAmount,
+                      style: ResponsiveHelper.subtitleStyle(context).copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                        letterSpacing: -0.3,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (recruitText != null) ...[
+                    Icon(Icons.people_outline,
+                        size: ResponsiveHelper.iconSize(context, 12),
+                        color: AppColors.grey400),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 2)),
+                    Text(
+                      recruitText,
+                      style: ResponsiveHelper.tinyStyle(context,
+                          color: recruitText == '모집 마감'
+                              ? AppColors.grey400
+                              : AppColors.grey500),
+                    ),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 컴팩트 카드 탭 → 공고 상세 화면
+  Future<void> _goToDetailCompact() async {
+    final result = await NavigationHelper.push<bool>(
+      context,
+      destination: JobPostingScreen(
+        to: widget.to,
+        workDetails: widget.to.workDetails,
+      ),
+    );
+    if (result == true && mounted) widget.onApplySuccess();
+  }
+
+  // ── 일반 카드 (compact=false) ───────────────────────────────────────
 
   Widget _buildCard(
       BuildContext context, bool isSelected, bool isAnyOtherExpanded) {
@@ -810,7 +1136,9 @@ class _UserTOCardState extends State<UserTOCard> {
             : '${slot.workDetails.first.workType} 외 ${slot.workDetails.length - 1}개';
 
     final slotDate = slot.date;
-    final dateLabel = '${slotDate.month}월 ${slotDate.day}일';
+    // [TZ-FIX] KST calendar date 기준 표시 — device timezone 무관
+    final kstSlotDate = FormatHelper.toKstDate(slotDate);
+    final dateLabel = '${kstSlotDate.month}월 ${kstSlotDate.day}일';
     final semanticDesc = isDisabled
         ? '$dateLabel 슬롯, 마감됨'
         : hasApplied
@@ -1253,11 +1581,12 @@ class _UserTOCardState extends State<UserTOCard> {
       // 모든 업무의 지원 마감이 경과한 슬롯 제외
       if (slot.workDetails.isNotEmpty &&
           slot.workDetails.every((wd) => wd.isTimeExpired)) { continue; }
-      final dateKey = DateTime(slot.date.year, slot.date.month, slot.date.day);
+      final dateKey = FormatHelper.toKstDate(slot.date);
       groupTOsByDate[dateKey] = widget.to.copyWith(rangeStart: slot.date);
-      // runtimeFull: 슬롯의 workTypeCounts 기반으로 업무별 정원 충족 여부 주입
+      // [8.1E.4] runtimeFull: workDetail 단위 정원 충족 여부 주입
+      // (wdId 우선 → legacy fallback, 동일 workType 다른 시간대는 독립 판정)
       groupWorkDetailsByDate[dateKey] = slot.workDetails.map((wd) =>
-          slot.isWorkTypeFull(wd.workType)
+          slot.isWorkDetailFull(wd)
               ? wd.copyWith(runtimeFull: true)
               : wd).toList();
       groupSlotIdsByDate[dateKey] = slot.id;
@@ -1307,8 +1636,9 @@ class _UserTOCardState extends State<UserTOCard> {
   Future<void> _openApplyDialogForSlot(SlotModel slot) async {
     if (_isApplyLoading || !mounted) return;
     final slotTO = widget.to.copyWith(rangeStart: slot.date);
+    // [8.1E.4] 동일 workType 다른 시간대도 독립 판정
     final annotatedDetails = slot.workDetails.map((wd) =>
-        slot.isWorkTypeFull(wd.workType)
+        slot.isWorkDetailFull(wd)
             ? wd.copyWith(runtimeFull: true)
             : wd).toList();
     final result = await ApplyWorkDialog.show(

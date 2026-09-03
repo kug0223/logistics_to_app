@@ -85,7 +85,11 @@ class _SubadminLeaveScreenState extends State<SubadminLeaveScreen> {
     setState(() => _processing.add(bizId));
     try {
       await MemberService().leaveAsSubAdmin(bizId);
-      // UserProvider의 Firestore 스트림이 subAdminBusinessIds 변경을 자동 반영
+      // [F-16-4 수정] leaveAsSubAdmin 완료 후 로컬 캐시 즉시 갱신
+      // UserProvider는 authStateChanges 기반 — subAdminBusinessIds를 자동 갱신하지 않으므로 직접 refresh 필요
+      if (mounted) {
+        await context.read<UserProvider>().refreshCurrentUser();
+      }
     } catch (_) {
       if (mounted) {
         ToastHelper.showError('탈퇴 중 오류가 발생했습니다. 다시 시도해 주세요.');

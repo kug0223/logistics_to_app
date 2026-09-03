@@ -37,7 +37,7 @@ class SlotWorkTypeCount {
 /// Firestore 경로: tos/{toId}/slots/{slotId}
 ///
 /// 각 슬롯은 독립적인 날짜를 나타내며, workDetails(업무 정의)와
-/// workTypeCounts(업무유형별 지원 현황)를 날짜별로 독립 관리한다.
+/// workDetailCounts(업무 단위 지원 현황)를 날짜별로 독립 관리한다.
 class SlotModel {
   final String id;
   final String toId;
@@ -47,9 +47,10 @@ class SlotModel {
   /// 급여·근무시간·필요인원 모두 날짜별로 다르게 설정 가능
   final List<WorkDetailData> workDetails;
 
-  /// 업무유형별 지원 현황 (key: workType)
-  /// 지원 처리 시 incrementally 업데이트됨
-  final Map<String, SlotWorkTypeCount> workTypeCounts;
+  /// [8.1E.1] workDetail 단위 독립 카운터 (key: wdId) — capacity canonical source
+  /// 새 슬롯: CF callableCreateFlexSlots / callableUpdateSlotWorkDetails에서 자동 초기화.
+  /// [8.1E.5] 레거시 슬롯(wdId 없는 슬롯): isWorkDetailFull()이 fail-safe FULL 반환.
+  final Map<String, SlotWorkTypeCount> workDetailCounts;
 
   /// 'open' | 'full' | 'closed'
   final String status;
@@ -78,7 +79,7 @@ class SlotModel {
     required this.toId,
     required this.date,
     this.workDetails = const [],
-    this.workTypeCounts = const {},
+    this.workDetailCounts = const {},
     this.status = SlotStatus.open,
     this.confirmedCount = 0,
     this.pendingCount = 0,
@@ -104,9 +105,10 @@ class SlotModel {
   factory SlotModel.fromMap(Map<String, dynamic> data, String documentId, String toId) {
     final workDetails = WorkDetailData.listFromFirestore(data['workDetails']);
 
-    final rawCounts = data['workTypeCounts'] as Map<String, dynamic>?;
-    final workTypeCounts = rawCounts != null
-        ? rawCounts.map((k, v) => MapEntry(
+    // [8.1E.5] workDetailCounts (canonical) 파싱 — 레거시 슬롯에는 없으므로 빈 맵 기본값
+    final rawDetailCounts = data['workDetailCounts'] as Map<String, dynamic>?;
+    final workDetailCounts = rawDetailCounts != null
+        ? rawDetailCounts.map((k, v) => MapEntry(
             k, SlotWorkTypeCount.fromMap(Map<String, dynamic>.from(v as Map))))
         : <String, SlotWorkTypeCount>{};
 
@@ -116,7 +118,7 @@ class SlotModel {
       date: (data['date'] as Timestamp?)?.toDate().toLocal() ??
           (throw ArgumentError('SlotModel: date is required')),
       workDetails: workDetails,
-      workTypeCounts: workTypeCounts,
+      workDetailCounts: workDetailCounts,
       status: data['status'] as String? ?? SlotStatus.open,
       confirmedCount: (data['confirmedCount'] as num?)?.toInt() ?? 0,
       pendingCount: (data['pendingCount'] as num?)?.toInt() ?? 0,
@@ -139,7 +141,9 @@ class SlotModel {
       'toId': toId,
       'date': Timestamp.fromDate(date),
       'workDetails': WorkDetailData.listToFirestore(workDetails),
-      'workTypeCounts': workTypeCounts.map((k, v) => MapEntry(k, v.toMap())),
+      // [8.1E.1] workDetailCounts — 빈 맵도 명시적으로 저장 (쿼리 안전성)
+      if (workDetailCounts.isNotEmpty)
+        'workDetailCounts': workDetailCounts.map((k, v) => MapEntry(k, v.toMap())),
       'status': status,
       'confirmedCount': confirmedCount,
       'pendingCount': pendingCount,
@@ -162,7 +166,7 @@ class SlotModel {
     String? toId,
     DateTime? date,
     List<WorkDetailData>? workDetails,
-    Map<String, SlotWorkTypeCount>? workTypeCounts,
+    Map<String, SlotWorkTypeCount>? workDetailCounts,
     String? status,
     int? confirmedCount,
     int? pendingCount,
@@ -183,7 +187,7 @@ class SlotModel {
       toId: toId ?? this.toId,
       date: date ?? this.date,
       workDetails: workDetails ?? this.workDetails,
-      workTypeCounts: workTypeCounts ?? this.workTypeCounts,
+      workDetailCounts: workDetailCounts ?? this.workDetailCounts,
       status: status ?? this.status,
       confirmedCount: confirmedCount ?? this.confirmedCount,
       pendingCount: pendingCount ?? this.pendingCount,
@@ -209,8 +213,7 @@ class SlotModel {
   /// 슬롯 날짜(date)가 오늘 이전인지 여부
   bool get isDatePast {
     final today = DateTime.now();
-    return DateTime(date.year, date.month, date.day)
-        .isBefore(DateTime(today.year, today.month, today.day));
+    return FormatHelper.toKstDate(date).isBefore(FormatHelper.toKstDate(today));
   }
 
   /// 수동마감·CF마감·인원충족·날짜경과·지원마감 중 하나라도 해당하면 true (UI 상태 표시용)
@@ -234,15 +237,23 @@ class SlotModel {
   int get totalRequired =>
       workDetails.fold(0, (acc, d) => acc + d.requiredCount);
 
-  /// 특정 업무유형의 지원 현황
-  SlotWorkTypeCount countFor(String workType) =>
-      workTypeCounts[workType] ?? const SlotWorkTypeCount();
+  /// [8.1E.1] workDetail 단위 카운터 조회 — key = wd.canonicalId (wdId 또는 composite)
+  SlotWorkTypeCount countForDetail(String canonicalId) =>
+      workDetailCounts[canonicalId] ?? const SlotWorkTypeCount();
 
-  /// 특정 업무유형이 마감됐는지 (confirmedCount >= requiredCount)
-  bool isWorkTypeFull(String workType) {
-    final detail = workDetails.where((d) => d.workType == workType).firstOrNull;
-    if (detail == null || detail.requiredCount == 0) return false;
-    return countFor(workType).confirmedCount >= detail.requiredCount;
+  /// [8.1E.1] workDetail 단위 마감 여부 — wdId 기반 정밀 판단
+  /// - workDetailCounts[canonicalId] 존재 → confirmed >= required
+  /// - wdId 있지만 WDC entry 없음 → invariant 파손 → fail-safe FULL
+  /// - [8.1E.5] wdId 없음 (legacy slot) → fail-safe FULL (workTypeCounts fallback 제거)
+  bool isWorkDetailFull(WorkDetailData wd) {
+    if (wd.requiredCount == 0) return false;
+    final count = workDetailCounts[wd.canonicalId];
+    if (count != null) {
+      return count.confirmedCount >= wd.requiredCount;
+    }
+    // wdId 있지만 WDC 없음 → invariant 파손, 또는 wdId 없는 legacy slot
+    // [8.1E.5] 양 경우 모두 fail-safe FULL (지원 버튼 비활성)
+    return true;
   }
 
   /// 날짜 포맷 (예: "5/6 (수)")

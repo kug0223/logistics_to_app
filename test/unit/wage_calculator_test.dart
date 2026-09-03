@@ -528,4 +528,268 @@ void main() {
       expect(r.appliedSupplementWage, greaterThanOrEqualTo(10320));
     });
   });
+
+  // ══════════════════════════════════════════════════════
+  // [PHASE5.2] nightIncluded=true break allocation 테스트
+  // ALfit 정책: 무급 추가휴게는 비야간 초과시간 우선 소진
+  // ══════════════════════════════════════════════════════
+  group('[PHASE5.2] nightIncluded break allocation', () {
+    // NIGHT-01: 조출 야간 (earlyNight), additionalBreak=0
+    // 계약 01:00~09:00, 실제 23:00~09:00, break=60, additionalBreak=0
+    // earlyNight(23:00~01:00)=120, lateNight=0
+    // additionalBreak=0 → nightAllocatedBreak=0 → nightMinutes=120
+    test('NIGHT-01: 조출 야간 120min, break 없음 → nightMinutes=120, nightAmount=10000', () {
+      final r = WageCalculator.calculate(
+        wageType: 'daily', baseWage: 96000, workDate: _d,
+        scheduledStart: '01:00', scheduledEnd: '09:00',
+        actualStart: '23:00', actualEnd: '09:00',
+        breakMinutes: 60, scheduledBreakMinutes: 60,
+        nightAllowanceApplied: true, nightIncluded: true,
+        baseHourlyWage: 10000,
+      );
+      expect(r.nightMinutes, equals(120), reason: 'NIGHT-01: nightMinutes');
+      expect(r.nightAmount, equals(10000), reason: 'NIGHT-01: nightAmount = 120×10000×0.5/60 = 10000');
+      // snapshot 필드 저장 확인
+      expect(r.nightIncluded, isTrue, reason: 'NIGHT-01: nightIncluded snapshot');
+    });
+
+    // NIGHT-04: 후반 야간 (lateNight), additionalBreak=0
+    // 계약 14:00~22:00, 실제 14:00~23:00, break=60, additionalBreak=0
+    // lateNight(22:00~23:00)=60, earlyNight=0
+    // additionalBreak=0 → nightMinutes=60
+    test('NIGHT-04: 후반 야간 60min, break 없음 → nightMinutes=60, nightAmount=5000', () {
+      final r = WageCalculator.calculate(
+        wageType: 'daily', baseWage: 96000, workDate: _d,
+        scheduledStart: '14:00', scheduledEnd: '22:00',
+        actualStart: '14:00', actualEnd: '23:00',
+        breakMinutes: 60, scheduledBreakMinutes: 60,
+        nightAllowanceApplied: true, nightIncluded: true,
+        baseHourlyWage: 10000,
+      );
+      expect(r.nightMinutes, equals(60), reason: 'NIGHT-04: nightMinutes');
+      expect(r.nightAmount, equals(5000), reason: 'NIGHT-04: nightAmount = 60×10000×0.5/60 = 5000');
+    });
+
+    // NIGHT-BREAK-02: 비야간 초과가 있어 break가 주간에 흡수
+    // 계약 12:00~20:00, 실제 12:00~23:00, schedBreak=60, additionalBreak=30
+    // lateNight(22:00~23:00)=60, rawExtraNonNight=120(20:00~22:00)
+    // additionalBreak=30 → rawExtraNonNight(120) 흡수 → nightAllocatedBreak=0
+    // nightMinutes=60
+    test('NIGHT-BREAK-02: 비야간 초과가 break 흡수 → nightMinutes=60', () {
+      final r = WageCalculator.calculate(
+        wageType: 'daily', baseWage: 96000, workDate: _d,
+        scheduledStart: '12:00', scheduledEnd: '20:00',
+        actualStart: '12:00', actualEnd: '23:00',
+        breakMinutes: 90, scheduledBreakMinutes: 60,
+        nightAllowanceApplied: true, nightIncluded: true,
+        baseHourlyWage: 10000,
+      );
+      expect(r.nightMinutes, equals(60), reason: 'NIGHT-BREAK-02: nightMinutes');
+      expect(r.nightAmount, equals(5000), reason: 'NIGHT-BREAK-02: nightAmount = 60×10000×0.5/60');
+    });
+
+    // NIGHT-BREAK-03: 초과가 전부 야간 → break가 야간에서 차감
+    // 계약 14:00~22:00, 실제 14:00~00:00, schedBreak=60, additionalBreak=30
+    // lateNight(22:00~00:00)=120, rawExtraNonNight=0
+    // additionalBreak=30 → rawExtraNonNight(0) 부족 → nightAllocatedBreak=30
+    // nightMinutes=120-30=90
+    test('NIGHT-BREAK-03: 초과 전부 야간, break 야간 차감 → nightMinutes=90', () {
+      final r = WageCalculator.calculate(
+        wageType: 'daily', baseWage: 96000, workDate: _d,
+        scheduledStart: '14:00', scheduledEnd: '22:00',
+        actualStart: '14:00', actualEnd: '00:00',
+        breakMinutes: 90, scheduledBreakMinutes: 60,
+        nightAllowanceApplied: true, nightIncluded: true,
+        baseHourlyWage: 10000,
+      );
+      expect(r.nightMinutes, equals(90), reason: 'NIGHT-BREAK-03: nightMinutes');
+      expect(r.nightAmount, equals(7500), reason: 'NIGHT-BREAK-03: nightAmount = 90×10000×0.5/60');
+    });
+
+    // nightIncluded=false regression: else 분기 미변경 확인
+    // 계약 14:00~22:00, 실제 14:00~23:00, break=60, nightIncluded=false
+    // rawNightMinutes(14:00~23:00) = 60 (22:00~23:00)
+    // dayPortion=480, breakInNight=0 → nightMinutes=60
+    test('nightIncluded=false regression: else 분기 동작 확인 → nightMinutes=60', () {
+      final r = WageCalculator.calculate(
+        wageType: 'daily', baseWage: 96000, workDate: _d,
+        scheduledStart: '14:00', scheduledEnd: '22:00',
+        actualStart: '14:00', actualEnd: '23:00',
+        breakMinutes: 60, scheduledBreakMinutes: 60,
+        nightAllowanceApplied: true, nightIncluded: false,
+        baseHourlyWage: 10000,
+      );
+      expect(r.nightMinutes, equals(60), reason: 'regression: nightMinutes');
+      expect(r.nightAmount, equals(5000), reason: 'regression: nightAmount');
+      // nightIncluded=false → snapshot은 false
+      expect(r.nightIncluded, isFalse, reason: 'regression: nightIncluded snapshot');
+    });
+  });
+
+  // ══════════════════════════════════════════════════════
+  // Phase 6: Canonical Extra Work Breakdown
+  // contractExcessMinutes  = max(0, workMinutes - scheduledWorkMins)
+  // premiumOvertimeMinutes = max(0, workMinutes - 480)
+  // extraWork15xMinutes    = min(contractExcess, premiumOvertime)
+  // extraWork1xMinutes     = contractExcess - extraWork15x
+  // ══════════════════════════════════════════════════════
+  group('Phase 6: Canonical Extra Work Breakdown', () {
+    // CANON-01: scheduled paid=330, actual paid=390, break=0
+    // contractExcess=60, premiumOvertime=0, extra1x=60, extra15x=0
+    test('CANON-01: scheduled=330, actual=390 → extra1x=60, extra15x=0', () {
+      final r = WageCalculator.calculate(
+        wageType: 'hourly', baseWage: 10000, workDate: _d,
+        scheduledStart: '09:00', scheduledEnd: '14:30',
+        actualStart: '09:00', actualEnd: '15:30',
+        breakMinutes: 0, nightAllowanceApplied: false,
+      );
+      expect(r.contractExcessMinutes, equals(60));
+      expect(r.premiumOvertimeMinutes, equals(0));
+      expect(r.extraWork15xMinutes, equals(0));
+      expect(r.extraWork1xMinutes, equals(60));
+      expect(r.hasCanonicalExtraWorkBreakdown, isTrue);
+    });
+
+    // CANON-02: scheduled paid=330, actual paid=480, break=0
+    // contractExcess=150, premiumOvertime=0, extra1x=150, extra15x=0
+    test('CANON-02: scheduled=330, actual=480 → extra1x=150, extra15x=0', () {
+      final r = WageCalculator.calculate(
+        wageType: 'hourly', baseWage: 10000, workDate: _d,
+        scheduledStart: '09:00', scheduledEnd: '14:30',
+        actualStart: '09:00', actualEnd: '17:00',
+        breakMinutes: 0, nightAllowanceApplied: false,
+      );
+      expect(r.contractExcessMinutes, equals(150));
+      expect(r.premiumOvertimeMinutes, equals(0));
+      expect(r.extraWork15xMinutes, equals(0));
+      expect(r.extraWork1xMinutes, equals(150));
+      expect(r.hasCanonicalExtraWorkBreakdown, isTrue);
+    });
+
+    // CANON-03: scheduled paid=330, actual paid=510, break=0
+    // contractExcess=180, premiumOvertime=30, extra1x=150, extra15x=30
+    test('CANON-03: scheduled=330, actual=510 → extra1x=150, extra15x=30', () {
+      final r = WageCalculator.calculate(
+        wageType: 'hourly', baseWage: 10000, workDate: _d,
+        scheduledStart: '09:00', scheduledEnd: '14:30',
+        actualStart: '09:00', actualEnd: '17:30',
+        breakMinutes: 0, nightAllowanceApplied: false,
+      );
+      expect(r.contractExcessMinutes, equals(180));
+      expect(r.premiumOvertimeMinutes, equals(30));
+      expect(r.extraWork15xMinutes, equals(30));
+      expect(r.extraWork1xMinutes, equals(150));
+      expect(r.hasCanonicalExtraWorkBreakdown, isTrue);
+    });
+
+    // CANON-04: scheduled paid=480, actual paid=510, break=0
+    // contractExcess=30, premiumOvertime=30, extra1x=0, extra15x=30
+    test('CANON-04: scheduled=480, actual=510 → extra1x=0, extra15x=30', () {
+      final r = WageCalculator.calculate(
+        wageType: 'hourly', baseWage: 10000, workDate: _d,
+        scheduledStart: '09:00', scheduledEnd: '17:00',
+        actualStart: '09:00', actualEnd: '17:30',
+        breakMinutes: 0, nightAllowanceApplied: false,
+      );
+      expect(r.contractExcessMinutes, equals(30));
+      expect(r.premiumOvertimeMinutes, equals(30));
+      expect(r.extraWork15xMinutes, equals(30));
+      expect(r.extraWork1xMinutes, equals(0));
+      expect(r.hasCanonicalExtraWorkBreakdown, isTrue);
+    });
+
+    // CANON-05: DAILY 9h계약 정시근무 — scheduled=540, actual=540, break=0
+    // contractExcess=0, premiumOvertime=60(540-480), extra1x=0, extra15x=0
+    // (초과분 없으므로 분류할 extraWork 없음 — 9h 기본임금에 이미 포함)
+    test('CANON-05: DAILY scheduled=540, actual=540 → contractExcess=0, premiumOvertime=60, extra1x=0, extra15x=0', () {
+      final r = WageCalculator.calculate(
+        wageType: 'daily', baseWage: 150000, workDate: _d,
+        scheduledStart: '09:00', scheduledEnd: '18:00',
+        actualStart: '09:00', actualEnd: '18:00',
+        breakMinutes: 0, nightAllowanceApplied: false,
+      );
+      expect(r.contractExcessMinutes, equals(0));
+      expect(r.premiumOvertimeMinutes, equals(60));
+      expect(r.extraWork15xMinutes, equals(0));
+      expect(r.extraWork1xMinutes, equals(0));
+      expect(r.hasCanonicalExtraWorkBreakdown, isTrue);
+    });
+
+    // CANON-06: DAILY 9h계약 1h초과 — scheduled=540, actual=600, break=0
+    // contractExcess=60, premiumOvertime=120, extra1x=0, extra15x=60
+    // (계약초과 60min 전부가 8h 초과 구간에 해당 → 모두 1.5x)
+    test('CANON-06: DAILY scheduled=540, actual=600 → extra1x=0, extra15x=60', () {
+      final r = WageCalculator.calculate(
+        wageType: 'daily', baseWage: 150000, workDate: _d,
+        scheduledStart: '09:00', scheduledEnd: '18:00',
+        actualStart: '09:00', actualEnd: '19:00',
+        breakMinutes: 0, nightAllowanceApplied: false,
+      );
+      expect(r.contractExcessMinutes, equals(60));
+      expect(r.premiumOvertimeMinutes, equals(120));
+      expect(r.extraWork15xMinutes, equals(60));
+      expect(r.extraWork1xMinutes, equals(0));
+      expect(r.hasCanonicalExtraWorkBreakdown, isTrue);
+    });
+
+    // CANON-07: DAILY 9h계약 미달 — scheduled=540, actual=510, break=0
+    // contractExcess=0, premiumOvertime=30(510-480), extra1x=0, extra15x=0
+    test('CANON-07: DAILY scheduled=540, actual=510 → contractExcess=0, premiumOvertime=30, extra1x=0, extra15x=0', () {
+      final r = WageCalculator.calculate(
+        wageType: 'daily', baseWage: 150000, workDate: _d,
+        scheduledStart: '09:00', scheduledEnd: '18:00',
+        actualStart: '09:30', actualEnd: '18:00',
+        breakMinutes: 0, nightAllowanceApplied: false,
+      );
+      expect(r.contractExcessMinutes, equals(0));
+      expect(r.premiumOvertimeMinutes, equals(30));
+      expect(r.extraWork15xMinutes, equals(0));
+      expect(r.extraWork1xMinutes, equals(0));
+      expect(r.hasCanonicalExtraWorkBreakdown, isTrue);
+    });
+
+    // DAILY-9H-02 Regression (Phase 5.3에서 누락된 테스트)
+    // scheduled: 09:00~19:00, break=60 → scheduledPaid=540
+    // actual: 09:00~20:00, break=60 → actualPaid=600
+    // contractExcess=60, premiumOvertime=120, extra15x=60, extra1x=0
+    // suppW = max(round(150000/540*60), 10320) = max(16667, 10320) = 16667
+    // 계약초과 60min 전부가 8h 초과 구간 → overtimeAmount = round(60×16667×1.5/60) = 25001
+    // totalAmount = 150000 + 25001 = 175001
+    test('DAILY-9H-02: scheduled paid=540, actual paid=600, 기존 monetary 유지', () {
+      final r = WageCalculator.calculate(
+        wageType: 'daily', baseWage: 150000, workDate: _d,
+        scheduledStart: '09:00', scheduledEnd: '19:00',
+        actualStart: '09:00', actualEnd: '20:00',
+        breakMinutes: 60, nightAllowanceApplied: false,
+      );
+      // canonical breakdown
+      expect(r.contractExcessMinutes, equals(60));
+      expect(r.premiumOvertimeMinutes, equals(120));
+      expect(r.extraWork15xMinutes, equals(60));
+      expect(r.extraWork1xMinutes, equals(0));
+      // monetary regression
+      expect(r.overtimeAmount, equals(25001));
+      expect(r.totalAmount, equals(175001));
+    });
+
+    // CANON-INVARIANT: 동일 paid → wageType 무관 canonical 동일
+    // scheduled=480, actual=540, break=0
+    // contractExcess=60, premiumOvertime=60
+    test('CANON-INVARIANT: 동일 paid에서 wageType 무관 canonical 동일', () {
+      final hourly = WageCalculator.calculate(
+        wageType: 'hourly', baseWage: 10000, workDate: _d,
+        scheduledStart: '09:00', scheduledEnd: '17:00',
+        actualStart: '09:00', actualEnd: '18:00',
+        breakMinutes: 0, nightAllowanceApplied: false,
+      );
+      final daily = WageCalculator.calculate(
+        wageType: 'daily', baseWage: 80000, workDate: _d,
+        scheduledStart: '09:00', scheduledEnd: '17:00',
+        actualStart: '09:00', actualEnd: '18:00',
+        breakMinutes: 0, nightAllowanceApplied: false,
+      );
+      expect(hourly.contractExcessMinutes, equals(daily.contractExcessMinutes));
+      expect(hourly.premiumOvertimeMinutes, equals(daily.premiumOvertimeMinutes));
+    });
+  });
 }

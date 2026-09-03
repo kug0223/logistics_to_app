@@ -29,6 +29,11 @@ class TODateSelector extends StatefulWidget {
   /// 계약 기간 유형: '15days' | '1month' | '3months' | '6months' | '1year' | 'custom'
   final String? contractPeriodType;
   final Function(String)? onContractPeriodTypeChanged;
+  /// 근무 시작 가능기간 (preset 전용): 지원자가 희망 시작일로 고를 수 있는 범위
+  final DateTime? workStartAvailableFrom;
+  final DateTime? workStartAvailableUntil;
+  final Function(DateTime?)? onWorkStartAvailableFromChanged;
+  final Function(DateTime?)? onWorkStartAvailableUntilChanged;
 
   // 읽기 전용
   final DateTime? displayDate;
@@ -51,6 +56,10 @@ class TODateSelector extends StatefulWidget {
     this.onWeekdayToggle,
     this.contractPeriodType,
     this.onContractPeriodTypeChanged,
+    this.workStartAvailableFrom,
+    this.workStartAvailableUntil,
+    this.onWorkStartAvailableFromChanged,
+    this.onWorkStartAvailableUntilChanged,
     this.displayDate,
     this.displayWorkDays,
   });
@@ -85,13 +94,18 @@ class _TODateSelectorState extends State<TODateSelector> {
 
     String dateText;
     if (widget.isLongTerm && widget.contractPeriodType != null && widget.contractPeriodType != 'custom') {
-      // preset 기간 유형: 레이블 표시 + 시작 가능일
+      // preset 기간 유형: 계약기간 레이블 + 근무 시작 가능기간
       final Map<String, String> labels = {
         '15days': '15일', '1month': '1개월', '3months': '3개월',
         '6months': '6개월', '1year': '1년',
       };
       dateText = labels[widget.contractPeriodType] ?? widget.contractPeriodType!;
-      if (widget.rangeStart != null) {
+      if (widget.workStartAvailableFrom != null && widget.workStartAvailableUntil != null) {
+        final fromFmt = FormatHelper.formatDateKorean(widget.workStartAvailableFrom!);
+        final untilFmt = FormatHelper.formatDateKorean(widget.workStartAvailableUntil!);
+        dateText += ' · 시작 가능 $fromFmt ~ $untilFmt';
+      } else if (widget.rangeStart != null) {
+        // legacy: rangeStart 기준 표시
         final isSameYear = widget.rangeStart!.year == now.year;
         final fmt = isSameYear ? FormatHelper.formatDateKorean : FormatHelper.formatDateLong;
         dateText += ' · ${fmt(widget.rangeStart!)} 이후 시작 가능';
@@ -730,7 +744,9 @@ class _TODateSelectorState extends State<TODateSelector> {
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
           Text(
-            '지원자의 희망 근무 시작일 기준으로 종료일이 자동 계산됩니다',
+            isCustom
+                ? '근무 시작·종료일을 직접 지정합니다'
+                : '지원자의 희망 시작일 기준으로 종료일이 자동 계산됩니다',
             style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -738,7 +754,7 @@ class _TODateSelectorState extends State<TODateSelector> {
           // 기간 유형 칩
           _buildPeriodTypeChips(context),
 
-          // 직접 입력: 기존 날짜 범위 피커
+          // 날짜 직접 지정(custom): 고정 시작일·종료일 피커
           if (isCustom) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             Row(
@@ -767,10 +783,10 @@ class _TODateSelectorState extends State<TODateSelector> {
             ),
           ],
 
-          // preset 선택 시: 선택 가능한 최초 시작일(선택 사항)
+          // preset: 근무 시작 가능기간 [시작일] ~ [종료일] 필수 입력
           if (hasPreset) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            _buildEarliestStartField(context),
+            _buildWorkStartAvailableRangeFields(context),
           ],
 
           SizedBox(height: ResponsiveHelper.spacing(context, 24)),
@@ -838,26 +854,38 @@ class _TODateSelectorState extends State<TODateSelector> {
     );
   }
 
-  Widget _buildEarliestStartField(BuildContext context) {
+  /// preset 장기공고 — 근무 시작 가능기간 [시작일] ~ [종료일] 필수 입력
+  Widget _buildWorkStartAvailableRangeFields(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
             Text(
-              '근무 시작 가능일',
+              '근무 시작 가능기간',
               style: ResponsiveHelper.bodyStyle(context).copyWith(fontWeight: FontWeight.w600),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-            Text(
-              '(선택)',
-              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+            Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 6),
+                vertical: ResponsiveHelper.spacing(context, 2),
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.errorBg,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                '필수',
+                style: ResponsiveHelper.tinyStyle(context,
+                    color: AppColors.errorDark, fontWeight: FontWeight.bold),
+              ),
             ),
           ],
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 4)),
         Text(
-          '지원자가 선택 가능한 최초 시작일입니다. 미설정 시 즉시 시작 가능',
+          '지원자가 희망 시작일로 선택할 수 있는 기간입니다.',
           style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -866,23 +894,83 @@ class _TODateSelectorState extends State<TODateSelector> {
             Expanded(
               child: _buildDateField(
                 context: context,
-                label: '시작 가능일',
-                date: widget.rangeStart,
-                onTap: () => _selectLongTermDate(context, isStart: true),
+                label: '시작일',
+                date: widget.workStartAvailableFrom,
+                onTap: () => _selectWorkStartDate(context, isFrom: true),
               ),
             ),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            if (widget.rangeStart != null)
-              TextButton.icon(
-                onPressed: () => widget.onRangeStartChanged?.call(DateTime(0)),
-                icon: const Icon(Icons.clear, size: 16),
-                label: const Text('초기화'),
-                style: TextButton.styleFrom(foregroundColor: AppColors.grey600),
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: ResponsiveHelper.spacing(context, 12)),
+              child: Icon(Icons.arrow_forward, color: Theme.of(context).primaryColor),
+            ),
+            Expanded(
+              child: _buildDateField(
+                context: context,
+                label: '종료일',
+                date: widget.workStartAvailableUntil,
+                onTap: () => _selectWorkStartDate(context, isFrom: false),
               ),
+            ),
           ],
         ),
+        if (widget.workStartAvailableFrom != null && widget.workStartAvailableUntil != null) ...[
+          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 12),
+              vertical: ResponsiveHelper.spacing(context, 8),
+            ),
+            decoration: BoxDecoration(
+              color: AppColors.infoBg,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppColors.infoLight),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, color: AppColors.infoDark, size: 16),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Expanded(
+                  child: Text(
+                    '지원자는 이 기간 안에서 희망 근무 시작일을 선택할 수 있습니다.',
+                    style: ResponsiveHelper.tinyStyle(context, color: AppColors.infoDark),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ],
     );
+  }
+
+  Future<void> _selectWorkStartDate(BuildContext context, {required bool isFrom}) async {
+    final now = DateTime.now();
+    final minDate = isFrom ? now : (widget.workStartAvailableFrom ?? now);
+    final picked = await DatePickerBottomSheet.show(
+      context: context,
+      initialDate: isFrom
+          ? (widget.workStartAvailableFrom ?? now)
+          : (widget.workStartAvailableUntil ?? widget.workStartAvailableFrom ?? now),
+      title: isFrom ? '시작 가능 첫날' : '시작 가능 마지막날',
+      subtitle: isFrom
+          ? '지원자가 선택 가능한 가장 이른 시작일입니다'
+          : '지원자가 선택 가능한 가장 늦은 시작일입니다',
+      minDate: minDate,
+      maxDate: now.add(const Duration(days: 365)),
+    );
+
+    if (picked != null) {
+      if (isFrom) {
+        widget.onWorkStartAvailableFromChanged?.call(picked);
+        // 시작일이 종료일보다 늦어지면 종료일도 같이 초기화
+        if (widget.workStartAvailableUntil != null &&
+            picked.isAfter(widget.workStartAvailableUntil!)) {
+          widget.onWorkStartAvailableUntilChanged?.call(null);
+        }
+      } else {
+        widget.onWorkStartAvailableUntilChanged?.call(picked);
+      }
+    }
   }
 
   Widget _buildDateField({
@@ -996,7 +1084,7 @@ class _TODateSelectorState extends State<TODateSelector> {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
-        gradient: LinearGradient(colors: [AppColors.successBg, AppColors.successLight.withValues(alpha: 0.3)]),
+        color: AppColors.successBg,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.successLight),
       ),

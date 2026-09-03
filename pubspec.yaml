@@ -2,7 +2,7 @@ name: ALfit
 description: "나에게 딱 맞는 알바 매칭 플랫폼"
 publish_to: 'none'
 
-version: 1.0.8+8
+version: 1.0.14+18
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

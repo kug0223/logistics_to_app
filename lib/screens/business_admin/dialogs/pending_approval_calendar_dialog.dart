@@ -10,6 +10,7 @@ import 'package:intl/intl.dart';
 import '../../../models/core/business_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../utils/loading_state_mixin.dart';
+import '../../../utils/format_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/loading_widget.dart';
@@ -88,7 +89,7 @@ class _PendingApprovalCalendarDialogState
 
   void _calculateStats() {
     final today = DateTime.now();
-    final todayOnly = DateTime(today.year, today.month, today.day);
+    final todayOnly = FormatHelper.toKstDate(today);
     final todayKey = DateFormat('yyyy-MM-dd').format(today);
 
     int total = 0;
@@ -145,202 +146,95 @@ class _PendingApprovalCalendarDialogState
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final monthStr = _monthFmt.format(_currentMonth);
-
-    return Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppDialogSize.borderRadius),
-      ),
-      insetPadding: const EdgeInsets.symmetric(
-        horizontal: AppDialogSize.insetH,
-        vertical: AppDialogSize.insetV,
-      ),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight:
-              MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
+    return AppModalShell(
+      children: [
+        AppModalHeader(
+          title: '승인 대기 현황',
+          subtitle: '날짜별 미승인 지원자 분포',
+          onClose: () => Navigator.pop(context),
+          trailing: _buildHeaderTrailing(),
         ),
-        child: Column(
-          children: [
-            _buildHeader(theme, monthStr),
-            if (!isLoading) _buildSummaryCard(),
-            Expanded(
-              child: isLoading
-                  ? const LoadingWidget(message: '승인 대기 현황 조회 중...')
-                  : _pendingCountByDate.isEmpty
-                      ? _buildEmptyState()
-                      : _buildContent(theme),
-            ),
-            _buildBottomBar(),
-          ],
+        if (!isLoading) _buildSummaryCard(),
+        Expanded(
+          child: isLoading
+              ? const LoadingWidget(message: '승인 대기 현황 조회 중...')
+              : _pendingCountByDate.isEmpty
+                  ? _buildEmptyState()
+                  : _buildContent(theme),
         ),
-      ),
+        // 닫기 Footer 없음 — Header X 버튼으로 충분
+      ],
     );
   }
 
-  Widget _buildHeader(ThemeData theme, String monthStr) {
+  /// Header trailing: 월 네비게이션 + 사업장 필터(다중 사업장 시)
+  Widget _buildHeaderTrailing() {
     final hasBizFilter = widget.businesses.length > 1;
-
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            AppColors.warning,
-            AppColors.warning.withValues(alpha: 0.80),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // 월 네비게이션
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            IconButton(
+              onPressed: isLoading ? null : _previousMonth,
+              icon: const Icon(Icons.chevron_left),
+              color: AppColors.grey700,
+              iconSize: 22,
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            ),
+            Text(
+              _monthFmt.format(_currentMonth),
+              style: ResponsiveHelper.bodyStyle(context)
+                  .copyWith(fontWeight: FontWeight.w700, color: AppColors.grey800),
+            ),
+            IconButton(
+              onPressed: isLoading ? null : _nextMonth,
+              icon: const Icon(Icons.chevron_right),
+              color: AppColors.grey700,
+              iconSize: 22,
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            ),
           ],
         ),
-        borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(AppDialogSize.borderRadius),
-          topRight: Radius.circular(AppDialogSize.borderRadius),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding:
-                    EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.assignment_late_outlined,
-                  color: Colors.white,
-                  size: ResponsiveHelper.iconSize(context, 24),
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '승인 대기 현황',
-                      style: ResponsiveHelper.titleStyle(context).copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      '날짜별 미승인 지원자 분포',
-                      style: ResponsiveHelper.smallStyle(context).copyWith(
-                        color: Colors.white.withValues(alpha: 0.8),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              IconButton(
-                onPressed: () => Navigator.pop(context),
-                tooltip: '닫기',
-                icon: Icon(
-                  Icons.close,
-                  color: Colors.white,
-                  size: ResponsiveHelper.iconSize(context, 24),
-                ),
-              ),
-            ],
-          ),
-
-          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-
-          if (hasBizFilter) ...[
-            _buildBusinessFilter(),
-            SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-          ],
-
-          // 월 선택
-          Container(
-            padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 12),
-              vertical: ResponsiveHelper.spacing(context, 8),
-            ),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                InkWell(
-                  onTap: _previousMonth,
-                  borderRadius: BorderRadius.circular(8),
-                  child: Padding(
-                    padding:
-                        EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
-                    child: Icon(Icons.chevron_left,
-                        color: AppColors.warning,
-                        size: ResponsiveHelper.iconSize(context, 24)),
-                  ),
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Text(
-                  monthStr,
-                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.warning,
-                  ),
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                InkWell(
-                  onTap: _nextMonth,
-                  borderRadius: BorderRadius.circular(8),
-                  child: Padding(
-                    padding:
-                        EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
-                    child: Icon(Icons.chevron_right,
-                        color: AppColors.warning,
-                        size: ResponsiveHelper.iconSize(context, 24)),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+        // 사업장 필터 (다중 사업장)
+        if (hasBizFilter) _buildBusinessFilter(),
+      ],
     );
   }
 
   Widget _buildBusinessFilter() {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 12),
-        vertical: ResponsiveHelper.spacing(context, 2),
-      ),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: DropdownButtonHideUnderline(
+    return DropdownButtonHideUnderline(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: AppColors.grey100,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.grey200),
+        ),
         child: DropdownButton<String?>(
           value: _selectedBusinessId,
           dropdownColor: Colors.white,
-          style: ResponsiveHelper.bodyStyle(context).copyWith(
-            color: Colors.white,
-            fontWeight: FontWeight.w600,
-          ),
-          iconEnabledColor: Colors.white,
+          style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey800),
+          iconEnabledColor: AppColors.grey500,
           isExpanded: true,
           items: [
             DropdownMenuItem<String?>(
               value: null,
               child: Text('전체 사업장',
-                  style: ResponsiveHelper.bodyStyle(context)
-                      .copyWith(color: AppColors.grey800)),
+                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey800)),
             ),
             ...widget.businesses.map((b) => DropdownMenuItem<String?>(
                   value: b.id,
                   child: Text(
                     b.name,
-                    style: ResponsiveHelper.bodyStyle(context)
-                        .copyWith(color: AppColors.grey800),
+                    style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey800),
                     overflow: TextOverflow.ellipsis,
                   ),
                 )),
@@ -426,7 +320,7 @@ class _PendingApprovalCalendarDialogState
 
   Widget _buildContent(ThemeData theme) {
     final today = DateTime.now();
-    final todayOnly = DateTime(today.year, today.month, today.day);
+    final todayOnly = FormatHelper.toKstDate(today);
 
     final sortedEntries = _pendingCountByDate.entries.toList()
       ..sort((a, b) => a.key.compareTo(b.key));
@@ -532,39 +426,4 @@ class _PendingApprovalCalendarDialogState
     );
   }
 
-  Widget _buildBottomBar() {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        color: AppColors.grey50,
-        borderRadius: const BorderRadius.only(
-          bottomLeft: Radius.circular(AppDialogSize.borderRadius),
-          bottomRight: Radius.circular(AppDialogSize.borderRadius),
-        ),
-        border: Border(top: BorderSide(color: AppColors.border)),
-      ),
-      child: SizedBox(
-        width: double.infinity,
-        child: ElevatedButton(
-          onPressed: () => Navigator.pop(context),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.grey200,
-            foregroundColor: AppColors.grey700,
-            padding: EdgeInsets.symmetric(
-              vertical: ResponsiveHelper.spacing(context, 14),
-            ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            elevation: 0,
-          ),
-          child: Text(
-            '닫기',
-            style: ResponsiveHelper.bodyStyle(context)
-                .copyWith(fontWeight: FontWeight.w600),
-          ),
-        ),
-      ),
-    );
-  }
 }

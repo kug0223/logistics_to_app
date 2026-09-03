@@ -19,17 +19,16 @@ import '../../theme/app_text_styles.dart';
 import '../../widgets/section_header.dart';
 import '../../utils/attendance_list_pdf.dart';
 import '../../utils/dialog_helper.dart';
-import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/tour_helper.dart';
 import '../../widgets/auth/account_status_banner.dart';
+import '../../widgets/common/business_selector_sheet.dart';
 import '../../widgets/common/notification_badge.dart';
 import '../../widgets/user/cards/job_image_placeholder.dart';
 import '../common/notification_screen.dart';
 import '../common/document_management_screen.dart';
 import '../common/job_posting_screen.dart';
 import '../../utils/navigation_helper.dart';
-import '../business_admin/business_admin_home_screen.dart';
 import '../common/tour_screen.dart';
 import 'attendance_check_screen.dart';
 import 'my_applications_screen.dart';
@@ -98,13 +97,13 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     _cachedRecentApplications = sorted.take(3).toList();
 
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
+    final today = FormatHelper.toKstDate(now);
     final endDate = today.add(const Duration(days: 6));
     final dates = <DateTime>{};
     for (final app in _applications) {
       if (!AppStatus.confirmedStatuses.contains(app.status)) continue;
       if (!app.isLongTermApplication) {
-        final wd = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
+        final wd = FormatHelper.toKstDate(app.workDate);
         if (!wd.isBefore(today) && !wd.isAfter(endDate)) dates.add(wd);
       } else {
         for (var d = today; !d.isAfter(endDate); d = d.add(const Duration(days: 1))) {
@@ -118,7 +117,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     // STATE B: 오늘 확정 근무 존재 여부 (출퇴근 CTA 최우선)
     final todayList = _applications.where((a) {
       if (!AppStatus.confirmedStatuses.contains(a.status)) return false;
-      final wd = DateTime(a.workDate.year, a.workDate.month, a.workDate.day);
+      final wd = FormatHelper.toKstDate(a.workDate);
       return wd == today;
     }).toList();
     _heroTodayApp = todayList.isEmpty ? null : todayList.first;
@@ -147,7 +146,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     _cachedThisWeekPendingDates = {};
     for (final app in _applications) {
       if (app.status != AppStatus.pending) continue;
-      final wd = DateTime(app.workDate.year, app.workDate.month, app.workDate.day);
+      final wd = FormatHelper.toKstDate(app.workDate);
       if (!wd.isBefore(today) && !wd.isAfter(endDate)) {
         _cachedThisWeekPendingDates.add(wd);
       }
@@ -186,13 +185,15 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       if (appliedToIdsForCount.contains(to.id)) { continue; }
 
       // 신규 preset: workStartAvailableFrom ~ Until / custom·legacy: rangeStart ~ rangeEnd
-      final rangeS = to.hasWorkStartAvailableRange
+      final rawRangeS = to.hasWorkStartAvailableRange
           ? to.workStartAvailableFrom
           : to.rangeStart;
-      final rangeE = to.hasWorkStartAvailableRange
+      final rawRangeE = to.hasWorkStartAvailableRange
           ? to.workStartAvailableUntil
           : to.rangeEnd;
-      if (rangeS == null) continue;
+      if (rawRangeS == null) continue;
+      final rangeS = FormatHelper.toKstDate(rawRangeS);
+      final rangeE = rawRangeE != null ? FormatHelper.toKstDate(rawRangeE) : null;
       final effectiveStart = rangeS.isBefore(today) ? today : rangeS;
       final effectiveEnd = rangeE == null
           ? cutoff
@@ -217,7 +218,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     for (final app in _applications) {
       if (AppStatus.confirmedStatuses.contains(app.status)) {
         final d = app.workDate;
-        _confirmedDateSet.add(DateTime(d.year, d.month, d.day));
+        _confirmedDateSet.add(FormatHelper.toKstDate(d));
       }
     }
   }
@@ -231,7 +232,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     super.initState();
     // Hero 7일 스트립: 오늘부터 시작 (과거 없음)
     final now = DateTime.now();
-    _stripStart = DateTime(now.year, now.month, now.day);
+    _stripStart = FormatHelper.toKstDate(now);
     WidgetsBinding.instance.addObserver(this);
     _onFcmRefresh = () { if (mounted) _autoRefresh(); };
     FCMService().addUserDataRefreshListener(_onFcmRefresh);
@@ -1081,7 +1082,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   // 선택 시: _stripStart = 선택일, _selectedDateChip = 선택일, 캐시 재계산
   Future<void> _showDatePickerSheet(BuildContext context, double s) async {
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
+    final today = FormatHelper.toKstDate(now);
     DateTime focusedDay = _selectedDateChip ?? _stripStart;
 
     await DialogHelper.showSheet<void>(
@@ -1116,7 +1117,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   focusedDay: focusedDay,
                   selectedDay: _selectedDateChip,
                   onDaySelected: (sel, foc) {
-                    final selDate = DateTime(sel.year, sel.month, sel.day);
+                    final selDate = DateTime.utc(sel.year, sel.month, sel.day);
                     if (selDate.isBefore(today)) return; // 과거 선택 불가
                     Navigator.pop(ctx2);
                     // 캘린더에서 선택 → 항상 해당 날짜부터 7일로 범위 이동
@@ -1130,7 +1131,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                   onPageChanged: (foc) => setSheet(() => focusedDay = foc),
                   // 공고 있는 날만 이벤트 1개 (점 on/off용)
                   eventLoader: (day) {
-                    final d = DateTime(day.year, day.month, day.day);
+                    final d = DateTime.utc(day.year, day.month, day.day);
                     return (_toDateCounts[d] ?? 0) > 0 ? [1] : [];
                   },
                   // #1565C0 작은 점 — 공고 있는 날짜만
@@ -1149,7 +1150,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
                     );
                   },
                   enabledDayPredicate: (day) =>
-                      !DateTime(day.year, day.month, day.day).isBefore(today),
+                      !DateTime.utc(day.year, day.month, day.day).isBefore(today),
                 ),
                 // 범례 — 처음 사용자에게 점의 의미를 설명
                 Padding(
@@ -1191,7 +1192,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     // 범례는 현재 표시 중인 7일 스트립 안에 확정 근무가 있을 때만 표시.
     // _confirmedDateSet.isNotEmpty 조건은 스트립 밖 과거/미래 확정 근무에도 반응하므로 부정확.
     final hasConfirmedInStrip = stripDays.any(
-      (d) => _confirmedDateSet.contains(DateTime(d.year, d.month, d.day)),
+      (d) => _confirmedDateSet.contains(DateTime.utc(d.year, d.month, d.day)),
     );
 
     // State C 그라데이션 — 파란 계열 (State B와 유사, 더 연하게)
@@ -1274,7 +1275,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
           // 7일을 Expanded로 균등 분배 → 한눈에 보임, 스크롤 없음
           Row(
             children: stripDays.map((day) {
-              final dayKey = DateTime(day.year, day.month, day.day);
+              final dayKey = DateTime.utc(day.year, day.month, day.day);
               final count = _toDateCounts[dayKey] ?? 0;
               final hasJobs = count > 0;
               // 확정 근무 있는 날 — Green Dot 표시 + 선택 활성
@@ -1778,7 +1779,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
   // ── 이번 주 일정 — 7일 dot 뷰 + 범례 ─────────────────────────────
   Widget _buildThisWeekSchedule(BuildContext context, double s, ThemeData theme) {
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
+    final today = FormatHelper.toKstDate(now);
     final weekStart = today.subtract(Duration(days: today.weekday - 1));
     final weekDays = List.generate(7, (i) => weekStart.add(Duration(days: i)));
 
@@ -1897,21 +1898,34 @@ class _UserHomeScreenState extends State<UserHomeScreen>
 
     // ① 신분 확인: 신분증 이미지 등록 여부 (idCardImagePath 신규 flow + idCardImageUrl legacy 양쪽 허용)
     final hasId = user.hasIdDocument;
-    // ② 급여정보: 은행명 + 계좌번호 + 통장사본 세 가지 모두 있어야 완료
-    final hasWage = user.bankName != null && user.bankName!.isNotEmpty &&
-        user.accountNumber != null && user.accountNumber!.isNotEmpty &&
-        user.bankbookImageUrl != null && user.bankbookImageUrl!.isNotEmpty;
-    // ③ 계좌 불일치: mismatch 상태면 등록 완료지만 재확인 필요 → 카드 유지
+    // ② 급여정보 준비 완료: 계좌 + 통장사본 제출 + mismatch 아님
+    // [PRODUCT-POLICY 2026-08-21] review_required = 정상 제출 완료 → hasWage = true
+    // mismatch = 관리자가 명시적 문제 발견 → 재등록 필요 → hasWage = false
+    // callableApplyToTO 서버 gate와 동일 기준 (mismatch만 차단).
     final isBankMismatch = user.bankVerificationStatus == 'mismatch';
+    final hasWage        = user.hasWageDocumentsReady; // hasBankAccount && hasBankbook && !mismatch
 
     final completed = (hasId ? 1 : 0) + (hasWage ? 1 : 0);
-    if (completed == 2 && !isBankMismatch) return const SizedBox.shrink();
+    // 카드 숨김: 신분증 + 급여정보 모두 준비 완료 (review_required 포함).
+    // mismatch는 hasWage = false → completed < 2 → 카드 유지.
+    if (completed == 2) return const SizedBox.shrink();
 
-    final subText = isBankMismatch
-        ? '계좌 정보를 다시 확인해주세요'
-        : completed == 0
-            ? '신분증과 급여정보를 등록해주세요'
-            : '지원 준비가 거의 완료됐어요';
+    // 상태별 subText
+    // mismatch: 재등록 필요 (관리자가 명시적 문제 발견)
+    // review_required + 완전 준비: 카드가 숨겨지므로 이 경우는 도달 불가
+    // 나머지: 미등록 안내
+    final String subText;
+    if (isBankMismatch) {
+      subText = '급여계좌 정보를 다시 확인해주세요';
+    } else if (!hasId && !hasWage) {
+      subText = '신분증과 급여계좌를 등록해주세요';
+    } else if (hasId) {
+      // hasId=true, hasWage=false (계좌 또는 통장사본 미등록)
+      subText = '급여계좌를 등록하면 지원 준비가 완료돼요';
+    } else {
+      // hasId=false, hasWage=true
+      subText = '신분증을 등록하면 지원 준비가 완료돼요';
+    }
     final theme = Theme.of(context);
 
     // ── 디자인: Warning이 아닌 Progress Status ──────────────────────
@@ -2258,8 +2272,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     if (_selectedDateChip != null) {
       confirmedOnDate = _applications.where((a) {
         if (!AppStatus.confirmedStatuses.contains(a.status)) return false;
-        final wd =
-            DateTime(a.workDate.year, a.workDate.month, a.workDate.day);
+        final wd = FormatHelper.toKstDate(a.workDate);
         return wd == _selectedDateChip;
       }).toList();
     } else {
@@ -2306,7 +2319,8 @@ class _UserHomeScreenState extends State<UserHomeScreen>
       if (to.isFlexType) {
         final rs = to.rangeStart;
         if (rs != null) {
-          dateText = '${rs.month}/${rs.day}';
+          // [TZ-FIX] KST calendar date 기준 표시 — device timezone 무관
+          dateText = FormatHelper.formatDateShort(rs);
           if (to.totalSlots > 1) dateText += ' 외 ${to.totalSlots - 1}일';
         } else {
           dateText = '${to.totalSlots}일';
@@ -2320,8 +2334,9 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             ? to.workStartAvailableUntil
             : to.rangeEnd;
         if (rs != null) {
-          dateText = '${rs.month}/${rs.day}';
-          if (endDt != null) dateText += ' ~ ${endDt.month}/${endDt.day}';
+          // [TZ-FIX] KST calendar date 기준 표시 — device timezone 무관
+          dateText = FormatHelper.formatDateShort(rs);
+          if (endDt != null) dateText += ' ~ ${FormatHelper.formatDateShort(endDt)}';
         } else {
           dateText = '';
         }
@@ -2717,8 +2732,7 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     if (_selectedDateChip != null) {
       confirmedOnDate = _applications.where((a) {
         if (!AppStatus.confirmedStatuses.contains(a.status)) return false;
-        final wd =
-            DateTime(a.workDate.year, a.workDate.month, a.workDate.day);
+        final wd = FormatHelper.toKstDate(a.workDate);
         return wd == _selectedDateChip;
       }).toList();
     } else {
@@ -2777,11 +2791,11 @@ class _UserHomeScreenState extends State<UserHomeScreen>
             : to.rangeEnd;
         if (rs == null) return false;
         // 날짜 범위 검사
-        final sdDate = DateTime(sd.year, sd.month, sd.day);
-        final rsDate = DateTime(rs.year, rs.month, rs.day);
+        final sdDate = DateTime.utc(sd.year, sd.month, sd.day);
+        final rsDate = FormatHelper.toKstDate(rs);
         if (sdDate.isBefore(rsDate)) return false;
         if (re != null) {
-          final reDate = DateTime(re.year, re.month, re.day);
+          final reDate = FormatHelper.toKstDate(re);
           if (sdDate.isAfter(reDate)) return false;
         }
         // contract: 요일 검사
@@ -3011,63 +3025,18 @@ class _UserHomeScreenState extends State<UserHomeScreen>
     } else {
       selected = await DialogHelper.showSheet<String>(
         context,
-        builder: (ctx) => _BusinessSelectorSheet(
+        builder: (ctx) => BusinessSelectorSheet(
           businessIds: bizIds,
           businessNames: up.subAdminBusinessNames,
+          selectedBusinessId: up.effectiveBusinessId,
         ),
       );
     }
     if (selected == null || !context.mounted) return;
+    // [PD-01] switchToAdminMode → notifyListeners() → AuthWrapper 반응형 라우팅 → BusinessAdminShell
     await up.switchToAdminMode(selected);
-    if (!context.mounted) return;
-    // 관리자 홈으로 화면 교체 — 탭 네비게이터가 아닌 루트 네비게이터 사용
-    // (UserRootScreen 내 탭 Navigator 위가 아니라 앱 최상위로 push)
-    Navigator.of(context, rootNavigator: true).pushReplacement(
-      MaterialPageRoute(builder: (_) => const BusinessAdminHomeScreen()),
-    );
   }
 
 }
 
-// ── 다중 사업장 선택 바텀시트 ────────────────────────────────────
-class _BusinessSelectorSheet extends StatelessWidget {
-  final List<String> businessIds;
-  final Map<String, String> businessNames;
-
-  const _BusinessSelectorSheet({
-    required this.businessIds,
-    required this.businessNames,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: EdgeInsets.fromLTRB(
-            ResponsiveHelper.spacing(context, 20),
-            ResponsiveHelper.spacing(context, 20),
-            ResponsiveHelper.spacing(context, 20),
-            ResponsiveHelper.spacing(context, 8),
-          ),
-          child: Text(
-            '사업장 선택',
-            style: ResponsiveHelper.subtitleStyle(context)
-                .copyWith(fontWeight: FontWeight.bold),
-          ),
-        ),
-        ...businessIds.map((id) {
-          final name = businessNames[id] ?? id;
-          return ListTile(
-            title: Text(name, style: ResponsiveHelper.bodyStyle(context)),
-            onTap: () => Navigator.pop(context, id),
-          );
-        }),
-        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-      ],
-    );
-  }
-}
 

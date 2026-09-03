@@ -71,7 +71,11 @@ extension UserFirestore on FirestoreService {
   }
 
   // CF/보안 규칙이 차단해야 하는 민감 필드 목록 (코드 레벨 2차 방어)
-  // Firestore rules owner-update denylist와 반드시 동기화 유지
+  // Firestore rules owner-update denylist와 반드시 동기화 유지.
+  // [SEC-UF02] 2차 방어 원칙:
+  //   - Firestore rules가 PRIMARY security boundary (1차 차단)
+  //   - _protectedUserFields는 client accidental-write 방지용 2차 방어
+  //   - rules denylist에 추가된 필드는 여기에도 반드시 추가 (역방향도 동일)
   static const _protectedUserFields = {
     'role', 'isBlacklisted', 'subAdminBusinessIds', 'subAdminOf', 'businessId',
     'blacklistReason', 'blacklistedBy', 'blacklistedAt',
@@ -87,6 +91,17 @@ extension UserFirestore on FirestoreService {
     'termsConsentAt', 'termsConsent',
     'isIdVerified', 'idCardVerifiedAt',
     'isDummy', // [RULE-FIX-H2] 계정 영구 삭제 유도 방지
+    // [BATCH-1A 동기화] CF 전용 필드 — rules denylist와 동일 목록
+    //   authPhone/phoneVerificationLevel: CF callableVerifyAndUpdatePhone/signUp 전용
+    //   contactPhone: CF callableVerifyAndUpdatePhone 전용 (OTP 검증 완료 후만 업데이트)
+    //   bankVerificationStatus/bankbookUploadedAt: CF callableMarkBankbookVerified 전용
+    // [BATCH-1B 추가]
+    //   bankVerifiedAt/bankVerifiedBy: CF callableSuperAdminVerifyBankAccount 전용 (SUPER_ADMIN 계좌 승인)
+    //   bankReviewedBy/bankReviewedAt: CF callableSuperAdminMarkBankMismatch 전용 (명의 불일치 처리)
+    'authPhone', 'phoneVerificationLevel', 'contactPhone',
+    'bankVerificationStatus', 'bankbookUploadedAt',
+    'bankVerifiedAt', 'bankVerifiedBy',
+    'bankReviewedBy', 'bankReviewedAt',
   };
 
   Future<void> updateUserDocument(String uid, Map<String, dynamic> data) async {

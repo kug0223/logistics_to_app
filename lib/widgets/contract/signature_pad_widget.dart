@@ -1,4 +1,4 @@
-﻿import 'dart:typed_data';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:signature/signature.dart';
@@ -8,9 +8,10 @@ import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 
-/// 손글씨 서명 패드
+/// 손글씨 서명 패드 BottomSheet 위젯
+///
 /// 사용법:
-///   final bytes = await showSignaturePad(context);
+///   final bytes = await showSignaturePad(context, title: '내 서명 등록');
 ///   if (bytes != null) { /* 서명 완료 */ }
 class SignaturePadWidget extends StatefulWidget {
   final String title;
@@ -52,6 +53,11 @@ class _SignaturePadWidgetState extends State<SignaturePadWidget> {
     super.dispose();
   }
 
+  void _clearPad() {
+    _controller.clear();
+    setState(() => _hasSignature = false);
+  }
+
   Future<void> _confirm() async {
     if (!_hasSignature) return;
     // 점 하나만 찍은 경우(포인트 수 5 미만) 서명 거부
@@ -68,35 +74,166 @@ class _SignaturePadWidgetState extends State<SignaturePadWidget> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final spacing = ResponsiveHelper.spacing;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // 타이틀
-        Padding(
-          padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 20),
-            vertical: ResponsiveHelper.spacing(context, 16),
+        // ── 드래그 핸들 ────────────────────────────────────────────
+        Container(
+          width: 40,
+          height: 4,
+          margin: EdgeInsets.symmetric(vertical: spacing(context, 12)),
+          decoration: BoxDecoration(
+            color: AppColors.grey300,
+            borderRadius: BorderRadius.circular(2),
           ),
+        ),
+
+        // ── 헤더: 아이콘 + 제목 + 닫기 ────────────────────────────
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: spacing(context, 20)),
           child: Row(
             children: [
-              Icon(Icons.draw_outlined,
-                  color: theme.primaryColor,
-                  size: ResponsiveHelper.iconSize(context, 22)),
-              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-              Text(
-                widget.title,
-                style: ResponsiveHelper.subtitleStyle(context)
-                    .copyWith(fontWeight: FontWeight.bold),
+              Container(
+                width: spacing(context, 36),
+                height: spacing(context, 36),
+                decoration: BoxDecoration(
+                  color: AppColors.infoBg,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.draw_outlined,
+                  color: AppColors.infoDark,
+                  size: ResponsiveHelper.iconSize(context, 18),
+                ),
               ),
-              const Spacer(),
-              TextButton(
-                onPressed: () {
-                  _controller.clear();
-                  setState(() => _hasSignature = false);
-                },
+              SizedBox(width: spacing(context, 10)),
+              Expanded(
                 child: Text(
-                  '지우기',
+                  widget.title,
+                  style: ResponsiveHelper.subtitleStyle(context)
+                      .copyWith(fontWeight: FontWeight.bold),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 20),
+                onPressed: widget.onCancel ?? () => Navigator.pop(context),
+                visualDensity: VisualDensity.compact,
+                color: AppColors.grey600,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+            ],
+          ),
+        ),
+
+        // ── 서브타이틀 ─────────────────────────────────────────────
+        Padding(
+          padding: EdgeInsets.only(
+            left: spacing(context, 20),
+            right: spacing(context, 20),
+            top: spacing(context, 2),
+            bottom: spacing(context, 10),
+          ),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '서명을 직접 그려주세요',
+              style: ResponsiveHelper.smallStyle(context,
+                  color: AppColors.grey500),
+            ),
+          ),
+        ),
+
+        // ── Divider ────────────────────────────────────────────────
+        const Divider(height: 1, color: AppColors.grey100),
+
+        SizedBox(height: spacing(context, 12)),
+
+        // ── 서명 캔버스 ────────────────────────────────────────────
+        Container(
+          margin: EdgeInsets.symmetric(horizontal: spacing(context, 20)),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.grey200, width: 1.5),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: Stack(
+              children: [
+                Signature(
+                  controller: _controller,
+                  height: spacing(context, 240),
+                  backgroundColor: Colors.white,
+                ),
+                // placeholder — drawing 시작하면 자동으로 사라짐
+                if (!_hasSignature)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Center(
+                        child: Text(
+                          '여기에 서명',
+                          style: TextStyle(
+                            fontSize: 15,
+                            color: AppColors.grey300,
+                            letterSpacing: 1.0,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+
+        // ── 지우기 — Pad 바로 아래 우측 ────────────────────────────
+        Padding(
+          padding: EdgeInsets.only(
+            right: spacing(context, 20),
+            top: spacing(context, 6),
+          ),
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: _hasSignature ? _clearPad : null,
+              icon: Icon(
+                Icons.refresh_outlined,
+                size: 13,
+                color: _hasSignature ? AppColors.grey500 : AppColors.grey300,
+              ),
+              label: Text(
+                '지우기',
+                style: ResponsiveHelper.tinyStyle(
+                  context,
+                  color: _hasSignature ? AppColors.grey500 : AppColors.grey300,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.zero,
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                splashFactory: NoSplash.splashFactory,
+              ),
+            ),
+          ),
+        ),
+
+        SizedBox(height: spacing(context, 10)),
+
+        // ── 안내 문구 ──────────────────────────────────────────────
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: spacing(context, 20)),
+          child: Row(
+            children: [
+              const Icon(Icons.info_outline, size: 13, color: AppColors.grey400),
+              SizedBox(width: spacing(context, 4)),
+              Expanded(
+                child: Text(
+                  '손가락으로 위 영역에 서명해주세요.',
                   style: ResponsiveHelper.smallStyle(context,
                       color: AppColors.grey500),
                 ),
@@ -105,47 +242,11 @@ class _SignaturePadWidgetState extends State<SignaturePadWidget> {
           ),
         ),
 
-        // 서명 캔버스
-        Container(
-          margin: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 20)),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: _hasSignature
-                  ? theme.primaryColor.withValues(alpha: 0.4)
-                  : AppColors.grey300,
-              width: 1.5,
-            ),
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Signature(
-              controller: _controller,
-              height: 180,
-              backgroundColor: Colors.white,
-            ),
-          ),
-        ),
+        SizedBox(height: spacing(context, 16)),
 
-        if (!_hasSignature)
-          Padding(
-            padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 8)),
-            child: Text(
-              '위 공간에 서명해주세요',
-              style: ResponsiveHelper.tinyStyle(context,
-                  color: AppColors.grey400),
-            ),
-          ),
-
-        SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-
-        // 버튼 행
+        // ── CTA 버튼 ───────────────────────────────────────────────
         Padding(
-          padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 20),
-          ),
+          padding: EdgeInsets.symmetric(horizontal: spacing(context, 20)),
           child: Row(
             children: [
               Expanded(
@@ -153,8 +254,9 @@ class _SignaturePadWidgetState extends State<SignaturePadWidget> {
                   onPressed: widget.onCancel ?? () => Navigator.pop(context),
                   style: OutlinedButton.styleFrom(
                     padding: EdgeInsets.symmetric(
-                        vertical: ResponsiveHelper.spacing(context, 14)),
+                        vertical: spacing(context, 14)),
                     side: const BorderSide(color: AppColors.grey300),
+                    foregroundColor: AppColors.grey600,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12)),
                   ),
@@ -163,16 +265,16 @@ class _SignaturePadWidgetState extends State<SignaturePadWidget> {
                           color: AppColors.grey600)),
                 ),
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              SizedBox(width: spacing(context, 12)),
               Expanded(
                 flex: 2,
                 child: ElevatedButton(
                   onPressed: _hasSignature ? _confirm : null,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: theme.primaryColor,
-                    disabledBackgroundColor: AppColors.grey200,
+                    disabledBackgroundColor: AppColors.grey100,
                     padding: EdgeInsets.symmetric(
-                        vertical: ResponsiveHelper.spacing(context, 14)),
+                        vertical: spacing(context, 14)),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12)),
                     elevation: 0,
@@ -189,14 +291,19 @@ class _SignaturePadWidgetState extends State<SignaturePadWidget> {
             ],
           ),
         ),
-        SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+
+        SizedBox(height: spacing(context, 16)),
       ],
     );
   }
 }
 
-/// 바텀시트로 서명 패드 표시
-/// Returns null if cancelled
+/// BottomSheet로 서명 패드 표시
+///
+/// [title]: '내 서명 등록' / '내 서명 변경' 등 컨텍스트에 맞게 전달
+/// Returns: 완료 시 PNG bytes, 취소 시 null
+///
+/// useRootNavigator: true → BottomNavigationBar까지 dim 처리됨
 Future<Uint8List?> showSignaturePad(
   BuildContext context, {
   String title = '서명해주세요',
@@ -205,12 +312,17 @@ Future<Uint8List?> showSignaturePad(
   await DialogHelper.showSheet(
     context,
     isScrollControlled: true,
+    // rootNavigator: BottomNavBar가 아닌 앱 루트 위에 Sheet 표시
+    useRootNavigator: true,
     builder: (_) => SignaturePadWidget(
       title: title,
-      onCancel: () => Navigator.pop(context),
+      // [F-07-3 수정] useRootNavigator:true로 연 시트는 반드시 rootNavigator로 닫아야 함
+      // Navigator.pop(context)는 nearest navigator를 pop → 중첩 네비게이터(탭 구조)에서
+      // 시트 대신 ContractSignScreen 자체가 pop될 수 있어 result가 null로 반환되는 버그
+      onCancel: () => Navigator.of(context, rootNavigator: true).pop(),
       onConfirm: (bytes) {
         result = bytes;
-        Navigator.pop(context);
+        Navigator.of(context, rootNavigator: true).pop();
       },
     ),
   );

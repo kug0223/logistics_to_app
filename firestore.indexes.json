@@ -106,6 +106,16 @@
       ]
     },
     {
+      "collectionGroup": "applications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "toId", "order": "ASCENDING" },
+        { "fieldPath": "slotId", "order": "ASCENDING" },
+        { "fieldPath": "workDetailId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "attendance",
       "queryScope": "COLLECTION",
       "fields": [
@@ -795,12 +805,30 @@
       ]
     },
     {
+      "collectionGroup": "deleted_accounts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "foreignIdentityFingerprint", "order": "ASCENDING" },
+        { "fieldPath": "deletedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "applications",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "uid", "order": "ASCENDING" },
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "isLongTermApplication", "order": "ASCENDING" }
+      ]
+    },
+
+    {
+      "collectionGroup": "applications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "uid", "order": "ASCENDING" },
+        { "fieldPath": "workDate", "order": "ASCENDING" }
       ]
     },
 
@@ -819,6 +847,15 @@
       "fields": [
         { "fieldPath": "uid", "order": "ASCENDING" },
         { "fieldPath": "deletedAt", "order": "DESCENDING" }
+      ]
+    },
+
+    {
+      "collectionGroup": "worker_availability",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "city", "order": "ASCENDING" },
+        { "fieldPath": "dates", "arrayConfig": "CONTAINS" }
       ]
     }
   ],

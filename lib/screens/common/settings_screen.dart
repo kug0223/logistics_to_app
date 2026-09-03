@@ -23,9 +23,8 @@ import '../../utils/navigation_helper.dart';
 // Widgets
 import '../../widgets/common/common_widgets.dart';
 import '../../widgets/contract/signature_pad_widget.dart';
-import '../../widgets/dialogs/restart_program_dialog.dart';
+// restart_program_dialog, trust_score_info_dialog: [5A.2A] 신뢰도 UI 제거
 import '../../widgets/common/badge_display_widget.dart';
-import '../../widgets/dialogs/trust_score_info_dialog.dart';
 
 // Screens
 import '../business_admin/contract_template_list_screen.dart';
@@ -116,7 +115,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _businessSealBase64 = user.sealBase64;
       _sealType = user.sealType;
       _resolvedBusinessId = context.read<UserProvider>().effectiveBusinessId;
-      // BUSINESS_ADMIN: null → 아래 CF 조회 분기로 진입 / SUB_ADMIN: subAdminOf 바로 사용
+      // BUSINESS_ADMIN: null → 아래 CF 조회 분기로 진입 / SUB_ADMIN: effectiveBusinessId(선택 사업장)
       _isSealLoading = false;
     });
 
@@ -327,6 +326,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     context, '서브관리자 관리', Icons.admin_panel_settings_outlined),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 _buildMenuGroup(context, [
+                  // [PD-01] 관리자 모드 중일 때: 지원자 모드 복귀 CTA
+                  if (isSubAdminInAdminMode)
+                    _SettingsItem(
+                      icon: Icons.person_outline,
+                      iconColor: AppColors.infoDark,
+                      title: '지원자 모드로 전환',
+                      onTap: () => userProvider.toggleAdminMode(),
+                      // toggleAdminMode() → notifyListeners() → AuthWrapper 반응형 라우팅 → UserRootScreen
+                    ),
                   _SettingsItem(
                     icon: Icons.logout_outlined,
                     iconColor: AppColors.error,
@@ -347,15 +355,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
               if (showAdminSection) ...[
                 _buildSectionHeader(context, '사업장 설정', Icons.business_outlined),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                // BUSINESS_ADMIN만: 내 서류 관리 (SubAdmin은 '내 정보' 섹션에서 이미 표시됨)
+                // [5D.2A] BUSINESS_ADMIN: 사업장 서류 관리 → BusinessListScreen
+                // canonical 경로: businesses/{bizId}.businessLicenseImageUrl
+                // DocumentManagementScreen은 legacy users/{uid} 경로만 업데이트 — BUSINESS_ADMIN primary UX 부적합
                 if (user?.isBusinessAdmin == true) ...[
                   _buildMenuGroup(context, [
                     _SettingsItem(
                       icon: Icons.description_outlined,
                       iconColor: AppColors.successDark,
-                      title: '내 서류 관리',
-                      onTap: () => NavigationHelper.push<bool>(context,
-                          destination: const DocumentManagementScreen()),
+                      title: '사업장 서류 관리',
+                      onTap: () => NavigationHelper.push<void>(context,
+                          destination: const BusinessListScreen()),
                     ),
                   ]),
                   SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -419,7 +429,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ? _SettingsItem(
                           icon: Icons.group_outlined,
                           iconColor: theme.primaryColor,
-                          title: '멤버 관리',
+                          title: '팀원 관리',
                           onTap: () => Navigator.push(
                               context,
                               MaterialPageRoute(
@@ -498,6 +508,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     iconColor: AppColors.warningDark,
                     title: 'Application 마이그레이션',
                     onTap: () => _runApplicationMigration(context),
+                  ),
+                  _SettingsItem(
+                    icon: Icons.access_time_filled,
+                    iconColor: AppColors.info,
+                    title: '총 근무시간 마이그레이션',
+                    subtitle: 'totalWorkHours 0 오류 복구',
+                    onTap: () => _runWorkHoursMigration(context),
                   ),
                 ]),
                 SizedBox(height: ResponsiveHelper.spacing(context, 20)),
@@ -724,7 +741,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ),
 
-          // ── 지원자 신뢰도 + 통계 (한 줄 compact)
+          // ── 지원자 근무 통계 (한 줄 compact) — [5A.2A] 신뢰도 점수/등급/재시작 제거
           if (isUser && user != null) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
             Container(
@@ -738,39 +755,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               child: Row(
                 children: [
-                  // 신뢰도
-                  Text(user.trustGradeEmoji,
-                      style: ResponsiveHelper.bodyStyle(context)),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                  Text(
-                    '신뢰도 ${user.trustScore}점',
-                    style: ResponsiveHelper.smallStyle(context,
-                        color: Colors.white, fontWeight: FontWeight.w600),
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                  Container(
-                    padding: EdgeInsets.symmetric(
-                        horizontal: ResponsiveHelper.spacing(context, 6),
-                        vertical: 1),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(user.trustGrade,
-                        style: ResponsiveHelper.tinyStyle(context,
-                            color: Colors.white, fontWeight: FontWeight.w600)),
-                  ),
-                  GestureDetector(
-                    onTap: () => TrustScoreInfoDialog.show(context),
-                    child: Padding(
-                      padding: EdgeInsets.only(
-                          left: ResponsiveHelper.spacing(context, 4)),
-                      child: Icon(Icons.help_outline,
-                          size: ResponsiveHelper.iconSize(context, 14),
-                          color: Colors.white.withValues(alpha: 0.7)),
-                    ),
-                  ),
-                  const Spacer(),
                   // 통계 4개 inline
                   _miniStat(context, '근무', '${user.totalWorkDays}일'),
                   _miniStat(
@@ -788,38 +772,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 badgeIds: user.badges,
                 compact: true,
                 maxDisplay: 8,
-              ),
-            ],
-
-            // 재시작 프로그램 (신뢰도 50 미만만, 작게)
-            if (user.trustScore < 50) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-              GestureDetector(
-                onTap: () => _showRestartProgramDialog(context, user),
-                child: Container(
-                  width: double.infinity,
-                  padding: EdgeInsets.symmetric(
-                      vertical: ResponsiveHelper.spacing(context, 8)),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(8),
-                    border:
-                        Border.all(color: Colors.white.withValues(alpha: 0.3)),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.refresh,
-                          size: ResponsiveHelper.iconSize(context, 14),
-                          color: Colors.white),
-                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                      Text('재시작 프로그램 신청',
-                          style: ResponsiveHelper.tinyStyle(context,
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                ),
               ),
             ],
           ],
@@ -845,24 +797,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  /// 🆕 재시작 프로그램 다이얼로그 표시
-  Future<void> _showRestartProgramDialog(
-      BuildContext context, UserModel user) async {
-    await showRestartProgramDialog(
-      context,
-      userId: user.uid,
-      currentScore: user.trustScore,
-      noShowCount: user.recentNoShowCount,
-      lateCount: user.recentLateCount,
-      onSuccess: () {
-        // 사용자 정보 새로고침
-        context.read<UserProvider>().refreshUserData();
-      },
-    );
-
-    // refreshUserData() 호출 후 UserProvider가 notifyListeners() → 자동 rebuild
-    // (context.watch 사용 화면이므로 별도 setState 불필요)
-  }
+  // [5A.2A] _showRestartProgramDialog 제거 — 재시작 프로그램 폐기
 
   Widget _buildSectionHeader(
       BuildContext context, String title, IconData icon) {
@@ -886,10 +821,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   /// [PERF] 내 서류 관리 메뉴 아이템 — subtitle·subtitleColor 중복 계산 방지
   _SettingsItem _buildDocumentMenuItem(BuildContext context, UserModel? user) {
-    final idDone = user?.idCardImageUrl?.isNotEmpty ?? false;
+    final idDone = user?.hasIdDocument ?? false;
     final accDone = (user?.bankName?.isNotEmpty ?? false) &&
         (user?.accountNumber?.isNotEmpty ?? false);
-    final bookDone = user?.bankbookImageUrl?.isNotEmpty ?? false;
+    final bookDone = user?.hasBankbookDocument ?? false;
     final done = [idDone, accDone, bookDone].where((v) => v).length;
     return _SettingsItem(
       icon: Icons.folder_special_outlined,
@@ -1102,7 +1037,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             (UserModel.notifWorkReminder, '근무 리마인더', Icons.schedule_outlined),
             (
               UserModel.notifApplicationUpdate,
-              '지원 결과 알림',
+              '지원 결과 알림',  // 거절·취소·일정변경 (확정·취소는 항상 수신)
               Icons.check_circle_outline
             ),
             (
@@ -1112,6 +1047,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             (UserModel.notifContractAlert, '계약 알림', Icons.description_outlined),
             (UserModel.notifWageAlert, '임금 확정 알림', Icons.payments_outlined),
+            (
+              UserModel.notifToMatchAlert,
+              '새 일자리 알림',
+              Icons.work_outline
+            ),
           ];
     final enabledCount =
         items.where((item) => _notifPrefs[item.$1] ?? true).length;
@@ -1281,12 +1221,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Icon(Icons.logout,
-                    color: AppColors.error,
+                    color: AppColors.textSecondary,
                     size: ResponsiveHelper.iconSize(context, 18)),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 Text('로그아웃',
                     style: ResponsiveHelper.bodyStyle(context).copyWith(
-                        color: AppColors.error, fontWeight: FontWeight.w600)),
+                        color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
               ],
             ),
           ),
@@ -1302,10 +1242,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       onPressed: () => _showWithdrawalChecklist(context, userProvider),
       child: Text(
         '회원탈퇴',
-        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey400)
+        style: ResponsiveHelper.smallStyle(context, color: AppColors.error)
             .copyWith(
           decoration: TextDecoration.underline,
-          decorationColor: AppColors.grey400,
+          decorationColor: AppColors.error,
         ),
       ),
     );
@@ -1614,6 +1554,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         year: nowUnpaid.year,
                         month: nowUnpaid.month,
                         initialTab: 0,
+                        showAllOutstanding: true, // [5C.2-S21] Home 드릴다운과 동일 전체기간 뷰
                       )));
         case 'payroll_interim':
           // 중간정산 탭(3) — 사업장 선택 후 당월 급여 지급현황으로 이동
@@ -1629,6 +1570,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         year: nowInterim.year,
                         month: nowInterim.month,
                         initialTab: 3,
+                        showPendingSettlementOnly: true, // [5C.2-S21] Home 드릴다운과 동일 PENDING 필터
                       )));
         case 'to_management':
           await Navigator.push(
@@ -1664,226 +1606,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _showDeleteAccountSheet(
       BuildContext context, UserProvider userProvider) async {
-    final passwordCtrl = TextEditingController();
-    bool obscure = true;
-    bool isLoading = false;
-    String? errorMsg;
-
-    await DialogHelper.showSheet(
+    // [FC-SET-01 OWNERSHIP FIX] _DeleteAccountSheet(StatefulWidget)이 passwordCtrl을
+    // 직접 소유하고 State.dispose()에서 해제한다.
+    // ThemeProvider.reset() + signOut()은 sheet 종료 후 부모에서 처리.
+    final deleted = await DialogHelper.showSheet<bool>(
       context,
       isScrollControlled: true,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModal) {
-          Future<void> doDelete() async {
-            // [FIX-MEDIUM] 텍스트필드 포커스 → 다이얼로그 전환 시 _dependents.isEmpty 크래시 방지
-            FocusScope.of(ctx).unfocus();
-            final pw = passwordCtrl.text.trim();
-            if (pw.isEmpty) {
-              setModal(() => errorMsg = '비밀번호를 입력해주세요');
-              return;
-            }
-
-            // 최종 재확인
-            if (!ctx.mounted) return;
-            final confirmed = await DialogHelper.showDangerConfirm(
-              ctx,
-              title: '정말 탈퇴하시겠습니까?',
-              message: '탈퇴 후 계정 및 모든 데이터가 삭제되며 복구할 수 없습니다.',
-              confirmText: '탈퇴하기',
-            );
-            if (confirmed != true || !ctx.mounted) return;
-
-            setModal(() {
-              isLoading = true;
-              errorMsg = null;
-            });
-
-            final authService = AuthService();
-            final err = await authService.deleteAccountWithPassword(pw);
-
-            if (!ctx.mounted) return;
-
-            if (err != null) {
-              setModal(() {
-                isLoading = false;
-                errorMsg = err;
-              });
-            } else {
-              Navigator.pop(ctx);
-              if (context.mounted) context.read<ThemeProvider>().reset();
-              // signOut()은 notifyListeners()로 라우팅 처리 — setState/context 미사용
-              // 따라서 이후 mounted 체크 불필요 (의도된 설계)
-              await userProvider.signOut();
-            }
-          }
-
-          return Container(
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-            ),
-            padding: EdgeInsets.fromLTRB(
-              24,
-              16,
-              24,
-              MediaQuery.of(ctx).viewInsets.bottom + 24,
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 핸들 바
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: AppColors.grey300,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // 제목
-                  Text(
-                    '회원탈퇴',
-                    style: ResponsiveHelper.titleStyle(ctx)
-                        .copyWith(fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '탈퇴 후 계정 복구는 불가능합니다',
-                    style: ResponsiveHelper.smallStyle(ctx,
-                        color: AppColors.grey500),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // 통합 안내 박스
-                  Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: AppColors.errorBg,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: AppColors.errorLight),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '탈퇴 시 아래 사항을 확인해주세요',
-                          style: ResponsiveHelper.smallStyle(ctx,
-                              color: AppColors.errorDeep,
-                              fontWeight: FontWeight.w600),
-                        ),
-                        const SizedBox(height: 10),
-                        for (final text in <String>[
-                          '프로필 및 개인정보 즉시 삭제',
-                          '업로드한 서류 삭제 (신분증, 통장사본 등)',
-                          '진행 중인 지원·공고 자동 취소',
-                          '탈퇴 후 30일간 재가입 제한',
-                        ])
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('• ',
-                                    style: ResponsiveHelper.tinyStyle(ctx,
-                                        color: AppColors.errorDeep)),
-                                Expanded(
-                                  child: Text(text,
-                                      style: ResponsiveHelper.tinyStyle(ctx,
-                                              color: AppColors.errorDeep)
-                                          .copyWith(height: 1.4)),
-                                ),
-                              ],
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // 비밀번호 입력
-                  Text(
-                    '비밀번호 확인',
-                    style: ResponsiveHelper.bodyStyle(ctx)
-                        .copyWith(fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: passwordCtrl,
-                    obscureText: obscure,
-                    decoration: InputDecoration(
-                      hintText: '현재 비밀번호 입력',
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      errorText: errorMsg,
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          obscure ? Icons.visibility_off : Icons.visibility,
-                          size: 20,
-                        ),
-                        onPressed: () => setModal(() => obscure = !obscure),
-                      ),
-                    ),
-                    onSubmitted: (_) => doDelete(),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // 버튼
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed:
-                              isLoading ? null : () => Navigator.pop(ctx),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12)),
-                          ),
-                          child: const Text('취소'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: isLoading ? null : doDelete,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.error,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12)),
-                          ),
-                          child: isLoading
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2, color: Colors.white),
-                                )
-                              : Text(
-                                  '탈퇴하기',
-                                  style: ResponsiveHelper.bodyStyle(context)
-                                      .copyWith(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w600),
-                                ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
+      builder: (ctx) => _DeleteAccountSheet(userProvider: userProvider),
     );
-    passwordCtrl.dispose();
+    if (deleted == true) {
+      if (context.mounted) context.read<ThemeProvider>().reset();
+      // signOut()은 notifyListeners()로 라우팅 처리 — 이후 mounted 체크 불필요 (의도된 설계)
+      await userProvider.signOut();
+    }
   }
 
   /// 🔄 Application 마이그레이션 실행
@@ -1902,38 +1637,87 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     if (confirmed != true || !context.mounted) return;
+    final rootNav = Navigator.of(context, rootNavigator: true);
 
     DialogHelper.showLoading(context, message: '마이그레이션 진행 중...\n잠시만 기다려주세요.');
 
+    Map<String, dynamic>? result;
     try {
-      // 마이그레이션 실행
-      final result = await FirestoreService().migrateApplicationWorkDetailIds();
-
-      // 로딩 닫기
-      if (context.mounted) Navigator.pop(context);
-
-      // 결과 표시
-      final migrated = result['migrated'] ?? 0;
-      final skipped = result['skipped'] ?? 0;
-      final failed = result['failed'] ?? 0;
-
-      if (context.mounted) {
-        if (failed == -1) {
-          ToastHelper.showError('마이그레이션 실패');
-        } else {
-          await DialogHelper.showInfo(
-            context,
-            title: '마이그레이션 완료',
-            message: '✅ 마이그레이션: $migrated개\n'
-                '⏭️ 스킵 (이미 있음): $skipped개\n'
-                '❌ 실패: $failed개',
-          );
-        }
-      }
+      result = await FirestoreService().migrateApplicationWorkDetailIds();
     } catch (e) {
-      // 로딩 닫기
-      if (context.mounted) Navigator.pop(context);
       if (context.mounted) ToastHelper.showError('마이그레이션 오류: $e');
+    } finally {
+      if (rootNav.mounted && rootNav.canPop()) rootNav.pop();
+    }
+
+    if (result == null) return;
+
+    // 결과 표시
+    final migrated = result['migrated'] ?? 0;
+    final skipped = result['skipped'] ?? 0;
+    final failed = result['failed'] ?? 0;
+
+    if (context.mounted) {
+      if (failed == -1) {
+        ToastHelper.showError('마이그레이션 실패');
+      } else {
+        await DialogHelper.showInfo(
+          context,
+          title: '마이그레이션 완료',
+          message: '✅ 마이그레이션: $migrated개\n'
+              '⏭️ 스킵 (이미 있음): $skipped개\n'
+              '❌ 실패: $failed개',
+        );
+      }
+    }
+  }
+
+  /// 🔄 총 근무시간(totalWorkHours) 마이그레이션 실행
+  ///
+  /// 원인: callableCalculateAndConfirmWage가 attendance.workHours(최상위 필드)를 쓰지 않아
+  ///   onAttendanceWageStatusChanged 트리거에서 0이 누적된 사용자 복구.
+  Future<void> _runWorkHoursMigration(BuildContext context) async {
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: '총 근무시간 마이그레이션',
+      message: '확정된 근태 기록을 기반으로 모든 사용자의\n'
+          '총 근무시간(totalWorkHours)을 재계산합니다.\n\n'
+          '⚠️ 기존 값을 덮어씁니다.\n'
+          '계속하시겠습니까?',
+      confirmText: '실행',
+      cancelText: '취소',
+      icon: Icons.access_time_filled,
+      iconColor: AppColors.info,
+    );
+
+    if (confirmed != true || !context.mounted) return;
+    final rootNav = Navigator.of(context, rootNavigator: true);
+
+    DialogHelper.showLoading(context, message: '근무시간 재계산 중...\n잠시만 기다려주세요.');
+
+    int? updatedUsers;
+    int? scannedAttendances;
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableMigrateUserWorkHours');
+      final result = await callable.call<Map<String, dynamic>>();
+      updatedUsers = result.data['updatedUsers'] ?? 0;
+      scannedAttendances = result.data['scannedAttendances'] ?? 0;
+    } catch (e) {
+      if (context.mounted) ToastHelper.showError('마이그레이션 오류: $e');
+    } finally {
+      if (rootNav.mounted && rootNav.canPop()) rootNav.pop();
+    }
+
+    if (updatedUsers == null) return;
+
+    if (context.mounted) {
+      await DialogHelper.showInfo(
+        context,
+        title: '마이그레이션 완료',
+        message: '✅ 업데이트된 사용자: $updatedUsers명\n'
+            '📋 처리된 근태 기록: $scannedAttendances건',
+      );
     }
   }
 
@@ -2242,7 +2026,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('사업주 날인',
+                    Text('인감/서명',
                         style: ResponsiveHelper.bodyStyle(context)
                             .copyWith(fontWeight: FontWeight.w600)),
                     Text(
@@ -2450,6 +2234,238 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FC-SET-01 OWNERSHIP FIX: _DeleteAccountSheet
+// passwordCtrl을 BottomSheet State가 직접 소유하고 dispose().
+// ThemeProvider.reset() + signOut()은 sheet 종료 후 부모(_showDeleteAccountSheet)가 처리.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _DeleteAccountSheet extends StatefulWidget {
+  final UserProvider userProvider;
+  const _DeleteAccountSheet({required this.userProvider});
+
+  @override
+  State<_DeleteAccountSheet> createState() => _DeleteAccountSheetState();
+}
+
+class _DeleteAccountSheetState extends State<_DeleteAccountSheet> {
+  final _passwordCtrl = TextEditingController();
+  bool _obscure = true;
+  bool _isLoading = false;
+  String? _errorMsg;
+
+  @override
+  void dispose() {
+    _passwordCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _doDelete() async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    final pw = _passwordCtrl.text.trim();
+    if (pw.isEmpty) {
+      setState(() => _errorMsg = '비밀번호를 입력해주세요');
+      return;
+    }
+
+    if (!mounted) return;
+    final confirmed = await DialogHelper.showDangerConfirm(
+      context,
+      title: '정말 탈퇴하시겠습니까?',
+      message: '탈퇴 후 계정 및 모든 데이터가 삭제되며 복구할 수 없습니다.',
+      confirmText: '탈퇴하기',
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() {
+      _isLoading = true;
+      _errorMsg = null;
+    });
+
+    final authService = AuthService();
+    final err = await authService.deleteAccountWithPassword(pw);
+
+    if (!mounted) return;
+
+    if (err != null) {
+      setState(() {
+        _isLoading = false;
+        _errorMsg = err;
+      });
+    } else {
+      // 탈퇴 성공 → sheet 닫기 (true 반환)
+      // ThemeProvider.reset() + signOut()은 부모(_showDeleteAccountSheet)가 처리
+      Navigator.pop(context, true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: EdgeInsets.fromLTRB(
+        24,
+        16,
+        24,
+        MediaQuery.of(context).viewInsets.bottom + 24,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 핸들 바
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.grey300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // 제목
+            Text(
+              '회원탈퇴',
+              style: ResponsiveHelper.titleStyle(context)
+                  .copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '탈퇴 후 계정 복구는 불가능합니다',
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+            ),
+            const SizedBox(height: 16),
+
+            // 통합 안내 박스
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.errorBg,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.errorLight),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '탈퇴 시 아래 사항을 확인해주세요',
+                    style: ResponsiveHelper.smallStyle(context,
+                        color: AppColors.errorDeep,
+                        fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 10),
+                  for (final text in <String>[
+                    '프로필 및 개인정보 즉시 삭제',
+                    '업로드한 서류 삭제 (신분증, 통장사본 등)',
+                    '진행 중인 지원·공고 자동 취소',
+                    '탈퇴 후 30일간 재가입 제한',
+                  ])
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('• ',
+                              style: ResponsiveHelper.tinyStyle(context,
+                                  color: AppColors.errorDeep)),
+                          Expanded(
+                            child: Text(text,
+                                style: ResponsiveHelper.tinyStyle(context,
+                                        color: AppColors.errorDeep)
+                                    .copyWith(height: 1.4)),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // 비밀번호 입력
+            Text(
+              '비밀번호 확인',
+              style: ResponsiveHelper.bodyStyle(context)
+                  .copyWith(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _passwordCtrl,
+              obscureText: _obscure,
+              decoration: InputDecoration(
+                hintText: '현재 비밀번호 입력',
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                errorText: _errorMsg,
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    _obscure ? Icons.visibility_off : Icons.visibility,
+                    size: 20,
+                  ),
+                  onPressed: () => setState(() => _obscure = !_obscure),
+                ),
+              ),
+              onSubmitted: (_) => _doDelete(),
+            ),
+            const SizedBox(height: 20),
+
+            // 버튼
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: _isLoading ? null : () => Navigator.pop(context),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('취소'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: _isLoading ? null : _doDelete,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.error,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: _isLoading
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white),
+                          )
+                        : Text(
+                            '탈퇴하기',
+                            style: ResponsiveHelper.bodyStyle(context).copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600),
+                          ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 // ── 설정 메뉴 그룹용 데이터 클래스 ─────────────────────────────────
 class _SettingsItem {

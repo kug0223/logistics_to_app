@@ -856,10 +856,11 @@ class ContractService {
           .join(' '),
       businessPhone: business.phone,
       ownerName: business.ownerName ?? '',
-      workerName: worker.name,
+      // [V3 FOREIGN-DOCUMENT-FIRST] officialName = 외국인은 legalName 우선, 내국인은 name
+      workerName: worker.officialName,
       workerBirthDate:
           worker.birthDate != null ? _fmtDate(worker.birthDate) : null,
-      workerPhone: worker.phone,
+      workerPhone: worker.effectivePhone,
       workerAddress: [worker.address, worker.detailAddress]
               .whereType<String>()
               .join(' ')

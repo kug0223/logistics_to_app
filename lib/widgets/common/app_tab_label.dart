@@ -43,25 +43,32 @@ class AppTabLabel extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(label),
-        SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 6),
-            vertical: ResponsiveHelper.spacing(context, 2),
-          ),
-          decoration: BoxDecoration(
-            color: urgent
-                ? AppColors.error
-                : effectiveColor.withValues(alpha: 0.15),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Text(
-            '$displayCount$countSuffix',
-            style: ResponsiveHelper.tinyStyle(
-              context,
-              color: urgent ? Colors.white : effectiveColor,
-              fontWeight: FontWeight.bold,
+        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+        // Flexible: 좁은 화면(320dp 등)에서 배지가 Row 범위를 초과하지 않도록 압축
+        Flexible(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 3),
+              vertical: ResponsiveHelper.spacing(context, 2),
+            ),
+            decoration: BoxDecoration(
+              color: urgent
+                  ? AppColors.error
+                  : effectiveColor.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            // FittedBox: 배지 공간이 좁을 때 count 숫자를 스케일다운 (overflow 방지)
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                '$displayCount$countSuffix',
+                style: ResponsiveHelper.tinyStyle(
+                  context,
+                  color: urgent ? Colors.white : effectiveColor,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
           ),
         ),

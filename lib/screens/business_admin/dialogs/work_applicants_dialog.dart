@@ -32,7 +32,7 @@ import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../utils/id_card_helper.dart';
 import 'fixed_worker_management_dialog.dart';
 import '../../../utils/format_helper.dart';
-import '../../../utils/trust_score_helper.dart';
+// trust_score_helper: 신뢰도 점수 시스템 제거 (5A.2A)
 import '../../../utils/week_helper.dart';
 import '../../../models/core/attendance_model.dart';
 import '../../../models/core/monthly_review_model.dart';
@@ -392,61 +392,42 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           ));
         }
       },
-      child: Dialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
-        ),
-        insetPadding: EdgeInsets.symmetric(
-          horizontal: ResponsiveHelper.spacing(context, 16),
-          vertical: AppDialogSize.insetV,
-        ),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
+      child: AppModalShell(
+        children: [
+          _buildHeader(context, theme),
+          _buildStatsBar(context, pending.length, confirmed.length),
+          if (pending.isNotEmpty && widget.work != null)
+            _buildSelectAllRow(context, pending.length),
+          Expanded(
+            child: isLoading
+                ? const LoadingWidget()
+                : (pending.isEmpty && confirmed.isEmpty)
+                    ? _buildEmptyState()
+                    : widget.work == null
+                        ? _buildGroupedApplicantList(context)
+                        : _buildApplicantList(context, pending, confirmed),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.max,
-            children: [
-              _buildHeader(context, theme),
-              _buildStatsBar(context, pending.length, confirmed.length),
-              if (pending.isNotEmpty && widget.work != null)
-                _buildSelectAllRow(context, pending.length),
-              Expanded(
-                child: isLoading
-                    ? const LoadingWidget()
-                    : (pending.isEmpty && confirmed.isEmpty)
-                        ? _buildEmptyState()
-                        : widget.work == null
-                            ? _buildGroupedApplicantList(context)
-                            : _buildApplicantList(context, pending, confirmed),
-              ),
-              _buildBottomBar(context),
-            ],
-          ),
-        ),
+          _buildBottomBar(context),
+        ],
       ),
     );
   }
 
-  /// 헤더
+  /// 헤더 — ALfit modal grammar (flat white + grey200 divider)
   Widget _buildHeader(BuildContext context, ThemeData theme) {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [theme.primaryColor, theme.primaryColor.withValues(alpha: 0.8)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+      decoration: const BoxDecoration(
+        color: Colors.white,
         borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(ResponsiveHelper.spacing(context, 24)),
-          topRight: Radius.circular(ResponsiveHelper.spacing(context, 24)),
+          topLeft: Radius.circular(AppDialogSize.borderRadius),
+          topRight: Radius.circular(AppDialogSize.borderRadius),
         ),
+        border: Border(bottom: BorderSide(color: AppColors.grey200)),
       ),
       child: Row(
         children: [
-          // 업무 아이콘 (그룹 모드: 공통 아이콘, 단일 모드: 업무 아이콘)
+          // 업무 아이콘 (그룹 모드: grey 플레이스홀더, 단일 모드: 업무 아이콘)
           if (widget.work != null)
             WorkTypeIcon.buildWithBackground(
               iconString: widget.work!.workTypeIcon,
@@ -459,10 +440,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
               width: ResponsiveHelper.spacing(context, 44),
               height: ResponsiveHelper.spacing(context, 44),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.2),
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
               ),
-              child: Icon(Icons.people, color: Colors.white, size: ResponsiveHelper.iconSize(context, 24)),
+              child: Icon(Icons.people, color: AppColors.grey500, size: ResponsiveHelper.iconSize(context, 24)),
             ),
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
 
@@ -475,17 +456,22 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                   widget.work != null
                       ? '${widget.work!.workType} - 지원자 관리'
                       : '${widget.toItem.to.title} - 지원자 관리',
-                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
                 Text(
                   widget.work != null
                       ? '${FormatHelper.formatDate(widget.toItem.slot?.date ?? widget.initialDate ?? widget.toItem.to.date)} · ${widget.work!.startTime}~${widget.work!.endTime} | ${widget.work!.formattedWage}'
                       : '${FormatHelper.formatDate(widget.toItem.slot?.date ?? widget.initialDate ?? widget.toItem.to.date)} · 업무 ${widget.toItem.workDetails.length}종',
-                  style: ResponsiveHelper.smallStyle(context, color: Colors.white.withValues(alpha: 0.7)),
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w400,
+                    color: AppColors.textSecondary,
+                  ),
                 ),
               ],
             ),
@@ -497,7 +483,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
               hasChanges: _hasChanges,
               affectedTOIds: _affectedOtherTOIds,
             )),
-            icon: Icon(Icons.close, color: Colors.white),
+            icon: const Icon(Icons.close, color: AppColors.grey500, size: 20),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
           ),
         ],
       ),
@@ -1151,8 +1139,6 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     final weeklyCount = _weeklyWorkCountMap[user?.uid ?? ''];
     final isSelected = _selectedIds.contains(app.id);
     final isStarred = isPending && _starredIds.contains(app.id);
-    final trustScore = TrustScoreHelper.calculate(user);
-
     final isNotificationTarget = widget.initialApplicationId != null && app.id == widget.initialApplicationId;
 
     Color cardBg = Colors.white;
@@ -1359,7 +1345,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                 ),
                               ],
                             ),
-                          _buildTrustBadge(context, trustScore),
+                          if (user != null && user.recentNoShowCount > 0)
+                            _buildNoShowBadge(context, user.recentNoShowCount),
                           if (weeklyCount != null)
                             _buildWeeklyCountBadge(context, weeklyCount),
                           if (user != null && user.averageRating > 0)
@@ -1501,8 +1488,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                         ),
                       ],
 
-                      // 대기 중 액션 버튼 (파트변경 / 거절 / 승인) — 마감/인원충족 TO, 권한 없음 시 숨김
-                      if (isPending && !_isBatchMode && !widget.toItem.to.isClosed &&
+                      // 대기 중 액션 버튼 (파트변경 / 거절 / 승인)
+                      // [4J.0B] 거절: 항상 허용(PENDING 정리 목적), 승인: canApprovePending만 허용
+                      // isClosed 통합 가드 제거 — isManualClosed TO에서도 거절 허용하기 위함
+                      if (isPending && !_isBatchMode &&
                           context.read<UserProvider>().can((p) => p.canManageTo)) ...[
                         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                         Row(
@@ -1527,18 +1516,31 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                               textColor: AppColors.error,
                               onTap: () => _rejectApplication(item),
                             ),
-                            SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                            _buildActionButton(
-                              context,
-                              label: '승인',
-                              icon: Icons.check,
-                              bgColor: AppColors.success,
-                              textColor: Colors.white,
-                              filled: true,
-                              onTap: () => _approveApplication(item),
-                            ),
+                            if (widget.toItem.to.canApprovePending) ...[
+                              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                              _buildActionButton(
+                                context,
+                                label: '승인',
+                                icon: Icons.check,
+                                bgColor: AppColors.success,
+                                textColor: Colors.white,
+                                filled: true,
+                                onTap: () => _approveApplication(item),
+                              ),
+                            ],
                           ],
                         ),
+                        // [4J.1] FULL/TIME_EXPIRED 힌트 — 승인 버튼이 숨겨진 이유 안내
+                        if (!widget.toItem.to.canApprovePending) ...[
+                          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                          Text(
+                            widget.toItem.to.isFull
+                                ? '정원이 충족된 공고입니다. 추가 승인이 제한됩니다.'
+                                : '기간이 만료된 공고입니다. 추가 승인이 제한됩니다.',
+                            style: ResponsiveHelper.smallStyle(context,
+                                color: AppColors.grey500),
+                          ),
+                        ],
                       ],
                     ],
                   ),
@@ -1684,45 +1686,27 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     );
   }
 
-/// 신뢰도 배지 (높음/보통/주의 3단계)
-  Widget _buildTrustBadge(BuildContext context, int score) {
-    // 80+: 초록, 40~79: 회색, 40 미만: 빨강
-    final Color color;
-    final Color bgColor;
-    final bool isLow = score < 40;
-    
-    if (score >= 70) {
-      color = AppColors.info;
-      bgColor = AppColors.infoBg;
-    } else if (isLow) {
-      color = AppColors.error;
-      bgColor = AppColors.errorBg;
-    } else {
-      color = AppColors.grey600;
-      bgColor = AppColors.grey100;
-    }
-    
+  // 노쇼 팩트 배지 (신뢰도 점수 대체 — 5A.2A)
+  Widget _buildNoShowBadge(BuildContext context, int count) {
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 6),
         vertical: ResponsiveHelper.spacing(context, 2),
       ),
       decoration: BoxDecoration(
-        color: bgColor,
+        color: AppColors.errorBg,
         borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 8)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            isLow ? Icons.shield : Icons.shield_outlined,
-            size: ResponsiveHelper.iconSize(context, 10),
-            color: color,
-          ),
+          Icon(Icons.warning_amber_rounded,
+              size: ResponsiveHelper.iconSize(context, 10),
+              color: AppColors.error),
           SizedBox(width: ResponsiveHelper.spacing(context, 3)),
           Text(
-            '신뢰$score',
-            style: ResponsiveHelper.tinyStyle(context, color: color).copyWith(
+            '최근 90일 노쇼 $count회',
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.error).copyWith(
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -2066,7 +2050,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       }
 
       if (!mounted) return;
-      ToastHelper.showSuccess('${user?.name ?? '지원자'}님이 승인되었습니다');
+      ToastHelper.showSuccess('${user?.name ?? '지원자'}님이 승인되었습니다. 계약서를 작성해 주세요.');
       await _loadApplicants();
       if (!mounted) return;
       await _updateLocalStats();
@@ -2253,19 +2237,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
 
   /// 하단 액션 바
   Widget _buildBottomBar(BuildContext context) {
-    final bottomRadius = BorderRadius.only(
-      bottomLeft: Radius.circular(ResponsiveHelper.spacing(context, 24)),
-      bottomRight: Radius.circular(ResponsiveHelper.spacing(context, 24)),
-    );
-
     if (!_isBatchMode) {
-      return Container(
-        padding: ResponsiveHelper.cardPadding(context),
-        decoration: BoxDecoration(
-          color: AppColors.grey50,
-          border: Border(top: BorderSide(color: AppColors.border)),
-          borderRadius: bottomRadius,
-        ),
+      return AppModalFooter(
         child: Row(
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
@@ -2282,13 +2255,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     }
 
     final hasSelection = _selectedIds.isNotEmpty;
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        color: AppColors.grey50,
-        border: Border(top: BorderSide(color: AppColors.border)),
-        borderRadius: bottomRadius,
-      ),
+    return AppModalFooter(
       child: Row(
         children: [
           Text(
@@ -2503,6 +2470,10 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         if (item.isNotEmpty && item['user'] != null) toProcess.add(item);
       }
 
+      // [4J.0B] 일괄 rollback 시 B 충돌 잔존 경고 추적
+      // A 확정 → B AUTO_CANCELED → A 계약서 실패 → A를 PENDING 롤백하지만 B는 복구 불가
+      bool batchRollbackWithCollateral = false;
+
       // 단건 처리 함수 (성공 여부 반환)
       Future<bool> processOne(Map<String, dynamic> item) async {
         final app = item['application'] as ApplicationModel;
@@ -2510,6 +2481,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         final appId = app.id;
         final appWorkDetail = widget.work ?? _getWorkForApp(app);
         if (appWorkDetail == null) return false;
+        bool thisCallHadCollateral = false;
         try {
           final affectedTOIds = await _firestoreService.updateApplicationStatus(
             applicationId: appId,
@@ -2518,6 +2490,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           );
           if (affectedTOIds.isNotEmpty) {
             _affectedOtherTOIds.addAll(affectedTOIds);
+            thisCallHadCollateral = true;  // 확정 시 B가 AUTO_CANCELED됨
           }
           // [BUG-수정 M-1] updateApplicationStatus 완료 후 Firestore에는 computedWorkEndDate가
           // 저장되지만 로컬 app 객체는 구버전이라 workEndDate가 null일 수 있음.
@@ -2553,6 +2526,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
           } catch (rollbackErr) {
             debugPrint('⚠️ 롤백 실패 ($appId): $rollbackErr');
           }
+          // [4J.0B-P1-ROLLBACK] B 충돌 잔존 경고: A 롤백 시 B(AUTO_CANCELED)는 복구 불가
+          // Firestore rules: AUTO_CANCELED → PENDING client direct write 차단
+          if (thisCallHadCollateral) {
+            batchRollbackWithCollateral = true;
+          }
           return false;
         }
       }
@@ -2568,8 +2546,12 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       if (!mounted) return;
 
       if (successCount < _selectedIds.length) {
-        ToastHelper.showWarning(
-            '$successCount/${_selectedIds.length}명 계약서 발송 완료. 실패한 지원자는 다시 시도해주세요.');
+        final baseMsg =
+            '$successCount/${_selectedIds.length}명 계약서 발송 완료. 실패한 지원자는 다시 시도해주세요.';
+        // [4J.0B-P1-ROLLBACK] B 충돌 잔존 경고: 관리자에게 재지원 안내 요청
+        ToastHelper.showWarning(batchRollbackWithCollateral
+            ? '$baseMsg\n⚠️ 일부 다른 지원서가 취소 상태로 남아 있을 수 있습니다. 해당 근로자에게 재지원을 안내해 주세요.'
+            : baseMsg);
       } else {
         ToastHelper.showSuccess('${_selectedIds.length}명에게 계약서가 발송되었습니다');
       }

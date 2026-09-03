@@ -17,7 +17,10 @@ import '../../../utils/toast_helper.dart';
 import 'payroll_worker_detail_screen.dart';
 import 'payroll_payment_dashboard_screen.dart';
 import '../../../services/payroll_payment_service.dart';
-import '../../../widgets/common/gradient_scaffold.dart';
+import '../../../screens/common/notification_screen.dart';
+import '../../../utils/navigation_helper.dart';
+import '../../../widgets/common/app_page_scaffold.dart';
+import '../../../widgets/common/notification_badge.dart';
 import '../../../widgets/common/skeleton_widget.dart';
 import '../../../widgets/common/app_search_bar.dart';
 import '../../../widgets/common/app_empty_state.dart';
@@ -36,9 +39,15 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
   int _selectedYear = DateTime.now().year;
   String? _businessId;
   bool _isLoading = true;
+  bool _noData = false; // Tab 루트에서 picker 취소 / 사업장 없음 시 empty state
+  bool _accessDenied = false; // [5C.1A-SCREEN-01] canManageWage=false SubAdmin
   String? _loadError;
   List<PayrollSummaryModel> _summaries = [];
   int _todayPaymentCount = 0; // null(조회실패) 시 이전 값 유지
+
+  // [ACCESS-DENIED-REGRESSION-01] permission hydration race 복구용 listener
+  // initState에서 등록, dispose에서 해제
+  late UserProvider _userProvider;
 
   static const List<String> _monthLabels = [
     '1월', '2월', '3월', '4월', '5월', '6월',
@@ -48,11 +57,37 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
   @override
   void initState() {
     super.initState();
+    // [ACCESS-DENIED-REGRESSION-01] provider 캡처 후 listener 등록
+    // → false-negative _accessDenied 상태를 permission hydration 완료 시 복구
+    _userProvider = context.read<UserProvider>();
+    _userProvider.addListener(_onPermissionChanged);
     _init();
+  }
+
+  // [ACCESS-DENIED-REGRESSION-01] permission hydration race 복구 handler
+  // 조건: _accessDenied=true 상태에서 provider가 canManageWage=true를 전달할 때만 복구
+  // gate는 _init() 내부에 그대로 유지 — unauthorized hidden tab은 계속 차단됨
+  void _onPermissionChanged() {
+    if (!mounted) return;
+    if (!_accessDenied) return;
+    if (!_userProvider.can((p) => p.canManageWage)) return;
+
+    setState(() {
+      _accessDenied = false;
+      _isLoading = true;
+      _loadError = null;
+    });
+    unawaited(_init());
   }
 
   Future<void> _init() async {
     final userProvider = context.read<UserProvider>();
+    // [5C.1A-SCREEN-01] canManageWage=false SubAdmin 직접 진입 차단
+    // PERMISSION_DENIED를 정상 UX로 사용하지 않도록 Firestore 쿼리 전 선행 체크
+    if (!userProvider.can((p) => p.canManageWage)) {
+      if (mounted) setState(() { _isLoading = false; _accessDenied = true; });
+      return;
+    }
     final uid = userProvider.currentUser?.uid;
     if (uid == null) {
       if (mounted) setState(() => _isLoading = false);
@@ -72,10 +107,8 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
       }
       if (!mounted) return;
       if (businesses.isEmpty) {
-        // setState 전에 mounted는 이미 위에서 보장됨 — 중복 체크 제거
-        setState(() => _isLoading = false);
-        ToastHelper.showWarning('사업장을 먼저 등록해주세요');
-        Navigator.pop(context);
+        // Tab 루트일 때 pop 불가 → noData empty state. Push 컨텍스트에서도 empty state가 더 명확함.
+        if (mounted) setState(() { _isLoading = false; _noData = true; });
         return;
       }
       // C-08: N사업장 지원 — BusinessPickerHelper로 선택 (1개면 자동 선택)
@@ -83,8 +116,8 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
       final picked = await BusinessPickerHelper.pickFromList(context, businesses);
       if (!mounted) return;
       if (picked == null) {
-        setState(() => _isLoading = false);
-        Navigator.pop(context);
+        // picker 취소 — pop 대신 empty state (tab 루트에서 pop 불가)
+        setState(() { _isLoading = false; _noData = true; });
         return;
       }
       _businessId = picked.id;
@@ -258,15 +291,60 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return GradientScaffold(
+    // [DESIGN-PATCH-1] GradientScaffold → AppPageScaffold — 관리자 Shell 정규화
+    // refresh / home / notification — PayrollPaymentDashboardScreen canonical order
+    return AppPageScaffold(
       title: '급여 관리',
-      showNotificationBell: true,
-      onRefresh: () => _loadYear(_selectedYear),
-      headerContent: _buildYearSelector(theme),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.refresh_rounded),
+          onPressed: () => _loadYear(_selectedYear),
+          color: AppColors.textSecondary,
+        ),
+        IconButton(
+          icon: const Icon(Icons.home_outlined),
+          onPressed: () => NavigationHelper.goHome(context),
+          color: AppColors.textSecondary,
+        ),
+        NotificationBadge(
+          child: IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const NotificationScreen()),
+            ),
+            color: AppColors.textSecondary,
+          ),
+        ),
+      ],
       body: Column(
         children: [
+          _buildYearSelector(theme),
           if (_isLoading)
             const Expanded(child: PayrollGridSkeleton())
+          else if (_accessDenied)
+            // [5C.1A-SCREEN-01] canManageWage=false SubAdmin 접근 차단 상태
+            const Expanded(
+              child: AppEmptyState(
+                icon: Icons.lock_outline,
+                title: '접근 권한이 없습니다',
+                subtitle: '급여 관리 권한이 있는 관리자에게 문의하세요.',
+              ),
+            )
+          else if (_noData)
+            Expanded(
+              child: AppEmptyState(
+                icon: Icons.business_outlined,
+                title: '사업장을 선택해주세요',
+                action: TextButton(
+                  onPressed: () {
+                    setState(() { _isLoading = true; _noData = false; });
+                    _init();
+                  },
+                  child: const Text('선택하기'),
+                ),
+              ),
+            )
           else if (_loadError != null || _summaries.length != 12)
             Expanded(
               child: AppEmptyState(
@@ -306,18 +384,18 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
   }
 
   Widget _buildYearSelector(ThemeData theme) {
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        ResponsiveHelper.spacing(context, 8),
-        0,
-        ResponsiveHelper.spacing(context, 8),
-        ResponsiveHelper.spacing(context, 12),
-      ),
+    // [DESIGN-PATCH-1] headerContent(파란 그라디언트) → flat body header
+    // 흰색 icon/text 제거 → admin dark token.
+    // Dashboard _buildYearMonthHeader와 동일한 primaryColor α0.04 tint 컨테이너.
+    return Container(
+      color: theme.primaryColor.withValues(alpha: 0.04),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           IconButton(
-            icon: const Icon(Icons.chevron_left, color: Colors.white),
+            icon: const Icon(Icons.chevron_left),
+            color: AppColors.textSecondary,
             tooltip: '이전 연도',
             onPressed: () => _onYearChanged(-1),
           ),
@@ -325,13 +403,13 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
           Text(
             '$_selectedYear년',
             style: ResponsiveHelper.titleStyle(context).copyWith(
-              color: Colors.white,
               fontWeight: FontWeight.bold,
             ),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 24)),
           IconButton(
-            icon: const Icon(Icons.chevron_right, color: Colors.white),
+            icon: const Icon(Icons.chevron_right),
+            color: AppColors.textSecondary,
             tooltip: '다음 연도',
             onPressed: () => _onYearChanged(1),
           ),
@@ -472,6 +550,13 @@ class _PayrollOverviewScreenState extends State<PayrollOverviewScreen> {
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    // [ACCESS-DENIED-REGRESSION-01] permission listener 해제
+    _userProvider.removeListener(_onPermissionChanged);
+    super.dispose();
   }
 }
 
@@ -615,8 +700,27 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
     final theme = Theme.of(context);
     final filtered = _filteredWorkers;
 
-    return GradientScaffold(
+    // [DESIGN-PATCH-1] GradientScaffold → AppPageScaffold — 관리자 Shell 정규화
+    // home / notification — refresh 없음 (현 상태 유지)
+    return AppPageScaffold(
       title: '${widget.summary.year}년 ${widget.summary.month}월 급여현황',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.home_outlined),
+          onPressed: () => NavigationHelper.goHome(context),
+          color: AppColors.textSecondary,
+        ),
+        NotificationBadge(
+          child: IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const NotificationScreen()),
+            ),
+            color: AppColors.textSecondary,
+          ),
+        ),
+      ],
       body: Column(
         children: [
           _buildSummaryHeader(context, theme),
@@ -892,7 +996,7 @@ class _PayrollMonthScreenState extends State<PayrollMonthScreen> {
                   color: AppColors.success, shape: BoxShape.circle),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-              Text('이체완료',
+              Text('이체 완료',
                   style: ResponsiveHelper.tinyStyle(context,
                       color: AppColors.grey500)),
               SizedBox(width: ResponsiveHelper.spacing(context, 4)),

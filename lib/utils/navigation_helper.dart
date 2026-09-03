@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:async';
 import '../providers/user_provider.dart';
-import '../screens/user/user_home_screen.dart';
+import '../screens/user/user_root_screen.dart';
 import '../screens/business_admin/business_admin_home_screen.dart';
 import '../screens/super_admin/super_admin_home_screen.dart';
+import 'admin_tab_switcher.dart';
 
 /// 화면 이동 + 데이터 갱신 통합 헬퍼
 /// 
@@ -30,9 +31,9 @@ class NavigationHelper {
     required Widget destination,
     FutureOr<void> Function(T? result)? onReturn,
     VoidCallback? onChanged,
+    bool useRootNavigator = false,
   }) async {
-    final result = await Navigator.push<T>(
-      context,
+    final result = await Navigator.of(context, rootNavigator: useRootNavigator).push<T>(
       MaterialPageRoute(builder: (context) => destination),
     );
     
@@ -93,10 +94,18 @@ class NavigationHelper {
   }
 
   /// 역할에 맞는 홈 화면으로 이동 — 기존 스택 전체 제거
-  /// SuperAdmin → SuperAdminHomeScreen
-  /// BusinessAdmin → BusinessAdminHomeScreen
-  /// USER (서브어드민 포함) → UserHomeScreen (모드 전환은 UserHomeScreen 내부에서 처리)
+  /// [ADMIN.NAV.SUBADMIN-HOME-NESTED-SHELL-01]
+  /// BusinessAdminShell이 active인 경우 tab 0(홈)으로 전환 — SUB_ADMIN 포함
+  /// Shell inactive(지원자 모드 / SuperAdmin / 비관리자) 시 기존 role 분기 유지
   static Future<void> goHome(BuildContext context) async {
+    // BusinessAdminShell active → tab Navigator에 UserRootScreen push 방지
+    // AdminTabSwitcher.isRegistered == BusinessAdminShell currently mounted
+    // role == USER(SUB_ADMIN 포함) / BUSINESS_ADMIN 모두 동일하게 처리
+    if (AdminTabSwitcher.instance.isRegistered) {
+      AdminTabSwitcher.instance.switchToTab(AdminTabSwitcher.homeTab);
+      return;
+    }
+
     final userProvider = Provider.of<UserProvider>(context, listen: false);
     final Widget home;
     if (userProvider.isSuperAdmin) {
@@ -104,7 +113,7 @@ class NavigationHelper {
     } else if (userProvider.isBusinessAdmin) {
       home = const BusinessAdminHomeScreen();
     } else {
-      home = const UserHomeScreen();
+      home = const UserRootScreen();
     }
     await pushAndRemoveAll(context, destination: home);
   }

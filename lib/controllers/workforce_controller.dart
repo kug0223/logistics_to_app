@@ -21,6 +21,25 @@ class WorkforceController extends ChangeNotifier {
   bool _disposed = false;
   final Set<String> _loadingGroupIds = {};
 
+  // ── Cross-tab data invalidation ──────────────────────────────────────
+  // reload() 호출 시 dataRevision을 증가시켜 다른 Root의 controller에 변경을 알린다.
+  // 각 Root는 dataRevision listener에서 자신의 controller.load()를 트리거한다.
+  // reload()를 직접 호출한 Root는 wasLastGlobalBumpByMe로 자기 중복 로드를 방지한다.
+  static int _globalReloadCounter = 0;
+  static final ValueNotifier<int> dataRevision = ValueNotifier<int>(0);
+  int _myLastBumpId = 0;
+
+  /// true: 이 인스턴스가 가장 최근 전역 revision 증가를 유발 → listener에서 자기 reload skip 가능
+  bool get wasLastGlobalBumpByMe =>
+      _myLastBumpId > 0 && _myLastBumpId == _globalReloadCounter;
+
+  // 사업장 이름 캐시 — items가 0건이어도 마지막 성공 로드의 이름 유지 (scope chip용)
+  List<String> _knownBusinessNames = [];
+
+  /// 마지막 성공 로드에서 확보한 사업장 이름 목록.
+  /// items가 비어 있어도 scope label 표시에 사용할 수 있다.
+  List<String> get knownBusinessNames => List.unmodifiable(_knownBusinessNames);
+
   List<TOGroupItem> get items => _items;
   bool get isLoading => _isLoading;
   bool isGroupLoading(String groupId) => _loadingGroupIds.contains(groupId);
@@ -136,6 +155,13 @@ class WorkforceController extends ChangeNotifier {
       );
       _maxActiveTOs = await limitFuture;
       _items = await itemsFuture;
+      // 사업장 이름 캐시 업데이트 — items 0건이어도 이전 캐시 유지
+      final loadedNames = _items
+          .map((g) => g.businessName)
+          .where((n) => n.isNotEmpty)
+          .toSet()
+          .toList();
+      if (loadedNames.isNotEmpty) _knownBusinessNames = loadedNames;
       // flex TO 슬롯 날짜 일괄 로드 (캘린더 날짜 필터링용)
       final flexIds =
           _items.where((g) => g.masterTO.isFlexType).map((g) => g.id).toList();
@@ -259,9 +285,13 @@ class WorkforceController extends ChangeNotifier {
     super.dispose();
   }
 
-  /// 데이터 변경 후 호출 — 두 뷰가 동시 갱신된다
+  /// 데이터 변경 후 호출 — 두 뷰가 동시 갱신된다.
+  /// 전역 dataRevision을 증가시켜 다른 탭의 controller도 갱신 신호를 받는다.
   Future<void> reload(BuildContext context) {
     _onExternalReloadCallback?.call();
+    // Cross-tab invalidation: 이 인스턴스가 revision을 발생시켰음을 기록
+    _myLastBumpId = ++_globalReloadCounter;
+    dataRevision.value = _globalReloadCounter;
     return load(context);
   }
 

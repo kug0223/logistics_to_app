@@ -183,37 +183,15 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
 
   Future<void> _showReplyDialog(MonthlyReviewModel review) async {
     if (_isProcessing) return;
-    final ctrl = TextEditingController();
-    final confirmed = await showDialog<bool>(
+    // [FC-ADM-01 OWNERSHIP FIX] _ReviewReplyDialog(StatefulWidget)이 ctrl을
+    // 직접 소유하고 State.dispose()에서 해제한다.
+    // addPostFrameCallback dispose 패턴 제거.
+    final text = await showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: const Text('답변 작성'),
-        content: TextField(
-          controller: ctrl,
-          maxLines: 4,
-          maxLength: 500,
-          decoration: const InputDecoration(
-            hintText: '리뷰에 대한 답변을 작성해주세요',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(ctx, false); },
-            child: const Text('취소'),
-          ),
-          TextButton(
-            onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(ctx, true); },
-            child: const Text('등록'),
-          ),
-        ],
-      ),
+      builder: (ctx) => const _ReviewReplyDialog(),
     );
-    final text = ctrl.text.trim();
-    WidgetsBinding.instance.addPostFrameCallback((_) => ctrl.dispose());
-    if (confirmed != true || !mounted) return;
-    if (text.isEmpty) return;
+    if (text == null || text.isEmpty || !mounted) return;
     setState(() => _isProcessing = true);
     try {
       final ok = await _reviewService.addBusinessResponse(
@@ -1012,6 +990,59 @@ class _YearNavButton extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FC-ADM-01 — 리뷰 답변 작성 다이얼로그
+// AlertDialog + TextEditingController 소유권: State가 직접 소유·해제
+// ══════════════════════════════════════════════════════════════════════════════
+class _ReviewReplyDialog extends StatefulWidget {
+  const _ReviewReplyDialog();
+
+  @override
+  State<_ReviewReplyDialog> createState() => _ReviewReplyDialogState();
+}
+
+class _ReviewReplyDialogState extends State<_ReviewReplyDialog> {
+  final _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('답변 작성'),
+      content: TextField(
+        controller: _ctrl,
+        maxLines: 4,
+        maxLength: 500,
+        decoration: const InputDecoration(
+          hintText: '리뷰에 대한 답변을 작성해주세요',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            FocusManager.instance.primaryFocus?.unfocus();
+            Navigator.pop(context); // null = 취소
+          },
+          child: const Text('취소'),
+        ),
+        TextButton(
+          onPressed: () {
+            FocusManager.instance.primaryFocus?.unfocus();
+            Navigator.pop(context, _ctrl.text.trim()); // String = 확인
+          },
+          child: const Text('등록'),
+        ),
+      ],
     );
   }
 }

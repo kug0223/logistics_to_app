@@ -795,16 +795,13 @@ extension AttendanceFirestore on FirestoreService {
   // ══════════════════════════════════════════════════════════
 
   /// 홈 요약용 마감 미처리 일수 카운트
-  /// CloseManagementDialog와 동일 로직 — 단기+장기 모두 포함
-  /// [PERF] 오늘 이전 날짜만 검사 (미래는 마감 불가)
+  /// 단기+장기 모두 포함, 전체 기간 (월 범위 제한 없음)
+  /// [P0-C] 월 경계 소멸 버그 수정 — month 파라미터 제거, 전체 미완료 business×date 집계
+  /// [PERF] 오늘 이전 날짜만 검사 (미래 및 오늘은 마감 action 대상 아님)
   Future<int> getUnclosedDaysCount({
     required String businessId,
-    required DateTime month,
   }) async {
     try {
-      final monthStart = DateTime(month.year, month.month, 1);
-      final monthEndExclusive = DateTime(month.year, month.month + 1, 1);
-      final daysInMonth = DateTime(month.year, month.month + 1, 0).day;
       final today = DateTime.now();
       final todayOnly = DateTime(today.year, today.month, today.day);
 
@@ -812,11 +809,11 @@ extension AttendanceFirestore on FirestoreService {
           .httpsCallable('callableGetApplicationsByBiz',
               options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
 
+      // [P0-C] 단기: 날짜 제한 없이 전체 기간 confirmed 단기 지원 조회
+      // 장기: 기존과 동일 (날짜 제한 없이 전체 장기 확정자 조회)
       final callResults = await Future.wait([
         callable.call<Map<String, dynamic>>({
           'businessId': businessId,
-          'workDateGteMs': monthStart.millisecondsSinceEpoch,
-          'workDateLtMs': monthEndExclusive.millisecondsSinceEpoch,
           'limit': 2000,
         }),
         callable.call<Map<String, dynamic>>({
@@ -854,16 +851,16 @@ extension AttendanceFirestore on FirestoreService {
         final effectiveStart = app.desiredStartDate ?? app.workDate;
         final startOnly = DateTime(effectiveStart.year, effectiveStart.month, effectiveStart.day);
 
-        for (int d = 1; d <= daysInMonth; d++) {
-          final date = DateTime(month.year, month.month, d);
-          if (date.isBefore(startOnly)) continue;
-          if (endDate != null) {
-            final endOnly = DateTime(endDate.year, endDate.month, endDate.day);
-            if (date.isAfter(endOnly)) continue;
-          }
+        // [P0-C] 전체 기간 확장: 시작일 → min(종료일, 어제)
+        final yesterdayOnly = todayOnly.subtract(const Duration(days: 1));
+        final endOnly = endDate != null ? DateTime(endDate.year, endDate.month, endDate.day) : null;
+        DateTime date = startOnly;
+        while (!date.isAfter(yesterdayOnly)) {
+          if (endOnly != null && date.isAfter(endOnly)) break;
           if (app.leaveDates != null &&
               app.leaveDates!.any((ld) =>
                   ld.year == date.year && ld.month == date.month && ld.day == date.day)) {
+            date = date.add(const Duration(days: 1));
             continue;
           }
           final isExtra = app.extraWorkDates != null &&
@@ -875,14 +872,17 @@ extension AttendanceFirestore on FirestoreService {
             if (!appsByDate[dateKey]!.any((a) => a.id == app.id)) {
               appsByDate[dateKey]!.add(app);
             }
+            date = date.add(const Duration(days: 1));
             continue;
           }
           final dayWeekday = FormatHelper.weekday(date);
-          if (!app.workDays!.contains(dayWeekday)) continue;
-          appsByDate.putIfAbsent(dateKey, () => []);
-          if (!appsByDate[dateKey]!.any((a) => a.id == app.id)) {
-            appsByDate[dateKey]!.add(app);
+          if (app.workDays!.contains(dayWeekday)) {
+            appsByDate.putIfAbsent(dateKey, () => []);
+            if (!appsByDate[dateKey]!.any((a) => a.id == app.id)) {
+              appsByDate[dateKey]!.add(app);
+            }
           }
+          date = date.add(const Duration(days: 1));
         }
       }
 
@@ -898,11 +898,10 @@ extension AttendanceFirestore on FirestoreService {
         for (int i = 0; i < allAppIds.length; i += 500)
           allAppIds.sublist(i, (i + 500).clamp(0, allAppIds.length)),
       ];
+      // [P0-C] 월 파라미터 미전달 — CF가 전체 기간 attendance 반환 (optional 처리됨)
       final chunkResults = await Future.wait(chunks.map((chunk) => attCallable.call({
         'businessId': businessId,
         'applicationIds': chunk,
-        'monthStartMs': monthStart.millisecondsSinceEpoch,
-        'monthEndExclusiveMs': monthEndExclusive.millisecondsSinceEpoch,
       })));
       for (final r in chunkResults) {
         for (final rec in (r.data['records'] as List? ?? [])) {

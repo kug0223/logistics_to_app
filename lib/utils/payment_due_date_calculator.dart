@@ -1,4 +1,5 @@
 // lib/utils/payment_due_date_calculator.dart
+import 'format_helper.dart';
 //
 // 지급 예정일(paymentDueDate) 계산 유틸리티
 //
@@ -19,7 +20,7 @@ class PaymentDueDateCalculator {
     required int? payScheduleDay,
     required DateTime workDate,
   }) {
-    final base = DateTime(workDate.year, workDate.month, workDate.day);
+    final base = FormatHelper.toKstDate(workDate);
 
     switch (payScheduleType) {
       case 'same_day':
@@ -46,8 +47,7 @@ class PaymentDueDateCalculator {
   /// 오늘이 paymentDueDate인지 확인 (지급일 도래 여부)
   static bool isDueToday(DateTime? paymentDueDate) {
     if (paymentDueDate == null) return false;
-    // toLocal(): KST 환경에서 UTC 기준 자정 전후 오판 방지
-    final today = DateTime.now().toLocal();
+    final today = FormatHelper.toKstDate(DateTime.now());
     return paymentDueDate.year  == today.year &&
            paymentDueDate.month == today.month &&
            paymentDueDate.day   == today.day;
@@ -56,21 +56,22 @@ class PaymentDueDateCalculator {
   /// 오늘 기준 지급 예정일이 오늘 이하인지 (지나쳤거나 당일)
   static bool isDueOnOrBefore(DateTime? paymentDueDate, {DateTime? reference}) {
     if (paymentDueDate == null) return false;
-    final ref = (reference ?? DateTime.now()).toLocal();
-    final refDate = DateTime(ref.year, ref.month, ref.day);
-    final dueDate = DateTime(
-        paymentDueDate.year, paymentDueDate.month, paymentDueDate.day);
+    final ref = reference ?? DateTime.now();
+    final refDate = FormatHelper.toKstDate(ref);
+    final dueDate = FormatHelper.toKstDate(paymentDueDate);
     return !dueDate.isAfter(refDate);
   }
 
   // ─── 내부 헬퍼 ─────────────────────────────────────────────────
 
-  /// 해당 주 또는 다음 주의 목표 요일 날짜 반환
-  /// workDate가 이미 그 요일이면 당일 반환
+  /// 해당 주의 다음 목표 요일 날짜 반환
+  /// workDate가 이미 그 요일이면 다음 주 해당 요일 반환 (CF srvNextWeekday 동일 정책)
   static DateTime _nextWeekday(DateTime from, int targetWeekday) {
     // Dart weekday: 1=월 ... 7=일
+    // [5C.1-DUE-DATE-WEEKLY] diff==0(동일 요일)이면 +7일(다음 주) 반환.
+    // 당일 반환은 same_day와 구분 불가 — CF [CF-MED-4-FIX]와 동일 정책.
     final diff = (targetWeekday - from.weekday) % 7;
-    return from.add(Duration(days: diff));
+    return from.add(Duration(days: diff == 0 ? 7 : diff));
   }
 
   /// 해당 월 또는 다음 달의 목표 일자 반환

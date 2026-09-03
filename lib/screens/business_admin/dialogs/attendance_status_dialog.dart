@@ -64,6 +64,9 @@ class AttendanceStatusDialog extends StatefulWidget {
   final List<String> businessIds;
   final String? initialBusinessId;
   final List<BusinessModel>? businesses;
+  /// [5B.2A] focused individual mode — WorkerRow에서 진입 시 해당 ApplicationModel.id를 전달.
+  /// null이면 기존 batch mode. userId가 아닌 applicationId 기준 (동일 uid 복수 application 대응).
+  final String? initialApplicationId;
 
   const AttendanceStatusDialog({
     super.key,
@@ -71,6 +74,7 @@ class AttendanceStatusDialog extends StatefulWidget {
     required this.businessIds,
     this.initialBusinessId,
     this.businesses,
+    this.initialApplicationId,
   });
 
   @override
@@ -100,6 +104,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   Map<String, ApplicationModel> _workerIdMap = {};   // id → worker (O(1) 조회용)
   Map<String, Map<String, dynamic>> _statusCache = {};  // _computeStatus 결과 캐시
   List<List<ApplicationModel>> _tabWorkers = List.generate(4, (_) => []); // 탭별 근로자 캐시
+  String? _highlightedAppId; // [5B.2A] focused individual mode — 진입 시 해당 row 강조
+  /// [5B.2B] focused row scroll — highlighted card에 부여, Scrollable.ensureVisible에 사용
+  final GlobalKey _focusedCardKey = GlobalKey();
 
   // UI 상태
   bool _isLoading = true;
@@ -166,6 +173,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     _tabController = TabController(length: 4, vsync: this);
     _selectedBusinessId = widget.initialBusinessId ??
         (widget.businessIds.isNotEmpty ? widget.businessIds.first : null);
+    _highlightedAppId = widget.initialApplicationId; // [5B.2A]
     if (widget.businesses != null) {
       _businessNameMap = {for (final b in widget.businesses!) b.id: b.name};
     }
@@ -288,6 +296,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         _rebuildStatusCache();
         _rebuildTabWorkers();
       });
+
+      // [5B.2A] focused individual mode: 데이터 로드 완료 후 해당 application의 탭으로 이동
+      if (_highlightedAppId != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToFocusedApp());
+      }
 
       debugPrint('✅ 당일명단 로드 완료: ${confirmedWorkers.length}명');
     } catch (e) {
@@ -484,7 +497,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   /// 사용자 표시명 (이름만)
   String _getDisplayName(String uid) {
     final user = _userMap[uid];
-    return user?.name ?? 'Unknown';
+    return user?.name ?? '이름 없음';
   }
 
   /// 성별/나이 표시 문자열
@@ -517,6 +530,42 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   /// 탭별 근로자 캐시 재빌드 — _rebuildStatusCache() 직후 항상 호출
   void _rebuildTabWorkers() {
     _tabWorkers = List.generate(4, (i) => _workersByTab(i));
+  }
+
+  /// [5B.2A/5B.2B] focused mode — 해당 application의 탭으로 이동 + row ensureVisible
+  /// initialApplicationId가 속한 탭을 찾아 animateTo.
+  /// 탭 전환 완료 후 _scrollToFocusedCard()로 해당 row를 viewport에 표시.
+  void _jumpToFocusedApp() {
+    if (!mounted || _highlightedAppId == null) return;
+    for (int i = 0; i < 4; i++) {
+      if (_tabWorkers[i].any((a) => a.id == _highlightedAppId)) {
+        if (_currentTabIndex != i) {
+          _tabController.animateTo(i);
+          setState(() => _currentTabIndex = i);
+          // 탭 전환 애니메이션 완료 후 scroll (300ms 정도 여유)
+          Future.delayed(const Duration(milliseconds: 350), _scrollToFocusedCard);
+        } else {
+          // 이미 올바른 탭 — 바로 scroll
+          WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToFocusedCard());
+        }
+        return;
+      }
+    }
+    // 탭에서 못 찾으면 — 이미 완료/제거된 상태. highlight만 유지.
+  }
+
+  /// [5B.2B] _focusedCardKey를 통해 해당 row를 viewport에 보이게 scroll
+  void _scrollToFocusedCard() {
+    if (!mounted || _highlightedAppId == null) return;
+    final ctx = _focusedCardKey.currentContext;
+    if (ctx != null) {
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+        alignment: 0.2, // 상단 20% 위치에 표시 (완전 상단보다 맥락 있게)
+      );
+    }
   }
 
   /// 출퇴근 상태 실제 계산 (UI 레벨 — DB status와 별개)
@@ -592,10 +641,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           'isPast': false,
         };
       }
-      // 정상 퇴근
+      // 정상 퇴근 — [5B.2A] Root pill(grey600)과 동일한 neutral 색상으로 통일
       return {
         'status': 'checkout',
-        'color': AppColors.purple,
+        'color': AppColors.grey600,
         'icon': Icons.home,
         'text': '퇴근',
         'timeText': timeText,
@@ -836,132 +885,43 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           Navigator.pop(context, _hasChanges);
         }
       },
-      child: Dialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppDialogSize.borderRadius),
-        ),
-        insetPadding: EdgeInsets.symmetric(
-          horizontal: AppDialogSize.insetH,
-          vertical: AppDialogSize.insetV,
-        ),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio
-                - MediaQuery.of(context).viewInsets.bottom,
+      child: AppModalShell(
+        children: [
+          // 헤더
+          _buildHeader(theme, dateStr),
+
+          // 내용 (하단 버튼 포함 — 스크롤 영역 안에 위치)
+          Flexible(
+            child: _isLoading
+                ? const LoadingWidget(message: '당일명단 조회 중...')
+                : _confirmedWorkers.isEmpty
+                    ? _buildEmptyState()
+                    : _buildContent(theme),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 헤더
-              _buildHeader(theme, dateStr),
 
-              // 내용 (하단 버튼 포함 — 스크롤 영역 안에 위치)
-              Flexible(
-                child: _isLoading
-                    ? const LoadingWidget(message: '당일명단 조회 중...')
-                    : _confirmedWorkers.isEmpty
-                        ? _buildEmptyState()
-                        : _buildContent(theme),
-              ),
+          // 선택 인원 확인/취소 고정 바 (선택 + 대상 있을 때만 표시)
+          if (!_isLoading && _selectedIds.isNotEmpty)
+            _buildSelectionConfirmBar(theme),
 
-              // 선택 인원 확인/취소 고정 바 (선택 + 대상 있을 때만 표시)
-              if (!_isLoading && _selectedIds.isNotEmpty)
-                _buildSelectionConfirmBar(theme),
-
-              // 하단 고정 바 (명단 출력 / 급여관리 / 처리현황 — 항상 표시)
-              if (!_isLoading)
-                _buildBottomBar(theme),
-            ],
-          ),
-        ),
+          // 하단 고정 바 (명단 출력 / 급여관리 / 처리현황 — 항상 표시)
+          if (!_isLoading)
+            _buildBottomBar(theme),
+        ],
       ),
     );
   }
 
-  /// 헤더 (그라데이션 + 사업장 드롭다운)
+  /// 헤더 (flat white + accent bar + 사업장 드롭다운)
   Widget _buildHeader(ThemeData theme, String dateStr) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            theme.primaryColor,
-            theme.primaryColor.withValues(alpha: 0.85),
-          ],
-        ),
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(ResponsiveHelper.spacing(context, 24)),
-          topRight: Radius.circular(ResponsiveHelper.spacing(context, 24)),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 제목 + 닫기 버튼
-          Row(
-            children: [
-              Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.how_to_reg,
-                  color: Colors.white,
-                  size: ResponsiveHelper.iconSize(context, 24),
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '당일명단',
-                      style: ResponsiveHelper.titleStyle(context).copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      dateStr,
-                      style: ResponsiveHelper.smallStyle(context, color: Colors.white.withValues(alpha: 0.7)),
-                    ),
-                  ],
-                ),
-              ),
-              // 닫기 버튼
-              Material(
-                color: Colors.white.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(12),
-                child: InkWell(
-                  onTap: () {
-                    FocusScope.of(context).unfocus();
-                    Navigator.pop(context, _hasChanges);
-                  },
-                  borderRadius: BorderRadius.circular(12),
-                  child: Padding(
-                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                    child: Icon(
-                      Icons.close,
-                      color: Colors.white,
-                      size: ResponsiveHelper.iconSize(context, 24),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-
-          // 사업장 선택 (2개 이상일 때만 표시)
-          if (widget.businessIds.length > 1)
-            AppSelectField<String>(
+    return AppModalHeader(
+      title: '당일명단',
+      subtitle: dateStr,
+      onClose: () {
+        FocusScope.of(context).unfocus();
+        Navigator.pop(context, _hasChanges);
+      },
+      trailing: widget.businessIds.length > 1
+          ? AppSelectField<String>(
               value: _selectedBusinessId,
               hintText: '사업장을 선택하세요',
               sheetTitle: '사업장 선택',
@@ -977,9 +937,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                   _loadData();
                 }
               },
-            ),
-        ],
-      ),
+            )
+          : null,
     );
   }
 
@@ -1009,10 +968,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                 padding.right, 0),
             child: Column(
               children: [
-                // 탭 바
+                // 탭 바 — 압축 라벨로 4개 탭 항상 표시 (360dp 오버플로우 없음)
                 TabBar(
                   controller: _tabController,
-                  labelPadding: const EdgeInsets.symmetric(horizontal: 6),
+                  labelPadding: EdgeInsets.zero,
                   labelStyle: ResponsiveHelper.smallStyle(context, fontWeight: FontWeight.bold),
                   unselectedLabelStyle: ResponsiveHelper.smallStyle(context),
                   onTap: (index) {
@@ -1030,10 +989,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                     }
                   },
                   tabs: [
-                    Tab(child: AppTabLabel(label: '검토', count: needsReview.length, urgent: needsReview.isNotEmpty)),
+                    Tab(child: AppTabLabel(label: '확인필요', count: needsReview.length, urgent: needsReview.isNotEmpty)),
                     Tab(child: AppTabLabel(label: '정상', count: normal.length)),
-                    Tab(child: AppTabLabel(label: '확인', count: adminConfirmedWorkers.length, badgeColor: AppColors.info)),
-                    Tab(child: AppTabLabel(label: '완료', count: done.length, badgeColor: AppColors.grey500)),
+                    // [5B.2B] "확인완료": 관리자가 근태 확인한 사람들의 탭
+                    Tab(child: AppTabLabel(label: '확인완료', count: adminConfirmedWorkers.length, badgeColor: AppColors.info)),
+                    Tab(child: AppTabLabel(label: '처리완료', count: done.length, badgeColor: AppColors.grey500)),
                   ],
                 ),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -1091,15 +1051,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     if ((stats['earlyLeave'] ?? 0) > 0)        badges.add(_StatChip('조퇴', stats['earlyLeave']!, AppColors.amber));
     if ((stats['missedCheckout'] ?? 0) > 0)    badges.add(_StatChip('미퇴근', stats['missedCheckout']!, AppColors.error));
 
-    return Container(
+    return Padding(
       padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 10),
+        horizontal: ResponsiveHelper.spacing(context, 4),
         vertical: ResponsiveHelper.spacing(context, 6),
-      ),
-      decoration: BoxDecoration(
-        color: theme.primaryColor.withValues(alpha: 0.05),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: theme.primaryColor.withValues(alpha: 0.12)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1199,12 +1154,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         ? tabWorkers.where((a) => _attendanceMap[a.id]?.status == AttendanceModel.statusNoShow).toList()
         : <ApplicationModel>[];
 
-    return Container(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
-      decoration: BoxDecoration(
-        color: AppColors.grey100,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.border),
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 4),
+        vertical: ResponsiveHelper.spacing(context, 6),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1374,17 +1327,46 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
             final isFutureDate = widget.date.isAfter(today);
             return Column(
               children: [
-                Row(
-                  children: [
-                    Expanded(child: _buildActionButton(icon: Icons.login,    label: '출근', color: AppColors.success, count: checkInCount,  onPressed: (checkInCount > 0  && canManage && !isFutureDate) ? _showBatchCheckInDialog   : null)),
+                // 반응형 배치: LayoutBuilder 실측 후 분기
+                // maxWidth < 380dp → 2×2 그리드 (폰 전체 범위)
+                // maxWidth ≥ 380dp → 4열 (태블릿)
+                // 근거: '시간 조정' 라벨이 폰 크기(320~430dp)에서 우측 오버플로우
+                //   유발 (실측 5.5px @ 380dp). 레이아웃 전환이 font 축소보다 우선(§1).
+                LayoutBuilder(builder: (_, constraints) {
+                  final isNarrow = constraints.maxWidth < 380;
+
+                  final ci = Expanded(child: _buildActionButton(icon: Icons.login,   label: '출근',     color: AppColors.success, count: checkInCount,  onPressed: (checkInCount  > 0 && canManage && !isFutureDate) ? _showBatchCheckInDialog    : null));
+                  final ad = Expanded(child: _buildActionButton(icon: Icons.tune,    label: '시간 조정', color: AppColors.info,    count: adjustCount,   onPressed: (adjustCount   > 0 && canManage && !isFutureDate) ? _showBatchAdjustTimeDialog : null));
+                  final co = Expanded(child: _buildActionButton(icon: Icons.logout,  label: '퇴근',     color: AppColors.purple,  count: checkOutCount, onPressed: (checkOutCount > 0 && canManage && !isFutureDate) ? _showBatchCheckOutDialog   : null));
+                  final rs = Expanded(child: _buildActionButton(icon: Icons.refresh, label: '리셋',     color: AppColors.error,   count: resetCount,    onPressed: (resetCount    > 0 && canManage && !isFutureDate) ? _showBatchResetDialog     : null));
+
+                  if (isNarrow) {
+                    // 2×2 그리드: 각 버튼이 절반 폭을 차지해 '시간 조정' 완전 표시
+                    return Column(mainAxisSize: MainAxisSize.min, children: [
+                      Row(children: [
+                        ci,
+                        SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+                        ad,
+                      ]),
+                      SizedBox(height: ResponsiveHelper.spacing(context, 5)),
+                      Row(children: [
+                        co,
+                        SizedBox(width: ResponsiveHelper.spacing(context, 5)),
+                        rs,
+                      ]),
+                    ]);
+                  }
+                  // 4열 (태블릿): Flexible 안전망이 _buildActionButton 내부에 적용됨
+                  return Row(children: [
+                    ci,
                     SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-                    Expanded(child: _buildActionButton(icon: Icons.tune,     label: '조정', color: AppColors.info,    count: adjustCount,   onPressed: (adjustCount > 0   && canManage && !isFutureDate) ? _showBatchAdjustTimeDialog : null)),
+                    ad,
                     SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-                    Expanded(child: _buildActionButton(icon: Icons.logout,   label: '퇴근', color: AppColors.purple,  count: checkOutCount, onPressed: (checkOutCount > 0 && canManage && !isFutureDate) ? _showBatchCheckOutDialog  : null)),
+                    co,
                     SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-                    Expanded(child: _buildActionButton(icon: Icons.refresh,  label: '리셋', color: AppColors.grey600, count: resetCount,    onPressed: (resetCount > 0    && canManage) ? _showBatchResetDialog    : null)),
-                  ],
-                ),
+                    rs,
+                  ]);
+                }),
                 if (isFutureDate) ...[
                   SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                   Text(
@@ -1452,12 +1434,18 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                     color: isEnabled ? color : AppColors.grey400,
                   ),
                   SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                  Text(
-                    label,
-                    style: ResponsiveHelper.smallStyle(
-                      context,
-                      color: isEnabled ? color : AppColors.grey400,
-                    ).copyWith(fontWeight: FontWeight.w600),
+                  // Flexible: 4열 레이아웃에서 긴 라벨('시간 조정' 등)이
+                  // Row 경계를 넘지 않도록 수축 허용 (안전망 — 주요 fix는 2×2 전환)
+                  Flexible(
+                    child: Text(
+                      label,
+                      style: ResponsiveHelper.smallStyle(
+                        context,
+                        color: isEnabled ? color : AppColors.grey400,
+                      ).copyWith(fontWeight: FontWeight.w600),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
                   ),
                 ],
               ),
@@ -1498,11 +1486,18 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
           }).toList();
 
     for (var app in filteredSource) {
-      // app.startTime/endTime으로 그룹화 — effectiveStart는 workType 단위 캐시라
-      // 같은 workType의 다른 시간대 TO가 섞이므로 사용하지 않음
+      // [5B.2B] canonical group identity — Root 5B.1B와 동일 원칙.
+      // workType_startTime_endTime 단독 key는 동일 business 내 다른 TO(다른 toId)가
+      // 같은 workType·시간대를 가질 경우 cross-TO merge를 유발.
+      //
+      // canonical: businessId | toId | slotId | workDetailId
+      // legacy fallback (toId 없음): businessId | workType_startTime_endTime | '' | ''
       final normStart = _normalizeTimeKey(app.startTime);
       final normEnd   = _normalizeTimeKey(app.endTime);
-      final groupKey  = '${app.selectedWorkType.trim()}_${normStart}_$normEnd';
+      final toSeg = app.toId ?? '${app.selectedWorkType.trim()}_${normStart}_$normEnd';
+      final slotSeg = app.slotId ?? '';
+      final wdSeg = app.workDetailId ?? '';
+      final groupKey = '${app.businessId}|$toSeg|$slotSeg|$wdSeg';
 
       workTypeGroups.putIfAbsent(groupKey, () => []);
       workTypeGroups[groupKey]!.add(app);
@@ -1624,15 +1619,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     final iconColor = workTypeInfo?.color != null 
         ? FormatHelper.parseColor(workTypeInfo!.color!)
         : theme.primaryColor;
-    final bgColor = workTypeInfo?.backgroundColor != null
-        ? FormatHelper.parseColor(workTypeInfo!.backgroundColor!)
-        : theme.primaryColor.withValues(alpha: 0.1);
-
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.grey50,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border, width: 1.5),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.grey200),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1667,9 +1658,13 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                   } else {
                     for (final a in selectableWorkers) { _selectedIds.add(a.id); }
                   }
-                  final total = _confirmedWorkers.where((a) =>
-                      (_getAttendanceStatus(a)['status'] as String) != 'noshow').length;
-                  _selectAll = _selectedIds.length >= total;
+                  // [BUG-FIX] 그룹 선택 후 _selectAll은 현재 탭의 selectable workers 기준으로 계산
+                  // (_confirmedWorkers 전체 기준이면 탭 필터에 따라 checkbox 상태 불일치 발생)
+                  final tabSelectable = _tabWorkers[_currentTabIndex]
+                      .where((a) => (_getAttendanceStatus(a)['status'] as String) != 'noshow')
+                      .toList();
+                  _selectAll = tabSelectable.isNotEmpty &&
+                      tabSelectable.every((a) => _selectedIds.contains(a.id));
                 });
               },
               child: Container(
@@ -1677,11 +1672,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                   horizontal: ResponsiveHelper.spacing(context, 12),
                   vertical: ResponsiveHelper.spacing(context, 10),
                 ),
-                decoration: BoxDecoration(
-                  color: theme.primaryColor.withValues(alpha: 0.05),
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(16),
-                    topRight: Radius.circular(16),
+                decoration: const BoxDecoration(
+                  color: AppColors.grey50,
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(12),
+                    topRight: Radius.circular(12),
                   ),
                 ),
                 child: Row(
@@ -1689,26 +1684,26 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                     // 파트 체크박스
                     AppCheckbox(value: allSelected),
                     SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-                    // 업무유형 아이콘
+                    // 업무유형 아이콘 (소형)
                     Container(
-                      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
+                      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
                       decoration: BoxDecoration(
-                        color: bgColor,
-                        borderRadius: BorderRadius.circular(10),
+                        color: iconColor.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(6),
                       ),
                       child: workTypeInfo != null
                           ? WorkTypeIcon.build(
                               workTypeInfo,
                               color: iconColor,
-                              size: ResponsiveHelper.iconSize(context, 20),
+                              size: ResponsiveHelper.iconSize(context, 14),
                             )
                           : Icon(
                               Icons.work_outline,
                               color: iconColor,
-                              size: ResponsiveHelper.iconSize(context, 20),
+                              size: ResponsiveHelper.iconSize(context, 14),
                             ),
                     ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 10)),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1844,26 +1839,34 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     final theme = Theme.of(context);
     final statusInfo = _getAttendanceStatus(app);
     final isSelected = _selectedIds.contains(app.id);
+    // [5B.2A] focused mode — 진입 시 해당 application 강조 (5초 후 자동 해제는 미구현, 탭 이동으로 맥락 제공)
+    final isFocused = _highlightedAppId == app.id;
     final displayName = _getDisplayName(app.uid);
     final genderAge = _getGenderAge(app.uid);
     final overdueCheckout = _isMissedCheckout(app);
 
     return Container(
+      // [5B.2B] focused card에 GlobalKey 부여 → Scrollable.ensureVisible 대상
+      key: isFocused ? _focusedCardKey : null,
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 6)),
       decoration: BoxDecoration(
         color: isSelected
             ? theme.primaryColor.withValues(alpha: 0.08)
-            : overdueCheckout
-                ? AppColors.warning.withValues(alpha: 0.04)
-                : Colors.white,
+            : isFocused
+                ? AppColors.info.withValues(alpha: 0.06)
+                : overdueCheckout
+                    ? AppColors.warning.withValues(alpha: 0.04)
+                    : Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: isSelected
               ? theme.primaryColor
-              : overdueCheckout
-                  ? AppColors.warning.withValues(alpha: 0.6)
-                  : AppColors.border,
-          width: isSelected || overdueCheckout ? 1.5 : 1,
+              : isFocused
+                  ? AppColors.info
+                  : overdueCheckout
+                      ? AppColors.warning.withValues(alpha: 0.6)
+                      : AppColors.border,
+          width: isSelected || isFocused || overdueCheckout ? 1.5 : 1,
         ),
         boxShadow: [
           BoxShadow(
@@ -2489,7 +2492,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
               child: ElevatedButton.icon(
                 onPressed: () => _batchGroupConfirm(confirmable),
                 icon: Icon(Icons.check_circle_outline, size: ResponsiveHelper.iconSize(context, 16)),
-                label: Text('확인 ${confirmable.length}명'),
+                // [5B.2B] adminConfirmed action: "확인 N명" → "근태 확인 N명" (Application/급여 확정과 구분)
+                label: Text('근태 확인 ${confirmable.length}명'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.success,
                   foregroundColor: Colors.white,
@@ -2530,9 +2534,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     if (_isLoading) return;
     final ok = await DialogHelper.showConfirm(
       context,
-      title: '그룹 전체 확인',
-      message: '${confirmable.length}명을 일괄 확인 처리합니까?',
-      confirmText: '확인',
+      title: '근태 일괄 확인',
+      message: '${confirmable.length}명의 근태를 확인 완료 처리합니까?',
+      confirmText: '근태 확인',
       icon: Icons.check_circle_outline,
       confirmColor: AppColors.success,
     );
@@ -2609,14 +2613,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
   /// 하단 버튼 바
   Widget _buildBottomBar(ThemeData theme) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        color: AppColors.grey50,
-        border: Border(
-          top: BorderSide(color: AppColors.border),
-        ),
-      ),
+    return AppModalFooter(
       child: Builder(builder: (context) {
         final selectedFinal = _selectedFinalConfirmedApps;
         return Column(
@@ -2676,18 +2673,23 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
 
-          // 급여관리 버튼
+          // 급여관리 버튼 — OutlinedButton (보조 액션)
           Expanded(
-            child: ElevatedButton.icon(
+            child: OutlinedButton.icon(
               onPressed: _confirmedWorkers.isNotEmpty && context.read<UserProvider>().can((p) => p.canManageWage)
                   ? _showWageConfirmDialog
                   : null,
               icon: Icon(Icons.payments, size: ResponsiveHelper.iconSize(context, 18)),
               label: const Text('급여관리'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor:
-                    _confirmedWorkers.isNotEmpty ? Theme.of(context).primaryColor : AppColors.grey300,
-                foregroundColor: Colors.white,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _confirmedWorkers.isNotEmpty
+                    ? Theme.of(context).primaryColor
+                    : AppColors.grey400,
+                side: BorderSide(
+                  color: _confirmedWorkers.isNotEmpty
+                      ? Theme.of(context).primaryColor
+                      : AppColors.grey300,
+                ),
                 padding: EdgeInsets.symmetric(
                   vertical: ResponsiveHelper.spacing(context, 12),
                 ),
@@ -2712,25 +2714,20 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
     return Row(
       children: [
-        Icon(
-          isAllProcessed ? Icons.check_circle : Icons.pending,
-          size: ResponsiveHelper.iconSize(context, 18),
-          color: isAllProcessed ? AppColors.success : AppColors.grey500,
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-        Text(
-          '처리현황: ',
-          style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
-        ),
+        if (isAllProcessed) ...[
+          const Icon(Icons.check_circle, size: 14, color: AppColors.success),
+          const SizedBox(width: 4),
+        ],
+        const Text('처리 완료 ',
+            style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
         Text(
           '$processedCount/${_confirmedWorkers.length}명',
-          style: ResponsiveHelper.bodyStyle(context).copyWith(
-            fontWeight: FontWeight.bold,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
             color: isAllProcessed ? AppColors.success : theme.primaryColor,
           ),
         ),
-        if (isAllProcessed)
-          Text(' ✓', style: ResponsiveHelper.bodyStyle(context, color: AppColors.success)),
       ],
     );
   }
@@ -3044,7 +3041,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
       title: '일괄 노쇼 처리',
-      message: '미출근 ${targets.length}명을 노쇼 처리합니다.\n노쇼 이력이 기록됩니다.\n\n$names',
+      message: '미출근 ${targets.length}명을 노쇼 처리합니다.\n'
+          '노쇼 이력이 기록되며, 최근 90일 내 노쇼가 3회 발생하면\n'
+          '24시간 동안 새로운 일자리 지원이 제한됩니다.\n\n$names',
       confirmText: '노쇼 처리',
     );
     if (!confirmed || !mounted) return;
@@ -3090,7 +3089,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     final confirmed = await DialogHelper.showConfirm(
       context,
       title: '노쇼 취소',
-      message: '${targets.length}명의 노쇼를 취소합니다.\n\n$names',
+      message: '잘못 처리된 노쇼를 취소합니다.\n'
+          '해당 노쇼 기록은 최근 90일 집계에서 제외됩니다.\n\n$names',
       confirmText: '취소 확인',
     );
     if (!confirmed || !mounted) return;

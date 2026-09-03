@@ -11,7 +11,6 @@ import '../work_type_icon.dart';
 import '../../utils/format_helper.dart';
 import '../../models/core/work_detail_data.dart';
 import '../../theme/app_colors.dart';
-import '../dialogs/styled_dialog.dart';
 import '../../utils/wage_calculator.dart';
 import '../app_select_field.dart';
 import '../../utils/dialog_helper.dart';
@@ -25,225 +24,16 @@ class WorkDetailDialog {
   static Future<WorkDetailInput?> showAddDialog({
     required BuildContext context,
     required List<BusinessWorkTypeModel> businessWorkTypes,
-  }) async {
-    final theme = Theme.of(context);
-    
-    BusinessWorkTypeModel? selectedWorkType;
-    String selectedWageType = 'hourly';
-    String? startTime;
-    String? endTime;
-    String? shiftType;
-    bool nightAllowanceApplied = true;
-    bool nightIncluded = false;
-    int breakMinutes = 0;
-    String? payScheduleType;
-    int? payScheduleDay;
-    String? payScheduleTime;
-    String taxDeductionType = InsuranceRateModel.typeNone;
-    final wageController = TextEditingController();
-    final countController = TextEditingController();
-    final baseHourlyWageController = TextEditingController();
-    final descriptionController = TextEditingController();
-
-    final result = await showDialog<WorkDetailInput>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => MediaQuery.removeViewInsets(
-        removeBottom: true,
-        context: ctx,
-        child: StatefulBuilder(
-          builder: (context, setDialogState) {
-            return Dialog(
-              backgroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(24),
-            ),
-            insetPadding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 16),
-              vertical: AppDialogSize.insetV,
-            ),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // ✨ 세련된 헤더
-                  _buildHeader(context, theme),
-                  
-                  // ✨ 메인 컨텐츠
-                  Flexible(
-                    child: SingleChildScrollView(
-                      padding: ResponsiveHelper.cardPadding(context),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // 업무 유형 선택
-                          _buildWorkTypeSection(
-                            context,
-                            theme,
-                            businessWorkTypes,
-                            selectedWorkType,
-                            setDialogState,
-                            (newWorkType) {  // ⭐ 콜백 함수 추가
-                              selectedWorkType = newWorkType;
-                            },
-                          ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                          
-                          // 급여 타입 선택
-                          _buildWageTypeSection(
-                            context,
-                            theme,
-                            selectedWageType,
-                            setDialogState,
-                            (newType) {
-                              selectedWageType = newType;
-                              if (newType != 'daily') {
-                                shiftType = null;
-                                nightIncluded = false;
-                              }
-                            },
-                          ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-                          // 야간수당 설정 (모든 급여 유형)
-                          _buildShiftAndNightSection(
-                            context, theme,
-                            selectedWageType, shiftType,
-                            nightAllowanceApplied, nightIncluded,
-                            setDialogState,
-                            (v) { shiftType = v; },
-                            (v) { nightAllowanceApplied = v; if (!v) { nightIncluded = false; } },
-                            (v) { nightIncluded = v; },
-                          ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-                          // 휴게시간
-                          _buildBreakMinutesSection(
-                            context, theme, breakMinutes, setDialogState,
-                            (v) { breakMinutes = v; },
-                          ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-                          // 근무 시간
-                          _buildTimeSection(
-                            context,
-                            theme,
-                            startTime,
-                            endTime,
-                            breakMinutes,
-                            setDialogState,
-                            (newTime) {
-                              startTime = newTime;
-                            },
-                            (newTime) {
-                              endTime = newTime;
-                            },
-                          ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-                          // 급여 입력
-                          _buildWageSection(
-                            context,
-                            theme,
-                            selectedWageType,
-                            wageController,
-                            startTime,
-                            endTime,
-                            breakMinutes,
-                          ),
-                          if (selectedWageType == 'daily') ...[
-                            SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                            // builder의 ctx를 사용해야 외부 context로 InheritedWidget 의존성이
-                            // 잘못 등록되는 _dependents.isEmpty 어설션을 방지할 수 있다
-                            ValueListenableBuilder<TextEditingValue>(
-                              valueListenable: wageController,
-                              builder: (ctx, __, ___) => _buildBaseHourlyWageSection(
-                                ctx, theme,
-                                wageController, baseHourlyWageController,
-                                startTime, endTime, breakMinutes,
-                              ),
-                            ),
-                          ],
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-                          // 급여 지급 일정
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                          _buildPayScheduleSection(
-                            context, theme,
-                            payScheduleType, payScheduleDay, payScheduleTime,
-                            setDialogState,
-                            (t) { payScheduleType = t; payScheduleDay = null; },
-                            (d) { payScheduleDay = d; },
-                            (t) { payScheduleTime = t; },
-                          ),
-
-                          // 공제 방식
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                          _buildTaxDeductionSection(
-                            context, theme,
-                            taxDeductionType,
-                            setDialogState,
-                            (v) { taxDeductionType = v; },
-                          ),
-
-                          // 필요 인원
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                          _buildCountSection(
-                            context,
-                            theme,
-                            countController,
-                          ),
-
-                          // 업무 설명 (선택)
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                          _buildDescriptionField(context, theme, descriptionController),
-
-                          // ✨ 액션 버튼들 (스크롤 안)
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                          _buildActionButtons(
-                            context,
-                            theme,
-                            selectedWorkType,
-                            startTime,
-                            endTime,
-                            wageController,
-                            countController,
-                            selectedWageType,
-                            shiftType,
-                            nightAllowanceApplied,
-                            nightIncluded,
-                            breakMinutes,
-                            baseHourlyWageController,
-                            payScheduleType,
-                            payScheduleDay,
-                            payScheduleTime,
-                            taxDeductionType,
-                            descriptionController,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-          },
+  }) {
+    return Navigator.of(context, rootNavigator: true).push<WorkDetailInput>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _WorkDetailEditorScreen(
+          isEdit: false,
+          businessWorkTypes: businessWorkTypes,
         ),
       ),
     );
-    // 다이얼로그 닫기 애니메이션(~300ms) 완료 후 dispose — 즉시 dispose 시
-    // StatefulBuilder builder가 애니메이션 도중 disposed controller를 참조해 crash 발생
-    Future<void>.delayed(const Duration(milliseconds: 400)).then((_) {
-      wageController.dispose();
-      countController.dispose();
-      baseHourlyWageController.dispose();
-      descriptionController.dispose();
-    });
-    return result;
   }
   /// ✨ 업무 수정 다이얼로그 표시
   /// [businessWorkTypes] 전달 시 업무 유형 변경 가능 (TO 생성 시)
@@ -252,324 +42,21 @@ class WorkDetailDialog {
     required WorkDetailData work,
     List<BusinessWorkTypeModel>? businessWorkTypes,
     int currentCount = 0,
-  }) async {
-    final theme = Theme.of(context);
-    
-    // ✅ 업무 유형 선택 (businessWorkTypes가 있을 때만 변경 가능)
-    BusinessWorkTypeModel? selectedWorkType;
-    if (businessWorkTypes != null && businessWorkTypes.isNotEmpty) {
-      selectedWorkType = businessWorkTypes.firstWhere(
-        (wt) => wt.name == work.workType,
-        orElse: () => businessWorkTypes.first,
-      );
-    }
-    
-    String selectedWageType = work.wageType;
-    String startTime = work.startTime;
-    String endTime = work.endTime;
-    String? shiftType = work.shiftType;
-    bool nightAllowanceApplied = work.nightAllowanceApplied;
-    bool nightIncluded = work.nightIncluded;
-    int breakMinutes = work.breakMinutes;
-    String? payScheduleType = work.payScheduleType;
-    int? payScheduleDay = work.payScheduleDay;
-    String? payScheduleTime = work.payScheduleTime;
-    String taxDeductionType = work.taxDeductionType;
-    final wageController = TextEditingController(
-      text: FormatHelper.formatNumber(work.wage),
-    );
-    final countController = TextEditingController(
-      text: work.requiredCount.toString(),
-    );
-    final baseHourlyWageController = TextEditingController(
-      text: work.baseHourlyWage != null
-          ? FormatHelper.formatNumber(work.baseHourlyWage!)
-          : '',
-    );
-    final descriptionController = TextEditingController(
-      text: work.description ?? '',
-    );
-
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => MediaQuery.removeViewInsets(
-        removeBottom: true,
-        context: ctx,
-        child: StatefulBuilder(
-          builder: (context, setDialogState) {
-            return Dialog(
-            backgroundColor: Colors.white,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(24),
-            ),
-            insetPadding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 16),
-              vertical: AppDialogSize.insetV,
-            ),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // ✨ 헤더
-                  _buildEditHeader(context, theme, work.workType),
-                  
-                  // ✨ 메인 컨텐츠
-                  Flexible(
-                    child: SingleChildScrollView(
-                      padding: ResponsiveHelper.cardPadding(context),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // 업무 유형 (변경 가능/불가)
-                          if (businessWorkTypes != null && businessWorkTypes.isNotEmpty)
-                            _buildWorkTypeSection(
-                              context,
-                              theme,
-                              businessWorkTypes,
-                              selectedWorkType,
-                              setDialogState,
-                              (newWorkType) {
-                                selectedWorkType = newWorkType;
-                              },
-                            )
-                          else
-                            _buildEditWarningCard(context),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                          
-                          // 급여 타입 선택
-                          _buildWageTypeSection(
-                            context,
-                            theme,
-                            selectedWageType,
-                            setDialogState,
-                            (newType) {
-                              selectedWageType = newType;
-                              if (newType != 'daily') {
-                                shiftType = null;
-                                nightIncluded = false;
-                              }
-                            },
-                          ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-                          // 야간수당 설정 (모든 급여 유형)
-                          _buildShiftAndNightSection(
-                            context, theme,
-                            selectedWageType, shiftType,
-                            nightAllowanceApplied, nightIncluded,
-                            setDialogState,
-                            (v) { shiftType = v; },
-                            (v) { nightAllowanceApplied = v; if (!v) { nightIncluded = false; } },
-                            (v) { nightIncluded = v; },
-                          ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-                          // 휴게시간
-                          _buildBreakMinutesSection(
-                            context, theme, breakMinutes, setDialogState,
-                            (v) { breakMinutes = v; },
-                          ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-                          // 근무 시간
-                          _buildTimeSection(
-                            context,
-                            theme,
-                            startTime,
-                            endTime,
-                            breakMinutes,
-                            setDialogState,
-                            (newTime) {
-                              if (newTime != null) startTime = newTime;
-                            },
-                            (newTime) {
-                              if (newTime != null) endTime = newTime;
-                            },
-                          ),
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-                          // 급여 입력
-                          _buildWageSection(
-                            context,
-                            theme,
-                            selectedWageType,
-                            wageController,
-                            startTime,
-                            endTime,
-                            breakMinutes,
-                          ),
-                          if (selectedWageType == 'daily') ...[
-                            SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                            ValueListenableBuilder<TextEditingValue>(
-                              valueListenable: wageController,
-                              builder: (ctx, __, ___) => _buildBaseHourlyWageSection(
-                                ctx, theme,
-                                wageController, baseHourlyWageController,
-                                startTime, endTime, breakMinutes,
-                              ),
-                            ),
-                          ],
-                          // 급여 지급 일정
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                          _buildPayScheduleSection(
-                            context, theme,
-                            payScheduleType, payScheduleDay, payScheduleTime,
-                            setDialogState,
-                            (t) { payScheduleType = t; payScheduleDay = null; },
-                            (d) { payScheduleDay = d; },
-                            (t) { payScheduleTime = t; },
-                          ),
-
-                          // 공제 방식
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                          _buildTaxDeductionSection(
-                            context, theme,
-                            taxDeductionType,
-                            setDialogState,
-                            (v) { taxDeductionType = v; },
-                          ),
-
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-
-                          // 필요 인원
-                          _buildEditCountSection(
-                            context,
-                            theme,
-                            countController,
-                            currentCount,
-                          ),
-
-                          // 업무 설명 (선택)
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                          _buildDescriptionField(context, theme, descriptionController),
-
-                          // ✨ 액션 버튼들 (스크롤 안)
-                          SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-                          _buildEditActionButtons(
-                            context,
-                            theme,
-                            currentCount,
-                            startTime,
-                            endTime,
-                            wageController,
-                            countController,
-                            selectedWageType,
-                            selectedWorkType,
-                            shiftType,
-                            nightAllowanceApplied,
-                            nightIncluded,
-                            breakMinutes,
-                            baseHourlyWageController,
-                            payScheduleType,
-                            payScheduleDay,
-                            payScheduleTime,
-                            taxDeductionType,
-                            descriptionController,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            );
-          },
+  }) {
+    return Navigator.of(context, rootNavigator: true).push<Map<String, dynamic>>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _WorkDetailEditorScreen(
+          isEdit: true,
+          businessWorkTypes: businessWorkTypes ?? const [],
+          existingWork: work,
+          currentCount: currentCount,
         ),
-      ),
-    );
-    // 다이얼로그 닫기 애니메이션(~300ms) 완료 후 dispose
-    Future<void>.delayed(const Duration(milliseconds: 400)).then((_) {
-      wageController.dispose();
-      countController.dispose();
-      baseHourlyWageController.dispose();
-      descriptionController.dispose();
-    });
-    return result;
-  }
-
-  /// ✨ 수정 헤더
-  static Widget _buildEditHeader(BuildContext context, ThemeData theme, String workType) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            theme.primaryColor,
-            theme.primaryColor.withValues(alpha: 0.8),
-          ],
-        ),
-        borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(24),
-          topRight: Radius.circular(24),
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              Icons.edit_note,
-              color: Colors.white,
-              size: ResponsiveHelper.iconSize(context, 24),
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 16)),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '$workType 수정',
-                  style: ResponsiveHelper.titleStyle(context).copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                Text(
-                  '업무 정보를 수정합니다',
-                  style: ResponsiveHelper.smallStyle(context).copyWith(
-                    color: Colors.white.withValues(alpha: 0.9),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Material(
-            color: Colors.white.withValues(alpha: 0.2),
-            borderRadius: BorderRadius.circular(8),
-            child: InkWell(
-              onTap: () {
-                FocusManager.instance.primaryFocus?.unfocus();
-                Navigator.pop(context);
-              },
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                child: Icon(
-                  Icons.close,
-                  color: Colors.white,
-                  size: ResponsiveHelper.iconSize(context, 20),
-                ),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
 
+  /// ✨ 수정 헤더
   /// ⚠️ 업무유형 변경 불가 안내 카드
   static Widget _buildEditWarningCard(BuildContext context) {
     return Container(
@@ -626,15 +113,15 @@ class WorkDetailDialog {
         Row(
           children: [
             Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
               decoration: BoxDecoration(
-                color: AppColors.purple.withValues(alpha: 0.1),
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
                 Icons.people,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: AppColors.purpleDark,
+                color: AppColors.grey500,
               ),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -697,284 +184,9 @@ class WorkDetailDialog {
     );
   }
 
-  /// ✨ 수정 액션 버튼들
-  static Widget _buildEditActionButtons(
-    BuildContext context,
-    ThemeData theme,
-    int currentCount,
-    String startTime,
-    String endTime,
-    TextEditingController wageController,
-    TextEditingController countController,
-    String selectedWageType,
-    BusinessWorkTypeModel? selectedWorkType,
-    String? shiftType,
-    bool nightAllowanceApplied,
-    bool nightIncluded,
-    int breakMinutes,
-    TextEditingController baseHourlyWageController,
-    String? payScheduleType,
-    int? payScheduleDay,
-    String? payScheduleTime,
-    String taxDeductionType,
-    TextEditingController descriptionController,
-  ) {
-    return Row(
-        children: [
-          Expanded(
-            child: OutlinedButton(
-              onPressed: () {
-                FocusManager.instance.primaryFocus?.unfocus();
-                Navigator.pop(context);
-              },
-              style: OutlinedButton.styleFrom(
-                padding: EdgeInsets.symmetric(
-                  vertical: ResponsiveHelper.spacing(context, 16),
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                side: BorderSide(color: AppColors.grey300),
-              ),
-              child: Text(
-                '취소',
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          Expanded(
-            flex: 2,
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    theme.primaryColor,
-                    theme.primaryColor.withValues(alpha: 0.8),
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: theme.primaryColor.withValues(alpha: 0.4),
-                    blurRadius: 8,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: () async {
-                    final wage = int.tryParse(wageController.text.replaceAll(',', ''));
-                    final count = int.tryParse(countController.text);
-
-                    if (wage == null || wage <= 0 || count == null || count <= 0) {
-                      ToastHelper.showError('유효한 금액(0원 초과)과 인원(1명 이상)을 입력하세요');
-                      return;
-                    }
-
-                    if (currentCount > 0 && count < currentCount) {
-                      if (!context.mounted) return;
-                      final proceed = await DialogHelper.showConfirm(
-                        context,
-                        title: '모집인원 축소 경고',
-                        message: '현재 확정 인원($currentCount명)보다 적게 설정합니다.\n'
-                            '이미 확정된 인원이 초과 상태가 됩니다. 계속하시겠습니까?',
-                        confirmText: '저장',
-                        confirmColor: AppColors.warning,
-                        icon: Icons.warning_amber,
-                        iconColor: AppColors.warning,
-                      );
-                      if (!proceed) return;
-                      if (!context.mounted) return;
-                    }
-
-                    if (selectedWageType == 'daily' && shiftType == null) {
-                      ToastHelper.showError('일급제는 근무 시간대(주간/석간/야간)를 선택해주세요');
-                      return;
-                    }
-
-                    if (payScheduleType == null) {
-                      ToastHelper.showError('급여 지급 일정을 선택해주세요');
-                      return;
-                    }
-
-                    if ((payScheduleType == 'weekly' || payScheduleType == 'monthly') &&
-                        payScheduleDay == null) {
-                      ToastHelper.showError(
-                        payScheduleType == 'weekly' ? '지급 요일을 선택해주세요' : '지급 날짜를 선택해주세요',
-                      );
-                      return;
-                    }
-
-                    // 최저임금 위반 경고
-                    final minWage = WageCalculator.currentMinimumWage;
-                    if (selectedWageType == 'hourly' && wage < minWage) {
-                      if (!context.mounted) return;
-                      final proceed = await DialogHelper.showConfirm(
-                        context,
-                        title: '최저임금 미달 경고',
-                        message: '입력한 시급(${FormatHelper.formatNumber(wage)}원)이\n'
-                            '최저임금(${FormatHelper.formatNumber(minWage)}원)보다 낮습니다.\n\n'
-                            '최저임금법 위반 시 3년 이하 징역 또는 2천만 원 이하 벌금이 부과됩니다.\n'
-                            '그래도 저장하시겠습니까?',
-                        confirmText: '저장',
-                        cancelText: '수정하기',
-                        confirmColor: AppColors.errorDark,
-                        icon: Icons.warning_amber,
-                        iconColor: AppColors.errorDark,
-                      );
-                      if (!proceed) return;
-                      if (!context.mounted) return;
-                    }
-
-                    FocusManager.instance.primaryFocus?.unfocus();
-                    Navigator.pop(context, {
-                      if (selectedWorkType != null) ...{
-                        'workType': selectedWorkType.name,
-                        'workTypeIcon': selectedWorkType.icon,
-                        'workTypeColor': selectedWorkType.color,
-                        'workTypeBackgroundColor': selectedWorkType.backgroundColor,
-                      },
-                      'wage': wage,
-                      'wageType': selectedWageType,
-                      'requiredCount': count,
-                      'startTime': startTime,
-                      'endTime': endTime,
-                      if (shiftType != null) 'shiftType': shiftType,
-                      'nightAllowanceApplied': nightAllowanceApplied,
-                      'nightIncluded': nightIncluded,
-                      'breakMinutes': breakMinutes,
-                      'baseHourlyWage': int.tryParse(
-                        baseHourlyWageController.text.replaceAll(',', ''),
-                      ),
-                      'payScheduleType': payScheduleType,
-                      if (payScheduleDay != null) 'payScheduleDay': payScheduleDay,
-                      if (payScheduleTime != null) 'payScheduleTime': payScheduleTime,
-                      'taxDeductionType': taxDeductionType,
-                      if (descriptionController.text.trim().isNotEmpty)
-                        'description': descriptionController.text.trim(),
-                    });
-                  },
-                  borderRadius: BorderRadius.circular(12),
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(
-                      vertical: ResponsiveHelper.spacing(context, 16),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.save,
-                          color: Colors.white,
-                          size: ResponsiveHelper.iconSize(context, 20),
-                        ),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                        Text(
-                          '저장',
-                          style: ResponsiveHelper.bodyStyle(context).copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: ResponsiveHelper.getFontSize(context, 16),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-    );
-  }
-
   // ============================================================
   // 🎨 UI 섹션 빌더들
   // ============================================================
-
-  /// ✨ 세련된 헤더
-  static Widget _buildHeader(BuildContext context, ThemeData theme) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            theme.primaryColor,
-            theme.primaryColor.withValues(alpha: 0.8),
-          ],
-        ),
-        borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(24),
-          topRight: Radius.circular(24),
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              Icons.work_outline,
-              color: Colors.white,
-              size: ResponsiveHelper.iconSize(context, 24),
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 16)),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '업무 추가',
-                  style: ResponsiveHelper.titleStyle(context).copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                Text(
-                  '새로운 업무를 추가하세요',
-                  style: ResponsiveHelper.smallStyle(context).copyWith(
-                    color: Colors.white.withValues(alpha: 0.9),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Material(
-            color: Colors.white.withValues(alpha: 0.2),
-            borderRadius: BorderRadius.circular(8),
-            child: InkWell(
-              onTap: () {
-                FocusManager.instance.primaryFocus?.unfocus();
-                Navigator.pop(context);
-              },
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                child: Icon(
-                  Icons.close,
-                  color: Colors.white,
-                  size: ResponsiveHelper.iconSize(context, 20),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   /// ✨ 업무 유형 선택 섹션 (콜백 추가)
   static Widget _buildWorkTypeSection(
@@ -991,15 +203,15 @@ class WorkDetailDialog {
         Row(
           children: [
             Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
               decoration: BoxDecoration(
-                color: theme.primaryColor.withValues(alpha: 0.1),
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
                 Icons.category,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: theme.primaryColor,
+                color: AppColors.grey500,
               ),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -1060,15 +272,15 @@ class WorkDetailDialog {
         Row(
           children: [
             Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
               decoration: BoxDecoration(
-                color: AppColors.success.withValues(alpha: 0.1),
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
                 Icons.payments,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: AppColors.successDark,
+                color: AppColors.grey500,
               ),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -1138,15 +350,15 @@ class WorkDetailDialog {
         Row(
           children: [
             Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
               decoration: BoxDecoration(
-                color: AppColors.info.withValues(alpha: 0.1),
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
                 Icons.schedule,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: AppColors.infoDark,
+                color: AppColors.grey500,
               ),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -1161,45 +373,54 @@ class WorkDetailDialog {
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
         Column(
           children: [
-            _buildTimePickerTile(
-              context: context,
-              theme: theme,
-              value: startTime,
-              hintText: '시작 시간 선택',
-              prefixIcon: Icons.play_arrow,
-              onTap: () async {
-                final selected = await _showTimePickerSheet(
-                  context, theme, startTime, '시작 시간',
-                );
-                if (selected != null && context.mounted) {
-                  setDialogState(() => onStartTimeChanged(selected));
-                }
-              },
-            ),
-            Padding(
-              padding: EdgeInsets.symmetric(
-                vertical: ResponsiveHelper.spacing(context, 8),
-              ),
-              child: Icon(
-                Icons.arrow_downward,
-                color: theme.primaryColor,
-                size: ResponsiveHelper.iconSize(context, 20),
-              ),
-            ),
-            _buildTimePickerTile(
-              context: context,
-              theme: theme,
-              value: endTime,
-              hintText: '종료 시간 선택',
-              prefixIcon: Icons.stop,
-              onTap: () async {
-                final selected = await _showTimePickerSheet(
-                  context, theme, endTime, '종료 시간',
-                );
-                if (selected != null && context.mounted) {
-                  setDialogState(() => onEndTimeChanged(selected));
-                }
-              },
+            // 시작/종료 시간 — 2열 수평 레이아웃
+            Row(
+              children: [
+                Expanded(
+                  child: _buildTimePickerTile(
+                    context: context,
+                    theme: theme,
+                    value: startTime,
+                    hintText: '시작 시간',
+                    prefixIcon: Icons.play_arrow,
+                    onTap: () async {
+                      final selected = await _showTimePickerSheet(
+                        context, theme, startTime, '시작 시간',
+                      );
+                      if (selected != null && context.mounted) {
+                        setDialogState(() => onStartTimeChanged(selected));
+                      }
+                    },
+                  ),
+                ),
+                Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveHelper.spacing(context, 8),
+                  ),
+                  child: Icon(
+                    Icons.arrow_forward_rounded,
+                    color: theme.primaryColor,
+                    size: ResponsiveHelper.iconSize(context, 18),
+                  ),
+                ),
+                Expanded(
+                  child: _buildTimePickerTile(
+                    context: context,
+                    theme: theme,
+                    value: endTime,
+                    hintText: '종료 시간',
+                    prefixIcon: Icons.stop,
+                    onTap: () async {
+                      final selected = await _showTimePickerSheet(
+                        context, theme, endTime, '종료 시간',
+                      );
+                      if (selected != null && context.mounted) {
+                        setDialogState(() => onEndTimeChanged(selected));
+                      }
+                    },
+                  ),
+                ),
+              ],
             ),
             // 총 근무시간 요약
             if (startTime != null && endTime != null) ...[
@@ -1274,8 +495,8 @@ class WorkDetailDialog {
         borderRadius: BorderRadius.circular(12),
         child: Container(
           padding: EdgeInsets.symmetric(
-            horizontal: ResponsiveHelper.spacing(context, 16),
-            vertical: ResponsiveHelper.spacing(context, 14),
+            horizontal: ResponsiveHelper.spacing(context, 10),
+            vertical: ResponsiveHelper.spacing(context, 11),
           ),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
@@ -1289,17 +510,17 @@ class WorkDetailDialog {
               Icon(
                 prefixIcon,
                 color: hasValue ? theme.primaryColor : AppColors.grey400,
-                size: ResponsiveHelper.iconSize(context, 20),
+                size: ResponsiveHelper.iconSize(context, 16),
               ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
               Expanded(
                 child: Text(
                   value ?? hintText,
                   style: hasValue
-                      ? ResponsiveHelper.bodyStyle(context).copyWith(
+                      ? ResponsiveHelper.smallStyle(context).copyWith(
                           fontWeight: FontWeight.bold,
                         )
-                      : ResponsiveHelper.bodyStyle(context).copyWith(
+                      : ResponsiveHelper.smallStyle(context).copyWith(
                           color: AppColors.grey400,
                         ),
                 ),
@@ -1307,7 +528,7 @@ class WorkDetailDialog {
               Icon(
                 Icons.expand_more,
                 color: hasValue ? theme.primaryColor : AppColors.grey400,
-                size: ResponsiveHelper.iconSize(context, 20),
+                size: ResponsiveHelper.iconSize(context, 16),
               ),
             ],
           ),
@@ -1432,15 +653,15 @@ class WorkDetailDialog {
         Row(
           children: [
             Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
               decoration: BoxDecoration(
-                color: AppColors.amber.withValues(alpha: 0.1),
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
                 Icons.currency_exchange,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: AppColors.amberDark,
+                color: AppColors.grey500,
               ),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -1496,30 +717,19 @@ class WorkDetailDialog {
           ),
         ),
         if (selectedWageType == 'hourly') ...[
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          Container(
-            padding: ResponsiveHelper.cardPadding(context),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [AppColors.infoBg, AppColors.infoExtraLight],
+          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+          Row(
+            children: [
+              Icon(Icons.info_outline,
+                  size: ResponsiveHelper.iconSize(context, 13),
+                  color: AppColors.grey400),
+              SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+              Text(
+                '${DateTime.now().year}년 최저시급 ${LaborStandards.formatCurrencyWithUnit(LaborStandards.currentMinimumWage)}',
+                style: ResponsiveHelper.captionStyle(context,
+                    color: AppColors.grey500),
               ),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.info_outline,
-                    size: ResponsiveHelper.iconSize(context, 16),
-                    color: AppColors.infoDark),
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Expanded(
-                  child: Text(
-                    '${DateTime.now().year}년 최저시급: ${LaborStandards.formatCurrencyWithUnit(LaborStandards.currentMinimumWage)}',
-                    style: ResponsiveHelper.smallStyle(context,
-                        color: AppColors.infoDeep),
-                  ),
-                ),
-              ],
-            ),
+            ],
           ),
           ValueListenableBuilder<TextEditingValue>(
             valueListenable: wageController,
@@ -1579,38 +789,82 @@ class WorkDetailDialog {
               final minWage = WageCalculator.currentMinimumWage;
               final isMet = hourlyEquiv >= minWage;
 
-              return Container(
-                padding: ResponsiveHelper.cardPadding(context),
-                decoration: BoxDecoration(
-                  color: isMet ? AppColors.infoBg : AppColors.warningBg,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: isMet
-                        ? AppColors.infoLight
-                        : AppColors.warningLight,
-                  ),
-                ),
-                child: Row(children: [
-                  Icon(
-                    isMet
-                        ? Icons.check_circle_outline
-                        : Icons.warning_amber_rounded,
-                    size: ResponsiveHelper.iconSize(context, 16),
-                    color: isMet ? AppColors.infoDark : AppColors.warningDark,
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  Expanded(
-                    child: Text(
-                      isMet
-                          ? '환산시급 ${FormatHelper.formatNumber(hourlyEquiv)}원 — 최저시급 충족'
-                          : '환산시급 ${FormatHelper.formatNumber(hourlyEquiv)}원 — 최저시급(${FormatHelper.formatNumber(minWage)}원) 미달',
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: isMet
-                              ? AppColors.infoDeep
-                              : AppColors.warningDeep),
+              // [Phase 6] 8시간 초과 일급 힌트 — 절대 금지 표현 없음
+              final showLongShiftHint = workMins > 480;
+              final excessMins = workMins - 480;
+
+              String fmtMinsLocal(int m) {
+                final h = m ~/ 60;
+                final rem = m % 60;
+                if (h == 0) return '$rem분';
+                if (rem == 0) return '$h시간';
+                return '$h시간 $rem분';
+              }
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: ResponsiveHelper.cardPadding(context),
+                    decoration: BoxDecoration(
+                      color: isMet ? AppColors.infoBg : AppColors.warningBg,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isMet
+                            ? AppColors.infoLight
+                            : AppColors.warningLight,
+                      ),
                     ),
+                    child: Row(children: [
+                      Icon(
+                        isMet
+                            ? Icons.check_circle_outline
+                            : Icons.warning_amber_rounded,
+                        size: ResponsiveHelper.iconSize(context, 16),
+                        color: isMet ? AppColors.infoDark : AppColors.warningDark,
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                      Expanded(
+                        child: Text(
+                          isMet
+                              ? '환산시급 ${FormatHelper.formatNumber(hourlyEquiv)}원 — 최저시급 충족'
+                              : '환산시급 ${FormatHelper.formatNumber(hourlyEquiv)}원 — 최저시급(${FormatHelper.formatNumber(minWage)}원) 미달',
+                          style: ResponsiveHelper.smallStyle(context,
+                              color: isMet
+                                  ? AppColors.infoDeep
+                                  : AppColors.warningDeep),
+                        ),
+                      ),
+                    ]),
                   ),
-                ]),
+                  if (showLongShiftHint) ...[
+                    SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.warningBg,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: AppColors.warningLight),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '계약 유급시간 ${fmtMinsLocal(workMins)}  ·  '
+                            '8시간 초과 예정 ${fmtMinsLocal(excessMins)}',
+                            style: ResponsiveHelper.captionStyle(context),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '일급은 위 계약시간 전체의 지급액으로 사용됩니다. '
+                            '8시간 초과 구간의 추가 지급분을 포함한 금액을 입력해 주세요.',
+                            style: ResponsiveHelper.captionStyle(context),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
               );
             },
           ),
@@ -1631,15 +885,15 @@ class WorkDetailDialog {
         Row(
           children: [
             Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
               decoration: BoxDecoration(
-                color: AppColors.purple.withValues(alpha: 0.1),
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
                 Icons.people,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: AppColors.purpleDark,
+                color: AppColors.grey500,
               ),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -1696,7 +950,8 @@ class WorkDetailDialog {
     );
   }
 
-  /// ✨ 업무 설명 섹션 (선택 사항)
+  /// ✨ 업무 설명 섹션 — V1 비노출, schema/data 보존 (v2 재노출 예비)
+  // ignore: unused_element
   static Widget _buildDescriptionField(
     BuildContext context,
     ThemeData theme,
@@ -1708,15 +963,15 @@ class WorkDetailDialog {
         Row(
           children: [
             Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
               decoration: BoxDecoration(
-                color: AppColors.info.withValues(alpha: 0.1),
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
                 Icons.description_outlined,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: AppColors.infoDark,
+                color: AppColors.grey500,
               ),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -1731,7 +986,7 @@ class WorkDetailDialog {
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
         TextFormField(
           controller: controller,
-          maxLines: 3,
+          maxLines: 2,
           maxLength: 200,
           style: ResponsiveHelper.bodyStyle(context),
           decoration: InputDecoration(
@@ -1755,213 +1010,6 @@ class WorkDetailDialog {
           ),
         ),
       ],
-    );
-  }
-
-  /// ✨ 액션 버튼들
-  static Widget _buildActionButtons(
-    BuildContext context,
-    ThemeData theme,
-    BusinessWorkTypeModel? selectedWorkType,
-    String? startTime,
-    String? endTime,
-    TextEditingController wageController,
-    TextEditingController countController,
-    String selectedWageType,
-    String? shiftType,
-    bool nightAllowanceApplied,
-    bool nightIncluded,
-    int breakMinutes,
-    TextEditingController baseHourlyWageController,
-    String? payScheduleType,
-    int? payScheduleDay,
-    String? payScheduleTime,
-    String taxDeductionType,
-    TextEditingController descriptionController,
-  ) {
-    return Row(
-        children: [
-          Expanded(
-            child: OutlinedButton(
-              onPressed: () {
-                FocusManager.instance.primaryFocus?.unfocus();
-                Navigator.pop(context);
-              },
-              style: OutlinedButton.styleFrom(
-                padding: EdgeInsets.symmetric(
-                  vertical: ResponsiveHelper.spacing(context, 16),
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                side: BorderSide(color: AppColors.grey300),
-              ),
-              child: Text(
-                '취소',
-                style: ResponsiveHelper.bodyStyle(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          Expanded(
-            flex: 2,
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    theme.primaryColor,
-                    theme.primaryColor.withValues(alpha: 0.8),
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: theme.primaryColor.withValues(alpha: 0.4),
-                    blurRadius: 8,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: () {
-                    if (selectedWorkType == null ||
-                        startTime == null ||
-                        endTime == null ||
-                        wageController.text.isEmpty ||
-                        countController.text.isEmpty) {
-                      ToastHelper.showError('모든 정보를 입력해주세요');
-                      return;
-                    }
-
-                    final wage = int.tryParse(wageController.text.replaceAll(',', ''));
-                    final count = int.tryParse(countController.text);
-
-                    if (wage == null || wage <= 0) {
-                      ToastHelper.showError('유효한 급여를 입력해주세요');
-                      return;
-                    }
-
-                    // 최저시급 미만 하드 차단 (시급제 직접 비교, 일급제는 환산시급 비교)
-                    final minWage = WageCalculator.currentMinimumWage;
-                    if (selectedWageType == 'hourly' && wage < minWage) {
-                      ToastHelper.showError(
-                        '시급이 최저시급(${FormatHelper.formatNumber(minWage)}원) 미만입니다.\n최저시급 이상으로 입력해주세요.');
-                      return;
-                    }
-                    if (selectedWageType == 'daily') {
-                      // 시작~종료 분 계산 (자정 경계 처리)
-                      int toMin(String t) {
-                        final p = t.split(':');
-                        return int.parse(p[0]) * 60 + int.parse(p[1]);
-                      }
-                      int sMin = toMin(startTime), eMin = toMin(endTime);
-                      if (eMin <= sMin) eMin += 1440;
-                      final workMins = (eMin - sMin - breakMinutes).clamp(0, 9999);
-                      if (workMins > 0) {
-                        final hourlyEquiv = (wage * 60 / workMins).round();
-                        if (hourlyEquiv < minWage) {
-                          ToastHelper.showError(
-                            '환산시급(${FormatHelper.formatNumber(hourlyEquiv)}원)이 최저시급(${FormatHelper.formatNumber(minWage)}원) 미만입니다.\n일급을 올려주세요.');
-                          return;
-                        }
-                      }
-                    }
-
-                    if (count == null || count <= 0) {
-                      ToastHelper.showError('유효한 인원 수를 입력해주세요');
-                      return;
-                    }
-
-                    // 시작 = 종료 (0분 근무) 차단
-                    if (startTime == endTime) {
-                      ToastHelper.showError('시작 시간과 종료 시간이 같을 수 없습니다');
-                      return;
-                    }
-
-                    if (selectedWageType == 'daily' && shiftType == null) {
-                      ToastHelper.showError('일급제는 근무 시간대(주간/석간/야간)를 선택해주세요');
-                      return;
-                    }
-
-                    if (payScheduleType == null) {
-                      ToastHelper.showError('급여 지급 일정을 선택해주세요');
-                      return;
-                    }
-
-                    if ((payScheduleType == 'weekly' || payScheduleType == 'monthly') &&
-                        payScheduleDay == null) {
-                      ToastHelper.showError(
-                        payScheduleType == 'weekly' ? '지급 요일을 선택해주세요' : '지급 날짜를 선택해주세요',
-                      );
-                      return;
-                    }
-
-                    FocusManager.instance.primaryFocus?.unfocus();
-                    Navigator.pop(
-                      context,
-                      WorkDetailInput(
-                        workType: selectedWorkType.name,
-                        workTypeIcon: selectedWorkType.icon,
-                        workTypeColor: selectedWorkType.color ?? '#FFFFFF',
-                        workTypeBackgroundColor: selectedWorkType.backgroundColor,
-                        wage: wage,
-                        requiredCount: count,
-                        startTime: startTime,
-                        endTime: endTime,
-                        wageType: selectedWageType,
-                        shiftType: shiftType,
-                        nightAllowanceApplied: nightAllowanceApplied,
-                        nightIncluded: nightIncluded,
-                        breakMinutes: breakMinutes,
-                        baseHourlyWage: int.tryParse(
-                          baseHourlyWageController.text.replaceAll(',', ''),
-                        ),
-                        payScheduleType: payScheduleType,
-                        payScheduleDay: payScheduleDay,
-                        payScheduleTime: payScheduleTime,
-                        taxDeductionType: taxDeductionType,
-                        description: descriptionController.text.trim().isEmpty
-                            ? null
-                            : descriptionController.text.trim(),
-                      ),
-                    );
-                  },
-                  borderRadius: BorderRadius.circular(12),
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(
-                      vertical: ResponsiveHelper.spacing(context, 16),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.add_circle_outline,
-                          color: Colors.white,
-                          size: ResponsiveHelper.iconSize(context, 20),
-                        ),
-                        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                        Text(
-                          '업무 추가',
-                          style: ResponsiveHelper.bodyStyle(context).copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: ResponsiveHelper.getFontSize(context, 16),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
     );
   }
 
@@ -2002,14 +1050,14 @@ class WorkDetailDialog {
         Row(
           children: [
             Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
               decoration: BoxDecoration(
-                color: AppColors.amber.withValues(alpha: 0.1),
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(Icons.calculate_outlined,
                   size: ResponsiveHelper.iconSize(context, 18),
-                  color: AppColors.amberDark),
+                  color: AppColors.grey500),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
             Expanded(
@@ -2185,12 +1233,12 @@ class WorkDetailDialog {
         Row(
           children: [
             Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
               decoration: BoxDecoration(
-                color: AppColors.infoDark.withValues(alpha: 0.1),
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Icon(Icons.nights_stay_outlined, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.infoDark),
+              child: Icon(Icons.nights_stay_outlined, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.grey500),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
             Expanded(
@@ -2320,14 +1368,14 @@ class WorkDetailDialog {
         Row(
           children: [
             Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
               decoration: BoxDecoration(
-                color: AppColors.successDark.withValues(alpha: 0.1),
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(Icons.account_balance_wallet_outlined,
                   size: ResponsiveHelper.iconSize(context, 18),
-                  color: AppColors.successDark),
+                  color: AppColors.grey500),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
             Text('급여 지급 일정',
@@ -2337,47 +1385,36 @@ class WorkDetailDialog {
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
-        // 유형 버튼 4개
+        // 유형 칩 4개 — compact segmented
         Row(
           children: types.map((t) {
             final (value, label, icon) = t;
             final isSelected = payScheduleType == value;
+            final isLast = value == 'monthly';
             return Expanded(
               child: Padding(
                 padding: EdgeInsets.only(
-                    right: value != 'monthly'
-                        ? ResponsiveHelper.spacing(context, 6)
-                        : 0),
+                    right: isLast ? 0 : ResponsiveHelper.spacing(context, 5)),
                 child: GestureDetector(
                   onTap: () => setDialogState(() => onTypeChanged(value)),
                   child: Container(
                     padding: EdgeInsets.symmetric(
-                        vertical: ResponsiveHelper.spacing(context, 12)),
+                        vertical: ResponsiveHelper.spacing(context, 8)),
                     decoration: BoxDecoration(
-                      gradient: isSelected
-                          ? LinearGradient(colors: [
-                              AppColors.successDark,
-                              AppColors.successDark.withValues(alpha: 0.8),
-                            ])
-                          : null,
-                      color: isSelected ? null : Colors.white,
+                      color: isSelected ? AppColors.successDark : Colors.white,
                       border: Border.all(
                         color: isSelected ? AppColors.successDark : AppColors.grey300,
-                        width: isSelected ? 2 : 1,
+                        width: 1,
                       ),
                       borderRadius: BorderRadius.circular(10),
-                      boxShadow: isSelected
-                          ? [BoxShadow(
-                              color: AppColors.successDark.withValues(alpha: 0.3),
-                              blurRadius: 6, offset: const Offset(0, 3))]
-                          : null,
                     ),
-                    child: Column(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Icon(icon,
-                            size: ResponsiveHelper.iconSize(context, 18),
+                            size: ResponsiveHelper.iconSize(context, 14),
                             color: isSelected ? Colors.white : AppColors.grey500),
-                        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                        SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                         Text(label,
                             style: ResponsiveHelper.smallStyle(context).copyWith(
                               color: isSelected ? Colors.white : AppColors.grey700,
@@ -2643,12 +1680,12 @@ class WorkDetailDialog {
         Row(
           children: [
             Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
               decoration: BoxDecoration(
-                color: AppColors.amber.withValues(alpha: 0.1),
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Icon(Icons.coffee, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.amberDark),
+              child: Icon(Icons.coffee, size: ResponsiveHelper.iconSize(context, 18), color: AppColors.grey500),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
             Column(
@@ -2671,10 +1708,10 @@ class WorkDetailDialog {
                 child: GestureDetector(
                   onTap: () => setDialogState(() => onChanged(min)),
                   child: Container(
-                    padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 12)),
+                    padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 10)),
                     decoration: BoxDecoration(
-                      color: isSelected ? AppColors.amberDark : Colors.white,
-                      border: Border.all(color: isSelected ? AppColors.amberDark : AppColors.grey300, width: isSelected ? 2 : 1),
+                      color: isSelected ? theme.primaryColor : Colors.white,
+                      border: Border.all(color: isSelected ? theme.primaryColor : AppColors.grey300, width: isSelected ? 2 : 1),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
@@ -2709,15 +1746,15 @@ class WorkDetailDialog {
         Row(
           children: [
             Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
               decoration: BoxDecoration(
-                color: theme.primaryColor.withValues(alpha: 0.1),
+                color: AppColors.grey100,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
                 Icons.account_balance_outlined,
                 size: ResponsiveHelper.iconSize(context, 18),
-                color: theme.primaryColor,
+                color: AppColors.grey500,
               ),
             ),
             SizedBox(width: ResponsiveHelper.spacing(context, 12)),
@@ -2745,10 +1782,10 @@ class WorkDetailDialog {
             onTap: () => setDialogState(() => onChanged(type)),
             child: Container(
               margin: EdgeInsets.only(
-                  bottom: ResponsiveHelper.spacing(context, 8)),
+                  bottom: ResponsiveHelper.spacing(context, 6)),
               padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 14),
-                vertical: ResponsiveHelper.spacing(context, 12),
+                horizontal: ResponsiveHelper.spacing(context, 12),
+                vertical: ResponsiveHelper.spacing(context, 8),
               ),
               decoration: BoxDecoration(
                 color: isSelected
@@ -2819,7 +1856,7 @@ class WorkDetailDialog {
     }
   }
 
-  /// ✨ 급여 타입 선택 버튼
+  /// ✨ 급여 타입 선택 버튼 — compact segmented tab
   static Widget _buildWageTypeButton({
     required BuildContext context,
     required ThemeData theme,
@@ -2830,60 +1867,794 @@ class WorkDetailDialog {
     required VoidCallback onTap,
   }) {
     final isSelected = value == selectedValue;
-    
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: EdgeInsets.symmetric(
-          vertical: ResponsiveHelper.spacing(context, 14),
+          vertical: ResponsiveHelper.spacing(context, 9),
         ),
         decoration: BoxDecoration(
-          gradient: isSelected
-              ? LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    theme.primaryColor,
-                    theme.primaryColor.withValues(alpha: 0.8),
-                  ],
-                )
-              : null,
-          color: isSelected ? null : Colors.white,
+          color: isSelected
+              ? theme.primaryColor
+              : Colors.white,
           border: Border.all(
-            color: isSelected 
-                ? theme.primaryColor
-                : AppColors.grey300,
-            width: isSelected ? 2 : 1,
+            color: isSelected ? theme.primaryColor : AppColors.grey300,
+            width: 1,
           ),
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: isSelected
-              ? [
-                  BoxShadow(
-                    color: theme.primaryColor.withValues(alpha: 0.3),
-                    blurRadius: 8,
-                    offset: const Offset(0, 4),
-                  ),
-                ]
-              : null,
+          borderRadius: BorderRadius.circular(10),
         ),
-        child: Column(
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
               icon,
-              color: isSelected ? Colors.white : AppColors.grey600,
-              size: ResponsiveHelper.iconSize(context, 20),
+              color: isSelected ? Colors.white : AppColors.grey500,
+              size: ResponsiveHelper.iconSize(context, 16),
             ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+            SizedBox(width: ResponsiveHelper.spacing(context, 5)),
             Text(
               label,
-              style: ResponsiveHelper.smallStyle(context).copyWith(
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
                 color: isSelected ? Colors.white : AppColors.grey700,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
               ),
             ),
           ],
         ),
       ),
     );
+  }
+}
+
+// ============================================================
+// 🎨 업무 상세 편집 화면 (Full-Screen, white-base)
+// showAddDialog / showEditDialog 에서 Navigator.push로 진입
+// ============================================================
+
+class _WorkDetailEditorScreen extends StatefulWidget {
+  final bool isEdit;
+  final List<BusinessWorkTypeModel> businessWorkTypes;
+  final WorkDetailData? existingWork;
+  final int currentCount;
+
+  const _WorkDetailEditorScreen({
+    required this.isEdit,
+    required this.businessWorkTypes,
+    this.existingWork,
+    this.currentCount = 0,
+  });
+
+  @override
+  State<_WorkDetailEditorScreen> createState() =>
+      _WorkDetailEditorScreenState();
+}
+
+class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
+  // ── State ──────────────────────────────────────────────────
+  BusinessWorkTypeModel? _selectedWorkType;
+  String _selectedWageType = 'hourly';
+  String? _startTime;
+  String? _endTime;
+  String? _shiftType;
+  bool _nightAllowanceApplied = true;
+  bool _nightIncluded = false;
+  int _breakMinutes = 0;
+  String? _payScheduleType;
+  int? _payScheduleDay;
+  String? _payScheduleTime;
+  String _taxDeductionType = InsuranceRateModel.typeNone;
+
+  // 미저장 변경 추적
+  bool _isDirty = false;
+
+  // baseHourlyWage stale 추적 — wage 변경 후 baseHourly 재입력 없으면 stale
+  bool _baseHourlyIsStale = false;
+
+  late final TextEditingController _wageController;
+  late final TextEditingController _countController;
+  late final TextEditingController _baseHourlyWageController;
+  late final TextEditingController _descriptionController;
+
+  // Section GlobalKeys (scroll-to-first-error)
+  final _keyWorkType    = GlobalKey();
+  final _keyWage        = GlobalKey();
+  final _keyTime        = GlobalKey();
+  final _keyBreak       = GlobalKey();
+  final _keyBaseHourly  = GlobalKey();
+  final _keyNight       = GlobalKey();
+  final _keyDeduction   = GlobalKey();
+  final _keyPaySchedule = GlobalKey();
+  final _keyCount       = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.isEdit && widget.existingWork != null) {
+      final w = widget.existingWork!;
+      _selectedWageType = w.wageType;
+      _startTime = w.startTime;
+      _endTime = w.endTime;
+      _shiftType = w.shiftType;
+      _nightAllowanceApplied = w.nightAllowanceApplied;
+      _nightIncluded = w.nightIncluded;
+      _breakMinutes = w.breakMinutes;
+      _payScheduleType = w.payScheduleType;
+      _payScheduleDay = w.payScheduleDay;
+      _payScheduleTime = w.payScheduleTime;
+      _taxDeductionType = w.taxDeductionType;
+      _wageController =
+          TextEditingController(text: FormatHelper.formatNumber(w.wage));
+      _countController =
+          TextEditingController(text: w.requiredCount.toString());
+      _baseHourlyWageController = TextEditingController(
+        text: w.baseHourlyWage != null
+            ? FormatHelper.formatNumber(w.baseHourlyWage!)
+            : '',
+      );
+      _descriptionController =
+          TextEditingController(text: w.description ?? '');
+      if (widget.businessWorkTypes.isNotEmpty) {
+        _selectedWorkType = widget.businessWorkTypes.firstWhere(
+          (wt) => wt.name == w.workType,
+          orElse: () => widget.businessWorkTypes.first,
+        );
+      }
+    } else {
+      _wageController = TextEditingController();
+      _countController = TextEditingController();
+      _baseHourlyWageController = TextEditingController();
+      _descriptionController = TextEditingController();
+    }
+
+    // _isDirty 리스너 — 텍스트 필드 변경 시 마킹
+    for (final c in [
+      _wageController,
+      _countController,
+      _baseHourlyWageController,
+      _descriptionController,
+    ]) {
+      c.addListener(_markDirty);
+    }
+
+    // wage 변경 시 기존 baseHourlyWage stale 처리
+    _wageController.addListener(_onWageChangedForBaseHourly);
+    // baseHourlyWage 재입력 시 stale 해제
+    _baseHourlyWageController.addListener(_onBaseHourlyChanged);
+  }
+
+  void _markDirty() {
+    if (!_isDirty) setState(() => _isDirty = true);
+  }
+
+  /// wage 텍스트 변경 시: 기존 baseHourlyWage를 stale로 표시.
+  /// 매 keystroke마다 controller를 clear하지 않고 flag만 세움 → UX 보존.
+  void _onWageChangedForBaseHourly() {
+    if (!_baseHourlyIsStale &&
+        _baseHourlyWageController.text.isNotEmpty) {
+      _baseHourlyIsStale = true; // setState 불필요 — save-time only
+    }
+  }
+
+  /// baseHourlyWage 직접 편집 시: stale 해제 (사용자가 새로 입력한 값).
+  void _onBaseHourlyChanged() {
+    if (_baseHourlyIsStale) _baseHourlyIsStale = false;
+  }
+
+  /// baseHourlyWage 의존 필드(start/end/break/wageType) 변경 시 stale 값 제거.
+  void _clearBaseHourlyIfStale() {
+    if (_baseHourlyWageController.text.isNotEmpty) {
+      _baseHourlyWageController.text = '';
+    }
+    _baseHourlyIsStale = false; // 이미 clear됐으므로 flag 초기화
+  }
+
+  @override
+  void dispose() {
+    _wageController.removeListener(_onWageChangedForBaseHourly);
+    _baseHourlyWageController.removeListener(_onBaseHourlyChanged);
+    for (final c in [
+      _wageController,
+      _countController,
+      _baseHourlyWageController,
+      _descriptionController,
+    ]) {
+      c.removeListener(_markDirty);
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  // ── 닫기 (미저장 확인 포함) ─────────────────────────────────
+  Future<void> _handleClose() async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    if (!_isDirty) {
+      Navigator.of(context).pop();
+      return;
+    }
+    if (!mounted) return;
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: '작성 중인 내용을 취소할까요?',
+      message: '입력한 내용은 저장되지 않습니다.',
+      confirmText: '취소',
+      cancelText: '계속 작성',
+      confirmColor: AppColors.errorDark,
+    );
+    if (!mounted) return;
+    if (confirmed) Navigator.of(context).pop();
+  }
+
+  void _scrollToFirstError(GlobalKey key) {
+    final ctx = key.currentContext;
+    if (ctx == null) return;
+    Scrollable.ensureVisible(
+      ctx,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+      alignment: 0.0,
+    );
+  }
+
+  // ── Build ───────────────────────────────────────────────────
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final title = widget.isEdit
+        ? '${widget.existingWork?.workType ?? ''} 수정'
+        : '업무 추가';
+
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _handleClose();
+      },
+      child: Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        leading: IconButton(
+          icon: const Icon(Icons.close, color: AppColors.textPrimary),
+          onPressed: _handleClose,
+        ),
+        title: Text(
+          title,
+          style: ResponsiveHelper.subtitleStyle(context).copyWith(
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(height: 1, color: AppColors.grey100),
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: _buildCTA(theme),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+        children: [
+          // ① 업무 유형
+          // [4H.0B-IDENTITY-LOCK] isEdit=true 시 workType picker 비활성 — 변경 시 workDetailId 파괴
+          // businessWorkTypes.isEmpty fallback은 기존 그대로 유지
+          KeyedSubtree(
+            key: _keyWorkType,
+            child: !widget.isEdit && widget.businessWorkTypes.isNotEmpty
+                ? WorkDetailDialog._buildWorkTypeSection(
+                    context,
+                    theme,
+                    widget.businessWorkTypes,
+                    _selectedWorkType,
+                    setState,
+                    (wt) { _selectedWorkType = wt; _isDirty = true; },
+                  )
+                : WorkDetailDialog._buildEditWarningCard(context),
+          ),
+          const SizedBox(height: 20),
+
+          // ② 급여 타입
+          WorkDetailDialog._buildWageTypeSection(
+            context,
+            theme,
+            _selectedWageType,
+            setState,
+            (type) {
+              _selectedWageType = type;
+              _isDirty = true;
+              if (type != 'daily') {
+                _shiftType = null;
+                _nightIncluded = false;
+              }
+              // daily→hourly 전환 시 stale baseHourlyWage 제거
+              _clearBaseHourlyIfStale();
+            },
+          ),
+          const SizedBox(height: 20),
+
+          // ③ 급여 금액
+          KeyedSubtree(
+            key: _keyWage,
+            child: WorkDetailDialog._buildWageSection(
+              context,
+              theme,
+              _selectedWageType,
+              _wageController,
+              _startTime,
+              _endTime,
+              _breakMinutes,
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // ④ 필요 인원
+          KeyedSubtree(
+            key: _keyCount,
+            child: widget.isEdit
+                ? WorkDetailDialog._buildEditCountSection(
+                    context,
+                    theme,
+                    _countController,
+                    widget.currentCount,
+                  )
+                : WorkDetailDialog._buildCountSection(
+                    context,
+                    theme,
+                    _countController,
+                  ),
+          ),
+          const SizedBox(height: 20),
+
+          // ⑤ 근무 시간
+          KeyedSubtree(
+            key: _keyTime,
+            child: WorkDetailDialog._buildTimeSection(
+              context,
+              theme,
+              _startTime,
+              _endTime,
+              _breakMinutes,
+              setState,
+              (t) {
+                if (t != null) {
+                  _startTime = t;
+                  _isDirty = true;
+                  _clearBaseHourlyIfStale();
+                }
+              },
+              (t) {
+                if (t != null) {
+                  _endTime = t;
+                  _isDirty = true;
+                  _clearBaseHourlyIfStale();
+                }
+              },
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // ⑥ 휴게시간
+          KeyedSubtree(
+            key: _keyBreak,
+            child: WorkDetailDialog._buildBreakMinutesSection(
+              context,
+              theme,
+              _breakMinutes,
+              setState,
+              (v) {
+                _breakMinutes = v;
+                _isDirty = true;
+                _clearBaseHourlyIfStale();
+              },
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // ⑦ 통상시급 (일급제)
+          if (_selectedWageType == 'daily') ...[
+            KeyedSubtree(
+              key: _keyBaseHourly,
+              child: ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _wageController,
+                builder: (ctx, __, ___) =>
+                    WorkDetailDialog._buildBaseHourlyWageSection(
+                  ctx,
+                  theme,
+                  _wageController,
+                  _baseHourlyWageController,
+                  _startTime,
+                  _endTime,
+                  _breakMinutes,
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+          ],
+
+          // ⑧ 야간수당
+          KeyedSubtree(
+            key: _keyNight,
+            child: WorkDetailDialog._buildShiftAndNightSection(
+              context,
+              theme,
+              _selectedWageType,
+              _shiftType,
+              _nightAllowanceApplied,
+              _nightIncluded,
+              setState,
+              (v) { _shiftType = v; _isDirty = true; },
+              (v) {
+                _nightAllowanceApplied = v;
+                _isDirty = true;
+                if (!v) _nightIncluded = false;
+              },
+              (v) { _nightIncluded = v; _isDirty = true; },
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // ⑨ 공제 방식
+          KeyedSubtree(
+            key: _keyDeduction,
+            child: WorkDetailDialog._buildTaxDeductionSection(
+              context,
+              theme,
+              _taxDeductionType,
+              setState,
+              (v) { _taxDeductionType = v; _isDirty = true; },
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // ⑩ 급여 지급 일정
+          KeyedSubtree(
+            key: _keyPaySchedule,
+            child: WorkDetailDialog._buildPayScheduleSection(
+              context,
+              theme,
+              _payScheduleType,
+              _payScheduleDay,
+              _payScheduleTime,
+              setState,
+              (t) { _payScheduleType = t; _payScheduleDay = null; _isDirty = true; },
+              (d) { _payScheduleDay = d; _isDirty = true; },
+              (t) { _payScheduleTime = t; _isDirty = true; },
+            ),
+          ),
+          // ⑪ 업무 설명 — V1 비노출 (schema/data 유지, 입력 UI hidden)
+          // TODO(v2): WorkDetailData.description 사용자 노출 경로 추가 시 복원
+        ],
+      ),
+    ),   // Scaffold
+    );   // PopScope
+  }
+
+  // ── Sticky CTA ──────────────────────────────────────────────
+  Widget _buildCTA(ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      child: SizedBox(
+        width: double.infinity,
+        height: 56,
+        child: ElevatedButton(
+          onPressed: _save,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: theme.primaryColor,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ),
+          child: Text(
+            widget.isEdit ? '저장' : '업무 추가',
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Validation & Save ───────────────────────────────────────
+  Future<void> _save() async {
+    FocusManager.instance.primaryFocus?.unfocus();
+
+    if (widget.isEdit) {
+      // ── Edit mode ──
+      final wage = int.tryParse(_wageController.text.replaceAll(',', ''));
+      final count = int.tryParse(_countController.text);
+
+      if (wage == null || wage <= 0 || count == null || count <= 0) {
+        _scrollToFirstError(_keyWage);
+        ToastHelper.showError('유효한 금액(0원 초과)과 인원(1명 이상)을 입력하세요');
+        return;
+      }
+
+      if (widget.currentCount > 0 && count < widget.currentCount) {
+        if (!mounted) return;
+        final proceed = await DialogHelper.showConfirm(
+          context,
+          title: '모집인원 축소 경고',
+          message: '현재 확정 인원(${widget.currentCount}명)보다 적게 설정합니다.\n'
+              '이미 확정된 인원이 초과 상태가 됩니다. 계속하시겠습니까?',
+          confirmText: '저장',
+          confirmColor: AppColors.warning,
+          icon: Icons.warning_amber,
+          iconColor: AppColors.warning,
+        );
+        if (!proceed) return;
+        if (!mounted) return;
+      }
+
+      if (_selectedWageType == 'daily' && _shiftType == null) {
+        _scrollToFirstError(_keyNight);
+        ToastHelper.showError('일급제는 근무 시간대(주간/석간/야간)를 선택해주세요');
+        return;
+      }
+
+      if (_payScheduleType == null) {
+        _scrollToFirstError(_keyPaySchedule);
+        ToastHelper.showError('급여 지급 일정을 선택해주세요');
+        return;
+      }
+
+      if ((_payScheduleType == 'weekly' || _payScheduleType == 'monthly') &&
+          _payScheduleDay == null) {
+        _scrollToFirstError(_keyPaySchedule);
+        ToastHelper.showError(
+          _payScheduleType == 'weekly' ? '지급 요일을 선택해주세요' : '지급 날짜를 선택해주세요',
+        );
+        return;
+      }
+
+      // 최저임금 위반 경고 (edit: confirm dialog, hourly + daily 동일 convention)
+      final minWage = WageCalculator.currentMinimumWage;
+      if (_selectedWageType == 'hourly' && wage < minWage) {
+        if (!mounted) return;
+        final proceed = await DialogHelper.showConfirm(
+          context,
+          title: '최저임금 미달 경고',
+          message: '입력한 시급(${FormatHelper.formatNumber(wage)}원)이\n'
+              '최저임금(${FormatHelper.formatNumber(minWage)}원)보다 낮습니다.\n\n'
+              '최저임금법 위반 시 3년 이하 징역 또는 2천만 원 이하 벌금이 부과됩니다.\n'
+              '그래도 저장하시겠습니까?',
+          confirmText: '저장',
+          cancelText: '수정하기',
+          confirmColor: AppColors.errorDark,
+          icon: Icons.warning_amber,
+          iconColor: AppColors.errorDark,
+        );
+        if (!proceed) return;
+        if (!mounted) return;
+      }
+      if (_selectedWageType == 'daily' &&
+          _startTime != null && _endTime != null) {
+        int toMin(String t) {
+          final p = t.split(':');
+          return int.parse(p[0]) * 60 + int.parse(p[1]);
+        }
+        int sMin = toMin(_startTime!), eMin = toMin(_endTime!);
+        if (eMin <= sMin) eMin += 1440;
+        final workMins = (eMin - sMin - _breakMinutes).clamp(0, 9999);
+        if (workMins > 0) {
+          final hourlyEquiv = (wage * 60 / workMins).round();
+          if (hourlyEquiv < minWage) {
+            if (!mounted) return;
+            final proceed = await DialogHelper.showConfirm(
+              context,
+              title: '최저임금 미달 경고',
+              message: '환산시급(${FormatHelper.formatNumber(hourlyEquiv)}원)이\n'
+                  '최저임금(${FormatHelper.formatNumber(minWage)}원)보다 낮습니다.\n\n'
+                  '최저임금법 위반 시 3년 이하 징역 또는 2천만 원 이하 벌금이 부과됩니다.\n'
+                  '그래도 저장하시겠습니까?',
+              confirmText: '저장',
+              cancelText: '수정하기',
+              confirmColor: AppColors.errorDark,
+              icon: Icons.warning_amber,
+              iconColor: AppColors.errorDark,
+            );
+            if (!proceed) return;
+            if (!mounted) return;
+          }
+        }
+      }
+
+      // stale baseHourlyWage → null (새 계산 기준 불일치 방지)
+      final editBaseHourly = _baseHourlyIsStale
+          ? null
+          : int.tryParse(_baseHourlyWageController.text.replaceAll(',', ''));
+
+      // manual baseHourlyWage 최저임금 미달 경고 (OPTION A: confirm dialog)
+      if (_selectedWageType == 'daily' &&
+          editBaseHourly != null &&
+          editBaseHourly < WageCalculator.currentMinimumWage) {
+        if (!mounted) return;
+        final proceed = await DialogHelper.showConfirm(
+          context,
+          title: '통상시급 최저임금 미달 경고',
+          message: '수동 입력한 통상시급(${FormatHelper.formatNumber(editBaseHourly)}원)이\n'
+              '최저임금(${FormatHelper.formatNumber(WageCalculator.currentMinimumWage)}원)보다 낮습니다.\n\n'
+              '야간수당 계산 기준에 사용됩니다. 그래도 저장하시겠습니까?',
+          confirmText: '저장',
+          cancelText: '수정하기',
+          confirmColor: AppColors.errorDark,
+          icon: Icons.warning_amber,
+          iconColor: AppColors.errorDark,
+        );
+        if (!proceed) return;
+        if (!mounted) return;
+      }
+
+      Navigator.of(context).pop(<String, dynamic>{
+        if (_selectedWorkType != null) ...{
+          'workType': _selectedWorkType!.name,
+          'workTypeIcon': _selectedWorkType!.icon,
+          'workTypeColor': _selectedWorkType!.color,
+          'workTypeBackgroundColor': _selectedWorkType!.backgroundColor,
+        },
+        'wage': wage,
+        'wageType': _selectedWageType,
+        'requiredCount': count,
+        'startTime': _startTime,
+        'endTime': _endTime,
+        if (_shiftType != null) 'shiftType': _shiftType,
+        'nightAllowanceApplied': _nightAllowanceApplied,
+        'nightIncluded': _nightIncluded,
+        'breakMinutes': _breakMinutes,
+        'baseHourlyWage': editBaseHourly,
+        'payScheduleType': _payScheduleType,
+        if (_payScheduleDay != null) 'payScheduleDay': _payScheduleDay,
+        if (_payScheduleTime != null) 'payScheduleTime': _payScheduleTime,
+        'taxDeductionType': _taxDeductionType,
+        if (_descriptionController.text.trim().isNotEmpty)
+          'description': _descriptionController.text.trim(),
+      });
+    } else {
+      // ── Add mode ──
+      if (_selectedWorkType == null) {
+        _scrollToFirstError(_keyWorkType);
+        ToastHelper.showError('업무 유형을 선택해주세요');
+        return;
+      }
+      if (_startTime == null || _endTime == null) {
+        _scrollToFirstError(_keyTime);
+        ToastHelper.showError('근무 시간을 설정해주세요');
+        return;
+      }
+      if (_wageController.text.isEmpty) {
+        _scrollToFirstError(_keyWage);
+        ToastHelper.showError('급여를 입력해주세요');
+        return;
+      }
+      if (_countController.text.isEmpty) {
+        _scrollToFirstError(_keyCount);
+        ToastHelper.showError('모집 인원을 입력해주세요');
+        return;
+      }
+
+      final wage = int.tryParse(_wageController.text.replaceAll(',', ''));
+      final count = int.tryParse(_countController.text);
+
+      if (wage == null || wage <= 0) {
+        _scrollToFirstError(_keyWage);
+        ToastHelper.showError('유효한 급여를 입력해주세요');
+        return;
+      }
+
+      // 최저시급 검증 (add: hard block)
+      final minWage = WageCalculator.currentMinimumWage;
+      if (_selectedWageType == 'hourly' && wage < minWage) {
+        _scrollToFirstError(_keyWage);
+        ToastHelper.showError(
+          '시급이 최저시급(${FormatHelper.formatNumber(minWage)}원) 미만입니다.\n최저시급 이상으로 입력해주세요.');
+        return;
+      }
+      if (_selectedWageType == 'daily') {
+        int toMin(String t) {
+          final p = t.split(':');
+          return int.parse(p[0]) * 60 + int.parse(p[1]);
+        }
+        int sMin = toMin(_startTime!), eMin = toMin(_endTime!);
+        if (eMin <= sMin) eMin += 1440;
+        final workMins = (eMin - sMin - _breakMinutes).clamp(0, 9999);
+        if (workMins > 0) {
+          final hourlyEquiv = (wage * 60 / workMins).round();
+          if (hourlyEquiv < minWage) {
+            _scrollToFirstError(_keyWage);
+            ToastHelper.showError(
+              '환산시급(${FormatHelper.formatNumber(hourlyEquiv)}원)이 최저시급(${FormatHelper.formatNumber(minWage)}원) 미만입니다.\n일급을 올려주세요.');
+            return;
+          }
+        }
+      }
+
+      if (count == null || count <= 0) {
+        _scrollToFirstError(_keyCount);
+        ToastHelper.showError('유효한 인원 수를 입력해주세요');
+        return;
+      }
+
+      if (_startTime == _endTime) {
+        _scrollToFirstError(_keyTime);
+        ToastHelper.showError('시작 시간과 종료 시간이 같을 수 없습니다');
+        return;
+      }
+
+      if (_selectedWageType == 'daily' && _shiftType == null) {
+        _scrollToFirstError(_keyNight);
+        ToastHelper.showError('일급제는 근무 시간대(주간/석간/야간)를 선택해주세요');
+        return;
+      }
+
+      if (_payScheduleType == null) {
+        _scrollToFirstError(_keyPaySchedule);
+        ToastHelper.showError('급여 지급 일정을 선택해주세요');
+        return;
+      }
+
+      if ((_payScheduleType == 'weekly' || _payScheduleType == 'monthly') &&
+          _payScheduleDay == null) {
+        _scrollToFirstError(_keyPaySchedule);
+        ToastHelper.showError(
+          _payScheduleType == 'weekly' ? '지급 요일을 선택해주세요' : '지급 날짜를 선택해주세요',
+        );
+        return;
+      }
+
+      // stale baseHourlyWage → null (wage 변경 후 재입력 없으면 auto-calc 사용)
+      final addBaseHourly = _baseHourlyIsStale
+          ? null
+          : int.tryParse(_baseHourlyWageController.text.replaceAll(',', ''));
+
+      // manual baseHourlyWage 최저임금 미달 경고 (OPTION A: confirm dialog)
+      if (_selectedWageType == 'daily' &&
+          addBaseHourly != null &&
+          addBaseHourly < minWage) {
+        if (!mounted) return;
+        final proceed = await DialogHelper.showConfirm(
+          context,
+          title: '통상시급 최저임금 미달 경고',
+          message: '수동 입력한 통상시급(${FormatHelper.formatNumber(addBaseHourly)}원)이\n'
+              '최저임금(${FormatHelper.formatNumber(minWage)}원)보다 낮습니다.\n\n'
+              '야간수당 계산 기준에 사용됩니다. 그래도 저장하시겠습니까?',
+          confirmText: '저장',
+          cancelText: '수정하기',
+          confirmColor: AppColors.errorDark,
+          icon: Icons.warning_amber,
+          iconColor: AppColors.errorDark,
+        );
+        if (!proceed) return;
+        if (!mounted) return;
+      }
+
+      Navigator.of(context).pop(
+        WorkDetailInput(
+          workType: _selectedWorkType!.name,
+          workTypeIcon: _selectedWorkType!.icon,
+          workTypeColor: _selectedWorkType!.color ?? '#FFFFFF',
+          workTypeBackgroundColor: _selectedWorkType!.backgroundColor,
+          wage: wage,
+          requiredCount: count,
+          startTime: _startTime!,
+          endTime: _endTime!,
+          wageType: _selectedWageType,
+          shiftType: _shiftType,
+          nightAllowanceApplied: _nightAllowanceApplied,
+          nightIncluded: _nightIncluded,
+          breakMinutes: _breakMinutes,
+          baseHourlyWage: addBaseHourly,
+          payScheduleType: _payScheduleType,
+          payScheduleDay: _payScheduleDay,
+          payScheduleTime: _payScheduleTime,
+          taxDeductionType: _taxDeductionType,
+          description: _descriptionController.text.trim().isEmpty
+              ? null
+              : _descriptionController.text.trim(),
+        ),
+      );
+    }
   }
 }

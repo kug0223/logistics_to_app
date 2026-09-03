@@ -28,6 +28,14 @@ class AppCalendar extends StatelessWidget {
   final Widget? Function(BuildContext, DateTime, List<Object?>)? markerBuilder;
   final bool Function(DateTime day)? enabledDayPredicate;
   final double rowHeight;
+  /// 헤더(월 선택 영역) 상하 내부 패딩. 기본 8. 공간을 줄이려면 4 등 소값 전달.
+  final double headerVerticalPadding;
+  /// selectedDayPredicate 재정의.
+  ///
+  /// null이면 기본값(`DateUtils.isSameDay(selectedDay, day)`) 사용.
+  /// 에디트 모드에서 복수 날짜를 선택 표시할 때 사용:
+  ///   `selectedDayPredicateOverride: (d) => editingDates.contains(dateKey(d))`
+  final bool Function(DateTime)? selectedDayPredicateOverride;
 
   static final DateTime _firstDay = DateTime.utc(2024, 1, 1);
   static final DateTime _lastDay = DateTime.utc(2050, 12, 31);
@@ -41,7 +49,9 @@ class AppCalendar extends StatelessWidget {
     required this.eventLoader,
     this.markerBuilder,
     this.enabledDayPredicate,
+    this.selectedDayPredicateOverride,
     this.rowHeight = 40,
+    this.headerVerticalPadding = 8,
   });
 
   @override
@@ -59,7 +69,8 @@ class AppCalendar extends StatelessWidget {
       sixWeekMonthsEnforced: true, // 항상 6행 → 달 전환 시 높이 고정
       daysOfWeekHeight: 28,
       rowHeight: rowHeight,
-      selectedDayPredicate: (day) => DateUtils.isSameDay(selectedDay, day),
+      selectedDayPredicate: selectedDayPredicateOverride ??
+          (day) => DateUtils.isSameDay(selectedDay, day),
       enabledDayPredicate: enabledDayPredicate,
       onDaySelected: onDaySelected,
       onPageChanged: onPageChanged,
@@ -122,7 +133,7 @@ class AppCalendar extends StatelessWidget {
           fontWeight: FontWeight.bold,
         ),
         headerPadding: EdgeInsets.symmetric(
-          vertical: ResponsiveHelper.spacing(context, 8),
+          vertical: ResponsiveHelper.spacing(context, headerVerticalPadding),
           horizontal: ResponsiveHelper.spacing(context, 8),
         ),
         leftChevronIcon: Icon(Icons.chevron_left, color: theme.primaryColor, size: 24),

@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../models/core/application_model.dart';
+import '../../models/core/worker_availability_model.dart';
 import '../../services/firestore_service.dart';
+import '../../services/availability_service.dart';
 import '../../providers/user_provider.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/calendar_helper.dart';
@@ -12,15 +14,12 @@ import '../../widgets/common/loading_widget.dart';
 import '../../widgets/calendar/schedule_calendar.dart';
 import '../../widgets/calendar/schedule_card.dart';
 import '../../models/core/attendance_model.dart';
-import '../../widgets/common/gradient_scaffold.dart';
-import '../../widgets/common/notification_badge.dart';
-import '../../screens/common/notification_screen.dart';
-import 'all_to_list_screen.dart';
 import '../../theme/app_colors.dart';
 import '../../screens/payroll/payslip_period_helper.dart';
 import '../../screens/payroll/payslip_pdf_builder.dart';
 import 'package:printing/printing.dart';
 import '../../widgets/common/app_empty_state.dart';
+import 'user_tab_scope.dart';
 
 class MyScheduleScreen extends StatefulWidget {
   const MyScheduleScreen({super.key});
@@ -32,6 +31,7 @@ class MyScheduleScreen extends StatefulWidget {
 class _MyScheduleScreenState extends State<MyScheduleScreen> {
   static final _fmt = NumberFormat('#,###');
   final FirestoreService _firestoreService = FirestoreService();
+  final AvailabilityService _availabilityService = AvailabilityService();
 
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
@@ -52,9 +52,18 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   // key: "${applicationId}_${yyyy}-${M}-${d}"
   Map<String, AttendanceModel> _attendanceMap = {};
 
+  // ─── Phase 8.1A: 근무 가능일 ────────────────────────────────
+  /// 저장된 가능일 날짜 키 Set — 캘린더 파란 dot, 배너 카운트에 사용
+  Set<String> _availabilityDates = {};
+  /// 에디트 모드 활성화 여부
+  bool _isEditMode = false;
+  /// 에디트 모드에서 현재 선택 중인 날짜 키 Set
+  Set<String> _editingDates = {};
+  /// 저장 중 상태 (중복 호출 방지)
+  bool _isSavingAvailability = false;
+
   // ─── 월별 통계 캐시 (build()마다 재계산 방지) ─────────────
   int _cachedConfirmedCount = 0;
-  int _cachedPendingCount = 0;
   int _cachedTotalIncome = 0;
   int _cachedActualDays = 0;
   int _cachedConfirmedIncome = 0;
@@ -67,7 +76,6 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     final thisMonth = CalendarHelper.getThisMonthApplications(_applications, _focusedDay);
     final attendances = _attendanceMap.values.toList();
     _cachedConfirmedCount  = CalendarHelper.getConfirmedCount(thisMonth);
-    _cachedPendingCount    = CalendarHelper.getPendingCount(thisMonth);
     _cachedTotalIncome     = CalendarHelper.getTotalIncome(thisMonth, _focusedDay);
     _cachedActualDays      = CalendarHelper.getActualWorkDays(attendances, _focusedDay);
     _cachedConfirmedIncome = CalendarHelper.getConfirmedIncome(attendances, _focusedDay);
@@ -102,6 +110,10 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
       _focusedDay.month,
       _focusedDay.day,
     );
+    // 근무 가능일 백그라운드 로드 (캘린더 로드를 블로킹하지 않음)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _loadAvailability();
+    });
   }
 
   @override
@@ -110,6 +122,28 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     if (!_initialLoadStarted) {
       _initialLoadStarted = true;
       _loadApplications();
+    }
+    // pendingScheduleMonth: 홈 "근무 기록 보기" 경유 진입 시 현재 달로 리셋.
+    // UserJobTab.didChangeDependencies의 pendingJobDate 소비 패턴과 동일.
+    // clearFn을 여기서 캡처 — postFrameCallback 안에서 context 재호출 시
+    // debug assertion이 터지므로 클로저로 미리 캡처한다.
+    final scope = UserTabScope.of(context);
+    final pending = scope?.pendingScheduleMonth;
+    if (pending != null) {
+      final clearFn = scope!.clearPendingScheduleMonth;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        clearFn();
+        final now = DateTime.now();
+        // 이미 현재 달이면 스킵 (불필요한 리로드 방지)
+        if (_focusedDay.year == now.year && _focusedDay.month == now.month) return;
+        _monthGeneration++;
+        setState(() {
+          _focusedDay = DateTime(now.year, now.month, now.day);
+          _selectedDay = DateTime(now.year, now.month, now.day);
+        });
+        _loadMonthlyAttendances(_focusedDay);
+      });
     }
   }
 
@@ -193,6 +227,96 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     }
   }
 
+  // ─── Phase 8.1A: 근무 가능일 CRUD ──────────────────────────
+
+  /// 저장된 근무 가능일 로드. 실패 시 조용히 무시 (핵심 기능이 아님).
+  Future<void> _loadAvailability() async {
+    if (!mounted) return;
+    final uid = context.read<UserProvider>().currentUser?.uid;
+    if (uid == null) return;
+    try {
+      final model = await _availabilityService.loadMyAvailability(uid);
+      if (!mounted) return;
+      setState(() {
+        _availabilityDates = model?.dateSet ?? {};
+      });
+    } catch (e) {
+      debugPrint('❌ 근무 가능일 로드 실패: $e');
+    }
+  }
+
+  /// 에디트 모드 진입. 기존 가능일로 editingDates 초기화.
+  void _enterEditMode() {
+    setState(() {
+      _isEditMode = true;
+      _editingDates = Set<String>.from(_availabilityDates);
+    });
+  }
+
+  /// 에디트 모드 취소. 변경사항 버림.
+  void _cancelEdit() {
+    setState(() {
+      _isEditMode = false;
+      _editingDates = {};
+    });
+  }
+
+  /// 에디트 모드에서 날짜 토글 (tap = 선택/해제)
+  void _toggleDate(DateTime day) {
+    final key = WorkerAvailabilityModel.dateKeyFrom(day);
+    setState(() {
+      if (_editingDates.contains(key)) {
+        _editingDates.remove(key);
+      } else {
+        if (_editingDates.length >= 60) {
+          ToastHelper.showWarning('최대 60일까지 등록할 수 있습니다.');
+          return;
+        }
+        _editingDates.add(key);
+      }
+    });
+  }
+
+  /// 에디트 모드에서 저장. Rules에서 city canonical 검증 수행.
+  Future<void> _saveAvailability() async {
+    if (_isSavingAvailability) return;
+    final user = context.read<UserProvider>().currentUser;
+    if (user == null) {
+      ToastHelper.showError('로그인이 필요합니다.');
+      return;
+    }
+    final city = user.homeRegion?.city;
+    if (city == null || city.isEmpty) {
+      ToastHelper.showError('지역 정보가 없습니다. 프로필에서 거주 지역을 먼저 설정해주세요.');
+      return;
+    }
+
+    setState(() => _isSavingAvailability = true);
+    try {
+      await _availabilityService.saveAvailability(
+        uid: user.uid,
+        dates: _editingDates,
+        city: city,
+        district: user.homeRegion?.district,
+      );
+      if (!mounted) return;
+      final saved = Set<String>.from(_editingDates);
+      setState(() {
+        _availabilityDates = saved;
+        _isEditMode = false;
+        _editingDates = {};
+        _isSavingAvailability = false;
+      });
+      ToastHelper.showSuccess('${saved.length}일 근무 가능일이 저장되었습니다.');
+    } catch (e) {
+      debugPrint('❌ 근무 가능일 저장 실패: $e');
+      if (mounted) {
+        setState(() => _isSavingAvailability = false);
+        ToastHelper.showError('저장에 실패했습니다. 다시 시도해주세요.');
+      }
+    }
+  }
+
   /// attendance 리스트 → Map 변환 (applicationId + 날짜 복합키)
   ///
   /// 키 포맷: '${applicationId}_${year}-${month}-${day}' (월·일 미패딩)
@@ -214,43 +338,100 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return GradientScaffold(
-      title: '내 스케줄',
-      onRefresh: _loadApplications,
-      // 스케줄 변경 승인/거절 후 캘린더 자동 갱신 — onChanged 콜백으로 _loadMonthlyAttendances 재호출
-      // GradientScaffold 기본 알림 벨 대신 커스텀 벨을 사용해 NotificationScreen pop 시 _loadApplications 재호출
-      showNotificationBell: false,
-      actions: [
-        NotificationBadge(
-          child: Material(
-            color: Colors.white.withValues(alpha: 0.2),
-            borderRadius: BorderRadius.circular(12),
-            child: Semantics(
-              label: '알림',
-              button: true,
-              child: InkWell(
-                onTap: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => const NotificationScreen()),
-                  );
-                  // 알림 화면에서 스케줄 변경 승인/거절이 처리됐을 수 있으므로 캘린더 갱신
-                  if (mounted) await _loadApplications();
-                },
-                borderRadius: BorderRadius.circular(12),
-                child: Padding(
-                  padding: EdgeInsets.all(
-                      ResponsiveHelper.spacing(context, 8)),
-                  child: Icon(Icons.notifications_outlined,
-                      color: Colors.white,
-                      size: ResponsiveHelper.iconSize(context, 24)),
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        title: Text(
+          _isEditMode ? '근무 가능일 선택' : '일정',
+          style: ResponsiveHelper.subtitleStyle(context)
+              .copyWith(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+        ),
+        centerTitle: false,
+        // 에디트 모드가 아닐 때만 "근무 가능일 등록" CTA 표시
+        actions: _isEditMode
+            ? null
+            : [
+                TextButton.icon(
+                  onPressed: _enterEditMode,
+                  icon: const Icon(Icons.event_available_outlined, size: 18),
+                  label: const Text('가능일'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.info,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                  ),
+                ),
+              ],
+      ),
+      // 에디트 모드 하단 sticky 바 (SafeArea(top: false) 필수)
+      bottomNavigationBar: _isEditMode
+          ? SafeArea(
+              top: false,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.06),
+                      blurRadius: 8,
+                      offset: const Offset(0, -2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: _cancelEdit,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.textSecondary,
+                          side: const BorderSide(color: AppColors.grey300),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        child: const Text('취소'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: ElevatedButton(
+                        onPressed: _isSavingAvailability ? null : _saveAvailability,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.info,
+                          foregroundColor: Colors.white,
+                          disabledBackgroundColor: AppColors.grey300,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        child: _isSavingAvailability
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : Text(
+                                _editingDates.isEmpty
+                                    ? '저장 (삭제)'
+                                    : '${_editingDates.length}일 저장',
+                              ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ),
-          ),
-        ),
-      ],
+            )
+          : null,
       body: _isLoading
           ? const LoadingWidget(message: '일정을 불러오는 중...')
           : _buildContent(),
@@ -260,6 +441,19 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   // ─── 컨텐츠 ─────────────────────────────────────────────────
 
   Widget _buildContent() {
+    // 에디트 모드: 달력만 보이고 일정 목록 숨김
+    if (_isEditMode) {
+      return SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: _buildWhiteZone(),
+      );
+    }
+
+    // SliverFillRemaining(hasScrollBody: false) 은 반드시 마지막 sliver이어야 한다.
+    // 뒤에 SliverToBoxAdapter를 추가하면 그 높이만큼 스크롤이 발생한다.
+    // 빈 상태(선택 날짜 있고 이벤트 없음)일 때 trailing 여백 sliver를 제외한다.
+    final showEmptyState = _selectedDay != null && _selectedDayEvents.isEmpty;
+
     return RefreshIndicator(
       onRefresh: _loadApplications,
       color: Theme.of(context).primaryColor,
@@ -282,18 +476,188 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
             ),
           ),
 
-          // 선택 날짜 헤더
-          if (_selectedDay != null)
+          // 선택 날짜 헤더 — 일정이 있을 때만 표시
+          // 일정이 없으면 헤더 없이 빈 상태 바로 시작 (헤더가 기대감을 유발하는 문제 방지)
+          if (_selectedDay != null && _selectedDayEvents.isNotEmpty)
             SliverToBoxAdapter(child: _buildDayHeader()),
 
-          // 일정 리스트
+          // 일정 리스트 or 빈 상태(SliverFillRemaining)
           _buildSliverScheduleList(),
 
-          // 카드·빈 상태·에러 등 모든 경우에 홈 인디케이터 + 여백 보장
-          SliverToBoxAdapter(
-            child: SizedBox(
-              height: MediaQuery.of(context).padding.bottom +
-                  ResponsiveHelper.spacing(context, 16),
+          // 홈 인디케이터 + 하단 여백:
+          // 빈 상태(SliverFillRemaining)가 마지막 sliver일 때는 추가하지 않는다.
+          // → SafeArea bottom은 AppEmptyState 내부 Padding으로 처리됨
+          if (!showEmptyState)
+            SliverToBoxAdapter(
+              child: SizedBox(
+                height: MediaQuery.of(context).padding.bottom +
+                    ResponsiveHelper.spacing(context, 16),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 캘린더 + 범례 + 월 요약을 하나의 흰 배경 구역으로 통합
+  Widget _buildWhiteZone() {
+    return Container(
+      color: Colors.white,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // 캘린더
+          ScheduleCalendar(
+            focusedDay: _focusedDay,
+            selectedDay: _isEditMode ? null : _selectedDay,
+            applications: _applications,
+            selectedFilter: _selectedFilter,
+            dateIndex: _dateIndex,
+            // Phase 8.1A: 가능일 마커 + 에디트 모드 파라미터
+            availabilityDates: _availabilityDates,
+            editingDates: _isEditMode ? _editingDates : null,
+            isEditMode: _isEditMode,
+            onDaySelected: (selectedDay, focusedDay) {
+              if (_isEditMode) {
+                // 에디트 모드: 날짜 tap = 선택/해제
+                _toggleDate(selectedDay);
+                setState(() => _focusedDay = focusedDay);
+              } else {
+                setState(() {
+                  _selectedDay = selectedDay;
+                  _focusedDay  = focusedDay;
+                  _recomputeSelectedDayEvents(); // H1
+                });
+              }
+            },
+            onPageChanged: (focusedDay) {
+              _monthGeneration++;
+              setState(() => _focusedDay = focusedDay);
+              if (!_isEditMode) _loadMonthlyAttendances(focusedDay);
+            },
+          ),
+
+          // 범례 (에디트 모드에서는 간소화 표시)
+          _buildLegendRow(),
+
+          // 근무 가능일 배너 (에디트 모드가 아닐 때만 표시)
+          if (!_isEditMode) _buildAvailabilityBanner(),
+
+          // 에디트 모드 안내 문구
+          if (_isEditMode) _buildEditModeHint(),
+
+          // 구분선
+          const Divider(height: 1, thickness: 1, color: AppColors.grey100),
+
+          // N월 요약 (2×2 KPI) — 에디트 모드에서는 숨김
+          if (!_isEditMode) _buildMonthlySummary(),
+
+          // 흰→회색 전환 구분선 (에디트 모드에서는 회색 구역 없음)
+          if (!_isEditMode) Container(height: 8, color: AppColors.grey100),
+        ],
+      ),
+    );
+  }
+
+  /// 근무 가능일 배너 — 평상시에 가능일 현황 표시
+  ///
+  /// count == 0 : 가능일 미등록 → 근무 제안 안내 타일 표시
+  /// count > 0  : 등록된 일 수 표시 + 근무 제안 설명 부제목
+  Widget _buildAvailabilityBanner() {
+    final count = _availabilityDates.length;
+    const descText =
+        '가능일을 등록하면 조건이 맞는 사업장에서 근무 제안을 받을 수 있어요.';
+
+    if (count == 0) {
+      // 미등록 상태 — 등록 유도 타일
+      return Container(
+        margin: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 12),
+          vertical: ResponsiveHelper.spacing(context, 6),
+        ),
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 12),
+          vertical: ResponsiveHelper.spacing(context, 8),
+        ),
+        decoration: BoxDecoration(
+          color: AppColors.infoBg,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.info_outline, size: 16, color: AppColors.info),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Expanded(
+              child: Text(
+                descText,
+                style: ResponsiveHelper.smallStyle(
+                    context, color: AppColors.infoDark),
+              ),
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            GestureDetector(
+              onTap: _enterEditMode,
+              child: Text(
+                '등록',
+                style: ResponsiveHelper.smallStyle(
+                  context,
+                  color: AppColors.infoDark,
+                ).copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // 등록 상태 — 현황 + 부제목
+    return Container(
+      margin: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 6),
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 8),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.infoBg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.event_available_outlined,
+              size: 16, color: AppColors.info),
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '근무 가능일 $count일 등록됨',
+                  style: ResponsiveHelper.smallStyle(
+                      context, color: AppColors.infoDark)
+                    ..copyWith(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  descText,
+                  style: ResponsiveHelper.tinyStyle(
+                      context, color: AppColors.infoDark),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+          GestureDetector(
+            onTap: _enterEditMode,
+            child: Text(
+              '수정',
+              style: ResponsiveHelper.smallStyle(
+                context,
+                color: AppColors.infoDark,
+              ).copyWith(fontWeight: FontWeight.w600),
             ),
           ),
         ],
@@ -301,61 +665,17 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     );
   }
 
-  /// 캘린더 + 범례 + 통계를 하나의 흰 배경 구역으로 통합
-  /// 카드 효과(margin/radius/shadow) 없이 풀너비로 배치 → 스크롤 매끄러움
-  Widget _buildWhiteZone() {
-    return Container(
-      color: AppColors.surface,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // 캘린더 (패딩만, 카드 없음)
-          Padding(
-            padding: EdgeInsets.only(
-              top: ResponsiveHelper.spacing(context, 8),
-            ),
-            child: ScheduleCalendar(
-              focusedDay: _focusedDay,
-              selectedDay: _selectedDay,
-              applications: _applications,
-              selectedFilter: _selectedFilter,
-              dateIndex: _dateIndex,
-              onDaySelected: (selectedDay, focusedDay) {
-                setState(() {
-                  _selectedDay = selectedDay;
-                  _focusedDay  = focusedDay;
-                  _recomputeSelectedDayEvents(); // H1
-                });
-              },
-              onPageChanged: (focusedDay) {
-                _monthGeneration++;
-                setState(() => _focusedDay = focusedDay);
-                _loadMonthlyAttendances(focusedDay);
-              },
-            ),
-          ),
-
-          // 구분선
-          const Divider(height: 1, thickness: 1, color: AppColors.grey100),
-
-          // 범례 (풀너비, 카드 없음)
-          _buildLegendRow(),
-
-          // 구분선
-          const Divider(height: 1, thickness: 1, color: AppColors.grey100),
-
-          // 통계 (풀너비, 카드 없음)
-          _buildStatsInline(
-            confirmedCount:  _cachedConfirmedCount,
-            pendingCount:    _cachedPendingCount,
-            actualDays:      _cachedActualDays,
-            totalIncome:     _cachedTotalIncome,
-            confirmedIncome: _cachedConfirmedIncome,
-          ),
-
-          // 흰→회색 전환 구분선
-          Container(height: 8, color: AppColors.grey100),
-        ],
+  /// 에디트 모드 안내 문구
+  Widget _buildEditModeHint() {
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 6),
+      ),
+      child: Text(
+        '날짜를 눌러 근무 가능일을 선택/해제하세요 (최대 60일, 오늘~90일 이내)',
+        style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+        textAlign: TextAlign.center,
       ),
     );
   }
@@ -366,6 +686,34 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
 
   Widget _buildLegendRow() {
     final primaryColor = Theme.of(context).primaryColor;
+    // 에디트 모드: 파란 원(선택) 안내만 표시
+    if (_isEditMode) {
+      return Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveHelper.spacing(context, 12),
+          vertical: ResponsiveHelper.spacing(context, 8),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 20,
+              height: 20,
+              decoration: BoxDecoration(
+                color: primaryColor,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              '선택됨',
+              style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 12),
@@ -375,12 +723,14 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           _legendDot(primaryColor, '확정', star: false),
-          SizedBox(width: ResponsiveHelper.spacing(context, 14)),
+          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
           _legendDot(AppColors.amberDark, '고정', star: true),
-          SizedBox(width: ResponsiveHelper.spacing(context, 14)),
+          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
           _legendDot(AppColors.warningMedium, '대기', star: false),
-          SizedBox(width: ResponsiveHelper.spacing(context, 14)),
+          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
           _legendDot(AppColors.grey400, '휴무', star: true),
+          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+          _legendDot(AppColors.info, '가능', star: false),
         ],
       ),
     );
@@ -406,82 +756,94 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     );
   }
 
-  // ─── 통계 (풀너비, 카드 없음) ──────────────────────────────────
+  // ─── N월 요약 (2×2 KPI 그리드) ─────────────────────────────────
 
-  Widget _buildStatsInline({
-    required int confirmedCount,
-    required int pendingCount,
-    required int actualDays,
-    required int totalIncome,
-    required int confirmedIncome,
-  }) {
+  Widget _buildMonthlySummary() {
+    final month = _focusedDay.month;
+    final primaryColor = Theme.of(context).primaryColor;
+    // 값이 0이면 비활성(textTertiary), 값이 있으면 semantic 색상 활성화
+    final confirmedWorkColor = _cachedConfirmedCount > 0
+        ? AppColors.textPrimary
+        : AppColors.textTertiary;
+    final actualDaysColor = _cachedActualDays > 0
+        ? AppColors.textPrimary
+        : AppColors.textTertiary;
+    final incomeColor = _cachedTotalIncome > 0 ? primaryColor : AppColors.textTertiary;
+    final confirmedIncomeColor = _cachedConfirmedIncome > 0
+        ? const Color(0xFF2E9D45)
+        : AppColors.textTertiary;
+
     return Padding(
-      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 14)),
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Text(
+            '$month월 요약',
+            style: ResponsiveHelper.bodyStyle(context)
+                .copyWith(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 14)),
           Row(
             children: [
-              Expanded(child: Center(child: _statItem(Icons.schedule, '대기', '$pendingCount건', AppColors.warning))),
-              _vDivider(),
-              Expanded(child: Center(child: _statItem(Icons.check_circle, '확정', '$confirmedCount일', AppColors.success))),
-              _vDivider(),
-              Expanded(child: Center(child: _statItem(Icons.directions_run, '실근무', '$actualDays일', AppColors.teal))),
+              Expanded(
+                child: _kpiItem('확정 근무', '$_cachedConfirmedCount일', confirmedWorkColor),
+              ),
+              Expanded(
+                child: _kpiItem('실근무', '$_cachedActualDays일', actualDaysColor),
+              ),
             ],
           ),
-          Padding(
-            padding: EdgeInsets.symmetric(
-                vertical: ResponsiveHelper.spacing(context, 10)),
-            child: const Divider(height: 1, color: AppColors.grey200),
-          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           Row(
             children: [
-              Expanded(child: Center(child: _statItem(Icons.payments, '예상수입(세전)',
-                  '${_fmt.format(totalIncome)}원', AppColors.info))),
-              _vDivider(),
-              Expanded(child: Center(child: _statItem(Icons.paid, '확정수입',
-                  '${_fmt.format(confirmedIncome)}원',
-                  AppColors.success))),
-            ],
-          ),
-          if (_confirmedWageRecords.isNotEmpty) ...[
-            Padding(
-              padding: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 8)),
-              child: const Divider(height: 1, color: AppColors.grey200),
-            ),
-            SizedBox(
-              width: double.infinity,
-              child: TextButton.icon(
-                onPressed: _isGeneratingPayslip ? null : _generateMonthlyPayslip,
-                icon: _isGeneratingPayslip
-                    ? SizedBox(
-                        width: ResponsiveHelper.iconSize(context, 14),
-                        height: ResponsiveHelper.iconSize(context, 14),
-                        child: const CircularProgressIndicator(strokeWidth: 2))
-                    : Icon(Icons.receipt_long_outlined,
-                        size: ResponsiveHelper.iconSize(context, 14),
-                        color: AppColors.infoDark),
-                label: Text(
-                  _isGeneratingPayslip ? '생성 중...' : '이번 달 임금명세서',
-                  style: ResponsiveHelper.smallStyle(context,
-                      color: AppColors.infoDark, fontWeight: FontWeight.w600),
-                ),
-                style: TextButton.styleFrom(
-                  padding: EdgeInsets.symmetric(
-                      vertical: ResponsiveHelper.spacing(context, 6)),
+              Expanded(
+                child: _kpiItem(
+                  '예상수입',
+                  '${_fmt.format(_cachedTotalIncome)}원',
+                  incomeColor,
                 ),
               ),
-            ),
-          ],
+              Expanded(
+                child: _kpiItem(
+                  '확정수입',
+                  '${_fmt.format(_cachedConfirmedIncome)}원',
+                  confirmedIncomeColor,
+                ),
+              ),
+            ],
+          ),
         ],
       ),
+    );
+  }
+
+  Widget _kpiItem(String label, String value, Color valueColor) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey600),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 3)),
+        Text(
+          value,
+          style: ResponsiveHelper.subtitleStyle(context)
+              .copyWith(fontWeight: FontWeight.bold, color: valueColor),
+        ),
+      ],
     );
   }
 
   // H2: build()마다 _attendanceMap 재순회 방지 — _recomputeStats()에서 갱신
   List<AttendanceModel> get _confirmedWageRecords => _cachedConfirmedWageRecords;
 
+  // [임금명세서 UI 제거 — 향후 수입 현황/급여 상세 화면에서 재활용 예정]
+  // ignore: unused_field
   bool _isGeneratingPayslip = false;
 
+  // ignore: unused_element
   Future<void> _generateMonthlyPayslip() async {
     final records = _confirmedWageRecords;
     if (records.isEmpty) {
@@ -519,44 +881,21 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
     }
   }
 
-  Widget _statItem(IconData icon, String label, String value, Color color) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: ResponsiveHelper.spacing(context, 16), color: color),
-        SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(label,
-                style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)),
-            Text(value,
-                style: ResponsiveHelper.smallStyle(context,
-                    color: color, fontWeight: FontWeight.bold)),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _vDivider() =>
-      Container(width: 1, height: 24, color: AppColors.grey200);
-
   // ─── 필터 칩 (노출형) ────────────────────────────────────────
 
-  // ─── 필터 칩 (회색 구역) ────────────────────────────────────────
+  // ─── 필터 칩 ─────────────────────────────────────────────────
 
   Widget _buildFilterChipsRow() {
     final theme = Theme.of(context);
+    const bgSurface = Color(0xFFF5F6F8);
     final filters = [
-      ('ALL', '전체', Icons.list_alt),
-      (AppStatus.confirmed, '확정', Icons.check_circle),
-      (AppStatus.pending, '대기', Icons.schedule),
+      ('ALL', '전체'),
+      (AppStatus.confirmed, '확정'),
+      (AppStatus.pending, '대기'),
     ];
     return Row(
       children: filters.map((f) {
-        final (value, label, icon) = f;
+        final (value, label) = f;
         final selected = _selectedFilter == value;
         return Padding(
           padding: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 8)),
@@ -567,34 +906,21 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
             }),
             child: Container(
               padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 12),
-                vertical: ResponsiveHelper.spacing(context, 6),
+                horizontal: ResponsiveHelper.spacing(context, 14),
+                vertical: ResponsiveHelper.spacing(context, 7),
               ),
               decoration: BoxDecoration(
-                color: selected ? theme.primaryColor : Colors.white,
+                color: selected ? theme.primaryColor : bgSurface,
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: selected ? theme.primaryColor : AppColors.grey200,
-                ),
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    icon,
-                    size: ResponsiveHelper.spacing(context, 14),
-                    color: selected ? Colors.white : AppColors.grey500,
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                  Text(
-                    label,
-                    style: ResponsiveHelper.tinyStyle(context,
-                        color: selected ? Colors.white : AppColors.grey600)
-                        .copyWith(
-                      fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                    ),
-                  ),
-                ],
+              child: Text(
+                label,
+                style: ResponsiveHelper.smallStyle(
+                  context,
+                  color: selected ? Colors.white : AppColors.grey600,
+                ).copyWith(
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                ),
               ),
             ),
           ),
@@ -606,7 +932,6 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   // ─── 날짜 헤더 ───────────────────────────────────────────────
 
   Widget _buildDayHeader() {
-    final theme = Theme.of(context);
     return Container(
       margin: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 16),
@@ -617,31 +942,23 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
         vertical: ResponsiveHelper.spacing(context, 10),
       ),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            theme.primaryColor.withValues(alpha: 0.1),
-            theme.primaryColor.withValues(alpha: 0.04),
-          ],
-        ),
+        color: const Color(0xFFF5F6F8),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         children: [
           Icon(
-            Icons.event,
-            color: theme.primaryColor,
-            size: ResponsiveHelper.iconSize(context, 18),
+            Icons.calendar_today_outlined,
+            color: AppColors.grey600,
+            size: ResponsiveHelper.iconSize(context, 16),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           Text(
             FormatHelper.formatDateKorean(_selectedDay!),
-            style: ResponsiveHelper.bodyStyle(
-              context,
-              color: theme.primaryColor,
-            ).copyWith(fontWeight: FontWeight.bold),
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.textSecondary)
+                .copyWith(fontWeight: FontWeight.w600),
           ),
           const Spacer(),
-          // 선택 날짜의 일정 수
           _buildDayEventCount(),
         ],
       ),
@@ -705,45 +1022,39 @@ class _MyScheduleScreenState extends State<MyScheduleScreen> {
   }
 
   Widget _buildEmptyState() {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final sel = DateTime(_selectedDay!.year, _selectedDay!.month, _selectedDay!.day);
-    final isFutureOrToday = !sel.isBefore(today);
     final isFiltered = _selectedFilter != 'ALL';
+    final sel = _selectedDay!;
+    final dateLabel = '${sel.month}월 ${sel.day}일';
 
-    // 필터가 켜져 있으면 "필터에 해당하는 일정 없음" 안내 — 공고 유도 메시지 제거
+    // 필터 ON — "전체 보기" 텍스트 링크만 제공 (CTA 버튼 불필요)
+    // SliverFillRemaining(hasScrollBody: false) → 필터+헤더 아래 남은 영역을 정확히 채워
+    // 스크롤 오버플로 없이 콘텐츠를 수직 중앙 정렬
     if (isFiltered) {
       final filterLabel = _selectedFilter == AppStatus.confirmed ? '확정' : '대기';
       return AppEmptyState(
         icon: Icons.filter_list_off,
         iconColor: AppColors.grey300,
-        title: "'$filterLabel' 일정이 없습니다",
+        title: "'$filterLabel' 일정이 없어요",
         subtitle: '다른 필터를 선택하거나 전체 보기를 눌러보세요',
         action: TextButton(
-          onPressed: () => setState(() => _selectedFilter = 'ALL'),
+          onPressed: () => setState(() {
+            _selectedFilter = 'ALL';
+            _recomputeStats();
+          }),
           child: const Text('전체 보기'),
         ),
         asSliver: true,
       );
     }
 
+    // 필터 OFF — 날짜 포함 제목, 캘린더 유도 문구, CTA 버튼 없음
+    // 사용자는 위 캘린더에서 다른 날짜를 선택하면 되고,
+    // 일자리는 하단 탭에서 접근 가능 — 빈 상태에서 구직 행동 강요 불필요
     return AppEmptyState(
-      icon: isFutureOrToday ? Icons.work_outline : Icons.event_busy,
-      iconColor: isFutureOrToday
-          ? Theme.of(context).primaryColor.withValues(alpha: 0.4)
-          : AppColors.grey300,
-      title: isFutureOrToday ? '등록된 일정이 없습니다' : '기록이 없습니다',
-      subtitle: isFutureOrToday ? '새로운 공고에 지원해보세요!' : '과거 날짜입니다',
-      action: isFutureOrToday
-          ? FilledButton.icon(
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const AllTOListScreen()),
-              ),
-              icon: const Icon(Icons.search, size: 18),
-              label: const Text('공고 보러가기'),
-            )
-          : null,
+      icon: Icons.calendar_today_outlined,
+      iconColor: AppColors.grey300,
+      title: '$dateLabel 일정이 없어요',
+      subtitle: '다른 날짜를 선택해 확인해보세요',
       asSliver: true,
     );
   }

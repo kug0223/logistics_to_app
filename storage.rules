@@ -29,6 +29,26 @@ service firebase.storage {
     //   이전: isLoggedIn()만으로 허용 → TO 목록에서 businessId 획득한 임의 사용자가 덮어쓰기 가능.
     //   이후: CF assertBizAdmin 검증 + Admin SDK 저장 → 소속 사업장 관리자만 업로드 가능.
     //   delete: callableDeleteBusinessImage CF 전용 (기존 유지)
+
+    // ── businesses/{bizId}/license/ — 사업자등록증 전용 (보안 강화) ──
+    // [REG-2 SEC 2026-08-20]
+    //   일반 사업장 이미지(대표·추가·교통편)와 달리 사업자등록증은 민감 서류.
+    //   보안 목표: 일반 USER·무관 ADMIN SDK 직접 접근 차단.
+    //   callableUploadBusinessImage(fileType:'businessLicense')로 저장 시
+    //   다운로드 토큰 없이 저장 → 토큰 URL 우회 불가.
+    //   SUPER_ADMIN 조회: callableGetBusinessLicenseSignedUrl CF → Signed URL (1시간)
+    //   Storage rules에서 Firestore 읽기 불가(프로젝트 특이사항)로 role 검증 불가
+    //   → allow get: if false (전면 차단). 모든 접근은 CF Admin SDK 경유.
+    //
+    //   ※ 일반 businesses/{bizId} 하위 이미지와 보안등급을 달리 적용하는 의도.
+    //   ※ 이 규칙이 더 구체적이므로 아래 일반 규칙보다 우선 적용됨.
+    match /businesses/{businessId}/license/{allPaths=**} {
+      allow read: if false;       // SDK 직접 접근 전면 차단 (토큰도 없으므로 URL 접근도 403)
+      allow create, update: if false;  // CF Admin SDK 전용
+      allow delete: if false;
+    }
+
+    // 일반 사업장 이미지 (대표·추가·교통편·업무유형): 로그인 사용자 읽기 허용
     match /businesses/{businessId}/{allPaths=**} {
       allow get: if isLoggedIn();
       allow list: if false;
@@ -41,10 +61,11 @@ service firebase.storage {
     // request.resource == null: read/delete 시 incoming resource 없음 → 크기 체크 면제
     // [SEC-ST01] 업로드 시 이미지 MIME 타입만 허용
     //
-    // [SIGNED-URL-AUDIT] 신분증(idCardImageUrl) Signed URL → 이미 구현 완료
-    //   callableGetIdCardSignedUrl CF: idCardAccessRequests 승인 확인 후 1시간 만료 URL 반환.
+    // [SIGNED-URL-AUDIT] 신분증 Signed URL → 구현 완료 (callableGetIdCardSignedUrl CF)
+    //   CF에서 idCardAccessRequests 승인 확인 후 1시간 만료 Signed URL 반환.
     //   통장/사업자등록증 URL은 callableGetUsersBatch에서 응답 필드 제거로 노출 차단.
-    //   Firestore rules도 users/{uid} 문서를 본인·소속 관리자·슈퍼어드민만 읽을 수 있도록 제한.
+    //   Firestore rules에서 users/{uid} 문서를 본인·슈퍼어드민만 GET 허용 (2026-08-10 관리자 제거).
+    //   Storage 직접 경로(SDK)는 아래 규칙에서 본인만 허용; 관리자는 항상 CF 경유.
     //   → 추가 Signed URL 불필요. 재탐색 금지.
     match /users/{uid}/{allPaths=**} {
       allow read, delete:

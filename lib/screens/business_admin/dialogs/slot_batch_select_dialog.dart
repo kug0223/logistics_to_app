@@ -8,6 +8,7 @@ import '../../../utils/toast_helper.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../theme/app_colors.dart';
 import '../../../utils/slot_status_util.dart';
+import '../../../utils/format_helper.dart';
 import '../../../widgets/common/app_checkbox.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/common/slot_status_badge.dart';
@@ -75,12 +76,12 @@ class _SlotBatchSelectDialogState extends State<SlotBatchSelectDialog> {
       slots.sort((a, b) => a.date.compareTo(b.date));
 
       final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
+      final today = FormatHelper.toKstDate(now);
 
       if (!mounted) return;
       final filtered = widget.closedAndReopenable
           ? slots.where((s) {
-              if (!s.isManualClosed || s.date.isBefore(today)) return false;
+              if (!s.isManualClosed || FormatHelper.toKstDate(s.date).isBefore(today)) return false;
               if (s.workDetails.isNotEmpty &&
                   s.workDetails.every((d) => d.isTimeExpired)) { return false; }
               return true;

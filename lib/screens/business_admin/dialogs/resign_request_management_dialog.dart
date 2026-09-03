@@ -7,6 +7,7 @@ import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../utils/loading_state_mixin.dart';
+import '../../../utils/format_helper.dart';
 import '../../../widgets/common/loading_button.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
@@ -72,67 +73,28 @@ class _ResignRequestManagementDialogState
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      insetPadding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 16),
-        vertical: AppDialogSize.insetV,
-      ),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
+    return AppModalShell(
+      children: [
+        AppModalHeader(
+          title: '퇴사 요청 관리',
+          onClose: () => Navigator.pop(context),
         ),
-        child: Column(
-          children: [
-            // 헤더
-            Container(
-              padding: ResponsiveHelper.cardPadding(context),
-              decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor,
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(24),
-                  topRight: Radius.circular(24),
-                ),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.exit_to_app, color: Colors.white),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
-                  Text(
-                    '퇴사 요청 관리',
-                    style: ResponsiveHelper.titleStyle(context).copyWith(  // ⭐ 변경
-                      color: Colors.white,
-                    ),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
-            ),
-
-            // 본문
-            Expanded(
-              child: isLoading
-                  ? const LoadingWidget()
-                  : _requests.isEmpty
-                      ? _buildEmptyState()
-                      : Builder(builder: (context) {
-                          final now = DateTime.now();
-                          return ListView.builder(
-                            padding: ResponsiveHelper.cardPadding(context),
-                            itemCount: _requests.length,
-                            itemBuilder: (context, index) =>
-                                RepaintBoundary(child: _buildRequestCard(_requests[index], now)),
-                          );
-                        }),
-            ),
-          ],
+        Expanded(
+          child: isLoading
+              ? const LoadingWidget()
+              : _requests.isEmpty
+                  ? _buildEmptyState()
+                  : Builder(builder: (context) {
+                      final now = DateTime.now();
+                      return ListView.builder(
+                        padding: ResponsiveHelper.cardPadding(context),
+                        itemCount: _requests.length,
+                        itemBuilder: (context, index) =>
+                            RepaintBoundary(child: _buildRequestCard(_requests[index], now)),
+                      );
+                    }),
         ),
-      ),
+      ],
     );
   }
 
@@ -165,26 +127,28 @@ class _ResignRequestManagementDialogState
     final app = item.application;
     final daysLeft = () {
       if (app.resignRequestedAt == null) return 0;
-      final today = DateTime(now.year, now.month, now.day);
-      final reqDay = DateTime(app.resignRequestedAt!.year, app.resignRequestedAt!.month, app.resignRequestedAt!.day);
+      final today = FormatHelper.toKstDate(now);
+      final reqDay = FormatHelper.toKstDate(app.resignRequestedAt!);
       return (3 - today.difference(reqDay).inDays).clamp(0, 3);
     }();
     final isUrgent = daysLeft <= 1;
 
-    return Card(
-      margin: EdgeInsets.only(  // ⭐ const 제거
-        bottom: ResponsiveHelper.spacing(context, 12),  // ⭐ 변경
+    return Container(
+      margin: EdgeInsets.only(
+        bottom: ResponsiveHelper.spacing(context, 12),
       ),
-      elevation: 2,
-      shape: RoundedRectangleBorder(
+      decoration: BoxDecoration(
+        color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: isUrgent ? AppColors.error.withValues(alpha: 0.5) : Theme.of(context).dividerColor,
-          width: isUrgent ? 2 : 1,
+        border: Border.all(
+          color: isUrgent
+              ? AppColors.error.withValues(alpha: 0.4)
+              : AppColors.grey200,
+          width: isUrgent ? 1.5 : 1,
         ),
       ),
       child: Padding(
-        padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
+        padding: ResponsiveHelper.cardPadding(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -261,7 +225,7 @@ class _ResignRequestManagementDialogState
             Container(
               padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
+                color: AppColors.grey50,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Column(

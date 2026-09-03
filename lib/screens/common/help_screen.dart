@@ -11,7 +11,6 @@ import '../../models/core/help_faq_model.dart';
 import '../../services/help_faq_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/responsive_helper.dart';
-import '../../widgets/common/gradient_scaffold.dart';
 
 class HelpScreen extends StatefulWidget {
   const HelpScreen({super.key});
@@ -39,7 +38,7 @@ class _HelpScreenState extends State<HelpScreen> {
   Future<void> _loadFaqs() async {
     final items = await _service.getItems(_isAdmin ? 'admin' : 'user');
     if (!mounted) return;
-    // Firestore에 데이터 없으면 로컬 폴백 유지 (null 상태 → 로컬 목록 사용)
+    // Firestore에 데이터 없으면 로컬 폴백 유지
     if (items.isNotEmpty) {
       setState(() => _items = items);
     } else {
@@ -49,75 +48,169 @@ class _HelpScreenState extends State<HelpScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     // Firestore 응답 전이거나 비어있으면 로컬 폴백
     final useLocal = _items == null || _items!.isEmpty;
-    return GradientScaffold(
-      title: '도움말',
-      body: useLocal
-          ? _buildLocalList(context, theme)
-          : _buildFirestoreList(context, theme, _items!),
+    final flat = useLocal
+        ? (_isAdmin ? _adminFaqs : _userFaqs)
+        : _items!
+            .map((m) => m.isHeader
+                ? _FaqItem.header(m.question)
+                : _FaqItem(question: m.question, answer: m.answer))
+            .toList();
+
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        title: const Text(
+          '도움말',
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+            letterSpacing: -0.3,
+          ),
+        ),
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: AppColors.textPrimary),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(height: 1, color: AppColors.borderLight),
+        ),
+      ),
+      body: _buildGroupedList(context, flat),
     );
   }
 
-  // Firestore 데이터로 렌더링
-  Widget _buildFirestoreList(
-      BuildContext context, ThemeData theme, List<HelpFaqModel> items) {
-    return ListView.builder(
-      padding: ResponsiveHelper.listPadding(context),
-      itemCount: items.length,
-      itemBuilder: (context, i) {
-        final item = items[i];
-        if (item.isHeader) {
-          return Padding(
-            padding: EdgeInsets.only(
-              top: i == 0 ? 0 : ResponsiveHelper.spacing(context, 8),
-              bottom: ResponsiveHelper.spacing(context, 4),
-            ),
-            child: Text(
-              item.question,
-              style: ResponsiveHelper.smallStyle(context,
-                  color: theme.primaryColor, fontWeight: FontWeight.w700),
-            ),
-          );
-        }
-        return _FaqTile(
-          question: item.question,
-          answer: item.answer,
-          theme: theme,
-        );
-      },
+  // ── 그룹 렌더링 ───────────────────────────────────────────────────
+
+  /// 평탄 리스트 → 카테고리 그룹화 → 카드 목록 렌더링
+  Widget _buildGroupedList(BuildContext context, List<_FaqItem> flat) {
+    final groups = _groupItems(flat);
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
+      itemCount: groups.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 14),
+      itemBuilder: (ctx, i) => _buildCategorySection(ctx, groups[i]),
     );
   }
 
-  // 로컬 하드코딩 폴백
-  Widget _buildLocalList(BuildContext context, ThemeData theme) {
-    final items = _isAdmin ? _adminFaqs : _userFaqs;
-    return ListView.builder(
-      padding: ResponsiveHelper.listPadding(context),
-      itemCount: items.length,
-      itemBuilder: (context, i) {
-        final item = items[i];
-        if (item.isHeader) {
-          return Padding(
-            padding: EdgeInsets.only(
-              top: i == 0 ? 0 : ResponsiveHelper.spacing(context, 8),
-              bottom: ResponsiveHelper.spacing(context, 4),
-            ),
-            child: Text(
-              item.question,
+  /// 카테고리 섹션: 레이블 + 질문 그룹 카드
+  Widget _buildCategorySection(BuildContext context, _FaqGroup group) {
+    final theme = Theme.of(context);
+    final items = group.items;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 섹션 레이블 — Material 아이콘 + ALfit Blue 제목
+        Padding(
+          padding: EdgeInsets.only(
+              left: ResponsiveHelper.spacing(context, 4)),
+          child: Row(children: [
+            Icon(group.icon,
+                size: ResponsiveHelper.iconSize(context, 14),
+                color: theme.primaryColor),
+            SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+            Text(
+              group.title,
               style: ResponsiveHelper.smallStyle(context,
                   color: theme.primaryColor, fontWeight: FontWeight.w700),
             ),
-          );
-        }
-        return _FaqTile(
-          question: item.question,
-          answer: item.answer,
-          theme: theme,
-        );
-      },
+          ]),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+        // 그룹 카드 — 여러 질문을 하나의 Card 안에 묶음
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.borderLight),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Material(
+              color: Colors.transparent,
+              child: Column(
+                children: [
+                  for (int i = 0; i < items.length; i++) ...[
+                    _FaqAccordionRow(
+                      key: ValueKey(items[i].question),
+                      question: items[i].question,
+                      answer: items[i].answer,
+                    ),
+                    if (i < items.length - 1)
+                      const Divider(
+                          height: 1, indent: 16, thickness: 0.5,
+                          color: AppColors.borderLight),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
+  }
+
+  // ── 데이터 유틸 ────────────────────────────────────────────────────
+
+  /// 평탄 리스트를 [header → 이하 items] 구조로 그룹화
+  static List<_FaqGroup> _groupItems(List<_FaqItem> flat) {
+    final groups = <_FaqGroup>[];
+    String header = '';
+    final items = <_FaqItem>[];
+
+    for (final item in flat) {
+      if (item.isHeader) {
+        if (items.isNotEmpty) {
+          groups.add(_FaqGroup(
+            title: _stripEmoji(header),
+            icon: _iconFor(header),
+            items: List.of(items),
+          ));
+          items.clear();
+        }
+        header = item.question;
+      } else {
+        items.add(item);
+      }
+    }
+    if (items.isNotEmpty) {
+      groups.add(_FaqGroup(
+        title: _stripEmoji(header),
+        icon: _iconFor(header),
+        items: List.of(items),
+      ));
+    }
+    return groups;
+  }
+
+  /// 헤더 문자열 앞의 emoji 제거
+  static String _stripEmoji(String s) {
+    final match = RegExp(r'[가-힣a-zA-Z]').firstMatch(s);
+    return match != null ? s.substring(match.start).trim() : s.trim();
+  }
+
+  /// 헤더 제목 → Material 아이콘 매핑 (emoji 없이 키워드 기반)
+  static IconData _iconFor(String title) {
+    final t = title;
+    if (t.contains('공고') || t.contains('지원') || t.contains('TO')) {
+      return Icons.work_outline;
+    }
+    if (t.contains('출퇴근') || t.contains('근태') || t.contains('당일')) {
+      return Icons.schedule_outlined;
+    }
+    if (t.contains('계약서')) return Icons.description_outlined;
+    if (t.contains('급여') || t.contains('임금') || t.contains('💳')) {
+      return Icons.payments_outlined;
+    }
+    if (t.contains('노쇼 & 제재')) return Icons.warning_amber_outlined;
+    if (t.contains('인력') || t.contains('멤버')) return Icons.group_outlined;
+    if (t.contains('사업장') || t.contains('설정')) return Icons.settings_outlined;
+    if (t.contains('계정') || t.contains('서류')) return Icons.badge_outlined;
+    return Icons.help_outline;
   }
 
   // ────────────────────────────────────────────────────────────
@@ -127,22 +220,23 @@ class _HelpScreenState extends State<HelpScreen> {
     _FaqItem.header('📋 공고 & 지원'),
     _FaqItem(
       question: '공고에 어떻게 지원하나요?',
-      answer: '홈 화면 → "공고 찾기"를 눌러 날짜·업종별로 공고를 탐색할 수 있습니다. '
-          '원하는 공고를 선택한 뒤 "지원하기" 버튼을 누르면 됩니다. '
+      answer: '홈 화면의 "지금 지원 가능한 일자리" 목록에서 공고를 선택하거나, '
+          '하단 "일자리" 탭에서 날짜·업종별로 공고를 탐색할 수 있습니다. '
+          '공고를 탭해 상세 내용을 확인한 후 "지원하기"를 눌러주세요. '
           '관리자가 확정하면 알림과 함께 근로계약서 서명 요청이 전송됩니다.',
     ),
     _FaqItem(
       question: '지원 취소는 어떻게 하나요?',
-      answer: '"내 스케줄" → 해당 일정 카드 → "지원 취소" 버튼을 누르세요.\n'
+      answer: '"일정" 탭에서 해당 날짜를 선택한 후 일정 카드의 "지원 취소" 버튼을 누르세요.\n'
           '• 대기 중(미확정): 즉시 취소됩니다.\n'
           '• 확정 후: 취소 요청을 보내야 하며, 관리자 승인 후 취소됩니다.\n'
-          '당일 취소 또는 무단 노쇼는 신뢰도 점수에 영향을 줍니다.',
+          '당일 취소 또는 무단 노쇼는 노쇼 기록에 남아 90일 이내 3회 이상 시 지원 제한이 적용됩니다.',
     ),
     _FaqItem(
       question: '근무 확정·취소 알림이 오지 않아요.',
-      answer: '① 설정 → 알림 → 푸시 알림이 켜져 있는지 확인하세요.\n'
+      answer: '① MY → "설정" → 알림에서 푸시 알림이 켜져 있는지 확인하세요.\n'
           '② 기기 설정에서 ALfit 알림 권한이 "허용"인지 확인하세요.\n'
-          '③ 설정 → 알림 → "지원 결과 알림"이 활성화되어 있는지 확인하세요.',
+          '③ MY → "설정" → 알림 세부 설정에서 "지원 현황 알림"이 활성화되어 있는지 확인하세요.',
     ),
     _FaqItem.header('⏰ 출퇴근 체크'),
     _FaqItem(
@@ -155,7 +249,7 @@ class _HelpScreenState extends State<HelpScreen> {
     ),
     _FaqItem(
       question: '실수로 출근 체크 시간이 잘못됐어요.',
-      answer: '"내 스케줄" → 해당 날짜 → "수정 요청" 버튼을 눌러 '
+      answer: '"일정" 탭에서 해당 날짜를 선택한 후 일정 카드의 "수정 요청" 버튼을 눌러 '
           '관리자에게 수정 요청을 보내세요. 관리자 승인 후 시간이 변경됩니다. '
           '원본 기록(최초 체크 시간)은 별도 보관됩니다.',
     ),
@@ -167,21 +261,21 @@ class _HelpScreenState extends State<HelpScreen> {
     _FaqItem.header('✍️ 근로계약서'),
     _FaqItem(
       question: '계약서 서명 요청이 왔어요. 어떻게 하나요?',
-      answer: '① 설정 → "내 서명"에서 서명을 먼저 등록해주세요.\n'
-          '② 홈 하단 "미서명 계약서 N건" 배너를 탭하거나, '
-          '"내 스케줄" → 해당 카드 → 계약서를 열어 내용을 확인한 뒤 서명하세요.\n'
+      answer: '① MY → 근무 관리 → "내 서명"에서 서명을 먼저 등록해주세요.\n'
+          '② 화면 하단에 나타나는 "미서명 계약서 N건" 배너를 탭하거나, '
+          'MY → 근무 관리 → "계약서"에서 해당 계약서를 열어 내용을 확인한 뒤 서명하세요.\n'
           '서명 후 관리자와 본인 모두 서명된 계약서를 PDF로 확인할 수 있습니다.',
     ),
     _FaqItem(
       question: '내 서명은 어디서 등록하나요?',
-      answer: '설정 → "내 서명" 항목에서 서명 패드에 직접 서명을 그릴 수 있습니다. '
+      answer: 'MY → 근무 관리 → "내 서명"에서 서명 패드에 직접 서명을 그릴 수 있습니다. '
           '등록된 서명은 계약서 서명 시 자동으로 적용됩니다. '
           '"변경"으로 언제든지 업데이트할 수 있습니다.',
     ),
     _FaqItem.header('💰 급여 & 임금명세서'),
     _FaqItem(
       question: '임금명세서는 어디서 확인하나요?',
-      answer: '"내 스케줄" → 확정된 근무 카드 → "임금명세서" 버튼을 누르면 '
+      answer: '"일정" 탭 → 확정된 근무 카드 → "임금명세서" 버튼을 누르면 '
           'PDF 형태로 확인하고 저장·공유할 수 있습니다. '
           '관리자가 급여를 확정한 이후부터 열람 가능합니다.',
     ),
@@ -191,28 +285,17 @@ class _HelpScreenState extends State<HelpScreen> {
           '야간 식대나 특정 공제가 적용됐을 수 있습니다. '
           '이상이 있으면 관리자에게 직접 문의하세요.',
     ),
-    _FaqItem.header('⭐ 신뢰도'),
+    _FaqItem.header('📊 노쇼 & 제재'),
     _FaqItem(
-      question: '신뢰도 점수는 어떻게 올리나요?',
-      answer: '• 정상 출근: +1점\n'
-          '• 퇴근 완료: +0.5점\n'
-          '• 지각: -1점\n'
-          '• 노쇼(무단 결근): -3점\n\n'
-          '꾸준히 성실하게 근무하면 점수가 올라가고, '
-          '채용 시 관리자에게 더 좋은 인상을 줄 수 있습니다.',
+      question: '노쇼 기록은 어디서 확인하나요?',
+      answer: '설정(MY → 설정) 화면 상단 통계 카드에서 '
+          '"노쇼(90일)" 항목으로 최근 90일 내 노쇼 횟수를 확인할 수 있습니다.',
     ),
     _FaqItem(
-      question: '신뢰도가 낮아져서 지원이 막혔어요.',
-      answer: '신뢰도가 일정 수준 이하로 떨어지면 지원이 제한될 수 있습니다. '
-          '신뢰도가 50점 미만이면 설정 화면 상단 신뢰도 카드에 "재시작 프로그램 신청" 버튼이 나타납니다. '
-          '신청 시 신뢰도가 50점으로 리셋되고 노쇼·지각 기록 각 1회가 감면됩니다 (2개월 1회 제한). '
-          '관리자 평점도 신뢰도에 영향을 줍니다.',
-    ),
-    _FaqItem(
-      question: '설정에서 재시작 프로그램 신청 버튼이 안 보여요.',
-      answer: '재시작 프로그램 버튼은 신뢰도가 50점 미만일 때만 설정 화면 상단 신뢰도 카드에 표시됩니다. '
-          '현재 신뢰도가 50점 이상이면 버튼이 나타나지 않으며, '
-          '신뢰도가 50점 아래로 떨어지면 자동으로 활성화됩니다.',
+      question: '지원이 제한됐어요. 원인이 뭔가요?',
+      answer: '최근 90일 이내 노쇼 기록이 3회 이상이면 24시간 지원 제한이 적용됩니다. '
+          '제한 기간이 지나면 자동으로 해제됩니다. '
+          '제재 해제 시점은 설정 화면에서 확인할 수 있습니다.',
     ),
     _FaqItem.header('👤 계정 & 서류'),
     _FaqItem(
@@ -222,7 +305,7 @@ class _HelpScreenState extends State<HelpScreen> {
     ),
     _FaqItem(
       question: '서류(신분증, 통장사본 등)는 어디서 등록하나요?',
-      answer: '설정 → "내 서류 관리"에서 신분증, 계좌정보, 통장사본을 등록할 수 있습니다. '
+      answer: 'MY → 근무 관리 → "내 서류 관리"에서 신분증, 계좌정보, 통장사본을 등록할 수 있습니다. '
           '서류 미등록 시 일부 사업장에서 지원이 제한될 수 있습니다.',
     ),
   ];
@@ -283,7 +366,7 @@ class _HelpScreenState extends State<HelpScreen> {
     _FaqItem(
       question: '노쇼 처리는 어떻게 하나요?',
       answer: '당일명단 → 해당 근무자 → "노쇼 처리" 버튼을 누르세요. '
-          '노쇼 처리 시 해당 근무자의 신뢰도 점수가 차감됩니다.',
+          '노쇼 처리 시 해당 근무자의 노쇼 기록이 남고 90일 이내 3회 누적 시 지원 제한이 적용됩니다.',
     ),
     _FaqItem.header('💳 급여 관리'),
     _FaqItem(
@@ -332,106 +415,86 @@ class _HelpScreenState extends State<HelpScreen> {
   ];
 }
 
-class _FaqTile extends StatefulWidget {
+// ── 아코디언 Row 위젯 ────────────────────────────────────────────────
+//
+// 독립 Card 방식 대신 카테고리 Card 안의 Row로 동작.
+// Material 조상이 제공하는 InkWell ripple 효과 사용.
+class _FaqAccordionRow extends StatefulWidget {
   final String question;
   final String answer;
-  final ThemeData theme;
 
-  const _FaqTile({
+  const _FaqAccordionRow({
+    super.key,
     required this.question,
     required this.answer,
-    required this.theme,
   });
 
   @override
-  State<_FaqTile> createState() => _FaqTileState();
+  State<_FaqAccordionRow> createState() => _FaqAccordionRowState();
 }
 
-class _FaqTileState extends State<_FaqTile> {
+class _FaqAccordionRowState extends State<_FaqAccordionRow> {
   bool _expanded = false;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: _expanded
-              ? widget.theme.primaryColor.withValues(alpha: 0.3)
-              : AppColors.grey200,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(12),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 질문 Row — 텍스트 + chevron, 파란 ? 아이콘 없음
+        InkWell(
           onTap: () => setState(() => _expanded = !_expanded),
           child: Padding(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 14)),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 16),
+              vertical: ResponsiveHelper.spacing(context, 14),
+            ),
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.help_outline_rounded,
-                      size: ResponsiveHelper.iconSize(context, 16),
-                      color: widget.theme.primaryColor,
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                    Expanded(
-                      child: Text(
-                        widget.question,
-                        style: ResponsiveHelper.bodyStyle(context).copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    Icon(
-                      _expanded
-                          ? Icons.keyboard_arrow_up_rounded
-                          : Icons.keyboard_arrow_down_rounded,
-                      size: ResponsiveHelper.iconSize(context, 20),
-                      color: AppColors.grey400,
-                    ),
-                  ],
-                ),
-                if (_expanded) ...[
-                  SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-                  Container(
-                    width: double.infinity,
-                    padding:
-                        EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-                    decoration: BoxDecoration(
-                      color:
-                          widget.theme.primaryColor.withValues(alpha: 0.04),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      widget.answer,
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: AppColors.grey700),
+                Expanded(
+                  child: Text(
+                    widget.question,
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
-                ],
+                ),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Icon(
+                  _expanded
+                      ? Icons.keyboard_arrow_up_rounded
+                      : Icons.keyboard_arrow_down_rounded,
+                  size: ResponsiveHelper.iconSize(context, 20),
+                  color: AppColors.grey400,
+                ),
               ],
             ),
           ),
         ),
-      ),
+        // 답변 영역 — 연한 grey50 배경, 파란 강조 없음
+        if (_expanded)
+          Container(
+            width: double.infinity,
+            color: AppColors.grey50,
+            padding: EdgeInsets.fromLTRB(
+              ResponsiveHelper.spacing(context, 16),
+              ResponsiveHelper.spacing(context, 10),
+              ResponsiveHelper.spacing(context, 16),
+              ResponsiveHelper.spacing(context, 14),
+            ),
+            child: Text(
+              widget.answer,
+              style: ResponsiveHelper.smallStyle(context,
+                      color: AppColors.grey700)
+                  .copyWith(height: 1.6),
+            ),
+          ),
+      ],
     );
   }
 }
+
+// ── 내부 데이터 모델 ───────────────────────────────────────────────────
 
 class _FaqItem {
   final String question;
@@ -444,4 +507,16 @@ class _FaqItem {
   const _FaqItem.header(this.question)
       : answer = '',
         isHeader = true;
+}
+
+class _FaqGroup {
+  final String title;
+  final IconData icon;
+  final List<_FaqItem> items;
+
+  const _FaqGroup({
+    required this.title,
+    required this.icon,
+    required this.items,
+  });
 }

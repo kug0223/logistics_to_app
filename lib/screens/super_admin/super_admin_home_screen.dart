@@ -3,9 +3,9 @@ import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../providers/user_provider.dart';
 import '../../providers/theme_provider.dart';
+import '../../services/fcm_service.dart';
 import 'all_businesses_screen.dart';
 import 'all_users_screen.dart';
-import 'foreign_worker_approval_screen.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../common/settings_screen.dart';
@@ -33,6 +33,10 @@ class _AdminHomeScreenState extends State<AdminHomeScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadStats();
+    // [Phase 9D] cold-start pending payload 소비
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      FCMService().consumePendingColdStartPayload();
+    });
   }
 
   @override
@@ -55,18 +59,12 @@ class _AdminHomeScreenState extends State<AdminHomeScreen>
       final results = await Future.wait([
         FirebaseFirestore.instance.collection('users').count().get(),
         FirebaseFirestore.instance.collection('businesses').count().get(),
-        FirebaseFirestore.instance
-            .collection('users')
-            .where('accountStatus', isEqualTo: 'pending')
-            .count()
-            .get(),
       ]);
       if (!mounted) return;
       setState(() {
         _stats = _SuperAdminStats(
           totalUsers: results[0].count ?? 0,
           totalBusinesses: results[1].count ?? 0,
-          pendingApprovals: results[2].count ?? 0,
         );
         _isLoading = false;
       });
@@ -75,7 +73,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen>
       if (!mounted) return;
       setState(() {
         _stats = const _SuperAdminStats(
-            totalUsers: 0, totalBusinesses: 0, pendingApprovals: 0);
+            totalUsers: 0, totalBusinesses: 0);
         _isLoading = false;
       });
     }
@@ -300,8 +298,6 @@ class _AdminHomeScreenState extends State<AdminHomeScreen>
     ThemeData theme,
     bool isLandscape,
   ) {
-    final pending = _stats?.pendingApprovals ?? 0;
-
     return ListView(
       // listPadding: 하단 홈 인디케이터 높이를 자동 추가
       padding: ResponsiveHelper.listPadding(context,
@@ -337,21 +333,6 @@ class _AdminHomeScreenState extends State<AdminHomeScreen>
           onTap: () => Navigator.push(
             context,
             MaterialPageRoute(builder: (_) => const AllUsersScreen()),
-          ),
-        ),
-        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-        _buildMenuTile(
-          context,
-          icon: Icons.how_to_reg_outlined,
-          color: AppColors.warning,
-          title: '외국인 승인',
-          subtitle: '가입 승인 및 거절 처리',
-          // 대기 건수가 있으면 뱃지 표시
-          badge: pending > 0 ? '$pending' : null,
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-                builder: (_) => const ForeignWorkerApprovalScreen()),
           ),
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 20)),
@@ -419,7 +400,6 @@ class _AdminHomeScreenState extends State<AdminHomeScreen>
   // ────────────────────────────────────────────────────────────
 
   Widget _buildStatsRow(BuildContext context, ThemeData theme) {
-    final pending = _stats?.pendingApprovals ?? 0;
     return Row(
       children: [
         _buildStatCard(
@@ -436,15 +416,6 @@ class _AdminHomeScreenState extends State<AdminHomeScreen>
           value: _isLoading ? '-' : '${_stats?.totalBusinesses ?? 0}개',
           icon: Icons.business_outlined,
           color: AppColors.purple,
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-        _buildStatCard(
-          context,
-          label: '승인 대기',
-          value: _isLoading ? '-' : '$pending명',
-          icon: Icons.pending_outlined,
-          color: pending > 0 ? AppColors.warning : AppColors.grey400,
-          highlight: !_isLoading && pending > 0,
         ),
       ],
     );
@@ -637,11 +608,9 @@ class _AdminHomeScreenState extends State<AdminHomeScreen>
 class _SuperAdminStats {
   final int totalUsers;
   final int totalBusinesses;
-  final int pendingApprovals;
 
   const _SuperAdminStats({
     required this.totalUsers,
     required this.totalBusinesses,
-    required this.pendingApprovals,
   });
 }

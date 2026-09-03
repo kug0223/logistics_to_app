@@ -16,7 +16,6 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/core/attendance_model.dart';
-import '../models/core/notification_model.dart';
 import '../models/core/payment_change_request_model.dart';
 import '../models/core/interim_settlement_request_model.dart';
 import '../utils/format_helper.dart';
@@ -265,6 +264,59 @@ class PayrollPaymentService {
     }
   }
 
+  /// 전체 미이체 근태 기록 조회 (홈 "급여 미이체" Action 진입용)
+  /// [PHASE-2C] 월 필터 없이 wageStatus=confirmed 전체 조회
+  /// 기간: 2020-01-01 ~ 내일 (충분히 넓은 범위, 실제 미이체는 수개월 이내)
+  /// [PATCH-R1] CF TWO_YEARS_MS(730일) 제한 준수: 단일 oversized request →
+  ///            730일 단위 sequential chunk + merge. calendar-year +2 금지.
+  ///            half-open [start, end): next_start = previous_end → gap/duplicate 없음.
+  Future<List<AttendanceModel>> getAllOutstandingWages({
+    required String businessId,
+  }) async {
+    try {
+      final farPast = DateTime(2020, 1, 1);
+      final tomorrow = DateTime.now().add(const Duration(days: 1));
+      // 730일 = CF TWO_YEARS_MS(2*365*24*60*60*1000ms)와 정확히 일치.
+      // 서버 조건이 > 이므로 730일 == TWO_YEARS_MS는 통과.
+      const chunkDuration = Duration(days: 730);
+
+      final allItems = <AttendanceModel>[];
+      DateTime chunkStart = farPast;
+
+      while (chunkStart.isBefore(tomorrow)) {
+        DateTime chunkEnd = chunkStart.add(chunkDuration);
+        if (chunkEnd.isAfter(tomorrow)) {
+          chunkEnd = tomorrow;
+        }
+
+        final result = await _cf
+            .httpsCallable('callableGetAdminAttendances',
+                options: HttpsCallableOptions(timeout: const Duration(seconds: 30)))
+            .call<Map<String, dynamic>>({
+          'businessId': businessId,
+          'startMs': chunkStart.millisecondsSinceEpoch,
+          'endMs': chunkEnd.millisecondsSinceEpoch,
+          'wageStatus': AttendanceModel.wageConfirmed,
+        });
+
+        final rawItems = (result.data['items'] as List? ?? []);
+        final chunkAttendances = rawItems.whereType<Map>().map((m) {
+          final raw = _cfHydrate(Map<String, dynamic>.from(m));
+          final id = raw.remove('id') as String? ?? '';
+          return AttendanceModel.tryFromMap(raw, id);
+        }).whereType<AttendanceModel>().toList();
+
+        allItems.addAll(chunkAttendances);
+        chunkStart = chunkEnd; // half-open: next start = previous end
+      }
+
+      return allItems;
+    } catch (e) {
+      debugPrint('[PayrollService] getAllOutstandingWages 실패: $e');
+      rethrow; // [ERROR-EMPTY-01] caller가 success-empty와 failure를 구분할 수 있도록
+    }
+  }
+
   /// 미이체(wageStatus=confirmed) 건수 (홈 배지용) — callableGetNotTransferredCount 경유
   /// attendance.businessId 단일 필터 → wageStatus만 읽고 서버 카운트 (복합 인덱스 불필요)
   Future<int?> getTotalNotTransferredCount({required String businessId}) async {
@@ -352,52 +404,38 @@ class PayrollPaymentService {
   }
 
   /// 변경 요청 승인
-  /// [PAY-H2] 트랜잭션으로 PENDING 상태 확인 후 update — 동시 이중 승인 + 감사 추적 오염 차단
+  /// [5C.1-PCR-02] CF callableApprovePaymentChangeRequest 경유 (권한+트랜잭션 서버 검증)
   Future<void> approveChangeRequest({
     required String requestId,
-    required String processedBy,
+    required String businessId,
   }) async {
-    final ref = _db.collection('payment_change_requests').doc(requestId);
-    await _db.runTransaction((tx) async {
-      final snap = await tx.get(ref);
-      if (!snap.exists) throw Exception('변경 요청 문서가 존재하지 않습니다.');
-      final currentStatus = snap.data()?['status'] as String?;
-      if (currentStatus != PaymentChangeRequestModel.statusPending) {
-        throw Exception('이미 처리된 요청입니다. (현재 상태: $currentStatus)');
-      }
-      tx.update(ref, {
-        'status':      PaymentChangeRequestModel.statusApproved,
-        'processedBy': processedBy,
-        'processedAt': FieldValue.serverTimestamp(),
-        'updatedAt':   FieldValue.serverTimestamp(),
-      });
+    await _cf
+        .httpsCallable(
+          'callableApprovePaymentChangeRequest',
+          options: HttpsCallableOptions(timeout: const Duration(seconds: 30)),
+        )
+        .call<Map<String, dynamic>>({
+      'businessId': businessId,
+      'requestId':  requestId,
     });
   }
 
   /// 변경 요청 거절
-  // [M2-FIX] approveChangeRequest와 동일하게 트랜잭션 래핑
-  //   approve(트랜잭션) vs reject(직접 update) 비대칭 → 동시 approve+reject 시 APPROVED 문서를 REJECTED로 덮어쓰는 race condition.
-  //   트랜잭션 내 status == PENDING 확인으로 방어.
+  /// [5C.1-PCR-03] CF callableRejectPaymentChangeRequest 경유 (권한+트랜잭션 서버 검증)
   Future<void> rejectChangeRequest({
     required String requestId,
-    required String processedBy,
+    required String businessId,
     required String rejectReason,
   }) async {
-    await _db.runTransaction((tx) async {
-      final ref = _db.collection('payment_change_requests').doc(requestId);
-      final snap = await tx.get(ref);
-      if (!snap.exists) throw Exception('변경 요청을 찾을 수 없습니다.');
-      final currentStatus = snap.data()?['status'] as String? ?? '';
-      if (currentStatus != PaymentChangeRequestModel.statusPending) {
-        throw Exception('이미 처리된 요청입니다. (현재 상태: $currentStatus)');
-      }
-      tx.update(ref, {
-        'status':       PaymentChangeRequestModel.statusRejected,
-        'processedBy':  processedBy,
-        'processedAt':  FieldValue.serverTimestamp(),
-        'rejectReason': rejectReason,
-        'updatedAt':    FieldValue.serverTimestamp(),
-      });
+    await _cf
+        .httpsCallable(
+          'callableRejectPaymentChangeRequest',
+          options: HttpsCallableOptions(timeout: const Duration(seconds: 30)),
+        )
+        .call<Map<String, dynamic>>({
+      'businessId':   businessId,
+      'requestId':    requestId,
+      'rejectReason': rejectReason,
     });
   }
 
@@ -561,47 +599,21 @@ class PayrollPaymentService {
   }
 
   /// 중간정산 거절
-  // [BUG-2 FIX] 거절 시 근로자에게 FCM 알림 발송 추가 (이전 구현에서 누락됨)
+  /// [5C.1-ISR-03] CF callableRejectInterimSettlement 경유 (권한+트랜잭션+알림 서버 처리)
   Future<void> rejectInterimSettlement({
     required InterimSettlementRequestModel req,
-    required String processedBy,
     required String rejectReason,
   }) async {
-    final ref = _db.collection('interim_settlement_requests').doc(req.id);
-    await _db.runTransaction((tx) async {
-      final snap = await tx.get(ref);
-      if (!snap.exists) {
-        throw Exception('중간정산 요청을 찾을 수 없습니다.');
-      }
-      if (snap.data()!['status'] != InterimSettlementRequestModel.statusPending) {
-        throw Exception('이미 처리된 요청입니다.');
-      }
-      tx.update(ref, {
-        'status':       InterimSettlementRequestModel.statusRejected,
-        'processedBy':  processedBy,
-        'processedAt':  FieldValue.serverTimestamp(),
-        'rejectReason': rejectReason,
-        'updatedAt':    FieldValue.serverTimestamp(),
-      });
+    await _cf
+        .httpsCallable(
+          'callableRejectInterimSettlement',
+          options: HttpsCallableOptions(timeout: const Duration(seconds: 30)),
+        )
+        .call<Map<String, dynamic>>({
+      'businessId':   req.businessId,
+      'requestId':    req.id,
+      'rejectReason': rejectReason,
     });
-    // 거절 알림 발송 (실패해도 거절 자체에 영향 없음)
-    try {
-      final notification = NotificationModel.createInterimSettlementRejected(
-        userId: req.workerId,
-        businessName: req.businessName,
-        businessId: req.businessId,
-        settlementRequestId: req.id,
-        periodStart: req.periodStart,
-        periodEnd: req.periodEnd,
-        rejectReason: rejectReason.isNotEmpty ? rejectReason : null,
-      );
-      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('createNotification',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
-          .call(notification.toMap());
-    } catch (e) {
-      debugPrint('⚠️ 중간정산 거절 알림 발송 실패 (거절 자체는 완료): $e');
-    }
   }
 }
 

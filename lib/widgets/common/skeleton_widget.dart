@@ -67,17 +67,21 @@ class AppShimmer extends StatelessWidget {
   }
 }
 
-// ─── 공고 목록 스켈레톤 (UserTOCard 접힌 상태) ────────────────────────────────
+// ─── 공고 목록 스켈레톤 (UserTOCard) ─────────────────────────────────────────
 
 class TOListSkeleton extends StatelessWidget {
-  const TOListSkeleton({super.key});
+  const TOListSkeleton({super.key, this.compact = false});
+
+  /// true: compact 카드(일자리 탭) 스켈레톤
+  /// false: 기본 확장형 카드 스켈레톤
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    // TO카드 높이(~260dp) + margin(12dp) ≈ 272dp 기준, +2로 마지막 카드 반쪽 노출
     final s = ResponsiveHelper.spacing(context, 1);
     final availableHeight = MediaQuery.sizeOf(context).height;
-    final cardHeight = s * 272;
+    // compact ≈ 170dp+10margin=180, 기본 ≈ 260dp+12margin=272
+    final cardHeight = s * (compact ? 180 : 272);
     final count = (availableHeight / cardHeight).ceil() + 2;
 
     return AppShimmer(
@@ -85,13 +89,90 @@ class TOListSkeleton extends StatelessWidget {
         physics: const NeverScrollableScrollPhysics(),
         padding: EdgeInsets.all(s * 16),
         itemCount: count,
-        itemBuilder: (_, __) => const _TOCardSkeleton(),
+        itemBuilder: (_, __) =>
+            compact ? _TOCompactCardSkeleton(s: s) : const _TOCardSkeleton(),
       ),
     );
   }
 }
 
-/// 실제 UserTOCard 접힌(collapsed) 상태와 1:1 대응
+/// compact 카드(_buildCompactCard) 1:1 대응 스켈레톤
+/// 컬러바 없음, 액션버튼 없음, expandBar 없음
+///   ① topRow: location아이콘 + 위치·사업장명(Expanded) + timeAgo + 하트
+///   ② 공고 제목 (maxLines:2)
+///   ③ 근무유형 텍스트
+///   ④ 날짜·시간 Row
+///   ⑤ 구분선
+///   ⑥ 급여 Row (Badge 없음)
+class _TOCompactCardSkeleton extends StatelessWidget {
+  const _TOCompactCardSkeleton({required this.s});
+  final double s;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: EdgeInsets.only(bottom: s * 7),
+      padding: EdgeInsets.all(s * 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFEEEEEE), width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ① topRow: 위치아이콘 + 위치·사업장명 + timeAgo + 하트
+          Row(
+            children: [
+              _Box(width: s * 12, height: s * 12, radius: 2),
+              SizedBox(width: s * 3),
+              Expanded(child: _FullBox(height: s * 12)),
+              SizedBox(width: s * 6),
+              _Box(width: s * 30, height: s * 11),
+              SizedBox(width: s * 4),
+              _Box(width: s * 22, height: s * 22, radius: 11),
+            ],
+          ),
+          SizedBox(height: s * 6),
+          // ② 공고 제목 (2줄)
+          _FullBox(height: s * 16),
+          SizedBox(height: s * 4),
+          _Box(width: s * 130, height: s * 16),
+          SizedBox(height: s * 6),
+          // ③ 근무유형 텍스트 (단기 · 일급)
+          _Box(width: s * 60, height: s * 11),
+          SizedBox(height: s * 8),
+          // ④ 날짜·시간 Row
+          Row(
+            children: [
+              _Box(width: s * 12, height: s * 12, radius: 2),
+              SizedBox(width: s * 4),
+              _Box(width: s * 80, height: s * 11),
+              SizedBox(width: s * 8),
+              _Box(width: s * 12, height: s * 12, radius: 2),
+              SizedBox(width: s * 3),
+              _Box(width: s * 70, height: s * 11),
+            ],
+          ),
+          SizedBox(height: s * 10),
+          // ⑤ 구분선
+          _FullBox(height: s * 1),
+          SizedBox(height: s * 10),
+          // ⑥ 급여 Row (뱃지 없음, 금액만)
+          Row(
+            children: [
+              _Box(width: s * 80, height: s * 16),
+              const Spacer(),
+              _Box(width: s * 40, height: s * 11),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 실제 UserTOCard 접힌(collapsed) 상태와 1:1 대응 (비compact 기존 카드)
 /// Stack: 컬러바(left spacing(5)) + 콘텐츠
 ///   ① topRow: 타입배지 + location아이콘 + 위치텍스트 + 즐겨찾기
 ///   ② 공고 제목 (maxLines:2 → 두 줄 스켈레톤)

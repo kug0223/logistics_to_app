@@ -166,6 +166,11 @@ class WageCalculator {
     // 의도된 안전장치 — 급여 0으로 처리해 음수 임금 방지. 관리자가 실수 입력 시 확인 필요
     final workMinutes = (actualMinutes - breakMinutes).clamp(0, 9999);
 
+    // Phase 6: canonical extra-work breakdown (wageType 무관, 동일 공식)
+    final schedWorkMins = (scheduledMinutes - schedBreak).clamp(0, 9999);
+    final srvContractExcessMins = (workMinutes - schedWorkMins).clamp(0, 9999);
+    final srvPremiumOvertimeMins = (workMinutes - standardWorkMinutes).clamp(0, 9999);
+
     // 2. 연장근무 계산
     int overtimeMinutes = 0;
     if (wageType == 'hourly') {
@@ -181,19 +186,44 @@ class WageCalculator {
     // earlyArrivalMinutes: 실제 조출 시간 (시간 표시용 — 수당 계산 시 내부에서 clamp)
     final schedStartMin = _parseTime(scheduledStart) ?? 0;
     final actualStartMin = _parseTime(actualStart) ?? 0;
-    // 단순 비교: 예정보다 이르면 조출, 늦으면(지각) 0
-    // 이전 "자정 넘김 보정" 로직은 예정 22~23시에 지각한 경우
-    // adjustedActualStart가 음수가 되어 조출 24시간으로 오계산되는 버그가 있었음
-    final earlyArrivalMinutes = (schedStartMin - actualStartMin).clamp(0, 9999);
+    // 자정 경계 보정 (CF 로직과 동일):
+    //   예정 22~23시에 지각한 경우(예: 예정 22:00, 실제 22:30): rawDiff = -30 → 0 (지각) ✅
+    //   야간 교대 조출(예: 예정 01:00, 실제 23:30): rawDiff = 60-1410 = -1350 < -720 → +1440 = 90분 ✅
+    //   -720(12h) 기준: 그보다 크면 단순 지각, 그보다 작으면 자정을 넘긴 조출
+    final earlyRawDiff = schedStartMin - actualStartMin;
+    final earlyArrivalMinutes = earlyRawDiff < -720
+        ? (earlyRawDiff + 1440).clamp(0, 9999)
+        : earlyRawDiff.clamp(0, 9999);
     
     // 3. 야간근무 계산 (휴게는 주간 구간 먼저 소진 — 야간 시간대 공제 최소화)
     int nightMinutes = 0;
     if (nightAllowanceApplied) {
       if (wageType == 'daily' && nightIncluded) {
         // 일급에 야간수당 포함 → 계약 구간 내 야간분은 제외, 초과분만 적용
+        // 초과분 = 연장(scheduledEnd~actualEnd) + 조출(actualStart~scheduledStart) 양쪽 포함
         if (overtimeMinutes > 0) {
-          nightMinutes = _calculateNightMinutes(scheduledEnd, actualEnd);
-          if (kDebugMode) debugPrint('🌙 야간(nightIncluded OT): scheduledEnd=$scheduledEnd, actualEnd=$actualEnd → ${nightMinutes}min');
+          final lateNight = _calculateNightMinutes(scheduledEnd, actualEnd);
+          final earlyNight = earlyArrivalMinutes > 0
+              ? _calculateNightMinutes(actualStart, scheduledStart)
+              : 0;
+          final rawExtraNightMinutes = earlyNight + lateNight;
+          // [PHASE5.2-FIX] ALfit 급여 정책: 무급휴게는 비야간 추가근무시간 우선 배정
+          // break 발생 시간대 미저장으로 실제 야간 발생 여부 불명 — payroll convention
+          // 총 추가 raw 시간 = overtimeMinutes + additionalBreak (= earlyArrivalMinutes + lateOvertime)
+          final additionalBreakMins = (breakMinutes - schedBreak).clamp(0, 9999);
+          final rawExtraNonNightMinutes =
+              (overtimeMinutes + additionalBreakMins - rawExtraNightMinutes)
+                  .clamp(0, 9999);
+          final nightAllocatedBreak =
+              (additionalBreakMins - rawExtraNonNightMinutes).clamp(0, 9999);
+          nightMinutes = (rawExtraNightMinutes - nightAllocatedBreak).clamp(0, 9999);
+          if (kDebugMode) {
+            debugPrint(
+              '🌙 야간(nightIncluded OT): 연장야간=${lateNight}min, 조출야간=${earlyNight}min'
+              ' → raw야간=${rawExtraNightMinutes}min, additionalBreak=${additionalBreakMins}min'
+              ', nightAllocatedBreak=${nightAllocatedBreak}min → 최종=${nightMinutes}min',
+            );
+          }
         }
       } else {
         final rawNightMinutes = _calculateNightMinutes(actualStart, actualEnd);
@@ -271,9 +301,12 @@ class WageCalculator {
       additionalAmount: additionalAmount,
       totalAmount: totalAmount,
       nightAllowanceApplied: nightAllowanceApplied,
+      nightIncluded: nightIncluded,
       memo: memo,
       appliedMinimumWage: minimumWage,
       appliedSupplementWage: appliedSupplementWage,
+      contractExcessMinutes: srvContractExcessMins,
+      premiumOvertimeMinutes: srvPremiumOvertimeMins,
     );
   }
 

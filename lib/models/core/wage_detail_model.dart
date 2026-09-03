@@ -14,11 +14,26 @@ class WageDetailModel {
   final int scheduledMinutes;      // 예정 근무시간
   final int scheduledBreakMinutes; // 예정 휴게시간 (TO 기준) — 실제와 다를 수 있음 (석식/야식 추가 시)
   final int actualMinutes;         // 실제 근무시간 (출퇴근 기준)
-  final int breakMinutes;          // 실제 적용 휴게시간
+  final int breakMinutes;          // 실제 적용 총 휴게시간 = appliedScheduledBreakMinutes + additionalBreakMinutes
   final int workMinutes;           // 실 근무시간 (actual - break)
+
+  // ── 휴게 상세 (Phase 3.1 — 신규 레코드만, 구형 레코드는 null) ──
+  /// 계약 기본 휴게 중 실제 적용한 시간 (관리자 확정값, <= scheduledBreakMinutes)
+  final int? appliedScheduledBreakMinutes;
+  /// 계약 기본 휴게 외 추가 적용 무급휴게 (석식·야식 등)
+  final int? additionalBreakMinutes;
+  // [LEGACY MIXED SEMANTIC — Phase 6]
+  // HOURLY: 8시간 초과 유급 시간 (8h 기준)
+  // DAILY: 계약 유급 초과 시간 (scheduledWork 기준)
+  // → canonical breakdown은 contractExcessMinutes / premiumOvertimeMinutes 사용
   final int overtimeMinutes;       // 연장근무 총합 (조출 + 연장, 시급제: 8h 초과 / 일급제: 예정 초과)
   final int earlyArrivalMinutes;   // 그 중 조출분 (예정 시작 전 근무) — 0이면 순수 연장만
   final int nightMinutes;          // 야간근무 (22:00~06:00)
+
+  // Phase 6: canonical extra-work breakdown
+  // wageType과 무관하게 동일 공식
+  final int? contractExcessMinutes;  // max(0, workMinutes - scheduledWorkMins)
+  final int? premiumOvertimeMinutes; // max(0, workMinutes - 480)
   
   // ── 금액 계산 ──
   final int baseAmount;            // 기본급
@@ -50,6 +65,9 @@ class WageDetailModel {
   
   // ── 옵션 ──
   final bool nightAllowanceApplied; // 야간수당 별도 적용 여부
+  // [PHASE5.2] night snapshot auditability — nullable (legacy safe)
+  /// 일급에 야간수당 포함 여부 (계약 구간 내 야간 제외, 초과분만 적용)
+  final bool? nightIncluded;
   final String? memo;              // 메모
   
   // ── 계산 기준 ──
@@ -79,9 +97,13 @@ class WageDetailModel {
     this.actualMinutes = 0,
     this.breakMinutes = 0,
     this.workMinutes = 0,
+    this.appliedScheduledBreakMinutes,
+    this.additionalBreakMinutes,
     this.overtimeMinutes = 0,
     this.earlyArrivalMinutes = 0,
     this.nightMinutes = 0,
+    this.contractExcessMinutes,
+    this.premiumOvertimeMinutes,
     this.baseAmount = 0,
     this.overtimeAmount = 0,
     this.earlyArrivalAmount = 0,
@@ -91,6 +113,7 @@ class WageDetailModel {
     this.weeklyHolidayAmount = 0,
     this.totalAmount = 0,
     this.nightAllowanceApplied = false,
+    this.nightIncluded,
     this.memo,
     this.appliedMinimumWage = 10320,
     this.appliedSupplementWage = 0,
@@ -120,9 +143,13 @@ class WageDetailModel {
       actualMinutes: (map['actualMinutes'] as num?)?.toInt() ?? 0,
       breakMinutes: (map['breakMinutes'] as num?)?.toInt() ?? 0,
       workMinutes: (map['workMinutes'] as num?)?.toInt() ?? 0,
+      appliedScheduledBreakMinutes: (map['appliedScheduledBreakMinutes'] as num?)?.toInt(),
+      additionalBreakMinutes: (map['additionalBreakMinutes'] as num?)?.toInt(),
       overtimeMinutes: (map['overtimeMinutes'] as num?)?.toInt() ?? 0,
       earlyArrivalMinutes: (map['earlyArrivalMinutes'] as num?)?.toInt() ?? 0,
       nightMinutes: (map['nightMinutes'] as num?)?.toInt() ?? 0,
+      contractExcessMinutes: (map['contractExcessMinutes'] as num?)?.toInt(),
+      premiumOvertimeMinutes: (map['premiumOvertimeMinutes'] as num?)?.toInt(),
       baseAmount: (map['baseAmount'] as num?)?.toInt() ?? 0,
       overtimeAmount: (map['overtimeAmount'] as num?)?.toInt() ?? 0,
       earlyArrivalAmount: (map['earlyArrivalAmount'] as num?)?.toInt() ?? 0,
@@ -132,6 +159,7 @@ class WageDetailModel {
       weeklyHolidayAmount: (map['weeklyHolidayAmount'] as num?)?.toInt() ?? 0,
       totalAmount: (map['totalAmount'] as num?)?.toInt() ?? 0,
       nightAllowanceApplied: map['nightAllowanceApplied'] ?? false,
+      nightIncluded: map['nightIncluded'] as bool?,
       memo: map['memo'],
       appliedMinimumWage: (map['appliedMinimumWage'] as num?)?.toInt() ?? 10320,
       appliedSupplementWage: (map['appliedSupplementWage'] as num?)?.toInt() ?? 0,
@@ -165,10 +193,14 @@ class WageDetailModel {
       if (scheduledBreakMinutes != 0) 'scheduledBreakMinutes': scheduledBreakMinutes,
       'actualMinutes': actualMinutes,
       'breakMinutes': breakMinutes,
+      if (appliedScheduledBreakMinutes != null) 'appliedScheduledBreakMinutes': appliedScheduledBreakMinutes,
+      if (additionalBreakMinutes != null) 'additionalBreakMinutes': additionalBreakMinutes,
       'workMinutes': workMinutes,
       'overtimeMinutes': overtimeMinutes,
       if (earlyArrivalMinutes != 0) 'earlyArrivalMinutes': earlyArrivalMinutes,
       'nightMinutes': nightMinutes,
+      if (contractExcessMinutes != null) 'contractExcessMinutes': contractExcessMinutes!,
+      if (premiumOvertimeMinutes != null) 'premiumOvertimeMinutes': premiumOvertimeMinutes!,
       'baseAmount': baseAmount,
       'overtimeAmount': overtimeAmount,
       if (earlyArrivalAmount != 0) 'earlyArrivalAmount': earlyArrivalAmount,
@@ -178,6 +210,7 @@ class WageDetailModel {
       'weeklyHolidayAmount': weeklyHolidayAmount,
       'totalAmount': totalAmount,
       'nightAllowanceApplied': nightAllowanceApplied,
+      if (nightIncluded != null) 'nightIncluded': nightIncluded,
       'memo': memo,
       'appliedMinimumWage': appliedMinimumWage,
       if (appliedSupplementWage != 0) 'appliedSupplementWage': appliedSupplementWage,
@@ -210,10 +243,14 @@ class WageDetailModel {
     int? scheduledBreakMinutes,
     int? actualMinutes,
     int? breakMinutes,
+    int? appliedScheduledBreakMinutes,
+    int? additionalBreakMinutes,
     int? workMinutes,
     int? overtimeMinutes,
     int? earlyArrivalMinutes,
     int? nightMinutes,
+    int? contractExcessMinutes,
+    int? premiumOvertimeMinutes,
     int? baseAmount,
     int? overtimeAmount,
     int? earlyArrivalAmount,
@@ -223,6 +260,7 @@ class WageDetailModel {
     int? weeklyHolidayAmount,
     int? totalAmount,
     bool? nightAllowanceApplied,
+    bool? nightIncluded,
     String? memo,
     int? appliedMinimumWage,
     int? appliedSupplementWage,
@@ -248,10 +286,14 @@ class WageDetailModel {
       scheduledBreakMinutes: scheduledBreakMinutes ?? this.scheduledBreakMinutes,
       actualMinutes: actualMinutes ?? this.actualMinutes,
       breakMinutes: breakMinutes ?? this.breakMinutes,
+      appliedScheduledBreakMinutes: appliedScheduledBreakMinutes ?? this.appliedScheduledBreakMinutes,
+      additionalBreakMinutes: additionalBreakMinutes ?? this.additionalBreakMinutes,
       workMinutes: workMinutes ?? this.workMinutes,
       overtimeMinutes: overtimeMinutes ?? this.overtimeMinutes,
       earlyArrivalMinutes: earlyArrivalMinutes ?? this.earlyArrivalMinutes,
       nightMinutes: nightMinutes ?? this.nightMinutes,
+      contractExcessMinutes: contractExcessMinutes ?? this.contractExcessMinutes,
+      premiumOvertimeMinutes: premiumOvertimeMinutes ?? this.premiumOvertimeMinutes,
       baseAmount: baseAmount ?? this.baseAmount,
       overtimeAmount: overtimeAmount ?? this.overtimeAmount,
       earlyArrivalAmount: earlyArrivalAmount ?? this.earlyArrivalAmount,
@@ -261,6 +303,7 @@ class WageDetailModel {
       weeklyHolidayAmount: weeklyHolidayAmount ?? this.weeklyHolidayAmount,
       totalAmount: totalAmount ?? this.totalAmount,
       nightAllowanceApplied: nightAllowanceApplied ?? this.nightAllowanceApplied,
+      nightIncluded: nightIncluded ?? this.nightIncluded,
       memo: memo ?? this.memo,
       appliedMinimumWage: appliedMinimumWage ?? this.appliedMinimumWage,
       appliedSupplementWage: appliedSupplementWage ?? this.appliedSupplementWage,
@@ -291,10 +334,14 @@ class WageDetailModel {
       scheduledBreakMinutes: scheduledBreakMinutes,
       actualMinutes: actualMinutes,
       breakMinutes: breakMinutes,
+      appliedScheduledBreakMinutes: appliedScheduledBreakMinutes,
+      additionalBreakMinutes: additionalBreakMinutes,
       workMinutes: workMinutes,
       overtimeMinutes: overtimeMinutes,
       earlyArrivalMinutes: earlyArrivalMinutes,
       nightMinutes: nightMinutes,
+      contractExcessMinutes: contractExcessMinutes,
+      premiumOvertimeMinutes: premiumOvertimeMinutes,
       baseAmount: baseAmount,
       overtimeAmount: overtimeAmount,
       earlyArrivalAmount: earlyArrivalAmount,
@@ -304,6 +351,7 @@ class WageDetailModel {
       weeklyHolidayAmount: weeklyHolidayAmount,
       totalAmount: totalAmount,
       nightAllowanceApplied: nightAllowanceApplied,
+      nightIncluded: nightIncluded,
       memo: memo,
       appliedMinimumWage: appliedMinimumWage,
       appliedSupplementWage: appliedSupplementWage,
@@ -326,6 +374,31 @@ class WageDetailModel {
 
   // ── Getter ──
   
+  // ── 휴게 breakdown getters (Phase 3.1) ──
+
+  /// 계약 기본 휴게 중 실제 적용값 (legacy 레코드는 min(scheduled, break) 추론)
+  int get effectiveAppliedScheduledBreak =>
+      appliedScheduledBreakMinutes ??
+      scheduledBreakMinutes.clamp(0, breakMinutes);
+
+  /// 추가 무급휴게 (석식·야식 등) (legacy 레코드는 max(0, break - scheduled) 추론)
+  int get effectiveAdditionalBreak =>
+      additionalBreakMinutes ??
+      (breakMinutes - effectiveAppliedScheduledBreak).clamp(0, 99999);
+
+  /// 휴게 상세 분류가 저장된 레코드인지 여부
+  bool get hasBreakBreakdown => appliedScheduledBreakMinutes != null;
+
+  /// 계약 기본 휴게에서 실제 적용량이 축소된 경우 (review된 조기퇴근 등)
+  bool get hasReducedScheduledBreak =>
+      hasBreakBreakdown && appliedScheduledBreakMinutes! < scheduledBreakMinutes;
+
+  /// 추가 무급휴게가 적용된 경우
+  bool get hasAdditionalBreak =>
+      effectiveAdditionalBreak > 0;
+
+  // ── 상태 getters ──
+
   /// 1차 확정 여부
   // [오탐 확인] calculatedAt은 급여 확정 시 항상 DateTime.now()로 함께 설정되므로 wageStatus == 'calculated'와 항상 동기화됨.
   bool get isCalculated => calculatedAt != null;
@@ -396,6 +469,26 @@ class WageDetailModel {
       _commaRe,
       (Match m) => '${m[1]},',
     )}원';
+  }
+
+  // Phase 6: canonical extra-work breakdown getters
+  bool get hasCanonicalExtraWorkBreakdown =>
+      contractExcessMinutes != null && premiumOvertimeMinutes != null;
+
+  /// 8시간 초과 × 1.5배 구간 (분)
+  /// = min(contractExcessMinutes, premiumOvertimeMinutes)
+  int get extraWork15xMinutes {
+    if (!hasCanonicalExtraWorkBreakdown) return 0;
+    final c = contractExcessMinutes!;
+    final p = premiumOvertimeMinutes!;
+    return c < p ? c : p;
+  }
+
+  /// 계약 초과 × 1배 구간 (분)
+  /// = contractExcessMinutes - extraWork15xMinutes
+  int get extraWork1xMinutes {
+    if (!hasCanonicalExtraWorkBreakdown) return 0;
+    return contractExcessMinutes! - extraWork15xMinutes;
   }
 
   @override

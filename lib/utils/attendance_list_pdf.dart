@@ -650,7 +650,7 @@ class AttendanceListPdf {
           workType: workType,
           name: user?.name ?? app.applicantName ?? 'Unknown',
           gender: user?.gender ?? '',
-          phone: _formatPhone(user?.phone ?? ''),
+          phone: _formatPhone(user?.effectivePhone ?? ''),
           workTime: '${app.startTime}~${app.endTime}',
           startTime: app.startTime,
           endTime: app.endTime,

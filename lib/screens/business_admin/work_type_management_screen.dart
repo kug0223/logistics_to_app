@@ -618,7 +618,8 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
           ),
         ),
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-        _buildListAddButton(),
+        // [AUTHZ.2] canEdit=false(canManageTo 없음)이면 추가 버튼 미노출
+        if (canEdit) _buildListAddButton(),
         SizedBox(height: ResponsiveHelper.spacing(context, 16)),
       ],
     );

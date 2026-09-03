@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuth;
+import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuth, FirebaseAuthException;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -23,6 +23,7 @@ import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../widgets/common/common_widgets.dart';
 import '../../widgets/inputs/home_region_picker_sheet.dart';
+import '../../widgets/auth/terms_viewer_screen.dart';
 import '../../theme/app_colors.dart';
 
 /// V3 외국인 Document-First 회원가입 마법사
@@ -70,8 +71,7 @@ enum _Step {
   phone,        // 1: 휴대폰 OTP 인증
   documentScan, // 2: 외국인등록증 촬영/선택 → OCR
   ocrConfirm,   // 3: OCR 결과 확인·수정
-  terms,        // 4: 약관 동의
-  homeRegion,   // 5: 주로 일할 지역 (USER 전용)
+  finalSetup,   // 4: 지역(USER) + 약관 동의 — 내국인 가입과 동일 구조
 }
 
 class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
@@ -111,20 +111,26 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
   /// [CASE C] 기존 Storage idCard를 재사용 중 — 재업로드 / markIdCardVerified 불필요
   bool _usingExistingIdCard = false;
 
+  /// [B.1] Recoverable 오류 재시도 지원 — 업로드 완료된 Storage 경로 기억.
+  /// finalizeForeignIdentity가 recoverable 오류로 실패해도 계정이 유지되므로
+  /// 재시도 시 이미 업로드된 이미지를 재사용할 수 있다.
+  /// 새 이미지가 선택되면 null로 리셋.
+  String? _uploadedStoragePath;
+
   // ── Step 3: OCR 확인 ─────────────────────────────────────────
   ForeignIdOcrResult? _ocrResult;
   final _legalNameCtrl      = TextEditingController();
   final _rawForeignIdCtrl   = TextEditingController(); // 13자리 평문
-  final _visaTypeCtrl       = TextEditingController();
-  final _stayExpiryCtrl     = TextEditingController(); // YYYY-MM-DD
+  final _visaTypeCtrl       = TextEditingController(); // 필수
+  // _stayExpiryCtrl 제거됨 — 가입 필수정보 최소화 정책 (Data Minimization)
   final _koreanNameCtrl     = TextEditingController();
   final _ocrFormKey = GlobalKey<FormState>();
 
-  // ── Step 4: 약관 동의 ─────────────────────────────────────────
+  // ── finalSetup: 약관 동의 ────────────────────────────────────
   LegalTerms? _legalTerms;
   bool _termsLoading = false;
   final _consentMap = <String, bool>{};
-  final _viewedIds  = <String>{};
+  final _viewedTermIds = <String>{}; // 열람한 약관 ID — '보기 *' ↔ '다시보기' 표시 구분
 
   // ── Step 5: 주로 일할 지역 ────────────────────────────────────
   UserRegion? _homeRegion;
@@ -158,7 +164,6 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
     _legalNameCtrl.dispose();
     _rawForeignIdCtrl.dispose();
     _visaTypeCtrl.dispose();
-    _stayExpiryCtrl.dispose();
     _koreanNameCtrl.dispose();
     super.dispose();
   }
@@ -260,9 +265,11 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       ToastHelper.showSuccess('인증번호가 발송되었습니다');
     } catch (e) {
       if (!mounted) return;
+      final code = e is FirebaseAuthException ? e.code : e.runtimeType.toString();
+      debugPrint('❌ [_sendCode] 에러: $e');
       setState(() {
         _codeSending = false;
-        _phoneError = '발송에 실패했습니다. 다시 시도해주세요';
+        _phoneError = '발송 실패 ($code)';  // TODO: 진단 후 원래 메시지로 복원
       });
     }
   }
@@ -338,9 +345,10 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       _legalNameCtrl.text = result.legalName ?? '';
       _rawForeignIdCtrl.text = result.foreignIdRaw ?? '';
       _visaTypeCtrl.text = result.visaType ?? '';
-      _stayExpiryCtrl.text = result.stayExpiryDate ?? '';
+      // stayExpiryDate — 가입 필수정보 최소화 정책으로 수집 안 함
       _koreanNameCtrl.clear();
       _imagePath = null;          // 재업로드 없음
+      _uploadedStoragePath = null; // [B.1] 기존 Storage 경로가 있어도 이 흐름에서는 무관
       _usingExistingIdCard = true;
 
       setState(() {
@@ -381,9 +389,10 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       _legalNameCtrl.text = result.legalName ?? '';
       _rawForeignIdCtrl.text = result.foreignIdRaw ?? '';
       _visaTypeCtrl.text = result.visaType ?? '';
-      _stayExpiryCtrl.text = result.stayExpiryDate ?? '';
+      // stayExpiryDate — 가입 필수정보 최소화 정책으로 수집 안 함
       _koreanNameCtrl.clear();
       _imagePath = picked.path;
+      _uploadedStoragePath = null; // [B.1] 새 이미지 선택 → 이전 업로드 경로 무효화
 
       setState(() => _ocrRunning = false);
       _goTo(_Step.ocrConfirm);
@@ -392,13 +401,13 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       if (!mounted) return;
       // OCR 예외 → 모든 필드 수동 입력 허용
       _ocrResult = const ForeignIdOcrResult(
-        legalNameFailed: true, foreignIdFailed: true, visaTypeFailed: true, stayExpiryFailed: true,
+        legalNameFailed: true, foreignIdFailed: true, visaTypeFailed: true,
       );
       _legalNameCtrl.clear();
       _rawForeignIdCtrl.clear();
       _visaTypeCtrl.clear();
-      _stayExpiryCtrl.clear();
       _imagePath = picked.path;
+      _uploadedStoragePath = null; // [B.1] 새 이미지 선택 → 이전 업로드 경로 무효화
 
       setState(() { _ocrRunning = false; });
       _goTo(_Step.ocrConfirm);
@@ -424,7 +433,11 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       return false;
     }
     if (_legalNameCtrl.text.trim().isEmpty) {
-      ToastHelper.showWarning('성명을 입력해주세요');
+      ToastHelper.showWarning('영문 이름을 입력해주세요');
+      return false;
+    }
+    if (_visaTypeCtrl.text.trim().isEmpty) {
+      ToastHelper.showWarning('체류자격을 입력해주세요');
       return false;
     }
     return true;
@@ -441,8 +454,12 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
     final rawId = _rawForeignIdCtrl.text.trim().replaceAll(RegExp(r'\D'), '');
     final legalName = _legalNameCtrl.text.trim();
     final visaType = _visaTypeCtrl.text.trim();
-    final stayExpiry = _stayExpiryCtrl.text.trim();
     final imagePath = _imagePath;
+
+    // [DEBUG] 진입점 추적
+    final dbgCurrentUid = FirebaseAuth.instance.currentUser?.uid;
+    final dbgMaskedId = rawId.length >= 8 ? '${rawId.substring(0, 8)}*****' : '(len=${rawId.length})';
+    debugPrint('🔷 [ForeignReg] _processRegistration 시작 | isResume=${widget.isResume} | existingAuth=${dbgCurrentUid ?? "null"} | maskedId=$dbgMaskedId | legalName=$legalName | imagePath=${imagePath != null}');
 
     // ================================================================
     // [RESUME MODE] 기존 uid 유지 — 새 Auth 계정 생성 금지
@@ -492,7 +509,6 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
           rawId,
           legalName: legalName.isNotEmpty ? legalName : null,
           visaType: visaType.isNotEmpty ? visaType : null,
-          stayExpiryDate: stayExpiry.isNotEmpty ? stayExpiry : null,
         );
         if (!mounted) return;
         if (finalizeErr != null) {
@@ -534,119 +550,21 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
 
       if (!mounted) return;
       setState(() => _isBusy = false);
-      _goTo(_Step.terms);
+      _goTo(_Step.finalSetup);
       return;
     }
-
-    // ================================================================
-    // [신규 가입 흐름] — isResume == false
-    // ================================================================
-
-    final userProvider = context.read<UserProvider>();
-    final role = widget.role;
-    final koreanName = _koreanNameCtrl.text.trim();
-    final phone = _phoneCtrl.text.trim();
-
-    // ── 사전 중복 체크 (UX용, atomic 체크는 finalize에서) ──────────
-    try {
-      final exists = await AuthService().precheckForeignIdentity(rawId, role);
-      if (!mounted) return;
-      if (exists) {
-        setState(() => _isBusy = false);
-        ToastHelper.showError('이미 동일 역할로 가입된 외국인등록번호입니다.');
-        return;
-      }
-    } catch (_) { /* 사전 체크 실패 무시 — finalize에서 재확인 */ }
-
-    // ── 계정 생성 ─────────────────────────────────────────────────
-    final effectiveName = koreanName.isNotEmpty ? koreanName : legalName;
-    final sentinelId = '${rawId.substring(0, 6)}-${rawId[6]}${'*' * 6}';
-
-    final success = await userProvider.signUp(
-      username: _usernameCtrl.text.trim(),
-      password: _passwordCtrl.text,
-      name: effectiveName,
-      phone: phone,
-      role: role,
-      gender: null,       // V3: 서버가 rawForeignId에서 계산
-      birthDate: null,    // V3: 서버가 rawForeignId에서 계산
-      residentNumber: null,
-      foreignIdNumber: sentinelId,
-      accountStatus: 'registration_pending',
-      authPhone: phone,
-      phoneVerificationLevel: 'otp_verified',
-      homeRegion: null,   // 나중에 recordTermsConsent 전에 설정
-    );
-    if (!mounted) return;
-    if (!success) {
-      setState(() => _isBusy = false);
-      final err = userProvider.error;
-      ToastHelper.showError((err != null && err.isNotEmpty) ? err : '계정 생성에 실패했습니다.');
-      return;
-    }
-
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) {
-      setState(() => _isBusy = false);
-      ToastHelper.showError('계정 정보를 확인할 수 없습니다. 다시 시도해주세요.');
-      return;
-    }
-
-    // ── 외국인등록증 이미지 업로드 ────────────────────────────────
-    String? uploadedPath;
-    if (imagePath != null) {
-      try {
-        final ts = DateTime.now().millisecondsSinceEpoch;
-        final storagePath = 'users/$uid/idCard_$ts.jpg';
-        final ref = FirebaseStorage.instance.ref(storagePath);
-        await ref.putFile(File(imagePath));
-        uploadedPath = storagePath;
-      } catch (e) {
-        debugPrint('⚠️ [ForeignReg] 이미지 업로드 실패 (계속): $e');
-      }
-    }
-
-    // ── finalizeForeignIdentity ───────────────────────────────────
-    final finalizeErr = await AuthService().finalizeForeignIdentity(
-      rawId,
-      legalName: legalName.isNotEmpty ? legalName : null,
-      visaType: visaType.isNotEmpty ? visaType : null,
-      stayExpiryDate: stayExpiry.isNotEmpty ? stayExpiry : null,
-    );
-    if (!mounted) return;
-    if (finalizeErr != null) {
-      setState(() => _isBusy = false);
-      ToastHelper.showError(finalizeErr);
-      return;
-    }
-
-    // ── callableMarkIdCardVerified ────────────────────────────────
-    if (uploadedPath != null) {
-      try {
-        await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-            .httpsCallable('callableMarkIdCardVerified',
-                options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
-            .call({'storagePath': uploadedPath});
-      } catch (e) {
-        debugPrint('⚠️ [ForeignReg] markIdCardVerified 실패 (resume로 재시도 가능): $e');
-      }
-    }
-
-    // 임시 파일 정리
-    if (imagePath != null) {
-      try { await File(imagePath).delete(); } catch (_) {}
-    }
-
-    if (!mounted) return;
-    setState(() => _isBusy = false);
-    _goTo(_Step.terms);
+    // [SAFETY] RESUME 전용 — FRESH 신규 가입은 _commitFreshRegistration() 에서 처리
   }
 
   // ============================================================
-  // Step 4: 약관 동의 유효성
+  // finalSetup 유효성 검사 (지역 + 약관)
   // ============================================================
 
-  bool _validateTerms() {
+  bool _validateFinalSetup() {
+    if (widget.role == UserRole.USER && _homeRegion == null) {
+      ToastHelper.showWarning('주로 일할 지역을 선택해주세요');
+      return false;
+    }
     final required = _legalTerms?.activeItems.where((t) => t.isRequired).toList() ?? [];
     final allAgreed = required.every((t) => _consentMap[t.id] == true);
     if (!allAgreed) {
@@ -655,6 +573,228 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
     }
     return true;
   }
+
+  bool get _isFinalSetupComplete {
+    if (widget.role == UserRole.USER && _homeRegion == null) return false;
+    final required = _legalTerms?.activeItems.where((t) => t.isRequired).toList() ?? [];
+    return required.every((t) => _consentMap[t.id] == true);
+  }
+
+  // ================================================================
+  // FRESH 신규 가입 최종 커밋 — finalSetup '가입 완료' 버튼에서 실행
+  //   signUp → Storage → finalizeForeignIdentity → markIdCard
+  //   → koreanName → region → termsConsent → active
+  // ================================================================
+  Future<void> _commitFreshRegistration() async {
+    if (_isBusy) return;
+    setState(() => _isBusy = true);
+
+    // Draft 값 먼저 읽기 (async gap 이전)
+    final rawId = _rawForeignIdCtrl.text.trim().replaceAll(RegExp(r'\D'), '');
+    final legalName = _legalNameCtrl.text.trim();
+    final visaType = _visaTypeCtrl.text.trim();
+    final imagePath = _imagePath;
+    final koreanName = _koreanNameCtrl.text.trim();
+    final phone = _phoneCtrl.text.trim();
+    final role = widget.role;
+
+    final dbgMaskedId = rawId.length >= 8 ? '${rawId.substring(0, 8)}*****' : '(len=${rawId.length})';
+    debugPrint('🔷 [ForeignReg] _commitFreshRegistration 시작 | maskedId=$dbgMaskedId');
+
+    // ──────────────────────────────────────────────────────────────
+    // [B.2] RETRY GUARD: 이전 시도에서 Auth/Firestore pending 이 남아있는지 확인
+    // ──────────────────────────────────────────────────────────────
+    final existingSession = FirebaseAuth.instance.currentUser;
+    bool proceedFresh = true;
+
+    if (existingSession != null) {
+      final retryUid = existingSession.uid;
+      bool isValidPendingRetry = false;
+      String? retryActualStatus;
+      bool retryDocExists = false;
+      try {
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users').doc(retryUid).get();
+        final status = userDoc.data()?['accountStatus'] as String?;
+        retryActualStatus = status;
+        retryDocExists = userDoc.exists;
+        isValidPendingRetry = userDoc.exists && status == 'registration_pending';
+      } catch (fsErr) {
+        debugPrint('❌ [ForeignReg commit] Firestore 상태 조회 실패: $fsErr');
+      }
+
+      debugPrint('🔍 [ForeignReg commit] 기존 세션 | uid=$retryUid | docExists=$retryDocExists | status=$retryActualStatus');
+
+      if (!isValidPendingRetry) {
+        if (!retryDocExists) {
+          // Orphan Auth → signOut 후 신규 진행
+          debugPrint('⚠️ [ForeignReg commit] Orphan Auth 감지 → signOut + 신규 가입');
+          try { await FirebaseAuth.instance.signOut(); } catch (_) {}
+          proceedFresh = true;
+        } else {
+          if (!mounted) return;
+          setState(() => _isBusy = false);
+          if (retryActualStatus == 'active') {
+            ToastHelper.showError('이미 가입된 계정이 확인되었습니다. 로그인 화면에서 다시 시도해 주세요.');
+          } else {
+            ToastHelper.showError('현재 상태에서는 가입을 진행할 수 없습니다. 앱을 재시작해 주세요.');
+          }
+          return;
+        }
+      } else {
+        // 유효한 pending retry → finalize 재시도 (signUp 건너뜀)
+        proceedFresh = false;
+        if (_uploadedStoragePath == null && imagePath != null) {
+          try {
+            final ts = DateTime.now().millisecondsSinceEpoch;
+            final retryPath = 'users/$retryUid/idCard_$ts.jpg';
+            await FirebaseStorage.instance.ref(retryPath).putFile(File(imagePath));
+            _uploadedStoragePath = retryPath;
+          } catch (e) {
+            debugPrint('⚠️ [ForeignReg commit retry] 이미지 업로드 실패: $e');
+          }
+        }
+        final finalizeErr = await AuthService().finalizeForeignIdentity(
+          rawId,
+          legalName: legalName.isNotEmpty ? legalName : null,
+          visaType: visaType.isNotEmpty ? visaType : null,
+        );
+        if (!mounted) return;
+        if (finalizeErr != null) {
+          setState(() => _isBusy = false);
+          ToastHelper.showError(finalizeErr);
+          return;
+        }
+        if (_uploadedStoragePath != null) {
+          try {
+            await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+                .httpsCallable('callableMarkIdCardVerified',
+                    options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
+                .call({'storagePath': _uploadedStoragePath});
+          } catch (e) {
+            debugPrint('⚠️ [ForeignReg commit retry] markIdCardVerified 실패: $e');
+          }
+        }
+        if (imagePath != null) {
+          try { await File(imagePath).delete(); } catch (_) {}
+        }
+        // proceedFresh == false → fall through to region + terms
+      }
+    }
+
+    if (proceedFresh) {
+      if (!mounted) return;
+
+      // ── 사전 중복 체크 ──────────────────────────────────────────
+      try {
+        final exists = await AuthService().precheckForeignIdentity(rawId, role);
+        if (!mounted) return;
+        if (exists) {
+          setState(() => _isBusy = false);
+          ToastHelper.showError('이미 동일 역할로 가입된 외국인등록번호입니다.');
+          return;
+        }
+      } catch (_) { /* 사전 체크 실패 무시 — finalize에서 재확인 */ }
+
+      // ── 계정 생성 ─────────────────────────────────────────────
+      if (!mounted) return;
+      final userProvider = context.read<UserProvider>();
+      final effectiveName = koreanName.isNotEmpty ? koreanName : legalName;
+      final sentinelId = '${rawId.substring(0, 6)}-${rawId[6]}${'*' * 6}';
+
+      debugPrint('🔷 [ForeignReg commit] signUp() | sentinelId=$sentinelId');
+      final success = await userProvider.signUp(
+        username: _usernameCtrl.text.trim(),
+        password: _passwordCtrl.text,
+        name: effectiveName,
+        phone: phone,
+        role: role,
+        gender: null,
+        birthDate: null,
+        residentNumber: null,
+        foreignIdNumber: sentinelId,
+        accountStatus: 'registration_pending',
+        authPhone: phone,
+        phoneVerificationLevel: 'otp_verified',
+        homeRegion: null,
+      );
+      if (!mounted) return;
+      if (!success) {
+        setState(() => _isBusy = false);
+        final err = userProvider.error ?? '';
+        final userMsg = err.contains('permission-denied') || err.contains('PERMISSION_DENIED')
+            ? '정보를 저장하지 못했습니다. 잠시 후 다시 시도해주세요.'
+            : (err.isNotEmpty ? err : '계정 생성에 실패했습니다.');
+        ToastHelper.showError(userMsg);
+        return;
+      }
+
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) {
+        setState(() => _isBusy = false);
+        ToastHelper.showError('계정 정보를 확인할 수 없습니다. 다시 시도해주세요.');
+        return;
+      }
+
+      // ── 이미지 업로드 ────────────────────────────────────────
+      String? uploadedPath;
+      if (imagePath != null) {
+        try {
+          final ts = DateTime.now().millisecondsSinceEpoch;
+          final storagePath = 'users/$uid/idCard_$ts.jpg';
+          await FirebaseStorage.instance.ref(storagePath).putFile(File(imagePath));
+          uploadedPath = storagePath;
+          _uploadedStoragePath = storagePath;
+        } catch (e) {
+          debugPrint('⚠️ [ForeignReg commit] 이미지 업로드 실패 (계속): $e');
+        }
+      }
+
+      // ── finalizeForeignIdentity ──────────────────────────────
+      final finalizeErr = await AuthService().finalizeForeignIdentity(
+        rawId,
+        legalName: legalName.isNotEmpty ? legalName : null,
+        visaType: visaType.isNotEmpty ? visaType : null,
+      );
+      if (!mounted) return;
+      if (finalizeErr != null) {
+        setState(() => _isBusy = false);
+        ToastHelper.showError(finalizeErr);
+        return;
+      }
+
+      // ── callableMarkIdCardVerified ───────────────────────────
+      if (uploadedPath != null) {
+        try {
+          await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableMarkIdCardVerified',
+                  options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
+              .call({'storagePath': uploadedPath});
+        } catch (e) {
+          debugPrint('⚠️ [ForeignReg commit] markIdCardVerified 실패: $e');
+        }
+      }
+
+      // ── 임시 파일 정리 ────────────────────────────────────────
+      if (imagePath != null) {
+        try { await File(imagePath).delete(); } catch (_) {}
+      }
+
+      // ── koreanName 저장 ───────────────────────────────────────
+      if (koreanName.isNotEmpty) {
+        try {
+          await FirebaseFirestore.instance
+              .collection('users').doc(uid).update({'koreanName': koreanName});
+        } catch (e) {
+          debugPrint('⚠️ [ForeignReg commit] koreanName 저장 실패 (치명적 아님): $e');
+        }
+      }
+    }
+
+    // ── region + terms → active (fresh + retry 공통) ─────────────
+    await _finalizeRegistration();
+  }
+
 
   // ============================================================
   // Step 5 (USER) 또는 최종: recordTermsConsent → active
@@ -671,16 +811,21 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       return;
     }
 
-    // homeRegion 업데이트 (USER 전용) — main.dart와 동일한 직접 Firestore 쓰기 패턴
-    if (widget.role == UserRole.USER && _homeRegion != null) {
+    // homeRegion 업데이트 (USER 전용) — hard-fail: 실패 시 terms CF 호출 금지
+    // _validateFinalSetup()에서 homeRegion != null 보장됨 (USER만 진입)
+    if (widget.role == UserRole.USER) {
       try {
         await FirestoreService().updateUserDocument(uid, {'homeRegion': _homeRegion!.toMap()});
       } catch (e) {
-        debugPrint('⚠️ [ForeignReg] homeRegion 업데이트 실패 (계속): $e');
+        debugPrint('❌ [ForeignReg] homeRegion 저장 실패: $e');
+        if (!mounted) return;
+        setState(() => _isBusy = false);
+        ToastHelper.showError('지역 정보를 저장하지 못했습니다.\n잠시 후 다시 시도해주세요.');
+        return; // callableRecordTermsConsent 호출 금지 — registration_pending 유지
       }
     }
 
-    // callableRecordTermsConsent → 4가지 조건 충족 시 CF가 active로 전환
+    // callableRecordTermsConsent → 5가지 조건 충족 시 CF가 active로 전환 (USER: homeRegion 포함)
     final consentRecord = <String, dynamic>{};
     for (final item in (_legalTerms?.activeItems ?? [])) {
       consentRecord[item.id] = {
@@ -759,20 +904,21 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       case _Step.documentScan:
         ToastHelper.showWarning('외국인등록증 사진을 먼저 촬영해주세요');
       case _Step.ocrConfirm:
-        if (_validateOcrConfirm()) await _processRegistration();
-      case _Step.terms:
-        if (!_validateTerms()) return;
-        if (widget.role == UserRole.USER) {
-          _goTo(_Step.homeRegion);
-        } else {
-          await _finalizeRegistration();
+        if (_validateOcrConfirm()) {
+          if (widget.isResume) {
+            await _processRegistration(); // RESUME: finalize → finalSetup
+          } else {
+            _goTo(_Step.finalSetup); // FRESH: 서버 호출 없이 이동
+          }
         }
-      case _Step.homeRegion:
-        if (_homeRegion == null) {
-          ToastHelper.showWarning('주로 일할 지역을 선택해주세요');
-          return;
+      case _Step.finalSetup:
+        if (_validateFinalSetup()) {
+          if (widget.isResume) {
+            await _finalizeRegistration(); // RESUME: region + terms → active
+          } else {
+            await _commitFreshRegistration(); // FRESH: 전체 커밋 → active
+          }
         }
-        await _finalizeRegistration();
     }
   }
 
@@ -792,25 +938,22 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
         if (!didPop) _handleBack();
       },
       child: Scaffold(
-        appBar: AppBar(
-          title: Text(widget.isResume ? '가입 이어서 완료' : '외국인 회원가입'),
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: _handleBack,
-          ),
-        ),
-        body: Column(children: [
-          // 진행 표시줄
-          _buildProgressBar(),
-          // 내용
-          Expanded(
-            child: SingleChildScrollView(
-              controller: _scrollCtrl,
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-              child: _buildCurrentStep(theme),
+        backgroundColor: Colors.white,
+        body: SafeArea(
+          bottom: false,
+          child: Column(children: [
+            // 커스텀 헤더 (내국인 회원가입과 동일한 UI Shell)
+            _buildHeader(),
+            // 내용
+            Expanded(
+              child: SingleChildScrollView(
+                controller: _scrollCtrl,
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+                child: _buildCurrentStep(theme),
+              ),
             ),
-          ),
-        ]),
+          ]),
+        ),
         bottomNavigationBar: SafeArea(
           top: false,
           child: _buildBottomButtons(theme),
@@ -819,21 +962,98 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
     );
   }
 
-  Widget _buildProgressBar() {
-    final double progress;
+  // 현재 스텝에 따른 헤더 부제목
+  String get _stepSubtitle => switch (_step) {
+    _Step.basicInfo    => '기본 정보 입력',
+    _Step.phone        => '휴대폰 인증',
+    _Step.documentScan => '외국인등록증 스캔',
+    _Step.ocrConfirm   => '정보 확인',
+    _Step.finalSetup   => widget.role == UserRole.USER ? '일자리 시작 설정' : '서비스 이용 동의',
+  };
+
+  // 내국인 회원가입과 동일한 커스텀 헤더
+  Widget _buildHeader() {
+    final int total;
+    final int current;
     if (widget.isResume) {
-      // [RESUME MODE] documentScan(0) → ocrConfirm(1) → terms(2) → [homeRegion(3)]
-      final resumeTotal = widget.role == UserRole.USER ? 4 : 3;
-      final resumeCurrent = (_step.index - _Step.documentScan.index).clamp(0, resumeTotal);
-      progress = (resumeCurrent + 1) / resumeTotal;
+      // [RESUME MODE] documentScan(0) → ocrConfirm(1) → finalSetup(2) [3단계, 두 역할 동일]
+      total = 3;
+      current = (_step.index - _Step.documentScan.index).clamp(0, total - 1);
     } else {
-      final total = widget.role == UserRole.USER ? _Step.values.length : _Step.values.length - 1;
-      progress = (_step.index + 1) / total;
+      // [FRESH] basicInfo(0)→phone(1)→documentScan(2)→ocrConfirm(3)→finalSetup(4) [5단계]
+      total = _Step.values.length; // 5
+      current = _step.index;
     }
-    return LinearProgressIndicator(
-      value: progress,
-      backgroundColor: AppColors.grey100,
-      minHeight: 4,
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        ResponsiveHelper.spacing(context, 4),
+        ResponsiveHelper.spacing(context, 6),
+        ResponsiveHelper.spacing(context, 20),
+        ResponsiveHelper.spacing(context, 12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          GestureDetector(
+            onTap: _handleBack,
+            child: Padding(
+              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
+              child: Icon(
+                Icons.arrow_back,
+                color: AppColors.textPrimary,
+                size: ResponsiveHelper.iconSize(context, 22),
+              ),
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+          Padding(
+            padding: EdgeInsets.symmetric(
+                horizontal: ResponsiveHelper.spacing(context, 8)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '회원가입',
+                  style: ResponsiveHelper.titleStyle(context).copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.textPrimary,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                Text(
+                  _stepSubtitle,
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: AppColors.textSecondary),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                // 진행 세그먼트 (내국인 회원가입과 동일한 스타일)
+                Row(
+                  children: List.generate(total * 2 - 1, (i) {
+                    if (i.isOdd) {
+                      return SizedBox(width: ResponsiveHelper.spacing(context, 5));
+                    }
+                    return _buildProgressSegment(i ~/ 2 <= current);
+                  }),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProgressSegment(bool active) {
+    return Expanded(
+      child: Container(
+        height: 3,
+        decoration: BoxDecoration(
+          color: active ? Theme.of(context).primaryColor : AppColors.grey200,
+          borderRadius: BorderRadius.circular(2),
+        ),
+      ),
     );
   }
 
@@ -843,8 +1063,7 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
       _Step.phone        => _buildPhone(theme),
       _Step.documentScan => _buildDocumentScan(theme),
       _Step.ocrConfirm   => _buildOcrConfirm(theme),
-      _Step.terms        => _buildTerms(theme),
-      _Step.homeRegion   => _buildHomeRegion(theme),
+      _Step.finalSetup   => _buildFinalSetup(theme),
     };
   }
 
@@ -859,9 +1078,9 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
         ]),
       );
     }
-    final isLast = _step == _Step.homeRegion ||
-        (_step == _Step.terms && widget.role == UserRole.BUSINESS_ADMIN);
+    final isLast = _step == _Step.finalSetup;
     final isDocScan = _step == _Step.documentScan;
+    final isDisabled = isLast && !_isFinalSetupComplete;
 
     if (isDocScan) {
       // 문서 스캔 단계는 하단 버튼 없음 (직접 촬영/선택 버튼으로 진행)
@@ -869,12 +1088,20 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
       child: SizedBox(
         width: double.infinity,
-        height: 48,
         child: ElevatedButton(
-          onPressed: _onNext,
+          onPressed: isDisabled ? null : _onNext,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: theme.primaryColor,
+            disabledBackgroundColor: AppColors.grey200,
+            foregroundColor: Colors.white,
+            disabledForegroundColor: AppColors.grey400,
+            padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 14)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            elevation: 0,
+          ),
           child: Text(isLast ? '가입 완료' : '다음'),
         ),
       ),
@@ -1211,13 +1438,48 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
 
         const SizedBox(height: 4),
 
-        // 성명 (외국인등록증 기재)
+        // 영문 이름 (외국인등록증 기재)
         _buildOcrField(
           controller: _legalNameCtrl,
-          label: '성명 (외국인등록증 기재)',
+          label: '영문 이름 (외국인등록증 기재)',
           hint: '예: NGUYEN VAN AN',
           failed: _ocrResult?.legalNameFailed ?? true,
-          validator: (v) => (v == null || v.trim().isEmpty) ? '성명을 입력해주세요' : null,
+          validator: (v) => (v == null || v.trim().isEmpty) ? '영문 이름을 입력해주세요' : null,
+        ),
+        // [Phase A.4] OCR 이름 정확도 불확실 시 확인 안내
+        if (_ocrResult != null && _ocrResult!.shouldPromptNameVerification) ...[
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.info_outline, size: 14, color: Colors.orange),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    '카드에 적힌 영문 이름과 동일한지 확인해주세요',
+                    style: const TextStyle(fontSize: 12, color: Colors.orange),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 14),
+
+        // 한글 이름 (선택) — 영문 이름 바로 아래 배치
+        _buildOcrField(
+          controller: _koreanNameCtrl,
+          label: '한글 이름',
+          hint: '한글 이름을 입력해주세요',
+          failed: false,
+          isOptional: true,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '없으면 입력하지 않으셔도 됩니다',
+          style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
         ),
         const SizedBox(height: 14),
 
@@ -1240,39 +1502,17 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
         ),
         const SizedBox(height: 14),
 
-        // 체류자격
+        // 체류자격 (필수)
         _buildOcrField(
           controller: _visaTypeCtrl,
-          label: '체류자격 (선택)',
-          hint: '예: E-9, F-4, H-2',
+          label: '체류자격',
+          hint: '예: F-4',
           failed: false,
-          isOptional: true,
-        ),
-        const SizedBox(height: 14),
-
-        // 체류기간만료일
-        _buildOcrField(
-          controller: _stayExpiryCtrl,
-          label: '체류기간만료일 (선택)',
-          hint: 'YYYY-MM-DD',
-          failed: false,
-          isOptional: true,
-        ),
-        const SizedBox(height: 14),
-
-        // 앱 표시용 이름 (선택)
-        _buildLabel('앱 표시 이름 (선택)', Icons.badge_outlined),
-        CommonWidgets.textField(
-          context: context,
-          controller: _koreanNameCtrl,
-          label: '앱 표시 이름',
-          hint: '한국어 이름이 있다면 입력해주세요 (예: 응우옌 반 안)',
-          icon: Icons.badge_outlined,
-        ),
-        const SizedBox(height: 4),
-        Text(
-          '앱 내 표시에만 사용됩니다. 급여 계좌와 계약서에는 외국인등록증 성명이 우선 사용됩니다.',
-          style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
+          isOptional: false,
+          validator: (v) {
+            if (v == null || v.trim().isEmpty) return '체류자격을 입력해주세요';
+            return null;
+          },
         ),
         const SizedBox(height: 20),
       ]),
@@ -1333,125 +1573,192 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
     ]);
   }
 
-  Widget _buildTerms(ThemeData theme) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      _buildStepHeader('서비스 이용 동의', '서비스 이용을 위해 약관에 동의해주세요'),
-      const SizedBox(height: 20),
+  // ============================================================
+  // finalSetup: 지역(USER) + 약관 동의 — 내국인 가입과 동일 구조
+  // ============================================================
 
-      if (_termsLoading) ...[
-        const Center(child: CircularProgressIndicator()),
-      ] else if (_legalTerms == null) ...[
-        const Text('약관 정보를 불러올 수 없습니다.'),
-      ] else ...[
-        // 전체 동의 버튼
-        GestureDetector(
-          onTap: () {
-            final allChecked = _consentMap.values.every((v) => v);
-            setState(() {
-              for (final key in _consentMap.keys) {
-                _consentMap[key] = !allChecked;
-              }
-            });
-          },
-          child: Container(
+  Widget _buildFinalSetup(ThemeData theme) {
+    final title = widget.role == UserRole.USER ? '일자리 시작 설정' : '서비스 이용 동의';
+    final subtitle = widget.role == UserRole.USER
+        ? '지역과 약관을 설정하면 가입이 완료됩니다'
+        : '서비스 이용을 위해 약관에 동의해주세요';
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _buildStepHeader(title, subtitle),
+      const SizedBox(height: 24),
+
+      // 지역 선택 (USER 전용)
+      if (widget.role == UserRole.USER) ...[
+        Text('주로 일할 지역',
+            style: ResponsiveHelper.smallStyle(context,
+                color: AppColors.grey600, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 8),
+        if (_homeRegion != null)
+          Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: AppColors.grey50,
-              borderRadius: BorderRadius.circular(10),
+              color: AppColors.successBg,
+              borderRadius: BorderRadius.circular(12),
             ),
             child: Row(children: [
-              Checkbox(
-                value: _consentMap.isNotEmpty && _consentMap.values.every((v) => v),
-                tristate: true,
-                onChanged: (v) => setState(() {
-                  for (final key in _consentMap.keys) { _consentMap[key] = v ?? false; }
-                }),
+              const Icon(Icons.location_on, color: AppColors.success),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(_homeRegion!.toString(),
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
               ),
-              const Expanded(child: Text('전체 동의', style: TextStyle(fontWeight: FontWeight.w600))),
+              TextButton(onPressed: _selectRegion, child: const Text('변경')),
             ]),
-          ),
-        ),
-        const Divider(height: 20),
-
-        for (final item in _legalTerms!.activeItems) ...[
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: Checkbox(
-              value: _consentMap[item.id] ?? false,
-              onChanged: (v) => setState(() => _consentMap[item.id] = v ?? false),
+          )
+        else
+          GestureDetector(
+            onTap: _selectRegion,
+            child: Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                border: Border.all(color: AppColors.grey200),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(children: [
+                Icon(Icons.map_outlined, color: AppColors.grey400),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text('지역을 선택해주세요',
+                      style: ResponsiveHelper.bodyStyle(context,
+                          color: AppColors.grey400)),
+                ),
+                Icon(Icons.chevron_right, color: AppColors.grey400),
+              ]),
             ),
-            title: Text(
-              '${item.isRequired ? '[필수] ' : '[선택] '}${item.title}',
-              style: ResponsiveHelper.bodyStyle(context),
-            ),
-            trailing: item.content.isNotEmpty
-                ? TextButton(
-                    onPressed: () async {
-                      _viewedIds.add(item.id);
-                      // 약관 내용 바텀시트 표시
-                      await DialogHelper.showSheet(
-                        context,
-                        isScrollControlled: true,
-                        builder: (ctx) => DraggableScrollableSheet(
-                          initialChildSize: 0.7,
-                          maxChildSize: 0.95,
-                          minChildSize: 0.4,
-                          expand: false,
-                          builder: (_, scrollCtrl) => Padding(
-                            padding: const EdgeInsets.all(20),
-                            child: SingleChildScrollView(
-                              controller: scrollCtrl,
-                              child: Column(children: [
-                                Text(item.title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                                const SizedBox(height: 16),
-                                Text(item.content),
-                              ]),
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                    child: const Text('보기'),
-                  )
-                : null,
           ),
-        ],
+        Text('가입 후 MY에서 언제든 변경할 수 있어요.',
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
+        const SizedBox(height: 24),
       ],
+
+      // 약관 동의 섹션
+      if (_termsLoading)
+        const Center(child: CircularProgressIndicator())
+      else if (_legalTerms == null)
+        Text('약관 정보를 불러올 수 없습니다.',
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500))
+      else
+        _buildConsentSection(),
     ]);
   }
 
-  Widget _buildHomeRegion(ThemeData theme) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      _buildStepHeader('주로 일할 지역', '가까운 일자리를 먼저 보여드릴게요'),
-      const SizedBox(height: 20),
+  /// 내국인 가입의 _buildConsentSection()과 동일한 로직
+  Widget _buildConsentSection() {
+    final items = _legalTerms!.activeItems;
+    final allAgreed = items.isNotEmpty && items.every((t) => _consentMap[t.id] == true);
 
-      if (_homeRegion != null)
-        Container(
-          padding: const EdgeInsets.all(16),
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // 전체 동의 버튼
+      GestureDetector(
+        onTap: () async {
+          final alreadyAll = items.every((t) => _consentMap[t.id] == true);
+          if (!alreadyAll) {
+            // 아직 동의 안 한 항목에 순차적으로 약관 뷰어 열기
+            final unagreed = items.where((t) => _consentMap[t.id] != true).toList();
+            for (final item in unagreed) {
+              await _showTermsDetail(item);
+              if (!mounted) return;
+            }
+          } else {
+            setState(() {
+              for (final key in _consentMap.keys) { _consentMap[key] = false; }
+            });
+          }
+        },
+        child: Container(
+          padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: AppColors.successBg,
-            borderRadius: BorderRadius.circular(12),
+            color: AppColors.grey50,
+            borderRadius: BorderRadius.circular(10),
           ),
           child: Row(children: [
-            const Icon(Icons.location_on, color: AppColors.success),
-            const SizedBox(width: 10),
-            Expanded(child: Text(_homeRegion!.toString(), style: const TextStyle(fontWeight: FontWeight.w600))),
-            TextButton(
-              onPressed: _selectRegion,
-              child: const Text('변경'),
+            Checkbox(
+              value: allAgreed ? true : (items.any((t) => _consentMap[t.id] == true) ? null : false),
+              tristate: true,
+              onChanged: (v) {
+                if (v == true) {
+                  // 전체 동의: 각 항목 뷰어 순차 오픈
+                  final unagreed = items.where((t) => _consentMap[t.id] != true).toList();
+                  if (unagreed.isEmpty) return;
+                  Future.microtask(() async {
+                    for (final item in unagreed) {
+                      await _showTermsDetail(item);
+                      if (!mounted) return;
+                    }
+                  });
+                } else {
+                  setState(() {
+                    for (final key in _consentMap.keys) { _consentMap[key] = false; }
+                    _viewedTermIds.clear();
+                  });
+                }
+              },
             ),
+            const Expanded(child: Text('전체 동의', style: TextStyle(fontWeight: FontWeight.w600))),
           ]),
-        )
-      else
-        OutlinedButton.icon(
-          onPressed: _selectRegion,
-          icon: const Icon(Icons.location_on_outlined),
-          label: const Text('지역 선택하기'),
-          style: OutlinedButton.styleFrom(
-            minimumSize: const Size(double.infinity, 48),
-          ),
         ),
+      ),
+      const Divider(height: 20),
+
+      for (final item in items)
+        _buildConsentRow(item),
     ]);
+  }
+
+  Widget _buildConsentRow(LegalTermsItem item) {
+    final theme = Theme.of(context);
+    final viewed = _viewedTermIds.contains(item.id);
+    final agreed = _consentMap[item.id] == true;
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Checkbox(
+        value: agreed,
+        onChanged: (v) {
+          if (v == true && !viewed) {
+            // 약관을 보지 않고 체크 → 뷰어 오픈 후 동의
+            _showTermsDetail(item);
+          } else {
+            setState(() => _consentMap[item.id] = v ?? false);
+          }
+        },
+      ),
+      title: Text(
+        '${item.isRequired ? '[필수] ' : '[선택] '}${item.title}',
+        style: ResponsiveHelper.bodyStyle(context),
+      ),
+      trailing: item.content.isNotEmpty
+          ? TextButton(
+              onPressed: () => _showTermsDetail(item),
+              child: Text(
+                viewed ? '다시보기' : '보기 *',
+                style: TextStyle(
+                  color: viewed ? AppColors.grey400 : theme.primaryColor,
+                  fontWeight: viewed ? FontWeight.normal : FontWeight.bold,
+                ),
+              ),
+            )
+          : null,
+    );
+  }
+
+  Future<void> _showTermsDetail(LegalTermsItem item) async {
+    _viewedTermIds.add(item.id);
+    if (mounted) setState(() {});
+    final agreed = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => TermsViewerScreen(item: item),
+      ),
+    );
+    if (agreed == true && mounted) {
+      setState(() => _consentMap[item.id] = true);
+    }
   }
 
   Future<void> _selectRegion() async {
@@ -1471,9 +1778,19 @@ class _ForeignRegisterScreenState extends State<ForeignRegisterScreen> {
 
   Widget _buildStepHeader(String title, String subtitle) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+      Text(
+        title,
+        style: ResponsiveHelper.bodyStyle(context).copyWith(
+          fontSize: 20,
+          fontWeight: FontWeight.bold,
+          color: AppColors.textPrimary,
+        ),
+      ),
       const SizedBox(height: 6),
-      Text(subtitle, style: const TextStyle(color: AppColors.grey500, fontSize: 14)),
+      Text(
+        subtitle,
+        style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
+      ),
     ]);
   }
 

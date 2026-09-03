@@ -78,7 +78,10 @@ class AttendanceBadgeHelper {
     final bool isOvertime;
     if (wageDetail != null) {
       effectiveIsEarlyArrival = wageDetail.earlyArrivalMinutes > 0;
-      isOvertime = (wageDetail.overtimeMinutes - wageDetail.earlyArrivalMinutes) > 0;
+      // Phase 7.1: canonical fields 있으면 contractExcessMinutes 기준, legacy는 기존
+      isOvertime = (wageDetail.hasCanonicalExtraWorkBreakdown)
+          ? (wageDetail.contractExcessMinutes ?? 0) > 0
+          : (wageDetail.overtimeMinutes - wageDetail.earlyArrivalMinutes) > 0;
     } else {
       effectiveIsEarlyArrival = isEarlyArrival;
       isOvertime = AttendanceStatusHelper.isOvertime(checkOut, effEnd,

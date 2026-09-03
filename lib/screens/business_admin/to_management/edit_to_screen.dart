@@ -13,6 +13,7 @@ import '../../../models/core/application_model.dart';
 import '../../../services/firestore_service.dart';
 
 // Utils
+import '../../../utils/format_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/navigation_helper.dart';
 import '../../../utils/responsive_helper.dart';
@@ -25,7 +26,6 @@ import '../../../widgets/dialogs/styled_dialog.dart';
 // 공통 위젯
 import 'widgets/to_widgets.dart';
 import '../../../theme/app_colors.dart';
-import '../../../widgets/common/gradient_scaffold.dart';
 import '../../../widgets/common/loading_widget.dart';
 
 class AdminEditTOScreen extends StatefulWidget {
@@ -49,6 +49,9 @@ class AdminEditTOScreen extends StatefulWidget {
 class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   final _formKey = GlobalKey<FormState>();
   final _firestoreService = FirestoreService();
+
+  // 섹션 스크롤용 GlobalKey (scroll-to-error)
+  final _workDetailSectionKey = GlobalKey();
 
   late TextEditingController _titleController;
   late TextEditingController _descriptionController;
@@ -92,7 +95,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       if (slot?.visibleFrom != null) {
         _publishMode = 'scheduled';
         final vf = slot!.visibleFrom!;
-        final diff = slot.date.difference(DateTime(vf.year, vf.month, vf.day)).inDays;
+        final diff = FormatHelper.toKstDate(slot.date).difference(FormatHelper.toKstDate(vf)).inDays;
         _publishDaysBefore = diff.clamp(1, 14);
         final vfKst = vf.toUtc().add(const Duration(hours: 9));
         _publishTime = '${vfKst.hour.toString().padLeft(2, '0')}:${vfKst.minute.toString().padLeft(2, '0')}';
@@ -203,6 +206,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     // 공통 업무상세 검증 (슬롯/TO 모두)
     if (_workDetails.isEmpty) {
       ToastHelper.showError('최소 1개의 업무를 추가해주세요');
+      _scrollToSection(_workDetailSectionKey);
       return;
     }
     if (_workDetails.any((w) => w.wage <= 0)) {
@@ -359,8 +363,11 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       if (shouldPublish) {
         try {
           await _firestoreService.publishTO(widget.to.id);
-        } on Exception catch (e) {
-          if (e.toString().contains('MAX_ACTIVE_TO_LIMIT')) {
+        } on FirebaseFunctionsException catch (e) {
+          // [5D.2A] failed-precondition → 서버 메시지 그대로 노출 (readiness 실패 등)
+          if (e.code == 'failed-precondition' && (e.message?.isNotEmpty ?? false)) {
+            if (mounted) ToastHelper.showError(e.message!);
+          } else if (e.toString().contains('MAX_ACTIVE_TO_LIMIT')) {
             final parts = e.toString().split(':');
             final limitStr = parts.length >= 2 ? parts.last : '4';
             if (mounted) ToastHelper.showError('진행 중인 공고가 $limitStr개를 초과할 수 없습니다');
@@ -413,17 +420,20 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
       if (!mounted) return;
       if (slotSyncFailed) {
-        ToastHelper.showWarning('TO가 수정되었으나 슬롯 동기화에 실패했습니다. 다시 저장해 주세요.');
+        ToastHelper.showWarning('공고가 수정되었으나 슬롯 동기화에 실패했습니다. 다시 저장해 주세요.');
         // 슬롯 동기화 실패 시 화면에 남아 재저장 가능하도록 팝하지 않음
         setState(() => _hasChanges = true);
       } else {
-        ToastHelper.showSuccess('TO가 수정되었습니다');
+        ToastHelper.showSuccess('공고가 수정되었습니다');
         NavigationHelper.popWithChange(context);
       }
     } catch (e) {
       debugPrint('❌ TO 수정 실패: $e');
-      if (mounted) ToastHelper.showError('수정에 실패했습니다');
-      if (mounted) setState(() => _hasChanges = true);
+      if (mounted) {
+        final msg = _cfErrorMessage(e) ?? '수정에 실패했습니다';
+        ToastHelper.showError(msg);
+        setState(() => _hasChanges = true);
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -467,16 +477,19 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         if (!await _applyTODraftTransition(visibleFrom)) return;
       }
 
-      await _firestoreService.updateSlotFull(
-        toId: widget.to.id,
-        slotId: slot.id,
-        workDetails: updatedWorkDetails,
-        applicationDeadline: slotDeadline,
-        title: _slotTitleController.text.trim(),
-        oldTotalRequired: slot.totalRequired,
-        visibleFrom: visibleFrom,
-        clearVisibleFrom: clearVisibleFrom,
-      );
+      // [4H.0C-SINGLE-GUARD] updateSlotFull → callableUpdateSlotWorkDetails (서버 identity guard)
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableUpdateSlotWorkDetails',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+      await callable.call({
+        'toId': widget.to.id,
+        'slotId': slot.id,
+        'workDetails': WorkDetailData.listToCFPayload(updatedWorkDetails),
+        'applicationDeadlineMs': slotDeadline?.millisecondsSinceEpoch,
+        'title': _slotTitleController.text.trim(),
+        'visibleFromMs': visibleFrom?.millisecondsSinceEpoch,
+        'clearVisibleFrom': clearVisibleFrom,
+      });
 
       _firestoreService.clearCache(toId: widget.to.id);
       if (!mounted) return;
@@ -484,7 +497,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       NavigationHelper.popWithChange(context);
     } catch (e) {
       debugPrint('❌ 슬롯 수정 실패: $e');
-      if (mounted) ToastHelper.showError('수정에 실패했습니다');
+      if (mounted) ToastHelper.showError(_cfErrorMessage(e) ?? '수정에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -533,8 +546,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           (m) => confirmedStatuses.contains(m['status']));
       if (!hasConfirmed) return true; // 미확정 근무자 없음 — 경고 불필요
     } catch (e) {
-      debugPrint('⚠️ WAGE-GUARD 쿼리 실패 (진행 허용): $e');
-      return true; // 조회 실패 시 강제 차단 금지
+      // [4H.0B-WAGE-01] FAIL CLOSE — 조회 실패 시 저장 차단 (SINGLE/BATCH 서버 가드 없으므로)
+      debugPrint('⚠️ WAGE-GUARD 쿼리 실패 (저장 차단): $e');
+      if (mounted) {
+        ToastHelper.showError('지원자 상태를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.');
+      }
+      return false;
     }
 
     if (!mounted) return false;
@@ -569,6 +586,32 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     try {
       final slots = widget.batchSlots!;
 
+      // [4H.0B-BATCH-01] 배치 저장 전 명시적 확인 — 기존 업무 구성이 교체됨을 고지
+      final confirmed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => StyledDialog(
+          title: '${slots.length}개 날짜 일괄 적용',
+          icon: Icons.edit_calendar_outlined,
+          headerColor: AppColors.info,
+          content: Text(
+            '선택한 ${slots.length}개 날짜의 기존 업무 설정이 현재 설정으로 교체됩니다.\n\n'
+            '날짜별로 다르게 설정된 업무·시간·급여도 동일하게 변경됩니다.',
+            style: ResponsiveHelper.bodyStyle(ctx, color: AppColors.grey700),
+          ),
+          actions: [
+            StyledDialogButton.cancel(
+              onPressed: () => Navigator.of(ctx).pop(false),
+            ),
+            StyledDialogButton.primary(
+              text: '일괄 적용',
+              onPressed: () => Navigator.of(ctx).pop(true),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || confirmed != true) return;
+
       // 공개 설정을 명시적으로 변경했을 때만 draft TO 자동 전환 (이중 호출 방지를 위해 결과 캐싱)
       if (_slotPublishChanged && widget.to.publishMode == 'draft') {
         final visibleFroms = slots.map((s) => _calcSlotVisibleFrom(s.date).$1).toList();
@@ -579,31 +622,9 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         if (!await _applyTODraftTransition(anyImmediate ? null : earliestVisibleFrom)) return;
       }
 
-      final firestore = FirebaseFirestore.instance;
-      const kMaxBatchOps = 499;
-      var currentBatch = firestore.batch();
-      int currentBatchOps = 0;
-      final allBatches = <WriteBatch>[];
-      int totalRequiredDelta = 0;
-
-      // [V7-FIX] 동시 편집 방지: 슬롯 workDetails를 Firestore에서 신선 조회해 정확한 delta 계산
-      //   스크린 로드 이후 다른 관리자가 같은 슬롯을 수정하면 로컬 totalRequired가 스테일해짐.
-      final freshSnaps = await Future.wait(
-        slots.map((s) => firestore
-            .collection('tos').doc(widget.to.id)
-            .collection('slots').doc(s.id)
-            .get(const GetOptions(source: Source.server))),
-      );
-      if (!mounted) return;
-      final freshSlotRequired = <String, int>{};
-      for (final snap in freshSnaps) {
-        if (snap.exists) {
-          final details = (snap.data()?['workDetails'] as List? ?? []);
-          freshSlotRequired[snap.id] = details.fold<int>(
-            0, (acc, d) => acc + ((d as Map)['requiredCount'] as int? ?? 0));
-        }
-      }
-
+      // [4H.0C-BATCH-GUARD] WriteBatch → callableUpdateSlotWorkDetails (서버 identity guard)
+      // 서버에서 isClosed / duplicate ID / ACTIVE 지원자 검증 후 원자적으로 저장.
+      final batchPayload = <Map<String, dynamic>>[];
       for (final slot in slots) {
         final updatedWorkDetails = _workDetails.map((work) {
           final parts = work.startTime.split(':');
@@ -624,57 +645,24 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
               .fold<DateTime?>(null, (earliest, dt) =>
                   earliest == null || dt.isBefore(earliest) ? dt : earliest);
         }
-
         final (visibleFrom, clearVisibleFrom) = _calcSlotVisibleFrom(slot.date);
-        final newTotalRequired = updatedWorkDetails.fold<int>(0, (s, d) => s + d.requiredCount);
 
-        final slotRef = firestore
-            .collection('tos').doc(widget.to.id)
-            .collection('slots').doc(slot.id);
-
-        // 500-op/batch 제한 방어: 499개 초과 시 현재 배치를 저장하고 새 배치 시작
-        if (currentBatchOps >= kMaxBatchOps) {
-          allBatches.add(currentBatch);
-          currentBatch = firestore.batch();
-          currentBatchOps = 0;
-        }
-        currentBatch.update(slotRef, {
-          'workDetails': WorkDetailData.listToFirestore(updatedWorkDetails),
-          'totalRequired': newTotalRequired,
-          'applicationDeadline': slotDeadline != null
-              ? Timestamp.fromDate(slotDeadline.toUtc())
-              : FieldValue.delete(),
-          if (clearVisibleFrom) 'visibleFrom': FieldValue.delete()
-          else if (visibleFrom != null) 'visibleFrom': Timestamp.fromDate(visibleFrom.toUtc()),
+        batchPayload.add({
+          'slotId': slot.id,
+          'workDetails': WorkDetailData.listToCFPayload(updatedWorkDetails),
+          'applicationDeadlineMs': slotDeadline?.millisecondsSinceEpoch,
+          'visibleFromMs': visibleFrom?.millisecondsSinceEpoch,
+          'clearVisibleFrom': clearVisibleFrom,
         });
-        currentBatchOps++;
-
-        final currentRequired = freshSlotRequired[slot.id] ?? slot.totalRequired;
-        if (currentRequired != newTotalRequired) {
-          totalRequiredDelta += newTotalRequired - currentRequired;
-        }
       }
 
-      allBatches.add(currentBatch);
-      for (final b in allBatches) {
-        await b.commit();
-      }
-
-      // [CF-MIGRATION 2026-08-10] 클라이언트 FieldValue.increment → CF 전면 재계산으로 교체
-      // 경합 조건(동시 편집)에서 delta 누락 없이 항상 정확한 totalRequired 보장
-      if (totalRequiredDelta != 0) {
-        try {
-          await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-              .httpsCallable(
-                'callableRecalcToTotalRequired',
-                options: HttpsCallableOptions(timeout: const Duration(seconds: 30)),
-              )
-              .call({'businessId': widget.to.businessId, 'toId': widget.to.id});
-        } catch (e) {
-          // 재계산 실패는 슬롯 수정 자체에 영향 없음 — 경고만 출력
-          debugPrint('⚠️ totalRequired 재계산 CF 실패 (슬롯 수정은 완료): $e');
-        }
-      }
+      final batchCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableUpdateSlotWorkDetails',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 60)));
+      await batchCallable.call({
+        'toId': widget.to.id,
+        'batchUpdates': batchPayload,
+      });
 
       _firestoreService.clearCache(toId: widget.to.id);
       if (!mounted) return;
@@ -682,7 +670,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       NavigationHelper.popWithChange(context);
     } catch (e) {
       debugPrint('❌ 일괄 슬롯 수정 실패: $e');
-      if (mounted) ToastHelper.showError('수정에 실패했습니다');
+      if (mounted) ToastHelper.showError(_cfErrorMessage(e) ?? '수정에 실패했습니다');
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -698,6 +686,13 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       businessWorkTypes: _businessWorkTypes,
     );
     if (result != null && mounted) {
+      // [4H.0C-DUP-01] 클라이언트 duplicate composite ID 검증
+      final candidateId =
+          '${result.workType!}_${result.startTime!}_${result.endTime!}';
+      if (_workDetails.any((w) => w.id == candidateId)) {
+        ToastHelper.showError('같은 업무 유형과 근무 시간의 업무가 이미 있습니다.');
+        return;
+      }
       setState(() {
         _hasChanges = true; // [B-4] workDetails 변경 감지
         _workDetails.add(WorkDetailData(
@@ -733,6 +728,15 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       businessWorkTypes: _businessWorkTypes,
     );
     if (result != null && mounted) {
+      // [4H.0C-DUP-02] 클라이언트 duplicate composite ID 검증 (자신 제외)
+      final candidateWorkType = (result['workType'] as String?) ?? work.workType;
+      final candidateStart = (result['startTime'] as String?) ?? work.startTime;
+      final candidateEnd = (result['endTime'] as String?) ?? work.endTime;
+      final candidateId = '${candidateWorkType}_${candidateStart}_$candidateEnd';
+      if (_workDetails.where((w) => w != work).any((w) => w.id == candidateId)) {
+        ToastHelper.showError('같은 업무 유형과 근무 시간의 업무가 이미 있습니다.');
+        return;
+      }
       final index = _workDetails.indexOf(work);
       if (index != -1) {
         setState(() {
@@ -790,14 +794,25 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             : '공고 수정';
 
     if (_isLoading) {
-      return GradientScaffold(
-        title: appBarTitle,
+      return Scaffold(
+        backgroundColor: Colors.white,
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          surfaceTintColor: Colors.transparent,
+          title: Text(appBarTitle,
+              style: ResponsiveHelper.subtitleStyle(context,
+                  fontWeight: FontWeight.bold)),
+        ),
         body: const LoadingWidget(),
       );
     }
 
     return PopScope(
-      canPop: !_hasChanges,
+      // [F-01-4 수정] 저장 진행 중에는 뒤로가기 차단
+      // _saveChanges()에서 _hasChanges=false를 즉시 설정하므로 기존 canPop:!_hasChanges만으로는
+      // _isSaving=true인 동안도 canPop=true가 되어 Firestore 작업 중 화면 이탈 허용됨
+      canPop: !_hasChanges && !_isSaving,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
         final nav = Navigator.of(context);
@@ -811,8 +826,31 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         );
         if (leave && mounted) nav.pop();
       },
-      child: GradientScaffold(
-        title: appBarTitle,
+      child: Scaffold(
+        backgroundColor: Colors.grey.shade50,
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          surfaceTintColor: Colors.transparent,
+          title: Text(appBarTitle,
+              style: ResponsiveHelper.subtitleStyle(context,
+                  fontWeight: FontWeight.bold)),
+        ),
+        bottomNavigationBar: SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              ResponsiveHelper.spacing(context, 16),
+              ResponsiveHelper.spacing(context, 8),
+              ResponsiveHelper.spacing(context, 16),
+              ResponsiveHelper.spacing(context, 12),
+            ),
+            child: TOActionButton.save(
+              onPressed: _isSaving ? null : _saveChanges,
+              isLoading: _isSaving,
+            ),
+          ),
+        ),
         body: Form(
           key: _formKey,
           child: ListView(
@@ -835,13 +873,26 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                   rangeEnd: widget.to.rangeEnd,
                   displayWorkDays: widget.to.workDays,
                   contractPeriodType: widget.to.contractPeriodType,
+                  workStartAvailableFrom: widget.to.workStartAvailableFrom,
+                  workStartAvailableUntil: widget.to.workStartAvailableUntil,
                 ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                Padding(
+                  padding: EdgeInsets.only(
+                      left: ResponsiveHelper.spacing(context, 4),
+                      bottom: ResponsiveHelper.spacing(context, 4)),
+                  child: Text(
+                    '날짜·근무요일은 공고 생성 후 변경할 수 없습니다',
+                    style: ResponsiveHelper.smallStyle(context,
+                        color: AppColors.grey500),
+                  ),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 TOTitleSection(titleController: _titleController),
                 SizedBox(height: ResponsiveHelper.spacing(context, 12)),
               ],
 
               TOWorkDetailsSection(
+                key: _workDetailSectionKey,
                 workDetailData: _workDetails,
                 onAddWork: _showAddWorkDialog,
                 onEditWorkData: _showEditWorkDialog,
@@ -915,11 +966,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
                 SizedBox(height: ResponsiveHelper.spacing(context, 20)),
               ],
 
-              TOActionButton.save(
-                onPressed: _isSaving ? null : _saveChanges,
-                isLoading: _isSaving,
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 40)),
+              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
             ],
           ),
         ),
@@ -940,7 +987,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '공고 제목',
+            '이 날짜의 공고 제목',
             style: ResponsiveHelper.subtitleStyle(context)
                 .copyWith(fontWeight: FontWeight.bold),
           ),
@@ -972,29 +1019,57 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     );
   }
 
+  // ============================================================
+  // 유틸리티 메서드
+  // ============================================================
+
+  /// GlobalKey로 등록된 섹션으로 자동 스크롤
+  void _scrollToSection(GlobalKey key) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = key.currentContext;
+      if (ctx == null) return;
+      Scrollable.ensureVisible(ctx,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeInOut,
+          alignment: 0.1);
+    });
+  }
+
+  /// FirebaseFunctionsException에서 사용자에게 표시할 메시지 추출.
+  /// 안전한 코드('failed-precondition', 'invalid-argument', 'not-found')만 노출.
+  String? _cfErrorMessage(Object e) {
+    if (e is FirebaseFunctionsException) {
+      const safeCodes = ['failed-precondition', 'invalid-argument', 'not-found'];
+      if (safeCodes.contains(e.code) && (e.message?.isNotEmpty ?? false)) {
+        return e.message;
+      }
+    }
+    return null;
+  }
+
   Widget _buildBatchInfoBanner(BuildContext context) {
     final slots = widget.batchSlots!;
     final dateLabels = slots.map((s) => s.formattedDate).join(', ');
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
       decoration: BoxDecoration(
-        color: AppColors.warningBg,
+        color: AppColors.infoBg,
         borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 10)),
-        border: Border.all(color: AppColors.warningLight),
+        border: Border.all(color: AppColors.infoLight),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.info_outline,
+              Icon(Icons.edit_calendar_outlined,
                   size: ResponsiveHelper.iconSize(context, 16),
-                  color: AppColors.warningDark),
+                  color: AppColors.infoDark),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Text(
                 '${slots.length}개 날짜 일괄 수정',
                 style: ResponsiveHelper.smallStyle(context,
-                        color: AppColors.warningDark)
+                        color: AppColors.infoDark)
                     .copyWith(fontWeight: FontWeight.bold),
               ),
             ],
@@ -1003,7 +1078,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           Text(
             '선택한 모든 날짜에 동일하게 적용됩니다.\n$dateLabels',
             style: ResponsiveHelper.smallStyle(context,
-                color: AppColors.warningDark),
+                color: AppColors.infoDark),
           ),
         ],
       ),
@@ -1018,10 +1093,14 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     final h = int.tryParse(parts[0]);
     final m = int.tryParse(parts[1]);
     if (h == null || m == null) return (null, true);
-    var vf = DateTime(
-      slotDate.year, slotDate.month, slotDate.day, h, m,
+    // [TZ-02 FIX] DateTime.utc()로 KST→UTC 명시 변환 — TZ-01(updateSlotsPublishSettings)과 동일 패턴
+    // DateTime(y,m,d,h,m)은 기기 로컬 타임존 기준 → UTC 시뮬레이터에서 9시간 오차
+    // DateTime.utc(y,m,d,h-9,m)은 "KST h시"를 UTC로 직접 표현 (Dart가 언더플로 자동 처리)
+    var vf = DateTime.utc(
+      slotDate.year, slotDate.month, slotDate.day, h - 9, m,
     ).subtract(Duration(days: _publishDaysBefore));
-    if (vf.isBefore(DateTime.now())) {
+    // isBefore 체크: UX 안내 전용 (실제 공개는 CF 서버 시간 기준)
+    if (vf.isBefore(DateTime.now().toUtc())) {
       ToastHelper.showInfo('공개 예정 시간이 지나 즉시 공개로 전환됩니다');
       return (null, true);
     }

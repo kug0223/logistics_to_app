@@ -190,6 +190,11 @@ class BusinessModel {
   /// null이면 AttendanceRules.defaults() 로 폴백
   final AttendanceRules? attendanceRules;
 
+  // ── 사업자 서류 ────────────────────────────────────────────
+  /// 사업자등록증 이미지 URL (business-owned, 신규 등록 필수)
+  /// businesses/{id}/businessLicenseImageUrl 경로 기준
+  final String? businessLicenseImageUrl;
+
   bool get isDeactivated => deactivatedAt != null;
 
   BusinessModel({
@@ -244,6 +249,7 @@ class BusinessModel {
     this.sealType = 'stamp',
     this.deactivatedAt,
     this.attendanceRules,
+    this.businessLicenseImageUrl,
   }) : adminIds = (adminIds != null && adminIds.isNotEmpty)
            ? adminIds
            : [ownerId];
@@ -316,6 +322,7 @@ class BusinessModel {
           ? AttendanceRules.fromMap(
               Map<String, dynamic>.from(map['attendanceRules'] as Map))
           : null,
+      businessLicenseImageUrl: map['businessLicenseImageUrl'] as String?,
     );
   }
   factory BusinessModel.fromFirestore(DocumentSnapshot doc) {
@@ -389,6 +396,7 @@ class BusinessModel {
       'sealType': sealType,
       'deactivatedAt': deactivatedAt != null ? Timestamp.fromDate(deactivatedAt!) : null,
       if (attendanceRules != null) 'attendanceRules': attendanceRules!.toMap(),
+      if (businessLicenseImageUrl != null) 'businessLicenseImageUrl': businessLicenseImageUrl,
     };
   }
   String get formattedBusinessNumber {
@@ -449,6 +457,8 @@ class BusinessModel {
     DateTime? deactivatedAt,
     bool clearDeactivatedAt = false,
     AttendanceRules? attendanceRules,
+    String? businessLicenseImageUrl,
+    bool clearBusinessLicenseImageUrl = false,
   }) {
     return BusinessModel(
       id: id ?? this.id,
@@ -497,6 +507,9 @@ class BusinessModel {
       beaconRssiThreshold: beaconRssiThreshold ?? this.beaconRssiThreshold,
       deactivatedAt: clearDeactivatedAt ? null : (deactivatedAt ?? this.deactivatedAt),
       attendanceRules: attendanceRules ?? this.attendanceRules,
+      businessLicenseImageUrl: clearBusinessLicenseImageUrl
+          ? null
+          : (businessLicenseImageUrl ?? this.businessLicenseImageUrl),
     );
   }
 

@@ -54,6 +54,12 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      // [AUDIT.2-L001] screen-level guard — Settings 메뉴 외 직접 진입 경로 방어 (OWNER-only 화면)
+      final up = context.read<UserProvider>();
+      if (!(up.currentUser?.isBusinessAdmin == true)) {
+        Navigator.of(context).pop();
+        return;
+      }
       _load();
     });
   }
@@ -1273,6 +1279,9 @@ class _PermissionToggleList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // [AUDIT.2R1] canCancelTransfer는 canManageWage 하위 권한 (MODEL B)
+    // canManageWage=false일 때 canCancelTransfer toggle 비활성화
+    final cancelTransferDisabled = !permissions.canManageWage;
     final items = [
       (
         Icons.campaign_outlined,
@@ -1293,7 +1302,10 @@ class _PermissionToggleList extends StatelessWidget {
         '급여 관리',
         '급여 확인·정산',
         permissions.canManageWage,
-        (v) => permissions.copyWith(canManageWage: v),
+        // canManageWage OFF 시 canCancelTransfer 자동 해제
+        (v) => v
+            ? permissions.copyWith(canManageWage: true)
+            : permissions.copyWith(canManageWage: false, canCancelTransfer: false),
       ),
       (
         Icons.description_outlined,
@@ -1304,8 +1316,8 @@ class _PermissionToggleList extends StatelessWidget {
       ),
       (
         Icons.undo_outlined,
-        '이체 취소',
-        '잘못 처리된 이체완료 되돌리기',
+        '이체 완료 처리 취소',
+        cancelTransferDisabled ? '급여 관리 권한이 필요합니다' : '잘못 처리된 이체완료 되돌리기',
         permissions.canCancelTransfer,
         (v) => permissions.copyWith(canCancelTransfer: v),
       ),
@@ -1327,10 +1339,12 @@ class _PermissionToggleList extends StatelessWidget {
         children: List.generate(items.length, (index) {
           final (icon, title, subtitle, value, updater) = items[index];
           final isLast = index == items.length - 1;
+          // canCancelTransfer(index 4)는 canManageWage=false 시 비활성
+          final isDisabled = index == 4 && cancelTransferDisabled;
           return Column(
             children: [
               InkWell(
-                onTap: () => onChanged(updater(!value)),
+                onTap: isDisabled ? null : () => onChanged(updater(!value)),
                 borderRadius: BorderRadius.vertical(
                   top: index == 0 ? const Radius.circular(12) : Radius.zero,
                   bottom:
@@ -1347,14 +1361,14 @@ class _PermissionToggleList extends StatelessWidget {
                         padding: EdgeInsets.all(
                             ResponsiveHelper.spacing(context, 6)),
                         decoration: BoxDecoration(
-                          color: value
+                          color: (value && !isDisabled)
                               ? theme.primaryColor.withValues(alpha: 0.1)
                               : AppColors.grey100,
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Icon(icon,
                             size: ResponsiveHelper.iconSize(context, 16),
-                            color: value
+                            color: (value && !isDisabled)
                                 ? theme.primaryColor
                                 : AppColors.grey400),
                       ),
@@ -1367,18 +1381,20 @@ class _PermissionToggleList extends StatelessWidget {
                                 style: ResponsiveHelper.bodyStyle(context)
                                     .copyWith(
                                         fontWeight: FontWeight.w600,
-                                        color: value
+                                        color: (value && !isDisabled)
                                             ? null
                                             : AppColors.grey500)),
                             Text(subtitle,
                                 style: ResponsiveHelper.tinyStyle(context,
-                                    color: AppColors.grey400)),
+                                    color: isDisabled
+                                        ? AppColors.grey300
+                                        : AppColors.grey400)),
                           ],
                         ),
                       ),
                       Switch(
-                        value: value,
-                        onChanged: (v) => onChanged(updater(v)),
+                        value: isDisabled ? false : value,
+                        onChanged: isDisabled ? null : (v) => onChanged(updater(v)),
                         activeThumbColor: theme.primaryColor,
                         activeTrackColor:
                             theme.primaryColor.withValues(alpha: 0.4),
@@ -1434,7 +1450,7 @@ class _PermissionSheetState extends State<_PermissionSheet> {
     (Icons.people_outline,      '근무자 관리', '승인·출퇴근·확정 관리'),
     (Icons.payments_outlined,   '급여 관리',   '급여 확인·정산'),
     (Icons.description_outlined,'계약서 관리', '계약서 작성·템플릿'),
-    (Icons.undo_outlined,       '이체 취소',   '잘못 처리된 이체완료 되돌리기'),
+    (Icons.undo_outlined,       '이체 완료 처리 취소', '잘못 처리된 이체완료 되돌리기'),
   ];
 
   bool _getValue(int i) => [
@@ -1448,7 +1464,10 @@ class _PermissionSheetState extends State<_PermissionSheet> {
   MemberPermissions _setValue(int i, bool v) => switch (i) {
     0 => _permissions.copyWith(canManageTo: v),
     1 => _permissions.copyWith(canManageWorkers: v),
-    2 => _permissions.copyWith(canManageWage: v),
+    // [AUDIT.2R1] canManageWage OFF 시 canCancelTransfer 자동 해제 (MODEL B)
+    2 => v
+        ? _permissions.copyWith(canManageWage: true)
+        : _permissions.copyWith(canManageWage: false, canCancelTransfer: false),
     3 => _permissions.copyWith(canManageContract: v),
     _ => _permissions.copyWith(canCancelTransfer: v),
   };
@@ -1530,11 +1549,15 @@ class _PermissionSheetState extends State<_PermissionSheet> {
                 children: List.generate(_items.length, (i) {
                   final (icon, title, subtitle) = _items[i];
                   final value = _getValue(i);
+                  // [AUDIT.2R1] canCancelTransfer(i==4)는 canManageWage=false 시 비활성 (MODEL B)
+                  final isDisabled = i == 4 && !_permissions.canManageWage;
                   return Column(
                     children: [
                       InkWell(
-                        onTap: () =>
-                            setState(() => _permissions = _setValue(i, !value)),
+                        onTap: isDisabled
+                            ? null
+                            : () => setState(
+                                () => _permissions = _setValue(i, !value)),
                         child: Padding(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 20, vertical: 14),
@@ -1544,7 +1567,7 @@ class _PermissionSheetState extends State<_PermissionSheet> {
                                 width: ResponsiveHelper.spacing(context, 40),
                                 height: ResponsiveHelper.spacing(context, 40),
                                 decoration: BoxDecoration(
-                                  color: value
+                                  color: (value && !isDisabled)
                                       ? theme.primaryColor.withValues(alpha: 0.1)
                                       : AppColors.grey100,
                                   borderRadius: BorderRadius.circular(10),
@@ -1552,7 +1575,7 @@ class _PermissionSheetState extends State<_PermissionSheet> {
                                 child: Icon(
                                   icon,
                                   size: ResponsiveHelper.iconSize(context, 18),
-                                  color: value
+                                  color: (value && !isDisabled)
                                       ? theme.primaryColor
                                       : AppColors.grey400,
                                 ),
@@ -1567,24 +1590,29 @@ class _PermissionSheetState extends State<_PermissionSheet> {
                                       style: ResponsiveHelper.bodyStyle(context)
                                           .copyWith(
                                         fontWeight: FontWeight.w600,
-                                        color: value
+                                        color: (value && !isDisabled)
                                             ? AppColors.grey800
                                             : AppColors.grey500,
                                       ),
                                     ),
                                     const SizedBox(height: 2),
                                     Text(
-                                      subtitle,
+                                      // 비활성 시 의존성 힌트 표시
+                                      isDisabled ? '급여 관리 권한이 필요합니다' : subtitle,
                                       style: ResponsiveHelper.tinyStyle(context,
-                                          color: AppColors.grey400),
+                                          color: isDisabled
+                                              ? AppColors.grey300
+                                              : AppColors.grey400),
                                     ),
                                   ],
                                 ),
                               ),
                               Switch(
-                                value: value,
-                                onChanged: (v) => setState(
-                                    () => _permissions = _setValue(i, v)),
+                                value: isDisabled ? false : value,
+                                onChanged: isDisabled
+                                    ? null
+                                    : (v) => setState(
+                                        () => _permissions = _setValue(i, v)),
                                 activeThumbColor: Colors.white,
                                 activeTrackColor: theme.primaryColor,
                                 inactiveThumbColor: Colors.white,

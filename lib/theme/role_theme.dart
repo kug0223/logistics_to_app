@@ -102,7 +102,9 @@ class RoleTheme {
           borderRadius: BorderRadius.circular(8),
           borderSide: const BorderSide(color: _primary, width: 2),
         ),
-        labelStyle: const TextStyle(color: _primary),
+        // 미입력 상태 레이블: 중립 회색 (파란색은 링크/선택 완료처럼 오독될 수 있음)
+        labelStyle: const TextStyle(color: Color(0xFF757575)),
+        // 포커스 또는 내용 있을 때 플로팅 레이블: 브랜드 블루 유지
         floatingLabelStyle: const TextStyle(color: _primary),
       ),
 

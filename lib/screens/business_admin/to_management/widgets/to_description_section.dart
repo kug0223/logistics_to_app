@@ -28,19 +28,26 @@ class TODescriptionSection extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            labelText ?? '상세 설명 (선택)',
+            labelText ?? '공통 안내 (선택)',
             style: ResponsiveHelper.subtitleStyle(context).copyWith(
               fontWeight: FontWeight.bold,
             ),
           ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            '모든 업무에 공통으로 안내할 내용을 입력하세요',
+            style: ResponsiveHelper.captionStyle(context).copyWith(
+              color: AppColors.grey500,
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           TextFormField(
             controller: controller,
             maxLines: maxLines,
             maxLength: 500,
             style: ResponsiveHelper.bodyStyle(context),
             decoration: InputDecoration(
-              hintText: hintText ?? '추가 안내사항을 입력하세요',
+              hintText: hintText ?? '준비물, 복장, 출입·집합 안내 등을 입력하세요',
               hintStyle: ResponsiveHelper.smallStyle(
                 context,
                 color: AppColors.grey400,

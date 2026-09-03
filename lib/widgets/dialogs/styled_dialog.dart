@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
+import '../../theme/app_text_styles.dart';
 
 /// 앱 전체 다이얼로그 크기 표준
 ///
@@ -20,6 +21,39 @@ class AppDialogSize {
   static const double borderRadius = 24.0;
   /// 내부 서브시트 최대 높이 비율 (다이얼로그 내 중첩 시트용)
   static const double subSheetHeightRatio = 0.85;
+}
+
+/// 다이얼로그 닫힘 시 포커스 안전 해제 — 버튼/barrier/뒤로가기 모두 대응
+///
+/// Dialog 루트를 이 위젯으로 감싸면, deactivate() 시점에
+/// FocusManager.instance.primaryFocus?.unfocus()를 호출하여
+/// '_dependents.isEmpty' assertion 크래시를 방지한다.
+///
+/// ⚠️ onPressed에서만 unfocus()를 호출하면 마이크로태스크 타이밍으로
+///    InheritedElement가 먼저 unmount되어 크래시가 계속 발생한다.
+///    deactivate() 시점에 호출해야 올바른 순서가 보장된다.
+///
+/// 동일 원리: dialog_helper.dart의 _SheetFocusSafeArea (바텀시트 전용)
+class DialogFocusSafeArea extends StatefulWidget {
+  final Widget child;
+  const DialogFocusSafeArea({super.key, required this.child});
+
+  @override
+  State<DialogFocusSafeArea> createState() => _DialogFocusSafeAreaState();
+}
+
+class _DialogFocusSafeAreaState extends State<DialogFocusSafeArea> {
+  @override
+  void deactivate() {
+    // FocusScope.of(context) 사용 금지 — deactivate 시점에 FocusScope InheritedElement가
+    // 먼저 unmount되면 _dependents assertion('_dependents.isEmpty') 크래시 발생.
+    // FocusManager.instance로 직접 접근하면 InheritedWidget 탐색 없이 안전하게 해제됨.
+    FocusManager.instance.primaryFocus?.unfocus();
+    super.deactivate();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 /// ✨ 세련된 다이얼로그 위젯
@@ -106,12 +140,15 @@ class StyledDialog extends StatelessWidget {
 
     final screenH = MediaQuery.sizeOf(context).height;
 
-    return Dialog(
-      backgroundColor: Colors.white,
-      insetPadding: insetPadding,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(24),
-      ),
+    // [FC-FIX] DialogFocusSafeArea — TextField가 있는 모든 StyledDialog를
+    // deactivate() 시점에 자동으로 unfocus하여 _dependents.isEmpty 크래시 방지
+    return DialogFocusSafeArea(
+      child: Dialog(
+        backgroundColor: Colors.white,
+        insetPadding: insetPadding,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+        ),
       child: Container(
         constraints: BoxConstraints(
           maxWidth: maxWidth ?? double.infinity,
@@ -135,38 +172,34 @@ class StyledDialog extends StatelessWidget {
           ],
         ),
       ),
-    );
+    ),   // Dialog
+    );   // DialogFocusSafeArea
   }
 
-  /// 헤더
+  /// 헤더 — [리디자인] 그라데이션 제거 → White 기반, color는 아이콘 컨테이너에만
   Widget _buildHeader(BuildContext context, Color color) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            color,
-            color.withValues(alpha: 0.8),
-          ],
-        ),
-        borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(24),
-          topRight: Radius.circular(24),
-        ),
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        ResponsiveHelper.spacing(context, 20),
+        ResponsiveHelper.spacing(context, 20),
+        ResponsiveHelper.spacing(context, 16),
+        0,
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // 아이콘
+          // 아이콘 — color 10% 배경 + 아이콘 자체에 color
           Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+            width: 44,
+            height: 44,
             decoration: BoxDecoration(
-              color: AppColors.surface.withValues(alpha: 0.2),
+              color: color.withValues(alpha: 0.10),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
               icon,
-              color: AppColors.surface,
-              size: ResponsiveHelper.iconSize(context, 28),
+              color: color,
+              size: ResponsiveHelper.iconSize(context, 24),
             ),
           ),
 
@@ -180,18 +213,18 @@ class StyledDialog extends StatelessWidget {
                 Text(
                   title,
                   style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                    color: AppColors.surface,
+                    color: const Color(0xFF111827),
                     fontWeight: FontWeight.bold,
                   ),
                 ),
                 if (subtitle != null) ...[
-                  SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                  SizedBox(height: ResponsiveHelper.spacing(context, 3)),
                   Text(
                     subtitle!,
                     style: ResponsiveHelper.smallStyle(context).copyWith(
-                      color: AppColors.surface.withValues(alpha: 0.9),
+                      color: const Color(0xFF757575),
                     ),
-                    maxLines: 1,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ],
@@ -204,39 +237,39 @@ class StyledDialog extends StatelessWidget {
             IconButton(
               tooltip: '닫기',
               onPressed: () => Navigator.pop(context),
-              icon: Icon(Icons.close, color: AppColors.surface),
+              icon: const Icon(Icons.close, color: Color(0xFF9CA3AF), size: 20),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
             ),
         ],
       ),
     );
   }
 
-  /// 버튼 영역
+  /// 버튼 영역 — [리디자인] 구분선 제거 → 여백만으로 콘텐츠와 분리
   Widget _buildActions(BuildContext context) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        color: AppColors.grey50,
-        borderRadius: const BorderRadius.only(
-          bottomLeft: Radius.circular(24),
-          bottomRight: Radius.circular(24),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: ResponsiveHelper.cardPadding(context),
+          child: Row(
+            children: (actions ?? [])
+                .map((action) => Expanded(child: action))
+                .toList()
+                .fold<List<Widget>>(
+              [],
+              (list, widget) {
+                if (list.isNotEmpty) {
+                  list.add(SizedBox(width: ResponsiveHelper.spacing(context, 12)));
+                }
+                list.add(widget);
+                return list;
+              },
+            ),
+          ),
         ),
-      ),
-      child: Row(
-        children: (actions ?? [])
-            .map((action) => Expanded(child: action))
-            .toList()
-            .fold<List<Widget>>(
-          [],
-          (list, widget) {
-            if (list.isNotEmpty) {
-              list.add(SizedBox(width: ResponsiveHelper.spacing(context, 12)));
-            }
-            list.add(widget);
-            return list;
-          },
-        ),
-      ),
+      ],
     );
   }
 }
@@ -307,41 +340,60 @@ class StyledDialogButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDisabled = !isLoading && onPressed == null;
-    final bg = isDisabled
-        ? AppColors.grey200
-        : isOutlined
-            ? AppColors.grey100
-            : (backgroundColor ?? theme.primaryColor);
-    final fg = isDisabled
-        ? AppColors.grey400
-        : isOutlined
-            ? AppColors.grey700
-            : (foregroundColor ?? AppColors.surface);
 
-    return Material(
-      color: bg,
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        onTap: isLoading || isDisabled ? null : onPressed,
+    // 색상 결정
+    final Color bgColor;
+    final Color fgColor;
+    final Border? border;
+
+    if (isDisabled) {
+      bgColor = AppColors.grey200;
+      fgColor = AppColors.grey400;
+      border = null;
+    } else if (isOutlined) {
+      // 취소 버튼 — 흰 배경 + 얇은 테두리
+      bgColor = Colors.white;
+      fgColor = const Color(0xFF4B5563);
+      border = Border.all(color: const Color(0xFFE5E7EB));
+    } else {
+      bgColor = backgroundColor ?? theme.primaryColor;
+      fgColor = foregroundColor ?? Colors.white;
+      border = null;
+    }
+
+    final Widget child = Center(
+      child: isLoading
+          ? SizedBox(
+              height: ResponsiveHelper.iconSize(context, 18),
+              width: ResponsiveHelper.iconSize(context, 18),
+              child: CircularProgressIndicator(strokeWidth: 2, color: fgColor),
+            )
+          : Text(
+              text,
+              style: ResponsiveHelper.bodyStyle(context).copyWith(
+                color: fgColor,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+    );
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: bgColor,
         borderRadius: BorderRadius.circular(10),
-        child: Padding(
-          padding: EdgeInsets.symmetric(
-            vertical: ResponsiveHelper.spacing(context, 14),
-          ),
-          child: Center(
-            child: isLoading
-                ? SizedBox(
-                    height: ResponsiveHelper.iconSize(context, 18),
-                    width: ResponsiveHelper.iconSize(context, 18),
-                    child: CircularProgressIndicator(strokeWidth: 2, color: fg),
-                  )
-                : Text(
-                    text,
-                    style: ResponsiveHelper.bodyStyle(context).copyWith(
-                      color: fg,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+        border: border,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          onTap: isLoading || isDisabled ? null : onPressed,
+          borderRadius: BorderRadius.circular(10),
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              vertical: ResponsiveHelper.spacing(context, 13),
+            ),
+            child: child,
           ),
         ),
       ),
@@ -510,12 +562,16 @@ class StyledDialogInfoCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: ResponsiveHelper.cardPadding(context),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 14),
+        vertical: ResponsiveHelper.spacing(context, 11),
+      ),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
+        // [리디자인] 배경 6-8%, 테두리 20-25% — 과도한 색상 강도 낮춤
+        color: color.withValues(alpha: 0.07),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: color.withValues(alpha: 0.3),
+          color: color.withValues(alpha: 0.22),
         ),
       ),
       child: Row(
@@ -523,15 +579,15 @@ class StyledDialogInfoCard extends StatelessWidget {
           Icon(
             icon,
             color: _getShade(color, 700),
-            size: ResponsiveHelper.iconSize(context, 20),
+            size: ResponsiveHelper.iconSize(context, 18),
           ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+          SizedBox(width: ResponsiveHelper.spacing(context, 10)),
           Expanded(
             child: Text(
               message,
               style: ResponsiveHelper.smallStyle(
                 context,
-                color: _getShade(color, 900),
+                color: _getShade(color, 800),
               ),
             ),
           ),
@@ -629,6 +685,185 @@ class PasswordStrengthIndicator extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Admin Workflow Modal Primitives
+// ──────────────────────────────────────────────────────────────────────────────
+// 대형 관리자 워크플로우 다이얼로그용 공통 primitive.
+//
+// 역할 분리:
+//   StyledDialog    — 아이콘+제목+버튼 형식의 소형 시맨틱 다이얼로그
+//   DialogHelper    — confirm / alert / sheet 등 시맨틱 호출 전용
+//   AppModalShell   — 탭·통계·배치 등 대형 관리자 워크플로우 Dialog 래퍼
+//   AppModalHeader  — flat white + 3px brand accent bar 헤더
+//   AppModalFooter  — 흰 배경 + grey200 상단 구분선 푸터 wrapper
+//
+// 새 Admin Dialog 개발 시:
+//   AppModalShell(children: [
+//     AppModalHeader(title: '...', subtitle: '...', onClose: () => Navigator.pop(context)),
+//     Flexible(child: body),
+//     AppModalFooter(child: Row([...])),
+//   ])
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// 대형 워크플로우 다이얼로그 외부 껍데기.
+///
+/// Dialog 배경·shape·insetPadding·maxHeight·viewInsets를 [AppDialogSize] 기준으로 표준화한다.
+/// children에는 [AppModalHeader] / [Flexible(body)] / interstitials / [AppModalFooter]를
+/// 순서대로 전달한다.
+class AppModalShell extends StatelessWidget {
+  final List<Widget> children;
+
+  const AppModalShell({
+    super.key,
+    required this.children,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DialogFocusSafeArea(
+      child: Dialog(
+        backgroundColor: Colors.white,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(Radius.circular(AppDialogSize.borderRadius)),
+        ),
+        insetPadding: const EdgeInsets.symmetric(
+          horizontal: AppDialogSize.insetH,
+          vertical: AppDialogSize.insetV,
+        ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio
+                - MediaQuery.of(context).viewInsets.bottom,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: children,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// ALfit modal grammar 표준 헤더.
+///
+/// flat white + 3px brand accent bar + title / optional subtitle +
+/// optional trailing (사업장 드롭다운 등) + close 버튼 + grey200 하단 구분선.
+///
+/// 기본 accent는 [Theme.of(context).primaryColor] (#1565C0).
+/// 특별한 이유가 있는 화면만 [accentColor]로 override.
+class AppModalHeader extends StatelessWidget {
+  /// 굵은 제목 — [AppTextStyles.jobTitle()] (17sp / w700)
+  final String title;
+
+  /// 부제목 — 날짜·설명 등 — [AppTextStyles.meta()] (14sp / w400, 선택)
+  final String? subtitle;
+
+  /// 닫기 버튼 콜백. null이면 닫기 버튼 미표시.
+  final VoidCallback? onClose;
+
+  /// 제목 Row 아래에 표시할 위젯 — 사업장 드롭다운 등 (선택).
+  final Widget? trailing;
+
+  /// accent bar 색상 기본값: [Theme.of(context).primaryColor]
+  final Color? accentColor;
+
+  const AppModalHeader({
+    super.key,
+    required this.title,
+    this.subtitle,
+    this.onClose,
+    this.trailing,
+    this.accentColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = accentColor ?? Theme.of(context).primaryColor;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(AppDialogSize.borderRadius),
+          topRight: Radius.circular(AppDialogSize.borderRadius),
+        ),
+        border: const Border(bottom: BorderSide(color: AppColors.grey200)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              // 3px brand accent bar (ALfit modal grammar)
+              Container(
+                width: 3,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: accent,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: AppTextStyles.jobTitle()),
+                    if (subtitle != null)
+                      Text(subtitle!, style: AppTextStyles.meta()),
+                  ],
+                ),
+              ),
+              if (onClose != null)
+                IconButton(
+                  onPressed: onClose,
+                  icon: const Icon(Icons.close, color: AppColors.grey500, size: 20),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                ),
+            ],
+          ),
+          if (trailing != null) ...[
+            const SizedBox(height: 12),
+            trailing!,
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// 대형 워크플로우 다이얼로그 하단 푸터 wrapper.
+///
+/// [Colors.white] 배경 + [AppColors.grey200] 상단 구분선 + 표준 padding.
+/// [child]에는 실제 버튼 Row 등 footer 콘텐츠를 전달한다.
+/// footer가 slim한 경우 [padding]으로 vertical을 조정해 override 가능.
+class AppModalFooter extends StatelessWidget {
+  final Widget child;
+
+  /// 기본값: symmetric(horizontal: 16, vertical: 10)
+  final EdgeInsetsGeometry padding;
+
+  const AppModalFooter({
+    super.key,
+    required this.child,
+    this.padding = const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: padding,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: AppColors.grey200)),
+      ),
+      child: child,
     );
   }
 }

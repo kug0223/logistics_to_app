@@ -6,7 +6,7 @@ import '../../providers/user_provider.dart';
 import '../../utils/responsive_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/toast_helper.dart';
-import 'trust_rules_settings_screen.dart';
+// trust_rules_settings_screen: [5A.2A] 신뢰도 규칙 메뉴 제거
 import 'review_tags_settings_screen.dart';
 import 'badge_settings_screen.dart';
 import 'minimum_wage_settings_screen.dart';
@@ -79,19 +79,9 @@ class _SystemSettingsScreenState extends State<SystemSettingsScreen> {
           // 설정 메뉴들
           _buildSettingSection(
             context,
-            title: '리뷰 & 신뢰도',
+            title: '리뷰 & 배지',
             items: [
-              _SettingItem(
-                icon: Icons.analytics_outlined,
-                title: '신뢰도 규칙',
-                subtitle: '점수 증감 규칙, 재시작 프로그램 설정',
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const TrustRulesSettingsScreen(),
-                  ),
-                ),
-              ),
+              // [5A.2A] '신뢰도 규칙' 항목 제거 — 신뢰도 점수 시스템 폐기
               _SettingItem(
                 icon: Icons.label_outline,
                 title: '리뷰 태그',

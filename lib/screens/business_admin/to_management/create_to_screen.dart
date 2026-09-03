@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 // Models
 import '../../../models/core/business_model.dart';
@@ -15,9 +16,11 @@ import '../../../models/work_detail_input.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/analytics_service.dart';
 import '../../../services/contract_template_service.dart';
+import '../../../services/business_posting_readiness.dart';
 import '../../../providers/user_provider.dart';
 
 // Utils
+import '../../../utils/format_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../utils/navigation_helper.dart';
@@ -28,30 +31,37 @@ import '../../../theme/app_colors.dart';
 
 // Widgets
 import '../../../widgets/pickers/create_edit_work_detail_dialog.dart';
-import '../../../widgets/dialogs/styled_dialog.dart';
-
 // 공통 위젯
 import 'widgets/to_widgets.dart';
 import '../../../widgets/app_select_field.dart';
-import '../../../widgets/common/gradient_scaffold.dart';
 import '../../../widgets/common/loading_widget.dart';
 import '../../common/settings_screen.dart';
 import '../contract_template_list_screen.dart';
 import '../work_type_management_screen.dart';
 import '../Business_form_screen.dart';
 
-/// 사업장별 사전조건 충족 여부
+/// 사업장별 사전조건 충족 여부 — [5D.2A] licenseReady 추가
 class _BizReadiness {
   final BusinessModel business;
   final bool workTypesReady;
+  final bool licenseReady;
   const _BizReadiness({
     required this.business,
     required this.workTypesReady,
+    required this.licenseReady,
   });
 }
 
 class AdminCreateTOScreen extends StatefulWidget {
-  const AdminCreateTOScreen({super.key});
+  /// [HOTFIX HOME.POSTING.ENTRY.1-R1] caller context 상속용 optional 파라미터.
+  /// SUB_ADMIN Home 공고등록 진입 시 effectiveBusinessId를 전달해
+  /// CreateTO 최초 사업장이 Home context와 일치하도록 한다.
+  /// - 유효하면(approved 목록에 존재) → 반드시 해당 사업장 초기 선택
+  /// - 유효하지 않으면 → 기존 fallback(workTypes-ready 첫 번째 / first) 사용
+  /// - null → 기존 동작 유지 (OWNER, businessList, Jobs 진입 등)
+  const AdminCreateTOScreen({super.key, this.initialBusinessId});
+
+  final String? initialBusinessId;
 
   @override
   State<AdminCreateTOScreen> createState() => _AdminCreateTOScreenState();
@@ -63,6 +73,23 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _groupTitleController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
+
+  // Scroll-to-error 지원
+  final _businessSectionKey = GlobalKey();
+  final _titleSectionKey = GlobalKey();
+  final _dateSectionKey = GlobalKey();
+  final _workDetailSectionKey = GlobalKey();
+
+  void _scrollToSection(GlobalKey key) {
+    final ctx = key.currentContext;
+    if (ctx == null) return;
+    Scrollable.ensureVisible(
+      ctx,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+      alignment: 0.0,
+    );
+  }
 
   // 로딩 상태
   bool _isLoading = false; // initState에서 _loadMyBusinesses() 호출 시 가드 통과를 위해 false 초기화
@@ -82,9 +109,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   bool _contractTemplatesReady = false;
   bool _formUnlocked = false;        // 한번 true가 되면 항상 폼 표시 (일방향 래치)
   bool _hasLicense = false;           // 사업자등록증 등록 여부
+  bool _hasSeal = false;              // 인감/서명 등록 여부 (SubAdmin 면제)
   List<_BizReadiness> _businessReadinessList = []; // 멀티 사업장 결핍 정보
   bool get _allPrerequisitesMet =>
-      _businessApproved && _workTypesReady && _contractTemplatesReady && _hasLicense;
+      _businessApproved && _workTypesReady && _contractTemplatesReady &&
+      _hasLicense && _hasSeal;
 
   // TO 설정 — 'flex' 단기 / 'contract' 장기
   String _selectedJobType = TOType.flex;
@@ -97,6 +126,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   DateTime? _rangeStart;
   DateTime? _rangeEnd;
   String? _contractPeriodType; // '15days' | '1month' | '3months' | '6months' | '1year' | 'custom'
+  // 근무 시작 가능기간 (preset 전용)
+  DateTime? _workStartAvailableFrom;
+  DateTime? _workStartAvailableUntil;
   int? _postingDurationDays = 7; // 기본 7일
 
   // 지원 마감
@@ -166,12 +198,39 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         allBusinesses = await _firestoreService.getBusinessesByIds(managedIds);
       }
       final approvedBusinesses = allBusinesses.where((b) => b.isApproved).toList();
-      // 서브어드민은 사업장 소유자가 아니므로 사업자등록증 체크 불필요
-      final bool hasLicense = userProvider.isSubAdmin
+      // 인감/서명: UserModel.sealBase64 기준 (SubAdmin 면제 — 계약서 날인은 사업주 계정)
+      final bool hasSeal = userProvider.isSubAdmin
           ? true
-          : (userProvider.currentUser?.businessLicenseImageUrl?.isNotEmpty ?? false);
+          : (userProvider.currentUser?.sealBase64?.isNotEmpty ?? false);
 
       if (!mounted) return;
+
+      // [HOTFIX-1C-UNAPPROVED] initialBusinessId가 미승인 사업장을 가리킬 때:
+      // approved 목록 fallback(B auto-jump) 금지 — 현재 effectiveBusinessId context 상속.
+      // Policy (§ HOME.POSTING.ENTRY.1-R1): 미승인이어도 membership 유효 → A 선택 + 승인 필요 안내.
+      // checks는 approvedBusinesses만 포함하므로, 미승인 A의 initCheck는 null → B fallback이 발생함.
+      // 이 분기가 그 auto-jump를 차단한다.
+      final initBizIdForApprovalCheck = widget.initialBusinessId;
+      if (initBizIdForApprovalCheck != null) {
+        final initBizFromAll = allBusinesses
+            .where((b) => b.id == initBizIdForApprovalCheck)
+            .firstOrNull;
+        if (initBizFromAll != null && !initBizFromAll.isApproved) {
+          setState(() {
+            _hasAnyBusiness = true;
+            _businessApproved = false;
+            _workTypesReady = false;
+            _contractTemplatesReady = false;
+            _hasLicense = false;
+            _hasSeal = hasSeal;
+            _businessReadinessList = [];
+            _selectedBusiness = initBizFromAll;
+            _myBusinesses = [];
+            _isLoading = false;
+          });
+          return;
+        }
+      }
 
       if (approvedBusinesses.isEmpty) {
         setState(() {
@@ -179,16 +238,36 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           _businessApproved = false;
           _workTypesReady = false;
           _contractTemplatesReady = false;
-          _hasLicense = hasLicense;
+          _hasLicense = false;
+          _hasSeal = hasSeal;
           _businessReadinessList = [];
           _isLoading = false;
         });
         return;
       }
 
-      // 모든 승인 사업장의 업무목록 + 계약서 병렬 로드
+      // [5D.2A] 사업장별 readiness 병렬 로드:
+      //   - 라이선스: canonical(business 문서) OR owner legacy(business.ownerId user 문서)
+      //     SubAdmin/co-admin 호출자의 businessLicenseImageUrl은 사용하지 않음
+      //   - workTypes: isActive==true >= 1
+      //   - 계약서 템플릿: 전역 합산
       final checks = await Future.wait(
         approvedBusinesses.map((biz) async {
+          // License: canonical 먼저, 없으면 ownerId 기준 legacy
+          bool licenseReady = biz.businessLicenseImageUrl?.isNotEmpty == true;
+          if (!licenseReady && biz.ownerId.isNotEmpty) {
+            try {
+              final ownerSnap = await FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(biz.ownerId)
+                  .get();
+              licenseReady =
+                  (ownerSnap.data()?['businessLicenseImageUrl'] as String?)
+                          ?.isNotEmpty ==
+                      true;
+            } catch (_) {}
+          }
+
           final res = await Future.wait([
             _firestoreService.getBusinessWorkTypes(biz.id),
             _contractTemplateService.getTemplates(biz.id),
@@ -197,6 +276,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             business: biz,
             workTypes: res[0] as List<BusinessWorkTypeModel>,
             templates: res[1] as List<ContractTemplateModel>,
+            licenseReady: licenseReady,
           );
         }),
       );
@@ -204,48 +284,48 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       if (!mounted) return;
 
       // 계약서 템플릿은 사업장 무관 전역 체크 — 모든 사업장 합산
-      final allTemplates =
-          checks.expand((c) => c.templates).toList();
+      final allTemplates = checks.expand((c) => c.templates).toList();
 
-      // 업무유형만 충족한 첫 번째 사업장 자동선택 (계약서는 전역)
+      // [HOTFIX HOME.POSTING.ENTRY.1-R1] 사업장 선택 우선순위:
+      //   1. widget.initialBusinessId가 approved 목록에 존재 → 반드시 해당 사업장 선택
+      //      (Home effectiveBusiness context 상속 — A incomplete여도 B로 자동 전환 금지)
+      //   2. workTypes-ready 첫 번째 사업장
+      //   3. checks.first (기존 fallback)
+      // [5D.2A] _hasLicense는 선택된 사업장 기준 — 다른 사업장의 license가 대신하면 안 됨
       final ready = checks.where((c) => c.workTypes.isNotEmpty);
 
-      if (ready.isNotEmpty) {
-        final sel = ready.first;
-        setState(() {
-          _myBusinesses = approvedBusinesses;
-          _selectedBusiness = sel.business;
-          _businessWorkTypes = sel.workTypes;
-          _hasAnyBusiness = true;
-          _businessApproved = true;
-          _workTypesReady = true;
-          _contractTemplatesReady = allTemplates.isNotEmpty;
-          _hasLicense = hasLicense;
-          _businessReadinessList = [];
-          if (_allPrerequisitesMet) _formUnlocked = true;
-          _isLoading = false;
-        });
-      } else {
-        // 어느 사업장도 업무유형 미충족 — 결핍 정보 보존
-        final first = checks.first;
-        setState(() {
-          _myBusinesses = approvedBusinesses;
-          _selectedBusiness = first.business;
-          _businessWorkTypes = first.workTypes;
-          _hasAnyBusiness = true;
-          _businessApproved = true;
-          _workTypesReady = first.workTypes.isNotEmpty;
-          _contractTemplatesReady = allTemplates.isNotEmpty;
-          _hasLicense = hasLicense;
-          _businessReadinessList = checks
-              .map((c) => _BizReadiness(
-                    business: c.business,
-                    workTypesReady: c.workTypes.isNotEmpty,
-                  ))
-              .toList();
-          _isLoading = false;
-        });
-      }
+      final initBizId = widget.initialBusinessId;
+      final initCheck = initBizId != null
+          ? checks.where((c) => c.business.id == initBizId).firstOrNull
+          : null;
+
+      // sel: initialBusinessId 우선 → ready.first → checks.first
+      final sel = initCheck ?? (ready.isNotEmpty ? ready.first : checks.first);
+      final selWorkTypesReady = sel.workTypes.isNotEmpty;
+
+      setState(() {
+        _myBusinesses = approvedBusinesses;
+        _selectedBusiness = sel.business;
+        _businessWorkTypes = sel.workTypes;
+        _hasAnyBusiness = true;
+        _businessApproved = true;
+        _workTypesReady = selWorkTypesReady;
+        _contractTemplatesReady = allTemplates.isNotEmpty;
+        _hasLicense = sel.licenseReady;
+        _hasSeal = hasSeal;
+        // workTypes 미충족 시 결핍 정보 보존 (readiness 안내용)
+        _businessReadinessList = selWorkTypesReady
+            ? []
+            : checks
+                .map((c) => _BizReadiness(
+                      business: c.business,
+                      workTypesReady: c.workTypes.isNotEmpty,
+                      licenseReady: c.licenseReady,
+                    ))
+                .toList();
+        if (_allPrerequisitesMet) _formUnlocked = true;
+        _isLoading = false;
+      });
     } catch (e) {
       debugPrint('❌ 사업장 로드 실패: $e');
       if (mounted) setState(() => _isLoading = false);
@@ -276,14 +356,19 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           .skip(1)
           .expand((r) => r as List<ContractTemplateModel>)
           .toList();
+      // [5D.2A] license: 선택된 사업장의 canonical OR ownerId legacy — 호출자 uid 아님
+      final bool hasLicense = await BusinessPostingReadiness
+          .hasLicenseForBusiness(_selectedBusiness!);
+      if (!mounted) return;
+      final up = Provider.of<UserProvider>(context, listen: false);
       setState(() {
         _businessWorkTypes = workTypes;
         _workTypesReady = workTypes.isNotEmpty;
         _contractTemplatesReady = allTemplates.isNotEmpty;
-        final up = Provider.of<UserProvider>(context, listen: false);
-        _hasLicense = up.isSubAdmin
+        _hasLicense = hasLicense;
+        _hasSeal = up.isSubAdmin
             ? true
-            : (up.currentUser?.businessLicenseImageUrl?.isNotEmpty ?? false);
+            : (up.currentUser?.sealBase64?.isNotEmpty ?? false);
         if (_allPrerequisitesMet) {
           _formUnlocked = true;
           _businessReadinessList = [];
@@ -333,6 +418,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       return;
     }
 
+    final rootNav = Navigator.of(context, rootNavigator: true);
     DialogHelper.showLoading(context, message: '공고 목록 불러오는 중...');
 
     try {
@@ -342,20 +428,19 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       );
     } catch (e) {
       debugPrint('❌ TO 목록 로드 실패: $e');
-      if (mounted) Navigator.pop(context);
       if (mounted) ToastHelper.showError('공고 목록을 불러올 수 없습니다');
       return;
+    } finally {
+      if (rootNav.mounted && rootNav.canPop()) rootNav.pop();
     }
 
-    if (!mounted) return;
-    Navigator.pop(context);
     await Future<void>.delayed(Duration.zero);
     if (!mounted) return;
 
-    final selectedTO = await showDialog<TOModel>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => _buildLoadFromExistingDialog(),
+    final selectedTO = await DialogHelper.showSheet<TOModel>(
+      context,
+      isScrollControlled: true,
+      builder: (_) => _buildLoadFromExistingSheet(),
     );
 
     if (selectedTO != null && mounted) {
@@ -411,11 +496,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     ToastHelper.showSuccess('공고 정보를 불러왔습니다');
   }
 
-  Widget _buildLoadFromExistingDialog() {
+  /// 기존 공고 불러오기 — 바텀시트 버전 (DialogHelper.showSheet 전용)
+  Widget _buildLoadFromExistingSheet() {
     String searchQuery = '';
-
     return StatefulBuilder(
-      builder: (context, setDialogState) {
+      builder: (context, setSheetState) {
+        final theme = Theme.of(context);
         // MEDIUM-2: searchQuery를 소문자로 보관 → 항목마다 toLowerCase() 호출 1회 절감
         final filteredTOs = searchQuery.isEmpty
             ? _recentTOsForLoad
@@ -423,18 +509,44 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                 .where((to) => to.title.toLowerCase().contains(searchQuery))
                 .toList();
 
-        return StyledDialog(
-          title: '기존 공고 불러오기',
-          icon: Icons.file_copy_outlined,
-          showCloseButton: true,
-          maxHeightRatio: 0.7,
-          fillHeight: true,
-          content: Column(
+        return SizedBox(
+          height: MediaQuery.of(context).size.height * 0.72,
+          child: Column(
             children: [
+              // 시트 헤더
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  ResponsiveHelper.spacing(context, 20),
+                  ResponsiveHelper.spacing(context, 16),
+                  ResponsiveHelper.spacing(context, 8),
+                  ResponsiveHelper.spacing(context, 8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.file_copy_outlined,
+                        color: theme.primaryColor,
+                        size: ResponsiveHelper.iconSize(context, 22)),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    Expanded(
+                      child: Text('기존 공고 불러오기',
+                          style: ResponsiveHelper.subtitleStyle(context)
+                              .copyWith(fontWeight: FontWeight.bold)),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close),
+                      iconSize: ResponsiveHelper.iconSize(context, 20),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ],
+                ),
+              ),
+              // 검색창
               Padding(
                 padding: EdgeInsets.fromLTRB(
                   ResponsiveHelper.spacing(context, 16),
-                  ResponsiveHelper.spacing(context, 12),
+                  0,
                   ResponsiveHelper.spacing(context, 16),
                   ResponsiveHelper.spacing(context, 8),
                 ),
@@ -451,9 +563,11 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     ),
                   ),
                   style: ResponsiveHelper.bodyStyle(context),
-                  onChanged: (v) => setDialogState(() => searchQuery = v.toLowerCase()),
+                  onChanged: (v) =>
+                      setSheetState(() => searchQuery = v.toLowerCase()),
                 ),
               ),
+              // 목록
               Expanded(
                 child: filteredTOs.isEmpty
                     ? Center(
@@ -463,9 +577,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                             Icon(Icons.inbox_outlined,
                                 size: ResponsiveHelper.iconSize(context, 48),
                                 color: AppColors.grey400),
-                            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+                            SizedBox(
+                                height: ResponsiveHelper.spacing(context, 12)),
                             Text(
-                              searchQuery.isEmpty ? '등록된 공고가 없습니다' : '검색 결과가 없습니다',
+                              searchQuery.isEmpty
+                                  ? '등록된 공고가 없습니다'
+                                  : '검색 결과가 없습니다',
                               style: ResponsiveHelper.bodyStyle(context,
                                   color: AppColors.grey600),
                             ),
@@ -482,6 +599,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                             _buildTOListTile(filteredTOs[index], ctx),
                       ),
               ),
+              // D: 정확한 안내 텍스트
               Container(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
                 color: AppColors.grey100,
@@ -491,9 +609,13 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                         size: ResponsiveHelper.iconSize(context, 16),
                         color: AppColors.grey600),
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                    Text('제목, 업무상세, 설명, 마감시간 설정을 불러옵니다',
+                    Expanded(
+                      child: Text(
+                        '공고 제목·관리용 카드명·공통 안내·근무유형·요일·업무 설정을 불러옵니다. 날짜와 공개 설정은 포함되지 않습니다.',
                         style: ResponsiveHelper.smallStyle(context,
-                            color: AppColors.grey600)),
+                            color: AppColors.grey600),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -556,16 +678,31 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     SizedBox(height: ResponsiveHelper.spacing(ctx, 2)),
                     Row(
                       children: [
-                        if (to.isContractType) ...[
-                          Icon(Icons.repeat,
-                              size: ResponsiveHelper.iconSize(ctx, 12),
-                              color: AppColors.longTermDark),
-                          SizedBox(width: ResponsiveHelper.spacing(ctx, 4)),
-                          Text('장기',
-                              style: ResponsiveHelper.tinyStyle(ctx,
-                                  color: AppColors.longTermDark)),
-                          SizedBox(width: ResponsiveHelper.spacing(ctx, 8)),
-                        ],
+                        // [단기] / [고정] 배지 — 항상 표시
+                        Container(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: ResponsiveHelper.spacing(ctx, 5),
+                            vertical: ResponsiveHelper.spacing(ctx, 2),
+                          ),
+                          decoration: BoxDecoration(
+                            color: to.isContractType
+                                ? AppColors.longTermBg
+                                : Theme.of(ctx)
+                                    .primaryColor
+                                    .withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            to.isContractType ? '고정' : '단기',
+                            style: ResponsiveHelper.tinyStyle(
+                              ctx,
+                              color: to.isContractType
+                                  ? AppColors.longTermDark
+                                  : Theme.of(ctx).primaryColor,
+                            ).copyWith(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        SizedBox(width: ResponsiveHelper.spacing(ctx, 6)),
                         Icon(Icons.people_outline,
                             size: ResponsiveHelper.iconSize(ctx, 12),
                             color: AppColors.grey500),
@@ -694,7 +831,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
   void _onDateToggle(DateTime date) {
     setState(() {
-      final normalized = DateTime(date.year, date.month, date.day);
+      final normalized = DateTime.utc(date.year, date.month, date.day);
       if (_selectedDates.any((d) => _isSameDay(d, normalized))) {
         _selectedDates.removeWhere((d) => _isSameDay(d, normalized));
       } else {
@@ -749,6 +886,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       _rangeStart = null;
       _rangeEnd = null;
       _contractPeriodType = null;
+      _workStartAvailableFrom = null;
+      _workStartAvailableUntil = null;
       _postingDurationDays = 7;
       _publishMode = 'immediate';
       _publishDaysBefore = 1;
@@ -763,14 +902,14 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   /// 날짜 하나가 이미 마감시간 지났는지 확인
   bool _isSlotExpired(DateTime date) {
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final dateOnly = DateTime(date.year, date.month, date.day);
+    final today = FormatHelper.toKstDate(now);
+    final dateOnly = FormatHelper.toKstDate(date);
 
     // 어제 이전 날짜는 무조건 만료
     if (dateOnly.isBefore(today)) return true;
 
     // 오늘 날짜: 업무별 마감시각 확인
-    if (!DateUtils.isSameDay(date, now)) return false;
+    if (dateOnly != today) return false;
     if (_workDetails.isEmpty) return false;
     return _workDetails.every((w) {
       final start = w.startTime;
@@ -803,47 +942,53 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     if (!mounted) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
     if (_titleController.text.trim().isEmpty) {
+      _scrollToSection(_titleSectionKey);
       ToastHelper.showError('제목을 입력해주세요');
       return;
     }
 
     if (_selectedBusiness == null) {
+      _scrollToSection(_businessSectionKey);
       ToastHelper.showError('사업장을 선택해주세요');
       return;
     }
 
     if (_businessWorkTypes.isEmpty) {
+      _scrollToSection(_businessSectionKey);
       ToastHelper.showError('업무목록을 먼저 등록해주세요.\n사업장 설정에서 업무목록을 추가할 수 있습니다.');
       return;
     }
 
     // LOW-2: DateTime.now()를 메서드 진입 시점에 한 번만 캡처
     final now = DateTime.now();
-    final todayOnly = DateTime(now.year, now.month, now.day);
+    final todayOnly = FormatHelper.toKstDate(now);
 
     if (_selectedJobType == TOType.flex) {
       if (_selectedDates.isEmpty) {
+        _scrollToSection(_dateSectionKey);
         ToastHelper.showError('날짜를 선택해주세요');
         return;
       }
       // 과거 날짜 포함 여부 경고 — _someSlotExpired 조건과 독립적으로 항상 표시
-      final hasPastDate = _selectedDates.any((d) =>
-          DateTime(d.year, d.month, d.day).isBefore(todayOnly));
+      final hasPastDate = _selectedDates.any((d) => d.isBefore(todayOnly));
       if (hasPastDate && !_allSlotsExpired) {
         ToastHelper.showWarning('과거 날짜가 포함되어 있습니다. 해당 날짜는 즉시 마감됩니다');
       }
     } else {
       if (_contractPeriodType == null) {
+        _scrollToSection(_dateSectionKey);
         ToastHelper.showError('계약 기간을 선택해주세요');
         return;
       }
       if (_contractPeriodType == 'custom' && (_rangeStart == null || _rangeEnd == null)) {
+        _scrollToSection(_dateSectionKey);
         ToastHelper.showError('계약 시작일과 종료일을 설정해주세요');
         return;
       }
       if (_contractPeriodType == 'custom' &&
           _rangeStart != null && _rangeEnd != null &&
           _rangeStart!.isAfter(_rangeEnd!)) {
+        _scrollToSection(_dateSectionKey);
         ToastHelper.showError('계약 시작일이 종료일보다 이후일 수 없습니다');
         return;
       }
@@ -859,23 +1004,46 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           ToastHelper.showWarning('계약 시작일이 과거 날짜입니다. 게시 즉시 활성 상태로 시작됩니다');
         }
       }
+      // preset 장기공고: 근무 시작 가능기간 필수
+      if (_contractPeriodType != null && _contractPeriodType != 'custom') {
+        if (_workStartAvailableFrom == null || _workStartAvailableUntil == null) {
+          _scrollToSection(_dateSectionKey);
+          ToastHelper.showError('근무 시작 가능기간을 설정해주세요');
+          return;
+        }
+        if (_workStartAvailableFrom!.isAfter(_workStartAvailableUntil!)) {
+          _scrollToSection(_dateSectionKey);
+          ToastHelper.showError('시작 가능기간의 시작일이 종료일보다 이후일 수 없습니다');
+          return;
+        }
+        // 전체 기간이 과거인 경우 차단
+        if (_workStartAvailableUntil!.isBefore(todayOnly)) {
+          _scrollToSection(_dateSectionKey);
+          ToastHelper.showError('근무 시작 가능기간이 모두 과거입니다. 종료일을 오늘 이후로 설정해주세요');
+          return;
+        }
+      }
       if (_selectedWeekdays.isEmpty) {
+        _scrollToSection(_dateSectionKey);
         ToastHelper.showError('근무 요일을 선택해주세요');
         return;
       }
     }
 
     if (_workDetails.isEmpty) {
+      _scrollToSection(_workDetailSectionKey);
       ToastHelper.showError('최소 1개의 업무를 추가해주세요');
       return;
     }
 
     if (_workDetails.any((w) => !w.isValid)) {
+      _scrollToSection(_workDetailSectionKey);
       ToastHelper.showError('모든 업무 정보를 입력해주세요');
       return;
     }
 
     if (_workDetails.any((w) => (w.wage ?? 0) <= 0)) {
+      _scrollToSection(_workDetailSectionKey);
       ToastHelper.showError('급여는 0원보다 커야 합니다');
       return;
     }
@@ -884,6 +1052,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     // 최저임금법 준수 책임은 사업주에게 있고, 앱은 경영 도구로서 개입하지 않는다.
 
     if (_workDetails.any((w) => (w.wage ?? 0) > 50000000)) {
+      _scrollToSection(_workDetailSectionKey);
       ToastHelper.showError('급여는 5,000만원 이하여야 합니다');
       return;
     }
@@ -998,14 +1167,25 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         rangeStart: _selectedJobType == TOType.contract
             ? () {
                 final d = _rangeStart ?? DateTime.now();
-                return DateTime(d.year, d.month, d.day);
+                // [TZ-FIX] DateTime(y,m,d)는 기기 로컬 자정 → UTC+12에서 epoch = 하루 이전 21:00 KST
+                // DateTime.utc(y,m,d,-9,0) = KST 00:00 UTC epoch (Dart가 -9h → 전날 15:00 UTC로 정규화)
+                return DateTime.utc(d.year, d.month, d.day, -9, 0);
               }()
             : null,
-        rangeEnd: _selectedJobType == TOType.contract && _contractPeriodType == 'custom' ? _rangeEnd : null,
+        // [TZ-FIX] rangeEnd/workStartAvailable* 동일 패턴 — KST 자정 UTC 기준으로 저장
+        rangeEnd: _selectedJobType == TOType.contract && _contractPeriodType == 'custom' && _rangeEnd != null
+            ? DateTime.utc(_rangeEnd!.year, _rangeEnd!.month, _rangeEnd!.day, -9, 0)
+            : null,
         workDays: _selectedJobType == TOType.contract ? _selectedWeekdays : null,
         contractDeadline: null,
         contractPeriodType: _selectedJobType == TOType.contract ? _contractPeriodType : null,
         postingDurationDays: _postingDurationDays, // flex·contract 모두 저장
+        workStartAvailableFrom: _selectedJobType == TOType.contract && _workStartAvailableFrom != null
+            ? DateTime.utc(_workStartAvailableFrom!.year, _workStartAvailableFrom!.month, _workStartAvailableFrom!.day, -9, 0)
+            : null,
+        workStartAvailableUntil: _selectedJobType == TOType.contract && _workStartAvailableUntil != null
+            ? DateTime.utc(_workStartAvailableUntil!.year, _workStartAvailableUntil!.month, _workStartAvailableUntil!.day, -9, 0)
+            : null,
         // 공개 설정 (draft = 미공개 저장, scheduled = 예약공개, immediate = 즉시공개)
         publishMode: _publishMode,
         publishDaysBefore: _publishMode == 'scheduled' ? _publishDaysBefore : null,
@@ -1030,10 +1210,16 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     } catch (e) {
       debugPrint('❌ TO 생성 실패: $e');
       if (mounted) {
-        if (e.toString().contains('MAX_ACTIVE_TO_LIMIT')) {
-          final parts = e.toString().split(':');
-          final limitStr = parts.length >= 2 ? parts.last : '4';
+        final msg = e.toString();
+        if (msg.contains('MAX_ACTIVE_TO_LIMIT')) {
+          // 서버가 'MAX_ACTIVE_TO_LIMIT:N' 형태로 반환
+          final parts = msg.split(':');
+          final limitStr = parts.length >= 2 ? parts.last.trim() : '4';
           ToastHelper.showError('진행중인 공고가 최대 $limitStr개입니다.\n기존 공고를 마감 후 새 공고를 등록해주세요.');
+        } else if (e is FirebaseFunctionsException && e.code == 'failed-precondition') {
+          // [5D.1A] 사업장 readiness 서버 gate — 서버 메시지 직접 표시
+          final serverMsg = e.message ?? '공고 등록 조건을 확인해 주세요.';
+          ToastHelper.showError(serverMsg);
         } else {
           ToastHelper.showError('공고 등록에 실패했습니다');
         }
@@ -1050,8 +1236,19 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return GradientScaffold(
-        title: '공고 등록',
+      return Scaffold(
+        backgroundColor: Colors.white,
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          surfaceTintColor: Colors.transparent,
+          centerTitle: false,
+          title: Text(
+            '공고 등록',
+            style: ResponsiveHelper.subtitleStyle(context)
+                .copyWith(fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+          ),
+        ),
         body: const LoadingWidget(),
       );
     }
@@ -1073,57 +1270,69 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         );
         if (leave && context.mounted) Navigator.pop(context);
       },
-      child: GradientScaffold(
-        title: '공고 등록',
-        actions: [
-          Material(
-            color: Colors.white.withValues(
-                alpha: _selectedBusiness != null ? 0.2 : 0.08),
-            borderRadius: BorderRadius.circular(12),
-            child: Semantics(
-              label: '공고 불러오기',
-              button: true,
-              child: InkWell(
-                onTap: _selectedBusiness != null
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          surfaceTintColor: Colors.transparent,
+          centerTitle: false,
+          title: Text(
+            '공고 등록',
+            style: ResponsiveHelper.subtitleStyle(context)
+                .copyWith(fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+          ),
+          // B: 아이콘 전용 → TextButton.icon "불러오기"
+          actions: [
+            Padding(
+              padding: EdgeInsets.only(
+                  right: ResponsiveHelper.spacing(context, 8)),
+              child: TextButton.icon(
+                onPressed: _selectedBusiness != null
                     ? _showLoadFromExistingDialog
                     : null,
-                borderRadius: BorderRadius.circular(12),
-                child: Padding(
-                  padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
-                  child: Icon(
-                    Icons.file_copy_outlined,
-                    color: _selectedBusiness != null
-                        ? Colors.white
-                        : Colors.white38,
-                    size: ResponsiveHelper.iconSize(context, 24),
-                  ),
-                ),
+                icon: const Icon(Icons.file_copy_outlined),
+                label: const Text('불러오기'),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
         body: Form(
           key: _formKey,
           child: ListView(
-            padding: ResponsiveHelper.listPadding(context),
+            // G: CTA가 bottomNavigationBar로 이동 → 하단 여유 확보
+            padding: ResponsiveHelper.listPadding(context)
+                .copyWith(bottom: ResponsiveHelper.spacing(context, 108)),
             children: [
               // [UI-COMPACT] 사업장 + 근무 유형 통합 카드 (카드 2개 → 1개)
-              _buildBusinessAndTypeSection(),
+              KeyedSubtree(
+                key: _businessSectionKey,
+                child: _buildBusinessAndTypeSection(),
+              ),
               SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
               // [UI-COMPACT] 공고 제목 + 카드 제목 통합 카드 (카드 2개 → 1개)
-              _buildTitleAndGroupSection(),
+              KeyedSubtree(
+                key: _titleSectionKey,
+                child: _buildTitleAndGroupSection(),
+              ),
               SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
-              _buildDateSelector(),
+              KeyedSubtree(
+                key: _dateSectionKey,
+                child: _buildDateSelector(),
+              ),
               SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
-              TOWorkDetailsSection(
-                workDetailInputs: _workDetails,
-                onAddWork: _showAddWorkDetailDialog,
-                onEditWorkByIndex: _editWorkDetail,
-                onRemoveWorkByIndex: _removeWorkDetail,
-                showNoWorkTypeWarning: _businessWorkTypes.isEmpty,
+              KeyedSubtree(
+                key: _workDetailSectionKey,
+                child: TOWorkDetailsSection(
+                  workDetailInputs: _workDetails,
+                  onAddWork: _showAddWorkDetailDialog,
+                  onEditWorkByIndex: _editWorkDetail,
+                  onRemoveWorkByIndex: _removeWorkDetail,
+                  showNoWorkTypeWarning: _businessWorkTypes.isEmpty,
+                ),
               ),
               SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
@@ -1155,14 +1364,24 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
               TODescriptionSection(controller: _descriptionController),
-              SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-
-              TOActionButton.create(
-                onPressed: _isCreating ? null : _createTO,
-                isLoading: _isCreating,
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 40)),
+              SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             ],
+          ),
+        ),
+        // G: CTA → Scaffold.bottomNavigationBar (SafeArea(top: false) 필수)
+        bottomNavigationBar: SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              ResponsiveHelper.spacing(context, 16),
+              ResponsiveHelper.spacing(context, 8),
+              ResponsiveHelper.spacing(context, 16),
+              ResponsiveHelper.spacing(context, 16),
+            ),
+            child: TOActionButton.create(
+              onPressed: _isCreating ? null : _createTO,
+              isLoading: _isCreating,
+            ),
           ),
         ),
       ),
@@ -1172,8 +1391,25 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   /// 공고 등록 사전조건 체크 화면 — 3가지를 한 번에 보여줌
   Widget _buildPrerequisiteScreen() {
     final theme = Theme.of(context);
-    return GradientScaffold(
-      title: '공고 등록',
+    final isSubAdmin =
+        context.read<UserProvider>().isSubAdmin;
+    // [AUTHZ.2] canManageContract — OWNER는 항상 true, SUB_ADMIN은 권한 확인
+    final canManageContract =
+        !isSubAdmin || context.read<UserProvider>().can((p) => p.canManageContract);
+    final cardCount = isSubAdmin ? 4 : 5;
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        centerTitle: false,
+        title: Text(
+          '공고 등록',
+          style: ResponsiveHelper.subtitleStyle(context)
+              .copyWith(fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+        ),
+      ),
       body: SingleChildScrollView(
         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
         child: Column(
@@ -1202,7 +1438,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                             style: ResponsiveHelper.subtitleStyle(context)
                                 .copyWith(fontWeight: FontWeight.bold)),
                         SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                        Text('아래 3가지를 모두 완료해야 공고를 등록할 수 있습니다.',
+                        Text('아래 $cardCount가지를 모두 완료해야 공고를 등록할 수 있습니다.',
                             style: ResponsiveHelper.smallStyle(context,
                                 color: AppColors.grey600)),
                       ],
@@ -1221,23 +1457,30 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             ],
 
             // ① 사업장 등록 & 승인
+            // [PH-READINESS-A] SUB_ADMIN은 사업장 자체를 등록할 수 없으므로 CTA 제거
             _buildPrerequisiteCard(
               index: 1,
               title: '사업장 등록 & 승인',
               isReady: _businessApproved,
               readyDescription: '승인된 사업장이 있습니다',
-              notReadyDescription: _hasAnyBusiness
-                  ? '사업장이 아직 승인되지 않았습니다.\n관리자 승인을 기다려주세요.'
-                  : '사업장이 등록되어 있지 않습니다.',
-              actionLabel: _hasAnyBusiness ? null : '사업장 등록하기',
-              onAction: _hasAnyBusiness
+              notReadyDescription: isSubAdmin
+                  ? (_hasAnyBusiness
+                      ? '사업장이 아직 승인되지 않았습니다.\n사업장 관리자에게 문의해주세요.'
+                      : '관리 중인 사업장이 없습니다.\n사업장 관리자에게 문의해주세요.')
+                  : (_hasAnyBusiness
+                      ? '사업장이 아직 승인되지 않았습니다.\n관리자 승인을 기다려주세요.'
+                      : '사업장이 등록되어 있지 않습니다.'),
+              actionLabel: isSubAdmin ? null : (_hasAnyBusiness ? null : '사업장 등록하기'),
+              onAction: isSubAdmin
                   ? null
-                  : () async {
-                      await NavigationHelper.push<void>(context,
-                          destination: const BusinessFormScreen());
-                      if (!mounted) return;
-                      await _loadMyBusinesses();
-                    },
+                  : (_hasAnyBusiness
+                      ? null
+                      : () async {
+                          await NavigationHelper.push<void>(context,
+                              destination: const BusinessFormScreen());
+                          if (!mounted) return;
+                          await _loadMyBusinesses();
+                        }),
             ),
 
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -1268,16 +1511,22 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
             // ③ 계약서 템플릿
+            // [AUTHZ.2] SUB_ADMIN canManageContract=false → CTA 제거, 관리자 요청 안내
             _buildPrerequisiteCard(
               index: 3,
               title: '근로계약서 템플릿',
               isReady: _contractTemplatesReady,
               readyDescription: '계약서 템플릿이 등록되어 있습니다',
-              notReadyDescription: _businessApproved
-                  ? '등록된 계약서 템플릿이 없습니다.'
-                  : '사업장 승인 후 확인 가능합니다.',
-              actionLabel: _businessApproved ? '계약서 관리' : null,
-              onAction: _businessApproved && _selectedBusiness != null
+              notReadyDescription: !canManageContract
+                  ? '근로계약서 템플릿 등록이 필요합니다.\n사업장 관리자에게 준비 완료를 요청해주세요.'
+                  : (_businessApproved
+                      ? '등록된 계약서 템플릿이 없습니다.'
+                      : '사업장 승인 후 확인 가능합니다.'),
+              actionLabel:
+                  canManageContract && _businessApproved ? '계약서 관리' : null,
+              onAction: canManageContract &&
+                      _businessApproved &&
+                      _selectedBusiness != null
                   ? () async {
                       await NavigationHelper.push<void>(
                         context,
@@ -1289,6 +1538,59 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     }
                   : null,
             ),
+
+            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+
+            // ④ 사업자등록증
+            // [5D.2] CTA → BusinessFormScreen (canonical: businesses/{bizId}.businessLicenseImageUrl)
+            // [PH-READINESS-A] SUB_ADMIN은 BusinessFormScreen 수정 권한 없음 → CTA 제거, owner 안내 문구
+            _buildPrerequisiteCard(
+              index: 4,
+              title: '사업자등록증',
+              isReady: _hasLicense,
+              readyDescription: '사업자등록증이 등록되어 있습니다',
+              notReadyDescription: isSubAdmin
+                  ? '사업자등록증 등록이 필요합니다.\n사업장 관리자에게 준비 완료를 요청해주세요.'
+                  : '사업자등록증 이미지를 등록해주세요.\n사업장 정보에서 업로드할 수 있습니다.',
+              actionLabel: isSubAdmin
+                  ? null
+                  : (_businessApproved && _selectedBusiness != null
+                      ? '사업장 정보로 이동'
+                      : '설정으로 이동'),
+              onAction: isSubAdmin
+                  ? null
+                  : () async {
+                      await NavigationHelper.push<void>(
+                        context,
+                        destination: _businessApproved && _selectedBusiness != null
+                            ? BusinessFormScreen(business: _selectedBusiness)
+                            : const SettingsScreen(),
+                      );
+                      if (!mounted) return;
+                      await _reCheckPrerequisites();
+                    },
+            ),
+
+            // ⑤ 인감/서명 (SubAdmin 면제 — 비표시)
+            if (!isSubAdmin) ...[
+              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+              _buildPrerequisiteCard(
+                index: 5,
+                title: '인감/서명 등록',
+                isReady: _hasSeal,
+                readyDescription: '인감 또는 서명이 등록되어 있습니다',
+                notReadyDescription: '계약서 날인을 위한 인감 또는 서명을 등록해주세요.\n설정 → 내 정보에서 등록할 수 있습니다.',
+                actionLabel: '설정으로 이동',
+                onAction: () async {
+                  await NavigationHelper.push<void>(
+                    context,
+                    destination: const SettingsScreen(),
+                  );
+                  if (!mounted) return;
+                  await _reCheckPrerequisites();
+                },
+              ),
+            ],
 
             SizedBox(height: ResponsiveHelper.spacing(context, 32)),
 
@@ -1370,6 +1672,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                           overflow: TextOverflow.ellipsis),
                     ),
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    _readinessChip(r.licenseReady, '사업자등록증'),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                     _readinessChip(r.workTypesReady, '업무유형'),
                   ],
                 ),
@@ -1740,6 +2044,19 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         _contractPeriodType = type;
         _hasChanges = true;
         if (type != 'custom') _rangeEnd = null;
+        // 계약 타입 변경 시 근무 시작 가능기간 초기화
+        _workStartAvailableFrom = null;
+        _workStartAvailableUntil = null;
+      }),
+      workStartAvailableFrom: _workStartAvailableFrom,
+      workStartAvailableUntil: _workStartAvailableUntil,
+      onWorkStartAvailableFromChanged: (date) => setState(() {
+        _workStartAvailableFrom = date;
+        _hasChanges = true;
+      }),
+      onWorkStartAvailableUntilChanged: (date) => setState(() {
+        _workStartAvailableUntil = date;
+        _hasChanges = true;
       }),
     );
   }

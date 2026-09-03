@@ -58,8 +58,8 @@ class ConfirmCancelDialog extends StatelessWidget {
   }) async {
     // 패널티 여부 계산
     final now = DateTime.now();
-    final workDay = DateTime(workDate.year, workDate.month, workDate.day);
-    final today = DateTime(now.year, now.month, now.day);
+    final workDay = FormatHelper.toKstDate(workDate);
+    final today = FormatHelper.toKstDate(now);
     final hasPenalty = workDay.isAtSameMomentAs(today) || workDay.isBefore(today);
 
     return showDialog<ConfirmCancelResult>(

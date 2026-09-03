@@ -29,13 +29,18 @@ import '../../../widgets/calendar/carrot_style_calendar.dart';
 import '../../../utils/payment_due_date_calculator.dart';
 import '../../../widgets/dialogs/styled_dialog.dart' show DialogFocusSafeArea;
 import '../../../widgets/common/loading_widget.dart';
-import '../../../widgets/common/gradient_scaffold.dart';
+import '../../../widgets/common/app_page_scaffold.dart';
+import '../../../utils/navigation_helper.dart';
+import '../../../screens/common/notification_screen.dart';
+import '../../../widgets/common/notification_badge.dart';
 import '../../../widgets/common/app_empty_state.dart';
 import '../../../widgets/common/app_search_bar.dart';
 import '../../../widgets/common/app_tab_label.dart';
 import '../../../widgets/common/app_batch_action_bar.dart';
 import '../../../widgets/common/app_filter_chip.dart';
 import '../../payroll/payslip_period_helper.dart';
+import '../../../services/member_service.dart';             // [BIZCTX-01A]
+import '../../../models/core/business_member_model.dart';  // [BIZCTX-01A] MemberPermissions
 
 class PayrollPaymentDashboardScreen extends StatefulWidget {
   final String businessId;
@@ -44,6 +49,16 @@ class PayrollPaymentDashboardScreen extends StatefulWidget {
   final int month;
   final int initialTab;
 
+  /// [PHASE-2C] 홈 "급여 미이체" 진입 시 true.
+  /// 미이체 탭(tab 0)을 전체 기간 outstanding으로 로드.
+  /// 기존 월별 UX는 변경 없음.
+  final bool showAllOutstanding;
+
+  /// [PHASE-2C.2] 홈 "중간정산 요청" 진입 시 true.
+  /// 중간정산 탭(tab 3)을 PENDING 전용으로 필터링.
+  /// 기존 일반 탭3 진입(PENDING+APPROVED)은 변경 없음.
+  final bool showPendingSettlementOnly;
+
   const PayrollPaymentDashboardScreen({
     super.key,
     required this.businessId,
@@ -51,6 +66,8 @@ class PayrollPaymentDashboardScreen extends StatefulWidget {
     required this.year,
     required this.month,
     this.initialTab = 0,
+    this.showAllOutstanding = false,
+    this.showPendingSettlementOnly = false, // [PHASE-2C.2]
   });
 
   @override
@@ -79,6 +96,14 @@ class _PayrollPaymentDashboardScreenState
   List<AttendanceModel> _allRecords = [];      // confirmed + transferred 합산
   List<PaymentChangeRequestModel>     _changeRequests    = [];
   List<InterimSettlementRequestModel> _settlementRequests = [];
+
+  /// [PHASE-2C] showAllOutstanding 모드용 — 전 기간 미이체 기록
+  List<AttendanceModel> _outstandingAll = [];
+  bool _outstandingLoading = false;
+  // [ERROR-EMPTY-01] true = CF/network 오류. false = 미조회 또는 성공.
+  // _outstandingAll.isNotEmpty && _outstandingLoadError = refresh 실패 (기존 데이터 유지)
+  // _outstandingAll.isEmpty  && _outstandingLoadError = 초기 진입 실패
+  bool _outstandingLoadError = false;
 
   // ── 미이체 탭 날짜 (기본: 오늘)
   late DateTime _selectedTransferDate;
@@ -115,6 +140,11 @@ class _PayrollPaymentDashboardScreenState
   final Map<String, Map<String, String>> _userBankCache = {};
   String _lastTransferNote = '';
 
+  // [BIZCTX-01A] target business permission — widget.businessId 기준
+  // BUSINESS_ADMIN: null (not needed, always allowed)
+  // SUB_ADMIN: loaded via MemberService.getMemberPermissions(widget.businessId, uid)
+  MemberPermissions? _targetPermissions;
+
   // ─────────────────────────────────────────────────
   @override
   void initState() {
@@ -122,7 +152,7 @@ class _PayrollPaymentDashboardScreenState
     _selectedYear  = widget.year;
     _selectedMonth = widget.month;
     final now = DateTime.now();
-    _selectedTransferDate = DateTime(now.year, now.month, now.day);
+    _selectedTransferDate = FormatHelper.toKstDate(now);
     _tabCtrl = TabController(length: 4, vsync: this, initialIndex: widget.initialTab.clamp(0, 3));
     _tabCtrl.addListener(() {
       if (!_tabCtrl.indexIsChanging) {
@@ -133,19 +163,31 @@ class _PayrollPaymentDashboardScreenState
       }
     });
     _searchCtrl.addListener(_onSearchChanged);
-    // PAY-M2: canManageWage 없는 서브어드민 진입 차단
+    // [BIZCTX-01A] target business permission gate — widget.businessId 기준
+    // BUSINESS_ADMIN: 즉시 허용 (member document 불필요)
+    // SUB_ADMIN: target business permission 비동기 확인 후 data load
+    // 기타 USER: pop (아래 _startDashboard 가 isSubAdmin == false 로 분기)
     final up = context.read<UserProvider>();
-    if (!up.can((p) => p.canManageWage)) {
+    if (up.isBusinessAdmin) {
+      // BUSINESS_ADMIN — fast path: target permission load 없이 기존 load 실행
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _load();
+        if (widget.showAllOutstanding) _loadAllOutstanding();
+      });
+    } else if (up.isSubAdmin) {
+      // SUB_ADMIN — target business permission async check 후 load
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _loadTargetPermissionsAndStart();
+      });
+    } else {
+      // USER (non-admin, non-subadmin) — access denied
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         Navigator.of(context).pop();
       });
-      return;
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _load();
-    });
   }
 
   void _onSearchChanged() {
@@ -155,6 +197,44 @@ class _PayrollPaymentDashboardScreenState
       if (q == _searchQuery) return;
       setState(() { _searchQuery = q; _recomputeDerived(); });
     });
+  }
+
+  // [BIZCTX-01A] SUB_ADMIN target business permission 비동기 확인 후 data load.
+  // FAIL CLOSED: error / null / canManageWage=false 모두 pop으로 처리.
+  // global selected business(A) 변경 없음 — widget.businessId(B) one-shot 조회만.
+  Future<void> _loadTargetPermissionsAndStart() async {
+    final up = context.read<UserProvider>();
+    final uid = up.currentUser?.uid;
+    if (uid == null || uid.isEmpty) {
+      if (mounted) Navigator.of(context).pop();
+      return;
+    }
+    try {
+      final perms = await MemberService().getMemberPermissions(widget.businessId, uid);
+      if (!mounted) return;
+      if (perms == null || !perms.canManageWage) {
+        Navigator.of(context).pop();
+        return;
+      }
+      // target permission 확정 — data load 허용
+      setState(() => _targetPermissions = perms);
+      _load();
+      if (widget.showAllOutstanding) _loadAllOutstanding();
+    } catch (e) {
+      debugPrint('❌ [BIZCTX-01A] target permission 로드 실패: $e');
+      if (mounted) Navigator.of(context).pop();
+    }
+  }
+
+  // [BIZCTX-01A] target business 기준 cancel 전송 권한.
+  // invariant: target.canManageWage == true AND target.canCancelTransfer == true
+  // BUSINESS_ADMIN: 항상 true (member document 불필요).
+  bool _canCancelTransferForTarget(UserProvider up) {
+    if (up.isBusinessAdmin) return true;
+    final perms = _targetPermissions;
+    return perms != null &&
+        perms.canManageWage &&
+        perms.canCancelTransfer;
   }
 
   // H1: 파생 상태(필터링 결과·배지) 일괄 재계산 — setState 콜백 내에서 호출
@@ -248,6 +328,84 @@ class _PayrollPaymentDashboardScreenState
     }
   }
 
+  // ─── [PHASE-2C] 전체 미이체 로드 ─────────────────────────────────────────────
+
+  Future<void> _loadAllOutstanding() async {
+    if (!mounted) return;
+    // [ERROR-EMPTY-01] retry 진입 시 error flag 초기화. _outstandingAll은 유지
+    // (refresh 중 기존 데이터가 화면에서 사라지지 않도록 함)
+    setState(() {
+      _outstandingLoading = true;
+      _outstandingLoadError = false;
+    });
+    try {
+      final records = await _payService.getAllOutstandingWages(
+        businessId: widget.businessId,
+      );
+      if (!mounted) return;
+      // bank info 로드 (이름 표시용)
+      final uids = records.map((r) => r.userId).toSet();
+      await _loadBankInfo(uids);
+      if (!mounted) return;
+      setState(() {
+        _outstandingAll = records;
+        _outstandingLoading = false;
+        _outstandingLoadError = false;
+      });
+    } catch (e) {
+      debugPrint('[Payroll] _loadAllOutstanding 실패: $e');
+      if (!mounted) return;
+      // [ERROR-EMPTY-01] 기존 data가 있는 refresh 실패 → 데이터 유지 + Toast 안내
+      // 초기 진입 실패 → _outstandingLoadError=true → inline error UI 표시
+      final hadData = _outstandingAll.isNotEmpty;
+      setState(() {
+        _outstandingLoading = false;
+        _outstandingLoadError = true;
+        // _outstandingAll: 변경하지 않음 — 기존 성공 데이터 보존
+      });
+      if (hadData) {
+        ToastHelper.showError('급여 정보를 새로고침하지 못했습니다');
+      }
+    }
+  }
+
+  /// [PHASE-2C] 전체 미이체 그룹 — 날짜 필터 없음, userId × paymentDueDate grouping
+  List<MapEntry<String, List<AttendanceModel>>> _getPendingGroupsAll() {
+    final recs = _outstandingAll
+        .where((r) => r.wageStatus == AttendanceModel.wageConfirmed)
+        .toList();
+
+    final map = <String, List<AttendanceModel>>{};
+    for (final r in recs) {
+      final due = r.paymentDueDate;
+      final duePart = due != null
+          ? '${due.year}-${due.month.toString().padLeft(2, '0')}-${due.day.toString().padLeft(2, '0')}'
+          : 'no_date';
+      (map['${r.userId}::$duePart'] ??= []).add(r);
+    }
+
+    if (_searchQuery.isNotEmpty) {
+      final q = _searchQuery.toLowerCase();
+      map.removeWhere((key, _) {
+        final uid  = key.split('::').first;
+        final name = (_userBankCache[uid]?['name'] ?? uid).toLowerCase();
+        return !name.contains(q);
+      });
+    }
+
+    // oldest paymentDueDate 먼저
+    final entries = map.entries.toList()
+      ..sort((a, b) {
+        final da = _dueDateFromKey(a.key);
+        final db = _dueDateFromKey(b.key);
+        if (da == null && db == null) return 0;
+        if (da == null) return 1;
+        if (db == null) return -1;
+        return da.compareTo(db);
+      });
+    return entries;
+  }
+
   Future<void> _loadBankInfo(Set<String> uids) async {
     final uncached = uids.where((u) => !_userBankCache.containsKey(u)).toList();
     if (uncached.isEmpty) return;
@@ -262,7 +420,6 @@ class _PayrollPaymentDashboardScreenState
           'bankName':               user.bankName      ?? '',
           'accountNumber':          user.accountNumber ?? '',
           'accountHolder':          user.accountHolder ?? user.name,
-          'bankVerificationStatus': user.bankVerificationStatus ?? '', // [PD-3]
         };
       }
     } catch (e) {
@@ -367,15 +524,16 @@ class _PayrollPaymentDashboardScreenState
         final range = weeks[idx];
         recs = recs.where((r) {
           final wd = r.workDate;
-          final d = DateTime(wd.year, wd.month, wd.day);
-          return !d.isBefore(range.start) && !d.isAfter(range.end);
+          final d = FormatHelper.toKstDate(wd);
+          return !d.isBefore(DateTime.utc(range.start.year, range.start.month, range.start.day))
+              && !d.isAfter(DateTime.utc(range.end.year, range.end.month, range.end.day));
         }).toList();
       }
     } else if (_selectedPayType == 'daily' && _selectedDay != null) {
       final day = _selectedDay!;
       recs = recs.where((r) {
         final wd = r.workDate;
-        return wd.year == day.year && wd.month == day.month && wd.day == day.day;
+        return FormatHelper.toKstDate(wd) == day;
       }).toList();
     }
 
@@ -413,10 +571,12 @@ class _PayrollPaymentDashboardScreenState
         if (!aXfer &&  bXfer) return -1;
         if ( aXfer && !bXfer) return 1;
         if (!aXfer) {
-          final aOver  = overdueMap[a.key]!;
-          final bOver  = overdueMap[b.key]!;
-          final aToday = dueTodayMap[a.key]!;
-          final bToday = dueTodayMap[b.key]!;
+          // overdueMap/dueTodayMap은 entries와 동일 키 집합으로 생성되므로 이론상 항상 존재하나
+          // setState 타이밍 경쟁 방어용 null 안전 폴백 적용
+          final aOver  = overdueMap[a.key]  ?? false;
+          final bOver  = overdueMap[b.key]  ?? false;
+          final aToday = dueTodayMap[a.key] ?? false;
+          final bToday = dueTodayMap[b.key] ?? false;
           if ( aOver && !bOver)  return -1;
           if (!aOver &&  bOver)  return 1;
           if ( aToday && !bToday) return -1;
@@ -433,7 +593,7 @@ class _PayrollPaymentDashboardScreenState
       if (r.wageStatus != AttendanceModel.wageConfirmed) continue;
       final due = r.paymentDueDate;
       if (due == null) continue;
-      final key = DateTime(due.year, due.month, due.day);
+      final key = FormatHelper.toKstDate(due);
       (usersByDate[key] ??= {}).add(r.userId);
     }
     return usersByDate.map((k, v) => MapEntry(k, v.length));
@@ -477,7 +637,7 @@ class _PayrollPaymentDashboardScreenState
       ),
     );
     if (picked != null && mounted) {
-      setState(() { _selectedDay = picked; _recomputeDerived(); }); // H1
+      setState(() { _selectedDay = DateTime.utc(picked.year, picked.month, picked.day); _recomputeDerived(); }); // H1
     }
   }
 
@@ -493,7 +653,7 @@ class _PayrollPaymentDashboardScreenState
     );
     if (picked != null && mounted) {
       setState(() {
-        _selectedTransferDate = DateTime(picked.year, picked.month, picked.day);
+        _selectedTransferDate = DateTime.utc(picked.year, picked.month, picked.day);
         _recomputeDerived(); // H1: 날짜 변경 → pendingGroups 재계산
       });
     }
@@ -506,9 +666,7 @@ class _PayrollPaymentDashboardScreenState
       if (r.wageStatus != AttendanceModel.wageConfirmed) return false;
       final due = r.paymentDueDate;
       if (due == null) return false;
-      return due.year == target.year &&
-             due.month == target.month &&
-             due.day == target.day;
+      return FormatHelper.toKstDate(due) == target;
     }).toList();
 
     final map = <String, List<AttendanceModel>>{};
@@ -532,10 +690,7 @@ class _PayrollPaymentDashboardScreenState
   }
 
   // ── 그룹 헬퍼 ────────────────────────────────────────────
-  static DateTime get _today {
-    final n = DateTime.now();
-    return DateTime(n.year, n.month, n.day);
-  }
+  static DateTime get _today => FormatHelper.toKstDate(DateTime.now());
 
   String _uidFromKey(String key) => key.split('::').first;
 
@@ -549,7 +704,7 @@ class _PayrollPaymentDashboardScreenState
     final dates = recs
         .map((r) => r.paymentDueDate)
         .whereType<DateTime>()
-        .map((d) => DateTime(d.year, d.month, d.day))
+        .map(FormatHelper.toKstDate)
         .toList()
       ..sort();
     return dates.isEmpty ? null : dates.first;
@@ -581,8 +736,6 @@ class _PayrollPaymentDashboardScreenState
   int get _selectedNet =>
       _sumNet(_allRecords.where((r) => _selectedIds.contains(r.id)).toList());
 
-  String get _uid => context.read<UserProvider>().currentUser?.uid ?? '';
-
   // ══════════════════════════════════════════════════════════
   // 이체 처리
   // ══════════════════════════════════════════════════════════
@@ -594,13 +747,13 @@ class _PayrollPaymentDashboardScreenState
       final uid = context.read<UserProvider>().currentUser?.uid ?? '';
       if (uid.isEmpty) { ToastHelper.showError('로그인 정보를 확인해주세요'); return; }
 
-      final workerName = _userBankCache[recs.first.userId]?['name'] ?? recs.first.userId;
+      final workerName = _userBankCache[recs.first.userId]?['name'] ?? '이름 없음';
       final net = _sumNet(recs);
       final confirmed = await DialogHelper.showConfirm(
         context,
-        title: '송금 처리',
-        message: '$workerName님께\n${FormatHelper.formatWage(net)} (${recs.length}건)을\n송금 처리하시겠습니까?',
-        confirmText: '송금 처리',
+        title: '이체 완료 처리', // [5C.2-P2] ACTION 용어 통일
+        message: '$workerName님께\n${FormatHelper.formatWage(net)} (${recs.length}건)을\n이체 완료 처리하시겠습니까?\n실제 은행 이체를 완료한 건만 처리해 주세요.',
+        confirmText: '이체 완료 처리',
         cancelText: '취소',
         icon: Icons.payment_outlined,
       );
@@ -633,16 +786,16 @@ class _PayrollPaymentDashboardScreenState
             records: recs, workerNameByUid: nameByUid),
         );
         if (skipped.isNotEmpty && mounted) {
-          ToastHelper.showWarning('${skipped.length}명은 계좌 정보 미확인으로 송금에서 제외되었습니다.');
+          ToastHelper.showWarning('${skipped.length}명은 계좌 정보 미확인으로 이체에서 제외되었습니다.');
         }
       }
       if (mounted) {
-        ToastHelper.showSuccess('${recs.length}건 송금 처리되었습니다');
+        ToastHelper.showSuccess('${recs.length}건 이체 완료 처리되었습니다');
         _load();
       }
     } catch (e) {
-      debugPrint('❌ 송금 처리 실패: $e');
-      if (mounted) ToastHelper.showError('송금 처리에 실패했습니다\n$e');
+      debugPrint('❌ 이체 완료 처리 실패: $e');
+      if (mounted) ToastHelper.showError('이체 완료 처리에 실패했습니다\n$e');
       if (mounted) _load();
     } finally {
       if (mounted) setState(() => _isTransferring = false);
@@ -655,9 +808,9 @@ class _PayrollPaymentDashboardScreenState
     try {
       final ok = await DialogHelper.showConfirm(
         context,
-        title: '일괄 이체 완료',
-        message: '선택된 ${_selectedIds.length}건 (${FormatHelper.formatWage(_selectedNet)})을\n이체 완료 처리하시겠습니까?',
-        confirmText: '이체 완료',
+        title: '일괄 이체 완료 처리', // [5C.2-P2] ACTION 용어 통일
+        message: '선택된 ${_selectedIds.length}건 (${FormatHelper.formatWage(_selectedNet)})을\n이체 완료 처리하시겠습니까?\n실제 은행 이체를 완료한 건만 처리해 주세요.',
+        confirmText: '이체 완료 처리',
         cancelText: '취소',
       );
       if (ok != true || !mounted) return;
@@ -859,7 +1012,7 @@ class _PayrollPaymentDashboardScreenState
       if (reason == null || reason.isEmpty || !mounted) return;
       setState(() => _isTransferring = true); // 실제 서비스 호출 직전에 설정
       await _payService.rejectInterimSettlement(
-          req: req, processedBy: _uid, rejectReason: reason);
+          req: req, rejectReason: reason);
       if (mounted) { ToastHelper.showSuccess('거절 처리되었습니다'); _load(); }
     } catch (e) {
       if (mounted) ToastHelper.showError('처리에 실패했습니다\n$e');
@@ -883,7 +1036,7 @@ class _PayrollPaymentDashboardScreenState
         cancelText: '취소',
       );
       if (ok != true || !mounted) return;
-      await _payService.approveChangeRequest(requestId: req.id, processedBy: _uid);
+      await _payService.approveChangeRequest(requestId: req.id, businessId: req.businessId);
       if (mounted) { ToastHelper.showSuccess('변경 요청이 승인되었습니다'); _load(); }
     } catch (e) {
       if (mounted) ToastHelper.showError('처리에 실패했습니다\n$e');
@@ -909,7 +1062,7 @@ class _PayrollPaymentDashboardScreenState
       );
       if (reason == null || reason.isEmpty || !mounted) return;
       await _payService.rejectChangeRequest(
-          requestId: req.id, processedBy: _uid, rejectReason: reason);
+          requestId: req.id, businessId: req.businessId, rejectReason: reason);
       if (mounted) { ToastHelper.showSuccess('거절 처리되었습니다'); _load(); }
     } catch (e) {
       if (mounted) ToastHelper.showError('처리에 실패했습니다\n$e');
@@ -932,56 +1085,86 @@ class _PayrollPaymentDashboardScreenState
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return GradientScaffold(
+    return AppPageScaffold(
       title: '급여 지급 현황',
-      onRefresh: _load,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.refresh_rounded),
+          onPressed: () {
+            _load();
+            if (widget.showAllOutstanding) _loadAllOutstanding();
+          },
+          color: AppColors.textSecondary,
+        ),
+        IconButton(
+          icon: const Icon(Icons.home_outlined),
+          onPressed: () => NavigationHelper.goHome(context),
+          color: AppColors.textSecondary,
+        ),
+        NotificationBadge(
+          child: IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const NotificationScreen()),
+            ),
+            color: AppColors.textSecondary,
+          ),
+        ),
+      ],
       body: _isLoading
           ? const LoadingWidget(message: '급여 현황 불러오는 중...')
           : Column(children: [
               // ── 검색바
               AppSearchBar(controller: _searchCtrl, hintText: '근무자 이름으로 검색'),
               // ── 탭바
-              Container(
-                color: AppColors.surface,
-                child: TabBar(
-                  controller: _tabCtrl,
-                  isScrollable: false,
-                  labelColor: theme.primaryColor,
-                  unselectedLabelColor: AppColors.grey500,
-                  indicatorColor: theme.primaryColor,
-                  indicatorWeight: 2.5,
-                  dividerColor: AppColors.grey100,
-                  labelPadding: const EdgeInsets.symmetric(horizontal: 14),
-                  labelStyle: ResponsiveHelper.smallStyle(context, fontWeight: FontWeight.w600),
-                  unselectedLabelStyle: ResponsiveHelper.smallStyle(context),
-                  tabs: [
-                    Tab(child: AppTabLabel(
-                        label: '미이체',
-                        count: _pendingBadgeCount,   // H1: 캐시
-                        badgeColor: AppColors.error,
-                        urgent: _pendingIsUrgent)),   // H1: 캐시
-                    Tab(child: AppTabLabel(label: '이체현황')),
-                    Tab(child: AppTabLabel(
-                        label: '변경요청',
-                        count: _changeRequests.length,
-                        badgeColor: AppColors.info)),
-                    Tab(child: AppTabLabel(
-                        label: '중간정산',
-                        count: _settlementRequests.length,
-                        badgeColor: AppColors.grey500)),
-                  ],
+              // [BADGE-SCOPE-01] showAllOutstanding=true: task-focused 전체 미이체 모드.
+              // 일반 월별 TabBar(미이체 badge = 현재 월 scope)를 숨겨 scope 혼란 제거.
+              // showAllOutstanding=false: 기존 TabBar + TabBarView 완전 유지.
+              if (!widget.showAllOutstanding)
+                Container(
+                  color: AppColors.surface,
+                  child: TabBar(
+                    controller: _tabCtrl,
+                    isScrollable: false,
+                    labelColor: theme.primaryColor,
+                    unselectedLabelColor: AppColors.grey500,
+                    indicatorColor: theme.primaryColor,
+                    indicatorWeight: 2.5,
+                    dividerColor: AppColors.grey100,
+                    labelPadding: const EdgeInsets.symmetric(horizontal: 14),
+                    labelStyle: ResponsiveHelper.smallStyle(context, fontWeight: FontWeight.w600),
+                    unselectedLabelStyle: ResponsiveHelper.smallStyle(context),
+                    tabs: [
+                      Tab(child: AppTabLabel(
+                          label: '미이체',
+                          count: _pendingBadgeCount,   // H1: 캐시
+                          badgeColor: AppColors.error,
+                          urgent: _pendingIsUrgent)),   // H1: 캐시
+                      Tab(child: AppTabLabel(label: '이체현황')),
+                      Tab(child: AppTabLabel(
+                          label: '변경요청',
+                          count: _changeRequests.length,
+                          badgeColor: AppColors.info)),
+                      Tab(child: AppTabLabel(
+                          label: '중간정산',
+                          count: _settlementRequests.length,
+                          badgeColor: AppColors.grey500)),
+                    ],
+                  ),
                 ),
-              ),
               Expanded(
-                child: TabBarView(
-                  controller: _tabCtrl,
-                  children: [
-                    _buildPendingTransferTab(),
-                    _buildTransferTab(),
-                    _buildChangeRequestTab(),
-                    _buildSettlementTab(),
-                  ],
-                ),
+                child: widget.showAllOutstanding
+                    ? _buildAllOutstandingView()
+                    : TabBarView(
+                        controller: _tabCtrl,
+                        children: [
+                          _buildPendingTransferTab(),
+                          _buildTransferTab(),
+                          _buildChangeRequestTab(),
+                          _buildSettlementTab(),
+                        ],
+                      ),
               ),
             ]),
     );
@@ -1016,7 +1199,182 @@ class _PayrollPaymentDashboardScreenState
   }
 
   // ─── 미이체 탭 ───────────────────────────────────────────
+  // ─── [PHASE-2C] 홈 진입 전체 미이체 뷰 ─────────────────────────────────────
+  // showAllOutstanding=true 일 때 _buildPendingTransferTab 대신 호출됨.
+  // 날짜 필터 없음, 배치모드 없음 — 모든 wageStatus=confirmed 미이체 건 표시.
+  Widget _buildAllOutstandingView() {
+    // [ERROR-EMPTY-01] 4-state rendering:
+    //   STATE-1: 초기 로딩 (기존 데이터 없음)
+    //   STATE-2: 성공 + 데이터 (기존 list)
+    //   STATE-3: 성공 + empty ("미이체 급여가 없습니다")
+    //   STATE-4: 초기 실패 (기존 데이터 없음 → inline error)
+    //
+    // refresh 실패 (기존 데이터 있음) → STATE-2 유지 + ToastHelper로 안내
+    // → error flag가 true여도 기존 데이터가 있으면 list를 계속 표시
+
+    // STATE-1: 첫 조회 중 (아직 데이터 없음)
+    if (_outstandingLoading && _outstandingAll.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    // STATE-4: 초기 진입 실패 (기존 데이터도 없음) — inline error UI
+    if (_outstandingLoadError && _outstandingAll.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.cloud_off_outlined, size: 48,
+                  color: AppColors.textSecondary),
+              const SizedBox(height: 16),
+              Text(
+                '급여 정보를 불러오지 못했습니다',
+                style: ResponsiveHelper.bodyStyle(context,
+                    fontWeight: FontWeight.w600),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '잠시 후 다시 시도해주세요',
+                style: ResponsiveHelper.tinyStyle(context,
+                    color: AppColors.textSecondary),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 20),
+              OutlinedButton(
+                onPressed: _loadAllOutstanding,
+                child: const Text('다시 시도'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final groups   = _getPendingGroupsAll();
+    final allRecs  = groups.expand((e) => e.value).toList();
+    final totalNet = _sumNet(allRecs);
+
+    return Column(children: [
+      // ── 헤더 요약 박스
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: AppColors.errorBg,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppColors.error.withValues(alpha: 0.2)),
+          ),
+          child: Row(children: [
+            const Icon(Icons.schedule_outlined, size: 16, color: AppColors.error),
+            const SizedBox(width: 10),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('전체 미이체',
+                    style: ResponsiveHelper.tinyStyle(context,
+                        color: AppColors.errorDark, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 2),
+                Text(
+                  FormatHelper.formatWage(totalNet),
+                  style: ResponsiveHelper.titleStyle(context, color: AppColors.errorDark)
+                      .copyWith(fontSize: 22, fontWeight: FontWeight.w800),
+                ),
+              ],
+            ),
+            const Spacer(),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: AppColors.error,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text('${groups.length}건',
+                  style: ResponsiveHelper.tinyStyle(context,
+                      color: Colors.white, fontWeight: FontWeight.w700)),
+            ),
+          ]),
+        ),
+      ),
+      const SizedBox(height: 8),
+
+      // ── 목록
+      Expanded(
+        child: groups.isEmpty
+            ? const AppEmptyState(
+                icon: Icons.check_circle_outline,
+                title: '미이체 급여가 없습니다',
+                subtitle: '확정된 미이체 건이 없거나 모두 처리되었습니다',
+              )
+            : RefreshIndicator(
+                onRefresh: _loadAllOutstanding,
+                child: ListView.builder(
+                  padding: ResponsiveHelper.listPadding(context).copyWith(top: 4),
+                  itemCount: groups.length,
+                  itemBuilder: (ctx, i) {
+                    final entry      = groups[i];
+                    final uid        = _uidFromKey(entry.key);
+                    final recs       = entry.value;
+                    final bank       = _userBankCache[uid];
+                    final net        = _sumNet(recs);
+                    final dueDate    = _dueDateFromKey(entry.key) ?? _earliestDue(recs);
+                    final isOver     = _groupIsOverdue(recs);
+                    final isToday2   = _groupIsDueToday(recs);
+                    final schLabel   = _scheduleLabel(recs);
+                    final daysUntil  = dueDate?.difference(_today).inDays;
+                    final bankStr    = bank?['bankName'] != null
+                        ? '${bank!['bankName']} ${bank['accountNumber']}'
+                        : '계좌 정보 없음';
+                    final workerName = bank?['name'] ?? uid;
+
+                    return RepaintBoundary(child: _WorkerPayCard(
+                      workerName:    workerName,
+                      bankInfo:      bankStr,
+                      businessName:  recs.first.businessName,
+                      netAmount:     net,
+                      recordCount:   recs.length,
+                      isTransferred: false,
+                      isPending:     true,
+                      isBatchMode:   false,
+                      isSelected:    false,
+                      isOverdue:     isOver,
+                      isDueToday:    isToday2,
+                      dueDate:       dueDate,
+                      scheduleLabel: schLabel,
+                      daysUntilDue:  daysUntil,
+                      onCardTap: () async {
+                        final up = Provider.of<UserProvider>(context, listen: false);
+                        final canCancel = _canCancelTransferForTarget(up); // [BIZCTX-01A] target B 기준
+                        final result = await Navigator.push<bool>(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => _WorkerPayDetailScreen(
+                              workerName:        workerName,
+                              records:           recs,
+                              bankInfo:          bankStr,
+                              canCancelTransfer: canCancel,
+                            ),
+                          ),
+                        );
+                        if (result == true && mounted) _loadAllOutstanding();
+                      },
+                      onSelect:          null,
+                      onMarkTransferred: () => _markWorker(recs),
+                    ));
+                  },
+                ),
+              ),
+      ),
+    ]);
+  }
+
   Widget _buildPendingTransferTab() {
+    // [PHASE-2C] 홈 전체 미이체 진입 시 all-outstanding 뷰로 override
+    if (widget.showAllOutstanding) return _buildAllOutstandingView();
+
     final groups      = _pendingGroups; // H1: 캐시 사용
     final pendingRecs = groups.expand((e) => e.value).toList();
     final totalNet    = _sumNet(pendingRecs);
@@ -1029,7 +1387,7 @@ class _PayrollPaymentDashboardScreenState
       if (!req.isApproved) return false;
       final sd = req.scheduledTransferDate;
       if (sd == null) return false;
-      final sdDay = DateTime(sd.year, sd.month, sd.day);
+      final sdDay = FormatHelper.toKstDate(sd);
       return !sdDay.isAfter(d);
     }).toList();
 
@@ -1133,7 +1491,7 @@ class _PayrollPaymentDashboardScreenState
           onSelectAll:    () => setState(() => _selectedIds.addAll(allIds)),
           onDeselectAll:  () => setState(() => _selectedIds.clear()),
           onAction: _selectedIds.isNotEmpty && _selectedNet > 0 ? _markBatch : null,
-          actionLabel: '송금',
+          actionLabel: '이체 완료 처리', // [5C.2-P2] ACTION 용어 통일
           actionIcon: Icons.send,
         ),
 
@@ -1228,11 +1586,9 @@ class _PayrollPaymentDashboardScreenState
                       dueDate:                  dueDate,
                       scheduleLabel:            schLabel,
                       daysUntilDue:             daysUntil,
-                      bankVerificationStatus:   bank?['bankVerificationStatus'], // [PD-3]
                       onCardTap: !_batchMode ? () async {
                         final up = Provider.of<UserProvider>(context, listen: false);
-                        final canCancel = up.isBusinessAdmin ||
-                            (up.memberPermissions?.canCancelTransfer ?? false);
+                        final canCancel = _canCancelTransferForTarget(up); // [BIZCTX-01A] target B 기준
                         final result = await Navigator.push<bool>(
                           context,
                           MaterialPageRoute(
@@ -1419,8 +1775,7 @@ class _PayrollPaymentDashboardScreenState
                       daysUntilDue:            daysUntil,
                       onCardTap: () async {
                         final up = Provider.of<UserProvider>(context, listen: false);
-                        final canCancel = up.isBusinessAdmin ||
-                            (up.memberPermissions?.canCancelTransfer ?? false);
+                        final canCancel = _canCancelTransferForTarget(up); // [BIZCTX-01A] target B 기준
                         final result = await Navigator.push<bool>(
                           context,
                           MaterialPageRoute(
@@ -1599,15 +1954,24 @@ class _PayrollPaymentDashboardScreenState
 
   // ─── 중간정산 탭 ──────────────────────────────────────────
   Widget _buildSettlementTab() {
-    if (_settlementRequests.isEmpty) {
-      return const AppEmptyState(
-          icon: Icons.account_balance_wallet_outlined, title: '중간정산 요청이 없습니다');
+    // [PHASE-2C.2] Home Action 진입 시 PENDING 전용 필터
+    // 일반 탭 진입(showPendingSettlementOnly=false)은 PENDING+APPROVED 그대로
+    final displayList = widget.showPendingSettlementOnly
+        ? _settlementRequests.where((r) => r.isPending).toList()
+        : _settlementRequests;
+
+    if (displayList.isEmpty) {
+      return AppEmptyState(
+          icon: Icons.account_balance_wallet_outlined,
+          title: widget.showPendingSettlementOnly
+              ? '처리 대기 중인 중간정산이 없습니다'
+              : '중간정산 요청이 없습니다');
     }
     return ListView.builder(
       padding: ResponsiveHelper.listPadding(context),
-      itemCount: _settlementRequests.length,
+      itemCount: displayList.length,
       itemBuilder: (_, i) {
-        final req = _settlementRequests[i];
+        final req = displayList[i];
         final scheduledLabel = req.scheduledTransferDate != null
             ? '이체 예정일: ${DateFormat('MM/dd').format(req.scheduledTransferDate!)}'
             : null;
@@ -1661,8 +2025,6 @@ class _WorkerPayCard extends StatelessWidget {
   final DateTime? dueDate;
   final String? scheduleLabel;
   final int? daysUntilDue;
-  /// [PD-3] 계좌 검증 상태 — null이면 표시 안 함 (이체완료 카드 등)
-  final String? bankVerificationStatus;
   final VoidCallback? onSelect;
   final VoidCallback? onMarkTransferred;
   final VoidCallback? onCardTap;
@@ -1683,7 +2045,6 @@ class _WorkerPayCard extends StatelessWidget {
     this.dueDate,
     this.scheduleLabel,
     this.daysUntilDue,
-    this.bankVerificationStatus,
     this.onSelect,
     this.onMarkTransferred,
     this.onCardTap,
@@ -1793,11 +2154,30 @@ class _WorkerPayCard extends StatelessWidget {
                                     ),
                                   )
                                 else
+                                  // [PHASE-2C.2] 지급일 미설정 anomaly — 명시적 경고 칩
                                   Flexible(
-                                    child: Text('지급일 미설정',
-                                        overflow: TextOverflow.ellipsis,
-                                        style: ResponsiveHelper.tinyStyle(context,
-                                            color: AppColors.grey400)),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: AppColors.warningBg,
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                            color: AppColors.warning.withValues(alpha: 0.4)),
+                                      ),
+                                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                        const Icon(Icons.warning_amber_outlined,
+                                            size: 11, color: AppColors.warningDark),
+                                        const SizedBox(width: 3),
+                                        Flexible(
+                                          child: Text('지급일 확인 필요',
+                                              overflow: TextOverflow.ellipsis,
+                                              style: ResponsiveHelper.tinyStyle(context,
+                                                  color: AppColors.warningDark,
+                                                  fontWeight: FontWeight.w600)),
+                                        ),
+                                      ]),
+                                    ),
                                   ),
                               ]),
                               // 2행: 사업장 · 계좌 + [계좌상태칩] + 건수
@@ -1817,12 +2197,6 @@ class _WorkerPayCard extends StatelessWidget {
                                       overflow: TextOverflow.ellipsis,
                                     );
                                   }()),
-                                // [PD-3] 계좌 검증 상태 배지 — verified는 표시 생략
-                                if (!isTransferred && bankVerificationStatus != null &&
-                                    bankVerificationStatus! != 'verified') ...[
-                                  const SizedBox(width: 4),
-                                  _BankStatusChip(status: bankVerificationStatus!),
-                                ],
                                 Text('$recordCount건',
                                     style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400)),
                               ]),
@@ -2283,35 +2657,6 @@ class _DueDateChip extends StatelessWidget {
   }
 }
 
-// ─── 계좌 검증 상태 배지 [PD-3] ──────────────────────────────────────
-class _BankStatusChip extends StatelessWidget {
-  final String status;
-  const _BankStatusChip({required this.status});
-
-  @override
-  Widget build(BuildContext context) {
-    final (label, color, bg) = switch (status) {
-      'review_required' => ('검토 중',     AppColors.warning, AppColors.warningBg),
-      'mismatch'        => ('재확인 필요', AppColors.error,   AppColors.errorBg),
-      _                 => ('미등록',      AppColors.grey400, AppColors.grey100),
-    };
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(3),
-      ),
-      child: Text(
-        label,
-        style: ResponsiveHelper.tinyStyle(
-          context,
-          color: color,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-}
 
 // ─── 미이체 날짜 선택 캘린더 바텀시트 ────────────────────────────────
 class _PendingCalendarSheet extends StatefulWidget {
@@ -2394,7 +2739,7 @@ class _PendingCalendarSheetState extends State<_PendingCalendarSheet> {
               focusedMonth: DateTime(_selectedDate.year, _selectedDate.month),
               onDateSelected: (date) => Navigator.pop(context, date),
               dayBadgeBuilder: (date) {
-                final key = DateTime(date.year, date.month, date.day);
+                final key = DateTime.utc(date.year, date.month, date.day);
                 final count = widget.countByDate[key] ?? 0;
                 if (count == 0) return null;
                 return Padding(
@@ -2445,8 +2790,8 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
   Future<void> _cancelTransfer(AttendanceModel r) async {
     final note = await DialogHelper.showTextInput(
       context,
-      title: '이체 취소',
-      message: '이체완료 상태를 미이체(확정)로 되돌립니다.\n실제 송금이 취소되지 않으니 별도 처리하세요.',
+      title: '이체 완료 처리 취소', // [5C.2-P2] CANCEL 용어 통일
+      message: '이체 완료 처리 상태를 미이체로 되돌립니다.\n실제 은행 이체는 취소되지 않습니다.',
       hintText: '예) 잘못된 금액으로 이체, 계좌 오입력 등',
       maxLength: 200,
       maxLines: 2,
@@ -2467,7 +2812,7 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
         cancelNote: note,
       );
       if (!mounted) return;
-      ToastHelper.showSuccess('이체가 취소되었습니다.');
+      ToastHelper.showSuccess('이체 완료 처리가 취소되었습니다.');
       Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;

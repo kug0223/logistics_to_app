@@ -25,7 +25,7 @@ import '../../../services/contract_service.dart';
 import '../../../services/firestore_service.dart';
 import '../../../services/monthly_review_service.dart';
 import '../../../utils/id_card_helper.dart';
-import '../../../utils/trust_score_helper.dart';
+// trust_score_helper: 신뢰도 점수 시스템 제거 (5A.2A)
 import '../../../theme/app_colors.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../utils/format_helper.dart';
@@ -40,6 +40,9 @@ import '../../../widgets/dialogs/contract_template_selector_dialog.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../widgets/dialogs/worker_detail_dialog.dart';
 import '../../../widgets/work_type_icon.dart';
+import 'available_workers_bottom_sheet.dart';
+import 'invite_method_sheet.dart';
+import 'invite_worker_dialog.dart';
 
 // ─── 그룹 데이터 (업무 단위) ────────────────────────────────────────────────
 class _GroupData {
@@ -49,7 +52,9 @@ class _GroupData {
   final String startTime;
   final String endTime;
   final bool isLongTerm;
-  final String? workDetailId;   // WorkDetail 고유 ID
+  /// [8.1E.4] canonical workDetail ID (wdId, new-schema 슬롯)
+  final String? wdId;
+  final String? workDetailId;   // composite WorkDetail ID (레거시/capacityKey 용)
   int requiredCount;             // 나중에 채움
   final List<ApplicationModel> pendingApps = [];
   final List<ApplicationModel> confirmedApps = [];
@@ -61,6 +66,7 @@ class _GroupData {
     required this.startTime,
     required this.endTime,
     required this.isLongTerm,
+    this.wdId,
     this.workDetailId,
     this.requiredCount = 0,
   });
@@ -68,15 +74,17 @@ class _GroupData {
   // 공고 고유 키 (공고 헤더 그룹핑용)
   String get toKey => toId ?? 'noid_$toTitle';
 
-  // 업무 고유 키 (그룹 스코프 — 신분증/계약서 일괄처리)
+  // [8.1E.4] 업무 고유 키 — wdId 우선, composite fallback, legacy fallback
   String get groupKey {
-    final wKey = workDetailId?.isNotEmpty == true
-        ? workDetailId!
-        : '${workType}_${startTime}_$endTime';
+    final wKey = wdId?.isNotEmpty == true
+        ? wdId!
+        : (workDetailId?.isNotEmpty == true
+            ? workDetailId!
+            : '${workType}_${startTime}_$endTime');
     return '${toId ?? toTitle}_$wKey';
   }
 
-  // capacity 맵에서 찾을 때 사용할 키
+  // capacity 맵에서 찾을 때 사용할 키 (composite 기반 _workDetailCapacityMap 과 일치)
   String get capacityKey => workDetailId?.isNotEmpty == true
       ? workDetailId!
       : '${workType}_${startTime}_$endTime';
@@ -255,6 +263,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           _contractSvc.getContractStatusBatch(allAppIds, businessId: bizId),
           _loadWeeklyCount(bizId),
           _loadWorkDetailCapacities(allApps),
+          // [4J.0C] 대기 중 TO 모델 선제 로드 — canApprovePending UI gate용
+          _fetchToCacheForPending(pending),
         ]);
         userMap = results[0] as Map<String, UserModel>;
         contractMap = results[1] as Map<String, String?>;
@@ -382,6 +392,22 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     return result;
   }
 
+  /// [4J.0C] 대기 중 지원서의 TO 모델을 _toCache에 선제 로드
+  /// 목적: canApprovePending UI gate (승인 버튼 show/hide, _batchApprove guard)
+  /// - 캐시 미적중 시 낙관적 허용 처리 (CF가 최종 차단)
+  Future<void> _fetchToCacheForPending(List<ApplicationModel> pending) async {
+    final toIds = pending
+        .map((a) => a.toId)
+        .whereType<String>()
+        .toSet()
+        .toList();
+    if (toIds.isEmpty) return;
+    await Future.wait(toIds.map((id) async {
+      final to = await _svc.getTO(id);
+      if (to != null) _toCache[id] = to;
+    }));
+  }
+
   // ── Grouping ───────────────────────────────────────────────────────────────
 
   void _rebuildGroups() => _cachedGroups = _buildGroups();
@@ -390,10 +416,17 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     final Map<String, _GroupData> groups = {};
 
     void addApp(ApplicationModel app, bool isPending) {
-      final wKey = app.workDetailId?.isNotEmpty == true
+      // [8.1E.4] wdId 우선 그룹키 — 동일 wdId 앱은 같은 그룹으로 집계
+      final wKey = app.wdId?.isNotEmpty == true
+          ? app.wdId!
+          : (app.workDetailId?.isNotEmpty == true
+              ? app.workDetailId!
+              : '${app.selectedWorkType}_${app.startTime}_${app.endTime}');
+      final key = '${app.toId ?? app.toTitle}_$wKey';
+      // capacity 맵 조회는 composite key 기반 (_workDetailCapacityMap 키 포맷 유지)
+      final compositeKey = app.workDetailId?.isNotEmpty == true
           ? app.workDetailId!
           : '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
-      final key = '${app.toId ?? app.toTitle}_$wKey';
       groups.putIfAbsent(
         key,
         () => _GroupData(
@@ -403,11 +436,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           startTime: app.startTime,
           endTime: app.endTime,
           isLongTerm: app.isLongTermApplication,
+          wdId: app.wdId,
           workDetailId: app.workDetailId,
-          requiredCount: _workDetailCapacityMap[
-              app.workDetailId?.isNotEmpty == true
-                  ? app.workDetailId!
-                  : '${app.selectedWorkType}_${app.startTime}_${app.endTime}'] ?? 0,
+          requiredCount: _workDetailCapacityMap[compositeKey] ?? 0,
         ),
       );
       if (isPending) {
@@ -449,36 +480,22 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) Navigator.pop(context, _hasChanges);
       },
-      child: Dialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppDialogSize.borderRadius),
-        ),
-        insetPadding: const EdgeInsets.symmetric(
-          horizontal: AppDialogSize.insetH,
-          vertical: AppDialogSize.insetV,
-        ),
-        child: SizedBox(
-          height:
-              MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
-          child: Column(
-            children: [
-              _buildHeader(context),
-              if (!_isLoading) _buildStatsStrip(context),
-              Expanded(
-                child: _isLoading
-                    ? const Padding(
-                        padding: EdgeInsets.all(40),
-                        child: LoadingWidget(message: '지원명단 불러오는 중...'),
-                      )
-                    : _buildBody(context),
-              ),
-              if (!_isLoading && _selectedIds.isNotEmpty)
-                _buildBatchActionBar(context),
-              _buildBottomBar(context),
-            ],
+      child: AppModalShell(
+        children: [
+          _buildHeader(context),
+          if (!_isLoading) _buildStatsStrip(context),
+          Expanded(
+            child: _isLoading
+                ? const Padding(
+                    padding: EdgeInsets.all(40),
+                    child: LoadingWidget(message: '지원명단 불러오는 중...'),
+                  )
+                : _buildBody(context),
           ),
-        ),
+          if (!_isLoading && _selectedIds.isNotEmpty)
+            _buildBatchActionBar(context),
+          _buildBottomBar(context),
+        ],
       ),
     );
   }
@@ -486,70 +503,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   // ── Header ─────────────────────────────────────────────────────────────────
 
   Widget _buildHeader(BuildContext context) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [AppColors.info, AppColors.info.withValues(alpha: 0.85)],
-        ),
-        borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(AppDialogSize.borderRadius),
-          topRight: Radius.circular(AppDialogSize.borderRadius),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding:
-                    EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(Icons.people_outlined,
-                    color: Colors.white,
-                    size: ResponsiveHelper.iconSize(context, 24)),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('지원명단',
-                        style: ResponsiveHelper.titleStyle(context).copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold)),
-                    Text(FormatHelper.formatDateLong(widget.date),
-                        style: ResponsiveHelper.smallStyle(context,
-                            color: Colors.white.withValues(alpha: 0.8))),
-                  ],
-                ),
-              ),
-              Material(
-                color: Colors.white.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(12),
-                child: InkWell(
-                  onTap: () => Navigator.pop(context, _hasChanges),
-                  borderRadius: BorderRadius.circular(12),
-                  child: Padding(
-                    padding: EdgeInsets.all(
-                        ResponsiveHelper.spacing(context, 8)),
-                    child: Icon(Icons.close,
-                        color: Colors.white,
-                        size: ResponsiveHelper.iconSize(context, 24)),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          if (widget.businesses.length > 1) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            AppSelectField<String>(
+    return AppModalHeader(
+      title: '지원명단',
+      subtitle: FormatHelper.formatDateLong(widget.date),
+      onClose: () => Navigator.pop(context, _hasChanges),
+      trailing: widget.businesses.length > 1
+          ? AppSelectField<String>(
               value: _selectedBusinessId,
               hintText: '사업장을 선택하세요',
               sheetTitle: '사업장 선택',
@@ -565,10 +524,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                   _load();
                 }
               },
-            ),
-          ],
-        ],
-      ),
+            )
+          : null,
     );
   }
 
@@ -581,10 +538,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         horizontal: ResponsiveHelper.spacing(context, 16),
         vertical: ResponsiveHelper.spacing(context, 8),
       ),
-      decoration: BoxDecoration(
-        color: AppColors.infoBg,
-        border:
-            Border(bottom: BorderSide(color: AppColors.infoLight, width: 0.5)),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: AppColors.grey200)),
       ),
       child: Row(
         children: [
@@ -737,9 +693,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.grey50,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border, width: 1.5),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.grey200),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -750,11 +706,11 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
               horizontal: ResponsiveHelper.spacing(context, 12),
               vertical: ResponsiveHelper.spacing(context, 10),
             ),
-            decoration: BoxDecoration(
-              color: AppColors.info.withValues(alpha: 0.08),
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(16),
-                topRight: Radius.circular(16),
+            decoration: const BoxDecoration(
+              color: AppColors.grey50,
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(12),
+                topRight: Radius.circular(12),
               ),
             ),
             child: Row(
@@ -918,6 +874,21 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           ),
         ),
 
+        // ── [Phase 8.1B.3] 인력 초대 버튼 (단기 + 부족 시에만 표시) ──
+        if (!g.isLongTerm && g.toId != null && g.requiredCount > 0 &&
+            g.requiredCount > g.confirmedApps.length)
+          Builder(builder: (ctx) {
+            final slotId = g.confirmedApps.isNotEmpty
+                ? g.confirmedApps.first.slotId
+                : (g.pendingApps.isNotEmpty
+                    ? g.pendingApps.first.slotId
+                    : null);
+            if (slotId == null) return const SizedBox.shrink();
+            final up = Provider.of<UserProvider>(ctx, listen: false);
+            if (!up.can((p) => p.canManageTo)) return const SizedBox.shrink();
+            return _buildInviteButton(g, slotId);
+          }),
+
         // ── 대기 중 섹션 ──
         if (g.pendingApps.isNotEmpty) ...[
           _sectionDivider(
@@ -1012,6 +983,90 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     );
   }
 
+  // ── [Phase 8.1B.3] 인력 초대 버튼 + InviteMethodSheet 라우팅 ─────────────
+
+  Widget _buildInviteButton(_GroupData g, String slotId) {
+    final shortage = g.requiredCount - g.confirmedApps.length;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: OutlinedButton.icon(
+        onPressed: () => _openInviteMethod(g, slotId),
+        icon: const Icon(Icons.person_add_outlined, size: 16),
+        label: Text('인력 초대 ($shortage명 부족)'),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.info,
+          side: const BorderSide(color: AppColors.info),
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openInviteMethod(_GroupData g, String slotId) async {
+    if (!mounted) return;
+    final shortage = (g.requiredCount - g.confirmedApps.length).clamp(0, 99);
+
+    // 1. 인력 초대 방식 선택 시트 — State.context 사용 (mounted 보장)
+    final choice = await DialogHelper.showSheet<String>(
+      context,
+      builder: (ctx) => InviteMethodSheet(
+        workType: g.workType,
+        date: widget.date,
+        startTime: g.startTime,
+        endTime: g.endTime,
+        shortage: shortage,
+      ),
+    );
+
+    if (!mounted || choice == null) return;
+
+    // 사업장명 취득
+    final biz = widget.businesses.where((b) => b.id == _selectedBusinessId)
+        .isNotEmpty
+        ? widget.businesses.firstWhere((b) => b.id == _selectedBusinessId)
+        : (widget.businesses.isNotEmpty ? widget.businesses.first : null);
+    final businessName = biz?.name ?? '';
+
+    if (choice == 'availability') {
+      // 2a. 근무 가능 인력 시트
+      if (!mounted) return;
+      await DialogHelper.showSheet<void>(
+        context,
+        isScrollControlled: true,
+        builder: (ctx) => AvailableWorkersBottomSheet(
+          toId: g.toId!,
+          slotId: slotId,
+          workDetailId: g.workDetailId,
+          businessId: _selectedBusinessId ?? '',
+          date: widget.date,
+          workType: g.workType,
+          startTime: g.startTime,
+          endTime: g.endTime,
+          requiredCount: g.requiredCount,
+          confirmedCount: g.confirmedApps.length,
+        ),
+      );
+    } else if (choice == 'direct') {
+      // 2b. 직접 초대 다이얼로그 (contextual mode — 날짜·슬롯 재선택 없음)
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => InviteWorkerDialog.contextual(
+          toId: g.toId!,
+          businessId: _selectedBusinessId ?? '',
+          businessName: businessName,
+          date: widget.date,
+          slotId: slotId,
+          workType: g.workType,
+          startTime: g.startTime,
+          endTime: g.endTime,
+        ),
+      );
+    }
+  }
+
   // ── Applicant Card ─────────────────────────────────────────────────────────
 
   Widget _buildApplicantCard(BuildContext context, ApplicationModel app,
@@ -1020,7 +1075,6 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     final isSelected = _selectedIds.contains(app.id);
     final isStarred = isPending && _starredIds.contains(app.id);
     final idCardStatus = _idCardStatusMap[user?.uid ?? ''] ?? 'none';
-    final trustScore = TrustScoreHelper.calculate(user);
     final up = Provider.of<UserProvider>(context, listen: false);
     final canManageTo = up.can((p) => p.canManageTo);
     final canManageContract = up.can((p) => p.canManageContract);
@@ -1212,7 +1266,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                         style: ResponsiveHelper.tinyStyle(context,
                             color: AppColors.grey600)),
                   ]),
-                _buildTrustBadge(context, trustScore),
+                if (user != null && user.recentNoShowCount > 0)
+                  _buildNoShowBadge(context, user.recentNoShowCount),
                 _weeklyCountBadge(context, app.uid),
                 if (user != null && user.averageRating > 0)
                   Row(mainAxisSize: MainAxisSize.min, children: [
@@ -1243,6 +1298,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             ),
 
             // ── Row 4: 액션 버튼 ──
+            // [4J.0C] 거절: 항상 허용(PENDING 정리), 승인: canApprovePending만 허용 — WorkApplicants parity
+            // _toCache에 TO가 없으면 true(낙관적 허용) — CF가 최종 gate
             if (isPending && !_isBatchMode && canManageTo) ...[
               const SizedBox(height: 8),
               Row(
@@ -1254,14 +1311,16 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                     color: AppColors.error,
                     onTap: () => _rejectApp(app),
                   ),
-                  const SizedBox(width: 8),
-                  _actionButton(
-                    context,
-                    label: '승인',
-                    color: AppColors.success,
-                    filled: true,
-                    onTap: () => _approveApp(app),
-                  ),
+                  if (_toCache[app.toId]?.canApprovePending ?? true) ...[
+                    const SizedBox(width: 8),
+                    _actionButton(
+                      context,
+                      label: '승인',
+                      color: AppColors.success,
+                      filled: true,
+                      onTap: () => _approveApp(app),
+                    ),
+                  ],
                 ],
               ),
             ] else if (!isPending) ...[
@@ -1391,40 +1450,26 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     );
   }
 
-  Widget _buildTrustBadge(BuildContext context, int score) {
-    final bool isLow = score < 40;
-    final Color color;
-    final Color bgColor;
-    if (score >= 70) {
-      color = AppColors.info;
-      bgColor = AppColors.infoBg;
-    } else if (isLow) {
-      color = AppColors.error;
-      bgColor = AppColors.errorBg;
-    } else {
-      color = AppColors.grey600;
-      bgColor = AppColors.grey100;
-    }
+  // 노쇼 팩트 배지 (신뢰도 점수 대체 — 5A.2A)
+  Widget _buildNoShowBadge(BuildContext context, int count) {
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 6),
         vertical: ResponsiveHelper.spacing(context, 2),
       ),
       decoration: BoxDecoration(
-        color: bgColor,
+        color: AppColors.errorBg,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            isLow ? Icons.shield : Icons.shield_outlined,
-            size: ResponsiveHelper.iconSize(context, 10),
-            color: color,
-          ),
+          Icon(Icons.warning_amber_rounded,
+              size: ResponsiveHelper.iconSize(context, 10),
+              color: AppColors.error),
           SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-          Text('신뢰$score',
-              style: ResponsiveHelper.tinyStyle(context, color: color)
+          Text('최근 90일 노쇼 $count회',
+              style: ResponsiveHelper.tinyStyle(context, color: AppColors.error)
                   .copyWith(fontWeight: FontWeight.w600)),
         ],
       ),
@@ -2571,50 +2616,51 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   // ── Batch Action Bar ───────────────────────────────────────────────────────
 
   Widget _buildBatchActionBar(BuildContext context) {
+    final brand = Theme.of(context).primaryColor;
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 16),
-        vertical: ResponsiveHelper.spacing(context, 10),
+        vertical: ResponsiveHelper.spacing(context, 8),
       ),
       decoration: BoxDecoration(
-        color: AppColors.infoBg,
-        border:
-            Border(top: BorderSide(color: AppColors.infoLight, width: 0.5)),
+        color: brand.withValues(alpha: 0.05),
+        border: Border(top: BorderSide(color: brand.withValues(alpha: 0.15))),
       ),
       child: Row(
         children: [
-          Icon(Icons.check_circle_rounded, size: 16, color: AppColors.infoDark),
+          Icon(Icons.check_circle_rounded, size: 14, color: brand),
           SizedBox(width: ResponsiveHelper.spacing(context, 6)),
           Text('${_selectedIds.length}명 선택',
               style: ResponsiveHelper.smallStyle(context).copyWith(
-                  fontWeight: FontWeight.bold, color: AppColors.infoDark)),
+                  fontWeight: FontWeight.bold, color: brand)),
           const Spacer(),
           TextButton(
             onPressed: () => setState(() => _selectedIds.clear()),
             style: TextButton.styleFrom(
+              foregroundColor: AppColors.grey500,
               padding: EdgeInsets.symmetric(
                   horizontal: ResponsiveHelper.spacing(context, 8), vertical: 4),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            child: Text('해제',
-                style: ResponsiveHelper.smallStyle(context,
-                    color: AppColors.grey500)),
+            child: const Text('해제', style: TextStyle(fontSize: 12)),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
           ElevatedButton.icon(
             onPressed: _isProcessing ? null : _batchApprove,
             icon: Icon(Icons.check_circle_outline,
-                size: ResponsiveHelper.iconSize(context, 15)),
-            label: Text('일괄 확정',
-                style: ResponsiveHelper.smallStyle(context)),
+                size: ResponsiveHelper.iconSize(context, 14)),
+            label: const Text('일괄 승인',  // [4J.0B] DayApplicants는 CONTRACT_PENDING만 생성 → '승인'이 정확한 표현
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.info,
+              backgroundColor: brand,
               foregroundColor: Colors.white,
+              elevation: 0,
               padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveHelper.spacing(context, 12),
-                vertical: 8,
+                horizontal: ResponsiveHelper.spacing(context, 10),
+                vertical: 6,
               ),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
           ),
         ],
@@ -2625,28 +2671,23 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   // ── Bottom Bar ─────────────────────────────────────────────────────────────
 
   Widget _buildBottomBar(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 16),
-        vertical: ResponsiveHelper.spacing(context, 12),
-      ),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: AppColors.grey100)),
-      ),
-      child: SizedBox(
-        width: double.infinity,
-        child: OutlinedButton.icon(
-          onPressed: () => Navigator.pop(context, _hasChanges),
-          icon: Icon(Icons.close, size: ResponsiveHelper.iconSize(context, 16)),
-          label: Text('닫기', style: ResponsiveHelper.bodyStyle(context)),
-          style: OutlinedButton.styleFrom(
-            padding: EdgeInsets.symmetric(
-                vertical: ResponsiveHelper.spacing(context, 12)),
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    // top-right X 버튼이 기본 닫기 역할 — footer는 접근성 보조용 slim 버튼만 유지
+    return AppModalFooter(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, _hasChanges),
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.textSecondary,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('닫기',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -2659,9 +2700,12 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
     final groups = _buildGroups();
     for (final g in groups) {
       if (g.confirmedApps.any((a) => a.id == app.id)) continue; // 이미 confirmed면 체크 불필요
-      final wKey = app.workDetailId?.isNotEmpty == true
-          ? app.workDetailId!
-          : '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
+      // [8.1E.4] groupKey와 동일한 우선순위: wdId 우선, composite fallback, legacy fallback
+      final wKey = app.wdId?.isNotEmpty == true
+          ? app.wdId!
+          : (app.workDetailId?.isNotEmpty == true
+              ? app.workDetailId!
+              : '${app.selectedWorkType}_${app.startTime}_${app.endTime}');
       if (g.groupKey.endsWith('_$wKey') || g.groupKey == '${app.toId ?? app.toTitle}_$wKey') {
         if (g.requiredCount > 0 && g.confirmedApps.length >= g.requiredCount) {
           ToastHelper.showWarning('정원이 초과되어 확정할 수 없습니다 (${g.toTitle} · ${g.workType})');
@@ -2684,14 +2728,15 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       final adminUID = FirebaseAuth.instance.currentUser?.uid;
       await _svc.updateApplicationStatus(
         applicationId: app.id,
-        // [BUG-FIX] confirmed → contractPending — 관리자 확정은 계약서 서명 대기 상태
-        // CONFIRMED는 계약 체결 완료 상태로 양방 서명 후에만 설정해야 함
-        status: AppStatus.contractPending,
+        // [P1-A-FIX] contractPending 직접 write 제거 → confirmed CF 경유 필수
+        // updateApplicationStatus(confirmed) → _confirmWithConflictCheck() → callableConfirmApplication
+        // CF가 TOCTOU 잠금·충돌감지·계약서 생성 후 CONTRACT_PENDING 상태로 설정
+        status: AppStatus.confirmed,
         confirmedBy: adminUID,
       );
       _hasChanges = true;
       if (!mounted) return;
-      ToastHelper.showSuccess('확정 처리되었습니다');
+      ToastHelper.showSuccess('승인되었습니다. 계약서를 작성해 주세요.');  // [4J.0C] CONTRACT_PENDING 결과 — WorkApplicants parity
       await _load();
     } on FirebaseFunctionsException catch (e) {
       if (mounted) ToastHelper.showError(e.message ?? '확정 처리 중 오류가 발생했습니다');
@@ -2774,13 +2819,27 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       return;
     }
 
+    // [4J.0C] TO-level canApprovePending 가드 — _toCache에 있는 TO만 검사
+    // FULL/TIME_EXPIRED/POSTING_EXPIRED TO는 선제 차단 (CF도 동일 gate)
+    final blockedApps = selectedApps.where((a) {
+      final to = _toCache[a.toId];
+      return to != null && !to.canApprovePending;
+    }).toList();
+    if (blockedApps.isNotEmpty) {
+      ToastHelper.showWarning('현재 상태의 공고(정원 초과·만료)에서는 승인할 수 없습니다. 공고 상태를 확인해 주세요.');
+      return;
+    }
+
     // [BUG-FIX-1] workDetail(업무) 단위 정원 초과 체크
     //   이전 코드는 TO 전체 합산 정원으로 체크해 특정 업무 파트가 초과돼도 허용되는 버그 존재
     final selectedByGroupKey = <String, int>{};
     for (final app in selectedApps) {
-      final wKey = app.workDetailId?.isNotEmpty == true
-          ? app.workDetailId!
-          : '${app.selectedWorkType}_${app.startTime}_${app.endTime}';
+      // [8.1E.4] groupKey와 동일한 우선순위: wdId 우선, composite fallback, legacy fallback
+      final wKey = app.wdId?.isNotEmpty == true
+          ? app.wdId!
+          : (app.workDetailId?.isNotEmpty == true
+              ? app.workDetailId!
+              : '${app.selectedWorkType}_${app.startTime}_${app.endTime}');
       final key = '${app.toId ?? app.toTitle}_$wKey';
       selectedByGroupKey[key] = (selectedByGroupKey[key] ?? 0) + 1;
     }
@@ -2805,38 +2864,45 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       final count = _selectedIds.length;
       final confirmed = await DialogHelper.showConfirm(
         context,
-        title: '일괄 확정',
+        title: '일괄 승인',
         message:
             '선택한 $count명을 계약 대기 상태로 변경하시겠습니까?\n이후 각 지원자의 계약서를 직접 작성·서명해야 합니다.',
-        confirmText: '일괄 확정',
+        confirmText: '일괄 승인',
       );
       if (!confirmed || !mounted) return;
       final ids = _selectedIds.toList();
+      final total = ids.length; // [4J.1] 부분 실패 카운트 계산용
       final adminUID = FirebaseAuth.instance.currentUser?.uid;
-      final results = await Future.wait(ids.map((appId) async {
+      // [P1-A-FIX] parallel Future.wait → sequential for-loop
+      //   confirmed CF 경유: callableConfirmApplication은 Firestore 트랜잭션 내 충돌감지 수행.
+      //   병렬 처리 시 CF 간 레이스컨디션으로 동일 슬롯 중복 확정 가능 → 순차 처리 필수.
+      //   [보안] PERMISSION_DENIED 포함 실패 로그 유지 — 크로스-사업장 접근 감지용.
+      int successCount = 0;
+      for (final appId in ids) {
         try {
           await _svc.updateApplicationStatus(
             applicationId: appId,
-            // [BUG-FIX] confirmed → contractPending — 관리자 확정은 계약서 서명 대기 상태
-            status: AppStatus.contractPending,
+            // confirmed → _confirmWithConflictCheck() → CF callableConfirmApplication
+            // CF가 TOCTOU 잠금·충돌감지·계약서 생성 후 CONTRACT_PENDING 설정
+            status: AppStatus.confirmed,
             confirmedBy: adminUID,
           );
-          return true;
+          successCount++;
         } catch (e) {
-          // [특이사항] PERMISSION_DENIED 포함 실패 사유를 로깅 — 크로스-사업장 접근 시도 감지용.
-          // UI에는 최종 성공 카운트만 표시하되, 보안 이벤트는 디버그 로그에 남긴다.
           debugPrint('❌ [_batchApprove] 확정 실패 [$appId]: $e');
-          return false;
         }
-      }));
-      final successCount = results.where((r) => r).length;
+      }
       if (successCount > 0) _hasChanges = true;
       if (!mounted) return;
-      // [DAY-2-FIX] successCount==0일 때 showSuccess 대신 showError — 모두 실패한 경우 안내
-      if (successCount > 0) {
-        ToastHelper.showSuccess('$successCount명이 확정되었습니다');
+      // [4J.1] 부분 실패 피드백 — 성공/전체 카운트 표시
+      // 실패 원인: network 오류 외에 TO 정원 초과(동시 확정)·Application 취소 등
+      // 재시도로 해결되지 않는 케이스 포함 → "상태를 확인" 권장
+      if (successCount == 0) {
+        ToastHelper.showError('승인에 실패했습니다. 지원자 상태를 확인해 주세요.');
+      } else if (successCount < total) {
+        ToastHelper.showWarning('$successCount/$total명 승인 완료. 실패한 지원자의 상태를 확인해 주세요.');
       } else {
-        ToastHelper.showError('확정에 실패했습니다. 잠시 후 다시 시도해주세요.');
+        ToastHelper.showSuccess('$successCount명이 승인되었습니다');
       }
       await _load();
     } finally {

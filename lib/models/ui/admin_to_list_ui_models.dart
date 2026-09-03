@@ -2,6 +2,7 @@ import '../core/to_model.dart';
 import '../core/slot_model.dart';
 import '../core/work_detail_data.dart';
 import '../../utils/close_state_utils.dart';
+import '../../utils/format_helper.dart';
 
 /// 공고 리스트 아이템 (관리자용)
 ///
@@ -55,7 +56,7 @@ class TOGroupItem {
   ///   - contract → singleTO.isClosed (게시만료 포함) + rangeEnd 폴백
   bool get isClosed {
     final now = DateTime.now();
-    final todayDay = DateTime(now.year, now.month, now.day);
+    final todayDay = FormatHelper.toKstDate(now);
 
     if (singleTO.isFlexType) {
       // 슬롯 로드된 경우: CloseStateUtils로 통일 판단
@@ -72,14 +73,14 @@ class TOGroupItem {
         lastDate = _slotDates!.reduce((a, b) => a.isAfter(b) ? a : b);
       }
       if (lastDate == null) return false;
-      return DateTime(lastDate.year, lastDate.month, lastDate.day).isBefore(todayDay);
+      return FormatHelper.toKstDate(lastDate).isBefore(todayDay);
     }
 
     // contract TO: TOModel.isClosed(게시만료 포함) + 계약 근무 종료일 체크
     if (singleTO.isClosed) return true;
     final lastDate = singleTO.rangeEnd;
     if (lastDate == null) return false;
-    return DateTime(lastDate.year, lastDate.month, lastDate.day).isBefore(todayDay);
+    return FormatHelper.toKstDate(lastDate).isBefore(todayDay);
   }
   bool get isManualClosed => singleTO.isManualClosed;
   bool get isPendingPublish => singleTO.isPendingPublish;
@@ -97,6 +98,25 @@ class TOGroupItem {
   int get totalPending =>
       _cachedTotalPending ?? singleTO.totalPending;
   bool get isFull => singleTO.isFull;
+
+  /// Firestore closedReason 코드 — badge contextual 레이블용
+  /// 예: "TIME_EXPIRED", "POSTING_EXPIRED", null(수동종료/해당없음)
+  String? get closedReasonCode => singleTO.closedReasonCode;
+
+  /// [4I.1] 수동 종료(isManualClosed=true)된 미래 슬롯이 1개 이상 존재하는지 여부.
+  /// SlotBatchSelectDialog.closedAndReopenable 기준과 동일한 정책:
+  ///   - slot.isManualClosed == true
+  ///   - slot.date >= today (KST)
+  /// 슬롯 미로드(_groupTOs == null) 시 false 반환 → 메뉴 숨김.
+  bool get hasReopenableManualSlots {
+    if (_groupTOs == null) return false;
+    final today = FormatHelper.toKstDate(DateTime.now());
+    return _groupTOs!.any((toItem) {
+      final slot = toItem.slot;
+      if (slot == null || !slot.isManualClosed) return false;
+      return !FormatHelper.toKstDate(slot.date).isBefore(today);
+    });
+  }
 
   // ── 날짜 ─────────────────────────────────────────────
 

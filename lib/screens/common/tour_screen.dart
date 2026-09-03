@@ -400,13 +400,13 @@ const _userTourPages = [
     icon: Icons.trending_up_rounded,
     color: AppColors.warningDarkest,
     bgColor: AppColors.warningBg,
-    tag: '급여 & 신뢰도',
-    title: '급여 명세서 확인,\n신뢰도로 기회 높이기',
-    description: '임금명세서를 앱에서 바로 확인하고\n성실한 출근으로 신뢰도를 쌓으세요.',
+    tag: '급여 & 근무 이력',
+    title: '급여 명세서 확인,\n노쇼 없이 더 많은 기회 얻기',
+    description: '임금명세서를 앱에서 바로 확인하고\n근무 이력과 노쇼 기록이 투명하게 쌓여요.',
     features: [
       TourFeature(Icons.receipt_long_outlined, '임금명세서 앱에서 확인·저장', AppColors.warningDarkest),
-      TourFeature(Icons.check_circle_rounded, '정상 출근 +1점', AppColors.success),
-      TourFeature(Icons.cancel_rounded, '노쇼 -3점 (채용 기회 감소)', AppColors.error),
+      TourFeature(Icons.check_circle_rounded, '출근 기록 → 리뷰·평점 누적', AppColors.success),
+      TourFeature(Icons.warning_amber_rounded, '노쇼 3회(90일) → 지원 제한', AppColors.error),
     ],
   ),
 ];

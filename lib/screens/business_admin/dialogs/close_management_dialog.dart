@@ -218,26 +218,21 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
         // 두 화면 사이 불일치가 있으면 당일명단에는 표시되지만 마감관리에서 누락되는 버그 발생.
         if (endDate == null && app.isTerminationApproved) continue;
         final effectiveStartDate = app.desiredStartDate ?? app.workDate;
-        final startDateOnly = DateTime(effectiveStartDate.year, effectiveStartDate.month, effectiveStartDate.day);
+        final startDateOnly = FormatHelper.toKstDate(effectiveStartDate);
 
         for (int d = 1; d <= daysInMonth; d++) {
           final date = DateTime(_currentMonth.year, _currentMonth.month, d);
           if (date.isBefore(startDateOnly)) continue;
           // 종료일이 있는 경우에만 종료일 이후 날짜 skip
           if (endDate != null) {
-            final endDateOnly = DateTime(endDate.year, endDate.month, endDate.day);
+            final endDateOnly = FormatHelper.toKstDate(endDate);
             if (date.isAfter(endDateOnly)) continue;
           }
           // 휴무일 체크
-          if (app.leaveDates != null && app.leaveDates!.any((ld) =>
-              ld.year == date.year && ld.month == date.month && ld.day == date.day)) {
-            continue;
-          }
+          if (app.isLeaveDateOn(date)) continue;
           // [B-6] extraWorkDates 우선 처리 — attendance_status_dialog._getConfirmedWorkersForDate()와 동일 우선순위
           // 비근무 요일에 승인된 추가 근무일이면 workDays 체크 건너뛰고 바로 포함 (당일명단 vs 마감관리 불일치 방지)
-          final isExtraWork = app.extraWorkDates != null &&
-              app.extraWorkDates!.any((ed) =>
-                  ed.year == date.year && ed.month == date.month && ed.day == date.day);
+          final isExtraWork = app.isExtraWorkDateOn(date);
           if (isExtraWork) {
             final dateKey = DateFormat('yyyy-MM-dd').format(date);
             appsByDate.putIfAbsent(dateKey, () => []);
@@ -363,30 +358,33 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
     int totalDays = 0;
     int closedDays = 0;
     int unclosedDays = 0;
-    
-    // 날짜별 모든 사업장이 마감됐는지 추적
-    // (한 사업장이라도 미마감이면 해당 날짜는 미마감으로 집계)
-    final Set<String> allDates = {};
-    final Map<String, bool> dateAllClosed = {};
 
-    for (final statuses in _closeStatusByBusiness.values) {
-      for (final status in statuses) {
+    // [P0-C] canonical unit = businessId × date
+    // HOME이 business×date 합산을 사용하므로 DETAIL도 동일 단위로 집계
+    // (이전: unique date — 복수 사업장에 같은 날짜가 있으면 1로 집계되는 unit mismatch 수정)
+    final Set<String> allBizDates = {};
+    final Map<String, bool> bizDateAllClosed = {};
+
+    for (final entry in _closeStatusByBusiness.entries) {
+      final bizId = entry.key;
+      for (final status in entry.value) {
         final dateKey = DateFormat('yyyy-MM-dd').format(status.date);
-        allDates.add(dateKey);
+        final bizDateKey = '${bizId}_$dateKey';
+        allBizDates.add(bizDateKey);
         final isClosed = status.statusType == CloseStatusType.closed;
-        dateAllClosed[dateKey] = (dateAllClosed[dateKey] ?? true) && isClosed;
+        bizDateAllClosed[bizDateKey] = (bizDateAllClosed[bizDateKey] ?? true) && isClosed;
       }
     }
 
-    final closedDates = dateAllClosed.entries
+    final closedBizDates = bizDateAllClosed.entries
         .where((e) => e.value)
         .map((e) => e.key)
         .toSet();
 
-    totalDays = allDates.length;
-    closedDays = closedDates.length;
+    totalDays = allBizDates.length;
+    closedDays = closedBizDates.length;
     unclosedDays = totalDays - closedDays;
-    
+
     _totalDays = totalDays;
     _closedDays = closedDays;
     _unclosedDays = unclosedDays;
@@ -450,164 +448,79 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
           Navigator.pop(context, _hasChanges);
         }
       },
-      child: Dialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
-        ),
-        insetPadding: EdgeInsets.symmetric(
-          horizontal: ResponsiveHelper.spacing(context, 16),
-          vertical: AppDialogSize.insetV,
-        ),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio),
-          child: Column(
-            children: [
-              // 헤더
-              _buildHeader(theme, monthStr),
-              
-              // 요약 카드
-              if (!isLoading) _buildSummaryCard(theme),
-              
-              // 컨텐츠 (스크롤 가능)
-              Expanded(
-                child: isLoading
-                    ? const LoadingWidget(message: '마감 현황 조회 중...')
-                    : _closeStatusByBusiness.isEmpty
-                        ? _buildEmptyState()
-                        : _buildContent(theme),
-              ),
-              
-              // 하단 버튼
-              _buildBottomBar(theme),
-            ],
+      child: AppModalShell(
+        children: [
+          // 헤더
+          _buildHeader(theme, monthStr),
+
+          // 요약 카드
+          if (!isLoading) _buildSummaryCard(theme),
+
+          // 컨텐츠 (스크롤 가능)
+          Expanded(
+            child: isLoading
+                ? const LoadingWidget(message: '마감 현황 조회 중...')
+                : _closeStatusByBusiness.isEmpty
+                    ? _buildEmptyState()
+                    : _buildContent(theme),
           ),
-        ),
+
+          // 하단 버튼
+          _buildBottomBar(theme),
+        ],
       ),
     );
   }
 
-  /// 헤더 (그라데이션)
+  /// 헤더
   Widget _buildHeader(ThemeData theme, String monthStr) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            AppColors.success,
-            AppColors.success.withValues(alpha: 0.85),
-          ],
-        ),
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(ResponsiveHelper.spacing(context, 24)),
-          topRight: Radius.circular(ResponsiveHelper.spacing(context, 24)),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 제목 + 닫기 버튼
-          Row(
-            children: [
-              Container(
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.lock_outline,
-                  color: Colors.white,
-                  size: ResponsiveHelper.iconSize(context, 24),
-                ),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '마감관리',
-                    style: ResponsiveHelper.titleStyle(context).copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(
-                    '당일명단 마감 현황',
-                    style: ResponsiveHelper.smallStyle(context).copyWith(
-                      color: Colors.white.withValues(alpha: 0.8),
-                    ),
-                  ),
-                ],
-              ),
-              const Spacer(),
-              IconButton(
-                onPressed: () => Navigator.pop(context, _hasChanges),
-                tooltip: '닫기',
-                icon: Icon(
-                  Icons.close,
-                  color: Colors.white,
-                  size: ResponsiveHelper.iconSize(context, 24),
-                ),
-              ),
-            ],
-          ),
-          
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          
-          // 월 선택
-          Container(
-            padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveHelper.spacing(context, 12),
-              vertical: ResponsiveHelper.spacing(context, 8),
-            ),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                InkWell(
-                  onTap: _previousMonth,
-                  borderRadius: BorderRadius.circular(8),
-                  child: Padding(
-                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
-                    child: Icon(
-                      Icons.chevron_left,
-                      color: AppColors.success,
-                      size: ResponsiveHelper.iconSize(context, 24),
-                    ),
-                  ),
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                Text(
-                  monthStr,
-                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.success,
-                  ),
-                ),
-                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                InkWell(
-                  onTap: _nextMonth,
-                  borderRadius: BorderRadius.circular(8),
-                  child: Padding(
-                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 4)),
-                    child: Icon(
-                      Icons.chevron_right,
-                      color: AppColors.success,
-                      size: ResponsiveHelper.iconSize(context, 24),
-                    ),
-                  ),
-                ),
-              ],
+    return AppModalHeader(
+      title: '마감관리',
+      subtitle: '당일명단 마감 현황',
+      onClose: () => Navigator.pop(context, _hasChanges),
+      trailing: _buildMonthNav(monthStr),
+    );
+  }
+
+  /// 월 네비게이션 (← 년/월 →)
+  Widget _buildMonthNav(String monthStr) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        InkWell(
+          onTap: _previousMonth,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
+            child: Icon(
+              Icons.chevron_left,
+              color: AppColors.grey600,
+              size: ResponsiveHelper.iconSize(context, 24),
             ),
           ),
-        ],
-      ),
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+        Text(
+          monthStr,
+          style: ResponsiveHelper.subtitleStyle(context).copyWith(
+            fontWeight: FontWeight.bold,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+        InkWell(
+          onTap: _nextMonth,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
+            child: Icon(
+              Icons.chevron_right,
+              color: AppColors.grey600,
+              size: ResponsiveHelper.iconSize(context, 24),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -927,17 +840,7 @@ class _CloseManagementDialogState extends State<CloseManagementDialog>
 
   /// 하단 버튼 바
   Widget _buildBottomBar(ThemeData theme) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        color: AppColors.grey50,
-        // [CRASH-3 수정] Border(top:...) + borderRadius 동시 사용 → Flutter Border.paint 크래시 (40건)
-        // DialogHelper.showSheet(useSafeArea:true, shape:Radius20)가 하단 모서리를 이미 클리핑하므로
-        // 하단 바에서 borderRadius 별도 지정 불필요 → 제거하여 크래시 해소
-        border: Border(
-          top: BorderSide(color: AppColors.border),
-        ),
-      ),
+    return AppModalFooter(
       child: SizedBox(
         width: double.infinity,
         child: ElevatedButton(

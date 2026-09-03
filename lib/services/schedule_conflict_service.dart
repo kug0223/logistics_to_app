@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import '../models/core/application_model.dart';
 import '../models/core/work_detail_model.dart';
+import '../utils/format_helper.dart';
 
 // CF Timestamp 역직렬화 헬퍼 — serializeFirestoreData(_seconds/_nanoseconds) 복원
 Map<String, dynamic> _cfHydrate(Map<String, dynamic> m) {
@@ -330,9 +331,8 @@ class ScheduleConflictService {
   /// [workDate] 근무 날짜
   /// 반환: true면 패널티 적용 (당일 취소)
   bool shouldApplyPenalty(DateTime workDate) {
-    final now = DateTime.now();
-    final workDay = DateTime(workDate.year, workDate.month, workDate.day);
-    final today = DateTime(now.year, now.month, now.day);
+    final today = FormatHelper.toKstDate(DateTime.now());
+    final workDay = FormatHelper.toKstDate(workDate);
 
     // 당일이면 패널티
     return workDay.isAtSameMomentAs(today) || workDay.isBefore(today);

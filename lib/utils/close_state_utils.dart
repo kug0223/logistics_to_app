@@ -1,6 +1,7 @@
 import '../models/core/to_model.dart';
 import '../models/core/work_detail_data.dart';
 import '../models/ui/admin_to_list_ui_models.dart';
+import 'format_helper.dart';
 
 /// 마감 상태 판단 — 단일 진실 소스
 ///
@@ -29,7 +30,7 @@ class CloseStateUtils {
     int? localRequired,
   }) {
     final slot = toItem.slot;
-    final today = DateTime(now.year, now.month, now.day);
+    final today = FormatHelper.toKstDate(now);
 
     // 슬롯 없음 → 판단 불가 → 열림 처리
     if (slot == null) return false;
@@ -38,7 +39,7 @@ class CloseStateUtils {
     if (masterTO.isManualClosed) return true;
 
     // 1. 날짜 경과
-    if (DateTime(slot.date.year, slot.date.month, slot.date.day).isBefore(today)) return true;
+    if (FormatHelper.toKstDate(slot.date).isBefore(today)) return true;
 
     // 2. 관리자 직접 마감 (closedBy 설정)
     if (slot.closedBy != null) return true;

@@ -16,7 +16,10 @@ import '../../../utils/toast_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../services/payroll_payment_service.dart';
 import 'package:printing/printing.dart';
-import '../../../widgets/common/gradient_scaffold.dart';
+import '../../../utils/navigation_helper.dart';
+import '../../../widgets/common/app_page_scaffold.dart';
+import '../../../widgets/common/notification_badge.dart';
+import '../../../screens/common/notification_screen.dart';
 import '../../../widgets/common/app_empty_state.dart';
 import '../../../widgets/common/loading_widget.dart';
 
@@ -119,13 +122,34 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return GradientScaffold(
+    // [DESIGN-PATCH-1] GradientScaffold → AppPageScaffold — 관리자 Shell 정규화
+    // parent screens(PayrollOverviewScreen, PayrollMonthScreen)와 동일 flat admin language
+    return AppPageScaffold(
       title: '${widget.workerName} · ${widget.month}월',
-      onRefresh: _loadRecords,
       actions: [
+        IconButton(
+          icon: const Icon(Icons.refresh_rounded),
+          onPressed: _loadRecords,
+          color: AppColors.textSecondary,
+        ),
+        IconButton(
+          icon: const Icon(Icons.home_outlined),
+          onPressed: () => NavigationHelper.goHome(context),
+          color: AppColors.textSecondary,
+        ),
+        NotificationBadge(
+          child: IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const NotificationScreen()),
+            ),
+            color: AppColors.textSecondary,
+          ),
+        ),
         if (_records.isNotEmpty)
           PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert, color: Colors.white),
+            icon: const Icon(Icons.more_vert),
             onSelected: (v) {
               if (v == 'interim') _showInterimSettlementDialog(context);
             },
@@ -216,7 +240,7 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
                 ),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-              Text('송금완료',
+              Text('이체 완료',
                   style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)),
               SizedBox(width: ResponsiveHelper.spacing(context, 4)),
               Text(
@@ -241,7 +265,7 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
                 ),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 5)),
-              Text('미송금',
+              Text('미이체', // [5C.2-P3] 용어 통일
                   style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)),
               SizedBox(width: ResponsiveHelper.spacing(context, 4)),
               Text(
@@ -535,8 +559,8 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
         message: '${widget.workerName}님의 확정 급여 ${settleableRecords.length}건을\n'
             '중간정산 처리하시겠습니까?\n\n'
             '대상 금액: ${FormatHelper.formatWage(totalNet)}\n'
-            '처리 후 "이체완료" 상태로 변경됩니다.',
-        confirmText: '이체완료 처리',
+            '처리 후 "이체 완료" 상태로 변경됩니다.',
+        confirmText: '이체 완료 처리', // [5C.2-P3] ACTION 용어 통일
         cancelText: '취소',
       );
       if (ok != true || !mounted) return;
@@ -884,7 +908,7 @@ class _WageStatusBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final isTransferred = wageStatus == AttendanceModel.wageTransferred;
     final color = isTransferred ? AppColors.success : AppColors.warning;
-    final label = isTransferred ? '송금완료' : '미송금';
+    final label = isTransferred ? '이체 완료' : '미이체'; // [5C.2-P3] 용어 통일
     final icon  = isTransferred
         ? Icons.check_circle_outline
         : Icons.schedule_outlined;

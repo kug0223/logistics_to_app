@@ -466,7 +466,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '신세계푸드 평택 물류',
+                        'ALfit 물류센터',
                         style: TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.w700,
@@ -545,7 +545,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         children: [
           _flowItem(
             title: '지원 완료',
-            subtitle: '신세계푸드 평택 물류',
+            subtitle: 'ALfit 물류센터',
             dotBg: AppColors.infoDark,
             dotIconColor: Colors.white,
             badge: '검토 중',
@@ -720,7 +720,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 ),
                 const SizedBox(height: 6),
                 const Text(
-                  '신세계푸드 평택 물류',
+                  'ALfit 물류센터',
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,

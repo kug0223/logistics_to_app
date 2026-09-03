@@ -22,19 +22,24 @@ import 'providers/network_provider.dart';
 import 'providers/badge_provider.dart';
 import 'models/core/user_model.dart';
 import 'screens/auth/login_screen.dart';
-import 'screens/user/user_home_screen.dart';
+import 'screens/user/user_root_screen.dart';
 import 'screens/super_admin/super_admin_home_screen.dart';
-import 'screens/business_admin/business_admin_home_screen.dart';
+import 'screens/business_admin/business_admin_shell.dart';
 import 'screens/common/splash_screen.dart';
 import 'screens/common/onboarding_screen.dart';
 import 'utils/wage_calculator.dart';
 import 'services/fcm_service.dart';
 import 'services/insurance_rate_service.dart';
 import 'services/analytics_service.dart';
+import 'utils/app_navigator_observer.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'widgets/common/network_banner.dart';
 import 'utils/tour_helper.dart';
 import 'utils/navigation_key.dart';
+import 'widgets/inputs/home_region_picker_sheet.dart';
+import 'models/core/user_region.dart';
+import 'services/firestore_service.dart';
+import 'utils/toast_helper.dart';
 
 /// 앱이 완전히 종료된 상태에서 FCM 메시지 수신 시 호출되는 최상위 핸들러
 /// (반드시 main() 바깥 최상위 함수여야 함 — Flutter 요구사항)
@@ -184,7 +189,10 @@ class MyApp extends StatelessWidget {
               Locale('en', 'US'),
             ],
             theme: themeProvider.theme,
-            navigatorObservers: [AnalyticsService.observer],
+            navigatorObservers: [
+              AnalyticsService.observer,
+              AppNavigatorObserver.instance, // root top route 추적 — FCM dedupe 전용
+            ],
             home: const NetworkBanner(child: SplashScreen()),
           );
         },
@@ -247,12 +255,17 @@ class _AuthWrapperState extends State<AuthWrapper> {
   Widget build(BuildContext context) {
     // 라우팅 결정에 필요한 최소 필드만 구독 — isAdminMode 토글 등 무관한
     // notifyListeners() 호출로 인한 불필요한 AuthWrapper 전체 리빌드 방지
-    return Selector<UserProvider, ({bool isLoading, bool isLoggedIn, String? uid, String? role})>(
+    return Selector<UserProvider, ({bool isLoading, bool isLoggedIn, String? uid, String? role, bool hasHomeRegion, bool isSubAdmin, bool isAdminMode})>(
       selector: (_, p) => (
         isLoading: p.isLoading,
         isLoggedIn: p.isLoggedIn,
         uid: p.currentUser?.uid,
         role: p.currentUser?.roleString,
+        // REG-2F: homeRegion 변경 시 AuthWrapper 리빌드 (복구 완료 감지)
+        hasHomeRegion: p.currentUser?.homeRegion != null,
+        // [PD-01] 하위관리자 모드 전환·복원 시 Shell 반응형 라우팅
+        isSubAdmin: p.currentUser?.isSubAdmin ?? false,
+        isAdminMode: p.isAdminMode,
       ),
       builder: (context, _, __) {
         final userProvider = context.read<UserProvider>();
@@ -354,13 +367,24 @@ class _AuthWrapperState extends State<AuthWrapper> {
               return const AdminHomeScreen();
             
             case UserRole.BUSINESS_ADMIN:
-              debugPrint('🎯 BUSINESS_ADMIN → BusinessAdminHomeScreen으로 이동');
-              return const BusinessAdminHomeScreen();
+              debugPrint('🎯 BUSINESS_ADMIN → BusinessAdminShell으로 이동');
+              return const BusinessAdminShell();
             
             case UserRole.USER:
-              // isAdminMode 모드 전환은 UserHomeScreen 내부에서 메뉴 그리드만 교체
-              debugPrint('🎯 USER → UserHomeScreen으로 이동');
-              return const UserHomeScreen();
+              // REG-2F: homeRegion 미설정 → 복구 화면 (기존 가입자 또는 STEP 3 미완료)
+              // homeRegion은 가입 필수 조건 — 설정 없이 HOME 우회 불가
+              if (user.homeRegion == null) {
+                debugPrint('🔄 USER homeRegion 없음 → 복구 화면 (강제)');
+                return const _HomeRegionRecoveryScreen();
+              }
+              // [PD-01] 하위관리자 + 관리자 모드 저장 상태 → Shell로 복원
+              if (user.isSubAdmin && userProvider.isAdminMode) {
+                debugPrint('🎯 USER(SubAdmin 관리자 모드) → BusinessAdminShell으로 이동');
+                return const BusinessAdminShell();
+              }
+              // 4탭 네비게이션 루트 — 홈/일자리/일정/MY
+              debugPrint('🎯 USER → UserRootScreen으로 이동');
+              return const UserRootScreen();
           }
         } catch (e, stackTrace) {
           debugPrint('❌ 화면 전환 중 에러 발생!');
@@ -402,6 +426,154 @@ class _AuthWrapperState extends State<AuthWrapper> {
           );
         }
       },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REG-2F: USER homeRegion 복구 화면
+// homeRegion == null인 USER (기존 가입자 또는 STEP 3 미완료)에게 지역 선택을 요청.
+// homeRegion은 가입 필수 조건 — 건너뛰기(우회) 없음.
+// 저장 성공 → refreshCurrentUser() → AuthWrapper 리빌드 → UserRootScreen으로 이동.
+// ─────────────────────────────────────────────────────────────────────────────
+class _HomeRegionRecoveryScreen extends StatefulWidget {
+  const _HomeRegionRecoveryScreen();
+
+  @override
+  State<_HomeRegionRecoveryScreen> createState() => _HomeRegionRecoveryScreenState();
+}
+
+class _HomeRegionRecoveryScreenState extends State<_HomeRegionRecoveryScreen> {
+  bool _isLoading = false;
+  UserRegion? _selected;
+
+  Future<void> _pickRegion() async {
+    final result = await HomeRegionPickerSheet.show(
+      context: context,
+      selectedRegion: _selected,
+    );
+    if (result != null && mounted) {
+      setState(() => _selected = result);
+    }
+  }
+
+  Future<void> _save() async {
+    if (_selected == null || _isLoading) return;
+    setState(() => _isLoading = true);
+    try {
+      final up = context.read<UserProvider>();
+      final uid = up.currentUser?.uid;
+      if (uid != null) {
+        await FirestoreService().updateUserDocument(uid, {'homeRegion': _selected!.toMap()});
+        if (!mounted) return;
+        // refreshCurrentUser → UserProvider notifyListeners → Selector 변화 → AuthWrapper 리빌드
+        await up.refreshCurrentUser();
+      }
+    } catch (e) {
+      if (mounted) ToastHelper.showError('저장에 실패했습니다. 다시 시도해주세요.');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      backgroundColor: AppColors.grey50,
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // 아이콘
+              Container(
+                width: 72, height: 72,
+                decoration: BoxDecoration(
+                  color: theme.primaryColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: Icon(Icons.location_on_outlined,
+                    color: theme.primaryColor, size: 36),
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                '주로 일할 지역을 알려주세요',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                '맞춤 일자리 추천에 활용됩니다.\n나중에 MY에서 언제든지 변경할 수 있어요.',
+                style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 32),
+              // 지역 선택 카드
+              GestureDetector(
+                onTap: _pickRegion,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: _selected != null ? theme.primaryColor : AppColors.grey300,
+                      width: _selected != null ? 1.5 : 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.map_outlined,
+                          color: _selected != null ? theme.primaryColor : AppColors.grey400),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          _selected != null
+                              ? '${_selected!.province ?? ''} ${_selected!.city}'.trim()
+                              : '지역 선택하기',
+                          style: TextStyle(
+                            color: _selected != null ? AppColors.textPrimary : AppColors.grey400,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ),
+                      Icon(Icons.chevron_right, color: AppColors.grey400),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              // 저장 버튼
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: (_selected == null || _isLoading) ? null : _save,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: theme.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    disabledBackgroundColor: AppColors.grey200,
+                    disabledForegroundColor: AppColors.grey400,
+                  ),
+                  child: _isLoading
+                      ? const SizedBox(
+                          width: 22, height: 22,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Text('저장하고 시작하기',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w600)),
+                ),
+              ),
+              // homeRegion은 가입 필수 조건 — 건너뛰기 없음
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

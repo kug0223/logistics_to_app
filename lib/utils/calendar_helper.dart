@@ -1,5 +1,6 @@
 import '../models/core/application_model.dart';
 import '../models/core/attendance_model.dart';
+import 'format_helper.dart';
 
 // ══════════════════════════════════════════════════════════════════════════
 // [검증 이력 — 재검증 시 참고]
@@ -97,8 +98,10 @@ class CalendarHelper {
       return app.status == AppStatus.pending;
     }
 
-    // ALL: 취소/거절 제외
-    return !AppStatus.inactiveStates.contains(app.status);
+    // ALL: 취소/거절/초대/만료 제외 — INVITED·EXPIRED는 '내 지원 > 초대'에서 관리
+    return !AppStatus.inactiveStates.contains(app.status) &&
+        app.status != AppStatus.invited &&
+        app.status != AppStatus.expired;
   }
 
   /// 이번 달 통계 대상 지원서 필터링
@@ -300,8 +303,8 @@ class CalendarHelper {
     final rangeStart = startDate.isAfter(firstOfMonth) ? startDate : firstOfMonth;
     final rangeEnd = endDate.isBefore(lastOfMonth) ? endDate : lastOfMonth;
 
-    final startOnly = DateTime(rangeStart.year, rangeStart.month, rangeStart.day);
-    final endOnly = DateTime(rangeEnd.year, rangeEnd.month, rangeEnd.day);
+    final startOnly = FormatHelper.toKstDate(rangeStart);
+    final endOnly = FormatHelper.toKstDate(rangeEnd);
 
     if (startOnly.isAfter(endOnly)) return 0;
 

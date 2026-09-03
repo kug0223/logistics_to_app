@@ -26,17 +26,22 @@ class CommonWidgets {
   }
 
   /// 설정/프로필/서류 화면 컴팩트 카드 데코레이션 (radius 12, 가벼운 그림자)
-  static BoxDecoration compactCardDecoration({Color? color}) {
+  ///
+  /// [borderOnly: true] — 그림자 없이 얇은 테두리+배경 계층 (회원가입 폼 등 폼 중심 화면)
+  static BoxDecoration compactCardDecoration({Color? color, bool borderOnly = false}) {
     return BoxDecoration(
       color: color ?? AppColors.surface,
       borderRadius: BorderRadius.circular(12),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withValues(alpha: 0.05),
-          blurRadius: 4,
-          offset: const Offset(0, 1),
-        ),
-      ],
+      border: borderOnly ? Border.all(color: AppColors.grey200) : null,
+      boxShadow: borderOnly
+          ? null
+          : [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 4,
+                offset: const Offset(0, 1),
+              ),
+            ],
     );
   }
   
@@ -468,20 +473,26 @@ class _ImagePreviewDialogState extends State<_ImagePreviewDialog> {
             },
             itemBuilder: (ctx, i) => InteractiveViewer(
               transformationController: _transformControllers[i],
-              minScale: 0.8,
+              minScale: 1.0,        // 원본(contain) 크기보다 작게 축소 방지
               maxScale: 4.0,
               clipBehavior: Clip.none,
-              child: Center(
-                child: CachedNetworkImage(
-                  imageUrl: widget.imageUrls[i],
-                  fit: BoxFit.contain,
-                  placeholder: (ctx, url) => const Center(
-                    child: CircularProgressIndicator(color: Colors.white),
-                  ),
-                  errorWidget: (ctx, url, e) => const Icon(
-                    Icons.broken_image_outlined,
-                    color: Colors.white54,
-                    size: 60,
+              // boundaryMargin 기본값(zero) 유지:
+              // 줌 1배 → 고정, 확대 시 → 이미지 경계 안에서만 드래그
+              child: SizedBox.expand(
+                // SizedBox.expand 필수: 이미지에 전체화면 크기를 명시해야
+                // BoxFit.contain이 세로/가로 비율에 상관없이 정확히 중앙 정렬됨
+                child: Center(
+                  child: CachedNetworkImage(
+                    imageUrl: widget.imageUrls[i],
+                    fit: BoxFit.contain,
+                    placeholder: (ctx, url) => const Center(
+                      child: CircularProgressIndicator(color: Colors.white),
+                    ),
+                    errorWidget: (ctx, url, e) => const Icon(
+                      Icons.broken_image_outlined,
+                      color: Colors.white54,
+                      size: 60,
+                    ),
                   ),
                 ),
               ),

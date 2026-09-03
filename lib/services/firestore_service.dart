@@ -446,7 +446,8 @@ class FirestoreService {
         final id = m.remove('id') as String? ?? '';
         final hydrated = _cfHydrate(m);
         final to = TOModel.tryFromMap(hydrated, id);
-        return to != null ? TOGroupItem(singleTO: to) : null;
+        // [BUG-FIX 2026-08-17] 소프트삭제 TO 방어 필터 — CF 응답에 isDeleted:true가 포함될 경우 클라이언트에서 차단
+        return (to != null && !to.isSoftDeleted) ? TOGroupItem(singleTO: to) : null;
       }).whereType<TOGroupItem>().toList()
         ..sort((a, b) => b.singleTO.createdAt.compareTo(a.singleTO.createdAt));
     } catch (e) {

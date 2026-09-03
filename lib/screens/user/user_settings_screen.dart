@@ -6,6 +6,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import '../../models/core/legal_terms_model.dart';
 import '../../models/core/user_model.dart';
 import '../../providers/user_provider.dart';
@@ -15,6 +16,7 @@ import '../../services/legal_terms_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/toast_helper.dart';
+import '../../widgets/dialogs/styled_dialog.dart';
 import '../common/help_screen.dart';
 import '../common/onboarding_screen.dart';
 
@@ -185,71 +187,97 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
   }
 
   Future<void> _handleDeleteAccount() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: const Text('회원탈퇴'),
-        content: const Text(
-          '탈퇴하면 모든 데이터가 삭제됩니다.\n계속하려면 현재 비밀번호를 입력해주세요.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('취소'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('계속', style: TextStyle(color: AppColors.error)),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-
-    // 비밀번호 확인 다이얼로그
-    String? password;
-    final pwController = TextEditingController();
-    // ignore: use_build_context_synchronously
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: const Text('비밀번호 확인'),
-        content: TextField(
-          controller: pwController,
-          obscureText: true,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: '비밀번호'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('취소'),
-          ),
-          TextButton(
-            onPressed: () {
-              password = pwController.text;
-              Navigator.pop(ctx);
-            },
-            child: const Text('탈퇴', style: TextStyle(color: AppColors.error)),
-          ),
-        ],
-      ),
-    );
-    pwController.dispose();
-    if (password == null || password!.isEmpty || !mounted) return;
-
+    // [F-15-1(A) 수정] 중복 탭 방지 — _togglePushNotification과 동일 패턴
+    // guard + try/finally로 진행 중 재진입 완전 차단
+    if (_isLoading) return;
+    setState(() => _isLoading = true);
     try {
-      final err = await AuthService().deleteAccountWithPassword(password!);
-      if (!mounted) return;
-      if (err != null) {
-        ToastHelper.showError(err);
-      } else {
-        await context.read<UserProvider>().signOut();
+      final confirmed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => StyledDialog(
+          title: '회원탈퇴',
+          subtitle: '이 작업은 되돌릴 수 없습니다',
+          icon: Icons.person_remove_outlined,
+          headerColor: AppColors.error,
+          content: StyledDialogInfoCard.error(
+            '탈퇴하면 모든 데이터가 영구 삭제되며 복구할 수 없습니다.\n계속하려면 비밀번호를 입력해주세요.',
+          ),
+          actions: [
+            StyledDialogButton.cancel(
+              onPressed: () => Navigator.pop(ctx, false),
+            ),
+            StyledDialogButton.danger(
+              text: '계속',
+              onPressed: () => Navigator.pop(ctx, true),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+
+      // 비밀번호 확인 다이얼로그
+      // [FC-01 OWNERSHIP FIX] _WithdrawPasswordDialog(StatefulWidget)이 controller를
+      // 직접 소유하고 State.dispose()에서 해제한다.
+      // Dialog lifecycle ↔ controller lifecycle 완전 일치:
+      //   State 생성 → _ctrl 생성 → 사용 → Navigator.pop → route 종료 → State.dispose() → _ctrl.dispose()
+      // 부모 메서드가 controller를 소유하면 showDialog 완료 직후 dispose하게 되고,
+      // Dialog 종료 애니메이션 중 DFSA deactivate()가 dispose된 controller에 접근해 크래시 발생.
+      // ignore: use_build_context_synchronously
+      final password = await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => const _WithdrawPasswordDialog(),
+      );
+      if (password == null || password.isEmpty || !mounted) return;
+
+      try {
+        // [F-15-1(B) FIX] SubAdmin 탈퇴 차단 — settings_screen.dart와 동일 방어 적용
+        // SubAdmin은 사업장에서 직책 해제 후 탈퇴해야 함
+        final blockerResult = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('callableGetWithdrawBlockers',
+                options: HttpsCallableOptions(timeout: const Duration(seconds: 25)))
+            .call<Map<String, dynamic>>({});
+        if (!mounted) return;
+
+        final hardBlocks = (blockerResult.data['hardBlocks'] as List<dynamic>? ?? [])
+            .cast<Map<String, dynamic>>();
+        // [NEW-QA-02 FIX] 서버가 반환하는 모든 hardBlock 처리 — SUBADMIN_MEMBERSHIP만 체크하던 버그 수정.
+        // 탈퇴 가능 여부의 최종 진실 소스는 서버(callableDeleteAccountFinal)이며,
+        // 클라이언트는 서버 결과 전체를 그대로 사용자에게 안내한다.
+        if (hardBlocks.isNotEmpty) {
+          final first = hardBlocks.first;
+          final type = first['type'] as String? ?? '';
+          final count = first['count'] as int? ?? 0;
+          ToastHelper.showError(_hardBlockMessage(type, count));
+          return;
+        }
+
+        final err = await AuthService().deleteAccountWithPassword(password);
+        if (!mounted) return;
+        if (err != null) {
+          ToastHelper.showError(err);
+        } else {
+          await context.read<UserProvider>().signOut();
+        }
+      } catch (e) {
+        if (mounted) ToastHelper.showError('탈퇴 처리 중 오류가 발생했습니다');
       }
-    } catch (e) {
-      if (mounted) ToastHelper.showError('탈퇴 처리 중 오류가 발생했습니다');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // ── hardBlock 안내 메시지 ─────────────────────────────────────────
+  // [NEW-QA-02] 서버 callableGetWithdrawBlockers 반환 type별 사용자 안내
+  String _hardBlockMessage(String type, int count) {
+    switch (type) {
+      case 'SUBADMIN_MEMBERSHIP':
+        return '서브관리자로 등록된 사업장($count곳)에서 직책 해제 후 탈퇴해주세요.';
+      case 'UNSIGNED_CONTRACT':
+        return '미서명 계약서($count건)를 먼저 서명해주세요.';
+      default:
+        return '탈퇴 전 처리해야 할 항목($count건)이 있습니다. 해결 후 다시 시도해주세요.';
     }
   }
 
@@ -515,10 +543,11 @@ class _UserSettingsScreenState extends State<UserSettingsScreen> {
   Widget _buildNotifCategories() {
     final categories = [
       (key: UserModel.notifWorkReminder, label: '근무 알림'),
-      (key: UserModel.notifApplicationUpdate, label: '지원 현황 알림'),
+      (key: UserModel.notifApplicationUpdate, label: '지원 현황 알림'),  // 확정·취소는 항상 수신
       (key: UserModel.notifReviewAlert, label: '리뷰 알림'),
       (key: UserModel.notifContractAlert, label: '계약서 알림'),
       (key: UserModel.notifWageAlert, label: '급여 알림'),
+      (key: UserModel.notifToMatchAlert, label: '새 일자리 알림'),
     ];
 
     return Container(
@@ -785,6 +814,66 @@ class _TermsReadOnlyScreen extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// [FC-01 OWNERSHIP FIX] 비밀번호 확인 다이얼로그 — 독립 StatefulWidget
+// ══════════════════════════════════════════════════════════════════════
+
+/// 회원탈퇴 시 현재 비밀번호를 입력받는 다이얼로그.
+///
+/// ## Controller Ownership Rule
+/// `_ctrl`(TextEditingController)을 이 StatefulWidget의 State가 직접 소유하고
+/// `State.dispose()`에서 해제한다.
+///
+/// 부모 메서드에서 controller를 생성한 뒤 `showDialog` 완료 직후 dispose하면
+/// Dialog 종료 애니메이션 진행 중에 `DFSA.deactivate() → unfocus()` 마이크로태스크가
+/// dispose된 controller에 접근하여 `TextEditingController was used after being disposed`
+/// 크래시가 발생한다.
+///
+/// ## 결과 반환
+/// 취소·hardware back → `null`, 탈퇴 확인 → 입력된 비밀번호 `String`.
+class _WithdrawPasswordDialog extends StatefulWidget {
+  const _WithdrawPasswordDialog();
+
+  @override
+  State<_WithdrawPasswordDialog> createState() => _WithdrawPasswordDialogState();
+}
+
+class _WithdrawPasswordDialogState extends State<_WithdrawPasswordDialog> {
+  final _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StyledDialog(
+      title: '비밀번호 확인',
+      subtitle: '탈퇴를 진행하려면 현재 비밀번호를 입력하세요',
+      icon: Icons.lock_outline,
+      headerColor: AppColors.error,
+      content: StyledDialogTextField(
+        controller: _ctrl,
+        labelText: '현재 비밀번호',
+        obscureText: true,
+        autofocus: true,
+        prefixIcon: Icons.lock_outline,
+      ),
+      actions: [
+        StyledDialogButton.cancel(
+          onPressed: () => Navigator.pop(context),
+        ),
+        StyledDialogButton.danger(
+          text: '탈퇴',
+          onPressed: () => Navigator.pop(context, _ctrl.text),
+        ),
+      ],
     );
   }
 }

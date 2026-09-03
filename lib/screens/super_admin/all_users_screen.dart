@@ -12,8 +12,7 @@ import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../utils/loading_state_mixin.dart';
-import '../../services/badge_service.dart';
-import 'package:flutter/services.dart';
+// badge_service, flutter/services: [5A.2A] trustScore 관련 제거로 불필요
 import '../../widgets/dialogs/styled_dialog.dart';
 
 /// 모든 사용자 조회·관리 화면 (최고관리자 전용)
@@ -196,36 +195,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
     }
   }
 
-  Future<void> _adjustTrustScore(UserModel user) async {
-    if (_isProcessing) return;
-    final result = await showDialog<int>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => _TrustScoreDialog(
-        name: user.name,
-        currentScore: user.trustScore,
-      ),
-    );
-    if (result == null || !mounted) return;
-
-    setState(() => _isProcessing = true);
-    try {
-      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableAdjustTrustScore')
-          .call({'targetUid': user.uid, 'score': result});
-      // 신뢰도 수동 조정 직후 배지 재계산 — minScore 조건 충족 시 즉시 배지 부여.
-      // fire-and-forget: 배지 계산 실패가 UI 플로우를 막지 않도록 await 없이 실행.
-      BadgeService().evaluateAndUpdateBadgesForUser(user.uid)
-          .catchError((e) { debugPrint('⚠️ 배지 재계산 실패 (무시): $e'); return <String>[]; });
-      if (!mounted) return;
-      ToastHelper.showSuccess('신뢰도가 $result점으로 조정되었습니다');
-      await _loadAllUsers();
-    } catch (e) {
-      if (mounted) ToastHelper.showError('처리 실패: $e');
-    } finally {
-      if (mounted) setState(() => _isProcessing = false);
-    }
-  }
+  // [5A.2A] _adjustTrustScore 제거 — callableAdjustTrustScore 폐기
 
   Future<String?> _showReasonDialog({
     required String title,
@@ -265,10 +235,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
           Navigator.pop(ctx);
           _clearRestriction(user);
         },
-        onAdjustTrustScore: () {
-          Navigator.pop(ctx);
-          _adjustTrustScore(user);
-        },
+        // [5A.2A] onAdjustTrustScore 제거
       ),
     );
   }
@@ -456,7 +423,7 @@ class _AllUsersScreenState extends State<AllUsersScreen>
                         // 신뢰도 텍스트: Flexible 필수 — 칩 3개 동시 표시 시 360dp overflow 방지
                         Flexible(
                           child: Text(
-                            '신뢰도 ${user.trustScore}점 · ${user.totalWorkDays}일 근무',
+                            '${user.totalWorkDays}일 근무',
                             style: ResponsiveHelper.tinyStyle(
                               context,
                               color: Theme.of(context).textTheme.bodySmall?.color,
@@ -518,13 +485,11 @@ class _UserDetailSheet extends StatelessWidget {
   final UserModel user;
   final VoidCallback onToggleBlacklist;
   final VoidCallback onClearRestriction;
-  final VoidCallback onAdjustTrustScore;
 
   const _UserDetailSheet({
     required this.user,
     required this.onToggleBlacklist,
     required this.onClearRestriction,
-    required this.onAdjustTrustScore,
   });
 
   @override
@@ -702,16 +667,6 @@ class _UserDetailSheet extends StatelessWidget {
                   ),
                 ],
 
-                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                _actionButton(
-                  context,
-                  icon: Icons.tune,
-                  label: '신뢰도 점수 수동 조정',
-                  color: Theme.of(context).primaryColor,
-                  onTap: onAdjustTrustScore,
-                  outlined: true,
-                ),
-
                 SizedBox(height: ResponsiveHelper.spacing(context, 24)),
               ],
             ),
@@ -764,7 +719,6 @@ class _UserDetailSheet extends StatelessWidget {
 
   Widget _statsGrid(BuildContext context) {
     final items = [
-      ('신뢰도', '${user.trustScore}점', AppColors.amber),
       ('총 근무', '${user.totalWorkDays}일', AppColors.success),
       ('노쇼', '${user.noShowCount}회', user.noShowCount > 0 ? AppColors.error : AppColors.grey400),
       ('지각(90일)', '${user.recentLateCount}회', user.recentLateCount > 3 ? AppColors.warning : AppColors.grey400),
@@ -891,86 +845,7 @@ class _UserDetailSheet extends StatelessWidget {
   }
 }
 
-// ── 신뢰도 점수 조정 다이얼로그 ─────────────────────────────────────────
-// StatefulWidget으로 컨트롤러 수명 관리 → showDialog Future 완료 후 즉시
-// dispose 되는 assertion 버그 방지
-class _TrustScoreDialog extends StatefulWidget {
-  final String name;
-  final int currentScore;
-
-  const _TrustScoreDialog({required this.name, required this.currentScore});
-
-  @override
-  State<_TrustScoreDialog> createState() => _TrustScoreDialogState();
-}
-
-class _TrustScoreDialogState extends State<_TrustScoreDialog> {
-  late final TextEditingController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(text: widget.currentScore.toString());
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    final v = int.tryParse(_controller.text.trim());
-    if (v == null || v < 0 || v > 100) {
-      ToastHelper.showError('0~100 사이의 숫자를 입력하세요');
-      return;
-    }
-    // [FC-05 FIX] autofocus: true — pop 전 반드시 unfocus (FocusScope teardown 크래시 방지)
-    FocusManager.instance.primaryFocus?.unfocus();
-    Navigator.pop(context, v);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return StyledDialog(
-      title: '신뢰도 점수 조정',
-      subtitle: widget.name,
-      icon: Icons.star_outline,
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '현재 점수: ${widget.currentScore}점\n0~100 범위로 입력하세요.',
-            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          StyledDialogTextField(
-            controller: _controller,
-            labelText: '신뢰도 점수',
-            prefixIcon: Icons.adjust,
-            suffixIcon: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              child: Text('점', style: TextStyle(color: AppColors.grey600, fontWeight: FontWeight.w500)),
-            ),
-            keyboardType: TextInputType.number,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            autofocus: true,
-            onFieldSubmitted: (_) => _submit(),
-          ),
-        ],
-      ),
-      actions: [
-        // [FC-05 FIX] autofocus: true — cancel도 unfocus 필수
-        StyledDialogButton.cancel(onPressed: () {
-          FocusManager.instance.primaryFocus?.unfocus();
-          Navigator.pop(context);
-        }),
-        StyledDialogButton.primary(text: '저장', onPressed: _submit),
-      ],
-    );
-  }
-}
+// [5A.2A] _TrustScoreDialog 제거 — 신뢰도 점수 시스템 폐기
 
 // ── 사유 입력 다이얼로그 (블랙리스트/제재) ──────────────────────────────
 class _ReasonDialog extends StatefulWidget {

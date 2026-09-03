@@ -93,12 +93,55 @@ class StorageService {
     }
   }
 
+  /// 이미지 업로드 후 성공 여부 반환 (download URL 미생성)
+  ///
+  /// [BUG-ID-01] 신분증 등 민감 파일 업로드 전용.
+  /// getDownloadURL()을 호출하지 않으므로 permanent download URL이 생성되지 않는다.
+  /// 호출자는 업로드 전에 storagePath를 직접 구성하고, 성공 후 CF에 storagePath를 전달한다.
+  Future<bool> uploadImageNoUrl(String filePath, String storagePath) async {
+    if (!_isValidImagePath(filePath)) {
+      debugPrint('❌ 유효하지 않은 이미지 형식: $filePath');
+      return false;
+    }
+    if (storagePath.startsWith('businesses/')) {
+      debugPrint('⚠️ businesses/ 경로는 uploadBusinessImage()로 호출해야 합니다: $storagePath');
+      return false;
+    }
+    try {
+      final ref = _storage.ref().child(storagePath);
+      final contentType = _mimeFromPath(filePath) ?? 'image/jpeg';
+      final metadata = SettableMetadata(contentType: contentType);
+
+      if (kIsWeb) {
+        final bytes = await XFile(filePath).readAsBytes();
+        await ref.putData(bytes, metadata);
+      } else {
+        final file = File(filePath);
+        if (!await file.exists()) {
+          debugPrint('❌ 파일이 존재하지 않음: $filePath');
+          return false;
+        }
+        await ref.putFile(file, metadata);
+      }
+      if (kDebugMode) debugPrint('✅ Storage 업로드 성공(URL 미생성): $storagePath');
+      return true;
+    } catch (e) {
+      debugPrint('❌ Storage 업로드 실패: $e');
+      return false;
+    }
+  }
+
   /// [SEC-BIZ-UPLOAD] 사업장 이미지 업로드 — callableUploadBusinessImage CF 경유
   /// Storage rules에서 Firestore 읽기 불가로 소속 검증 불가 → CF assertBizAdmin 검증 후 저장
+  ///
+  /// [REG-2 SEC] fileType 파라미터:
+  ///   - 'businessLicense': license/ 서브경로 저장 + 토큰 없음 → 직접 URL 접근 불가
+  ///   - null (기본): 기존 경로 + 토큰 URL (일반 사업장 이미지)
   Future<String?> uploadBusinessImage(
     Uint8List bytes,
     String businessId, {
     String contentType = 'image/jpeg',
+    String? fileType,
   }) async {
     try {
       final base64 = base64Encode(bytes);
@@ -108,6 +151,7 @@ class StorageService {
         'businessId': businessId,
         'imageBase64': base64,
         'contentType': contentType,
+        if (fileType != null) 'fileType': fileType,
       });
       final downloadUrl = result.data['downloadUrl'] as String?;
       if (kDebugMode) debugPrint('✅ businesses/ 이미지 CF 업로드 성공: $downloadUrl');

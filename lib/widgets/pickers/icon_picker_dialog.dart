@@ -696,11 +696,14 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
-      ),
-      child: Container(
+    // [FC-04 FIX] DialogFocusSafeArea — deactivate()에서 unfocus하여
+    // _dependents.isEmpty assertion 크래시 방지
+    return DialogFocusSafeArea(
+      child: Dialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 24)),
+        ),
+        child: Container(
         constraints: BoxConstraints(
           maxWidth: 600,
           maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
@@ -734,7 +737,8 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
           ],
         ),
       ),
-    );
+    ),   // Dialog
+    );   // DialogFocusSafeArea
   }
 
   /// ✨ 세련된 헤더
@@ -795,7 +799,11 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
             color: AppColors.surface.withValues(alpha: 0.2),
             borderRadius: BorderRadius.circular(8),
             child: InkWell(
-              onTap: () => Navigator.pop(context),
+              // [FC-04 FIX] X 버튼 — pop 전 unfocus
+              onTap: () {
+                FocusManager.instance.primaryFocus?.unfocus();
+                Navigator.pop(context);
+              },
               borderRadius: BorderRadius.circular(8),
               child: Padding(
                 padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 8)),
@@ -1100,7 +1108,11 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
             children: [
               Expanded(
                 child: OutlinedButton(
-                  onPressed: () => Navigator.pop(context),
+                  // [FC-04 FIX] 취소 — pop 전 unfocus
+                  onPressed: () {
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    Navigator.pop(context);
+                  },
                   style: OutlinedButton.styleFrom(
                     padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 14)),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -1112,9 +1124,13 @@ class _IconPickerWidgetState extends State<_IconPickerWidget> {
               Expanded(
                 flex: 2,
                 child: ElevatedButton.icon(
+                  // [FC-04 FIX] 선택 — pop 전 unfocus
                   onPressed: _selectedIcon == null
                       ? null
-                      : () => Navigator.pop(context, selectedItem),
+                      : () {
+                          FocusManager.instance.primaryFocus?.unfocus();
+                          Navigator.pop(context, selectedItem);
+                        },
                   style: ElevatedButton.styleFrom(
                     padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 14)),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),

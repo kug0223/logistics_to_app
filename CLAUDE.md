@@ -304,3 +304,194 @@ PENDING 자체가 대기 상태이며, 관리자가 PENDING 인원 중에서 선
   → "클라이언트가 이 값을 위조하면 실질적 피해가 발생하는가?" → YES → CF
   → 위 모두 NO → 클라이언트 OK (rules로 2차 방어 추가)
 ```
+
+---
+
+## USER PRODUCT POLICY REGISTRY
+
+> **목적:** 코드 구현·함수명·필드명만 보고 Product Policy를 잘못 추론하는 오탐 방지.
+> 각 정책은 CONFIRMED / CURRENT IMPLEMENTATION / FUTURE OPTION 으로 구분한다.
+
+---
+
+### 1. Identity Uniqueness (계정 유일성)
+
+**CONFIRMED:**
+- REAL PERSON × ROLE = 계정 최대 1개
+- 동일인이 USER 1개 + BUSINESS_ADMIN 1개를 동시에 보유하는 것은 허용
+- phone/authPhone/contactPhone은 uniqueness key가 아님
+
+**CURRENT IMPLEMENTATION:**
+- 내국인: `nativeIdentityFingerprints/{ciHash}_{role}` sentinel (Firestore transaction, atomic)
+- 외국인: `foreignIdFingerprints/{HMAC-SHA256}_{role}` sentinel (동일 패턴, 대칭)
+- sentinel key는 CF Admin SDK로만 생성/삭제 — 클라이언트 직접 조작 불가
+
+---
+
+### 2. 내국인/외국인 가입 (Registration)
+
+**CONFIRMED:**
+- 내국인: PASS 본인인증 (KG이니시스/PortOne V1) 필수 → CI 기반 uniqueness
+- 외국인: 외국인등록번호 직접 입력 → HMAC fingerprint 기반 uniqueness
+- 탈퇴 후 30일 재가입 불가 (`deleted_accounts` 컬렉션 기준)
+- 블랙리스트 계정은 영구 재가입 차단
+
+**CURRENT IMPLEMENTATION:**
+- 내국인 CI는 `users/{uid}.ciHash` + `nativeIdentityFingerprints` sentinel
+- 외국인 fingerprint는 `users/{uid}.foreignIdentityFingerprint` + `foreignIdFingerprints` sentinel
+- 탈퇴 시 `callableDeleteAccountPreData`가 두 sentinel 모두 삭제 + `deleted_accounts` 기록
+
+---
+
+### 3. 신분증 업로드 / ID-CONSENT
+
+**CONFIRMED:**
+- `isIdVerified` = "USER가 자신의 Storage 경로에 신분증을 정상 업로드했다"는 상태
+- SUPER_ADMIN의 신분증 진위 심사 결과가 **아니다**
+- 단기(슬롯 있는) 공고 지원 시 `isIdVerified = true` 필수 (서버 gate)
+- 장기(슬롯 없는) 공고에는 이 gate 미적용
+- 신분증 열람 authority는 신분증 승인 여부가 아닌 ID-CONSENT Grant 기반
+- Grant 기준: Application + idCardConsentGiven + 확정 상태 + 사업장 관계 + 관리자 permission + expiresAt
+
+**CURRENT IMPLEMENTATION:**
+- `callableMarkIdCardVerified`: USER 본인 호출, 경로 검증 후 `isIdVerified = true`
+- `callableGetIdCardSignedUrl`: idCardAccessRequests Grant 확인 후 1시간 만료 Signed URL 반환
+
+---
+
+### 4. 급여계좌 등록 / Verification
+
+**CONFIRMED:**
+- USER가 자신의 급여계좌를 직접 등록/변경한다
+- `bankName`/`accountNumber`/`accountHolder` — 클라이언트 Firestore direct write 금지, CF 전용
+- `accountHolder`는 서버가 `users/{uid}.name`에서 읽어 저장 (클라이언트 전달 불가)
+- 계좌 변경 시 기존 bankbookImage/bankbookUploadedAt 전면 초기화 (불변 원칙)
+- `Attendance.wageAccount` snapshot은 계좌 변경 후에도 소급 변경하지 않음
+- [Phase 6 완료] `bankVerificationStatus`(review_required/verified/mismatch) 시스템 폐기 — V3에서 불필요
+
+**CURRENT IMPLEMENTATION:**
+- 금융기관 계좌 실명조회 API 없음
+- `callableMarkBankbookVerified`: 통장사본 업로드 → `bankbookImageUrl`/`bankbookImagePath`/`bankbookUploadedAt` 기록만 (status 전환 없음)
+- `callableGetBankbookSignedUrl`: SUPER_ADMIN + businessId 권한 확인 후 1시간 Signed URL 반환
+- [Phase 6 삭제됨] `callableSuperAdminVerifyBankAccount`, `callableSuperAdminMarkBankMismatch`, `callableGetPendingBankVerification`, `callableMigrateBankVerificationStatus`
+
+**FUTURE OPTION:**
+- 금융기관 예금주 조회 API 도입 시: 정상 본인명의 계좌 자동 confirmed, 예외건만 manual review
+- `users.name`을 `accountHolder`에 복사하거나 문자열 비교로 "본인계좌" 처리하지 않음 — 금융기관 실명 검증이 아님
+
+---
+
+### 5. Application 지원 Prerequisite
+
+**CONFIRMED (Phase 6 업데이트):**
+- bankName + accountNumber + (bankbookImagePath 또는 bankbookImageUrl) 미등록 → 지원 불가
+- 단기(슬롯) 공고: `isIdVerified == true` 추가 필요
+- 내국인: `passVerifiedAt` 존재 필요
+- 외국인: `accountStatus == 'active'` 필요
+- 블랙리스트/제재 중 계정: 지원 불가
+- [Phase 6 삭제됨] `bankVerificationStatus === 'mismatch'` gate — V3에서 해당 상태 값 미발급이므로 gate 제거
+- [Phase 6 삭제됨] `bankVerificationStatus`(review_required/verified/mismatch) 기반 게이팅 전면 제거
+
+**isIdVerified 역할:**
+- `isIdVerified = true` = PASS 본인인증 완료 사용자가 신분증 업로드 완료.
+  → SUPER_ADMIN 사전 심사 결과가 아님. callableMarkIdCardVerified가 업로드 후 설정.
+- `callableAdminVerifyIdCard` 같은 사전 관리자 승인 구조 생성 금지.
+
+**OCR 역할:**
+- 금융기관 실명조회 / 공적 신분증 진위 인증이 아님.
+- 입력 정보와 제출 이미지의 1차 일치 확인 보조 수단.
+- "신뢰도 N%", "검증 완료", "계좌 인증 완료" 표현 사용 금지.
+
+**CURRENT IMPLEMENTATION:**
+- `callableApplyToTO`에서 위 조건들을 순서대로 서버 검증
+- 클라이언트 `apply_prerequisites_screen.dart`는 UX 사전 안내용 (서버 재검증 필수)
+- `UserModel.hasWageDocumentsReady` — canonical 지원 준비 완료 getter
+- `UserModel.hasApplicationDocumentsReady` — 신분증 + 급여정보 통합 getter
+- UI는 Document Readiness만 표현: "계좌 등록 완료", "통장사본 등록 완료" (bankVerificationStatus 표시 없음)
+
+---
+
+### 6. Application 중복지원 / 확정 충돌
+
+**CONFIRMED:**
+- 동일 시간대 여러 공고에 Application 제출(PENDING) 허용 — Application = 관심 표현
+- 하나가 CONFIRMED되는 시점에 겹치는 다른 Application을 자동취소
+- 동일 시간대 복수 CONFIRMED는 허용하지 않음
+- Apply 단계에서 "동일 시간대 지원이 존재한다"는 이유만으로 차단하는 정책이 아님
+
+**CURRENT IMPLEMENTATION:**
+- Application 확정 시 `autoConflictCancelOverlapping` 로직으로 겹치는 PENDING 자동취소
+- complexId(`{toId}_{slotId}_{workType}_{uid}`)로 동일 공고·동일 슬롯 중복 지원 차단
+
+---
+
+### 7. Attendance Bank Snapshot
+
+**CONFIRMED:**
+- Attendance 급여 확정(`wageStatus = 'confirmed'`) 시 계좌 snapshot 기록
+- 이후 USER가 계좌를 변경해도 기존 Attendance snapshot은 소급 변경하지 않음
+- [Phase 6 삭제됨] `wageAccountVerificationStatus` — V3에서 폐기. 이체 판단은 4필드 완전성으로만.
+- V3 이체 invariant: `wageAccountBankName + wageAccountNumberEncrypted + wageAccountHolder + wageAccountSnapshotAt` 4필드 모두 존재 → 이체 가능
+
+**CURRENT IMPLEMENTATION:**
+- `callableConfirmFinalWage`: 급여 확정 시 4필드 snapshot + `wageAccountSnapshotVersion = 1` 기록
+- `callableMarkTransferredBatch`: V3(snapshotVersion==1)는 4필드 완전성만 검증. Legacy는 bankGate 없이 통과.
+- [Phase 6 삭제됨] `callableSuperAdminVerifyBankAccount` 기반 `wageAccountVerificationStatus` 승격 로직
+- [TODO-ACCOUNT-FINGERPRINT] 재암호화 시 동일 계좌 암호문 불일치 문제 → HMAC fingerprint 전환 예정
+
+---
+
+### 8. 탈퇴 / 30일 재가입
+
+**CONFIRMED:**
+- 탈퇴 후 30일간 동일 CI(내국인) / 동일 외국인등록번호(외국인)로 재가입 불가
+- 블랙리스트 계정은 재가입 영구 차단
+- 탈퇴 시 양쪽 sentinel 모두 삭제 + `deleted_accounts` 기록
+
+**CURRENT IMPLEMENTATION:**
+- `callableDeleteAccountPreData`: sentinel 삭제 + `deleted_accounts.canReregisterAt = 탈퇴일 + 30일`
+- 내국인 재가입: `callableVerifyPassAuth`에서 `deleted_accounts.ciHash` 조회
+- 외국인 재가입: `callableFinalizeForeignIdentity`에서 `deleted_accounts.foreignIdentityFingerprint` 조회
+
+---
+
+### 9. 외국인 Document-First 가입 (V3 — 2026-08-21 확정)
+
+**CONFIRMED:**
+- 외국인 가입 = "외국인등록증 이미지 업로드 → OCR → 사용자 확인 → 서버 검증" 순서
+- OCR = 입력 보조수단 ONLY. "진위확인/취업자격인증" 절대 표현 금지
+- OCR 실패 → 수동 입력으로 대체 (가입 차단 없음)
+- `legalName` / `koreanName` / `accountHolder` 는 완전 독립된 개념 (혼용 금지)
+- `displayName` getter: `koreanName ?? legalName ?? name`
+- `officialName` getter: `(isForeign && legalName != null) ? legalName : name`
+
+**active 완료 조건 (4가지 모두 충족 시 CF가 자동 전환):**
+1. `foreignIdentityFingerprint` 존재
+2. `idCardImagePath` 존재 (`isIdVerified = true`)
+3. `termsConsentAt` 존재
+4. SUPER_ADMIN 수동 승인 불필요 — `callableRecordTermsConsent`가 조건 확인 후 자동 전환
+
+**registration_pending 복구 (CASE A~E):**
+- `RegistrationRecoveryScreen` → Firestore 직접 읽기로 CASE 판단 (user_provider pending guard 우회)
+- CASE A/E: fingerprint ✓ + idCard ✓ → `callableRecordTermsConsent` 재호출 → active
+- CASE B: fingerprint ✓, idCard ✗ → `ForeignRegisterScreen(isResume: true)` documentScan부터
+- CASE C: fingerprint ✗, idCard ✓ → `ForeignRegisterScreen(isResume: true, existingIdCardPath: ...)` — Storage 재사용 시도 (성공 시 ocrConfirm 바로 이동, 재업로드 없음)
+- CASE D: fingerprint ✗, idCard ✗ → `ForeignRegisterScreen(isResume: true)` documentScan부터
+
+**절대 금지:**
+- ❌ SUPER_ADMIN 승인 단계를 어떤 이름으로도 재추가
+- ❌ `rawForeignId` 13자리 원문 Firestore 영구 저장
+- ❌ 클라이언트가 `accountStatus`를 active로 직접 쓰기
+- ❌ resume 진입 시 `userProvider.signUp()` 호출 (새 계정 생성 금지)
+- ❌ resume 진입 시 `users/{uid}.set()` 또는 전체 문서 초기화
+- ❌ "취업자격 인증 완료", "정부 인증 완료" 문구 사용
+
+**CURRENT IMPLEMENTATION:**
+- `lib/screens/auth/foreign_register_screen.dart` — V3 마법사 (6단계, isResume/existingIdCardPath 지원)
+- `lib/screens/auth/registration_recovery_screen.dart` — CASE A~E 복구 화면
+- `lib/services/foreign_id_ocr_service.dart` — OCR 서비스 (google_mlkit_text_recognition)
+- `lib/services/auth_service.dart` — `finalizeForeignIdentity()` (legalName/visaType/stayExpiryDate 포함)
+- CF: `callableFinalizeForeignIdentity` — HMAC fingerprint atomic 중복 체크 + idempotent
+- CF: `callableMarkIdCardVerified` — Storage 경로 소유권 검증 + isIdVerified 설정
+- CF: `callableRecordTermsConsent` — 4가지 조건 확인 → active 자동 전환
+- CF: `callableAdminApproveForeignWorker` — V3에서 `unimplemented` throw로 비활성화 (dead code 제거 완료)

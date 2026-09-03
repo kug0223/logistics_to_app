@@ -183,6 +183,20 @@ class PassVerificationService {
     }
   }
 
+  /// 재인증(설정 > 본인인증 / 홈 배너) 완료 후 passToken 소비 + ciHash/passVerifiedAt 저장
+  ///
+  /// [H-5] ciHash·passVerifiedAt은 클라이언트에서 직접 write 불가 — CF Admin SDK 경유 필수.
+  /// 성공 시 users/{uid}.passVerifiedAt = serverTimestamp() 업데이트 → needsPassAuthRecovery 해제.
+  /// 실패 시 예외를 호출자에게 그대로 전달한다 (재인증 미완료 상태를 유지해야 하므로 삼키지 않음).
+  static Future<void> finalizePassReauth(String passToken) async {
+    await _fn
+        .httpsCallable(
+          'finalizePassReauth',
+          options: HttpsCallableOptions(timeout: const Duration(seconds: 15)),
+        )
+        .call({'passToken': passToken});
+  }
+
   // ── 유틸 ───────────────────────────────────────────────────────────────────
 
   /// YYYYMMDD → DateTime 변환. 형식 오류 시 null 반환.

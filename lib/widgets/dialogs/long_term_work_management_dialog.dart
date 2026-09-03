@@ -41,64 +41,27 @@ class _LongTermWorkManagementDialogState
             !app.isTerminationApproved)
         .toList();
 
-    return Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      insetPadding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 16),
-        vertical: AppDialogSize.insetV,
-      ),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 헤더
-            Container(
-              padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
-              decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor,
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(4),
-                  topRight: Radius.circular(4),
-                ),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.work, color: Colors.white),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),  // ⭐ 변경
-                  Text(
-                    '고정근무 관리',
-                    style: ResponsiveHelper.titleStyle(context).copyWith(  // ⭐ 변경
-                      color: Colors.white,
-                    ),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
-            ),
-
-            // 본문
-            Expanded(
-              child: longTermWorks.isEmpty
-                  ? _buildEmptyState()
-                  : Builder(builder: (context) {
-                      final now = DateTime.now();
-                      return ListView.builder(
-                        padding: ResponsiveHelper.cardPadding(context),
-                        itemCount: longTermWorks.length,
-                        itemBuilder: (context, index) =>
-                            _buildWorkCard(longTermWorks[index], now),
-                      );
-                    }),
-            ),
-          ],
+    return AppModalShell(
+      children: [
+        AppModalHeader(
+          title: '고정근무 관리',
+          onClose: () => Navigator.pop(context),
         ),
-      ),
+        // 본문
+        Expanded(
+          child: longTermWorks.isEmpty
+              ? _buildEmptyState()
+              : Builder(builder: (context) {
+                  final now = DateTime.now();
+                  return ListView.builder(
+                    padding: ResponsiveHelper.cardPadding(context),
+                    itemCount: longTermWorks.length,
+                    itemBuilder: (context, index) =>
+                        _buildWorkCard(longTermWorks[index], now),
+                  );
+                }),
+        ),
+      ],
     );
   }
 

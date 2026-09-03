@@ -293,7 +293,7 @@ class _FilterDialogState extends State<FilterDialog> {
             onTap: () => setState(() => _tempTOType = null)),
         _chip(context, label: '단기', icon: Icons.bolt_outlined, isSelected: _tempTOType == TOType.flex,
             primary: primary, onTap: () => setState(() => _tempTOType = TOType.flex)),
-        _chip(context, label: '장기', icon: Icons.calendar_month_outlined, isSelected: _tempTOType == TOType.contract,
+        _chip(context, label: '고정', icon: Icons.calendar_month_outlined, isSelected: _tempTOType == TOType.contract,
             primary: primary, onTap: () => setState(() => _tempTOType = TOType.contract)),
       ],
     );

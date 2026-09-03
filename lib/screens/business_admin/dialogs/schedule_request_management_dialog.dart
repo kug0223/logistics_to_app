@@ -97,76 +97,30 @@ class _ScheduleRequestManagementDialogState
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      insetPadding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 16),
-        vertical: AppDialogSize.insetV,
-      ),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
+    return AppModalShell(
+      children: [
+        AppModalHeader(
+          title: '스케줄 변경 요청',
+          onClose: () => Navigator.pop(context),
         ),
-        child: Column(
-          children: [
-            // 헤더
-            Container(
-              padding: ResponsiveHelper.cardPadding(context),
-              decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(12),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.edit_calendar,
-                    color: Colors.white,
-                    size: ResponsiveHelper.iconSize(context, 24),
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                  Expanded(
-                    child: Text(
-                      '스케줄 변경 요청 관리',
-                      style: ResponsiveHelper.titleStyle(context).copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
+        _buildFilterTabs(),
+        Expanded(
+          child: isLoading
+              ? const LoadingWidget(message: '요청 목록을 불러오는 중...')
+              : _filteredRequests.isEmpty
+                  ? _buildEmptyState()
+                  : RefreshIndicator(
+                      onRefresh: _loadRequests,
+                      child: ListView.builder(
+                        padding: ResponsiveHelper.cardPadding(context),
+                        itemCount: _filteredRequests.length,
+                        itemBuilder: (context, index) {
+                          return RepaintBoundary(child: _buildRequestCard(_filteredRequests[index]));
+                        },
                       ),
                     ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
-            ),
-
-            // 필터 탭
-            _buildFilterTabs(),
-
-            // 요청 목록
-            Expanded(
-              child: isLoading
-                  ? const LoadingWidget(message: '요청 목록을 불러오는 중...')
-                  : _filteredRequests.isEmpty
-                      ? _buildEmptyState()
-                      : RefreshIndicator(
-                          onRefresh: _loadRequests,
-                          child: ListView.builder(
-                            padding: ResponsiveHelper.cardPadding(context),
-                            itemCount: _filteredRequests.length,
-                            itemBuilder: (context, index) {
-                              return RepaintBoundary(child: _buildRequestCard(_filteredRequests[index]));
-                            },
-                          ),
-                        ),
-            ),
-          ],
         ),
-      ),
+      ],
     );
   }
 
@@ -183,7 +137,7 @@ class _ScheduleRequestManagementDialogState
       ),
       child: Row(
         children: [
-          _buildFilterTab('대기중 ($pendingCount)', 'PENDING'),
+          _buildFilterTab('대기($pendingCount)', 'PENDING'),
           _buildFilterTab('전체', 'ALL'),
           _buildFilterTab('승인됨', 'APPROVED'),
           _buildFilterTab('거절됨', 'REJECTED'),
@@ -220,10 +174,12 @@ class _ScheduleRequestManagementDialogState
           child: Text(
             label,
             textAlign: TextAlign.center,
-            style: ResponsiveHelper.bodyStyle(context).copyWith(
-              color: isSelected 
-                  ? Theme.of(context).primaryColor 
-                  : Theme.of(context).textTheme.bodySmall?.color,
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+            style: ResponsiveHelper.smallStyle(context).copyWith(
+              color: isSelected
+                  ? Theme.of(context).primaryColor
+                  : AppColors.grey500,
               fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
             ),
           ),
@@ -262,9 +218,14 @@ class _ScheduleRequestManagementDialogState
   Widget _buildRequestCard(_RequestWithUser item) {
     final request = item.request;
     
-    return Card(
+    return Container(
       margin: EdgeInsets.only(
         bottom: ResponsiveHelper.spacing(context, 12),
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.grey200),
       ),
       child: Padding(
         padding: ResponsiveHelper.cardPadding(context),
@@ -520,7 +481,7 @@ class _ScheduleRequestManagementDialogState
       ),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(6),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

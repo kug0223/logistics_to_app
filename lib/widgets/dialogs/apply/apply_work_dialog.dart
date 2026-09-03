@@ -17,7 +17,7 @@ import '../../../utils/format_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../theme/app_colors.dart';
 import 'work_selection_card.dart';
-import 'apply_summary_section.dart';
+
 import 'confirm_cancel_dialog.dart';
 import 'apply_confirm_dialog.dart';
 import '../../../utils/navigation_helper.dart';
@@ -161,9 +161,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   // ✅ 이미 알림 표시한 날짜 (중복 표시 방지)
   final Set<DateTime> _shownAlertDates = {};
 
-  // 내 전체 지원 현황 (모든 공고 포함 — 내 지원 현황 섹션용)
-  List<ApplicationModel> _allMyApplications = [];
-  bool _allMyApplicationsLoadError = false;
 
   // ✅ 출퇴근 기록이 있는 application ID (장기공고용)
   final Set<String> _hasAttendanceIds = {};
@@ -195,7 +192,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   
   // 🔥 이미 지원 완료 상태인지 체크
   bool get _hasActiveApplication {
-    final dateKey = DateTime(widget.mainTO.date.year, widget.mainTO.date.month, widget.mainTO.date.day);
+    final dateKey = FormatHelper.toKstDate(widget.mainTO.date);
     final apps = _applicationsByDate[dateKey];
     if (apps == null) return false;
     return apps.values.any((app) => app.status == AppStatus.pending || AppStatus.confirmedStatuses.contains(app.status));
@@ -203,7 +200,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
   // 🔥 지원된 희망시작일 가져오기
   DateTime? get _appliedDesiredStartDate {
-    final dateKey = DateTime(widget.mainTO.date.year, widget.mainTO.date.month, widget.mainTO.date.day);
+    final dateKey = FormatHelper.toKstDate(widget.mainTO.date);
     final apps = _applicationsByDate[dateKey];
     if (apps == null) return null;
     final activeApp = apps.values.cast<ApplicationModel?>().firstWhere(
@@ -222,8 +219,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   void initState() {
     super.initState();
     final to = widget.mainTO;
+    // 신규 preset: workStartAvailableUntil / legacy preset: 1년 후 fallback / custom·flex: endDate(=rangeEnd)
     _calendarLastDay = to.hasPresetPeriod
-        ? DateTime.now().add(const Duration(days: 365))
+        ? (to.workStartAvailableUntil ?? DateTime.now().add(const Duration(days: 365)))
         : to.endDate ?? to.date;
     // postFrameCallback: context 완전히 준비된 후 실행 (initState 내 직접 context 사용 방지)
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -242,25 +240,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       return;
     }
 
-    // 전체 지원 현황 초기화
-    // 1) 캐시가 있으면 즉시 반영 (빠른 초기 표시)
-    _allMyApplications = widget.myApplications ?? [];
-    // 2) 항상 Firestore 최신 데이터로 갱신 (캐시 누락·다른 경로 지원 보완)
-    _firestoreService.getMyApplications(_currentUserId!).then((apps) {
-      if (mounted) {
-        setState(() {
-          _allMyApplications = apps;
-          _allMyApplicationsLoadError = false;
-        });
-      }
-    }).catchError((e) {
-      debugPrint('⚠️ 지원 현황 초기 로드 실패: $e');
-      // 캐시도 없고 로드도 실패한 경우 에러 상태 표시
-      if (mounted && _allMyApplications.isEmpty) {
-        setState(() => _allMyApplicationsLoadError = true);
-      }
-    });
-
     // ✅ 장기공고: 희망 시작일 기본값 = null (사용자가 직접 선택해야 함)
     // 🔥 기본값 설정 제거 - 사용자가 캘린더에서 선택 가능한 날짜를 직접 선택해야 함
     if (_isLongTerm) {
@@ -271,8 +250,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     if (_isGroupTO) {
       final sortedDates = widget.groupTOsByDate!.keys.toList()..sort();
       final today = DateTime.now();
-      final todayOnly = DateTime(today.year, today.month, today.day);
-      
+      final todayOnly = FormatHelper.toKstDate(today);
+
       // 오늘 이후 가장 가까운 날짜 선택
       final futureDate = sortedDates.cast<DateTime?>().firstWhere(
         (d) => !d!.isBefore(todayOnly),
@@ -356,7 +335,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
     TOModel? to;
     if (_isGroupTO) {
-      final dateKey = DateTime(date.year, date.month, date.day);
+      final dateKey = DateTime.utc(date.year, date.month, date.day);
       to = widget.groupTOsByDate?[dateKey];
     } else {
       to = widget.mainTO;
@@ -372,8 +351,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
       // 🔥 FIX: 장기공고는 TO 시작일을 고정 키로 사용 (desiredStartDate와 무관하게)
       final dateKey = _isLongTerm
-          ? DateTime(widget.mainTO.date.year, widget.mainTO.date.month, widget.mainTO.date.day)
-          : DateTime(date.year, date.month, date.day);
+          ? FormatHelper.toKstDate(widget.mainTO.date)
+          : DateTime.utc(date.year, date.month, date.day);
 
       // 날짜/슬롯 필터 + 활성 상태 필터를 통합 처리해 캐시에 저장
       _applicationsByDate[dateKey] = _buildActiveDateCache(applications, dateKey);
@@ -538,7 +517,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
     List<WorkDetailModel> workDetails;
     if (_isGroupTO) {
-      final dateKey = DateTime(date.year, date.month, date.day);
+      final dateKey = DateTime.utc(date.year, date.month, date.day);
       workDetails = widget.groupWorkDetailsByDate?[dateKey] ?? [];
     } else {
       workDetails = widget.workDetails;
@@ -724,11 +703,11 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             _buildSingleDateInfo(context, theme),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
           ],
-          
+
           // 내 확정 스케줄 경고 - 캘린더 아래로 (장기공고는 ConflictWarningBox에서 표시하므로 제외)
           if (_myConfirmedSchedules.isNotEmpty && !_isLongTerm)
             _buildMyScheduleWarning(context, theme),
-          
+
           // 업무 선택 섹션 + 상세보기 버튼
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -840,13 +819,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             );
           }),
           
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          
-          // 내 지원 현황 (전체 공고 통합)
-          ApplySummarySection(
-            myApplications: _allMyApplications,
-            isLoadError: _allMyApplicationsLoadError,
-          ),
         ],
       ),
     );
@@ -1091,7 +1063,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             borderRadius: BorderRadius.circular(
               ResponsiveHelper.spacing(context, 12),
             ),
-        border: Border.all(color: AppColors.longTermLight),
+        border: Border.all(color: AppColors.infoLight),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.03),
@@ -1106,7 +1078,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
             decoration: BoxDecoration(
-              color: AppColors.longTermBg,
+              color: AppColors.infoBg,
               borderRadius: BorderRadius.only(
                 topLeft: Radius.circular(ResponsiveHelper.spacing(context, 11)),
                 topRight: Radius.circular(ResponsiveHelper.spacing(context, 11)),
@@ -1117,13 +1089,13 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                 Icon(
                   Icons.touch_app,
                   size: ResponsiveHelper.iconSize(context, 18),
-                  color: AppColors.longTermDark,
+                  color: AppColors.infoDark,
                 ),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 Expanded(
                   child: Text(
                     '희망 시작일을 선택하세요',
-                    style: ResponsiveHelper.bodyStyle(context, color: AppColors.longTermDark).copyWith(
+                    style: ResponsiveHelper.bodyStyle(context, color: AppColors.infoDark).copyWith(
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -1247,7 +1219,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                 _buildLegendItem(context, AppColors.warning, '대기'),
                 SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                _buildLegendItem(context, AppColors.longTerm, '선택가능'),
+                _buildLegendItem(context, AppColors.infoBg, '선택가능'),
               ],
             ),
           ),
@@ -1384,23 +1356,23 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     // 🔥 지원 완료 상태일 때 스타일
     if (isApplied && isInAppliedRange && isWorkDay) {
       // 지원된 근무 기간 (희망시작일 ~ 종료일)
-      bgColor = AppColors.longTerm.withValues(alpha: 0.5);
-      textColor = AppColors.longTermDark;
+      bgColor = AppColors.infoBg;
+      textColor = AppColors.infoDark;
     } else if (isApplied && isInAppliedRange) {
       // 지원된 기간 내 휴무일
-      bgColor = AppColors.longTerm.withValues(alpha: 0.15);
+      bgColor = AppColors.infoBg.withValues(alpha: 0.5);
       textColor = AppColors.grey500;
     } else if (isSelected) {
       // 선택된 날짜 (희망 시작일)
-      bgColor = AppColors.longTerm;
+      bgColor = AppColors.infoDark;
       textColor = Colors.white;
     } else if (isOutside) {
       bgColor = Colors.transparent;
       textColor = AppColors.grey300;
     } else if (isSelectable) {
       // 선택 가능한 날짜
-      bgColor = AppColors.longTerm.withValues(alpha: 0.3);
-      textColor = AppColors.longTermDark;
+      bgColor = AppColors.infoBg;
+      textColor = AppColors.infoDark;
     } else if (isInRange && isWorkDay) {
       // 근무일이지만 과거 (선택 불가)
       bgColor = AppColors.grey200;
@@ -1420,9 +1392,9 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
         color: bgColor,
         shape: BoxShape.circle,
         border: isToday 
-            ? Border.all(color: Theme.of(context).primaryColor, width: 2) 
-            : isSelected 
-                ? Border.all(color: AppColors.longTermDark, width: 2)
+            ? Border.all(color: Theme.of(context).primaryColor, width: 2)
+            : isSelected
+                ? Border.all(color: AppColors.infoDark, width: 2)
                 : null,
       ),
       child: Center(
@@ -1487,14 +1459,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             _buildDateWorkSection(context, theme, _selectedDate!),
           ] else
             _buildEmptyDateSelection(context),
-          
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          
-          // 내 지원 현황 (전체 공고 통합)
-          ApplySummarySection(
-            myApplications: _allMyApplications,
-            isLoadError: _allMyApplicationsLoadError,
-          ),
           
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
         ],
@@ -1588,7 +1552,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
             
             // 이벤트 마커 (지원/확정 상태)
             eventLoader: (day) {
-              final dateKey = DateTime(day.year, day.month, day.day);
+              final dateKey = DateTime.utc(day.year, day.month, day.day);
               final apps = _applicationsByDate[dateKey];
               if (apps == null || apps.isEmpty) return [];
               
@@ -1645,7 +1609,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                 final isAvailable = availableDates.any(
                   (d) => DateUtils.isSameDay(d, day),
                 );
-                final dateKey = DateTime(day.year, day.month, day.day);
+                final dateKey = DateTime.utc(day.year, day.month, day.day);
                 final to = widget.groupTOsByDate?[dateKey];
                 final isPending = to?.isPendingPublish ?? false;
 
@@ -1679,7 +1643,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
                 );
                 final isSelected = _selectedDate != null &&
                     DateUtils.isSameDay(_selectedDate, day);
-                final dateKey = DateTime(day.year, day.month, day.day);
+                final dateKey = DateTime.utc(day.year, day.month, day.day);
 
                 return _buildDayCell(
                   context,
@@ -1890,7 +1854,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
   /// 날짜의 모든 업무가 마감됐는지 (isTimeExpired 포함)
   bool _isDateAllClosed(DateTime dateKey) {
     final now = DateTime.now();
-    if (dateKey.isBefore(DateTime(now.year, now.month, now.day))) return true;
+    if (dateKey.isBefore(FormatHelper.toKstDate(now))) return true;
     final workDetails = widget.groupWorkDetailsByDate?[dateKey] ?? [];
     if (workDetails.isEmpty) return false;
     return workDetails.every((d) => d.isClosed || d.isTimeExpired || d.isFull);
@@ -1981,7 +1945,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     DateTime date,
   ) {
     final dateFormat = _mdeFmt;
-    final dateKey = DateTime(date.year, date.month, date.day);
+    final dateKey = DateTime.utc(date.year, date.month, date.day);
     final to = widget.groupTOsByDate![dateKey];
     final workDetails = widget.groupWorkDetailsByDate?[dateKey] ?? [];
 
@@ -2423,7 +2387,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     // slotId: 단일 슬롯이면 widget.slotId, 다중 슬롯이면 날짜 맵에서 조회
     final resolvedSlotId = widget.slotId ?? (date == null
         ? null
-        : widget.groupSlotIdsByDate?[DateTime(date.year, date.month, date.day)]);
+        : widget.groupSlotIdsByDate?[DateTime.utc(date.year, date.month, date.day)]);
 
     try {
       final success = await _firestoreService.applyToTOWithWorkType(
@@ -2452,7 +2416,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
       // 상태 새로고침
       await _refreshApplicationStatus(date ?? to.date, work.workType);
-      _reloadAllMyApplications(); // fire-and-forget: 내 지원 현황 갱신
 
       if (!mounted) return;
       _hasChanges = true;
@@ -2523,7 +2486,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
       // 상태 새로고침
       await _refreshApplicationStatus(application.workDate, application.selectedWorkType);
-      _reloadAllMyApplications(); // fire-and-forget: 내 지원 현황 갱신
 
       if (!mounted) return;
       _hasChanges = true;
@@ -2593,7 +2555,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       await _loadConflictsForDate(targetDate);
       // 장기공고: 확정 취소 후 기간 내 충돌 날짜 재계산
       if (_isLongTerm) await _loadConfirmedDatesInRange();
-      _reloadAllMyApplications(); // fire-and-forget: 내 지원 현황 갱신
 
       if (!mounted) return;
       _hasChanges = true;
@@ -2616,19 +2577,6 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     }
   }
 
-  /// 특정 날짜/업무의 상태 새로고침
-  /// 지원/취소 후 전체 지원 현황 갱신 (내 지원 현황 섹션 실시간 업데이트)
-  Future<void> _reloadAllMyApplications() async {
-    if (_currentUserId == null) return;
-    try {
-      final apps =
-          await _firestoreService.getMyApplications(_currentUserId!);
-      if (mounted) setState(() => _allMyApplications = apps);
-    } catch (e) {
-      debugPrint('⚠️ 전체 지원 현황 갱신 실패: $e');
-    }
-  }
-
   Future<void> _refreshApplicationStatus(DateTime date, String workType) async {
     if (_currentUserId == null) return;
 
@@ -2637,8 +2585,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       // 장기공고는 _loadDateApplications와 동일한 고정 키 사용
       // (_desiredStartDate ≠ mainTO.date인 경우 getter들이 stale 데이터를 보는 불일치 방지)
       final dateKey = _isLongTerm
-          ? DateTime(widget.mainTO.date.year, widget.mainTO.date.month, widget.mainTO.date.day)
-          : DateTime(date.year, date.month, date.day);
+          ? FormatHelper.toKstDate(widget.mainTO.date)
+          : DateTime.utc(date.year, date.month, date.day);
 
       if (_isGroupTO) {
         to = widget.groupTOsByDate?[dateKey];
@@ -2683,11 +2631,11 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
 
   /// 그룹 TO 날짜 선택 시 특이사항 체크 및 알림 표시
   Future<void> _checkAndShowDateAlert(DateTime selectedDay) async {
-    final dateKey = DateTime(selectedDay.year, selectedDay.month, selectedDay.day);
-    
+    final dateKey = DateTime.utc(selectedDay.year, selectedDay.month, selectedDay.day);
+
     // 이미 알림 표시한 날짜면 스킵
     if (_shownAlertDates.contains(dateKey)) return;
-    
+
     // 해당 날짜의 TO 정보
     final to = widget.groupTOsByDate?[dateKey];
     final workDetails = widget.groupWorkDetailsByDate?[dateKey] ?? [];
@@ -2700,7 +2648,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     }
 
     final nowDay = DateTime.now();
-    final isDatePast = dateKey.isBefore(DateTime(nowDay.year, nowDay.month, nowDay.day));
+    final isDatePast = dateKey.isBefore(FormatHelper.toKstDate(nowDay));
     bool isWorkClosed(WorkDetailData d) => d.isClosed || d.isTimeExpired || d.isFull;
 
     // 2. 전체 마감 체크 (날짜 경과 포함)
@@ -2769,8 +2717,8 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     final workDate = widget.mainTO.date;
     final workDetails = widget.workDetails;
     final nowDay = DateTime.now();
-    final isWorkDatePast = DateTime(workDate.year, workDate.month, workDate.day)
-        .isBefore(DateTime(nowDay.year, nowDay.month, nowDay.day));
+    final isWorkDatePast = FormatHelper.toKstDate(workDate)
+        .isBefore(FormatHelper.toKstDate(nowDay));
     bool isSClosed(WorkDetailData d) => d.isClosed || d.isTimeExpired || d.isFull;
 
     // 1. 전체 마감 체크 (날짜 경과 포함)

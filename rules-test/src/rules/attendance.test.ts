@@ -59,10 +59,20 @@ beforeAll(async () => {
   // 기본 출근 기록
   await seedDoc(env, 'attendance', ATT, baseAtt);
 
+  // wageStatus=calculated (정상 수정 가능 상태)
+  await seedDoc(env, 'attendance', 'att-calculated', {
+    ...baseAtt,
+    wageStatus: 'calculated',
+    finalWage: 50000,
+    wageDetail: { totalAmount: 50000, netWage: 50000, workMinutes: 480 },
+  });
+
   // wageStatus=confirmed (근무자 퇴근 수정 불가)
   await seedDoc(env, 'attendance', 'att-confirmed', {
     ...baseAtt,
     wageStatus: 'confirmed',
+    finalWage: 60000,
+    wageDetail: { totalAmount: 60000, netWage: 60000, workMinutes: 480 },
   });
 
   // wageStatus=transferred (역전환 차단)
@@ -136,12 +146,14 @@ describe('AT-GET: 단건 읽기', () => {
 // ─── AT-CREATE: 출근 기록 생성 ──────────────────────────────────────
 
 describe('AT-CREATE: 출근 기록 생성', () => {
-  test('AT-CREATE-01 근무자 본인이 소속 사업장 businessId로 생성 허용', async () => {
+  test('AT-CREATE-01 ❌ [ARCH-FIX] attendance create는 CF Admin SDK 전용 — 근무자 직접 생성 차단', async () => {
+    // callableCheckIn CF로 이전 완료. allow create: if false; (rules L925)
+    // 이전 기대값: assertSucceeds — 현재 architecture와 맞지 않는 STALE TEST였음.
     const db = getAuth(env, IDS.user);
-    await assertSucceeds(
+    await assertFails(
       setDoc(doc(db, 'attendance', 'att-user-create'), {
         userId: IDS.user,
-        businessId: IDS.business,  // users/{uid}.businessId == biz-001
+        businessId: IDS.business,
         workDate: '2024-01-16',
         status: 'WORKING',
         wageStatus: 'pending',
@@ -162,9 +174,10 @@ describe('AT-CREATE: 출근 기록 생성', () => {
     );
   });
 
-  test('AT-CREATE-03 관리자가 수동 출근 기록 생성 허용', async () => {
+  test('AT-CREATE-03 ❌ [ARCH-FIX] attendance create는 CF Admin SDK 전용 — 관리자 client 직접 생성 차단', async () => {
+    // callableCheckIn/callableBatchSetNoShow 등 CF만 create 가능. allow create: if false; (rules L925)
     const db = getAuth(env, IDS.admin, { businessId: IDS.business });
-    await assertSucceeds(
+    await assertFails(
       setDoc(doc(db, 'attendance', 'att-admin-create'), {
         userId: IDS.user,
         businessId: IDS.business,
@@ -175,16 +188,17 @@ describe('AT-CREATE: 출근 기록 생성', () => {
     );
   });
 
-  test('AT-CREATE-04 서브어드민도 출근 기록 생성 허용 (HIGH-FIX)', async () => {
+  test('AT-CREATE-04 ❌ [ARCH-FIX] attendance create는 CF Admin SDK 전용 — 서브어드민 client 직접 생성 차단', async () => {
+    // allow create: if false; (rules L925) — 서브어드민 포함 모든 클라이언트 차단
     const db = getAuth(env, IDS.subAdmin, { subAdminOf: IDS.business });
-    await assertSucceeds(
+    await assertFails(
       setDoc(doc(db, 'attendance', 'att-sub-create'), {
         userId: IDS.user,
         businessId: IDS.business,
         workDate: '2024-01-18',
         status: 'NO_SHOW',
         wageStatus: 'pending',
-        finalWage: 0,  // NO_SHOW면 finalWage=0 필수
+        finalWage: 0,
       }),
     );
   });
@@ -262,9 +276,11 @@ describe('AT-CREATE: 출근 기록 생성', () => {
 // ─── AT-UPDATE: 근무자 퇴근 수정 ────────────────────────────────────
 
 describe('AT-UPDATE: 근무자 퇴근 수정', () => {
-  test('AT-UPDATE-01 근무자가 wageStatus=pending 상태에서 checkOut 필드 수정 허용', async () => {
+  test('AT-UPDATE-01 ❌ [ARCH-FIX] 근무자 checkOut 수정은 CF 전용 — 직접 client write 차단', async () => {
+    // callableCheckOut CF로 이전 완료. USER 분기 허용 경로(L956~970)에 checkOut 없음.
+    // 이전 기대값: assertSucceeds — 현재 architecture와 맞지 않는 STALE TEST였음.
     const db = getAuth(env, IDS.user);
-    await assertSucceeds(
+    await assertFails(
       updateDoc(doc(db, 'attendance', ATT), {
         checkOut: '18:00',
         workHours: 8,
@@ -309,11 +325,23 @@ describe('AT-UPDATE: 근무자 퇴근 수정', () => {
 // ─── AT-UPDATE: 관리자 제한 ───────────────────────────────────────────
 
 describe('AT-UPDATE: 관리자 수정 제한', () => {
-  test('AT-UPDATE-05 관리자가 finalWage/wageStatus 등 운영 필드 수정 허용', async () => {
+  test('AT-UPDATE-05a ✅ 관리자가 finalWage만 수정 허용 (calculated 상태)', async () => {
+    // wageStatus 변경 없이 finalWage만 변경 — pending 상태 ATT에서 허용
     const db = getAuth(env, IDS.admin, { businessId: IDS.business });
     await assertSucceeds(
       updateDoc(doc(db, 'attendance', ATT), {
         finalWage: 60000,
+        updatedAt: '2024-01-15T20:00:00Z',
+      }),
+    );
+  });
+
+  test('AT-UPDATE-05b ❌ [ARCH-FIX] 관리자가 wageStatus 직접 변경 차단 — CF 전용', async () => {
+    // wageStatus client write 전면 차단 (rules L951). CF(callableConfirmFinalWage 등)만 변경 가능.
+    // 이전 기대값: assertSucceeds — wageStatus 차단 규칙과 충돌하는 STALE TEST였음.
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      updateDoc(doc(db, 'attendance', ATT), {
         wageStatus: 'confirmed',
         updatedAt: '2024-01-15T20:00:00Z',
       }),
@@ -617,5 +645,206 @@ describe('AT-LIST: 목록 쿼리', () => {
       where('status', '==', 'scheduled'),
       limit(10),
     )));
+  });
+});
+
+// ─── RULE-WAGE: 확정/이체 급여 불변성 (PHASE4-FIX) ────────────────────
+//
+// finalWage / wageDetail 직접 client SDK 수정은:
+//   - calculated 상태 → ALLOW (정상 수정 경로)
+//   - confirmed 상태  → DENY  ([PHASE4-FIX] 급여 마감 완료, callableCancelFinalConfirmation 후 수정 필요)
+//   - transferred 상태 → DENY (지급 완료, 급여 증빙 위변조 방지)
+//
+// CF Admin SDK(callableConfirmFinalWage, callableCancelFinalConfirmation 등)는
+// Firestore Rules를 우회하므로 서버 State Machine 전이는 영향 없음.
+//
+// att-calculated, att-confirmed, att-transferred fixture 사용.
+
+describe('RULE-WAGE: 확정/이체 급여 finalWage/wageDetail 불변성', () => {
+  // ── 정상 경로 (calculated 상태) ──────────────────────────────────────
+
+  test('RULE-WAGE-01 ✅ calculated 상태에서 BUSINESS_ADMIN의 wageDetail 수정 허용', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertSucceeds(
+      updateDoc(doc(db, 'attendance', 'att-calculated'), {
+        wageDetail: { totalAmount: 55000, netWage: 55000, workMinutes: 480 },
+        updatedAt: '2024-01-15T20:00:00Z',
+      }),
+    );
+  });
+
+  test('RULE-WAGE-02 ✅ calculated 상태에서 BUSINESS_ADMIN의 finalWage 수정 허용', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertSucceeds(
+      updateDoc(doc(db, 'attendance', 'att-calculated'), {
+        finalWage: 55000,
+        updatedAt: '2024-01-15T20:00:00Z',
+      }),
+    );
+  });
+
+  // ── confirmed 상태 차단 ([PHASE4-FIX]) ───────────────────────────────
+
+  test('RULE-WAGE-03 ❌ confirmed 상태에서 BUSINESS_ADMIN의 wageDetail 수정 차단', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      updateDoc(doc(db, 'attendance', 'att-confirmed'), {
+        wageDetail: { totalAmount: 99000, netWage: 99000, workMinutes: 480 },
+        updatedAt: '2024-01-15T20:00:00Z',
+      }),
+    );
+  });
+
+  test('RULE-WAGE-04 ❌ confirmed 상태에서 BUSINESS_ADMIN의 finalWage 수정 차단', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      updateDoc(doc(db, 'attendance', 'att-confirmed'), {
+        finalWage: 99000,
+        updatedAt: '2024-01-15T20:00:00Z',
+      }),
+    );
+  });
+
+  // ── transferred 상태 차단 (기존 + PHASE4-FIX 확인) ────────────────────
+
+  test('RULE-WAGE-05 ❌ transferred 상태에서 BUSINESS_ADMIN의 wageDetail 수정 차단', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      updateDoc(doc(db, 'attendance', 'att-transferred'), {
+        wageDetail: { totalAmount: 99000, netWage: 99000, workMinutes: 480 },
+        updatedAt: '2024-01-15T20:00:00Z',
+      }),
+    );
+  });
+
+  test('RULE-WAGE-06 ❌ transferred 상태에서 BUSINESS_ADMIN의 finalWage 수정 차단', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      updateDoc(doc(db, 'attendance', 'att-transferred'), {
+        finalWage: 99000,
+        updatedAt: '2024-01-15T20:00:00Z',
+      }),
+    );
+  });
+
+  // ── USER 경로 ─────────────────────────────────────────────────────────
+
+  test('RULE-WAGE-07 ❌ confirmed 상태에서 일반 USER의 wageDetail 수정 차단', async () => {
+    // USER 경로는 checkOut/actualEnd/updatedAt만 허용 — wageDetail은 USER 경로 자체에서 차단
+    const db = getAuth(env, IDS.user);
+    await assertFails(
+      updateDoc(doc(db, 'attendance', 'att-confirmed'), {
+        wageDetail: { totalAmount: 99000, netWage: 99000, workMinutes: 480 },
+        updatedAt: '2024-01-15T20:00:00Z',
+      }),
+    );
+  });
+
+  // ── 타 사업장 격리 ────────────────────────────────────────────────────
+
+  test('RULE-WAGE-08 ❌ 타 사업장 BUSINESS_ADMIN은 confirmed 급여 수정 불가 (크로스-비즈 격리)', async () => {
+    // att-confirmed는 businessId=biz-001 소속, admin2는 biz-002 관리자
+    const db = getAuth(env, IDS.admin2, { businessId: IDS.business2 });
+    await assertFails(
+      updateDoc(doc(db, 'attendance', 'att-confirmed'), {
+        finalWage: 99000,
+        updatedAt: '2024-01-15T20:00:00Z',
+      }),
+    );
+  });
+});
+
+// ─── RULE-SNAPSHOT: confirmed payroll snapshot 불변성 (PHASE4.1-FIX) ──
+//
+// callableConfirmFinalWage가 쓰는 server-owned 필드는
+// confirmed/transferred 상태에서 client SDK 직접 수정 DENY.
+//
+// 필드별 CF 소유권:
+//   finalConfirmedAt      → callableConfirmFinalWage serverTimestamp
+//   confirmedBy           → callableConfirmFinalWage callerUid
+//   paymentDueDate        → callableConfirmFinalWage 계산 (callableCancelFinalConfirmation이 delete)
+//   wageAccountSnapshotVersion → callableConfirmFinalWage (항상 1)
+//   wageAccountBankName   → callableConfirmFinalWage 계좌 스냅샷
+//   wageAccountNumberEncrypted → 동일
+//   wageAccountHolder     → 동일
+//   wageAccountSnapshotAt → 동일
+//
+// Flutter 클라이언트 직접 write: 없음 (전수 grep 확인)
+// CF Admin SDK는 rules 우회 — cancel/reconfirm 정상 경로 영향 없음.
+
+describe('RULE-SNAPSHOT: confirmed payroll snapshot 서버 전용 필드 불변성', () => {
+  // ── confirmed 상태 snapshot 필드 직접 수정 차단 ────────────────────
+
+  test('RULE-SNAPSHOT-01 ❌ confirmed + BUSINESS_ADMIN + paymentDueDate 변경 → DENY', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      updateDoc(doc(db, 'attendance', 'att-confirmed'), {
+        paymentDueDate: '2024-02-10',
+        updatedAt: '2024-01-15T20:00:00Z',
+      }),
+    );
+  });
+
+  test('RULE-SNAPSHOT-02 ❌ confirmed + BUSINESS_ADMIN + wageAccountBankName 변경 → DENY', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      updateDoc(doc(db, 'attendance', 'att-confirmed'), {
+        wageAccountBankName: '국민은행',
+        updatedAt: '2024-01-15T20:00:00Z',
+      }),
+    );
+  });
+
+  test('RULE-SNAPSHOT-03 ❌ confirmed + BUSINESS_ADMIN + wageAccountNumberEncrypted 변경 → DENY', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      updateDoc(doc(db, 'attendance', 'att-confirmed'), {
+        wageAccountNumberEncrypted: 'enc-fake-account-number',
+        updatedAt: '2024-01-15T20:00:00Z',
+      }),
+    );
+  });
+
+  test('RULE-SNAPSHOT-04 ❌ confirmed + BUSINESS_ADMIN + wageAccountHolder 변경 → DENY', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      updateDoc(doc(db, 'attendance', 'att-confirmed'), {
+        wageAccountHolder: '김의관',
+        updatedAt: '2024-01-15T20:00:00Z',
+      }),
+    );
+  });
+
+  test('RULE-SNAPSHOT-05 ❌ confirmed + BUSINESS_ADMIN + wageAccountSnapshotAt 변경 → DENY', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      updateDoc(doc(db, 'attendance', 'att-confirmed'), {
+        wageAccountSnapshotAt: '2024-01-15T20:00:00Z',
+        updatedAt: '2024-01-15T20:00:00Z',
+      }),
+    );
+  });
+
+  test('RULE-SNAPSHOT-06 ❌ confirmed + BUSINESS_ADMIN + finalConfirmedAt 변경 → DENY', async () => {
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      updateDoc(doc(db, 'attendance', 'att-confirmed'), {
+        finalConfirmedAt: '2024-01-15T20:00:00Z',
+        updatedAt: '2024-01-15T20:00:00Z',
+      }),
+    );
+  });
+
+  // ── transferred 상태에서도 동일 차단 ──────────────────────────────────
+
+  test('RULE-SNAPSHOT-07 ❌ transferred + BUSINESS_ADMIN + snapshot 필드 변경 → DENY (consolidated)', async () => {
+    // paymentDueDate, wageAccountBankName, wageAccountHolder, finalConfirmedAt — 대표 4개 묶어 검증
+    const db = getAuth(env, IDS.admin, { businessId: IDS.business });
+    await assertFails(
+      updateDoc(doc(db, 'attendance', 'att-transferred'), {
+        paymentDueDate: '2024-02-10',
+        updatedAt: '2024-01-15T20:00:00Z',
+      }),
+    );
   });
 });

@@ -90,11 +90,24 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   // [Phase 2] CF callableCalculateAndConfirmWage 호출용 파라미터 캐시
   final Map<String, Map<String, dynamic>> _wageParams = {};
 
-  // 파트+시간대 그룹별 칩 선택 상태 — key: workType_startTime_endTime
+  // 파트+시간대 그룹별 추가 무급휴게 칩 선택 — key: workType_startTime_endTime
   final Map<String, int> _groupExtraBreakMinutes = {};
 
-  // 근무자별 실제 적용된 추가공제 시간 (선택된 근무자만 반영)
+  // ── Phase 3.1 break state ──────────────────────────────────
+  // 근무자별 추가 무급휴게 (석식·야식 등) — 그룹 기본값 또는 개별 override
   final Map<String, int> _workerExtraBreakMinutes = {};
+
+  // 근무자별 적용 계약휴게 override (null = TO 기본값 사용)
+  final Map<String, int> _workerAppliedScheduledBreakOverride = {};
+
+  // 계약보다 짧게 근무하여 휴게 확인이 필요한 근무자
+  final Map<String, bool> _workerBreakReviewRequired = {};
+
+  // 관리자가 휴게를 확인/선택한 근무자
+  final Map<String, bool> _workerBreakReviewed = {};
+
+  // [Phase 3.1] 추가 무급휴게를 개별 명시한 근무자 — 그룹 변경 시 이 Set에 속한 근무자는 보호
+  final Set<String> _workerAdditionalBreakOverridden = {};
   
   // 근무자 목록 (상태별 분리)
   List<ApplicationModel> _pendingWorkers = [];      // 미확정 (퇴근완료, pending)
@@ -156,6 +169,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     await _prefetchMissingWorkDetails();
     // 급여 미리 계산 (async)
     await _calculateAllWages();
+    // [Phase 3.1] 휴게 확인 필요 근무자 감지 (WorkDetail 조회 후 실행)
+    _detectAllBreakReviews();
 
     // 확정내역 탭: 금액 높은순 (계산 완료 후 정렬 — 이상값 빠른 탐지)
     _calculatedWorkers.sort((a, b) {
@@ -241,37 +256,93 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   int _getScheduledBreakMinutes(ApplicationModel app) =>
       WorkDetailHelper.breakMinutes(WorkDetailHelper.resolve(app, widget.workDetailTimeMap));
 
-  /// 연장근무 여부 확인 — 석식/야식공제 적용 가능 조건
-  bool _workerHasOvertime(ApplicationModel app) {
+  // ── Phase 3.1: Break Review ──────────────────────────────────
+
+  /// 계약보다 짧게 근무하여 휴게 확인이 필요한지 판단
+  ///
+  /// 조건: scheduledBreakMinutes > 0 AND actualPresence < scheduledPresence
+  ///
+  /// "휴게를 안 썼다"는 의미가 아님.
+  /// "계약 기간 전체를 근무하지 않았으므로 계약 휴게 전체 공제 여부 확인 필요"
+  bool _isBreakReviewRequired(ApplicationModel app) {
+    final scheduledBreak = _getScheduledBreakMinutes(app);
+    if (scheduledBreak == 0) return false;
     final attendance = widget.attendanceMap[app.id];
     if (attendance?.checkIn == null || attendance?.checkOut == null) return false;
-    final elapsed = WageCalculator.elapsedMinutes(attendance!.checkIn!, attendance.checkOut!);
-    final schedBreak = _getScheduledBreakMinutes(app);
     final effStart = WorkDetailHelper.effectiveStart(app, widget.workDetailTimeMap);
     final effEnd = WorkDetailHelper.effectiveEnd(app, widget.workDetailTimeMap);
-    final scheduledElapsed = WageCalculator.elapsedMinutes(effStart, effEnd);
-    final scheduledWorkMins = (scheduledElapsed - schedBreak).clamp(0, 9999);
-    final actualWorkMins = (elapsed - schedBreak).clamp(0, 9999);
-    return actualWorkMins > scheduledWorkMins;
+    final scheduledPresence = WageCalculator.elapsedMinutes(effStart, effEnd);
+    final actualPresence = WageCalculator.elapsedMinutes(attendance!.checkIn!, attendance.checkOut!);
+    return actualPresence < scheduledPresence;
   }
 
-  /// 그룹 추가 공제 시간 변경 → 선택된 근무자만 급여 재계산
+  /// 미확정 근무자 전체 break review 상태 감지 (initData 후 호출)
+  void _detectAllBreakReviews() {
+    for (final app in _pendingWorkers) {
+      final required = _isBreakReviewRequired(app);
+      _workerBreakReviewRequired[app.id] = required;
+      // 이미 override를 설정한 근무자는 reviewed로 간주
+      if (required && _workerAppliedScheduledBreakOverride.containsKey(app.id)) {
+        _workerBreakReviewed[app.id] = true;
+      }
+    }
+  }
+
+  /// 근무자별 실제 적용 계약휴게 (override 없으면 TO 기본값)
+  int _getAppliedScheduledBreak(ApplicationModel app) =>
+      _workerAppliedScheduledBreakOverride[app.id] ?? _getScheduledBreakMinutes(app);
+
+  /// 근무자별 추가 무급휴게
+  int _getAdditionalBreak(ApplicationModel app) =>
+      _workerExtraBreakMinutes[app.id] ?? 0;
+
+  /// 근무자별 총 effective break
+  int _getEffectiveBreak(ApplicationModel app) =>
+      _getAppliedScheduledBreak(app) + _getAdditionalBreak(app);
+
+  // ── [Phase 3.1] break review gate (공통 헬퍼) ──────────────
+
+  /// batch/individual/all confirm 공통 게이트: reviewRequired && 미검토 → false
+  bool _breakReviewGatePassed(String appId) =>
+      !(_workerBreakReviewRequired[appId] == true && _workerBreakReviewed[appId] != true);
+
+  /// 적용 계약휴게 + 추가 무급휴게 동시 설정 (review 완료 처리 포함)
+  Future<void> _setWorkerBreakComponents(ApplicationModel app, int appliedScheduledBreak, int additionalBreak) async {
+    setState(() {
+      _workerAppliedScheduledBreakOverride[app.id] = appliedScheduledBreak;
+      _workerBreakReviewed[app.id] = true;
+      _workerAdditionalBreakOverridden.add(app.id);
+      _workerExtraBreakMinutes[app.id] = additionalBreak;
+    });
+    final wage = await _calculateWageForWorker(app, extraBreakMinutes: additionalBreak, forceRecalculate: true);
+    if (!mounted) return;
+    setState(() {
+      if (wage != null) _calculatedWages[app.id] = wage;
+    });
+  }
+
+
+  /// 그룹 추가 공제 시간 변경 — explicit override 근무자는 보호됨
   Future<void> _setGroupBreak(List<ApplicationModel> groupWorkers, int extraMinutes) async {
     // groupWorkers는 putIfAbsent().add() 로 생성 — 최소 1개 보장, .first 안전
     final key = _getGroupKey(groupWorkers.first);
-    final selectedInGroup = groupWorkers.where((a) => _pendingSelectedIds.contains(a.id)).toList();
+    // [Phase 3.1] override marker 있는 근무자 제외 — 개별 설정 보호
+    final toUpdate = groupWorkers
+        .where((a) =>
+            _pendingSelectedIds.contains(a.id) &&
+            !_workerAdditionalBreakOverridden.contains(a.id))
+        .toList();
 
-    // 선택된 근무자 extra break 반영 — 한 번에 setState
     setState(() {
       _groupExtraBreakMinutes[key] = extraMinutes;
-      for (final app in selectedInGroup) {
+      for (final app in toUpdate) {
         _workerExtraBreakMinutes[app.id] = extraMinutes;
       }
     });
 
     // 급여 병렬 계산 후 한 번에 반영
     final results = await Future.wait(
-      selectedInGroup.map((app) async {
+      toUpdate.map((app) async {
         final wage = await _calculateWageForWorker(app, extraBreakMinutes: extraMinutes, forceRecalculate: true);
         return (id: app.id, wage: wage);
       }),
@@ -414,6 +485,14 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         }
       } catch (e) {
         debugPrint('⚠️ WorkDetail 조회 실패: $e');
+        // 폴백: 이미 저장된 wageDetail의 scheduledBreakMinutes 사용 (0보다 큰 경우)
+        // WorkDetail 조회 실패 시 0이 전달되면 CF에서 실제 breakMinutes로 대체하지만
+        // Flutter 미리보기 계산은 오차가 생기므로 이전 값을 재사용한다.
+        final prevSchedBreak = attendance.wageDetail?.scheduledBreakMinutes ?? 0;
+        if (prevSchedBreak > 0) {
+          breakMinutes = prevSchedBreak;
+          debugPrint('ℹ️ scheduledBreakMinutes 폴백: wageDetail에서 $prevSchedBreak분 사용');
+        }
       }
     } else {
       // toId=null인 지원서(TO 없이 직접 채용된 경우)는 WorkDetail 조회를 건너뛰고,
@@ -428,10 +507,14 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     }
 
     try {
-      // 관리자가 직접 선택한 석식/야식공제 그대로 적용
-      final effectiveBreak = breakMinutes + extraBreakMinutes;
+      // [Phase 3.1] break 구조: appliedScheduledBreak + additionalBreak = effectiveBreak
+      // appliedScheduledBreak: 계약 휴게 중 실제 적용 (관리자 확정값, override 없으면 TO 기본값)
+      // additionalBreak: 추가 무급휴게 (석식·야식 등, extraBreakMinutes 파라미터)
+      final appliedSchedBreak = _workerAppliedScheduledBreakOverride[app.id] ?? breakMinutes;
+      final additionalBreak = extraBreakMinutes; // 그룹칩 또는 개별 override
+      final effectiveBreak = appliedSchedBreak + additionalBreak;
 
-      // [Phase 2] CF callableCalculateAndConfirmWage 호출용 파라미터 캐싱
+      // [Phase 3.1] CF callableCalculateAndConfirmWage 호출용 파라미터 캐싱 (break 상세 포함)
       _wageParams[app.id] = {
         'wageType': wageType,
         'baseWage': baseWage,
@@ -441,7 +524,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         'actualStart': attendance.checkIn!.split(':').take(2).join(':'),
         'actualEnd': attendance.checkOut!.split(':').take(2).join(':'),
         'breakMinutes': effectiveBreak,
-        'scheduledBreakMinutes': breakMinutes,
+        'scheduledBreakMinutes': breakMinutes,          // TO 기준값 (OT 계산 기준)
+        'appliedScheduledBreakMinutes': appliedSchedBreak, // 실제 적용 계약휴게
+        'additionalBreakMinutes': additionalBreak,          // 추가 무급휴게
         'nightAllowanceApplied': nightAllowanceApplied,
         'nightIncluded': nightIncluded,
         'additionalAmount': 0,
@@ -458,7 +543,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         actualStart: attendance.checkIn!,
         actualEnd: attendance.checkOut!,
         breakMinutes: effectiveBreak,
-        scheduledBreakMinutes: breakMinutes,
+        scheduledBreakMinutes: breakMinutes, // TO 기준값 (OT threshold 계산용)
         nightAllowanceApplied: nightAllowanceApplied,
         nightIncluded: nightIncluded,
         baseHourlyWage: baseHourlyWage,
@@ -507,19 +592,23 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     );
     if (confirmed != true || !mounted) return;
 
-    // [WageConfirm] 계좌 미인증 근무자 경고 — 비차단, 이체 전 확인 권장
-    final unverifiedCount = _pendingWorkers
-        .where((app) => _pendingSelectedIds.contains(app.id))
-        .where((app) {
-          final user = widget.userMap[app.uid];
-          return user != null && user.bankVerificationStatus != 'verified';
-        })
-        .length;
-    if (unverifiedCount > 0 && mounted) {
-      ToastHelper.showWarning(
-        '계좌 미인증 근무자 $unverifiedCount명이 포함됩니다. 이체 전 계좌 확인을 권장합니다.',
+    // ── [Phase 3.1] 휴게 미확인 근무자 게이트 (_breakReviewGatePassed 공통 헬퍼) ──
+    final unreviewedWorkers = _pendingSelectedIds.where((id) => !_breakReviewGatePassed(id)).toList();
+    if (unreviewedWorkers.isNotEmpty && mounted) {
+      final names = unreviewedWorkers
+          .map((id) => widget.workers.where((w) => w.id == id).firstOrNull)
+          .where((app) => app != null)
+          .map((app) => widget.userMap[app!.uid]?.name ?? '근무자')
+          .join(', ');
+      await DialogHelper.showAlert(
+        context,
+        title: '휴게시간 확인 필요',
+        message: '아래 근무자의 휴게시간을 확인해주세요.\n\n$names\n\n각 근무자 카드의 ⚠️ 휴게 확인을 완료한 후 다시 시도하세요.',
       );
+      setState(() => _isProcessing = false);
+      return;
     }
+    // ────────────────────────────────────────────────────────────
 
     final adminUid = Provider.of<UserProvider>(context, listen: false).currentUser?.uid;
 
@@ -637,6 +726,13 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           });
           final serverNetWage = (result.data['effectiveNetWage'] as num?)?.toInt()
               ?? calculatedWage.effectiveNetWage;
+          // [Phase 5.2] 서버 재계산 결과로 UI 상태 보정 — SERVER RESULT IS AUTHORITATIVE
+          final reconciledWage = calculatedWage.copyWith(
+            netWage: serverNetWage,
+            totalAmount: (result.data['totalAmount'] as num?)?.toInt(),
+            nightMinutes: (result.data['nightMinutes'] as num?)?.toInt(),
+            nightAmount: (result.data['nightAmount'] as num?)?.toInt(),
+          );
 
           if (calculatedWage.retroactiveDeduction > 0 && app != null) {
             _firestoreService.createNotification(
@@ -646,7 +742,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                 businessId: widget.businessId,
                 workDate: attendance.workDate,
                 retroactiveAmount: calculatedWage.retroactiveDeduction,
-                grossWage: calculatedWage.totalAmount,
+                grossWage: reconciledWage.totalAmount,
                 netWage: serverNetWage,
                 attendanceId: attendance.id,
               ),
@@ -656,7 +752,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           return (
             success: true,
             appId: appId,
-            wage: calculatedWage,
+            wage: reconciledWage,
             failedName: null as String?,
           );
         } catch (e) {
@@ -1040,6 +1136,16 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
   /// 개별 급여 확정
   Future<void> _processIndividualConfirm(ApplicationModel app, AttendanceModel attendance, WageDetailModel wage) async {
+    // [Phase 3.1] break review gate — batch/all와 동일한 invariant
+    if (!_breakReviewGatePassed(app.id) && mounted) {
+      final name = widget.userMap[app.uid]?.name ?? '근무자';
+      await DialogHelper.showAlert(
+        context,
+        title: '휴게시간 확인 필요',
+        message: '$name의 휴게시간을 확인해주세요.\n\n카드의 ⚠️ 휴게 확인을 완료한 후 다시 시도하세요.',
+      );
+      return;
+    }
     if (_isProcessing) return;
     setState(() => _isProcessing = true);
     try {
@@ -1129,6 +1235,13 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       });
       final indivServerNetWage = (indivResult.data['effectiveNetWage'] as num?)?.toInt()
           ?? calculatedWage.effectiveNetWage;
+      // [Phase 5.2] 서버 재계산 결과로 UI 상태 보정 — SERVER RESULT IS AUTHORITATIVE
+      final indivReconciledWage = calculatedWage.copyWith(
+        netWage: indivServerNetWage,
+        totalAmount: (indivResult.data['totalAmount'] as num?)?.toInt(),
+        nightMinutes: (indivResult.data['nightMinutes'] as num?)?.toInt(),
+        nightAmount: (indivResult.data['nightAmount'] as num?)?.toInt(),
+      );
 
       if (calculatedWage.retroactiveDeduction > 0) {
         _firestoreService.createNotification(
@@ -1138,7 +1251,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             businessId: widget.businessId,
             workDate: attendance.workDate,
             retroactiveAmount: calculatedWage.retroactiveDeduction,
-            grossWage: calculatedWage.totalAmount,
+            grossWage: indivReconciledWage.totalAmount,
             netWage: indivServerNetWage,
             attendanceId: attendance.id,
           ),
@@ -1150,7 +1263,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
 
       if (mounted) {
         setState(() {
-          _calculatedWages[app.id] = calculatedWage;
+          _calculatedWages[app.id] = indivReconciledWage;
           _pendingWorkers.removeWhere((w) => w.id == app.id);
           _calculatedWorkers.add(app);
           _pendingSelectedIds.remove(app.id);
@@ -1758,7 +1871,6 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final dateStr = FormatHelper.formatDateKorean(widget.date);
-    final screenHeight = MediaQuery.sizeOf(context).height;
 
     return PopScope(
       canPop: false,
@@ -1767,102 +1879,31 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
           Navigator.pop(context, _hasChanges);
         }
       },
-      child: Dialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppDialogSize.borderRadius),
-        ),
-        insetPadding: const EdgeInsets.symmetric(
-          horizontal: AppDialogSize.insetH,
-          vertical: AppDialogSize.insetV,
-        ),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: screenHeight * AppDialogSize.maxHeightRatio),
-          child: Column(
-            children: [
-              _buildHeader(context, theme, dateStr),
-              _buildTabBar(context, theme),
-              Expanded(
-                child: TabBarView(
-                  controller: _tabController,
-                  children: [
-                    _buildPendingTab(context, theme),
-                    _buildCalculatedTab(context, theme),
-                    _buildTransferredTab(context, theme),
-                  ],
-                ),
-              ),
-            ],
+      child: AppModalShell(
+        children: [
+          _buildHeader(context, theme, dateStr),
+          _buildTabBar(context, theme),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _buildPendingTab(context, theme),
+                _buildCalculatedTab(context, theme),
+                _buildTransferredTab(context, theme),
+              ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
 
   /// 헤더
   Widget _buildHeader(BuildContext context, ThemeData theme, String dateStr) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            theme.primaryColor,
-            theme.primaryColor.withValues(alpha: 0.85),
-          ],
-        ),
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(ResponsiveHelper.spacing(context, 20)),
-          topRight: Radius.circular(ResponsiveHelper.spacing(context, 20)),
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(ResponsiveHelper.spacing(context, 12)),
-            ),
-            child: Icon(
-              Icons.payments,
-              color: Colors.white,
-              size: ResponsiveHelper.iconSize(context, 24),
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '급여 관리',
-                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                Text(
-                  '$dateStr · ${widget.businessName}',
-                  style: ResponsiveHelper.smallStyle(context).copyWith(
-                    color: Colors.white.withValues(alpha: 0.9),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            onPressed: () => Navigator.pop(context, _hasChanges),
-            icon: Icon(
-              Icons.close,
-              color: Colors.white,
-              size: ResponsiveHelper.iconSize(context, 24),
-            ),
-          ),
-        ],
-      ),
+    return AppModalHeader(
+      title: '급여 관리',
+      subtitle: '$dateStr · ${widget.businessName}',
+      onClose: () => Navigator.pop(context, _hasChanges),
     );
   }
 
@@ -2348,10 +2389,15 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         ? wage.formattedNetWage
         : (wage?.formattedTotal ?? '계산 중...');
     final accentColor = isPending ? AppColors.warning : theme.primaryColor;
-    // 실제 적용된 휴게시간 (석식/야식공제는 연장시간 있을 때만 합산)
-    final hasOvertime = _workerHasOvertime(app);
-    final extraApplied = hasOvertime ? (_workerExtraBreakMinutes[app.id] ?? 0) : 0;
-    final breakMins = wage?.breakMinutes ?? (_getScheduledBreakMinutes(app) + extraApplied);
+    // [Phase 3.1] 총 적용 휴게시간 — 계산 완료 후에는 wageDetail에서, 미계산 상태는 추정값
+    final breakMins = wage?.breakMinutes ?? _getEffectiveBreak(app);
+    // break 상세: 계약 휴게 조정 여부 + 추가 여부
+    final appliedSchedBreak = wage?.effectiveAppliedScheduledBreak ?? _getAppliedScheduledBreak(app);
+    final additionalBreakMins = wage?.effectiveAdditionalBreak ?? _getAdditionalBreak(app);
+    final scheduledBreakMins = _getScheduledBreakMinutes(app);
+    final hasReducedBreak = appliedSchedBreak < scheduledBreakMins && scheduledBreakMins > 0;
+    final hasAdditional = additionalBreakMins > 0;
+    final needsReview = _workerBreakReviewRequired[app.id] == true && _workerBreakReviewed[app.id] != true && isPending;
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
       decoration: BoxDecoration(
@@ -2499,11 +2545,58 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                     child: _buildWageFormulaLine(context, wage, accentColor),
                   ),
 
+                // ── [Phase 6] 추가 근무 canonical breakdown ──────────
+                if (wage != null) _buildCanonicalOvertimeSection(context, wage),
+
+                // ── [Phase 3.1] 휴게 확인 필요 배너 ─────────────────
+                if (needsReview) ...[
+                  GestureDetector(
+                    onTap: () => _showBreakReviewSheet(context, app),
+                    child: Container(
+                      width: double.infinity,
+                      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: ResponsiveHelper.spacing(context, 10),
+                        vertical: ResponsiveHelper.spacing(context, 7),
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.warning.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.warning_amber_rounded, size: 14, color: AppColors.warningDark),
+                          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                          Expanded(
+                            child: Text(
+                              '휴게시간 확인 필요 · 계약 ${FormatHelper.formatCompactHours(scheduledBreakMins)} 공제 예정',
+                              style: ResponsiveHelper.tinyStyle(context).copyWith(
+                                color: AppColors.warningDark,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            '확인 →',
+                            style: ResponsiveHelper.tinyStyle(context).copyWith(
+                              color: AppColors.warningDark,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+
                 // ── 하단: 휴게 배지 + 급여 금액 ─────────────────
                 Row(
                   children: [
-                    if (breakMins > 0) ...[
-                      Container(
+                    // [Phase 3.1] 모든 근무자가 배지 탭으로 휴게 조정 가능
+                    GestureDetector(
+                      onTap: () => _showBreakReviewSheet(context, app),
+                      child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                         decoration: BoxDecoration(
                           color: AppColors.successBg,
@@ -2516,17 +2609,30 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                             Icon(Icons.pause_circle_outline,
                                 size: 11, color: AppColors.successDark),
                             SizedBox(width: ResponsiveHelper.spacing(context, 3)),
-                            Text(
-                              '휴게 ${FormatHelper.formatCompactHours(breakMins)}',
-                              style: ResponsiveHelper.tinyStyle(context).copyWith(
-                                color: AppColors.successDark,
-                                fontWeight: FontWeight.w600,
+                            // [Phase 3.1] breakdown이 있으면 상세 표시
+                            if ((hasReducedBreak || hasAdditional) && !needsReview)
+                              Text(
+                                _formatBreakBadgeText(breakMins, appliedSchedBreak, scheduledBreakMins, additionalBreakMins),
+                                style: ResponsiveHelper.tinyStyle(context).copyWith(
+                                  color: AppColors.successDark,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              )
+                            else
+                              Text(
+                                '무급휴게 ${FormatHelper.formatCompactHours(breakMins)}',
+                                style: ResponsiveHelper.tinyStyle(context).copyWith(
+                                  color: AppColors.successDark,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
-                            ),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+                            Icon(Icons.edit_outlined,
+                                size: 10, color: AppColors.successDark.withValues(alpha: 0.6)),
                           ],
                         ),
                       ),
-                    ],
+                    ),
                     const Spacer(),
                     if (wage?.wageTypeLabel != null) ...[
                       Container(
@@ -2566,6 +2672,202 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     );
   }
 
+  // ── [Phase 3.1] Break Review ────────────────────────────────
+
+  /// 휴게배지 텍스트 생성 (breakdown 있을 때)
+  String _formatBreakBadgeText(int total, int applied, int scheduled, int additional) {
+    if (additional > 0 && applied < scheduled) {
+      return '무급휴게 ${FormatHelper.formatCompactHours(total)} (기본${FormatHelper.formatCompactHours(applied)}+추가${FormatHelper.formatCompactHours(additional)})';
+    }
+    if (additional > 0) {
+      return '무급휴게 ${FormatHelper.formatCompactHours(total)} (기본${FormatHelper.formatCompactHours(applied)}+추가${FormatHelper.formatCompactHours(additional)})';
+    }
+    if (applied < scheduled) {
+      return '무급휴게 ${FormatHelper.formatCompactHours(total)} (계약${FormatHelper.formatCompactHours(scheduled)}→실제${FormatHelper.formatCompactHours(applied)})';
+    }
+    return '무급휴게 ${FormatHelper.formatCompactHours(total)}';
+  }
+
+  /// 휴게 확인 바텀시트 — [Phase 3.1] 2-섹션 (기본 + 추가)
+  /// needsReview = true인 근무자는 경고 색상, 일반 근무자도 배지 탭으로 진입 가능
+  Future<void> _showBreakReviewSheet(BuildContext ctx, ApplicationModel app) async {
+    final scheduledBreak = _getScheduledBreakMinutes(app);
+    final needsReview = _workerBreakReviewRequired[app.id] == true;
+    final wage = _calculatedWages[app.id];
+
+    // 초기값: 이미 override된 값 우선, 없으면 현재 wage의 effectiveXxx
+    int selApplied = _workerAppliedScheduledBreakOverride.containsKey(app.id)
+        ? _workerAppliedScheduledBreakOverride[app.id]!
+        : (wage?.effectiveAppliedScheduledBreak ?? scheduledBreak.clamp(0, wage?.breakMinutes ?? scheduledBreak));
+    int selAdditional = _workerExtraBreakMinutes[app.id] ?? (wage?.effectiveAdditionalBreak ?? 0);
+
+    // 기본 무급휴게 프리셋 (계약 기준)
+    final appliedPresets = <int>[0];
+    if (scheduledBreak >= 30 && !appliedPresets.contains(30)) appliedPresets.add(30);
+    if (scheduledBreak >= 60 && !appliedPresets.contains(60)) appliedPresets.add(60);
+    if (!appliedPresets.contains(scheduledBreak)) appliedPresets.add(scheduledBreak);
+    appliedPresets.sort();
+
+    const additionalPresets = [0, 30, 60, 90];
+
+    final accentColor = needsReview ? AppColors.warning : AppColors.info;
+
+    final result = await DialogHelper.showSheet<(int, int)>(
+      ctx,
+      isScrollControlled: true,
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (ctx2, setS) {
+          final totalBreak = selApplied + selAdditional;
+          return SingleChildScrollView(
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                16, 16, 16,
+                MediaQuery.of(ctx2).viewInsets.bottom + 32,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 제목
+                  Text(
+                    needsReview ? '⚠️ 휴게시간 확인 필요' : '휴게시간 조정',
+                    style: ResponsiveHelper.subtitleStyle(ctx2)
+                        .copyWith(fontWeight: FontWeight.bold, color: needsReview ? AppColors.warningDark : null),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(ctx2, 4)),
+                  Text(
+                    needsReview
+                        ? '조기퇴근으로 실제 휴게와 다를 수 있습니다. 계약 ${FormatHelper.formatCompactHours(scheduledBreak)} 기준 확인하세요.'
+                        : '이 근무자의 무급휴게를 조정합니다.',
+                    style: ResponsiveHelper.smallStyle(ctx2, color: AppColors.grey600),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(ctx2, 20)),
+
+                  // ── 섹션 1: 기본 무급휴게 (계약 기준) ──────────────
+                  Text(
+                    '기본 무급휴게 (계약 ${FormatHelper.formatCompactHours(scheduledBreak)} 기준)',
+                    style: ResponsiveHelper.smallStyle(ctx2)
+                        .copyWith(fontWeight: FontWeight.w600, color: AppColors.grey700),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(ctx2, 8)),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: appliedPresets.map((min) {
+                      final isSelected = selApplied == min;
+                      return GestureDetector(
+                        onTap: () => setS(() => selApplied = min),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: isSelected ? accentColor : AppColors.grey100,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: isSelected ? accentColor : AppColors.grey300,
+                            ),
+                          ),
+                          child: Text(
+                            min == 0 ? '없음' : FormatHelper.formatCompactHours(min),
+                            style: ResponsiveHelper.bodyStyle(ctx2).copyWith(
+                              color: isSelected ? Colors.white : AppColors.grey700,
+                              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(ctx2, 20)),
+
+                  // ── 섹션 2: 추가 무급휴게 ────────────────────────────
+                  Text(
+                    '추가 무급휴게',
+                    style: ResponsiveHelper.smallStyle(ctx2)
+                        .copyWith(fontWeight: FontWeight.w600, color: AppColors.grey700),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(ctx2, 4)),
+                  Text(
+                    '계약 외 추가로 쉰 휴게 시간',
+                    style: ResponsiveHelper.tinyStyle(ctx2, color: AppColors.grey500),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(ctx2, 8)),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: additionalPresets.map((min) {
+                      final isSelected = selAdditional == min;
+                      return GestureDetector(
+                        onTap: () => setS(() => selAdditional = min),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: isSelected ? AppColors.info : AppColors.grey100,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: isSelected ? AppColors.info : AppColors.grey300,
+                            ),
+                          ),
+                          child: Text(
+                            min == 0 ? '없음' : FormatHelper.formatCompactHours(min),
+                            style: ResponsiveHelper.bodyStyle(ctx2).copyWith(
+                              color: isSelected ? Colors.white : AppColors.grey700,
+                              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(ctx2, 16)),
+
+                  // ── 합계 표시 ─────────────────────────────────────────
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: AppColors.grey50,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      '총 무급휴게: ${FormatHelper.formatCompactHours(totalBreak)}'
+                          '  (기본 ${FormatHelper.formatCompactHours(selApplied)} + 추가 ${FormatHelper.formatCompactHours(selAdditional)})',
+                      style: ResponsiveHelper.smallStyle(ctx2)
+                          .copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  SizedBox(height: ResponsiveHelper.spacing(ctx2, 20)),
+
+                  // ── 적용 버튼 ─────────────────────────────────────────
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(sheetCtx, (selApplied, selAdditional)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: accentColor,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: Text(
+                        '적용',
+                        style: ResponsiveHelper.bodyStyle(ctx2).copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    if (result != null && mounted) {
+      final (applied, additional) = result;
+      await _setWorkerBreakComponents(app, applied, additional);
+    }
+  }
+
   /// 계산식 한 줄 요약 (예: "8.0h × 12,000원 +조출 3,000원 +연장 2,000원 +야간 1,000원")
   Widget _buildWageFormulaLine(BuildContext context, WageDetailModel wage, Color accentColor) {
     final parts = <String>[];
@@ -2580,7 +2882,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
         parts.add('-미근무 ${FormatHelper.formatWage(deduction)}');
       }
     }
-    if (wage.overtimeAmount > 0) {
+    // Phase 7.1: canonical record면 _buildCanonicalOvertimeSection에서 처리 → formula에서 생략
+    if (wage.overtimeAmount > 0 && !wage.hasCanonicalExtraWorkBreakdown) {
       // earlyArrivalAmount: WageDetailModel에 저장된 실제 조출수당 (8h 기준 계산)
       // 구형 레코드(earlyArrivalAmount==0)는 비율 fallback
       final earlyMins = wage.earlyArrivalMinutes.clamp(0, wage.overtimeMinutes);
@@ -2591,11 +2894,11 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       final regularAmt = wage.overtimeAmount - earlyAmt;
       if (earlyAmt > 0 && regularAmt > 0) {
         parts.add('+조출 ${FormatHelper.formatWage(earlyAmt)}');
-        parts.add('+연장 ${FormatHelper.formatWage(regularAmt)}');
+        parts.add('+연장 근무 ${FormatHelper.formatWage(regularAmt)}');
       } else if (earlyAmt > 0) {
         parts.add('+조출 ${FormatHelper.formatWage(earlyAmt)}');
       } else {
-        parts.add('+연장 ${FormatHelper.formatWage(wage.overtimeAmount)}');
+        parts.add('+연장 근무 ${FormatHelper.formatWage(wage.overtimeAmount)}');
       }
     }
     if (wage.nightAmount > 0) {
@@ -3000,7 +3303,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             ],
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          // 석식/야식공제 라벨
+          // [Phase 3.1] 추가 무급휴게 라벨 (석식·야식 등)
           Row(
             children: [
               Icon(Icons.restaurant_outlined, size: 12, color: AppColors.grey500),
@@ -3008,8 +3311,8 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               Flexible(
                 child: Text(
                   schedBreak > 0
-                      ? '석식/야식공제 (기본 ${FormatHelper.formatCompactHours(schedBreak)})'
-                      : '석식/야식공제',
+                      ? '추가 무급휴게 (석식·야식 등) · 기본 ${FormatHelper.formatCompactHours(schedBreak)}'
+                      : '추가 무급휴게 (석식·야식 등)',
                   style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -3017,7 +3320,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             ],
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 5)),
-          // 석식/야식공제 칩 (그룹 일괄 적용 — 선택된 근무자 전체에 반영)
+          // [Phase 3.1] 추가 무급휴게 칩 — 그룹 기본값, 근무자별 override 가능
           Row(
             children: options.map((min) {
               final isSelected = extra == min;
@@ -3070,6 +3373,78 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
     return parts.isNotEmpty ? '(${parts.join(', ')})' : '';
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // [Phase 6] Canonical 추가 근무 breakdown 헬퍼
+  // ═══════════════════════════════════════════════════════════
+
+  /// 분(minutes)을 "Xh Xm / X시간 X분" 형식으로 포맷
+  String _fmtMins(int mins) {
+    final h = mins ~/ 60;
+    final m = mins % 60;
+    if (h == 0) return '$m분';
+    if (m == 0) return '$h시간';
+    return '$h시간 $m분';
+  }
+
+  /// [Phase 6] canonical 추가 근무 breakdown 표시 위젯
+  ///
+  /// hasCanonicalExtraWorkBreakdown == true 이고 contractExcessMinutes > 0 인 경우만 렌더.
+  /// 그 외에는 SizedBox.shrink() 반환.
+  Widget _buildCanonicalOvertimeSection(BuildContext context, WageDetailModel wage) {
+    if (!wage.hasCanonicalExtraWorkBreakdown) return const SizedBox.shrink();
+    final totalExtraMins = wage.contractExcessMinutes!;
+    if (totalExtraMins == 0 || wage.overtimeAmount <= 0) return const SizedBox.shrink();
+
+    final extra1x = wage.extraWork1xMinutes;
+    final extra15x = wage.extraWork15xMinutes;
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 6)),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: AppColors.warningBg,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.warningLight),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '연장 근무  ${_fmtMins(totalExtraMins)}',
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark)
+                      .copyWith(fontWeight: FontWeight.w600),
+                ),
+                Text(
+                  FormatHelper.formatWage(wage.overtimeAmount),
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.warningDark)
+                      .copyWith(fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+            if (extra1x > 0) ...[
+              const SizedBox(height: 3),
+              Text(
+                '· 계약시간 초과 · 1배  ${_fmtMins(extra1x)}',
+                style: ResponsiveHelper.tinyStyle(context, color: AppColors.warningDark),
+              ),
+            ],
+            if (extra15x > 0) ...[
+              const SizedBox(height: 3),
+              Text(
+                '· 8시간 초과 · 1.5배  ${_fmtMins(extra15x)}',
+                style: ResponsiveHelper.tinyStyle(context, color: AppColors.warningDark),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   List<Widget> _buildWageFlagBadges(ApplicationModel app) {
     final attendance = widget.attendanceMap[app.id];
     final flags = AttendanceBadgeHelper.compute(
@@ -3086,7 +3461,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       if (flags.isLate) _buildFlagBadge('지각', AppColors.error),
       if (flags.isEarlyLeave) _buildFlagBadge('조퇴', AppColors.warning),
       if (flags.isOvertime) _buildFlagBadge('연장', AppColors.info),
-      if (flags.isNight) _buildFlagBadge('심야', AppColors.purpleDark),
+      if (flags.isNight) _buildFlagBadge('야간', AppColors.purpleDark),
     ];
   }
 

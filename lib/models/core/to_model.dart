@@ -63,6 +63,12 @@ class TOModel {
   final int? postingDurationDays;
   /// 서버 저장 게시 만료일 (CF 계산값 — 연장 시 업데이트됨)
   final DateTime? postingExpiryDateServer;
+  /// 근무 시작 가능기간 시작일 (preset 장기공고 전용)
+  /// 지원자가 희망 시작일로 선택 가능한 범위의 첫날
+  final DateTime? workStartAvailableFrom;
+  /// 근무 시작 가능기간 종료일 (preset 장기공고 전용)
+  /// 지원자가 희망 시작일로 선택 가능한 범위의 마지막날
+  final DateTime? workStartAvailableUntil;
 
   // ── 인원 집계 ─────────────────────────────────────
   final int totalRequired;
@@ -118,6 +124,8 @@ class TOModel {
     this.contractPeriodType,
     this.postingDurationDays,
     this.postingExpiryDateServer,
+    this.workStartAvailableFrom,
+    this.workStartAvailableUntil,
     this.totalRequired = 0,
     this.totalConfirmed = 0,
     this.totalPending = 0,
@@ -179,6 +187,10 @@ class TOModel {
       postingDurationDays: (data['postingDurationDays'] as num?)?.toInt(),
       postingExpiryDateServer:
           parseTimestampNullable(data['postingExpiryDate']),
+      workStartAvailableFrom:
+          parseTimestampNullable(data['workStartAvailableFrom']),
+      workStartAvailableUntil:
+          parseTimestampNullable(data['workStartAvailableUntil']),
       totalRequired: (data['totalRequired'] as num?)?.toInt() ?? 0,
       totalConfirmed: (data['totalConfirmed'] as num?)?.toInt() ?? 0,
       totalPending: (data['totalPending'] as num?)?.toInt() ?? 0,
@@ -227,6 +239,10 @@ class TOModel {
       if (postingDurationDays != null) 'postingDurationDays': postingDurationDays,
       if (postingExpiryDateServer != null)
         'postingExpiryDate': Timestamp.fromDate(postingExpiryDateServer!),
+      if (workStartAvailableFrom != null)
+        'workStartAvailableFrom': Timestamp.fromDate(workStartAvailableFrom!),
+      if (workStartAvailableUntil != null)
+        'workStartAvailableUntil': Timestamp.fromDate(workStartAvailableUntil!),
       'totalRequired': totalRequired,
       'totalConfirmed': totalConfirmed,
       'totalPending': totalPending,
@@ -293,6 +309,10 @@ class TOModel {
     bool clearPostingDuration = false,
     DateTime? postingExpiryDateServer,
     bool clearPostingExpiryDateServer = false,
+    DateTime? workStartAvailableFrom,
+    bool clearWorkStartAvailableFrom = false,
+    DateTime? workStartAvailableUntil,
+    bool clearWorkStartAvailableUntil = false,
     String? creatorUID,
     DateTime? createdAt,
     bool? isDeleted,
@@ -337,6 +357,8 @@ class TOModel {
       contractPeriodType: clearContractPeriodType ? null : (contractPeriodType ?? this.contractPeriodType),
       postingDurationDays: clearPostingDuration ? null : (postingDurationDays ?? this.postingDurationDays),
       postingExpiryDateServer: clearPostingExpiryDateServer ? null : (postingExpiryDateServer ?? this.postingExpiryDateServer),
+      workStartAvailableFrom: clearWorkStartAvailableFrom ? null : (workStartAvailableFrom ?? this.workStartAvailableFrom),
+      workStartAvailableUntil: clearWorkStartAvailableUntil ? null : (workStartAvailableUntil ?? this.workStartAvailableUntil),
       creatorUID: creatorUID ?? this.creatorUID,
       createdAt: createdAt ?? this.createdAt,
       isDeleted: isDeleted ?? this.isDeleted,
@@ -403,6 +425,18 @@ class TOModel {
       status == TOStatus.expired ||
       (isContractType && (isPostingExpired || isDeadlinePassed));
 
+  /// [4J.0B] PENDING 지원자 승인 가능 여부 — isClosed보다 세분화된 판단
+  ///
+  /// - isManualClosed ONLY: 허용 (4I 설계 — 기존 PENDING은 관리자가 계속 처리 가능)
+  /// - isFull: 거부 (정원 충족, CF capacity guard에서도 차단)
+  /// - TIME_EXPIRED / POSTING_EXPIRED: 거부 (근무 시점·게시 기간 만료)
+  /// - isContractType + postingExpired/deadlinePassed: 거부
+  bool get canApprovePending =>
+      !isFull &&
+      status != TOStatus.expired &&
+      !(status == TOStatus.closed && !isManualClosed) &&
+      !(isContractType && (isPostingExpired || isDeadlinePassed));
+
   String get calculatedStatus {
     if (isManualClosed) return TOStatus.closed;
     if (isFull) return TOStatus.full;
@@ -413,6 +447,11 @@ class TOModel {
 
   /// preset 기간 여부
   bool get hasPresetPeriod => contractPeriodType != null && contractPeriodType != 'custom';
+
+  /// 신규 근무 시작 가능기간 필드 존재 여부 (preset 전용)
+  /// false이면 legacy 공고 — 기존 동작 유지
+  bool get hasWorkStartAvailableRange =>
+      workStartAvailableFrom != null && workStartAvailableUntil != null;
 
   /// 계약 기간 레이블
   String get contractPeriodLabel {
@@ -427,28 +466,40 @@ class TOModel {
     }
   }
 
+  /// 월말 clamp 후 N달 더하기 헬퍼 — Dart month overflow 방지
+  /// 예: 1/31 + 1달 → 2/28 (clamp), 8/31 + 1달 → 9/30 (clamp)
+  static DateTime _addMonths(DateTime start, int months) {
+    final rawMonth = start.month + months;
+    final targetYear = start.year + (rawMonth - 1) ~/ 12;
+    final targetMonth = ((rawMonth - 1) % 12) + 1;
+    final lastDayOfTarget = DateTime(targetYear, targetMonth + 1, 0).day;
+    final targetDay = start.day.clamp(1, lastDayOfTarget);
+    return DateTime(targetYear, targetMonth, targetDay);
+  }
+
   /// 주어진 시작일에서 계약 종료일 계산 (preset 타입 전용)
-  /// day를 그대로 넘기면 월말 오버플로우 발생(예: 1/31+1개월→3/3)
-  /// 다음달 1일 - 1일 패턴으로 월말을 안전하게 계산
+  ///
+  /// 규칙 (inclusive 계약기간):
+  ///   15일:    start + 14일 (시작일 포함 15일)
+  ///   월 단위: (start + N달) - 1일
+  ///   연 단위: (start + 12달) - 1일
+  ///
+  /// 예: 8/17 + 1개월 → 9/17 - 1일 = 9/16
+  ///     8/17 + 1년   → 2027/8/17 - 1일 = 2027/8/16
+  ///     1/31 + 1개월 → 2/28(clamp) - 1일 = 2/27
   DateTime computeContractEndDate(DateTime startDate) {
     switch (contractPeriodType) {
       case '15days':
+        // 시작일 포함 15일 = start + 14일
         return startDate.add(const Duration(days: 14));
-      // 패턴: DateTime(y, startMonth + N + 1, 1) - 1day = N개월 뒤 달의 말일
-      // 예) 1월 시작 → 1month: DateTime(y, 3, 1)-1 = 2월 말일 ✓
       case '1month':
-        return DateTime(startDate.year, startDate.month + 2, 1)
-            .subtract(const Duration(days: 1));
+        return _addMonths(startDate, 1).subtract(const Duration(days: 1));
       case '3months':
-        return DateTime(startDate.year, startDate.month + 4, 1)
-            .subtract(const Duration(days: 1));
+        return _addMonths(startDate, 3).subtract(const Duration(days: 1));
       case '6months':
-        return DateTime(startDate.year, startDate.month + 7, 1)
-            .subtract(const Duration(days: 1));
+        return _addMonths(startDate, 6).subtract(const Duration(days: 1));
       case '1year':
-        // 시작월과 같은 달의 다음해 말일 = DateTime(year+1, month+1, 0) 패턴
-        return DateTime(startDate.year + 1, startDate.month + 1, 1)
-            .subtract(const Duration(days: 1));
+        return _addMonths(startDate, 12).subtract(const Duration(days: 1));
       default:
         return rangeEnd ?? startDate;
     }
@@ -457,14 +508,17 @@ class TOModel {
   String get contractPeriodDisplay {
     if (!isContractType) return '';
     if (hasPresetPeriod) {
-      if (rangeStart != null) {
-        final end = computeContractEndDate(rangeStart!);
-        return '${FormatHelper.formatDate(rangeStart!)} ~ ${FormatHelper.formatDate(end)} ($contractPeriodLabel)';
+      // preset: 근무 시작 가능기간 + 계약기간 표시
+      if (hasWorkStartAvailableRange) {
+        return '근무 시작 가능 ${FormatHelper.formatDate(workStartAvailableFrom!)} ~ '
+            '${FormatHelper.formatDate(workStartAvailableUntil!)} ($contractPeriodLabel)';
       }
+      // legacy preset: 기간 레이블만 표시
       return contractPeriodLabel;
     }
+    // custom: 고정 근무기간
     if (rangeStart == null || rangeEnd == null) return '';
-    return '${FormatHelper.formatDate(rangeStart!)} ~ ${FormatHelper.formatDate(rangeEnd!)}';
+    return '근무기간 ${FormatHelper.formatDate(rangeStart!)} ~ ${FormatHelper.formatDate(rangeEnd!)}';
   }
 
   String get workDaysLabel {
@@ -522,21 +576,18 @@ class TOModel {
   bool get isPostingExpired {
     final d = postingExpiryDate;
     if (d == null) return false;
-    // 만료일 당일은 표시, 다음날 00:00 이후 숨김
+    // 만료일 당일은 표시, 다음날 00:00(KST) 이후 숨김
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final expiry = DateTime(d.year, d.month, d.day);
-    return today.isAfter(expiry);
+    return FormatHelper.toKstDate(now).isAfter(FormatHelper.toKstDate(d));
   }
 
-  /// 게시기간 만료 마감이고 연장 가능 (rangeEnd 여유 3일 이상)
+  /// 게시기간 만료 마감이고 연장 가능
+  /// 종료일 여유 검사는 CF(callableExtendPosting)에서 처리
   bool get isPostingExpiredAndExtendable {
     if (!isContractType) return false;
     if (status != TOStatus.closed) return false;
     if (closedReasonCode != 'POSTING_EXPIRED') return false;
-    final end = endDate;
-    if (end == null) return false;
-    return end.difference(DateTime.now()).inDays >= 3;
+    return true;
   }
 
   String get closedReason {
@@ -557,8 +608,12 @@ class TOModel {
   // 구 아키텍처(groups/date 기반)에서 마이그레이션 중인 화면에서 사용.
   // Phase 5-6 리팩터링 완료 후 제거 예정.
 
-  /// 구 date 필드. flex: createdAt, contract: rangeStart
-  DateTime get date => rangeStart ?? createdAt;
+  /// 공고 대표 날짜
+  /// - flex(단기): createdAt
+  /// - contract custom: rangeStart (고정 계약 시작일)
+  /// - contract preset 신규: workStartAvailableFrom (근무 시작 가능 첫날)
+  /// - contract preset legacy(신규 필드 없음): rangeStart (기존 동작 유지)
+  DateTime get date => rangeStart ?? workStartAvailableFrom ?? createdAt;
 
   /// isContractType 별칭
   bool get isLongTerm => isContractType;
@@ -566,9 +621,13 @@ class TOModel {
   /// isFlexType 별칭
   bool get isShortTerm => isFlexType;
 
-  /// rangeEnd 별칭 — preset 타입이면 rangeStart 기준으로 종료일 자동 계산
+  /// 공고 자체의 계약 종료일
+  /// - preset 장기공고: null
+  ///   (지원자마다 희망 시작일이 달라 TO 단일 종료일 없음 — computeContractEndDate 사용)
+  /// - custom 장기공고: rangeEnd (고정 종료일)
+  /// - 단기(flex): null
   DateTime? get endDate {
-    if (hasPresetPeriod && rangeStart != null) return computeContractEndDate(rangeStart!);
+    if (hasPresetPeriod) return null;
     return rangeEnd;
   }
 

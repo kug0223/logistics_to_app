@@ -6,6 +6,7 @@ import '../../../models/core/business_model.dart';
 import '../../../models/core/user_model.dart';
 import '../../../services/firestore_service.dart';
 import '../../../utils/loading_state_mixin.dart';
+import '../../../utils/format_helper.dart';
 import '../../../utils/responsive_helper.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/loading_widget.dart';
@@ -56,7 +57,7 @@ class _ExpiringContractsDialogState extends State<ExpiringContractsDialog>
   Future<void> _loadData() async {
     await runWithLoading(() async {
       final today = DateTime.now();
-      final todayOnly = DateTime(today.year, today.month, today.day);
+      final todayOnly = FormatHelper.toKstDate(today);
 
       final perBusiness = await Future.wait(
         widget.businessIds.map((bizId) async {
@@ -68,7 +69,7 @@ class _ExpiringContractsDialogState extends State<ExpiringContractsDialog>
           final inWindow = apps.where((app) {
             final end = app.actualResignDate ?? app.workEndDate;
             if (end == null) return false;
-            final endOnly = DateTime(end.year, end.month, end.day);
+            final endOnly = FormatHelper.toKstDate(end);
             return endOnly.difference(todayOnly).inDays <= _daysWindow;
           }).toList();
 
@@ -112,111 +113,32 @@ class _ExpiringContractsDialogState extends State<ExpiringContractsDialog>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-
-    return Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppDialogSize.borderRadius),
-      ),
-      insetPadding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, AppDialogSize.insetH),
-        vertical: AppDialogSize.insetV,
-      ),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
+    return AppModalShell(
+      children: [
+        AppModalHeader(
+          title: '계약 종료 예정',
+          subtitle: 'D-15 이내 만료 임박 근무자',
+          onClose: () => Navigator.pop(context),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildHeader(context, theme),
-            if (!isLoading) _buildSummaryCard(context),
-            Expanded(
-              child: isLoading
-                  ? const LoadingWidget(message: '계약 현황 조회 중...')
-                  : _items.isEmpty
-                      ? _buildEmptyState(context)
-                      : ListView.separated(
-                          shrinkWrap: true,
-                          padding: EdgeInsets.symmetric(
-                            vertical: ResponsiveHelper.spacing(context, 8),
-                          ),
-                          itemCount: _items.length,
-                          separatorBuilder: (_, __) =>
-                              const Divider(height: 1, indent: 56),
-                          itemBuilder: (_, i) =>
-                              _buildWorkerRow(context, theme, _items[i]),
-                        ),
-            ),
-            _buildBottomBar(context),
-          ],
+        if (!isLoading) _buildSummaryCard(context),
+        Expanded(
+          child: isLoading
+              ? const LoadingWidget(message: '계약 현황 조회 중...')
+              : _items.isEmpty
+                  ? _buildEmptyState(context)
+                  : ListView.separated(
+                      padding: EdgeInsets.symmetric(
+                        vertical: ResponsiveHelper.spacing(context, 8),
+                      ),
+                      itemCount: _items.length,
+                      separatorBuilder: (_, __) =>
+                          const Divider(height: 1, indent: 56),
+                      itemBuilder: (_, i) =>
+                          _buildWorkerRow(context, theme, _items[i]),
+                    ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildHeader(BuildContext context, ThemeData theme) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            AppColors.warning,
-            AppColors.warning.withValues(alpha: 0.8),
-          ],
-        ),
-        borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(AppDialogSize.borderRadius),
-          topRight: Radius.circular(AppDialogSize.borderRadius),
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              Icons.calendar_month_outlined,
-              color: Colors.white,
-              size: ResponsiveHelper.iconSize(context, 24),
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '계약 종료 예정',
-                style: ResponsiveHelper.titleStyle(context).copyWith(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              Text(
-                'D-15 이내 만료 임박 근무자',
-                style: ResponsiveHelper.smallStyle(context).copyWith(
-                  color: Colors.white.withValues(alpha: 0.85),
-                ),
-              ),
-            ],
-          ),
-          const Spacer(),
-          IconButton(
-            onPressed: () => Navigator.pop(context),
-            tooltip: '닫기',
-            icon: Icon(
-              Icons.close,
-              color: Colors.white,
-              size: ResponsiveHelper.iconSize(context, 24),
-            ),
-          ),
-        ],
-      ),
+        // 닫기 Footer 없음 — Header X 버튼으로 충분
+      ],
     );
   }
 
@@ -408,40 +330,4 @@ class _ExpiringContractsDialogState extends State<ExpiringContractsDialog>
     );
   }
 
-  Widget _buildBottomBar(BuildContext context) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        color: AppColors.grey50,
-        borderRadius: const BorderRadius.only(
-          bottomLeft: Radius.circular(AppDialogSize.borderRadius),
-          bottomRight: Radius.circular(AppDialogSize.borderRadius),
-        ),
-        border: const Border(top: BorderSide(color: AppColors.border)),
-      ),
-      child: SizedBox(
-        width: double.infinity,
-        child: ElevatedButton(
-          onPressed: () => Navigator.pop(context),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.grey200,
-            foregroundColor: AppColors.grey700,
-            padding: EdgeInsets.symmetric(
-              vertical: ResponsiveHelper.spacing(context, 14),
-            ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            elevation: 0,
-          ),
-          child: Text(
-            '닫기',
-            style: ResponsiveHelper.bodyStyle(context).copyWith(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }

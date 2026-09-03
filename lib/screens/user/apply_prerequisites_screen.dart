@@ -48,7 +48,7 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
 
   bool get _idCardReady {
     final u = _user;
-    return u != null && u.idCardImageUrl != null && u.idCardImageUrl!.isNotEmpty;
+    return u != null && u.hasIdDocument;
   }
 
   bool get _idVerified => _user?.isIdVerified ?? false;
@@ -62,7 +62,7 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
 
   bool get _bankbookReady {
     final u = _user;
-    return u != null && u.bankbookImageUrl != null && u.bankbookImageUrl!.isNotEmpty;
+    return u != null && u.hasBankbookDocument;
   }
 
   bool get _isBlacklisted => _user?.isBlacklisted ?? false;
@@ -432,7 +432,7 @@ bool meetsApplyPrerequisites(UserModel user, {required bool isFlexType}) {
   if (!user.isPassVerified) {
     return false;
   }
-  if (user.idCardImageUrl == null || user.idCardImageUrl!.isEmpty) {
+  if (!user.hasIdDocument) {
     return false;
   }
   if (isFlexType && !user.isIdVerified) {
@@ -442,7 +442,7 @@ bool meetsApplyPrerequisites(UserModel user, {required bool isFlexType}) {
       user.accountNumber == null || user.accountNumber!.isEmpty) {
     return false;
   }
-  if (user.bankbookImageUrl == null || user.bankbookImageUrl!.isEmpty) {
+  if (!user.hasBankbookDocument) {
     return false;
   }
   return true;

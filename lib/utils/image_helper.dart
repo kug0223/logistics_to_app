@@ -170,7 +170,7 @@ class ImageHelper {
                 child: Padding(
                   padding: EdgeInsets.symmetric(
                     horizontal: ResponsiveHelper.spacing(ctx, 20),
-                    vertical: ResponsiveHelper.spacing(ctx, 10),
+                    vertical: ResponsiveHelper.spacing(ctx, 12),
                   ),
                   child: Row(
                     children: [
@@ -187,11 +187,21 @@ class ImageHelper {
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(ctx, 16)),
                       Expanded(
-                        child: Text('카메라로 촬영',
-                            style: ResponsiveHelper.bodyStyle(ctx)),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('카메라로 촬영',
+                                style: ResponsiveHelper.bodyStyle(ctx)
+                                    .copyWith(fontWeight: FontWeight.w600)),
+                            const SizedBox(height: 2),
+                            Text('셔터를 눌러 바로 촬영합니다',
+                                style: ResponsiveHelper.smallStyle(ctx,
+                                    color: AppColors.grey400)),
+                          ],
+                        ),
                       ),
                       const Icon(Icons.chevron_right,
-                          color: AppColors.grey300, size: 20),
+                          color: AppColors.grey300, size: 18),
                     ],
                   ),
                 ),
@@ -205,7 +215,7 @@ class ImageHelper {
                 child: Padding(
                   padding: EdgeInsets.symmetric(
                     horizontal: ResponsiveHelper.spacing(ctx, 20),
-                    vertical: ResponsiveHelper.spacing(ctx, 10),
+                    vertical: ResponsiveHelper.spacing(ctx, 12),
                   ),
                   child: Row(
                     children: [
@@ -222,11 +232,21 @@ class ImageHelper {
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(ctx, 16)),
                       Expanded(
-                        child: Text('갤러리에서 선택',
-                            style: ResponsiveHelper.bodyStyle(ctx)),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('갤러리에서 선택',
+                                style: ResponsiveHelper.bodyStyle(ctx)
+                                    .copyWith(fontWeight: FontWeight.w600)),
+                            const SizedBox(height: 2),
+                            Text('앨범에서 사진을 선택합니다',
+                                style: ResponsiveHelper.smallStyle(ctx,
+                                    color: AppColors.grey400)),
+                          ],
+                        ),
                       ),
                       const Icon(Icons.chevron_right,
-                          color: AppColors.grey300, size: 20),
+                          color: AppColors.grey300, size: 18),
                     ],
                   ),
                 ),
@@ -868,6 +888,10 @@ class ImageHelper {
     File? imageFile,
     String? title,
     String? cacheKey,
+    bool noCache = false,
+    // [BUG-ID-01] noCache:true → Image.network(disk cache 없음) 사용.
+    //   신분증 등 민감 이미지는 반드시 noCache:true 를 전달할 것.
+    //   일반 이미지는 noCache:false(기본값) 유지 — CachedNetworkImage 그대로.
   }) async {
     if (imageUrl == null && imageFile == null) {
       ToastHelper.showError('이미지를 불러올 수 없습니다');
@@ -881,7 +905,8 @@ class ImageHelper {
         imageUrl: imageUrl,
         imageFile: imageFile,
         title: title,
-        cacheKey: cacheKey,
+        cacheKey: noCache ? null : cacheKey,
+        noCache: noCache,
       ),
     );
   }
@@ -939,12 +964,14 @@ class _FullScreenImageViewer extends StatefulWidget {
   final File? imageFile;
   final String? title;
   final String? cacheKey;
+  final bool noCache; // [BUG-ID-01] true이면 Image.network(disk cache 없음) 사용
 
   const _FullScreenImageViewer({
     this.imageUrl,
     this.imageFile,
     this.title,
     this.cacheKey,
+    this.noCache = false,
   });
 
   @override
@@ -1043,6 +1070,33 @@ class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
     }
 
     if (widget.imageUrl != null) {
+      // [BUG-ID-01] noCache:true → Image.network (memory-only, disk cache 없음)
+      //   신분증 등 민감 이미지 전용. Signed URL 만료 후 재접근 시 errorBuilder로 처리.
+      if (widget.noCache) {
+        return Image.network(
+          widget.imageUrl!,
+          fit: BoxFit.contain,
+          loadingBuilder: (context, child, progress) {
+            if (progress == null) return child;
+            return const Center(
+              child: CircularProgressIndicator(color: Colors.white),
+            );
+          },
+          errorBuilder: (context, error, stackTrace) => const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.broken_image, color: Colors.white54, size: 48),
+                SizedBox(height: 8),
+                Text(
+                  '이미지를 불러올 수 없습니다',
+                  style: TextStyle(color: Colors.white54),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
       return CachedNetworkImage(
         imageUrl: widget.imageUrl!,
         cacheKey: widget.cacheKey,

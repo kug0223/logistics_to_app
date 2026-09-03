@@ -1,7 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import '../../utils/encryption_helper.dart';
-import '../../utils/trust_score_helper.dart';
+// trust_score_helper: [5A.2A] 신뢰도 점수 시스템 폐기
 import 'user_region.dart';
 
 // 사용자 권한 enum
@@ -91,7 +91,6 @@ class UserModel {
   /// [V3] 통장사본 Storage 경로 — Signed URL 발급(callableGetBankbookSignedUrl)에 사용.
   /// V3 이전 등록 사용자는 null이며 bankbookImageUrl을 통해 접근.
   final String? bankbookImagePath;
-  final bool isBankbookVerified;       // 통장사본 검증 여부 (CF Admin SDK로만 설정) — legacy, bankVerificationStatus로 대체 예정
   final DateTime? bankbookVerifiedAt;  // 통장사본 검증 시각 — legacy
   // [PRODUCT-POLICY] bankVerificationStatus — canonical 상태 정의
   //
@@ -147,8 +146,7 @@ class UserModel {
   final String? businessName;           // 상호명 (관리자용)
   final String? businessLicenseImageUrl; // 사업자등록증 이미지
   final String? ceoName;                 // 대표자명
-  // ── 신뢰도 시스템 ──
-  final int? storedTrustScore;           // 저장된 신뢰도 점수
+  // ── 신뢰도 시스템 — [5A.2A] storedTrustScore 제거 ──
   final double rehireRate;               // 재고용 희망률 (0.0~1.0)
   final List<String> badges;             // 배지 ID 목록
   final DateTime? lastRestartAt;         // 마지막 재시작 프로그램 일시
@@ -170,11 +168,12 @@ class UserModel {
   final UserRegion? lastSelectedJobRegion;
 
   // 알림 카테고리 키 상수
-  static const String notifWorkReminder    = 'workReminder';
+  static const String notifWorkReminder      = 'workReminder';
   static const String notifApplicationUpdate = 'applicationUpdate';
-  static const String notifReviewAlert     = 'reviewAlert';
-  static const String notifContractAlert   = 'contractAlert';
-  static const String notifWageAlert       = 'wageAlert';
+  static const String notifReviewAlert       = 'reviewAlert';
+  static const String notifContractAlert     = 'contractAlert';
+  static const String notifWageAlert         = 'wageAlert';
+  static const String notifToMatchAlert      = 'toMatchAlert';  // [Phase 9B] 구인공고 매칭 알림
 
   static const Map<String, bool> defaultNotifPrefs = {
     'workReminder':      true,
@@ -182,6 +181,7 @@ class UserModel {
     'reviewAlert':       true,
     'contractAlert':     true,
     'wageAlert':         true,
+    'toMatchAlert':      true,  // [Phase 9B] 구인공고 매칭 알림 (USER only)
   };
 
   UserModel({
@@ -227,7 +227,6 @@ class UserModel {
     this.accountHolder,
     this.bankbookImageUrl,
     this.bankbookImagePath,
-    this.isBankbookVerified = false,
     this.bankbookVerifiedAt,
     this.bankVerificationStatus,
     this.bankbookUploadedAt,
@@ -254,7 +253,6 @@ class UserModel {
     this.businessLicenseImageUrl,
     this.ceoName,
     // ── 신뢰도 시스템 ──
-    this.storedTrustScore,
     this.rehireRate = 0.0,
     this.badges = const [],
     this.lastRestartAt,
@@ -360,11 +358,13 @@ class UserModel {
   //   금융기관 실명조회가 아님. 입력 정보와 이미지의 1차 일치 확인 보조 수단.
   // ─────────────────────────────────────────────────────────────────
 
-  /// 급여계좌 기본 정보 등록 여부 (bankName + accountNumber 존재).
+  /// 급여계좌 기본 정보 등록 여부 (bankName + accountNumber + accountHolder 존재).
+  /// [V3 FOREIGN HOLDER] accountHolder 포함 — 외국인은 실제 예금주명 직접 입력.
   /// 계좌번호는 암호화 저장이지만 null 여부로만 확인한다.
   bool get hasBankAccount =>
       (bankName != null && bankName!.isNotEmpty) &&
-      (accountNumber != null && accountNumber!.isNotEmpty);
+      (accountNumber != null && accountNumber!.isNotEmpty) &&
+      (accountHolder != null && accountHolder!.isNotEmpty);
 
   /// 통장사본 제출 여부 (bankbookImagePath 또는 bankbookImageUrl 중 하나 이상 존재).
   /// V3 이후: bankbookImagePath 우선. V3 이전 사용자: bankbookImageUrl 폴백.
@@ -372,12 +372,11 @@ class UserModel {
       (bankbookImagePath != null && bankbookImagePath!.isNotEmpty) ||
       (bankbookImageUrl != null && bankbookImageUrl!.isNotEmpty);
 
-  /// [PRODUCT-POLICY] 지원자 관점에서 급여정보 준비 완료 여부.
-  /// review_required = 정상 제출 완료 → 준비됨.
-  /// mismatch만 재등록 필요 → 미준비.
-  /// Canonical 기준: callableApplyToTO mismatch gate와 동일 논리.
+  /// [PRODUCT-POLICY V3] 지원자 관점에서 급여정보 준비 완료 여부.
+  /// bankName + accountNumber + accountHolder 존재 + 통장사본 제출.
+  /// [Phase 6] bankVerificationStatus mismatch gate 제거됨 — V3에서 해당 status 미발급.
   bool get hasWageDocumentsReady =>
-      hasBankAccount && hasBankbookDocument && bankVerificationStatus != 'mismatch';
+      hasBankAccount && hasBankbookDocument;
 
   /// [PRODUCT-POLICY] 신규 지원에 필요한 서류 준비 완료 여부.
   /// 장기 공고: hasIdDocument + hasWageDocumentsReady
@@ -421,34 +420,7 @@ class UserModel {
     return calculatedAge;
   }
 
-  /// 신뢰도 점수 (0~100).
-  ///
-  /// 저장된 값([storedTrustScore]) 우선.
-  /// 없으면 [TrustScoreHelper.calculate]로 폴백 — 단일 공식 원칙.
-  int get trustScore {
-    if (storedTrustScore != null) return storedTrustScore!;
-    return TrustScoreHelper.calculate(this);
-  }
-  
-  /// 신뢰도 등급
-  String get trustGrade {
-    final s = trustScore;
-    if (s >= 90) return '최우수';
-    if (s >= 70) return '우수';
-    if (s >= 50) return '보통';
-    if (s >= 30) return '주의';
-    return '경고';
-  }
-  
-  /// 신뢰도 등급 이모지
-  String get trustGradeEmoji {
-    final s = trustScore;
-    if (s >= 90) return '🌟';
-    if (s >= 70) return '✅';
-    if (s >= 50) return '😐';
-    if (s >= 30) return '⚠️';
-    return '🚨';
-  }
+  // [5A.2A] trustScore / trustGrade / trustGradeEmoji getter 제거 — 신뢰도 점수 시스템 폐기
 
   // ── Firestore 변환 ──
 
@@ -523,7 +495,6 @@ class UserModel {
       accountHolder: map['accountHolder'],
       bankbookImageUrl: map['bankbookImageUrl'],
       bankbookImagePath: map['bankbookImagePath'],
-      isBankbookVerified: map['isBankbookVerified'] ?? false,
       bankbookVerifiedAt: _parseDateTime(map['bankbookVerifiedAt']),
       bankVerificationStatus: map['bankVerificationStatus'] as String?,
       bankbookUploadedAt: _parseDateTime(map['bankbookUploadedAt']),
@@ -555,8 +526,7 @@ class UserModel {
       businessName: map['businessName'],
       businessLicenseImageUrl: map['businessLicenseImageUrl'],
       ceoName: map['ceoName'],
-      // ── 신뢰도 시스템 ──
-      storedTrustScore: (map['trustScore'] as num?)?.toInt(),
+      // ── 신뢰도 시스템 — [5A.2A] storedTrustScore 제거 (Firestore의 trustScore 필드는 읽지 않음)
       rehireRate: (map['rehireRate'] as num?)?.toDouble() ?? 0.0,
       badges: map['badges'] != null ? List<String>.from(map['badges']) : [],
       lastRestartAt: _parseDateTime(map['lastRestartAt']),
@@ -626,7 +596,6 @@ class UserModel {
       'accountHolder': accountHolder,
       'bankbookImageUrl': bankbookImageUrl,
       'bankbookImagePath': bankbookImagePath,
-      'isBankbookVerified': isBankbookVerified,
       'bankbookVerifiedAt': bankbookVerifiedAt != null
           ? Timestamp.fromDate(bankbookVerifiedAt!)
           : null,
@@ -658,8 +627,7 @@ class UserModel {
       'businessName': businessName,
       'businessLicenseImageUrl': businessLicenseImageUrl,
       'ceoName': ceoName,
-      // ── 신뢰도 시스템 ──
-      'trustScore': storedTrustScore,
+      // ── 신뢰도 시스템 — [5A.2A] trustScore write 제거
       'rehireRate': rehireRate,
       'badges': badges,
       'lastRestartAt': lastRestartAt != null
@@ -753,7 +721,6 @@ class UserModel {
     String? accountHolder,
     String? bankbookImageUrl,
     String? bankbookImagePath,
-    bool? isBankbookVerified,
     DateTime? bankbookVerifiedAt,
     String? bankVerificationStatus,
     DateTime? bankbookUploadedAt,
@@ -780,7 +747,6 @@ class UserModel {
     String? businessLicenseImageUrl,
     String? ceoName,
     // ── 신뢰도 시스템 ──
-    int? storedTrustScore,
     double? rehireRate,
     List<String>? badges,
     DateTime? lastRestartAt,
@@ -840,7 +806,6 @@ class UserModel {
       accountHolder: accountHolder ?? this.accountHolder,
       bankbookImageUrl: bankbookImageUrl ?? this.bankbookImageUrl,
       bankbookImagePath: bankbookImagePath ?? this.bankbookImagePath,
-      isBankbookVerified: isBankbookVerified ?? this.isBankbookVerified,
       bankbookVerifiedAt: bankbookVerifiedAt ?? this.bankbookVerifiedAt,
       bankVerificationStatus: bankVerificationStatus ?? this.bankVerificationStatus,
       bankbookUploadedAt: bankbookUploadedAt ?? this.bankbookUploadedAt,
@@ -867,7 +832,6 @@ class UserModel {
       businessLicenseImageUrl: businessLicenseImageUrl ?? this.businessLicenseImageUrl,
       ceoName: ceoName ?? this.ceoName,
       // ── 신뢰도 시스템 ──
-      storedTrustScore: storedTrustScore ?? this.storedTrustScore,
       rehireRate: rehireRate ?? this.rehireRate,
       badges: badges ?? this.badges,
       lastRestartAt: lastRestartAt ?? this.lastRestartAt,

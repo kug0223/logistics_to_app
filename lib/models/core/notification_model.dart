@@ -3,6 +3,23 @@ import 'package:flutter/foundation.dart';
 
 import 'application_model.dart';
 
+/// 알림 카테고리 — 수신 맥락 기반 (account role이 아닌 이벤트별 결정)
+/// 같은 type도 수신자(관리자/근로자)에 따라 다른 category로 저장 가능.
+/// Phase 2: CF가 각 알림 document에 명시적으로 저장. Phase 1은 resolvedCategory fallback.
+enum NotificationCategory {
+  personal, // 근로자 개인 자격 수신 (지원·근무·급여·계약 결과 등)
+  admin,    // 관리자 역할 수신 (지원서 접수·계약 검토·인력 관리 등)
+  system,   // 시스템 공지·기타
+}
+
+/// 알림 중요도 — 카드 UI 강조 수준 및 CTA 표시 기준
+/// Phase 2: CF가 각 알림 document에 명시적으로 저장. Phase 1은 resolvedImportance fallback.
+enum NotificationImportance {
+  actionRequired, // 사용자 액션이 필요 → 단일 CTA 버튼 표시, 제목 w600
+  statusUpdate,   // 상태 변경 안내 → 제목 w600(미읽음)/w500(읽음)
+  reminderInfo,   // 정보 전달·리마인더 → 제목 w500, 아이콘 neutral (opacity 낮추지 않음)
+}
+
 /// 알림 유형
 enum NotificationType {
   // 지원 관련 (지원자용)
@@ -66,6 +83,8 @@ enum NotificationType {
   idCardAccessRejected,    // 신분증 열람 거절됨 (관리자에게)
   // 발송 로직 미구현 — CF 스케줄러 추가 필요
   idCardAccessExpiringSoon,// 신분증 열람 권한 만료 임박
+  // [ID-CONSENT] 사전동의 자동 Grant 활성화 알림 (근로자에게)
+  idCardConsentGranted,    // 근무 확정으로 신분증 열람 권한 활성화됨 (지원자에게)
   
   // 멤버 관리
   memberInvitationReceived, // 하위 관리자 초대 받음 (근무자에게)
@@ -77,33 +96,87 @@ enum NotificationType {
 
   // 공고 관련 (관리자)
   toPostingExpiringTomorrow, // 공고 게시 만료 D-1 (관리자에게, CF: "toPostingExpiringTomorrow")
+  toPostingExpired,          // 공고 게시 만료됨 (관리자에게, CF: "toPostingExpired")
+
+  // TO 초대 관련
+  toInvite,               // TO 초대 받음 (근로자에게, CF: "toInvite")
+  toInviteAccepted,       // 초대 수락됨 (초대한 관리자에게, CF: "toInviteAccepted")
+  toInviteDeclined,       // 초대 거절됨 (초대한 관리자에게, CF: "toInviteDeclined")
+  toInviteCanceled,       // 초대 취소됨 (근로자에게, CF: "toInviteCanceled")
+
+  // 출퇴근 재확인 관련 (근무 당일 H-2/H-1 스케줄러)
+  reconfirmRequest,        // 오늘 근무 확인 요청 (근로자에게, CF: "reconfirmRequest")
+  reconfirmAdminWarning,   // 출근 미확인 경고 (관리자에게, CF: "reconfirmAdminWarning")
+  reconfirmDeclined,       // 근무 취소됨 — 재확인 거절 (관리자에게, CF: "reconfirmDeclined")
+
+  // 중간정산 완료 (관리자 직접 처리 경로)
+  interimSettlementCompleted, // 중간정산 완료됨 (근로자에게, CF: "interimSettlementCompleted")
+
+  // [Phase 8.1C] JOB→WORKER 매칭 알림 (근로자에게)
+  toMatch,                 // 가능일에 새 일자리 발견 알림 (CF: "toMatch", screen: "toMatch")
 
   // 시스템
   systemNotice,            // 시스템 공지
   other,                   // 기타
 }
 
-/// 서브어드민이 관리자로서 받는 알림 타입 집합 (알림 화면 필터용)
+/// [Phase 1 Legacy Fallback] 관리자(BUSINESS_ADMIN / SubAdmin)가 관리 업무로서 받는 알림 타입 집합.
+///
+/// ⚠️  이 Set은 category 필드가 없는 구형 Firestore 알림 문서를 위한 fallback 전용입니다.
+/// Phase 2 이후 신규 알림에는 CF가 category 필드를 명시 저장하므로, resolvedCategory getter는
+/// category 필드를 우선하고 이 Set은 category == null인 경우에만 참조합니다.
+///
+/// ❌ 신규 알림 type 분류 기준으로 사용하지 마세요.
+/// ✅ 올바른 분류: factory 메서드의 category 파라미터 또는 CF의 category 필드를 사용하세요.
+///
+/// [제거된 타입 - 근로자 수신 또는 양방향이므로 legacy fallback에도 포함하지 않음]
+/// - terminationRequested: CF가 근로자에게만 발송 → personal
+/// - confirmationCanceled: CF 스케줄러가 근로자에게만 발송 → personal
+/// - reviewReceived: CF 미구현 (Dead), 수신자는 리뷰를 받는 근로자 → personal
+/// - reviewRequest: 관리자·근로자 양방향 → category 필드로만 구분
 const Set<NotificationType> kAdminNotifTypes = {
+  // 지원·채용 관련
   NotificationType.newApplication,
   NotificationType.applicationCanceled,
+  // confirmationCanceled 제거: CF 스케줄러가 근로자(d.uid)에게만 발송 → personal
+
+  // 계약 관련
   NotificationType.contractSigned,
   NotificationType.contractExpiringReminder,
-  NotificationType.terminationRequested,
+  // terminationRequested 제거: callableRequestTermination이 workerUid에게만 발송 → personal
   NotificationType.resignRequested,
   NotificationType.contractRequested,
+  NotificationType.resignReminder,
+
+  // 스케줄 변경
   NotificationType.scheduleChangeRequested,
+
+  // 신분증 열람
   NotificationType.idCardAccessApproved,
   NotificationType.idCardAccessRejected,
+
+  // 멤버 관리
   NotificationType.memberInvitationAccepted,
   NotificationType.memberInvitationRejected,
+
+  // 급여·정산
   NotificationType.interimSettlementRequested,
-  NotificationType.reviewReceived,
-  NotificationType.reviewRequest,        // 관리자도 리뷰 작성 요청을 받을 수 있음
-  // FCM-BUG-B: 확정 취소 알림도 관리자 탭에 표시
-  NotificationType.confirmationCanceled,
-  NotificationType.resignReminder,
+
+  // 리뷰 (양방향 타입 제거: category 필드로만 구분)
+  // reviewReceived 제거: CF 미구현, 수신자는 리뷰 받은 근로자 → personal
+  // reviewRequest 제거: 관리자·근로자 양방향 → CF category 필드로 분류
+
+  // 공고 관련 (관리자/creatorUID에게 발송)
   NotificationType.toPostingExpiringTomorrow,
+  NotificationType.toPostingExpired,
+
+  // TO 초대 결과 (초대한 관리자에게)
+  NotificationType.toInviteAccepted,
+  NotificationType.toInviteDeclined,
+
+  // 출퇴근 재확인 (관리자 수신)
+  NotificationType.reconfirmAdminWarning,
+  NotificationType.reconfirmDeclined,
 };
 
 /// 앱 내 알림 모델
@@ -119,6 +192,10 @@ class NotificationModel {
   final bool isRead;                // 읽음 여부
   final DateTime createdAt;         // 생성 시각
   final DateTime? readAt;           // 읽은 시각
+  /// 수신 맥락 카테고리 — CF가 명시적으로 저장 (Phase 2). 없으면 resolvedCategory fallback
+  final NotificationCategory? category;
+  /// 중요도 — CF가 명시적으로 저장 (Phase 2). 없으면 resolvedImportance fallback
+  final NotificationImportance? importance;
 
   NotificationModel({
     required this.id,
@@ -130,6 +207,8 @@ class NotificationModel {
     this.isRead = false,
     required this.createdAt,
     this.readAt,
+    this.category,
+    this.importance,
   });
 
   /// Firestore에서 변환
@@ -144,6 +223,8 @@ class NotificationModel {
       isRead: map['isRead'] ?? false,
       createdAt: (map['createdAt'] as Timestamp?)?.toDate().toLocal() ?? DateTime.now(),
       readAt: (map['readAt'] as Timestamp?)?.toDate().toLocal(),
+      category: _categoryFromString(map['category']?.toString()),
+      importance: _importanceFromString(map['importance']?.toString()),
     );
   }
 
@@ -175,6 +256,8 @@ class NotificationModel {
       // CF callable 파라미터는 JSON-serializable만 허용 — Timestamp 불가, ISO 8601 문자열 사용
       'createdAt': createdAt.toUtc().toIso8601String(),
       'readAt': readAt?.toUtc().toIso8601String(),
+      if (category != null) 'category': _categoryToString(category!),
+      if (importance != null) 'importance': _importanceToString(importance!),
     };
   }
 
@@ -189,6 +272,8 @@ class NotificationModel {
     bool? isRead,
     DateTime? createdAt,
     DateTime? readAt,
+    NotificationCategory? category,
+    NotificationImportance? importance,
   }) {
     return NotificationModel(
       id: id ?? this.id,
@@ -200,8 +285,65 @@ class NotificationModel {
       isRead: isRead ?? this.isRead,
       createdAt: createdAt ?? this.createdAt,
       readAt: readAt ?? this.readAt,
+      category: category ?? this.category,
+      importance: importance ?? this.importance,
     );
   }
+
+  // ── Category / Importance Getters ──────────────────────────────────────────
+
+  /// ACTION_REQUIRED 알림 type 집합 (resolvedImportance fallback용)
+  static const Set<NotificationType> _actionRequiredTypes = {
+    NotificationType.contractSignRequested,
+    NotificationType.memberInvitationReceived,
+    NotificationType.idCardAccessRequested,
+    NotificationType.reviewRequest,
+    NotificationType.reconfirmRequest,
+    NotificationType.terminationRequested,
+    NotificationType.scheduleChangeRequested,
+    NotificationType.resignRequested,
+    NotificationType.contractRequested,
+    NotificationType.interimSettlementRequested,
+  };
+
+  /// REMINDER_INFO 알림 type 집합 (resolvedImportance fallback용)
+  static const Set<NotificationType> _reminderInfoTypes = {
+    NotificationType.workReminder,
+    NotificationType.contractExpiringReminder,
+    NotificationType.toPostingExpiringTomorrow,
+    NotificationType.toPostingExpired,
+    NotificationType.resignReminder,
+    NotificationType.idCardAccessExpiringSoon,
+    NotificationType.systemNotice,
+    NotificationType.retroactiveDeductionAlert,
+    NotificationType.reconfirmAdminWarning,
+    NotificationType.toMatch,          // [Phase 8.1C] 일자리 발견 알림
+  };
+
+  /// 알림 카테고리 — category 필드가 없으면 kAdminNotifTypes 기반 fallback
+  /// 한계: 같은 type을 양방향으로 사용하는 경우(reviewReceived 등)에 부정확할 수 있음.
+  /// CF가 category를 명시적으로 저장하면 그 값이 우선.
+  NotificationCategory get resolvedCategory {
+    if (category != null) return category!;
+    if (type == NotificationType.systemNotice || type == NotificationType.other) {
+      return NotificationCategory.system;
+    }
+    if (kAdminNotifTypes.contains(type)) return NotificationCategory.admin;
+    return NotificationCategory.personal;
+  }
+
+  /// 알림 중요도 — importance 필드가 없으면 type 기반 fallback
+  NotificationImportance get resolvedImportance {
+    if (importance != null) return importance!;
+    if (_actionRequiredTypes.contains(type)) return NotificationImportance.actionRequired;
+    if (_reminderInfoTypes.contains(type)) return NotificationImportance.reminderInfo;
+    return NotificationImportance.statusUpdate;
+  }
+
+  /// 사업장명 스냅샷 — CF가 data에 저장, 없으면 null (카드마다 Firestore 조회 금지)
+  String? get businessName =>
+      data?['businessName']?.toString() ??
+      data?['displayBusinessName']?.toString();
 
   // ── Getter ──
 
@@ -292,6 +434,8 @@ class NotificationModel {
         return 'block';
       case NotificationType.idCardAccessExpiringSoon:
         return 'schedule';
+      case NotificationType.idCardConsentGranted: // [ID-CONSENT]
+        return 'lock_open';
       // 멤버 관리
       case NotificationType.memberInvitationReceived:
         return 'group_add';
@@ -304,7 +448,28 @@ class NotificationModel {
         return 'alarm';
       // 공고 관련
       case NotificationType.toPostingExpiringTomorrow:
+      case NotificationType.toPostingExpired:
         return 'event_note';
+      // TO 초대 관련
+      case NotificationType.toInvite:
+      case NotificationType.toInviteCanceled:
+        return 'mail';
+      case NotificationType.toInviteAccepted:
+        return 'how_to_reg';
+      case NotificationType.toInviteDeclined:
+        return 'person_remove';
+      // 출퇴근 재확인 관련
+      case NotificationType.reconfirmRequest:
+        return 'check_circle_outline';
+      case NotificationType.reconfirmAdminWarning:
+      case NotificationType.reconfirmDeclined:
+        return 'warning_amber';
+      // 중간정산 완료
+      case NotificationType.interimSettlementCompleted:
+        return 'account_balance_wallet';
+      // [Phase 8.1C] 일자리 매칭 알림
+      case NotificationType.toMatch:
+        return 'work_outline';
       // 시스템
       case NotificationType.systemNotice:
         return 'campaign';
@@ -332,6 +497,40 @@ class NotificationModel {
   }
 
   // ── Static Helper ──
+
+  static NotificationCategory? _categoryFromString(String? value) {
+    switch (value) {
+      case 'personal': return NotificationCategory.personal;
+      case 'admin':    return NotificationCategory.admin;
+      case 'system':   return NotificationCategory.system;
+      default:         return null;
+    }
+  }
+
+  static String _categoryToString(NotificationCategory cat) {
+    switch (cat) {
+      case NotificationCategory.personal: return 'personal';
+      case NotificationCategory.admin:    return 'admin';
+      case NotificationCategory.system:   return 'system';
+    }
+  }
+
+  static NotificationImportance? _importanceFromString(String? value) {
+    switch (value) {
+      case 'actionRequired': return NotificationImportance.actionRequired;
+      case 'statusUpdate':   return NotificationImportance.statusUpdate;
+      case 'reminderInfo':   return NotificationImportance.reminderInfo;
+      default:               return null;
+    }
+  }
+
+  static String _importanceToString(NotificationImportance imp) {
+    switch (imp) {
+      case NotificationImportance.actionRequired: return 'actionRequired';
+      case NotificationImportance.statusUpdate:   return 'statusUpdate';
+      case NotificationImportance.reminderInfo:   return 'reminderInfo';
+    }
+  }
 
   static NotificationType _typeFromString(String value) {
     switch (value) {
@@ -377,13 +576,14 @@ class NotificationModel {
       case 'interimSettlementRejected': return NotificationType.interimSettlementRejected;
       // 리뷰
       case 'reviewReceived': return NotificationType.reviewReceived;
-      case 'REVIEW_REQUEST': return NotificationType.reviewRequest;
-      case 'reviewRequest': return NotificationType.reviewRequest; // 구버전 레코드 역직렬화 호환
+      case 'REVIEW_REQUEST': return NotificationType.reviewRequest; // 레거시 — 기존 Firestore 문서 역직렬화 호환
+      case 'reviewRequest': return NotificationType.reviewRequest; // 신규 camelCase (CF 통일 후)
       // 신분증
       case 'idCardAccessRequested': return NotificationType.idCardAccessRequested;
       case 'idCardAccessApproved': return NotificationType.idCardAccessApproved;
       case 'idCardAccessRejected': return NotificationType.idCardAccessRejected;
       case 'idCardAccessExpiringSoon': return NotificationType.idCardAccessExpiringSoon;
+      case 'idCardConsentGranted': return NotificationType.idCardConsentGranted; // [ID-CONSENT]
       // 멤버 관리
       case 'memberInvitationReceived': return NotificationType.memberInvitationReceived;
       case 'memberInvitationAccepted': return NotificationType.memberInvitationAccepted;
@@ -392,6 +592,20 @@ class NotificationModel {
       case 'resignReminder': return NotificationType.resignReminder;
       // 공고 관련
       case 'toPostingExpiringTomorrow': return NotificationType.toPostingExpiringTomorrow;
+      case 'toPostingExpired': return NotificationType.toPostingExpired;
+      // TO 초대 관련
+      case 'toInvite': return NotificationType.toInvite;
+      case 'toInviteAccepted': return NotificationType.toInviteAccepted;
+      case 'toInviteDeclined': return NotificationType.toInviteDeclined;
+      case 'toInviteCanceled': return NotificationType.toInviteCanceled;
+      // 출퇴근 재확인 관련
+      case 'reconfirmRequest': return NotificationType.reconfirmRequest;
+      case 'reconfirmAdminWarning': return NotificationType.reconfirmAdminWarning;
+      case 'reconfirmDeclined': return NotificationType.reconfirmDeclined;
+      // 중간정산 완료
+      case 'interimSettlementCompleted': return NotificationType.interimSettlementCompleted;
+      // [Phase 8.1C] 일자리 매칭 알림
+      case 'toMatch': return NotificationType.toMatch;
       // 시스템
       case 'systemNotice': return NotificationType.systemNotice;
       default: return NotificationType.other;
@@ -442,12 +656,13 @@ class NotificationModel {
       case NotificationType.interimSettlementRejected: return 'interimSettlementRejected';
       // 리뷰
       case NotificationType.reviewReceived: return 'reviewReceived';
-      case NotificationType.reviewRequest: return 'REVIEW_REQUEST';
+      case NotificationType.reviewRequest: return 'reviewRequest'; // 구버전 'REVIEW_REQUEST' → 신규 camelCase 통일
       // 신분증
       case NotificationType.idCardAccessRequested: return 'idCardAccessRequested';
       case NotificationType.idCardAccessApproved: return 'idCardAccessApproved';
       case NotificationType.idCardAccessRejected: return 'idCardAccessRejected';
       case NotificationType.idCardAccessExpiringSoon: return 'idCardAccessExpiringSoon';
+      case NotificationType.idCardConsentGranted: return 'idCardConsentGranted'; // [ID-CONSENT]
       // 멤버 관리
       case NotificationType.memberInvitationReceived: return 'memberInvitationReceived';
       case NotificationType.memberInvitationAccepted: return 'memberInvitationAccepted';
@@ -456,6 +671,20 @@ class NotificationModel {
       case NotificationType.resignReminder: return 'resignReminder';
       // 공고 관련
       case NotificationType.toPostingExpiringTomorrow: return 'toPostingExpiringTomorrow';
+      case NotificationType.toPostingExpired: return 'toPostingExpired';
+      // TO 초대 관련
+      case NotificationType.toInvite: return 'toInvite';
+      case NotificationType.toInviteAccepted: return 'toInviteAccepted';
+      case NotificationType.toInviteDeclined: return 'toInviteDeclined';
+      case NotificationType.toInviteCanceled: return 'toInviteCanceled';
+      // 출퇴근 재확인 관련
+      case NotificationType.reconfirmRequest: return 'reconfirmRequest';
+      case NotificationType.reconfirmAdminWarning: return 'reconfirmAdminWarning';
+      case NotificationType.reconfirmDeclined: return 'reconfirmDeclined';
+      // 중간정산 완료
+      case NotificationType.interimSettlementCompleted: return 'interimSettlementCompleted';
+      // [Phase 8.1C] 일자리 매칭 알림
+      case NotificationType.toMatch: return 'toMatch';
       // 시스템
       case NotificationType.systemNotice: return 'systemNotice';
       case NotificationType.other: return 'other';
@@ -483,6 +712,7 @@ class NotificationModel {
         'businessId': businessId,
         'action': 'idCardAccessRequest',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -507,6 +737,7 @@ class NotificationModel {
         'workerId': workerId,
         'action': 'idCardAccessApproved',
       },
+      category: NotificationCategory.admin,
       createdAt: DateTime.now(),
     );
   }
@@ -532,6 +763,7 @@ class NotificationModel {
         'workerId': workerId,
         'action': 'idCardAccessRejected',
       },
+      category: NotificationCategory.admin,
       createdAt: DateTime.now(),
     );
   }
@@ -556,6 +788,7 @@ class NotificationModel {
         'businessId': businessId,
         'action': 'applicationDetail',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -579,6 +812,7 @@ class NotificationModel {
         'businessId': businessId,
         'action': 'reviewDetail',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -604,6 +838,7 @@ class NotificationModel {
         'businessId': businessId,
         'action': 'applicationDetail',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -634,6 +869,7 @@ class NotificationModel {
         'workDate': workDate.toIso8601String(),
         'action': 'applicantDetail',
       },
+      category: NotificationCategory.admin,
       createdAt: DateTime.now(),
     );
   }
@@ -664,6 +900,7 @@ class NotificationModel {
         'workDate': workDate.toIso8601String(),
         'action': 'applicantDetail',
       },
+      category: NotificationCategory.admin,
       createdAt: DateTime.now(),
     );
   }
@@ -694,6 +931,7 @@ class NotificationModel {
         'workDate': workDate.toIso8601String(),
         'action': 'applicantDetail',
       },
+      category: NotificationCategory.admin,
       createdAt: DateTime.now(),
     );
   }
@@ -719,6 +957,7 @@ class NotificationModel {
         'businessId': businessId,
         'action': 'applicationDetail',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -765,6 +1004,7 @@ class NotificationModel {
         'businessId': businessId,
         'action': 'scheduleChangeRequest',
       },
+      category: NotificationCategory.admin,
       createdAt: DateTime.now(),
     );
   }
@@ -810,6 +1050,7 @@ class NotificationModel {
         'businessId': businessId,
         'action': 'scheduleDetail',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -856,6 +1097,7 @@ class NotificationModel {
         'businessId': businessId,
         'action': 'scheduleDetail',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -880,6 +1122,7 @@ class NotificationModel {
         'businessId': businessId,
         'screen': 'contractSign',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -905,6 +1148,7 @@ class NotificationModel {
         'businessId': businessId,
         'screen': 'contractSigned',
       },
+      category: NotificationCategory.admin,
       createdAt: DateTime.now(),
     );
   }
@@ -928,6 +1172,7 @@ class NotificationModel {
         'businessId': businessId,
         'screen': 'userContracts',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -952,6 +1197,7 @@ class NotificationModel {
         'businessId': businessId,
         'action': 'terminationRequest',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -975,6 +1221,7 @@ class NotificationModel {
         'businessId': businessId,
         'action': 'applicationDetail',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -997,6 +1244,7 @@ class NotificationModel {
         'businessId': businessId,
         'action': 'applicationDetail',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -1020,6 +1268,7 @@ class NotificationModel {
         'businessId': businessId,
         'action': 'applicationDetail',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -1047,6 +1296,7 @@ class NotificationModel {
         'reason': 'SCHEDULE_CONFLICT',
         'action': 'applicationDetail',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -1071,6 +1321,7 @@ class NotificationModel {
         'action': 'toList',
         'reason': 'TO_DELETED',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -1101,6 +1352,7 @@ class NotificationModel {
         'businessId': businessId,
         'action': 'applicationDetail',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -1136,6 +1388,7 @@ class NotificationModel {
         'businessId': businessId,
         'action': 'wageDetail',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -1161,6 +1414,7 @@ class NotificationModel {
         'businessId': businessId,
         'screen': 'wageTransferred',
       },
+      category: NotificationCategory.personal,
     );
   }
 
@@ -1190,6 +1444,7 @@ class NotificationModel {
         'settlementRequestId': settlementRequestId,
         'screen': 'interimSettlementAdmin',
       },
+      category: NotificationCategory.admin,
     );
   }
 
@@ -1222,6 +1477,7 @@ class NotificationModel {
         'netAmount': netAmount,
         'screen': 'interimSettlement',
       },
+      category: NotificationCategory.personal,
     );
   }
 
@@ -1249,6 +1505,7 @@ class NotificationModel {
         'settlementRequestId': settlementRequestId,
         'screen': 'interimSettlement',
       },
+      category: NotificationCategory.personal,
     );
   }
 
@@ -1268,7 +1525,10 @@ class NotificationModel {
     return NotificationModel(
       id: '',
       userId: userId,
-      type: NotificationType.wageTransferred,
+      // [BUG-FIX] 이전: wageTransferred (오류). 올바른 타입: interimSettlementCompleted
+      // CF callableAdminDirectInterimSettlement는 이미 interimSettlementCompleted를 사용하고 있음.
+      // 이 factory를 통해 createNotification callable을 호출하는 경우도 올바른 type으로 저장됨.
+      type: NotificationType.interimSettlementCompleted,
       title: '중간정산 완료',
       body: '[$businessName] $periodText 기간 중간정산이 완료되었습니다. 실수령액을 앱에서 확인하세요.',
       createdAt: DateTime.now(),
@@ -1278,6 +1538,7 @@ class NotificationModel {
         'screen': 'interimSettlement',
         'netAmount': netAmount,
       },
+      category: NotificationCategory.personal,
     );
   }
 
@@ -1301,6 +1562,7 @@ class NotificationModel {
         'businessId': businessId,
         'action': 'wageDetail',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -1328,6 +1590,7 @@ class NotificationModel {
         'expiryDate': expiryDate.toIso8601String(),
         'screen': 'contractRenewal',
       },
+      category: NotificationCategory.admin,
       createdAt: DateTime.now(),
     );
   }
@@ -1351,6 +1614,7 @@ class NotificationModel {
         'businessId': businessId,
         'screen': 'mySchedule',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -1374,6 +1638,7 @@ class NotificationModel {
         'businessId': businessId,
         'screen': 'mySchedule',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -1396,6 +1661,7 @@ class NotificationModel {
         'businessId': businessId,
         'action': 'wageDetail',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -1419,6 +1685,7 @@ class NotificationModel {
         'businessId': businessId,
         'action': 'memberInvitation',
       },
+      category: NotificationCategory.personal,
       createdAt: DateTime.now(),
     );
   }
@@ -1437,6 +1704,7 @@ class NotificationModel {
       title: '초대 수락됨',
       body: '$acceptedName님이 $businessName 관리자 초대를 수락했습니다.',
       data: {'action': 'memberManagement', 'businessId': businessId},
+      category: NotificationCategory.admin,
       createdAt: DateTime.now(),
     );
   }
@@ -1455,6 +1723,7 @@ class NotificationModel {
       title: '초대 거절됨',
       body: '$rejectedName님이 $businessName 관리자 초대를 거절했습니다.',
       data: {'action': 'memberManagement', 'businessId': businessId},
+      category: NotificationCategory.admin,
       createdAt: DateTime.now(),
     );
   }

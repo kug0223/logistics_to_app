@@ -11,7 +11,7 @@ class ResponsiveHelper {
     if (width < 400) return 0.9;
     return 1.0;
   }
-  
+
   /// 반응형 간격
   static double spacing(BuildContext context, double baseSpacing) {
     final scale = getScale(context);

@@ -1,9 +1,18 @@
 // lib/screens/payroll/payslip_view_screen.dart
 //
-// 임금명세서 미리보기 화면
-// - Printing.raster() + InteractiveViewer로 직접 핀치줌 구현
-// - 공유(share_plus) / 인쇄(printing) 지원
-// - 성능: PDF bytes 최초 1회 생성, 래스터 이미지 캐싱
+// 임금명세서 PDF Preview 화면 (PAYSLIP-FINAL)
+//
+// 역할:
+//   - 진입 즉시 공식 A4 임금명세서 PDF를 Full-screen으로 표시
+//   - PayslipData 구성 → PDF lazy 생성 → 핀치줌 뷰어
+//   - AppBar: ← 임금명세서 | 인쇄(blue) | 공유(blue)
+//   - Document Viewer 스타일: 흰 AppBar + #F5F6F8 배경 (GradientScaffold 아님)
+//
+// Navigation:
+//   WageDetailDialog / ScheduleCard / PayrollWorkerDetailScreen
+//   → PayslipViewScreen (직접 PDF 진입, 중간 Mobile Payslip 화면 없음)
+//
+// PayslipPdfBuilder / WageDetailModel / CF 로직 변경 없음
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -18,7 +27,6 @@ import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/common/loading_widget.dart';
 import 'payslip_pdf_builder.dart';
-import '../../widgets/common/gradient_scaffold.dart';
 
 class PayslipViewScreen extends StatefulWidget {
   final AttendanceModel attendance;
@@ -40,23 +48,32 @@ class PayslipViewScreen extends StatefulWidget {
 }
 
 class _PayslipViewScreenState extends State<PayslipViewScreen> {
-  // PDF 바이트 캐시 — 한 번 생성 후 재사용 (성능 최적화)
+  /// PayslipData 구성 Future
   Future<PayslipData>? _dataFuture;
-  // PDF bytes Future — build()마다 재생성 방지
-  Future<Uint8List>? _pdfBytesFuture;
-  // 중복 탭 방지 — 공유/인쇄 작업 진행 중 여부
-  bool _isSharing = false;
 
-  /// worker?.name 우선, 없으면 workerNameOverride 사용
+  /// PDF bytes lazy cache — _pdfBytes getter로만 접근
+  /// initState에서 미시작, _dataFuture 완료 후 최초 PDF 뷰어 빌드 시 시작
+  Future<Uint8List>? _pdfBytesFuture;
+
+  /// 공유/인쇄 작업 진행 중 여부 (중복 탭 방지)
+  bool _isActing = false;
+
+  /// [V3 FOREIGN-DOCUMENT-FIRST] officialName 우선 (외국인=legalName, 내국인=name)
   String get _workerName =>
-      widget.worker?.name ?? widget.workerNameOverride ?? '근무자';
+      widget.worker?.officialName ?? widget.workerNameOverride ?? '근무자';
+
+  /// PDF bytes lazy getter — _dataFuture 완료 후 최초 접근 시만 PayslipPdfBuilder.build() 실행
+  Future<Uint8List> get _pdfBytes {
+    _pdfBytesFuture ??=
+        _dataFuture!.then((data) => PayslipPdfBuilder.build(data));
+    return _pdfBytesFuture!;
+  }
 
   @override
   void initState() {
     super.initState();
     _dataFuture = _buildData();
-    // 데이터 준비 즉시 PDF 생성 시작 — FutureBuilder 리빌드를 기다리지 않고 파이프라인 처리
-    _pdfBytesFuture = _dataFuture!.then((data) => PayslipPdfBuilder.build(data));
+    // PDF는 on-demand — PayslipData 준비 완료 후 뷰어 빌드 시 자동 시작
   }
 
   Future<PayslipData> _buildData() async {
@@ -71,6 +88,9 @@ class _PayslipViewScreenState extends State<PayslipViewScreen> {
     }
     final biz = widget.business;
     final w = widget.worker;
+    // 지급일(transferDate/paymentDueDate)은 fromAttendance() 내부에서
+    // wageStatus 기반으로 자동 파생된다 — 별도 전달 불필요 (PAYSLIP-07)
+    // 사업장 주소·사업자번호·대표자명은 현재 스펙상 불필요하므로 의도적으로 생략
     return PayslipData.fromAttendance(
       attendance: widget.attendance,
       workerName: _workerName,
@@ -88,70 +108,81 @@ class _PayslipViewScreenState extends State<PayslipViewScreen> {
     return '${widget.attendance.businessName}_임금명세서_${_workerName}_$date.pdf';
   }
 
+  // ── Document Viewer 색상 상수 ─────────────────────────────────────
+  // GradientScaffold를 쓰지 않는 이유:
+  //   이 화면은 ALfit 메인 내비게이션 화면이 아니라 공식 문서를 열어보는 뷰어다.
+  //   상단 전체 Blue Header + Home/Notification 버튼은 문서 집중을 방해한다.
+  //   Brand Blue는 인쇄/공유 액션 accent으로만 사용한다.
+  static const _kViewerBg  = Color(0xFFF5F6F8); // 문서 주변 배경
+  static const _kBarBg     = Colors.white;       // AppBar 배경
+  static const _kBarDivider = Color(0xFFEEEEEE); // AppBar 하단 divider
+  static const _kBackIcon   = Color(0xFF212121); // 뒤로가기 아이콘 (dark neutral)
+  static const _kTitleColor = Color(0xFF212121); // 제목 텍스트
+  static const _kActionColor = AppColors.brand;  // 인쇄/공유 아이콘 (#1565C0)
+
   @override
   Widget build(BuildContext context) {
-    return GradientScaffold(
-      title: '임금명세서',
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.print_outlined, color: Colors.white),
-          tooltip: '인쇄',
-          onPressed: _isSharing ? null : () async {
-            setState(() => _isSharing = true);
-            try {
-              await _print();
-            } finally {
-              if (mounted) setState(() => _isSharing = false);
-            }
-          },
+    return Scaffold(
+      backgroundColor: _kViewerBg,
+      // ── Document Viewer AppBar: 흰 배경, 하단 구분선, brand blue 액션
+      appBar: AppBar(
+        backgroundColor: _kBarBg,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
+        // 뒤로가기
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: _kBackIcon),
+          tooltip: '뒤로',
+          onPressed: () => Navigator.of(context).pop(),
         ),
-        IconButton(
-          icon: const Icon(Icons.share_outlined, color: Colors.white),
-          tooltip: '공유',
-          onPressed: _isSharing ? null : () async {
-            setState(() => _isSharing = true);
-            try {
-              await _share(context);
-            } finally {
-              if (mounted) setState(() => _isSharing = false);
-            }
-          },
+        // 제목
+        title: const Text(
+          '임금명세서',
+          style: TextStyle(
+            color: _kTitleColor,
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
+            letterSpacing: -0.3,
+          ),
         ),
-      ],
+        // 액션: 인쇄 + 공유 (brand blue)
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.print_outlined, color: _kActionColor),
+            tooltip: '인쇄',
+            onPressed: _isActing ? null : _print,
+          ),
+          IconButton(
+            icon: const Icon(Icons.share_outlined, color: _kActionColor),
+            tooltip: '공유',
+            onPressed: _isActing ? null : _share,
+          ),
+          const SizedBox(width: 4),
+        ],
+        // 하단 구분선
+        bottom: const PreferredSize(
+          preferredSize: Size.fromHeight(1),
+          child: Divider(
+            height: 1,
+            thickness: 1,
+            color: _kBarDivider,
+          ),
+        ),
+      ),
       body: FutureBuilder<PayslipData>(
         future: _dataFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const LoadingWidget(message: '임금명세서 생성 중...');
+            return const LoadingWidget(message: '임금명세서 준비 중...');
           }
           if (snapshot.hasError) {
             return _buildError(context, snapshot.error.toString());
           }
-          final data = snapshot.data!;
-          return _buildPreview(context, data);
+          // PayslipData 준비 완료 → PDF lazy 빌드 시작 (_pdfBytes getter)
+          return _PdfZoomViewer(pdfFuture: _pdfBytes);
         },
       ),
-    );
-  }
-
-  Widget _buildPreview(BuildContext context, PayslipData data) {
-    return Column(
-      children: [
-        // 상단 정보 배너
-        _InfoBanner(
-          workerName: _workerName,
-          businessName: widget.attendance.businessName,
-          workDate: widget.attendance.workDate,
-          netWage: data.wageDetail.effectiveNetWage,
-        ),
-
-        // PDF 핀치줌 뷰어 (직접 핀치로 확대/축소)
-        Expanded(
-          child: _PdfZoomViewer(
-            pdfFuture: _pdfBytesFuture ??= PayslipPdfBuilder.build(data),
-          ),
-        ),
-      ],
     );
   }
 
@@ -162,7 +193,9 @@ class _PayslipViewScreenState extends State<PayslipViewScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.error_outline, size: ResponsiveHelper.iconSize(context, 56), color: AppColors.error),
+            Icon(Icons.error_outline,
+                size: ResponsiveHelper.iconSize(context, 56),
+                color: AppColors.error),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),
             Text(
               '임금명세서를 생성할 수 없습니다',
@@ -182,101 +215,33 @@ class _PayslipViewScreenState extends State<PayslipViewScreen> {
     );
   }
 
-  Future<void> _share(BuildContext context) async {
+  Future<void> _share() async {
+    if (_isActing) return;
+    setState(() => _isActing = true);
     try {
-      final data = await _dataFuture;
-      if (!mounted || data == null) return;
-      _pdfBytesFuture ??= PayslipPdfBuilder.build(data);
-      final bytes = await _pdfBytesFuture!;
+      final bytes = await _pdfBytes;
       await Printing.sharePdf(bytes: bytes, filename: _fileName);
     } catch (e) {
       if (mounted) ToastHelper.showError('공유에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isActing = false);
     }
   }
 
   Future<void> _print() async {
+    if (_isActing) return;
+    setState(() => _isActing = true);
     try {
-      final data = await _dataFuture;
-      if (data == null || !mounted) return;
-      _pdfBytesFuture ??= PayslipPdfBuilder.build(data);
-      final bytes = await _pdfBytesFuture!;
+      final bytes = await _pdfBytes;
       await Printing.layoutPdf(
         onLayout: (_) async => bytes,
         name: _fileName,
       );
     } catch (e) {
       if (mounted) ToastHelper.showError('인쇄에 실패했습니다');
+    } finally {
+      if (mounted) setState(() => _isActing = false);
     }
-  }
-}
-
-// ─── 상단 요약 배너 ───────────────────────────────────────────────
-
-class _InfoBanner extends StatelessWidget {
-  final String workerName;
-  final String businessName;
-  final DateTime workDate;
-  final int netWage;
-
-  const _InfoBanner({
-    required this.workerName,
-    required this.businessName,
-    required this.workDate,
-    required this.netWage,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 16),
-        vertical: ResponsiveHelper.spacing(context, 12),
-      ),
-      color: theme.primaryColor.withValues(alpha: 0.06),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '$workerName · $businessName',
-                  style: ResponsiveHelper.bodyStyle(context)
-                      .copyWith(fontWeight: FontWeight.w700),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                Text(
-                  '근무일: ${FormatHelper.formatDateDot(workDate)}',
-                  style: ResponsiveHelper.tinyStyle(context,
-                      color: AppColors.grey500),
-                ),
-              ],
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                '실수령액',
-                style: ResponsiveHelper.tinyStyle(context,
-                    color: AppColors.grey500),
-              ),
-              Text(
-                FormatHelper.formatWage(netWage),
-                style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                  color: theme.primaryColor,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
   }
 }
 
@@ -326,43 +291,55 @@ class _PdfZoomViewerState extends State<_PdfZoomViewer> {
         }
 
         final pages = snap.data!;
-        // LayoutBuilder로 화면 너비를 구해서 이미지를 맞춤
+        // ─ fitWidth 뷰어 ──────────────────────────────────────────
+        // 클리핑 방어:
+        //   InteractiveViewer(constrained: false)는 자식에게 무한 제약을 주므로
+        //   Padding+Container 합산이 뷰포트와 정확히 일치해도
+        //   부동소수점 차이로 우측 1-2px 클리핑이 발생할 수 있다.
+        //   → SizedBox(width: viewW)로 자식 폭을 뷰포트와 명시적으로 동일하게
+        //     고정하면 이 문제가 완전히 해소된다.
         return LayoutBuilder(
           builder: (ctx, constraints) {
-            final pageWidth = constraints.maxWidth - 16; // 좌우 8px 여백
+            final viewW = constraints.maxWidth; // 뷰포트 폭(= SizedBox 폭)
+            final imgW = viewW - 24;            // 좌우 12px 여백 확보
+
             return InteractiveViewer(
-              // constrained: false → 줌인 시 화면 밖으로 스크롤 가능
-              constrained: false,
+              constrained: false,   // 세로 스크롤 + 핀치줌 허용
               boundaryMargin: const EdgeInsets.all(20),
               minScale: 0.5,
               maxScale: 5.0,
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-                child: Column(
-                  children: pages
-                      .map((pageBytes) => Container(
-                            margin: const EdgeInsets.only(bottom: 12),
-                            width: pageWidth,
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              boxShadow: [
-                                BoxShadow(
-                                  color:
-                                      Colors.black.withValues(alpha: 0.08),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 3),
+              child: SizedBox(
+                // ← 핵심 수정: 자식을 뷰포트 폭에 명시 고정 (우측 잘림 방지)
+                width: viewW,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Column(
+                    children: pages
+                        .map((pageBytes) => Padding(
+                              // 좌우 12px 여백 → 그림자 출혈 없이 안전 확보
+                              padding:
+                                  const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black
+                                          .withValues(alpha: 0.08),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 2),
+                                    ),
+                                  ],
                                 ),
-                              ],
-                            ),
-                            // width를 화면에 맞게 고정 → 초기 렌더링 시 잘림 없음
-                            child: Image.memory(
-                              pageBytes,
-                              width: pageWidth,
-                              fit: BoxFit.fitWidth,
-                            ),
-                          ))
-                      .toList(),
+                                child: Image.memory(
+                                  pageBytes,
+                                  width: imgW,
+                                  fit: BoxFit.fitWidth,
+                                ),
+                              ),
+                            ))
+                        .toList(),
+                  ),
                 ),
               ),
             );

@@ -75,7 +75,7 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
 
   // 급여 색상 — 일급: 주황, 시급: 초록
   Color _wageColor(bool isClosed) {
-    if (isClosed) return AppColors.grey400;
+    if (isClosed) return AppColors.grey600;
     return widget.work.wageType == 'daily'
         ? AppColors.warningDark
         : AppColors.successDark;
@@ -411,6 +411,10 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
     // status='SCHEDULED'는 isPendingPublish와 별개 경로 — 둘 다 체크해야 예약 배지가 표시됨
     final slotScheduled = slot?.visibleFrom != null && slot!.visibleFrom!.isAfter(_buildNow);
     if (slotScheduled || to.status == TOStatus.scheduled || to.isPendingPublish) {
+      // [4I.1A] "예약" → "예약 공개" / publishAt 경과 시 "공개 대기"
+      final publishAt = slot?.visibleFrom ?? to.publishAt;
+      final isOverdue = publishAt != null && publishAt.isBefore(_buildNow);
+      final scheduledLabel = isOverdue ? '공개 대기' : '예약 공개';
       return Container(
         padding: EdgeInsets.symmetric(
           horizontal: ResponsiveHelper.spacing(context, 6),
@@ -421,7 +425,7 @@ class _WorkDetailRowState extends State<WorkDetailRow> {
           borderRadius: BorderRadius.circular(4),
         ),
         child: Text(
-          '예약',
+          scheduledLabel,
           style: ResponsiveHelper.tinyStyle(
             context,
             color: AppColors.scheduledDark,

@@ -105,6 +105,16 @@ class FormatHelper {
     return '${kst.month}/${kst.day}';
   }
 
+  /// DATE_ONLY 비교·필터용 KST calendar date — device timezone 무관.
+  /// rangeStart/rangeEnd/slot.date 만료 체크 등에 사용.
+  /// 예: FormatHelper.toKstDate(rangeEnd).isBefore(FormatHelper.toKstDate(DateTime.now()))
+  static DateTime toKstDate(DateTime dt) {
+    final kst = _toKst(dt);
+    // DateTime.utc: device timezone 무관한 KST calendar-date comparison key
+    // "실제 KST 자정 instant"가 아닌 정규화된 비교 키 목적
+    return DateTime.utc(kst.year, kst.month, kst.day);
+  }
+
   /// DateTime을 시간만 포맷팅
   ///
   /// 예시:

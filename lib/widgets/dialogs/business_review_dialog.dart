@@ -142,6 +142,8 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
               StyledDialogButton.primary(
                 text: '확인',
                 onPressed: () {
+                  // [FC-10 FIX] 중첩 다이얼로그 확인 — pop 전 unfocus (_commentController 보호)
+                  FocusManager.instance.primaryFocus?.unfocus();
                   Navigator.pop(resultContext);
                   Navigator.pop(context, true);
                 },
@@ -201,70 +203,15 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
     );
   }
 
-  /// 헤더
+  /// 헤더 — flat AppModalHeader (ALfit Modal Grammar)
   Widget _buildHeader(BuildContext context, ThemeData theme) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            theme.primaryColor,
-            theme.primaryColor.withValues(alpha: 0.8),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(AppDialogSize.borderRadius),
-          topRight: Radius.circular(AppDialogSize.borderRadius),
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              Icons.rate_review,
-              color: Colors.white,
-              size: ResponsiveHelper.iconSize(context, 28),
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '사업장 리뷰 작성',
-                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                Text(
-                  '${widget.reviewYear}년 ${widget.reviewMonth}월',
-                  style: ResponsiveHelper.smallStyle(context).copyWith(
-                    color: Colors.white.withValues(alpha: 0.9),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: '닫기',
-            onPressed: () {
-              FocusManager.instance.primaryFocus?.unfocus();
-              Navigator.pop(context);
-            },
-            icon: const Icon(Icons.close, color: Colors.white),
-          ),
-        ],
-      ),
+    return AppModalHeader(
+      title: '사업장 리뷰 작성',
+      subtitle: '${widget.reviewYear}년 ${widget.reviewMonth}월',
+      onClose: () {
+        FocusManager.instance.primaryFocus?.unfocus();
+        Navigator.pop(context);
+      },
     );
   }
 
@@ -635,38 +582,28 @@ class _BusinessReviewDialogState extends State<BusinessReviewDialog> {
     );
   }
 
-  /// 버튼
+  /// 버튼 — ReviewDialogShell scroll 내부에 위치 (keyboard-safe)
   Widget _buildActions(BuildContext context, ThemeData theme) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: const BoxDecoration(
-        color: AppColors.grey50,
-        borderRadius: BorderRadius.only(
-          bottomLeft: Radius.circular(AppDialogSize.borderRadius),
-          bottomRight: Radius.circular(AppDialogSize.borderRadius),
+    return Row(
+      children: [
+        Expanded(
+          child: StyledDialogButton.cancel(
+            onPressed: _isSubmitting ? null : () {
+              FocusManager.instance.primaryFocus?.unfocus();
+              Navigator.pop(context);
+            },
+          ),
         ),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: StyledDialogButton.cancel(
-              onPressed: _isSubmitting ? null : () {
-                FocusManager.instance.primaryFocus?.unfocus();
-                Navigator.pop(context);
-              },
-            ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+        Expanded(
+          flex: 2,
+          child: StyledDialogButton.primary(
+            text: '리뷰 작성',
+            onPressed: _isSubmitting ? null : _submitReview,
+            isLoading: _isSubmitting,
           ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          Expanded(
-            flex: 2,
-            child: StyledDialogButton.primary(
-              text: '리뷰 작성',
-              onPressed: _isSubmitting ? null : _submitReview,
-              isLoading: _isSubmitting,
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

@@ -12,6 +12,7 @@ import '../../models/core/attendance_model.dart';
 import '../../models/core/insurance_rate_model.dart';
 import '../../models/core/wage_detail_model.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/wage_calculation_lines.dart';
 import 'payslip_period_helper.dart';
 
 /// 임금명세서 생성에 필요한 데이터 묶음
@@ -36,8 +37,13 @@ class PayslipData {
   // 급여 상세
   final WageDetailModel wageDetail;
 
-  // 지급일 (선택 — 명시 없으면 "확정일")
-  final DateTime? paymentDate;
+  // 지급일 — wageStatus 기반 분리 (PAYSLIP-07)
+  //   transferred: actualPaymentDate = transferDate (이체 완료 → "임금지급일")
+  //   confirmed:   scheduledPaymentDate = paymentDueDate (이체 전 → "지급 예정일", null이면 행 숨김)
+  //   그 외:       지급일 행 표시 안 함
+  final String wageStatus;
+  final DateTime? actualPaymentDate;     // 실제 이체일 (transferred 상태)
+  final DateTime? scheduledPaymentDate;  // 지급 예정일 (confirmed 상태)
 
   const PayslipData({
     required this.businessName,
@@ -52,7 +58,9 @@ class PayslipData {
     this.checkOut,
     required this.workMinutes,
     required this.wageDetail,
-    this.paymentDate,
+    this.wageStatus = AttendanceModel.wageConfirmed,
+    this.actualPaymentDate,
+    this.scheduledPaymentDate,
   });
 
   /// AttendanceModel에서 편리하게 생성
@@ -63,13 +71,14 @@ class PayslipData {
     String businessNumber = '',
     String businessAddress = '',
     String ownerName = '',
-    DateTime? paymentDate,
+    // [PAYSLIP-07] 지급일은 attendance에서 직접 파생 — 호출자 별도 전달 불필요
   }) {
     // assert는 release 빌드에서 제거됨 → ArgumentError로 교체해 런타임 크래시 방지
     final wd = attendance.wageDetail;
     if (wd == null) {
       throw ArgumentError('wageDetail이 없는 출근 기록으로는 임금명세서를 생성할 수 없습니다');
     }
+    final status = attendance.wageStatus;
     return PayslipData(
       businessName: attendance.businessName,
       businessNumber: businessNumber,
@@ -83,7 +92,15 @@ class PayslipData {
       checkOut: attendance.checkOut?.split(':').take(2).join(':'),
       workMinutes: wd.workMinutes,
       wageDetail: wd,
-      paymentDate: paymentDate,
+      wageStatus: status,
+      // transferred: 실제 이체일 사용 (null이면 정합성 오류로 UI에서 별도 표시)
+      actualPaymentDate: status == AttendanceModel.wageTransferred
+          ? attendance.transferDate
+          : null,
+      // confirmed: 지급 예정일 사용 (null이면 PDF에서 행 숨김)
+      scheduledPaymentDate: status == AttendanceModel.wageConfirmed
+          ? attendance.paymentDueDate
+          : null,
     );
   }
 }
@@ -131,43 +148,52 @@ class PayslipPdfBuilder {
     // ── 문서 생성 ───────────────────────────────────────────────
     final doc = pw.Document();
 
+    // 계산 기준 줄 목록 — 섹션 유무 분기용으로 미리 계산
+    final calcLines = buildWageCalculationLines(wd);
+
     doc.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.fromLTRB(36, 36, 36, 40),
         footer: (ctx) => _buildFooter(ctx, ts, grey),
-        build: (ctx) => [
-          // ─ 헤더 ───────────────────────────────────────────────
-          _buildHeader(data, ts, primary, grey),
-          pw.SizedBox(height: 16),
+        build: (ctx) {
+          return [
+            // ─ 헤더 ─────────────────────────────────────────────
+            _buildHeader(data, ts, primary, grey),
+            pw.SizedBox(height: 10), // 14 → 10: 헤더 하단 간격 축소
 
-          // ─ 사업장/근무자 정보 ─────────────────────────────────
-          _buildPartyInfo(data, ts, grey),
-          pw.SizedBox(height: 12),
+            // ─ 기본 정보 ────────────────────────────────────────
+            _buildInfoBlock(data, ts),
+            pw.SizedBox(height: 16), // 12 → 16: 섹션 간 rhythm 균형
 
-          // ─ 근무 시간 ──────────────────────────────────────────
-          _buildWorkTimeSection(data, wd, ts, primary, grey, black),
-          pw.SizedBox(height: 12),
+            // ─ 근무 시간 ────────────────────────────────────────
+            _buildWorkTimeSection(data, wd, ts, primary, grey, black),
+            pw.SizedBox(height: 16),
 
-          // ─ 지급 내역 ──────────────────────────────────────────
-          _buildPaySection(wd, ts, primary, grey, black),
-          pw.SizedBox(height: 12),
+            // ─ 지급 내역 ────────────────────────────────────────
+            _buildPaySection(wd, ts, primary, grey, black),
+            pw.SizedBox(height: 16),
 
-          // ─ 공제 내역 ──────────────────────────────────────────
-          if (wd.taxDeductionType != InsuranceRateModel.typeNone)
-            _buildDeductionSection(wd, ts, primary, grey, black),
+            // ─ 계산 기준 (수당 항목이 있을 때만) ─────────────────
+            if (calcLines.isNotEmpty) ...[
+              _buildCalculationSection(calcLines, ts, primary, grey, black),
+              pw.SizedBox(height: 16),
+            ],
 
-          if (wd.taxDeductionType != InsuranceRateModel.typeNone)
-            pw.SizedBox(height: 12),
+            // ─ 공제 내역 ────────────────────────────────────────
+            if (wd.taxDeductionType != InsuranceRateModel.typeNone) ...[
+              _buildDeductionSection(wd, ts, primary, grey, black),
+              pw.SizedBox(height: 16),
+            ],
 
-          // ─ 최종 실수령액 ──────────────────────────────────────
-          _buildNetWageBox(wd, ts, primary),
+            // ─ 최종 실수령액 ─────────────────────────────────────
+            _buildNetWageBox(wd, ts, primary),
+            pw.SizedBox(height: 12), // 16 → 12
 
-          pw.SizedBox(height: 16),
-
-          // ─ 법적 고지 ──────────────────────────────────────────
-          _buildLegalNote(ts, grey),
-        ],
+            // ─ 법적 고지 (compact — 박스 없이 인라인 텍스트) ────────
+            _buildLegalNote(ts, grey),
+          ];
+        },
       ),
     );
 
@@ -181,9 +207,40 @@ class PayslipPdfBuilder {
     PdfColor primary,
     PdfColor grey,
   ) {
-    final payDate = d.paymentDate != null
-        ? FormatHelper.formatDateDot(d.paymentDate!)
-        : '미정';
+    // ── 지급일 행 구성 (wageStatus 기반, PAYSLIP-07) ──────────────
+    //   transferred + actualPaymentDate  → "임금지급일: X"
+    //   transferred + null               → 정합성 오류 표시
+    //   confirmed   + scheduledPaymentDate → "지급 예정일: X"
+    //   confirmed   + null / 그 외       → 행 생략
+    final List<pw.Widget> dateRows = [];
+
+    if (d.wageStatus == AttendanceModel.wageTransferred) {
+      if (d.actualPaymentDate != null) {
+        dateRows.add(pw.Text(
+          '임금지급일: ${FormatHelper.formatDateDot(d.actualPaymentDate!)}',
+          style: ts(9.0, color: grey),
+        ));
+      } else {
+        // [DEFENSIVE] transferred + transferDate == null
+        //   CF 3개 경로 모두 동일 tx.update() 객체에 transferDate를 항상 포함시키므로
+        //   정상 레코드에서는 발생하지 않음. legacy 데이터 또는 비정상 쓰기 방어용.
+        dateRows.add(pw.Text(
+          '임금지급일: 확인 필요',
+          style: ts(9.0, bold: true, color: PdfColor.fromHex('#D32F2F')),
+        ));
+      }
+    } else if (d.wageStatus == AttendanceModel.wageConfirmed &&
+        d.scheduledPaymentDate != null) {
+      dateRows.add(pw.Text(
+        '지급 예정일: ${FormatHelper.formatDateDot(d.scheduledPaymentDate!)}',
+        style: ts(9.0, color: grey),
+      ));
+    }
+
+    dateRows.add(pw.Text(
+      '근무일: ${FormatHelper.formatDateDot(d.workDate)}',
+      style: ts(9.0, color: grey),
+    ));
 
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -193,24 +250,15 @@ class PayslipPdfBuilder {
           mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
           children: [
             pw.Text('임금명세서',
-                style: ts(18.0, bold: true, color: primary)),
+                style: ts(16.0, bold: true, color: primary)),
             pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.end,
-              children: [
-                pw.Text(
-                  '지급일: $payDate',
-                  style: ts(8.0, color: grey),
-                ),
-                pw.Text(
-                  '근무일: ${FormatHelper.formatDateDot(d.workDate)}',
-                  style: ts(8.0, color: grey),
-                ),
-              ],
+              children: dateRows,
             ),
           ],
         ),
         pw.SizedBox(height: 4),
-        pw.Divider(color: primary, thickness: 1.5),
+        pw.Divider(color: primary, thickness: 2.0),
         // 법적 근거
         pw.Text(
           '근로기준법 제48조 제2항에 따라 임금의 구성항목·계산방법·공제내역을 명시합니다.',
@@ -220,48 +268,45 @@ class PayslipPdfBuilder {
     );
   }
 
-  // ─── 사업장 / 근무자 정보 ────────────────────────────────────────
-  static pw.Widget _buildPartyInfo(
-    PayslipData d,
-    Function ts,
-    PdfColor grey,
-  ) {
+  // ─── 기본 정보 (식별 정보 최소화) ──────────────────────────────
+  // 기존 4-column PartyInfo Table 대체.
+  // 임금명세서 식별에 필요한 최소 항목만 표시.
+  static pw.Widget _buildInfoBlock(PayslipData d, Function ts) {
+    final labelColor = PdfColor.fromHex('#616161');
+    final rows = <pw.TableRow>[];
+
+    void addRow(String label, String value) {
+      rows.add(pw.TableRow(children: [
+        _cell(label, ts, bold: true, color: labelColor, fontSize: 9.0),
+        _cell(value, ts, fontSize: 9.0),
+      ]));
+    }
+
+    addRow('사업장명', d.businessName);
+    addRow('근로자', d.workerName);
+    if (d.workerBirthDate.isNotEmpty) {
+      addRow('생년월일', d.workerBirthDate);
+    }
+    addRow('업무 유형', d.workType);
+    addRow('임금 형태', d.wageDetail.wageType == 'hourly' ? '시급제' : '일급제');
+    if (d.businessNumber.isNotEmpty) {
+      addRow('사업자번호', d.businessNumber);
+    }
+
     return pw.Table(
-      border: pw.TableBorder.all(color: PdfColor.fromHex('#E0E0E0'), width: 0.5),
+      border: pw.TableBorder.all(
+          color: PdfColor.fromHex('#E0E0E0'), width: 0.5),
       columnWidths: {
-        0: const pw.FixedColumnWidth(80),
-        1: const pw.FlexColumnWidth(2),
-        2: const pw.FixedColumnWidth(80),
-        3: const pw.FlexColumnWidth(2),
+        0: const pw.FixedColumnWidth(65),
+        1: const pw.FlexColumnWidth(1),
       },
-      children: [
-        _tableRow2Col(
-          '사업장명', d.businessName,
-          '근무자', d.workerName,
-          ts,
-        ),
-        if (d.businessNumber.isNotEmpty || d.workerBirthDate.isNotEmpty)
-          _tableRow2Col(
-            '사업자번호', d.businessNumber.isNotEmpty ? d.businessNumber : '-',
-            '생년월일', d.workerBirthDate.isNotEmpty ? d.workerBirthDate : '-',
-            ts,
-          ),
-        if (d.businessAddress.isNotEmpty)
-          _tableRow2Col(
-            '사업장 주소', d.businessAddress,
-            '대표자', d.ownerName.isNotEmpty ? d.ownerName : '-',
-            ts,
-          ),
-        _tableRow2Col(
-          '업무 유형', d.workType,
-          '출근 시각', d.checkIn != null ? '${d.checkIn} 출근' : '-',
-          ts,
-        ),
-      ],
+      children: rows,
     );
   }
 
-  // ─── 근무 시간 ────────────────────────────────────────────────
+  // ─── 근무 시간 ─────────────────────────────────────────────────
+  // 기존 4-column "구분|시간|구분|시간" 구조 → 2-column label/value.
+  // 연장/야간은 0분이면 행 숨김.
   static pw.Widget _buildWorkTimeSection(
     PayslipData d,
     WageDetailModel wd,
@@ -270,51 +315,51 @@ class PayslipPdfBuilder {
     PdfColor grey,
     PdfColor black,
   ) {
+    final labelColor = PdfColor.fromHex('#616161');
+    final rows = <pw.TableRow>[];
+
+    void addRow(String label, String value) {
+      rows.add(pw.TableRow(children: [
+        _cell(label, ts, bold: true, color: labelColor, fontSize: 9.0),
+        _cell(value, ts, fontSize: 9.0),
+      ]));
+    }
+
+    addRow('출근', d.checkIn ?? '-');
+    addRow('퇴근', d.checkOut ?? '-');
+    addRow('실근무', _fmtMin(wd.workMinutes));
+    addRow('휴게', _fmtMin(wd.breakMinutes));
+    // 연장 근무 — canonical 분기
+    if (wd.hasCanonicalExtraWorkBreakdown && (wd.contractExcessMinutes ?? 0) > 0) {
+      // CANONICAL PATH: 전체 초과 + 세부 breakdown
+      addRow('연장 근무', _fmtMin(wd.contractExcessMinutes!));
+      if (wd.extraWork1xMinutes > 0) {
+        addRow('계약시간 초과 (1배)', _fmtMin(wd.extraWork1xMinutes));
+      }
+      if (wd.extraWork15xMinutes > 0) {
+        addRow('8시간 초과 (1.5배)', _fmtMin(wd.extraWork15xMinutes));
+      }
+    } else if (wd.overtimeMinutes > 0) {
+      // LEGACY PATH
+      addRow('연장 근무', _fmtMin(wd.overtimeMinutes));
+    }
+    if (wd.nightMinutes > 0) {
+      addRow('야간수당', _fmtMin(wd.nightMinutes));
+    }
+
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        _sectionTitle('■  근무 시간', ts, primary),
+        _sectionTitle('근무 시간', ts, primary),
         pw.SizedBox(height: 4),
         pw.Table(
           border: pw.TableBorder.all(
               color: PdfColor.fromHex('#E0E0E0'), width: 0.5),
           columnWidths: {
-            0: const pw.FlexColumnWidth(1),
+            0: const pw.FixedColumnWidth(65),
             1: const pw.FlexColumnWidth(1),
-            2: const pw.FlexColumnWidth(1),
-            3: const pw.FlexColumnWidth(1),
           },
-          children: [
-            // 헤더
-            pw.TableRow(
-              decoration:
-                  pw.BoxDecoration(color: PdfColor.fromHex('#F5F5F5')),
-              children: [
-                _cell('구분', ts, bold: true, color: grey),
-                _cell('시간', ts, bold: true, color: grey),
-                _cell('구분', ts, bold: true, color: grey),
-                _cell('시간', ts, bold: true, color: grey),
-              ],
-            ),
-            pw.TableRow(children: [
-              _cell('출근', ts),
-              _cell(d.checkIn ?? '-', ts),
-              _cell('퇴근', ts),
-              _cell(d.checkOut ?? '-', ts),
-            ]),
-            pw.TableRow(children: [
-              _cell('실 근무', ts),
-              _cell(_fmtMin(wd.workMinutes), ts),
-              _cell('휴게', ts),
-              _cell(_fmtMin(wd.breakMinutes), ts),
-            ]),
-            pw.TableRow(children: [
-              _cell('연장근무', ts),
-              _cell(_fmtMin(wd.overtimeMinutes), ts),
-              _cell('야간근무', ts),
-              _cell(_fmtMin(wd.nightMinutes), ts),
-            ]),
-          ],
+          children: rows,
         ),
       ],
     );
@@ -331,13 +376,13 @@ class PayslipPdfBuilder {
     final wageLabel = wd.wageType == 'hourly' ? '시급' : '일급';
     final rows = <pw.TableRow>[];
 
-    // 헤더
+    // 헤더 — 연한 파란 배경 (그레이스케일에서도 헤더 구분 가능한 F0F4FF)
     rows.add(pw.TableRow(
-      decoration: pw.BoxDecoration(color: PdfColor.fromHex('#E3F2FD')),
+      decoration: pw.BoxDecoration(color: PdfColor.fromHex('#F0F4FF')),
       children: [
-        _cell('지급 항목', ts, bold: true, color: primary),
-        _cell('금액', ts, bold: true, color: primary, align: pw.Alignment.centerRight),
-        _cell('비고', ts, bold: true, color: primary),
+        _cell('지급 항목', ts, bold: true, color: primary, fontSize: 9.0),
+        _cell('금액', ts, bold: true, color: primary, align: pw.Alignment.centerRight, fontSize: 9.0),
+        _cell('비고', ts, bold: true, color: primary, fontSize: 9.0),
       ],
     ));
 
@@ -348,25 +393,51 @@ class PayslipPdfBuilder {
       // [Q-02 fix] overtimeMinutes >= workMinutes 시 음수가 되어 '- 근무' 표시되는 것 방지
       '${_fmtMin((wd.workMinutes - wd.overtimeMinutes).clamp(0, wd.workMinutes))} 근무',
       ts,
+      fontSize: 9.0,
     ));
 
-    // 연장수당
-    if (wd.overtimeMinutes > 0) {
+    // 연장 근무수당 — canonical 분기
+    if (wd.hasCanonicalExtraWorkBreakdown && (wd.contractExcessMinutes ?? 0) > 0) {
+      // CANONICAL PATH: 세부 시간 breakdown만 표시
+      // overtimeAmount는 HOURLY/DAILY mixed semantic이므로 "연장 근무수당 전체"로 오해되는
+      // 단일 합계 행 표시 금지. 시간 breakdown이 상세 내역을 대체함.
+      if (wd.extraWork1xMinutes > 0) {
+        rows.add(_payRow(
+          '계약시간 초과 (1배)',
+          '',
+          _fmtMin(wd.extraWork1xMinutes),
+          ts,
+          fontSize: 9.0,
+        ));
+      }
+      if (wd.extraWork15xMinutes > 0) {
+        rows.add(_payRow(
+          '8시간 초과 (1.5배)',
+          '',
+          _fmtMin(wd.extraWork15xMinutes),
+          ts,
+          fontSize: 9.0,
+        ));
+      }
+    } else if (wd.overtimeMinutes > 0) {
+      // LEGACY PATH
       rows.add(_payRow(
-        '연장근로수당 (×1.5)',
+        '연장 근무수당',
         _fmtWon(wd.overtimeAmount),
         _fmtMin(wd.overtimeMinutes),
         ts,
+        fontSize: 9.0,
       ));
     }
 
     // 야간수당
     if (wd.nightAmount > 0) {
       rows.add(_payRow(
-        '야간근로수당 (×0.5 가산)',
+        '야간수당',
         _fmtWon(wd.nightAmount),
         _fmtMin(wd.nightMinutes),
         ts,
+        fontSize: 9.0,
       ));
     }
 
@@ -377,6 +448,7 @@ class PayslipPdfBuilder {
         _fmtWon(wd.weeklyHolidayAmount),
         '주 소정근로 개근',
         ts,
+        fontSize: 9.0,
       ));
     }
 
@@ -387,35 +459,37 @@ class PayslipPdfBuilder {
         _fmtWon(wd.additionalAmount),
         wd.memo ?? '',
         ts,
+        fontSize: 9.0,
       ));
     }
 
-    // 공제 (추가공제)
+    // 추가공제 (앱 UI 표현 제거 → 공식 문서 표현으로)
     if (wd.deductionAmount > 0) {
       rows.add(_payRow(
-        '▼ 공제 (식대·안전화 등)',
+        '추가공제',
         '-${_fmtWon(wd.deductionAmount)}',
         wd.memo ?? '',
         ts,
         isDeduction: true,
+        fontSize: 9.0,
       ));
     }
 
-    // 소계
+    // 지급 합계 (기존: 세전 총액)
     rows.add(pw.TableRow(
       decoration: pw.BoxDecoration(color: PdfColor.fromHex('#F5F5F5')),
       children: [
-        _cell('세전 총액', ts, bold: true),
+        _cell('지급 합계', ts, bold: true, fontSize: 9.0),
         _cell(_fmtWon(wd.totalAmount), ts,
-            bold: true, align: pw.Alignment.centerRight),
-        _cell('', ts),
+            bold: true, align: pw.Alignment.centerRight, fontSize: 9.0),
+        _cell('', ts, fontSize: 9.0),
       ],
     ));
 
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        _sectionTitle('■  지급 내역', ts, primary),
+        _sectionTitle('지급 내역', ts, primary),
         pw.SizedBox(height: 4),
         pw.Table(
           border: pw.TableBorder.all(
@@ -431,7 +505,56 @@ class PayslipPdfBuilder {
     );
   }
 
+  // ─── 계산 기준 섹션 ────────────────────────────────────────────
+  // buildWageCalculationLines()가 반환한 문자열 목록을 PDF 블록으로 렌더링.
+  // 기존 7.5pt grey → 8.5pt dark grey, accent container 스타일로 강화.
+  // 호출자는 lines.isNotEmpty를 확인한 뒤 호출해야 한다.
+  static pw.Widget _buildCalculationSection(
+    List<String> lines,
+    Function ts,
+    PdfColor primary,
+    PdfColor grey,
+    PdfColor black,
+  ) {
+    final textColor = PdfColor.fromHex('#424242');
+
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        _sectionTitle('계산 기준', ts, primary),
+        pw.SizedBox(height: 4),
+        pw.Container(
+          width: double.infinity,
+          padding: const pw.EdgeInsets.fromLTRB(10, 6, 10, 8),
+          decoration: pw.BoxDecoration(
+            color: PdfColor.fromHex('#FAFAFA'),
+            border: pw.Border.all(
+              color: PdfColor.fromHex('#E0E0E0'),
+              width: 0.5,
+            ),
+          ),
+          child: pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: lines
+                .map(
+                  (line) => pw.Padding(
+                    padding: const pw.EdgeInsets.only(top: 3),
+                    child: pw.Text(
+                      '·  $line',
+                      style: ts(9.0, color: textColor),
+                    ),
+                  ),
+                )
+                .toList(),
+          ),
+        ),
+      ],
+    );
+  }
+
   // ─── 공제 내역 ────────────────────────────────────────────────
+  // 기존 주황색(#FFF3E0/#E65100) 경고 스타일 → 중립 grey 헤더 + primary 텍스트.
+  // 공제는 오류가 아니므로 경보 UI 제거.
   static pw.Widget _buildDeductionSection(
     WageDetailModel wd,
     Function ts,
@@ -441,63 +564,67 @@ class PayslipPdfBuilder {
   ) {
     final rows = <pw.TableRow>[];
 
+    // 헤더 — 중립 grey 배경, primary 텍스트
     rows.add(pw.TableRow(
-      decoration: pw.BoxDecoration(color: PdfColor.fromHex('#FFF3E0')),
+      decoration: pw.BoxDecoration(color: PdfColor.fromHex('#F5F5F5')),
       children: [
-        _cell('공제 항목', ts, bold: true, color: PdfColor.fromHex('#E65100')),
-        _cell('금액', ts, bold: true, color: PdfColor.fromHex('#E65100'),
-            align: pw.Alignment.centerRight),
-        _cell('비고', ts, bold: true, color: PdfColor.fromHex('#E65100')),
+        _cell('공제 항목', ts, bold: true, color: primary, fontSize: 9.0),
+        _cell('금액', ts, bold: true, color: primary,
+            align: pw.Alignment.centerRight, fontSize: 9.0),
+        _cell('비고', ts, bold: true, color: primary, fontSize: 9.0),
       ],
     ));
 
     if (wd.nationalPensionDeduction > 0) {
       rows.add(_payRow('국민연금', _fmtWon(wd.nationalPensionDeduction),
           '근로자 부담분', ts,
-          isDeduction: true));
+          isDeduction: true, fontSize: 9.0));
     }
     if (wd.healthInsuranceDeduction > 0) {
       rows.add(_payRow('건강보험', _fmtWon(wd.healthInsuranceDeduction),
           '근로자 부담분', ts,
-          isDeduction: true));
+          isDeduction: true, fontSize: 9.0));
     }
     if (wd.ltcInsuranceDeduction > 0) {
       rows.add(_payRow('장기요양보험', _fmtWon(wd.ltcInsuranceDeduction),
           '건강보험료 기준', ts,
-          isDeduction: true));
+          isDeduction: true, fontSize: 9.0));
     }
     if (wd.employmentInsuranceDeduction > 0) {
       rows.add(_payRow('고용보험', _fmtWon(wd.employmentInsuranceDeduction),
           '근로자 부담분', ts,
-          isDeduction: true));
+          isDeduction: true, fontSize: 9.0));
     }
     if (wd.incomeTaxDeduction > 0) {
       final taxLabel = wd.taxDeductionType == InsuranceRateModel.typeFreelancer33
           ? '사업소득세 3.3%'
           : '근로소득세·지방소득세';
       rows.add(_payRow(taxLabel, _fmtWon(wd.incomeTaxDeduction), '', ts,
-          isDeduction: true));
+          isDeduction: true, fontSize: 9.0));
     }
     if (wd.retroactiveDeduction > 0) {
       rows.add(_payRow('8일 소급 공제', _fmtWon(wd.retroactiveDeduction),
           '1~7일분 합산 공제', ts,
-          isDeduction: true));
+          isDeduction: true, fontSize: 9.0));
     }
 
+    // 공제 합계 (기존: 총 공제액)
     rows.add(pw.TableRow(
       decoration: pw.BoxDecoration(color: PdfColor.fromHex('#F5F5F5')),
       children: [
-        _cell('총 공제액', ts, bold: true),
+        _cell('공제 합계', ts, bold: true, fontSize: 9.0),
         _cell(_fmtWon(wd.totalInsuranceDeduction), ts,
-            bold: true, align: pw.Alignment.centerRight),
-        _cell('', ts),
+            bold: true, align: pw.Alignment.centerRight, fontSize: 9.0),
+        _cell('', ts, fontSize: 9.0),
       ],
     ));
 
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        _sectionTitle('■  공제 내역 (${InsuranceRateModel.typeLabel(wd.taxDeductionType)})', ts, primary),
+        _sectionTitle(
+            '공제 내역 (${InsuranceRateModel.typeLabel(wd.taxDeductionType)})',
+            ts, primary),
         pw.SizedBox(height: 4),
         pw.Table(
           border: pw.TableBorder.all(
@@ -514,73 +641,88 @@ class PayslipPdfBuilder {
   }
 
   // ─── 실수령액 박스 ───────────────────────────────────────────────
+  // 금액 17pt Bold — 문서의 핵심 결과값으로 충분한 emphasis.
+  // 배경 #E3F2FD (연한 파란) 유지 — 앱 카드 같은 full primary 배경 미사용.
   static pw.Widget _buildNetWageBox(
     WageDetailModel wd,
     Function ts,
     PdfColor primary,
   ) {
     final net = wd.effectiveNetWage;
+    final metaGrey = PdfColor.fromHex('#9E9E9E');
 
     return pw.Container(
-      padding: const pw.EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const pw.EdgeInsets.fromLTRB(16, 12, 16, 12),
       decoration: pw.BoxDecoration(
         color: PdfColor.fromHex('#E3F2FD'),
         borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
-        border: pw.Border.all(color: primary, width: 1),
+        border: pw.Border.all(color: primary, width: 1.5),
       ),
       child: pw.Row(
         mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: pw.CrossAxisAlignment.center,
         children: [
-          pw.Text('실수령액 (세후)', style: ts(11.0, bold: true, color: primary)),
-          pw.Text(_fmtWon(net), style: ts(14.0, bold: true, color: primary)),
+          pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text('실수령액', style: ts(11.0, bold: true, color: primary)),
+              pw.SizedBox(height: 2),
+              pw.Text('세후 지급액', style: ts(7.5, color: metaGrey)),
+            ],
+          ),
+          pw.Text(_fmtWon(net), style: ts(18.0, bold: true, color: primary)),
         ],
       ),
     );
   }
 
-  // ─── 법적 고지 ────────────────────────────────────────────────
+  // ─── 법적 고지 (compact) ─────────────────────────────────────
+  // 헤더에 이미 "근로기준법 제48조 제2항" 1줄이 있으므로 반복 최소화.
+  // 박스/테두리 제거 — 인라인 supporting text 수준으로 축소.
   static pw.Widget _buildLegalNote(Function ts, PdfColor grey) {
-    return pw.Container(
-      padding: const pw.EdgeInsets.all(8),
-      decoration: pw.BoxDecoration(
-        color: PdfColor.fromHex('#FAFAFA'),
-        border: pw.Border.all(color: PdfColor.fromHex('#E0E0E0'), width: 0.5),
-        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
-      ),
-      child: pw.Text(
-        '※ 본 임금명세서는 근로기준법 제48조 제2항에 따라 교부됩니다.\n'
-        '※ 공제내역은 국민연금법, 국민건강보험법, 고용보험법, 소득세법에 근거합니다.\n'
-        '※ 이의사항은 사업장 관리자 또는 관할 고용노동지청에 문의하시기 바랍니다.',
-        style: ts(6.5, color: grey),
-      ),
+    return pw.Text(
+      '※ 공제내역은 국민연금법·건강보험법·고용보험법·소득세법에 근거합니다.'
+      '   이의사항은 사업장 관리자 또는 관할 고용노동지청에 문의하시기 바랍니다.',
+      style: ts(6.5, color: grey),
     );
   }
 
   // ─── 푸터 ────────────────────────────────────────────────────
+  // 1페이지 문서: 푸터 완전 생략 (브랜드 텍스트·페이지 번호 불필요).
+  // 멀티페이지: 우측 페이지 번호만 표시. 브랜드 텍스트 제거.
   static pw.Widget _buildFooter(
     pw.Context ctx,
     Function ts,
     PdfColor grey,
   ) {
-    return pw.Row(
-      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-      children: [
-        pw.Text('AlFit 임금명세서', style: ts(7.0, color: grey)),
-        pw.Text(
-          '${ctx.pageNumber} / ${ctx.pagesCount}',
-          style: ts(7.0, color: grey),
-        ),
-      ],
+    if (ctx.pagesCount <= 1) return pw.SizedBox();
+    return pw.Align(
+      alignment: pw.Alignment.centerRight,
+      child: pw.Text(
+        '${ctx.pageNumber} / ${ctx.pagesCount}',
+        style: ts(7.0, color: grey),
+      ),
     );
   }
 
   // ─── 헬퍼 ────────────────────────────────────────────────────
 
+  // 섹션 타이틀 — "■" 기호 제거, 좌측 accent bar로 통일.
+  // 단일 임금명세서 전용. 집계 PDF는 별도 inline 텍스트 사용.
+  // 10pt 텍스트 기준으로 accent bar 16px로 비례 조정.
   static pw.Widget _sectionTitle(
-      String title, Function ts, PdfColor color) {
-    return pw.Text(title, style: ts(9.0, bold: true, color: color));
+      String title, Function ts, PdfColor primary) {
+    return pw.Row(
+      crossAxisAlignment: pw.CrossAxisAlignment.center,
+      children: [
+        pw.Container(width: 3, height: 16, color: primary),
+        pw.SizedBox(width: 6),
+        pw.Text(title, style: ts(10.0, bold: true, color: primary)),
+      ],
+    );
   }
 
+  // 집계 PDF에서 공유 사용 — 변경 금지
   static pw.TableRow _tableRow2Col(
     String k1, String v1,
     String k2, String v2,
@@ -594,34 +736,43 @@ class PayslipPdfBuilder {
     ]);
   }
 
+  // isDeduction: 금액(amount)만 semantic red (#C62828).
+  // 레이블은 항상 black — 공제 행 전체를 빨간색으로 만들지 않는다.
+  // 집계 PDF에서도 공유 사용 — fontSize 기본값 8.0으로 집계 PDF 외관 보존.
+  // 단일 명세서에서는 fontSize: 9.0 전달.
   static pw.TableRow _payRow(
     String label,
     String amount,
     String note,
     Function ts, {
     bool isDeduction = false,
+    double fontSize = 8.0,
   }) {
-    final color = isDeduction ? PdfColor.fromHex('#B71C1C') : PdfColors.black;
+    final amountColor =
+        isDeduction ? PdfColor.fromHex('#C62828') : PdfColors.black;
     return pw.TableRow(children: [
-      _cell(label, ts, color: color),
-      _cell(amount, ts, align: pw.Alignment.centerRight, color: color),
-      _cell(note, ts, color: PdfColor.fromHex('#424242')),
+      _cell(label, ts, color: PdfColors.black, fontSize: fontSize),
+      _cell(amount, ts, align: pw.Alignment.centerRight, color: amountColor, fontSize: fontSize),
+      _cell(note, ts, color: PdfColor.fromHex('#424242'), fontSize: fontSize),
     ]);
   }
 
+  // fontSize 기본값 8.0 → 집계 PDF 호출부는 변경 불필요
+  // 단일 임금명세서 섹션에서는 fontSize: 9.0 명시 전달
   static pw.Widget _cell(
     String text,
     Function ts, {
     bool bold = false,
     PdfColor? color,
     pw.Alignment align = pw.Alignment.centerLeft,
+    double fontSize = 8.0,
   }) {
     return pw.Container(
       padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 5),
       alignment: align,
       child: pw.Text(
         text,
-        style: ts(8.0, bold: bold, color: color ?? PdfColors.black),
+        style: ts(fontSize, bold: bold, color: color ?? PdfColors.black),
       ),
     );
   }
@@ -804,8 +955,8 @@ class PayslipPdfBuilder {
             _cell('총 근무시간', ts), _cell(_fmtMin(d.totalWorkMinutes), ts),
           ]),
           pw.TableRow(children: [
-            _cell('연장근무', ts), _cell(_fmtMin(d.totalOvertimeMinutes), ts),
-            _cell('야간근무', ts), _cell(_fmtMin(d.totalNightMinutes), ts),
+            _cell('연장 근무', ts), _cell(_fmtMin(d.totalOvertimeMinutes), ts),
+            _cell('야간수당', ts), _cell(_fmtMin(d.totalNightMinutes), ts),
           ]),
         ],
       ),
@@ -826,10 +977,10 @@ class PayslipPdfBuilder {
 
     rows.add(_payRow('기본급', _fmtWon(d.totalBaseAmount), '${d.totalWorkDays}일', ts));
     if (d.totalOvertimeAmount > 0) {
-      rows.add(_payRow('연장근로수당 (×1.5)', _fmtWon(d.totalOvertimeAmount), _fmtMin(d.totalOvertimeMinutes), ts));
+      rows.add(_payRow('연장 근무수당', _fmtWon(d.totalOvertimeAmount), _fmtMin(d.totalOvertimeMinutes), ts));
     }
     if (d.totalNightAmount > 0) {
-      rows.add(_payRow('야간근로수당 (×0.5 가산)', _fmtWon(d.totalNightAmount), _fmtMin(d.totalNightMinutes), ts));
+      rows.add(_payRow('야간수당', _fmtWon(d.totalNightAmount), _fmtMin(d.totalNightMinutes), ts));
     }
     if (d.totalWeeklyHolidayAmount > 0) {
       rows.add(_payRow('주휴수당', _fmtWon(d.totalWeeklyHolidayAmount), '', ts));

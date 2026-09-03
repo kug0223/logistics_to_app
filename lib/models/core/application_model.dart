@@ -21,7 +21,8 @@ class ApplicationModel {
   
   // 업무 유형 및 금액
   final String selectedWorkType; // 현재 지원한 업무 유형 (예: "피킹")
-  final String? workDetailId;  // ✅ 추가: WorkDetail 고유 ID
+  final String? workDetailId;  // ✅ 추가: WorkDetail 고유 ID (composite or legacy)
+  final String? wdId;          // [Phase 8.1E.2] immutable WorkDetail canonical ID (wdId from workDetails[].wdId)
   final String? toId;          // ✅ TO 고유 ID
   final String? slotId;        // ✅ 슬롯 ID (flex 타입 공고의 특정 날짜 슬롯)
   final String? groupId;       // Deprecated — 하위 호환용, 신규 공고는 미사용
@@ -138,6 +139,7 @@ class ApplicationModel {
     required this.uid,
     required this.selectedWorkType,
     this.workDetailId,
+    this.wdId,
     this.toId,
     this.slotId,
     this.groupId,
@@ -244,6 +246,7 @@ class ApplicationModel {
       uid: data['uid'] ?? '',
       selectedWorkType: data['selectedWorkType'] ?? '',
       workDetailId: data['workDetailId'],
+      wdId: data['wdId'] as String?,
       toId: data['toId'],
       slotId: data['slotId'],
       groupId: data['groupId'],
@@ -372,6 +375,7 @@ class ApplicationModel {
       'uid': uid,
       'selectedWorkType': selectedWorkType,
       'workDetailId': workDetailId,
+      'wdId': wdId,
       'toId': toId,
       'slotId': slotId,
       'groupId': groupId,
@@ -492,6 +496,7 @@ class ApplicationModel {
     String? selectedWorkType,
     String? toId,
     String? workDetailId,
+    String? wdId,
     String? slotId,
     String? groupId,
     int? wage,
@@ -579,6 +584,7 @@ class ApplicationModel {
       selectedWorkType: selectedWorkType ?? this.selectedWorkType,
       toId: toId ?? this.toId,
       workDetailId: workDetailId ?? this.workDetailId,
+      wdId: wdId ?? this.wdId,
       slotId: slotId ?? this.slotId,
       groupId: groupId ?? this.groupId,
       wage: wage ?? this.wage,
@@ -766,13 +772,13 @@ class ApplicationModel {
 
     DateTime effectiveStart = desiredStartDate ?? workDate;
     if (confirmedAt != null && desiredStartDate == null) {
-      final confirmedDay = DateTime(confirmedAt!.year, confirmedAt!.month, confirmedAt!.day);
-      if (confirmedDay.isAfter(workDate)) effectiveStart = confirmedDay;
+      final confirmedDay = FormatHelper.toKstDate(confirmedAt!);
+      if (confirmedDay.isAfter(FormatHelper.toKstDate(workDate))) effectiveStart = confirmedDay;
     }
 
-    final targetOnly = DateTime(targetDate.year, targetDate.month, targetDate.day);
-    final startOnly = DateTime(effectiveStart.year, effectiveStart.month, effectiveStart.day);
-    final endOnly = DateTime(endDate.year, endDate.month, endDate.day);
+    final targetOnly = FormatHelper.toKstDate(targetDate);
+    final startOnly = FormatHelper.toKstDate(effectiveStart);
+    final endOnly = FormatHelper.toKstDate(endDate);
 
     if (targetOnly.isBefore(startOnly) || targetOnly.isAfter(endOnly)) return false;
 
@@ -807,13 +813,13 @@ class ApplicationModel {
 
     DateTime effectiveStart = desiredStartDate ?? workDate;
     if (confirmedAt != null && desiredStartDate == null) {
-      final confirmedDay = DateTime(confirmedAt!.year, confirmedAt!.month, confirmedAt!.day);
-      if (confirmedDay.isAfter(workDate)) effectiveStart = confirmedDay;
+      final confirmedDay = FormatHelper.toKstDate(confirmedAt!);
+      if (confirmedDay.isAfter(FormatHelper.toKstDate(workDate))) effectiveStart = confirmedDay;
     }
 
-    final targetOnly = DateTime(targetDate.year, targetDate.month, targetDate.day);
-    final startOnly = DateTime(effectiveStart.year, effectiveStart.month, effectiveStart.day);
-    final endOnly = DateTime(endDate.year, endDate.month, endDate.day);
+    final targetOnly = FormatHelper.toKstDate(targetDate);
+    final startOnly = FormatHelper.toKstDate(effectiveStart);
+    final endOnly = FormatHelper.toKstDate(endDate);
 
     if (targetOnly.isBefore(startOnly) || targetOnly.isAfter(endOnly)) return false;
 
@@ -859,8 +865,11 @@ class ApplicationModel {
       terminationStatus == AppStatus.approved ||
       terminationStatus == AppStatus.autoApproved;
 
-  static bool _isSameDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
+  static bool _isSameDay(DateTime a, DateTime b) {
+    final ka = FormatHelper.toKstDate(a);
+    final kb = FormatHelper.toKstDate(b);
+    return ka.year == kb.year && ka.month == kb.month && ka.day == kb.day;
+  }
 }
 
 /// 지원서 Firestore 상태 상수 (대문자 — applications 컬렉션 convention)

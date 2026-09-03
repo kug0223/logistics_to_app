@@ -429,6 +429,39 @@ extension ApplicationFirestore on FirestoreService {
         return [];
       }
 
+      // [APPROVE-AUTH-01 C2 FIX / RELIABILITY-01] contractPending 직접 write → callableApproveApplicationForReview
+      // [RELIABILITY-01] status + pending counters + notification → 서버 atomic 처리.
+      //   callableApproveApplicationForReview:
+      //     - status + totalPending/slot.pendingCount/wdId.pendingCount: 동일 transaction (atomic)
+      //     - approval notification: deterministic doc ID(application_confirmed_{id}) + doc.create()
+      //   alreadyApproved=true여도 callable이 notification ensure 실행 — client 구별 불필요.
+      //   client는 local cache invalidation만 담당.
+      if (status == AppStatus.contractPending) {
+        final approveCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable(
+              'callableApproveApplicationForReview',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)),
+            );
+        // callable 실패 시 throw propagate — caller가 failure UX 처리
+        await approveCallable.call<Map<String, dynamic>>({'applicationId': applicationId});
+
+        // Local cache invalidation — callable success 후 실행 (최초 승인/retry 모두).
+        // uid는 callable input에 없으므로 서버 read로 확보.
+        // read 실패 시 cache stale — approve 자체는 이미 성공이므로 non-critical.
+        try {
+          final cpSnap = await _firestore
+              .collection('applications')
+              .doc(applicationId)
+              .get(const GetOptions(source: Source.server));
+          final cpUid = cpSnap.data()?['uid'] as String? ?? '';
+          if (cpUid.isNotEmpty) invalidateMyApplicationsCache(cpUid);
+        } catch (e) {
+          debugPrint('⚠️ [updateApplicationStatus] 로컬 캐시 무효화 실패 (approve는 성공): $e');
+        }
+
+        return [];
+      }
+
       final appDoc = await _firestore
           .collection('applications')
           .doc(applicationId)
@@ -955,8 +988,12 @@ extension ApplicationFirestore on FirestoreService {
           final wd = workDetails.firstWhere(
             (d) => d['workType'] == newWorkType, orElse: () => {});
           final required = (wd['requiredCount'] as num?)?.toInt() ?? 0;
-          final counts = slotData['workTypeCounts'] as Map<String, dynamic>?;
-          final confirmed = (counts?[newWorkType]?['confirmedCount'] as num?)?.toInt() ?? 0;
+          // [Phase 8.1E.5] workDetailCounts canonical source — workTypeCounts 제거
+          final rawWDC = slotData['workDetailCounts'] as Map<String, dynamic>?;
+          final wdId = wd['wdId'] as String?;
+          final confirmed = (wdId != null && wdId.isNotEmpty)
+              ? (rawWDC?[wdId]?['confirmedCount'] as num?)?.toInt() ?? 0
+              : 0;
           if (required > 0 && confirmed >= required) {
             ToastHelper.showWarning(
               '[$newWorkType] 모집인원($required명)이 이미 찼습니다. 그래도 변경됩니다.');
@@ -1182,7 +1219,10 @@ extension ApplicationFirestore on FirestoreService {
     }
   }
 
-  /// 홈 요약용 승인 대기 카운트 — 날짜 제한 없이 PENDING 단기 지원 건수만 반환
+  /// 홈 요약용 승인 대기 카운트 — 날짜 제한 없이 단기+장기 PENDING 전체 반환
+  /// [P0-B] status=PENDING 서버 필터 적용 — 전체 status fetch 후 client 필터 방식에서 전환
+  /// (비 PENDING document가 500 cap을 소진해 PENDING count 누락되는 문제 해결)
+  /// [PHASE-2A] 단기 전용 필터 제거 — SupportReviewQueueScreen과 semantics 일치
   Future<int> getAllPendingApplicationsCount(String businessId) async {
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
@@ -1190,6 +1230,7 @@ extension ApplicationFirestore on FirestoreService {
               options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
       final result = await callable.call<Map<String, dynamic>>({
         'businessId': businessId,
+        'status': AppStatus.pending,
         'limit': 500,
       });
       return (result.data['applications'] as List? ?? [])
@@ -1200,7 +1241,7 @@ extension ApplicationFirestore on FirestoreService {
             return ApplicationModel.tryFromMap(raw, id);
           })
           .whereType<ApplicationModel>()
-          .where((app) => app.status == AppStatus.pending && !app.isLongTermApplication)
+          .where((app) => app.status == AppStatus.pending)
           .length;
     } catch (e) {
       debugPrint('❌ [승인대기] 카운트 조회 실패: $e');
@@ -1410,50 +1451,20 @@ extension ApplicationFirestore on FirestoreService {
     final appInfo = (data['appInfo'] as Map?)?.cast<String, dynamic>() ?? {};
     final toId = appInfo['toId'] as String?;
     final uid = appInfo['uid'] as String? ?? '';
-    final businessId = appInfo['businessId'] as String? ?? '';
     final businessName = appInfo['businessName'] as String? ?? '';
     final startTime = appInfo['startTime'] as String? ?? '';
     final endTime = appInfo['endTime'] as String? ?? '';
-    final isLongTerm = appInfo['isLongTerm'] as bool? ?? false;
     final workDateMs = appInfo['workDateMs'] as int? ?? 0;
-    final startDateMs = appInfo['startDateMs'] as int?;
-    final workEndDateMs = appInfo['workEndDateMs'] as int?;
-    final workDays = (appInfo['workDays'] as List?)?.whereType<String>().toList();
-
     if (toId != null) clearCache(toId: toId);
     if (uid.isNotEmpty) invalidateMyApplicationsCache(uid);
 
-    // [SEC-FIX] 충돌 AUTO_CANCEL → CF 이전 (callableAutoConflictCancel)
-    // 이유: BUSINESS_ADMIN이 uid 단독 LIST 쿼리 시 보안 규칙에서 PERMISSION_DENIED
-    //   → 클라이언트에서 타사업장 포함 전체 충돌 탐색 불가 → Admin SDK CF로 처리
-    List<Map<String, dynamic>> canceledDetails = [];
-    try {
-      final autoConflictCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableAutoConflictCancel',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
-      final autoConflictResult = await autoConflictCallable.call({
-        'confirmedAppId': applicationId,
-        'targetUid': uid,
-        'businessId': businessId,
-        'businessName': businessName,
-        'startTime': startTime,
-        'endTime': endTime,
-        if (!isLongTerm) 'workDate': workDateMs,
-        if (isLongTerm) ...{
-          'isLongTerm': true,
-          'startDate': startDateMs ?? workDateMs,
-          if (workEndDateMs != null) 'endDate': workEndDateMs,
-          if (workDays != null) 'workDays': workDays,
-        },
-      });
-      canceledDetails = ((autoConflictResult.data as Map?)?['canceledDetails'] as List? ?? [])
-          .whereType<Map>()
-          .map((m) => Map<String, dynamic>.from(m))
-          .toList();
-      debugPrint('✅ AUTO_CANCEL CF 완료 — ${canceledDetails.length}건 취소');
-    } catch (e) {
-      debugPrint('⚠️ AUTO_CANCEL CF 실패 (확정은 완료됨): $e');
-    }
+    // [HARDENING] 충돌 AUTO_CANCEL은 callableConfirmApplication 트랜잭션 내에서 원자적으로 처리됨.
+    // confirm 응답의 autoCanceledDetails 필드에서 직접 수신.
+    final canceledDetails = ((data['autoCanceledDetails'] as List?) ?? [])
+        .whereType<Map>()
+        .map((m) => Map<String, dynamic>.from(m))
+        .toList();
+    debugPrint('✅ 확정 완료 — 트랜잭션 내 AUTO_CANCEL ${canceledDetails.length}건');
 
     // 자동 취소된 충돌 지원서의 TO 캐시 무효화
     // [BUG-FIX] detail['id']는 applicationId이고 TO 캐시 키는 toId — detail['toId'] 사용해야 함
@@ -1529,26 +1540,22 @@ extension ApplicationFirestore on FirestoreService {
 
   /// TO.totalConfirmed 및 Slot.confirmedCount 변경
   ///
-  /// [skipWorkTypeCounts] CONFIRM 경로에서 true — workTypeCounts/workTypeConfirmedCounts는
-  /// 트랜잭션(_confirmWithConflictCheck) 내에서 이미 increment됨. 배치에서 재증가 시 이중 카운트.
-  /// CANCEL/DECREMENT 경로(delta=-1)는 false(기본값) — 트랜잭션 없음, 배치에서 직접 감소.
-  ///
   /// [F01/F02/F03 동시성] FieldValue.increment()는 서버 측 원자 연산 → count 정확도 보장.
   /// [CRIT-02-FIX] 정원 초과 방지: 정원 검증 필드를 트랜잭션 내 write로 이동해
   ///   Firestore 낙관적 잠금 활성화. 두 트랜잭션이 같은 slotRef write 시 충돌 감지 → retry.
+  /// [Phase 8.1E.5] workTypeCounts 쓰기 제거 — canonical source는 workDetailCounts
   void _incrementTOConfirmed(
     WriteBatch batch,
     String toId,
     String? slotId, {
     required int delta,
     String? workType,
-    bool skipWorkTypeCounts = false,
   }) {
     final toUpdate = <String, dynamic>{
       'totalConfirmed': FieldValue.increment(delta),
     };
-    // contract TO: workTypeConfirmedCounts — CONFIRM 경로에서 트랜잭션이 처리, 배치에서 skip
-    if (!skipWorkTypeCounts && slotId == null && workType != null && workType.isNotEmpty) {
+    // contract TO: workTypeConfirmedCounts (TO 레벨 집계) — 유지
+    if (slotId == null && workType != null && workType.isNotEmpty) {
       toUpdate['workTypeConfirmedCounts.$workType'] = FieldValue.increment(delta);
     }
     batch.update(_firestore.collection('tos').doc(toId), toUpdate);
@@ -1558,15 +1565,9 @@ extension ApplicationFirestore on FirestoreService {
           .doc(toId)
           .collection('slots')
           .doc(slotId);
-      final slotUpdate = <String, dynamic>{
+      batch.update(slotRef, {
         'confirmedCount': FieldValue.increment(delta),
-      };
-      // flex TO: workTypeCounts.$workType.confirmedCount — CONFIRM 경로에서 트랜잭션이 처리
-      if (!skipWorkTypeCounts && workType != null) {
-        slotUpdate['workTypeCounts.$workType.confirmedCount'] =
-            FieldValue.increment(delta);
-      }
-      batch.update(slotRef, slotUpdate);
+      });
     }
   }
 

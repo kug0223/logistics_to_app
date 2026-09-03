@@ -334,7 +334,6 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final trustScore = widget.user.trustScore;
     final isPending = widget.application?.status == AppStatus.pending;
 
    return Dialog(
@@ -365,7 +364,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           mainAxisSize: MainAxisSize.min,
           children: [
             // 헤더
-            _buildHeader(context, theme, trustScore),
+            _buildHeader(context, theme),
             
             // 내용
             Flexible(
@@ -415,28 +414,25 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   }
 
   /// 헤더 (프로필 + 전화 버튼)
-  Widget _buildHeader(BuildContext context, ThemeData theme, int trustScore) {
+  Widget _buildHeader(BuildContext context, ThemeData theme) {
     return Container(
       padding: ResponsiveHelper.cardPadding(context),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [theme.primaryColor, theme.primaryColor.withValues(alpha: 0.8)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        color: Colors.white,
         borderRadius: BorderRadius.only(
           topLeft: Radius.circular(ResponsiveHelper.spacing(context, 20)),
           topRight: Radius.circular(ResponsiveHelper.spacing(context, 20)),
         ),
+        border: const Border(bottom: BorderSide(color: AppColors.grey200)),
       ),
       child: Column(
         children: [
           Row(
             children: [
-              // 프로필 이미지
+              // 프로필 이미지 — [PH-WORKER-DETAIL-1B] soft brand bg (흰색 배경 → 이니셜이 허공에 뜨는 현상 수정)
               CircleAvatar(
                 radius: ResponsiveHelper.spacing(context, 28),
-                backgroundColor: Colors.white,
+                backgroundColor: theme.primaryColor.withValues(alpha: 0.10),
                 child: widget.user.profileImageUrl != null
                     ? ClipOval(
                         child: CachedNetworkImage(
@@ -475,7 +471,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                           child: Text(
                             widget.user.name,
                             style: ResponsiveHelper.titleStyle(context).copyWith(
-                              color: Colors.white,
+                              color: AppColors.textPrimary,
                               fontWeight: FontWeight.bold,
                             ),
                             overflow: TextOverflow.ellipsis,
@@ -505,46 +501,13 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                     SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                     Text(
                       '${widget.user.gender ?? ''} · ${widget.user.age ?? '-'}세',
-                      style: ResponsiveHelper.bodyStyle(context, color: Colors.white.withValues(alpha: 0.7)),
+                      style: ResponsiveHelper.bodyStyle(context, color: AppColors.textSecondary),
                     ),
                   ],
                 ),
               ),
               
-              // 신뢰도 점수 (우측 상단)
-              Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 10),
-                  vertical: ResponsiveHelper.spacing(context, 6),
-                ),
-                decoration: BoxDecoration(
-                  color: trustScore >= 80
-                      ? AppColors.success.withValues(alpha: 0.25)
-                      : trustScore >= 60
-                          ? AppColors.amber.withValues(alpha: 0.25)
-                          : AppColors.error.withValues(alpha: 0.25),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  children: [
-                    Text(
-                      '$trustScore',
-                      style: ResponsiveHelper.titleStyle(context).copyWith(
-                        color: trustScore >= 80
-                            ? AppColors.success
-                            : trustScore >= 60
-                                ? AppColors.amber
-                                : AppColors.error,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      '신뢰도',
-                      style: ResponsiveHelper.tinyStyle(context, color: Colors.white.withValues(alpha: 0.7)),
-                    ),
-                  ],
-                ),
-              ),
+              // [5A.2A] 신뢰도 점수 컨테이너 제거
             ],
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
@@ -556,22 +519,23 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
               vertical: ResponsiveHelper.spacing(context, 8),
             ),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.15),
+              color: AppColors.grey50,
               borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppColors.grey200),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.phone, size: ResponsiveHelper.iconSize(context, 16), color: Colors.white),
+                Icon(Icons.phone, size: ResponsiveHelper.iconSize(context, 16), color: AppColors.grey600),
                 SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                 Text(
                   widget.user.effectivePhone ?? '-',
-                  style: ResponsiveHelper.bodyStyle(context, color: Colors.white),
+                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary),
                 ),
                 if (widget.user.effectivePhone != null && widget.user.effectivePhone!.isNotEmpty) ...[
                   SizedBox(width: ResponsiveHelper.spacing(context, 12)),
                   Material(
-                    color: Colors.white.withValues(alpha: 0.2),
+                    color: theme.primaryColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(20),
                     child: InkWell(
                       onTap: () => _makePhoneCall(widget.user.effectivePhone),
@@ -587,12 +551,12 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                             Icon(
                               Icons.call,
                               size: ResponsiveHelper.iconSize(context, 14),
-                              color: Colors.white,
+                              color: theme.primaryColor,
                             ),
                             SizedBox(width: ResponsiveHelper.spacing(context, 4)),
                             Text(
                               '전화',
-                              style: ResponsiveHelper.smallStyle(context, color: Colors.white),
+                              style: ResponsiveHelper.smallStyle(context, color: theme.primaryColor),
                             ),
                           ],
                         ),
@@ -743,7 +707,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                   icon: Icons.work_history_outlined,
                   label: '총 근무',
                   value: '${user.totalWorkDays}일',
-                  color: AppColors.info,
+                  // neutral — 근무일수는 semantic 강조 대상이 아님
+                  color: AppColors.grey500,
+                  bgColor: AppColors.grey100,
                 ),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -755,7 +721,9 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                   value: user.averageRating > 0
                       ? user.averageRating.toStringAsFixed(1)
                       : '-',
-                  color: AppColors.amberMedium,
+                  // 평점 데이터 있을 때만 amber, 없으면 neutral
+                  color: user.averageRating > 0 ? AppColors.amberMedium : AppColors.grey500,
+                  bgColor: user.averageRating > 0 ? AppColors.amberMedium.withValues(alpha: 0.1) : AppColors.grey100,
                 ),
               ),
             ],
@@ -767,10 +735,10 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                 child: _buildStatCard(
                   context,
                   icon: Icons.cancel_outlined,
-                  label: '무단결근',
-                  value: '${user.noShowCount}회',
-                  color: user.noShowCount > 0 ? AppColors.error : AppColors.grey400,
-                  bgColor: user.noShowCount > 0 ? AppColors.errorBg : AppColors.grey100,
+                  label: '노쇼(90일)',
+                  value: '${user.recentNoShowCount}회',
+                  color: user.recentNoShowCount > 0 ? AppColors.error : AppColors.grey400,
+                  bgColor: user.recentNoShowCount > 0 ? AppColors.errorBg : AppColors.grey100,
                 ),
               ),
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
@@ -798,52 +766,51 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
   Widget _buildRehireRateBadge(BuildContext context, double rate, int reviewCount) {
     final pct = (rate * 100).round();
     final Color color;
-    final Color bgColor;
     final IconData icon;
     if (rate >= 0.7) {
       color = AppColors.successDark;
-      bgColor = AppColors.successBg;
       icon = Icons.thumb_up_rounded;
     } else if (rate >= 0.4) {
       color = AppColors.warningDark;
-      bgColor = AppColors.warningBg;
       icon = Icons.thumbs_up_down_rounded;
     } else {
       color = AppColors.errorDark;
-      bgColor = AppColors.errorBg;
       icon = Icons.thumb_down_rounded;
     }
 
+    // [PH-WORKER-DETAIL] 재고용 추천률 — metric이므로 full colored bg 대신
+    // neutral surface + subtle border. semantic color는 icon/text에만 적용.
     return Container(
       width: double.infinity,
       padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 14),
-        vertical: ResponsiveHelper.spacing(context, 10),
+        horizontal: ResponsiveHelper.spacing(context, 12),
+        vertical: ResponsiveHelper.spacing(context, 8),
       ),
       decoration: BoxDecoration(
-        color: bgColor,
+        color: AppColors.grey50,
         borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
       ),
       child: Row(
         children: [
-          Icon(icon, size: ResponsiveHelper.iconSize(context, 16), color: color),
-          SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          Icon(icon, size: ResponsiveHelper.iconSize(context, 14), color: color),
+          SizedBox(width: ResponsiveHelper.spacing(context, 6)),
           Text(
             '재고용 추천률',
-            style: ResponsiveHelper.smallStyle(context, color: color),
+            style: ResponsiveHelper.smallStyle(context, color: AppColors.textSecondary),
           ),
           const Spacer(),
           Text(
             '$pct%',
-            style: ResponsiveHelper.subtitleStyle(context).copyWith(
+            style: ResponsiveHelper.bodyStyle(context).copyWith(
               color: color,
               fontWeight: FontWeight.bold,
             ),
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           Text(
-            '(전체 $reviewCount건)',
-            style: ResponsiveHelper.tinyStyle(context, color: color),
+            '($reviewCount건)',
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
           ),
         ],
       ),
@@ -1039,8 +1006,11 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     //   2) documentAccessConsentGiven == true (V3) 또는 idCardConsentGiven == true (legacy)
     //   3) 통장사본 파일이 존재해야 함 (bankbookImagePath OR bankbookImageUrl)
     final app = widget.application;
+    // [4J.0B] CONTRACT_PENDING은 CONFIRMED와 다름 — CF callableGetBankbookSignedUrl이
+    // appStatus !== "CONFIRMED" 시 permission-denied 반환하므로 클라이언트도 동일하게 제한
+    // confirmedStatuses.contains()는 contractPending을 포함하여 UI 버튼이 노출되지만 CF가 차단하는 불일치 수정
     final isConfirmedApp = app != null &&
-        AppStatus.confirmedStatuses.contains(app.status);
+        app.status == AppStatus.confirmed;
     // [V3] 통장사본은 documentAccessConsentGiven 전용 — idCardConsentGiven(legacy)는 신분증 접근만 허용
     // CF callableGetBankbookSignedUrl도 documentAccessConsentGiven만 검증하므로 UI와 일치시킴
     final hasConsent = app != null && app.documentAccessConsentGiven;
@@ -1717,11 +1687,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                        false;
     final primary = Theme.of(context).primaryColor;
 
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: AppColors.border)),
-      ),
+    return AppModalFooter(
       child: Row(
         children: [
           // 닫기 버튼 (항상)
@@ -1800,6 +1766,7 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
           ],
 
           // 리뷰 버튼 (확정자 + businessId 있을 때)
+          // [PH-WORKER-DETAIL] 리뷰 확인/작성은 navigation action — success green이 아닌 brand secondary
           if (isConfirmed && widget.application != null && widget.businessId != null) ...[
             SizedBox(width: ResponsiveHelper.spacing(context, 8)),
             Expanded(
@@ -1808,12 +1775,8 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
                 icon: _hasWrittenReview == true
                     ? Icons.rate_review
                     : Icons.rate_review_outlined,
-                bgColor: _hasWrittenReview == true
-                    ? AppColors.successBg
-                    : primary.withValues(alpha: 0.08),
-                textColor: _hasWrittenReview == true
-                    ? AppColors.successDark
-                    : primary,
+                bgColor: primary.withValues(alpha: 0.08),
+                textColor: primary,
                 onTap: _openReviewDialog,
               ),
             ),

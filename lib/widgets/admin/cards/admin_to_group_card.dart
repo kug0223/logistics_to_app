@@ -48,7 +48,6 @@ import '../../../widgets/dialogs/styled_dialog.dart';
 
 // Local Widgets
 import 'admin_work_detail.dart';
-import 'to_capacity_ring.dart';
 import '../../../screens/common/job_posting_screen.dart';
 import '../../../screens/business_admin/dialogs/work_detail_management_dialog.dart';
 
@@ -123,6 +122,8 @@ class TOGroupCard extends StatefulWidget {
 
 class _TOGroupCardState extends State<TOGroupCard> {
   bool _isExtending = false;
+  /// [4I.1] Close/Reopen/Delete 중복 실행 방어 — 연타 보호
+  bool _isLifecycleActionRunning = false;
 
   // build() 내 O(N) 집계 캐시 — didUpdateWidget에서 갱신
   late List<TOItem> _targetTOs;
@@ -200,6 +201,17 @@ class _TOGroupCardState extends State<TOGroupCard> {
     super.dispose();
   }
 
+  // [4I.1] CF 에러 → 사용자 메시지 변환 헬퍼
+  // FirebaseFunctionsException의 message(서버 반환 문자열)를 우선 사용.
+  // 서버 메시지가 없으면 fallback 사용.
+  String _cfErrorMessage(Object error, {required String fallback}) {
+    if (error is FirebaseFunctionsException) {
+      final msg = error.message;
+      if (msg != null && msg.isNotEmpty) return msg;
+    }
+    return fallback;
+  }
+
   @override
   void didUpdateWidget(TOGroupCard old) {
     super.didUpdateWidget(old);
@@ -218,23 +230,24 @@ class _TOGroupCardState extends State<TOGroupCard> {
         if (mounted) setState(() => _selectedChipDate = null);
       });
     }
-    // 고정공고/단건 단기: 마지막 카드 펼침 시 자동 스크롤
+    // 카드 접힐 때 날짜 칩 선택 초기화 (multiSlot 접힘 지원)
+    if (old.isExpanded && !widget.isExpanded && _selectedChipDate != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _selectedChipDate = null);
+      });
+    }
+    // 마지막 카드 펼침 시 자동 스크롤 (모든 카드 타입)
     if (!old.isExpanded && widget.isExpanded && widget.isLastCard) {
-      final isMultiSlot = widget.displayMode == TOCardDisplayMode.list &&
-          !widget.groupItem.isLongTerm &&
-          widget.groupItem.groupTOs.length > 1;
-      if (!isMultiSlot) {
-        _scrollTimer?.cancel();
-        _scrollTimer = Timer(const Duration(milliseconds: 350), () {
-          if (!mounted) return;
-          final ctx = _expandedBottomKey.currentContext;
-          if (ctx == null) return;
-          // ignore: use_build_context_synchronously
-          Scrollable.ensureVisible(ctx,
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeOut);
-        });
-      }
+      _scrollTimer?.cancel();
+      _scrollTimer = Timer(const Duration(milliseconds: 350), () {
+        if (!mounted) return;
+        final ctx = _expandedBottomKey.currentContext;
+        if (ctx == null) return;
+        // ignore: use_build_context_synchronously
+        Scrollable.ensureVisible(ctx,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut);
+      });
     }
   }
 
@@ -324,10 +337,6 @@ class _TOGroupCardState extends State<TOGroupCard> {
 
     // 이 카드가 활성 상태인지 — 단건 펼침 OR activeGroupKey가 이 카드를 가리킴
     // _selectedChipDate 조건 제거: 접기를 해도 activeGroupKey가 유지되어야 함(버그 3 수정)
-    final isThisGroupActive = widget.isExpanded ||
-        widget.activeGroupKey == widget.groupItem.id;
-    final isDimmed = widget.isAnyExpanded && !isThisGroupActive;
-
     final cardContent = Container(
       margin: EdgeInsets.only(
         bottom: ResponsiveHelper.spacing(context, 4),
@@ -348,8 +357,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
                 ),
               ],
               border: Border.all(
-                color: (isMultiSlot || widget.isExpanded) ? theme.primaryColor : AppColors.grey200,
-                width: (isMultiSlot || widget.isExpanded) ? 1.5 : 1,
+                color: AppColors.grey200,
+                width: 1,
               ),
             ),
             child: Material(
@@ -359,15 +368,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
               // ✨ 헤더 (클릭 가능)
               InkWell(
                 // multiSlot: 비활성(isDimmed)→활성화, 활성→날짜패널 접기
-                onTap: isMultiSlot
-                    ? (isDimmed
-                        ? () => widget.onGroupActivated?.call(widget.groupItem.id)
-                        : () {
-                            if (_selectedChipDate == null) return;
-                            setState(() => _selectedChipDate = null);
-                            widget.onGroupDeactivated?.call();
-                          })
-                    : widget.onToggleExpand,
+                onTap: widget.onToggleExpand,
                 borderRadius: BorderRadius.only(
                   topLeft: Radius.circular(16),
                   topRight: Radius.circular(16),
@@ -508,10 +509,22 @@ class _TOGroupCardState extends State<TOGroupCard> {
                         ],
                       ),
 
-                      // multiSlot: 링 차트 + 통계 (헤더 흰 영역 안)
+                      // multiSlot: 확정/대기/미충원 도트 요약 (collapsed summary)
                       if (isMultiSlot) ...[
-                        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                        _buildMultiSlotRingRow(context),
+                        SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                        Row(
+                          children: [
+                            Flexible(fit: FlexFit.loose, child: _buildDot(context, AppColors.success, '확정 $totalConfirmed')),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                            Flexible(fit: FlexFit.loose, child: _buildDot(context, AppColors.warning, '대기 $totalPending')),
+                            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                            Flexible(
+                              fit: FlexFit.loose,
+                              child: _buildDot(context, AppColors.grey400,
+                                  '미충원 ${(totalRequired - totalConfirmed - totalPending).clamp(0, totalRequired)}'),
+                            ),
+                          ],
+                        ),
                       ],
                       
                       // 고정 공고: 계약기간 + 공고마감 한 줄
@@ -598,31 +611,24 @@ class _TOGroupCardState extends State<TOGroupCard> {
                         _buildStatusBadge(context, allClosed: allClosed, targetTOs: targetTOs),
                       ],
 
-                      // 펼침 힌트 — multiSlot은 항상 표시이므로 불필요
-                      if (!isMultiSlot) ...[
-                        SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-                        Center(
-                          child: Icon(
-                            widget.isExpanded
-                                ? Icons.keyboard_arrow_up
-                                : Icons.keyboard_arrow_down,
-                            size: ResponsiveHelper.iconSize(context, 20),
-                            color: AppColors.grey400,
-                          ),
+                      // 펼침 힌트 — 모든 카드 타입 표시
+                      SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                      Center(
+                        child: Icon(
+                          widget.isExpanded
+                              ? Icons.keyboard_arrow_up
+                              : Icons.keyboard_arrow_down,
+                          size: ResponsiveHelper.iconSize(context, 20),
+                          color: AppColors.grey400,
                         ),
-                      ],
+                      ),
                     ],
                   ),
                 ),
               ),
               
-              // 펼쳐진 영역
-              // multiSlot: 항상 표시 (접힘 없음)
-              // 단건/고정: 기존 AnimatedSize 접힘 유지
-              if (isMultiSlot)
-                _buildMultiSlotSection(context, theme)
-              else
-                AnimatedSize(
+              // 펼쳐진 영역 — 모든 카드 타입 통일 (multiSlot 포함)
+              AnimatedSize(
                   duration: const Duration(milliseconds: 300),
                   curve: Curves.easeInOutCubic,
                   alignment: Alignment.topCenter,
@@ -650,7 +656,16 @@ class _TOGroupCardState extends State<TOGroupCard> {
                                 child: Padding(
                                   padding: ResponsiveHelper.symmetricPadding(
                                       context, horizontal: 12, vertical: 10),
-                                  child: _buildExpandedBodyContent(context, theme),
+                                  child: isMultiSlot
+                                      ? (widget.isGroupLoading
+                                          ? Padding(
+                                              padding: EdgeInsets.all(
+                                                  ResponsiveHelper.spacing(context, 24)),
+                                              child: const LoadingWidget(message: '불러오는 중...'),
+                                            )
+                                          : _buildMultiSlotLayout(
+                                              context, theme, _getFilteredGroupTOs()))
+                                      : _buildExpandedBodyContent(context, theme),
                                 ),
                               ),
                               SizedBox(key: _expandedBottomKey, height: 0),
@@ -683,14 +698,14 @@ class _TOGroupCardState extends State<TOGroupCard> {
       ),
         );
     // [PERF-1] 항상 같은 위젯 타입 유지 — isAnyExpanded 전환 시 RenderObject 재생성 방지.
-    // 이전: isAnyExpanded=false면 cardContent(Container) 반환,
-    //       isAnyExpanded=true면 AnimatedOpacity(AnimatedScale(...)) 반환 → 타입 변경 → 전체 카드 rebuild
-    // 수정: 항상 AnimatedOpacity(AnimatedScale(...)) 래퍼 유지, opacity/scale 값만 변경
+    // Dimming 제거: 모든 카드 정상 opacity 유지.
+    // 이유: 관리자가 펼친 카드 외에도 다른 공고를 동시에 scan해야 함.
+    // Accordion(한 번에 하나만 펼침)은 유지 — opacity 감소만 제거.
     return AnimatedOpacity(
-      opacity: (widget.isAnyExpanded && isDimmed) ? 0.45 : 1.0,
+      opacity: 1.0,
       duration: const Duration(milliseconds: 220),
       child: AnimatedScale(
-        scale: (widget.isAnyExpanded && isDimmed) ? 0.98 : 1.0,
+        scale: 1.0,
         duration: const Duration(milliseconds: 220),
         alignment: Alignment.topCenter,
         child: cardContent,
@@ -755,65 +770,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // 다중 슬롯 레이아웃 — 링 차트 + 날짜 칩 + 당일 패널
+  // 다중 슬롯 레이아웃 — 날짜 칩 + 당일 패널
   // ═══════════════════════════════════════════════════════════════
-
-  /// multiSlot 카드 하단 섹션 — 접힘 없이 항상 표시
-  Widget _buildMultiSlotSection(BuildContext context, ThemeData theme) {
-    if (widget.isGroupLoading) {
-      return Padding(
-        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
-        child: const LoadingWidget(message: '불러오는 중...'),
-      );
-    }
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const Divider(height: 1, color: AppColors.grey200),
-        Container(
-          decoration: const BoxDecoration(
-            color: AppColors.grey50,
-            borderRadius: BorderRadius.only(
-              bottomLeft: Radius.circular(16),
-              bottomRight: Radius.circular(16),
-            ),
-          ),
-          child: Padding(
-            padding: ResponsiveHelper.symmetricPadding(
-                context, horizontal: 12, vertical: 10),
-            child: _buildMultiSlotLayout(context, theme, _getFilteredGroupTOs()),
-          ),
-        ),
-      ],
-    );
-  }
 
   static const _weekdays = ['월', '화', '수', '목', '금', '토', '일'];
   String _weekdayLabel(DateTime d) => _weekdays[d.weekday - 1];
-
-  /// 링 차트 + 확정/대기/미충원 통계 — 카드 헤더(흰 영역) 안에 표시
-  Widget _buildMultiSlotRingRow(BuildContext context) {
-    final c = _totalConfirmed, p = _totalPending, r = _totalRequired;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        TOCapacityRing(confirmed: c, pending: p, total: r),
-        SizedBox(width: ResponsiveHelper.spacing(context, 16)),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildStatRow(context, '확정', c, AppColors.success),
-              SizedBox(height: ResponsiveHelper.spacing(context, 5)),
-              _buildStatRow(context, '대기', p, AppColors.warning),
-              SizedBox(height: ResponsiveHelper.spacing(context, 5)),
-              _buildStatRow(context, '미충원', (r - c - p).clamp(0, r), AppColors.grey400),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
 
   /// 칩 상태 색상 — 마감(회색) / 예약(앰버) / 진행중(primary)
   Color _chipStatusColor(ThemeData theme, TOItem item) {
@@ -822,8 +783,9 @@ class _TOGroupCardState extends State<TOGroupCard> {
     }
     final slotDate = item.slot?.date;
     if (slotDate != null) {
-      final today = DateTime(_buildNow.year, _buildNow.month, _buildNow.day);
-      if (DateTime(slotDate.year, slotDate.month, slotDate.day).isAfter(today)) {
+      // [TZ-FIX] KST calendar date 기준 비교 — device timezone 무관
+      final today = FormatHelper.toKstDate(_buildNow);
+      if (FormatHelper.toKstDate(slotDate).isAfter(today)) {
         return AppColors.warning;
       }
     }
@@ -877,28 +839,6 @@ class _TOGroupCardState extends State<TOGroupCard> {
           child: selected == null
               ? const SizedBox.shrink()
               : _buildDayPanel(context, theme, selected),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildStatRow(BuildContext context, String label, int count, Color color) {
-    return Row(
-      children: [
-        Container(
-          width: 8,
-          height: 8,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-        ),
-        const SizedBox(width: 6),
-        Text(
-          '$label ',
-          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-        ),
-        Text(
-          '$count명',
-          style:
-              ResponsiveHelper.smallStyle(context).copyWith(fontWeight: FontWeight.w700),
         ),
       ],
     );
@@ -1303,7 +1243,32 @@ class _TOGroupCardState extends State<TOGroupCard> {
       masterTO: widget.groupItem.masterTO,
       targetTOs: targetTOs,
     );
-    return SlotStatusBadge(status: status, scheduledAt: scheduledAt);
+
+    // [4I.1] closed 상태일 때 종료 원인에 따라 contextual 레이블 전달
+    //   FULL       → '모집 완료' (인원 충족, 관리자 종료 아님)
+    //   isManualClosed → '종료'  (관리자 직접 종료)
+    //   TIME_EXPIRED   → '지원 마감' (applicationDeadline/근무시간 경과)
+    //   POSTING_EXPIRED→ '공고 만료' (게시기간 경과)
+    //   기타(legacy)   → null → '마감' fallback
+    String? closedLabel;
+    if (status == SlotDisplayStatus.closed) {
+      final to = widget.groupItem.masterTO;
+      if (widget.groupItem.isFull) {
+        closedLabel = '모집 완료';
+      } else if (to.isManualClosed) {
+        closedLabel = '종료';
+      } else if (widget.groupItem.closedReasonCode == 'TIME_EXPIRED') {
+        closedLabel = '지원 마감';
+      } else if (widget.groupItem.closedReasonCode == 'POSTING_EXPIRED') {
+        closedLabel = '공고 만료';
+      }
+    }
+
+    return SlotStatusBadge(
+      status: status,
+      scheduledAt: scheduledAt,
+      closedLabel: closedLabel,
+    );
   }
 
   Widget _buildUrgentBadge(BuildContext context) {
@@ -1352,6 +1317,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
     final isContract = widget.groupItem.masterTO.isContractType;
     final isClosed = widget.groupItem.isClosed;
     final isManualClosed = widget.groupItem.isManualClosed;
+    final isFull = widget.groupItem.isFull; // [4I.1A] FULL guard용
     final up = context.read<UserProvider>();
     final user = up.currentUser;
     final canDelete = user?.isBusinessAdmin == true || user?.isSuperAdmin == true || up.can((p) => p.canManageTo);
@@ -1365,13 +1331,13 @@ class _TOGroupCardState extends State<TOGroupCard> {
           [
             AppMenuSheetItem(
               icon: Icons.visibility,
-              label: '공고 상세보기',
+              label: '지원자 화면 미리보기',
               color: AppColors.info,
               onTap: () => _handleSingleTOMenuAction(context, 'preview'),
             ),
           ],
-        // 수정 (canManageTo)
-        if (canManageTo)
+        // 수정 (canManageTo) — [4H.0B-CLOSED-01] isClosed 시 Edit 숨김 (재오픈 후 수정)
+        if (canManageTo && !isClosed)
           [
             AppMenuSheetItem(
               icon: isContract ? Icons.edit : Icons.edit_calendar,
@@ -1380,39 +1346,77 @@ class _TOGroupCardState extends State<TOGroupCard> {
               onTap: () => _handleSingleTOMenuAction(context, isContract ? 'edit' : 'batchEdit'),
             ),
           ],
-        // 마감 / 재오픈 (canManageTo)
-        // [REG-UI02-01] isContract=true && isClosed=true && !isManualClosed 케이스에서 빈 itemGroup 방지
-        if (canManageTo && (isClosed ? (!isContract || isManualClosed) : true))
-          [
-            if (isClosed) ...[
-              if (isContract && isManualClosed)
+        // [4I.1] 마감 / 재오픈 — lifecycle semantics 기반 정확한 분기
+        // CONTRACT
+        //   !isClosed → 공고 종료
+        //   isManualClosed=true → 공고 재오픈 (callableUpdateTO)
+        //   TIME_EXPIRED/POSTING_EXPIRED → 재오픈 HIDE (badge로 상태 전달)
+        // FLEX
+        //   !isClosed → 일괄 종료
+        //   isManualClosed=true(TO level) → 공고 재오픈 (callableUpdateTO)
+        //   !isManualClosed && hasReopenableManualSlots → 종료한 날짜 재오픈 (callableReopenSlots)
+        //   FULL / TIME_EXPIRED / eligible slots 없음 → HIDE
+        if (canManageTo) ...[
+          if (isContract) ...[
+            if (!isClosed)
+              [
+                AppMenuSheetItem(
+                  icon: Icons.lock_outline,
+                  label: '공고 종료',
+                  color: AppColors.warning,
+                  onTap: () => _handleSingleTOMenuAction(context, 'close'),
+                ),
+              ],
+            if (isClosed && isManualClosed)
+              [
                 AppMenuSheetItem(
                   icon: Icons.lock_open,
-                  label: '재오픈',
+                  label: '공고 재오픈',
                   color: AppColors.success,
                   onTap: () => _handleSingleTOMenuAction(context, 'reopen'),
                 ),
-              if (!isContract)
+              ],
+            // CONTRACT TIME_EXPIRED / POSTING_EXPIRED: 재오픈 HIDE (연장하기 버튼 별도 존재)
+          ] else ...[
+            // FLEX
+            if (!isClosed)
+              [
+                AppMenuSheetItem(
+                  icon: Icons.lock_outline,
+                  label: '일괄 종료',
+                  color: AppColors.warning,
+                  onTap: () => _handleSingleTOMenuAction(context, 'batchClose'),
+                ),
+              ],
+            if (isClosed && isManualClosed)
+              [
                 AppMenuSheetItem(
                   icon: Icons.lock_open,
-                  label: '일괄재오픈',
+                  label: '공고 재오픈',
+                  color: AppColors.success,
+                  onTap: () => _handleSingleTOMenuAction(context, 'reopen'),
+                ),
+              ],
+            // FLEX: slot 수동 종료된 eligible date 존재 시에만 표시
+            // [4I.1A] FULL guard 추가 — FULL 상태에서는 서버가 차단하므로 메뉴도 숨김
+            if (isClosed && !isManualClosed && !isFull &&
+                widget.groupItem.hasReopenableManualSlots)
+              [
+                AppMenuSheetItem(
+                  icon: Icons.lock_open,
+                  label: '종료한 날짜 재오픈',
                   color: AppColors.success,
                   onTap: () => _handleSingleTOMenuAction(context, 'batchReopen'),
                 ),
-            ] else ...[
-              AppMenuSheetItem(
-                icon: Icons.lock_outline,
-                label: isContract ? '마감' : '일괄마감',
-                color: AppColors.warning,
-                onTap: () => _handleSingleTOMenuAction(context, isContract ? 'close' : 'batchClose'),
-              ),
-            ],
+              ],
+            // FULL / TIME_EXPIRED / eligible 없음: 재오픈 HIDE
           ],
+        ],
         if (canManageTo)
           [
             AppMenuSheetItem(
               icon: Icons.drive_file_rename_outline,
-              label: '카드 제목 변경',
+              label: '관리용 카드명 변경',
               color: AppColors.purple,
               onTap: () => _handleSingleTOMenuAction(context, 'renameCard'),
             ),
@@ -1422,7 +1426,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           [
             AppMenuSheetItem(
               icon: Icons.person_add_outlined,
-              label: '근로자 초대',
+              label: '인력 초대',
               color: AppColors.success,
               onTap: () => _showInviteWorkerDialog(context),
             ),
@@ -1467,12 +1471,13 @@ class _TOGroupCardState extends State<TOGroupCard> {
           [
             AppMenuSheetItem(
               icon: Icons.visibility,
-              label: '공고 상세보기',
+              label: '지원자 화면 미리보기',
               color: AppColors.info,
               onTap: () => _handleSingleTOMenuAction(context, 'preview'),
             ),
           ],
-          if (canManageTo)
+          // [4H.0B-CLOSED-02] 캘린더 뷰 contract TO — isClosed 시 수정 숨김 (재오픈 후 수정)
+          if (canManageTo && !isClosed)
             [
               AppMenuSheetItem(
                 icon: Icons.edit,
@@ -1494,7 +1499,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
               else if (!isClosed)
                 AppMenuSheetItem(
                   icon: Icons.lock_outline,
-                  label: '마감',
+                  label: '공고 종료',
                   color: AppColors.warning,
                   onTap: () => _handleSingleTOMenuAction(context, 'close'),
                 ),
@@ -1503,7 +1508,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
             [
               AppMenuSheetItem(
                 icon: Icons.person_add_outlined,
-                label: '근로자 초대',
+                label: '인력 초대',
                 color: AppColors.success,
                 onTap: () => _showInviteWorkerDialog(context),
               ),
@@ -1534,7 +1539,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           [
             AppMenuSheetItem(
               icon: Icons.visibility,
-              label: '공고 상세보기',
+              label: '지원자 화면 미리보기',
               color: AppColors.info,
               onTap: () => _handleSingleTOMenuAction(context, 'preview'),
             ),
@@ -1560,7 +1565,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
             [
               AppMenuSheetItem(
                 icon: Icons.person_add_outlined,
-                label: '근로자 초대',
+                label: '인력 초대',
                 color: AppColors.success,
                 onTap: () => _showInviteWorkerDialog(context),
               ),
@@ -1585,7 +1590,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
     }
   }
 
-  /// 근로자 초대 다이얼로그
+  /// 인력 초대 다이얼로그 (일반 모드 — TO 카드 메뉴 진입)
   void _showInviteWorkerDialog(BuildContext context) {
     final masterTO = widget.groupItem.masterTO;
     showDialog(
@@ -1626,6 +1631,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           if (workDetails.isEmpty && calSlot.needsWorkDetailLoad) {
             // 이 mounted 체크는 첫 await 이전이라 비동기 갭 보호 효과 없음 — 실질 보호는 1077/1081/1083행
             if (!mounted) return;
+            final rootNav = Navigator.of(context, rootNavigator: true);
             showDialog(context: this.context, barrierDismissible: false,
                 builder: (_) => const Center(child: LoadingWidget()));
             try {
@@ -1637,13 +1643,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
                 result['workStats'] as Map<String, Map<String, int>>,
               );
             } catch (e) {
-              if (mounted) {
-                Navigator.pop(this.context);
-                ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
-              }
+              if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
               return;
+            } finally {
+              if (rootNav.mounted && rootNav.canPop()) rootNav.pop();
             }
-            if (mounted) Navigator.pop(this.context);
           }
           if (!mounted) return;
           final resolvedStats = calSlot.resolveStats();
@@ -1680,9 +1684,15 @@ class _TOGroupCardState extends State<TOGroupCard> {
 
       case 'edit':
         if (widget.calendarSlot != null) {
+          // [4H.0C-CLOSED-03] 슬롯 레벨 마감 체크 — TO 레벨 가드는 1301줄에서 처리됨
+          if (widget.calendarSlot!.slot?.isClosed == true) {
+            ToastHelper.showError('종료된 날짜는 수정할 수 없습니다. 먼저 재오픈해주세요.');
+            return;
+          }
           // 캘린더 단기 슬롯: 슬롯 단위 수정
           await NavigationHelper.push<bool>(
             context,
+            useRootNavigator: true,
             destination: AdminEditTOScreen(to: masterTO, slot: widget.calendarSlot!.slot),
             onReturn: (result) {
               if (result == true && mounted) {
@@ -1694,6 +1704,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
         } else {
           await NavigationHelper.push<bool>(
             context,
+            useRootNavigator: true,
             destination: AdminEditTOScreen(to: masterTO),
             onReturn: (result) {
               if (result == true && mounted) {
@@ -1712,10 +1723,12 @@ class _TOGroupCardState extends State<TOGroupCard> {
           firestoreService: widget.firestoreService,
           title: '일괄수정 날짜 선택',
           confirmLabel: '수정',
+          openOnly: true, // [4H.0C-CLOSED-02] 마감된 슬롯 선택 방지
         );
         if (editSlots == null || editSlots.isEmpty || !mounted) return;
         await NavigationHelper.push<bool>(
           this.context,
+          useRootNavigator: true,
           destination: AdminEditTOScreen(to: masterTO, batchSlots: editSlots),
           onReturn: (result) {
             if (result == true && mounted) {
@@ -1727,14 +1740,16 @@ class _TOGroupCardState extends State<TOGroupCard> {
         break;
 
       case 'batchClose':
+        // [4I.1] 로딩 guard — 연타 방지
+        if (_isLifecycleActionRunning) return;
         // uid는 await 이전에 캡처 (async gap 후 context 접근 방지)
         final closeUid = context.read<UserProvider>().currentUser?.uid ?? 'UNKNOWN';
         final closeSlots = await SlotBatchSelectDialog.show(
           context: context,
           to: masterTO,
           firestoreService: widget.firestoreService,
-          title: '일괄마감 날짜 선택',
-          confirmLabel: '마감',
+          title: '종료할 날짜 선택',
+          confirmLabel: '종료',
           openOnly: true,
         );
         if (closeSlots == null || closeSlots.isEmpty || !mounted) return;
@@ -1742,16 +1757,21 @@ class _TOGroupCardState extends State<TOGroupCard> {
           context: this.context,
           barrierDismissible: false,
           builder: (dialogCtx) => StyledDialog(
-            title: '일괄 마감',
-            subtitle: '선택한 ${closeSlots.length}개 날짜를 마감하시겠습니까?',
+            title: '날짜 종료',
+            subtitle: '선택한 ${closeSlots.length}개 날짜를 종료할까요?',
             icon: Icons.lock_outline,
             headerColor: AppColors.warning,
-            content: const SizedBox.shrink(),
+            // [4I.1] PENDING 거절 영향 명시 + 재오픈 가능 안내
+            content: StyledDialogInfoCard.warning(
+              '종료한 날짜는 신규 지원을 받지 않으며, 대기 중인 지원자는 거절 처리됩니다.\n'
+              '확정된 근무 기록은 유지됩니다.\n\n'
+              '근무 전 날짜는 종료 후 다시 열 수 있습니다.',
+            ),
             actions: [
               StyledDialogButton.cancel(
                   onPressed: () => Navigator.pop(dialogCtx, false)),
               StyledDialogButton.primary(
-                text: '마감',
+                text: '종료',
                 backgroundColor: AppColors.warning,
                 onPressed: () => Navigator.pop(dialogCtx, true),
               ),
@@ -1759,6 +1779,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           ),
         );
         if (confirmed != true || !mounted) return;
+        setState(() => _isLifecycleActionRunning = true);
         try {
           await widget.firestoreService.batchCloseSlots(
             toId: masterTO.id,
@@ -1769,20 +1790,28 @@ class _TOGroupCardState extends State<TOGroupCard> {
           widget.firestoreService.clearCache(toId: masterTO.id);
           if (mounted) {
             widget.onChanged();
-            ToastHelper.showSuccess('${closeSlots.length}개 날짜가 마감되었습니다');
+            ToastHelper.showSuccess('${closeSlots.length}개 날짜가 종료되었습니다');
           }
         } catch (e) {
-          if (mounted) ToastHelper.showError('마감 처리에 실패했습니다');
+          if (mounted) {
+            final msg = _cfErrorMessage(e, fallback: '종료 처리에 실패했습니다');
+            ToastHelper.showError(msg);
+          }
+        } finally {
+          if (mounted) setState(() => _isLifecycleActionRunning = false);
         }
         break;
 
       case 'batchReopen':
+        // [4I.1] 로딩 guard — 연타 방지
+        if (_isLifecycleActionRunning) return;
         final reopenSlots = await SlotBatchSelectDialog.show(
           context: context,
           to: masterTO,
           firestoreService: widget.firestoreService,
-          title: '일괄재오픈 날짜 선택',
-          confirmLabel: '재오픈',
+          // [4I.1] "종료한 날짜 재오픈" copy
+          title: '다시 열 날짜 선택',
+          confirmLabel: '다시 열기',
           closedAndReopenable: true,
         );
         if (reopenSlots == null || reopenSlots.isEmpty || !mounted) return;
@@ -1790,24 +1819,29 @@ class _TOGroupCardState extends State<TOGroupCard> {
           context: this.context,
           barrierDismissible: false,
           builder: (dialogCtx) => StyledDialog(
-            title: '일괄 재오픈',
-            subtitle: '선택한 ${reopenSlots.length}개 날짜를 재오픈하시겠습니까?',
+            // [4I.1] 제목/설명 copy 업데이트
+            title: '날짜 다시 열기',
+            subtitle: '종료한 ${reopenSlots.length}개 날짜를 다시 열까요?',
             icon: Icons.lock_open,
             headerColor: AppColors.success,
-            content: const SizedBox.shrink(),
+            content: StyledDialogInfoCard.info(
+              '선택한 날짜가 모집 중으로 전환됩니다.\n'
+              '이미 거절된 지원자는 재지원이 필요합니다.',
+            ),
             actions: [
               StyledDialogButton.cancel(
                   onPressed: () => Navigator.pop(dialogCtx, false)),
               StyledDialogButton.primary(
-                text: '재오픈',
+                text: '다시 열기',
                 onPressed: () => Navigator.pop(dialogCtx, true),
               ),
             ],
           ),
         );
         if (reopenConfirmed != true || !mounted) return;
+        setState(() => _isLifecycleActionRunning = true);
         try {
-          await widget.firestoreService.batchReopenSlots(
+          final result = await widget.firestoreService.batchReopenSlots(
             toId: masterTO.id,
             slotIds: reopenSlots.map((s) => s.id).toList(),
             businessId: masterTO.businessId,
@@ -1815,14 +1849,33 @@ class _TOGroupCardState extends State<TOGroupCard> {
           widget.firestoreService.clearCache(toId: masterTO.id);
           if (mounted) {
             widget.onChanged();
-            ToastHelper.showSuccess('${reopenSlots.length}개 날짜가 재오픈되었습니다');
+            // [4I.1] Partial success UX — CF 응답 reopenedCount 비교
+            final requestedCount = reopenSlots.length;
+            final reopenedCount =
+                result.containsKey('reopenedCount')
+                    ? (result['reopenedCount'] as int? ?? requestedCount)
+                    : requestedCount;
+            if (reopenedCount < requestedCount) {
+              ToastHelper.showWarning(
+                '$requestedCount개 중 $reopenedCount개 날짜를 다시 열었습니다.',
+              );
+            } else {
+              ToastHelper.showSuccess('$reopenedCount개 날짜를 다시 열었습니다.');
+            }
           }
         } catch (e) {
-          if (mounted) ToastHelper.showError('재오픈 처리에 실패했습니다');
+          if (mounted) {
+            final msg = _cfErrorMessage(e, fallback: '날짜 재오픈에 실패했습니다');
+            ToastHelper.showError(msg);
+          }
+        } finally {
+          if (mounted) setState(() => _isLifecycleActionRunning = false);
         }
         break;
 
       case 'batchDelete':
+        // [4I.1] 로딩 guard — 연타 방지
+        if (_isLifecycleActionRunning) return;
         final deleteSlots = await SlotBatchSelectDialog.show(
           context: context,
           to: masterTO,
@@ -1859,6 +1912,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
           ),
         );
         if (deleteConfirmed != true || !mounted) return;
+        setState(() => _isLifecycleActionRunning = true);
         try {
           await widget.firestoreService.batchDeleteSlots(
             toId: masterTO.id,
@@ -1881,7 +1935,12 @@ class _TOGroupCardState extends State<TOGroupCard> {
             }
           }
         } catch (e) {
-          if (mounted) ToastHelper.showError('삭제 처리에 실패했습니다');
+          if (mounted) {
+            final msg = _cfErrorMessage(e, fallback: '삭제 처리에 실패했습니다');
+            ToastHelper.showError(msg);
+          }
+        } finally {
+          if (mounted) setState(() => _isLifecycleActionRunning = false);
         }
         break;
 
@@ -1918,8 +1977,8 @@ class _TOGroupCardState extends State<TOGroupCard> {
           context: this.context,
           barrierDismissible: false,
           builder: (ctx) => StyledDialog(
-            title: '카드 제목 변경',
-            subtitle: '공고 카드에 표시될 제목을 설정합니다',
+            title: '관리용 카드명 변경',
+            subtitle: '공고 카드에 표시될 관리용 이름을 설정합니다',
             icon: Icons.drive_file_rename_outline,
             headerColor: AppColors.purple,
             content: StyledDialogTextField(
@@ -1969,6 +2028,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
         final toItemForManage = _getSingleTOItem();
         if (!toItemForManage.isWorkDetailLoaded || toItemForManage.workDetails.isEmpty) {
           if (!mounted) return;
+          final rootNav = Navigator.of(context, rootNavigator: true);
           showDialog(context: this.context, barrierDismissible: false,
               builder: (_) => const Center(child: LoadingWidget()));
           try {
@@ -1985,13 +2045,11 @@ class _TOGroupCardState extends State<TOGroupCard> {
               result['workStats'] as Map<String, Map<String, int>>,
             );
           } catch (e) {
-            if (mounted) {
-              Navigator.pop(this.context);
-              ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
-            }
+            if (mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
             return;
+          } finally {
+            if (rootNav.mounted && rootNav.canPop()) rootNav.pop();
           }
-          if (mounted) Navigator.pop(this.context);
         }
         if (!mounted) return;
         WorkDetailManagementDialog(
@@ -2168,7 +2226,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                 size: ResponsiveHelper.iconSize(context, 13),
                 color: isPast ? AppColors.grey500 : AppColors.warningDark),
             SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-            Text('공고마감 $expiry',
+            Text('지원 마감 $expiry',
                 style: ResponsiveHelper.smallStyle(context,
                     color: isPast ? AppColors.grey500 : AppColors.warningDark)),
           ],

@@ -16,7 +16,7 @@ class TooltipService {
   static const String firstCheckIn = 'first_check_in';            // 첫 출근
   static const String firstReview = 'first_review';               // 첫 리뷰 작성
   static const String firstToCreate = 'first_to_create';          // 첫 TO 등록
-  static const String trustScoreInfo = 'trust_score_info';        // 신뢰도 설명
+  // [5A.2B] trustScoreInfo 제거 — trustScore 시스템 폐기
   static const String scheduleChange = 'schedule_change';         // 일정 변경 요청
 
   /// 툴팁이 이미 표시되었는지 확인

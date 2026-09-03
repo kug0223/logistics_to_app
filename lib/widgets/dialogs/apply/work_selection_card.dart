@@ -89,8 +89,8 @@ class WorkSelectionCard extends StatelessWidget {
     if (deadline == null) return null;
     final timeStr = FormatHelper.formatTime(deadline);
     if (slotDate case final slotDate?) {
-      final deadlineDay = DateTime(deadline.year, deadline.month, deadline.day);
-      final workDay = DateTime(slotDate.year, slotDate.month, slotDate.day);
+      final deadlineDay = FormatHelper.toKstDate(deadline);
+      final workDay = FormatHelper.toKstDate(slotDate);
       if (deadlineDay.isBefore(workDay)) return '전날 $timeStr까지';
     }
     return '마감 $timeStr';
@@ -432,7 +432,7 @@ class WorkSelectionCard extends StatelessWidget {
         if (_isClosed) {
           return _buildSmallButton(context, '마감', AppColors.grey400, null, icon: Icons.block);
         }
-        return _buildSmallButton(context, '지원', AppColors.success, onApply, icon: Icons.send);
+        return _buildSmallButton(context, '지원', AppColors.infoDark, onApply, icon: Icons.send);
         
       case WorkApplicationStatus.pending:
         return _buildSmallButton(context, '취소', AppColors.grey500, onCancelApplication, icon: Icons.close);
@@ -540,8 +540,8 @@ class WorkSelectionCard extends StatelessWidget {
     if (!isLongTerm && workDetail.isTimeExpired) return true;
     if (!isLongTerm && slotDate != null) {
       final now = DateTime.now();
-      return DateTime(slotDate!.year, slotDate!.month, slotDate!.day)
-          .isBefore(DateTime(now.year, now.month, now.day));
+      return FormatHelper.toKstDate(slotDate!)
+          .isBefore(FormatHelper.toKstDate(now));
     }
     return false;
   }

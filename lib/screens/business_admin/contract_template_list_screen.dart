@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../../models/core/contract_template_model.dart';
+import '../../providers/user_provider.dart';
 import '../../services/contract_template_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
@@ -38,6 +40,14 @@ class _ContractTemplateListScreenState
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      // [AUTHZ.2] SUB_ADMIN canManageContract 진입 가드
+      // Settings/Home의 메뉴 미노출 철학 동일 — 어떤 경로로 진입해도 권한 없으면 차단
+      final up = context.read<UserProvider>();
+      if (up.isSubAdmin && !up.can((p) => p.canManageContract)) {
+        ToastHelper.showWarning('계약서 관리 권한이 없습니다');
+        Navigator.pop(context);
+        return;
+      }
       _load();
     });
   }

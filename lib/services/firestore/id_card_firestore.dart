@@ -89,54 +89,30 @@ extension IdCardFirestore on FirestoreService {
   }
 
   /// 신분증 열람 요청 승인
+  /// [F-10-3 FIX CF-MIGRATED] callableRespondIdCardAccessRequest CF 이전
+  ///   · expiresAt = DateTime.now() 클라이언트 위조 가능 → 서버 타임스탬프 기반으로 교체
+  ///   · 타인 데이터 직접 쓰기 / 법적 타임스탬프 → Trust Boundary 위반 해소
   Future<bool> approveIdCardAccessRequest(String requestId) async {
     try {
       debugPrint('✅ [approveIdCardAccessRequest] 승인: $requestId');
 
-      final docRef = _firestore.collection('idCardAccessRequests').doc(requestId);
-      Map<String, dynamic>? requestData;
-
-      // 관리자 2명이 동시에 승인 버튼을 탭하면 get→update 사이에 두 번째 get이
-      // 끼어들어 알림 2건 발송 + expiresAt 충돌이 발생할 수 있음.
-      // 트랜잭션으로 처리: pending 상태일 때만 approved로 전환 (이미 처리된 경우 false 반환).
-      final wasApproved = await _firestore.runTransaction<bool>((tx) async {
-        final doc = await tx.get(docRef);
-        if (!doc.exists) return false;
-        if (doc.data()?['status'] != 'pending') return false;
-
-        final expiresAt = DateTime.now().add(const Duration(days: 7));
-        tx.update(docRef, {
-          'status': 'approved',
-          'respondedAt': FieldValue.serverTimestamp(),
-          'expiresAt': Timestamp.fromDate(expiresAt),
-        });
-        requestData = Map.from(doc.data()!);
-        return true;
+      final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableRespondIdCardAccessRequest',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
+          .call<Map<String, dynamic>>({
+        'requestId': requestId,
+        'action': 'approve',
       });
 
-      if (!wasApproved || requestData == null) {
+      final success = result.data['success'] as bool? ?? false;
+      final alreadyHandled = result.data['alreadyHandled'] as bool? ?? false;
+
+      if (alreadyHandled) {
         debugPrint('⚠️ [approveIdCardAccessRequest] 이미 처리된 요청이거나 찾을 수 없습니다');
         return false;
       }
-
-      // 트랜잭션 성공 후 알림 — 실패해도 승인 결과에 영향 없음
-      try {
-        await createNotification(
-          NotificationModel.createIdCardAccessApproved(
-            userId: requestData!['requesterId'],
-            targetUserName: requestData!['targetUserName'],
-            // requesterBusinessId는 createIdCardAccessRequest(line 67)에서 항상 저장 — '' 폴백 실제 발생 가능성 없음
-            businessId: requestData!['requesterBusinessId'] as String? ?? '',
-            requestId: requestId,
-            workerId: requestData!['targetUserId'] as String? ?? '',
-          ),
-        );
-      } catch (e) {
-        debugPrint('⚠️ [approveIdCardAccessRequest] 알림 생성 실패: $e');
-      }
-
       debugPrint('✅ [approveIdCardAccessRequest] 승인 완료');
-      return true;
+      return success;
     } catch (e) {
       debugPrint('❌ [approveIdCardAccessRequest] 실패: $e');
       return false;
@@ -144,53 +120,29 @@ extension IdCardFirestore on FirestoreService {
   }
 
   /// 신분증 열람 요청 거절
+  /// [F-10-3 FIX CF-MIGRATED] callableRespondIdCardAccessRequest CF 이전
   Future<bool> rejectIdCardAccessRequest(String requestId, {String? reason}) async {
     try {
       debugPrint('❌ [rejectIdCardAccessRequest] 거절: $requestId');
 
-      final docRef = _firestore.collection('idCardAccessRequests').doc(requestId);
-      Map<String, dynamic>? requestData;
-
-      // approveIdCardAccessRequest와 동일하게 트랜잭션 적용 — 근무자가
-      // 실수로 두 번 탭하면 중복 알림이 발송될 수 있으므로 pending 상태일 때만 처리.
-      final wasRejected = await _firestore.runTransaction<bool>((tx) async {
-        final doc = await tx.get(docRef);
-        if (!doc.exists) return false;
-        if (doc.data()?['status'] != 'pending') return false;
-
-        tx.update(docRef, {
-          'status': 'rejected',
-          'respondedAt': FieldValue.serverTimestamp(),
-          'rejectionReason': reason,
-        });
-        requestData = Map.from(doc.data()!);
-        return true;
+      final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableRespondIdCardAccessRequest',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
+          .call<Map<String, dynamic>>({
+        'requestId': requestId,
+        'action': 'reject',
+        if (reason != null) 'rejectionReason': reason,
       });
 
-      if (!wasRejected || requestData == null) {
+      final success = result.data['success'] as bool? ?? false;
+      final alreadyHandled = result.data['alreadyHandled'] as bool? ?? false;
+
+      if (alreadyHandled) {
         debugPrint('⚠️ [rejectIdCardAccessRequest] 이미 처리된 요청이거나 찾을 수 없습니다');
         return false;
       }
-
-      // 트랜잭션 성공 후 알림 — 실패해도 거절 결과에 영향 없음
-      try {
-        await createNotification(
-          NotificationModel.createIdCardAccessRejected(
-            userId: requestData!['requesterId'],
-            targetUserName: requestData!['targetUserName'],
-            // requesterBusinessId는 createIdCardAccessRequest(line 67)에서 항상 저장 — '' 폴백 실제 발생 가능성 없음
-            businessId: requestData!['requesterBusinessId'] as String? ?? '',
-            requestId: requestId,
-            workerId: requestData!['targetUserId'] as String? ?? '',
-            rejectionReason: reason,
-          ),
-        );
-      } catch (e) {
-        debugPrint('⚠️ [rejectIdCardAccessRequest] 알림 생성 실패: $e');
-      }
-
       debugPrint('✅ [rejectIdCardAccessRequest] 거절 완료');
-      return true;
+      return success;
     } catch (e) {
       debugPrint('❌ [rejectIdCardAccessRequest] 실패: $e');
       return false;

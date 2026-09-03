@@ -36,22 +36,43 @@ class TOListDialogs {
     final confirmedCount = checkResult['confirmedCount'] as int;
     final totalCount = checkResult['totalCount'] as int;
 
-    String content = '다음 TO를 삭제하시겠습니까?\n\n📋 ${to.title}';
-
+    // [4I.1A] delete dialog copy 개선 — StyledDialog 패턴, 정확한 semantics
+    // 삭제: Firestore 문서 제거(되돌릴 수 없음), 계약/근무 기록 유지, 지원서 자동 취소
+    String bodyText =
+        '삭제한 공고는 목록에서 제거되며 되돌릴 수 없습니다.\n'
+        '이미 생성된 계약·근무 기록은 유지됩니다.';
     if (hasApplicants) {
-      content += '\n\n👤 지원자: $totalCount명 (확정 $confirmedCount명)';
       if (confirmedCount > 0) {
-        content += '\n⚠️ 확정된 근무자가 있습니다!\n삭제 시 모든 지원서가 자동 취소되고 알림이 발송됩니다.';
+        bodyText += '\n\n확정 근무자 $confirmedCount명 포함, 총 $totalCount명의 지원서가 자동 취소됩니다.';
       } else {
-        content += '\n삭제 시 모든 지원서가 자동 취소됩니다.';
+        bodyText += '\n\n대기 중인 지원서 $totalCount건이 자동 취소됩니다.';
       }
     }
 
     if (!context.mounted) return;
-    final confirmed = await DialogHelper.showDeleteConfirm(
-      context,
-      itemName: '공고',
-      additionalMessage: content,
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) => StyledDialog(
+        title: '공고 삭제',
+        subtitle: to.title,
+        icon: Icons.delete_forever,
+        headerColor: AppColors.error,
+        content: StyledDialogInfoCard(
+          message: bodyText,
+          icon: confirmedCount > 0 ? Icons.warning_amber : Icons.info_outline,
+          color: confirmedCount > 0 ? AppColors.warning : AppColors.info,
+        ),
+        actions: [
+          StyledDialogButton.cancel(
+            onPressed: () => Navigator.pop(dialogCtx, false),
+          ),
+          StyledDialogButton.danger(
+            text: '삭제',
+            onPressed: () => Navigator.pop(dialogCtx, true),
+          ),
+        ],
+      ),
     );
 
     if (confirmed == true) {
@@ -81,74 +102,55 @@ class TOListDialogs {
       return;
     }
 
-    final confirmed = await DialogHelper.showCustom<bool>(
-      context,
-      title: '공고 마감',
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('이 공고를 마감 처리하시겠습니까?'),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
-          Container(
-            padding: ResponsiveHelper.cardPadding(context),  // ⭐ 변경
-            decoration: BoxDecoration(
-              color: AppColors.warningBg,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '• 더 이상 지원을 받을 수 없습니다', 
-                  style: ResponsiveHelper.smallStyle(context),  // ⭐ 변경
-                ),
-                Text(
-                  '• 재오픈으로 다시 활성화 가능합니다', 
-                  style: ResponsiveHelper.smallStyle(context),  // ⭐ 변경
-                ),
-              ],
-            ),
+    // [4I.1] StyledDialog 패턴으로 전환, copy 업데이트
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) => StyledDialog(
+        title: '공고 종료',
+        subtitle: '이 공고를 종료할까요?',
+        icon: Icons.lock_outline,
+        headerColor: AppColors.warning,
+        content: StyledDialogInfoCard.warning(
+          '신규 지원을 받지 않습니다.\n'
+          '기존 지원자는 그대로 유지되며, 확정된 근무 일정은 변경되지 않습니다.\n\n'
+          '재오픈으로 언제든 다시 활성화할 수 있습니다.',
+        ),
+        actions: [
+          StyledDialogButton.cancel(
+            onPressed: () => Navigator.pop(dialogCtx, false),
+          ),
+          StyledDialogButton.primary(
+            text: '종료',
+            backgroundColor: AppColors.warning,
+            onPressed: () => Navigator.pop(dialogCtx, true),
           ),
         ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, false),
-          child: const Text('취소'),
-        ),
-        ElevatedButton(
-          onPressed: () => Navigator.pop(context, true),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.warning,
-            foregroundColor: Colors.white,
-          ),
-          child: const Text('마감'),
-        ),
-      ],
     );
 
     if (confirmed != true) return;
     if (!context.mounted) return;
+    final rootNav = Navigator.of(context, rootNavigator: true);
 
     DialogHelper.showLoading(context, message: '처리 중...');
 
+    bool? success;
     try {
-      final success = await firestoreService.closeTOManually(to.id, adminUID);
-
-      if (!context.mounted) return;
-      Navigator.pop(context); // 로딩 닫기
-
-      if (success) {
-        ToastHelper.showSuccess('공고가 마감되었습니다.');
-        onChanged();
-      } else {
-        ToastHelper.showError('공고 마감에 실패했습니다.');
-      }
+      success = await firestoreService.closeTOManually(to.id, adminUID);
     } catch (e) {
-      if (context.mounted) Navigator.pop(context);
       debugPrint('❌ TO 마감 실패: $e');
-      if (context.mounted) ToastHelper.showError('공고 마감 중 오류가 발생했습니다.');
+      if (context.mounted) ToastHelper.showError('공고 종료 중 오류가 발생했습니다.');
+    } finally {
+      if (rootNav.mounted && rootNav.canPop()) rootNav.pop();
+    }
+
+    if (success == null) return;
+    if (success) {
+      ToastHelper.showSuccess('공고가 종료되었습니다.');
+      onChanged();
+    } else {
+      ToastHelper.showError('공고 종료에 실패했습니다.');
     }
   }
 
@@ -204,25 +206,26 @@ class TOListDialogs {
 
     if (confirmed != true) return;
     if (!context.mounted) return;
+    final rootNav = Navigator.of(context, rootNavigator: true);
 
     DialogHelper.showLoading(context, message: '재오픈 중...');
 
+    bool? success;
     try {
-      final success = await firestoreService.reopenTO(to.id, adminUID);
-
-      if (!context.mounted) return;
-      Navigator.pop(context);
-
-      if (success) {
-        ToastHelper.showSuccess('공고가 재오픈되었습니다.');
-        onChanged();
-      } else {
-        ToastHelper.showError('공고 재오픈에 실패했습니다.');
-      }
+      success = await firestoreService.reopenTO(to.id, adminUID);
     } catch (e) {
-      if (context.mounted) Navigator.pop(context);
       debugPrint('❌ TO 재오픈 실패: $e');
       if (context.mounted) ToastHelper.showError('공고 재오픈 중 오류가 발생했습니다.');
+    } finally {
+      if (rootNav.mounted && rootNav.canPop()) rootNav.pop();
+    }
+
+    if (success == null) return;
+    if (success) {
+      ToastHelper.showSuccess('공고가 재오픈되었습니다.');
+      onChanged();
+    } else {
+      ToastHelper.showError('공고 재오픈에 실패했습니다.');
     }
   }
 

@@ -241,22 +241,37 @@ class AppColors {
   /// 비활성 배경
   static const Color disabledBackground = grey100;
   
-  // --- 텍스트 ---
-  
-  /// 기본 텍스트 (제목, 본문)
-  static const Color textPrimary = grey900;
-  
-  /// 보조 텍스트 (설명, 부제목)
-  static const Color textSecondary = grey600;
-  
-  /// 힌트 텍스트 (placeholder)
-  static const Color textHint = grey400;
-  
-  /// 비활성 텍스트
-  static const Color textDisabled = grey500;
-  
+  // --- 텍스트 (4단계 위계) ---
+  //
+  //  textPrimary   #212121  화면 제목, 섹션 제목, 공고 제목, 중요 숫자, 급여
+  //  textSecondary #616161  날짜, 시간, 사업장명, 지역, 사용자가 반드시 읽어야 하는 보조정보
+  //  textTertiary  #8A8A8A  상태 라벨, 통계 라벨, 부가 설명, 중요도 낮은 안내문
+  //  textDisabled  #BDBDBD  선택 불가 날짜, 비활성화 버튼, disabled 요소
+  //
+  // ⚠️ 일반 보조정보(날짜·지역·시간)에 textDisabled 사용 금지 → textSecondary 사용
+
+  /// 기본 텍스트 (제목, 핵심 숫자, 급여)
+  static const Color textPrimary = grey900;            // #212121
+
+  /// 보조 텍스트 (날짜, 사업장명, 지역 등 사용자가 반드시 읽어야 하는 보조정보)
+  static const Color textSecondary = grey700;          // #616161
+
+  /// 3차 텍스트 (상태 라벨, 통계 라벨, 부가 설명)
+  static const Color textTertiary = Color(0xFF8A8A8A); // #8A8A8A
+
+  /// 힌트 텍스트 (input placeholder)
+  static const Color textHint = grey400;               // #BDBDBD
+
+  /// 비활성 텍스트 (실제 선택불가 요소, disabled UI)
+  static const Color textDisabled = grey400;           // #BDBDBD
+
   /// 흰색 텍스트 (어두운 배경용)
   static const Color textOnDark = Color(0xFFFFFFFF);
+
+  // --- 브랜드 ---
+
+  /// ALfit 브랜드 블루 (섹션 액션 텍스트, 강조 링크)
+  static const Color brand = workTypeBlue;             // #1565C0
   
   // --- 아이콘 ---
   

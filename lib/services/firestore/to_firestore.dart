@@ -67,6 +67,11 @@ extension TOFirestore on FirestoreService {
   static final Map<String, int> _cachedPerAdmin = {};
   static final Map<String, DateTime> _cachedPerAdminAt = {};
 
+  // 공개 공고 목록 캐시 (지원자용 홈화면 — 탭 재진입·자동갱신 CF 호출 절감)
+  static List<TOModel>? _cachedPublishedTOs;
+  static DateTime? _cachedPublishedTOsAt;
+  static const Duration _publishedTOsCacheTTL = Duration(minutes: 2);
+
   Future<int> getMaxActiveTOLimit({String? adminUID}) async {
     final now = DateTime.now();
 
@@ -184,13 +189,22 @@ extension TOFirestore on FirestoreService {
 
   /// 공개 공고 목록 (지원자용) — [CF-MIGRATED D6-CP2] callableGetPublishedTOs
   /// Admin SDK → isPublished + status 복합 필터 서버 강제, rules limit 루프홀 차단
+  /// TTL 2분 인메모리 캐시: 탭 재진입·30초 자동갱신 시 CF 반복 호출 방지
   Future<List<TOModel>> getPublishedTOs() async {
+    final now = DateTime.now();
+    // ── TTL 캐시 히트 ──────────────────────────────────────────
+    if (_cachedPublishedTOs != null &&
+        _cachedPublishedTOsAt != null &&
+        now.difference(_cachedPublishedTOsAt!) < _publishedTOsCacheTTL) {
+      debugPrint('📋 [TO] 공개 공고 캐시 히트 (${_cachedPublishedTOs!.length}개)');
+      return _cachedPublishedTOs!;
+    }
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableGetPublishedTOs',
               options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
       final result = await callable.call<Map<String, dynamic>>({});
-      return (result.data['tos'] as List? ?? [])
+      final tos = (result.data['tos'] as List? ?? [])
           .whereType<Map>()
           .map((m) {
             final raw = _cfHydrate(Map<String, dynamic>.from(m));
@@ -199,10 +213,19 @@ extension TOFirestore on FirestoreService {
           })
           .whereType<TOModel>()
           .toList();
+      _cachedPublishedTOs = tos;
+      _cachedPublishedTOsAt = now;
+      return tos;
     } catch (e) {
       debugPrint('❌ [TO] 공개 공고 목록 조회 실패: $e');
       return [];
     }
+  }
+
+  /// 공개 공고 캐시 무효화 — 강제 새로고침(pull-to-refresh) 시 호출
+  void invalidatePublishedTOsCache() {
+    _cachedPublishedTOs = null;
+    _cachedPublishedTOsAt = null;
   }
 
   /// 공개 공고 페이지네이션 조회 (지원자용) — [CF-MIGRATED D6-CP2] callableGetPublishedTOsPaged
@@ -333,6 +356,8 @@ extension TOFirestore on FirestoreService {
     DateTime? contractDeadline,
     String? contractPeriodType,
     int? postingDurationDays,
+    DateTime? workStartAvailableFrom,
+    DateTime? workStartAvailableUntil,
 
     // 예약 공개
     String publishMode = 'immediate',
@@ -382,9 +407,11 @@ extension TOFirestore on FirestoreService {
             isPublished = true;
             debugPrint('⚠️ [TO] publishTime 파싱 실패 (즉시 공개 폴백): $publishTime');
           } else {
-            final candidate = DateTime(
+            // [TZ-FIX] DateTime(y,m,d,h,min)은 기기 로컬 → UTC+9 이외 기기에서 epoch 오류
+            // DateTime.utc(y,m,d, h-9, min)로 KST h:min → UTC 변환 (음수 시 Dart가 전일로 정규화)
+            final candidate = DateTime.utc(
               baseDate.year, baseDate.month, baseDate.day,
-              hour, minute,
+              hour - 9, minute,
             ).subtract(Duration(days: publishDaysBefore));
 
             if (candidate.isBefore(DateTime.now())) {
@@ -430,6 +457,8 @@ extension TOFirestore on FirestoreService {
         applicationDeadline: contractDeadline,
         contractPeriodType: contractPeriodType,
         postingDurationDays: postingDurationDays,
+        workStartAvailableFrom: type == TOType.contract ? workStartAvailableFrom : null,
+        workStartAvailableUntil: type == TOType.contract ? workStartAvailableUntil : null,
         totalRequired: totalRequired,
         publishMode: publishMode,
         publishAt: publishAt,
@@ -760,7 +789,14 @@ extension TOFirestore on FirestoreService {
       var batch = _firestore.batch();
       int count = 0;
 
+      final today = DateTime.now();
+      final todayMidnight = DateTime(today.year, today.month, today.day);
+
       for (final slot in slots) {
+        // [PAST-01 FIX] 이미 지난 슬롯은 deadline 재계산 건너뜀
+        // 과거 슬롯의 applicationDeadline=null + isAutoClosed 조합 시 의도치 않은 재오픈 방지
+        if (slot.date.isBefore(todayMidnight)) continue;
+
         final slotRef = _firestore
             .collection('tos').doc(toId)
             .collection('slots').doc(slot.id);
@@ -926,31 +962,36 @@ extension TOFirestore on FirestoreService {
 
   /// 선택한 슬롯들 일괄 재오픈 — callableReopenSlots CF 위임
   /// reopenedBy 서버 강제 (callerUid), open/full TOCTOU 제거 (트랜잭션 원자화)
-  Future<void> batchReopenSlots({
+  ///
+  /// [4I.1] 반환값: CF 응답 Map — {success, reopenedCount, failedCount, failures[]}
+  /// partial success 시 reopenedCount < slotIds.length.
+  Future<Map<String, dynamic>> batchReopenSlots({
     required String toId,
     required List<String> slotIds,
     required String businessId,
     String? reopenedBy, // CF에서 callerUid로 대체 — 하위 호환 유지
   }) async {
-    if (slotIds.isEmpty) return;
+    if (slotIds.isEmpty) return {'success': true, 'reopenedCount': 0};
     GlobalLoadingController.show('슬롯 재오픈 중...');
     final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
         .httpsCallable('callableReopenSlots',
             options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
     try {
-      await callable.call({
+      final result = await callable.call({
         'toId': toId,
         'slotIds': slotIds,
         'businessId': businessId,
       });
+      clearCache(toId: toId);
+      final data = (result.data as Map?)?.cast<String, dynamic>() ?? {};
+      debugPrint('✅ [Slot] ${data['reopenedCount'] ?? slotIds.length}개 슬롯 일괄 재오픈 완료 (CF)');
+      return data;
     } on FirebaseFunctionsException catch (e) {
       debugPrint('❌ [Slot] 일괄 재오픈 실패: ${e.code} — ${e.message}');
       rethrow;
     } finally {
       GlobalLoadingController.hide();
     }
-    clearCache(toId: toId);
-    debugPrint('✅ [Slot] ${slotIds.length}개 슬롯 일괄 재오픈 완료 (CF)');
   }
 
   /// 선택한 슬롯들 일괄 삭제 — CF callableDeleteSlots 위임 (Admin SDK로 보안 규칙 우회)
@@ -1021,12 +1062,15 @@ extension TOFirestore on FirestoreService {
             final hour = int.tryParse(parts[0]);
             final minute = int.tryParse(parts[1]);
             if (hour == null || minute == null || hour > 23 || minute > 59) continue;
-            final visibleFrom = DateTime(
+            // [TZ-01 FIX] DateTime.utc()로 KST→UTC 명시 변환 — CF calcVisibleFromMs와 동일 패턴
+            // DateTime(y,m,d,h,min)은 기기 로컬 타임존 기준이므로 UTC 에뮬레이터에서 9시간 오차 발생
+            // DateTime.utc(y,m,d,h-9,min)은 "KST h시"를 UTC로 직접 표현 (Dart가 분/시 언더플로 자동 처리)
+            final visibleFrom = DateTime.utc(
               slot.date.year, slot.date.month, slot.date.day,
-              hour, minute,
+              hour - 9, minute,
             ).subtract(Duration(days: publishDaysBefore));
             batch.update(slotRef, {
-              'visibleFrom': Timestamp.fromDate(visibleFrom.toUtc()),
+              'visibleFrom': Timestamp.fromDate(visibleFrom),
             });
           }
         } else {
@@ -1087,108 +1131,6 @@ extension TOFirestore on FirestoreService {
       if (slotTitle != null && slotTitle.isNotEmpty) 'slotTitle': slotTitle,
     });
     debugPrint('✅ [TO] 슬롯 ${dates.length}개 생성 완료 (CF)');
-  }
-
-  // ignore: unused_element
-  Future<void> _createSlots({
-    required String toId,
-    required List<DateTime> dates,
-    required List<WorkDetailData> workDetails,
-    required String deadlineType,
-    required int hoursBeforeStart,
-    DateTime? fixedDeadline,
-    String publishMode = 'immediate',
-    int? publishDaysBefore,
-    String? publishTime,
-    String? slotTitle,
-    DateTime? overrideVisibleFrom,
-    // [BUG-수정] T-M-1: 마지막 배치에 함께 커밋할 TO 카운터 업데이트를 받아
-    // 슬롯 생성과 TO 카운터 변경을 원자적으로 처리한다.
-    DocumentReference? toRefForCounter,
-    Map<String, dynamic>? toCounterUpdates,
-  }) async {
-    var batch = _firestore.batch();
-    int count = 0;
-    final now = DateTime.now();
-
-    for (final date in dates) {
-      final slotRef = _firestore
-          .collection('tos').doc(toId)
-          .collection('slots').doc();
-
-      // 업무별 마감 계산 — 각 workDetail의 startTime 기준으로 개별 계산
-      final workDetailsWithDeadlines = workDetails.map((d) {
-        DateTime? deadline;
-        if (deadlineType == 'HOURS_BEFORE') {
-          final parts = d.startTime.split(':');
-          if (parts.length >= 2) {
-            // startTime은 항상 KST — DateTime.utc()로 생성 후 KST→UTC(-9h) 변환
-            deadline = DateTime.utc(
-              date.year, date.month, date.day,
-              int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0,
-            ).subtract(const Duration(hours: 9)).subtract(Duration(hours: hoursBeforeStart));
-          }
-        } else if (deadlineType == 'FIXED_TIME' && fixedDeadline != null) {
-          deadline = fixedDeadline.toUtc();
-        }
-        return d.copyWith(applicationDeadline: deadline);
-      }).toList();
-
-      // 슬롯 레벨 마감 = 가장 이른 업무 마감 (하위 호환용)
-      final slotDeadline = workDetailsWithDeadlines
-          .where((d) => d.applicationDeadline != null)
-          .map((d) => d.applicationDeadline!)
-          .fold<DateTime?>(null, (earliest, dt) =>
-              earliest == null || dt.isBefore(earliest) ? dt : earliest);
-
-      // 슬롯 공개 시각: override가 있으면 우선 사용, 없으면 TO 설정 기준 계산
-      DateTime? visibleFrom = overrideVisibleFrom?.toUtc();
-      if (visibleFrom == null &&
-          publishMode == 'scheduled' &&
-          publishDaysBefore != null &&
-          publishTime != null) {
-        final parts = publishTime.split(':');
-        if (parts.length >= 2) {
-          visibleFrom = DateTime(
-            date.year, date.month, date.day,
-            int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0,
-          ).subtract(Duration(days: publishDaysBefore)).toUtc();
-        }
-      }
-
-      final workTypeCounts = {
-        for (final d in workDetailsWithDeadlines)
-          d.workType: const SlotWorkTypeCount(),
-      };
-
-      batch.set(slotRef, SlotModel(
-        id: slotRef.id,
-        toId: toId,
-        date: DateTime(date.year, date.month, date.day),
-        workDetails: workDetailsWithDeadlines,
-        workTypeCounts: workTypeCounts,
-        applicationDeadline: slotDeadline,
-        visibleFrom: visibleFrom,
-        title: (slotTitle?.isNotEmpty == true) ? slotTitle : null,
-        createdAt: now,
-      ).toMap()..['createdAt'] = FieldValue.serverTimestamp());
-      count++;
-      if (count >= 499) {
-        await batch.commit();
-        batch = _firestore.batch();
-        count = 0;
-      }
-    }
-
-    // [BUG-수정] T-M-1: TO 카운터 업데이트를 마지막 배치에 포함해 원자적으로 커밋
-    // — 슬롯 생성 성공 후 TO 업데이트 실패로 totalSlots/totalRequired 불일치하는 문제 방지
-    if (toRefForCounter != null && toCounterUpdates != null) {
-      batch.update(toRefForCounter, toCounterUpdates);
-    }
-    if (count > 0 || (toRefForCounter != null && toCounterUpdates != null)) {
-      await batch.commit();
-    }
-    debugPrint('✅ [TO] 슬롯 ${dates.length}개 생성 완료');
   }
 
 }

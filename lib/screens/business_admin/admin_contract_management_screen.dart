@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../../models/core/application_model.dart';
 import '../../models/core/business_model.dart';
@@ -18,10 +19,14 @@ import '../../utils/toast_helper.dart';
 import '../../utils/dialog_helper.dart';
 import '../../screens/contract/contract_sign_screen.dart';
 import '../../widgets/common/loading_widget.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_scaffold.dart';
+import '../../utils/navigation_helper.dart';
+import '../../screens/common/notification_screen.dart';
+import '../../widgets/common/notification_badge.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/app_search_bar.dart';
 import '../../widgets/common/app_tab_label.dart';
+import '../../providers/user_provider.dart';
 import '../../widgets/dialogs/contract_template_selector_dialog.dart';
 
 class AdminContractManagementScreen extends StatefulWidget {
@@ -124,6 +129,12 @@ class _AdminContractManagementScreenState
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      // [AUDIT.2-M002] screen-level guard — caller가 guard하더라도 직접 진입 경로 방어
+      final up = context.read<UserProvider>();
+      if (!up.can((p) => p.canManageContract)) {
+        Navigator.of(context).pop();
+        return;
+      }
       _load();
     });
   }
@@ -450,17 +461,39 @@ class _AdminContractManagementScreenState
 
   @override
   Widget build(BuildContext context) {
-    return GradientScaffold(
+    final theme = Theme.of(context);
+    return AppPageScaffold(
       title: '계약서 관리',
-      onRefresh: _refresh,
-      headerBottom: TabBar(
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.refresh_rounded),
+          onPressed: _refresh,
+          color: AppColors.textSecondary,
+        ),
+        IconButton(
+          icon: const Icon(Icons.home_outlined),
+          onPressed: () => NavigationHelper.goHome(context),
+          color: AppColors.textSecondary,
+        ),
+        NotificationBadge(
+          child: IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const NotificationScreen()),
+            ),
+            color: AppColors.textSecondary,
+          ),
+        ),
+      ],
+      bottom: TabBar(
         controller: _tabCtrl,
         isScrollable: true,
         tabAlignment: TabAlignment.start,
-        labelColor: Colors.white,
-        unselectedLabelColor: Colors.white.withValues(alpha: 0.6),
-        indicatorColor: Colors.white,
-        indicatorWeight: 2.5,
+        labelColor: theme.primaryColor,
+        unselectedLabelColor: AppColors.grey500,
+        indicatorColor: theme.primaryColor,
+        indicatorWeight: 2,
         dividerColor: Colors.transparent,
         tabs: _tabLabels.map((l) => Tab(child: AppTabLabel(label: l))).toList(),
       ),

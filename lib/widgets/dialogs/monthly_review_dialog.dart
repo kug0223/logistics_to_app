@@ -184,6 +184,8 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
             StyledDialogButton.primary(
               text: '확인',
               onPressed: () {
+                // [FC-08 FIX] 중첩 다이얼로그 확인 — pop 전 unfocus
+                FocusManager.instance.primaryFocus?.unfocus();
                 Navigator.pop(resultContext);
                 if (context.mounted) Navigator.pop(context, true);
               },
@@ -243,69 +245,15 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
     );
   }
 
-  /// 헤더
+  /// 헤더 — flat AppModalHeader (ALfit Modal Grammar)
   Widget _buildHeader(BuildContext context, ThemeData theme) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            theme.primaryColor,
-            theme.primaryColor.withValues(alpha: 0.8),
-          ],
-        ),
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(24),
-          topRight: Radius.circular(24),
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Icon(
-              Icons.rate_review,
-              color: Colors.white,
-              size: ResponsiveHelper.iconSize(context, 28),
-            ),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 16)),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${widget.reviewMonth}월 리뷰 작성',
-                  style: ResponsiveHelper.titleStyle(context).copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                Text(
-                  widget.targetUserName,
-                  style: ResponsiveHelper.smallStyle(context, color: Colors.white.withValues(alpha: 0.7)),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            onPressed: () {
-              FocusManager.instance.primaryFocus?.unfocus();
-              Navigator.pop(context);
-            },
-            icon: Icon(
-              Icons.close,
-              color: Colors.white,
-              size: ResponsiveHelper.iconSize(context, 24),
-            ),
-          ),
-        ],
-      ),
+    return AppModalHeader(
+      title: '${widget.reviewMonth}월 리뷰 작성',
+      subtitle: widget.targetUserName,
+      onClose: () {
+        FocusManager.instance.primaryFocus?.unfocus();
+        Navigator.pop(context);
+      },
     );
   }
 
@@ -723,38 +671,28 @@ class _MonthlyReviewDialogState extends State<MonthlyReviewDialog> {
     );
   }
 
-  /// 버튼
+  /// 버튼 — ReviewDialogShell scroll 내부에 위치 (keyboard-safe)
   Widget _buildActions(BuildContext context, ThemeData theme) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: const BoxDecoration(
-        color: AppColors.grey50,
-        borderRadius: BorderRadius.only(
-          bottomLeft: Radius.circular(AppDialogSize.borderRadius),
-          bottomRight: Radius.circular(AppDialogSize.borderRadius),
+    return Row(
+      children: [
+        Expanded(
+          child: StyledDialogButton.cancel(
+            onPressed: _isSubmitting ? null : () {
+              FocusManager.instance.primaryFocus?.unfocus();
+              Navigator.pop(context);
+            },
+          ),
         ),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: StyledDialogButton.cancel(
-              onPressed: _isSubmitting ? null : () {
-                FocusManager.instance.primaryFocus?.unfocus();
-                Navigator.pop(context);
-              },
-            ),
+        SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+        Expanded(
+          flex: 2,
+          child: StyledDialogButton.primary(
+            text: '리뷰 작성',
+            onPressed: _isSubmitting ? null : _submitReview,
+            isLoading: _isSubmitting,
           ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-          Expanded(
-            flex: 2,
-            child: StyledDialogButton.primary(
-              text: '리뷰 작성',
-              onPressed: _isSubmitting ? null : _submitReview,
-              isLoading: _isSubmitting,
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -780,106 +718,52 @@ class _MonthlyReviewViewDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Dialog(
-      backgroundColor: AppColors.surface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      insetPadding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 16),
-        vertical: AppDialogSize.insetV,
-      ),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
+    return AppModalShell(
+      children: [
+        AppModalHeader(
+          title: '${review.reviewYear}년 ${review.reviewMonth}월 리뷰',
+          subtitle: review.targetUserName ?? '',
+          onClose: () => Navigator.pop(context),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildHeader(context, theme),
-            Flexible(
-              child: SingleChildScrollView(
-                padding: ResponsiveHelper.cardPadding(context),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildRatingRow(context),
-                    SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                    _buildRehireRow(context),
-                    if (review.positiveTags.isNotEmpty) ...[
-                      SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                      _buildTagRow(context, '좋았던 점', review.positiveTags,
-                          AppColors.success, Icons.thumb_up_outlined),
-                    ],
-                    if (review.improvementTags.isNotEmpty) ...[
-                      SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                      _buildTagRow(context, '아쉬운 점', review.improvementTags,
-                          AppColors.warning, Icons.lightbulb_outline),
-                    ],
-                    if (review.comment != null &&
-                        review.comment!.isNotEmpty) ...[
-                      SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                      _buildCommentRow(context),
-                    ],
-                    SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                    _buildPublishStatus(context),
-                  ],
-                ),
-              ),
-            ),
-            _buildActions(context, theme),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHeader(BuildContext context, ThemeData theme) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(colors: [
-          theme.primaryColor,
-          theme.primaryColor.withValues(alpha: 0.8),
-        ]),
-        borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(24),
-          topRight: Radius.circular(24),
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Icon(Icons.rate_review, color: Colors.white,
-                size: ResponsiveHelper.iconSize(context, 28)),
-          ),
-          SizedBox(width: ResponsiveHelper.spacing(context, 16)),
-          Expanded(
+        Expanded(
+          child: SingleChildScrollView(
+            padding: ResponsiveHelper.cardPadding(context),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '${review.reviewYear}년 ${review.reviewMonth}월 리뷰',
-                  style: ResponsiveHelper.titleStyle(context)
-                      .copyWith(color: Colors.white, fontWeight: FontWeight.bold),
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                Text(review.targetUserName ?? '',
-                    style: ResponsiveHelper.smallStyle(context, color: Colors.white70)),
+                _buildRatingRow(context),
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                _buildRehireRow(context),
+                if (review.positiveTags.isNotEmpty) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                  _buildTagRow(context, '좋았던 점', review.positiveTags,
+                      AppColors.success, Icons.thumb_up_outlined),
+                ],
+                if (review.improvementTags.isNotEmpty) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                  _buildTagRow(context, '아쉬운 점', review.improvementTags,
+                      AppColors.warning, Icons.lightbulb_outline),
+                ],
+                if (review.comment != null && review.comment!.isNotEmpty) ...[
+                  SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                  _buildCommentRow(context),
+                ],
+                SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                _buildPublishStatus(context),
               ],
             ),
           ),
-          IconButton(
-            onPressed: () => Navigator.pop(context),
-            icon: Icon(Icons.close, color: Colors.white,
-                size: ResponsiveHelper.iconSize(context, 24)),
+        ),
+        AppModalFooter(
+          child: SizedBox(
+            width: double.infinity,
+            child: StyledDialogButton.primary(
+              text: '닫기',
+              onPressed: () => Navigator.pop(context),
+            ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -1038,22 +922,6 @@ class _MonthlyReviewViewDialog extends StatelessWidget {
     );
   }
 
-  Widget _buildActions(BuildContext context, ThemeData theme) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: const BoxDecoration(
-        color: AppColors.grey50,
-        borderRadius: BorderRadius.only(
-          bottomLeft: Radius.circular(AppDialogSize.borderRadius),
-          bottomRight: Radius.circular(AppDialogSize.borderRadius),
-        ),
-      ),
-      child: StyledDialogButton.primary(
-        text: '닫기',
-        onPressed: () => Navigator.pop(context),
-      ),
-    );
-  }
 }
 
 /// 리뷰 작성 다이얼로그 표시 헬퍼

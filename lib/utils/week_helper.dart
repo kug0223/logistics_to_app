@@ -1,8 +1,10 @@
+import 'format_helper.dart';
+
 /// 주 단위 계산 유틸리티 (월요일 시작 ~ 일요일 종료)
 class WeekHelper {
   /// 해당 날짜가 속한 주의 월요일 (0시 기준)
   static DateTime weekStart(DateTime date) {
-    final d = DateTime(date.year, date.month, date.day);
+    final d = FormatHelper.toKstDate(date);
     return d.subtract(Duration(days: d.weekday - 1));
   }
 

@@ -230,6 +230,82 @@ describe('U-CREATE: users 문서 생성 (회원가입)', () => {
       accountStatus: 'active',             // 외국인은 pending만 허용
     }));
   });
+
+  // ─── FOREIGN-SIGNUP-01~05: 외국인 V3 가입 Phase B regression ───────────────
+  //
+  // 실기기 버그: accountStatus='registration_pending'이 rules 허용 목록에 없어서
+  // 외국인 가입 시 users/{uid}.set() CREATE가 PERMISSION_DENIED.
+  //
+  // 수정 (Phase B): 허용 목록에 'registration_pending' 추가.
+  //   'registration_pending' 상태는 CF callableRecordTermsConsent만 'active'로 전환 가능.
+  //   클라이언트가 accountStatus를 update하는 경로는 rules에서 여전히 차단됨.
+
+  // FOREIGN-SIGNUP-01: registration_pending + foreignIdNumber sentinel → ALLOW
+  test('FOREIGN-SIGNUP-01 ✅ 외국인 V3 가입: accountStatus=registration_pending + sentinel 허용 (Phase B)', async () => {
+    // 실기기 오류 재현: foreign_register_screen.dart signUp()에서
+    //   accountStatus: 'registration_pending', foreignIdNumber: '001020-5******' (sentinel)
+    // 이 CREATE가 PERMISSION_DENIED였음 → rules 수정으로 해결
+    const foreignUid = 'uid-foreign-new';
+    const db = getAuth(env, foreignUid);
+    await assertSucceeds(setDoc(doc(db, 'users', foreignUid), {
+      ...safeData,
+      accountStatus: 'registration_pending',  // 외국인 V3 가입 전용 상태
+      foreignIdNumber: '001020-5******',       // sentinel (마스킹 완료, 원문 아님)
+    }));
+  });
+
+  // FOREIGN-SIGNUP-02: registration_pending + isIdVerified=true → DENY
+  test('FOREIGN-SIGNUP-02 ❌ registration_pending 가입 시 isIdVerified=true 직접 쓰기 차단', async () => {
+    // isIdVerified는 CF callableMarkIdCardVerified 전용 (클라이언트 직접 설정 금지)
+    const foreignUid = 'uid-foreign-idverify';
+    const db = getAuth(env, foreignUid);
+    await assertFails(setDoc(doc(db, 'users', foreignUid), {
+      ...safeData,
+      accountStatus: 'registration_pending',
+      isIdVerified: true,  // CF Admin SDK 전용 → 차단
+    }));
+  });
+
+  // FOREIGN-SIGNUP-03: registration_pending + accountStatus=active 직접 write → DENY
+  // (UPDATE 경로 — rules에서 accountStatus 변경이 차단되어야 함)
+  test('FOREIGN-SIGNUP-03 ❌ registration_pending 계정이 accountStatus=active로 update 시도 차단', async () => {
+    // 먼저 registration_pending 계정 생성 (FOREIGN-SIGNUP-01 기반)
+    const foreignUid = 'uid-foreign-activate';
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'users', foreignUid), {
+        ...safeData,
+        accountStatus: 'registration_pending',
+        role: 'USER',
+      });
+    });
+    // 클라이언트가 accountStatus를 active로 직접 update → 차단
+    const db = getAuth(env, foreignUid);
+    await assertFails(updateDoc(doc(db, 'users', foreignUid), {
+      accountStatus: 'active',  // CF callableRecordTermsConsent만 허용 → 클라이언트 차단
+    }));
+  });
+
+  // FOREIGN-SIGNUP-04: 외국인 가입 중 다른 uid 문서 CREATE → DENY
+  test('FOREIGN-SIGNUP-04 ❌ 외국인 가입 중 타인 uid 문서 생성 차단', async () => {
+    const foreignUid = 'uid-foreign-attacker';
+    const db = getAuth(env, foreignUid);
+    await assertFails(setDoc(doc(db, 'users', IDS.user), {  // 타인 uid
+      ...safeData,
+      accountStatus: 'registration_pending',
+    }));
+  });
+
+  // FOREIGN-SIGNUP-05: SEC-102 유지 — foreignIdNumber + accountStatus=active 차단
+  test('FOREIGN-SIGNUP-05 ❌ foreignIdNumber 실제 값 + accountStatus=active 차단 유지 (SEC-102)', async () => {
+    // rules 수정 후에도 SEC-102 보안 차단은 유지됨
+    const foreignUid = 'uid-foreign-bypass';
+    const db = getAuth(env, foreignUid);
+    await assertFails(setDoc(doc(db, 'users', foreignUid), {
+      ...safeData,
+      foreignIdNumber: '881010-6123456',  // 실제 등록번호 (active로 직접 가입 시도)
+      accountStatus: 'active',            // SEC-102: sentinel 있으면 active 차단
+    }));
+  });
 });
 
 // ─────────────────────────────────────────────────────

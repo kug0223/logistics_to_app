@@ -1,5 +1,3 @@
-import 'dart:math' show max;
-
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -8,19 +6,30 @@ import '../../models/core/business_model.dart';
 import '../../models/core/business_work_type_model.dart';
 import '../../models/core/to_model.dart';
 import '../../models/core/work_detail_data.dart';
+import '../../models/core/insurance_rate_model.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/dialog_helper.dart';
 import '../../utils/image_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../theme/app_colors.dart';
 import 'styled_dialog.dart';
-import '../../widgets/common/common_widgets.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/tax_deduction_badge.dart';
 import '../../widgets/work_type_icon.dart';
 
-/// 내 스케줄 → 근무 상세 정보 BottomSheet
+/// 내 스케줄 → 근무 상세 BottomSheet
+///
+/// "공고 상세"가 아니라 "내가 실제로 근무할 일정"을 확인하는 화면.
+/// ApplicationModel이 최우선 소스 — 지원/확정 당시 서버 스냅샷 데이터.
+///
+/// 데이터 우선순위:
+///   wage/wageType     → CF가 Slot/TO에서 추출한 서버 스냅샷 (CASE A)
+///   startTime/endTime → 클라이언트 제공, HH:MM 검증 (CASE C, 정상 흐름에서 Slot과 일치)
+///   정산/공제/입금    → WorkDetailData (TOModel 배열 내 매칭)
+///   주소/편의시설     → BusinessModel
+///   업무 안내        → BusinessWorkTypeModel
 class ScheduleDetailDialog extends StatefulWidget {
   final ApplicationModel application;
 
@@ -34,10 +43,9 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
   final FirestoreService _firestoreService = FirestoreService();
   bool _isLoading = true;
   BusinessModel? _business;
-  TOModel? _to;
   BusinessWorkTypeModel? _workType;
-  WorkDetailData? _workDetail; // M2: getter 대신 필드로 1회만 계산
-  String _netTime = '';        // L2: build() 마다 재계산 방지
+  WorkDetailData? _workDetail;
+  String _netTime = '';
 
   @override
   void initState() {
@@ -47,7 +55,6 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
 
   Future<void> _load() async {
     try {
-      // H1: getBusinessWorkTypes를 Future.wait에 합류 — 직렬 네트워크 왕복 제거
       final results = await Future.wait([
         _firestoreService.getBusinessById(widget.application.businessId),
         _firestoreService.getTOByApplication(widget.application),
@@ -63,12 +70,9 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
           (w) => w.name == widget.application.selectedWorkType,
           orElse: () => wts.isEmpty ? throw StateError('empty') : wts.first,
         );
-      // 업무유형 조회 실패 시 wt=null 유지 — UI가 null을 폴백으로 처리함
       } catch (_) {}
 
-      // M2: _workDetail 1회 계산
       final wd = _resolveWorkDetail(to);
-      // L2: netTime 1회 계산
       final app = widget.application;
       final nt = FormatHelper.calcNetWorkTime(
         app.startTime, app.endTime,
@@ -78,7 +82,6 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
       if (!mounted) return;
       setState(() {
         _business = biz;
-        _to = to;
         _workType = wt;
         _workDetail = wd;
         _netTime = nt;
@@ -92,24 +95,22 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
     }
   }
 
-  // ─── 매칭 WorkDetail ───────────────────────────────────────
+  // WorkDetail 매칭: workType + startTime 우선, 레거시 폴백, 최종 ApplicationModel 복원
   WorkDetailData? _resolveWorkDetail(TOModel? to) {
     if (to == null) return null;
     final app = widget.application;
 
-    // 1순위: workType + startTime 정확 매칭
     final exact = to.workDetails
         .where((d) => d.workType == app.selectedWorkType && d.startTime == app.startTime)
         .firstOrNull;
     if (exact != null) return exact;
 
-    // 2순위: 동일 workType이 하나뿐이면 사용 (startTime 미설정 레거시 대응)
     final sameType = to.workDetails
         .where((d) => d.workType == app.selectedWorkType)
         .toList();
     if (sameType.length == 1) return sameType.first;
 
-    // 3순위: 동일 workType이 복수이거나 없으면 지원 당시 저장된 값으로 복원
+    // 매칭 실패 시 지원 당시 저장된 값으로 복원
     return WorkDetailData(
       workType: app.selectedWorkType,
       wage: app.wage,
@@ -120,33 +121,71 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
     );
   }
 
-  // ─── 상태 배지 정보 ───────────────────────────────────────
+  // ─── 상태 배지 ────────────────────────────────────────────
   ({String label, Color bg, Color fg}) get _statusInfo {
     final status = widget.application.status;
+    if (status == AppStatus.contractPending) {
+      return (label: '계약 진행 중', bg: AppColors.infoBg, fg: AppColors.infoDark);
+    }
     if (AppStatus.confirmedStatuses.contains(status)) {
       return (label: '확정', bg: AppColors.successBg, fg: AppColors.successDark);
     }
-    if (status == AppStatus.pending || status == AppStatus.contractPending) {
-      return (label: '대기중', bg: AppColors.warningBg, fg: AppColors.warningDark);
+    if (status == AppStatus.pending) {
+      return (label: '대기', bg: AppColors.warningBg, fg: AppColors.warningDark);
+    }
+    if (status == AppStatus.rejected) {
+      return (label: '거절', bg: AppColors.errorBg, fg: AppColors.errorDark);
     }
     return (label: '취소', bg: AppColors.grey100, fg: AppColors.grey500);
   }
 
+  // ─── 편의 계산 ─────────────────────────────────────────────
+  bool get _hasTransportInfo =>
+      _business != null &&
+      (_business!.transportDescription?.isNotEmpty == true ||
+          _business!.transportImageUrls?.isNotEmpty == true);
+
+  bool get _hasWorkGuide {
+    final wt = _workType;
+    final biz = _business;
+    return (wt != null &&
+            (wt.description != null ||
+                wt.thumbnailUrl != null ||
+                wt.images?.isNotEmpty == true ||
+                wt.duties != null ||
+                wt.workEnvironment != null ||
+                wt.requirements != null ||
+                wt.precautions != null)) ||
+        (biz?.precautions?.isNotEmpty == true);
+  }
+
+  String get _confirmMessage =>
+      widget.application.confirmMessage?.trim() ?? '';
+
+  String _attendanceLabel(String type) => switch (type) {
+        'gps'    => 'GPS 위치 인증',
+        'beacon' => '비콘 출근 인증',
+        'both'   => 'GPS + 비콘 인증',
+        _        => '',
+      };
+
+  // ═══════════════════════════════════════════════════════════
+  // Build
+  // ═══════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Container(
       constraints: BoxConstraints(
         maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
       ),
       decoration: const BoxDecoration(
-        color: AppColors.grey50,
+        color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Handle
+          // Drag handle
           Container(
             margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 12)),
             width: ResponsiveHelper.spacing(context, 40),
@@ -157,8 +196,8 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
             ),
           ),
           // Header
-          _buildHeader(context, theme),
-          // Content
+          _buildHeader(context),
+          // Scrollable content
           Flexible(
             child: _isLoading
                 ? const Padding(
@@ -167,25 +206,25 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
                   )
                 : SingleChildScrollView(
                     padding: EdgeInsets.fromLTRB(
-                      ResponsiveHelper.spacing(context, 16),
+                      ResponsiveHelper.spacing(context, 20),
                       0,
-                      ResponsiveHelper.spacing(context, 16),
-                      ResponsiveHelper.spacing(context, 24),
+                      ResponsiveHelper.spacing(context, 20),
+                      ResponsiveHelper.spacing(context, 32),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-                        _buildWorkDetailCard(context, theme),
-                        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                        _buildBusinessCard(context, theme),
-                        if (_to?.description?.isNotEmpty == true) ...[
-                          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                          _buildDescriptionCard(context),
+                        SizedBox(height: ResponsiveHelper.spacing(context, 24)),
+                        _buildWorkInfoSection(context),
+                        _Divider(),
+                        _buildLocationSection(context),
+                        if (_hasWorkGuide) ...[
+                          _Divider(),
+                          _buildWorkGuideSection(context),
                         ],
-                        if (_business?.precautions?.isNotEmpty == true) ...[
-                          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-                          _buildPrecautionsCard(context),
+                        if (_confirmMessage.isNotEmpty) ...[
+                          _Divider(),
+                          _buildManagerNoteSection(context),
                         ],
                       ],
                     ),
@@ -197,27 +236,29 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
   }
 
   // ─── 헤더 ────────────────────────────────────────────────
-  Widget _buildHeader(BuildContext context, ThemeData theme) {
+  Widget _buildHeader(BuildContext context) {
     final app = widget.application;
     final si = _statusInfo;
     final isLong = app.isLongTermApplication;
 
     return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveHelper.spacing(context, 16),
-        vertical: ResponsiveHelper.spacing(context, 14),
+      padding: EdgeInsets.fromLTRB(
+        ResponsiveHelper.spacing(context, 20),
+        ResponsiveHelper.spacing(context, 14),
+        ResponsiveHelper.spacing(context, 4),
+        ResponsiveHelper.spacing(context, 14),
       ),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: AppColors.grey100)),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: Color(0xFFE8E9ED))),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 날짜 + 업무유형 정보
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // 날짜 배지 + 상태 배지
                 Row(
                   children: [
                     // 날짜 배지
@@ -241,7 +282,7 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
                             fontWeight: FontWeight.bold),
                       ),
                     ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                     // 상태 배지
                     Container(
                       padding: EdgeInsets.symmetric(
@@ -260,7 +301,8 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
                     ),
                   ],
                 ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                // 사업장명
                 Text(
                   app.businessName,
                   style: ResponsiveHelper.subtitleStyle(context)
@@ -268,83 +310,210 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                if (_to != null)
-                  Text(
-                    _to!.title,
-                    style: ResponsiveHelper.smallStyle(context,
-                        color: AppColors.grey600),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                // 업무명
+                Row(
+                  children: [
+                    if (app.workTypeIcon != null)
+                      WorkTypeIcon.buildWithBackground(
+                        iconString: app.workTypeIcon!,
+                        iconColor: app.workTypeColor ?? '#2196F3',
+                        backgroundColor: app.workTypeBackgroundColor ?? '#E3F2FD',
+                        size: 10,
+                        containerSize: 18,
+                      )
+                    else
+                      Icon(Icons.work_outline,
+                          size: ResponsiveHelper.iconSize(context, 14),
+                          color: AppColors.grey500),
+                    SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                    Flexible(
+                      child: Text(
+                        app.selectedWorkType,
+                        style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700)
+                            .copyWith(fontWeight: FontWeight.w600),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
           IconButton(
             onPressed: () => Navigator.pop(context),
             icon: const Icon(Icons.close),
-            color: AppColors.grey500,
+            color: AppColors.grey400,
           ),
         ],
       ),
     );
   }
 
-  // ─── 업무 상세 카드 ───────────────────────────────────────
-  Widget _buildWorkDetailCard(BuildContext context, ThemeData theme) {
+  // ─── Section 1: 근무 정보 ────────────────────────────────
+  Widget _buildWorkInfoSection(BuildContext context) {
     final app = widget.application;
     final wd = _workDetail;
-    final netTime = _netTime;
 
-    final wageColor = app.wageType == 'daily'
-        ? AppColors.warningDark
-        : AppColors.successDark;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionTitle(context, '근무 정보'),
+        SizedBox(height: ResponsiveHelper.spacing(context, 16)),
 
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: CommonWidgets.cardDecoration(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 섹션 타이틀
-          CommonWidgets.sectionHeader(
-            context: context,
-            title: '업무 상세',
-            icon: Icons.work_outline,
+        // 근무일 (단기) 또는 근무 기간+요일 (장기)
+        if (app.isLongTermApplication) ...[
+          _infoRow(context, '근무 기간',
+              Text(app.workPeriodDisplay, style: _valueStyle(context))),
+          if (app.workDaysDisplay != null)
+            _infoRow(context, '근무 요일',
+                Text(app.workDaysDisplay!, style: _valueStyle(context))),
+        ] else
+          _infoRow(context, '근무일',
+              Text(FormatHelper.formatDateLong(app.workDate), style: _valueStyle(context))),
+
+        // 근무 시간
+        _infoRow(
+          context,
+          '근무시간',
+          Row(
+            children: [
+              Text('${app.startTime} ~ ${app.endTime}', style: _valueStyle(context)),
+              if (_netTime.isNotEmpty) ...[
+                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                Text(
+                  '· 실근무 $_netTime',
+                  style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+                ),
+              ],
+            ],
           ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 14)),
+        ),
 
-          // 업무 유형 행 — 탭 시 업무 상세 보기
+        // 급여
+        _infoRow(
+          context,
+          '급여',
+          Text(
+            '${FormatHelper.formatNumber(app.wage)}원 / ${app.wageTypeLabel}',
+            style: _valueStyle(context),
+          ),
+        ),
+
+        // 정산 주기
+        if (wd?.payScheduleTypeLabel.isNotEmpty == true)
+          _infoRow(context, '정산',
+              Text(wd!.payScheduleTypeLabel, style: _valueStyle(context))),
+
+        // 입금 예정
+        if (wd?.payScheduleDetail.isNotEmpty == true)
+          _infoRow(context, '입금 예정',
+              Text(wd!.payScheduleDetail, style: _valueStyle(context))),
+
+        // 공제 방식 — chip을 Align으로 감싸 Expanded 전체 채움 방지
+        if (wd != null &&
+            wd.taxDeductionType != InsuranceRateModel.typeNone)
+          _infoRow(
+            context,
+            '공제',
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TaxDeductionBadge.chip(taxDeductionType: wd.taxDeductionType),
+            ),
+          ),
+      ],
+    );
+  }
+
+  // ─── Section 2: 근무 장소 ────────────────────────────────
+  Widget _buildLocationSection(BuildContext context) {
+    final app = widget.application;
+    final biz = _business;
+    // 로컬 변수로 추출 — Dart flow analysis가 if 블록 안에서 non-null로 승격
+    final bizAddress = biz?.address;
+    final bizPhone = biz?.phone;
+    final attendLabel = _attendanceLabel(biz?.attendanceType ?? '');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionTitle(context, '근무 장소'),
+        SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+        // 사업장명
+        Text(
+          app.businessName,
+          style: ResponsiveHelper.bodyStyle(context)
+              .copyWith(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+        ),
+
+        // 주소
+        if (bizAddress != null && bizAddress.isNotEmpty) ...[
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            bizAddress,
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
+          ),
+        ],
+
+        // 전화 버튼
+        if (bizPhone != null && bizPhone.isNotEmpty) ...[
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => _call(bizPhone),
+              icon: const Icon(Icons.phone_outlined, size: 18),
+              label: Text('전화하기  $bizPhone'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.success,
+                side: const BorderSide(color: AppColors.success),
+                padding: EdgeInsets.symmetric(
+                  vertical: ResponsiveHelper.spacing(context, 12),
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+          ),
+        ],
+
+        // 출근 인증 방식 (GPS/비콘 — 수동은 표시 안 함)
+        if (attendLabel.isNotEmpty) ...[
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          _infoRow(context, '출근 인증',
+              Text(attendLabel, style: _valueStyle(context))),
+        ],
+
+        // 찾아오는 길 (접혀 있음 → 탭 시 서브 시트)
+        if (_hasTransportInfo) ...[
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
           InkWell(
-            onTap: () => _showWorkDetail(context),
-            borderRadius: BorderRadius.circular(10),
-            child: Padding(
+            onTap: () => _showTransportSheet(context),
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
               padding: EdgeInsets.symmetric(
-                  vertical: ResponsiveHelper.spacing(context, 4)),
+                vertical: ResponsiveHelper.spacing(context, 10),
+                horizontal: ResponsiveHelper.spacing(context, 12),
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.grey50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFE8E9ED)),
+              ),
               child: Row(
                 children: [
-                  WorkTypeIcon.buildWithBackground(
-                    iconString: app.workTypeIcon ?? '📋',
-                    iconColor: app.workTypeColor ?? '#2196F3',
-                    backgroundColor: app.workTypeBackgroundColor ?? '#E3F2FD',
-                    size: ResponsiveHelper.iconSize(context, 20),
-                    containerSize: ResponsiveHelper.iconSize(context, 40),
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
+                  Icon(Icons.directions_transit_outlined,
+                      size: ResponsiveHelper.iconSize(context, 16),
+                      color: AppColors.infoDark),
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          app.selectedWorkType,
-                          style: ResponsiveHelper.subtitleStyle(context)
-                              .copyWith(fontWeight: FontWeight.bold),
-                        ),
-                        Text(
-                          '업무 상세 보기',
-                          style: ResponsiveHelper.tinyStyle(context,
-                              color: theme.primaryColor),
-                        ),
-                      ],
+                    child: Text(
+                      '찾아오는 길',
+                      style: ResponsiveHelper.bodyStyle(context, color: AppColors.infoDark)
+                          .copyWith(fontWeight: FontWeight.w600),
                     ),
                   ),
                   Icon(Icons.chevron_right,
@@ -354,629 +523,481 @@ class _ScheduleDetailDialogState extends State<ScheduleDetailDialog> {
               ),
             ),
           ),
+        ],
 
-          SizedBox(height: ResponsiveHelper.spacing(context, 14)),
-          const Divider(height: 1, color: AppColors.grey100),
-          SizedBox(height: ResponsiveHelper.spacing(context, 14)),
-
-          // 근무 시간
-          _infoRow(
-            context,
-            icon: Icons.access_time,
-            iconColor: AppColors.info,
-            label: '근무 시간',
-            child: Row(
-              children: [
-                Text(
-                  '${app.startTime} ~ ${app.endTime}',
-                  style: ResponsiveHelper.bodyStyle(context)
-                      .copyWith(fontWeight: FontWeight.w600),
-                ),
-                if (netTime.isNotEmpty) ...[
-                  SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                  Text(
-                    '($netTime)',
-                    style: ResponsiveHelper.smallStyle(context,
-                        color: AppColors.grey500),
-                  ),
-                ],
-              ],
-            ),
-          ),
-
-          // 지원 마감은 이미 지원 완료 상태이므로 표시하지 않음
-
+        // 편의 정보 칩 (주차 / 식사)
+        if (_hasConvenienceInfo(biz)) ...[
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-
-          // 급여
-          _infoRow(
-            context,
-            icon: Icons.payments_outlined,
-            iconColor: wageColor,
-            label: '급여',
-            child: Row(
-              children: [
-                Text(
-                  '${FormatHelper.formatNumber(app.wage)}원/${app.wageTypeLabel}',
-                  style: ResponsiveHelper.bodyStyle(context).copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: wageColor,
-                  ),
-                ),
-                if (wd?.payScheduleTypeLabel.isNotEmpty == true) ...[
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  Container(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: ResponsiveHelper.spacing(context, 6),
-                      vertical: 1,
-                    ),
-                    decoration: BoxDecoration(
-                      color: wageColor.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      wd!.payScheduleTypeLabel,
-                      style: ResponsiveHelper.tinyStyle(context,
-                          color: wageColor, fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-
-          // 입금일 상세
-          if (wd?.payScheduleDetail.isNotEmpty == true) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            _infoRow(
-              context,
-              icon: Icons.account_balance_wallet_outlined,
-              iconColor: AppColors.grey500,
-              label: '입금 예정',
-              child: Text(
-                '${wd!.payScheduleDetail} 입금',
-                style: ResponsiveHelper.bodyStyle(context)
-                    .copyWith(fontWeight: FontWeight.w600),
-              ),
-            ),
-          ],
-
-          // 공제 방식
-          if (wd != null) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            _infoRow(
-              context,
-              icon: Icons.receipt_long_outlined,
-              iconColor: AppColors.grey500,
-              label: '공제 방식',
-              child: TaxDeductionBadge.chip(
-                  taxDeductionType: wd.taxDeductionType),
-            ),
-          ],
-
-          // 장기 근무 정보
-          if (app.isLongTermApplication) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            _infoRow(
-              context,
-              icon: Icons.date_range,
-              iconColor: AppColors.longTerm,
-              label: '근무 기간',
-              child: Text(
-                app.workPeriodDisplay,
-                style: ResponsiveHelper.bodyStyle(context)
-                    .copyWith(fontWeight: FontWeight.w600),
-              ),
-            ),
-            if (app.workDaysDisplay != null) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-              _infoRow(
-                context,
-                icon: Icons.event_repeat,
-                iconColor: AppColors.longTerm,
-                label: '근무 요일',
-                child: Text(
-                  app.workDaysDisplay!,
-                  style: ResponsiveHelper.bodyStyle(context)
-                      .copyWith(fontWeight: FontWeight.w600),
-                ),
-              ),
-            ],
-          ],
+          _buildConvenienceChips(context, biz!),
         ],
-      ),
+      ],
     );
   }
 
-  // ─── 사업장 카드 ──────────────────────────────────────────
-  Widget _buildBusinessCard(BuildContext context, ThemeData theme) {
-    return Container(
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: CommonWidgets.cardDecoration(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          CommonWidgets.sectionHeader(
-            context: context,
-            title: '사업장 정보',
-            icon: Icons.business_outlined,
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 14)),
+  bool _hasConvenienceInfo(BusinessModel? biz) =>
+      biz != null &&
+      (biz.parkingAvailable ||
+          (biz.mealsProvided?.isNotEmpty == true));
 
-          // 사업장명
-          _infoRow(
-            context,
-            icon: Icons.store_outlined,
-            iconColor: theme.primaryColor,
-            label: '사업장명',
-            child: Text(
-              widget.application.businessName,
-              style: ResponsiveHelper.bodyStyle(context)
-                  .copyWith(fontWeight: FontWeight.w600),
-            ),
-          ),
-
-          // 주소
-          if (_business?.address.isNotEmpty == true) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            _infoRow(
-              context,
-              icon: Icons.location_on_outlined,
-              iconColor: AppColors.error,
-              label: '주소',
-              child: Text(
-                _business!.address,
-                style: ResponsiveHelper.bodyStyle(context)
-                    .copyWith(fontWeight: FontWeight.w500),
-              ),
-            ),
-          ],
-
-          // 전화 버튼
-          if (_business?.phone?.isNotEmpty == true) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 14)),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: () => _call(_business!.phone!),
-                icon: const Icon(Icons.phone_outlined),
-                label: Text('전화하기  ${_business!.phone}'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.success,
-                  side: const BorderSide(color: AppColors.success),
-                  padding: EdgeInsets.symmetric(
-                    vertical: ResponsiveHelper.spacing(context, 12),
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
-            ),
-          ],
-
-          // 찾아오는 방법 (교통편 사진 + 상세설명)
-          if (_hasTransportInfo) ...[
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            const Divider(height: 1, color: AppColors.grey100),
-            SizedBox(height: ResponsiveHelper.spacing(context, 14)),
-            Row(
-              children: [
-                Icon(Icons.directions_transit_outlined,
-                    size: ResponsiveHelper.iconSize(context, 14),
-                    color: AppColors.infoDark),
-                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-                Text(
-                  '찾아오는 방법',
-                  style: ResponsiveHelper.smallStyle(context,
-                      color: AppColors.infoDark, fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-
-            // 교통편 사진
-            if (_business!.transportImageUrls?.isNotEmpty == true) ...[
-              SizedBox(
-                height: 140,
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: _business!.transportImageUrls!.length,
-                  itemBuilder: (_, i) => Container(
-                    width: 200,
-                    margin: EdgeInsets.only(
-                        right: ResponsiveHelper.spacing(context, 8)),
-                    clipBehavior: Clip.hardEdge,
-                    decoration: BoxDecoration(borderRadius: BorderRadius.circular(10)),
-                    child: ImageHelper.buildCachedImage(
-                      _business!.transportImageUrls![i],
-                      fit: BoxFit.cover,
-                      memCacheWidth: 600,
-                      memCacheHeight: 420,
-                    ),
-                  ),
-                ),
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            ],
-
-            // 상세설명
-            if (_business!.transportDescription?.isNotEmpty == true)
-              Container(
-                width: double.infinity,
-                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-                decoration: BoxDecoration(
-                  color: AppColors.infoBg,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.infoLight),
-                ),
-                child: Text(
-                  _business!.transportDescription!,
-                  style: ResponsiveHelper.smallStyle(context,
-                      color: AppColors.grey700)
-                      .copyWith(height: 1.5),
-                ),
-              ),
-          ],
-        ],
-      ),
-    );
+  Widget _buildConvenienceChips(BuildContext context, BusinessModel biz) {
+    final chips = <Widget>[];
+    if (biz.parkingAvailable) {
+      chips.add(_chip(context, Icons.local_parking_outlined, '주차 가능', AppColors.info));
+    }
+    final mealsProvided = biz.mealsProvided;
+    if (mealsProvided != null && mealsProvided.isNotEmpty) {
+      chips.add(_chip(context, Icons.restaurant_outlined,
+          '식사 ${mealsProvided.join("·")}', AppColors.success));
+    }
+    return Wrap(spacing: ResponsiveHelper.spacing(context, 8), children: chips);
   }
 
-  bool get _hasTransportInfo =>
-      _business != null &&
-      (_business!.transportDescription?.isNotEmpty == true ||
-          _business!.transportImageUrls?.isNotEmpty == true);
-
-  // ─── 업무 설명 카드 ───────────────────────────────────────
-  Widget _buildDescriptionCard(BuildContext context) {
+  Widget _chip(BuildContext context, IconData icon, String label, Color color) {
     return Container(
-      width: double.infinity,
-      padding: ResponsiveHelper.cardPadding(context),
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 10),
+        vertical: ResponsiveHelper.spacing(context, 5),
+      ),
       decoration: BoxDecoration(
-        color: AppColors.infoBg,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.infoLight),
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              Icon(Icons.article_outlined,
-                  size: ResponsiveHelper.iconSize(context, 16),
-                  color: AppColors.infoDark),
-              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Text(
-                '업무 설명',
-                style: ResponsiveHelper.smallStyle(context,
-                    color: AppColors.infoDark, fontWeight: FontWeight.bold),
-              ),
-            ],
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+          Icon(icon, size: ResponsiveHelper.iconSize(context, 13), color: color),
+          SizedBox(width: ResponsiveHelper.spacing(context, 4)),
           Text(
-            _to?.description ?? '',
-            style: ResponsiveHelper.smallStyle(context,
-                color: AppColors.grey700),
+            label,
+            style: ResponsiveHelper.tinyStyle(context, color: color,
+                fontWeight: FontWeight.w600),
           ),
         ],
       ),
     );
   }
 
-  // ─── 준비사항 카드 ────────────────────────────────────────
-  Widget _buildPrecautionsCard(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: ResponsiveHelper.cardPadding(context),
-      decoration: BoxDecoration(
-        color: AppColors.warningBg,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.warningLight),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.warning_amber_outlined,
-                  size: ResponsiveHelper.iconSize(context, 16),
-                  color: AppColors.warningDark),
-              SizedBox(width: ResponsiveHelper.spacing(context, 6)),
-              Text(
-                '준비사항',
-                style: ResponsiveHelper.smallStyle(context,
-                    color: AppColors.warningDark, fontWeight: FontWeight.bold),
-              ),
-            ],
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-          Text(
-            _business?.precautions ?? '',
-            style: ResponsiveHelper.smallStyle(context,
-                color: AppColors.grey700),
-          ),
-        ],
-      ),
-    );
-  }
+  // ─── Section 3: 업무 안내 ────────────────────────────────
+  Widget _buildWorkGuideSection(BuildContext context) {
+    final wt = _workType;
+    final biz = _business;
+    final app = widget.application;
 
-  // ─── 공통 정보 행 ──────────────────────────────────────────
-  Widget _infoRow(
-    BuildContext context, {
-    required IconData icon,
-    required Color iconColor,
-    required String label,
-    required Widget child,
-  }) {
-    return Row(
+    final images = <String>[
+      if (wt?.thumbnailUrl != null) wt!.thumbnailUrl!,
+      if (wt?.images != null) ...wt!.images!,
+    ];
+
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          width: ResponsiveHelper.iconSize(context, 30),
-          height: ResponsiveHelper.iconSize(context, 30),
-          decoration: BoxDecoration(
-            color: iconColor.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(8),
+        _sectionTitle(context, '업무 안내'),
+        SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+        // 이미지 슬라이더
+        // - 1장: full width, 복수: carousel(다음 사진 일부 노출 → affordance)
+        if (images.isNotEmpty) ...[
+          SizedBox(
+            height: 130,
+            child: images.length == 1
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: ImageHelper.buildCachedImage(
+                      images[0],
+                      fit: BoxFit.cover,
+                      memCacheWidth: 800,
+                      memCacheHeight: 520,
+                    ),
+                  )
+                : ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    clipBehavior: Clip.none,  // 오른쪽 잘림 없이 다음 사진 affordance
+                    itemCount: images.length,
+                    itemBuilder: (_, i) => Container(
+                      width: 200,  // 컨테이너 너비 < 화면 → 다음 사진 일부 노출
+                      margin: EdgeInsets.only(right: ResponsiveHelper.spacing(context, 10)),
+                      clipBehavior: Clip.hardEdge,
+                      decoration: BoxDecoration(borderRadius: BorderRadius.circular(12)),
+                      child: ImageHelper.buildCachedImage(
+                        images[i],
+                        fit: BoxFit.cover,
+                        memCacheWidth: 600,
+                        memCacheHeight: 390,
+                      ),
+                    ),
+                  ),
           ),
-          child: Icon(icon,
-              size: ResponsiveHelper.iconSize(context, 16), color: iconColor),
-        ),
-        SizedBox(width: ResponsiveHelper.spacing(context, 10)),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+        ],
+
+        // 한 줄 소개 (selectedWorkType은 header에 이미 표시 — 중복 생략)
+        // oneLineIntro가 없으면 이 블록 전체 생략 → 바로 상세 항목으로 시작
+        if (wt?.oneLineIntro?.isNotEmpty == true) ...[
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Text(
-                label,
-                style: ResponsiveHelper.tinyStyle(context,
+              if (app.workTypeIcon != null)
+                WorkTypeIcon.buildWithBackground(
+                  iconString: app.workTypeIcon!,
+                  iconColor: app.workTypeColor ?? '#2196F3',
+                  backgroundColor: app.workTypeBackgroundColor ?? '#E3F2FD',
+                  size: 12,
+                  containerSize: 22,
+                )
+              else
+                Icon(Icons.work_outline,
+                    size: ResponsiveHelper.iconSize(context, 16),
                     color: AppColors.grey500),
+              SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+              Expanded(
+                child: Text(
+                  wt!.oneLineIntro!,
+                  style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey600),
+                ),
               ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 2)),
-              child,
             ],
           ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+        ],
+
+        // 업무 설명
+        if (wt?.description?.isNotEmpty == true) ...[
+          SizedBox(height: ResponsiveHelper.spacing(context, 14)),
+          _guideItem(context, '업무 설명', wt!.description!),
+        ],
+
+        // 주요 업무
+        if (wt?.duties?.isNotEmpty == true) ...[
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          _guideItem(context, '주요 업무', wt!.duties!),
+        ],
+
+        // 근무 환경
+        if (wt?.workEnvironment?.isNotEmpty == true) ...[
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          _guideItem(context, '근무 환경', wt!.workEnvironment!),
+        ],
+
+        // 자격 요건
+        if (wt?.requirements?.isNotEmpty == true) ...[
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          _guideItem(context, '자격 요건', wt!.requirements!),
+        ],
+
+        // 업무 주의사항 (BusinessWorkType)
+        if (wt?.precautions?.isNotEmpty == true) ...[
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          _guideItem(context, '주의사항', wt!.precautions!),
+        ],
+
+        // 준비사항 (Business — neutral, 경고색 없음)
+        // 아이콘+진한 레이블로 다른 섹션과 구분감 강화
+        if (biz?.precautions?.isNotEmpty == true) ...[
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+          _guideItemPreparation(context, biz!.precautions!),
+        ],
+      ],
+    );
+  }
+
+  Widget _guideItem(BuildContext context, String label, String content) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500,
+              fontWeight: FontWeight.w600),
+        ),
+        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+        Text(
+          content,
+          style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700)
+              .copyWith(height: 1.55),
         ),
       ],
     );
   }
 
-  // ─── 업무 상세 BottomSheet ──────────────────────────────
-  void _showWorkDetail(BuildContext context) {
-    final app = widget.application;
-    final wd = _workDetail;
-    final wt = _workType;
-    final hasDetail = wt != null &&
-        (wt.description != null ||
-            wt.thumbnailUrl != null ||
-            wt.images?.isNotEmpty == true);
-
-    showModalBottomSheet(
-      context: context,
-      useSafeArea: true,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: 0.65,
-        minChildSize: 0.4,
-        maxChildSize: 0.95,
-        builder: (ctx, scroll) => Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius:
-                BorderRadius.vertical(top: Radius.circular(20)),
-          ),
-          child: Column(
-            children: [
-              Container(
-                margin: EdgeInsets.symmetric(
-                    vertical: ResponsiveHelper.spacing(ctx, 12)),
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                    color: AppColors.grey300,
-                    borderRadius: BorderRadius.circular(2)),
-              ),
-              Expanded(
-                child: ListView(
-                  controller: scroll,
-                  padding: () {
-                    final cp = ResponsiveHelper.cardPadding(ctx);
-                    return EdgeInsets.fromLTRB(
-                      cp.left,
-                      cp.top,
-                      cp.right,
-                      // edge-to-edge 대응: viewPaddingOf는 SafeArea 소비 무관 물리적 인셋.
-                      // max로 SafeArea 정상 동작 시 이중 합산 방지.
-                      max(cp.bottom, MediaQuery.viewPaddingOf(ctx).bottom),
-                    );
-                  }(),
-                  children: [
-                    // 헤더
-                    Row(
-                      children: [
-                        WorkTypeIcon.buildWithBackground(
-                          iconString: app.workTypeIcon ?? '📋',
-                          iconColor: app.workTypeColor ?? '#2196F3',
-                          backgroundColor:
-                              app.workTypeBackgroundColor ?? '#E3F2FD',
-                          size: ResponsiveHelper.iconSize(ctx, 26),
-                          containerSize: ResponsiveHelper.iconSize(ctx, 52),
-                        ),
-                        SizedBox(width: ResponsiveHelper.spacing(ctx, 14)),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(app.selectedWorkType,
-                                  style:
-                                      ResponsiveHelper.titleStyle(ctx).copyWith(
-                                    fontWeight: FontWeight.bold,
-                                  )),
-                              if (wt?.oneLineIntro != null)
-                                Text(wt!.oneLineIntro!,
-                                    style: ResponsiveHelper.smallStyle(ctx,
-                                        color: AppColors.grey600)),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    SizedBox(height: ResponsiveHelper.spacing(ctx, 20)),
-                    const Divider(height: 1, color: AppColors.grey200),
-                    SizedBox(height: ResponsiveHelper.spacing(ctx, 20)),
-
-                    // 근무 시간
-                    _detailItem(ctx, Icons.schedule_outlined, '근무 시간',
-                        '${app.startTime} ~ ${app.endTime}'),
-                    SizedBox(height: ResponsiveHelper.spacing(ctx, 12)),
-
-                    // 급여
-                    _detailItem(
-                      ctx,
-                      Icons.payments_outlined,
-                      '급여',
-                      () {
-                        final base =
-                            '${app.wageTypeLabel} ${app.formattedWage}';
-                        final sched = wd?.payScheduleTypeLabel ?? '';
-                        return sched.isNotEmpty ? '$base · $sched' : base;
-                      }(),
-                    ),
-
-                    // 입금일
-                    if (wd?.payScheduleDetail.isNotEmpty == true) ...[
-                      SizedBox(height: ResponsiveHelper.spacing(ctx, 12)),
-                      _detailItem(ctx,
-                          Icons.account_balance_wallet_outlined,
-                          '입금일', wd!.payScheduleDetail),
-                    ],
-
-                    // 업무유형 상세 (등록된 경우)
-                    if (hasDetail) ...[
-                      SizedBox(height: ResponsiveHelper.spacing(ctx, 24)),
-                      const Divider(height: 1, color: AppColors.grey200),
-                      SizedBox(height: ResponsiveHelper.spacing(ctx, 20)),
-                      _buildWorkTypeImages(ctx, wt),
-                      if (wt.description != null) ...[
-                        SizedBox(height: ResponsiveHelper.spacing(ctx, 16)),
-                        _detailItem(ctx, Icons.description_outlined,
-                            '업무 설명', wt.description!),
-                      ],
-                      if (wt.workEnvironment != null) ...[
-                        SizedBox(height: ResponsiveHelper.spacing(ctx, 12)),
-                        _detailItem(ctx, Icons.thermostat_outlined,
-                            '근무 환경', wt.workEnvironment!),
-                      ],
-                      if (wt.requirements != null) ...[
-                        SizedBox(height: ResponsiveHelper.spacing(ctx, 12)),
-                        _detailItem(ctx, Icons.checklist_outlined,
-                            '자격 요건', wt.requirements!),
-                      ],
-                      if (wt.duties != null) ...[
-                        SizedBox(height: ResponsiveHelper.spacing(ctx, 12)),
-                        _detailItem(ctx, Icons.task_alt_outlined,
-                            '주요 업무', wt.duties!),
-                      ],
-                      if (wt.precautions != null) ...[
-                        SizedBox(height: ResponsiveHelper.spacing(ctx, 12)),
-                        CommonWidgets.infoCard(
-                          context: ctx,
-                          message: wt.precautions!,
-                          icon: Icons.warning_amber_outlined,
-                          color: AppColors.warningDark,
-                        ),
-                      ],
-                    ] else ...[
-                      SizedBox(height: ResponsiveHelper.spacing(ctx, 24)),
-                      Center(
-                        child: Text('업무 유형 상세 정보가 등록되지 않았습니다.',
-                            style: ResponsiveHelper.smallStyle(ctx,
-                                color: AppColors.grey400)),
-                      ),
-                    ],
-                    SizedBox(height: ResponsiveHelper.spacing(ctx, 32)),
-                    CommonWidgets.outlineButton(
-                      context: ctx,
-                      text: '닫기',
-                      onPressed: () => Navigator.pop(ctx),
-                      icon: Icons.close,
-                    ),
-                    SizedBox(height: ResponsiveHelper.spacing(ctx, 16)),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _detailItem(
-      BuildContext context, IconData icon, String title, String content) {
-    final theme = Theme.of(context);
+  /// 준비사항 전용 — 아이콘 + 진한 레이블로 다른 업무 설명 항목과 구분
+  Widget _guideItemPreparation(BuildContext context, String content) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Icon(icon,
-                size: ResponsiveHelper.iconSize(context, 18),
-                color: theme.primaryColor),
-            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-            Text(title,
-                style: ResponsiveHelper.bodyStyle(context)
-                    .copyWith(fontWeight: FontWeight.bold)),
+            Icon(
+              Icons.checklist_rounded,
+              size: ResponsiveHelper.iconSize(context, 13),
+              color: AppColors.grey600,
+            ),
+            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+            Text(
+              '준비사항',
+              style: ResponsiveHelper.smallStyle(context,
+                  color: AppColors.grey700, fontWeight: FontWeight.w700),
+            ),
           ],
         ),
-        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-        Container(
-          width: double.infinity,
-          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-          decoration: BoxDecoration(
-            color: AppColors.grey100,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Text(content,
-              style: ResponsiveHelper.bodyStyle(context)
-                  .copyWith(height: 1.5, color: AppColors.grey700)),
+        SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+        Text(
+          content,
+          style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700)
+              .copyWith(height: 1.55),
         ),
       ],
     );
   }
 
-  Widget _buildWorkTypeImages(
-      BuildContext context, BusinessWorkTypeModel wt) {
-    final images = <String>[
-      if (wt.thumbnailUrl != null) wt.thumbnailUrl!,
-      if (wt.images != null) ...wt.images!,
-    ];
-    if (images.isEmpty) return const SizedBox.shrink();
-    return SizedBox(
-      height: 180,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        itemCount: images.length,
-        itemBuilder: (_, i) => Container(
-          width: 240,
-          margin: EdgeInsets.only(
-              right: ResponsiveHelper.spacing(context, 12)),
-          clipBehavior: Clip.hardEdge,
-          decoration: BoxDecoration(borderRadius: BorderRadius.circular(16)),
-          child: ImageHelper.buildCachedImage(images[i],
-              fit: BoxFit.cover,
-              memCacheWidth: 720,
-              memCacheHeight: 540),
+  // ─── Section 4: 관리자 안내 ─────────────────────────────
+  Widget _buildManagerNoteSection(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionTitle(context, '관리자 안내'),
+        SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+        Container(
+          width: double.infinity,
+          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 14)),
+          decoration: BoxDecoration(
+            color: AppColors.grey50,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: const Color(0xFFE8E9ED)),
+          ),
+          child: Text(
+            _confirmMessage,
+            style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700)
+                .copyWith(height: 1.55),
+          ),
         ),
+      ],
+    );
+  }
+
+  // ─── 찾아오는 길 서브 시트 ──────────────────────────────
+  Future<void> _showTransportSheet(BuildContext context) async {
+    final biz = _business;
+    if (biz == null) return;
+
+    await DialogHelper.showSheet<void>(
+      context,
+      isScrollControlled: true,
+      useRootNavigator: true,  // 루트 네비게이터로 열어 BottomNav dim 유지
+      builder: (ctx) => _TransportSheet(business: biz),
+    );
+  }
+
+  // ─── 공통 위젯 ─────────────────────────────────────────
+  Widget _sectionTitle(BuildContext context, String title) {
+    return Text(
+      title,
+      style: ResponsiveHelper.subtitleStyle(context)
+          .copyWith(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+    );
+  }
+
+  /// 평탄한 Label / Value 행
+  Widget _infoRow(BuildContext context, String label, Widget value) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: ResponsiveHelper.spacing(context, 80),
+            child: Text(
+              label,
+              style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500),
+            ),
+          ),
+          Expanded(child: value),
+        ],
       ),
     );
   }
 
+  TextStyle _valueStyle(BuildContext context) =>
+      ResponsiveHelper.bodyStyle(context, color: AppColors.textPrimary)
+          .copyWith(fontWeight: FontWeight.w500);
+
   Future<void> _call(String phone) async {
     final uri = Uri.parse('tel:$phone');
     if (await canLaunchUrl(uri)) await launchUrl(uri);
+  }
+}
+
+// ─── 구분선 ────────────────────────────────────────────────
+class _Divider extends StatelessWidget {
+  const _Divider();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        vertical: ResponsiveHelper.spacing(context, 20),
+      ),
+      child: const Divider(height: 1, color: Color(0xFFE8E9ED)),
+    );
+  }
+}
+
+// ─── 찾아오는 길 서브 시트 ─────────────────────────────────
+class _TransportSheet extends StatelessWidget {
+  final BusinessModel business;
+
+  const _TransportSheet({required this.business});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.75,
+      ),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Handle
+          Container(
+            margin: EdgeInsets.only(top: ResponsiveHelper.spacing(context, 12)),
+            width: ResponsiveHelper.spacing(context, 40),
+            height: 4,
+            decoration: BoxDecoration(
+              color: AppColors.grey300,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          // Header
+          Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 20),
+              vertical: ResponsiveHelper.spacing(context, 16),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.directions_transit_outlined,
+                    size: ResponsiveHelper.iconSize(context, 20),
+                    color: AppColors.infoDark),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Expanded(
+                  child: Text(
+                    '찾아오는 길',
+                    style: ResponsiveHelper.subtitleStyle(context)
+                        .copyWith(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close),
+                  color: AppColors.grey400,
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: Color(0xFFE8E9ED)),
+          // Content
+          Flexible(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                ResponsiveHelper.spacing(context, 20),
+                ResponsiveHelper.spacing(context, 20),
+                ResponsiveHelper.spacing(context, 20),
+                ResponsiveHelper.spacing(context, 32),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 주소
+                  if (business.address.isNotEmpty) ...[
+                    Text(
+                      '주소',
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.grey500, fontWeight: FontWeight.w600),
+                    ),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                    Text(
+                      business.address,
+                      style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700),
+                    ),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+                  ],
+
+                  // 교통편 이미지
+                  if (business.transportImageUrls?.isNotEmpty == true) ...[
+                    SizedBox(
+                      height: 160,
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: business.transportImageUrls!.length,
+                        itemBuilder: (_, i) => Container(
+                          width: 220,
+                          margin: EdgeInsets.only(
+                              right: ResponsiveHelper.spacing(context, 10)),
+                          clipBehavior: Clip.hardEdge,
+                          decoration:
+                              BoxDecoration(borderRadius: BorderRadius.circular(12)),
+                          child: ImageHelper.buildCachedImage(
+                            business.transportImageUrls![i],
+                            fit: BoxFit.cover,
+                            memCacheWidth: 660,
+                            memCacheHeight: 480,
+                          ),
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                  ],
+
+                  // 찾아오는 길 안내 텍스트 (transportDescription = 교통/경로 자유서술)
+                  if (business.transportDescription?.isNotEmpty == true) ...[
+                    Text(
+                      '찾아오는 길 안내',
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.grey500, fontWeight: FontWeight.w600),
+                    ),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                    Text(
+                      business.transportDescription!,
+                      style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey700)
+                          .copyWith(height: 1.55),
+                    ),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+                  ],
+
+                  // 주차 안내
+                  Row(
+                    children: [
+                      Icon(
+                        business.parkingAvailable
+                            ? Icons.check_circle_outline
+                            : Icons.cancel_outlined,
+                        size: ResponsiveHelper.iconSize(context, 16),
+                        color: business.parkingAvailable
+                            ? AppColors.success
+                            : AppColors.grey400,
+                      ),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                      Text(
+                        business.parkingAvailable ? '주차 가능' : '주차 불가',
+                        style: ResponsiveHelper.bodyStyle(
+                          context,
+                          color: business.parkingAvailable
+                              ? AppColors.success
+                              : AppColors.grey500,
+                        ).copyWith(fontWeight: FontWeight.w500),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

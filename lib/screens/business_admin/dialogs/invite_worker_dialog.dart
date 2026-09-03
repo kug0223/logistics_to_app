@@ -10,25 +10,95 @@ import '../../../utils/format_helper.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/common_widgets.dart';
+import '../../../widgets/dialogs/styled_dialog.dart';
 
 /// 근로자 초대 다이얼로그
 ///
 /// 관리자가 특정 TO에 전화번호로 근로자를 직접 초대한다.
-/// - 단기 TO: 슬롯 날짜 선택 후 초대
-/// - 장기 TO: 시작일 + 종료일 지정 후 초대
 ///
-/// 수락 시 CF(callableAcceptInvitation)에서 스케줄 충돌 검증 → CONFIRMED 전환.
+/// ## 일반 모드 (general mode)
+/// TOGroupCard 메뉴 → [인력 초대] 에서 진입.
+/// - 단기 TO: 슬롯 날짜 선택 후 근무 제안
+/// - 장기 TO: 시작일 + 종료일 지정 후 근무 제안
+///
+/// ## 컨텍스트 모드 (contextual mode) — [Phase 8.1B.3]
+/// DayApplicantsDialog → [인력 초대] → [직접 초대] 에서 진입.
+/// 날짜·슬롯·업무 정보가 이미 확정되어 있으므로 재선택 UI를 표시하지 않는다.
+/// [InviteWorkerDialog.contextual] 팩토리로 생성.
+///
+/// 수락 시 CF(callableAcceptTOInvitation)에서 스케줄 충돌 검증 → CONFIRMED 전환.
 class InviteWorkerDialog extends StatefulWidget {
-  final TOGroupItem groupItem;
+  // ── 공통 필드 ────────────────────────────────────────────────────
   final String businessId;
   final String businessName;
 
+  // ── 일반 모드 전용 ───────────────────────────────────────────────
+  final TOGroupItem? groupItem;
+
+  // ── 컨텍스트 모드 전용 (DayApplicantsDialog exact context) ───────
+  final String? contextualToId;
+  final DateTime? prefilledDate;
+  final String? prefilledSlotId;
+  final String? prefilledWorkType;
+  final String? prefilledStartTime;
+  final String? prefilledEndTime;
+
+  /// 컨텍스트 모드 여부 — [contextualToId] + [prefilledDate] 존재 시 true
+  bool get isContextualMode =>
+      contextualToId != null && prefilledDate != null;
+
+  /// 일반 모드 생성자 — TOGroupCard 메뉴에서 사용
   const InviteWorkerDialog({
     super.key,
     required this.groupItem,
     required this.businessId,
     required this.businessName,
-  });
+  })  : contextualToId = null,
+        prefilledDate = null,
+        prefilledSlotId = null,
+        prefilledWorkType = null,
+        prefilledStartTime = null,
+        prefilledEndTime = null;
+
+  /// 컨텍스트 모드 생성자 — DayApplicantsDialog exact work-group에서 사용.
+  ///
+  /// [date], [slotId], [workType] 이 pre-filled되어
+  /// 날짜·업무 재선택 UI를 표시하지 않는다.
+  static InviteWorkerDialog contextual({
+    Key? key,
+    required String toId,
+    required String businessId,
+    required String businessName,
+    required DateTime date,
+    String? slotId,
+    String? workType,
+    String? startTime,
+    String? endTime,
+  }) {
+    return InviteWorkerDialog._contextual(
+      key: key,
+      contextualToId: toId,
+      businessId: businessId,
+      businessName: businessName,
+      prefilledDate: date,
+      prefilledSlotId: slotId,
+      prefilledWorkType: workType,
+      prefilledStartTime: startTime,
+      prefilledEndTime: endTime,
+    );
+  }
+
+  const InviteWorkerDialog._contextual({
+    super.key,
+    required this.contextualToId,
+    required this.businessId,
+    required this.businessName,
+    required this.prefilledDate,
+    this.prefilledSlotId,
+    this.prefilledWorkType,
+    this.prefilledStartTime,
+    this.prefilledEndTime,
+  }) : groupItem = null;
 
   @override
   State<InviteWorkerDialog> createState() => _InviteWorkerDialogState();
@@ -52,13 +122,18 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
   DateTime? _startDate;
   DateTime? _endDate;
 
-  bool get _isLong => widget.groupItem.isLongTerm;
+  // 컨텍스트 모드에서는 항상 단기(슬롯 있는) 케이스
+  bool get _isLong => widget.isContextualMode
+      ? false
+      : (widget.groupItem?.isLongTerm ?? false);
 
-  /// 단기 TO 슬롯 날짜 + slotId 쌍 목록
+  /// 단기 TO 슬롯 날짜 + slotId 쌍 목록 — 일반 모드에서만 사용
   List<({DateTime date, String? slotId})> get _slotEntries {
     if (_isLong) return [];
+    final gi = widget.groupItem;
+    if (gi == null) return [];
     // groupTOs 로드된 경우: 슬롯별 날짜+ID
-    final fromTOs = widget.groupItem.groupTOs
+    final fromTOs = gi.groupTOs
         .where((t) => t.slot?.date != null)
         .map((t) => (date: t.slot!.date, slotId: t.slot?.id))
         .toList();
@@ -67,7 +142,7 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
       return fromTOs;
     }
     // fallback: slotDates만 있는 경우 (slotId 미확보)
-    final dates = widget.groupItem.slotDates.toList()..sort();
+    final dates = gi.slotDates.toList()..sort();
     return dates.map((d) => (date: d, slotId: null)).toList();
   }
 
@@ -75,8 +150,8 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
   void initState() {
     super.initState();
     if (_isLong) {
-      // 장기 TO 기본값 설정
-      final to = widget.groupItem.masterTO;
+      // 장기 TO 기본값 설정 (일반 모드에서만 도달)
+      final to = widget.groupItem!.masterTO;
       final today = DateTime.now();
       final toStart = to.rangeStart ?? today;
       _startDate = toStart.isAfter(today) ? toStart : today;
@@ -157,6 +232,8 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
 
   bool get _canSend {
     if (_found == null || _sending) return false;
+    // 컨텍스트 모드: date pre-filled → 날짜 선택 불필요
+    if (widget.isContextualMode) return true;
     if (_isLong) return _startDate != null && _endDate != null;
     return _selectedDate != null;
   }
@@ -175,19 +252,47 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
 
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableInviteWorker');
+
+      // toId: 컨텍스트 모드는 contextualToId, 일반 모드는 groupItem에서 취득
+      final toId = widget.isContextualMode
+          ? widget.contextualToId!
+          : widget.groupItem!.masterTO.id;
+
       await callable.call({
-        'toId': widget.groupItem.masterTO.id,
+        'toId': toId,
         'businessId': widget.businessId,
         'targetUid': _found!['uid'],
-        if (!_isLong) 'workDate': _selectedDate!.toIso8601String(),
-        if (!_isLong && _selectedSlotId != null) 'slotId': _selectedSlotId,
-        if (_isLong) 'workDate': _startDate!.toIso8601String(),
-        if (_isLong) 'workEndDate': _endDate!.toIso8601String(),
-        if (_isLong) 'workDays': widget.groupItem.masterTO.workDays,
+        if (widget.isContextualMode) ...{
+          // 컨텍스트 모드: pre-filled date/slotId/workType 전달
+          'workDate': widget.prefilledDate!.toIso8601String(),
+          if (widget.prefilledSlotId != null && widget.prefilledSlotId!.isNotEmpty)
+            'slotId': widget.prefilledSlotId,
+          // [6.1 INV-01/02] selectedWorkType → 서버가 wage/wageType 파생
+          // [Phase 8.1B.4] workDetailStartTime/End → 동일 workType 복수 시 정확한 WorkDetail 식별
+          if (widget.prefilledWorkType != null && widget.prefilledWorkType!.isNotEmpty)
+            'selectedWorkType': widget.prefilledWorkType,
+          if (widget.prefilledStartTime != null && widget.prefilledStartTime!.isNotEmpty)
+            'workDetailStartTime': widget.prefilledStartTime,
+          if (widget.prefilledEndTime != null && widget.prefilledEndTime!.isNotEmpty)
+            'workDetailEndTime': widget.prefilledEndTime,
+        } else if (!_isLong) ...{
+          'workDate': _selectedDate!.toIso8601String(),
+          if (_selectedSlotId != null) 'slotId': _selectedSlotId,
+        } else ...{
+          'workDate': _startDate!.toIso8601String(),
+          'workEndDate': _endDate!.toIso8601String(),
+          'workDays': widget.groupItem!.masterTO.workDays,
+        },
       });
 
       if (!mounted) return;
-      ToastHelper.showSuccess('${_found!['name']}님에게 초대를 발송했습니다');
+      final name = _found!['name'] as String? ?? '';
+      // 컨텍스트 모드: "근무 제안" / 일반 모드: "초대 발송" (기존 표현 유지)
+      if (widget.isContextualMode) {
+        ToastHelper.showSuccess('$name님에게 근무 제안을 보냈습니다');
+      } else {
+        ToastHelper.showSuccess('$name님에게 초대를 발송했습니다');
+      }
       Navigator.pop(context, true);
     } on FirebaseFunctionsException catch (e) {
       debugPrint('❌ 초대 발송 오류: ${e.code} — ${e.message}');
@@ -203,7 +308,8 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
   // ── 날짜 피커 ───────────────────────────────────────────────────
 
   Future<void> _pickDate({required bool isStart}) async {
-    final to = widget.groupItem.masterTO;
+    // 일반 모드에서만 호출됨 — groupItem 보장
+    final to = widget.groupItem!.masterTO;
     final now = DateTime.now();
     final toStart = to.rangeStart ?? now;
     final toEnd = to.rangeEnd ?? to.postingExpiryDate;
@@ -240,143 +346,113 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
     final theme = Theme.of(context);
     final s = ResponsiveHelper.getScale(context);
 
+    // subtitle: 컨텍스트 모드 → 사업장명 / 단기 → '단기 · TO제목' / 장기 → '장기 · TO제목'
+    final subtitle = widget.isContextualMode
+        ? widget.businessName
+        : _isLong
+            ? '장기 · ${widget.groupItem?.title ?? ''}'
+            : '단기 · ${widget.groupItem?.title ?? ''}';
+
     return PopScope(
       canPop: !_sending,
-      child: Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        clipBehavior: Clip.antiAlias,
-        insetPadding:
-            EdgeInsets.symmetric(horizontal: 20 * s, vertical: 40 * s),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _buildHeader(theme, s),
-              _buildBody(theme, s),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ── 헤더 ────────────────────────────────────────────────────────
-
-  Widget _buildHeader(ThemeData theme, double s) {
-    final isLong = _isLong;
-    return Container(
-      padding: EdgeInsets.fromLTRB(20 * s, 18 * s, 16 * s, 18 * s),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [theme.primaryColor, theme.colorScheme.secondary],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-      ),
-      child: Row(
+      child: AppModalShell(
         children: [
-          Container(
-            padding: EdgeInsets.all(8 * s),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(
-              Icons.person_add_outlined,
-              color: Colors.white,
-              size: ResponsiveHelper.iconSize(context, 20),
-            ),
+          AppModalHeader(
+            title: widget.isContextualMode ? '직접 초대' : '인력 초대',
+            subtitle: subtitle,
+            onClose: _sending
+                ? null
+                : () {
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    Navigator.pop(context, false);
+                  },
           ),
-          SizedBox(width: 12 * s),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '근로자 초대',
-                  style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                Row(
-                  children: [
-                    Container(
-                      padding: EdgeInsets.symmetric(
-                          horizontal: 6 * s, vertical: 1 * s),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.25),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        isLong ? '장기' : '단기',
-                        style: ResponsiveHelper.tinyStyle(context,
-                            color: Colors.white),
-                      ),
-                    ),
-                    SizedBox(width: 6 * s),
-                    Flexible(
-                      child: Text(
-                        widget.groupItem.title,
-                        style: ResponsiveHelper.tinyStyle(context,
-                            color: Colors.white.withValues(alpha: 0.9)),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
+            child: SingleChildScrollView(
+              padding: EdgeInsets.all(16 * s),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // 컨텍스트 모드: 근무 정보 요약 (날짜·슬롯 재선택 불필요)
+                  if (widget.isContextualMode) _buildContextSummary(s),
+                  _buildPhoneSearchSection(theme, s),
+                  if (_found != null) ...[
+                    SizedBox(height: 12 * s),
+                    _buildFoundCard(s),
                   ],
-                ),
-              ],
-            ),
-          ),
-          // 닫기 버튼
-          Material(
-            color: Colors.white.withValues(alpha: 0.15),
-            borderRadius: BorderRadius.circular(8),
-            child: InkWell(
-              onTap: _sending
-                  ? null
-                  : () {
-                      FocusManager.instance.primaryFocus?.unfocus();
-                      Navigator.pop(context, false);
-                    },
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: EdgeInsets.all(6 * s),
-                child: Icon(
-                  Icons.close,
-                  color: Colors.white,
-                  size: ResponsiveHelper.iconSize(context, 18),
-                ),
+                  // 일반 모드에서만 날짜/슬롯 선택 섹션 표시
+                  if (!widget.isContextualMode) ...[
+                    SizedBox(height: 12 * s),
+                    _isLong
+                        ? _buildLongTermDateSection(theme, s)
+                        : _buildShortTermSlotSection(theme, s),
+                  ],
+                ],
               ),
             ),
           ),
+          AppModalFooter(child: _buildSendButton(theme, s)),
         ],
       ),
     );
   }
 
-  // ── 본문 ────────────────────────────────────────────────────────
+  // ── [Phase 8.1B.3] 컨텍스트 모드 근무 정보 요약 카드 ────────────
 
-  Widget _buildBody(ThemeData theme, double s) {
-    return Container(
-      color: AppColors.grey50,
-      padding: EdgeInsets.all(16 * s),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildPhoneSearchSection(theme, s),
-          if (_found != null) ...[
-            SizedBox(height: 12 * s),
-            _buildFoundCard(s),
+  Widget _buildContextSummary(double s) {
+    final workType = widget.prefilledWorkType ?? '';
+    final dateStr = widget.prefilledDate != null
+        ? FormatHelper.formatDateShort(widget.prefilledDate!)
+        : '';
+    final startT = widget.prefilledStartTime ?? '';
+    final endT = widget.prefilledEndTime ?? '';
+    final timeStr = (startT.isNotEmpty && endT.isNotEmpty)
+        ? '$startT ~ $endT'
+        : '';
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: 12 * s),
+      child: Container(
+        padding: EdgeInsets.all(14 * s),
+        decoration: CommonWidgets.compactCardDecoration(),
+        child: Row(
+          children: [
+            Container(
+              padding: EdgeInsets.all(8 * s),
+              decoration: BoxDecoration(
+                color: AppColors.info.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                Icons.work_outline,
+                size: ResponsiveHelper.iconSize(context, 16),
+                color: AppColors.info,
+              ),
+            ),
+            SizedBox(width: 10 * s),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (workType.isNotEmpty)
+                    Text(
+                      workType,
+                      style: ResponsiveHelper.bodyStyle(context)
+                          .copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  if (dateStr.isNotEmpty || timeStr.isNotEmpty)
+                    Text(
+                      [dateStr, timeStr]
+                          .where((v) => v.isNotEmpty)
+                          .join(' · '),
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.grey500),
+                    ),
+                ],
+              ),
+            ),
           ],
-          SizedBox(height: 12 * s),
-          _isLong
-              ? _buildLongTermDateSection(theme, s)
-              : _buildShortTermSlotSection(theme, s),
-          SizedBox(height: 20 * s),
-          _buildSendButton(theme, s),
-        ],
+        ),
       ),
     );
   }
@@ -669,7 +745,8 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
                       onTap: () => _pickDate(isStart: false))),
             ],
           ),
-          if (widget.groupItem.masterTO.workDays.isNotEmpty) ...[
+          // groupItem 보장 — _buildLongTermDateSection은 일반 모드에서만 호출됨
+          if ((widget.groupItem?.masterTO.workDays ?? []).isNotEmpty) ...[
             SizedBox(height: 10 * s),
             Row(
               children: [
@@ -678,7 +755,7 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
                     color: AppColors.grey400),
                 SizedBox(width: 4 * s),
                 Text(
-                  '근무 요일: ${widget.groupItem.masterTO.workDays.join(', ')}',
+                  '근무 요일: ${(widget.groupItem?.masterTO.workDays ?? []).join(', ')}',
                   style: ResponsiveHelper.tinyStyle(context,
                       color: AppColors.grey500),
                 ),
@@ -789,7 +866,8 @@ class _InviteWorkerDialogState extends State<InviteWorkerDialog> {
                           color: Colors.white),
                       SizedBox(width: 6 * s),
                       Text(
-                        '초대 발송',
+                        // 컨텍스트 모드: "근무 제안" / 일반 모드: "초대 발송"
+                        widget.isContextualMode ? '근무 제안' : '초대 발송',
                         style: ResponsiveHelper.bodyStyle(context).copyWith(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,

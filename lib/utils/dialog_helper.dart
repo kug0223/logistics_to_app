@@ -418,13 +418,19 @@ class DialogHelper {
     bool isScrollControlled = false,
     bool enableDrag = true,
     bool isDismissible = true,
+    /// true: 루트 Navigator로 시트를 표시 → BottomNavigationBar까지 Dim 처리됨
+    /// false(기본): 현재 Navigator → BottomNavBar는 Dim 밖에 남음
+    bool useRootNavigator = false,
   }) {
     return showModalBottomSheet<T>(
       context: context,
+      useRootNavigator: useRootNavigator,
       useSafeArea: true,
       isScrollControlled: isScrollControlled,
       enableDrag: enableDrag,
       isDismissible: isDismissible,
+      // 모든 Sheet의 기본 배경 흰색 — 앱 디자인 시스템 통일
+      backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -790,6 +796,7 @@ class DialogHelper {
   // ═══════════════════════════════════════════════════════════
 
   /// 앱 통일 스타일 다이얼로그 프레임
+  /// [리디자인] 그라데이션 헤더 제거 → White 기반, accentColor는 아이콘에만 사용
   static Widget _buildDialog(
     BuildContext context, {
     required String title,
@@ -799,6 +806,7 @@ class DialogHelper {
     required Color accentColor,
   }) {
     return Dialog(
+      backgroundColor: Colors.white,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
       child: ConstrainedBox(
@@ -807,31 +815,26 @@ class DialogHelper {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 그라데이션 헤더
-            Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 18)),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [accentColor, accentColor.withValues(alpha: 0.75)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(24),
-                  topRight: Radius.circular(24),
-                ),
+            // 헤더 — White 기반, accentColor는 아이콘 컨테이너에만
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                ResponsiveHelper.spacing(context, 20),
+                ResponsiveHelper.spacing(context, 20),
+                ResponsiveHelper.spacing(context, 20),
+                0,
               ),
               child: Row(
                 children: [
                   Container(
-                    padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 10)),
+                    width: 44,
+                    height: 44,
                     decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.2),
+                      color: accentColor.withValues(alpha: 0.10),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Icon(
                       icon,
-                      color: Colors.white,
+                      color: accentColor,
                       size: ResponsiveHelper.iconSize(context, 22),
                     ),
                   ),
@@ -841,7 +844,7 @@ class DialogHelper {
                       title,
                       style: ResponsiveHelper.subtitleStyle(context).copyWith(
                         fontWeight: FontWeight.bold,
-                        color: Colors.white,
+                        color: const Color(0xFF111827),
                       ),
                     ),
                   ),
@@ -858,16 +861,9 @@ class DialogHelper {
               ),
               child: body,
             ),
-            // 버튼 행
-            Container(
+            // 버튼 행 — 구분선 제거, 여백만으로 콘텐츠와 분리
+            Padding(
               padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-              decoration: const BoxDecoration(
-                color: AppColors.grey50,
-                borderRadius: BorderRadius.only(
-                  bottomLeft: Radius.circular(24),
-                  bottomRight: Radius.circular(24),
-                ),
-              ),
               child: Row(
                 children: actions
                     .asMap()
@@ -891,26 +887,33 @@ class DialogHelper {
     );
   }
 
-  /// 취소 버튼
+  /// 취소 버튼 — 흰 배경 + 얇은 테두리
   static Widget _cancelBtn(
     BuildContext context,
     VoidCallback onPressed,
     String text,
   ) {
-    return Material(
-      color: AppColors.grey100,
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        onTap: onPressed,
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
         borderRadius: BorderRadius.circular(10),
-        child: Padding(
-          padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 13)),
-          child: Center(
-            child: Text(
-              text,
-              style: ResponsiveHelper.bodyStyle(context).copyWith(
-                color: AppColors.grey700,
-                fontWeight: FontWeight.w600,
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(10),
+          child: Padding(
+            padding: EdgeInsets.symmetric(vertical: ResponsiveHelper.spacing(context, 13)),
+            child: Center(
+              child: Text(
+                text,
+                style: ResponsiveHelper.bodyStyle(context).copyWith(
+                  color: const Color(0xFF4B5563),
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
           ),

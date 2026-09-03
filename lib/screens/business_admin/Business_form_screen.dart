@@ -1,4 +1,3 @@
-import 'package:ALfit/screens/common/document_management_screen.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
@@ -23,15 +22,12 @@ import '../../services/storage_service.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/constants.dart';
-import '../../utils/dialog_helper.dart';
-
 // Widgets
 import '../../widgets/common/common_widgets.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/inputs/daum_address_search.dart';
 
 // Screen
-import '../auth/login_screen.dart';
 import '../../utils/navigation_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../theme/app_colors.dart';
@@ -82,6 +78,10 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   // 이미지
   File? _mainImage;
   String? _mainImageUrl;
+
+  // 사업자등록증 이미지 (신규 등록 필수)
+  File? _businessLicenseImage;
+  String? _businessLicenseImageUrl;
 
   // 삭제할 이미지 URL 추적
   final List<String> _imagesToDelete = [];
@@ -190,6 +190,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
 
     _mainImageUrl = business.mainImageUrl;
     _additionalImageUrls = business.imageUrls ?? [];
+    _businessLicenseImageUrl = business.businessLicenseImageUrl;
 
     if (business.ownerName != null) _ownerNameController.text = business.ownerName!;
 
@@ -215,6 +216,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   void dispose() {
     // TMP-01: 저장되지 않고 남은 임시 압축 파일 정리 (fire-and-forget)
     _mainImage?.delete().ignore();
+    _businessLicenseImage?.delete().ignore();
     for (final file in _additionalImages) {
       file.delete().ignore();
     }
@@ -243,38 +245,12 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     final theme = Theme.of(context);
 
     return PopScope(
-      canPop: !widget.isFromSignUp && !_isEditMode,
+      // 수정 모드: 뒤로가기 가로채서 확인 다이얼로그 표시
+      // 신규 등록(ADMIN HOME에서 진입): 바로 pop 허용
+      canPop: !_isEditMode,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
-        if (widget.isFromSignUp) {
-          final nav = Navigator.of(context);
-          final confirmed = await showDialog<bool>(
-            context: context,
-            barrierDismissible: false,
-            builder: (context) => StyledDialog(
-              title: '등록 취소',
-              icon: Icons.exit_to_app,
-              headerColor: AppColors.warning,
-              content: const Text('사업장 등록을 취소하시겠습니까?\n로그인 화면으로 이동합니다.'),
-              actions: [
-                StyledDialogButton.cancel(
-                  text: '아니오',
-                  onPressed: () => Navigator.pop(context, false),
-                ),
-                StyledDialogButton.danger(
-                  text: '예',
-                  onPressed: () => Navigator.pop(context, true),
-                ),
-              ],
-            ),
-          );
-          if (confirmed == true && nav.context.mounted) {
-            nav.pushAndRemoveUntil(
-              MaterialPageRoute(builder: (context) => const LoginScreen()),
-              (route) => false,
-            );
-          }
-        } else if (_isEditMode) {
+        if (_isEditMode) {
           final nav = Navigator.of(context);
           final confirmed = await showDialog<bool>(
             context: context,
@@ -734,6 +710,25 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           ),
 
           SizedBox(height: ResponsiveHelper.spacing(context, 16)),
+
+          // 사업자등록증 (신규 등록 필수 / 수정 시 선택)
+          CommonWidgets.sectionHeader(
+            context: context,
+            title: '사업자등록증${_isEditMode ? ' (선택)' : ' (필수)'}',
+            icon: Icons.description_outlined,
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          if (!_isEditMode)
+            Padding(
+              padding: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
+              child: Text(
+                '신규 사업장 등록 시 사업자등록증 이미지가 필요합니다.',
+                style: ResponsiveHelper.tinyStyle(context, color: AppColors.warning),
+              ),
+            ),
+          _buildBusinessLicensePicker(context, theme),
+
+          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
         ],
       ),
     );
@@ -805,6 +800,137 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                     _imagesToDelete.add(_mainImageUrl!);
                   }
                   _mainImageUrl = null;
+                });
+              },
+              child: Container(
+                padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.6),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.close,
+                  color: Colors.white,
+                  size: ResponsiveHelper.iconSize(context, 20),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// 사업자등록증 이미지 선택 (신규 등록 필수 / 수정 선택)
+  ///
+  /// [REG-2 SEC] 신규 업로드된 사업자등록증은 Storage license/ 경로에 토큰 없이 저장.
+  ///   수정 모드에서 기존 URL(_businessLicenseImageUrl)은 직접 로드 불가 (403) — "제출됨" 배지 표시.
+  ///   새 파일을 선택한 경우(_businessLicenseImage != null)만 로컬 파일 미리보기 표시.
+  Widget _buildBusinessLicensePicker(BuildContext context, ThemeData theme) {
+    final hasNewLocal = _businessLicenseImage != null;
+    final hasExistingUrl = _businessLicenseImageUrl != null;
+    final hasImage = hasNewLocal || hasExistingUrl;
+
+    return Stack(
+      children: [
+        GestureDetector(
+          onTap: () async {
+            final image = await ImageHelper.pickAndCompressImage(
+              context,
+              type: ImageType.general,
+              useBottomSheet: true,
+            );
+            if (!mounted || image == null) return;
+            final prev = _businessLicenseImage;
+            setState(() => _businessLicenseImage = image);
+            prev?.delete().ignore(); // 교체 전 임시 파일 정리
+          },
+          child: Container(
+            width: double.infinity,
+            height: 160,
+            decoration: BoxDecoration(
+              color: AppColors.grey200,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: (!_isEditMode && !hasImage) ? AppColors.warning : AppColors.grey300,
+                width: (!_isEditMode && !hasImage) ? 1.5 : 1,
+              ),
+              // 새 로컬 파일이 있을 때만 이미지 표시.
+              // 기존 URL은 토큰 없는 Storage 경로 URL → 직접 로드 불가 → "제출됨" 배지로 대체.
+              image: hasNewLocal
+                  ? DecorationImage(
+                      image: FileImage(_businessLicenseImage!),
+                      fit: BoxFit.contain,
+                    )
+                  : null,
+            ),
+            child: hasNewLocal
+                ? null
+                : hasExistingUrl
+                    // 기존 사업자등록증 제출 상태 표시 (이미지 직접 로드 X)
+                    ? Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.check_circle_outline,
+                            size: ResponsiveHelper.iconSize(context, 40),
+                            color: AppColors.success,
+                          ),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                          Text(
+                            '사업자등록증 제출됨',
+                            style: ResponsiveHelper.bodyStyle(context).copyWith(
+                              color: AppColors.success,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                          Text(
+                            '탭하여 재업로드',
+                            style: ResponsiveHelper.tinyStyle(
+                              context,
+                              color: AppColors.grey500,
+                            ),
+                          ),
+                        ],
+                      )
+                    : Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.upload_file_outlined,
+                            size: ResponsiveHelper.iconSize(context, 40),
+                            color: AppColors.grey400,
+                          ),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                          Text(
+                            '사업자등록증 이미지 업로드',
+                            style: ResponsiveHelper.bodyStyle(context)
+                                .copyWith(color: AppColors.grey600),
+                          ),
+                          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                          Text(
+                            'JPG / PNG',
+                            style: ResponsiveHelper.tinyStyle(
+                              context,
+                              color: AppColors.grey500,
+                            ),
+                          ),
+                        ],
+                      ),
+          ),
+        ),
+        // 삭제 버튼 (이미지가 있을 때만 표시)
+        if (hasImage)
+          Positioned(
+            top: ResponsiveHelper.spacing(context, 8),
+            right: ResponsiveHelper.spacing(context, 8),
+            child: GestureDetector(
+              onTap: () {
+                _businessLicenseImage?.delete().ignore();
+                setState(() {
+                  _businessLicenseImage = null;
+                  // 기존 URL은 null로 설정만 (삭제 목록 관리는 Firestore update로 처리)
+                  _businessLicenseImageUrl = null;
                 });
               },
               child: Container(
@@ -1945,6 +2071,13 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       setState(() => _autoValidate = true);
       return false;
     }
+    // 신규 등록 시 사업자등록증 필수
+    if (!_isEditMode &&
+        _businessLicenseImage == null &&
+        _businessLicenseImageUrl == null) {
+      ToastHelper.showError('사업자등록증 이미지를 업로드해주세요');
+      return false;
+    }
     return true;
   }
 
@@ -2023,75 +2156,19 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   }
 
   Future<void> _showManualAddressDialog() async {
-    final addressController = TextEditingController();
-    final latController = TextEditingController(text: '37.5665');
-    final lngController = TextEditingController(text: '126.9780');
-
-    try {
-    final result = await showDialog<bool>(
+    // [FC-BIZ-01 OWNERSHIP FIX] _ManualAddressDialog(StatefulWidget)이 controller 3개를
+    // 직접 소유하고 State.dispose()에서 해제한다.
+    final result = await showDialog<_ManualAddressResult>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => StyledDialog(
-        title: '주소 직접 입력',
-        icon: Icons.location_on,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-        content: SingleChildScrollView(
-          child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: addressController,
-              decoration: const InputDecoration(
-                labelText: '주소',
-                hintText: '서울시 강남구 테헤란로 123',
-              ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: latController,
-                    decoration: const InputDecoration(labelText: '위도'),
-                    keyboardType: TextInputType.number,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: lngController,
-                    decoration: const InputDecoration(labelText: '경도'),
-                    keyboardType: TextInputType.number,
-                  ),
-                ),
-              ],
-            ),
-          ],
-          ),
-        ),
-        actions: [
-          StyledDialogButton.cancel(
-            onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(context, false); },
-          ),
-          StyledDialogButton.primary(
-            text: '확인',
-            onPressed: () { FocusManager.instance.primaryFocus?.unfocus(); Navigator.pop(context, true); },
-          ),
-        ],
-      ),
+      builder: (ctx) => const _ManualAddressDialog(),
     );
-
-    if (mounted && result == true && addressController.text.isNotEmpty) {
+    if (mounted && result != null && result.address.isNotEmpty) {
       setState(() {
-        _addressController.text = addressController.text;
-        _latitude = double.tryParse(latController.text);
-        _longitude = double.tryParse(lngController.text);
+        _addressController.text = result.address;
+        _latitude = result.lat;
+        _longitude = result.lng;
       });
-    }
-    } finally {
-      addressController.dispose();
-      latController.dispose();
-      lngController.dispose();
     }
   }
 
@@ -2102,31 +2179,11 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     // catch 블록에서 orphan Storage 정리를 위해 try 밖에서 선언
     final newlyUploadedUrls = <String>[];
     try {
-      // 사업자등록증 체크 — 캐시 사용 (refreshCurrentUser는 저장 완료 후 1회만 수행)
       final userProvider = context.read<UserProvider>();
       final user = userProvider.currentUser;
 
       if (user == null) {
         ToastHelper.showError('로그인이 필요합니다.');
-        return;
-      }
-
-      // 사업자등록증 미등록 시 다이얼로그
-      if (user.businessLicenseImageUrl == null) {
-        final shouldNavigate = await DialogHelper.showDocumentRequired(
-          context,
-          title: '사업자등록증 등록 필요',
-          missingDocuments: ['사업자등록증'],
-        );
-
-        if (shouldNavigate && mounted) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const DocumentManagementScreen(),
-            ),
-          );
-        }
         return;
       }
 
@@ -2143,15 +2200,29 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
       // Storage 삭제는 Firestore 업데이트 성공 후에만 수행한다.
       // 이 시점에서는 새 이미지 업로드만 먼저 진행한다.
 
-      // 이미지 병렬 업로드 (대표 + 추가 + 교통편 동시)
+      // 이미지 병렬 업로드 (대표 + 사업자등록증 + 추가 + 교통편 동시)
       String? mainImageUrl = _mainImageUrl;
+      String? businessLicenseImageUrl = _businessLicenseImageUrl;
       List<String> additionalUrls = List.from(_additionalImageUrls);
       List<String> transportUrls = List.from(_transportImageUrls);
 
+      // 업로드 인덱스 추적
+      int uploadIdx = 0;
+      int? mainUploadIdx;
+      int? licenseUploadIdx;
       final uploadFutures = <Future<String?>>[];
-      if (_mainImage != null) uploadFutures.add(_uploadImage(_mainImage!, uploadBizId, 'main'));
+
+      if (_mainImage != null) {
+        mainUploadIdx = uploadIdx++;
+        uploadFutures.add(_uploadImage(_mainImage!, uploadBizId, 'main'));
+      }
+      if (_businessLicenseImage != null) {
+        licenseUploadIdx = uploadIdx++;
+        uploadFutures.add(_uploadImage(_businessLicenseImage!, uploadBizId, 'license'));
+      }
+      final additionalUploadStart = uploadIdx;
       uploadFutures.addAll(_additionalImages.map((img) => _uploadImage(img, uploadBizId, 'additional')));
-      final transportUploadStart = uploadFutures.length;
+      final transportUploadStart = additionalUploadStart + _additionalImages.length;
       uploadFutures.addAll(_transportImages.map((img) => _uploadImage(img, uploadBizId, 'transport')));
 
       if (uploadFutures.isNotEmpty) {
@@ -2172,17 +2243,20 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           throw Exception('이미지 업로드에 실패했습니다. 인터넷 연결을 확인 후 다시 시도해주세요.');
         }
 
-        int i = 0;
-        if (_mainImage != null) {
-          mainImageUrl = results[i++];
-          newlyUploadedUrls.add(mainImageUrl!);
+        if (mainUploadIdx != null) {
+          mainImageUrl = results[mainUploadIdx]!;
+          newlyUploadedUrls.add(mainImageUrl);
         }
-        for (; i < transportUploadStart; i++) {
+        if (licenseUploadIdx != null) {
+          businessLicenseImageUrl = results[licenseUploadIdx]!;
+          newlyUploadedUrls.add(businessLicenseImageUrl);
+        }
+        for (int i = additionalUploadStart; i < transportUploadStart; i++) {
           final url = results[i]!;
           newlyUploadedUrls.add(url);
           additionalUrls.add(url);
         }
-        for (; i < results.length; i++) {
+        for (int i = transportUploadStart; i < results.length; i++) {
           final url = results[i]!;
           newlyUploadedUrls.add(url);
           transportUrls.add(url);
@@ -2214,6 +2288,9 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         // isApproved는 관리자가 편집할 수 없는 서버 관리 필드 — update 맵 제외
         // (포함 시 슈퍼어드민이 isApproved 변경 후 BUSINESS_ADMIN이 저장하면 diff에 포함돼 PERMISSION_DENIED 발생)
         if (!_isEditMode) 'isApproved': false,
+        // 사업자등록증: 신규=필수(업로드 URL), 수정=업로드했을 때만 갱신
+        if (businessLicenseImageUrl != null)
+          'businessLicenseImageUrl': businessLicenseImageUrl,
         'mainImageUrl': mainImageUrl,
         'imageUrls': additionalUrls,
         'oneLineIntro': _oneLineIntroController.text.trim().isEmpty ? null : _oneLineIntroController.text.trim(),
@@ -2308,20 +2385,13 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         await userProvider.refreshCurrentUser();
         if (!mounted) return;
 
-        ToastHelper.showSuccess('사업장이 등록되었습니다\n바로 사용하실 수 있습니다');
+        ToastHelper.showSuccess('사업장 등록 완료\n운영팀 검토 후 서비스가 활성화됩니다');
       }
 
       if (mounted) {
-        if (widget.isFromSignUp) {
-          // 회원가입 후 → 로그인 화면으로
-          NavigationHelper.pushAndRemoveAll(
-            context,
-            destination: const LoginScreen(),
-          );
-        } else {
-          // 일반 등록/수정 → 뒤로가기 (변경됨 표시)
-          NavigationHelper.popWithChange(context);
-        }
+        // 등록/수정 완료 → 뒤로가기 (변경됨 표시)
+        // ADMIN HOME 복귀 시 STATE B 배너로 전환됨 (AuthWrapper 라우팅 불필요)
+        NavigationHelper.popWithChange(context);
       }
     } catch (e) {
       debugPrint('❌ 사업장 저장 실패: $e');
@@ -2342,10 +2412,16 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
   }
 
   // [SEC-BIZ-UPLOAD] CF 경유 업로드 — callableUploadBusinessImage → assertBizAdmin 검증 후 저장
+  // [REG-2 SEC] type == 'license' 시 fileType: 'businessLicense' 전달
+  //   → CF가 license/ 서브경로 + 토큰 없이 저장 (Storage rules allow get: if false)
   Future<String?> _uploadImage(File imageFile, String bizId, String type) async {
     try {
       final bytes = await imageFile.readAsBytes();
-      return await _storageService.uploadBusinessImage(bytes, bizId);
+      return await _storageService.uploadBusinessImage(
+        bytes,
+        bizId,
+        fileType: type == 'license' ? 'businessLicense' : null,
+      );
     } finally {
       // TMP-01: pickAndCompressImage()가 반환한 임시 파일(compressed_xxx.jpg)은
       // 업로드 성공/실패 무관하게 정리.
@@ -2355,5 +2431,97 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
         debugPrint('⚠️ 임시 이미지 파일 삭제 실패 (무시 가능)');
       }
     }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FC-BIZ-01 OWNERSHIP FIX: _ManualAddressDialog
+// controller 3개를 Dialog State가 직접 소유하고 dispose().
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ManualAddressResult {
+  final String address;
+  final double? lat;
+  final double? lng;
+  const _ManualAddressResult({required this.address, this.lat, this.lng});
+}
+
+class _ManualAddressDialog extends StatefulWidget {
+  const _ManualAddressDialog();
+
+  @override
+  State<_ManualAddressDialog> createState() => _ManualAddressDialogState();
+}
+
+class _ManualAddressDialogState extends State<_ManualAddressDialog> {
+  final _addressCtrl = TextEditingController();
+  final _latCtrl = TextEditingController(text: '37.5665');
+  final _lngCtrl = TextEditingController(text: '126.9780');
+
+  @override
+  void dispose() {
+    _addressCtrl.dispose();
+    _latCtrl.dispose();
+    _lngCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StyledDialog(
+      title: '주소 직접 입력',
+      icon: Icons.location_on,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _addressCtrl,
+              decoration: const InputDecoration(
+                labelText: '주소',
+                hintText: '서울시 강남구 테헤란로 123',
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _latCtrl,
+                    decoration: const InputDecoration(labelText: '위도'),
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    controller: _lngCtrl,
+                    decoration: const InputDecoration(labelText: '경도'),
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        StyledDialogButton.cancel(
+          onPressed: () => Navigator.pop(context),
+        ),
+        StyledDialogButton.primary(
+          text: '확인',
+          onPressed: () => Navigator.pop(
+            context,
+            _ManualAddressResult(
+              address: _addressCtrl.text,
+              lat: double.tryParse(_latCtrl.text),
+              lng: double.tryParse(_lngCtrl.text),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }

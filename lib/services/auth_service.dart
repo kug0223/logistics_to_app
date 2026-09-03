@@ -3,10 +3,22 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import '../models/core/user_model.dart';
+import '../models/core/user_region.dart';
 import '../utils/toast_helper.dart';
 import '../utils/encryption_helper.dart';
 import 'fcm_service.dart';
 import 'firestore_service.dart';
+
+/// [C안 F-01-3] 외국인 가입 중 약관 동의 CF 기록 실패 → 재로그인 시 복구 흐름
+/// Auth 세션을 유지한 채 throw — signOut 없이 복구 화면으로 라우팅한다.
+class IncompleteRegistrationException implements Exception {
+  final String message;
+  const IncompleteRegistrationException({
+    this.message = '가입이 완전히 완료되지 않았습니다.',
+  });
+  @override
+  String toString() => 'IncompleteRegistrationException: $message';
+}
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -55,9 +67,20 @@ class AuthService {
 
           // 가입 승인 상태 체크
           final status = data['accountStatus'] as String? ?? 'active';
+          if (status == 'registration_pending') {
+            // [V3] Document-First 가입 미완료 — Auth 세션 유지 + resume 흐름
+            // ForeignRegisterScreen.resume()으로 라우팅하여 남은 단계 재개
+            throw IncompleteRegistrationException(
+              message: '가입 절차를 이어서 완료해주세요.',
+            );
+          }
           if (status == 'pending') {
-            await _auth.signOut();
-            throw Exception('가입 승인 대기 중입니다.\n슈퍼관리자 승인 후 이용 가능합니다.');
+            // 레거시 외국인 pending — V3 resume 흐름으로 흡수
+            // termsConsentAt 유무와 무관하게 IncompleteRegistrationException 사용
+            // callableRecordTermsConsent → active 전환 로직이 조건 확인 후 처리
+            throw IncompleteRegistrationException(
+              message: '가입 절차를 이어서 완료해주세요.',
+            );
           }
           if (status == 'rejected') {
             await _auth.signOut();
@@ -94,6 +117,9 @@ class AuthService {
             result.user!.uid,
           );
         } else {
+          // [F-01-1 FIX] Auth 세션이 열린 채로 throw하면 앱이 인증된 고아 세션 상태로 남음
+          //   → signOut()으로 Auth 세션 정리 후 예외 발생
+          await _auth.signOut();
           throw Exception('사용자 정보를 찾을 수 없습니다.');
         }
       }
@@ -161,9 +187,14 @@ class AuthService {
     String? ci,
     String? foreignIdNumber,
     String accountStatus = 'active',
+    // 전화번호 시스템
+    String? authPhone,
+    String? phoneVerificationLevel,
     // 주소 기반 필드
     String? address,
     String? detailAddress,
+    // 추천 지역 (USER 가입 시 필수, BUSINESS_ADMIN은 null)
+    UserRegion? homeRegion,
     // ⭐ 서류 업로드 필드
     String? idCardImageUrl,           // 신분증 앞면 (지원자)
     String? bankbookImageUrl,         // 통장 사본 (지원자)
@@ -205,9 +236,14 @@ class AuthService {
           ci: ci,
           foreignIdNumber: foreignIdNumber,
           accountStatus: accountStatus,
+          // 전화번호 시스템
+          authPhone: authPhone,
+          phoneVerificationLevel: phoneVerificationLevel,
           // ⭐ 주소 추가!
           address: address,
           detailAddress: detailAddress,
+          // 추천 지역
+          homeRegion: homeRegion,
           // ⭐ 서류 이미지
           idCardImageUrl: idCardImageUrl,
           bankbookImageUrl: bankbookImageUrl,
@@ -293,20 +329,26 @@ class AuthService {
   }
 
   // 로그아웃
-  Future<void> signOut() async {
+  //
+  // [showToast] 사용자가 의도적으로 로그아웃한 경우에만 true (기본값).
+  // 고아 Auth 세션 정리(_loadUserData orphan path), 임시 세션 정리(비밀번호 재설정) 등
+  // 내부 정리 목적 호출 시 false를 전달해 토스트를 억제한다.
+  Future<void> signOut({bool showToast = true}) async {
     try {
       final uid = _auth.currentUser?.uid;
       final fs = FirestoreService();
       fs.invalidateGlobalTOLimitCache();
       if (uid != null) fs.invalidateAdminTOLimitCache(uid);
       await _auth.signOut();
-      ToastHelper.showInfo('로그아웃되었습니다.');
+      if (showToast) ToastHelper.showInfo('로그아웃되었습니다.');
     } catch (e) {
       throw Exception('로그아웃 중 오류가 발생했습니다.');
     }
   }
 
   // 사용자 정보 가져오기
+  // [F-01-1 restore path] doc.exists==false → null 반환 (호출자가 고아 세션 처리)
+  // 네트워크·파싱 예외는 rethrow → _loadUserData catch가 처리 (null과 구별 가능)
   Future<UserModel?> getUserData(String uid) async {
     try {
       DocumentSnapshot doc =
@@ -318,10 +360,10 @@ class AuthService {
           uid,
         );
       }
-      return null;
+      return null; // users 문서 없음 — 고아 Auth session 가능성
     } catch (e) {
       debugPrint('사용자 정보 가져오기 실패: $e');
-      return null;
+      rethrow; // 네트워크·파싱 오류는 호출자(_loadUserData)에서 처리
     }
   }
 
@@ -607,8 +649,9 @@ class AuthService {
     }
   }
 
-  // [M-3] 외국인등록번호 중복 체크 — callableCheckForeignIdExists CF 경유 (PII 노출 차단)
-  // 동일 IV + AES 고정 암호화이므로 같은 입력 → 같은 암호문 → 서버 쿼리 가능
+  // [DEPRECATED] callableCheckForeignIdExists — AES random IV로 equality 쿼리 broken.
+  //   신규 코드에서는 precheckForeignIdentity() + finalizeForeignIdentity() 사용.
+  //   레거시 호환용으로만 유지.
   Future<bool> checkForeignIdExists(String foreignIdNumber, UserRole role) async {
     try {
       final encrypted = EncryptionHelper.encrypt(foreignIdNumber);
@@ -618,13 +661,206 @@ class AuthService {
           .call({'foreignIdNumber': encrypted, 'role': _roleToString(role)});
       return (result.data as Map)['exists'] == true;
     } catch (e) {
-      debugPrint('❌ 외국인등록번호 중복 체크 실패: $e');
-      return true; // 에러 시 중복으로 간주
+      debugPrint('❌ [DEPRECATED] 외국인등록번호 중복 체크 실패: $e');
+      return false; // 구버전 broken 쿼리 — false 반환 (finalize에서 atomic 재확인)
+    }
+  }
+
+  // [FOREIGN-IDENTITY-01] 외국인등록번호 사전 중복 체크 — HMAC 기반 서버 쿼리 (UX용)
+  // 평문 rawForeignId(13자리 숫자)를 CF로 전송 → 서버가 HMAC 계산 → foreignIdFingerprints 조회.
+  // 실제 atomic 중복 차단은 finalizeForeignIdentity에서 수행.
+  // Input: rawForeignId = 13자리 숫자 (하이픈 없음), role
+  Future<bool> precheckForeignIdentity(String rawForeignId, UserRole role) async {
+    try {
+      final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callablePrecheckForeignIdentity',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
+          .call({'rawForeignId': rawForeignId, 'role': _roleToString(role)});
+      return (result.data as Map)['exists'] == true;
+    } catch (e) {
+      debugPrint('⚠️ 외국인 사전 체크 실패 (무시 — finalize에서 재확인): $e');
+      return false; // pre-check 실패 시 비중복으로 처리
+    }
+  }
+
+  // [FOREIGN-IDENTITY-03] 외국인 identity 확정 — HMAC fingerprint 생성 + atomic 중복 체크 + Firestore 기록
+  // signUp() 직후 호출 필수.
+  //
+  // [B.2] 오류 정책 (확정):
+  //
+  //   TERMINAL — 이 외국인등록번호로는 가입 불가, 서버 cleanup 후 재가입 처음부터:
+  //     already-exists: 다른 계정이 동일 ID를 선점 → callableAbortForeignRegistration 호출
+  //
+  //   RECOVERABLE — pending 유지, 사용자가 수정하거나 서버 정상화 후 재시도:
+  //     invalid-argument  : 등록번호 형식 오류 → 사용자가 번호를 수정하고 재시도 가능
+  //     failed-precondition: 나이 미달 → pending 유지 (재시도 의미 없지만 orphan 생성 방지)
+  //     permission-denied : 블랙리스트/30일 제한 → pending 유지 (에러 메시지만 표시)
+  //     unauthenticated   : 토큰 만료 → pending 유지 (앱 재시작 후 recovery 경로 사용)
+  //     not-found         : Firestore doc 누락 (signUp 실패 race) → Auth-only 삭제 (fallback)
+  //     internal, unavailable, deadline-exceeded, 네트워크: 서버/망 일시 장애 → pending 유지
+  //
+  // 반환: null = 성공, String = 오류 메시지
+  Future<String?> finalizeForeignIdentity(
+    String rawForeignId, {
+    String? legalName,
+    String? visaType,
+  }) async {
+    final payload = <String, dynamic>{'rawForeignId': rawForeignId};
+    if (legalName != null && legalName.isNotEmpty) payload['legalName'] = legalName;
+    if (visaType != null && visaType.isNotEmpty) payload['visaType'] = visaType;
+    // [DEBUG] CF 호출 직전 상태 확인
+    final currentUid = _auth.currentUser?.uid;
+    final idLen = rawForeignId.length;
+    final maskedId = idLen >= 8 ? '${rawForeignId.substring(0, 8)}*****' : '???';
+    debugPrint('🔷 [finalize] CF 호출 시작 | uid=$currentUid | idLen=$idLen | maskedId=$maskedId | legalName=$legalName | visaType=$visaType');
+    try {
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableFinalizeForeignIdentity',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
+          .call(payload);
+      debugPrint('✅ [finalize] CF 성공 | uid=$currentUid');
+      return null; // 성공
+    } on FirebaseFunctionsException catch (e) {
+      // [DEBUG] CF 에러 전체 정보 출력 — code/message/details 모두
+      debugPrint('❌ [finalize] CF 오류 | code=${e.code} | message=${e.message} | details=${e.details} | plugin=${e.plugin}');
+      if (e.code == 'already-exists') {
+        // TERMINAL: 다른 계정이 동일 외국인등록번호를 선점 — 이 pending 가입은 완료 불가.
+        // → callableAbortForeignRegistration (서버 CF)으로 Firestore·Storage·Auth 전체 정리.
+        // ※ Auth-only 삭제(B.1) 대신 server-authoritative cleanup으로 교체(B.2).
+        await _abortForeignRegistrationViaServer('already-exists');
+        return '이미 동일 역할로 가입된 외국인등록번호입니다.';
+      }
+      if (e.code == 'not-found') {
+        // Firestore users/{uid} 문서 없음 — signUp()과 finalize() 사이의 race condition.
+        // callableAbortForeignRegistration도 문서가 없으면 Auth만 정리하므로 직접 삭제.
+        await _deleteAuthAccountOnlyFallback('not-found');
+        return '계정 정보를 확인할 수 없습니다. 다시 시도해주세요.';
+      }
+      // ── RECOVERABLE — pending 상태 유지, 에러 메시지만 반환 ─────────
+      // invalid-argument: 사용자가 등록번호를 다시 입력하고 재시도 가능
+      // failed-precondition(나이미달)·permission-denied(블랙리스트/30일)·unauthenticated:
+      //   Auth를 삭제하면 recovery 경로(RegistrationRecoveryScreen)도 막힘 → pending 보존.
+      // internal·unavailable·deadline-exceeded·기타: 서버/망 장애 → pending 보존.
+      debugPrint('⚠️ [finalize] RECOVERABLE — pending 유지 | code=${e.code}');
+      return switch (e.code) {
+        'invalid-argument'   => '입력 정보를 확인하고 다시 시도해주세요.',
+        'failed-precondition'=> '만 19세 이상만 가입할 수 있습니다.',
+        'permission-denied'  => '가입이 제한된 계정입니다. 고객센터에 문의해주세요.',
+        'unauthenticated'    => '인증이 만료되었습니다. 앱을 재시작해주세요.',
+        _                    => '정보를 확인하는 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.',
+      };
+    } catch (e) {
+      // 네트워크 단절 등 — RECOVERABLE: Auth·Firestore 유지
+      debugPrint('❌ [finalize] non-CF 예외 | type=${e.runtimeType} | error=$e');
+      return '인터넷 연결을 확인하고 다시 시도해주세요.';
+    }
+  }
+
+  // [B.2/B.2.2] TERMINAL 케이스용 서버 cleanup — callableAbortForeignRegistration 호출.
+  //   완전 성공: Firestore + Storage + Auth 모두 서버에서 삭제.
+  //   부분 완료(partial:true): CF가 sensitive resource(Storage)를 HARD GATE로 처리.
+  //     STORAGE_RETRYABLE : Storage 삭제 실패 → user doc + Auth 보존 → 재시도 가능
+  //     FIRESTORE_RETRYABLE: Firestore 삭제 실패 → Auth 보존 → 재시도 가능
+  //     AUTH_RETRYABLE    : Firestore+Storage 정리됨, Auth user 살아있어 재시도 가능
+  //   CF exception: CF 자체 도달 실패(unauthenticated/app-check/network) → Auth-only fallback
+  Future<void> _abortForeignRegistrationViaServer(String reason) async {
+    debugPrint('⚠️ [finalizeForeignIdentity] 서버 cleanup 시작 (reason: $reason)');
+    try {
+      final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableAbortForeignRegistration',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
+          .call({});
+      // [B.2.2] partial 응답 확인 — CF는 partial 실패 시 exception 대신 JSON 반환.
+      // partial=true = Auth 살아있거나 retry context 보존 → 클라이언트 Auth 삭제 금지.
+      final data = result.data as Map<dynamic, dynamic>?;
+      final partial = data?['partial'] == true;
+      final cfReason = data?['reason'] as String? ?? '';
+      if (partial) {
+        // silent success 금지: partial 상태를 반드시 로그
+        debugPrint('⚠️ [finalizeForeignIdentity] 서버 cleanup 부분 완료 ($cfReason) — Auth/user 보존, 재시도 가능');
+        // NOT IMPLEMENTED (B.2.2): 사용자 facing retry 안내 UI
+      } else {
+        debugPrint('✅ [finalizeForeignIdentity] 서버 cleanup 완료 (Firestore+Storage+Auth)');
+      }
+      // partial 여부와 무관하게 클라이언트에서 Auth 추가 삭제 금지.
+      // CF가 이미 Auth를 정리했거나(success), Auth를 보존해 retry context를 유지함(partial).
+    } on FirebaseFunctionsException catch (cfErr) {
+      // CF 자체 도달 실패 (unauthenticated/app-check) → CF 로직이 실행되지 않은 상태.
+      // 상태 불확실 → Auth-only 삭제 last-resort fallback.
+      debugPrint('❌ [finalizeForeignIdentity] 서버 cleanup CF 실패 — Auth-only fallback (${cfErr.code})');
+      await _deleteAuthAccountOnlyFallback('cf-abort-failed');
+    } catch (e) {
+      debugPrint('❌ [finalizeForeignIdentity] 서버 cleanup 네트워크 오류 — Auth-only fallback: $e');
+      await _deleteAuthAccountOnlyFallback('cf-abort-network');
+    }
+  }
+
+  // [B.2] Auth-only 삭제 — callableAbortForeignRegistration 실패 시 fallback 또는 not-found 케이스.
+  // ※ RECOVERABLE 오류에서는 절대 호출하지 않는다.
+  Future<void> _deleteAuthAccountOnlyFallback(String reason) async {
+    debugPrint('⚠️ [finalizeForeignIdentity] Auth-only fallback 삭제 (reason: $reason)');
+    try {
+      await _auth.currentUser?.delete();
+      debugPrint('✅ [finalizeForeignIdentity] Auth-only fallback 완료');
+    } catch (authErr) {
+      debugPrint('❌ [finalizeForeignIdentity] Auth 삭제 실패 (orphan 가능): $authErr');
+    }
+  }
+
+  // [NATIVE-IDENTITY-03] 내국인 identity 확정 — passToken 소비 + atomic sentinel + ciHash/passVerifiedAt 기록
+  // signUp() 직후 호출 필수. 실패 시 FAIL-CLOSE: 계정 롤백 후 오류 메시지 반환.
+  // 반환: null = 성공, String = 오류 메시지(모든 실패 케이스 포함)
+  Future<String?> finalizeNativeIdentity(String passToken) async {
+    try {
+      await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('finalizeRegistration',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 15)))
+          .call({'passToken': passToken});
+      return null;
+    } on FirebaseFunctionsException catch (e) {
+      if (e.code == 'already-exists') {
+        // 동일 ciHash+role 중복 → 계정 롤백 (Firestore 먼저, Auth 나중)
+        await _rollbackNativeAccount('already-exists');
+        return '이미 동일 역할로 가입된 계정이 있습니다.';
+      }
+      // FAIL-CLOSE: network 오류, transaction 실패 등 → 계정 롤백
+      await _rollbackNativeAccount(e.code);
+      return '가입 정보를 확인하는 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.';
+    } catch (e) {
+      // FAIL-CLOSE: 네트워크 단절 등 예외 → 계정 롤백
+      await _rollbackNativeAccount('unknown');
+      return '가입 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+    }
+  }
+
+  // [NATIVE-IDENTITY-03] 내국인 가입 롤백 — Firestore 먼저 삭제 후 Auth 삭제 (CLAUDE.md Firestore 삭제 순서)
+  // partial cleanup 실패 시 orphan 계정이 남을 수 있으므로 debugPrint로 기록 (silent ignore 금지)
+  Future<void> _rollbackNativeAccount(String reason) async {
+    debugPrint('⚠️ [finalizeNativeIdentity] 롤백 시작 (reason: $reason)');
+    try {
+      final uid = _auth.currentUser?.uid;
+      if (uid != null) {
+        // Firestore 먼저 삭제 (CLAUDE.md: Firestore 삭제 순서)
+        await _firestore.collection('users').doc(uid).delete();
+        debugPrint('✅ [finalizeNativeIdentity] Firestore 문서 삭제 완료');
+      }
+    } catch (firestoreErr) {
+      // Firestore 삭제 실패 → orphan Firestore 문서 가능 (Auth 삭제는 계속 시도)
+      debugPrint('❌ [finalizeNativeIdentity] Firestore 롤백 실패 (orphan 문서 가능): $firestoreErr');
+    }
+    try {
+      await _auth.currentUser?.delete();
+      debugPrint('✅ [finalizeNativeIdentity] Auth 계정 삭제 완료');
+    } catch (authErr) {
+      // Auth 삭제 실패 → orphan Auth 계정 가능 (관리자 수동 정리 필요)
+      debugPrint('❌ [finalizeNativeIdentity] Auth 롤백 실패 (orphan 계정 가능): $authErr');
     }
   }
 
   // [M-3] 아이디 찾기 (이름 + 전화번호) — callableFindUsername CF 경유 (PII 노출 차단)
-  Future<String?> findUsername({
+  // [AUTH-FIX §4] 복수 계정 지원 — 동일 이름+전화번호에 복수 계정 존재 시 전체 반환.
+  // 반환: [{username, role}] — 빈 리스트 = 찾을 수 없음, 오류 시 빈 리스트
+  Future<List<Map<String, String>>> findUsername({
     required String name,
     required String phone,
   }) async {
@@ -632,16 +868,45 @@ class AuthService {
       final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableFindUsername')
           .call({'name': name, 'phone': phone});
-      final username = (result.data as Map)['username'] as String?;
-      if (username == null) {
-        ToastHelper.showError('일치하는 사용자를 찾을 수 없습니다.');
-        return null;
-      }
-      return username;
+      final raw = (result.data as Map)['accounts'];
+      if (raw == null) return [];
+      final accounts = (raw as List).whereType<Map>().map((a) => {
+        'username': (a['username'] as String?) ?? '',
+        'role':     (a['role']     as String?) ?? '',
+      }).where((a) => a['username']!.isNotEmpty).toList();
+      return accounts;
     } catch (e) {
       debugPrint('❌ 아이디 찾기 실패: $e');
       ToastHelper.showError('아이디 찾기 중 오류가 발생했습니다.');
-      return null;
+      return [];
     }
+  }
+
+  // [AUTH-FIX §2] 외국인 USER 비밀번호 찾기 1단계: username → OTP 발송
+  // 반환: 마스킹된 전화번호 (e.g. "010-****-1234"), null = 실패
+  Future<String?> sendOtpForPasswordReset(String username) async {
+    final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable(
+          'callableSendOtpForPasswordReset',
+          options: HttpsCallableOptions(timeout: const Duration(seconds: 15)),
+        )
+        .call({'username': username.trim()});
+    return (result.data as Map)['maskedPhone'] as String?;
+  }
+
+  // [AUTH-FIX §2] 외국인 USER 비밀번호 찾기 2단계: OTP 검증 → Custom Token 발급
+  // 반환: customToken, null = 실패
+  // 예외를 삼키지 않음 — 호출자에서 FirebaseFunctionsException catch 필수
+  Future<String?> resetPasswordWithOtp({
+    required String username,
+    required String code,
+  }) async {
+    final result = await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+        .httpsCallable(
+          'callableResetPasswordWithOtp',
+          options: HttpsCallableOptions(timeout: const Duration(seconds: 15)),
+        )
+        .call({'username': username.trim(), 'code': code.trim()});
+    return (result.data as Map)['customToken'] as String?;
   }
 }

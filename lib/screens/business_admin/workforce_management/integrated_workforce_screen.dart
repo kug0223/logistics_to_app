@@ -1,6 +1,7 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../../models/core/business_member_model.dart';
 import '../../../providers/user_provider.dart';
 import '../../../utils/toast_helper.dart';
 import '../../../utils/responsive_helper.dart';
@@ -21,7 +22,18 @@ class IntegratedWorkforceScreen extends StatefulWidget {
   /// 알림 딥링크 등에서 특정 사업장을 초기 선택할 때 전달. null이면 effectiveBusinessId 사용.
   final String? initialBusinessId;
 
-  const IntegratedWorkforceScreen({super.key, this.initialBusinessId});
+  /// [AUDIT.2R5] FCM·알림함 경유 진입 시 type 기반 세분화 권한 검사에 사용.
+  /// null → 일반 탭·버튼 진입 (generic OR guard 적용).
+  /// non-null → 해당 notification domain의 canonical permission만 허용.
+  /// FCMService는 payload `screen` 문자열을 그대로 전달.
+  /// NotificationScreen은 notification.type.name (Dart enum name)을 전달.
+  final String? notificationType;
+
+  const IntegratedWorkforceScreen({
+    super.key,
+    this.initialBusinessId,
+    this.notificationType,
+  });
 
   @override
   State<IntegratedWorkforceScreen> createState() =>
@@ -46,12 +58,146 @@ class _IntegratedWorkforceScreenState extends State<IntegratedWorkforceScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    // [AUDIT.2R2/2R3] 비동기 guard — FCM·notification 경로 포함 모든 진입 방어.
+    // async FrameCallback: Future<void>를 void로 업캐스트 (Flutter 표준 패턴).
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
+      final up = context.read<UserProvider>();
+
+      // ── [AUDIT.2R3] SUB_ADMIN 멀티 사업장 context 정렬 ──────────────────
+      // FCMService / NotificationScreen이 initialBusinessId=A로 IWS를 push했지만
+      // effectiveBusinessId=B인 경우, switchToAdminMode(A)로 context를 A로 전환한 뒤
+      // A의 fresh permissions로 권한을 검사하고 A의 데이터를 로드한다.
+      //
+      // Invariant (SUB_ADMIN):
+      //   Notification.businessId = Permission checked businessId
+      //                           = Destination businessId = Loaded data businessId
+      //
+      // switchToAdminMode 내부: subAdminBusinessIds 포함 검증 + Firestore fresh load.
+      // BUSINESS_ADMIN: isSubAdmin=false → 블록 전체 skip → can() 항상 true.
+      final initialBizId = widget.initialBusinessId;
+      if (up.isSubAdmin && initialBizId != null) {
+        final inList = up.currentUser?.subAdminBusinessIds.contains(initialBizId) ?? false;
+        if (!inList) {
+          // 알림 businessId가 이 SUB_ADMIN의 사업장 목록에 없음 → 잘못된 알림 or 권한 회수
+          ToastHelper.showWarning('이 업무를 처리할 권한이 없습니다.');
+          Navigator.of(context).pop();
+          return;
+        }
+        if (initialBizId != up.effectiveBusinessId) {
+          // 다른 사업장 알림 → switchToAdminMode로 A로 전환 (fresh permissions 포함)
+          await up.switchToAdminMode(initialBizId);
+          if (!mounted) return;
+        }
+      }
+
+      // ── [AUDIT.2R5] screen-level permission guard ─────────────────────
+      // • notificationType != null (FCM·알림함 경유):
+      //     _permissionForNotificationType()로 type별 canonical permission 검사.
+      //     예: toInviteAccepted → canManageTo만 허용.
+      //         canManageWorkers를 가진 SUB_ADMIN이라도 canManageTo 없으면 차단.
+      //
+      // • notificationType == null (일반 탭·버튼 진입):
+      //     R4 generic OR guard — 4개 도메인 중 하나 이상 보유 시 허용.
+      //
+      // _permissionForNotificationType 반환값:
+      //   non-null check → up.can(check) 결과로 허용·차단
+      //   (p) => false   → up.can()이 BUSINESS_ADMIN에서 단락 true → OWNER-only 구현
+      //   null           → generic OR guard로 fall through
+      //
+      // BUSINESS_ADMIN → up.can() 항상 true → 어떤 check에도 통과.
+      // SUB_ADMIN 권한 0개 → generic OR 전체 false → 차단.
+      final notifType = widget.notificationType;
+      final bool hasPermission;
+      if (notifType != null) {
+        final specificCheck = _permissionForNotificationType(notifType);
+        hasPermission = specificCheck != null
+            ? up.can(specificCheck)
+            : _hasGenericIwsPermission(up);
+      } else {
+        hasPermission = _hasGenericIwsPermission(up);
+      }
+      if (!hasPermission) {
+        ToastHelper.showWarning('이 업무를 처리할 권한이 없습니다.');
+        Navigator.of(context).pop();
+        return;
+      }
       _loadBusinessIds();
     });
     _fcmRefreshCallback = () { if (mounted) _controller.reload(context); };
     FCMService().addAdminRefreshListener(_fcmRefreshCallback);
+  }
+
+  // ── [AUDIT.2R5] 정적 권한 헬퍼 ─────────────────────────────────────
+  // IWS는 FCMService·NotificationScreen 양쪽에서 진입 가능.
+  // Notification 경유 시 type별 canonical permission을 단일 정의로 유지.
+
+  /// 4개 도메인 중 하나라도 권한 있으면 허용 — 일반(탭·버튼) 진입용 generic guard.
+  static bool _hasGenericIwsPermission(UserProvider up) =>
+      up.can((p) => p.canManageTo) ||
+      up.can((p) => p.canManageWorkers) ||
+      up.can((p) => p.canManageContract) ||
+      up.can((p) => p.canManageWage);
+
+  /// Notification type string → canonical required MemberPermissions check.
+  ///
+  /// FCMService의 `screen` 값과 NotificationScreen의 `notification.type.name` 양쪽을 처리.
+  /// (일부 type은 FCM screen key와 Dart enum name이 다름 — 예: 'contractRenewal' vs 'contractExpiringReminder')
+  ///
+  /// 반환값:
+  ///   non-null check → 해당 permission 검사 (canManageTo / canManageWorkers / canManageContract / canManageWage)
+  ///   (p) => false   → OWNER(BUSINESS_ADMIN) 전용 — up.can()의 단락 평가 활용 (SUB_ADMIN 전체 차단)
+  ///   null           → generic guard로 fall through (알 수 없는 type)
+  static bool Function(MemberPermissions)? _permissionForNotificationType(
+      String type) {
+    switch (type) {
+      // ── TO 도메인 ──────────────────────────────────────────────────
+      case 'toInviteAccepted':
+      case 'toInviteDeclined':
+      case 'toDetail': // TO 만료 임박 알림 IWS 폴백
+        return (p) => p.canManageTo;
+
+      // ── 계약 도메인 ────────────────────────────────────────────────
+      // FCM key: 'contractRenewal'  ↔  enum name: 'contractExpiringReminder'
+      case 'contractSigned':
+      case 'contractRenewal':           // FCMService screen key
+      case 'contractExpiringReminder':  // NotificationScreen enum name
+      case 'contractRequested':
+        return (p) => p.canManageContract;
+
+      // ── 임금 도메인 ────────────────────────────────────────────────
+      // FCM key: 'interimSettlementAdmin'  ↔  enum name: 'interimSettlementRequested'
+      case 'interimSettlementAdmin':      // FCMService screen key
+      case 'interimSettlementRequested':  // NotificationScreen enum name
+        return (p) => p.canManageWage;
+
+      // ── 인력 도메인 ────────────────────────────────────────────────
+      case 'fixedWorker':
+      case 'scheduleChangeRequested':
+      case 'terminationRequested':
+      case 'terminationApproved':
+      case 'terminationRejected':
+      case 'resignRequested':
+      case 'resignApproved':
+      case 'resignRejected':
+      case 'resignReminder':
+      case 'reconfirmAdminWarning':
+      case 'reconfirmDeclined':
+      case 'idCardAccessRequested':
+      case 'idCardAccessApproved':
+      case 'idCardAccessRejected':
+        return (p) => p.canManageWorkers;
+
+      // ── OWNER(BUSINESS_ADMIN) 전용 ────────────────────────────────
+      // SUB_ADMIN은 멤버 초대를 발송할 수 없으므로 수신도 정상 경로에서 없음.
+      // (p) => false: up.can()이 BUSINESS_ADMIN → 항상 true 단락, SUB_ADMIN → false.
+      case 'memberInvitationAccepted':
+      case 'memberInvitationRejected':
+        return (p) => false;
+
+      default:
+        return null; // generic guard로 fall through
+    }
   }
 
   Future<void> _setViewMode(bool isCalendar) async {
