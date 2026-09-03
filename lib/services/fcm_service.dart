@@ -541,14 +541,16 @@ class FCMService {
           builder: (_) => const MyApplicationsScreen(),
         );
         break;
-      // toInviteAccepted/Declined: 관리자가 수신 → 인력 관리 화면으로 이동
+      // toInviteAccepted/Declined: 관리자가 수신 → Jobs 탭 (공고 관리 canonical destination)
+      // [PATCH-FCM-B] ADMIN.POSTING.ROUTE-INTEGRITY-01
+      // admin: Jobs tab (Shell active + visible) / NotificationScreen fallback
+      // worker: MyApplicationsScreen (기존 유지)
       case 'toInviteAccepted':
       case 'toInviteDeclined':
         if (_currentUserIsAdmin) {
-          _pushFcmScreen(
-            destinationKey: iwKey,
-            builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId, notificationType: screen),
-          );
+          if (!AdminTabSwitcher.instance.switchToTab(AdminTabSwitcher.jobsTab)) {
+            _navigateToNotificationScreen();
+          }
         } else {
           _pushFcmScreen(
             destinationKey: 'my_applications',
