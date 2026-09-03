@@ -456,7 +456,7 @@ class FCMService {
             _navigateToNotificationScreen(); // payload businessId 없음 → 알림 목록 fallback
           } else {
             _pushFcmScreen(
-              destinationKey: 'admin_contract_mgmt:$notifBusinessId',
+              destinationKey: 'admin_contract_mgmt:$notifBusinessId:contractSigned',
               builder: (_) => AdminContractManagementScreen(businessId: notifBusinessId),
             );
           }
@@ -508,7 +508,7 @@ class FCMService {
             _navigateToNotificationScreen(); // payload businessId 없음 → 알림 목록 fallback
           } else {
             _pushFcmScreen(
-              destinationKey: 'admin_contract_mgmt:$notifBusinessId',
+              destinationKey: 'admin_contract_mgmt:$notifBusinessId:contractRenewal',
               builder: (_) => AdminContractManagementScreen(
                 businessId: notifBusinessId,
                 initialTab: 3,
@@ -675,7 +675,7 @@ class FCMService {
             _navigateToNotificationScreen(); // payload businessId 없음 → 알림 목록 fallback
           } else {
             _pushFcmScreen(
-              destinationKey: 'admin_contract_mgmt:$notifBusinessId',
+              destinationKey: 'admin_contract_mgmt:$notifBusinessId:contractRequested',
               builder: (_) => AdminContractManagementScreen(
                 businessId: notifBusinessId,
                 initialTab: 1,
