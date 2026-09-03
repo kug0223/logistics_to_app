@@ -86,15 +86,20 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
   /// 탭 전환 — 이미 선택된 탭을 다시 탭하면 해당 탭 루트로 복귀
   /// PD-02: 권한 없는 탭은 BottomNav에서 숨김 처리 (Toast 차단 제거)
   /// [AUDIT.2R1-M001] AdminTabSwitcher 경로 포함 — 비가시 탭 전환 차단
-  void switchToTab(int index) {
+  /// [PATCH-NAV] ADMIN.NAV.HIDDEN-TAB-SWITCH-01
+  /// validation order: mounted → bounds → visible → same-index → different-index
+  /// [return] true = accept; false = Shell unmounted·invalid·hidden
+  bool switchToTab(int index) {
+    if (!mounted) return false;
+    if (index < 0 || index >= _navigatorKeys.length) return false;
+    final up = context.read<UserProvider>();
+    if (!_visibleTabIndices(up).contains(index)) return false; // 권한 없는 탭 차단
     if (_currentIndex == index) {
       _navigatorKeys[index].currentState?.popUntil((r) => r.isFirst);
-    } else {
-      if (!mounted) return;
-      final up = context.read<UserProvider>();
-      if (!_visibleTabIndices(up).contains(index)) return; // 권한 없는 탭 차단
-      setState(() => _currentIndex = index);
+      return true;
     }
+    setState(() => _currentIndex = index);
+    return true;
   }
 
   /// [NAV-POLICY-N1] Home Task deep-link — target tab을 root normalize 후 route push.
