@@ -666,14 +666,10 @@ class FCMService {
       // memberInvitationReceived: 다이얼로그 처리 필요 → 알림 탭에서 처리 (케이스 없음 → default)
       case 'memberInvitationAccepted':
       case 'memberInvitationRejected':
-        if (_currentUserIsAdmin) {
-          _pushFcmScreen(
-            destinationKey: iwKey,
-            builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId, notificationType: screen),
-          );
-        } else {
-          _navigateToNotificationScreen();
-        }
+        // [PATCH-FCM-D] ADMIN.POSTING.ROUTE-INTEGRITY-01
+        // admin·non-admin 모두 NotificationScreen으로 — IntegratedWorkforceScreen(IWS) 제거
+        // 멤버 초대 결과는 대화 컨텍스트(알림 목록)에서 처리
+        _navigateToNotificationScreen();
         break;
       // ─── 신분증 열람 ─────────────────────────────────────────────
       case 'idCardAccessRequested':
@@ -681,14 +677,10 @@ class FCMService {
         break;
       case 'idCardAccessApproved':
       case 'idCardAccessRejected':
-        if (_currentUserIsAdmin) {
-          _pushFcmScreen(
-            destinationKey: iwKey,
-            builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId, notificationType: screen),
-          );
-        } else {
-          _navigateToNotificationScreen();
-        }
+        // [PATCH-FCM-D] ADMIN.POSTING.ROUTE-INTEGRITY-01
+        // admin·non-admin 모두 NotificationScreen으로 — IntegratedWorkforceScreen(IWS) 제거
+        // 신분증 열람 결과는 알림 목록에서 열람 컨텍스트와 함께 처리
+        _navigateToNotificationScreen();
         break;
       // ─── 리뷰 ────────────────────────────────────────────────────
       case 'reviewReceived':
