@@ -633,10 +633,29 @@ class FCMService {
           builder: (_) => const MyScheduleScreen(),
         );
         break;
-      // ─── 계약해지·퇴사 신청 ──────────────────────────────────────
+      // ─── 계약해지 신청 ────────────────────────────────────────────
+      // [PATCH-FCM-A1B] terminationRequested: admin→worker 방향 — admin path DEAD LEGACY
+      // producer(callableRequestTermination)는 workerUid에게만 발송; admin은 safe fallback
       case 'terminationRequested':
+        if (_currentUserIsAdmin) {
+          _navigateToNotificationScreen();
+        } else {
+          _navigateToNotificationScreen();
+        }
+        break;
+      // ─── 퇴사 신청 ───────────────────────────────────────────────
+      // [PATCH-FCM-A1B] resignRequested: worker→admin 방향 — canManageWorkers
+      // WORKFORCE-SUBADMIN-BIZCTX-01 회피: interim NotificationScreen (R3B에서 개선)
       case 'resignRequested':
-      // contractRequested: 근무자→관리자 방향 알림 — 관리자에게만 유효
+        if (_currentUserIsAdmin) {
+          _navigateToNotificationScreen();
+        } else {
+          _navigateToNotificationScreen();
+        }
+        break;
+      // ─── 계약 작성 요청 ──────────────────────────────────────────
+      // contractRequested: worker→admin CONTRACT intent — canManageContract
+      // [PATCH-FCM-A1B] IWS hold: ADMIN.CONTRACT-MGMT.SUBADMIN-BIZCTX-01 미확정 → PATCH-FCM-C까지 유지
       case 'contractRequested':
         if (_currentUserIsAdmin) {
           _pushFcmScreen(
