@@ -27,6 +27,7 @@ import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/app_search_bar.dart';
 import '../../widgets/common/app_tab_label.dart';
 import '../../providers/user_provider.dart';
+import '../../services/member_service.dart';
 import '../../widgets/dialogs/contract_template_selector_dialog.dart';
 
 class AdminContractManagementScreen extends StatefulWidget {
@@ -127,16 +128,51 @@ class _AdminContractManagementScreenState
         if (mounted) setState(() => _searchQuery = _searchCtrl.text.trim());
       });
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
+      // [PATCH-CONTRACT-MGMT-PERMISSION-01] target-B 기준 canManageContract 재검증
+      // — up.can()의 current-selected-A snapshot에서 widget.businessId(B) 기준으로 교체.
       // [AUDIT.2-M002] screen-level guard — caller가 guard하더라도 직접 진입 경로 방어
-      final up = context.read<UserProvider>();
-      if (!up.can((p) => p.canManageContract)) {
+      final allowed = await _canAccessTargetBusiness();
+      if (!mounted) return;
+      if (!allowed) {
         Navigator.of(context).pop();
         return;
       }
       _load();
     });
+  }
+
+  /// widget.businessId(target B) 기준 canManageContract 권한 확인.
+  /// BUSINESS_ADMIN → 항상 허용 (서버가 소속 검증).
+  /// SUB_ADMIN → target business 멤버십 + canManageContract 재검증.
+  /// up.can()의 current-selected-A snapshot을 B 기준으로 교체하는 screen-local helper.
+  Future<bool> _canAccessTargetBusiness() async {
+    final up = context.read<UserProvider>();
+
+    // BUSINESS_ADMIN(OWNER/SUPER_ADMIN 포함) → 서버가 소속 검증하므로 client gate 통과
+    if (!up.isSubAdmin) return true;
+
+    final uid = up.currentUser?.uid;
+    if (uid == null) return false;
+
+    // SUB_ADMIN: target business 멤버십 확인 (subAdminBusinessIds 포함 여부)
+    final inList = up.currentUser?.subAdminBusinessIds.contains(widget.businessId) ?? false;
+    if (!inList) return false;
+
+    // 현재 선택 사업장 == target이고 권한이 로드됐으면 캐시 사용 (네트워크 절약)
+    if (up.permissionsLoaded && up.selectedSubAdminBusinessId == widget.businessId) {
+      return up.can((p) => p.canManageContract);
+    }
+
+    // 다른 사업장 선택 중이거나 캐시 미로드 → target-local Firestore 직접 조회
+    try {
+      final perms = await MemberService().getMemberPermissions(widget.businessId, uid);
+      return perms?.canManageContract == true;
+    } catch (e) {
+      debugPrint('❌ [CONTRACT-MGMT] target business 권한 조회 실패: $e');
+      return false; // fail closed
+    }
   }
 
   @override
