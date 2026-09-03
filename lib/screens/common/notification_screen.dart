@@ -22,6 +22,8 @@ import '../../models/ui/admin_to_list_ui_models.dart';
 import '../business_admin/dialogs/work_applicants_dialog.dart';
 import '../business_admin/dialogs/day_applicants_dialog.dart';
 import '../business_admin/dialogs/fixed_worker_management_dialog.dart';
+import '../business_admin/dialogs/schedule_request_management_dialog.dart'; // [PATCH-NOTIF-B1]
+import '../business_admin/dialogs/resign_request_management_dialog.dart';    // [PATCH-NOTIF-B1]
 import '../../models/core/employment_contract_model.dart';
 import '../../services/contract_service.dart';
 import '../../services/member_service.dart';
@@ -728,20 +730,29 @@ class _NotificationScreenState extends State<NotificationScreen> {
         if (isUser) {
           ToastHelper.showWarning('현재 처리할 수 없는 알림입니다.');
         } else {
+          // [PATCH-NOTIF-B1] IWS → ScheduleRequestManagementDialog(B)
+          final schedBizId = notification.data?['businessId']?.toString();
           final access = await _validateAdminNotificationAccess(
             context,
-            businessId: notification.data?['businessId']?.toString(),
+            businessId: schedBizId,
             requiredPermission: (p) => p.canManageWorkers,
           );
           if (!context.mounted) return;
           if (_handleAdminAccess(access)) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-                initialBusinessId: notification.data?['businessId']?.toString(),
-                notificationType: notification.type.name,
-              )),
-            );
+            if (schedBizId != null && schedBizId.isNotEmpty) {
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (_) => ScheduleRequestManagementDialog(
+                  businessId: schedBizId,
+                  onChanged: () {},
+                ),
+              );
+            } else {
+              // validator step2 가 noBusinessId 반환하므로 실질적으로 도달 불가.
+              // 안전 처리: 경고 표시 후 종료.
+              ToastHelper.showWarning('알림 정보를 확인할 수 없습니다.');
+            }
           }
         }
         break;
@@ -853,20 +864,29 @@ class _NotificationScreenState extends State<NotificationScreen> {
           _showMyRequestsDialog(context, userProvider.currentUser?.uid);
         } else {
           // [F-11-3 수정] 권한 회수 후 탭 시 무효화 — resignRequested와 동일 패턴
+          // [PATCH-NOTIF-B1] IWS → ResignRequestManagementDialog(B)
+          final termBizId = notification.data?['businessId']?.toString();
           final access = await _validateAdminNotificationAccess(
             context,
-            businessId: notification.data?['businessId']?.toString(),
+            businessId: termBizId,
             requiredPermission: (p) => p.canManageWorkers,
           );
           if (!context.mounted) return;
           if (_handleAdminAccess(access)) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-                initialBusinessId: notification.data?['businessId']?.toString(),
-                notificationType: notification.type.name,
-              )),
-            );
+            if (termBizId != null && termBizId.isNotEmpty) {
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (_) => ResignRequestManagementDialog(
+                  businessId: termBizId,
+                  onChanged: () {},
+                ),
+              );
+            } else {
+              // validator step2 가 noBusinessId 반환하므로 실질적으로 도달 불가.
+              // 안전 처리: 경고 표시 후 종료.
+              ToastHelper.showWarning('알림 정보를 확인할 수 없습니다.');
+            }
           }
         }
         break;
@@ -903,23 +923,32 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       // resignRequested: 근로자→관리자 퇴직 요청, resignReminder: D+1/D+2 미처리 경고
       // 두 타입 모두 항상 관리자 수신 — USER 수신 시 에러 토스트 (navigation 없음)
+      // [PATCH-NOTIF-B1] IWS → ResignRequestManagementDialog(B)
       case NotificationType.resignRequested:
       case NotificationType.resignReminder:
         {
+          final resignBizId = notification.data?['businessId']?.toString();
           final access = await _validateAdminNotificationAccess(
             context,
-            businessId: notification.data?['businessId']?.toString(),
+            businessId: resignBizId,
             requiredPermission: (p) => p.canManageWorkers,
           );
           if (!context.mounted) return;
           if (_handleAdminAccess(access)) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-                initialBusinessId: notification.data?['businessId']?.toString(),
-                notificationType: notification.type.name,
-              )),
-            );
+            if (resignBizId != null && resignBizId.isNotEmpty) {
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (_) => ResignRequestManagementDialog(
+                  businessId: resignBizId,
+                  onChanged: () {},
+                ),
+              );
+            } else {
+              // validator step2 가 noBusinessId 반환하므로 실질적으로 도달 불가.
+              // 안전 처리: 경고 표시 후 종료.
+              ToastHelper.showWarning('알림 정보를 확인할 수 없습니다.');
+            }
           }
         }
         break;
