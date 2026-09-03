@@ -1828,12 +1828,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       if (nav.canPop()) nav.pop();
       debugPrint('❌ DayApplicantsDialog 로드 실패: $e');
       if (!context.mounted) return;
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-          initialBusinessId: preferredBusinessId,
-        )),
-      );
+      ToastHelper.showError('데이터를 불러오는데 실패했습니다');
     }
   }
 
@@ -1948,12 +1943,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     }
 
     if (data == null) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-          initialBusinessId: fallbackBusinessId,
-        )),
-      );
+      ToastHelper.showWarning('알림 정보를 확인할 수 없습니다.');
       return;
     }
 
@@ -1961,12 +1951,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     final workDetailId = data['workDetailId']?.toString();
 
     if (toId == null || toId.isEmpty || workDetailId == null || workDetailId.isEmpty) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-          initialBusinessId: fallbackBusinessId,
-        )),
-      );
+      ToastHelper.showWarning('알림 정보를 확인할 수 없습니다.');
       return;
     }
 
@@ -1985,12 +1970,6 @@ class _NotificationScreenState extends State<NotificationScreen> {
         if (navWA.canPop()) navWA.pop();
         if (!context.mounted) return;
         ToastHelper.showError('공고를 찾을 수 없습니다');
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-            initialBusinessId: fallbackBusinessId,
-          )),
-        );
         return;
       }
 
@@ -1999,9 +1978,6 @@ class _NotificationScreenState extends State<NotificationScreen> {
         if (navWA.canPop()) navWA.pop();
         if (!context.mounted) return;
         ToastHelper.showError('공고 데이터를 불러올 수 없습니다');
-        Navigator.push(context, MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-          initialBusinessId: fallbackBusinessId,
-        )));
         return;
       }
       final to = TOModel.tryFromMap(toData, toId);
@@ -2009,9 +1985,6 @@ class _NotificationScreenState extends State<NotificationScreen> {
         if (navWA.canPop()) navWA.pop();
         if (!context.mounted) return;
         ToastHelper.showError('공고 데이터를 불러올 수 없습니다');
-        Navigator.push(context, MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-          initialBusinessId: fallbackBusinessId,
-        )));
         return;
       }
 
@@ -2026,12 +1999,6 @@ class _NotificationScreenState extends State<NotificationScreen> {
         if (navWA.canPop()) navWA.pop();
         if (!context.mounted) return;
         ToastHelper.showError('업무 정보를 찾을 수 없습니다');
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-            initialBusinessId: fallbackBusinessId,
-          )),
-        );
         return;
       }
 
@@ -2071,12 +2038,6 @@ class _NotificationScreenState extends State<NotificationScreen> {
       debugPrint('❌ 알림 네비게이션 실패: $e');
       if (!context.mounted) return;
       ToastHelper.showError('데이터를 불러오는데 실패했습니다');
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-          initialBusinessId: fallbackBusinessId,
-        )),
-      );
     }
   }
 }
