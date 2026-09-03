@@ -150,7 +150,13 @@ class _AdminContractManagementScreenState
   Future<bool> _canAccessTargetBusiness() async {
     final up = context.read<UserProvider>();
 
-    // BUSINESS_ADMIN(OWNER/SUPER_ADMIN 포함) → 서버가 소속 검증하므로 client gate 통과
+    // [GAPFIX-CONTRACT-MGMT-IDENTITY-GATE-01] 순수 USER 명시적 차단
+    // isSubAdmin = (role==USER && subAdminBusinessIds.isNotEmpty) 이므로
+    // 일반 USER(subAdminBusinessIds=[])는 isSubAdmin=false → !isSubAdmin=true →
+    // 아래 BUSINESS_ADMIN 경로로 오진입. 사전 차단 필수.
+    if (up.isUser && !up.isSubAdmin) return false;
+
+    // BUSINESS_ADMIN · SUPER_ADMIN → 서버가 소속 검증하므로 client gate 통과
     if (!up.isSubAdmin) return true;
 
     final uid = up.currentUser?.uid;
