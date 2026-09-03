@@ -22,7 +22,6 @@ import '../../utils/attendance_list_pdf.dart';
 // Screens
 import '../common/settings_screen.dart';
 import 'to_management/create_to_screen.dart';
-import 'workforce_management/workforce_root_screen.dart';
 import '../common/notification_screen.dart';
 import '../../widgets/common/notification_badge.dart';
 import 'admin_stats_screen.dart';
@@ -1807,20 +1806,15 @@ Future<void> _loadWeeklyRosterCounts() async {
         _sectionHeader(context, s, '이번 주 근무',
             action: '전체 보기',
             // [PATCH-R2A1] ADMIN.POSTING.ROUTE-INTEGRITY-01
-            // Home "이번 주 근무" → canonical 인력 탭 전환 (WorkforceRootScreen)
-            // Shell active: workforceTab 전환 / Shell 미활성: WorkforceRootScreen standalone push
+            // [PATCH-HOME-WF] ADMIN.HOME.WORKFORCE-FALLBACK-PERMISSION-01
+            // Home "이번 주 근무" → canonical 인력 탭 전환 only
+            // WorkforceRootScreen standalone fallback 제거 — permission gate 없는 standalone push 불가
             onAction: () => _safeNavigate(() => _requireApprovedBusiness(
                 context,
                 () async {
-                  if (!AdminTabSwitcher.instance.switchToTab(
-                      AdminTabSwitcher.workforceTab)) {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const WorkforceRootScreen(),
-                      ),
-                    );
-                  }
+                  AdminTabSwitcher.instance.switchToTab(
+                    AdminTabSwitcher.workforceTab,
+                  );
                 }))),
         SizedBox(height: 12 * s),
         Padding(
