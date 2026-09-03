@@ -6,7 +6,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../screens/business_admin/admin_review_list_screen.dart';
 import '../screens/business_admin/payroll/payroll_payment_dashboard_screen.dart'; // [FCM-ROUTE-01]
-import '../screens/business_admin/workforce_management/integrated_workforce_screen.dart';
+import '../screens/business_admin/admin_contract_management_screen.dart'; // [PATCH-FCM-C]
 import '../screens/common/notification_screen.dart';
 import '../screens/contract/contract_sign_screen.dart';
 import '../screens/user/my_applications_screen.dart';
@@ -441,22 +441,25 @@ class FCMService {
     final screen = (data['screen'] as String?) ?? (data['type'] as String?);
     // BUG-5 수정: 다중 사업장 서브어드민이 알림 탭 시 올바른 사업장으로 이동하도록 businessId 추출
     final notifBusinessId = data['businessId'] as String?;
-    // IntegratedWorkforceScreen dedupe key — business context 단위
-    final iwKey = 'integrated_workforce:${notifBusinessId ?? 'default'}';
     switch (screen) {
       // 계약서 서명 요청 — contractId로 계약서 직접 로드 후 서명 화면 이동 (B안: 최단 경로)
       case 'contractSign':
         _navigateToContractSign(data); // fire-and-forget: 내부에서 await + _pushFcmScreen 처리
         break;
-      // 근무자 서명 완료 알림 — 관리자 전용, 인력 관리 화면으로 직접 이동
+      // 근무자 서명 완료 알림 — 관리자 전용, 계약 관리 화면으로 직접 이동
       // SP-M-2 수정: initialize() 시 저장된 _currentUserIsAdmin으로 역할 가드.
       // USER(isAdmin=false)이면 관리자 전용 화면 대신 UserContractsScreen으로 폴백.
+      // [PATCH-FCM-C] IWS → AdminContractManagementScreen(target B, initialTab=0 전체)
       case 'contractSigned':
         if (_currentUserIsAdmin) {
-          _pushFcmScreen(
-            destinationKey: iwKey,
-            builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId, notificationType: screen),
-          );
+          if (notifBusinessId == null) {
+            _navigateToNotificationScreen(); // payload businessId 없음 → 알림 목록 fallback
+          } else {
+            _pushFcmScreen(
+              destinationKey: 'admin_contract_mgmt:$notifBusinessId',
+              builder: (_) => AdminContractManagementScreen(businessId: notifBusinessId),
+            );
+          }
         } else {
           _pushFcmScreen(
             destinationKey: 'user_contracts',
@@ -495,14 +498,23 @@ class FCMService {
           _navigateToNotificationScreen();
         }
         break;
-      // [BUG-FCM-01 수정] 'contractRenewal'(contractExpiringReminder) — 관리자는 인력관리 화면으로 직접 이동.
-      // 기존: case 없어 default → 알림 목록 경유 2탭 필요. 관리자면 바로 IntegratedWorkforceScreen으로.
+      // [BUG-FCM-01 수정] 'contractRenewal'(contractExpiringReminder) — 관리자는 계약 관리 화면으로 직접 이동.
+      // 기존: case 없어 default → 알림 목록 경유 2탭 필요. 관리자면 바로 AdminContractManagementScreen으로.
+      // [PATCH-FCM-C] IWS → AdminContractManagementScreen(target B, initialTab=3 완료)
+      // 갱신 대상 계약은 이미 완료(완료 탭)된 상태이므로 Tab 3이 가장 관련성 높음.
       case 'contractRenewal':
         if (_currentUserIsAdmin) {
-          _pushFcmScreen(
-            destinationKey: iwKey,
-            builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId, notificationType: screen),
-          );
+          if (notifBusinessId == null) {
+            _navigateToNotificationScreen(); // payload businessId 없음 → 알림 목록 fallback
+          } else {
+            _pushFcmScreen(
+              destinationKey: 'admin_contract_mgmt:$notifBusinessId',
+              builder: (_) => AdminContractManagementScreen(
+                businessId: notifBusinessId,
+                initialTab: 3,
+              ),
+            );
+          }
         } else {
           _navigateToNotificationScreen();
         }
@@ -655,13 +667,21 @@ class FCMService {
         break;
       // ─── 계약 작성 요청 ──────────────────────────────────────────
       // contractRequested: worker→admin CONTRACT intent — canManageContract
-      // [PATCH-FCM-A1B] IWS hold: ADMIN.CONTRACT-MGMT.SUBADMIN-BIZCTX-01 미확정 → PATCH-FCM-C까지 유지
+      // [PATCH-FCM-C] IWS → AdminContractManagementScreen(target B, initialTab=1 미발송)
+      // 근로자가 계약서 발송을 요청/독촉 → 관리자의 action은 미발송 탭에서 계약서 전송.
       case 'contractRequested':
         if (_currentUserIsAdmin) {
-          _pushFcmScreen(
-            destinationKey: iwKey,
-            builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId, notificationType: screen),
-          );
+          if (notifBusinessId == null) {
+            _navigateToNotificationScreen(); // payload businessId 없음 → 알림 목록 fallback
+          } else {
+            _pushFcmScreen(
+              destinationKey: 'admin_contract_mgmt:$notifBusinessId',
+              builder: (_) => AdminContractManagementScreen(
+                businessId: notifBusinessId,
+                initialTab: 1,
+              ),
+            );
+          }
         } else {
           _navigateToNotificationScreen();
         }
