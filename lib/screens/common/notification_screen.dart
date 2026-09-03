@@ -1022,22 +1022,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
         if (isUser) {
           _showMyRequestsDialog(context, userProvider.currentUser?.uid);
         } else {
-          // [F-11-3 수정] 예외적으로 관리자가 수신한 경우에도 권한 재검증
-          final access = await _validateAdminNotificationAccess(
-            context,
-            businessId: notification.data?['businessId']?.toString(),
-            requiredPermission: (p) => p.canManageWorkers,
-          );
-          if (!context.mounted) return;
-          if (_handleAdminAccess(access)) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-                initialBusinessId: notification.data?['businessId']?.toString(),
-                notificationType: notification.type.name,
-              )),
-            );
-          }
+          // [PATCH-NOTIF-C2] DEAD_ADMIN_HANDLER — 현재 producer가 근무자(targetUserId)에게만 발송함
+          // legacy/stale notification 안전 처리: validator 불필요, business context 없음
+          ToastHelper.showWarning('현재 처리할 수 없는 알림입니다.');
         }
         break;
 
