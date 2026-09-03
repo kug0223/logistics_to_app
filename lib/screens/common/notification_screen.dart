@@ -1061,13 +1061,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
             if (workerId != null && workerId.isNotEmpty) {
               await _openWorkerDetailFromNotification(context, workerId, businessId);
             } else {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-                  initialBusinessId: businessId,
-                  notificationType: notification.type.name,
-                )),
-              );
+              // [PATCH-NOTIF-C1] workerId 없음 — worker 특정 불가, IWS fallback 제거
+              ToastHelper.showWarning('알림 정보를 확인할 수 없습니다.');
             }
           }
         }
