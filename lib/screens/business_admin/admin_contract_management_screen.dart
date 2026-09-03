@@ -144,27 +144,26 @@ class _AdminContractManagementScreenState
   }
 
   /// widget.businessId(target B) 기준 canManageContract 권한 확인.
-  /// BUSINESS_ADMIN → 항상 허용 (서버가 소속 검증).
-  /// SUB_ADMIN → target business 멤버십 + canManageContract 재검증.
-  /// up.can()의 current-selected-A snapshot을 B 기준으로 교체하는 screen-local helper.
+  /// [GAPFIX-CONTRACT-MGMT-IDENTITY-GATE-02] 명시적 positive allow-list 방식.
+  /// 부정형(!isSubAdmin) 기반 admin 판별을 제거하여 null user / 일반 USER 모두 DENY.
   Future<bool> _canAccessTargetBusiness() async {
     final up = context.read<UserProvider>();
+    final user = up.currentUser;
 
-    // [GAPFIX-CONTRACT-MGMT-IDENTITY-GATE-01] 순수 USER 명시적 차단
-    // isSubAdmin = (role==USER && subAdminBusinessIds.isNotEmpty) 이므로
-    // 일반 USER(subAdminBusinessIds=[])는 isSubAdmin=false → !isSubAdmin=true →
-    // 아래 BUSINESS_ADMIN 경로로 오진입. 사전 차단 필수.
-    if (up.isUser && !up.isSubAdmin) return false;
+    // 1. 인증되지 않은 사용자 → DENY
+    if (user == null) return false;
 
-    // BUSINESS_ADMIN · SUPER_ADMIN → 서버가 소속 검증하므로 client gate 통과
-    if (!up.isSubAdmin) return true;
+    // 2. BUSINESS_ADMIN → 서버가 소속 검증하므로 client gate 통과
+    if (user.isBusinessAdmin) return true;
 
-    final uid = up.currentUser?.uid;
-    if (uid == null) return false;
+    // 3. SubAdmin이 아닌 나머지 (일반 USER 포함) → 명시적 DENY
+    if (!user.isSubAdmin) return false;
+
+    // 4. 이하 SUB_ADMIN 경로
+    final uid = user.uid;
 
     // SUB_ADMIN: target business 멤버십 확인 (subAdminBusinessIds 포함 여부)
-    final inList = up.currentUser?.subAdminBusinessIds.contains(widget.businessId) ?? false;
-    if (!inList) return false;
+    if (!user.subAdminBusinessIds.contains(widget.businessId)) return false;
 
     // 현재 선택 사업장 == target이고 권한이 로드됐으면 캐시 사용 (네트워크 절약)
     if (up.permissionsLoaded && up.selectedSubAdminBusinessId == widget.businessId) {
