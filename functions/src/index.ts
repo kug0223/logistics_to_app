@@ -14296,6 +14296,27 @@ export const callableGetContractsByBiz = onCall(
 
     await assertBizAdmin(callerUid, businessId);
 
+    // [CF-CONTRACT-SERVER-PERM-GAP FIX] SUB_ADMIN canManageContract 서버 검증
+    // assertBizAdmin은 사업장 멤버십 존재만 확인 — 세부 권한은 별도 체크 필요.
+    // BUSINESS_ADMIN / SUPER_ADMIN은 소유자 수준 권한 보유 → member doc 조회 불필요.
+    // callableGetUnsentApplicationsByBiz의 [SECURITY.AUTHZ.1] 패턴 동일 적용.
+    {
+      const callerUserSnap = await db.collection("users").doc(callerUid).get();
+      const callerRole = ((callerUserSnap.data() ?? {})["role"] as string | undefined) ?? "";
+      const isCallerOwner = callerRole === "BUSINESS_ADMIN" || callerRole === "SUPER_ADMIN";
+      if (!isCallerOwner) {
+        // SUB_ADMIN 또는 기타: target business canManageContract 권한 확인
+        const memberSnap = await db
+          .collection("businesses").doc(businessId)
+          .collection("members").doc(callerUid)
+          .get();
+        const memberPerms = ((memberSnap.data() ?? {})["permissions"] ?? {}) as Record<string, boolean>;
+        if (memberPerms["canManageContract"] !== true) {
+          throw new HttpsError("permission-denied", "계약 관리 권한이 없습니다.");
+        }
+      }
+    }
+
     const cap = Math.min(
       typeof rawLimit === "number" && rawLimit > 0 ? rawLimit : 100,
       1000
