@@ -484,14 +484,13 @@ class FCMService {
           builder: (_) => const MyScheduleScreen(),
         );
         break;
-      // [FCM-01 수정] fixedWorker screen → 인력 관리 화면 직접 이동 (관리자 퇴사 자동 승인 알림 딥링크)
-      // 이전: 케이스 없음 → default → 알림 목록으로 떨어져 관리자가 추가로 탭해야 했음
+      // [PATCH-FCM-A1A] fixedWorker (고용 생애주기 관리자 알림)
+      // WORKFORCE-SUBADMIN-BIZCTX-01 회피: notification target B ≠ effective business A 시
+      // switchToTab(workforceTab)은 A context로 열려 wrong-context가 되므로 interim NotificationScreen 사용.
+      // TODO(R3B): NotificationScreen canonicalization 후 target-business-aware route로 개선
       case 'fixedWorker':
         if (_currentUserIsAdmin) {
-          _pushFcmScreen(
-            destinationKey: iwKey,
-            builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId, notificationType: screen),
-          );
+          _navigateToNotificationScreen();
         } else {
           _navigateToNotificationScreen();
         }
@@ -617,12 +616,12 @@ class FCMService {
         );
         break;
       // ─── 스케줄 변경 ─────────────────────────────────────────────
+      // [PATCH-FCM-A1A] scheduleChangeRequested 관리자 IWS route 제거
+      // WORKFORCE-SUBADMIN-BIZCTX-01 회피: target B ≠ effective A → wrong-context
+      // TODO(R3B): NotificationScreen canonicalization 후 ScheduleRequestManagementDialog 직접 연결
       case 'scheduleChangeRequested':
         if (_currentUserIsAdmin) {
-          _pushFcmScreen(
-            destinationKey: iwKey,
-            builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId, notificationType: screen),
-          );
+          _navigateToNotificationScreen();
         } else {
           _navigateToNotificationScreen(); // MyRequestsDialog는 알림 탭에서 열림
         }
