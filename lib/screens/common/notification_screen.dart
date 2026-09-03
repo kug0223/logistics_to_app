@@ -784,13 +784,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
                   ),
                 );
               } else {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-                    initialBusinessId: businessId,
-                    notificationType: notification.type.name,
-                  )),
-                );
+                // businessId 없음 — validator가 noBusinessId 반환하므로 실질적으로 도달 불가.
+                // 안전 처리: 경고 표시 후 종료 (IWS 폴백 제거).
+                ToastHelper.showWarning('알림 정보를 확인할 수 없습니다.');
               }
             }
           }
@@ -833,13 +829,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
               ),
             );
           } else {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-                initialBusinessId: notifBusinessId,
-                notificationType: notification.type.name,
-              )),
-            );
+            // 목적지 해소 불가 — validator 통과 후 notifBusinessId는 항상 non-null/non-empty이므로
+            // 실질적으로 도달 불가. 안전 처리: 경고 표시 후 종료 (IWS 폴백 제거).
+            ToastHelper.showWarning('알림 정보를 확인할 수 없습니다.');
           }
         }
         break;
@@ -934,20 +926,22 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       // contractRequested: 근무자→관리자 계약서 작성 요청 — 항상 관리자 수신
       // USER 수신 시 에러 토스트 (navigation 없음)
+      // [PATCH-NOTIF-A1-CONTRACT] IWS → AdminContractManagementScreen(Tab 1 = 미발송)
       case NotificationType.contractRequested:
         {
+          final contractReqBusinessId = notification.data?['businessId']?.toString();
           final access = await _validateAdminNotificationAccess(
             context,
-            businessId: notification.data?['businessId']?.toString(),
+            businessId: contractReqBusinessId,
             requiredPermission: (p) => p.canManageContract,
           );
           if (!context.mounted) return;
           if (_handleAdminAccess(access)) {
             Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-                initialBusinessId: notification.data?['businessId']?.toString(),
-                notificationType: notification.type.name,
+              MaterialPageRoute(builder: (_) => AdminContractManagementScreen(
+                businessId: contractReqBusinessId ?? '',
+                initialTab: 1,
               )),
             );
           }
