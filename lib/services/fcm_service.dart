@@ -763,12 +763,12 @@ class FCMService {
         if (_currentUserIsAdmin) {
           // [P2-B-FIX] IntegratedWorkforceScreen push 대신 Shell Jobs 탭 전환
           // Shell 활성 상태(포그라운드/백그라운드) → 탭 전환
-          // Shell 미활성 상태(앱 종료 후 재시작) → IntegratedWorkforceScreen 폴백
+          // [PATCH-FCM-E] ADMIN.POSTING.ROUTE-INTEGRITY-01
+          // Shell 미활성(disposed) edge case → NotificationScreen 안전 fallback
+          // 정상 cold-start(BusinessAdminShell 경유)에서는 AdminTabSwitcher가
+          // initState에서 동기 등록되므로 switchToTab이 항상 true — 이 분기 미도달
           if (!AdminTabSwitcher.instance.switchToTab(AdminTabSwitcher.jobsTab)) {
-            _pushFcmScreen(
-              destinationKey: iwKey,
-              builder: (_) => IntegratedWorkforceScreen(initialBusinessId: notifBusinessId, notificationType: screen),
-            );
+            _navigateToNotificationScreen();
           }
         } else {
           _navigateToNotificationScreen();
