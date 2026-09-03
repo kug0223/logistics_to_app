@@ -25,6 +25,10 @@ class WorkforceController extends ChangeNotifier {
   // reload() 호출 시 dataRevision을 증가시켜 다른 Root의 controller에 변경을 알린다.
   // 각 Root는 dataRevision listener에서 자신의 controller.load()를 트리거한다.
   // reload()를 직접 호출한 Root는 wasLastGlobalBumpByMe로 자기 중복 로드를 방지한다.
+  //
+  // [PATCH-R2] notifyDataChanged(): controller instance 없이 외부에서 revision만 bump.
+  // Home Quick Create 등 controller.reload()를 직접 호출할 수 없는 mutation source에서 사용.
+  // bump된 revision은 Jobs/Workforce/Home 등 모든 listener가 수신한다.
   static int _globalReloadCounter = 0;
   static final ValueNotifier<int> dataRevision = ValueNotifier<int>(0);
   int _myLastBumpId = 0;
@@ -32,6 +36,21 @@ class WorkforceController extends ChangeNotifier {
   /// true: 이 인스턴스가 가장 최근 전역 revision 증가를 유발 → listener에서 자기 reload skip 가능
   bool get wasLastGlobalBumpByMe =>
       _myLastBumpId > 0 && _myLastBumpId == _globalReloadCounter;
+
+  /// 전역 revision을 증가시키는 단일 private helper.
+  /// 반환값은 이 bump에 할당된 revision id.
+  static int _bumpDataRevision() {
+    final revision = ++_globalReloadCounter;
+    dataRevision.value = revision;
+    return revision;
+  }
+
+  /// controller instance 없이 호출할 수 있는 외부 invalidation API.
+  /// TO 생성·수정·삭제 등 mutation 후 dataRevision listener가 있는 모든 consumer를 갱신한다.
+  /// BuildContext 불필요 — Firestore fetch를 직접 수행하지 않음.
+  static void notifyDataChanged() {
+    _bumpDataRevision();
+  }
 
   // 사업장 이름 캐시 — items가 0건이어도 마지막 성공 로드의 이름 유지 (scope chip용)
   List<String> _knownBusinessNames = [];
@@ -290,8 +309,8 @@ class WorkforceController extends ChangeNotifier {
   Future<void> reload(BuildContext context) {
     _onExternalReloadCallback?.call();
     // Cross-tab invalidation: 이 인스턴스가 revision을 발생시켰음을 기록
-    _myLastBumpId = ++_globalReloadCounter;
-    dataRevision.value = _globalReloadCounter;
+    // _bumpDataRevision()으로 통합 — 외부 notifyDataChanged()와 동일 경로
+    _myLastBumpId = _bumpDataRevision();
     return load(context);
   }
 

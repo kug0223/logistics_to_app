@@ -45,6 +45,7 @@ import 'widgets/business_action_drill_down_sheet.dart';
 import '../../widgets/common/business_selector_sheet.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/admin_tab_switcher.dart';
+import '../../controllers/workforce_controller.dart';
 
 // [PERF-2026-07-16] Selector용 record — 필요한 필드만 추출해 불필요한 rebuild 방지
 typedef _AdminHomeData = ({
@@ -74,6 +75,13 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   int _summaryActiveTO = 0;
   bool _summaryLoading = true;
 
+  // [PATCH-R2] HOME-COUNT-FRESHNESS-01 — Posting global revision listener
+  // WorkforceController.dataRevision 변경 시 Home summary를 자동 갱신한다.
+  // _lastSeenPostingRevision: mount 시점 revision 이전 신호는 무시 (과거 replay 방지)
+  // _summaryRequestGeneration: 비동기 summary 요청 중 stale overwrite 방지 (latest-wins)
+  int _lastSeenPostingRevision = 0;
+  int _summaryRequestGeneration = 0;
+
   // [PHASE-2C] Canonical Action Summary — 4개 Action 셀의 정규 source
   // unsentContract / unpaidWage / wageChangeRequest / settlementRequest
   AdminHomeSummaryModel? _canonicalSummary;
@@ -101,6 +109,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     WidgetsBinding.instance.addObserver(this);
     _onFcmRefresh = () { if (mounted) _autoRefresh(); };
     FCMService().addAdminRefreshListener(_onFcmRefresh);
+    // [PATCH-R2] HOME-COUNT-FRESHNESS-01 — posting revision listener 등록
+    // mount 시점 revision 캡처 → 이후 변경만 수신 (과거 신호 replay 방지)
+    _lastSeenPostingRevision = WorkforceController.dataRevision.value;
+    WorkforceController.dataRevision.addListener(_onPostingRevisionChanged);
     AttendanceListPdf.preloadFonts();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       // [PH1C] 사업장 전환 감지 초기화 — 최초 렌더 전 기준값 확정
@@ -130,9 +142,22 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     FCMService().removeAdminRefreshListener(_onFcmRefresh);
+    // [PATCH-R2] posting revision listener 해제
+    WorkforceController.dataRevision.removeListener(_onPostingRevisionChanged);
     // [PH1C] 사업장 전환 감지 리스너 해제 (postFrameCallback 실행 전 dispose 방어)
     _cachedUp?.removeListener(_onBusinessSwitchCheck);
     super.dispose();
+  }
+
+  // [PATCH-R2] HOME-COUNT-FRESHNESS-01 — global posting revision change handler
+  // Jobs·Workforce 탭 경유 TO mutation(create/edit/close/delete/reopen) + Home quick-create 모두 수신.
+  // `_summaryLoading`으로 신호를 drop하지 않음 — async load 중에도 revision 수신 → 재요청 허용.
+  // 중복·outdated 결과 방지는 _summaryRequestGeneration(latest-wins)이 담당.
+  void _onPostingRevisionChanged() {
+    final revision = WorkforceController.dataRevision.value;
+    if (!mounted || revision <= _lastSeenPostingRevision) return;
+    _lastSeenPostingRevision = revision;
+    _loadSummaryCounts();
   }
 
   @override
@@ -293,10 +318,16 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   }
 
   // [PHASE-3A] activeTO만 로드 — approval/unclosed 등은 canonical summary에서
+  // [PATCH-R2] latest-wins 보호: _summaryRequestGeneration으로 outdated async 결과 폐기.
+  // 동시 호출 허용 — 가장 최근 호출의 결과만 setState에 반영.
   Future<void> _loadSummaryCounts() async {
+    final myGeneration = ++_summaryRequestGeneration;
+
     final businesses = await _getBusinesses();
     if (businesses.isEmpty || !mounted) {
-      if (mounted) setState(() => _summaryLoading = false);
+      if (mounted && myGeneration == _summaryRequestGeneration) {
+        setState(() => _summaryLoading = false);
+      }
       return;
     }
     final bizIds = businesses.map((b) => b.id).toList();
@@ -305,14 +336,17 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         bizIds.map((id) => _firestoreService.getTOsByBusiness(id, activeOnly: true)),
       );
       final activeTO = lists.expand((l) => l).where((t) => t.status == 'ACTIVE').length;
-      if (!mounted) return;
+      // latest-wins: 더 새로운 요청이 완료됐으면 이 결과를 버린다
+      if (!mounted || myGeneration != _summaryRequestGeneration) return;
       setState(() {
         _summaryActiveTO = activeTO;
         _summaryLoading  = false;
       });
     } catch (e) {
       debugPrint('❌ 진행 공고 집계 실패: $e');
-      if (mounted) setState(() => _summaryLoading = false);
+      if (mounted && myGeneration == _summaryRequestGeneration) {
+        setState(() => _summaryLoading = false);
+      }
     }
   }
 
@@ -990,7 +1024,12 @@ Future<void> _loadWeeklyRosterCounts() async {
                 destination: AdminCreateTOScreen(initialBusinessId: initBizId),
                 useRootNavigator: true,
                 onReturn: (r) {
-                  if (r == true) ToastHelper.showSuccess('공고가 등록되었습니다');
+                  if (r != true) return;
+                  ToastHelper.showSuccess('공고가 등록되었습니다');
+                  // [PATCH-R2] Home quick-create → global revision bump.
+                  // Home listener(_onPostingRevisionChanged) + JobsRoot/WorkforceRoot listener가
+                  // 수신하여 각자 refresh — direct _loadSummaryCounts() 호출 없음.
+                  WorkforceController.notifyDataChanged();
                 });
           })),
         ),
