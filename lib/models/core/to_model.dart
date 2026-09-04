@@ -581,15 +581,6 @@ class TOModel {
     return FormatHelper.toKstDate(now).isAfter(FormatHelper.toKstDate(d));
   }
 
-  /// 게시기간 만료 마감이고 연장 가능
-  /// 종료일 여유 검사는 CF(callableExtendPosting)에서 처리
-  bool get isPostingExpiredAndExtendable {
-    if (!isContractType) return false;
-    if (status != TOStatus.closed) return false;
-    if (closedReasonCode != 'POSTING_EXPIRED') return false;
-    return true;
-  }
-
   String get closedReason {
     if (isManualClosed) return '수동 마감';
     if (isFull) return '인원 충족';

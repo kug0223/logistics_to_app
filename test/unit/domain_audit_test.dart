@@ -114,29 +114,8 @@ void main() {
       expect(restored.closedReasonCode, equals('MANUAL')); // 왕복 후 유지
     });
 
-    // A-03: closedReasonCode 'POSTING_EXPIRED' → isPostingExpiredAndExtendable 조건 충족
-    test('A-03: closedReasonCode="POSTING_EXPIRED" → isPostingExpiredAndExtendable 판단에 사용', () {
-      // CLOSED + contractType + 'POSTING_EXPIRED' + endDate 3일 이상 남은 경우만 true
-      // → closedReasonCode가 null이면 false가 되어 관리자가 연장 버튼을 볼 수 없음
-      final toClosed = TOModel.fromMap({
-        ..._minimalToMap(closedReason: 'POSTING_EXPIRED'),
-        'status': 'CLOSED',
-        'type': 'contract',
-        'rangeEnd': Timestamp.fromDate(DateTime.now().add(Duration(days: 10))),
-      }, 'to001');
-      expect(toClosed.closedReasonCode, equals('POSTING_EXPIRED'));
-      expect(toClosed.isPostingExpiredAndExtendable, isTrue);
-
-      // closedReasonCode null이면 → false
-      final toWithoutReason = TOModel.fromMap({
-        ..._minimalToMap(),
-        'status': 'CLOSED',
-        'type': 'contract',
-        'rangeEnd': Timestamp.fromDate(DateTime.now().add(Duration(days: 10))),
-      }, 'to002');
-      expect(toWithoutReason.closedReasonCode, isNull);
-      expect(toWithoutReason.isPostingExpiredAndExtendable, isFalse);
-    });
+    // A-03: [DECOMMISSIONED] isPostingExpiredAndExtendable 제거됨 — 연장 기능 종료
+    // closedReasonCode 'POSTING_EXPIRED' 파싱은 A-02(closedReasonCode 직렬화)에서 검증됨
 
     // A-04: [D1-CP4] TOStatus.draft는 어느 그룹에도 속하지 않는 고립 상태
     test('A-04: TOStatus.draft 고립 확인 — openStates에도 closedStates에도 없음', () {

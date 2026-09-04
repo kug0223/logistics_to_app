@@ -59,9 +59,13 @@ class AdminCreateTOScreen extends StatefulWidget {
   /// - 유효하면(approved 목록에 존재) → 반드시 해당 사업장 초기 선택
   /// - 유효하지 않으면 → 기존 fallback(workTypes-ready 첫 번째 / first) 사용
   /// - null → 기존 동작 유지 (OWNER, businessList, Jobs 진입 등)
-  const AdminCreateTOScreen({super.key, this.initialBusinessId});
+  const AdminCreateTOScreen({super.key, this.initialBusinessId, this.initialTO});
 
   final String? initialBusinessId;
+  /// [REPOST-R1] CLOSED TO에서 다시 모집하기 진입 시 설정.
+  /// 사업장 확정 후 _loadDataFromTO()로 1회 자동 불러오기.
+  /// sourceToId 없음 — 새 독립 공고 생성.
+  final TOModel? initialTO;
 
   @override
   State<AdminCreateTOScreen> createState() => _AdminCreateTOScreenState();
@@ -326,6 +330,13 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         if (_allPrerequisitesMet) _formUnlocked = true;
         _isLoading = false;
       });
+      // [REPOST-R1] 사업장 확정 후 initialTO 자동 불러오기 (1회).
+      // 성공 경로에서만 실행 — 미승인/빈 사업장 early-return은 여기 도달하지 않음.
+      if (mounted &&
+          widget.initialTO != null &&
+          _selectedBusiness?.id == widget.initialTO!.businessId) {
+        _loadDataFromTO(widget.initialTO!);
+      }
     } catch (e) {
       debugPrint('❌ 사업장 로드 실패: $e');
       if (mounted) setState(() => _isLoading = false);

@@ -33,6 +33,7 @@ import '../../common/common_widgets.dart';
 
 // Screens
 import '../../../screens/business_admin/to_management/edit_to_screen.dart';
+import '../../../screens/business_admin/to_management/create_to_screen.dart'; // [REPOST-R1]
 
 // Dialogs
 import '../../../screens/business_admin/dialogs/day_applicants_dialog.dart';
@@ -121,7 +122,6 @@ class TOGroupCard extends StatefulWidget {
 }
 
 class _TOGroupCardState extends State<TOGroupCard> {
-  bool _isExtending = false;
   /// [4I.1] Close/Reopen/Delete 중복 실행 방어 — 연타 보호
   bool _isLifecycleActionRunning = false;
 
@@ -248,33 +248,6 @@ class _TOGroupCardState extends State<TOGroupCard> {
             duration: const Duration(milliseconds: 300),
             curve: Curves.easeOut);
       });
-    }
-  }
-
-  Future<void> _handleExtend(BuildContext context, TOModel masterTO) async {
-    final selected = await DialogHelper.showSheet<int>(
-      context,
-      builder: (ctx) => _ExtendDaysSheet(masterTO: masterTO),
-    );
-    if (selected == null) return;
-    if (!mounted) return;
-    setState(() => _isExtending = true);
-    try {
-      await widget.firestoreService.extendTOPosting(masterTO.id, selected);
-      if (!mounted) return;
-      ToastHelper.showSuccess('공고가 $selected일 연장되었습니다.');
-      widget.onChanged();
-    } on Exception catch (e) {
-      if (!mounted) return;
-      final msg = e.toString();
-      if (msg.contains('MAX_ACTIVE_TO_LIMIT')) {
-        final limit = msg.split(':').last.trim();
-        ToastHelper.showError('활성 공고 한도($limit개)를 초과하여 연장할 수 없습니다.');
-      } else {
-        ToastHelper.showError('연장 실패: $msg');
-      }
-    } finally {
-      if (mounted) setState(() => _isExtending = false);
     }
   }
 
@@ -537,54 +510,6 @@ class _TOGroupCardState extends State<TOGroupCard> {
                         _buildDeadlineMeta(context, now),
                       ],
                       
-                      // 장기 TO 게시만료 — 연장하기 버튼
-                      if (masterTO.isPostingExpiredAndExtendable) ...[
-                        SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                        GestureDetector(
-                          onTap: _isExtending
-                              ? null
-                              : () => _handleExtend(context, masterTO),
-                          child: Container(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: ResponsiveHelper.spacing(context, 12),
-                              vertical: ResponsiveHelper.spacing(context, 5),
-                            ),
-                            decoration: BoxDecoration(
-                              color: Theme.of(context).primaryColor,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (_isExtending)
-                                  SizedBox(
-                                    width: ResponsiveHelper.iconSize(context, 12),
-                                    height: ResponsiveHelper.iconSize(context, 12),
-                                    child: const CircularProgressIndicator(
-                                      strokeWidth: 1.5,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                else
-                                  Icon(
-                                    Icons.refresh,
-                                    size: ResponsiveHelper.iconSize(context, 13),
-                                    color: Colors.white,
-                                  ),
-                                SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                                Text(
-                                  '연장하기',
-                                  style: ResponsiveHelper.smallStyle(context).copyWith(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-
                       // 고정: 확정/대기/미충원 도트 + 모집중 칩 한 줄
                       if (masterTO.isLongTerm && !isMultiSlot) ...[
                         SizedBox(height: ResponsiveHelper.spacing(context, 6)),
@@ -1323,6 +1248,18 @@ class _TOGroupCardState extends State<TOGroupCard> {
     final canDelete = user?.isBusinessAdmin == true || user?.isSuperAdmin == true || up.can((p) => p.canManageTo);
     // TO-02: 쓰기 작업 항목은 canManageTo 권한 있을 때만 표시
     final canManageTo = up.can((p) => p.canManageTo);
+    // [REPOST-GAPFIX] WHITELIST / FAIL-CLOSED:
+    // 알려진 정상 모집 종료 상태만 명시 허용. 알 수 없는 미래 closedReason은 기본 비표시.
+    final repostReasonCode = widget.groupItem.closedReasonCode;
+    final canRepost = canManageTo &&
+        isClosed &&
+        (isManualClosed ||
+            isFull ||
+            repostReasonCode == 'POSTING_EXPIRED' ||
+            repostReasonCode == 'TIME_EXPIRED' ||
+            repostReasonCode == 'ALL_SLOTS_EXPIRED' ||
+            repostReasonCode == 'ALL_WORKDETAILS_CLOSED' ||
+            repostReasonCode == 'ALL_CHILDREN_CLOSED');
     AppMenuSheet.show(
       context: context,
       itemGroups: [
@@ -1376,7 +1313,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
                   onTap: () => _handleSingleTOMenuAction(context, 'reopen'),
                 ),
               ],
-            // CONTRACT TIME_EXPIRED / POSTING_EXPIRED: 재오픈 HIDE (연장하기 버튼 별도 존재)
+            // CONTRACT TIME_EXPIRED / POSTING_EXPIRED: 재오픈 HIDE (다시 모집하기 사용)
           ] else ...[
             // FLEX
             if (!isClosed)
@@ -1412,6 +1349,16 @@ class _TOGroupCardState extends State<TOGroupCard> {
             // FULL / TIME_EXPIRED / eligible 없음: 재오픈 HIDE
           ],
         ],
+        // [REPOST-GAPFIX] 다시 모집하기 — WHITELIST/FAIL-CLOSED (canRepost 조건 참조)
+        if (canRepost)
+          [
+            AppMenuSheetItem(
+              icon: Icons.replay,
+              label: '다시 모집하기',
+              color: AppColors.info,
+              onTap: () => _handleSingleTOMenuAction(context, 'repost'),
+            ),
+          ],
         if (canManageTo)
           [
             AppMenuSheetItem(
@@ -1952,6 +1899,18 @@ class _TOGroupCardState extends State<TOGroupCard> {
         widget.dialogs.showReopenTODialog(masterTO);
         break;
 
+      case 'repost':
+        // [REPOST-R1] CLOSED TO에서 다시 모집하기 — initialTO prefill, sourceToId 없음 (독립 신규 공고)
+        await NavigationHelper.push<bool>(
+          context,
+          useRootNavigator: true,
+          destination: AdminCreateTOScreen(
+            initialBusinessId: masterTO.businessId,
+            initialTO: masterTO,
+          ),
+        );
+        break;
+
       case 'delete':
         // 캘린더 단기 슬롯: 해당 슬롯만 삭제
         if (widget.calendarSlot != null) {
@@ -2370,109 +2329,10 @@ class _TOGroupCardState extends State<TOGroupCard> {
   }
 }
 
+// [DECOMMISSIONED] _ExtendDaysSheet 제거됨 — 게시기간 연장 기능 종료
+// 다시 모집하기 → AdminCreateTOScreen(initialTO) → NEW TO ID
+
 /// 인원 현황 배지 — 리스트/캘린더 뷰 공용
-/// 게시기간 연장 일수 선택 바텀시트
-class _ExtendDaysSheet extends StatelessWidget {
-  final TOModel masterTO;
-  const _ExtendDaysSheet({required this.masterTO});
-
-  static const _options = [3, 5, 7, 10];
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final end = masterTO.endDate;
-    final now = DateTime.now();
-
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        ResponsiveHelper.spacing(context, 20),
-        ResponsiveHelper.spacing(context, 20),
-        ResponsiveHelper.spacing(context, 20),
-        ResponsiveHelper.spacing(context, 24),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '연장 기간 선택',
-            style: ResponsiveHelper.titleStyle(context).copyWith(fontWeight: FontWeight.bold),
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-          Text(
-            end != null ? '계약 종료일: ${FormatHelper.formatDate(end)}' : '',
-            style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-          ),
-          SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-          Builder(
-            builder: (ctx) {
-              final allDisabled = end != null &&
-                  _options.every((d) => now.add(Duration(days: d)).isAfter(end));
-              if (allDisabled) {
-                return Padding(
-                  padding: EdgeInsets.symmetric(
-                    vertical: ResponsiveHelper.spacing(context, 8),
-                  ),
-                  child: Text(
-                    '계약 종료일까지 남은 기간이 짧아 선택 가능한 연장 기간이 없습니다.',
-                    style: ResponsiveHelper.smallStyle(context, color: AppColors.grey600),
-                  ),
-                );
-              }
-              return Wrap(
-                spacing: ResponsiveHelper.spacing(context, 10),
-                runSpacing: ResponsiveHelper.spacing(context, 10),
-                children: _options.map((days) {
-                  final expiryDate = now.add(Duration(days: days));
-                  final disabled = end != null && expiryDate.isAfter(end);
-                  return GestureDetector(
-                    onTap: disabled ? null : () => Navigator.of(context).pop(days),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 150),
-                      padding: EdgeInsets.symmetric(
-                        horizontal: ResponsiveHelper.spacing(context, 18),
-                        vertical: ResponsiveHelper.spacing(context, 10),
-                      ),
-                      decoration: BoxDecoration(
-                        color: disabled ? AppColors.grey100 : theme.primaryColor.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: disabled ? AppColors.grey300 : theme.primaryColor,
-                          width: 1.5,
-                        ),
-                      ),
-                      child: Column(
-                        children: [
-                          Text(
-                            '$days일',
-                            style: ResponsiveHelper.bodyStyle(context).copyWith(
-                              fontWeight: FontWeight.bold,
-                              color: disabled ? AppColors.grey400 : theme.primaryColor,
-                            ),
-                          ),
-                          if (!disabled && end != null)
-                            Text(
-                              '~${expiryDate.month}/${expiryDate.day}',
-                              style: ResponsiveHelper.smallStyle(
-                                context,
-                                color: AppColors.grey600,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  );
-                }).toList(),
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class PersonnelBadge extends StatelessWidget {
   final int confirmed;
   final int required;

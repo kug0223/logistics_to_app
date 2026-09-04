@@ -659,9 +659,16 @@ service cloud.firestore {
       //   슈퍼어드민은 긴급 운영 수정 시 직접 write 허용 (동일 보호 조건 유지)
       allow update: if isSuperAdmin() &&
                        !request.resource.data.diff(resource.data).affectedKeys()
-                         .hasAny(['businessId']) &&
+                         // [CAPACITY-STAGE1] postingCapacityScopeKey는 CF(서버)만 기록/삭제
+                         // SUPER_ADMIN 직접 write도 차단 — 파생 키 일관성 CF에서 보장
+                         .hasAny(['businessId', 'postingCapacityScopeKey']) &&
                        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status']) ||
-                        request.resource.data.status in ['ACTIVE', 'FULL', 'CLOSED', 'EXPIRED', 'DRAFT', 'SCHEDULED'])
+                        // [CAPACITY-STAGE3A] NON-COUNTED → COUNTED 차단 — SUPER_ADMIN도 CF 경유 강제
+                        // COUNTED(ACTIVE/FULL)→any: 허용 (마감·상태유지 포함)
+                        // NON-COUNTED→NON-COUNTED: 허용 (CLOSED→DRAFT 등 운영 조정)
+                        // NON-COUNTED→COUNTED: 차단 (callablePublishTO/callableUpdateTO 경유)
+                        (resource.data.status in ['ACTIVE', 'FULL'] ||
+                         request.resource.data.status in ['CLOSED', 'EXPIRED', 'DRAFT', 'SCHEDULED']))
                     // [SLOT-SYNC 2026-07-15] 슬롯 수정 시 totalRequired 집계 동기화 예외
                     //   CF 이전 이유(감사 필드 위조·updatedBy 로그)와 무관한 순수 집계 파생 필드.
                     //   updateSlotFull/saveBatchSlotChanges에서 slots update와 함께 tos.totalRequired를
@@ -686,10 +693,12 @@ service cloud.firestore {
                         // addSlot 진짜 호출이면 totalSlots+totalRequired 동시 변경 필수
                         (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['isPublished']) ||
                          request.resource.data.diff(resource.data).affectedKeys().hasAll(['totalSlots', 'totalRequired'])) &&
-                        // [M14-FIX] DRAFT/SCHEDULED TO에서 공개 직접 전환 차단 (callablePublishTO 우회 방지)
-                        // 예외: publishMode='deferred' TO는 슬롯 생성 완료 후 ACTIVE 전환이 하단 규칙에서 허용
+                        // [CAPACITY-STAGE3A] NON-COUNTED source 차단 — counted source(ACTIVE/FULL)만 허용
+                        // FULL→ACTIVE: count-preserving (syncTOStats 지연 시 addSlot이 허용)
+                        // CLOSED/EXPIRED→ACTIVE: capacity-increasing bypass 차단
+                        // deferred SCHEDULED→ACTIVE: DEFERRED-PUBLISH 규칙 제거로 callablePublishTO 강제
                         (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['isPublished', 'status']) ||
-                         (resource.data.status != 'DRAFT' && resource.data.status != 'SCHEDULED')) &&
+                         resource.data.status in ['ACTIVE', 'FULL']) &&
                         request.resource.data.get('totalRequired', 0) >= 0 &&
                         request.resource.data.get('totalSlots', 0) >= 0)
                     // [WORKDETAIL-FIX] closeWorkDetail/reopenWorkDetail — workDetails 배열 마감·재오픈 허용
@@ -697,16 +706,9 @@ service cloud.firestore {
                     || (isLoggedIn() && (isToAdmin(toId) || isSuperAdmin()) &&
                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['workDetails']));
 
-      // [DEFERRED-PUBLISH] flex 즉시공개 — 슬롯 생성 완료 후 SCHEDULED→ACTIVE 전환 허용
-      // publishMode='deferred': deferPublish 전용 마킹 — 일반 SCHEDULED TO(callablePublishTO 경유)와 구별
-      // status/isPublished/statusUpdatedAt 3개 필드만 허용 — 관리자 필드 위조 차단
-      allow update: if isLoggedIn() && (isToAdmin(toId) || isSuperAdmin()) &&
-                       resource.data.status == 'SCHEDULED' &&
-                       resource.data.get('publishMode', '') == 'deferred' &&
-                       request.resource.data.status == 'ACTIVE' &&
-                       request.resource.data.get('isPublished', false) == true &&
-                       request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['status', 'isPublished', 'statusUpdatedAt']);
+      // [CAPACITY-STAGE3A] DEFERRED-PUBLISH 직접 전환 규칙 제거
+      // SCHEDULED(deferred) → ACTIVE 클라이언트 직접 write 차단 — capacity quota 우회 방지
+      // 클라이언트는 callablePublishTO를 사용해야 함 (TX atomic: capacity 강제 + scope key 기록)
 
       // 지원자: 지원/취소 시 totalPending 카운터만 수정 허용 (음수 방지)
       // [MEDIUM-FIX] ±1 제한 없이 임의 양수값 설정 가능 → 통계 훼손 가능
@@ -1681,9 +1683,14 @@ service cloud.firestore {
                        //   callableFinalizeWorkerSignature CF(Admin SDK) 전용 — 서명 없이 서명 완료 위조 차단
                        // [SEC-EMPLOYER-SIG 2026-07-15] employer 서명 필드도 차단 —
                        //   callableFinalizeEmployerSignature CF(Admin SDK) 전용 (storage.rules if false 병행)
+                       // [SEC-GAP-HIST-CREATE-01 2026-09-04] historicalOwnerUid CREATE 주입 차단 —
+                       //   onBusinessDeleted(CF Admin SDK)가 deleted business.ownerId 서버 스냅샷으로 기록하는 필드.
+                       //   클라이언트가 CREATE 시 임의 값을 심으면 "충돌→기존 값 보존" 로직에 의해
+                       //   위조된 UID가 P3 historical read authorization principal로 영구화될 수 있음.
                        !request.resource.data.keys().hasAny([
                          'workerSignatureUrl', 'workerSignatureHash', 'workerSignedAt',
-                         'employerSignatureUrl', 'employerSignatureHash', 'employerSignedAt'
+                         'employerSignatureUrl', 'employerSignatureHash', 'employerSignedAt',
+                         'historicalOwnerUid'
                        ]) &&
                        // [MEDIUM-CONTRACT-STATUS] status 화이트리스트 — 'completed' 위조 계약서 차단
                        //   CF Admin SDK는 rules 우회하므로 정상 생성 흐름에 영향 없음

@@ -535,13 +535,27 @@ extension TOFirestore on FirestoreService {
           rethrow;
         }
 
-        // 슬롯 생성 완료 후 즉시공개 상태로 전환 (노출 창 최소화)
+        // 슬롯 생성 완료 후 callablePublishTO로 ACTIVE 전환
+        // [CAPACITY-STAGE3A] deferred direct write 제거 — capacity quota 우회 차단
+        // callablePublishTO TX: capacity 강제 + postingCapacityScopeKey atomic 기록
+        // publishMode:'deferred' → CF가 'immediate'로 정규화 (downstream 의존성 없음)
         if (deferPublish) {
-          await toRef.update({
-            'isPublished': true,
-            'status': toStatus,
-            'statusUpdatedAt': FieldValue.serverTimestamp(),
-          });
+          try {
+            final publishCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+                .httpsCallable('callablePublishTO',
+                    options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+            await publishCallable.call<Map<String, dynamic>>({'toId': toId});
+            clearCache(toId: toId);
+          } on FirebaseFunctionsException catch (e) {
+            if (e.code == 'resource-exhausted' &&
+                (e.message ?? '').contains('MAX_ACTIVE_TO_LIMIT')) {
+              final parts = (e.message ?? '').split(':');
+              final limitStr = parts.length >= 2 ? parts.last : '4';
+              throw Exception('MAX_ACTIVE_TO_LIMIT:$limitStr');
+            }
+            debugPrint('❌ [TO] deferred 공개 전환 실패: ${e.code} — ${e.message}');
+            rethrow;
+          }
         }
       }
 
@@ -612,38 +626,6 @@ extension TOFirestore on FirestoreService {
       rethrow;
     } catch (e) {
       debugPrint('❌ [TO] 공개 전환 실패: $e');
-      rethrow;
-    } finally {
-      GlobalLoadingController.hide();
-    }
-  }
-
-  /// 장기 TO 게시기간 연장 — callableExtendTOPosting CF 위임
-  /// extensionDays: 3 | 5 | 7 | 10
-  /// 반환값: 새 postingExpiryDate (밀리초)
-  Future<DateTime> extendTOPosting(String toId, int extensionDays) async {
-    GlobalLoadingController.show('공고 연장 중...');
-    try {
-      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableExtendTOPosting',
-              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
-      final result = await callable.call<Map<String, dynamic>>(
-        {'toId': toId, 'extensionDays': extensionDays},
-      );
-      clearCache(toId: toId);
-      final expiryMs = result.data['postingExpiryDate'] as int;
-      return DateTime.fromMillisecondsSinceEpoch(expiryMs);
-    } on FirebaseFunctionsException catch (e) {
-      if (e.code == 'resource-exhausted' &&
-          (e.message ?? '').contains('MAX_ACTIVE_TO_LIMIT')) {
-        final parts = (e.message ?? '').split(':');
-        final limitStr = parts.length >= 2 ? parts.last : '4';
-        throw Exception('MAX_ACTIVE_TO_LIMIT:$limitStr');
-      }
-      debugPrint('❌ [TO] 연장 실패: ${e.code} — ${e.message}');
-      rethrow;
-    } catch (e) {
-      debugPrint('❌ [TO] 연장 실패: $e');
       rethrow;
     } finally {
       GlobalLoadingController.hide();

@@ -13,6 +13,7 @@ import '../user/my_schedule_screen.dart';
 import '../user/user_contracts_screen.dart';
 import '../user/dialogs/my_requests_dialog.dart';
 import '../business_admin/workforce_management/integrated_workforce_screen.dart';
+import '../business_admin/jobs_root_screen.dart';
 import '../contract/contract_sign_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -1236,6 +1237,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       // 공고 만료 임박/만료됨 — 관리자(creatorUID)에게만 발송
       // USER가 혹시 수신한 경우 관리자 전용 화면 진입 차단
+      // [DECOMMISSION] 연장하기 제거 — 다시 모집하기 → JobsRootScreen
       case NotificationType.toPostingExpiringTomorrow:
       case NotificationType.toPostingExpired:
         if (isUser) {
@@ -1250,9 +1252,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
           if (_handleAdminAccess(access)) {
             Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-                initialBusinessId: notification.data?['businessId']?.toString(),
-              )),
+              MaterialPageRoute(builder: (_) => const JobsRootScreen()),
             );
           }
         }

@@ -839,57 +839,8 @@ export const masterScheduler = onSchedule(
       // [TODO] idCardAccessExpiringSoon: 신분증 열람 권한 만료 D-1 알림 미구현
       // approvedAccess 중 expiresAt이 내일인 항목 조회 → 근무자에게 알림 발송 필요
 
-      // 장기 TO 게시기간 D-1 알림 (rangeEnd 여유 3일 이상인 경우만)
-      // — processTOExpiry가 만료 직후 알림을 보내므로 여기서는 "내일 만료" 사전 안내만
-      try {
-        const tomorrowStart = admin.firestore.Timestamp.fromMillis(
-          timestamp.toMillis() + 24 * 60 * 60 * 1000
-        );
-        const dayAfterTomorrow = admin.firestore.Timestamp.fromMillis(
-          timestamp.toMillis() + 2 * 24 * 60 * 60 * 1000
-        );
-        const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
-
-        const expiringTomorrow = await db
-          .collection("tos")
-          .where("type", "==", "contract")
-          .where("status", "==", "ACTIVE")
-          .where("postingExpiryDate", ">=", tomorrowStart)
-          .where("postingExpiryDate", "<", dayAfterTomorrow)
-          .limit(100)
-          .get();
-
-        if (!expiringTomorrow.empty) {
-          const notifBatch = db.batch();
-          for (const doc of expiringTomorrow.docs) {
-            const d = doc.data();
-            const rangeEnd = d.rangeEnd as admin.firestore.Timestamp | undefined;
-            const rangeEndMs = rangeEnd?.toMillis() ?? 0;
-            const canExtend = rangeEndMs - timestamp.toMillis() >= THREE_DAYS_MS;
-            if (!canExtend) continue; // rangeEnd 여유 없으면 알림 생략 (조용히 CLOSED 예정)
-            if (!d.creatorUID) continue;
-
-            const notifRef = db
-              .collection("users")
-              .doc(d.creatorUID as string)
-              .collection("notifications")
-              .doc();
-            notifBatch.set(notifRef, {
-              userId: d.creatorUID,
-              type: "toPostingExpiringTomorrow",
-              title: "공고 게시 만료 D-1",
-              body: `'${d.title ?? "공고"}' 게시기간이 내일 만료됩니다. 연장하려면 공고 화면에서 [연장하기]를 누르세요.`,
-              data: {toId: doc.id, businessId: d.businessId ?? "", screen: "toDetail"},
-              isRead: false,
-              createdAt: timestamp,
-            });
-          }
-          await notifBatch.commit();
-          console.log(`✅ [장기 TO D-1 알림] ${expiringTomorrow.size}건 처리`);
-        }
-      } catch (e) {
-        console.error("❌ [장기 TO D-1 알림] 실패:", e);
-      }
+      // [DECOMMISSIONED] 장기 TO 게시기간 D-1 알림 제거 — 연장 기능 종료
+      // 게시 만료 후에는 processTOExpiry가 toPostingExpired 알림 발송 (다시 모집하기 유도)
     }
 
     // ═══════════════════════════════════════════════════════
@@ -2367,39 +2318,27 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
 
   console.log(`  📋 [예약공개] 대상 TO: ${snapshot.size}개`);
 
-  // [H-2] active TO 한도 — 예약 공개 시 사업장별 한도 초과 방지
-  // [PERF] 고유 bizId 목록을 미리 수집해 count 쿼리를 병렬 일괄 조회
-  const [appConfigSnap] = await Promise.all([
-    db.collection("settings").doc("app_config").get(),
-  ]);
-  const maxActiveTOPerBusiness: number = (appConfigSnap.data()?.maxActiveTOPerBusiness as number | undefined) ?? 4;
-
+  // [CAPACITY-STAGE3B] pre-batch bizActiveCounts/appConfigSnap 제거 — per-scope TX로 전환
+  // [5D.1A] Business Posting Readiness 일괄 조회 (scheduled activation 재검증)
   const uniqueBizIds = [...new Set(
     snapshot.docs
       .map((d) => d.data().businessId as string | undefined)
       .filter((id): id is string => !!id),
   )];
-  // [5D.1A] count 쿼리 + readiness 체크 병렬 실행
-  const [countEntries, readinessEntries] = await Promise.all([
-    Promise.all(uniqueBizIds.map(async (bizId) => {
-      const countSnap = await db.collection("tos")
-        .where("businessId", "==", bizId)
-        .where("status", "in", ["ACTIVE", "FULL"])
-        .count().get();
-      console.warn(`    ⚠️ [W-2] bizId=${bizId} active count=${countSnap.data().count} (TOCTOU — 동시 공개 시 한도 미초과 가능)`);
-      return [bizId, countSnap.data().count] as [string, number];
-    })),
-    // [5D.1A] Business Posting Readiness 일괄 조회 (scheduled activation 재검증)
-    // 실패/미충족 business의 TO는 SCHEDULED 상태 유지 → 다음 실행에서 재시도
-    Promise.all(uniqueBizIds.map(async (bizId): Promise<[string, boolean]> => {
+  // [CAPACITY-STAGE3B] bizId → ownerUid 수집 Map (TX grouping용 — scope pre-group)
+  const bizOwnerMap = new Map<string, string>();
+
+  const readinessEntries = await Promise.all(
+    uniqueBizIds.map(async (bizId): Promise<[string, boolean]> => {
       try {
         const bizSnap = await db.collection("businesses").doc(bizId).get();
         const bizData = bizSnap.data();
         if (!bizSnap.exists || !bizData?.isApproved) return [bizId, false];
         const hasCanonicalLicense = !!(bizData?.businessLicenseImageUrl as string | undefined);
         let licenseReady = hasCanonicalLicense;
+        const ownerId = bizData?.ownerId as string | undefined;
+        if (ownerId) bizOwnerMap.set(bizId, ownerId);
         if (!licenseReady) {
-          const ownerId = bizData?.ownerId as string | undefined;
           if (ownerId) {
             const ownerSnap = await db.collection("users").doc(ownerId).get();
             licenseReady = !!(ownerSnap.data()?.businessLicenseImageUrl as string | undefined);
@@ -2411,67 +2350,144 @@ async function processScheduledPublish(now: Timestamp): Promise<void> {
         return [bizId, !wtSnap.empty];
       } catch (e) {
         console.error(`    ⚠️ [5D.1A] bizId=${bizId} readiness check error:`, e);
-        return [bizId, false]; // 안전: 오류 시 공개 건너뜀
+        return [bizId, false];
       }
-    })),
-  ]);
-  const bizActiveCounts = new Map<string, number>(countEntries);
+    }),
+  );
   const bizReadinessMap = new Map<string, boolean>(readinessEntries);
 
-  let batch = db.batch();
-  let batchCount = 0;
-  const affectedGroupIds = new Set<string>();
-  const publishedTOIds: string[] = [];
-  let processedCount = 0;
+  // ── [CAPACITY-STAGE3B] per-scope-group TX ───────────────────────────────────
+  // eligible 후보를 scopeKey(오너) 단위로 그룹화 — 각 그룹을 단일 TX로 처리
+  const scopeGroups = new Map<string, admin.firestore.QueryDocumentSnapshot[]>();
 
   for (const doc of snapshot.docs) {
     const data = doc.data();
-
-    // 관리자가 수동마감한 SCHEDULED TO는 공개 대상 아님
     if (data.closedBy != null) {
       console.log(`    ⏭ ${doc.id} 수동마감 상태 — 공개 건너뜀`);
       continue;
     }
-
-    // [H-2] 사업장별 active TO 한도 체크 (카운트는 루프 전 병렬 일괄 조회 완료)
     const bizId = data.businessId as string | undefined;
-    if (bizId) {
-      // [5D.1A] Business Posting Readiness 재검증 — 예약 공개 시점에 사업장 상태 재확인
-      if (bizReadinessMap.get(bizId) === false) {
-        console.log(`    ⏭ ${doc.id} business readiness 미충족(미승인/서류/업무) — 공개 건너뜀`);
-        continue;
-      }
-      const currentActive = bizActiveCounts.get(bizId) ?? 0;
-      if (currentActive >= maxActiveTOPerBusiness) {
-        console.log(`    ⚠️ ${doc.id} 한도 초과(${currentActive}/${maxActiveTOPerBusiness}) — 공개 건너뜀`);
-        continue;
-      }
-      bizActiveCounts.set(bizId, currentActive + 1);
+    if (!bizId) {
+      console.warn(`    ⚠️ ${doc.id} businessId 없음 — 건너뜀`);
+      continue;
     }
+    if (bizReadinessMap.get(bizId) === false) {
+      console.log(`    ⏭ ${doc.id} business readiness 미충족 — 공개 건너뜀`);
+      continue;
+    }
+    const ownerId = bizOwnerMap.get(bizId);
+    if (!ownerId) {
+      console.warn(`    ⚠️ [CAPACITY-STAGE3B] ${doc.id} ownerId 없음 — 건너뜀`);
+      continue;
+    }
+    const scopeKey = buildPostingCapacityScopeKey(ownerId);
+    if (!scopeGroups.has(scopeKey)) scopeGroups.set(scopeKey, []);
+    scopeGroups.get(scopeKey)!.push(doc);
+  }
 
-    batch.update(doc.ref, {
-      isPublished: true,
-      publishedAt: now,
-      status: "ACTIVE",
-      statusUpdatedAt: now,
+  const publishedTOIds: string[] = [];
+  const affectedGroupIds = new Set<string>();
+  let processedCount = 0;
+
+  for (const [expectedScopeKey, groupDocs] of scopeGroups) {
+    // 결정론적 순서: publishAt ASC, 동일 시각이면 doc ID ASC
+    groupDocs.sort((a, b) => {
+      const aMs = (a.data().publishAt as admin.firestore.Timestamp | undefined)?.toMillis() ?? 0;
+      const bMs = (b.data().publishAt as admin.firestore.Timestamp | undefined)?.toMillis() ?? 0;
+      if (aMs !== bMs) return aMs - bMs;
+      return a.id < b.id ? -1 : 1;
     });
-    console.log(`    → ${doc.id} 공개 처리`);
-    processedCount++;
-    batchCount++;
-    publishedTOIds.push(doc.id);
 
-    if (data.groupId) {
-      affectedGroupIds.add(data.groupId);
-    }
+    const groupBizIds = [...new Set(
+      groupDocs.map((d) => d.data().businessId as string).filter(Boolean),
+    )];
+    const groupToRefs = groupDocs.map((d) => db.collection("tos").doc(d.id));
+    let groupPublishedIds: string[] = [];
 
-    if (batchCount >= 499) {
-      await batch.commit();
-      batch = db.batch();
-      batchCount = 0;
+    try {
+      await db.runTransaction(async (tx) => {
+        // ── ALL READS FIRST ─────────────────────────────────────────────────
+
+        // 모든 사업장 신선 재읽기 + scope drift 검증
+        const freshBizSnaps = await Promise.all(
+          groupBizIds.map((bizId) => tx.get(db.collection("businesses").doc(bizId))),
+        );
+        for (const bizSnap of freshBizSnaps) {
+          if (!bizSnap.exists) {
+            throw new Error(`SCOPE_DRIFT: 사업장(${bizSnap.id}) 없음 — 그룹 건너뜀`);
+          }
+          const freshOwnerId = bizSnap.data()?.ownerId as string | undefined;
+          if (!freshOwnerId) {
+            throw new Error(`SCOPE_DRIFT: 사업장(${bizSnap.id}) ownerId 없음 — 그룹 건너뜀`);
+          }
+          if (buildPostingCapacityScopeKey(freshOwnerId) !== expectedScopeKey) {
+            throw new Error(
+              `SCOPE_DRIFT: 사업장(${bizSnap.id}) scopeKey 변경 — 그룹 건너뜀`,
+            );
+          }
+        }
+
+        // owner capacity context (첫 번째 bizId 기준 — 동일 오너 검증 완료)
+        const {scopeKey, activePostingCapacity} =
+          await resolvePostingCapacityContextTx(tx, groupBizIds[0]);
+        if (scopeKey !== expectedScopeKey) {
+          throw new Error(`SCOPE_DRIFT: resolver scopeKey 불일치 — 그룹 건너뜀`);
+        }
+
+        // 모든 candidate TO 신선 재읽기
+        const freshToSnaps = await Promise.all(groupToRefs.map((ref) => tx.get(ref)));
+
+        // 오너 scope 현재 활성 공고 수
+        const nowMs = Date.now();
+        const effectiveCount = await getEffectiveActivePostingCountTx(tx, scopeKey, nowMs);
+        let remaining = activePostingCapacity - effectiveCount;
+
+        // ── WRITES (모든 READ 완료 후) ────────────────────────────────────
+        groupPublishedIds = [];
+
+        for (let i = 0; i < groupDocs.length; i++) {
+          if (remaining <= 0) break;
+
+          const freshSnap = freshToSnaps[i];
+          if (!freshSnap.exists) continue;
+          const freshData = freshSnap.data()!;
+
+          // 신선 재검증 — 다른 세션이 이미 처리했거나 상태 변경된 경우 방어
+          if (freshData.isPublished === true) continue;
+          if (freshData.status !== "SCHEDULED") continue;
+          if (freshData.publishMode !== "scheduled") continue;
+          if (freshData.closedBy != null) continue;
+          const freshPublishAt = freshData.publishAt as admin.firestore.Timestamp | undefined;
+          if (!freshPublishAt || freshPublishAt.toMillis() > now.toMillis()) continue;
+
+          tx.update(freshSnap.ref, {
+            isPublished: true,
+            publishedAt: now,
+            status: "ACTIVE",
+            statusUpdatedAt: now,
+            postingCapacityScopeKey: scopeKey,
+          });
+          groupPublishedIds.push(freshSnap.id);
+          remaining--;
+        }
+      });
+
+      // TX 성공 후 side effects 수집 (TX commit 후에만)
+      for (const toId of groupPublishedIds) {
+        publishedTOIds.push(toId);
+        processedCount++;
+        const originalDoc = snapshot.docs.find((d) => d.id === toId);
+        if (originalDoc?.data().groupId) {
+          affectedGroupIds.add(originalDoc.data().groupId as string);
+        }
+        console.log(`    → ${toId} 공개 처리 (scope: ${expectedScopeKey})`);
+      }
+    } catch (groupErr) {
+      // 그룹 격리: 해당 scope 그룹은 SCHEDULED 유지, 다음 실행에서 재시도
+      console.error(`  ❌ [예약공개] scope(${expectedScopeKey}) TX 실패 — SCHEDULED 유지:`, groupErr);
     }
   }
 
-  if (batchCount > 0) await batch.commit();
   const skipped = snapshot.size - processedCount;
   console.log(`  ✅ [예약공개] ${processedCount}개 TO 공개 완료! (건너뜀: ${skipped}개)`);
 
@@ -3124,15 +3140,11 @@ async function processTOExpiry(now: Timestamp): Promise<void> {
     .get();
 
   if (!contractExpirySnap.empty) {
-    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
     const contractBatch = db.batch();
     const contractGroupIds = new Set<string>();
 
     for (const doc of contractExpirySnap.docs) {
       const d = doc.data();
-      const rangeEnd = d.rangeEnd as admin.firestore.Timestamp | undefined;
-      const rangeEndMs = rangeEnd?.toMillis() ?? 0;
-      const canExtend = rangeEndMs - now.toMillis() >= THREE_DAYS_MS;
 
       contractBatch.update(doc.ref, {
         status: "CLOSED",
@@ -3140,31 +3152,27 @@ async function processTOExpiry(now: Timestamp): Promise<void> {
         closedReason: "POSTING_EXPIRED",
         statusUpdatedAt: now,
         isPublished: false,
-        _canExtend: canExtend, // 클라이언트 연장 가능 여부 힌트
+        // [DECOMMISSIONED] _canExtend 필드 제거 — 연장 기능 종료
       });
-      console.log(`    → ${doc.id} 장기 TO 게시만료 CLOSED (canExtend: ${canExtend})`);
+      console.log(`    → ${doc.id} 장기 TO 게시만료 CLOSED`);
       if (d.groupId) contractGroupIds.add(d.groupId as string);
 
-      // 관리자에게 만료 알림 (rangeEnd 여유 3일 이상이면 연장 안내 포함)
+      // 관리자에게 만료 알림 — 다시 모집하기 안내
       if (d.businessId && d.creatorUID) {
         const notifRef = db
           .collection("users")
           .doc(d.creatorUID as string)
           .collection("notifications")
           .doc();
-        const notifBody = canExtend
-          ? `'${d.title ?? "공고"}' 게시기간이 만료되었습니다. 계약기간 내 연장이 가능합니다.`
-          : `'${d.title ?? "공고"}' 게시기간이 만료되었습니다.`;
         contractBatch.set(notifRef, {
           userId: d.creatorUID,
           type: "toPostingExpired",
           title: "공고 게시 만료",
-          body: notifBody,
+          body: `'${d.title ?? "공고"}' 게시기간이 만료되었습니다. 다시 모집하려면 [다시 모집하기]를 사용하세요.`,
           data: {
             toId: doc.id,
             businessId: d.businessId,
             screen: "toDetail",
-            canExtend,
           },
           isRead: false,
           createdAt: now,
@@ -5200,24 +5208,202 @@ export const onBusinessDeleted = onDocumentDeleted(
     }
 
     // [M-3] 고아 데이터 cascade — 6개 컬렉션 병렬 삭제 (서로 독립)
+    // [ACCESS-GAP-PATCH-01] P2: deleted business snapshot — historicalOwnerUid 사전 추출
+    // event.data?.data()는 삭제 직전 문서 스냅샷. ownerId는 trusted server-side 출처.
+    const deletedData = event.data?.data();
+    const historicalOwnerUid: string | null =
+      deletedData && typeof deletedData.ownerId === "string" &&
+      (deletedData.ownerId as string).trim().length > 0
+        ? (deletedData.ownerId as string)
+        : null;
+    if (!historicalOwnerUid) {
+      console.error(
+        `🚨 [EC-M-01][HIGH] deleted business ${businessId} ownerId 없음/빈값 — ` +
+        `historicalOwnerUid 스탬핑 불가. 계약 보존은 유지됨.`,
+      );
+    }
     await Promise.allSettled([
       deleteByBusinessId("schedule_change_requests"),
-      // [EC-M-01] employment_contracts: Firestore 삭제 + Storage 파일 정리
+      // [EC-M-01] employment_contracts: pending_employer만 삭제, 서명·완료·무효 계약 보존
+      // [DATA-ARCH-CONTRACT-RETENTION] pending_worker/completed/voided/unknown → Firestore + Storage 보존
+      // [ACCESS-GAP-PATCH-01] P1: pending_worker → voided(BUSINESS_DELETED) TX-atomic TOCTOU-safe
+      //                        P2: 전체 retained에 historicalOwnerUid 스탬핑 (deleted business.ownerId)
+      // 이유: 서명 artifact(signature_employer.png 등)는 분쟁·감사 증거 — 사업장 삭제로 파기 금지
       (async () => {
-        let last: FirebaseFirestore.DocumentSnapshot | undefined;
-        while (true) {
-          let q: FirebaseFirestore.Query = db.collection("employment_contracts")
-            .where("businessId", "==", businessId).limit(PAGE);
-          if (last) q = q.startAfter(last);
-          const snap = await q.get();
-          if (snap.empty) break;
-          const contractIds = snap.docs.map((d) => d.id);
-          const batch = db.batch();
-          snap.docs.forEach((d) => batch.delete(d.ref));
-          await batch.commit();
-          await Promise.allSettled(contractIds.map((id) => _cleanupContractFiles(id)));
-          if (snap.docs.length < PAGE) break;
-          last = snap.docs[snap.docs.length - 1];
+        try {
+          let last: FirebaseFirestore.DocumentSnapshot | undefined;
+          let retainedCount = 0;
+          let malformedStatusCount = 0;
+
+          while (true) {
+            let q: FirebaseFirestore.Query = db.collection("employment_contracts")
+              .where("businessId", "==", businessId).limit(PAGE);
+            if (last) q = q.startAfter(last);
+            const snap = await q.get();
+            if (snap.empty) break;
+
+            const deletableDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+            const pendingWorkerDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+            const stableRetainedDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+
+            snap.docs.forEach((d) => {
+              const status = d.data().status as string | undefined;
+              if (status === "pending_employer") {
+                deletableDocs.push(d);
+              } else if (status === "pending_worker") {
+                pendingWorkerDocs.push(d);
+                retainedCount++;
+              } else {
+                // completed / voided / unknown / missing → fail-safe 보존
+                stableRetainedDocs.push(d);
+                retainedCount++;
+                if (!["completed", "voided"].includes(status ?? "")) {
+                  malformedStatusCount++;
+                  console.warn(
+                    `⚠️ [EC-M-01] employment_contract ${d.id} 알 수 없는 status="${status ?? "missing"}" → fail-safe 보존`,
+                  );
+                }
+              }
+            });
+
+            // ── 1) pending_employer 삭제 + Storage 정리 ──────────────────────
+            if (deletableDocs.length > 0) {
+              const delBatch = db.batch();
+              deletableDocs.forEach((d) => delBatch.delete(d.ref));
+              await delBatch.commit();
+              const deletableIds = deletableDocs.map((d) => d.id);
+              await Promise.allSettled(deletableIds.map((id) => _cleanupContractFiles(id)));
+              console.log(
+                `🗑️ [EC-M-01] employment_contracts 삭제 ${deletableDocs.length}건 (pending_employer)`,
+              );
+            }
+
+            // ── 2) pending_worker → voided (TX-atomic, TOCTOU-safe) + historicalOwnerUid ──
+            // query 이후 worker 서명으로 completed 전환 가능 → fresh read 후 조건부 write 필수
+            // [IMMUTABILITY] completed 계약을 voided로 다운그레이드 절대 금지
+            const pendingWorkerResults = await Promise.allSettled(
+              pendingWorkerDocs.map((d) =>
+                db.runTransaction(async (tx) => {
+                  const freshSnap = await tx.get(d.ref);
+                  // [MISSING-DOC-GUARD] 외부 쿼리 이후 계약서가 삭제된 경우 (희소 race condition)
+                  // tx.update()를 삭제된 문서에 호출하면 NOT_FOUND 에러 → TOCTOU skip 처리
+                  if (!freshSnap.exists) {
+                    return "TOCTOU_SKIPPED(deleted)";
+                  }
+                  const freshStatus = freshSnap.data()?.status as string | undefined;
+                  const existingOwner = freshSnap.data()?.historicalOwnerUid as string | undefined;
+
+                  // [C2-TRUST_DELETED_BUSINESS_OWNER] historicalOwnerUid 교정/스탬핑
+                  // 재시도: existingOwner === historicalOwnerUid → 멱등 write
+                  // 충돌: existingOwner !== historicalOwnerUid → deleted business.ownerId 우선(교정)
+                  //   이유: SEC-GAP-HIST-CREATE-01(rules) 패치로 CREATE 주입 차단됨.
+                  //         충돌값은 선행 오염 또는 버그 — 신뢰된 서버 스냅샷으로 교정.
+                  let ownerToStamp: string | undefined;
+                  if (historicalOwnerUid) {
+                    if (!existingOwner) {
+                      ownerToStamp = historicalOwnerUid;
+                    } else if (existingOwner === historicalOwnerUid) {
+                      ownerToStamp = historicalOwnerUid; // 멱등 — 동일값
+                    } else {
+                      // [C2] deleted business.ownerId > preexisting historicalOwnerUid
+                      console.error(
+                        `🚨 [EC-M-01][HIGH] contract ${d.id} historicalOwnerUid 충돌 — ` +
+                        `existing="${existingOwner}", incoming="${historicalOwnerUid}" → 정규 ownerId로 교정 (C2)`,
+                      );
+                      ownerToStamp = historicalOwnerUid; // C2: deleted business.ownerId 우선
+                    }
+                  }
+
+                  if (freshStatus === "pending_worker") {
+                    // P1: voided 전환 (canonical 필드 — onBusinessDeactivated와 동일 구조)
+                    // P2: historicalOwnerUid 동시 스탬핑
+                    // [IMMUTABILITY] status/voidReason/contractVoidedAt 외 계약 내용 미접촉
+                    const ownerField = ownerToStamp !== undefined
+                      ? {historicalOwnerUid: ownerToStamp}
+                      : {};
+                    tx.update(d.ref, {
+                      status: "voided",
+                      voidReason: "BUSINESS_DELETED",
+                      contractVoidedAt: admin.firestore.FieldValue.serverTimestamp(),
+                      ...ownerField,
+                    });
+                    return "VOIDED";
+                  } else {
+                    // TOCTOU: 이미 다른 상태(completed/voided 등)로 전환됨 — status 변경 금지
+                    // historicalOwnerUid만 C2 정책으로 스탬핑/교정 (conflict 포함)
+                    if (ownerToStamp !== undefined) {
+                      tx.update(d.ref, {historicalOwnerUid: ownerToStamp});
+                    }
+                    return `TOCTOU_SKIPPED(${freshStatus ?? "unknown"})`;
+                  }
+                })
+              )
+            );
+
+            // pending_worker 결과 집계 + 실패 가시화
+            let voidedCount = 0;
+            let toctouCount = 0;
+            pendingWorkerResults.forEach((r, i) => {
+              if (r.status === "fulfilled") {
+                if (r.value === "VOIDED") voidedCount++;
+                else toctouCount++;
+              } else {
+                // TX 실패: outer allSettled가 swallow하므로 여기서 명시적 오류 로그
+                console.error(
+                  `🚨 [EC-M-01] pending_worker contract ${pendingWorkerDocs[i].id} TX 실패:`,
+                  r.reason,
+                );
+              }
+            });
+            if (pendingWorkerDocs.length > 0) {
+              console.log(
+                `✅ [EC-M-01] pending_worker ${pendingWorkerDocs.length}건: ` +
+                `voided=${voidedCount}, TOCTOU-skipped=${toctouCount}`,
+              );
+            }
+
+            // ── 3) stable retained (completed/voided/unknown): historicalOwnerUid 스탬핑 ──
+            // [IMMUTABILITY] status·ContractSnapshot·articles·slots·pdfUrl·서명 미접촉
+            // [IDEMPOTENCY] historicalOwnerUid는 이 패치에서 첫 도입 필드.
+            //   재시도 시 동일 trigger → 동일 deleted business → 동일 ownerId.
+            //   stableRetainedDocs.length ≤ PAGE(499) — Firestore batch 500건 제한 내 안전.
+            if (stableRetainedDocs.length > 0 && historicalOwnerUid) {
+              const ownerBatch = db.batch();
+              stableRetainedDocs.forEach((d) => {
+                ownerBatch.update(d.ref, {historicalOwnerUid});
+              });
+              try {
+                await ownerBatch.commit();
+              } catch (err) {
+                console.error(
+                  `🚨 [EC-M-01] stable retained historicalOwnerUid 스탬핑 배치 실패 ` +
+                  `(${stableRetainedDocs.length}건) — 개별 fallback:`,
+                  err,
+                );
+                await Promise.allSettled(
+                  stableRetainedDocs.map((d) => d.ref.update({historicalOwnerUid}))
+                );
+              }
+            }
+
+            if (snap.docs.length < PAGE) break;
+            last = snap.docs[snap.docs.length - 1];
+          }
+
+          if (retainedCount > 0) {
+            console.log(
+              `✅ [EC-M-01] employment_contracts 보존 ${retainedCount}건` +
+              (malformedStatusCount > 0 ? `, 알 수 없는 status ${malformedStatusCount}건` : ""),
+            );
+          }
+        } catch (err) {
+          // IIFE 전체 실패 — outer allSettled가 rejection을 swallow하기 전 명시적 로그
+          console.error(
+            `🚨 [EC-M-01] employment_contracts 처리 치명적 오류 — ` +
+            `일부 pending_worker 종료 또는 historicalOwnerUid 스탬핑 미완료 가능:`,
+            err,
+          );
+          throw err;
         }
       })(),
       deleteByBusinessId("monthly_reviews"),
@@ -5227,7 +5413,7 @@ export const onBusinessDeleted = onDocumentDeleted(
     ]);
 
     // [BB-003] 모든 관리자의 managedBusinessIds에서 삭제된 사업장 ID 제거 (adminIds 기준)
-    const deletedData = event.data?.data();
+    // [ACCESS-GAP-PATCH-01] deletedData는 historicalOwnerUid 추출을 위해 위에서 미리 선언됨
     const allAdminIds: string[] = deletedData
       ? (Array.isArray(deletedData.adminIds) ? deletedData.adminIds
         : (deletedData.ownerId ? [deletedData.ownerId as string] : []))
@@ -7338,6 +7524,139 @@ export const callableUploadBusinessImage = onCall(
   }
 );
 
+// ── [QUOTA-HELPER] canonical active-quota predicate ────────────────────────────────
+// 하나의 TO 문서가 active-quota를 소비하는지 결정하는 순수 함수.
+// 조건: isDeleted !== true  AND  논리적으로 만료되지 않음
+// - isDeleted 필드가 absent인 문서는 비삭제로 취급 (TO 생성 시 필드 미초기화 상태 대응)
+// - CONTRACT: postingExpiryDate 만료 여부만 검사
+// - FLEX / 기타: applicationDeadline 또는 postingExpiryDate 중 하나라도 만료 시 제외
+// - isPublished 필터 미포함 (status 기반 quota 의미와 일치, soft-delete는 isDeleted로 처리)
+// 사용처: callableCreateTO, callablePublishTO, callableUpdateTO(reopen),
+//         callableReopenSlots, processScheduledPublish
+function isEffectiveActiveTOForQuota(
+  data: FirebaseFirestore.DocumentData,
+  nowMs: number,
+): boolean {
+  // soft-deleted TO는 quota 소비 불가
+  if (data.isDeleted === true) return false;
+  const toType = data.type as string | undefined;
+  const dl = (data.applicationDeadline as admin.firestore.Timestamp | undefined)?.toMillis?.();
+  const pe = (data.postingExpiryDate as admin.firestore.Timestamp | undefined)?.toMillis?.();
+  if (toType === "contract") {
+    // CONTRACT: processTOExpiry와 동일 — postingExpiryDate만 검사
+    if (pe != null && pe < nowMs) return false;
+  } else {
+    // FLEX / 기타: applicationDeadline 또는 postingExpiryDate 만료 시 제외
+    if (dl != null && dl < nowMs) return false;
+    if (pe != null && pe < nowMs) return false;
+  }
+  return true;
+}
+
+// ── [CAPACITY-STAGE1] postingCapacityScopeKey 파생 인덱스 키 빌더 ──
+// 순수 함수(Firestore 접근 없음, await 없음). Stage 1 전용.
+// 반환 형식: "ADMIN:<ownerUid>" (미래: "ORG:<orgId>")
+// ownerUid 공백 시 fail-closed — 빈 문자열은 절대 저장하지 않음.
+function buildPostingCapacityScopeKey(ownerUid: string): string {
+  if (!ownerUid) {
+    throw new HttpsError(
+      "failed-precondition",
+      "[CAPACITY-STAGE1] ownerUid가 비어 있습니다. postingCapacityScopeKey를 생성할 수 없습니다.",
+    );
+  }
+  return `ADMIN:${ownerUid}`;
+}
+
+// ── [CAPACITY-STAGE3B] TX-safe capacity context resolver ────────────────────
+// 트랜잭션 내부에서 사업장 → 오너 User → 한도를 단일 스냅샷으로 해결한다.
+// 반환: { scopeKey, ownerUid, activePostingCapacity, capacitySource }
+//   capacitySource: "owner_override" | "global_config" | "default"
+//
+// 사업장 없음           → not-found throw
+// ownerId 없음/빈 문자열 → failed-precondition throw
+// 오너 User 문서 없음   → failed-precondition("OWNER_USER_NOT_FOUND") — fail-closed
+// owner.maxActiveTOs 비정상값 → 경고 후 globalConfig/default 폴백
+async function resolvePostingCapacityContextTx(
+  tx: admin.firestore.Transaction,
+  businessId: string,
+): Promise<{
+  scopeKey: string;
+  ownerUid: string;
+  activePostingCapacity: number;
+  capacitySource: "owner_override" | "global_config" | "default";
+}> {
+  const [bizSnap, configSnap] = await Promise.all([
+    tx.get(db.collection("businesses").doc(businessId)),
+    tx.get(db.collection("settings").doc("app_config")),
+  ]);
+  if (!bizSnap.exists) {
+    throw new HttpsError("not-found", `사업장(${businessId})을 찾을 수 없습니다.`);
+  }
+  const ownerUid = bizSnap.data()?.ownerId as string | undefined;
+  if (!ownerUid) {
+    throw new HttpsError(
+      "failed-precondition",
+      `[CAPACITY-STAGE3B] 사업장(${businessId})에 ownerId가 없습니다.`,
+    );
+  }
+
+  const ownerSnap = await tx.get(db.collection("users").doc(ownerUid));
+  if (!ownerSnap.exists) {
+    throw new HttpsError(
+      "failed-precondition",
+      `[CAPACITY-STAGE3B] OWNER_USER_NOT_FOUND: ${ownerUid}`,
+    );
+  }
+
+  const scopeKey = buildPostingCapacityScopeKey(ownerUid);
+
+  // 한도 결정: 오너 override → 글로벌 설정 → 기본값 4
+  const ownerOverrideRaw = ownerSnap.data()?.maxActiveTOs as unknown;
+  let activePostingCapacity = 4;
+  let capacitySource: "owner_override" | "global_config" | "default" = "default";
+
+  if (
+    typeof ownerOverrideRaw === "number" &&
+    Number.isInteger(ownerOverrideRaw) &&
+    ownerOverrideRaw >= 1 &&
+    ownerOverrideRaw <= 50
+  ) {
+    activePostingCapacity = ownerOverrideRaw;
+    capacitySource = "owner_override";
+  } else {
+    if (ownerOverrideRaw != null) {
+      console.warn(
+        `[CAPACITY-STAGE3B] ownerUid=${ownerUid} maxActiveTOs 비정상(${JSON.stringify(ownerOverrideRaw)}) — 글로벌 설정으로 폴백`,
+      );
+    }
+    const globalRaw = configSnap.data()?.maxActiveTOPerBusiness as unknown;
+    if (typeof globalRaw === "number" && Number.isInteger(globalRaw) && globalRaw > 0) {
+      activePostingCapacity = globalRaw;
+      capacitySource = "global_config";
+    }
+    // else: default 4 유지
+  }
+
+  return {scopeKey, ownerUid, activePostingCapacity, capacitySource};
+}
+
+// ── [CAPACITY-STAGE3B] TX-safe owner-scope active count ─────────────────────
+// postingCapacityScopeKey 기준으로 오너 전체 scope의 유효 활성 공고 수를 TX 내에서 조회.
+// .limit() 없음 — 유효 TO를 완전 조회 후 isEffectiveActiveTOForQuota in-memory 필터 적용.
+async function getEffectiveActivePostingCountTx(
+  tx: admin.firestore.Transaction,
+  scopeKey: string,
+  nowMs: number,
+): Promise<number> {
+  const snap = await tx.get(
+    db
+      .collection("tos")
+      .where("postingCapacityScopeKey", "==", scopeKey)
+      .where("status", "in", ["ACTIVE", "FULL"]),
+  );
+  return snap.docs.filter((doc) => isEffectiveActiveTOForQuota(doc.data(), nowMs)).length;
+}
+
 // ── callableCreateTO ─────────────────────────────────────
 // [HIGH-02] TO 생성 개수 제한 서버 강제 — 클라이언트 Firestore.add() 직접 호출 우회 차단
 // 1) 관리자·소속 사업장 교차검증  2) draft 아닌 경우 개수 제한 체크  3) TO 문서 생성(serverTimestamp 강제)
@@ -7418,52 +7737,8 @@ export const callableCreateTO = onCall(
       await assertBusinessPostingReady(businessId, bizAuthSnap.data());
     }
 
-    // 개수 제한 체크 (draft 제외)
-    // [HIGH-05-MITIGATE] TOCTOU 완전 방어는 카운터 문서 필요 — 현재는 businessId 직접 쿼리로
-    //   managedBusinessIds 의존성 제거 + 단일 사업장 기준으로 단순화
-    if (publishMode !== "draft") {
-      // status 기준으로 카운트 — isPublished 기준은 자동만료 시 isPublished 미해제 버그 영향을 받으므로 status 사용
-      const quotaSnap = await db.collection("tos")
-        .where("businessId", "==", businessId)
-        .where("status", "in", ["ACTIVE", "FULL"])
-        .limit(101)
-        .get();
-      // [P1-C] 스케줄러 미처리 만료 TO를 카운트에서 제외 (processTOExpiry 시간당 실행 보완)
-      // [P1-C-PARITY] processTOExpiry 기준과 동일: CONTRACT는 postingExpiryDate만, FLEX는 applicationDeadline
-      //   CONTRACT TO에 applicationDeadline이 설정된 경우 processTOExpiry는 postingExpiryDate만 체크 →
-      //   in-memory filter도 동일하게 타입 분기 처리 (카운터 의미 일치)
-      const nowMsCreate = Date.now();
-      const totalActive = quotaSnap.docs.filter(doc => {
-        const d = doc.data();
-        const toTypeC = d.type as string | undefined;
-        const dl = (d.applicationDeadline as admin.firestore.Timestamp | undefined)?.toMillis?.();
-        const pe = (d.postingExpiryDate as admin.firestore.Timestamp | undefined)?.toMillis?.();
-        if (toTypeC === "contract") {
-          if (pe != null && pe < nowMsCreate) return false;
-        } else {
-          if (dl != null && dl < nowMsCreate) return false;
-          if (pe != null && pe < nowMsCreate) return false;
-        }
-        return true;
-      }).length;
-
-      // 한도: users.maxActiveTOs 우선, settings/app_config.maxActiveTOPerBusiness 폴백, 기본 4
-      let limit = 4;
-      const perAdminLimit = callerData?.maxActiveTOs as number | undefined;
-      if (perAdminLimit && perAdminLimit > 0) {
-        limit = perAdminLimit;
-      } else {
-        try {
-          const configSnap = await db.collection("settings").doc("app_config").get();
-          const v = configSnap.data()?.maxActiveTOPerBusiness as number | undefined;
-          if (v && v > 0) limit = v;
-        } catch (_) { /* 조회 실패 시 기본값 유지 */ }
-      }
-
-      if (totalActive >= limit) {
-        throw new HttpsError("resource-exhausted", `MAX_ACTIVE_TO_LIMIT:${limit}`);
-      }
-    }
+    // [CAPACITY-STAGE3B] immediate ACTIVE: TX atomic capacity check + create (아래 add() 교체)
+    // DRAFT/SCHEDULED/deferred 초기 생성: quota 소비 없음 — 기존 add() 경로 유지
 
     // totalRequired 음수 차단
     const totalRequired = toData.totalRequired as number | undefined;
@@ -7532,12 +7807,14 @@ export const callableCreateTO = onCall(
         break;
       case "deferred":
         // flex 즉시공개 TO — 슬롯 생성 완료 전까지 비공개로 생성 (노출 창 최소화)
-        // 슬롯 생성 완료 후 클라이언트가 isPublished:true로 전환 (rules에서 허용)
+        // 슬롯 생성 완료 후 클라이언트가 callablePublishTO를 호출하여 ACTIVE 전환
+        // [CAPACITY-STAGE3A] 직접 rules 전환 제거 — callablePublishTO TX atomic 보장
         // publishAt 없어도 됨 — 스케줄 공개가 아니라 슬롯 생성 완료 시점 공개
         finalData.status = "SCHEDULED";
         finalData.isPublished = false;
         break;
       default: // "immediate"
+        // [CAPACITY-STAGE3B] postingCapacityScopeKey는 TX resolver에서 확정 — 아래 TX 참조
         finalData.status = "ACTIVE";
         finalData.isPublished = true;
         break;
@@ -7558,6 +7835,24 @@ export const callableCreateTO = onCall(
       }
     }
 
+    // [CAPACITY-STAGE3B] immediate ACTIVE: TX atomic capacity check + create
+    // DRAFT/SCHEDULED/deferred: 개수 제한 없음 (비공개 상태) — 기존 add() 경로 유지
+    if (publishMode === "immediate") {
+      const newToRef = db.collection("tos").doc();
+      await db.runTransaction(async (tx) => {
+        const nowMsCreate = Date.now();
+        const {scopeKey, activePostingCapacity} =
+          await resolvePostingCapacityContextTx(tx, businessId);
+        const effectiveCount = await getEffectiveActivePostingCountTx(tx, scopeKey, nowMsCreate);
+        if (effectiveCount >= activePostingCapacity) {
+          throw new HttpsError("resource-exhausted", `MAX_ACTIVE_TO_LIMIT:${activePostingCapacity}`);
+        }
+        // postingCapacityScopeKey: TX resolver 확정값으로 덮어씀 (owner-scope 보장)
+        tx.set(newToRef, {...finalData, postingCapacityScopeKey: scopeKey});
+      });
+      return {toId: newToRef.id};
+    }
+    // DRAFT / SCHEDULED / deferred: 개수 제한 미적용, scopeKey 불필요
     const toRef = await db.collection("tos").add(finalData);
     return {toId: toRef.id};
   }
@@ -8108,19 +8403,7 @@ export const callablePublishTO = onCall(
       throw new HttpsError("failed-precondition", `공개 전환 불가 상태입니다: ${toStatusNow}`);
     }
 
-    // 한도 계산 (트랜잭션 외부 — assertBizAdmin이 반환한 callerData 재사용)
-    let limit = 4;
-    const perAdminLimit = authCallerData?.maxActiveTOs as number | undefined;
-    if (perAdminLimit && perAdminLimit > 0) {
-      limit = perAdminLimit;
-    } else {
-      try {
-        const configSnap = await db.collection("settings").doc("app_config").get();
-        const v = configSnap.data()?.maxActiveTOPerBusiness as number | undefined;
-        if (v && v > 0) limit = v;
-      } catch (_) { /* 조회 실패 시 기본값 유지 */ }
-    }
-
+    // [CAPACITY-STAGE3B] TX 내 owner scope-total 검증 — pre-TX actor-based limit 제거
     // [HIGH-TO-PUB-FIX] 쿼터 확인 + update를 트랜잭션으로 묶어 동시 공개 TOCTOU 차단
     let alreadyPublished = false;
     await db.runTransaction(async (tx) => {
@@ -8128,28 +8411,13 @@ export const callablePublishTO = onCall(
       if (!freshTo.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
       if (freshTo.data()!.isPublished === true) { alreadyPublished = true; return; }
 
-      // status 기준으로 카운트 (isPublished 기준 버그 우회)
-      const quotaSnap = await tx.get(
-        db.collection("tos").where("businessId", "==", businessId).where("status", "in", ["ACTIVE", "FULL"]).limit(limit + 1)
-      );
-      // [P1-C] 스케줄러 미처리 만료 TO를 카운트에서 제외
-      // [P1-C-PARITY] CONTRACT는 postingExpiryDate만, FLEX는 applicationDeadline (processTOExpiry 기준 동일)
+      // [CAPACITY-STAGE3B] owner scope-total TX capacity check
       const nowMsPub = Date.now();
-      const effectivePubCount = quotaSnap.docs.filter(doc => {
-        const d = doc.data();
-        const toTypeP = d.type as string | undefined;
-        const dl = (d.applicationDeadline as admin.firestore.Timestamp | undefined)?.toMillis?.();
-        const pe = (d.postingExpiryDate as admin.firestore.Timestamp | undefined)?.toMillis?.();
-        if (toTypeP === "contract") {
-          if (pe != null && pe < nowMsPub) return false;
-        } else {
-          if (dl != null && dl < nowMsPub) return false;
-          if (pe != null && pe < nowMsPub) return false;
-        }
-        return true;
-      }).length;
-      if (effectivePubCount >= limit) {
-        throw new HttpsError("resource-exhausted", `MAX_ACTIVE_TO_LIMIT:${limit}`);
+      const {scopeKey: pubScopeKey, activePostingCapacity: pubCapacity} =
+        await resolvePostingCapacityContextTx(tx, businessId);
+      const effectivePubCount = await getEffectiveActivePostingCountTx(tx, pubScopeKey, nowMsPub);
+      if (effectivePubCount >= pubCapacity) {
+        throw new HttpsError("resource-exhausted", `MAX_ACTIVE_TO_LIMIT:${pubCapacity}`);
       }
 
       const publishUpdates: Record<string, unknown> = {
@@ -8159,6 +8427,8 @@ export const callablePublishTO = onCall(
         statusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
         // [LOW-PUB-01 수정 2026-07-15] 예약 공개(scheduled) → 즉시 공개 전환 시 publishAt 잔류 방지
         publishAt: admin.firestore.FieldValue.delete(),
+        // [CAPACITY-STAGE3B] TX resolver 확정 scopeKey (owner-scope 보장)
+        postingCapacityScopeKey: pubScopeKey,
       };
       // 장기 TO: draft 공개 시 게시 만료일 계산 (발행 시점 = now)
       if (toData.type === "contract" && typeof toData.postingDurationDays === "number") {
@@ -8435,72 +8705,94 @@ export const callableUpdateTO = onCall(
       if (reopenWorkDetails.length < 1) {
         throw new HttpsError("failed-precondition", "공고에 최소 1개의 업무가 필요합니다.");
       }
-      // [P1-B-FIX] 재개 시 활성 공고 한도 검증 — 이전에는 한도 체크 없이 재개 허용
-      let reopenLimit = 4;
-      const perAdminLimitRO = authCallerData?.maxActiveTOs as number | undefined;
-      if (perAdminLimitRO && perAdminLimitRO > 0) {
-        reopenLimit = perAdminLimitRO;
-      } else {
-        try {
-          const cfgSnap = await db.collection("settings").doc("app_config").get();
-          const cfgV = cfgSnap.data()?.maxActiveTOPerBusiness as number | undefined;
-          if (cfgV && cfgV > 0) reopenLimit = cfgV;
-        } catch (_) { /* 조회 실패 시 기본값 유지 */ }
-      }
-      const quotaSnapRO = await db.collection("tos")
-        .where("businessId", "==", businessId)
-        .where("status", "in", ["ACTIVE", "FULL"])
-        .limit(reopenLimit + 1)
-        .get();
-      // [P1-C] 스케줄러 미처리 만료 TO를 카운트에서 제외 (processTOExpiry 시간당 실행 보완)
-      // [P1-C-PARITY] CONTRACT는 postingExpiryDate만, FLEX는 applicationDeadline (processTOExpiry 기준 동일)
-      const nowMsRO = Date.now();
-      const effectiveActiveCount = quotaSnapRO.docs.filter(doc => {
-        const d = doc.data();
-        const toTypeRO = d.type as string | undefined;
-        const dl = (d.applicationDeadline as admin.firestore.Timestamp | undefined)?.toMillis?.();
-        const pe = (d.postingExpiryDate as admin.firestore.Timestamp | undefined)?.toMillis?.();
-        if (toTypeRO === "contract") {
-          if (pe != null && pe < nowMsRO) return false;
-        } else {
-          if (dl != null && dl < nowMsRO) return false;
-          if (pe != null && pe < nowMsRO) return false;
+
+      // [CAPACITY-STAGE3B] 재개: owner scope-total TX — 신선 TO 재읽기 + lifecycle 재계산
+      // POSTING-MANUAL-REOPEN-TIMEBOUNDARY-01: OPEN / UNCHANGED (시간경계 소급 처리 미구현)
+      await db.runTransaction(async (txReopen) => {
+        const freshSnap = await txReopen.get(toRef);
+        if (!freshSnap.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
+        const freshToData = freshSnap.data()!;
+        // 신선 상태 재검증 — TX 사이에 다른 세션이 이미 재개했을 경우 방어
+        if (freshToData.isManualClosed !== true) {
+          throw new HttpsError("failed-precondition", "이미 재개된 공고입니다.");
         }
-        return true;
-      }).length;
-      if (effectiveActiveCount >= reopenLimit) {
-        throw new HttpsError("resource-exhausted", `MAX_ACTIVE_TO_LIMIT:${reopenLimit}`);
-      }
 
-      // 재개 필드 서버 강제
-      finalUpdates.isManualClosed = false;
-      finalUpdates.reopenedBy = callerUid;
-      finalUpdates.reopenedAt = admin.firestore.FieldValue.serverTimestamp();
-      finalUpdates.closedAt = admin.firestore.FieldValue.delete();
-      finalUpdates.closedBy = admin.firestore.FieldValue.delete();
+        const nowMsRT = Date.now();
+        const freshPublishAt = freshToData.publishAt as admin.firestore.Timestamp | undefined;
+        const freshPublishMode = freshToData.publishMode as string | undefined;
+        // 신선 lifecycle 재계산 — stale toData 참조 제거
+        const isScheduledAndFuture =
+          freshPublishMode === "scheduled" &&
+          freshPublishAt != null &&
+          freshPublishAt.toMillis() > nowMsRT;
 
-      // [P1-B-FIX] 재개 시 status/isPublished 서버 복원
-      // - 예약공개 대기 중(publishMode=scheduled + publishAt이 미래)이었으면 SCHEDULED 유지
-      // - 그 외 모든 케이스: ACTIVE 복원 + isPublished:true (발행 상태 복원)
-      // isPublished: true를 finalUpdates에 직접 설정하는 것은 안전 — 클라이언트 updates가 아닌
-      // 서버 재개 로직이므로 line 8028의 가드(updates.isPublished 체크)에 해당하지 않음
-      const existingPublishAt = toData.publishAt as admin.firestore.Timestamp | undefined;
-      const isScheduledAndFuture =
-        toData.publishMode === "scheduled" &&
-        existingPublishAt != null &&
-        existingPublishAt.toMillis() > nowMsRO;
+        // 클라이언트 sanitized updates + 서버 강제 재개 필드 병합
+        const txReopenUpdates: Record<string, unknown> = {
+          ...finalUpdates,
+          isManualClosed: false,
+          reopenedBy: callerUid,
+          reopenedAt: admin.firestore.FieldValue.serverTimestamp(),
+          closedAt: admin.firestore.FieldValue.delete(),
+          closedBy: admin.firestore.FieldValue.delete(),
+          statusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedBy: callerUid,
+        };
 
-      if (isScheduledAndFuture) {
-        // 예약 발행 복원 — publishAt이 미래면 processScheduledPublish가 자동 공개 처리
-        finalUpdates.status = "SCHEDULED";
-      } else {
-        // ACTIVE + 공개 복원
-        finalUpdates.status = "ACTIVE";
-        finalUpdates.isPublished = true;
-      }
-      finalUpdates.statusUpdatedAt = admin.firestore.FieldValue.serverTimestamp();
+        if (isScheduledAndFuture) {
+          // 예약 발행 복원 — publishAt이 미래면 processScheduledPublish가 자동 공개 처리
+          // SCHEDULED 분기: capacity 체크 불필요 (quota 미소비)
+          txReopenUpdates.status = "SCHEDULED";
+        } else {
+          // ACTIVE 복원: owner scope-total TX capacity check
+          const freshBizId = freshToData.businessId as string | undefined ?? businessId;
+          const {scopeKey: rtScopeKey, activePostingCapacity: rtCapacity} =
+            await resolvePostingCapacityContextTx(txReopen, freshBizId);
+          const rtCount = await getEffectiveActivePostingCountTx(txReopen, rtScopeKey, nowMsRT);
+          if (rtCount >= rtCapacity) {
+            throw new HttpsError("resource-exhausted", `MAX_ACTIVE_TO_LIMIT:${rtCapacity}`);
+          }
+          txReopenUpdates.status = "ACTIVE";
+          txReopenUpdates.isPublished = true;
+          // [CAPACITY-STAGE3B] TX resolver 확정 scopeKey (owner-scope 보장)
+          txReopenUpdates.postingCapacityScopeKey = rtScopeKey;
+        }
+
+        // 장기 TO: postingDurationDays 변경 시 postingExpiryDate 재계산 (신선 데이터 기반)
+        if (
+          freshToData.type === "contract" &&
+          typeof txReopenUpdates.postingDurationDays === "number"
+        ) {
+          const newDays = txReopenUpdates.postingDurationDays as number;
+          let baseMs: number;
+          if (txReopenUpdates.publishAt instanceof admin.firestore.Timestamp) {
+            baseMs = txReopenUpdates.publishAt.toMillis();
+          } else if ("publishAt" in updates && (updates as Record<string, unknown>).publishAt === null) {
+            baseMs = nowMsRT;
+          } else {
+            const freshExpiry = freshToData.postingExpiryDate as admin.firestore.Timestamp | undefined;
+            const oldDays = (freshToData.postingDurationDays as number | undefined) ?? 0;
+            if (freshExpiry && oldDays > 0) {
+              baseMs = freshExpiry.toMillis() - oldDays * 24 * 60 * 60 * 1000;
+            } else {
+              const freshPAt = freshToData.publishAt as admin.firestore.Timestamp | undefined;
+              const freshCAt = freshToData.createdAt as admin.firestore.Timestamp | undefined;
+              baseMs = (freshPAt ?? freshCAt)?.toMillis() ?? nowMsRT;
+            }
+          }
+          txReopenUpdates.postingExpiryDate = admin.firestore.Timestamp.fromMillis(
+            baseMs + newDays * 24 * 60 * 60 * 1000,
+          );
+        }
+
+        txReopen.update(toRef, txReopenUpdates);
+      });
+
+      console.log(`✅ [callableUpdateTO] TO ${toId} 재개 완료 (by: ${callerUid})`);
+      return {success: true};
     }
 
+    // 재개 외 일반 편집: 기존 non-TX update 경로 유지
     // status 변경 시 statusUpdatedAt 서버 강제
     if ("status" in updates) {
       finalUpdates.statusUpdatedAt = admin.firestore.FieldValue.serverTimestamp();
@@ -9109,251 +9401,21 @@ function _kstToMs(y: number, mo: number, d: number): number {
   return new Date(y, mo, d).getTime() - _KST_OFFSET_MS;
 }
 
-/**
- * KST 달력에서 N개월 후 같은 일자 (월말 clamp 포함)
- * Dart _addMonths()와 완전히 동일한 로직
- */
-function _addMonthsKST(y: number, mo: number, d: number, months: number): {y: number; mo: number; d: number} {
-  const rawMo = mo + months;
-  const targetY = y + Math.floor(rawMo / 12);
-  const targetMo = ((rawMo % 12) + 12) % 12; // 음수 방어
-  const lastDay = new Date(targetY, targetMo + 1, 0).getDate();
-  return {y: targetY, mo: targetMo, d: Math.min(d, lastDay)};
-}
-
-/**
- * KST 달력일 기준 차이 (laterMs - earlierMs, 일 단위 정수)
- * Korea는 DST 없음(항상 UTC+9) → 정확한 달력 일수 산출
- */
-function _kstDaysDiff(laterMs: number, earlierMs: number): number {
-  const laterKST  = new Date(laterMs  + _KST_OFFSET_MS);
-  const earlierKST = new Date(earlierMs + _KST_OFFSET_MS);
-  const laterDay   = Date.UTC(laterKST.getUTCFullYear(),  laterKST.getUTCMonth(),  laterKST.getUTCDate());
-  const earlierDay = Date.UTC(earlierKST.getUTCFullYear(), earlierKST.getUTCMonth(), earlierKST.getUTCDate());
-  return Math.round((laterDay - earlierDay) / (24 * 60 * 60 * 1000));
-}
-
-/** KST 날짜 표시용 (toLocaleDateString은 CF locale 의존 → 직접 포맷) */
-function _fmtKST(ts: admin.firestore.Timestamp): string {
-  const {y, mo, d} = _tsToKST(ts);
-  return `${y}년 ${mo + 1}월 ${d}일`;
-}
-
-// ── computeContractEndDateMs ──────────────────────────────
-// 계약 종료일 계산 (Inclusive, B안) — Dart computeContractEndDate()와 동일
-// contractEnd = (startDate + contractPeriod) - 1일  (시작일 포함 기산)
-//
-// 반환값: KST 자정 UTC 밀리초 (Firestore Timestamp 저장 방식과 동일)
-// 0 반환: 알 수 없는 contractPeriodType
-//
-// ✅ 테스트 케이스 (Dart 동일 결과):
-//   8/1  + 1개월 → 8/31   8/15 + 1개월 → 9/14   8/31 + 1개월 → 9/29
-//   1/31 + 1개월 → 2/27   2/29(윤년) + 1년 → 2/27(익년)
-//   8/17 + 3개월 → 11/16  8/17 + 1년 → 8/16(익년)  8/17 + 15일 → 8/31
-function computeContractEndDateMs(
-  contractPeriodType: string,
-  startTs: admin.firestore.Timestamp
-): number {
-  const {y, mo, d} = _tsToKST(startTs);
-  switch (contractPeriodType) {
-    case "15days":
-      // 시작일 포함 15일 → 종료일 = 시작 + 14일 (JS auto-overflow로 월말 처리)
-      return _kstToMs(y, mo, d + 14);
-    case "1month": {
-      const e = _addMonthsKST(y, mo, d, 1);
-      return _kstToMs(e.y, e.mo, e.d - 1);
-    }
-    case "3months": {
-      const e = _addMonthsKST(y, mo, d, 3);
-      return _kstToMs(e.y, e.mo, e.d - 1);
-    }
-    case "6months": {
-      const e = _addMonthsKST(y, mo, d, 6);
-      return _kstToMs(e.y, e.mo, e.d - 1);
-    }
-    case "1year": {
-      const e = _addMonthsKST(y, mo, d, 12);
-      return _kstToMs(e.y, e.mo, e.d - 1);
-    }
-    default:
-      return 0;
-  }
-}
+// [DECOMMISSIONED] _addMonthsKST, _kstDaysDiff, _fmtKST, computeContractEndDateMs 제거됨
+// callableExtendTOPosting 전용 헬퍼 — 연장 기능 종료로 삭제
+// _tsToKST, _kstToMs, _KST_OFFSET_MS 는 callableBatchAdjustAttendanceTime 에서 계속 사용
 
 // ── callableExtendTOPosting ──────────────────────────────
-// CLOSED(POSTING_EXPIRED) 장기 TO를 재활성화 — maxActiveTOs + rangeEnd 이중 검증
-// Input:  { toId: string, extensionDays: 3 | 5 | 7 | 10 }
-// Output: { success: true, postingExpiryDate: number (ms) }
+// [DECOMMISSIONED] 게시기간 연장 기능 종료 — 동일 TO 재사용 폐기
+// 새 모집 사이클은 다시 모집하기 → NEW TO ID 를 사용한다.
+// export는 호환성 tombstone으로 유지 — Firestore 쓰기 없음
 export const callableExtendTOPosting = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
-  async (request) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
-    const callerUid = request.auth.uid;
-    const {toId, extensionDays} = request.data as {toId?: string; extensionDays?: number};
-
-    if (!toId || typeof toId !== "string" || toId.trim() === "") {
-      throw new HttpsError("invalid-argument", "toId가 필요합니다.");
-    }
-    const VALID_DAYS = [3, 5, 7, 10];
-    if (!extensionDays || !VALID_DAYS.includes(extensionDays)) {
-      throw new HttpsError("invalid-argument", `extensionDays는 ${VALID_DAYS.join("/")} 중 하나여야 합니다.`);
-    }
-
-    const toRef = db.collection("tos").doc(toId);
-    const toSnap = await toRef.get();
-    if (!toSnap.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
-    const toData = toSnap.data()!;
-
-    // 장기 TO 전용
-    if (toData.type !== "contract") {
-      throw new HttpsError("failed-precondition", "장기 TO(contract)만 연장할 수 있습니다.");
-    }
-
-    const businessId = toData.businessId as string | undefined;
-    if (!businessId) throw new HttpsError("invalid-argument", "공고에 businessId가 없습니다.");
-
-    const {callerData: authCallerData} = await assertBizAdmin(callerUid, businessId);
-    // [PERM-TO-02] 서브어드민 canManageTo 세부 권한 검증 — callablePublishTO와 대칭
-    const authCallerRole = authCallerData?.role as string | undefined;
-    if (authCallerRole !== "BUSINESS_ADMIN" && authCallerRole !== "SUPER_ADMIN") {
-      const memberSnapForExtend = await db.collection("businesses").doc(businessId).collection("members").doc(callerUid).get();
-      const memberPermsForExtend = (memberSnapForExtend.data()?.permissions as Record<string, boolean>) ?? {};
-      if (!memberPermsForExtend.canManageTo) throw new HttpsError("permission-denied", "TO 관리 권한이 없습니다.");
-    }
-
-    // 상태 검증: POSTING_EXPIRED로 CLOSED된 경우만 허용
-    if (toData.status !== "CLOSED" || toData.closedReason !== "POSTING_EXPIRED") {
-      throw new HttpsError(
-        "failed-precondition",
-        "게시기간 만료로 마감된 공고만 연장할 수 있습니다."
-      );
-    }
-
-    // ── 게시 연장 상한 검증 ─────────────────────────────────
-    // D+1 정책: 당일 지원 불가 → 지원 마감일 다음날 ≤ 가장 늦은 희망 시작일
-    //   preset 신규: postingExpiry ≤ workStartAvailableUntil - 1일 (KST)
-    //   custom:      postingExpiry ≤ rangeStart - 1일 (근무 시작 전날까지만 모집)
-    //   legacy:      postingExpiry ≤ rangeEnd (기존 동작 보존)
-
-    const contractPeriodType = toData.contractPeriodType as string | undefined;
-    const isCustomType       = contractPeriodType === "custom";
-    const wsuTs              = toData.workStartAvailableUntil as admin.firestore.Timestamp | undefined;
-    const isNewPolicyPreset  = !isCustomType && wsuTs != null;
-
-    const nowMs      = Date.now();
-    const newExpiryMs = nowMs + extensionDays * 24 * 60 * 60 * 1000;
-
-    if (isCustomType) {
-      // custom: 근무 시작일(rangeStart) 전날이 최대 게시 마감일
-      const rangeStartTs = toData.rangeStart as admin.firestore.Timestamp | undefined;
-      if (!rangeStartTs) {
-        throw new HttpsError("failed-precondition", "custom 공고에 근무 시작일(rangeStart) 정보가 없습니다.");
-      }
-      const rs = _tsToKST(rangeStartTs);
-      // 최대 게시 마감일 = rangeStart - 1일 (KST)
-      const maxExpiryMs = _kstToMs(rs.y, rs.mo, rs.d - 1);
-      // D+1 체크: newExpiry KST 달력일 ≤ maxExpiry KST 달력일
-      if (_kstDaysDiff(maxExpiryMs, newExpiryMs) < 0) {
-        throw new HttpsError(
-          "invalid-argument",
-          `연장 기간이 근무 시작일(${_fmtKST(rangeStartTs)}) 이후까지 이어집니다. ` +
-          `모집은 근무 시작 전날까지만 연장할 수 있습니다.`
-        );
-      }
-      // 근무 시작까지 KST 달력 3일 미만이면 연장 불가
-      if (_kstDaysDiff(rangeStartTs.toMillis(), nowMs) < 3) {
-        throw new HttpsError("failed-precondition", "근무 시작까지 3일 미만이므로 연장할 수 없습니다.");
-      }
-    } else if (isNewPolicyPreset) {
-      // preset 신규: workStartAvailableUntil - 1일이 최대 게시 마감일 (D+1)
-      const wsu = _tsToKST(wsuTs!);
-      const maxExpiryMs = _kstToMs(wsu.y, wsu.mo, wsu.d - 1);
-      if (_kstDaysDiff(maxExpiryMs, newExpiryMs) < 0) {
-        throw new HttpsError(
-          "invalid-argument",
-          `연장 기간이 지원 가능기간 종료일(${_fmtKST(wsuTs!)})을 초과합니다. ` +
-          `마지막 지원 가능일 하루 전(${_fmtKST(admin.firestore.Timestamp.fromMillis(maxExpiryMs))})까지만 연장할 수 있습니다.`
-        );
-      }
-      // 지원 가능기간 종료까지 3일 미만이면 연장 불가
-      if (_kstDaysDiff(wsuTs!.toMillis(), nowMs) < 3) {
-        throw new HttpsError("failed-precondition", "지원 가능기간 종료까지 3일 미만이므로 연장할 수 없습니다.");
-      }
-    } else {
-      // legacy: rangeEnd 기반 기존 동작 보존
-      const rangeEndStored = toData.rangeEnd as admin.firestore.Timestamp | undefined;
-      let effectiveRangeEndMs: number;
-      if (rangeEndStored) {
-        effectiveRangeEndMs = rangeEndStored.toMillis();
-      } else {
-        const rangeStartTs = toData.rangeStart as admin.firestore.Timestamp | undefined;
-        if (!contractPeriodType || !rangeStartTs) {
-          throw new HttpsError("failed-precondition", "계약 종료일 정보가 없습니다.");
-        }
-        effectiveRangeEndMs = computeContractEndDateMs(contractPeriodType, rangeStartTs);
-        if (effectiveRangeEndMs === 0) {
-          throw new HttpsError("failed-precondition", "알 수 없는 계약 기간 유형입니다.");
-        }
-      }
-      if (newExpiryMs > effectiveRangeEndMs) {
-        throw new HttpsError(
-          "invalid-argument",
-          `연장 기간(${extensionDays}일)이 계약 종료일(${_fmtKST(admin.firestore.Timestamp.fromMillis(effectiveRangeEndMs))})을 초과합니다.`
-        );
-      }
-      const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
-      if (effectiveRangeEndMs - nowMs < THREE_DAYS_MS) {
-        throw new HttpsError("failed-precondition", "계약 종료까지 3일 미만이므로 연장할 수 없습니다.");
-      }
-    }
-
-    // maxActiveTOs 한도 검증 (트랜잭션 내에서 재확인)
-    let limit = 4;
-    const perAdminLimit = authCallerData?.maxActiveTOs as number | undefined;
-    if (perAdminLimit && perAdminLimit > 0) {
-      limit = perAdminLimit;
-    } else {
-      try {
-        const configSnap = await db.collection("settings").doc("app_config").get();
-        const v = configSnap.data()?.maxActiveTOPerBusiness as number | undefined;
-        if (v && v > 0) limit = v;
-      } catch (_) { /* 조회 실패 시 기본값 유지 */ }
-    }
-
-    const newExpiryTs = admin.firestore.Timestamp.fromMillis(newExpiryMs);
-
-    await db.runTransaction(async (tx) => {
-      const freshTo = await tx.get(toRef);
-      if (!freshTo.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
-      if (freshTo.data()!.status !== "CLOSED" || freshTo.data()!.closedReason !== "POSTING_EXPIRED") {
-        throw new HttpsError("failed-precondition", "이미 연장되었거나 상태가 변경되었습니다.");
-      }
-
-      // 활성 TO 개수 재확인 (동시 연장 TOCTOU 차단, status 기준으로 정확히 카운트)
-      const quotaSnap = await tx.get(
-        db.collection("tos").where("businessId", "==", businessId).where("status", "in", ["ACTIVE", "FULL"]).limit(limit + 1)
-      );
-      if (quotaSnap.size >= limit) {
-        throw new HttpsError("resource-exhausted", `MAX_ACTIVE_TO_LIMIT:${limit}`);
-      }
-
-      tx.update(toRef, {
-        status: "ACTIVE",
-        isPublished: true,
-        postingExpiryDate: newExpiryTs,
-        closedAt: admin.firestore.FieldValue.delete(),
-        closedBy: admin.firestore.FieldValue.delete(),
-        closedReason: admin.firestore.FieldValue.delete(),
-        _canExtend: admin.firestore.FieldValue.delete(),
-        isManualClosed: false,
-        statusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedBy: callerUid,
-      });
-    });
-
-    console.log(`✅ [callableExtendTOPosting] TO ${toId} 연장 완료 (+${extensionDays}일)`);
-    return {success: true, postingExpiryDate: newExpiryMs};
+  async (_request) => {
+    throw new HttpsError(
+      "unimplemented",
+      "게시기간 연장 기능이 종료되었습니다. 새 공고를 등록하여 다시 모집하기를 사용해 주세요."
+    );
   }
 );
 
@@ -15927,6 +15989,9 @@ export const callableDeleteTO = onCall(
       isDeleted: true,
       deletedAt: admin.firestore.FieldValue.serverTimestamp(),
       isPublished: false,
+      // [CAPACITY-STAGE1] 소프트 삭제 시 파생 인덱스 키 제거
+      // admin-total capacity query에서 삭제된 TO가 집계되지 않도록 보장
+      postingCapacityScopeKey: admin.firestore.FieldValue.delete(),
     });
 
     // 3. 알림 발송 (fire-and-forget)
@@ -16194,213 +16259,199 @@ export const callableReopenSlots = onCall(
 
     const now = admin.firestore.FieldValue.serverTimestamp();
 
-    // [4I.0C] 슬롯 eligibility 결과 타입
-    type SlotReopenResult =
-      | {success: true}
-      | {success: false; reason: string; message: string};
+    // [CAPACITY-STAGE3B] pre-TX actor-based limit 제거 — owner scope-total TX resolver로 전환
+    // [FLEX-REOPEN-LIMIT] capacity 검증은 아래 TX 내 resolvePostingCapacityContextTx로 처리
 
-    // 각 슬롯 트랜잭션: TOCTOU 방지 — confirmedCount 읽기 + open/full 결정 + 쓰기 원자화
-    // [PERF-2026-07-16] 슬롯별 독립 트랜잭션이므로 Promise.allSettled 병렬화 안전
-    // [4I.0D] parent TO ref를 루프 외부에서 한 번만 생성 — 각 transaction에서 공유
+    // [FLEX-REOPEN-ATOMICITY] 슬롯 재오픈 + TO cascade + active-limit 검증을 단일 트랜잭션으로 통합
+    //   이전: 슬롯별 독립 트랜잭션 N개 병렬 → TO cascade 별도 write (비원자, active-limit 미검증)
+    //   이후: 하나의 runTransaction에서 모든 슬롯 + TO + limit 처리 → 완전 원자 보장
+    //
+    //   동시성 보장:
+    //   - 두 다른 FLEX TO 동시 재오픈: 둘 다 tx.get(active query) → Firestore serializable 격리
+    //     → 하나 commit 후 나머지 retry → 재카운트 → 한도 초과 시 reject. 최대 1개만 신규 ACTIVE.
+    //   - 같은 TO 내 다중 호출: toRef 충돌 → Firestore retry → cascade 중복 없음.
     const toRef = db.collection("tos").doc(toId);
-    const slotResults = await Promise.allSettled(
-      slotIds.map(async (slotId): Promise<SlotReopenResult> => {
-        const slotRef = toRef.collection("slots").doc(slotId);
-        // [L-1-FIX] 트랜잭션 반환값으로 실제 업데이트 여부 확인 — 미존재 슬롯 오증가 방지
-        return db.runTransaction(async (tx): Promise<SlotReopenResult> => {
-          // [4I.0D] TO + Slot 동시 read — 같은 transaction snapshot에서 parent lifecycle 재검증
-          //   callableCloseTOManually / syncTOStats와 concurrent write 발생 시:
-          //   Firestore serializable isolation → conflict → retry → 최신 TO 상태 반영 → guard 적용
-          const [toTxSnap, slotSnap] = await Promise.all([
-            tx.get(toRef),
-            tx.get(slotRef),
-          ]);
-          if (!slotSnap.exists) {
-            return {success: false, reason: "NOT_FOUND", message: "슬롯을 찾을 수 없습니다."};
+    const slotRefs = slotIds.map((id) => toRef.collection("slots").doc(id));
+
+    type SlotEligibleUpdate = {
+      ref: admin.firestore.DocumentReference;
+      payload: Record<string, unknown>;
+      slotDate: admin.firestore.Timestamp | undefined;
+    };
+    type SlotRejection = {success: false; reason: string; message: string};
+
+    const {reopenedCount, failures} = await db.runTransaction(async (tx) => {
+      // (A) TO + 모든 슬롯 동시 read (동일 트랜잭션 스냅샷 — TOCTOU 차단)
+      const [toTxSnap, ...slotSnaps] = await Promise.all([
+        tx.get(toRef),
+        ...slotRefs.map((ref) => tx.get(ref)),
+      ]);
+
+      // (B) TO-level lifecycle 재검증 (트랜잭션 스냅샷 기준)
+      const toTxData = toTxSnap.data() ?? {};
+      if (toTxData.isManualClosed === true) {
+        throw new HttpsError("failed-precondition", "종료된 전체 공고는 먼저 공고를 재오픈해야 합니다.");
+      }
+      if ((toTxData.status as string) === "FULL") {
+        throw new HttpsError("failed-precondition", "정원이 충족된 공고는 확정 취소를 통해서만 모집 상태로 변경됩니다.");
+      }
+
+      // (C) 슬롯 eligibility 판단 (기존 Guard 1~4 동일 — 의미 변경 없음)
+      const kstOffsetMs = 9 * 60 * 60 * 1000;
+      const nowKst = new Date(Date.now() + kstOffsetMs);
+      const todayKstStr = nowKst.toISOString().slice(0, 10);
+      const kstHHMM =
+        String(nowKst.getUTCHours()).padStart(2, "0") +
+        ":" +
+        String(nowKst.getUTCMinutes()).padStart(2, "0");
+
+      const eligibleUpdates: SlotEligibleUpdate[] = [];
+      const txRejections: SlotRejection[] = [];
+
+      for (let i = 0; i < slotSnaps.length; i++) {
+        const slotSnap = slotSnaps[i];
+        const slotRef = slotRefs[i];
+
+        if (!slotSnap.exists) {
+          txRejections.push({success: false, reason: "NOT_FOUND", message: "슬롯을 찾을 수 없습니다."});
+          continue;
+        }
+
+        const d = slotSnap.data()!;
+
+        // Guard 1: 이미 열린 슬롯 (open/full)
+        if ((d.status as string) !== "closed") {
+          txRejections.push({success: false, reason: "NOT_CLOSED", message: "이미 열려 있는 슬롯입니다."});
+          continue;
+        }
+
+        // Guard 2: 수동 종료(isManualClosed=true)가 아닌 슬롯 차단
+        //   TIME_EXPIRED(processTOExpiry): isManualClosed write 없음 → false → 거절
+        //   PARENT_TO_EXPIRED(processTOExpiry slots): isManualClosed write 없음 → false → 거절
+        if (!(d.isManualClosed as boolean | undefined)) {
+          txRejections.push({success: false, reason: "NOT_MANUAL_CLOSED", message: "수동으로 종료한 날짜만 다시 열 수 있습니다."});
+          continue;
+        }
+
+        const slotDateTs = d.date as admin.firestore.Timestamp | undefined;
+        if (slotDateTs) {
+          const slotKst = new Date(slotDateTs.toMillis() + kstOffsetMs);
+          const slotDateStr = slotKst.toISOString().slice(0, 10);
+
+          // Guard 3: 과거 날짜 차단 (client: date.isBefore(today) 와 동일 정책)
+          if (slotDateStr < todayKstStr) {
+            txRejections.push({success: false, reason: "PAST_DATE", message: "지난 근무 날짜는 다시 열 수 없습니다."});
+            continue;
           }
 
-          // [4I.0D] Transaction-snapshot 기준 TO lifecycle re-check (TOCTOU closure)
-          //   TO read를 transaction에 포함시켜 callableCloseTOManually / syncTOStats
-          //   concurrent write를 conflict domain에 포함 — 외부 snapshot guard(4I.0C)는 early-exit 유지
-          const toTxData = toTxSnap.data() ?? {};
-          if (toTxData.isManualClosed === true) {
-            return {
-              success: false,
-              reason: "TO_MANUAL_CLOSED",
-              message: "종료된 전체 공고는 먼저 공고를 재오픈해야 합니다.",
-            };
-          }
-          if ((toTxData.status as string) === "FULL") {
-            return {
-              success: false,
-              reason: "TO_FULL",
-              message: "정원이 충족된 공고는 확정 취소를 통해서만 모집 상태로 변경됩니다.",
-            };
-          }
-
-          const d = slotSnap.data()!;
-
-          // [4I.0C] Guard 1: 이미 열린 슬롯 (open/full)
-          if ((d.status as string) !== "closed") {
-            return {success: false, reason: "NOT_CLOSED", message: "이미 열려 있는 슬롯입니다."};
-          }
-
-          // [4I.0C] Guard 2: 수동 종료(isManualClosed=true)가 아닌 슬롯 차단
-          //   TIME_EXPIRED(processTOExpiry): isManualClosed write 없음 → false → 거절
-          //   PARENT_TO_EXPIRED(processTOExpiry slots): isManualClosed write 없음 → false → 거절
-          if (!(d.isManualClosed as boolean | undefined)) {
-            return {
-              success: false,
-              reason: "NOT_MANUAL_CLOSED",
-              message: "수동으로 종료한 날짜만 다시 열 수 있습니다.",
-            };
-          }
-
-          // [4I.0C] Guard 3 & 4: 날짜/근무시간 검증 (KST 기준)
-          const slotDateTs = d.date as admin.firestore.Timestamp | undefined;
-          if (slotDateTs) {
-            const kstOffsetMs = 9 * 60 * 60 * 1000;
-            const nowKst = new Date(Date.now() + kstOffsetMs);
-            const todayKstStr = nowKst.toISOString().slice(0, 10); // "YYYY-MM-DD"
-            const slotKst = new Date(slotDateTs.toMillis() + kstOffsetMs);
-            const slotDateStr = slotKst.toISOString().slice(0, 10);
-
-            // Guard 3: 과거 날짜 차단 (client: date.isBefore(today) 와 동일 정책)
-            if (slotDateStr < todayKstStr) {
-              return {
-                success: false,
-                reason: "PAST_DATE",
-                message: "지난 근무 날짜는 다시 열 수 없습니다.",
-              };
-            }
-
-            // Guard 4: 당일 — 모든 workDetail endTime 경과 시 차단
-            //   (client: workDetails.every((d) => d.isTimeExpired) 와 동일 정책)
-            if (slotDateStr === todayKstStr) {
-              const wds = (d.workDetails as Array<{endTime?: string}> | undefined) ?? [];
-              if (wds.length > 0) {
-                const kstHHMM =
-                  String(nowKst.getUTCHours()).padStart(2, "0") +
-                  ":" +
-                  String(nowKst.getUTCMinutes()).padStart(2, "0");
-                const allExpired = wds.every((wd) => {
-                  const end = (wd.endTime as string | undefined) ?? "23:59";
-                  return end <= kstHHMM;
-                });
-                if (allExpired) {
-                  return {
-                    success: false,
-                    reason: "WORK_TIME_EXPIRED",
-                    message: "근무 시간이 이미 종료된 날짜는 다시 열 수 없습니다.",
-                  };
-                }
+          // Guard 4: 당일 — 모든 workDetail endTime 경과 시 차단
+          //   (client: workDetails.every((d) => d.isTimeExpired) 와 동일 정책)
+          if (slotDateStr === todayKstStr) {
+            const wds = (d.workDetails as Array<{endTime?: string}> | undefined) ?? [];
+            if (wds.length > 0) {
+              const allExpired = wds.every((wd) => {
+                const end = (wd.endTime as string | undefined) ?? "23:59";
+                return end <= kstHHMM;
+              });
+              if (allExpired) {
+                txRejections.push({success: false, reason: "WORK_TIME_EXPIRED", message: "근무 시간이 이미 종료된 날짜는 다시 열 수 없습니다."});
+                continue;
               }
             }
           }
+        }
 
-          const confirmed = (d.confirmedCount as number | undefined) ?? 0;
-          const rawWDs = (d.workDetails as Record<string, unknown>[] | undefined) ?? [];
-          const required = rawWDs.reduce(
-            (acc, wd) => acc + ((wd.requiredCount as number | undefined) ?? 0), 0
-          );
-          // 정원이 찬 슬롯은 full 유지 — open으로 강제 시 초과 지원 허용됨
-          const newStatus = required > 0 && confirmed >= required ? "full" : "open";
+        const confirmed = (d.confirmedCount as number | undefined) ?? 0;
+        const rawWDs = (d.workDetails as Record<string, unknown>[] | undefined) ?? [];
+        const required = rawWDs.reduce(
+          (acc, wd) => acc + ((wd.requiredCount as number | undefined) ?? 0), 0
+        );
+        // 정원이 찬 슬롯은 full 유지 — open으로 강제 시 초과 지원 허용됨
+        const newStatus = required > 0 && confirmed >= required ? "full" : "open";
 
-          tx.update(slotRef, {
+        eligibleUpdates.push({
+          ref: slotRef,
+          payload: {
             isManualClosed: false,
             status: newStatus,
             reopenedAt: now,
             reopenedBy: callerUid, // 서버 강제 — 클라이언트 위조 불가
             closedAt: admin.firestore.FieldValue.delete(),
             closedBy: admin.firestore.FieldValue.delete(),
-          });
-          return {success: true};
+          },
+          slotDate: slotDateTs,
         });
-      })
-    );
-
-    const reopenedCount = slotResults.filter(
-      (r) => r.status === "fulfilled" && (r.value as SlotReopenResult).success === true
-    ).length;
-
-    // [4I.0C] eligibility 거절 집계 — PromiseFulfilledResult 타입 좁히기 후 접근
-    const failures: Array<{success: false; reason: string; message: string}> = [];
-    for (const r of slotResults) {
-      if (r.status === "fulfilled" && !(r.value as SlotReopenResult).success) {
-        failures.push(r.value as {success: false; reason: string; message: string});
       }
-    }
 
-    slotResults.forEach((r, i) => {
-      if (r.status === "rejected") {
-        console.error(`[ReopenSlots] 슬롯 ${slotIds[i]} 재오픈 실패:`, (r as PromiseRejectedResult).reason);
+      // (D) 재오픈 가능한 슬롯이 없으면 전체 실패 (커밋 없음 — rollback)
+      if (eligibleUpdates.length === 0) {
+        if (txRejections.length > 0) {
+          throw new HttpsError("failed-precondition", txRejections[0].message);
+        }
+        throw new HttpsError("failed-precondition", "재오픈 가능한 슬롯이 없습니다.");
       }
-    });
-    if (failures.length > 0) {
-      console.warn(
-        `[ReopenSlots] TO(${toId}): ${failures.length}개 슬롯 eligibility 거절:`,
-        failures.map((f) => f.reason).join(", ")
-      );
-    }
 
-    // [4I.0C] 전체 거절 시 첫 번째 이유로 오류 반환
-    if (reopenedCount === 0) {
-      if (failures.length > 0) {
-        throw new HttpsError("failed-precondition", failures[0].message);
-      }
-      if (slotResults.some((r) => r.status === "rejected")) {
-        throw new HttpsError("internal", "슬롯 재오픈에 실패했습니다. 잠시 후 다시 시도해 주세요.");
-      }
-    }
+      // (E) 부모 TO 활성화 필요 여부 — CLOSED/EXPIRED → ACTIVE 전환 시에만 count 증가
+      const currentTOStatus = toTxData.status as string | undefined;
+      const parentNeedsActivation =
+        !toTxData.isManualClosed &&
+        (currentTOStatus === "CLOSED" || currentTOStatus === "EXPIRED");
 
-    // TO cascade status 동기화 — open/full 슬롯이 생기면 CLOSED → ACTIVE 복구
-    try {
-      // [PERF-M7] allSlotsSnap + toSnap2 병렬 조회
-      const [allSlotsSnap, toSnap2] = await Promise.all([
-        db.collection("tos").doc(toId).collection("slots").get(),
-        db.collection("tos").doc(toId).get(),
-      ]);
-      const hasOpenSlot = allSlotsSnap.docs.some((d) => {
-        const s = d.data();
-        return !s.isManualClosed && (s.status === "open" || s.status === "full");
-      });
-      const currentTOStatus = toSnap2.data()?.status as string | undefined;
-      // [MEDIUM-2 수정 2026-07-17] EXPIRED 상태도 ACTIVE로 복구
-      //   이전: CLOSED만 처리 → EXPIRED TO 슬롯 재오픈 시 TO가 EXPIRED 상태로 유지되던 버그
-      // [MEDIUM-2 FIX-B] EXPIRED → ACTIVE: closedReason 잔존 + applicationDeadline 미갱신 버그
-      //   closedReason: "TIME_EXPIRED" 잔존 시 ACTIVE TO에 만료 사유가 남음
-      //   applicationDeadline이 과거이면 processTOExpiry가 다음 실행 시 즉시 재닫힘
-      // [4I.0D] isManualClosed 재확인 — partial-success race 시 cascade가 수동종료를 되돌리지 않도록
-      //   일부 slot이 TO 수동종료 전에 commit된 경우 cascade에서 isManualClosed=true를 감지하면 스킵
-      if (hasOpenSlot && !toSnap2.data()?.isManualClosed &&
-          (currentTOStatus === "CLOSED" || currentTOStatus === "EXPIRED")) {
+      // (F) [CAPACITY-STAGE3B] CLOSED/EXPIRED → ACTIVE 전환 시 owner scope-total TX capacity check
+      //   부모 이미 ACTIVE: count 증가 없으므로 limit 검증 불필요 (§5 준수)
+      let rsActiveScopeKey: string | undefined;
+      if (parentNeedsActivation) {
+        const nowMsRS = Date.now();
+        const rsCtx = await resolvePostingCapacityContextTx(tx, businessId);
+        const effectiveCountRS = await getEffectiveActivePostingCountTx(tx, rsCtx.scopeKey, nowMsRS);
+        if (effectiveCountRS >= rsCtx.activePostingCapacity) {
+          throw new HttpsError("resource-exhausted", `MAX_ACTIVE_TO_LIMIT:${rsCtx.activePostingCapacity}`);
+        }
+        rsActiveScopeKey = rsCtx.scopeKey;
+      }
+
+      // (G) 슬롯 업데이트 기록 (모든 eligible 슬롯)
+      for (const {ref, payload} of eligibleUpdates) {
+        tx.update(ref, payload);
+      }
+
+      // (H) 부모 TO cascade — 기존 필드 동일, EXPIRED 경우 applicationDeadline 갱신
+      //   [MEDIUM-2 수정 2026-07-17] EXPIRED 상태도 ACTIVE로 복구 (기존 동작 유지)
+      //   [MEDIUM-2 FIX-B] closedReason 잔존 + applicationDeadline 미갱신 버그 수정 (기존 동작 유지)
+      if (parentNeedsActivation) {
+        // [CAPACITY-STAGE3B] TX resolver 확정 scopeKey (owner-scope 보장)
+        // rsActiveScopeKey は parentNeedsActivation==true 時 resolvePostingCapacityContextTx で確定済み
         const toUpdatePayload: Record<string, unknown> = {
           status: "ACTIVE",
           closedAt: admin.firestore.FieldValue.delete(),
           closedReason: admin.firestore.FieldValue.delete(),
           isManualClosed: false,
           statusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          postingCapacityScopeKey: rsActiveScopeKey!,
         };
         if (currentTOStatus === "EXPIRED") {
-          // 가장 이른 open 슬롯 workDate를 applicationDeadline으로 연장 — 재만료 방지
-          const openSlotDates = allSlotsSnap.docs
-            .filter((d) => {
-              const sd = d.data();
-              return !sd.isManualClosed && (sd.status === "open" || sd.status === "full");
-            })
-            .map((d) => d.data().date as admin.firestore.Timestamp | undefined)
+          // 가장 이른 eligible 슬롯 workDate를 applicationDeadline으로 갱신 — 재만료 방지
+          const eligibleDates = eligibleUpdates
+            .map((u) => u.slotDate)
             .filter((t): t is admin.firestore.Timestamp => t != null);
-          if (openSlotDates.length > 0) {
-            const earliest = openSlotDates.reduce((min, t) =>
+          if (eligibleDates.length > 0) {
+            const earliest = eligibleDates.reduce((min, t) =>
               t.toMillis() < min.toMillis() ? t : min
             );
             toUpdatePayload.applicationDeadline = earliest;
           }
         }
-        await db.collection("tos").doc(toId).update(toUpdatePayload);
+        tx.update(toRef, toUpdatePayload);
       }
-    } catch (e) {
-      console.error(`[ReopenSlots] TO cascade status 재계산 실패 (${toId}):`, e);
+
+      return {reopenedCount: eligibleUpdates.length, failures: txRejections};
+    });
+
+    if (failures.length > 0) {
+      console.warn(
+        `[ReopenSlots] TO(${toId}): ${failures.length}개 슬롯 eligibility 거절:`,
+        failures.map((f) => f.reason).join(", ")
+      );
     }
 
     return {success: true, reopenedCount};

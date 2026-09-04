@@ -842,6 +842,15 @@
     },
 
     {
+      "collectionGroup": "employment_contracts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "historicalOwnerUid", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+
+    {
       "collectionGroup": "deleted_accounts",
       "queryScope": "COLLECTION",
       "fields": [
