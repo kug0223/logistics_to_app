@@ -19,7 +19,7 @@ import '../../widgets/common/gradient_scaffold.dart';
 import '../../services/device_integrity_service.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../screens/contract/contract_sign_screen.dart';
-import 'all_to_list_screen.dart';
+import 'user_tab_scope.dart';
 
 /// 출퇴근 체크 화면
 class AttendanceCheckScreen extends StatefulWidget {
@@ -636,10 +636,11 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       title: '오늘 확정된 근무가 없습니다',
       subtitle: '새로운 공고에 지원해보세요',
       action: FilledButton.icon(
-        onPressed: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const AllTOListScreen()),
-        ),
+        onPressed: () {
+          final scope = UserTabScope.of(context);
+          Navigator.of(context).pop();
+          scope?.switchToTab(1);
+        },
         icon: const Icon(Icons.search, size: 18),
         label: const Text('공고 보러가기'),
       ),

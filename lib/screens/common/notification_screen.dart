@@ -46,7 +46,7 @@ import '../../widgets/dialogs/worker_detail_dialog.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
 import '../user/attendance_check_screen.dart';
 import '../../models/core/business_member_model.dart';
-import '../user/all_to_list_screen.dart';               // [Phase 8.1C] toMatch fallback
+import '../user/user_tab_scope.dart';                   // [Phase 8.1C] toMatch fallback → tab 1
 import 'job_posting_screen.dart';                       // [Phase 8.1C] toMatch 공고 상세
 import '../business_admin/payroll/payroll_payment_dashboard_screen.dart'; // [FCM-ROUTE-01]
 import '../../utils/admin_tab_switcher.dart';           // [FCM-ROUTE-01] Settlement tab canonical routing
@@ -1285,10 +1285,10 @@ class _NotificationScreenState extends State<NotificationScreen> {
               MaterialPageRoute(builder: (_) => JobPostingScreen(toId: toMatchToId)),
             );
           } else {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const AllTOListScreen()),
-            );
+            // toId 없는 비정상 payload — CF는 항상 toId를 포함하므로 FCM 전달 오류
+            // USER 모드: UserTabScope가 있으면 일자리 탭(1)으로 전환
+            // ADMIN 모드: UserTabScope null → silent no-op
+            UserTabScope.of(context)?.switchToTab(1);
           }
         }
         break;

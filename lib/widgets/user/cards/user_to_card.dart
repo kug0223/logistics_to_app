@@ -1102,7 +1102,7 @@ class _UserTOCardState extends State<UserTOCard> {
     // 배지 우선순위: 지원완료 > 예약(visibleFrom 미래) > 충족 > 마감 > 모집중
     // isFull을 isEffectivelyClosed보다 먼저 체크: slot.isFull은 isEffectivelyClosed에
     // 포함되지만 '충족'과 '마감'을 구분 표시하기 위해 별도 처리.
-    // TO 레벨 isManualClosed는 all_to_list_screen 필터에서 이미 제외되므로 여기서 불필요.
+    // TO 레벨 isManualClosed는 공고 목록 필터에서 이미 제외되므로 여기서 불필요.
     String statusLabel;
     Color statusBg;
     Color statusFg;
@@ -1628,7 +1628,7 @@ class _UserTOCardState extends State<UserTOCard> {
         slotPendingCount: slot.pendingCount,
       ),
     );
-    // 공고 상세에서 지원한 경우 부모(AllTOListScreen) 지원 목록 갱신
+    // 공고 상세에서 지원한 경우 부모 화면 지원 목록 갱신
     if (result == true && mounted) widget.onApplySuccess();
   }
 

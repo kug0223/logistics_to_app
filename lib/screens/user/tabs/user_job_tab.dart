@@ -32,7 +32,7 @@ import '../user_tab_scope.dart';
 ///   1: 내 지원 — MyApplicationsScreen
 ///
 /// Phase 1 허브 화면('무엇을 찾으시나요?') 제거.
-/// AllTOListScreen의 데이터 로딩·필터 로직을 이 화면으로 통합.
+/// 공고 데이터 로딩·필터 로직을 담당하는 canonical 일자리 탭.
 class UserJobTab extends StatefulWidget {
   const UserJobTab({super.key});
 

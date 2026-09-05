@@ -162,7 +162,7 @@ class FirestoreService {
   ///   FirestoreService의 메모리 캐시는 _userCache(uid 키) 하나만 존재하며,
   ///   TO 단위 캐시는 없다. TO 수정 후 데이터는 Source.server 직접 조회이므로
   ///   캐시 무효화가 필요 없다.
-  ///   화면 레벨의 workDetails/slots 캐시는 AllTOListScreen 등에서 직접 clear.
+  ///   화면 레벨의 workDetails/slots 캐시는 각 화면에서 직접 clear.
   ///   clearCache(toId:)는 "이 TO가 수정됨"을 표시하기 위한 호출 관례 유지용.
   ///
   /// [toId] null 시 — _userCache 전체 클리어 (로그아웃 등)

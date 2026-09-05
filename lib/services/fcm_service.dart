@@ -14,7 +14,6 @@ import '../screens/user/my_schedule_screen.dart';
 import '../screens/user/user_contracts_screen.dart';
 import '../screens/user/attendance_check_screen.dart';
 import '../screens/user/my_reviews_screen.dart';
-import '../screens/user/all_to_list_screen.dart';          // [Phase 8.1C] toMatch fallback
 import '../screens/common/job_posting_screen.dart';         // [Phase 8.1C] toMatch 공고 상세 진입
 import 'contract_service.dart';
 import '../models/core/employment_contract_model.dart';
@@ -521,7 +520,7 @@ class FCMService {
         break;
       // ─── [Phase 8.1C] 일자리 매칭 알림 ─────────────────────────
       // toMatch: 근로자가 가능일에 새 일자리 발견 → 해당 공고 상세 직접 진입
-      // toId 없는 경우(비정상 payload)에만 AllTOListScreen fallback.
+      // toId 없는 경우: CF는 항상 toId를 포함하므로 FCM 전달 오류 등 비정상 상황.
       // 공고가 CLOSED/FULL/EXPIRED 상태여도 JobPostingScreen이 자체 처리
       // (_isEffectivelyClosed 게터로 안내 + 지원버튼 비활성).
       // DELETED(getTO→null)는 화면 내부에서 오류 toast 처리.
@@ -534,11 +533,8 @@ class FCMService {
               builder: (_) => JobPostingScreen(toId: toMatchToId),
             );
           } else {
-            // toId 없는 비정상 payload → 일자리 목록 fallback
-            _pushFcmScreen(
-              destinationKey: 'job_list',
-              builder: (_) => const AllTOListScreen(),
-            );
+            // toId 없는 비정상 payload — CF는 항상 toId를 포함하므로 FCM 전달 오류
+            debugPrint('⚠️ [FCM] toMatch payload missing toId — ignored');
           }
         }
         break;
