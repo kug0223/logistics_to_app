@@ -28707,4 +28707,211 @@ export const callableGetUnclosedActionQueue = onCall(
   }
 );
 
+// ─── callableGetHistoricalContracts ──────────────────────────────────────────
+// [DATA-ARCH-CONTRACT-P3] 전(前) 사업장 오너 — 보존된 계약서 목록 조회
+// 호출 가능 조건: request.auth.uid == historicalOwnerUid (자기 자신만)
+// 반환: 요약 목록 (pdfUrl 미포함, pdfAvailable boolean만 포함)
+// Input:  { lastDocId?: string, pageSize?: number }
+// Output: { contracts: [...], lastDocId: string | null, hasMore: boolean }
+export const callableGetHistoricalContracts = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    // ── 1. 인증 ────────────────────────────────────────────────────────────────
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    // ── 2. 입력 검증 ───────────────────────────────────────────────────────────
+    // [GAP-A] strict pageSize: coerce/clamp 금지 — 비정수·범위외·NaN·Infinity 즉시 거부
+    const rawData = (request.data ?? {}) as Record<string, unknown>;
+    // [GAP-C] strict lastDocId: 타입 오류/빈 문자열 즉시 거부 (C-I2 + C-I3 해소)
+    const rawLastDocId = rawData.lastDocId;
+    let lastDocId: string | undefined;
+    if (rawLastDocId === undefined || rawLastDocId === null) {
+      lastDocId = undefined;
+    } else if (
+      typeof rawLastDocId !== "string" ||
+      rawLastDocId.trim().length === 0
+    ) {
+      throw new HttpsError("invalid-argument", "유효하지 않은 커서입니다.");
+    } else {
+      lastDocId = rawLastDocId;
+    }
+    const rawPageSize = rawData.pageSize;
+    let pageSize: number;
+    if (rawPageSize === undefined || rawPageSize === null) {
+      pageSize = 20;
+    } else if (
+      typeof rawPageSize !== "number" ||
+      !Number.isFinite(rawPageSize) ||
+      !Number.isInteger(rawPageSize) ||
+      rawPageSize < 1 ||
+      rawPageSize > 100
+    ) {
+      throw new HttpsError("invalid-argument", "pageSize는 1 이상 100 이하의 정수여야 합니다.");
+    } else {
+      pageSize = rawPageSize;
+    }
+
+    // ── 3. 기본 쿼리 (status 필터 없음 — 모든 보존 기록 노출) ─────────────────
+    let q: FirebaseFirestore.Query = db
+      .collection("employment_contracts")
+      .where("historicalOwnerUid", "==", callerUid)
+      .orderBy("createdAt", "desc")
+      .limit(pageSize + 1);
+
+    // ── 4. 커서 (다른 소유자 문서 커서 우회 차단) ──────────────────────────────
+    if (lastDocId) {
+      const lastSnap = await db.collection("employment_contracts").doc(lastDocId).get();
+      if (!lastSnap.exists) {
+        throw new HttpsError("invalid-argument", "유효하지 않은 커서입니다.");
+      }
+      if (lastSnap.data()?.historicalOwnerUid !== callerUid) {
+        throw new HttpsError("permission-denied", "접근 권한이 없는 커서입니다.");
+      }
+      // [GAP-B] createdAt Timestamp 검증 — orderBy 기준 필드 누락 시 커서 거부
+      const cursorCreatedAt = lastSnap.data()?.createdAt;
+      if (!(cursorCreatedAt instanceof Timestamp)) {
+        throw new HttpsError("invalid-argument", "유효하지 않은 커서입니다.");
+      }
+      q = q.startAfter(lastSnap);
+    }
+
+    // ── 5. 쿼리 실행 ───────────────────────────────────────────────────────────
+    const snap = await q.get();
+    const hasMore = snap.docs.length > pageSize;
+    const docs = hasMore ? snap.docs.slice(0, pageSize) : snap.docs;
+
+    // ── 6. 요약 매핑 ───────────────────────────────────────────────────────────
+    // snapshot에서 동결된 사업장명·근무자명 사용 — 삭제된 business/user 생존
+    // 내부 필드(historicalOwnerUid, pdfUrl, 서명URL, 해시, ID참조 등) 미포함
+    const contracts = docs.map((d) => {
+      const data = d.data();
+      const snapshotData = (
+        typeof data.snapshot === "object" && data.snapshot !== null
+          ? data.snapshot
+          : {}
+      ) as Record<string, unknown>;
+
+      const summary: Record<string, unknown> = {
+        contractId:      d.id,
+        businessId:      data.businessId      ?? null,
+        businessName:    snapshotData.businessName ?? null,
+        workerId:        data.workerId         ?? null,
+        workerName:      snapshotData.workerName   ?? null,
+        status:          data.status           ?? null,
+        isLongTerm:      data.isLongTerm       ?? null,
+        createdAt:       data.createdAt        ?? null,
+        employerSignedAt: data.employerSignedAt ?? null,
+        workerSignedAt:  data.workerSignedAt   ?? null,
+        contractVoidedAt: data.contractVoidedAt ?? null,
+        voidReason:      data.voidReason       ?? null,
+        // pdfUrl 직접 노출 금지 — boolean만 반환
+        pdfAvailable:
+          typeof data.pdfUrl === "string" &&
+          (data.pdfUrl as string).trim().length > 0,
+      };
+      return serializeFirestoreData(summary);
+    });
+
+    return {
+      contracts,
+      lastDocId: docs.length > 0 ? docs[docs.length - 1].id : null,
+      hasMore,
+    };
+  }
+);
+
+// ─── callableGetHistoricalContractById ───────────────────────────────────────
+// [DATA-ARCH-CONTRACT-P3] 전(前) 사업장 오너 — 보존된 계약서 단건 상세 조회
+// 호출 가능 조건: data.historicalOwnerUid == callerUid (자기 자신만)
+// IDOR 방어: contractId 단독 보유는 접근 근거 아님 — historicalOwnerUid 일치 필수
+// 반환: 상세 DTO (pdfUrl, snapshot, articles, slots 포함; 서명URL·내부필드 미포함)
+// Input:  { contractId: string }
+// Output: 계약서 상세 DTO
+export const callableGetHistoricalContractById = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    // ── 1. 인증 ────────────────────────────────────────────────────────────────
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    // ── 2. 입력 검증 ───────────────────────────────────────────────────────────
+    const {contractId} = (request.data ?? {}) as {contractId?: string};
+    if (
+      !contractId ||
+      typeof contractId !== "string" ||
+      contractId.trim().length === 0
+    ) {
+      throw new HttpsError("invalid-argument", "contractId가 필요합니다.");
+    }
+
+    // ── 3. 문서 조회 ───────────────────────────────────────────────────────────
+    const docSnap = await db
+      .collection("employment_contracts")
+      .doc(contractId.trim())
+      .get();
+
+    // ── 4. not-found 마스킹 (문서 미존재 + 소유자 불일치 동일 응답) ────────────
+    // IDOR: contractId 단독으로 타인 계약 존재 여부 노출 방지
+    if (!docSnap.exists) {
+      throw new HttpsError("not-found", "계약서를 찾을 수 없습니다.");
+    }
+    const data = docSnap.data()!;
+    if (
+      typeof data.historicalOwnerUid !== "string" ||
+      data.historicalOwnerUid !== callerUid
+    ) {
+      throw new HttpsError("not-found", "계약서를 찾을 수 없습니다.");
+    }
+
+    // ── 5. 상세 DTO 구성 ───────────────────────────────────────────────────────
+    // snapshot/articles/slots: 계약 당시 동결 데이터 (live business/user 불필요)
+    // 서명 이미지 URL 미포함: historical read UI는 PDF 중심 (raw 서명 이미지 불필요)
+    // historicalOwnerUid 미포함: 내부 인가 필드, 호출자에게 반환 불필요
+    const snapshotData = (
+      typeof data.snapshot === "object" && data.snapshot !== null
+        ? data.snapshot
+        : {}
+    ) as Record<string, unknown>;
+    const articlesData = Array.isArray(data.articles) ? data.articles : [];
+    // [GAP-D] applicationId 노출 차단 — 운영 참조 키는 historical archive DTO 미포함
+    // 계약 내용(근무일/시간/임금)만 추출; 말폼 슬롯은 skip하지 않고 null-safe 처리
+    const slotsData = (Array.isArray(data.slots) ? data.slots : [])
+      .filter((s): s is Record<string, unknown> => typeof s === "object" && s !== null)
+      .map((s) => ({
+        workDate:  s["workDate"]  ?? null,
+        startTime: s["startTime"] ?? null,
+        endTime:   s["endTime"]   ?? null,
+        wage:      s["wage"]      ?? null,
+        wageType:  s["wageType"]  ?? null,
+      }));
+
+    const detail: Record<string, unknown> = {
+      contractId:       docSnap.id,
+      businessId:       data.businessId       ?? null,
+      businessName:     snapshotData.businessName ?? null,
+      workerId:         data.workerId          ?? null,
+      workerName:       snapshotData.workerName   ?? null,
+      status:           data.status            ?? null,
+      isLongTerm:       data.isLongTerm        ?? null,
+      createdAt:        data.createdAt         ?? null,
+      employerSignedAt: data.employerSignedAt  ?? null,
+      workerSignedAt:   data.workerSignedAt    ?? null,
+      contractVoidedAt: data.contractVoidedAt  ?? null,
+      voidReason:       data.voidReason        ?? null,
+      snapshot:         snapshotData,
+      articles:         articlesData,
+      slots:            slotsData,
+      // pdfUrl: 인가 완료 후 실제 URL 반환 (null이면 PDF 미생성 계약)
+      pdfUrl:
+        typeof data.pdfUrl === "string" &&
+        (data.pdfUrl as string).trim().length > 0
+          ? data.pdfUrl
+          : null,
+    };
+
+    return serializeFirestoreData(detail);
+  }
+);
+
 // [Phase 6 완료] callableGetLegacyBankCleanupStatus 삭제 — diagnostic CF, 역할 완료.

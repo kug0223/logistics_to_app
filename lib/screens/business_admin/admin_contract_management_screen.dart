@@ -29,6 +29,7 @@ import '../../widgets/common/app_tab_label.dart';
 import '../../providers/user_provider.dart';
 import '../../services/member_service.dart';
 import '../../widgets/dialogs/contract_template_selector_dialog.dart';
+import 'historical_contracts_screen.dart';
 
 class AdminContractManagementScreen extends StatefulWidget {
   final String businessId;
@@ -50,7 +51,6 @@ class AdminContractManagementScreen extends StatefulWidget {
 class _AdminContractManagementScreenState
     extends State<AdminContractManagementScreen>
     with SingleTickerProviderStateMixin {
-
   final _contractService = ContractService();
   final _firestoreService = FirestoreService();
   final _scrollCtrl = ScrollController();
@@ -58,11 +58,11 @@ class _AdminContractManagementScreenState
 
   // 탭 순서 — index 1("미발송")은 _isUnsentTab으로 분기
   static const _tabs = <ContractStatus?>[
-    null,                         // 0: 전체
-    null,                         // 1: 미발송 (ApplicationModel 목록)
+    null, // 0: 전체
+    null, // 1: 미발송 (ApplicationModel 목록)
     ContractStatus.pendingWorker, // 2: 근무자 대기
-    ContractStatus.completed,     // 3: 완료
-    ContractStatus.voided,        // 4: 무효
+    ContractStatus.completed, // 3: 완료
+    ContractStatus.voided, // 4: 무효
   ];
   static const _tabLabels = ['전체', '미발송', '근무자 대기', '완료', '무효'];
 
@@ -81,7 +81,13 @@ class _AdminContractManagementScreenState
   bool _isSendingContract = false;
 
   // 탭별 캐시 — 동일 탭 재방문 시 CF 재호출 없이 즉시 표시
-  final Map<int, ({List<EmploymentContractModel> items, String? lastDocId, bool hasMore})> _tabCache = {};
+  final Map<
+      int,
+      ({
+        List<EmploymentContractModel> items,
+        String? lastDocId,
+        bool hasMore
+      })> _tabCache = {};
   List<ApplicationModel>? _unsentCache;
 
   String _searchQuery = '';
@@ -114,7 +120,10 @@ class _AdminContractManagementScreenState
   @override
   void initState() {
     super.initState();
-    _tabCtrl = TabController(length: _tabs.length, vsync: this, initialIndex: widget.initialTab.clamp(0, _tabs.length - 1));
+    _tabCtrl = TabController(
+        length: _tabs.length,
+        vsync: this,
+        initialIndex: widget.initialTab.clamp(0, _tabs.length - 1));
     _tabCtrl.addListener(() {
       if (!_tabCtrl.indexIsChanging) {
         _searchCtrl.clear();
@@ -166,13 +175,15 @@ class _AdminContractManagementScreenState
     if (!user.subAdminBusinessIds.contains(widget.businessId)) return false;
 
     // 현재 선택 사업장 == target이고 권한이 로드됐으면 캐시 사용 (네트워크 절약)
-    if (up.permissionsLoaded && up.selectedSubAdminBusinessId == widget.businessId) {
+    if (up.permissionsLoaded &&
+        up.selectedSubAdminBusinessId == widget.businessId) {
       return up.can((p) => p.canManageContract);
     }
 
     // 다른 사업장 선택 중이거나 캐시 미로드 → target-local Firestore 직접 조회
     try {
-      final perms = await MemberService().getMemberPermissions(widget.businessId, uid);
+      final perms =
+          await MemberService().getMemberPermissions(widget.businessId, uid);
       return perms?.canManageContract == true;
     } catch (e) {
       debugPrint('❌ [CONTRACT-MGMT] target business 권한 조회 실패: $e');
@@ -205,14 +216,17 @@ class _AdminContractManagementScreenState
     // 캐시 히트: 스피너 없이 즉시 표시
     if (useCache) {
       if (_isUnsentTab && _unsentCache != null) {
-        setState(() { _unsentApps = List.from(_unsentCache!); _isLoading = false; });
+        setState(() {
+          _unsentApps = List.from(_unsentCache!);
+          _isLoading = false;
+        });
         return;
       }
       if (!_isUnsentTab) {
         final cached = _tabCache[tabIdx];
         if (cached != null) {
           setState(() {
-            _items   = List.from(cached.items);
+            _items = List.from(cached.items);
             _lastDoc = cached.lastDocId;
             _hasMore = cached.hasMore;
             _isLoading = false;
@@ -223,7 +237,13 @@ class _AdminContractManagementScreenState
     }
 
     _fetchInProgress = true;
-    setState(() { _isLoading = true; _items = []; _unsentApps = []; _lastDoc = null; _hasMore = false; });
+    setState(() {
+      _isLoading = true;
+      _items = [];
+      _unsentApps = [];
+      _lastDoc = null;
+      _hasMore = false;
+    });
     try {
       if (_isUnsentTab) {
         await _loadUnsentContracts();
@@ -235,11 +255,15 @@ class _AdminContractManagementScreenState
         );
         if (!mounted) return;
         setState(() {
-          _items   = result.items;
+          _items = result.items;
           _lastDoc = result.lastDocId;
           _hasMore = result.hasMore;
         });
-        _tabCache[tabIdx] = (items: List.from(result.items), lastDocId: result.lastDocId, hasMore: result.hasMore);
+        _tabCache[tabIdx] = (
+          items: List.from(result.items),
+          lastDocId: result.lastDocId,
+          hasMore: result.hasMore
+        );
       }
     } catch (e) {
       debugPrint('❌ 계약 목록 로드 실패: $e');
@@ -268,7 +292,8 @@ class _AdminContractManagementScreenState
 
   Future<void> _loadUnsentContracts() async {
     try {
-      final unsent = await _firestoreService.getUnsentApplicationsByBusiness(widget.businessId)
+      final unsent = await _firestoreService
+          .getUnsentApplicationsByBusiness(widget.businessId)
         ..sort((a, b) => a.workDate.compareTo(b.workDate));
       if (!mounted) return;
       setState(() => _unsentApps = unsent);
@@ -294,7 +319,8 @@ class _AdminContractManagementScreenState
       });
       // 페이지네이션 결과도 캐시에 반영
       final tabIdx = _tabCtrl.index;
-      _tabCache[tabIdx] = (items: List.from(_items), lastDocId: _lastDoc, hasMore: _hasMore);
+      _tabCache[tabIdx] =
+          (items: List.from(_items), lastDocId: _lastDoc, hasMore: _hasMore);
     } catch (e) {
       debugPrint('❌ 계약 목록 추가 로드 실패: $e');
       if (mounted) ToastHelper.showError('계약서를 더 불러오는데 실패했습니다.');
@@ -327,7 +353,8 @@ class _AdminContractManagementScreenState
     // 단건 변경을 캐시에도 반영
     final tabIdx = _tabCtrl.index;
     if (!_isUnsentTab) {
-      _tabCache[tabIdx] = (items: List.from(_items), lastDocId: _lastDoc, hasMore: _hasMore);
+      _tabCache[tabIdx] =
+          (items: List.from(_items), lastDocId: _lastDoc, hasMore: _hasMore);
     }
   }
 
@@ -404,8 +431,9 @@ class _AdminContractManagementScreenState
       // [SEC-FIX 2026-08-10] getUser(app.uid) 직접 호출 제거 →
       //   callableGetWorkerBasicProfile CF 경유 (assertBizAdmin + 지원자 재검증)
       final toId = app.toId ?? '';
-      final workerProfileCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-          .httpsCallable('callableGetWorkerBasicProfile');
+      final workerProfileCallable =
+          FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+              .httpsCallable('callableGetWorkerBasicProfile');
 
       final fetchResults = await Future.wait([
         toId.isNotEmpty
@@ -425,7 +453,8 @@ class _AdminContractManagementScreenState
 
       final workDetails = fetchResults[0] as List<WorkDetailData>;
       final business = fetchResults[1] as BusinessModel?;
-      final workerResult = fetchResults[2] as HttpsCallableResult<Map<String, dynamic>>;
+      final workerResult =
+          fetchResults[2] as HttpsCallableResult<Map<String, dynamic>>;
       final workerData = workerResult.data;
       // CF 반환값으로 최소 UserModel 구성 (계약서 작성에 필요한 필드만)
       final worker = UserModel(
@@ -436,12 +465,14 @@ class _AdminContractManagementScreenState
         name: (workerData['name'] as String?) ?? '',
         phone: workerData['phone'] as String?,
         birthDate: workerData['birthDateMs'] != null
-            ? DateTime.fromMillisecondsSinceEpoch(workerData['birthDateMs'] as int)
+            ? DateTime.fromMillisecondsSinceEpoch(
+                workerData['birthDateMs'] as int)
             : null,
         address: workerData['address'] as String?,
         detailAddress: workerData['detailAddress'] as String?,
       );
-      final freshAppDoc = fetchResults[3] as DocumentSnapshot<Map<String, dynamic>>;
+      final freshAppDoc =
+          fetchResults[3] as DocumentSnapshot<Map<String, dynamic>>;
 
       if (workDetails.isEmpty) {
         ToastHelper.showError('업무 정보를 불러올 수 없습니다');
@@ -452,7 +483,8 @@ class _AdminContractManagementScreenState
         return;
       }
       if (!freshAppDoc.exists) throw Exception('지원서를 찾을 수 없습니다');
-      final freshApp = ApplicationModel.tryFromMap(freshAppDoc.data()!, freshAppDoc.id);
+      final freshApp =
+          ApplicationModel.tryFromMap(freshAppDoc.data()!, freshAppDoc.id);
       if (freshApp == null) throw Exception('지원서 데이터가 손상되었습니다');
       if (!mounted) return;
 
@@ -485,7 +517,8 @@ class _AdminContractManagementScreenState
       // ⑦ 사업주 서명 화면으로 이동 — 서명 완료 시 status: pendingWorker 전환
       final nav = Navigator.of(context);
       await nav.push(MaterialPageRoute(
-        builder: (_) => ContractSignScreen(contract: contract, role: 'employer'),
+        builder: (_) =>
+            ContractSignScreen(contract: contract, role: 'employer'),
       ));
       if (!mounted) return;
 
@@ -503,6 +536,7 @@ class _AdminContractManagementScreenState
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final user = context.read<UserProvider>().currentUser;
     return AppPageScaffold(
       title: '계약서 관리',
       actions: [
@@ -526,6 +560,34 @@ class _AdminContractManagementScreenState
             color: AppColors.textSecondary,
           ),
         ),
+        // 보관된 계약서 — BUSINESS_ADMIN 전용 (이 사업장의 전 소유자 계약 아카이브)
+        if (user?.isBusinessAdmin == true)
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: AppColors.textSecondary),
+            onSelected: (value) {
+              if (value == 'archive') {
+                Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => const HistoricalContractsScreen(),
+                ));
+              }
+            },
+            itemBuilder: (_) => [
+              PopupMenuItem<String>(
+                value: 'archive',
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.archive_outlined,
+                      size: 20,
+                      color: AppColors.textSecondary,
+                    ),
+                    const SizedBox(width: 12),
+                    const Text('보관된 계약서'),
+                  ],
+                ),
+              ),
+            ],
+          ),
       ],
       bottom: TabBar(
         controller: _tabCtrl,
@@ -555,7 +617,8 @@ class _AdminContractManagementScreenState
                         vertical: ResponsiveHelper.spacing(context, 6)),
                     child: Text(
                       '로드되지 않은 계약서가 있습니다. 아래로 스크롤해 더 불러오세요.',
-                      style: ResponsiveHelper.tinyStyle(context, color: AppColors.warningDark),
+                      style: ResponsiveHelper.tinyStyle(context,
+                          color: AppColors.warningDark),
                     ),
                   ),
                 Expanded(
@@ -565,45 +628,51 @@ class _AdminContractManagementScreenState
                       final filteredUnsent = _filteredUnsentApps;
                       final filteredItems = _filteredItems;
                       return _isUnsentTab
-                        ? (filteredUnsent.isEmpty
-                            ? _buildEmpty(context)
-                            : ListView.builder(
-                                padding: ResponsiveHelper.listPadding(context),
-                                itemCount: filteredUnsent.length,
-                                itemBuilder: (ctx, i) => _UnsentAppCard(
-                                  app: filteredUnsent[i],
-                                  onTap: _isSendingContract
-                                      ? null
-                                      : () => _sendContractFromApp(filteredUnsent[i]),
-                                ),
-                              ))
-                        : (filteredItems.isEmpty
-                            ? _buildEmpty(context)
-                            : ListView.builder(
-                                controller: _scrollCtrl,
-                                padding: ResponsiveHelper.listPadding(context),
-                                itemCount: filteredItems.length + (_isLoadingMore ? 1 : 0),
-                                itemBuilder: (ctx, i) {
-                                  if (i == filteredItems.length) {
-                                    return const Padding(
-                                      padding: EdgeInsets.all(16),
-                                      child: LoadingWidget(),
+                          ? (filteredUnsent.isEmpty
+                              ? _buildEmpty(context)
+                              : ListView.builder(
+                                  padding:
+                                      ResponsiveHelper.listPadding(context),
+                                  itemCount: filteredUnsent.length,
+                                  itemBuilder: (ctx, i) => _UnsentAppCard(
+                                    app: filteredUnsent[i],
+                                    onTap: _isSendingContract
+                                        ? null
+                                        : () => _sendContractFromApp(
+                                            filteredUnsent[i]),
+                                  ),
+                                ))
+                          : (filteredItems.isEmpty
+                              ? _buildEmpty(context)
+                              : ListView.builder(
+                                  controller: _scrollCtrl,
+                                  padding:
+                                      ResponsiveHelper.listPadding(context),
+                                  itemCount: filteredItems.length +
+                                      (_isLoadingMore ? 1 : 0),
+                                  itemBuilder: (ctx, i) {
+                                    if (i == filteredItems.length) {
+                                      return const Padding(
+                                        padding: EdgeInsets.all(16),
+                                        child: LoadingWidget(),
+                                      );
+                                    }
+                                    final item = filteredItems[i];
+                                    return _ContractCard(
+                                      contract: item,
+                                      onTap: () => _openContract(item),
+                                      onVoid: (item.status !=
+                                                  ContractStatus.voided &&
+                                              item.status !=
+                                                  ContractStatus.completed)
+                                          ? () => _voidContract(item)
+                                          : null,
+                                      onRetry: item.hasVoidFailedApps
+                                          ? () => _retryVoidFailedApps(item)
+                                          : null,
                                     );
-                                  }
-                                  final item = filteredItems[i];
-                                  return _ContractCard(
-                                    contract: item,
-                                    onTap: () => _openContract(item),
-                                    onVoid: (item.status != ContractStatus.voided &&
-                                            item.status != ContractStatus.completed)
-                                        ? () => _voidContract(item)
-                                        : null,
-                                    onRetry: item.hasVoidFailedApps
-                                        ? () => _retryVoidFailedApps(item)
-                                        : null,
-                                  );
-                                },
-                              ));
+                                  },
+                                ));
                     }),
                   ),
                 ),
@@ -618,9 +687,7 @@ class _AdminContractManagementScreenState
       return AppEmptyState(
         icon: isSearching ? Icons.search_off : Icons.check_circle_outline,
         title: isSearching ? '"$_searchQuery" 검색 결과 없음' : '미발송 계약서 없음',
-        subtitle: isSearching
-            ? '다른 이름으로 검색해 보세요'
-            : '확정된 모든 지원자에게 계약서가 발송되었습니다',
+        subtitle: isSearching ? '다른 이름으로 검색해 보세요' : '확정된 모든 지원자에게 계약서가 발송되었습니다',
       );
     }
     return AppEmptyState(
@@ -657,8 +724,7 @@ class _ContractCard extends StatelessWidget {
     final statusBg = _statusBg(contract.status);
 
     return Container(
-      margin: EdgeInsets.only(
-          bottom: ResponsiveHelper.spacing(context, 10)),
+      margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(14),
@@ -743,8 +809,7 @@ class _ContractCard extends StatelessWidget {
                       ),
                       child: Text(
                         contract.status.label,
-                        style: ResponsiveHelper.tinyStyle(context)
-                            .copyWith(
+                        style: ResponsiveHelper.tinyStyle(context).copyWith(
                           color: statusColor,
                           fontWeight: FontWeight.w600,
                         ),
@@ -768,7 +833,8 @@ class _ContractCard extends StatelessWidget {
                     ),
                     _InfoChip(
                       icon: Icons.attach_money,
-                      text: '${FormatHelper.formatNumber(contract.snapshot.wage)}원'
+                      text:
+                          '${FormatHelper.formatNumber(contract.snapshot.wage)}원'
                           ' / ${contract.snapshot.wageType == 'hourly' ? '시급' : '일급'}',
                     ),
                     _InfoChip(
@@ -797,7 +863,8 @@ class _ContractCard extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: AppColors.warningBg,
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
+                      border: Border.all(
+                          color: AppColors.warning.withValues(alpha: 0.4)),
                     ),
                     child: Row(
                       children: [
@@ -817,7 +884,8 @@ class _ContractCard extends StatelessWidget {
                             onPressed: onRetry,
                             style: TextButton.styleFrom(
                               padding: EdgeInsets.symmetric(
-                                horizontal: ResponsiveHelper.spacing(context, 8),
+                                horizontal:
+                                    ResponsiveHelper.spacing(context, 8),
                                 vertical: ResponsiveHelper.spacing(context, 2),
                               ),
                               minimumSize: Size.zero,
@@ -825,14 +893,13 @@ class _ContractCard extends StatelessWidget {
                             ),
                             child: Text('재처리',
                                 style: ResponsiveHelper.tinyStyle(context,
-                                    color: AppColors.warningDark)
+                                        color: AppColors.warningDark)
                                     .copyWith(fontWeight: FontWeight.w700)),
                           ),
                       ],
                     ),
                   ),
                 ],
-
               ],
             ),
           ),
@@ -857,19 +924,27 @@ class _ContractCard extends StatelessWidget {
 
   Color _statusColor(ContractStatus s) {
     switch (s) {
-      case ContractStatus.pendingEmployer: return AppColors.warning;
-      case ContractStatus.pendingWorker:   return AppColors.info;
-      case ContractStatus.completed:       return AppColors.success;
-      case ContractStatus.voided:          return AppColors.grey500;
+      case ContractStatus.pendingEmployer:
+        return AppColors.warning;
+      case ContractStatus.pendingWorker:
+        return AppColors.info;
+      case ContractStatus.completed:
+        return AppColors.success;
+      case ContractStatus.voided:
+        return AppColors.grey500;
     }
   }
 
   Color _statusBg(ContractStatus s) {
     switch (s) {
-      case ContractStatus.pendingEmployer: return AppColors.warningBg;
-      case ContractStatus.pendingWorker:   return AppColors.infoBg;
-      case ContractStatus.completed:       return AppColors.successBg;
-      case ContractStatus.voided:          return AppColors.grey100;
+      case ContractStatus.pendingEmployer:
+        return AppColors.warningBg;
+      case ContractStatus.pendingWorker:
+        return AppColors.infoBg;
+      case ContractStatus.completed:
+        return AppColors.successBg;
+      case ContractStatus.voided:
+        return AppColors.grey100;
     }
   }
 }
@@ -880,14 +955,15 @@ class _SignProgressBar extends StatelessWidget {
   final EmploymentContractModel contract;
   const _SignProgressBar({required this.contract});
 
-  String _shortDate(DateTime d) => FormatHelper.formatDateDot(d).substring(5); // "MM.dd"
+  String _shortDate(DateTime d) =>
+      FormatHelper.formatDateDot(d).substring(5); // "MM.dd"
 
   @override
   Widget build(BuildContext context) {
     final employerDone = contract.employerSignatureUrl != null;
-    final workerDone   = contract.workerSignatureUrl != null;
+    final workerDone = contract.workerSignatureUrl != null;
     final employerColor = employerDone ? AppColors.success : AppColors.grey400;
-    final workerColor   = workerDone   ? AppColors.success : AppColors.grey400;
+    final workerColor = workerDone ? AppColors.success : AppColors.grey400;
 
     return Row(
       children: [
@@ -905,7 +981,8 @@ class _SignProgressBar extends StatelessWidget {
           SizedBox(width: ResponsiveHelper.spacing(context, 3)),
           Text(
             _shortDate(contract.employerSignedAt!),
-            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+            style:
+                ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
           ),
         ],
         Expanded(
@@ -930,7 +1007,8 @@ class _SignProgressBar extends StatelessWidget {
           SizedBox(width: ResponsiveHelper.spacing(context, 3)),
           Text(
             _shortDate(contract.workerSignedAt!),
-            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
+            style:
+                ResponsiveHelper.tinyStyle(context, color: AppColors.grey400),
           ),
         ],
       ],
@@ -955,8 +1033,8 @@ class _InfoChip extends StatelessWidget {
             color: AppColors.grey500),
         SizedBox(width: ResponsiveHelper.spacing(context, 4)),
         Text(text,
-            style: ResponsiveHelper.tinyStyle(context,
-                color: AppColors.grey600)),
+            style:
+                ResponsiveHelper.tinyStyle(context, color: AppColors.grey600)),
       ],
     );
   }
@@ -971,9 +1049,8 @@ class _UnsentAppCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final name = app.applicantName?.isNotEmpty == true
-        ? app.applicantName!
-        : '이름 미상';
+    final name =
+        app.applicantName?.isNotEmpty == true ? app.applicantName! : '이름 미상';
 
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 10)),
