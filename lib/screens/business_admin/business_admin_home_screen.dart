@@ -1049,7 +1049,7 @@ Future<void> _loadWeeklyRosterCounts() async {
                 MaterialPageRoute(builder: (_) => AdminContractManagementScreen(businessId: bizId)));
           })),
         ),
-      if (!isSub || up.can((p) => p.canManageWorkers || p.canManageWage))
+      if (!isSub || up.can((p) => p.canManageWage))
         (
           icon: Icons.bar_chart_outlined,
           label: '통계',
