@@ -3,8 +3,198 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/core/attendance_model.dart';
-import '../models/core/monthly_review_model.dart';
 import 'firestore_service.dart';
+
+// ─── 리뷰 통계 상태 ─────────────────────────────────────────────
+// [SECURITY-ADMIN-REVIEW-STATS-AGGREGATE 2026-09-05]
+// NO_DATA / SUPPRESSED / UNAVAILABLE 세 가지 상태를 명시적으로 구분.
+// nullable bool 2개로 표현하면 불가능한 상태가 생기므로 enum 사용.
+enum ReviewStatsState {
+  available,    // 쿼리 성공 + reviewCount >= 1 + 미억제
+  noData,       // 쿼리 성공 + reviewCount == 0 (또는 초기값)
+  suppressed,   // 쿼리 성공 + reviewCount < 3 + wage-only SUB_ADMIN
+  unavailable,  // callable 실패 (어느 사업장이라도)
+}
+
+// ─── 출근 통계 완전성 상태 ───────────────────────────────────────
+// [SECURITY-ADMIN-STATS-ATTENDANCE-COMPLETENESS 2026-09-05]
+// AVAILABLE: 모든 사업장 callable 성공 + limitReached=false + 완전한 행 파싱.
+// UNAVAILABLE: callable 실패 / limitReached=true / envelope 오류 / 행 파싱 실패.
+// 정상 응답 0건도 AVAILABLE — 집계 데이터 없음은 실패가 아님.
+enum AttendanceStatsState {
+  available,    // 완전하고 신뢰할 수 있는 출근 데이터
+  unavailable,  // 부분적이거나 조회 실패한 데이터 — 집계 표시 금지
+}
+
+/// 단일 사업장 callableGetMonthlyReviewStatsByBiz 응답 DTO.
+/// suppressed=true 시 ratingSum 등 민감 필드는 null.
+/// transport 실패와 NO_DATA를 절대 혼동하지 않음 —
+/// transport 실패는 throw로 전파, empty()는 reviewCount==0 성공 응답 전용.
+class ReviewStatsDto {
+  final int reviewCount;
+  final bool suppressed;
+  final int? ratingSum;
+  final int? rehireYesCount;
+  final int? rehireNoCount;
+  final Map<String, int>? positiveTagCounts;
+
+  const ReviewStatsDto({
+    required this.reviewCount,
+    required this.suppressed,
+    this.ratingSum,
+    this.rehireYesCount,
+    this.rehireNoCount,
+    this.positiveTagCounts,
+  });
+
+  /// NO_DATA (reviewCount==0) 성공 응답용 — transport 실패에 사용 금지
+  const ReviewStatsDto.empty()
+      : reviewCount = 0,
+        suppressed = false,
+        ratingSum = 0,
+        rehireYesCount = 0,
+        rehireNoCount = 0,
+        positiveTagCounts = const {};
+
+  /// callableGetMonthlyReviewStatsByBiz 응답을 엄격하게 파싱한다.
+  /// 필수 키 누락·잘못된 타입·불변식 위반 → FormatException throw.
+  /// throw는 호출부의 독립 review try/catch가 ReviewStatsState.unavailable로 매핑.
+  /// [SECURITY-MONTHLY-REVIEWS-STATS-DTO-VALIDATION 2026-09-05]
+  static ReviewStatsDto fromMap(Map<String, dynamic> m) {
+    // ── 공통 필수 키 존재 확인 ──────────────────────────────────────
+    if (!m.containsKey('reviewCount')) {
+      throw FormatException('ReviewStatsDto: reviewCount 키 누락');
+    }
+    if (!m.containsKey('suppressed')) {
+      throw FormatException('ReviewStatsDto: suppressed 키 누락');
+    }
+
+    // ── reviewCount: num, finite, integer, >= 0 ─────────────────────
+    final rawCount = m['reviewCount'];
+    if (rawCount is! num) {
+      throw FormatException(
+          'ReviewStatsDto: reviewCount가 num이 아님 (${rawCount.runtimeType})');
+    }
+    if (!rawCount.isFinite || rawCount != rawCount.toInt()) {
+      throw FormatException(
+          'ReviewStatsDto: reviewCount 유효하지 않음 ($rawCount)');
+    }
+    final reviewCount = rawCount.toInt();
+    if (reviewCount < 0) {
+      throw FormatException('ReviewStatsDto: reviewCount가 음수 ($reviewCount)');
+    }
+
+    // ── suppressed: bool only (0/1/null/"true" 등 거부) ────────────
+    final rawSuppressed = m['suppressed'];
+    if (rawSuppressed is! bool) {
+      throw FormatException(
+          'ReviewStatsDto: suppressed가 bool이 아님 (${rawSuppressed.runtimeType})');
+    }
+    final suppressed = rawSuppressed;
+
+    // ── 억제 응답 경로 ──────────────────────────────────────────────
+    if (suppressed) {
+      // 억제 응답 불변식: reviewCount > 0 (서버 zero-count 수정과 동기)
+      if (reviewCount == 0) {
+        throw FormatException(
+            'ReviewStatsDto: suppressed=true이나 reviewCount=0 (서버 불변식 위반)');
+      }
+      // 민감 필드는 키 존재 + 명시적 null 필수 (키 누락도 거부)
+      for (final key in [
+        'ratingSum', 'rehireYesCount', 'rehireNoCount', 'positiveTagCounts',
+      ]) {
+        if (!m.containsKey(key)) {
+          throw FormatException('ReviewStatsDto: suppressed 응답에 $key 키 없음');
+        }
+        if (m[key] != null) {
+          throw FormatException(
+              'ReviewStatsDto: suppressed=true이나 $key가 null이 아님');
+        }
+      }
+      return ReviewStatsDto(reviewCount: reviewCount, suppressed: true);
+    }
+
+    // ── 미억제 응답 경로 — 로컬 헬퍼로 각 메트릭 검증 ───────────────
+    int requireNonNegInt(String key) {
+      if (!m.containsKey(key)) {
+        throw FormatException('ReviewStatsDto: $key 키 누락');
+      }
+      final v = m[key];
+      if (v is! num) {
+        throw FormatException(
+            'ReviewStatsDto: $key가 num이 아님 (${v.runtimeType})');
+      }
+      if (!v.isFinite || v != v.toInt()) {
+        throw FormatException('ReviewStatsDto: $key 유효하지 않음 ($v)');
+      }
+      final i = v.toInt();
+      if (i < 0) throw FormatException('ReviewStatsDto: $key가 음수 ($i)');
+      return i;
+    }
+
+    final ratingSum = requireNonNegInt('ratingSum');
+    final rehireYesCount = requireNonNegInt('rehireYesCount');
+    final rehireNoCount = requireNonNegInt('rehireNoCount');
+
+    // 재고용 답변 합산 <= 전체 리뷰 수 (wouldRehire=null 허용 설계와 일치)
+    if (rehireYesCount + rehireNoCount > reviewCount) {
+      throw FormatException(
+          'ReviewStatsDto: rehire count 불변식 위반 '
+          '(yes=$rehireYesCount + no=$rehireNoCount > count=$reviewCount)');
+    }
+
+    // positiveTagCounts: Map, 키=String, 값=non-negative integer
+    if (!m.containsKey('positiveTagCounts')) {
+      throw FormatException('ReviewStatsDto: positiveTagCounts 키 누락');
+    }
+    final rawTags = m['positiveTagCounts'];
+    if (rawTags is! Map) {
+      throw FormatException('ReviewStatsDto: positiveTagCounts가 Map이 아님');
+    }
+    final positiveTagCounts = <String, int>{};
+    for (final entry in rawTags.entries) {
+      if (entry.key is! String) {
+        throw FormatException(
+            'ReviewStatsDto: positiveTagCounts 키가 String이 아님 '
+            '(${entry.key.runtimeType})');
+      }
+      final v = entry.value;
+      if (v is! num) {
+        throw FormatException(
+            'ReviewStatsDto: positiveTagCounts["${entry.key}"] 값이 num이 아님');
+      }
+      if (!v.isFinite || v != v.toInt()) {
+        throw FormatException(
+            'ReviewStatsDto: positiveTagCounts["${entry.key}"] 값 유효하지 않음 ($v)');
+      }
+      final i = v.toInt();
+      if (i < 0) {
+        throw FormatException(
+            'ReviewStatsDto: positiveTagCounts["${entry.key}"] 값이 음수 ($i)');
+      }
+      positiveTagCounts[entry.key as String] = i;
+    }
+
+    // NO_DATA 불변식: reviewCount=0이면 모든 집계는 0/빈맵이어야 함
+    if (reviewCount == 0 &&
+        (ratingSum != 0 ||
+            rehireYesCount != 0 ||
+            rehireNoCount != 0 ||
+            positiveTagCounts.isNotEmpty)) {
+      throw FormatException(
+          'ReviewStatsDto: reviewCount=0이나 집계값 존재 (서버 불변식 위반)');
+    }
+
+    return ReviewStatsDto(
+      reviewCount: reviewCount,
+      suppressed: false,
+      ratingSum: ratingSum,
+      rehireYesCount: rehireYesCount,
+      rehireNoCount: rehireNoCount,
+      positiveTagCounts: positiveTagCounts,
+    );
+  }
+}
 
 // ─── 데이터 모델 ────────────────────────────────────────────────
 
@@ -84,6 +274,13 @@ class AnnualStatsData {
   // 신뢰점수 분포 (userId → trustScore)
   final Map<String, int> workerTrustScores;
 
+  // 리뷰 통계 상태 — NO_DATA / SUPPRESSED / UNAVAILABLE / AVAILABLE
+  final ReviewStatsState reviewStatsState;
+
+  // 출근 통계 완전성 상태 — [SECURITY-ADMIN-STATS-ATTENDANCE-COMPLETENESS 2026-09-05]
+  final AttendanceStatsState attendanceStatsState;
+  final AttendanceStatsState prevAttendanceStatsState;
+
   const AnnualStatsData({
     required this.year,
     this.filterBusinessId,
@@ -104,6 +301,9 @@ class AnnualStatsData {
     required this.exceptions,
     required this.exceptionMonth,
     this.workerTrustScores = const {},
+    this.reviewStatsState = ReviewStatsState.noData,
+    this.attendanceStatsState = AttendanceStatsState.available,
+    this.prevAttendanceStatsState = AttendanceStatsState.available,
   });
 
   double get wageDeltaPct {
@@ -164,6 +364,12 @@ class MonthDetailData {
   final List<AttendanceModel> rawAttendance;
   final Map<String, UserInfo> userInfoMap;
 
+  // 리뷰 통계 상태
+  final ReviewStatsState reviewStatsState;
+
+  // 출근 통계 완전성 상태 — [SECURITY-ADMIN-STATS-ATTENDANCE-COMPLETENESS 2026-09-05]
+  final AttendanceStatsState attendanceStatsState;
+
   const MonthDetailData({
     required this.year,
     required this.month,
@@ -179,12 +385,27 @@ class MonthDetailData {
     required this.impTagFreq,
     required this.rawAttendance,
     required this.userInfoMap,
+    this.reviewStatsState = ReviewStatsState.noData,
+    this.attendanceStatsState = AttendanceStatsState.available,
   });
 
   int get totalAttendanceCount => presentCount + lateCount + absentCount;
   double get attendanceRate => totalAttendanceCount == 0
       ? 0
       : presentCount / totalAttendanceCount * 100;
+}
+
+// ─── 출근 조회 결과 래퍼 ──────────────────────────────────────────
+// AdminStatsService 파일 전용 — 외부 노출 금지.
+// [SECURITY-ADMIN-STATS-ATTENDANCE-COMPLETENESS 2026-09-05]
+class _AttFetchResult {
+  final List<AttendanceModel> rows;
+  final AttendanceStatsState state;
+
+  const _AttFetchResult({
+    required this.rows,
+    required this.state,
+  });
 }
 
 // ─── 서비스 ─────────────────────────────────────────────────────
@@ -256,16 +477,20 @@ class AdminStatsService {
     final prevYearStart = DateTime(year - 1, 1, 1);
     final prevYearEnd = DateTime(year, 1, 1);
 
-    // [PERF] 전년도 리뷰(results[3])는 실제로 사용되지 않으므로 CF 호출 1회 절감
-    final results = await Future.wait([
-      _queryAttendance(ids, yearStart, yearEnd),
-      _queryAttendance(ids, prevYearStart, prevYearEnd),
-      _queryReviews(ids, year),
+    // [PERF] 출근 통계 — 병렬 조회 (리뷰 통계와 독립)
+    // [SECURITY-ADMIN-STATS-ATTENDANCE-COMPLETENESS 2026-09-05]
+    // _fetchAttendanceSafe: 기간 단위 독립 실패 포착 — thisYear 실패 ≠ prevYear 실패
+    final attResults = await Future.wait([
+      _fetchAttendanceSafe(ids, yearStart, yearEnd),
+      _fetchAttendanceSafe(ids, prevYearStart, prevYearEnd),
     ]);
 
-    final thisYearAtt = results[0] as List<AttendanceModel>;
-    final prevYearAtt = results[1] as List<AttendanceModel>;
-    final thisYearReviews = results[2] as List<MonthlyReviewModel>;
+    final thisResult = attResults[0];
+    final prevResult = attResults[1];
+    final thisYearAtt = thisResult.rows;
+    final prevYearAtt = prevResult.rows;
+    final attendanceStatsState = thisResult.state;
+    final prevAttendanceStatsState = prevResult.state;
 
     // 월별 집계
     final trendMap = <int, List<AttendanceModel>>{};
@@ -304,18 +529,29 @@ class AdminStatsService {
     final attRate = _calcAttendanceRate(thisYearAtt);
     final prevAttRate = _calcAttendanceRate(prevYearAtt);
 
-    // 재고용률 + 평점
-    final reviewsWithRehire =
-        thisYearReviews.where((r) => r.wouldRehire != null).toList();
-    final rehireRate = reviewsWithRehire.isEmpty
-        ? 0.0
-        : reviewsWithRehire.where((r) => r.wouldRehire == true).length /
-            reviewsWithRehire.length *
-            100;
-    final avgRating = thisYearReviews.isEmpty
-        ? 0.0
-        : thisYearReviews.map((r) => r.rating).reduce((a, b) => a + b) /
-            thisYearReviews.length;
+    // 재고용률 + 평점 — 독립 에러 경계 (FAIL-A: 어느 사업장 실패 시 unavailable)
+    // 출근/급여 통계는 review 실패에 무관하게 유지됨.
+    ReviewStatsState reviewStatsState = ReviewStatsState.noData;
+    double rehireRate = 0.0;
+    double avgRating = 0.0;
+    try {
+      final dto = await _queryReviewStatsMerged(ids, year);
+      if (dto.suppressed) {
+        reviewStatsState = ReviewStatsState.suppressed;
+      } else if (dto.reviewCount == 0) {
+        reviewStatsState = ReviewStatsState.noData;
+      } else {
+        reviewStatsState = ReviewStatsState.available;
+        avgRating = dto.ratingSum! / dto.reviewCount;
+        final denominator = dto.rehireYesCount! + dto.rehireNoCount!;
+        rehireRate = denominator == 0
+            ? 0.0
+            : dto.rehireYesCount! / denominator * 100;
+      }
+    } catch (e) {
+      debugPrint('⚠️ 연간 리뷰 통계 조회 실패: $e');
+      reviewStatsState = ReviewStatsState.unavailable;
+    }
 
     // 노쇼율
     final noShowCount = thisYearAtt.where((r) =>
@@ -390,6 +626,9 @@ class AdminStatsService {
       exceptions: exceptions,
       exceptionMonth: exceptionMonth,
       workerTrustScores: trustScores,
+      reviewStatsState: reviewStatsState,
+      attendanceStatsState: attendanceStatsState,
+      prevAttendanceStatsState: prevAttendanceStatsState,
     );
   }
 
@@ -407,13 +646,35 @@ class AdminStatsService {
     final start = DateTime(year, month, 1);
     final end = DateTime(year, month + 1, 1);
 
-    final results = await Future.wait([
-      _queryAttendance(ids, start, end),
-      _queryMonthReviews(ids, year, month),
-    ]);
+    // 출근 통계 (독립 경로 — review 실패 시에도 유지)
+    // [SECURITY-ADMIN-STATS-ATTENDANCE-COMPLETENESS 2026-09-05]
+    final attResult = await _fetchAttendanceSafe(ids, start, end);
+    final attendance = attResult.rows;
+    final attendanceStatsState = attResult.state;
 
-    final attendance = results[0] as List<AttendanceModel>;
-    final reviews = results[1] as List<MonthlyReviewModel>;
+    // 리뷰 통계 독립 에러 경계 (FAIL-A: 어느 사업장 실패 시 unavailable)
+    ReviewStatsState reviewStatsState = ReviewStatsState.noData;
+    double avgRating = 0.0;
+    int rehireCount = 0;
+    int noRehireCount = 0;
+    Map<String, int> posTagFreq = {};
+    try {
+      final dto = await _queryMonthReviewStatsMerged(ids, year, month);
+      if (dto.suppressed) {
+        reviewStatsState = ReviewStatsState.suppressed;
+      } else if (dto.reviewCount == 0) {
+        reviewStatsState = ReviewStatsState.noData;
+      } else {
+        reviewStatsState = ReviewStatsState.available;
+        avgRating = dto.ratingSum! / dto.reviewCount;
+        rehireCount = dto.rehireYesCount ?? 0;
+        noRehireCount = dto.rehireNoCount ?? 0;
+        posTagFreq = dto.positiveTagCounts ?? {};
+      }
+    } catch (e) {
+      debugPrint('⚠️ 월 리뷰 통계 조회 실패: $e');
+      reviewStatsState = ReviewStatsState.unavailable;
+    }
 
     final infoMap = await _fetchUserInfoByRecords(attendance);
 
@@ -479,23 +740,6 @@ class AdminStatsService {
       }
     }
 
-    // 리뷰 집계
-    final avgRating = reviews.isEmpty
-        ? 0.0
-        : reviews.map((r) => r.rating).reduce((a, b) => a + b) /
-            reviews.length;
-    final rehireCount =
-        reviews.where((r) => r.wouldRehire == true).length;
-    final noRehireCount =
-        reviews.where((r) => r.wouldRehire == false).length;
-
-    final posFreq = <String, int>{};
-    final impFreq = <String, int>{};
-    for (final r in reviews) {
-      for (final t in r.positiveTags) { posFreq[t] = (posFreq[t] ?? 0) + 1; }
-      for (final t in r.improvementTags) { impFreq[t] = (impFreq[t] ?? 0) + 1; }
-    }
-
     return MonthDetailData(
       year: year,
       month: month,
@@ -507,10 +751,14 @@ class AdminStatsService {
       avgRating: avgRating,
       rehireCount: rehireCount,
       noRehireCount: noRehireCount,
-      posTagFreq: posFreq,
-      impTagFreq: impFreq,
+      posTagFreq: posTagFreq,
+      // [SECURITY-ADMIN-REVIEW-STATS-AGGREGATE] impTagFreq: active consumer 없음
+      // 신규 aggregate 엔드포인트에서 미반환. 기존 모델 필드는 유지 (구조 변경 최소화).
+      impTagFreq: const {},
       rawAttendance: attendance,
       userInfoMap: infoMap,
+      reviewStatsState: reviewStatsState,
+      attendanceStatsState: attendanceStatsState,
     );
   }
 

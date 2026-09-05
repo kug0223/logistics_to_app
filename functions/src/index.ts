@@ -14898,6 +14898,209 @@ export const callableGetMonthlyReviewsByBiz = onCall(
   }
 );
 
+// ─── 4-B. callableGetMonthlyReviewStatsByBiz ─────────────────────────────────
+// [SECURITY-ADMIN-REVIEW-STATS-AGGREGATE 2026-09-05]
+// 개별 리뷰 원문 없이 집계 수치만 반환 — AdminStats 재고용률/평점 산출 전용.
+// 권한: BUSINESS_ADMIN / SUPER_ADMIN / SUB_ADMIN(canManageWage).
+// PRIV-B 소표본 억제: wage-only SUB_ADMIN + reviewCount < 3 → suppressed=true, null metrics.
+// PARAM-B: 허용된 키 이외 거부. reviewType/isPublished/targetUserId/limit 서버 고정.
+// 완전 범위 쿼리(no limit) — silent truncation 금지.
+export const callableGetMonthlyReviewStatsByBiz = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    // [PARAM-B] 허용된 키만 수락 — 미지정 파라미터 즉시 거부
+    const ALLOWED_KEYS = new Set(["businessId", "reviewYear", "reviewMonth"]);
+    const receivedKeys = Object.keys(request.data ?? {});
+    const unknownKeys = receivedKeys.filter((k) => !ALLOWED_KEYS.has(k));
+    if (unknownKeys.length > 0) {
+      throw new HttpsError(
+        "invalid-argument",
+        `지원하지 않는 파라미터: ${unknownKeys.join(", ")}`
+      );
+    }
+
+    const {businessId, reviewYear, reviewMonth} = (request.data ?? {}) as {
+      businessId?: string;
+      reviewYear?: number;
+      reviewMonth?: number;
+    };
+
+    // businessId 검증
+    if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+
+    // reviewYear 검증 (required)
+    if (
+      reviewYear === undefined ||
+      typeof reviewYear !== "number" ||
+      !Number.isInteger(reviewYear)
+    ) {
+      throw new HttpsError("invalid-argument", "reviewYear는 정수여야 합니다.");
+    }
+
+    // reviewMonth 검증 (optional)
+    if (reviewMonth !== undefined) {
+      if (
+        typeof reviewMonth !== "number" ||
+        !Number.isInteger(reviewMonth) ||
+        reviewMonth < 1 ||
+        reviewMonth > 12
+      ) {
+        throw new HttpsError("invalid-argument", "reviewMonth는 1~12 정수여야 합니다.");
+      }
+    }
+
+    // 1. 멤버십/소유권 확인
+    const {callerData} = await assertBizAdmin(callerUid, businessId);
+    const callerRole = (callerData?.role as string | undefined) ?? "";
+
+    // 2. SUB_ADMIN canManageWage gate + suppression 여부 판단
+    let isWageOnlySubAdmin = false;
+    if (callerRole === "USER") {
+      const memberSnap = await db
+        .collection("businesses")
+        .doc(businessId)
+        .collection("members")
+        .doc(callerUid)
+        .get();
+      const perms = memberSnap.data()?.permissions as Record<string, unknown> | undefined;
+
+      // canManageWage 필수 (endpoint authorization)
+      if (perms?.canManageWage !== true) {
+        throw new HttpsError("permission-denied", "급여 관리 권한이 없습니다.");
+      }
+
+      // canManageWorkers 부재 → PRIV-B 억제 대상
+      // (canManageWorkers는 인가 기준이 아님 — 억제 여부 판단에만 사용)
+      isWageOnlySubAdmin = perms?.canManageWorkers !== true;
+    }
+
+    // 3. 완전 범위 쿼리 — limit 없음 (silent truncation 금지)
+    let q: admin.firestore.Query = db
+      .collection("monthly_reviews")
+      .where("businessId", "==", businessId)
+      .where("reviewType", "==", "ADMIN_TO_USER")
+      .where("reviewYear", "==", reviewYear);
+
+    if (reviewMonth !== undefined) {
+      q = q.where("reviewMonth", "==", reviewMonth);
+    }
+
+    const snap = await q.get();
+
+    // 4. CF 내부 집계 — 개별 리뷰 행 미반환
+    let reviewCount = 0;
+    let ratingSum = 0;
+    let rehireYesCount = 0;
+    let rehireNoCount = 0;
+    const positiveTagCounts: Record<string, number> = {};
+    // [ANNUAL DIFFERENCING DEFENSE] wage-only annual 요청 전용 — 월별 리뷰 건수 추적
+    // annual - Σ(visible monthly) 차분으로 억제 월 역산을 방지하기 위해 사용.
+    const monthCounts: Record<number, number> = {};
+    let hasUnsafeMonthBucket = false; // reviewMonth 누락/비정수/범위초과 문서 감지
+
+    for (const doc of snap.docs) {
+      const data = doc.data();
+      reviewCount++;
+
+      // rating: 누락/비정수/소수점 → fail-closed (부분 집계 금지)
+      // Number.isInteger 추가: Flutter DTO는 ratingSum을 int로 파싱하므로
+      // 소수점 rating이 서버에 저장된 경우 조용한 정밀도 손실 방지.
+      const rawRating = data["rating"];
+      if (
+        typeof rawRating !== "number" ||
+        !Number.isFinite(rawRating) ||
+        !Number.isInteger(rawRating)
+      ) {
+        throw new HttpsError(
+          "failed-precondition",
+          `리뷰 문서 ${doc.id}의 rating 필드가 유효하지 않습니다.`
+        );
+      }
+      ratingSum += rawRating;
+
+      // wouldRehire: null/missing → 집계 제외 (설계 의도)
+      const wouldRehire = data["wouldRehire"];
+      if (wouldRehire === true) rehireYesCount++;
+      else if (wouldRehire === false) rehireNoCount++;
+
+      // positiveTags only (improvementTagCounts: active consumer 없음 → 미반환)
+      const tags = data["positiveTags"];
+      if (Array.isArray(tags)) {
+        for (const tag of tags) {
+          if (typeof tag === "string") {
+            positiveTagCounts[tag] = (positiveTagCounts[tag] ?? 0) + 1;
+          }
+        }
+      }
+
+      // [ANNUAL DIFFERENCING DEFENSE] wage-only annual 요청 시 monthly partition 추적
+      // reviewMonth === undefined = 월 필터 없는 연간 쿼리
+      if (isWageOnlySubAdmin && reviewMonth === undefined) {
+        const storedMonth = data["reviewMonth"];
+        if (
+          typeof storedMonth !== "number" ||
+          !Number.isInteger(storedMonth) ||
+          storedMonth < 1 ||
+          storedMonth > 12
+        ) {
+          // reviewMonth 누락/비정수/범위초과 → 해당 문서를 특정 월에 귀속 불가
+          // privacy fail-safe: annual 집계 억제 트리거
+          hasUnsafeMonthBucket = true;
+        } else {
+          monthCounts[storedMonth] = (monthCounts[storedMonth] ?? 0) + 1;
+        }
+      }
+    }
+
+    // 5. PRIV-B 소표본 억제
+    // [SECURITY-MONTHLY-REVIEWS-STATS-DIFFERENCING 2026-09-05]
+    // monthly(reviewMonth 있음): 해당 월 reviewCount < 3 → suppressed
+    // annual(reviewMonth 없음): 아래 중 하나라도 해당 → suppressed
+    //   a) 1개라도 0 < monthCount < 3인 달 존재 (low-sample month)
+    //   b) hasUnsafeMonthBucket (reviewMonth 이상 문서)
+    // 이유: annual - Σ(unsuppressed monthly) = suppressed 달 복원 차단
+    let shouldSuppress = false;
+    if (isWageOnlySubAdmin) {
+      if (reviewMonth !== undefined) {
+        // monthly: reviewCount > 0 조건 추가 — 0건은 SUPPRESSED 아닌 NO_DATA
+        // [SECURITY-MONTHLY-REVIEWS-STATS-ZERO-COUNT 2026-09-05]
+        shouldSuppress = reviewCount > 0 && reviewCount < 3;
+      } else {
+        // annual: differencing-safe per-month 검사
+        const hasLowSampleMonth = Object.values(monthCounts).some(
+          (c) => c > 0 && c < 3
+        );
+        shouldSuppress = hasLowSampleMonth || hasUnsafeMonthBucket;
+      }
+    }
+
+    if (shouldSuppress) {
+      return {
+        reviewCount,
+        suppressed: true,
+        ratingSum: null,
+        rehireYesCount: null,
+        rehireNoCount: null,
+        positiveTagCounts: null,
+      };
+    }
+
+    return {
+      reviewCount,
+      suppressed: false,
+      ratingSum,
+      rehireYesCount,
+      rehireNoCount,
+      positiveTagCounts,
+    };
+  }
+);
+
 // ─── 5. callableGetReviewRequestsByBiz ───────────────────────────────────────
 export const callableGetReviewRequestsByBiz = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},

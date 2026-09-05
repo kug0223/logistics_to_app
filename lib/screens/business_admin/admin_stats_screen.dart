@@ -381,6 +381,11 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
 
   Widget _buildKpiSection(AnnualStatsData data) {
     final theme = Theme.of(context);
+    // [SECURITY-ADMIN-STATS-ATTENDANCE-COMPLETENESS 2026-09-05]
+    final attOk =
+        data.attendanceStatsState == AttendanceStatsState.available;
+    final prevAttOk =
+        data.prevAttendanceStatsState == AttendanceStatsState.available;
     final hasPrevWage = data.prevYearTotalWage > 0;
     final hasPrevCount = data.prevYearTotalWorkCount > 0;
     final hasPrevAtt = data.prevYearAttendanceRate > 0;
@@ -418,18 +423,18 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                   style: ResponsiveHelper.tinyStyle(context,
                       color: AppColors.grey400),
                 ),
-                if (hasPrevWage && data.wageDeltaPct != 0) ...[
+                if (attOk && prevAttOk && hasPrevWage && data.wageDeltaPct != 0) ...[
                   SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                   _DeltaBadge(delta: data.wageDeltaPct),
                 ],
               ]),
               SizedBox(height: ResponsiveHelper.spacing(context, 6)),
               Text(
-                _fmtWage(data.totalWage),
+                attOk ? _fmtWage(data.totalWage) : '확인 불가',
                 style: TextStyle(
                   fontSize: ResponsiveHelper.titleStyle(context).fontSize! * 1.6,
                   fontWeight: FontWeight.w800,
-                  color: theme.primaryColor,
+                  color: attOk ? theme.primaryColor : AppColors.grey400,
                   letterSpacing: -0.5,
                 ),
               ),
@@ -452,37 +457,56 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
             child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                 Expanded(child: _StatCell(
                   label: '근무 건수',
-                  value: '${data.totalWorkCount}건',
-                  valueColor: AppColors.grey900,
-                  delta: hasPrevCount ? data.workCountDeltaPct : null,
+                  value: attOk ? '${data.totalWorkCount}건' : '확인 불가',
+                  valueColor: attOk ? AppColors.grey900 : AppColors.grey400,
+                  delta: (attOk && prevAttOk && hasPrevCount)
+                      ? data.workCountDeltaPct
+                      : null,
                 )),
                 _VLine(),
                 Expanded(child: _StatCell(
                   label: '출근율',
-                  value: data.attendanceRate == 0
-                      ? '-' : '${data.attendanceRate.toStringAsFixed(1)}%',
-                  valueColor: AppColors.success,
-                  delta: hasPrevAtt
+                  value: attOk
+                      ? (data.attendanceRate == 0
+                          ? '-'
+                          : '${data.attendanceRate.toStringAsFixed(1)}%')
+                      : '확인 불가',
+                  valueColor: attOk ? AppColors.success : AppColors.grey400,
+                  delta: (attOk && prevAttOk && hasPrevAtt)
                       ? data.attendanceRate - data.prevYearAttendanceRate
                       : null,
                 )),
                 _VLine(),
                 Expanded(child: _StatCell(
                   label: '노쇼율',
-                  value: data.noShowRate == 0
-                      ? '-' : '${data.noShowRate.toStringAsFixed(1)}%',
-                  valueColor: data.noShowRate > 0 ? AppColors.error : AppColors.grey400,
-                  delta: hasPrevNoShow
+                  value: attOk
+                      ? (data.noShowRate == 0
+                          ? '-'
+                          : '${data.noShowRate.toStringAsFixed(1)}%')
+                      : '확인 불가',
+                  valueColor: attOk
+                      ? (data.noShowRate > 0
+                          ? AppColors.error
+                          : AppColors.grey400)
+                      : AppColors.grey400,
+                  delta: (attOk && prevAttOk && hasPrevNoShow)
                       ? -(data.noShowRate - data.prevYearNoShowRate)
                       : null,
                 )),
                 _VLine(),
                 Expanded(child: _StatCell(
                   label: '재고용률',
-                  value: data.rehireRate == 0
-                      ? '-' : '${data.rehireRate.toStringAsFixed(0)}%',
+                  // [SECURITY-ADMIN-REVIEW-STATS-AGGREGATE 2026-09-05]
+                  // NO_DATA / SUPPRESSED / UNAVAILABLE / AVAILABLE 명시적 구분
+                  value: switch (data.reviewStatsState) {
+                    ReviewStatsState.available =>
+                        data.rehireRate == 0 ? '-' : '${data.rehireRate.toStringAsFixed(0)}%',
+                    ReviewStatsState.noData => '-',
+                    ReviewStatsState.suppressed => '표본 부족',
+                    ReviewStatsState.unavailable => '확인 불가',
+                  },
                   valueColor: AppColors.amber,
-                  subValue: data.avgRating > 0
+                  subValue: data.reviewStatsState == ReviewStatsState.available && data.avgRating > 0
                       ? '★ ${data.avgRating.toStringAsFixed(1)}' : null,
                 )),
             ]),
@@ -599,7 +623,13 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
             valueListenable: _touchedBarIndex,
             builder: (context, touchedIdx, _) => SizedBox(
               height: 180,
-              child: maxWage == 0
+              child: data.attendanceStatsState == AttendanceStatsState.unavailable
+                  ? Center(
+                      child: Text('조회 실패',
+                          style: ResponsiveHelper.smallStyle(context,
+                              color: AppColors.grey400)),
+                    )
+                  : maxWage == 0
                   ? Center(
                       child: Text('데이터 없음',
                           style: ResponsiveHelper.smallStyle(context,

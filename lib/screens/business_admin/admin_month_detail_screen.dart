@@ -386,9 +386,11 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
             ],
           ),
 
-          // 리뷰 요약 — 데이터 있을 때만 컴팩트 인라인
-          if (data.avgRating > 0 ||
-              data.rehireCount + data.noRehireCount > 0) ...[
+          // 리뷰 요약 — [SECURITY-ADMIN-REVIEW-STATS-AGGREGATE 2026-09-05]
+          // AVAILABLE: 기존 UI 유지 / SUPPRESSED·UNAVAILABLE: 인라인 텍스트 / NODATA: 숨김
+          if (data.reviewStatsState == ReviewStatsState.available &&
+              (data.avgRating > 0 ||
+                  data.rehireCount + data.noRehireCount > 0)) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 10)),
             const Divider(height: 1, color: AppColors.grey100),
             SizedBox(height: ResponsiveHelper.spacing(context, 10)),
@@ -443,6 +445,20 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
                       ),
                     )),
               ],
+            ),
+          ],
+          // SUPPRESSED(표본 부족) / UNAVAILABLE(조회 실패) — 인라인 텍스트
+          if (data.reviewStatsState == ReviewStatsState.suppressed ||
+              data.reviewStatsState == ReviewStatsState.unavailable) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+            const Divider(height: 1, color: AppColors.grey100),
+            SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+            Text(
+              data.reviewStatsState == ReviewStatsState.suppressed
+                  ? '표본 부족'
+                  : '확인 불가',
+              style: ResponsiveHelper.smallStyle(context,
+                  color: AppColors.grey400),
             ),
           ],
         ],
