@@ -310,13 +310,43 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
     final data = _data;
     if (data == null) return _buildEmpty();
 
-    final hasAnyData = data.totalWorkCount > 0;
+    // [SECURITY-ADMIN-STATS-ATTENDANCE-COMPLETENESS 2026-09-05]
+    // A: UNAVAILABLE — callable 실패 / limitReached / envelope 오류 / 행 파싱 실패
+    // B: AVAILABLE + 0 records — 정상 응답, 해당 연도 출근 기록 없음
+    // C: AVAILABLE + data — 정상 집계
+    final attUnavailable =
+        data.attendanceStatsState == AttendanceStatsState.unavailable;
+    final hasAnyData = !attUnavailable && data.totalWorkCount > 0;
 
     return ListView(
       padding: ResponsiveHelper.listPadding(context),
       children: [
-        // 데이터 없음 안내
-        if (!hasAnyData) ...[
+        // A: 출근 데이터 조회 실패 배너
+        if (attUnavailable) ...[
+          Container(
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+            decoration: BoxDecoration(
+              color: AppColors.error.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                  color: AppColors.error.withValues(alpha: 0.2)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.cloud_off_outlined,
+                    color: AppColors.error,
+                    size: ResponsiveHelper.iconSize(context, 18)),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Text('출근 데이터를 불러올 수 없습니다',
+                    style: ResponsiveHelper.smallStyle(context,
+                        color: AppColors.error)),
+              ],
+            ),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 14)),
+        ]
+        // B: 정상 응답 + 해당 연도 데이터 없음
+        else if (!hasAnyData) ...[
           Container(
             padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
             decoration: BoxDecoration(
@@ -338,21 +368,21 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
           SizedBox(height: ResponsiveHelper.spacing(context, 14)),
         ],
 
-        // KPI
+        // KPI — 출근 셀은 attUnavailable 시 '확인 불가', 리뷰는 독립 표시
         _buildKpiSection(data),
         SizedBox(height: ResponsiveHelper.spacing(context, 14)),
 
-        // 예외 알림
-        if (data.exceptions.isNotEmpty) ...[
+        // 예외 알림 — 출근 데이터 필요, unavailable 시 숨김
+        if (!attUnavailable && data.exceptions.isNotEmpty) ...[
           _buildExceptionSection(data),
           SizedBox(height: ResponsiveHelper.spacing(context, 14)),
         ],
 
-        // 업무별 인건비 (스크롤 없이 바로 보이도록 차트 위)
+        // 업무별 인건비 — unavailable 시 wageByWorkType 비어 있어 auto-hidden
         _buildWorkTypeWageSection(data),
         SizedBox(height: ResponsiveHelper.spacing(context, 14)),
 
-        // 월별 차트
+        // 월별 차트 — unavailable 시 '조회 실패' 표시
         _buildAnnualChart(data),
         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 

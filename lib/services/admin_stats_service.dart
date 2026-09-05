@@ -767,87 +767,153 @@ class AdminStatsService {
   // [D01 → CF 이전] 관리자 통계용 출근 기록 조회 — callableGetAdminAttendances CF 경유.
   // attendance allow list: if false 이후 Admin SDK 서버사이드 처리로 전환.
   // 사업장별 병렬 CF 호출 (기존 병렬 Firestore 쿼리 패턴 유지).
+  // [SECURITY-ADMIN-STATS-ATTENDANCE-COMPLETENESS 2026-09-05]
+  // fail-closed: per-business catch 제거 — 어느 사업장이라도 실패하면 throw 전파.
+  // 엄격한 envelope 검증 + limitReached fail-closed + 행 파싱 fail-closed.
   Future<List<AttendanceModel>> _queryAttendance(
       List<String> ids, DateTime start, DateTime end) async {
     final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
         .httpsCallable('callableGetAdminAttendances',
             options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
     final results = await Future.wait(ids.map((id) async {
-      try {
-        final result = await callable.call<Map<String, dynamic>>({
-          'businessId': id,
-          'startMs': start.millisecondsSinceEpoch,
-          'endMs': end.millisecondsSinceEpoch,
-        });
-        final items = (result.data['items'] as List<dynamic>? ?? []);
-        final limitReached = result.data['limitReached'] as bool? ?? false;
-        if (limitReached) {
-          debugPrint('⚠️ admin_stats: limit(10000) 도달 — 데이터 누락 가능 (bizId=$id)');
-        }
-        return items.map((e) {
-          final m = Map<String, dynamic>.from(e as Map);
-          final docId = m.remove('id') as String? ?? '';
-          return AttendanceModel.tryFromMap(m, docId);
-        }).whereType<AttendanceModel>().toList();
-      } catch (e) {
-        debugPrint('❌ 근태 CF 조회 실패 ($id): $e');
-        return <AttendanceModel>[];
+      // per-business catch 없음 — 실패 시 Future.wait가 throw, 기간 전체 UNAVAILABLE
+      final result = await callable.call<Map<String, dynamic>>({
+        'businessId': id,
+        'startMs': start.millisecondsSinceEpoch,
+        'endMs': end.millisecondsSinceEpoch,
+      });
+
+      // ── 엄격한 응답 envelope 검증 (기본값 ?? [] / ?? false 금지) ──────
+      final data = result.data;
+      if (!data.containsKey('items')) {
+        throw StateError(
+            'callableGetAdminAttendances: items 키 누락 (bizId=$id)');
       }
+      final rawItems = data['items'];
+      if (rawItems is! List) {
+        throw StateError(
+            'callableGetAdminAttendances: items가 List가 아님 (bizId=$id)');
+      }
+      if (!data.containsKey('limitReached')) {
+        throw StateError(
+            'callableGetAdminAttendances: limitReached 키 누락 (bizId=$id)');
+      }
+      final rawLimitReached = data['limitReached'];
+      if (rawLimitReached is! bool) {
+        throw StateError(
+            'callableGetAdminAttendances: limitReached가 bool이 아님 (bizId=$id)');
+      }
+
+      // ── limitReached fail-closed (LIMIT-A) ────────────────────────
+      if (rawLimitReached) {
+        throw StateError(
+            '출근 기록 한계(10,000건) 초과 — 완전한 집계 불가 (bizId=$id)');
+      }
+
+      // ── 행 파싱 fail-closed (ROW-A) ──────────────────────────────
+      final parsed = <AttendanceModel>[];
+      for (final e in rawItems) {
+        final m = Map<String, dynamic>.from(e as Map);
+        final docId = m.remove('id') as String? ?? '';
+        final model = AttendanceModel.tryFromMap(m, docId);
+        if (model == null) {
+          throw StateError(
+              '출근 기록 파싱 실패 (bizId=$id, docId=$docId)');
+        }
+        parsed.add(model);
+      }
+      return parsed;
     }));
     return results.expand((list) => list).toList();
   }
 
-  Future<List<MonthlyReviewModel>> _queryReviews(
+  /// 기간 단위 출근 조회 — throw를 AttendanceStatsState.unavailable 로 변환.
+  /// annual: Future.wait([_fetchAttendanceSafe, _fetchAttendanceSafe])로 양 기간 독립 실패 지원.
+  /// [SECURITY-ADMIN-STATS-ATTENDANCE-COMPLETENESS 2026-09-05]
+  Future<_AttFetchResult> _fetchAttendanceSafe(
+      List<String> ids, DateTime start, DateTime end) async {
+    try {
+      final rows = await _queryAttendance(ids, start, end);
+      return _AttFetchResult(
+          rows: rows, state: AttendanceStatsState.available);
+    } catch (e) {
+      debugPrint('⚠️ 출근 조회 실패 ($start~$end): $e');
+      return const _AttFetchResult(
+          rows: [], state: AttendanceStatsState.unavailable);
+    }
+  }
+
+  // [SECURITY-ADMIN-REVIEW-STATS-AGGREGATE 2026-09-05]
+  // aggregate 전용 — 개별 리뷰 행 미반환.
+  // FAIL-A: per-business catch 없음 — 어느 사업장이라도 실패하면 전파.
+  // 호출부는 독립 try/catch로 감싸 출근 통계를 보존함.
+  Future<ReviewStatsDto> _queryReviewStatsMerged(
       List<String> ids, int year) async {
     final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-        .httpsCallable('callableGetMonthlyReviewsByBiz',
+        .httpsCallable('callableGetMonthlyReviewStatsByBiz',
             options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
-    final results = await Future.wait(ids.map((id) async {
-      try {
-        final result = await callable.call({
-          'businessId': id,
-          'reviewYear': year,
-          'reviewType': 'ADMIN_TO_USER',
-        });
-        final raw = List.from(result.data['reviews'] as List? ?? []);
-        return raw.map((e) {
-          final m = Map<String, dynamic>.from(e as Map);
-          final docId = m.remove('id') as String? ?? '';
-          return MonthlyReviewModel.tryFromMap(m, docId);
-        }).whereType<MonthlyReviewModel>().toList();
-      } catch (e) {
-        debugPrint('⚠️ 연간 리뷰 조회 실패 ($id): $e');
-        return <MonthlyReviewModel>[];
-      }
+    final dtos = await Future.wait(ids.map((id) async {
+      // per-business catch 없음 (FAIL-A)
+      final result = await callable.call({
+        'businessId': id,
+        'reviewYear': year,
+      });
+      return ReviewStatsDto.fromMap(
+          Map<String, dynamic>.from(result.data as Map));
     }));
-    return results.expand((list) => list).toList();
+    return _mergeReviewStats(dtos);
   }
 
-  Future<List<MonthlyReviewModel>> _queryMonthReviews(
+  Future<ReviewStatsDto> _queryMonthReviewStatsMerged(
       List<String> ids, int year, int month) async {
     final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-        .httpsCallable('callableGetMonthlyReviewsByBiz',
+        .httpsCallable('callableGetMonthlyReviewStatsByBiz',
             options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
-    final results = await Future.wait(ids.map((id) async {
-      try {
-        final result = await callable.call({
-          'businessId': id,
-          'reviewYear': year,
-          'reviewMonth': month,
-          'reviewType': 'ADMIN_TO_USER',
-        });
-        final raw = List.from(result.data['reviews'] as List? ?? []);
-        return raw.map((e) {
-          final m = Map<String, dynamic>.from(e as Map);
-          final docId = m.remove('id') as String? ?? '';
-          return MonthlyReviewModel.tryFromMap(m, docId);
-        }).whereType<MonthlyReviewModel>().toList();
-      } catch (e) {
-        debugPrint('⚠️ 월간 리뷰 조회 실패 ($id): $e');
-        return <MonthlyReviewModel>[];
-      }
+    final dtos = await Future.wait(ids.map((id) async {
+      // per-business catch 없음 (FAIL-A)
+      final result = await callable.call({
+        'businessId': id,
+        'reviewYear': year,
+        'reviewMonth': month,
+      });
+      return ReviewStatsDto.fromMap(
+          Map<String, dynamic>.from(result.data as Map));
     }));
-    return results.expand((list) => list).toList();
+    return _mergeReviewStats(dtos);
+  }
+
+  /// 다중 사업장 집계 merge.
+  /// suppression-aware: 어느 하나라도 suppressed → 전체 suppressed.
+  /// 빈 list → ReviewStatsDto.empty() (idempotent).
+  ReviewStatsDto _mergeReviewStats(List<ReviewStatsDto> dtos) {
+    if (dtos.isEmpty) return const ReviewStatsDto.empty();
+    // suppression-aware: any suppressed → merged suppressed
+    // (현재 SUB_ADMIN=단일 사업장이므로 list는 항상 1개.
+    //  [FUTURE-PRIV-NOTE] 다중 SUB_ADMIN 도입 시 suppression 재검토 필요)
+    if (dtos.any((d) => d.suppressed)) {
+      return ReviewStatsDto(
+        reviewCount: dtos.fold(0, (s, d) => s + d.reviewCount),
+        suppressed: true,
+      );
+    }
+    final totalCount = dtos.fold(0, (s, d) => s + d.reviewCount);
+    final totalRatingSum = dtos.fold(0, (s, d) => s + (d.ratingSum ?? 0));
+    final totalYes = dtos.fold(0, (s, d) => s + (d.rehireYesCount ?? 0));
+    final totalNo = dtos.fold(0, (s, d) => s + (d.rehireNoCount ?? 0));
+    final mergedTags = <String, int>{};
+    for (final d in dtos) {
+      for (final e in (d.positiveTagCounts ?? {}).entries) {
+        mergedTags[e.key] = (mergedTags[e.key] ?? 0) + e.value;
+      }
+    }
+    return ReviewStatsDto(
+      reviewCount: totalCount,
+      suppressed: false,
+      ratingSum: totalRatingSum,
+      rehireYesCount: totalYes,
+      rehireNoCount: totalNo,
+      positiveTagCounts: mergedTags,
+    );
   }
 
   /// FirestoreService.getUsersBatch를 통해 이름·성별·전화번호 조회 (캐시 공유)
@@ -964,6 +1030,8 @@ class AdminStatsService {
                 workerCount: 0)),
         exceptions: [],
         exceptionMonth: 0,
+        attendanceStatsState: AttendanceStatsState.unavailable,
+        prevAttendanceStatsState: AttendanceStatsState.unavailable,
       );
 
   MonthDetailData _emptyDetail(int year, int month) => MonthDetailData(

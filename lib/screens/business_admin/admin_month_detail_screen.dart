@@ -243,7 +243,11 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
           IconButton(
             icon: const Icon(Icons.download_outlined, color: Colors.white),
             tooltip: '엑셀 내보내기',
-            onPressed: _data == null ? null : _exportExcel,
+            onPressed: (_data == null ||
+                    _data!.attendanceStatsState ==
+                        AttendanceStatsState.unavailable)
+                ? null
+                : _exportExcel,
           ),
       ],
       body: _isLoading
@@ -277,13 +281,24 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
     }
 
     final data = _data;
-    if (data == null || data.totalAttendanceCount == 0) {
+    if (data == null) {
       return const AppEmptyState(
         icon: Icons.event_busy_outlined,
         title: '근무 데이터가 없습니다',
       );
     }
 
+    // [SECURITY-ADMIN-STATS-ATTENDANCE-COMPLETENESS 2026-09-05]
+    // AVAILABLE + 0 records = genuine empty month (not a failure)
+    if (data.attendanceStatsState == AttendanceStatsState.available &&
+        data.totalAttendanceCount == 0) {
+      return const AppEmptyState(
+        icon: Icons.event_busy_outlined,
+        title: '근무 데이터가 없습니다',
+      );
+    }
+
+    // UNAVAILABLE 또는 정상 데이터 — sections이 state-aware하게 렌더링
     return ListView(
       padding: ResponsiveHelper.listPadding(context),
       children: [
@@ -299,6 +314,28 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
   // ─── 근태 요약 ────────────────────────────────────────────
 
   Widget _buildAttendanceSummary(MonthDetailData data) {
+    // [SECURITY-ADMIN-STATS-ATTENDANCE-COMPLETENESS 2026-09-05]
+    // UNAVAILABLE: 출근 수치를 0으로 표시하면 관리자 오인 위험
+    if (data.attendanceStatsState == AttendanceStatsState.unavailable) {
+      return Container(
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+        decoration: _cardDecoration(),
+        child: Row(
+          children: [
+            Icon(Icons.cloud_off_outlined,
+                color: AppColors.error,
+                size: ResponsiveHelper.iconSize(context, 18)),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            Text(
+              '출근 데이터 확인 불가',
+              style: ResponsiveHelper.smallStyle(context,
+                  color: AppColors.error),
+            ),
+          ],
+        ),
+      );
+    }
+
     final total = data.totalAttendanceCount;
     final presRatio = total == 0 ? 0.0 : data.presentCount / total;
     final lateRatio = total == 0 ? 0.0 : data.lateCount / total;
@@ -469,6 +506,28 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
   // ─── 직원별 요약 ──────────────────────────────────────────
 
   Widget _buildWorkerSection(MonthDetailData data) {
+    // [SECURITY-ADMIN-STATS-ATTENDANCE-COMPLETENESS 2026-09-05]
+    // UNAVAILABLE: 0명으로 표시하면 "이달 근무자 없음"으로 오인 위험
+    if (data.attendanceStatsState == AttendanceStatsState.unavailable) {
+      return Container(
+        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+        decoration: _cardDecoration(),
+        child: Row(
+          children: [
+            Icon(Icons.info_outline,
+                color: AppColors.grey400,
+                size: ResponsiveHelper.iconSize(context, 18)),
+            SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+            Text(
+              '출근 데이터를 불러올 수 없습니다',
+              style: ResponsiveHelper.smallStyle(context,
+                  color: AppColors.grey500),
+            ),
+          ],
+        ),
+      );
+    }
+
     final workers = _sortedWorkers(data);
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
