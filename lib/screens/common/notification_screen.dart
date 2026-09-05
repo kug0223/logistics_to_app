@@ -1174,7 +1174,21 @@ class _NotificationScreenState extends State<NotificationScreen> {
         break;
 
       // 리뷰 작성 요청 — requestKey로 review_requests 조회 후 다이얼로그 직접 표시
+      // [SECURITY-ADMIN-REVIEW-NOTIFICATION-GATE 2026-09-05]
+      // 관리자 경로에서 canManageWorkers 게이트 추가 — reviewReceived와 동일 패턴.
+      // 순수 USER는 isUser==true이므로 _openReviewDialogFromNotification 내 isUser 분기가 처리.
+      // SUB_ADMIN은 isUser==false(local compound var)이므로 이 gate가 먼저 실행됨.
       case NotificationType.reviewRequest:
+        if (!isUser) {
+          final access = await _validateAdminNotificationAccess(
+            context,
+            businessId: notification.data?['businessId']?.toString(),
+            requiredPermission: (p) => p.canManageWorkers,
+            businessIdRequired: false,
+          );
+          if (!context.mounted) return;
+          if (!_handleAdminAccess(access)) break;
+        }
         await _openReviewDialogFromNotification(context, notification, isUser);
         break;
       // ═══════════════════════════════════════════════════════════

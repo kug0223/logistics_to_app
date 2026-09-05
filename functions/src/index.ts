@@ -14831,7 +14831,26 @@ export const callableGetMonthlyReviewsByBiz = onCall(
       throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
     }
 
-    await assertBizAdmin(callerUid, businessId);
+    const {callerData} = await assertBizAdmin(callerUid, businessId);
+
+    // [SECURITY-ADMIN-REVIEW-MR-CALLABLE-GATE 2026-09-05]
+    // callableGetMonthlyReviewsByBiz는 개인 근로자 평가 원문(full private review docs)을 반환.
+    // SUB_ADMIN(role==USER)은 canManageWorkers 필수.
+    // wage-only / To-only / 권한 없는 SUB_ADMIN은 접근 차단.
+    // BUSINESS_ADMIN(role==BUSINESS_ADMIN) / SUPER_ADMIN은 이 분기를 건너뜀.
+    const callerRole = (callerData?.role as string | undefined) ?? "";
+    if (callerRole === "USER") {
+      const memberSnap = await db
+        .collection("businesses")
+        .doc(businessId)
+        .collection("members")
+        .doc(callerUid)
+        .get();
+      const perms = memberSnap.data()?.permissions as Record<string, unknown> | undefined;
+      if (perms?.canManageWorkers !== true) {
+        throw new HttpsError("permission-denied", "근로자 관리 권한이 없습니다.");
+      }
+    }
 
     const cap = Math.min(
       typeof rawLimit === "number" && rawLimit > 0 ? rawLimit : 100,
@@ -14842,8 +14861,14 @@ export const callableGetMonthlyReviewsByBiz = onCall(
       .collection("monthly_reviews")
       .where("businessId", "==", businessId);
 
-    // [BUG-05] 잘못된 reviewType 조용히 무시 → 전체 문서 반환 위험. throw로 변경
-    const VALID_REVIEW_TYPES = new Set(["MONTHLY", "PERIOD", "SPOT", "EXIT"]);
+    // [SECURITY-ADMIN-REVIEW-MR-ENUM-FIX 2026-09-05]
+    // 기존 VALID_REVIEW_TYPES("MONTHLY","PERIOD","SPOT","EXIT")는 ReviewType enum
+    // 실제 wire 값("ADMIN_TO_USER"/"USER_TO_BUSINESS")과 불일치.
+    // 모든 active caller가 ADMIN_TO_USER 또는 USER_TO_BUSINESS를 전송하므로
+    // stale validator 단독 유지 시 모든 호출이 invalid-argument로 실패.
+    // [주의] 이 enum fix는 canManageWorkers gate와 반드시 함께 적용되어야 함.
+    // enum fix 단독 적용 시 wage-only SUB_ADMIN이 private review에 접근 가능해짐.
+    const VALID_REVIEW_TYPES = new Set(["ADMIN_TO_USER", "USER_TO_BUSINESS"]);
     if (reviewType !== undefined && !VALID_REVIEW_TYPES.has(reviewType as string)) {
       throw new HttpsError("invalid-argument", `허용되지 않는 reviewType 값입니다: ${reviewType}`);
     }
@@ -14890,7 +14915,25 @@ export const callableGetReviewRequestsByBiz = onCall(
       throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
     }
 
-    await assertBizAdmin(callerUid, businessId);
+    const {callerData} = await assertBizAdmin(callerUid, businessId);
+
+    // [SECURITY-ADMIN-REVIEW-CALLABLE-GATE 2026-09-05]
+    // SUB_ADMIN(role==USER)은 canManageWorkers 필수.
+    // assertBizAdmin이 비멤버는 이미 throw하므로 여기서는 권한 검증만 추가.
+    // BUSINESS_ADMIN(role==BUSINESS_ADMIN)/SUPER_ADMIN은 이 분기를 건너뜀.
+    const callerRole = (callerData?.role as string | undefined) ?? "";
+    if (callerRole === "USER") {
+      const memberSnap = await db
+        .collection("businesses")
+        .doc(businessId)
+        .collection("members")
+        .doc(callerUid)
+        .get();
+      const perms = memberSnap.data()?.permissions as Record<string, unknown> | undefined;
+      if (perms?.canManageWorkers !== true) {
+        throw new HttpsError("permission-denied", "근로자 관리 권한이 없습니다.");
+      }
+    }
 
     const cap = Math.min(
       typeof rawLimit === "number" && rawLimit > 0 ? rawLimit : 200,

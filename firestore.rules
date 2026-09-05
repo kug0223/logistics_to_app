@@ -1131,15 +1131,18 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════
     match /monthly_reviews/{reviewId} {
 
-      // get: 본인(작성자/수신자), 해당 사업장 관리자/하위관리자, 공개 리뷰
+      // get: 본인(수신자), 해당 사업장 관리자/하위관리자(canManageWorkers), 공개 리뷰
       // resource == null: 문서 미존재 시 존재 여부 확인 허용 (리뷰 작성 여부 체크)
+      // [SECURITY-ADMIN-REVIEW-MR-GET 2026-09-05]
+      //   reviewerId==auth.uid 제거 — revocation gap: 관리자 해임 후에도 자신이 작성한 리뷰 열람 가능했던 취약점
+      //   SubAdmin: isSubAdminOf만으로는 부족 → canManageWorkers 추가
       allow get: if isLoggedIn() && (
         isSuperAdmin() ||
         resource == null ||
-        resource.data.reviewerId == request.auth.uid ||
         resource.data.targetUserId == request.auth.uid ||
         isAdminOf(resource.data.businessId) ||
-        isSubAdminOf(resource.data.businessId) ||
+        (isSubAdminOf(resource.data.businessId) &&
+         subAdminCanManageWorkers(resource.data.businessId)) ||
         resource.data.isPublished == true
       );
       // list: USER는 본인 필터 필수
@@ -1171,9 +1174,11 @@ service cloud.firestore {
                         isSuperAdmin() ||
                         (request.resource.data.reviewType == 'ADMIN_TO_USER' &&
                          // SEC-81: reviewerId가 리뷰 작성자 본인임을 강제 — 타 관리자 명의 리뷰 생성 차단
+                         // [SECURITY-ADMIN-REVIEW-MR-CREATE 2026-09-05] SubAdmin: canManageWorkers 필수
                          request.resource.data.reviewerId == request.auth.uid &&
                          (isAdminOf(request.resource.data.businessId) ||
-                          isSubAdminOf(request.resource.data.businessId))) ||
+                          (isSubAdminOf(request.resource.data.businessId) &&
+                           subAdminCanManageWorkers(request.resource.data.businessId)))) ||
                         (request.resource.data.reviewType == 'USER_TO_BUSINESS' &&
                          isUser() && isNotBlacklisted() &&
                          // [H-01] reviewerId는 익명 보장을 위해 저장하지 않으므로 필드 부재를 강제
@@ -1217,9 +1222,11 @@ service cloud.firestore {
                         .hasOnly(['reviewerName', 'reviewerId']) &&
                       request.resource.data.get('reviewerName', '') == '탈퇴한 회원' &&
                       request.resource.data.get('reviewerId', '') == '') ||
+                     // [SECURITY-ADMIN-REVIEW-MR-UPDATE 2026-09-05] SubAdmin: canManageWorkers 필수
                      (isLoggedIn() &&
                       (isAdminOf(resource.data.businessId) ||
-                       isSubAdminOf(resource.data.businessId)) &&
+                       (isSubAdminOf(resource.data.businessId) &&
+                        subAdminCanManageWorkers(resource.data.businessId))) &&
                       resource.data.get('businessResponse', null) == null &&
                       request.resource.data.diff(resource.data).affectedKeys()
                         .hasOnly(['businessResponse', 'businessRespondedAt']) &&
@@ -1500,12 +1507,14 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════
     match /review_requests/{requestId} {
 
-      // get: 해당 워커 본인 · 해당 사업장 관리자 · 하위관리자 · 슈퍼어드민 (resource==null: 문서 미존재 시 허용)
+      // get: 해당 워커 본인 · 해당 사업장 관리자 · 하위관리자(canManageWorkers 필수) · 슈퍼어드민
+      // [SECURITY-ADMIN-REVIEW-REQ-GET 2026-09-05] SubAdmin 멤버십만으로는 불충분 — canManageWorkers 필수
       allow get: if isLoggedIn() && (
                    resource == null ||
                    isOwner(resource.data.workerId) ||
                    isAdminOf(resource.data.businessId) ||
-                   isSubAdminOf(resource.data.businessId) ||
+                   (isSubAdminOf(resource.data.businessId) &&
+                    subAdminCanManageWorkers(resource.data.businessId)) ||
                    isSuperAdmin()
                  );
 
@@ -1518,18 +1527,12 @@ service cloud.firestore {
                     // USER 직접 list 차단 — 크로스-사용자 리뷰 요청 덤프 방지
                   );
 
-      // 생성: 해당 사업장 관리자/하위관리자 또는 슈퍼어드민
-      // [SEC-RR-STATUS] status 초기값 'PENDING' 강제 — 관리자가 COMPLETED 등으로 직접 생성해
-      //   CF onReviewCreated 처리 없이 완료된 요청으로 오인되는 취약점 차단
-      // [SEC-RR-CREATE-MEMBER] workerId가 해당 사업장 소속 근무자인지 검증
-      //   악의적 관리자가 타 사업장 근무자를 workerId로 지정해 허위 리뷰 TO-DO 생성 차단
-      allow create: if isLoggedIn() && (
-                      isSuperAdmin() ||
-                      ((isAdminOf(request.resource.data.businessId) ||
-                        isSubAdminOf(request.resource.data.businessId)) &&
-                       request.resource.data.get('status', '') == 'PENDING' &&
-                       exists(/databases/$(database)/documents/businesses/$(request.resource.data.businessId)/members/$(request.resource.data.get('workerId', '_'))))
-                    );
+      // 생성: 슈퍼어드민만 허용
+      // [SECURITY-ADMIN-REVIEW-REQ-CREATE 2026-09-05] 모든 legitimate 생성 경로는 Admin SDK 전용
+      //   (onWageConfirmed 트리거, createPendingReviewRequests 스케줄러 — Rules 우회)
+      //   클라이언트(BA/SubAdmin) 직접 create 경로 없음 → BA/SubAdmin client 생성 완전 차단
+      //   Admin SDK는 Rules를 우회하므로 시스템 트리거/스케줄러에 영향 없음
+      allow create: if isSuperAdmin();
 
       // 수정: 워커(자신의 리뷰 제출 필드만) · 해당 사업장 관리자/하위관리자(자신의 필드만) · 슈퍼어드민
       allow update: if isLoggedIn() && (
@@ -1549,10 +1552,12 @@ service cloud.firestore {
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['workerName']) &&
                        request.resource.data.get('workerName', '') == '탈퇴한 회원') ||
-                      // 관리자/하위관리자: 자신의 리뷰 제출 필드만
+                      // 관리자/하위관리자(canManageWorkers 필수): 자신의 리뷰 제출 필드만
                       // [MEDIUM-FIX 29차] adminStatus 값 화이트리스트 추가
+                      // [SECURITY-ADMIN-REVIEW-REQ-UPDATE 2026-09-05] SubAdmin은 canManageWorkers 필수
                       ((isAdminOf(resource.data.businessId) ||
-                        isSubAdminOf(resource.data.businessId)) &&
+                        (isSubAdminOf(resource.data.businessId) &&
+                         subAdminCanManageWorkers(resource.data.businessId))) &&
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['adminStatus', 'adminReviewId']) &&
                        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['adminStatus']) ||
