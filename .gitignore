@@ -88,3 +88,6 @@ functions/service-account-key.json
 functions/create_super_admin.js
 functions/seed_pass_token.js
 functions/seed_tos.js
+
+# Claude Code 자동 생성 worktree (agent isolation) — 추적 제외
+.claude/worktrees/
