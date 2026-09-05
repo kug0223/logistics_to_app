@@ -711,13 +711,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
           );
           if (!context.mounted) return;
           if (_handleAdminAccess(access)) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-                initialBusinessId: notification.data?['businessId']?.toString(),
-                notificationType: notification.type.name,
-              )),
-            );
+            // [CALLER1-PATCH] IWS → WorkApplicantsDialog
+            // 수락: CONFIRMED 지원자 auto-focus / 거절: REJECTED는 activeList 미포함(의도적 UX).
+            await _openWorkApplicantsFromNotification(context, notification);
           }
         }
         break;
@@ -2004,14 +2000,78 @@ class _NotificationScreenState extends State<NotificationScreen> {
       return;
     }
 
-    final toId = data['toId']?.toString();
-    final workDetailId = data['workDetailId']?.toString();
+    var toId = data['toId']?.toString();
+    var resolvedWdId = data['wdId']?.toString();
+    var resolvedWorkDetailId = data['workDetailId']?.toString();
+    final applicationId = data['applicationId']?.toString();
 
-    if (toId == null || toId.isEmpty || workDetailId == null || workDetailId.isEmpty) {
+    // [CALLER1-PATCH] toId 또는 WD identity 미존재 시 레거시 호환 — applicationId로 역추적
+    // State A: toId 없음 + WD 없음 → 전체 복원 시도
+    // State B: toId 있음 + WD 없음 → WD identity만 복원 시도 (toId 보존)
+    // State C: toId 있음 + WD 없음 + Application에도 selectedWorkType/wdId 없음 → safe failure
+    final notifHasWdIdentity =
+        (resolvedWdId != null && resolvedWdId.isNotEmpty) ||
+        (resolvedWorkDetailId != null && resolvedWorkDetailId.isNotEmpty);
+    if (applicationId != null &&
+        applicationId.isNotEmpty &&
+        ((toId == null || toId.isEmpty) || !notifHasWdIdentity)) {
+      try {
+        final appDoc = await FirebaseFirestore.instance
+            .collection('applications')
+            .doc(applicationId)
+            .get();
+        if (!appDoc.exists || appDoc.data() == null) {
+          ToastHelper.showWarning('알림 정보를 확인할 수 없습니다.');
+          return;
+        }
+        final appData = appDoc.data()!;
+        // [보안] businessId 바인딩: 알림 businessId와 지원서 businessId 반드시 일치
+        final appBusinessId = appData['businessId']?.toString();
+        if (fallbackBusinessId != null && fallbackBusinessId.isNotEmpty &&
+            appBusinessId != fallbackBusinessId) {
+          ToastHelper.showWarning('알림 정보를 확인할 수 없습니다.');
+          return;
+        }
+        // toId: null/empty 일 때만 Application에서 복원. 유효한 알림 toId는 보존.
+        final appToId = appData['toId']?.toString();
+        if ((toId == null || toId.isEmpty) &&
+            appToId != null && appToId.isNotEmpty) {
+          toId = appToId;
+        }
+        // wdId: null/empty 일 때만 복원 (??= 는 null만 체크하므로 empty-string 포함 처리)
+        final appWdId = appData['wdId']?.toString();
+        if ((resolvedWdId == null || resolvedWdId.isEmpty) &&
+            appWdId != null && appWdId.isNotEmpty) {
+          resolvedWdId = appWdId;
+        }
+        final existingWdKey = resolvedWorkDetailId;
+        if (existingWdKey == null || existingWdKey.isEmpty) {
+          final wt = appData['selectedWorkType']?.toString();
+          final st = appData['startTime']?.toString();
+          final et = appData['endTime']?.toString();
+          if (wt != null && wt.isNotEmpty &&
+              st != null && st.isNotEmpty &&
+              et != null && et.isNotEmpty) {
+            resolvedWorkDetailId = '${wt}_${st}_$et';
+          }
+        }
+      } catch (e) {
+        debugPrint('⚠️ [알림] 지원서 역추적 실패: $e');
+        ToastHelper.showWarning('알림 정보를 확인할 수 없습니다.');
+        return;
+      }
+    }
+
+    // toId: TO 로드 필수. wdId 또는 workDetailId 중 하나: WorkDetail 매칭 필수.
+    final hasWdIdentifier =
+        (resolvedWdId != null && resolvedWdId.isNotEmpty) ||
+        (resolvedWorkDetailId != null && resolvedWorkDetailId.isNotEmpty);
+    if (toId == null || toId.isEmpty || !hasWdIdentifier) {
       ToastHelper.showWarning('알림 정보를 확인할 수 없습니다.');
       return;
     }
 
+    if (!context.mounted) return;
     final navWA = Navigator.of(context, rootNavigator: true); // 언마운트 후에도, showDialog와 동일한 루트 내비게이터로 팝
 
     showDialog(
@@ -2046,9 +2106,12 @@ class _NotificationScreenState extends State<NotificationScreen> {
       }
 
       // workDetails는 tos/{toId}의 배열 필드 — 서브컬렉션이 아님.
-      // 알림의 workDetailId는 id(workType_start_end 합성키) 또는 legacyId(workType)일 수 있음.
+      // [CALLER1-PATCH] 해소 우선순위: (1) wdId(Phase 8.1E canonical), (2) composite/legacyId
       final workDetail = to.workDetails.cast<WorkDetailModel?>().firstWhere(
-        (wd) => wd?.id == workDetailId || wd?.legacyId == workDetailId,
+        (wd) =>
+          (resolvedWdId != null && resolvedWdId.isNotEmpty && wd?.wdId == resolvedWdId) ||
+          (resolvedWorkDetailId != null && resolvedWorkDetailId.isNotEmpty &&
+           (wd?.id == resolvedWorkDetailId || wd?.legacyId == resolvedWorkDetailId)),
         orElse: () => null,
       );
 
@@ -2068,6 +2131,44 @@ class _NotificationScreenState extends State<NotificationScreen> {
         isWorkDetailLoaded: true,
       );
 
+      // [BIZCTX-PATCH] SUB_ADMIN: notification target business B 권한을 항상 fresh fetch.
+      // USER mode에서는 _memberPermissions가 null일 수 있으므로 effectiveBusinessId == B여도 skip 금지.
+      // BUSINESS_ADMIN: targetPermissions = null → dialog가 provider.can() 폴백(항상 true) 사용.
+      MemberPermissions? targetPermissions;
+      if (up.isSubAdmin) {
+        final uid = up.currentUser?.uid;
+        if (uid == null || fallbackBusinessId == null || fallbackBusinessId.isEmpty) {
+          if (navWA.canPop()) navWA.pop();
+          if (!context.mounted) return;
+          ToastHelper.showWarning('알림 정보를 확인할 수 없습니다.');
+          return;
+        }
+        try {
+          targetPermissions = await MemberService().getMemberPermissions(
+            fallbackBusinessId,
+            uid,
+          );
+        } catch (e) {
+          debugPrint('[BizCtxPatch] target 권한 조회 실패: $e');
+          if (navWA.canPop()) navWA.pop();
+          if (!context.mounted) return;
+          ToastHelper.showWarning('알림 정보를 확인할 수 없습니다.');
+          return;
+        }
+        // [NAVFIX] getMemberPermissions 성공 후 context unmount 시 loading dialog 정리
+        if (!context.mounted) {
+          if (navWA.mounted && navWA.canPop()) navWA.pop();
+          return;
+        }
+        // fail closed: null → 멤버십 없음, !canManageTo → 권한 없음 → 다이얼로그 차단
+        if (targetPermissions == null || !targetPermissions.canManageTo) {
+          if (navWA.canPop()) navWA.pop();
+          if (!context.mounted) return;
+          ToastHelper.showWarning('이 업무에 대한 접근 권한이 없습니다.');
+          return;
+        }
+      }
+
       if (navWA.canPop()) navWA.pop();
       if (!context.mounted) return;
       WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -2085,8 +2186,10 @@ class _NotificationScreenState extends State<NotificationScreen> {
             toItem: toItem,
             onChanged: () {},
             // 지원/지원취소 알림에서 특정 지원자를 맨 앞에 하이라이트
-            initialApplicationId: data['applicationId']?.toString(),
+            initialApplicationId: applicationId,
             initialDate: initialDate,
+            // [BIZCTX-PATCH] SUB_ADMIN: target business B 권한 주입 (null = BUSINESS_ADMIN 폴백)
+            targetPermissions: targetPermissions,
           ),
         );
       });

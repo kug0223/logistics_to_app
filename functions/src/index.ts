@@ -23998,13 +23998,26 @@ export const callableAcceptTOInvitation = onCall(
       const invitedBy  = appData.invitedBy  as string | undefined;
       const toTitle    = (appData.toTitle   as string | undefined) ?? (toId ?? "업무");
       const workerName = (appData.applicantName as string | undefined) ?? "근로자";
+      // [CALLER1-PATCH] 딥링크 navigation 식별자 — wdId 우선(Phase 8.1E canonical), legacy composite 보완
+      const navWdId    = appData.wdId              as string | undefined;
+      const navWt      = appData.selectedWorkType  as string | undefined;
+      const navSt      = appData.startTime         as string | undefined;
+      const navEt      = appData.endTime           as string | undefined;
+      const navWdKey   = (navWt && navSt && navEt) ? `${navWt}_${navSt}_${navEt}` : undefined;
       if (invitedBy) {
         db.collection("users").doc(invitedBy).collection("notifications").add({
           userId:    invitedBy,
           type:      "toInviteAccepted",
           title:     "초대를 수락했습니다 ✅",
           body:      `${workerName}님이 '${toTitle}' 근무 초대를 수락했습니다.`,
-          data:      {applicationId, businessId: appData.businessId, action: "applicationDetail"},
+          data: {
+            applicationId,
+            businessId: appData.businessId,
+            ...(toId     ? {toId}                   : {}),
+            ...(navWdId  ? {wdId: navWdId}          : {}),
+            ...(navWdKey ? {workDetailId: navWdKey}  : {}),
+            action: "applicationDetail",
+          },
           isRead:    false,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
           readAt:    null,
@@ -24115,13 +24128,26 @@ export const callableDeclineTOInvitation = onCall(
       const toId       = appData.toId          as string | undefined;
       const toTitle    = (appData.toTitle      as string | undefined) ?? (toId ?? "업무");
       const workerName = (appData.applicantName as string | undefined) ?? "근로자";
+      // [CALLER1-PATCH] 딥링크 navigation 식별자 — wdId 우선(Phase 8.1E canonical), legacy composite 보완
+      const navWdId    = appData.wdId              as string | undefined;
+      const navWt      = appData.selectedWorkType  as string | undefined;
+      const navSt      = appData.startTime         as string | undefined;
+      const navEt      = appData.endTime           as string | undefined;
+      const navWdKey   = (navWt && navSt && navEt) ? `${navWt}_${navSt}_${navEt}` : undefined;
       if (invitedBy) {
         db.collection("users").doc(invitedBy).collection("notifications").add({
           userId:    invitedBy,
           type:      "toInviteDeclined",
           title:     "초대를 거절했습니다",
           body:      `${workerName}님이 '${toTitle}' 근무 초대를 거절했습니다.`,
-          data:      {applicationId, businessId: appData.businessId, action: "applicationDetail"},
+          data: {
+            applicationId,
+            businessId: appData.businessId,
+            ...(toId     ? {toId}                   : {}),
+            ...(navWdId  ? {wdId: navWdId}          : {}),
+            ...(navWdKey ? {workDetailId: navWdKey}  : {}),
+            action: "applicationDetail",
+          },
           isRead:    false,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
           readAt:    null,

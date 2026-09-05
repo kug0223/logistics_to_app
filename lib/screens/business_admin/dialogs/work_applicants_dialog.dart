@@ -40,6 +40,7 @@ import '../../../services/monthly_review_service.dart';
 import '../../../screens/contract/contract_sign_screen.dart' show ContractTemplateWidget;
 import '../../../widgets/common/app_empty_state.dart';
 import '../../../widgets/common/loading_widget.dart';
+import '../../../models/core/business_member_model.dart';
 
 /// 다이얼로그 결과
 class WorkApplicantsDialogResult {
@@ -61,6 +62,10 @@ class WorkApplicantsDialog extends StatefulWidget {
   final String? initialApplicationId;
   /// 알림 딥링크에서 slot이 없을 때 헤더에 표시할 날짜. slot?.date가 우선한다.
   final DateTime? initialDate;
+  /// [BIZCTX-PATCH] 알림 딥링크 경로에서 target business B의 실제 권한 주입.
+  /// null → 기존 UserProvider.can() 동작 유지 (non-notification 경로 / BUSINESS_ADMIN).
+  /// non-null → canManageTo UI guard를 이 객체 기준으로 평가한다 (SUB_ADMIN cross-biz 대응).
+  final MemberPermissions? targetPermissions;
 
   const WorkApplicantsDialog({
     super.key,
@@ -69,6 +74,7 @@ class WorkApplicantsDialog extends StatefulWidget {
     required this.onChanged,
     this.initialApplicationId,
     this.initialDate,
+    this.targetPermissions,
   });
 
   @override
@@ -112,6 +118,15 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   // [BUG-CANCEL-01] 확정취소 버튼 가드 — 근무 이력 있는 확정자 노출 방지
   // key = userId, value = 슬롯 날짜(or 주간)에 checkIn/급여확정 기록 존재 여부
   Map<String, bool> _hasWorkedMap = {};
+
+  // [BIZCTX-PATCH] target business canManageTo 해소.
+  // targetPermissions 주입 시 해당 객체 사용 (알림 cross-biz SUB_ADMIN 대응).
+  // null이면 UserProvider.can() 폴백 — non-notification 경로 / BUSINESS_ADMIN.
+  bool _canManageTo() {
+    final target = widget.targetPermissions;
+    if (target != null) return target.canManageTo;
+    return context.read<UserProvider>().can((p) => p.canManageTo);
+  }
 
   @override
   void initState() {
@@ -1492,7 +1507,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                       // [4J.0B] 거절: 항상 허용(PENDING 정리 목적), 승인: canApprovePending만 허용
                       // isClosed 통합 가드 제거 — isManualClosed TO에서도 거절 허용하기 위함
                       if (isPending && !_isBatchMode &&
-                          context.read<UserProvider>().can((p) => p.canManageTo)) ...[
+                          _canManageTo()) ...[
                         SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.end,
@@ -2000,7 +2015,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   Future<void> _approveApplication(Map<String, dynamic> item) async {
     if (_isProcessing) return;
     // [HIGH-02] 지원서 승인은 canManageTo 권한 필요
-    if (!context.read<UserProvider>().can((p) => p.canManageTo)) {
+    if (!_canManageTo()) {
       ToastHelper.showWarning('지원서 처리 권한이 없습니다.');
       return;
     }
@@ -2065,7 +2080,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   Future<void> _rejectApplication(Map<String, dynamic> item) async {
     if (_isProcessing) return;
     // [HIGH-02] 지원서 거절은 canManageTo 권한 필요
-    if (!context.read<UserProvider>().can((p) => p.canManageTo)) {
+    if (!_canManageTo()) {
       ToastHelper.showWarning('지원서 처리 권한이 없습니다.');
       return;
     }
@@ -2114,7 +2129,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   Future<void> _cancelConfirmation(Map<String, dynamic> item) async {
     if (_isProcessing) return;
     // [HIGH-02] 확정 취소는 canManageTo 권한 필요
-    if (!context.read<UserProvider>().can((p) => p.canManageTo)) {
+    if (!_canManageTo()) {
       ToastHelper.showWarning('확정 취소 권한이 없습니다.');
       return;
     }
@@ -2325,7 +2340,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   Future<void> _batchApprove() async {
     if (_selectedIds.isEmpty || _isProcessing) return;
     // [HIGH-02] 일괄 승인은 canManageTo 권한 필요
-    if (!context.read<UserProvider>().can((p) => p.canManageTo)) {
+    if (!_canManageTo()) {
       ToastHelper.showWarning('지원서 처리 권한이 없습니다.');
       return;
     }
@@ -2968,7 +2983,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
   Future<void> _batchReject() async {
     if (_selectedIds.isEmpty || _isProcessing) return;
     // [HIGH-02] 일괄 거절은 canManageTo 권한 필요
-    if (!context.read<UserProvider>().can((p) => p.canManageTo)) {
+    if (!_canManageTo()) {
       ToastHelper.showWarning('지원서 처리 권한이 없습니다.');
       return;
     }
