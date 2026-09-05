@@ -864,7 +864,8 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "city", "order": "ASCENDING" },
-        { "fieldPath": "dates", "arrayConfig": "CONTAINS" }
+        { "fieldPath": "dates", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "__name__", "order": "ASCENDING" }
       ]
     }
   ],
