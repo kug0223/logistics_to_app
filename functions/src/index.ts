@@ -10602,12 +10602,76 @@ export const callableGetAdminAttendances = onCall(
       }
     }
 
+    // [BATCH-1B] SAFE-A allowlist constants — 비임금 SUB_ADMIN 응답 기본거부 투영
+    // Firestore 키명 기준 (Dart 프로퍼티명과 다름: checkIn→checkInAt 등)
+    // 새 Attendance 필드가 추가되어도 비임금 칼러에게 자동 노출되지 않음.
+    // [R3-ATT-CALLABLE-WAGE-PROJECTION-PATCH 2026-09-05]
+    const NONWAGE_TOP_LEVEL_ALLOWLIST = new Set([
+      // Identity / Reference (7)
+      "applicationId", "userId", "businessId", "businessName",
+      "workDate", "workType", "yearMonth",
+      // Check-in/out (Firestore 키명 — Dart checkInAt/checkOutAt 등과 다름) (10)
+      "checkIn", "originalCheckIn", "checkInLat", "checkInLng", "checkInMethod",
+      "checkOut", "originalCheckOut", "checkOutLat", "checkOutLng", "checkOutMethod",
+      // Operational status (9)
+      "status", "wageStatus", "adminConfirmed",
+      "isZeroWork", "isModified", "modifyRequested",
+      "modifyReason", "modifiedBy", "modifiedAt",
+      // Location verification (2)
+      "checkInSuspicious", "checkInDistance",
+      // Work metrics non-financial (1)
+      "workHours",
+      // Nested — 내부는 아래 NONWAGE_WAGE_DETAIL_ALLOWLIST로 별도 재구성 (1)
+      "wageDetail",
+      // Metadata (2)
+      "createdAt", "updatedAt",
+      // Total: 32
+    ]);
+    const NONWAGE_WAGE_DETAIL_ALLOWLIST = new Set([
+      // TIME / POLICY 14개만 허용 — MONEY 필드(baseAmount/netWage 등) 전체 제외
+      "workMinutes", "overtimeMinutes", "earlyArrivalMinutes",
+      "nightMinutes", "contractExcessMinutes", "premiumOvertimeMinutes",
+      "scheduledMinutes", "actualMinutes", "breakMinutes",
+      "appliedScheduledBreakMinutes", "additionalBreakMinutes",
+      "nightAllowanceApplied", "nightIncluded",
+      "wageType",
+    ]);
+
     return {
       items: docs.map((d) => {
         const data = serializeFirestoreData(d.data());
         if (!canAccessBankAccount) {
-          // 계좌 암호문 제거 — canManageWage 없는 SubAdmin은 접근 불가
+          // 계좌 암호문 및 계좌 메타데이터 제거
+          // canManageWage 없는 SubAdmin은 모든 은행/계좌 필드 접근 불가
+          // [R3-ATT-CALLABLE-BANK-METADATA-FILTER-PATCH 2026-09-04]
           delete (data as Record<string, unknown>)["wageAccountNumberEncrypted"];
+          delete (data as Record<string, unknown>)["wageAccountBankName"];
+          delete (data as Record<string, unknown>)["wageAccountHolder"];
+          delete (data as Record<string, unknown>)["wageAccountSnapshotAt"];
+          delete (data as Record<string, unknown>)["wageAccountVerificationStatus"];
+          delete (data as Record<string, unknown>)["wageAccountVerifiedAt"];
+          // [BATCH-1B] 비임금 칼러 응답을 명시적 top-level allowlist로 재구성 (SAFE-A)
+          // finalWage/snapshotWage/transferDate/confirmedAt 등 재무 필드는
+          // allowlist 미포함으로 자동 제외 — denylist 열거 불필요.
+          const sanitizedData: Record<string, unknown> = Object.fromEntries(
+            Object.entries(data as Record<string, unknown>).filter(
+              ([key]) => NONWAGE_TOP_LEVEL_ALLOWLIST.has(key)
+            )
+          );
+          // wageDetail: TIME/POLICY 14개 필드만 허용 (MONEY 필드 자동 제외)
+          // null/undefined/array/primitive인 경우 wageDetail 자체를 응답에서 생략
+          const rawWd = (data as Record<string, unknown>)["wageDetail"];
+          if (rawWd && typeof rawWd === "object" && !Array.isArray(rawWd)) {
+            sanitizedData["wageDetail"] = Object.fromEntries(
+              Object.entries(rawWd as Record<string, unknown>).filter(
+                ([key]) => NONWAGE_WAGE_DETAIL_ALLOWLIST.has(key)
+              )
+            );
+          } else {
+            // wageDetail이 없거나 비정상 형태 — 응답에서 생략 (tryFromMap null 처리)
+            delete sanitizedData["wageDetail"];
+          }
+          return {id: d.id, ...sanitizedData};
         }
         return {id: d.id, ...data};
       }),

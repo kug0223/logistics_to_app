@@ -967,12 +967,15 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════
     match /attendance/{attendanceId} {
 
-      // get: 본인 · 해당 사업장 관리자 · 하위관리자 · 슈퍼어드민
+      // get: 본인 · 슈퍼어드민만 허용
+      // [R3-ATT-GET-01-PATCH 2026-09-04] isAdminOf / isSubAdminOf 제거
+      //   근거: 모든 관리자 출결 읽기는 callableGetAdminAttendances(CF Admin SDK) 경유 완료.
+      //   SUB_ADMIN direct GET은 canManageTo/Workers/Wage 세분화 없이 wage/account 암호문 노출 —
+      //   permission mismatch CONFIRMED (ATT-G2 결정).
+      //   getTodayAttendance() / createScheduleChangeRequest() — USER-own, isOwner 커버 유지.
       allow get: if isLoggedIn() && (
                    resource == null ||
                    isOwner(resource.data.userId) ||
-                   isAdminOf(resource.data.businessId) ||
-                   isSubAdminOf(resource.data.businessId) ||
                    isSuperAdmin()
                  );
 
