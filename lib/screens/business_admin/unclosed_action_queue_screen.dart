@@ -23,7 +23,13 @@ import '../../providers/user_provider.dart';
 import '../../services/unclosed_action_queue_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/loading_state_mixin.dart';
+import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../widgets/common/app_empty_state.dart';
+import '../../widgets/common/app_page_scaffold.dart';
+import '../../widgets/common/loading_widget.dart';
+import '../../widgets/common/notification_badge.dart';
+import '../common/notification_screen.dart';
 import 'dialogs/attendance_status_dialog.dart';
 
 // ─── 날짜 포맷 ────────────────────────────────────────────────────────────────
@@ -121,36 +127,38 @@ class _UnclosedActionQueueScreenState
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
+        // _hasChanges bool result를 caller에게 전달
         if (!didPop) Navigator.pop(context, _hasChanges);
       },
-      child: Scaffold(
-        backgroundColor: AppColors.surface,
-        appBar: AppBar(
-          backgroundColor: AppColors.surface,
-          foregroundColor: AppColors.brand,
-          elevation: 0,
-          scrolledUnderElevation: 1,
-          surfaceTintColor: Colors.transparent,
-          title: Text(
-            '마감 필요',
-            style: ResponsiveHelper.titleStyle(
-              context, color: AppColors.textPrimary,
+      child: AppPageScaffold(
+        title: '마감 필요',
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh, size: 22),
+            color: AppColors.textSecondary,
+            onPressed: isLoading ? null : _load,
+            tooltip: '새로고침',
+          ),
+          IconButton(
+            icon: const Icon(Icons.home_outlined),
+            color: AppColors.textSecondary,
+            onPressed: () => NavigationHelper.goHome(context),
+            tooltip: '홈',
+          ),
+          NotificationBadge(
+            child: IconButton(
+              icon: const Icon(Icons.notifications_outlined),
+              color: AppColors.textSecondary,
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const NotificationScreen()),
+              ),
+              tooltip: '알림',
             ),
           ),
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back_ios_new, size: 20),
-            onPressed: () => Navigator.pop(context, _hasChanges),
-          ),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.refresh, size: 22),
-              onPressed: isLoading ? null : _load,
-              tooltip: '새로고침',
-            ),
-          ],
-        ),
+        ],
         body: isLoading
-            ? const Center(child: CircularProgressIndicator())
+            ? const LoadingWidget()
             : _buildBody(),
       ),
     );
@@ -165,6 +173,11 @@ class _UnclosedActionQueueScreenState
         const Divider(height: 1, thickness: 1, color: AppColors.borderLight),
         Expanded(
           child: ListView.builder(
+            // AppPageScaffold는 body에 하단 SafeArea를 적용하지 않는다.
+            // gesture navigation 기기에서 마지막 row가 시스템 바에 가리지 않도록 보정.
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.paddingOf(context).bottom,
+            ),
             itemCount: _items.length,
             itemBuilder: (_, i) => _buildRow(_items[i]),
           ),
@@ -289,54 +302,28 @@ class _UnclosedActionQueueScreenState
   // ─── 상태 화면들 ────────────────────────────────────────────────────────────
 
   Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.check_circle_outline, size: 56, color: AppColors.textHint),
-          const SizedBox(height: 12),
-          Text(
-            '마감할 근무일이 없어요',
-            style: ResponsiveHelper.bodyStyle(
-              context,
-              color: AppColors.textTertiary,
-              fontWeight: FontWeight.w500,
-            ).copyWith(fontSize: 15),
-          ),
-        ],
-      ),
+    return const AppEmptyState(
+      icon: Icons.check_circle_outline,
+      title: '마감할 근무일이 없어요',
     );
   }
 
-  // available:false — 0건처럼 보이면 안 됨
+  // available:false — 0건처럼 보이면 안 됨 (별도 semantics 유지)
   Widget _buildErrorState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.error_outline, size: 56, color: AppColors.error),
-          const SizedBox(height: 12),
-          Text(
-            '마감 정보를 불러오지 못했어요',
-            style: ResponsiveHelper.bodyStyle(
-              context,
-              color: AppColors.textTertiary,
-              fontWeight: FontWeight.w500,
-            ).copyWith(fontSize: 15),
+    return AppEmptyState(
+      icon: Icons.error_outline,
+      iconColor: AppColors.error,
+      title: '마감 정보를 불러오지 못했어요',
+      action: OutlinedButton(
+        onPressed: isLoading ? null : _load,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.brand,
+          side: const BorderSide(color: AppColors.brand),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
           ),
-          const SizedBox(height: 16),
-          OutlinedButton(
-            onPressed: isLoading ? null : _load,
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.brand,
-              side: const BorderSide(color: AppColors.brand),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-            child: const Text('다시 시도'),
-          ),
-        ],
+        ),
+        child: const Text('다시 시도'),
       ),
     );
   }
