@@ -33,7 +33,9 @@ import '../../utils/format_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
 import '../../widgets/app_select_field.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_scaffold.dart';
+import '../../widgets/common/notification_badge.dart';
+import '../common/notification_screen.dart';
 
 /// 🏢 사업장 등록/수정 화면 (Stepper 방식)
 class BusinessFormScreen extends StatefulWidget {
@@ -275,8 +277,26 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           if (confirmed == true && nav.context.mounted) nav.pop();
         }
       },
-      child: GradientScaffold(
+      child: AppPageScaffold(
         title: _isEditMode ? '사업장 수정' : '사업장 등록',
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.home_outlined),
+            onPressed: () => NavigationHelper.goHome(context),
+            color: AppColors.textSecondary,
+            tooltip: '홈',
+          ),
+          NotificationBadge(
+            child: IconButton(
+              icon: const Icon(Icons.notifications_outlined),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const NotificationScreen()),
+              ),
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ],
         body: _isLoading
           ? const LoadingWidget()
           : Column(
@@ -427,7 +447,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           return Container(
             margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: AppColors.surface,
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: _selectedCategory == entry.key
