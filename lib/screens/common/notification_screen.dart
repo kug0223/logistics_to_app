@@ -12,8 +12,8 @@ import '../user/my_applications_screen.dart';
 import '../user/my_schedule_screen.dart';
 import '../user/user_contracts_screen.dart';
 import '../user/dialogs/my_requests_dialog.dart';
-import '../business_admin/workforce_management/integrated_workforce_screen.dart';
 import '../business_admin/jobs_root_screen.dart';
+import '../business_admin/member_management_screen.dart';
 import '../contract/contract_sign_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -1097,23 +1097,26 @@ class _NotificationScreenState extends State<NotificationScreen> {
         await _handleMemberInvitation(context, notification);
         break;
 
+      // [CALLER3-PATCH] IWS → MemberManagementScreen(OWNER-ONLY).
+      // 두 이벤트 모두 초대한 BUSINESS_ADMIN(OWNER)에게 발송 — member management 도메인.
+      // payload: {action:"memberManagement", businessId}.
+      // requiredPermission: (p) => false → SubAdmin은 멤버십 존재 여부와 무관하게 차단.
+      // MemberManagementScreen 자체 가드(isBusinessAdmin)와 이중 방어.
       case NotificationType.memberInvitationAccepted:
       case NotificationType.memberInvitationRejected:
-        // 초대 수락/거절 결과는 통합 인력 관리 화면에서 확인 — 의도된 설계.
-        // SubAdmin은 알림 발송 후 권한이 취소됐을 수 있으므로 businessId 멤버십 재검증.
         {
           final access = await _validateAdminNotificationAccess(
             context,
             businessId: notification.data?['businessId']?.toString(),
+            requiredPermission: (p) => false,
           );
           if (!context.mounted) return;
           if (_handleAdminAccess(access)) {
             Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-                initialBusinessId: notification.data?['businessId']?.toString(),
-                notificationType: notification.type.name,
-              )),
+              MaterialPageRoute(
+                builder: (_) => const MemberManagementScreen(),
+              ),
             );
           }
         }
