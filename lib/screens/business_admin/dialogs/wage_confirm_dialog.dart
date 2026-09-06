@@ -1433,7 +1433,15 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
       );
       if (!confirmed || !mounted) return;
 
-      final ids = List<String>.from(_calculatedSelectedIds);
+      // [M5-PATCH] Defense-in-depth: only wageCalculated IDs reach callableWageCancel.
+      // Stale IDs (wageConfirmed after a concurrent action) are dropped here.
+      final ids = _calculatedSelectedIds
+          .where((id) => widget.attendanceMap[id]?.wageStatus == AttendanceModel.wageCalculated)
+          .toList();
+      if (ids.isEmpty) {
+        ToastHelper.showWarning('취소할 수 있는 급여 확정 내역이 없습니다');
+        return;
+      }
       final appSnapshots = <String, ApplicationModel>{};
       for (final id in ids) {
         final matches = _calculatedWorkers.where((a) => a.id == id);
@@ -2008,7 +2016,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
               final isConfirmed = attendance?.wageStatus == AttendanceModel.wageConfirmed;
               return RepaintBoundary(child: Stack(
                 children: [
-                  _buildWorkerCard(context, theme, app, _calculatedSelectedIds, false),
+                  _buildWorkerCard(context, theme, app, _calculatedSelectedIds, false, isSelectable: !isConfirmed),
                   if (isConfirmed)
                     Positioned(
                       top: 10,
@@ -2317,7 +2325,15 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   /// 선택 바
   Widget _buildSelectionBar(BuildContext context, ThemeData theme, List<ApplicationModel> workers, Set<String> selectedIds, bool isPending) {
     final hasSelection = selectedIds.isNotEmpty;
-    final selectAll = selectedIds.length == workers.length && workers.isNotEmpty;
+    // [M5-PATCH] Tab 1 eligibility: wageConfirmed rows are read-only in Tab 1.
+    // Tab 0 (isPending=true): all workers are wagePending → all eligible.
+    final eligibleIds = isPending
+        ? workers.map((a) => a.id).toSet()
+        : workers
+            .where((a) => widget.attendanceMap[a.id]?.wageStatus != AttendanceModel.wageConfirmed)
+            .map((a) => a.id)
+            .toSet();
+    final selectAll = eligibleIds.isNotEmpty && selectedIds.containsAll(eligibleIds);
     final accentColor = isPending ? AppColors.warning : theme.primaryColor;
 
     return Container(
@@ -2330,9 +2346,9 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
             activeColor: accentColor,
             onTap: () => setState(() {
               if (!selectAll) {
-                selectedIds.addAll(workers.map((a) => a.id));
+                selectedIds.addAll(eligibleIds);
               } else {
-                selectedIds.clear();
+                selectedIds.removeAll(eligibleIds);
               }
             }),
           ),
@@ -2372,7 +2388,7 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
   }
 
   /// 근무자 카드
-  Widget _buildWorkerCard(BuildContext context, ThemeData theme, ApplicationModel app, Set<String> selectedIds, bool isPending) {
+  Widget _buildWorkerCard(BuildContext context, ThemeData theme, ApplicationModel app, Set<String> selectedIds, bool isPending, {bool isSelectable = true}) {
     final user = widget.userMap[app.uid];
     final attendance = widget.attendanceMap[app.id];
     final wage = _calculatedWages[app.id];
@@ -2430,16 +2446,18 @@ class _WageConfirmDialogState extends State<WageConfirmDialog> with SingleTicker
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 체크박스
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2),
-                      child: AppCheckbox(
-                        value: isSelected,
-                        activeColor: accentColor,
-                        onTap: () => _handleWorkerCheckboxTap(app, selectedIds),
+                    // 체크박스 — [M5-PATCH] wageConfirmed는 Tab 1에서 read-only (isSelectable: false)
+                    if (isSelectable) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: AppCheckbox(
+                          value: isSelected,
+                          activeColor: accentColor,
+                          onTap: () => _handleWorkerCheckboxTap(app, selectedIds),
+                        ),
                       ),
-                    ),
-                    SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+                      SizedBox(width: ResponsiveHelper.spacing(context, 10)),
+                    ],
 
                     // 정보 — Expanded로 전체 너비 확보
                     Expanded(
