@@ -8,10 +8,13 @@ import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import 'admin_month_detail_screen.dart';
-import '../../widgets/common/gradient_scaffold.dart';
-import '../../widgets/common/app_empty_state.dart';
-import '../../widgets/common/loading_widget.dart';
+import '../../screens/common/notification_screen.dart';
+import '../../utils/navigation_helper.dart';
 import '../../utils/toast_helper.dart';
+import '../../widgets/common/app_empty_state.dart';
+import '../../widgets/common/app_page_scaffold.dart';
+import '../../widgets/common/loading_widget.dart';
+import '../../widgets/common/notification_badge.dart';
 
 class AdminStatsScreen extends StatefulWidget {
   final List<String> businessIds;
@@ -193,17 +196,46 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return GradientScaffold(
+    // [DESIGN-PATCH-3] GradientScaffold → AppPageScaffold — 관리자 통계 화면 flat admin 정렬
+    // headerContent(interactive filter) → body 상단 persistent filter로 이동
+    // loading/error/empty 상태에서도 filter 접근 가능하도록 Column([header, Expanded(body)])
+    return AppPageScaffold(
       title: '통계',
-      showNotificationBell: true,
-      onRefresh: _loadStats,
-      headerContent: _buildHeader(theme),
-      body: _isLoading
-          ? const LoadingWidget(message: '통계 불러오는 중...')
-          : RefreshIndicator(
-              onRefresh: _loadStats,
-              child: _buildContent(),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.refresh_rounded),
+          onPressed: _loadStats,
+          color: AppColors.textSecondary,
+        ),
+        IconButton(
+          icon: const Icon(Icons.home_outlined),
+          onPressed: () => NavigationHelper.goHome(context),
+          color: AppColors.textSecondary,
+        ),
+        NotificationBadge(
+          child: IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const NotificationScreen()),
             ),
+            color: AppColors.textSecondary,
+          ),
+        ),
+      ],
+      body: Column(
+        children: [
+          _buildHeader(theme),
+          Expanded(
+            child: _isLoading
+                ? const LoadingWidget(message: '통계 불러오는 중...')
+                : RefreshIndicator(
+                    onRefresh: _loadStats,
+                    child: _buildContent(),
+                  ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -231,31 +263,35 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                     vertical: ResponsiveHelper.spacing(context, 9),
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.15),
+                    color: AppColors.grey100,
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Row(
-                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(Icons.business_outlined,
-                          color: Colors.white,
+                          color: AppColors.textSecondary,
                           size: ResponsiveHelper.iconSize(context, 16)),
                       SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                      Text(
-                        // _businesses.isEmpty 체크가 단락 평가되므로
-                        // orElse의 _businesses.first는 리스트가 비어있을 때 도달 불가 — 안전
-                        _filterBusinessId == null || _businesses.isEmpty
-                            ? '전체 사업장'
-                            : _businesses
-                                .firstWhere((b) => b.id == _filterBusinessId,
-                                    orElse: () => _businesses.first)
-                                .name,
-                        style: ResponsiveHelper.smallStyle(context,
-                            color: Colors.white, fontWeight: FontWeight.w600),
+                      Flexible(
+                        child: Text(
+                          // _businesses.isEmpty 체크가 단락 평가되므로
+                          // orElse의 _businesses.first는 리스트가 비어있을 때 도달 불가 — 안전
+                          _filterBusinessId == null || _businesses.isEmpty
+                              ? '전체 사업장'
+                              : _businesses
+                                  .firstWhere((b) => b.id == _filterBusinessId,
+                                      orElse: () => _businesses.first)
+                                  .name,
+                          style: ResponsiveHelper.smallStyle(context,
+                              color: AppColors.textPrimary,
+                              fontWeight: FontWeight.w600),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                       SizedBox(width: ResponsiveHelper.spacing(context, 6)),
                       Icon(Icons.keyboard_arrow_down_rounded,
-                          color: Colors.white.withValues(alpha: 0.8),
+                          color: AppColors.textSecondary,
                           size: ResponsiveHelper.iconSize(context, 18)),
                     ],
                   ),
@@ -285,7 +321,7 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
                   child: Text(
                     '$_selectedYear년',
                     style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                        color: Colors.white, fontWeight: FontWeight.bold),
+                        color: AppColors.textPrimary, fontWeight: FontWeight.bold),
                   ),
                 ),
                 _ArrowBtn(
@@ -973,13 +1009,11 @@ class _ArrowBtn extends StatelessWidget {
       child: Container(
         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 6)),
         decoration: BoxDecoration(
-          color: Colors.white
-              .withValues(alpha: onTap == null ? 0.05 : 0.15),
+          color: onTap == null ? AppColors.grey100 : AppColors.grey200,
           shape: BoxShape.circle,
         ),
         child: Icon(icon,
-            color:
-                Colors.white.withValues(alpha: onTap == null ? 0.3 : 1.0),
+            color: onTap == null ? AppColors.grey300 : AppColors.textSecondary,
             size: ResponsiveHelper.iconSize(context, 20)),
       ),
     );
