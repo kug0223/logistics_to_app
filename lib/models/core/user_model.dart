@@ -382,7 +382,9 @@ class UserModel {
   /// 장기 공고: hasIdDocument + hasWageDocumentsReady
   /// 단기(슬롯) 공고는 isIdVerified 추가 필요 — 이 getter는 공통 기반값.
   ///
-  /// TODO: job_posting_screen, apply_prerequisites_screen을 이 getter로 통일할 것.
+  /// ⚠️ 이 getter는 문서 존재 여부만 확인한다.
+  /// 전체 지원 prerequisite(isIdVerified·PASS 본인인증·blacklist·restriction·accountStatus·
+  /// contextual server check)는 포함하지 않으므로 단독으로 지원 gate로 사용하지 말 것.
   bool get hasApplicationDocumentsReady => hasIdDocument && hasWageDocumentsReady;
 
   /// 가입 승인 대기 중 (레거시 'pending' 또는 V3 'registration_pending')

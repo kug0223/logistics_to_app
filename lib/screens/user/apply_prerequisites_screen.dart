@@ -424,7 +424,8 @@ bool meetsApplyPrerequisites(UserModel user, {required bool isFlexType}) {
   if (user.isBlacklisted || user.isRestricted) {
     return false;
   }
-  if (!user.isPassVerified) {
+  // 내국인만 PASS 필수 — 외국인은 CF와 동일하게 면제
+  if (!user.isForeign && !user.isPassVerified) {
     return false;
   }
   if (!user.hasIdDocument) {
