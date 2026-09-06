@@ -88,7 +88,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // 컨트롤러에 필터 다이얼로그 콜백 등록 (IntegratedWorkforceScreen의 필터 버튼이 호출)
+    // 컨트롤러에 필터 다이얼로그 콜백 등록
     _workforceController ??= context.read<WorkforceController>();
     _workforceController!.registerShowFilterCallback(_showFilterDialog);
     _workforceController!.registerOnExternalReload(_clearExpansionState);

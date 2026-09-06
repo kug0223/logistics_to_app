@@ -10,10 +10,6 @@
 //   3: 정산   (PayrollOverviewScreen)    — 사업장별 급여 관리
 //   4: MY     (SettingsScreen)           — 계정·앱 설정
 //
-// [IntegratedWorkforceScreen]
-//   삭제하지 않음 — FCM deep link 등 다른 route에서 사용 가능성 유지.
-//   이 Shell에서는 직접 destination으로 사용하지 않음.
-//
 // [Controller 분리]
 //   JobsRootScreen.WorkforceController ≠ WorkforceRootScreen.WorkforceController
 //   각 Root가 전용 controller 인스턴스 보유 — filter/tab/loading state 격리.

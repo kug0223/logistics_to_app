@@ -448,7 +448,6 @@ class FCMService {
       // 근무자 서명 완료 알림 — 관리자 전용, 계약 관리 화면으로 직접 이동
       // SP-M-2 수정: initialize() 시 저장된 _currentUserIsAdmin으로 역할 가드.
       // USER(isAdmin=false)이면 관리자 전용 화면 대신 UserContractsScreen으로 폴백.
-      // [PATCH-FCM-C] IWS → AdminContractManagementScreen(target B, initialTab=0 전체)
       case 'contractSigned':
         if (_currentUserIsAdmin) {
           if (notifBusinessId == null) {
@@ -497,9 +496,7 @@ class FCMService {
           _navigateToNotificationScreen();
         }
         break;
-      // [BUG-FCM-01 수정] 'contractRenewal'(contractExpiringReminder) — 관리자는 계약 관리 화면으로 직접 이동.
-      // 기존: case 없어 default → 알림 목록 경유 2탭 필요. 관리자면 바로 AdminContractManagementScreen으로.
-      // [PATCH-FCM-C] IWS → AdminContractManagementScreen(target B, initialTab=3 완료)
+      // 'contractRenewal'(contractExpiringReminder) — 관리자는 계약 관리 화면으로 직접 이동.
       // 갱신 대상 계약은 이미 완료(완료 탭)된 상태이므로 Tab 3이 가장 관련성 높음.
       case 'contractRenewal':
         if (_currentUserIsAdmin) {
@@ -624,8 +621,7 @@ class FCMService {
         );
         break;
       // ─── 스케줄 변경 ─────────────────────────────────────────────
-      // [PATCH-FCM-A1A] scheduleChangeRequested 관리자 IWS route 제거
-      // WORKFORCE-SUBADMIN-BIZCTX-01 회피: target B ≠ effective A → wrong-context
+      // scheduleChangeRequested: WORKFORCE-SUBADMIN-BIZCTX-01 회피 — NotificationScreen 경유
       // TODO(R3B): NotificationScreen canonicalization 후 ScheduleRequestManagementDialog 직접 연결
       case 'scheduleChangeRequested':
         if (_currentUserIsAdmin) {
@@ -662,9 +658,7 @@ class FCMService {
         }
         break;
       // ─── 계약 작성 요청 ──────────────────────────────────────────
-      // contractRequested: worker→admin CONTRACT intent — canManageContract
-      // [PATCH-FCM-C] IWS → AdminContractManagementScreen(target B, initialTab=1 미발송)
-      // 근로자가 계약서 발송을 요청/독촉 → 관리자의 action은 미발송 탭에서 계약서 전송.
+      // contractRequested: worker→admin — 근로자가 계약서 발송을 요청/독촉 → 미발송 탭에서 처리.
       case 'contractRequested':
         if (_currentUserIsAdmin) {
           if (notifBusinessId == null) {
@@ -703,9 +697,7 @@ class FCMService {
       // memberInvitationReceived: 다이얼로그 처리 필요 → 알림 탭에서 처리 (케이스 없음 → default)
       case 'memberInvitationAccepted':
       case 'memberInvitationRejected':
-        // [PATCH-FCM-D] ADMIN.POSTING.ROUTE-INTEGRITY-01
-        // admin·non-admin 모두 NotificationScreen으로 — IntegratedWorkforceScreen(IWS) 제거
-        // 멤버 초대 결과는 대화 컨텍스트(알림 목록)에서 처리
+        // FCM deep link는 NotificationScreen 경유 — 인앱 알림에서 MemberManagementScreen으로 이동
         _navigateToNotificationScreen();
         break;
       // ─── 신분증 열람 ─────────────────────────────────────────────
@@ -714,8 +706,6 @@ class FCMService {
         break;
       case 'idCardAccessApproved':
       case 'idCardAccessRejected':
-        // [PATCH-FCM-D] ADMIN.POSTING.ROUTE-INTEGRITY-01
-        // admin·non-admin 모두 NotificationScreen으로 — IntegratedWorkforceScreen(IWS) 제거
         // 신분증 열람 결과는 알림 목록에서 열람 컨텍스트와 함께 처리
         _navigateToNotificationScreen();
         break;
@@ -747,9 +737,7 @@ class FCMService {
         );
         break;
       // ─── 중간정산 (FCM-01) ────────────────────────────────────────
-      // [FCM-ROUTE-01] 중간정산 관리 canonical destination 교체:
-      //   IntegratedWorkforceScreen(NO DIRECT MANAGEMENT)
-      //   → PayrollPaymentDashboardScreen(FULL MANAGEMENT, tab 3)
+      // interimSettlementAdmin → PayrollPaymentDashboardScreen(tab 3).
       // SUB_ADMIN: role==USER → _currentUserIsAdmin==false → NotificationScreen 경유 permission 검증.
       // year/month: settlement tab query는 businessId 기준(month-free), DateTime.now() fallback 안전.
       case 'interimSettlementAdmin': // 관리자 수신 — 급여 중간정산 탭으로 직접 이동
@@ -798,12 +786,8 @@ class FCMService {
       // ─── 공고 만료 임박 (관리자 전용, CF masterScheduler) ────
       case 'toDetail': // toPostingExpiringTomorrow 알림의 screen 필드 값
         if (_currentUserIsAdmin) {
-          // [P2-B-FIX] IntegratedWorkforceScreen push 대신 Shell Jobs 탭 전환
-          // Shell 활성 상태(포그라운드/백그라운드) → 탭 전환
-          // [PATCH-FCM-E] ADMIN.POSTING.ROUTE-INTEGRITY-01
-          // Shell 미활성(disposed) edge case → NotificationScreen 안전 fallback
-          // 정상 cold-start(BusinessAdminShell 경유)에서는 AdminTabSwitcher가
-          // initState에서 동기 등록되므로 switchToTab이 항상 true — 이 분기 미도달
+          // Shell 활성 시 Jobs 탭 전환. 미활성(disposed) edge case → NotificationScreen fallback.
+          // 정상 cold-start에서는 AdminTabSwitcher가 initState 동기 등록 → switchToTab 항상 true.
           if (!AdminTabSwitcher.instance.switchToTab(AdminTabSwitcher.jobsTab)) {
             _navigateToNotificationScreen();
           }

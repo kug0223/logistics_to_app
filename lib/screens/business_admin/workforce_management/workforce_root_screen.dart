@@ -21,10 +21,6 @@
 //   SubAdmin: 배정 사업장 (up.subAdminBusinessNames)
 //   미로드 시: '내 사업장' fallback
 //
-// [마감관리 canonical route]
-//   WorkforceCalendarView(hideCloseManagement: true)로 숨김.
-//   IntegratedWorkforceScreen(legacy)에서는 4개 버튼 모두 유지.
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -32,7 +28,6 @@ import '../../../controllers/workforce_controller.dart';
 import '../../../providers/user_provider.dart';
 import '../../../services/fcm_service.dart';
 import '../../../theme/app_colors.dart';
-// workforce_calendar_view.dart는 IntegratedWorkforceScreen에서 계속 사용됨 — 삭제 금지
 import 'workforce_operational_view.dart';
 
 class WorkforceRootScreen extends StatefulWidget {
@@ -118,8 +113,6 @@ class _WorkforceRootScreenState extends State<WorkforceRootScreen>
             children: [
               _buildHeader(s),
               const Expanded(
-                // PHASE 5B.1: WorkforceOperationalView — Date/Worker 운영 UX
-                // (기존 WorkforceCalendarView는 IntegratedWorkforceScreen에서 유지)
                 child: WorkforceOperationalView(),
               ),
             ],
