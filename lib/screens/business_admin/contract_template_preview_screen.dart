@@ -4,8 +4,11 @@ import '../../models/core/contract_template_model.dart';
 import '../../models/core/employment_contract_model.dart';
 import '../../screens/contract/contract_sign_screen.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_scaffold.dart';
+import '../../widgets/common/notification_badge.dart';
+import '../common/notification_screen.dart';
 
 /// 계약서 템플릿 미리보기 화면
 ///
@@ -41,8 +44,27 @@ class ContractTemplatePreviewScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GradientScaffold(
+    return AppPageScaffold(
       title: '미리보기',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.home_outlined),
+          color: AppColors.textSecondary,
+          onPressed: () => NavigationHelper.goHome(context),
+          tooltip: '홈',
+        ),
+        NotificationBadge(
+          child: IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            color: AppColors.textSecondary,
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const NotificationScreen()),
+            ),
+            tooltip: '알림',
+          ),
+        ),
+      ],
       body: Column(
         children: [
           // 안내 배너
@@ -74,8 +96,16 @@ class ContractTemplatePreviewScreen extends StatelessWidget {
           // 계약서 본문
           Expanded(
             child: SingleChildScrollView(
-              padding:
-                  EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
+              padding: EdgeInsets.fromLTRB(
+                ResponsiveHelper.spacing(context, 16),
+                ResponsiveHelper.spacing(context, 16),
+                ResponsiveHelper.spacing(context, 16),
+                // AppPageScaffold는 body에 하단 SafeArea를 적용하지 않는다.
+                // 시각적 여백(16) + 기기 하단 인셋(홈 인디케이터/제스처 바)을 더해
+                // 계약서 본문 하단이 시스템 내비게이션 영역에 가려지지 않도록 한다.
+                ResponsiveHelper.spacing(context, 16) +
+                    MediaQuery.paddingOf(context).bottom,
+              ),
               child: ContractTemplateWidget(
                 snapshot: _dummySnapshot,
                 contractDate: DateTime.now(),

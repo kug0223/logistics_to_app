@@ -12,8 +12,11 @@ import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import 'contract_template_edit_screen.dart';
 import 'contract_template_preview_screen.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../utils/navigation_helper.dart';
+import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/app_empty_state.dart';
+import '../../widgets/common/notification_badge.dart';
+import '../common/notification_screen.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
 
@@ -153,8 +156,27 @@ class _ContractTemplateListScreenState
 
   @override
   Widget build(BuildContext context) {
-    return GradientScaffold(
+    return AppPageScaffold(
       title: '근로계약서 관리',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.home_outlined),
+          color: AppColors.textSecondary,
+          onPressed: () => NavigationHelper.goHome(context),
+          tooltip: '홈',
+        ),
+        NotificationBadge(
+          child: IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            color: AppColors.textSecondary,
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const NotificationScreen()),
+            ),
+            tooltip: '알림',
+          ),
+        ),
+      ],
       body: _loading
           ? const LoadingWidget()
           : _templates.isEmpty
@@ -587,7 +609,7 @@ class _TemplateCard extends StatelessWidget {
       margin:
           EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppColors.grey200),
         boxShadow: [
