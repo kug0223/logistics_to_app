@@ -23,8 +23,14 @@ import '../../services/support_review_queue_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/loading_state_mixin.dart';
+import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
+import '../../widgets/common/app_empty_state.dart';
+import '../../widgets/common/app_page_scaffold.dart';
+import '../../widgets/common/loading_widget.dart';
+import '../../widgets/common/notification_badge.dart';
+import '../common/notification_screen.dart';
 
 // ─── 우선순위 분류 ────────────────────────────────────────────────────────────
 
@@ -436,32 +442,33 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) Navigator.pop(context, _hasChanges);
       },
-      child: Scaffold(
-        backgroundColor: AppColors.surface,
-        appBar: AppBar(
-          backgroundColor: AppColors.surface,
-          foregroundColor: AppColors.brand,
-          elevation: 0,
-          scrolledUnderElevation: 1,
-          surfaceTintColor: Colors.transparent,
-          title: Text(
-            '지원 검토',
-            style: ResponsiveHelper.titleStyle(context, color: AppColors.textPrimary),
+      child: AppPageScaffold(
+        title: '지원 검토',
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh, size: 22),
+            color: AppColors.textSecondary,
+            onPressed: isLoading ? null : _load,
+            tooltip: '새로고침',
           ),
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back_ios_new, size: 20),
-            onPressed: () => Navigator.pop(context, _hasChanges),
+          IconButton(
+            icon: const Icon(Icons.home_outlined),
+            color: AppColors.textSecondary,
+            onPressed: () => NavigationHelper.goHome(context),
+            tooltip: '홈',
           ),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.refresh, size: 22),
-              onPressed: isLoading ? null : _load,
-              tooltip: '새로고침',
+          NotificationBadge(
+            child: IconButton(
+              icon: const Icon(Icons.notifications_outlined),
+              color: AppColors.textSecondary,
+              onPressed: () => Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const NotificationScreen())),
+              tooltip: '알림',
             ),
-          ],
-        ),
+          ),
+        ],
         body: isLoading
-            ? const Center(child: CircularProgressIndicator())
+            ? const LoadingWidget()
             : _buildBody(),
       ),
     );
@@ -488,6 +495,11 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
               : groups.isEmpty
                   ? _buildEmptyStateFiltered()
                   : ListView.builder(
+                      // AppPageScaffold는 body에 하단 SafeArea를 적용하지 않는다.
+                      // gesture navigation 기기에서 마지막 row가 시스템 바에 가리지 않도록 보정.
+                      padding: EdgeInsets.only(
+                        bottom: MediaQuery.paddingOf(context).bottom,
+                      ),
                       itemCount: listItems.length,
                       itemBuilder: (ctx, i) => _buildListItem(listItems[i]),
                     ),
@@ -777,79 +789,33 @@ class _SupportReviewQueueScreenState extends State<SupportReviewQueueScreen>
   // ─── Empty / Error 상태 ─────────────────────────────────────────────────────
 
   Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.check_circle_outline, size: 56, color: AppColors.textHint),
-          const SizedBox(height: 12),
-          Text(
-            '검토할 지원이 없어요',
-            style: ResponsiveHelper.bodyStyle(
-              context,
-              color: AppColors.textTertiary,
-              fontWeight: FontWeight.w500,
-            ).copyWith(fontSize: 15),
-          ),
-        ],
-      ),
+    return const AppEmptyState(
+      icon: Icons.check_circle_outline,
+      title: '검토할 지원이 없어요',
     );
   }
 
   Widget _buildEmptyStateFiltered() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.filter_list_off, size: 48, color: AppColors.textHint),
-          const SizedBox(height: 12),
-          Text(
-            '해당 조건의 지원이 없어요',
-            style: ResponsiveHelper.bodyStyle(
-              context,
-              color: AppColors.textTertiary,
-            ).copyWith(fontSize: 15),
-          ),
-          const SizedBox(height: 8),
-          TextButton(
-            onPressed: () => setState(() => _filter = _Filter.all),
-            child: const Text('전체 보기'),
-          ),
-        ],
+    return AppEmptyState(
+      icon: Icons.filter_list_off,
+      title: '해당 조건의 지원이 없어요',
+      action: TextButton(
+        onPressed: () => setState(() => _filter = _Filter.all),
+        child: const Text('전체 보기'),
       ),
     );
   }
 
   // [CR-01 FIX] ERROR state — permission-denied/network 등 실패 시 표시
   Widget _buildErrorState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.error_outline, size: 56, color: AppColors.errorLight),
-          const SizedBox(height: 12),
-          Text(
-            '지원 내역을 불러오지 못했어요',
-            style: ResponsiveHelper.bodyStyle(
-              context,
-              fontWeight: FontWeight.w500,
-              color: AppColors.textPrimary,
-            ).copyWith(fontSize: 15),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '잠시 후 다시 시도해 주세요.',
-            style: ResponsiveHelper.bodyStyle(
-              context,
-              color: AppColors.textTertiary,
-            ).copyWith(fontSize: 13),
-          ),
-          const SizedBox(height: 16),
-          TextButton(
-            onPressed: _load,
-            child: const Text('다시 시도'),
-          ),
-        ],
+    return AppEmptyState(
+      icon: Icons.error_outline,
+      iconColor: AppColors.error,
+      title: '지원 내역을 불러오지 못했어요',
+      subtitle: '잠시 후 다시 시도해 주세요.',
+      action: TextButton(
+        onPressed: _load,
+        child: const Text('다시 시도'),
       ),
     );
   }
