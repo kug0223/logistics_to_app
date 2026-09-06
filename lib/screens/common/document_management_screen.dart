@@ -652,7 +652,7 @@ class _DocumentManagementScreenState extends State<DocumentManagementScreen> {
     final bankStatus     = user.bankVerificationStatus;
     final isBankMismatch = bankStatus == 'mismatch';
     // Canonical 기준: UserModel.hasWageDocumentsReady와 동일
-    // (hasBankAccount && hasBankbookDocument && !mismatch)
+    // (hasBankAccount && hasBankbookDocument)
     final isBankReadyForApply = user.hasWageDocumentsReady;
     // 미사용 변수 방지: 이 함수에서 isBankVerified/isBankReviewRequired는
     // _buildBankInfoSection 내부에서 별도 계산하므로 여기서 선언하지 않는다.

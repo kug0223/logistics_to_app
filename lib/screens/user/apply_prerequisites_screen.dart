@@ -53,12 +53,7 @@ class _ApplyPrerequisitesScreenState extends State<ApplyPrerequisitesScreen> {
 
   bool get _idVerified => _user?.isIdVerified ?? false;
 
-  bool get _accountReady {
-    final u = _user;
-    return u != null &&
-        u.bankName != null && u.bankName!.isNotEmpty &&
-        u.accountNumber != null && u.accountNumber!.isNotEmpty;
-  }
+  bool get _accountReady => _user?.hasBankAccount == true;
 
   bool get _bankbookReady {
     final u = _user;
@@ -438,10 +433,7 @@ bool meetsApplyPrerequisites(UserModel user, {required bool isFlexType}) {
   if (isFlexType && !user.isIdVerified) {
     return false;
   }
-  if (user.bankName == null || user.bankName!.isEmpty ||
-      user.accountNumber == null || user.accountNumber!.isEmpty) {
-    return false;
-  }
+  if (!user.hasBankAccount) return false;
   if (!user.hasBankbookDocument) {
     return false;
   }
