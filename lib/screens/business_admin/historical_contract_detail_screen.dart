@@ -7,10 +7,13 @@ import '../../models/core/insurance_rate_model.dart';
 import '../../services/historical_contract_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../../widgets/common/notification_badge.dart';
+import '../common/notification_screen.dart';
 
 /// 보관된 계약서 상세 화면 — READ ONLY.
 ///
@@ -114,6 +117,23 @@ class _HistoricalContractDetailScreenState
   Widget build(BuildContext context) {
     return AppPageScaffold(
       title: '계약서 상세',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.home_outlined),
+          color: AppColors.textSecondary,
+          onPressed: () => NavigationHelper.goHome(context),
+          tooltip: '홈',
+        ),
+        NotificationBadge(
+          child: IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            color: AppColors.textSecondary,
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const NotificationScreen())),
+            tooltip: '알림',
+          ),
+        ),
+      ],
       body: _buildBody(context),
     );
   }
