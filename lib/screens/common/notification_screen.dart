@@ -624,7 +624,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       // confirmationCanceled는 양방향:
       //   createConfirmationCanceled        → 지원자에게 (data에 toId/workDetailId 없음)
       //   createConfirmationCanceledByWorker → 관리자에게 (data에 toId/workDetailId 포함)
-      // 관리자가 탭하면 WorkApplicantsDialog를 열고, 없으면 IntegratedWorkforceScreen 폴백.
+      // 관리자가 탭하면 권한 확인 후 WorkApplicantsDialog를 연다.
       //
       // [FCM vs 알림함 라우팅 불일치 — 의도적 유지]
       // FCMService의 confirmationCanceled는 screen: "mySchedule" 데이터를 받아 MyScheduleScreen으로 이동.
