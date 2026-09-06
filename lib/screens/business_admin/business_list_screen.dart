@@ -28,9 +28,11 @@ import 'business_form_screen.dart';
 import 'to_management/create_to_screen.dart';
 import '../../widgets/common/app_menu_sheet.dart';
 import '../../theme/app_colors.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_scaffold.dart';
+import '../../widgets/common/notification_badge.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../common/notification_screen.dart';
 
 /// 📋 내 사업장 관리 화면 (관리자 전용)
 class BusinessListScreen extends StatefulWidget {
@@ -157,9 +159,32 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
     final userProvider = context.read<UserProvider>();
     final isSubAdmin = userProvider.isSubAdmin;
 
-    return GradientScaffold(
+    return AppPageScaffold(
       title: '내 사업장 관리',
-      onRefresh: () => _loadBusinesses(forceServer: true),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.refresh_rounded),
+          onPressed: () => _loadBusinesses(forceServer: true),
+          color: AppColors.textSecondary,
+          tooltip: '새로고침',
+        ),
+        IconButton(
+          icon: const Icon(Icons.home_outlined),
+          onPressed: () => NavigationHelper.goHome(context),
+          color: AppColors.textSecondary,
+          tooltip: '홈',
+        ),
+        NotificationBadge(
+          child: IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const NotificationScreen()),
+            ),
+            color: AppColors.textSecondary,
+          ),
+        ),
+      ],
       body: _isLoading
           ? const LoadingWidget()
           : _businesses.isEmpty

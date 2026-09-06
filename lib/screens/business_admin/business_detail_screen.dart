@@ -23,7 +23,9 @@ import '../../widgets/maps/full_map_dialog.dart';
 import 'business_form_screen.dart';
 import '../../utils/navigation_helper.dart';
 import '../../theme/app_colors.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_scaffold.dart';
+import '../../widgets/common/notification_badge.dart';
+import '../common/notification_screen.dart';
 
 
 /// 🏢 사업장 상세 화면
@@ -79,22 +81,40 @@ class _BusinessDetailScreenState extends State<BusinessDetailScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return PopScope(
-      canPop: true,
+    return PopScope<bool>(
+      canPop: false,
       onPopInvokedWithResult: (didPop, result) {
-        if (didPop && _hasChanges) {
-          // 이미 pop 되었고, 변경사항이 있으면 이전 화면에서 처리하도록
-          // Navigator.pop의 result로는 전달 안되므로 별도 처리 필요 없음
-          // business_list_screen에서 무조건 _loadBusinesses() 호출하는 방식 유지
+        if (!didPop) {
+          // [DESIGN-PATCH-5] GradientScaffold.onBack → PopScope 전환
+          // AppPageScaffold에 onBack 파라미터 없음 → back 제스처를 가로채
+          // _hasChanges 결과값을 부모(business_list_screen)에 전달
+          Navigator.of(context).pop(_hasChanges);
         }
       },
-      child: GradientScaffold(
+      child: AppPageScaffold(
         title: _currentBusiness.name,
-        onBack: () => NavigationHelper.pop(context, changed: _hasChanges),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.home_outlined),
+            onPressed: () => NavigationHelper.goHome(context),
+            color: AppColors.textSecondary,
+            tooltip: '홈',
+          ),
+          NotificationBadge(
+            child: IconButton(
+              icon: const Icon(Icons.notifications_outlined),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const NotificationScreen()),
+              ),
+              color: AppColors.textSecondary,
+            ),
+          ),
           if (!context.select<UserProvider, bool>((p) => p.isSubAdmin))
             IconButton(
-              icon: const Icon(Icons.edit_outlined, color: Colors.white),
+              icon: const Icon(Icons.edit_outlined),
+              color: AppColors.textSecondary,
+              tooltip: '수정',
               onPressed: () async {
                 await NavigationHelper.push<bool>(
                   context,
