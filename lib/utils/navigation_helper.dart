@@ -102,6 +102,18 @@ class NavigationHelper {
     // AdminTabSwitcher.isRegistered == BusinessAdminShell currently mounted
     // role == USER(SUB_ADMIN 포함) / BUSINESS_ADMIN 모두 동일하게 처리
     if (AdminTabSwitcher.instance.isRegistered) {
+      // [ADMIN.NAV.FCM-ROOT-HOME-01]
+      // FCM/root Navigator로 push된 화면(AdminContractManagementScreen 등)에서
+      // Home 버튼을 눌렀을 때 Shell은 mounted이지만 root route가 화면을 가리고 있음.
+      // Navigator identity 비교로 Shell 내부 route vs root overlay route를 구분:
+      //   - Shell tab 내부: Navigator.of(false) = tab sub-navigator ≠ root → skip
+      //   - FCM root route: Navigator.of(false) = root navigator == root → popUntil
+      // popUntil(isFirst): FCM screen 이후 추가 push된 route도 전부 제거
+      final localNavigator = Navigator.of(context, rootNavigator: false);
+      final rootNavigator = Navigator.of(context, rootNavigator: true);
+      if (identical(localNavigator, rootNavigator) && rootNavigator.canPop()) {
+        rootNavigator.popUntil((route) => route.isFirst);
+      }
       AdminTabSwitcher.instance.switchToTab(AdminTabSwitcher.homeTab);
       return;
     }
