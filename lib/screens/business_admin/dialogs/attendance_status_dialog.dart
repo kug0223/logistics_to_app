@@ -2711,6 +2711,12 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   Widget _buildProgressRow(ThemeData theme) {
     final processedCount = _processedCount;
     final isAllProcessed = _confirmedWorkers.isNotEmpty && processedCount == _confirmedWorkers.length;
+    // [SUMMARY-PATCH] Tab 2 (확인완료) 실제 인원
+    // _tabWorkers[2] = adminConfirmed==true && !isDone — Tab 표시 인원과 항상 동일
+    // raw adminConfirmed count 미사용:
+    //   isDone 이동 후에도 attendanceMap의 adminConfirmed=true가 잔존할 수 있어
+    //   처리완료 인원과 중복 집계될 위험을 차단
+    final confirmedTabCount = _tabWorkers[2].length;
 
     return Row(
       children: [
@@ -2728,6 +2734,18 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
             color: isAllProcessed ? AppColors.success : theme.primaryColor,
           ),
         ),
+        if (confirmedTabCount > 0) ...[
+          const Text('  ·  ',
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          Text(
+            '확인완료 $confirmedTabCount명',
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: AppColors.info,
+            ),
+          ),
+        ],
       ],
     );
   }
