@@ -1077,26 +1077,16 @@ class _NotificationScreenState extends State<NotificationScreen> {
       // reconfirmAdminWarning: 출근 미확인 경고 → 관리자에게만 발송 — ADMIN_ONLY
       // reconfirmDeclined: 재확인 거절(근무 취소) → 관리자에게만 발송 — ADMIN_ONLY
       // USER 수신 시 에러 토스트 (MyScheduleScreen 폴백 금지)
+      // [CALLER2-PATCH] IWS(canManageWorkers) → WorkApplicantsDialog(canManageTo).
+      // 두 이벤트 모두 단기(type="short") TO 슬롯 인력 공백 이벤트 — canManageTo 도메인.
+      // payload: {screen:"fixedWorker"(레거시 힌트), applicationId, businessId}.
+      // applicationId → Application 역추적 → toId/wdId 복원은 _openWorkApplicantsFromNotification 담당.
       case NotificationType.reconfirmAdminWarning:
       case NotificationType.reconfirmDeclined:
         if (isUser) {
           ToastHelper.showWarning('현재 처리할 수 없는 알림입니다.');
         } else {
-          final access = await _validateAdminNotificationAccess(
-            context,
-            businessId: notification.data?['businessId']?.toString(),
-            requiredPermission: (p) => p.canManageWorkers,
-          );
-          if (!context.mounted) return;
-          if (_handleAdminAccess(access)) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => IntegratedWorkforceScreen(
-                initialBusinessId: notification.data?['businessId']?.toString(),
-                notificationType: notification.type.name,
-              )),
-            );
-          }
+          await _openWorkApplicantsFromNotification(context, notification);
         }
         break;
 
