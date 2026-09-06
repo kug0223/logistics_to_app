@@ -16,8 +16,13 @@ import '../../models/core/user_model.dart';
 import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
+import '../../widgets/common/app_empty_state.dart';
+import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../../widgets/common/notification_badge.dart';
+import '../common/notification_screen.dart';
 import 'dialogs/fixed_worker_management_dialog.dart';
 
 class _ExpiringItem {
@@ -138,19 +143,27 @@ class _ExpiringContractsScreenState extends State<ExpiringContractsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: const Text('계약 종료 예정'),
-        backgroundColor: Colors.white,
-        foregroundColor: AppColors.grey800,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1),
-          child: Container(height: 1, color: AppColors.border),
+    return AppPageScaffold(
+      title: '계약 종료 예정',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.home_outlined),
+          color: AppColors.textSecondary,
+          onPressed: () => NavigationHelper.goHome(context),
+          tooltip: '홈',
         ),
-      ),
+        NotificationBadge(
+          child: IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            color: AppColors.textSecondary,
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const NotificationScreen()),
+            ),
+            tooltip: '알림',
+          ),
+        ),
+      ],
       body: _buildBody(context),
     );
   }
@@ -169,6 +182,11 @@ class _ExpiringContractsScreenState extends State<ExpiringContractsScreen> {
         const Divider(height: 1),
         Expanded(
           child: ListView.separated(
+            // AppPageScaffold는 body에 하단 SafeArea를 적용하지 않는다.
+            // gesture navigation 기기에서 마지막 row가 시스템 바에 가리지 않도록 보정.
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.paddingOf(context).bottom,
+            ),
             itemCount: _items.length,
             separatorBuilder: (_, __) =>
                 const Divider(height: 1, indent: 56),
@@ -196,44 +214,19 @@ class _ExpiringContractsScreenState extends State<ExpiringContractsScreen> {
   }
 
   Widget _buildEmpty(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.event_available, size: 48, color: AppColors.grey300),
-          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-          Text(
-            '곧 종료되는 계약이 없어요',
-            style: ResponsiveHelper.bodyStyle(context,
-                color: AppColors.grey500),
-          ),
-        ],
-      ),
+    return const AppEmptyState(
+      icon: Icons.event_available,
+      title: '곧 종료되는 계약이 없어요',
     );
   }
 
   Widget _buildError(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline, size: 48, color: AppColors.grey300),
-            SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-            Text(
-              '계약 종료 예정 정보를 불러오지 못했어요',
-              style: ResponsiveHelper.bodyStyle(context,
-                  color: AppColors.grey500),
-              textAlign: TextAlign.center,
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            TextButton(
-              onPressed: _loadData,
-              child: const Text('다시 시도'),
-            ),
-          ],
-        ),
+    return AppEmptyState(
+      icon: Icons.error_outline,
+      title: '계약 종료 예정 정보를 불러오지 못했어요',
+      action: TextButton(
+        onPressed: _loadData,
+        child: const Text('다시 시도'),
       ),
     );
   }
