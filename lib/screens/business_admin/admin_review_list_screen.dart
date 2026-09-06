@@ -27,13 +27,16 @@ import '../../services/monthly_review_service.dart';
 
 // Dialogs
 import '../../widgets/dialogs/monthly_review_dialog.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
 import '../../widgets/common/app_search_bar.dart';
 import '../../widgets/common/app_tab_label.dart';
 import '../../widgets/common/app_filter_chip.dart';
 import '../../widgets/common/app_empty_state.dart';
+import '../../widgets/common/notification_badge.dart';
 import '../../utils/business_picker_helper.dart';
+import '../../utils/navigation_helper.dart';
+import '../common/notification_screen.dart';
 
 enum _DividerMarker { expired }
 
@@ -367,11 +370,55 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     final theme = Theme.of(context);
     final hasActiveFilter = _selectedMonth > 0;
 
-    return GradientScaffold(
+    return AppPageScaffold(
       title: hasActiveFilter
           ? '리뷰 관리 · $_selectedYear년 $_selectedMonth월'
           : '리뷰 관리',
-      onRefresh: _loadReviews,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.refresh_rounded),
+          onPressed: _loadReviews,
+          color: AppColors.textSecondary,
+        ),
+        IconButton(
+          icon: const Icon(Icons.home_outlined),
+          onPressed: () => NavigationHelper.goHome(context),
+          color: AppColors.textSecondary,
+        ),
+        NotificationBadge(
+          child: IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const NotificationScreen()),
+            ),
+            color: AppColors.textSecondary,
+          ),
+        ),
+      ],
+      // [DESIGN-PATCH-4] TabBar → AppPageScaffold.bottom (기존 body Container 제거)
+      bottom: TabBar(
+        controller: _tabController,
+        indicatorColor: theme.primaryColor,
+        indicatorWeight: 3,
+        labelColor: theme.primaryColor,
+        unselectedLabelColor: AppColors.grey400,
+        dividerColor: AppColors.grey100,
+        labelStyle: ResponsiveHelper.smallStyle(context,
+            fontWeight: FontWeight.w600),
+        unselectedLabelStyle: ResponsiveHelper.smallStyle(context),
+        tabs: [
+          Tab(child: AppTabLabel(label: '작성',
+              count: _writtenReviews.length, badgeColor: theme.primaryColor)),
+          Tab(child: AppTabLabel(label: '받음',
+              count: _receivedReviews.length, badgeColor: AppColors.info)),
+          Tab(child: AppTabLabel(
+              label: '미작성',
+              count: _pendingRequests.length,
+              badgeColor: AppColors.error,
+              urgent: _pendingIsUrgent)),
+        ],
+      ),
       body: _isLoading
           ? const LoadingWidget()
           : _hasError
@@ -381,73 +428,36 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
                   subtitle: '네트워크 상태를 확인 후 당겨서 새로고침하세요',
                 )
               : Column(
-              children: [
-                // 탭 (흰 영역) — 균등 폭, 텍스트만
-                Container(
-                  color: Colors.white,
-                  child: TabBar(
-                    controller: _tabController,
-                    indicatorColor: theme.primaryColor,
-                    indicatorWeight: 3,
-                    labelColor: theme.primaryColor,
-                    unselectedLabelColor: AppColors.grey400,
-                    dividerColor: AppColors.grey100,
-                    labelStyle: ResponsiveHelper.smallStyle(context,
-                        fontWeight: FontWeight.w600),
-                    unselectedLabelStyle:
-                        ResponsiveHelper.smallStyle(context),
-                    tabs: [
-                      Tab(child: AppTabLabel(label: '작성',
-                          count: _writtenReviews.length, badgeColor: theme.primaryColor)),
-                      Tab(child: AppTabLabel(label: '받음',
-                          count: _receivedReviews.length, badgeColor: AppColors.info)),
-                      Tab(child: AppTabLabel(
-                          label: '미작성',
-                          count: _pendingRequests.length,
-                          badgeColor: AppColors.error,
-                          urgent: _pendingIsUrgent)),
-                    ],
-                  ),
-                ),
-                // 검색바
-                Container(
-                  color: Colors.white,
-                  padding: EdgeInsets.fromLTRB(
-                    ResponsiveHelper.spacing(context, 12),
-                    0,
-                    ResponsiveHelper.spacing(context, 12),
-                    ResponsiveHelper.spacing(context, 8),
-                  ),
-                  child: AppSearchBar(
-                    controller: _searchCtrl,
-                    hintText: '근무자 이름으로 검색',
-                  ),
-                ),
-                _buildMonthFilter(),
-                Expanded(
-                  child: TabBarView(
-                    controller: _tabController,
-                    children: [
-                      _buildReviewList(
-                        _writtenReviews,
-                        isWritten: true,
-                        hasMore: _hasMoreWritten,
-                        isLoadingMore: _isLoadingMoreWritten,
-                        onLoadMore: _loadMoreWritten,
+                  children: [
+                    AppSearchBar(
+                      controller: _searchCtrl,
+                      hintText: '근무자 이름으로 검색',
+                    ),
+                    _buildMonthFilter(),
+                    Expanded(
+                      child: TabBarView(
+                        controller: _tabController,
+                        children: [
+                          _buildReviewList(
+                            _writtenReviews,
+                            isWritten: true,
+                            hasMore: _hasMoreWritten,
+                            isLoadingMore: _isLoadingMoreWritten,
+                            onLoadMore: _loadMoreWritten,
+                          ),
+                          _buildReviewList(
+                            _receivedReviews,
+                            isWritten: false,
+                            hasMore: _hasMoreReceived,
+                            isLoadingMore: _isLoadingMoreReceived,
+                            onLoadMore: _loadMoreReceived,
+                          ),
+                          _buildPendingRequestList(),
+                        ],
                       ),
-                      _buildReviewList(
-                        _receivedReviews,
-                        isWritten: false,
-                        hasMore: _hasMoreReceived,
-                        isLoadingMore: _isLoadingMoreReceived,
-                        onLoadMore: _loadMoreReceived,
-                      ),
-                      _buildPendingRequestList(),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
     );
   }
 
@@ -459,7 +469,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     final yearIdx = years.indexOf(_selectedYear);
 
     return Container(
-      color: Colors.white,
+      color: AppColors.surface,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -564,29 +574,10 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
     VoidCallback? onLoadMore,
   }) {
     if (reviews.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              isWritten ? Icons.rate_review : Icons.reviews,
-              size: ResponsiveHelper.iconSize(context, 64),
-              color: AppColors.grey300,
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            Text(
-              isWritten ? '작성한 리뷰가 없습니다' : '받은 리뷰가 없습니다',
-              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
-            ),
-            if (_selectedMonth > 0) ...[
-              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-              Text(
-                '$_selectedMonth월 필터 적용 중',
-                style: ResponsiveHelper.smallStyle(context, color: AppColors.grey400),
-              ),
-            ],
-          ],
-        ),
+      return AppEmptyState(
+        icon: isWritten ? Icons.rate_review : Icons.reviews,
+        title: isWritten ? '작성한 리뷰가 없습니다' : '받은 리뷰가 없습니다',
+        subtitle: _selectedMonth > 0 ? '$_selectedMonth월 필터 적용 중' : null,
       );
     }
 
@@ -602,15 +593,10 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
           }).toList();
 
     if (filtered.isEmpty && _searchQuery.isNotEmpty) {
-      return Center(
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Icon(Icons.search_off_rounded,
-              size: ResponsiveHelper.iconSize(context, 48),
-              color: AppColors.grey300),
-          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-          Text('"$_searchQuery" 검색 결과 없음',
-              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500)),
-        ]),
+      return AppEmptyState(
+        icon: Icons.search_off_rounded,
+        title: '검색 결과가 없습니다',
+        subtitle: '"$_searchQuery"에 해당하는 근무자가 없습니다',
       );
     }
 
@@ -655,22 +641,9 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
 
   Widget _buildPendingRequestList() {
     if (_pendingRequests.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.check_circle_outline,
-              size: ResponsiveHelper.iconSize(context, 64),
-              color: AppColors.grey300,
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            Text(
-              '미작성 리뷰가 없습니다',
-              style: ResponsiveHelper.bodyStyle(context, color: AppColors.grey500),
-            ),
-          ],
-        ),
+      return const AppEmptyState(
+        icon: Icons.check_circle_outline,
+        title: '미작성 리뷰가 없습니다',
       );
     }
 
@@ -737,7 +710,7 @@ class _AdminReviewListScreenState extends State<AdminReviewListScreen>
       child: Container(
         margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 12)),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.surface,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: isDeadlineSoon
