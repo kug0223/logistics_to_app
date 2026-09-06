@@ -9,12 +9,15 @@ import '../../services/member_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
+import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
-import '../../widgets/common/gradient_scaffold.dart';
 import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/app_menu_sheet.dart';
+import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../../widgets/common/notification_badge.dart';
+import '../common/notification_screen.dart';
 
 // 사업장별 멤버/초대 데이터 묶음
 class _BizSection {
@@ -216,9 +219,34 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
   @override
   Widget build(BuildContext context) {
     final isEmpty = _isEmpty; // L2: build() 내 2회 중복 평가 방지
-    return GradientScaffold(
+    return AppPageScaffold(
       title: '멤버 관리',
-      onRefresh: _load,
+      actions: [
+        // GradientScaffold.onRefresh 대응 — empty 상태에서도 수동 새로고침 가능하도록 유지
+        IconButton(
+          icon: const Icon(Icons.refresh_rounded),
+          color: AppColors.textSecondary,
+          onPressed: _load,
+          tooltip: '새로고침',
+        ),
+        IconButton(
+          icon: const Icon(Icons.home_outlined),
+          color: AppColors.textSecondary,
+          onPressed: () => NavigationHelper.goHome(context),
+          tooltip: '홈',
+        ),
+        NotificationBadge(
+          child: IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            color: AppColors.textSecondary,
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const NotificationScreen()),
+            ),
+            tooltip: '알림',
+          ),
+        ),
+      ],
       // 사업장 1개일 때만 FAB — 멤버가 있어야 표시 (empty 상태는 _buildEmpty의 버튼 사용)
       // SubAdmin은 초대 권한 없음
       floatingActionButton: !_isSubAdmin && _isSingleBiz && _sections.isNotEmpty && !isEmpty
@@ -239,8 +267,14 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
                     final items = [
                       for (final s in _sections) ..._buildSection(context, s),
                     ];
+                    // AppPageScaffold는 body에 하단 SafeArea를 적용하지 않는다.
+                    // GradientScaffold 내장 SafeArea 제거분을 보상하기 위해
+                    // listPadding의 bottom에 기기 하단 인셋을 추가한다.
+                    final lp = ResponsiveHelper.listPadding(context);
                     return ListView.builder(
-                      padding: ResponsiveHelper.listPadding(context),
+                      padding: lp.copyWith(
+                        bottom: lp.bottom + MediaQuery.paddingOf(context).bottom,
+                      ),
                       itemCount: items.length,
                       itemBuilder: (_, i) => items[i],
                     );
@@ -555,7 +589,7 @@ class _MemberCard extends StatelessWidget {
     return Container(
       margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 8)),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.grey200),
         boxShadow: [
@@ -1004,7 +1038,7 @@ class _InviteDialogState extends State<_InviteDialog> {
                       // 전화번호 검색
                       Container(
                         decoration: BoxDecoration(
-                          color: Colors.white,
+                          color: AppColors.surface,
                           borderRadius: BorderRadius.circular(14),
                           boxShadow: [
                             BoxShadow(
@@ -1325,7 +1359,7 @@ class _PermissionToggleList extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
