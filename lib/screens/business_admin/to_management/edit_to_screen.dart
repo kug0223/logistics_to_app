@@ -815,7 +815,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       // _isSaving=true인 동안도 canPop=true가 되어 Firestore 작업 중 화면 이탈 허용됨
       canPop: !_hasChanges && !_isSaving,
       onPopInvokedWithResult: (didPop, _) async {
-        if (didPop) return;
+        // [M1-FIX] 저장 진행 중(_isSaving)에는 다이얼로그 없이 즉시 차단
+        if (didPop || _isSaving) return;
         final nav = Navigator.of(context);
         final leave = await DialogHelper.showConfirm(
           context,

@@ -1271,7 +1271,8 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     return PopScope(
       canPop: !_isCreating && !_hasChanges,
       onPopInvokedWithResult: (didPop, _) async {
-        if (didPop || !_hasChanges) return;
+        // [M1-FIX] 등록 진행 중(_isCreating)에는 다이얼로그 없이 즉시 차단
+        if (didPop || _isCreating || !_hasChanges) return;
         final leave = await DialogHelper.showConfirm(
           context,
           title: '입력 중인 내용이 있습니다',
