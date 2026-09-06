@@ -213,38 +213,13 @@ class _HistoricalContractsScreenState extends State<HistoricalContractsScreen> {
   }
 
   Widget _buildInitialError(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 24)),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.error_outline,
-              size: ResponsiveHelper.iconSize(context, 48),
-              color: AppColors.grey400,
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 16)),
-            Text(
-              '보관된 계약서를 불러오지 못했습니다.',
-              style: ResponsiveHelper.bodyStyle(context)
-                  .copyWith(color: AppColors.textPrimary),
-              textAlign: TextAlign.center,
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-            Text(
-              '잠시 후 다시 시도해 주세요.',
-              style: ResponsiveHelper.captionStyle(context)
-                  .copyWith(color: AppColors.textSecondary),
-              textAlign: TextAlign.center,
-            ),
-            SizedBox(height: ResponsiveHelper.spacing(context, 24)),
-            OutlinedButton(
-              onPressed: _loadInitial,
-              child: const Text('다시 시도'),
-            ),
-          ],
-        ),
+    return AppEmptyState(
+      icon: Icons.error_outline,
+      title: '보관된 계약서를 불러오지 못했습니다.',
+      subtitle: '잠시 후 다시 시도해 주세요.',
+      action: OutlinedButton(
+        onPressed: _loadInitial,
+        child: const Text('다시 시도'),
       ),
     );
   }
