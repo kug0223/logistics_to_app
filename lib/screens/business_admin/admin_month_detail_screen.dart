@@ -11,9 +11,12 @@ import '../../theme/app_colors.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../screens/common/notification_screen.dart';
+import '../../utils/navigation_helper.dart';
 import '../../widgets/common/app_empty_state.dart';
+import '../../widgets/common/app_page_scaffold.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../../widgets/common/notification_badge.dart';
 
 class AdminMonthDetailScreen extends StatefulWidget {
   final List<String> businessIds;
@@ -226,28 +229,50 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
             .firstOrNull
         : (widget.businesses.length == 1 ? widget.businesses.first.name : null);
 
-    return GradientScaffold(
+    // [DESIGN-PATCH-2] GradientScaffold → AppPageScaffold — 관리자 정산 화면 flat admin 정렬
+    // onRefresh 자동 버튼 제거 → AppBar refresh action + body RefreshIndicator 유지
+    return AppPageScaffold(
       title: bizName != null
           ? '${widget.year}년 ${widget.month}월 · $bizName'
           : '${widget.year}년 ${widget.month}월',
-      onRefresh: _loadData,
       actions: [
+        IconButton(
+          icon: const Icon(Icons.refresh_rounded),
+          onPressed: _loadData,
+          color: AppColors.textSecondary,
+        ),
+        IconButton(
+          icon: const Icon(Icons.home_outlined),
+          onPressed: () => NavigationHelper.goHome(context),
+          color: AppColors.textSecondary,
+        ),
+        NotificationBadge(
+          child: IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const NotificationScreen()),
+            ),
+            color: AppColors.textSecondary,
+          ),
+        ),
         if (_isExporting)
           const Padding(
-            padding: EdgeInsets.all(16),
+            padding: EdgeInsets.all(8),
             child: SizedBox(
                 width: 18, height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+                child: CircularProgressIndicator(strokeWidth: 2)),
           )
         else
           IconButton(
-            icon: const Icon(Icons.download_outlined, color: Colors.white),
+            icon: const Icon(Icons.download_outlined),
             tooltip: '엑셀 내보내기',
             onPressed: (_data == null ||
                     _data!.attendanceStatsState ==
                         AttendanceStatsState.unavailable)
                 ? null
                 : _exportExcel,
+            color: AppColors.textSecondary,
           ),
       ],
       body: _isLoading
@@ -261,21 +286,14 @@ class _AdminMonthDetailScreenState extends State<AdminMonthDetailScreen> {
 
   Widget _buildContent() {
     if (_hasError) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.error_outline, size: 48, color: AppColors.error),
-            const SizedBox(height: 12),
-            const Text('데이터를 불러오지 못했습니다.\n다시 시도해주세요.',
-                textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            TextButton.icon(
-              onPressed: _loadData,
-              icon: const Icon(Icons.refresh),
-              label: const Text('다시 시도'),
-            ),
-          ],
+      return AppEmptyState(
+        icon: Icons.error_outline,
+        title: '데이터를 불러오지 못했습니다',
+        iconColor: AppColors.error,
+        action: TextButton.icon(
+          onPressed: _loadData,
+          icon: const Icon(Icons.refresh),
+          label: const Text('다시 시도'),
         ),
       );
     }
