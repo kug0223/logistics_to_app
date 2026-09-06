@@ -795,11 +795,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
 
     if (_isLoading) {
       return Scaffold(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.background,
         appBar: AppBar(
           backgroundColor: Colors.white,
           elevation: 0,
           surfaceTintColor: Colors.transparent,
+          centerTitle: false,
           title: Text(appBarTitle,
               style: ResponsiveHelper.subtitleStyle(context,
                   fontWeight: FontWeight.bold)),
@@ -827,11 +828,12 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         if (leave && mounted) nav.pop();
       },
       child: Scaffold(
-        backgroundColor: Colors.grey.shade50,
+        backgroundColor: AppColors.background,
         appBar: AppBar(
           backgroundColor: Colors.white,
           elevation: 0,
           surfaceTintColor: Colors.transparent,
+          centerTitle: false,
           title: Text(appBarTitle,
               style: ResponsiveHelper.subtitleStyle(context,
                   fontWeight: FontWeight.bold)),
@@ -854,7 +856,10 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         body: Form(
           key: _formKey,
           child: ListView(
-            padding: ResponsiveHelper.listPadding(context),
+            // bottomNavigationBar의 SafeArea가 시스템 inset을 처리하므로
+            // paddingOf.bottom 중복 추가 없이 CTA 위 콘텐츠 여백만 확보한다.
+            // CreateTO body(bottom:108)와 동등한 clearance 적용.
+            padding: ResponsiveHelper.listPadding(context).copyWith(bottom: 108),
             children: [
               if (widget.isBatchMode) ...[
                 _buildBatchInfoBanner(context),
@@ -979,7 +984,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     return Container(
       padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.grey200),
       ),
