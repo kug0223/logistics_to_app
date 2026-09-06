@@ -1250,7 +1250,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   Widget build(BuildContext context) {
     if (_isLoading) {
       return Scaffold(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.background,
         appBar: AppBar(
           backgroundColor: Colors.white,
           elevation: 0,
@@ -1298,7 +1298,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         if (leave && context.mounted) Navigator.pop(context);
       },
       child: Scaffold(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.background,
         appBar: AppBar(
           backgroundColor: Colors.white,
           elevation: 0,
@@ -1440,7 +1440,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         !isSubAdmin || context.read<UserProvider>().can((p) => p.canManageContract);
     final cardCount = isSubAdmin ? 4 : 5;
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.background,
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
