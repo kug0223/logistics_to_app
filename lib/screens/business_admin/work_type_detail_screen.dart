@@ -24,7 +24,9 @@ import '../../../widgets/work_type_icon.dart';
 // Services
 import '../../services/storage_service.dart';
 import '../../theme/app_colors.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_scaffold.dart';
+import '../../widgets/common/notification_badge.dart';
+import '../common/notification_screen.dart';
 
 /// 📦 업무유형 상세 화면
 class WorkTypeDetailScreen extends StatefulWidget {
@@ -127,18 +129,37 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
           NavigationHelper.popWithChange(context);
         }
       },
-      child: GradientScaffold(
+      child: AppPageScaffold(
         title: _isEditing ? '업무유형 수정' : '업무유형 상세',
         actions: [
+          IconButton(
+            icon: const Icon(Icons.home_outlined),
+            color: AppColors.textSecondary,
+            onPressed: () => NavigationHelper.goHome(context),
+            tooltip: '홈',
+          ),
+          NotificationBadge(
+            child: IconButton(
+              icon: const Icon(Icons.notifications_outlined),
+              color: AppColors.textSecondary,
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const NotificationScreen()),
+              ),
+              tooltip: '알림',
+            ),
+          ),
           if (!_isEditing && context.select<UserProvider, bool>((p) => p.can((perm) => perm.canManageTo)))
             IconButton(
-              icon: const Icon(Icons.edit, color: Colors.white),
+              icon: const Icon(Icons.edit),
+              color: AppColors.textSecondary,
               onPressed: () => setState(() => _isEditing = true),
               tooltip: '수정',
             )
           else
             IconButton(
-              icon: const Icon(Icons.close, color: Colors.white),
+              icon: const Icon(Icons.close),
+              color: AppColors.textSecondary,
               onPressed: _cancelEditing,
               tooltip: '취소',
             ),
@@ -184,7 +205,9 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
                       _buildSaveButton(context),
                     ],
 
-                    // [BUG-PAD FIX] GradientScaffold SafeArea가 paddingOf.bottom 소비 → viewPaddingOf 이중 패딩
+                    // AppPageScaffold는 body에 하단 SafeArea를 적용하지 않는다.
+                    // 시각적 여백(32) + 기기 하단 인셋(홈 인디케이터/제스처 바)을 더해
+                    // 마지막 컨텐츠가 시스템 내비게이션 영역에 가려지지 않도록 한다.
                     SizedBox(
                       height: ResponsiveHelper.spacing(context, 32) +
                           MediaQuery.paddingOf(context).bottom,
