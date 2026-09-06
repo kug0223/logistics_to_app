@@ -22096,6 +22096,173 @@ export const callableCloseTOManually = onCall(
 );
 
 // ─────────────────────────────────────────────────────────
+// callableCreateScheduleChangeRequest — 스케줄 변경 요청 생성 (서버 원자화, P2 idempotency)
+//
+// 이전 이유:
+//   - 클라이언트 collection.add()는 PENDING 중복 방어 불가 (TOCTOU)
+//   - 관리자가 동일 날짜에 동일 requestType을 빠르게 두 번 탭하면 2개의 PENDING 문서 생성 가능
+//   - CF Firestore 트랜잭션 내 tx.get(query)로 PENDING uniqueness 보장
+//
+// 호출자: BUSINESS_ADMIN 또는 SubAdmin(canManageWorkers) — 관리자만 생성 가능
+// requestType 제한: EXTRA_WORK 또는 NO_WORK만 허용 (LEAVE는 클라이언트 전용, CANCEL_* 는 별도 CF)
+// 반환값: { success: true, created: boolean, requestId: string }
+//   - created=true  : 신규 문서 생성됨
+//   - created=false : 동일 날짜·requestType의 PENDING이 이미 존재 (기존 requestId 반환)
+// ─────────────────────────────────────────────────────────
+export const callableCreateScheduleChangeRequest = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {
+      applicationId,
+      businessId,
+      targetDateMs,
+      requestType,
+      reason,
+      wageAmount,
+      applicantName,
+    } = request.data as {
+      applicationId: string;
+      businessId: string;
+      targetDateMs: number;
+      requestType: string;
+      reason?: string;
+      wageAmount?: number;
+      applicantName?: string;
+    };
+
+    // ── 입력값 기본 검증 ──────────────────────────────────
+    if (!applicationId || typeof applicationId !== "string") {
+      throw new HttpsError("invalid-argument", "applicationId 필수");
+    }
+    if (!businessId || typeof businessId !== "string") {
+      throw new HttpsError("invalid-argument", "businessId 필수");
+    }
+    if (typeof targetDateMs !== "number" || !isFinite(targetDateMs)) {
+      throw new HttpsError("invalid-argument", "targetDateMs는 유효한 숫자여야 합니다.");
+    }
+    if (requestType !== "EXTRA_WORK" && requestType !== "NO_WORK") {
+      throw new HttpsError("invalid-argument", "requestType은 EXTRA_WORK 또는 NO_WORK만 허용됩니다.");
+    }
+    if (reason && reason.length > 500) {
+      throw new HttpsError("invalid-argument", "reason은 최대 500자까지 입력 가능합니다.");
+    }
+
+    // ── 1. 관리자 권한 검증 (assertBizAdmin) ──────────────
+    const {callerData, bizData} = await assertBizAdmin(callerUid, businessId);
+
+    // ── 2. SubAdmin canManageWorkers 세부 권한 검증 ────────
+    // callableApproveScheduleChangeRequest와 동일 패턴
+    const adminIds = (bizData?.adminIds as string[] | undefined) ?? [];
+    if (
+      (callerData?.role as string | undefined) !== "SUPER_ADMIN" &&
+      !adminIds.includes(callerUid) &&
+      (bizData?.ownerId as string | undefined) !== callerUid
+    ) {
+      const memberSnap = await db.collection("businesses").doc(businessId).collection("members").doc(callerUid).get();
+      const perms = (memberSnap.data()?.permissions as Record<string, boolean>) ?? {};
+      if (!perms.canManageWorkers) throw new HttpsError("permission-denied", "근로자 관리 권한이 없습니다.");
+    }
+
+    // ── 3. Application 소유권 검증 (Admin SDK가 Rules를 우회하므로 명시적 재구현) ──
+    const appRef = db.collection("applications").doc(applicationId);
+    const appSnap = await appRef.get();
+    if (!appSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    const appData = appSnap.data()!;
+    if (appData.businessId !== businessId) {
+      throw new HttpsError("permission-denied", "지원서가 해당 사업장에 속하지 않습니다.");
+    }
+    const applicantUid = appData.uid as string;
+    if (!applicantUid) throw new HttpsError("internal", "지원서에 applicantUid가 없습니다.");
+
+    // ── 4. 대상 날짜 계산 (UTC 자정 기준) ─────────────────
+    const targetDate = new Date(targetDateMs);
+
+    const sameDayUTC = (ts: admin.firestore.Timestamp): boolean => {
+      const d = ts.toDate();
+      return (
+        d.getUTCFullYear() === targetDate.getUTCFullYear() &&
+        d.getUTCMonth() === targetDate.getUTCMonth() &&
+        d.getUTCDate() === targetDate.getUTCDate()
+      );
+    };
+
+    // ── 5. 트랜잭션: PENDING 중복 체크 → 신규 생성 ────────
+    // [트랜잭션 규칙] 모든 read를 write 이전에 수행
+    let resultRequestId: string;
+    let created: boolean;
+
+    const pendingQuery = db
+      .collection("schedule_change_requests")
+      .where("applicationId", "==", applicationId)
+      .where("requestType", "==", requestType)
+      .where("status", "==", "PENDING");
+
+    await db.runTransaction(async (tx) => {
+      const pendingSnap = await tx.get(pendingQuery);
+
+      // 동일 날짜의 PENDING이 이미 있으면 idempotent return
+      const existingDoc = pendingSnap.docs.find((doc) => {
+        const td = doc.data().targetDate as admin.firestore.Timestamp | undefined;
+        return td !== undefined && sameDayUTC(td);
+      });
+
+      if (existingDoc) {
+        resultRequestId = existingDoc.id;
+        created = false;
+        return; // write 없이 트랜잭션 종료 (idempotent)
+      }
+
+      // 신규 문서 생성 (auto-ID 보존 — deterministic ID 사용 금지)
+      const newRef = db.collection("schedule_change_requests").doc();
+      tx.set(newRef, {
+        applicationId,
+        businessId,
+        applicantUid,
+        applicantName: applicantName ?? null,
+        targetDate: admin.firestore.Timestamp.fromDate(targetDate),
+        requestType,
+        requestedBy: "ADMIN",       // 서버 강제 — 클라이언트 위조 차단
+        requestedByUid: callerUid,  // 서버 강제 — callerUid 직접 기록
+        requestedAt: admin.firestore.FieldValue.serverTimestamp(),
+        reason: reason ?? null,
+        status: "PENDING",
+        wageAmount: wageAmount ?? null,
+      });
+
+      resultRequestId = newRef.id;
+      created = true;
+    });
+
+    // ── 6. 알림 전송 (트랜잭션 외부 — 알림 실패가 생성을 롤백하지 않도록) ──
+    // created=true인 경우에만 전송 (트랜잭션 retry로 인한 중복 발송 방지)
+    if (created!) {
+      const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+      const targetDateKST = new Date(targetDate.getTime() + KST_OFFSET_MS);
+      const dateStr = `${targetDateKST.getUTCMonth() + 1}월 ${targetDateKST.getUTCDate()}일`;
+      const typeLabel = requestType === "EXTRA_WORK" ? "추가 근무" : "휴무";
+      const notifBody = reason
+        ? `${dateStr} ${typeLabel} 요청이 도착했습니다. 사유: ${reason}`
+        : `${dateStr} ${typeLabel} 요청이 도착했습니다.`;
+
+      db.collection("users").doc(applicantUid).collection("notifications").add({
+        userId: applicantUid,
+        type: "scheduleChangeRequest",
+        title: "스케줄 변경 요청",
+        body: notifBody,
+        data: {requestId: resultRequestId!, businessId, action: "scheduleChangeDetail"},
+        isRead: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      }).catch((e: unknown) => console.error("[callableCreateScheduleChangeRequest] 알림 전송 실패:", e));
+    }
+
+    return {success: true, created: created!, requestId: resultRequestId!};
+  }
+);
+
+// ─────────────────────────────────────────────────────────
 // callableCancelScheduleChangeRequest — 스케줄 변경 요청 취소 (서버 원자화)
 //
 // 이전 이유:

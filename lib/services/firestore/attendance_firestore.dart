@@ -404,36 +404,59 @@ extension AttendanceFirestore on FirestoreService {
       }
     }
 
+    // [P2-FIX] 관리자 생성 요청(EXTRA_WORK·NO_WORK)은 callableCreateScheduleChangeRequest CF로 이전.
+    // CF 내부에서 Firestore 트랜잭션으로 PENDING uniqueness 보장 (TOCTOU 방어).
+    // 알림 발송도 CF 내부에서 처리되므로 클라이언트 측 알림 호출 제거.
+    if (request.requestedBy == RequesterType.ADMIN) {
+      try {
+        final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+            .httpsCallable('callableCreateScheduleChangeRequest',
+                options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
+        final result = await callable.call<Map<String, dynamic>>({
+          'applicationId': request.applicationId,
+          'businessId': request.businessId,
+          'targetDateMs': request.targetDate.millisecondsSinceEpoch,
+          'requestType': request.requestType.name,
+          if (request.reason != null) 'reason': request.reason,
+          if (request.wageAmount != null) 'wageAmount': request.wageAmount,
+          'applicantName': request.applicantName,
+        });
+        final data = result.data;
+        final requestId = data['requestId'] as String?;
+        final created = data['created'] as bool? ?? false;
+        debugPrint(
+          created
+              ? '✅ 스케줄 변경 요청 생성 완료 (CF): $requestId'
+              : '✅ 스케줄 변경 요청 이미 존재 (중복 방지, CF): $requestId',
+        );
+        return requestId;
+      } on FirebaseFunctionsException catch (e) {
+        debugPrint('❌ 스케줄 변경 요청 생성 실패 (CF): ${e.code} ${e.message}');
+        return null;
+      } catch (e) {
+        debugPrint('❌ 스케줄 변경 요청 생성 실패: $e');
+        return null;
+      }
+    }
+
+    // 지원자(APPLICANT)가 생성하는 경우는 기존 Firestore 직접 쓰기 유지.
+    // (APPLICANT 경로는 rules의 allow create 조건으로 보호됨)
     try {
       // [B6-FIX] requestedAt 서버 타임스탬프 오버라이드 — toMap()의 DateTime 값 조작 차단
       final scrMap = request.toMap()..['requestedAt'] = FieldValue.serverTimestamp();
       final docRef = await _firestore.collection('schedule_change_requests').add(scrMap);
       debugPrint('✅ 스케줄 변경 요청 생성 완료: ${docRef.id}');
 
-      // 🔔 알림 생성 (fire-and-forget)
-      if (request.requestedBy == RequesterType.APPLICANT) {
-        // 지원자가 요청한 경우 → 관리자에게 알림
-        // ignore: unawaited_futures
-        _sendScheduleChangeRequestNotification(
-          businessId: request.businessId,
-          requesterName: request.applicantName,
-          requestType: request.requestType.name,
-          targetDate: request.targetDate,
-          requestId: docRef.id,
-          reason: request.reason,
-        );
-      } else if (request.requestedBy == RequesterType.ADMIN) {
-        // 관리자가 요청한 경우 (NO_WORK·EXTRA_WORK 등) → 근로자에게 알림
-        // ignore: unawaited_futures
-        _sendScheduleChangeRequestToWorkerNotification(
-          applicantUid: request.applicantUid,
-          businessId: request.businessId,
-          requestType: request.requestType.name,
-          targetDate: request.targetDate,
-          requestId: docRef.id,
-          reason: request.reason,
-        );
-      }
+      // 🔔 알림 생성 (fire-and-forget) — 지원자 요청 시 관리자에게 알림
+      // ignore: unawaited_futures
+      _sendScheduleChangeRequestNotification(
+        businessId: request.businessId,
+        requesterName: request.applicantName,
+        requestType: request.requestType.name,
+        targetDate: request.targetDate,
+        requestId: docRef.id,
+        reason: request.reason,
+      );
 
       return docRef.id;
     } catch (e) {
@@ -660,40 +683,6 @@ extension AttendanceFirestore on FirestoreService {
       debugPrint('🔔 스케줄 변경 요청 알림 전송 완료 → 관리자: ${adminIds.length}명');
     } catch (e) {
       debugPrint('⚠️ 스케줄 변경 요청 알림 전송 실패: $e');
-    }
-  }
-
-  /// 🔔 스케줄 변경 요청 알림 전송 (근로자에게) — 관리자가 NO_WORK·EXTRA_WORK 요청한 경우
-  Future<void> _sendScheduleChangeRequestToWorkerNotification({
-    required String applicantUid,
-    required String businessId,
-    required String requestType,
-    required DateTime targetDate,
-    required String requestId,
-    String? reason,
-  }) async {
-    try {
-      final businessDoc = await _firestore
-          .collection('businesses')
-          .doc(businessId)
-          .get(const GetOptions(source: Source.server));
-      if (!businessDoc.exists) return;
-      final businessName = businessDoc.data()?['name'] as String? ?? '사업장';
-
-      await createNotification(
-        NotificationModel.createScheduleChangeRequested(
-          userId: applicantUid,
-          requesterName: businessName,
-          requestType: requestType,
-          targetDate: targetDate,
-          requestId: requestId,
-          businessId: businessId,
-          reason: reason,
-        ),
-      );
-      debugPrint('🔔 스케줄 변경 요청 알림 전송 완료 → 근로자: $applicantUid');
-    } catch (e) {
-      debugPrint('⚠️ 스케줄 변경 요청 근로자 알림 전송 실패: $e');
     }
   }
 
