@@ -15,8 +15,11 @@ import 'work_type_detail_screen.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/common/app_menu_sheet.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_scaffold.dart';
+import '../../widgets/common/notification_badge.dart';
 import '../../widgets/common/app_empty_state.dart';
+import '../../utils/navigation_helper.dart';
+import '../common/notification_screen.dart';
 import '../../models/core/to_model.dart';
 
 /// 업무 유형 관리 화면 — businessId/businessName을 외부에서 주입받음
@@ -466,9 +469,32 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
     // [PERF-2026-07-16] bool 1개만 필요 → select으로 rebuild 범위 축소
     final canEdit = context.select<UserProvider, bool>((p) => p.can((perm) => perm.canManageTo));
 
-    return GradientScaffold(
+    return AppPageScaffold(
       title: '업무 유형 관리',
-      onRefresh: _loadWorkTypes,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.refresh_rounded),
+          onPressed: _loadWorkTypes,
+          color: AppColors.textSecondary,
+          tooltip: '새로고침',
+        ),
+        IconButton(
+          icon: const Icon(Icons.home_outlined),
+          onPressed: () => NavigationHelper.goHome(context),
+          color: AppColors.textSecondary,
+          tooltip: '홈',
+        ),
+        NotificationBadge(
+          child: IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const NotificationScreen()),
+            ),
+            color: AppColors.textSecondary,
+          ),
+        ),
+      ],
       body: _isLoading
           ? const LoadingWidget(message: '업무 유형을 불러오는 중...')
           : _workTypes.isEmpty
@@ -537,7 +563,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       children: [
         Container(
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: AppColors.surface,
             borderRadius: BorderRadius.circular(16),
             boxShadow: [
               BoxShadow(
