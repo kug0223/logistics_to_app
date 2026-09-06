@@ -3,9 +3,12 @@ import 'package:flutter/material.dart';
 import '../../models/core/contract_template_model.dart';
 import '../../services/contract_template_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/navigation_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
-import '../../widgets/common/gradient_scaffold.dart';
+import '../../widgets/common/app_page_scaffold.dart';
+import '../../widgets/common/notification_badge.dart';
+import '../common/notification_screen.dart';
 
 class ContractTemplateEditScreen extends StatefulWidget {
   final String businessId;
@@ -188,21 +191,40 @@ class _ContractTemplateEditScreenState
         if (!context.mounted) return;
         if (discard) nav.pop();
       },
-      child: GradientScaffold(
+      child: AppPageScaffold(
         title: _isNew ? '새 템플릿 만들기' : '템플릿 편집',
-      actions: [
-        TextButton(
-          onPressed: _saving ? null : _save,
-          child: _saving
-              ? const SizedBox(
-                  width: 18, height: 18,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white),
-                )
-              : Text('저장',
-                  style: ResponsiveHelper.bodyStyle(context).copyWith(color: Colors.white, fontWeight: FontWeight.bold)),
-        ),
-      ],
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.home_outlined),
+            color: AppColors.textSecondary,
+            onPressed: () => NavigationHelper.goHome(context),
+            tooltip: '홈',
+          ),
+          NotificationBadge(
+            child: IconButton(
+              icon: const Icon(Icons.notifications_outlined),
+              color: AppColors.textSecondary,
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const NotificationScreen()),
+              ),
+              tooltip: '알림',
+            ),
+          ),
+          TextButton(
+            onPressed: _saving ? null : _save,
+            child: _saving
+                ? SizedBox(
+                    width: 18, height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Theme.of(context).primaryColor),
+                  )
+                : Text('저장',
+                    style: ResponsiveHelper.bodyStyle(context).copyWith(
+                        color: Theme.of(context).primaryColor,
+                        fontWeight: FontWeight.bold)),
+          ),
+        ],
       body: ListView(
         controller: _scrollCtrl,
         padding: ResponsiveHelper.listPadding(context),
@@ -309,7 +331,13 @@ class _ContractTemplateEditScreenState
             ),
           ),
 
-          SizedBox(height: ResponsiveHelper.spacing(context, 32)),
+          // AppPageScaffold는 body에 하단 SafeArea를 적용하지 않는다.
+          // 시각적 여백(32) + 기기 하단 인셋(홈 인디케이터/제스처 바)을 더해
+          // 마지막 조항/추가 버튼이 시스템 내비게이션 영역에 가려지지 않도록 한다.
+          SizedBox(
+            height: ResponsiveHelper.spacing(context, 32) +
+                MediaQuery.paddingOf(context).bottom,
+          ),
         ],
       ),
     ),
@@ -343,7 +371,7 @@ class _ArticleCard extends StatelessWidget {
       margin: EdgeInsets.only(
           bottom: ResponsiveHelper.spacing(context, 12)),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.grey200),
       ),
@@ -534,7 +562,7 @@ class _Card extends StatelessWidget {
       padding:
           EdgeInsets.all(ResponsiveHelper.spacing(context, 14)),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: AppColors.grey200),
       ),
