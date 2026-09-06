@@ -39,6 +39,8 @@ import '../../common/settings_screen.dart';
 import '../contract_template_list_screen.dart';
 import '../work_type_management_screen.dart';
 import '../Business_form_screen.dart';
+import '../../common/notification_screen.dart';
+import '../../../widgets/common/notification_badge.dart';
 
 /// 사업장별 사전조건 충족 여부 — [5D.2A] licenseReady 추가
 class _BizReadiness {
@@ -1259,6 +1261,19 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             style: ResponsiveHelper.subtitleStyle(context)
                 .copyWith(fontWeight: FontWeight.w700, color: AppColors.textPrimary),
           ),
+          actions: [
+            NotificationBadge(
+              child: IconButton(
+                icon: const Icon(Icons.notifications_outlined),
+                color: AppColors.textSecondary,
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const NotificationScreen()),
+                ),
+                tooltip: '알림',
+              ),
+            ),
+          ],
         ),
         body: const LoadingWidget(),
       );
@@ -1305,6 +1320,21 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     : null,
                 icon: const Icon(Icons.file_copy_outlined),
                 label: const Text('불러오기'),
+              ),
+            ),
+            NotificationBadge(
+              child: IconButton(
+                icon: const Icon(Icons.notifications_outlined),
+                color: AppColors.textSecondary,
+                // [M1-FIX] 등록 진행 중에는 다른 화면 이동 차단
+                onPressed: _isCreating
+                    ? null
+                    : () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => const NotificationScreen()),
+                        ),
+                tooltip: '알림',
               ),
             ),
           ],
@@ -1421,6 +1451,19 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
           style: ResponsiveHelper.subtitleStyle(context)
               .copyWith(fontWeight: FontWeight.w700, color: AppColors.textPrimary),
         ),
+        actions: [
+          NotificationBadge(
+            child: IconButton(
+              icon: const Icon(Icons.notifications_outlined),
+              color: AppColors.textSecondary,
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const NotificationScreen()),
+              ),
+              tooltip: '알림',
+            ),
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),

@@ -27,6 +27,8 @@ import '../../../widgets/dialogs/styled_dialog.dart';
 import 'widgets/to_widgets.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/loading_widget.dart';
+import '../../common/notification_screen.dart';
+import '../../../widgets/common/notification_badge.dart';
 
 class AdminEditTOScreen extends StatefulWidget {
   final TOModel to;
@@ -804,6 +806,19 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           title: Text(appBarTitle,
               style: ResponsiveHelper.subtitleStyle(context,
                   fontWeight: FontWeight.bold)),
+          actions: [
+            NotificationBadge(
+              child: IconButton(
+                icon: const Icon(Icons.notifications_outlined),
+                color: AppColors.textSecondary,
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const NotificationScreen()),
+                ),
+                tooltip: '알림',
+              ),
+            ),
+          ],
         ),
         body: const LoadingWidget(),
       );
@@ -838,6 +853,23 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           title: Text(appBarTitle,
               style: ResponsiveHelper.subtitleStyle(context,
                   fontWeight: FontWeight.bold)),
+          actions: [
+            NotificationBadge(
+              child: IconButton(
+                icon: const Icon(Icons.notifications_outlined),
+                color: AppColors.textSecondary,
+                // [M1-FIX] 저장 진행 중에는 다른 화면 이동 차단
+                onPressed: _isSaving
+                    ? null
+                    : () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => const NotificationScreen()),
+                        ),
+                tooltip: '알림',
+              ),
+            ),
+          ],
         ),
         bottomNavigationBar: SafeArea(
           top: false,
