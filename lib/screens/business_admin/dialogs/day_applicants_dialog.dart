@@ -532,7 +532,14 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   // ── Stats Strip ────────────────────────────────────────────────────────────
 
   Widget _buildStatsStrip(BuildContext context) {
-    final totalCount = _pendingApps.length + _confirmedApps.length;
+    // [UX-D-02] 총 부족 = workDetail별 max(required_i - confirmed_i, 0) 합산
+    // aggregate 공식(Σrequired - Σconfirmed)은 과충원 그룹이 다른 그룹 부족을 상쇄하므로 사용 금지
+    final totalShortage = _cachedGroups.fold<int>(
+      0,
+      (acc, g) => acc + (g.requiredCount - g.confirmedApps.length).clamp(0, 99999),
+    );
+    final shortageColor =
+        totalShortage > 0 ? AppColors.errorDark : AppColors.grey500;
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveHelper.spacing(context, 16),
@@ -544,7 +551,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       ),
       child: Row(
         children: [
-          _statCell(context, '합계', totalCount, AppColors.grey700),
+          _statCell(context, '부족', totalShortage, shortageColor),
           _statDivider(context),
           _statCell(context, '지원', _pendingApps.length, AppColors.warningDark),
           _statDivider(context),
@@ -987,19 +994,36 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   Widget _buildInviteButton(_GroupData g, String slotId) {
     final shortage = g.requiredCount - g.confirmedApps.length;
+    // [UX-D-03] pendingCount >= shortage: 현재 대기자 풀로 이론적 부족 충족 가능
+    // → 기존 지원자 처리가 운영 우선순위이므로 CTA를 tertiary 약화로 신호.
+    // PENDING을 공식 shortage/capacity에서 차감하지 않음 — 시각 강도만 조정.
+    final isPendingSufficient = g.pendingApps.length >= shortage;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: OutlinedButton.icon(
-        onPressed: () => _openInviteMethod(g, slotId),
-        icon: const Icon(Icons.person_add_outlined, size: 16),
-        label: Text('인력 초대 ($shortage명 부족)'),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: AppColors.info,
-          side: const BorderSide(color: AppColors.info),
-          alignment: Alignment.centerLeft,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        ),
-      ),
+      child: isPendingSufficient
+          ? TextButton.icon(
+              onPressed: () => _openInviteMethod(g, slotId),
+              icon: const Icon(Icons.person_add_outlined, size: 16),
+              label: Text('인력 초대 ($shortage명 부족)'),
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.grey600,
+                alignment: Alignment.centerLeft,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
+            )
+          : OutlinedButton.icon(
+              onPressed: () => _openInviteMethod(g, slotId),
+              icon: const Icon(Icons.person_add_outlined, size: 16),
+              label: Text('인력 초대 ($shortage명 부족)'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.info,
+                side: const BorderSide(color: AppColors.info),
+                alignment: Alignment.centerLeft,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
+            ),
     );
   }
 
