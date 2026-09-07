@@ -21310,13 +21310,24 @@ export const callableApproveScheduleChangeRequest = onCall(
         const requestType = scrData.requestType as string;
 
         if (requestType === "LEAVE" || requestType === "NO_WORK") {
+          // [P1-GUARD] leaveDates 추가 + extraWorkDates에서 같은 날짜 제거
+          // 동일 날짜가 leaveDates ∩ extraWorkDates에 동시 존재하면 consumer(isWorkingOnDate,
+          // _workDaysInMonth, attendance_firestore 등)의 우선순위 불일치로 근태·급여 판정이
+          // 달라지는 P1 dual-state를 approve 시점에 차단한다.
+          // [FUTURE_REVIEW_REQUIRED_IF_APPROVED_ADMIN_CANCEL_ACTIVATED]
+          // 현재 Flutter UI에 ADMIN-created APPROVED request cancel 경로가 없으므로
+          // 이 cleanup 이후 cancel = extraWorkDates 제거 → base schedule로 돌아가는 contract는
+          // 사용자에게 노출되지 않는다. 향후 해당 UI가 활성화되면 rollback policy 재검토 필요.
           const leaveDates = parseDates("leaveDates");
           if (!leaveDates.some(sameDay)) leaveDates.push(scrData.targetDate as admin.firestore.Timestamp);
-          tx.update(appRef, {leaveDates});
+          const extraWorkDates = parseDates("extraWorkDates").filter((ts) => !sameDay(ts));
+          tx.update(appRef, {leaveDates, extraWorkDates});
         } else if (requestType === "EXTRA_WORK") {
+          // [P1-GUARD] extraWorkDates 추가 + leaveDates에서 같은 날짜 제거 (위와 대칭)
           const extraWorkDates = parseDates("extraWorkDates");
           if (!extraWorkDates.some(sameDay)) extraWorkDates.push(scrData.targetDate as admin.firestore.Timestamp);
-          tx.update(appRef, {extraWorkDates});
+          const leaveDates = parseDates("leaveDates").filter((ts) => !sameDay(ts));
+          tx.update(appRef, {leaveDates, extraWorkDates});
         } else if (requestType === "CANCEL_LEAVE") {
           const leaveDates = parseDates("leaveDates").filter((ts) => !sameDay(ts));
           tx.update(appRef, {leaveDates});
