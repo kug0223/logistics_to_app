@@ -128,6 +128,69 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     return context.read<UserProvider>().can((p) => p.canManageTo);
   }
 
+  // [CSA-02] canManageContract: canManageTo와 대칭 구조.
+  // targetPermissions 우선 — notification cross-biz SUB_ADMIN 정확한 권한 반영.
+  // null이면 UserProvider.can() 폴백 — BUSINESS_ADMIN은 항상 true.
+  bool _canManageContract() {
+    final target = widget.targetPermissions;
+    if (target != null) return target.canManageContract;
+    return context.read<UserProvider>().can((p) => p.canManageContract);
+  }
+
+  // [CSA-01] Employer seal canonical resolver.
+  // BUSINESS_ADMIN: 현재 사용자(사업주 본인) seal 사용.
+  // SUB_ADMIN: business.ownerId 문서에서 사업주 seal 조회 — DayApplicants와 동일 semantics.
+  // CF는 seal bytes 출처를 검증하지 않으므로 클라이언트가 올바른 owner seal을 사용해야 한다.
+  Future<({String sealBase64, String sealType})> _resolveEmployerSeal(
+    BusinessModel business,
+  ) async {
+    final up = context.read<UserProvider>();
+    final String sealUid;
+    if (up.isSubAdmin) {
+      sealUid = business.ownerId;
+    } else {
+      sealUid = up.currentUser?.uid ?? '';
+    }
+    if (sealUid.isEmpty) return (sealBase64: '', sealType: 'stamp');
+    final doc = await FirebaseFirestore.instance.collection('users').doc(sealUid).get();
+    final data = doc.data();
+    return (
+      sealBase64: (data?['sealBase64'] as String?) ?? '',
+      sealType: (data?['sealType'] as String?) ?? 'stamp',
+    );
+  }
+
+  // [CSA-01] Seal 미등록 시 안내 메시지 — SubAdmin과 사업주 구분.
+  Future<void> _showSealMissingDialog({required bool isBatchApprove}) async {
+    final up = context.read<UserProvider>();
+    final String message;
+    final String confirmText;
+    if (up.isSubAdmin) {
+      message = isBatchApprove
+          ? '일괄 계약 발송에는 사업주 날인이 필요합니다.\n사업주에게 날인 등록을 요청해주세요.'
+          : '계약 발송에는 사업주 날인이 필요합니다.\n사업주에게 날인 등록을 요청해주세요.';
+      confirmText = '확인';
+    } else {
+      message = isBatchApprove
+          ? '일괄 계약 발송에는 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 또는 서명을 먼저 등록해주세요.'
+          : '계약 발송에는 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 또는 서명을 먼저 등록해주세요.';
+      confirmText = '설정으로 이동';
+    }
+    if (!mounted) return;
+    final go = await DialogHelper.showConfirm(
+      context,
+      title: '사업주 날인 미등록',
+      message: message,
+      confirmText: confirmText,
+      cancelText: '취소',
+    );
+    if (!mounted) return;
+    if (go && !up.isSubAdmin) {
+      Navigator.of(context, rootNavigator: true)
+          .push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -712,6 +775,8 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                 return _buildIdCardRequestSection(context, requestableCount);
               }),
               Builder(builder: (context) {
+                // [CSA-02] canManageContract 없는 사용자에게 계약서 일괄작성 버튼 숨김
+                if (!_canManageContract()) return const SizedBox.shrink();
                 final noContractCount = confirmed.where((item) {
                   final app = item['application'] as ApplicationModel;
                   final status = _contractStatusMap[app.id];
@@ -1464,10 +1529,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
                                 textColor: AppColors.info,
                                 onTap: () => _showChangeWorkPartDialog(item),
                               ),
-                            // 계약 미작성 시 개별 작성 버튼
-                            if (_contractStatusMap[app.id] == null ||
+                            // 계약 미작성 시 개별 작성 버튼 — [CSA-02] canManageContract 필수
+                            if (_canManageContract() &&
+                                (_contractStatusMap[app.id] == null ||
                                 (_contractStatusMap[app.id]?.isEmpty ?? true) ||
-                                _contractStatusMap[app.id] == 'voided')
+                                _contractStatusMap[app.id] == 'voided'))
                               _buildActionButton(
                                 context,
                                 label: '계약서 작성',
@@ -2270,6 +2336,9 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     }
 
     final hasSelection = _selectedIds.isNotEmpty;
+    // [CSA-02/E] batch approve = 승인+계약 통합 action → canManageContract 필요
+    // 거절은 canManageTo만으로 충분 (계약 생성 없음).
+    final canApproveWithContract = _canManageContract();
     return AppModalFooter(
       child: Row(
         children: [
@@ -2287,13 +2356,15 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
             onTap: hasSelection ? () => _batchReject() : null,
           ),
           SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+          // [CSA-02/F] 계약 권한 없으면 승인 버튼 비활성(회색) — canManageTo만 있는 사용자에게
+          // 실행 불가 action을 클릭 가능한 상태로 노출하지 않는다.
           _buildBottomBarButton(
             context,
             label: '승인',
             icon: Icons.check,
-            bgColor: hasSelection ? AppColors.successBg : AppColors.grey100,
-            textColor: hasSelection ? AppColors.successDark : AppColors.grey400,
-            onTap: hasSelection ? () => _batchApprove() : null,
+            bgColor: (hasSelection && canApproveWithContract) ? AppColors.successBg : AppColors.grey100,
+            textColor: (hasSelection && canApproveWithContract) ? AppColors.successDark : AppColors.grey400,
+            onTap: (hasSelection && canApproveWithContract) ? () => _batchApprove() : null,
           ),
         ],
       ),
@@ -2344,6 +2415,12 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       ToastHelper.showWarning('지원서 처리 권한이 없습니다.');
       return;
     }
+    // [CSA-03] batch approve = 승인+계약 통합 → canManageContract도 필요.
+    // mutation(CONFIRMED 변경) 전에 차단하여 CONFIRMED→PENDING 롤백 사이클 방지.
+    if (!_canManageContract()) {
+      ToastHelper.showWarning('계약서 관리 권한이 없습니다.');
+      return;
+    }
 
     // 인원 체크 (일괄 승인은 단일 업무 모드에서만 실행됨)
     if (widget.work != null) {
@@ -2370,8 +2447,7 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
     if (!mounted) return;
 
     // 2. 사업장 정보 + 인감 로드
-    final currentUserSeal = context.read<UserProvider>().currentUser?.sealBase64;
-    final currentUserSealType = context.read<UserProvider>().currentUser?.sealType ?? 'stamp';
+    // [CSA-01] seal은 _resolveEmployerSeal()로 조회 — SUB_ADMIN은 owner seal 사용
     late BusinessModel business;
     late String sealBase64;
     String sealType = 'stamp';
@@ -2384,26 +2460,14 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         return;
       }
       business = b;
-      // 날인은 users/{uid}에서 전역 로드 (설정에서 등록한 날인 사용)
-      if (currentUserSeal == null || currentUserSeal.isEmpty) {
+      final seal = await _resolveEmployerSeal(business);
+      if (seal.sealBase64.isEmpty) {
         if (!mounted) return;
-        final goToSettings = await DialogHelper.showConfirm(
-          context,
-          title: '사업주 날인 미등록',
-          message: '일괄 계약 발송에는 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 또는 서명을 먼저 등록해주세요.',
-          confirmText: '설정으로 이동',
-          cancelText: '취소',
-        );
-        if (!mounted) return;
-        if (goToSettings) {
-          Navigator.of(context, rootNavigator: true).push(
-            MaterialPageRoute(builder: (_) => const SettingsScreen()),
-          );
-        }
+        await _showSealMissingDialog(isBatchApprove: true);
         return;
       }
-      sealBase64 = currentUserSeal;
-      sealType = currentUserSealType;
+      sealBase64 = seal.sealBase64;
+      sealType = seal.sealType;
       continueToProcess = true;
     } catch (e) {
       debugPrint('❌ [_batchApprove] 사업장 정보 조회 실패: $e');
@@ -2704,34 +2768,11 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       return;
     }
 
-    // 2. 인감 확인
-    final currentUser = context.read<UserProvider>().currentUser;
-    final sealBase64 = currentUser?.sealBase64 ?? '';
-    final sealType = currentUser?.sealType ?? 'stamp';
-    if (sealBase64.isEmpty) {
-      if (!mounted) {
-        return;
-      }
-      final goSettings = await DialogHelper.showConfirm(
-        context,
-        title: '사업주 날인 미등록',
-        message: '일괄 계약 발송에는 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 또는 서명을 먼저 등록해주세요.',
-        confirmText: '설정으로 이동',
-        cancelText: '취소',
-      );
-      if (!mounted) {
-        return;
-      }
-      if (goSettings) {
-        Navigator.of(context, rootNavigator: true)
-            .push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
-      }
-      setState(() => _isContractBatchProcessing = false);
-      return;
-    }
-
-    // 3. 사업장 정보 로드
+    // 2. 사업장 정보 로드 + 인감 확인
+    // [CSA-01] seal은 _resolveEmployerSeal()로 조회 — SUB_ADMIN은 owner seal 사용
     late BusinessModel business;
+    late String sealBase64;
+    String sealType = 'stamp';
     try {
       final b = await _firestoreService.getBusinessById(businessId);
       if (b == null) {
@@ -2739,6 +2780,15 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         return;
       }
       business = b;
+      final seal = await _resolveEmployerSeal(business);
+      if (seal.sealBase64.isEmpty) {
+        if (!mounted) return;
+        await _showSealMissingDialog(isBatchApprove: true);
+        setState(() => _isContractBatchProcessing = false);
+        return;
+      }
+      sealBase64 = seal.sealBase64;
+      sealType = seal.sealType;
     } catch (e) {
       debugPrint('❌ [_batchCreateContractsForConfirmed] 사업장 정보 조회 실패: $e');
       if (mounted) ToastHelper.showError('사업장 정보를 불러오는 중 오류가 발생했습니다');
@@ -2884,39 +2934,16 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
       return;
     }
 
-    // 2. 인감 확인
-    final currentUser = context.read<UserProvider>().currentUser;
-    final sealBase64 = currentUser?.sealBase64 ?? '';
-    final sealType = currentUser?.sealType ?? 'stamp';
-    if (sealBase64.isEmpty) {
-      if (!mounted) {
-        return;
-      }
-      final goSettings = await DialogHelper.showConfirm(
-        context,
-        title: '사업주 날인 미등록',
-        message: '계약 발송에는 사업주 날인이 필요합니다.\n설정 > 사업주 날인에서 도장 또는 서명을 먼저 등록해주세요.',
-        confirmText: '설정으로 이동',
-        cancelText: '취소',
-      );
-      if (!mounted) {
-        return;
-      }
-      if (goSettings) {
-        Navigator.of(context, rootNavigator: true)
-            .push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
-      }
-      setState(() => _isProcessing = false);
-      return;
-    }
-
-    // 3. 사업장 정보 로드 + 미리보기 생성
+    // 2. 사업장 정보 로드 + 인감 확인 + 미리보기 생성
+    // [CSA-01] seal은 _resolveEmployerSeal()로 조회 — SUB_ADMIN은 owner seal 사용
     final resolvedWork = widget.work ?? _getWorkForApp(app);
     if (resolvedWork == null) {
       ToastHelper.showError('업무 정보를 찾을 수 없습니다');
       if (mounted) setState(() => _isProcessing = false);
       return;
     }
+    late String sealBase64;
+    String sealType = 'stamp';
     late EmploymentContractModel previewContract;
     try {
       final b = await _firestoreService.getBusinessById(businessId);
@@ -2924,6 +2951,15 @@ class _WorkApplicantsDialogState extends State<WorkApplicantsDialog>
         if (mounted) ToastHelper.showError('사업장 정보를 불러올 수 없습니다');
         return;
       }
+      final seal = await _resolveEmployerSeal(b);
+      if (seal.sealBase64.isEmpty) {
+        if (!mounted) return;
+        await _showSealMissingDialog(isBatchApprove: false);
+        setState(() => _isProcessing = false);
+        return;
+      }
+      sealBase64 = seal.sealBase64;
+      sealType = seal.sealType;
       previewContract = await ContractService().buildPreviewContract(
         application: app,
         business: b,
