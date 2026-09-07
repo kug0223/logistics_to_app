@@ -859,9 +859,12 @@ class ApplicationModel {
   }
 
   /// 퇴사 또는 계약해지가 승인 완료된 상태 (APPROVED / AUTO_APPROVED)
+  /// [DEFERRED-RESIGN] 퇴사는 status==CANCELED와 동시에 참이 돼야 함
+  /// — 승인됐지만 아직 고용 중인 D-기간에는 false → 퇴사 버튼 표시 안 함
   bool get isTerminationApproved =>
-      resignStatus == AppStatus.approved ||
-      resignStatus == AppStatus.autoApproved ||
+      ((resignStatus == AppStatus.approved ||
+        resignStatus == AppStatus.autoApproved) &&
+       status == AppStatus.canceled) ||
       terminationStatus == AppStatus.approved ||
       terminationStatus == AppStatus.autoApproved;
 

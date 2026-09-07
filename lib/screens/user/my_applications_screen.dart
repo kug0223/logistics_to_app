@@ -778,8 +778,11 @@ class _MyApplicationsScreenState extends State<MyApplicationsScreen> {
                     AppStatus.confirmedStatuses.contains(app.status)) ...[
                   _buildLongTermStatusSection(app),
                   _buildInterimSettlementButton(app),
-                  if (!app.isTerminationApproved &&
-                      app.resignStatus != 'PENDING')
+                  // [DEFERRED-RESIGN] 퇴사 신청이 없거나 거절된 상태 + CANCELED 아직 아닌 경우만 버튼 표시
+                  // APPROVED 상태여도 status!=CANCELED이면 D+1까지 고용 유지 → 버튼 숨김
+                  if ((app.resignStatus == null ||
+                       app.resignStatus == AppStatus.rejected) &&
+                      app.status != AppStatus.canceled)
                     _buildResignButton(app),
                 ],
 

@@ -767,6 +767,231 @@ export const onNotificationCreated = onDocumentCreated(
 
 // ═══════════════════════════════════════════════════════════
 
+// ─── [DEFERRED-RESIGN] D+1 퇴사 효력 전환 ─────────────────
+// 승인된 퇴사 신청(resignStatus=APPROVED|AUTO_APPROVED, status=CONFIRMED|CONTRACT_PENDING)을
+// actualResignDate(D) 경과 후 실제 CANCELED로 전환.
+// 매일 자정 processContractRenewalChecks와 병렬 실행.
+// ──────────────────────────────────────────────────────────
+async function processResignEffectiveTransition(now: Timestamp): Promise<void> {
+  const nowDate = now.toDate();
+  const pendingContractStatuses = ["pending_employer", "pending_worker"];
+
+  // [STARVATION-SAFE] 4-쿼리: resignStatus×status 2×2 복합 인덱스 활용 (in-memory 필터 없음)
+  const [q1, q2, q3, q4] = await Promise.all([
+    db.collection("applications")
+      .where("resignStatus", "==", "APPROVED")
+      .where("status", "==", "CONFIRMED")
+      .where("actualResignDate", "<", now)
+      .limit(100).get(),
+    db.collection("applications")
+      .where("resignStatus", "==", "APPROVED")
+      .where("status", "==", "CONTRACT_PENDING")
+      .where("actualResignDate", "<", now)
+      .limit(100).get(),
+    db.collection("applications")
+      .where("resignStatus", "==", "AUTO_APPROVED")
+      .where("status", "==", "CONFIRMED")
+      .where("actualResignDate", "<", now)
+      .limit(100).get(),
+    db.collection("applications")
+      .where("resignStatus", "==", "AUTO_APPROVED")
+      .where("status", "==", "CONTRACT_PENDING")
+      .where("actualResignDate", "<", now)
+      .limit(100).get(),
+  ]);
+
+  const seen = new Set<string>();
+  const allDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+  for (const snap of [q1, q2, q3, q4]) {
+    for (const doc of snap.docs) {
+      if (!seen.has(doc.id)) { seen.add(doc.id); allDocs.push(doc); }
+    }
+  }
+
+  if (allDocs.length === 0) {
+    console.log("  ✅ [퇴사 효력 전환] 처리 대상 없음");
+  } else {
+    console.log(`  🔄 [퇴사 효력 전환] 처리 대상: ${allDocs.length}건`);
+
+    const results = await Promise.allSettled(allDocs.map(async (doc) => {
+      try {
+        const app = doc.data();
+        const actualResignDate = (app.actualResignDate as Timestamp | undefined)?.toDate();
+        if (!actualResignDate || actualResignDate >= nowDate) return;
+
+        // 계약서 사전 조회 (TX 외부 — TX 내에서 voiding에만 사용)
+        const contractQ = await db.collection("employment_contracts")
+          .where("applicationId", "==", doc.id)
+          .where("businessId", "==", app.businessId)
+          .limit(5).get();
+        const contractsToVoid = contractQ.docs.filter(
+          (d) => pendingContractStatuses.includes(d.data().status as string)
+        );
+
+        // 원자적 TX: Application CANCELED 전환 + 계약서 voiding
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(doc.ref);
+          const freshApp = snap.data();
+          if (!freshApp || freshApp.status === "CANCELED") return; // 이미 처리됨
+          if (freshApp.resignStatus !== "APPROVED" && freshApp.resignStatus !== "AUTO_APPROVED") return;
+          const freshActualResignDate = (freshApp.actualResignDate as Timestamp | undefined)?.toDate();
+          if (!freshActualResignDate || freshActualResignDate >= nowDate) return;
+
+          // [CAUSALITY] status=CANCELED + resignStatus=APPROVED → isTerminationApproved=true
+          // [STARVATION-SAFE] resignAttendanceNormalizedAt=null → attendance 재시도 쿼리 대상
+          tx.update(doc.ref, {
+            status: "CANCELED",
+            canceledAt: now,
+            cancelReason: "RESIGNATION_EFFECTIVE",
+            resignAttendanceNormalizedAt: null,
+          });
+          // [CONTRACT_VOID_AT_EFFECTIVE_D1] pending 계약서 voiding
+          for (const contractDoc of contractsToVoid) {
+            tx.update(contractDoc.ref, {
+              status: "voided",
+              contractVoidedAt: now,
+              voidReason: "RESIGNATION",
+            });
+          }
+        });
+
+        // [TOKEN_REVOKE_AT_EFFECTIVE_D1] 고용 종료 시점에 Auth 토큰 무효화
+        try {
+          await admin.auth().revokeRefreshTokens(app.uid as string);
+        } catch (tokenErr) {
+          console.warn(`[퇴사 D+1] revokeRefreshTokens 실패 uid=${app.uid}: ${tokenErr}`);
+          await db.collection("pending_token_revocations").doc(app.uid as string).set({
+            uid: app.uid,
+            reason: "RESIGNATION_EFFECTIVE",
+            applicationId: doc.id,
+            failedAt: now,
+          }).catch(() => {/* 기록 실패는 무시 */});
+        }
+
+        // TO 카운터 감소 (wdId canonical + workTypeConfirmedCounts + totalConfirmed)
+        if (app.toId) {
+          try {
+            const toRef = db.collection("tos").doc(app.toId as string);
+            const toCounterUpdate: {[key: string]: admin.firestore.FieldValue} = {
+              totalConfirmed: admin.firestore.FieldValue.increment(-1),
+            };
+            if (!app.slotId && app.selectedWorkType) {
+              toCounterUpdate[`workTypeConfirmedCounts.${app.selectedWorkType}`] =
+                admin.firestore.FieldValue.increment(-1);
+            }
+            if (app.wdId) {
+              toCounterUpdate[`workDetailCounts.${app.wdId}.confirmedCount`] =
+                admin.firestore.FieldValue.increment(-1);
+            }
+            const toCounterBatch = db.batch();
+            toCounterBatch.update(toRef, toCounterUpdate);
+            if (app.slotId) {
+              toCounterBatch.update(
+                toRef.collection("slots").doc(app.slotId as string),
+                {confirmedCount: admin.firestore.FieldValue.increment(-1)}
+              );
+            }
+            await toCounterBatch.commit();
+          } catch (e) {
+            console.warn(`[퇴사 D+1] TO 카운터 감소 실패 toId=${app.toId}: ${e}`);
+          }
+        }
+
+        // scheduled attendance → absent 처리 (actualResignDate=D 초과 날짜만, strict >)
+        {
+          let lastAtt: FirebaseFirestore.DocumentSnapshot | undefined;
+          while (true) {
+            let attQ: FirebaseFirestore.Query = db.collection("attendance")
+              .where("applicationId", "==", doc.id)
+              .where("status", "==", "scheduled")
+              .limit(499);
+            if (lastAtt) attQ = attQ.startAfter(lastAtt);
+            const scheduledSnap = await attQ.get();
+            if (scheduledSnap.empty) break;
+            const attBatch = db.batch();
+            let updated = 0;
+            let lastDoc: FirebaseFirestore.DocumentSnapshot | undefined;
+            for (const attDoc of scheduledSnap.docs) {
+              lastDoc = attDoc;
+              const workDate = (attDoc.data().workDate as Timestamp | undefined)?.toDate();
+              // [STRICT-GT] actualResignDate(=D)는 마지막 근무일 — D+1 이후만 absent
+              if (workDate && workDate > actualResignDate) {
+                attBatch.update(attDoc.ref, {status: "absent", updatedAt: now});
+                updated++;
+              }
+            }
+            if (updated > 0) await attBatch.commit();
+            if (scheduledSnap.size < 499) break;
+            lastAtt = lastDoc;
+          }
+        }
+
+        // [STARVATION-SAFE] 출근기록 정리 완료 마커 — null→serverTimestamp 전환으로 재시도 쿼리에서 제외
+        await doc.ref.update({
+          resignAttendanceNormalizedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }).catch((e) => console.warn(`[퇴사 D+1] 마커 기록 실패 ${doc.id}: ${e}`));
+
+        console.log(`  ✅ [퇴사 D+1] ${doc.id} 처리 완료`);
+      } catch (err) {
+        console.error(`[퇴사 D+1] 문서 ${doc.id} 처리 실패: ${err}`);
+        throw err;
+      }
+    }));
+
+    const successCount = results.filter((r) => r.status === "fulfilled").length;
+    console.log(`  ✅ [퇴사 효력 전환] ${successCount}/${allDocs.length}건 처리 완료`);
+  }
+
+  // [ATTENDANCE-RETRY] TX 성공 후 attendance 처리 실패한 문서 재처리
+  // resignAttendanceNormalizedAt==null인 CANCELED+RESIGNATION_EFFECTIVE 대상
+  const retrySnap = await db.collection("applications")
+    .where("cancelReason", "==", "RESIGNATION_EFFECTIVE")
+    .where("status", "==", "CANCELED")
+    .where("resignAttendanceNormalizedAt", "==", null)
+    .limit(50).get();
+
+  if (!retrySnap.empty) {
+    console.log(`  🔄 [퇴사 D+1 재시도] attendance 미완료 ${retrySnap.size}건`);
+    await Promise.allSettled(retrySnap.docs.map(async (doc) => {
+      try {
+        const app = doc.data();
+        const actualResignDate = (app.actualResignDate as Timestamp | undefined)?.toDate();
+        if (!actualResignDate) return;
+        let lastAtt: FirebaseFirestore.DocumentSnapshot | undefined;
+        while (true) {
+          let attQ: FirebaseFirestore.Query = db.collection("attendance")
+            .where("applicationId", "==", doc.id)
+            .where("status", "==", "scheduled")
+            .limit(499);
+          if (lastAtt) attQ = attQ.startAfter(lastAtt);
+          const scheduledSnap = await attQ.get();
+          if (scheduledSnap.empty) break;
+          const attBatch = db.batch();
+          let updated = 0;
+          let lastDoc: FirebaseFirestore.DocumentSnapshot | undefined;
+          for (const attDoc of scheduledSnap.docs) {
+            lastDoc = attDoc;
+            const workDate = (attDoc.data().workDate as Timestamp | undefined)?.toDate();
+            if (workDate && workDate > actualResignDate) {
+              attBatch.update(attDoc.ref, {status: "absent", updatedAt: now});
+              updated++;
+            }
+          }
+          if (updated > 0) await attBatch.commit();
+          if (scheduledSnap.size < 499) break;
+          lastAtt = lastDoc;
+        }
+        await doc.ref.update({
+          resignAttendanceNormalizedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        console.log(`  ✅ [퇴사 D+1 재시도] ${doc.id} attendance 정리 완료`);
+      } catch (e) {
+        console.error(`[퇴사 D+1 재시도] ${doc.id} 실패: ${e}`);
+      }
+    }));
+  }
+}
+
 // ═══════════════════════════════════════════════════════════
 // 🔥 통합 마스터 스케줄러 (매 시간 정각 실행)
 // ═══════════════════════════════════════════════════════════
@@ -829,8 +1054,9 @@ export const masterScheduler = onSchedule(
         processExpiredReviewRequests(timestamp),
         processContractRenewalChecks(timestamp),
         processExpiredIdCardAccess(timestamp),
+        processResignEffectiveTransition(timestamp),
       ]);
-      const midnightNames = ["미퇴근 처리", "자동 결근", "리뷰 요청", "리뷰 공개", "계약 연장", "신분증 만료"];
+      const midnightNames = ["미퇴근 처리", "자동 결근", "리뷰 요청", "리뷰 공개", "계약 연장", "신분증 만료", "퇴사 효력 전환"];
       midnightResults.forEach((r, i) => {
         if (r.status === "rejected") console.error(`❌ [${midnightNames[i]}] 실패:`, r.reason);
         else console.log(`✅ [${midnightNames[i]}] 완료`);
@@ -4239,30 +4465,15 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         await db.runTransaction(async (tx) => {
           const snap = await tx.get(doc.ref);
           if (snap.data()?.resignStatus !== "PENDING") return; // 이미 처리됨
-          // [RESIGNATION-001 수정] status="CANCELED" 설정 시 cancelReason 명시
-          // cancelReason 없으면 일반 취소와 구분 불가 → 퇴사 처리 원인 추적 불가
+          // [DEFERRED-RESIGN] 승인은 결정만 — status=CANCELED·카운터·계약·attendance는 D+1에서 처리
           tx.update(doc.ref, {
             resignStatus: "AUTO_APPROVED",
             resignApprovedAt: now,
             actualResignDate: Timestamp.fromDate(actualResignDate),
-            status: "CANCELED",
-            canceledAt: now,
-            cancelReason: "RESIGNATION_APPROVED",
           });
         });
 
-        // 퇴직 확정 → Auth 토큰 즉시 무효화 (로그아웃 없이도 접근 차단)
-        try {
-          await admin.auth().revokeRefreshTokens(app.uid as string);
-        } catch (tokenErr) {
-          console.warn(`[퇴직] revokeRefreshTokens 실패 uid=${app.uid}: ${tokenErr}`);
-          await db.collection("pending_token_revocations").doc(app.uid as string).set({
-            uid: app.uid,
-            reason: "RESIGNATION_AUTO_APPROVED",
-            applicationId: doc.id, // [APP-ID-FIX] app = doc.data() → app.id = undefined
-            failedAt: now,
-          }).catch(() => {/* 기록 실패는 무시 */});
-        }
+        // [DEFERRED-RESIGN] TOKEN_REVOKE_AT_EFFECTIVE_D1 — 토큰 무효화는 D+1에서 처리
         // [SEC-SUBADMIN-CLEAR] subAdminBusinessIds 초기화 + member doc 삭제 — 퇴직 후 SubAdmin 권한 잔류 방지
         // [1D-REVOKE-FIX] member doc 원자 삭제 → client _startMemberPermsListener data==null 감지 → _isAdminMode=false 즉시
         try {
@@ -4284,83 +4495,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
           console.warn(`[퇴직-D+3] subAdminBusinessIds 초기화 실패 uid=${app.uid}:`, e);
         }
 
-        // [R-H4/H5/H6-FIX] AUTO_APPROVED 수동 approveResignation()과 동일하게 3가지 정리 추가
-        // 수동 승인 경로에만 있던 처리(카운터·계약서·attendance)를 AUTO_APPROVED에도 적용
-        try {
-          const resignPendingContractStatuses = ["pending_employer", "pending_worker"];
-          const resignConfirmedStatuses = ["CONFIRMED", "CONTRACT_PENDING"];
-          const resignCleanupBatch = db.batch();
-
-          // [R-H6] TO totalConfirmed 카운터 감소 — 이전 status가 확정 상태였던 경우만
-          if (app.toId && resignConfirmedStatuses.includes(app.status as string)) {
-            const toRef = db.collection("tos").doc(app.toId as string);
-            const toCounterUpdate: {[key: string]: admin.firestore.FieldValue} = {
-              totalConfirmed: admin.firestore.FieldValue.increment(-1),
-            };
-            if (!app.slotId && app.selectedWorkType) {
-              toCounterUpdate[`workTypeConfirmedCounts.${app.selectedWorkType}`] =
-                admin.firestore.FieldValue.increment(-1);
-            }
-            resignCleanupBatch.update(toRef, toCounterUpdate);
-            if (app.slotId) {
-              const slotRef = toRef.collection("slots").doc(app.slotId as string);
-              // [Phase 8.1E.5] workTypeCounts.confirmedCount 제거 — workDetailCounts canonical
-              resignCleanupBatch.update(slotRef, {
-                confirmedCount: admin.firestore.FieldValue.increment(-1),
-              });
-            }
-          }
-
-          // [R-H5] 서명 대기 계약서 voided 전환 (applicationId 직접 매칭 → applicationIds arrayContains 순서)
-          const resignContractQ1 = await db.collection("employment_contracts")
-            .where("applicationId", "==", doc.id)
-            .where("businessId", "==", app.businessId)
-            .limit(5).get();
-          let resignContractsToVoid = resignContractQ1.docs.filter(
-            (d) => resignPendingContractStatuses.includes(d.data().status as string)
-          );
-          if (resignContractsToVoid.length === 0) {
-            const resignContractQ2 = await db.collection("employment_contracts")
-              .where("applicationIds", "array-contains", doc.id)
-              .where("businessId", "==", app.businessId)
-              .limit(5).get();
-            resignContractsToVoid = resignContractQ2.docs.filter(
-              (d) => resignPendingContractStatuses.includes(d.data().status as string)
-            );
-          }
-          for (const contractDoc of resignContractsToVoid) {
-            resignCleanupBatch.update(contractDoc.ref, {
-              status: "voided", contractVoidedAt: now, voidReason: "RESIGNATION",
-            });
-          }
-          await resignCleanupBatch.commit();
-
-          // [R-H4] actualResignDate 이후 scheduled attendance → absent 처리 (orphan 방지)
-          // limit(500): 1년 주 5일 근무 ≈ 260건, 500으로 충분 (초과 시 다음 스케줄에서 처리)
-          const resignScheduledSnap = await db.collection("attendance")
-            .where("applicationId", "==", doc.id)
-            .where("status", "==", "scheduled").limit(500).get();
-          if (!resignScheduledSnap.empty) {
-            let attBatch = db.batch();
-            let attCount = 0;
-            for (const attDoc of resignScheduledSnap.docs) {
-              const workDate = (attDoc.data().workDate as {toDate(): Date} | undefined)?.toDate();
-              if (workDate && workDate >= actualResignDate) {
-                attBatch.update(attDoc.ref, {status: "absent", updatedAt: now});
-                attCount++;
-                if (attCount >= 499) {
-                  await attBatch.commit();
-                  attBatch = db.batch();
-                  attCount = 0;
-                }
-              }
-            }
-            if (attCount > 0) await attBatch.commit();
-          }
-        } catch (cleanupErr) {
-          // 정리 실패 시에도 알림은 발송 (CF reconcileTOStats가 카운터를 교정함)
-          console.error(`[D+3 퇴사 AUTO_APPROVED] 정리 실패 ${doc.id}:`, cleanupErr);
-        }
+        // [DEFERRED-RESIGN] 카운터·계약·attendance 정리는 D+1 processResignEffectiveTransition이 담당
 
         // 근무자에게 자동 승인 알림 (best-effort — 알림 실패가 자동승인 자체를 막지 않음)
         // [FCM-03 수정] businessId 누락 → notification_screen resignApproved 분기에서
@@ -15720,28 +15855,7 @@ export const callableApproveResignation = onCall(
       throw new HttpsError("permission-denied", "자신의 퇴사 요청은 직접 처리할 수 없습니다.");
     }
 
-    // [PERF-M5] 계약서 사전 쿼리 병렬화 — cq1 + cq2 동시 실행 (2 RTT → 1 RTT)
-    const pendingContractStatuses = ["pending_employer", "pending_worker"];
-    let contractRef: admin.firestore.DocumentReference | null = null;
-    const [cq1, cq2] = await Promise.all([
-      db.collection("employment_contracts")
-        .where("applicationId", "==", applicationId)
-        .where("businessId", "==", businessId)
-        .limit(5).get(),
-      db.collection("employment_contracts")
-        .where("applicationIds", "array-contains", applicationId)
-        .where("businessId", "==", businessId)
-        .limit(5).get(),
-    ]);
-    const cq1Match = cq1.docs.find((d) =>
-      pendingContractStatuses.includes(d.data().status as string)
-    );
-    const cq2Match = cq1Match ? null : cq2.docs.find((d) =>
-      pendingContractStatuses.includes(d.data().status as string)
-    );
-    if (cq1Match) contractRef = cq1Match.ref;
-    else if (cq2Match) contractRef = cq2Match.ref;
-
+    // [DEFERRED-RESIGN] 계약 조회 불필요 — CONTRACT_VOID_AT_EFFECTIVE_D1: processResignEffectiveTransition이 담당
     type ResignationResolved = {
       toId: string | null;
       slotId: string | null;
@@ -15749,12 +15863,10 @@ export const callableApproveResignation = onCall(
       businessId: string;
       businessName: string;
       resignRequestDate: admin.firestore.Timestamp | null;
-      originalStatus: string;
     };
     let resolvedData: ResignationResolved | null = null;
 
     await db.runTransaction(async (tx) => {
-      // [VOID-01] read-before-write: 모든 read를 write 이전에 수행
       const snap = await tx.get(appRef);
       if (!snap.exists) throw new HttpsError("not-found", "지원서 없음");
       const d = snap.data()!;
@@ -15763,15 +15875,6 @@ export const callableApproveResignation = onCall(
           "failed-precondition",
           `퇴사 요청 상태가 PENDING이 아님: ${d.resignStatus}`
         );
-      }
-
-      // [VOID-01] contractRef tx 내 재읽기 — 외부 쿼리 이후 completed 전환 방어
-      let freshContractStatus: string | null = null;
-      if (contractRef) {
-        const freshContract = await tx.get(contractRef);
-        freshContractStatus = freshContract.exists
-          ? ((freshContract.data()?.status as string | undefined) ?? null)
-          : null;
       }
 
       const resignRequestDate =
@@ -15783,60 +15886,22 @@ export const callableApproveResignation = onCall(
         businessId: (d.businessId as string) ?? "",
         businessName: (d.businessName as string) ?? "",
         resignRequestDate,
-        originalStatus: d.status as string,
       };
+      // [DEFERRED-RESIGN] 승인은 결정만 — status=CANCELED·카운터·계약·attendance는 D+1에서 처리
       tx.update(appRef, {
         resignStatus: "APPROVED",
         resignApprovedAt: admin.firestore.FieldValue.serverTimestamp(),
         resignApprovedBy: callerUid,
         actualResignDate:
           resignRequestDate ?? admin.firestore.FieldValue.serverTimestamp(),
-        status: "CANCELED",
       });
-      // [VOID-01] pending 상태일 때만 voiding — completed 계약서는 법적 증거 보전
-      if (contractRef && freshContractStatus && pendingContractStatuses.includes(freshContractStatus)) {
-        tx.update(contractRef, {
-          status: "voided",
-          contractVoidedAt: admin.firestore.FieldValue.serverTimestamp(),
-          voidReason: "RESIGNATION",
-        });
-      }
     });
 
     if (!resolvedData) throw new HttpsError("internal", "트랜잭션 결과 없음");
     const app = resolvedData as ResignationResolved;
 
-    // TO totalConfirmed 감소 (best-effort: 실패해도 트랜잭션은 이미 커밋됨 — CF syncTOStats 교정)
-    if (app.toId && CONFIRMED_STATUSES.includes(app.originalStatus)) {
-      try {
-        const batch = db.batch();
-        batch.update(db.collection("tos").doc(app.toId), {
-          totalConfirmed: admin.firestore.FieldValue.increment(-1),
-        });
-        if (app.slotId) {
-          batch.update(
-            db.collection("tos").doc(app.toId).collection("slots").doc(app.slotId),
-            {confirmedCount: admin.firestore.FieldValue.increment(-1)}
-          );
-        }
-        await batch.commit();
-      } catch (e) {
-        console.warn(`[callableApproveResignation] TO 카운터 감소 실패 (best-effort) toId=${app.toId}:`, e);
-      }
-    }
-
-    // 퇴직 확정 → Auth 토큰 즉시 무효화 (수동 퇴사 승인 경로 — D+3 자동 승인과 동일 패턴)
-    try {
-      await admin.auth().revokeRefreshTokens(app.uid);
-    } catch (tokenErr) {
-      console.warn(`[퇴사승인] revokeRefreshTokens 실패 uid=${app.uid}: ${tokenErr}`);
-      await db.collection("pending_token_revocations").doc(app.uid).set({
-        uid: app.uid,
-        reason: "RESIGNATION_MANUALLY_APPROVED",
-        applicationId,
-        failedAt: admin.firestore.FieldValue.serverTimestamp(),
-      }).catch(() => {/* 기록 실패는 무시 */});
-    }
+    // [DEFERRED-RESIGN] TOKEN_REVOKE_AT_EFFECTIVE_D1 — 토큰 무효화는 D+1에서 처리
+    // [DEFERRED-RESIGN] 카운터·계약·attendance 정리는 D+1 processResignEffectiveTransition이 담당
     // [SEC-SUBADMIN-CLEAR] subAdminBusinessIds 초기화 + member doc 삭제 — 퇴사 후 SubAdmin 권한 잔류 방지
     // [1D-REVOKE-FIX] member doc 원자 삭제 → client _startMemberPermsListener data==null 감지 → _isAdminMode=false 즉시
     try {
@@ -15858,38 +15923,9 @@ export const callableApproveResignation = onCall(
       console.warn(`[퇴사승인] subAdminBusinessIds 초기화 실패 uid=${app.uid}:`, e);
     }
 
-    // 퇴사일 이후 scheduled attendance → absent 일괄 처리
-    // [M-5 수정 2026-07-15] limit() 없음 → while 루프 페이지네이션으로 교체
-    const cutoffDate = app.resignRequestDate?.toDate() ?? new Date();
-    {
-      let lastAtt: FirebaseFirestore.DocumentSnapshot | undefined;
-      while (true) {
-        let q: FirebaseFirestore.Query = db.collection("attendance")
-          .where("applicationId", "==", applicationId)
-          .where("status", "==", "scheduled")
-          .limit(499);
-        if (lastAtt) q = q.startAfter(lastAtt);
-        const scheduledSnap = await q.get();
-        if (scheduledSnap.empty) break;
-        const cancelBatch = db.batch();
-        let updated = 0;
-        for (const doc of scheduledSnap.docs) {
-          const workDate = doc.data().workDate as admin.firestore.Timestamp | null;
-          if (workDate && workDate.toDate() >= cutoffDate) {
-            cancelBatch.update(doc.ref, {
-              status: "absent",
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
-            updated++;
-          }
-        }
-        if (updated > 0) await cancelBatch.commit();
-        if (scheduledSnap.docs.length < 499) break;
-        lastAtt = scheduledSnap.docs[scheduledSnap.docs.length - 1];
-      }
-    }
+    // [DEFERRED-RESIGN] attendance 정리는 D+1에서 processResignEffectiveTransition이 담당
 
-    // 근무자에게 알림 (best-effort — 실패해도 APPROVED/CANCELED 상태는 유지)
+    // 근무자에게 알림 (best-effort — 실패해도 APPROVED 상태는 유지)
     if (app.uid && app.uid.length > 0) {
       const rd = app.resignRequestDate;
       const rdStr = rd ? (() => { const KST_OFFSET_MS = 9 * 60 * 60 * 1000; const dKST = new Date(rd.toDate().getTime() + KST_OFFSET_MS); return `${dKST.getUTCMonth()+1}/${dKST.getUTCDate()}`; })() : null;
