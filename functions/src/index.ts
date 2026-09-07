@@ -12800,16 +12800,31 @@ export const onAttendanceWageStatusChanged = onDocumentWritten(
             userUpdates.restrictedUntil = admin.firestore.Timestamp.fromDate(restriction2);
           }
         } else {
-          // ── noshowOff: 관리자 노쇼 취소 → noShowDates 배열에서 해당 timestamp 제거 + 카운트 보정 ──
-          const currentRecent = (userData.recentNoShowCount as number | undefined) ?? 0;
-          const newRecentNoShowCount = Math.max(0, currentRecent - 1);
-          userUpdates.recentNoShowCount = newRecentNoShowCount;
-          // 저장된 timestamp로 noShowDates 정확히 제거 (구버전 호환: 없으면 배열 건드리지 않음)
+          // ── noshowOff: 관리자 노쇼 취소 → noShowDates 배열에서 해당 timestamp 제거 + 90일 재계산 ──
+          // [FIX-90D-RECALC] currentRecent - 1 단순 감산 제거 → post-cancel 배열 기반 rolling 재계산
+          // 이유: NO_SHOW 생성 후 취소 전에 90일 경계가 지나면 stored counter가 실제 count보다 높아져
+          //       recentNoShowCount-1 >= 3 → restrictedUntil이 삭제되지 않아 지원을 잘못 차단함
           const storedNoshowTs = after?.noShowPenaltyTimestamp as admin.firestore.Timestamp | undefined;
+          const currentNoShowDates = (userData.noShowDates as admin.firestore.Timestamp[] | undefined) ?? [];
+          const cutoff90dOff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+
+          // post-cancel 배열: 취소된 timestamp를 메모리에서 제외 (anchor 없으면 원본 배열 그대로)
+          const postCancelDates = storedNoshowTs != null
+            ? currentNoShowDates.filter((t) =>
+                !(t.seconds === storedNoshowTs.seconds && t.nanoseconds === storedNoshowTs.nanoseconds)
+              )
+            : currentNoShowDates;
+
+          // rolling 90-day recount (post-cancel 기준, 정확한 재산출)
+          const postCancelRecentCount = postCancelDates.filter((t) => t.toDate() >= cutoff90dOff).length;
+          userUpdates.recentNoShowCount = postCancelRecentCount;
+
+          // Firestore 배열에서도 정확히 제거 (arrayRemove는 Timestamp equality 기반)
           if (storedNoshowTs != null) {
             userUpdates.noShowDates = admin.firestore.FieldValue.arrayRemove(storedNoshowTs);
           }
-          if (newRecentNoShowCount < 3) {
+          // 취소는 restriction을 연장하지 않음 — postCancelRecentCount < 3이면 해제, >= 3이면 기존 유지
+          if (postCancelRecentCount < 3) {
             userUpdates.restrictedUntil = admin.firestore.FieldValue.delete();
           }
         }
