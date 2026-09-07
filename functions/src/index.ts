@@ -828,24 +828,54 @@ async function processResignEffectiveTransition(now: Timestamp): Promise<void> {
           (d) => pendingContractStatuses.includes(d.data().status as string)
         );
 
-        // 원자적 TX: Application CANCELED 전환 + 계약서 voiding
+        // ── 원자적 TX: status=CANCELED + canonical capacity decrement + 계약서 voiding ──
+        // [ATOMIC-CAPACITY] status=CANCELED와 canonical capacity decrement를 동일 TX에서 처리
+        // reads-before-writes 순서: Application → TO → Slot → (writes)
         await db.runTransaction(async (tx) => {
-          const snap = await tx.get(doc.ref);
-          const freshApp = snap.data();
-          if (!freshApp || freshApp.status === "CANCELED") return; // 이미 처리됨
-          if (freshApp.resignStatus !== "APPROVED" && freshApp.resignStatus !== "AUTO_APPROVED") return;
+          // ── 1. 모든 read ─────────────────────────────────────────────────────
+          const freshSnap = await tx.get(doc.ref);
+          const freshApp = freshSnap.data();
+          if (!freshApp) return;
+          const freshStatus = freshApp.status as string | undefined;
+          // 멱등성 + 상태 guard: CONFIRMED/CONTRACT_PENDING 아니거나 이미 decrement 완료 시 skip
+          if (freshStatus !== "CONFIRMED" && freshStatus !== "CONTRACT_PENDING") return;
+          if (freshApp.confirmedDecrementedAt) return;
           const freshActualResignDate = (freshApp.actualResignDate as Timestamp | undefined)?.toDate();
           if (!freshActualResignDate || freshActualResignDate >= nowDate) return;
 
-          // [CAUSALITY] status=CANCELED + resignStatus=APPROVED → isTerminationApproved=true
+          const toId = app.toId as string | undefined;
+          const slotId = app.slotId as string | undefined;
+          const wdId = app.wdId as string | undefined;
+          const selectedWorkType = app.selectedWorkType as string | undefined;
+
+          let toSnap: FirebaseFirestore.DocumentSnapshot | undefined;
+          let slotSnap: FirebaseFirestore.DocumentSnapshot | undefined;
+          let isNewSchemaSlot = false;
+          if (toId) {
+            const toRef = db.collection("tos").doc(toId);
+            toSnap = await tx.get(toRef);
+            if (slotId) {
+              slotSnap = await tx.get(toRef.collection("slots").doc(slotId));
+              const decWds =
+                (slotSnap.data()?.workDetails as Record<string, unknown>[] | undefined) ?? [];
+              isNewSchemaSlot = decWds.some(
+                (wd) => typeof wd["wdId"] === "string" && (wd["wdId"] as string).length > 0
+              );
+            }
+          }
+
+          // ── 2. 모든 write ────────────────────────────────────────────────────
+          // [CAUSALITY] Application CANCELED + confirmedDecrementedAt (idempotency marker)
           // [STARVATION-SAFE] resignAttendanceNormalizedAt=null → attendance 재시도 쿼리 대상
           tx.update(doc.ref, {
             status: "CANCELED",
             canceledAt: now,
             cancelReason: "RESIGNATION_EFFECTIVE",
             resignAttendanceNormalizedAt: null,
+            confirmedDecrementedAt: admin.firestore.FieldValue.serverTimestamp(),
           });
-          // [CONTRACT_VOID_AT_EFFECTIVE_D1] pending 계약서 voiding
+
+          // [CONTRACT_VOID_AT_EFFECTIVE_D1] pending 계약서 voiding (blind write — TX 외부에서 필터링)
           for (const contractDoc of contractsToVoid) {
             tx.update(contractDoc.ref, {
               status: "voided",
@@ -853,50 +883,61 @@ async function processResignEffectiveTransition(now: Timestamp): Promise<void> {
               voidReason: "RESIGNATION",
             });
           }
+
+          // [CANONICAL-CAPACITY] TO / slot / wdId canonical decrement (음수 방지 + new-schema guard)
+          if (toId && toSnap) {
+            const toRef = db.collection("tos").doc(toId);
+            const currentTotalConfirmed = (toSnap.data()?.totalConfirmed as number) ?? 0;
+            if (currentTotalConfirmed > 0) {
+              const toUpdate: Record<string, admin.firestore.FieldValue> = {
+                totalConfirmed: admin.firestore.FieldValue.increment(-1),
+              };
+              if (!slotId && selectedWorkType) {
+                // non-slot: workTypeConfirmedCounts 서브카운터 음수 방지
+                const currentWorkTypeCount =
+                  ((toSnap.data()?.workTypeConfirmedCounts as Record<string, number> | undefined)
+                    ?.[selectedWorkType] ?? 0);
+                if (currentWorkTypeCount > 0) {
+                  toUpdate[`workTypeConfirmedCounts.${selectedWorkType}`] =
+                    admin.firestore.FieldValue.increment(-1);
+                }
+              }
+              tx.update(toRef, toUpdate);
+
+              if (slotId && slotSnap) {
+                const slotRef = toRef.collection("slots").doc(slotId);
+                const slotConfirmedCount = (slotSnap.data()?.confirmedCount as number) ?? 0;
+                if (slotConfirmedCount > 0) {
+                  if (isNewSchemaSlot && !wdId) {
+                    // [Phase 8.1E.2D] new-schema slot + wdId 없음 → aggregate-only 금지
+                    console.error(
+                      `[퇴사 D+1] Phase8.1E.2D: new-schema slot wdId 없음 — slot 카운터 스킵 ` +
+                      `(appId=${doc.id}). callableRecalculateTOStats로 교정 필요.`
+                    );
+                  } else {
+                    const slotUpdate: Record<string, admin.firestore.FieldValue> = {
+                      confirmedCount: admin.firestore.FieldValue.increment(-1),
+                    };
+                    if (wdId) {
+                      // [wdId canonical] workDetailCounts.{wdId}.confirmedCount
+                      const wdcEntry = (
+                        slotSnap.data()?.workDetailCounts as
+                          Record<string, {confirmedCount?: number}> | undefined
+                      )?.[wdId];
+                      if ((wdcEntry?.confirmedCount ?? 0) > 0) {
+                        slotUpdate[`workDetailCounts.${wdId}.confirmedCount`] =
+                          admin.firestore.FieldValue.increment(-1);
+                      }
+                    }
+                    tx.update(slotRef, slotUpdate);
+                  }
+                }
+              }
+            }
+          }
         });
 
-        // [TOKEN_REVOKE_AT_EFFECTIVE_D1] 고용 종료 시점에 Auth 토큰 무효화
-        try {
-          await admin.auth().revokeRefreshTokens(app.uid as string);
-        } catch (tokenErr) {
-          console.warn(`[퇴사 D+1] revokeRefreshTokens 실패 uid=${app.uid}: ${tokenErr}`);
-          await db.collection("pending_token_revocations").doc(app.uid as string).set({
-            uid: app.uid,
-            reason: "RESIGNATION_EFFECTIVE",
-            applicationId: doc.id,
-            failedAt: now,
-          }).catch(() => {/* 기록 실패는 무시 */});
-        }
-
-        // TO 카운터 감소 (wdId canonical + workTypeConfirmedCounts + totalConfirmed)
-        if (app.toId) {
-          try {
-            const toRef = db.collection("tos").doc(app.toId as string);
-            const toCounterUpdate: {[key: string]: admin.firestore.FieldValue} = {
-              totalConfirmed: admin.firestore.FieldValue.increment(-1),
-            };
-            if (!app.slotId && app.selectedWorkType) {
-              toCounterUpdate[`workTypeConfirmedCounts.${app.selectedWorkType}`] =
-                admin.firestore.FieldValue.increment(-1);
-            }
-            if (app.wdId) {
-              toCounterUpdate[`workDetailCounts.${app.wdId}.confirmedCount`] =
-                admin.firestore.FieldValue.increment(-1);
-            }
-            const toCounterBatch = db.batch();
-            toCounterBatch.update(toRef, toCounterUpdate);
-            if (app.slotId) {
-              toCounterBatch.update(
-                toRef.collection("slots").doc(app.slotId as string),
-                {confirmedCount: admin.firestore.FieldValue.increment(-1)}
-              );
-            }
-            await toCounterBatch.commit();
-          } catch (e) {
-            console.warn(`[퇴사 D+1] TO 카운터 감소 실패 toId=${app.toId}: ${e}`);
-          }
-        }
-
+        // post-TX side effects — TX commit 성공 후에만 실행 (순서: attendance → token revoke)
         // scheduled attendance → absent 처리 (actualResignDate=D 초과 날짜만, strict >)
         {
           let lastAtt: FirebaseFirestore.DocumentSnapshot | undefined;
@@ -924,6 +965,20 @@ async function processResignEffectiveTransition(now: Timestamp): Promise<void> {
             if (scheduledSnap.size < 499) break;
             lastAtt = lastDoc;
           }
+        }
+
+        // [TOKEN_REVOKE_AT_EFFECTIVE_D1] attendance 정리 후 Auth 토큰 무효화
+        // (TX commit 이후 + attendance 완료 후 실행 — critical state commit 이후 best-effort)
+        try {
+          await admin.auth().revokeRefreshTokens(app.uid as string);
+        } catch (tokenErr) {
+          console.warn(`[퇴사 D+1] revokeRefreshTokens 실패 uid=${app.uid}: ${tokenErr}`);
+          await db.collection("pending_token_revocations").doc(app.uid as string).set({
+            uid: app.uid,
+            reason: "RESIGNATION_EFFECTIVE",
+            applicationId: doc.id,
+            failedAt: now,
+          }).catch(() => {/* 기록 실패는 무시 */});
         }
 
         // [STARVATION-SAFE] 출근기록 정리 완료 마커 — null→serverTimestamp 전환으로 재시도 쿼리에서 제외
