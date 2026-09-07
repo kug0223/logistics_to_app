@@ -6804,6 +6804,224 @@ export const callableVoidContract = onCall(
   }
 );
 
+// ── callableVoidContractWithApplications ─────────────────────────────────────
+// 계약서 무효화 + 연결 지원서 취소를 단일 Firestore Transaction에서 원자 처리.
+// 기존 callableVoidContract + client-side cancelConfirmedApplication 2단계 패턴(P1 버그)을 대체.
+// P1: 계약서 void 후 클라이언트 crashloop → Contract.voided + Application.CONTRACT_PENDING 분리 상태 방지.
+//
+// Input:  { contractId: string, voidReason?: string }
+// Output: { success: true, workerId, businessName, businessId, applicationIds }
+//       | { alreadyVoided: true }
+// Errors:
+//   unauthenticated      — 미로그인
+//   invalid-argument     — contractId 누락 / voidReason 500자 초과
+//   not-found            — 계약서 없음
+//   permission-denied    — canManageContract 권한 없음 / 지원서 businessId·workerId 불일치
+//   failed-precondition  — completed 계약서 무효화 시도
+export const callableVoidContractWithApplications = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {contractId, voidReason} = request.data as {contractId?: string; voidReason?: string};
+    if (!contractId || typeof contractId !== "string") {
+      throw new HttpsError("invalid-argument", "contractId가 필요합니다.");
+    }
+    if (voidReason && voidReason.length > 500) {
+      throw new HttpsError("invalid-argument", "voidReason은 500자 이하여야 합니다.");
+    }
+
+    // 1. 사전 읽기 — businessId(불변 필드) 추출 + 권한 검증
+    const contractRef = db.collection("employment_contracts").doc(contractId);
+    const preSnap = await contractRef.get();
+    if (!preSnap.exists) throw new HttpsError("not-found", "계약서를 찾을 수 없습니다.");
+    const preData = preSnap.data()!;
+    const businessId = preData["businessId"] as string | undefined;
+    const workerId = (preData["workerId"] as string | undefined) ?? "";
+    if (!businessId) throw new HttpsError("internal", "계약서 businessId 누락");
+
+    // [PERM-CONTRACT-02] assertBizAdmin + canManageContract SubAdmin 검증 (callableVoidContract 동일 패턴)
+    const {bizData: assertedBizData, callerData: voidCallerData} = await assertBizAdmin(callerUid, businessId);
+    const voidCallerRole = voidCallerData?.role as string | undefined;
+    if (voidCallerRole !== "BUSINESS_ADMIN" && voidCallerRole !== "SUPER_ADMIN") {
+      const memberSnap = await db.collection("businesses").doc(businessId).collection("members").doc(callerUid).get();
+      const memberPerms = (memberSnap.data()?.permissions as Record<string, boolean>) ?? {};
+      if (!memberPerms.canManageContract) {
+        throw new HttpsError("permission-denied", "계약서 관리 권한이 없습니다.");
+      }
+    }
+    const businessName = (assertedBizData?.["name"] as string | undefined) ?? "";
+
+    // 2. applicationIds 수집 (applicationIds[] 우선, 레거시 applicationId 단건 폴백)
+    const applicationIds: string[] = Array.isArray(preData["applicationIds"])
+      ? (preData["applicationIds"] as string[])
+      : (preData["applicationId"] ? [preData["applicationId"] as string] : []);
+
+    // 3. ID-CONSENT grant ref 사전 준비
+    //    auto grant:     doc id = `auto_${appId}` (명명 규칙 고정 — tx.get 직접 가능)
+    //    personal grant: TX 내 쿼리 불가 제약 → 사전 쿼리로 ref 목록 확보 후 TX 내 tx.get fresh 재확인
+    const autoGrantRefs = applicationIds.map((appId) =>
+      db.collection("idCardAccessRequests").doc(`auto_${appId}`)
+    );
+    const appRefs = applicationIds.map((appId) => db.collection("applications").doc(appId));
+
+    // personal grants: applicationId + targetUserId=workerId + status=approved 필터 (각 app 독립)
+    const personalGrantRefsByApp = new Map<string, FirebaseFirestore.DocumentReference[]>();
+    if (workerId) {
+      await Promise.all(
+        applicationIds.map(async (appId) => {
+          const pgSnap = await db.collection("idCardAccessRequests")
+            .where("applicationId", "==", appId)
+            .where("targetUserId", "==", workerId)
+            .where("status", "==", "approved")
+            .get();
+          const refs = pgSnap.docs
+            .filter((doc) => doc.id !== `auto_${appId}`) // auto grant 중복 방지
+            .map((doc) => doc.ref);
+          personalGrantRefsByApp.set(appId, refs);
+        })
+      );
+    }
+    const allPersonalGrantRefs: FirebaseFirestore.DocumentReference[] = [];
+    for (const refs of personalGrantRefsByApp.values()) {
+      allPersonalGrantRefs.push(...refs);
+    }
+
+    // 4. Firestore Transaction — reads 먼저, writes 나중 (Firestore 규칙)
+    type TxResult = {alreadyVoided: true} | {alreadyVoided: false};
+    const txResult: TxResult = await db.runTransaction(async (tx) => {
+      // ── READS ──────────────────────────────────────────────────────────────
+      const freshContract = await tx.get(contractRef);
+      const freshApps = appRefs.length > 0 ? await Promise.all(appRefs.map((r) => tx.get(r))) : [];
+      const freshAutoGrants = autoGrantRefs.length > 0 ? await Promise.all(autoGrantRefs.map((r) => tx.get(r))) : [];
+      const freshPersonalGrants = allPersonalGrantRefs.length > 0
+        ? await Promise.all(allPersonalGrantRefs.map((r) => tx.get(r)))
+        : [];
+
+      // ── CONTRACT 상태 검증 ─────────────────────────────────────────────────
+      if (!freshContract.exists) throw new HttpsError("not-found", "계약서를 찾을 수 없습니다.");
+      const contractStatus = (freshContract.data()!["status"] as string | undefined) ?? "";
+      if (contractStatus === "voided") return {alreadyVoided: true as const}; // 멱등
+      if (contractStatus === "completed") {
+        throw new HttpsError("failed-precondition", "쌍방 서명이 완료된 계약서는 무효화할 수 없습니다.");
+      }
+
+      // ── APPLICATION 교차검증 (ANY INVALID → 전체 TX abort) ─────────────────
+      for (const appSnap of freshApps) {
+        if (!appSnap.exists) continue;
+        const appData = appSnap.data()!;
+        if (appData["businessId"] !== businessId) {
+          throw new HttpsError("permission-denied", "계약서와 사업장이 일치하지 않는 지원서가 포함되어 있습니다.");
+        }
+        if (appData["uid"] !== workerId) {
+          throw new HttpsError("permission-denied", "계약서와 근로자가 일치하지 않는 지원서가 포함되어 있습니다.");
+        }
+      }
+
+      const now = admin.firestore.Timestamp.now();
+
+      // ── WRITES ─────────────────────────────────────────────────────────────
+
+      // Contract void
+      tx.update(contractRef, {
+        status: "voided",
+        voidedBy: callerUid,
+        contractVoidedAt: admin.firestore.FieldValue.serverTimestamp(),
+        ...(voidReason ? {voidReason} : {}),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      // Application cancel — CONFIRMED/CONTRACT_PENDING 상태인 것만 (callableCancelConfirmedApplication 동일 semantics)
+      for (let i = 0; i < freshApps.length; i++) {
+        const appSnap = freshApps[i];
+        if (!appSnap.exists) continue;
+        const appStatus = (appSnap.data()!["status"] as string | undefined) ?? "";
+        if (!CONFIRMED_STATUSES.includes(appStatus)) continue; // 이미 취소됨 — 스킵
+
+        const updateFields: Record<string, unknown> = {
+          status: "CANCELED",
+          canceledAt: admin.firestore.FieldValue.serverTimestamp(),
+          cancelReason: "ADMIN_CANCELED",
+          canceledBy: callerUid, // 서버 강제 — 클라이언트 UID 위조 차단
+          statusHistory: admin.firestore.FieldValue.arrayUnion({
+            status: "CANCELED",
+            at: now,
+            by: callerUid,
+            action: "ADMIN_CANCEL_CONFIRMED",
+            reason: voidReason ?? "ADMIN_CANCELED",
+          }),
+        };
+        if (voidReason) updateFields.cancelMessage = voidReason;
+        tx.update(appSnap.ref, updateFields);
+
+        // ID-CONSENT auto grant revoke (각 app별 1개)
+        const autoGrantSnap = freshAutoGrants[i];
+        if (autoGrantSnap?.exists && autoGrantSnap.data()?.["status"] === "approved") {
+          tx.update(autoGrantSnap.ref, {
+            status: "revoked",
+            revokedAt: admin.firestore.FieldValue.serverTimestamp(),
+            revokeReason: "APPLICATION_CANCELED",
+          });
+          console.info(`[voidContractWithApplications] ID-CONSENT auto-grant revoked: app=${applicationIds[i]}`);
+        }
+      }
+
+      // ID-CONSENT personal grant revoke (전체 apps)
+      let personalRevokedCount = 0;
+      for (const pgSnap of freshPersonalGrants) {
+        if (pgSnap.exists && pgSnap.data()?.["status"] === "approved") {
+          tx.update(pgSnap.ref, {
+            status: "revoked",
+            revokedAt: admin.firestore.FieldValue.serverTimestamp(),
+            revokeReason: "APPLICATION_CANCELED",
+          });
+          personalRevokedCount++;
+        }
+      }
+      if (personalRevokedCount > 0) {
+        console.info(`[voidContractWithApplications] ID-CONSENT personal-grant ${personalRevokedCount}개 revoked: contract=${contractId}`);
+      }
+
+      return {alreadyVoided: false as const};
+    });
+
+    if (txResult.alreadyVoided) return {alreadyVoided: true};
+
+    // 5. Post-TX side effects (비원자적 — TX 성공 후 best-effort)
+
+    // 5-A. 출근기록 canceledWithApplication=true 설정
+    //      (자정 processMissedCheckouts의 missed_checkout 오마킹 방지)
+    try {
+      await Promise.all(
+        applicationIds.map(async (appId) => {
+          const attSnap = await db.collection("attendance")
+            .where("applicationId", "==", appId)
+            .limit(5)
+            .get();
+          if (!attSnap.empty) {
+            const attBatch = db.batch();
+            let hasUpdate = false;
+            for (const attDoc of attSnap.docs) {
+              const attData = attDoc.data();
+              if (attData.checkIn != null && attData.checkOut == null) {
+                attBatch.update(attDoc.ref, {canceledWithApplication: true});
+                hasUpdate = true;
+              }
+            }
+            if (hasUpdate) await attBatch.commit();
+          }
+        })
+      );
+    } catch (e) {
+      console.warn("[voidContractWithApplications] 출근기록 canceledWithApplication 설정 실패 (무시):", e);
+    }
+
+    console.info(`[voidContractWithApplications] 완료: contract=${contractId}, apps=${applicationIds.length}건`);
+    return {success: true, workerId, businessName, businessId, applicationIds};
+  }
+);
+
 // ── recordDeletedAccount ────────────────────────────────
 // 탈퇴 기록을 deleted_accounts에 Admin SDK로 저장
 // [AUTH-H2] 클라이언트가 deleted_accounts에 직접 쓰면 탈퇴 안 한 상태에서 임의 문서를

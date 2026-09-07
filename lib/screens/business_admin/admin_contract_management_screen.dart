@@ -381,12 +381,8 @@ class _AdminContractManagementScreenState
       _load(useCache: false);
     } catch (e) {
       if (!mounted) return;
-      // CF 무효화 완료 후 app 취소 일부 실패 vs CF 자체 실패 분기
-      if (e.toString().contains('계약서가 무효화되었으나')) {
-        ToastHelper.showWarning('무효 처리됐으나 일부 지원서 취소에 실패했습니다. 카드에서 재처리하세요.');
-      } else {
-        ToastHelper.showError('무효 처리에 실패했습니다. 다시 시도해주세요.');
-      }
+      // [CONTRACT-VOID-ATOMIC] 단일 CF atomic 처리 — 부분 실패 분기 제거
+      ToastHelper.showError('무효 처리에 실패했습니다. 다시 시도해주세요.');
       _invalidateAllCaches();
       _load(useCache: false);
     } finally {
@@ -394,7 +390,9 @@ class _AdminContractManagementScreenState
     }
   }
 
-  /// voidFailedAppIds 재처리 — 실패한 application 취소를 다시 시도
+  /// voidFailedAppIds 재처리 — 패치 이전 부분 실패 레코드 복구용 (레거시 경로)
+  /// [CONTRACT-VOID-ATOMIC] 새 callableVoidContractWithApplications CF는 voidFailedAppIds를
+  /// 생성하지 않으므로 이 메서드는 기존 데이터 복구 목적으로만 유지.
   Future<void> _retryVoidFailedApps(EmploymentContractModel c) async {
     if (_isRetrying) return;
     setState(() => _isRetrying = true);

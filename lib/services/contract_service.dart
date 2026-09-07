@@ -539,87 +539,38 @@ class ContractService {
 
   /// 계약서 무효화 (관리자 전용)
   ///
-  /// [V-001] 실행 순서: 계약서 voided 먼저 → 알림 발송 → application 취소
-  /// [CF-MIGRATED 2026-07-17] Trust Boundary Charter "계약 효력 상태 = CF 필수" 준수.
-  ///   callableVoidContract CF(Admin SDK)가 voidedBy=callerUid 강제 + serverTimestamp 적용.
+  /// [CONTRACT-VOID-ATOMIC 2026-09-07] callableVoidContractWithApplications CF로 교체.
+  ///   Contract void + Application cancel + ID-CONSENT grant revoke를 단일 Firestore
+  ///   Transaction으로 처리. 기존 2단계 패턴(P1: split state 위험)을 제거.
   Future<void> voidContract(String contractId) async {
     final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-        .httpsCallable('callableVoidContract',
+        .httpsCallable('callableVoidContractWithApplications',
             options: HttpsCallableOptions(timeout: const Duration(seconds: 30)));
     final result = await callable.call({'contractId': contractId});
-    // Firebase SDK 런타임 반환형은 Map<dynamic,dynamic> — 다른 CF 호출과 동일하게 방어 캐스팅
+    // Firebase SDK 런타임 반환형은 Map<dynamic,dynamic> — 방어 캐스팅
     final data = result.data as Map<dynamic, dynamic>?;
 
+    final alreadyVoided = data?['alreadyVoided'] as bool? ?? false;
+    if (alreadyVoided) return; // 멱등 처리 — 이미 voided 상태
+
+    // Post-TX: 근무자에게 무효화 알림 발송 (CF TX 성공 이후 — 비원자적, best-effort)
+    // [H-34] TX 외부에서 알림 발송 → 알림 실패 시 TX 상태(voided+CANCELED)는 유지
     final workerId = data?['workerId'] as String? ?? '';
     final bizName = data?['businessName'] as String? ?? '';
     final bizId = data?['businessId'] as String? ?? '';
-    final appIds = (data?['applicationIds'] as List?)?.whereType<String>().toList() ?? [];
-
-    if (workerId.isEmpty) return; // 이미 voided — 멱등 처리
-
-    // 2단계: 근무자에게 무효화 알림 즉시 발송 (계약서 voided 직후 — 앱 취소 전)
-    // [H-34] 앱 취소 실패와 무관하게 근무자가 즉시 인지하도록 순서 보장
-    try {
-      await _firestoreService.createNotification(
-        NotificationModel.createContractVoided(
-          userId: workerId,
-          businessName: bizName,
-          businessId: bizId,
-          contractId: contractId,
-        ),
-      );
-    } catch (e) {
-      debugPrint('⚠️ [H-34] 계약서 무효화 알림 발송 실패 (비치명적): $e');
-    }
-
-    // 3단계: 연결된 application 취소 처리
-    // [B-003] false 반환도 실패로 간주 — cancelConfirmedApplication은 내부 오류를
-    // exception 대신 false로 반환하므로 반환값을 명시적으로 체크해야 함
-    // [W-2] canceledBy: 'system' — voidContract는 시스템/관리자 취소이므로 ADMIN_CANCELED로 기록
-    // null 전달 시 USER_CANCELED로 기록되어 감사 로그에서 혼동 발생
-    // [PERF] 취소 N+1 → 병렬 처리 (각 appId 독립 실행)
-    final cancelResults = await Future.wait(
-      appIds.map((appId) async {
-        try {
-          final ok = await _firestoreService.cancelConfirmedApplication(
-            appId,
-            canceledBy: 'system',
-            cancelReason: '계약서가 무효화되었습니다',
-          );
-          if (!ok) {
-            debugPrint('⚠️ voidContract: application 취소 실패 ($appId): false 반환');
-            return appId;
-          }
-          return null;
-        } catch (e) {
-          debugPrint('⚠️ voidContract: application 취소 실패 ($appId): $e');
-          return appId;
-        }
-      }),
-    );
-    final failedIds = cancelResults.whereType<String>().toList();
-
-    // 4단계: 실패한 appId 기록 — 관리자 화면 경고 배너로 노출, 재처리 버튼 제공
-    // M-5: voidFailedAppIds 저장 실패 시 재시도(retryVoidFailedApps) 메커니즘이
-    // 동작하지 않아 미취소 application이 CONFIRMED 상태로 잔존할 수 있음.
-    // 완전한 해결책은 Cloud Functions의 트랜잭션 기반 처리이나, 현 규모에서는
-    // exception 메시지에 failedIds를 포함해 관리자가 수동 처리할 수 있도록 한다.
-    if (failedIds.isNotEmpty) {
+    if (workerId.isNotEmpty) {
       try {
-        await _db.collection('employment_contracts').doc(contractId).update({
-          'voidFailedAppIds': failedIds,
-        });
+        await _firestoreService.createNotification(
+          NotificationModel.createContractVoided(
+            userId: workerId,
+            businessName: bizName,
+            businessId: bizId,
+            contractId: contractId,
+          ),
+        );
       } catch (e) {
-        // voidFailedAppIds 저장 실패 — retryVoidFailedApps 경로 불가.
-        // failedIds를 exception 메시지에 포함해 관리자가 직접 확인할 수 있게 한다.
-        debugPrint('⚠️ voidFailedAppIds 기록 실패: $e\n  미취소 IDs: $failedIds');
-        throw Exception(
-          '계약서가 무효화되었으나 ${failedIds.length}개 지원서 취소에 실패했습니다.\n'
-          '직접 확인이 필요한 지원서 IDs: ${failedIds.join(', ')}');
+        debugPrint('⚠️ [H-34] 계약서 무효화 알림 발송 실패 (비치명적): $e');
       }
-      throw Exception(
-        '계약서가 무효화되었으나 ${failedIds.length}개 지원서 취소에 실패했습니다.\n'
-        '계약서 카드에서 재처리하거나 직접 확인해주세요.');
     }
   }
 
