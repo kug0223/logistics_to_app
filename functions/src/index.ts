@@ -15207,17 +15207,19 @@ export const callableApproveApplicationForReview = onCall(
     const approveWorkType = appData.selectedWorkType as string | undefined;
     const approveWorkDateTs = appData.workDate as admin.firestore.Timestamp | undefined;
 
-    // Step 5: 원자적 상태 전이 + pending counter — TOCTOU 방지
-    // [RELIABILITY-01] counter를 status 전이와 동일 transaction으로 이동.
-    //   callableRejectApplication의 PENDING→REJECTED counter 패턴과 동일.
-    //   alreadyApproved=true(CONTRACT_PENDING) → transaction write 없음 → counter decrement 없음.
+    // Step 5: 원자적 상태 전이 + capacity reservation — TOCTOU 방지
+    // [CAPACITY-ALIGN] callableConfirmApplication과 동일한 canonical capacity contract.
+    //   alreadyApproved=true(CONTRACT_PENDING) → TX 쓰기 없음 → counter 재증가 없음
+    //   (ONE Application → capacity reservation exactly once 불변식 유지)
     let alreadyApproved = false;
     await db.runTransaction(async (tx) => {
+      // ── PHASE 1: 읽기 (모든 tx.get은 tx.update 이전) ──
+
+      // R1: Application fresh read — TOCTOU / [TARGET-BINDING]
       const freshSnap = await tx.get(appRef);
       if (!freshSnap.exists) throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
       const freshData = freshSnap.data()!;
 
-      // [TARGET-BINDING] businessId 불변 검증 — auth 이후 문서 교체/변조 방지
       const freshBusinessId = freshData.businessId as string | undefined;
       if (freshBusinessId !== targetBusinessId) {
         throw new HttpsError("failed-precondition", "지원서의 사업장 정보가 변경되었습니다.");
@@ -15225,13 +15227,13 @@ export const callableApproveApplicationForReview = onCall(
 
       const freshStatus = freshData.status as string | undefined;
 
-      // 멱등 케이스: 이미 CONTRACT_PENDING이면 성공 처리 (callableConfirmApplication의 [6.1A] 패턴 참고)
+      // 멱등 케이스: CONTRACT_PENDING → reservation 없이 종료 (exactly-once 보장)
       if (freshStatus === "CONTRACT_PENDING") {
         alreadyApproved = true;
-        return; // 트랜잭션 쓰기 없이 종료 — counter decrement 없음
+        return;
       }
 
-      // PENDING 선결조건: 다른 상태는 쓰기 차단
+      // PENDING 선결조건
       if (freshStatus !== "PENDING") {
         throw new HttpsError(
           "failed-precondition",
@@ -15239,32 +15241,109 @@ export const callableApproveApplicationForReview = onCall(
         );
       }
 
-      // 쓰기: status → CONTRACT_PENDING
-      // rejectedBy/rejectedAt/statusHistory 등 추가 audit field 없음 (현재 경로에 없는 확장 금지)
+      // R2: Slot/TO fresh read — CAPACITY-GUARD (callableConfirmApplication R5 동일 패턴)
+      let approveSlotRef: admin.firestore.DocumentReference | null = null;
+      let approveSlotFresh: admin.firestore.DocumentSnapshot | null = null;
+      let approveToRef: admin.firestore.DocumentReference | null = null;
+      let approveToFresh: admin.firestore.DocumentSnapshot | null = null;
+      if (approveToId && approveWorkType) {
+        if (approveSlotId) {
+          approveSlotRef = db.collection("tos").doc(approveToId).collection("slots").doc(approveSlotId);
+          approveSlotFresh = await tx.get(approveSlotRef);
+        } else {
+          approveToRef = db.collection("tos").doc(approveToId);
+          approveToFresh = await tx.get(approveToRef);
+        }
+      }
+
+      // ── PHASE 2: 검증 ──
+
+      // V4: [CAPACITY-GUARD] 정원 서버 검증 — callableConfirmApplication V4 exact semantics
+      // wdId canonical guard: slot.workDetailCounts.{wdId}.confirmedCount vs workDetail.requiredCount
+      // slot aggregate(confirmedCount) / TO aggregate(totalConfirmed) 는 guard 기준으로 사용하지 않음.
+      if (approveToId && approveWorkType) {
+        if (approveSlotId && approveSlotFresh?.exists) {
+          const rawWDs = (approveSlotFresh.data()!.workDetails as Record<string, unknown>[] | undefined) ?? [];
+          for (const wd of rawWDs) {
+            if (wd.workType === approveWorkType) {
+              const req = (wd.requiredCount as number | undefined) ?? 0;
+              const {confirmedCount: conf} = getWorkDetailCount(
+                approveSlotFresh.data()!,
+                wd as Record<string, unknown>,
+              );
+              if (req > 0 && conf >= req) {
+                throw new HttpsError(
+                  "failed-precondition",
+                  `정원이 초과되었습니다. (필요: ${req}명, 현재: ${conf}명 확정)`,
+                );
+              }
+              break;
+            }
+          }
+        } else if (approveToFresh?.exists) {
+          // 비-슬롯 TO capacity
+          const confCounts = approveToFresh.data()!.workTypeConfirmedCounts as Record<string, number> | undefined;
+          const conf = (confCounts?.[approveWorkType]) ?? 0;
+          const rawWDs = (approveToFresh.data()!.workDetails as Record<string, unknown>[] | undefined) ?? [];
+          for (const wd of rawWDs) {
+            if (wd.workType === approveWorkType) {
+              const req = (wd.requiredCount as number | undefined) ?? 0;
+              if (req > 0 && conf >= req) {
+                throw new HttpsError(
+                  "failed-precondition",
+                  `정원이 초과되었습니다. (필요: ${req}명, 현재: ${conf}명 확정)`,
+                );
+              }
+              break;
+            }
+          }
+        }
+      }
+
+      // ── PHASE 3: 쓰기 (읽기 완료 후) ──
+
+      // W1: Application → CONTRACT_PENDING
       tx.update(appRef, {
         status: "CONTRACT_PENDING",
       });
 
-      // [RELIABILITY-01] pending counter decrement — status 전이와 atomic.
-      // callableRejectApplication PENDING counter 패턴과 동일 (totalPending / pendingCount / wdId).
-      if (approveToId) {
+      // W2: capacity reservation (pending → confirmed) — callableConfirmApplication W3 exact semantics
+      // 슬롯 경로: slot.pendingCount -1 + confirmedCount +1 + wdId both + TO total both
+      // 비슬롯 경로: TO.workTypeConfirmedCounts +1 + totalPending -1 + totalConfirmed +1
+      if (approveToId && approveWorkType) {
+        if (approveSlotId && approveSlotRef && approveSlotFresh?.exists) {
+          const w2SlotUpdate: Record<string, unknown> = {
+            pendingCount: admin.firestore.FieldValue.increment(-1),
+            confirmedCount: admin.firestore.FieldValue.increment(1),
+          };
+          if (approveWdId) {
+            w2SlotUpdate[`workDetailCounts.${approveWdId}.pendingCount`] =
+              admin.firestore.FieldValue.increment(-1);
+            w2SlotUpdate[`workDetailCounts.${approveWdId}.confirmedCount`] =
+              admin.firestore.FieldValue.increment(1);
+          }
+          tx.update(approveSlotRef, w2SlotUpdate);
+          tx.update(db.collection("tos").doc(approveToId), {
+            totalPending: admin.firestore.FieldValue.increment(-1),
+            totalConfirmed: admin.firestore.FieldValue.increment(1),
+          });
+        } else if (approveToRef && approveToFresh?.exists) {
+          tx.update(approveToRef, {
+            [`workTypeConfirmedCounts.${approveWorkType}`]: admin.firestore.FieldValue.increment(1),
+            totalPending: admin.firestore.FieldValue.increment(-1),
+            totalConfirmed: admin.firestore.FieldValue.increment(1),
+          });
+        } else {
+          // Slot/TO 문서 부재 — pending decrement만 (aggregate 음수 방지)
+          tx.update(db.collection("tos").doc(approveToId), {
+            totalPending: admin.firestore.FieldValue.increment(-1),
+          });
+        }
+      } else if (approveToId) {
+        // approveWorkType 없는 레거시 데이터 — pending decrement 유지
         tx.update(db.collection("tos").doc(approveToId), {
           totalPending: admin.firestore.FieldValue.increment(-1),
         });
-        if (approveSlotId) {
-          const approveSlotUpdate: Record<string, unknown> = {
-            pendingCount: admin.firestore.FieldValue.increment(-1),
-          };
-          // [Phase 8.1E.2] wdId canonical counter — callableRejectApplication 동일 패턴
-          if (approveWdId) {
-            approveSlotUpdate[`workDetailCounts.${approveWdId}.pendingCount`] =
-              admin.firestore.FieldValue.increment(-1);
-          }
-          tx.update(
-            db.collection("tos").doc(approveToId).collection("slots").doc(approveSlotId),
-            approveSlotUpdate,
-          );
-        }
       }
     });
 
