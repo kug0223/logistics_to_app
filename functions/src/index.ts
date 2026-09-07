@@ -6729,12 +6729,212 @@ export const callableFinalizeEmployerSignature = onCall(
   }
 );
 
+// ── voidContractAtomicLifecycle (internal canonical helper) ──────────────────
+// 계약서 void lifecycle canonical implementation.
+// callableVoidContract · callableVoidContractWithApplications 두 public callable의 공통 구현.
+// caller-side permission 검증(assertBizAdmin + canManageContract)과 pre-read는 각 callable에서
+// 수행 후 이 함수를 호출한다.
+//
+// lifecycle:
+//   1. ID-CONSENT grant refs 사전 준비 (auto: 명명 규칙, personal: pre-fetch)
+//   2. Firestore TX (atomic):
+//      a. Contract fresh read — completed guard / already-voided 멱등
+//      b. per-Application businessId·workerId 교차검증 (ANY MISMATCH → 전체 TX abort)
+//      c. Contract void
+//      d. per-Application CONFIRMED_STATUSES guard → CANCELED + statusHistory
+//      e. ID-CONSENT auto grant + personal grant revoke
+//   3. Post-TX (best-effort): attendance.canceledWithApplication=true
+//      [DEFERRED-P2] 실패 시 missed_checkout 관리자 확인 가능 (noShowCount/패널티 없음)
+
+interface VoidContractAtomicInput {
+  contractId: string;
+  callerUid: string;
+  businessId: string;   // assertBizAdmin 이전 pre-read에서 추출한 불변 필드
+  businessName: string; // assertBizAdmin bizData에서 추출
+  workerId: string;     // pre-read에서 추출
+  applicationIds: string[];
+  voidReason?: string;
+}
+
+interface VoidContractAtomicResult {
+  alreadyVoided: boolean;
+  applicationIds: string[];
+  workerId: string;
+  businessName: string;
+  businessId: string;
+}
+
+async function voidContractAtomicLifecycle(
+  params: VoidContractAtomicInput
+): Promise<VoidContractAtomicResult> {
+  const {contractId, callerUid, businessId, businessName, workerId, applicationIds, voidReason} = params;
+
+  const contractRef = db.collection("employment_contracts").doc(contractId);
+  const autoGrantRefs = applicationIds.map((appId) =>
+    db.collection("idCardAccessRequests").doc(`auto_${appId}`)
+  );
+  const appRefs = applicationIds.map((appId) => db.collection("applications").doc(appId));
+
+  // personal grants pre-fetch (TX 내 쿼리 불가 → ref 목록 사전 확보, TX 내 tx.get으로 fresh 재확인)
+  const personalGrantRefsByApp = new Map<string, FirebaseFirestore.DocumentReference[]>();
+  if (workerId) {
+    await Promise.all(
+      applicationIds.map(async (appId) => {
+        const pgSnap = await db.collection("idCardAccessRequests")
+          .where("applicationId", "==", appId)
+          .where("targetUserId", "==", workerId)
+          .where("status", "==", "approved")
+          .get();
+        const refs = pgSnap.docs
+          .filter((doc) => doc.id !== `auto_${appId}`) // auto grant 중복 방지
+          .map((doc) => doc.ref);
+        personalGrantRefsByApp.set(appId, refs);
+      })
+    );
+  }
+  const allPersonalGrantRefs: FirebaseFirestore.DocumentReference[] = [];
+  for (const refs of personalGrantRefsByApp.values()) {
+    allPersonalGrantRefs.push(...refs);
+  }
+
+  // Firestore TX — reads 먼저, writes 나중
+  type TxResult = {alreadyVoided: true} | {alreadyVoided: false};
+  const txResult: TxResult = await db.runTransaction(async (tx) => {
+    // ── READS ──
+    const freshContract = await tx.get(contractRef);
+    const freshApps = appRefs.length > 0 ? await Promise.all(appRefs.map((r) => tx.get(r))) : [];
+    const freshAutoGrants = autoGrantRefs.length > 0 ? await Promise.all(autoGrantRefs.map((r) => tx.get(r))) : [];
+    const freshPersonalGrants = allPersonalGrantRefs.length > 0
+      ? await Promise.all(allPersonalGrantRefs.map((r) => tx.get(r)))
+      : [];
+
+    // ── CONTRACT 상태 검증 ──
+    if (!freshContract.exists) throw new HttpsError("not-found", "계약서를 찾을 수 없습니다.");
+    const contractStatus = (freshContract.data()!["status"] as string | undefined) ?? "";
+    if (contractStatus === "voided") return {alreadyVoided: true as const}; // 멱등
+    if (contractStatus === "completed") {
+      throw new HttpsError("failed-precondition", "쌍방 서명이 완료된 계약서는 무효화할 수 없습니다.");
+    }
+
+    // ── APPLICATION 교차검증 (ANY INVALID → 전체 TX abort) ──
+    for (const appSnap of freshApps) {
+      if (!appSnap.exists) continue;
+      const appData = appSnap.data()!;
+      if (appData["businessId"] !== businessId) {
+        throw new HttpsError("permission-denied", "계약서와 사업장이 일치하지 않는 지원서가 포함되어 있습니다.");
+      }
+      if (appData["uid"] !== workerId) {
+        throw new HttpsError("permission-denied", "계약서와 근로자가 일치하지 않는 지원서가 포함되어 있습니다.");
+      }
+    }
+
+    const now = admin.firestore.Timestamp.now();
+
+    // ── WRITES ──
+
+    // Contract void
+    tx.update(contractRef, {
+      status: "voided",
+      voidedBy: callerUid,
+      contractVoidedAt: admin.firestore.FieldValue.serverTimestamp(),
+      ...(voidReason ? {voidReason} : {}),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // Application cancel (CONFIRMED_STATUSES만 — 이미 취소된 경우 스킵)
+    for (let i = 0; i < freshApps.length; i++) {
+      const appSnap = freshApps[i];
+      if (!appSnap.exists) continue;
+      const appStatus = (appSnap.data()!["status"] as string | undefined) ?? "";
+      if (!CONFIRMED_STATUSES.includes(appStatus)) continue;
+
+      const updateFields: Record<string, unknown> = {
+        status: "CANCELED",
+        canceledAt: admin.firestore.FieldValue.serverTimestamp(),
+        cancelReason: "ADMIN_CANCELED",
+        canceledBy: callerUid, // 서버 강제 — 클라이언트 UID 위조 차단
+        statusHistory: admin.firestore.FieldValue.arrayUnion({
+          status: "CANCELED",
+          at: now,
+          by: callerUid,
+          action: "ADMIN_CANCEL_CONFIRMED",
+          reason: voidReason ?? "ADMIN_CANCELED",
+        }),
+      };
+      if (voidReason) updateFields.cancelMessage = voidReason;
+      tx.update(appSnap.ref, updateFields);
+
+      // ID-CONSENT auto grant revoke
+      const autoGrantSnap = freshAutoGrants[i];
+      if (autoGrantSnap?.exists && autoGrantSnap.data()?.["status"] === "approved") {
+        tx.update(autoGrantSnap.ref, {
+          status: "revoked",
+          revokedAt: admin.firestore.FieldValue.serverTimestamp(),
+          revokeReason: "APPLICATION_CANCELED",
+        });
+        console.info(`[voidContractAtomicLifecycle] ID-CONSENT auto-grant revoked: app=${applicationIds[i]}`);
+      }
+    }
+
+    // ID-CONSENT personal grant revoke (전체 apps)
+    let personalRevokedCount = 0;
+    for (const pgSnap of freshPersonalGrants) {
+      if (pgSnap.exists && pgSnap.data()?.["status"] === "approved") {
+        tx.update(pgSnap.ref, {
+          status: "revoked",
+          revokedAt: admin.firestore.FieldValue.serverTimestamp(),
+          revokeReason: "APPLICATION_CANCELED",
+        });
+        personalRevokedCount++;
+      }
+    }
+    if (personalRevokedCount > 0) {
+      console.info(`[voidContractAtomicLifecycle] ID-CONSENT personal-grant ${personalRevokedCount}개 revoked: contract=${contractId}`);
+    }
+
+    return {alreadyVoided: false as const};
+  });
+
+  if (txResult.alreadyVoided) {
+    return {alreadyVoided: true, applicationIds: [], workerId: "", businessName, businessId};
+  }
+
+  // Post-TX: attendance.canceledWithApplication=true (best-effort, [DEFERRED-P2])
+  try {
+    await Promise.all(
+      applicationIds.map(async (appId) => {
+        const attSnap = await db.collection("attendance")
+          .where("applicationId", "==", appId)
+          .limit(5)
+          .get();
+        if (!attSnap.empty) {
+          const attBatch = db.batch();
+          let hasUpdate = false;
+          for (const attDoc of attSnap.docs) {
+            const attData = attDoc.data();
+            if (attData.checkIn != null && attData.checkOut == null) {
+              attBatch.update(attDoc.ref, {canceledWithApplication: true});
+              hasUpdate = true;
+            }
+          }
+          if (hasUpdate) await attBatch.commit();
+        }
+      })
+    );
+  } catch (e) {
+    console.warn("[voidContractAtomicLifecycle] 출근기록 canceledWithApplication 설정 실패 (무시):", e);
+  }
+
+  console.info(`[voidContractAtomicLifecycle] 완료: contract=${contractId}, apps=${applicationIds.length}건`);
+  return {alreadyVoided: false, applicationIds, workerId, businessName, businessId};
+}
+
 // ── callableVoidContract ─────────────────────────────────
 // 계약서 수동 무효화 — Trust Boundary Charter "계약 효력 상태 = CF 필수"
 // [CF-MIGRATED 2026-07-17] contract_service.dart voidContract() 클라이언트 트랜잭션 이전.
-//   Firestore rules가 voidedBy == request.auth.uid + contractVoidedAt == request.time을
-//   서버에서 강제했으나, Charter 규정 준수를 위해 Admin SDK CF로 이전.
-//   Admin SDK: callerUid 위조 불가 + FieldValue.serverTimestamp() 확실 적용.
+// [CONTRACT-VOID-ATOMIC 2026-09-07] contract-only void 제거 — voidContractAtomicLifecycle로
+//   위임. callableVoidContractWithApplications와 완전히 동일한 canonical atomic lifecycle 사용.
+//   legacy response shape({ applicationIds, workerId, businessName, businessId }) 유지.
 // Input:  { contractId: string }
 // Output: { applicationIds: string[], workerId: string, businessName: string, businessId: string }
 export const callableVoidContract = onCall(
@@ -6745,16 +6945,17 @@ export const callableVoidContract = onCall(
     const {contractId} = request.data as {contractId?: string};
     if (!contractId) throw new HttpsError("invalid-argument", "contractId가 필요합니다.");
 
+    // 1단계: 사전 읽기 — businessId(불변 필드) 추출 + 권한 검증
     const contractRef = db.collection("employment_contracts").doc(contractId);
-
-    // 1단계: 사전 읽기 — businessId 확인 + 권한 검증
-    //   businessId는 불변 필드이므로 TOCTOU 위험 없음 (assertBizAdmin 트랜잭션 밖에서 실행)
     const preSnap = await contractRef.get();
     if (!preSnap.exists) throw new HttpsError("not-found", "계약서를 찾을 수 없습니다.");
-    const businessId = preSnap.data()!["businessId"] as string;
+    const preData = preSnap.data()!;
+    const businessId = preData["businessId"] as string | undefined;
+    const workerId = (preData["workerId"] as string | undefined) ?? "";
     if (!businessId) throw new HttpsError("internal", "계약서 businessId 누락");
+
     // assertBizAdmin이 반환한 bizData·callerData 재사용 — 사업장 중복 read 제거
-    const { bizData: assertedBizData, callerData: voidCallerData } = await assertBizAdmin(callerUid, businessId);
+    const {bizData: assertedBizData, callerData: voidCallerData} = await assertBizAdmin(callerUid, businessId);
     // [PERM-CONTRACT-02] 서브어드민 canManageContract 세부 권한 검증
     const voidCallerRole = voidCallerData?.role as string | undefined;
     if (voidCallerRole !== "BUSINESS_ADMIN" && voidCallerRole !== "SUPER_ADMIN") {
@@ -6762,62 +6963,36 @@ export const callableVoidContract = onCall(
       const memberPerms = (memberSnap.data()?.permissions as Record<string, boolean>) ?? {};
       if (!memberPerms.canManageContract) throw new HttpsError("permission-denied", "계약서 관리 권한이 없습니다.");
     }
-
-    // 2단계: 사업장명 (assertBizAdmin이 이미 읽은 businesses 문서에서 추출)
     const businessName = (assertedBizData?.["name"] as string | undefined) ?? "";
 
-    // 3단계: 상태 검증 + voided 전환 원자 처리
-    let workerId = "";
-    let applicationIds: string[] = [];
-    let alreadyVoided = false;
+    // 2단계: applicationIds 수집 (applicationIds[] 우선, 레거시 applicationId 단건 폴백)
+    const applicationIds: string[] = Array.isArray(preData["applicationIds"])
+      ? (preData["applicationIds"] as string[])
+      : (preData["applicationId"] ? [preData["applicationId"] as string] : []);
 
-    await db.runTransaction(async (tx) => {
-      const snap = await tx.get(contractRef);
-      if (!snap.exists) throw new HttpsError("not-found", "계약서를 찾을 수 없습니다.");
-      const data = snap.data()!;
-      const status = data["status"] as string;
-
-      if (status === "voided") { alreadyVoided = true; return; }
-      if (status === "completed") {
-        throw new HttpsError("failed-precondition", "쌍방 서명이 완료된 계약서는 무효화할 수 없습니다.");
-      }
-
-      workerId = (data["workerId"] as string) ?? "";
-      // applicationIds 우선, 없으면 레거시 applicationId 단건 처리
-      applicationIds = (data["applicationIds"] as string[] | undefined) ??
-        (data["applicationId"] ? [data["applicationId"] as string] : []);
-
-      tx.update(contractRef, {
-        status: "voided",
-        voidedBy: callerUid,
-        contractVoidedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
+    // 3단계: canonical atomic lifecycle (callableVoidContractWithApplications와 동일 경로)
+    const result = await voidContractAtomicLifecycle({
+      contractId, callerUid, businessId, businessName, workerId, applicationIds,
     });
 
+    // legacy response shape — 기존 client 호환
     return {
-      applicationIds: alreadyVoided ? [] : applicationIds,
-      workerId: alreadyVoided ? "" : workerId,
-      businessName,
-      businessId,
+      applicationIds: result.alreadyVoided ? [] : result.applicationIds,
+      workerId: result.alreadyVoided ? "" : result.workerId,
+      businessName: result.businessName,
+      businessId: result.businessId,
     };
   }
 );
 
 // ── callableVoidContractWithApplications ─────────────────────────────────────
-// 계약서 무효화 + 연결 지원서 취소를 단일 Firestore Transaction에서 원자 처리.
-// 기존 callableVoidContract + client-side cancelConfirmedApplication 2단계 패턴(P1 버그)을 대체.
-// P1: 계약서 void 후 클라이언트 crashloop → Contract.voided + Application.CONTRACT_PENDING 분리 상태 방지.
+// 계약서 무효화 + 연결 지원서 취소를 단일 TX에서 원자 처리 (canonical Dart path).
+// [CONTRACT-VOID-ATOMIC 2026-09-07] voidContractAtomicLifecycle helper로 위임.
+//   callableVoidContract와 완전히 동일한 canonical lifecycle을 공유.
 //
 // Input:  { contractId: string, voidReason?: string }
 // Output: { success: true, workerId, businessName, businessId, applicationIds }
 //       | { alreadyVoided: true }
-// Errors:
-//   unauthenticated      — 미로그인
-//   invalid-argument     — contractId 누락 / voidReason 500자 초과
-//   not-found            — 계약서 없음
-//   permission-denied    — canManageContract 권한 없음 / 지원서 businessId·workerId 불일치
-//   failed-precondition  — completed 계약서 무효화 시도
 export const callableVoidContractWithApplications = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
   async (request) => {
@@ -6841,7 +7016,7 @@ export const callableVoidContractWithApplications = onCall(
     const workerId = (preData["workerId"] as string | undefined) ?? "";
     if (!businessId) throw new HttpsError("internal", "계약서 businessId 누락");
 
-    // [PERM-CONTRACT-02] assertBizAdmin + canManageContract SubAdmin 검증 (callableVoidContract 동일 패턴)
+    // [PERM-CONTRACT-02] assertBizAdmin + canManageContract SubAdmin 검증
     const {bizData: assertedBizData, callerData: voidCallerData} = await assertBizAdmin(callerUid, businessId);
     const voidCallerRole = voidCallerData?.role as string | undefined;
     if (voidCallerRole !== "BUSINESS_ADMIN" && voidCallerRole !== "SUPER_ADMIN") {
@@ -6858,167 +7033,13 @@ export const callableVoidContractWithApplications = onCall(
       ? (preData["applicationIds"] as string[])
       : (preData["applicationId"] ? [preData["applicationId"] as string] : []);
 
-    // 3. ID-CONSENT grant ref 사전 준비
-    //    auto grant:     doc id = `auto_${appId}` (명명 규칙 고정 — tx.get 직접 가능)
-    //    personal grant: TX 내 쿼리 불가 제약 → 사전 쿼리로 ref 목록 확보 후 TX 내 tx.get fresh 재확인
-    const autoGrantRefs = applicationIds.map((appId) =>
-      db.collection("idCardAccessRequests").doc(`auto_${appId}`)
-    );
-    const appRefs = applicationIds.map((appId) => db.collection("applications").doc(appId));
-
-    // personal grants: applicationId + targetUserId=workerId + status=approved 필터 (각 app 독립)
-    const personalGrantRefsByApp = new Map<string, FirebaseFirestore.DocumentReference[]>();
-    if (workerId) {
-      await Promise.all(
-        applicationIds.map(async (appId) => {
-          const pgSnap = await db.collection("idCardAccessRequests")
-            .where("applicationId", "==", appId)
-            .where("targetUserId", "==", workerId)
-            .where("status", "==", "approved")
-            .get();
-          const refs = pgSnap.docs
-            .filter((doc) => doc.id !== `auto_${appId}`) // auto grant 중복 방지
-            .map((doc) => doc.ref);
-          personalGrantRefsByApp.set(appId, refs);
-        })
-      );
-    }
-    const allPersonalGrantRefs: FirebaseFirestore.DocumentReference[] = [];
-    for (const refs of personalGrantRefsByApp.values()) {
-      allPersonalGrantRefs.push(...refs);
-    }
-
-    // 4. Firestore Transaction — reads 먼저, writes 나중 (Firestore 규칙)
-    type TxResult = {alreadyVoided: true} | {alreadyVoided: false};
-    const txResult: TxResult = await db.runTransaction(async (tx) => {
-      // ── READS ──────────────────────────────────────────────────────────────
-      const freshContract = await tx.get(contractRef);
-      const freshApps = appRefs.length > 0 ? await Promise.all(appRefs.map((r) => tx.get(r))) : [];
-      const freshAutoGrants = autoGrantRefs.length > 0 ? await Promise.all(autoGrantRefs.map((r) => tx.get(r))) : [];
-      const freshPersonalGrants = allPersonalGrantRefs.length > 0
-        ? await Promise.all(allPersonalGrantRefs.map((r) => tx.get(r)))
-        : [];
-
-      // ── CONTRACT 상태 검증 ─────────────────────────────────────────────────
-      if (!freshContract.exists) throw new HttpsError("not-found", "계약서를 찾을 수 없습니다.");
-      const contractStatus = (freshContract.data()!["status"] as string | undefined) ?? "";
-      if (contractStatus === "voided") return {alreadyVoided: true as const}; // 멱등
-      if (contractStatus === "completed") {
-        throw new HttpsError("failed-precondition", "쌍방 서명이 완료된 계약서는 무효화할 수 없습니다.");
-      }
-
-      // ── APPLICATION 교차검증 (ANY INVALID → 전체 TX abort) ─────────────────
-      for (const appSnap of freshApps) {
-        if (!appSnap.exists) continue;
-        const appData = appSnap.data()!;
-        if (appData["businessId"] !== businessId) {
-          throw new HttpsError("permission-denied", "계약서와 사업장이 일치하지 않는 지원서가 포함되어 있습니다.");
-        }
-        if (appData["uid"] !== workerId) {
-          throw new HttpsError("permission-denied", "계약서와 근로자가 일치하지 않는 지원서가 포함되어 있습니다.");
-        }
-      }
-
-      const now = admin.firestore.Timestamp.now();
-
-      // ── WRITES ─────────────────────────────────────────────────────────────
-
-      // Contract void
-      tx.update(contractRef, {
-        status: "voided",
-        voidedBy: callerUid,
-        contractVoidedAt: admin.firestore.FieldValue.serverTimestamp(),
-        ...(voidReason ? {voidReason} : {}),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-
-      // Application cancel — CONFIRMED/CONTRACT_PENDING 상태인 것만 (callableCancelConfirmedApplication 동일 semantics)
-      for (let i = 0; i < freshApps.length; i++) {
-        const appSnap = freshApps[i];
-        if (!appSnap.exists) continue;
-        const appStatus = (appSnap.data()!["status"] as string | undefined) ?? "";
-        if (!CONFIRMED_STATUSES.includes(appStatus)) continue; // 이미 취소됨 — 스킵
-
-        const updateFields: Record<string, unknown> = {
-          status: "CANCELED",
-          canceledAt: admin.firestore.FieldValue.serverTimestamp(),
-          cancelReason: "ADMIN_CANCELED",
-          canceledBy: callerUid, // 서버 강제 — 클라이언트 UID 위조 차단
-          statusHistory: admin.firestore.FieldValue.arrayUnion({
-            status: "CANCELED",
-            at: now,
-            by: callerUid,
-            action: "ADMIN_CANCEL_CONFIRMED",
-            reason: voidReason ?? "ADMIN_CANCELED",
-          }),
-        };
-        if (voidReason) updateFields.cancelMessage = voidReason;
-        tx.update(appSnap.ref, updateFields);
-
-        // ID-CONSENT auto grant revoke (각 app별 1개)
-        const autoGrantSnap = freshAutoGrants[i];
-        if (autoGrantSnap?.exists && autoGrantSnap.data()?.["status"] === "approved") {
-          tx.update(autoGrantSnap.ref, {
-            status: "revoked",
-            revokedAt: admin.firestore.FieldValue.serverTimestamp(),
-            revokeReason: "APPLICATION_CANCELED",
-          });
-          console.info(`[voidContractWithApplications] ID-CONSENT auto-grant revoked: app=${applicationIds[i]}`);
-        }
-      }
-
-      // ID-CONSENT personal grant revoke (전체 apps)
-      let personalRevokedCount = 0;
-      for (const pgSnap of freshPersonalGrants) {
-        if (pgSnap.exists && pgSnap.data()?.["status"] === "approved") {
-          tx.update(pgSnap.ref, {
-            status: "revoked",
-            revokedAt: admin.firestore.FieldValue.serverTimestamp(),
-            revokeReason: "APPLICATION_CANCELED",
-          });
-          personalRevokedCount++;
-        }
-      }
-      if (personalRevokedCount > 0) {
-        console.info(`[voidContractWithApplications] ID-CONSENT personal-grant ${personalRevokedCount}개 revoked: contract=${contractId}`);
-      }
-
-      return {alreadyVoided: false as const};
+    // 3. canonical atomic lifecycle — callableVoidContract와 동일 helper
+    const result = await voidContractAtomicLifecycle({
+      contractId, callerUid, businessId, businessName, workerId, applicationIds, voidReason,
     });
 
-    if (txResult.alreadyVoided) return {alreadyVoided: true};
-
-    // 5. Post-TX side effects (비원자적 — TX 성공 후 best-effort)
-
-    // 5-A. 출근기록 canceledWithApplication=true 설정
-    //      (자정 processMissedCheckouts의 missed_checkout 오마킹 방지)
-    try {
-      await Promise.all(
-        applicationIds.map(async (appId) => {
-          const attSnap = await db.collection("attendance")
-            .where("applicationId", "==", appId)
-            .limit(5)
-            .get();
-          if (!attSnap.empty) {
-            const attBatch = db.batch();
-            let hasUpdate = false;
-            for (const attDoc of attSnap.docs) {
-              const attData = attDoc.data();
-              if (attData.checkIn != null && attData.checkOut == null) {
-                attBatch.update(attDoc.ref, {canceledWithApplication: true});
-                hasUpdate = true;
-              }
-            }
-            if (hasUpdate) await attBatch.commit();
-          }
-        })
-      );
-    } catch (e) {
-      console.warn("[voidContractWithApplications] 출근기록 canceledWithApplication 설정 실패 (무시):", e);
-    }
-
-    console.info(`[voidContractWithApplications] 완료: contract=${contractId}, apps=${applicationIds.length}건`);
-    return {success: true, workerId, businessName, businessId, applicationIds};
+    if (result.alreadyVoided) return {alreadyVoided: true};
+    return {success: true, workerId: result.workerId, businessName: result.businessName, businessId: result.businessId, applicationIds: result.applicationIds};
   }
 );
 
