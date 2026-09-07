@@ -762,6 +762,8 @@ class _PayrollPaymentDashboardScreenState
       final note = await _showTransferNoteDialog();
       if (!mounted) return;
 
+      // [PAY-09-FIX] skippedCount 추적 후 실제 처리 건수만 성공으로 표시
+      int skippedCount = 0;
       if (recs.length == 1) {
         final r  = recs.first;
         final wd = r.wageDetail;
@@ -785,12 +787,16 @@ class _PayrollPaymentDashboardScreenState
           notificationInfos: buildTransferNotificationInfos(
             records: recs, workerNameByUid: nameByUid),
         );
+        skippedCount = skipped.length;
         if (skipped.isNotEmpty && mounted) {
-          ToastHelper.showWarning('${skipped.length}명은 계좌 정보 미확인으로 이체에서 제외되었습니다.');
+          ToastHelper.showWarning('${skipped.length}건은 계좌 정보 미확인으로 이체에서 제외되었습니다.');
         }
       }
       if (mounted) {
-        ToastHelper.showSuccess('${recs.length}건 이체 완료 처리되었습니다');
+        final processedCount = recs.length - skippedCount;
+        if (processedCount > 0) {
+          ToastHelper.showSuccess('$processedCount건 이체 완료 처리되었습니다');
+        }
         _load();
       }
     } catch (e) {
@@ -839,7 +845,11 @@ class _PayrollPaymentDashboardScreenState
         ToastHelper.showWarning('${batchSkipped.length}건은 계좌 정보 미확인으로 이체에서 제외되었습니다.');
       }
       if (mounted) {
-        ToastHelper.showSuccess('${_selectedIds.length}건 이체 완료 처리되었습니다');
+        // [PAY-09-FIX] 실제 처리 건수만 성공으로 표시 (선택 총 건수 표시 금지)
+        final processedCount = _selectedIds.length - batchSkipped.length;
+        if (processedCount > 0) {
+          ToastHelper.showSuccess('$processedCount건 이체 완료 처리되었습니다');
+        }
         _load();
       }
     } catch (e) {
