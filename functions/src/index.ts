@@ -23831,58 +23831,78 @@ export const callableAcceptInvitation = onCall(
     }
 
     const invRef = db.collection("member_invitations").doc(invitationId);
-    const invSnap = await invRef.get();
-    if (!invSnap.exists) throw new HttpsError("not-found", "초대장을 찾을 수 없습니다.");
-    const inv = invSnap.data()!;
 
-    if (inv.targetUid !== callerUid) {
-      throw new HttpsError("permission-denied", "본인 초대가 아닙니다.");
-    }
-    if (inv.status !== "pending") {
-      throw new HttpsError("failed-precondition", "이미 처리된 초대입니다.");
-    }
-    // [D4-CP1 핵심 수정] 3일 만료 서버 강제 — 클라이언트 기준과 동일, rules 30일 루프홀 차단
-    const createdAtMs = (inv.createdAt as admin.firestore.Timestamp).toMillis();
-    if (createdAtMs < Date.now() - 3 * 24 * 60 * 60 * 1000) {
-      throw new HttpsError("failed-precondition", "초대 유효기간(3일)이 만료되었습니다.");
-    }
+    // [RACE-FIX 2026-09-07] batch → TX 전환.
+    // reject / cancel 이 TX read 이후 먼저 commit돼도
+    // TX retry 시 invitation fresh read로 status 재확인 → 단일 terminal state 보장.
+    // 삭제된 사업장 초대 수락 차단(business exists 검증) 추가.
+    let capturedInv: FirebaseFirestore.DocumentData | undefined;
+    await db.runTransaction(async (tx) => {
+      // [TX 내부 read 1] 초대 — 모든 eligibility 판단은 TX snapshot 기준
+      const invSnap = await tx.get(invRef);
+      if (!invSnap.exists) throw new HttpsError("not-found", "초대장을 찾을 수 없습니다.");
+      const inv = invSnap.data()!;
+      capturedInv = inv;
 
-    const businessId = inv.businessId as string;
-    const memberRef = db.collection("businesses").doc(businessId)
-      .collection("members").doc(callerUid);
-    if ((await memberRef.get()).exists) {
-      throw new HttpsError("already-exists", "이미 해당 사업장의 멤버입니다.");
-    }
+      if (inv.targetUid !== callerUid) {
+        throw new HttpsError("permission-denied", "본인 초대가 아닙니다.");
+      }
+      if (inv.status !== "pending") {
+        throw new HttpsError("failed-precondition", "이미 처리된 초대입니다.");
+      }
+      // [D4-CP1 핵심 수정 유지] 3일 만료 서버 강제 — rules 30일 루프홀 차단
+      const createdAtMs = (inv.createdAt as admin.firestore.Timestamp).toMillis();
+      if (createdAtMs < Date.now() - 3 * 24 * 60 * 60 * 1000) {
+        throw new HttpsError("failed-precondition", "초대 유효기간(3일)이 만료되었습니다.");
+      }
 
-    const batch = db.batch();
-    batch.update(invRef, {
-      status: "accepted",
-      respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+      const businessId = inv.businessId as string;
+      const bizRef = db.collection("businesses").doc(businessId);
+      const memberRef = db.collection("businesses").doc(businessId)
+        .collection("members").doc(callerUid);
+      const userRef = db.collection("users").doc(callerUid);
+
+      // [TX 내부 read 2-4] business / member / user — 병렬 조회
+      const [bizSnap, memberSnap] = await Promise.all([
+        tx.get(bizRef),
+        tx.get(memberRef),
+        tx.get(userRef), // write 전 존재 보장 + TX 읽기 집합 편입
+      ]);
+      if (!bizSnap.exists) {
+        throw new HttpsError("not-found", "해당 사업장이 존재하지 않습니다.");
+      }
+      if (memberSnap.exists) {
+        throw new HttpsError("already-exists", "이미 해당 사업장의 멤버입니다.");
+      }
+
+      // [TX 내부 write] invitation + member + user mirror — 단일 TX atomic
+      tx.update(invRef, {
+        status: "accepted",
+        respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      tx.set(memberRef, {
+        uid: callerUid,
+        businessId,
+        name: (inv.targetName as string | undefined) ?? "",
+        phone: (inv.targetPhone as string | undefined) ?? null,
+        role: "WORKER",
+        permissions: (inv.permissions as Record<string, boolean> | undefined) ?? {},
+        invitationId,
+        invitedBy: (inv.invitedBy as string | undefined) ?? null,
+        addedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      // [1D-INV-FIX 유지] invitation / member doc / subAdminBusinessIds 모두 단일 TX
+      tx.update(userRef, {
+        subAdminBusinessIds: admin.firestore.FieldValue.arrayUnion(businessId),
+        subAdminOf: admin.firestore.FieldValue.delete(), // legacy field cleanup
+      });
     });
-    batch.set(memberRef, {
-      uid: callerUid,
-      businessId,
-      name: (inv.targetName as string | undefined) ?? "",
-      phone: (inv.targetPhone as string | undefined) ?? null,
-      role: "WORKER",
-      permissions: (inv.permissions as Record<string, boolean> | undefined) ?? {},
-      invitationId,
-      invitedBy: (inv.invitedBy as string | undefined) ?? null,
-      addedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-    // [1D-INV-FIX] Canonical membership write — trigger 의존 제거.
-    // callableAcceptInvitation SUCCESS 시 invitation / member doc / subAdminBusinessIds 세 record
-    // 모두 동일 batch에서 원자적으로 보장.
-    // onMemberInvitationAccepted 트리거는 idempotent backstop으로만 남음.
-    batch.update(db.collection("users").doc(callerUid), {
-      subAdminBusinessIds: admin.firestore.FieldValue.arrayUnion(businessId),
-      subAdminOf: admin.firestore.FieldValue.delete(), // legacy field cleanup
-    });
-    await batch.commit();
 
-    // 초대한 관리자에게 수락 알림 — [1D-INV-FIX] subAdminBusinessIds는 위 batch에서 처리 완료.
+    // [POST-TX] 초대한 관리자에게 수락 알림 — TX 완료 후 best-effort (실패 시 멤버십 롤백 없음)
     try {
+      const inv = capturedInv!;
       const adminUid = inv.invitedBy as string | undefined;
+      const businessId = inv.businessId as string;
       if (adminUid) {
         await db.collection("users").doc(adminUid).collection("notifications").add({
           userId: adminUid,
