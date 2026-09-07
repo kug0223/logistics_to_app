@@ -864,6 +864,13 @@ async function processResignEffectiveTransition(now: Timestamp): Promise<void> {
             }
           }
 
+          // [CONTRACT-FRESH-READ] candidate contract TX 내부 fresh read
+          // pre-query는 candidate ref 확보용만 — fresh status가 pending인 경우에만 void
+          // completed는 법적 증거 보존 대상 → race로 completed 전환된 경우 절대 skip
+          const contractFreshSnaps = await Promise.all(
+            contractsToVoid.map((c) => tx.get(c.ref))
+          );
+
           // ── 2. 모든 write ────────────────────────────────────────────────────
           // [CAUSALITY] Application CANCELED + confirmedDecrementedAt (idempotency marker)
           // [STARVATION-SAFE] resignAttendanceNormalizedAt=null → attendance 재시도 쿼리 대상
@@ -875,13 +882,24 @@ async function processResignEffectiveTransition(now: Timestamp): Promise<void> {
             confirmedDecrementedAt: admin.firestore.FieldValue.serverTimestamp(),
           });
 
-          // [CONTRACT_VOID_AT_EFFECTIVE_D1] pending 계약서 voiding (blind write — TX 외부에서 필터링)
-          for (const contractDoc of contractsToVoid) {
-            tx.update(contractDoc.ref, {
-              status: "voided",
-              contractVoidedAt: now,
-              voidReason: "RESIGNATION",
-            });
+          // [CONTRACT_VOID_AT_EFFECTIVE_D1] fresh status = pending_* 인 경우에만 void
+          // Scenario B: pre-query 후 completed 전환 → TX fresh read에서 skip → completed 불변
+          const voidablePendingStatuses = ["pending_employer", "pending_worker"];
+          for (const freshContractSnap of contractFreshSnaps) {
+            const freshContractStatus =
+              freshContractSnap.data()?.status as string | undefined;
+            if (
+              freshContractSnap.exists &&
+              freshContractStatus &&
+              voidablePendingStatuses.includes(freshContractStatus)
+            ) {
+              tx.update(freshContractSnap.ref, {
+                status: "voided",
+                contractVoidedAt: now,
+                voidReason: "RESIGNATION",
+              });
+            }
+            // completed / voided / canceled / 기타 → skip (법적 증거 보존)
           }
 
           // [CANONICAL-CAPACITY] TO / slot / wdId canonical decrement (음수 방지 + new-schema guard)
