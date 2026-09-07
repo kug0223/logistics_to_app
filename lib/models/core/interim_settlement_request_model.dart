@@ -13,6 +13,7 @@ class InterimSettlementRequestModel {
   static const String statusApproved  = 'APPROVED';
   static const String statusRejected  = 'REJECTED';
   static const String statusProcessed = 'PROCESSED'; // 실제 송금 완료
+  static const String statusCanceled  = 'CANCELED';  // [PAY-08] APPROVED 취소 (lock 해제)
 
   final String id;
   final String applicationId;
@@ -157,6 +158,7 @@ class InterimSettlementRequestModel {
   bool get isApproved  => status == statusApproved;
   bool get isRejected  => status == statusRejected;
   bool get isProcessed => status == statusProcessed;
+  bool get isCanceled  => status == statusCanceled; // [PAY-08]
 
   String get statusLabel {
     switch (status) {
@@ -164,6 +166,7 @@ class InterimSettlementRequestModel {
       case statusApproved:  return '승인 (이체 대기)';
       case statusRejected:  return '거절';
       case statusProcessed: return '정산 완료';
+      case statusCanceled:  return '승인 취소'; // [PAY-08]
       default:              return status;
     }
   }

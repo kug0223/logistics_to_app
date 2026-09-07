@@ -95,6 +95,14 @@ class AttendanceModel {
   final String? transferNote;
   final String? transferredBy;
 
+  // [PAY-08] 중간정산 lock + provenance
+  /// APPROVED 상태 중간정산이 이 attendance에 lock을 보유하는 경우 해당 ISR ID
+  /// null이면 일반 이체 대상 (lock 없음)
+  final String? activeInterimSettlementId;
+  /// 이 attendance를 processed한 중간정산 요청 ID (영구 provenance 기록)
+  /// null이면 일반 이체이거나 아직 미이체
+  final String? interimSettlementRequestId;
+
   // 서버 측 GPS 검증
   final bool checkInSuspicious;
   final int? checkInDistance;
@@ -160,6 +168,8 @@ class AttendanceModel {
     this.transferDate,
     this.transferNote,
     this.transferredBy,
+    this.activeInterimSettlementId,
+    this.interimSettlementRequestId,
     this.checkInSuspicious = false,
     this.checkInDistance,
     this.snapshotWage,
@@ -182,6 +192,12 @@ class AttendanceModel {
   }
 
   // ── 급여 이체 계좌 getter ────────────────────────────────────
+
+  /// [PAY-08] 이 attendance가 APPROVED 중간정산에 lock되어 있는지
+  bool get isInterimSettlementLocked => activeInterimSettlementId != null;
+
+  /// [PAY-08] 이 attendance가 중간정산을 통해 이체되었는지 (개별 cancelTransfer 불가)
+  bool get isFromInterimSettlement => interimSettlementRequestId != null;
 
   /// 복호화된 계좌번호 (클라이언트 전용 — ENCRYPT_KEY 필요)
   String? get wageAccountNumberDecrypted =>
@@ -305,6 +321,8 @@ class AttendanceModel {
       transferDate:     parseTimestampNullable(map['transferDate']),
       transferNote:     map['transferNote']  as String?,
       transferredBy:    map['transferredBy'] as String?,
+      activeInterimSettlementId:  map['activeInterimSettlementId'] as String?,
+      interimSettlementRequestId: map['interimSettlementRequestId'] as String?,
       checkInSuspicious: map['checkInSuspicious'] as bool? ?? false,
       checkInDistance:   (map['checkInDistance'] as num?)?.toInt(),
       snapshotWage:      (map['snapshotWage']     as num?)?.toInt(),

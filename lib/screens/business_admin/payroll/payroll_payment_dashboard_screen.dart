@@ -763,6 +763,7 @@ class _PayrollPaymentDashboardScreenState
       if (!mounted) return;
 
       // [PAY-09-FIX] skippedCount 추적 후 실제 처리 건수만 성공으로 표시
+      // [PAY-08-FIX] skip 원인별 메시지 구분 (계좌 미확인 vs 중간정산 lock)
       int skippedCount = 0;
       if (recs.length == 1) {
         final r  = recs.first;
@@ -780,16 +781,22 @@ class _PayrollPaymentDashboardScreenState
       } else {
         final nameByUid = Map.fromEntries(
           _userBankCache.entries.map((e) => MapEntry(e.key, e.value['name'] ?? e.key)));
-        final skipped = await _payService.markTransferredBatch(
+        final result = await _payService.markTransferredBatch(
           attendanceIds:     recs.map((r) => r.id).toList(),
           businessId:        recs.first.businessId,
           transferNote:      note,
           notificationInfos: buildTransferNotificationInfos(
             records: recs, workerNameByUid: nameByUid),
         );
-        skippedCount = skipped.length;
-        if (skipped.isNotEmpty && mounted) {
-          ToastHelper.showWarning('${skipped.length}건은 계좌 정보 미확인으로 이체에서 제외되었습니다.');
+        skippedCount = result.allSkipped.length;
+        if (mounted) {
+          // [PAY-08] 중간정산 lock으로 제외된 건과 계좌 미확인 건을 분리해 표시
+          if (result.settlementLocked.isNotEmpty) {
+            ToastHelper.showWarning('${result.settlementLocked.length}건은 승인된 중간정산에 포함되어 제외되었습니다.');
+          }
+          if (result.bankSkipped.isNotEmpty) {
+            ToastHelper.showWarning('${result.bankSkipped.length}건은 계좌 정보 미확인으로 이체에서 제외되었습니다.');
+          }
         }
       }
       if (mounted) {
@@ -834,19 +841,25 @@ class _PayrollPaymentDashboardScreenState
       final nameByUid = Map.fromEntries(
         _userBankCache.entries.map((e) => MapEntry(e.key, e.value['name'] ?? e.key)));
 
-      final batchSkipped = await _payService.markTransferredBatch(
+      final batchResult = await _payService.markTransferredBatch(
         attendanceIds:     _selectedIds.toList(),
         businessId:        selectedRecords.first.businessId,
         transferNote:      note,
         notificationInfos: buildTransferNotificationInfos(
           records: selectedRecords, workerNameByUid: nameByUid),
       );
-      if (batchSkipped.isNotEmpty && mounted) {
-        ToastHelper.showWarning('${batchSkipped.length}건은 계좌 정보 미확인으로 이체에서 제외되었습니다.');
+      if (mounted) {
+        // [PAY-08] 중간정산 lock으로 제외된 건과 계좌 미확인 건을 분리해 표시
+        if (batchResult.settlementLocked.isNotEmpty) {
+          ToastHelper.showWarning('${batchResult.settlementLocked.length}건은 승인된 중간정산에 포함되어 제외되었습니다.');
+        }
+        if (batchResult.bankSkipped.isNotEmpty) {
+          ToastHelper.showWarning('${batchResult.bankSkipped.length}건은 계좌 정보 미확인으로 이체에서 제외되었습니다.');
+        }
       }
       if (mounted) {
         // [PAY-09-FIX] 실제 처리 건수만 성공으로 표시 (선택 총 건수 표시 금지)
-        final processedCount = _selectedIds.length - batchSkipped.length;
+        final processedCount = _selectedIds.length - batchResult.allSkipped.length;
         if (processedCount > 0) {
           ToastHelper.showSuccess('$processedCount건 이체 완료 처리되었습니다');
         }
@@ -932,6 +945,45 @@ class _PayrollPaymentDashboardScreenState
   };
 
   // ── 중간정산 ──────────────────────────────────────────────
+
+  /// [PAY-08] APPROVED → CANCELED — attendance lock 해제 공식 경로
+  Future<void> _cancelApprovedSettlement(InterimSettlementRequestModel req) async {
+    if (_isTransferring) return;
+    // 취소 사유 입력 (선택)
+    final reason = await DialogHelper.showTextInput(
+      context,
+      title: '중간정산 승인 취소',
+      message: '은행에서 아직 중간정산 금액을 이체하지 않은 경우에만 승인을 취소해 주세요.\n\n'
+          'ALfit의 승인 상태와 급여 잠금만 해제되며,\n실제 은행 이체는 취소되지 않습니다.',
+      hintText: '취소 사유 (선택)',
+      maxLength: 200,
+      maxLines: 2,
+      confirmText: '승인 취소',
+      cancelText: '닫기',
+      confirmColor: AppColors.error,
+      icon: Icons.cancel_outlined,
+      iconColor: AppColors.error,
+    );
+    if (!mounted) return; // dialog dismissed
+    // reason == null 이면 사용자가 닫기 선택 → 중단
+    if (reason == null) return;
+
+    setState(() => _isTransferring = true);
+    try {
+      await _payService.cancelApprovedSettlement(
+        req: req,
+        cancelReason: reason.trim().isEmpty ? null : reason.trim(),
+      );
+      if (!mounted) return;
+      ToastHelper.showSuccess('중간정산 승인이 취소되었습니다.');
+      _load();
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showError('승인 취소 실패: ${e.toString().replaceFirst("Exception: ", "")}');
+    } finally {
+      if (mounted) setState(() => _isTransferring = false);
+    }
+  }
 
   /// PENDING → APPROVED (이체예정일 지정 + 근로자 FCM)
   Future<void> _approveSettlement(InterimSettlementRequestModel req) async {
@@ -1990,9 +2042,11 @@ class _PayrollPaymentDashboardScreenState
           subtitle:     '${req.periodLabel} · ${req.recordCount}건',
           detail:       '실수령: ${FormatHelper.formatWage(req.netAmount)}'
               '${scheduledLabel != null ? '  ·  $scheduledLabel' : ''}',
-          onApprove:    req.isPending  ? () => _approveSettlement(req)  : null,
-          onReject:     req.isPending  ? () => _rejectSettlement(req)   : null,
-          onProcess:    req.isApproved ? () => _processSettlement(req)  : null,
+          onApprove:         req.isPending  ? () => _approveSettlement(req)         : null,
+          onReject:          req.isPending  ? () => _rejectSettlement(req)          : null,
+          onProcess:         req.isApproved ? () => _processSettlement(req)         : null,
+          // [PAY-08] APPROVED 취소 버튼 — 실제 은행 이체 전 lock 해제용
+          onCancelApproved:  req.isApproved ? () => _cancelApprovedSettlement(req) : null,
           statusLabel:  req.statusLabel,
         );
       },
@@ -2273,6 +2327,8 @@ class _RequestCard extends StatelessWidget {
   final VoidCallback? onReject;
   /// APPROVED 상태 중간정산 이체 처리 버튼 — null이면 미표시
   final VoidCallback? onProcess;
+  /// [PAY-08] APPROVED 취소 버튼 — null이면 미표시
+  final VoidCallback? onCancelApproved;
   final String? statusLabel;
 
   const _RequestCard({
@@ -2282,6 +2338,7 @@ class _RequestCard extends StatelessWidget {
     this.onApprove,
     this.onReject,
     this.onProcess,
+    this.onCancelApproved,
     this.statusLabel,
   });
 
@@ -2332,7 +2389,7 @@ class _RequestCard extends StatelessWidget {
           SizedBox(height: ResponsiveHelper.spacing(context, 2)),
           Text(detail,
               style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)),
-          if (onApprove != null || onReject != null || onProcess != null) ...[
+          if (onApprove != null || onReject != null || onProcess != null || onCancelApproved != null) ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 10)),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
@@ -2350,6 +2407,22 @@ class _RequestCard extends StatelessWidget {
                     ),
                     child: const Text('거절'),
                   ),
+                // [PAY-08] APPROVED 취소 버튼 — APPROVED 상태일 때만 표시
+                if (onCancelApproved != null) ...[
+                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                  OutlinedButton(
+                    onPressed: onCancelApproved,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.grey600,
+                      side: const BorderSide(color: AppColors.grey400),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: ResponsiveHelper.spacing(context, 14),
+                        vertical:   ResponsiveHelper.spacing(context, 6),
+                      ),
+                    ),
+                    child: const Text('승인 취소'),
+                  ),
+                ],
                 if (onApprove != null) ...[
                   SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                   ElevatedButton(
@@ -3260,7 +3333,8 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
                                 color: AppColors.grey400),
                           ),
                         ],
-                        if (isXfer && widget.canCancelTransfer) ...[
+                        // [PAY-08] 중간정산 처리된 이체는 개별 취소 불가 (r.isFromInterimSettlement)
+                        if (isXfer && widget.canCancelTransfer && !r.isFromInterimSettlement) ...[
                           const SizedBox(height: 6),
                           GestureDetector(
                             onTap: _isCancelling ? null : () => _cancelTransfer(r),

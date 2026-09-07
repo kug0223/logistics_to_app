@@ -18231,6 +18231,8 @@ export const callableCancelFinalConfirmation = onCall(
             const data = snap.data()!;
             // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
             if (data.businessId !== businessId) return false;
+            // [PAY-08] 중간정산 APPROVED lock — 마감 취소 차단
+            if (data.activeInterimSettlementId) return false;
             if (data.wageStatus === "transferred" || data.wageStatus !== "confirmed") return false;
 
             const existingDetail = (data.wageDetail ?? {}) as Record<string, unknown>;
@@ -20089,6 +20091,7 @@ export const callableMarkTransferredBatch = onCall(
 
     const now = admin.firestore.FieldValue.serverTimestamp();
     const skipped: string[] = [];
+    const lockedSkipped: string[] = []; // [PAY-08] 중간정산 APPROVED lock으로 제외된 ID
     let processed = 0;
     // [MEDIUM-3] 실제로 transferred 상태로 전환된 attendanceId 추적 — 알림 필터링용
     // 멱등 처리(already-transferred)는 포함하지 않아 중복 알림 방지
@@ -20105,6 +20108,7 @@ export const callableMarkTransferredBatch = onCall(
     await db.runTransaction(async (tx) => {
       // 재시도 시 이전 누적분 초기화
       skipped.length = 0;
+      lockedSkipped.length = 0; // [PAY-08]
       processed = 0;
       processedAttendanceIds.clear();
       validWorkerUserIds.clear();
@@ -20135,6 +20139,13 @@ export const callableMarkTransferredBatch = onCall(
         // 이미 transferred: 멱등 처리 (성공으로 카운트)
         if (ws === "transferred") {
           processed++;
+          continue;
+        }
+
+        // [PAY-08] 중간정산 APPROVED lock — 일반 이체 차단 (ISR 컬렉션 조회 없이 필드 체크)
+        if (data.activeInterimSettlementId) {
+          lockedSkipped.push(id);
+          skipped.push(id);
           continue;
         }
 
@@ -20223,7 +20234,7 @@ export const callableMarkTransferredBatch = onCall(
       );
     }
 
-    return {success: true, processed, skipped};
+    return {success: true, processed, skipped, lockedBySettlement: lockedSkipped};
   }
 );
 
@@ -20288,6 +20299,13 @@ export const callableCancelTransfer = onCall(
       const data = snap.data()!;
       if (data.businessId !== businessId) {
         throw new HttpsError("permission-denied", "해당 사업장의 출근기록이 아닙니다.");
+      }
+      // [PAY-08] 중간정산 처리된 이체는 개별 취소 불가 (reversal inconsistency 방지)
+      if (data.interimSettlementRequestId) {
+        throw new HttpsError(
+          "failed-precondition",
+          "중간정산으로 처리된 급여는 개별 이체 완료 취소를 할 수 없습니다."
+        );
       }
       if (data.wageStatus !== "transferred") {
         throw new HttpsError(
@@ -27111,8 +27129,8 @@ export const callableRequestInterimSettlement = onCall(
 // ══════════════════════════════════════════════════════════════════════════════
 // callableApproveInterimSettlement
 // 관리자가 중간정산을 승인하고 이체예정일을 지정한다.
-// PENDING → APPROVED + scheduledTransferDate 저장 + 근로자에게 FCM
-// attendance 상태는 변경하지 않음 (이체 처리는 callableProcessInterimSettlement에서)
+// PENDING → APPROVED + 금액 재계산 + attendance 개별 lock (activeInterimSettlementId)
+// [PAY-08] attendance fresh read + 금액 서버 재고정 + lock atomic set
 // ══════════════════════════════════════════════════════════════════════════════
 export const callableApproveInterimSettlement = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
@@ -27155,6 +27173,7 @@ export const callableApproveInterimSettlement = onCall(
     let savedReqData: FirebaseFirestore.DocumentData | null = null;
 
     await db.runTransaction(async (tx) => {
+      // [PAY-08] TX 내 fresh read: request + 모든 attendance
       const reqSnap = await tx.get(reqRef);
       if (!reqSnap.exists) throw new HttpsError("not-found", "중간정산 요청을 찾을 수 없습니다.");
 
@@ -27167,14 +27186,55 @@ export const callableApproveInterimSettlement = onCall(
       workerId = rd.workerId as string;
       savedReqData = rd;
 
+      const attendanceIds = Array.isArray(rd.attendanceIds) ? (rd.attendanceIds as string[]) : [];
+      if (attendanceIds.length === 0) throw new HttpsError("failed-precondition", "정산 대상 출근기록이 없습니다.");
+
+      // [PAY-08] TX 내 attendance fresh read (최대 100건, 202 ops < 500 한도)
+      const attRefs = attendanceIds.map((id) => db.collection("attendance").doc(id));
+      const attSnaps = await Promise.all(attRefs.map((ref) => tx.get(ref)));
+
+      // [PAY-08] PRECONDITION: 전건 validated
+      let freshGross = 0;
+      let freshNet   = 0;
+      for (const snap of attSnaps) {
+        if (!snap.exists) throw new HttpsError("failed-precondition", `출근기록 없음: ${snap.id}`);
+        const ad = snap.data()!;
+        if (ad.userId !== workerId || ad.businessId !== d.businessId)
+          throw new HttpsError("failed-precondition", `소속 불일치: ${snap.id}`);
+        if (ad.wageStatus !== "confirmed")
+          throw new HttpsError("failed-precondition", `확정(confirmed) 상태가 아닙니다: ${snap.id} (현재: ${ad.wageStatus})`);
+        // [PAY-08] 다른 ISR이 이미 lock을 보유 중이면 승인 차단
+        const lockedBy = ad.activeInterimSettlementId as string | undefined;
+        if (lockedBy && lockedBy !== d.settlementRequestId)
+          throw new HttpsError("failed-precondition", `다른 중간정산(${lockedBy})이 이미 해당 출근기록을 보유하고 있습니다: ${snap.id}`);
+        // 금액 재계산 (callableRequestInterimSettlement와 동일 formula)
+        const finalWage = (ad.finalWage as number | undefined) ?? 0;
+        freshGross += finalWage;
+        const wageDetail = ad.wageDetail as Record<string, number> | undefined;
+        freshNet += wageDetail?.netWage ?? finalWage;
+      }
+
+      freshGross = Math.round(freshGross);
+      freshNet   = Math.round(freshNet);
+
+      // [PAY-08] ATOMIC WRITE: request 승인 + 금액 재고정 + attendance lock
       tx.update(reqRef, {
         status: "APPROVED",
-        processedBy: callerUid,
-        processedAt: admin.firestore.FieldValue.serverTimestamp(),
+        approvedBy: callerUid,
+        approvedAt: admin.firestore.FieldValue.serverTimestamp(),
         scheduledTransferDate: admin.firestore.Timestamp.fromDate(transferDate),
+        requestedAmount: freshGross,
+        netAmount: freshNet,
+        amountRefreshedAt: admin.firestore.FieldValue.serverTimestamp(),
         ...(d.transferNote ? {transferNote: d.transferNote} : {}),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
+      for (const snap of attSnaps) {
+        tx.update(snap.ref, {
+          activeInterimSettlementId: d.settlementRequestId,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
     });
 
     // 트랜잭션 완료 후 근로자에게 FCM
@@ -27247,7 +27307,7 @@ export const callableProcessInterimSettlement = onCall(
     let savedReqData: FirebaseFirestore.DocumentData | null = null;
     let processedCount = 0;
 
-    // 단일 트랜잭션: attendance 일괄 transferred + status PROCESSED
+    // [PAY-08] ALL-OR-NOTHING 단일 트랜잭션: 전건 검증 후에만 write
     await db.runTransaction(async (tx) => {
       processedCount = 0; // 재시도 시 초기화
 
@@ -27264,40 +27324,71 @@ export const callableProcessInterimSettlement = onCall(
       savedReqData = rd;
 
       const attendanceIds = Array.isArray(rd.attendanceIds) ? (rd.attendanceIds as string[]) : [];
+      if (attendanceIds.length === 0) throw new HttpsError("failed-precondition", "정산 대상 출근기록이 없습니다.");
+
       const now = admin.firestore.Timestamp.now();
       const noteToWrite = d.transferNote ?? "중간정산 이체";
+      const requestId = d.settlementRequestId;
 
-      // attendance 문서 일괄 조회 (트랜잭션 내)
+      // [PAY-08] TX 내 attendance fresh read
       const attRefs = attendanceIds.map((id) => db.collection("attendance").doc(id));
-      const attSnaps = attRefs.length > 0
-        ? await Promise.all(attRefs.map((ref) => tx.get(ref)))
-        : [];
+      const attSnaps = await Promise.all(attRefs.map((ref) => tx.get(ref)));
 
+      // [PAY-08] PHASE 1: 전건 사전 검증 (write 이전 — all-or-nothing)
+      let freshGross = 0;
+      let freshNet   = 0;
       for (const snap of attSnaps) {
-        if (!snap.exists) continue;
+        if (!snap.exists)
+          throw new HttpsError("failed-precondition", `출근기록 없음: ${snap.id}`);
         const ad = snap.data()!;
-        if (ad.userId !== workerId || ad.businessId !== d.businessId) continue;
-        if (ad.wageStatus === "transferred") { processedCount++; continue; } // 멱등
-        if (ad.wageStatus !== "confirmed") continue;
+        if (ad.userId !== workerId || ad.businessId !== d.businessId)
+          throw new HttpsError("failed-precondition", `소속 불일치: ${snap.id}`);
+        // [PAY-08] lock 소유 확인 — 다른 ISR이 이미 transferred한 경우 충돌 감지
+        if (ad.wageStatus === "transferred")
+          throw new HttpsError(
+            "failed-precondition",
+            `해당 출근기록이 다른 경로에서 이미 이체되었습니다: ${snap.id}. 현재 요청을 취소하고 재승인 후 처리해 주세요.`
+          );
+        if (ad.wageStatus !== "confirmed")
+          throw new HttpsError("failed-precondition", `확정(confirmed) 상태가 아닙니다: ${snap.id} (현재: ${ad.wageStatus})`);
+        // [PAY-08] lock 검증 — 이 요청의 lock을 소유해야 함
+        if (ad.activeInterimSettlementId !== requestId)
+          throw new HttpsError(
+            "failed-precondition",
+            `출근기록의 중간정산 lock이 현재 요청과 일치하지 않습니다: ${snap.id}`
+          );
+        const finalWage = (ad.finalWage as number | undefined) ?? 0;
+        freshGross += finalWage;
+        const wageDetail = ad.wageDetail as Record<string, number> | undefined;
+        freshNet += wageDetail?.netWage ?? finalWage;
+      }
+
+      freshGross = Math.round(freshGross);
+      freshNet   = Math.round(freshNet);
+
+      // [PAY-08] AMOUNT DRIFT GUARD — 승인 이후 금액 변경 차단
+      if (freshGross !== (rd.requestedAmount as number) || freshNet !== (rd.netAmount as number)) {
+        throw new HttpsError(
+          "failed-precondition",
+          "중간정산 승인 후 급여 금액이 변경되었습니다. 현재 요청을 취소하고 다시 승인해 주세요."
+        );
+      }
+
+      // [PAY-08] PHASE 2: 전건 통과 후 atomic write
+      for (const snap of attSnaps) {
         tx.update(snap.ref, {
           wageStatus: "transferred",
           transferDate: now,
           transferredBy: callerUid,
           transferNote: noteToWrite,
+          activeInterimSettlementId: admin.firestore.FieldValue.delete(), // lock 해제
+          interimSettlementRequestId: requestId,                          // provenance 영구 보존
           updatedAt: now,
         });
         processedCount++;
       }
 
-      // 처리 가능한 attendance가 전혀 없으면 PROCESSED 차단
-      if (processedCount === 0 && attSnaps.length > 0) {
-        throw new HttpsError(
-          "failed-precondition",
-          "이체 가능한 출근 기록이 없습니다. (wageStatus가 confirmed 또는 transferred 상태인 항목 없음)"
-        );
-      }
-
-      // status → PROCESSED (attendance 업데이트와 동일 트랜잭션 — 원자적)
+      // status → PROCESSED (attendance와 동일 TX — 원자적)
       tx.update(reqRef, {
         status: "PROCESSED",
         processedBy: callerUid,
@@ -27706,6 +27797,89 @@ export const callableCancelTOInvitation = onCall(
   }
 );
 
+// ─── callableCancelApprovedInterimSettlement ──────────────────────────────────
+// 관리자가 APPROVED 상태의 중간정산을 취소한다 (실제 은행 이체 없이 앱 상태만 해제)
+// [PAY-08] attendance-level lock 해제를 위한 공식 취소 경로
+// APPROVED → CANCELED + attendance.activeInterimSettlementId 일괄 삭제 (동일 TX)
+export const callableCancelApprovedInterimSettlement = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {settlementRequestId, businessId, cancelReason} = request.data as {
+      settlementRequestId: string;
+      businessId: string;
+      cancelReason?: string;
+    };
+
+    if (!settlementRequestId) throw new HttpsError("invalid-argument", "settlementRequestId 필수");
+    if (!businessId) throw new HttpsError("invalid-argument", "businessId 필수");
+
+    // [ISR-CANCEL-PERM] callableApproveInterimSettlement와 동일 권한
+    const {callerData: cancelCallerData, bizData: cancelBizData} = await assertBizAdmin(callerUid, businessId);
+    const cancelAdminIds = (cancelBizData?.adminIds as string[] | undefined) ?? [];
+    if (
+      (cancelCallerData?.role as string | undefined) !== "SUPER_ADMIN" &&
+      !cancelAdminIds.includes(callerUid) &&
+      (cancelBizData?.ownerId as string | undefined) !== callerUid
+    ) {
+      const cancelMemberSnap = await db.collection("businesses").doc(businessId).collection("members").doc(callerUid).get();
+      const cancelPerms = (cancelMemberSnap.data()?.permissions as Record<string, boolean>) ?? {};
+      if (cancelPerms.canManageWage !== true) throw new HttpsError("permission-denied", "임금 관리 권한이 없습니다.");
+    }
+
+    const reqRef = db.collection("interim_settlement_requests").doc(settlementRequestId);
+
+    await db.runTransaction(async (tx) => {
+      const reqSnap = await tx.get(reqRef);
+      if (!reqSnap.exists) throw new HttpsError("not-found", "중간정산 요청을 찾을 수 없습니다.");
+
+      const rd = reqSnap.data()!;
+      if (rd.businessId !== businessId)
+        throw new HttpsError("permission-denied", "사업장 불일치");
+      if (rd.status !== "APPROVED")
+        throw new HttpsError("failed-precondition", "APPROVED 상태인 요청만 취소 가능합니다.");
+
+      const attendanceIds = Array.isArray(rd.attendanceIds) ? (rd.attendanceIds as string[]) : [];
+
+      // [PAY-08] TX 내 attendance fresh read — lock 소유 확인
+      const attRefs = attendanceIds.map((id) => db.collection("attendance").doc(id));
+      const attSnaps = await Promise.all(attRefs.map((ref) => tx.get(ref)));
+
+      for (const snap of attSnaps) {
+        if (!snap.exists) continue;
+        const ad = snap.data()!;
+        // lock 소유 확인 — 이 요청의 lock만 해제 가능
+        const lockedBy = ad.activeInterimSettlementId as string | undefined;
+        if (lockedBy && lockedBy !== settlementRequestId) {
+          throw new HttpsError(
+            "failed-precondition",
+            `출근기록 ${snap.id}의 lock이 현재 요청과 불일치합니다. (보유: ${lockedBy})`
+          );
+        }
+        if (lockedBy === settlementRequestId) {
+          tx.update(snap.ref, {
+            activeInterimSettlementId: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+      }
+
+      // APPROVED → CANCELED
+      tx.update(reqRef, {
+        status: "CANCELED",
+        canceledBy: callerUid,
+        canceledAt: admin.firestore.FieldValue.serverTimestamp(),
+        ...(cancelReason ? {cancelReason} : {}),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+
+    return {success: true};
+  }
+);
+
 // ─── callableAdminDirectInterimSettlement ─────────────────────────────────────
 // 관리자가 직접 중간정산을 생성 + 즉시 처리(PROCESSED)하는 CF
 // [Trust Boundary] 클라이언트가 interim_settlement_requests 직접 쓰기를 대체
@@ -27756,67 +27930,72 @@ export const callableAdminDirectInterimSettlement = onCall(
     const now = admin.firestore.FieldValue.serverTimestamp();
     const nowTs = admin.firestore.Timestamp.now();
 
-    // 처리할 attendanceIds 필터링 (wageConfirmed만, 타 근로자 제외, 이미 transferred 멱등 처리)
-    const attSnaps = await Promise.all(
-      attendanceIds.map(id => db.collection("attendance").doc(id).get())
-    );
+    // 트랜잭션: attendance fresh read + ISR lock 체크 + 이체 + ISR 문서 생성
+    // [PAY-08] TOCTOU 수정: TX 밖 stale read 제거 → TX 안 fresh read + lock 검증
+    const settlementRef = db.collection("interim_settlement_requests").doc();
 
-    const idsToTransfer: string[] = [];
-    let actualNetAmount = 0;
-    for (const snap of attSnaps) {
-      if (!snap.exists) continue;
-      const d = snap.data()!;
-      if (d.businessId !== businessId) continue; // 타 사업장 차단
-      if (d.userId !== workerId) continue;         // 타 근로자 차단
-      const ws = d.wageStatus as string | undefined;
-      if (ws === "transferred") {
-        // 이미 이체된 건 — 금액 합산만 (멱등)
-        actualNetAmount += ((d.finalWage as number | undefined) ?? 0);
-        continue;
+    let actualNetAmount = 0; // TX 내에서 계산, FCM 발송용으로 TX 밖에서 참조
+
+    await db.runTransaction(async (tx) => {
+      actualNetAmount = 0; // 재시도 시 초기화
+
+      // [PAY-08] TX 내 attendance fresh read
+      const txAttSnaps = await Promise.all(
+        attendanceIds.map(id => tx.get(db.collection("attendance").doc(id)))
+      );
+
+      const idsToTransfer: string[] = [];
+      let periodStart: admin.firestore.Timestamp = nowTs;
+      let periodEnd:   admin.firestore.Timestamp = nowTs;
+      const dates: admin.firestore.Timestamp[] = [];
+
+      for (const snap of txAttSnaps) {
+        if (!snap.exists) continue;
+        const ad = snap.data()!;
+        if (ad.businessId !== businessId) continue; // 타 사업장 차단
+        if (ad.userId !== workerId) continue;         // 타 근로자 차단
+
+        const ws = ad.wageStatus as string | undefined;
+
+        // [PAY-08] 중간정산 APPROVED lock — 관리자 직접 정산도 차단
+        if (ad.activeInterimSettlementId) continue; // lock 보유 중 — skip
+
+        if (ws === "transferred") {
+          // 이미 이체된 건 — 금액 합산만 (멱등)
+          actualNetAmount += ((ad.finalWage as number | undefined) ?? 0);
+          continue;
+        }
+        if (ws !== "confirmed") continue;
+
+        idsToTransfer.push(snap.id);
+        actualNetAmount += ((ad.finalWage as number | undefined) ?? 0);
+        const wd = ad.workDate as admin.firestore.Timestamp | undefined;
+        if (wd) dates.push(wd);
       }
-      if (ws !== "confirmed") continue; // confirmed만 이체 가능
-      idsToTransfer.push(snap.id);
-      actualNetAmount += ((d.finalWage as number | undefined) ?? 0);
-    }
 
-    if (idsToTransfer.length === 0 && attSnaps.every(s => {
-      const ws = s.data()?.wageStatus as string | undefined;
-      return ws === "transferred";
-    })) {
-      throw new HttpsError("failed-precondition", "모든 항목이 이미 이체 처리되었습니다.");
-    }
+      if (idsToTransfer.length === 0) {
+        throw new HttpsError("failed-precondition", "이체 가능한 출근기록이 없습니다. (모두 이체 완료이거나 중간정산 진행 중)");
+      }
 
-    // 정산 기간: attendanceIds 중 workDate 기준 min/max
-    let periodStart = nowTs;
-    let periodEnd   = nowTs;
-    {
-      const dates = attSnaps
-        .filter(s => s.exists)
-        .map(s => s.data()!.workDate as admin.firestore.Timestamp | undefined)
-        .filter((d): d is admin.firestore.Timestamp => !!d);
       if (dates.length > 0) {
         dates.sort((a, b) => a.seconds - b.seconds);
         periodStart = dates[0];
         periodEnd   = dates[dates.length - 1];
       }
-    }
 
-    // 트랜잭션: attendance 이체 + interim_settlement_requests 문서 생성
-    const settlementRef = db.collection("interim_settlement_requests").doc();
-
-    await db.runTransaction(async (tx) => {
-      // attendance 상태 전환
+      // attendance 이체 + provenance 기록
       for (const id of idsToTransfer) {
         const ref = db.collection("attendance").doc(id);
         tx.update(ref, {
-          wageStatus:     "transferred",
-          transferDate:   now,
-          transferredBy:  callerUid,
-          updatedAt:      now,
-          transferNote:   "중간정산 이체",
-          cancelNote:        admin.firestore.FieldValue.delete(),
-          cancelledTransferAt: admin.firestore.FieldValue.delete(),
-          cancelledTransferBy: admin.firestore.FieldValue.delete(),
+          wageStatus:               "transferred",
+          transferDate:             now,
+          transferredBy:            callerUid,
+          updatedAt:                now,
+          transferNote:             "중간정산 이체",
+          interimSettlementRequestId: settlementRef.id, // [PAY-08] provenance
+          cancelNote:               admin.firestore.FieldValue.delete(),
+          cancelledTransferAt:      admin.firestore.FieldValue.delete(),
+          cancelledTransferBy:      admin.firestore.FieldValue.delete(),
         });
       }
 

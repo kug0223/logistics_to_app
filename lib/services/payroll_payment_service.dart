@@ -97,19 +97,25 @@ class PayrollPaymentService {
           ]
         : null;
 
-    await _cf.httpsCallable('callableMarkTransferredBatch').call({
+    final result = await _cf.httpsCallable('callableMarkTransferredBatch').call({
       'businessId': businessId,
       'attendanceIds': [attendanceId],
       if (transferNote != null && transferNote.isNotEmpty) 'transferNote': transferNote,
       if (notifications != null) 'notifications': notifications,
     });
+    // [PAY-08] 단건 이체 시 ISR lock으로 제외된 경우 명시적 오류 반환
+    final data = result.data as Map<dynamic, dynamic>? ?? {};
+    final locked = (data['lockedBySettlement'] as List?)?.cast<String>() ?? [];
+    if (locked.contains(attendanceId)) {
+      throw Exception('해당 출근기록은 승인된 중간정산에 포함되어 있어 이체 처리할 수 없습니다. 중간정산을 먼저 처리하거나 승인을 취소해 주세요.');
+    }
   }
 
   /// 일괄 이체 완료 처리 — callableMarkTransferredBatch(최대 200건/청크) 위임
   // 재시도 시: 이미 transferred된 건은 CF에서 멱등 처리(processed++ 후 skip)
   // 알림은 첫 번째 청크에만 포함 (알림은 attendanceIds 순서와 무관)
-  /// [반환값] CF가 계좌 정보 미확인으로 건너뛴 attendanceId 목록 (비어 있으면 전원 이체 완료)
-  Future<List<String>> markTransferredBatch({
+  /// [PAY-08] [반환값] CF 처리 결과 — skip 원인 구분 포함
+  Future<MarkTransferResult> markTransferredBatch({
     required List<String> attendanceIds,
     required String businessId,
     String? transferNote,
@@ -130,7 +136,8 @@ class PayrollPaymentService {
 
     bool notificationsSent = false;
     final List<String> chunkErrors = [];
-    final List<String> allSkipped = [];   // 계좌 미확인으로 건너뛴 attendanceId
+    final List<String> allSkipped = [];             // 전체 skip attendanceId
+    final List<String> allLockedBySettlement = [];  // [PAY-08] ISR lock으로 skip된 ID
     for (int i = 0; i < attendanceIds.length; i += 200) {
       final chunk = attendanceIds.skip(i).take(200).toList();
       // [FIX] 알림 포함 여부를 await 이전에 결정·잠금:
@@ -148,10 +155,12 @@ class PayrollPaymentService {
         // [BUG-FIX] notificationsSent = true를 await 성공 후로 이동
         // await 이전에 설정하면 첫 청크 실패 시 이후 청크에서 알림을 전혀 발송하지 않음
         if (sendNotifs) notificationsSent = true;
-        // CF 응답에서 계좌 미확인 skip 목록 수집
+        // [PAY-08] CF 응답에서 skip 원인 구분 수집
         final data = result.data as Map<dynamic, dynamic>? ?? {};
         final skipped = (data['skipped'] as List?)?.cast<String>() ?? [];
+        final locked = (data['lockedBySettlement'] as List?)?.cast<String>() ?? [];
         allSkipped.addAll(skipped);
+        allLockedBySettlement.addAll(locked);
       } catch (e) {
         final msg = e is FirebaseFunctionsException
             ? (e.message ?? e.code)
@@ -163,7 +172,12 @@ class PayrollPaymentService {
     if (chunkErrors.isNotEmpty) {
       throw Exception('이체 일괄처리 실패 (${chunkErrors.length}개 청크):\n${chunkErrors.join('\n')}');
     }
-    return allSkipped;
+    // [PAY-08] bank skip = allSkipped에서 locked 제외
+    final bankSkipped = allSkipped.where((id) => !allLockedBySettlement.contains(id)).toList();
+    return MarkTransferResult(
+      bankSkipped: bankSkipped,
+      settlementLocked: allLockedBySettlement,
+    );
   }
 
   /// 이체 취소 — transferred → confirmed (CF callableCancelTransfer 경유)
@@ -598,6 +612,22 @@ class PayrollPaymentService {
     });
   }
 
+  /// [PAY-08] APPROVED 중간정산 취소 — attendance lock 해제 + APPROVED → CANCELED
+  Future<void> cancelApprovedSettlement({
+    required InterimSettlementRequestModel req,
+    String? cancelReason,
+  }) async {
+    final callable = _cf.httpsCallable(
+      'callableCancelApprovedInterimSettlement',
+      options: HttpsCallableOptions(timeout: const Duration(seconds: 30)),
+    );
+    await callable.call({
+      'settlementRequestId': req.id,
+      'businessId': req.businessId,
+      if (cancelReason != null && cancelReason.isNotEmpty) 'cancelReason': cancelReason,
+    });
+  }
+
   /// 중간정산 거절
   /// [5C.1-ISR-03] CF callableRejectInterimSettlement 경유 (권한+트랜잭션+알림 서버 처리)
   Future<void> rejectInterimSettlement({
@@ -615,6 +645,24 @@ class PayrollPaymentService {
       'rejectReason': rejectReason,
     });
   }
+}
+
+// ─── 이체 처리 결과 ───────────────────────────────────────────────
+
+/// [PAY-08] markTransferredBatch 처리 결과 — skip 원인 구분
+class MarkTransferResult {
+  /// 계좌 정보 미확인으로 제외된 attendanceId 목록
+  final List<String> bankSkipped;
+  /// 승인된 중간정산 lock으로 제외된 attendanceId 목록 [PAY-08]
+  final List<String> settlementLocked;
+
+  const MarkTransferResult({
+    required this.bankSkipped,
+    required this.settlementLocked,
+  });
+
+  /// 전체 제외된 attendanceId 목록
+  List<String> get allSkipped => [...bankSkipped, ...settlementLocked];
 }
 
 // ─── 이체 완료 알림 정보 ──────────────────────────────────────────
