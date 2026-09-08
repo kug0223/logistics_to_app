@@ -7,11 +7,16 @@ import '../pickers/date_picker_bottom_sheet.dart';
 import '../dialogs/styled_dialog.dart';
 
 class FilterDialog extends StatefulWidget {
-  final String? selectedBusiness;
+  // [PATCH-IDENTITY] selectedBusinessId / businessOptions는 businessId 기반.
+  // display label은 businessOptions[id] (businessName).
+  // onBusinessChanged 콜백도 businessId를 반환한다.
+  final String? selectedBusinessId;
   final DateTimeRange? selectedDateRange;
   final String? selectedTOType;        // null / 'flex' / 'contract'
   final String? selectedPublishStatus; // null / 'published' / 'unpublished' / 'pending'
-  final List<String> businessNames;
+  /// 사업장 옵션: key=businessId, value=businessName.
+  /// 1개 이하이면 사업장 필터 섹션을 숨긴다.
+  final Map<String, String> businessOptions;
   final Function(String?) onBusinessChanged;
   final Function(DateTimeRange?) onDateRangeChanged;
   final Function(String?)? onTOTypeChanged;
@@ -22,11 +27,11 @@ class FilterDialog extends StatefulWidget {
 
   const FilterDialog({
     super.key,
-    this.selectedBusiness,
+    this.selectedBusinessId,
     this.selectedDateRange,
     this.selectedTOType,
     this.selectedPublishStatus,
-    required this.businessNames,
+    required this.businessOptions,
     required this.onBusinessChanged,
     required this.onDateRangeChanged,
     this.onTOTypeChanged,
@@ -49,7 +54,7 @@ class _FilterDialogState extends State<FilterDialog> {
   @override
   void initState() {
     super.initState();
-    _tempBusiness = widget.selectedBusiness;
+    _tempBusiness = widget.selectedBusinessId;
     _tempDateRange = widget.selectedDateRange;
     _tempTOType = widget.selectedTOType;
     _tempPublishStatus = widget.selectedPublishStatus;
@@ -92,7 +97,7 @@ class _FilterDialogState extends State<FilterDialog> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (widget.businessNames.length > 1) ...[
+                  if (widget.businessOptions.length > 1) ...[
                     _buildSection(
                       context,
                       label: '사업장',
@@ -259,7 +264,12 @@ class _FilterDialogState extends State<FilterDialog> {
 
   // ─── 사업장 Chips ─────────────────────────────────────────
 
+  // [PATCH-IDENTITY] 내부값(key) = businessId, 표시(value) = businessName.
+  // 동명 사업장이 있어도 businessId가 다르면 별개 chip으로 표시.
+  // ⚠️ P3_DEFERRED: 동명 사업장 chip 시각 구분(예: "물류센터 · 평택") 미구현.
   Widget _buildBusinessChips(BuildContext context, Color primary) {
+    final sortedEntries = widget.businessOptions.entries.toList()
+      ..sort((a, b) => a.value.compareTo(b.value));
     return Wrap(
       spacing: ResponsiveHelper.spacing(context, 8),
       runSpacing: ResponsiveHelper.spacing(context, 8),
@@ -271,12 +281,13 @@ class _FilterDialogState extends State<FilterDialog> {
           primary: primary,
           onTap: () => setState(() => _tempBusiness = null),
         ),
-        ...widget.businessNames.map((name) => _chip(
+        ...sortedEntries.map((entry) => _chip(
               context,
-              label: name,
-              isSelected: _tempBusiness == name,
+              label: entry.value, // businessName (display only)
+              isSelected: _tempBusiness == entry.key, // compare by businessId
               primary: primary,
-              onTap: () => setState(() => _tempBusiness = _tempBusiness == name ? null : name),
+              onTap: () => setState(() =>
+                  _tempBusiness = _tempBusiness == entry.key ? null : entry.key),
             )),
       ],
     );

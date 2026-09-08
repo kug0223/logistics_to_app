@@ -68,7 +68,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   // H2: 필터 결과 캐시 — items·필터·탭이 바뀔 때만 재계산
   List<TOGroupItem>? _lastCachedItems;
   String? _lastCachedTab;
-  String? _lastCachedBusiness;
+  String? _lastCachedBusinessId; // [PATCH-IDENTITY] businessId 기반
   String? _lastCachedTOType;
   String? _lastCachedPublishStatus;
   DateTimeRange? _lastCachedDateRange;
@@ -144,7 +144,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     final controller = context.read<WorkforceController>();
     if (identical(allItems, _lastCachedItems) &&
         _selectedTab == _lastCachedTab &&
-        controller.selectedBusiness == _lastCachedBusiness &&
+        controller.selectedBusinessId == _lastCachedBusinessId &&
         controller.selectedTOType == _lastCachedTOType &&
         controller.selectedPublishStatus == _lastCachedPublishStatus &&
         controller.selectedDateRange == _lastCachedDateRange) {
@@ -152,7 +152,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     }
     _lastCachedItems = allItems;
     _lastCachedTab = _selectedTab;
-    _lastCachedBusiness = controller.selectedBusiness;
+    _lastCachedBusinessId = controller.selectedBusinessId;
     _lastCachedTOType = controller.selectedTOType;
     _lastCachedPublishStatus = controller.selectedPublishStatus;
     _lastCachedDateRange = controller.selectedDateRange;
@@ -161,8 +161,9 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   }
 
   /// controller.items 에서 탭·사업장·날짜 필터 적용
+  /// [PATCH-IDENTITY] 사업장 필터는 businessId 기반 — 동명 사업장 충돌 방지.
   List<TOGroupItem> _computeFilteredItems(List<TOGroupItem> allItems, WorkforceController controller) {
-    final selectedBusiness = controller.selectedBusiness;
+    final selectedBusinessId = controller.selectedBusinessId;
     final selectedTOType = controller.selectedTOType;
     final selectedPublishStatus = controller.selectedPublishStatus;
     final selectedDateRange = controller.selectedDateRange;
@@ -175,8 +176,8 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     }
 
     final filtered = source.where((groupItem) {
-      if (selectedBusiness != null &&
-          groupItem.businessName != selectedBusiness) {
+      if (selectedBusinessId != null &&
+          groupItem.businessId != selectedBusinessId) {
         return false;
       }
 
@@ -333,7 +334,7 @@ class _WorkforceListViewState extends State<WorkforceListView> {
     //   - managedBusinessIds.length >= 2 + no business filter → 멀티 전체 scope → 분모 숨김
     //   - managedBusinessIds.length >= 2 + business filter 선택 → 단일 필터 → 분모 표시
     final up = context.read<UserProvider>();
-    final isBusinessFiltered = controller.selectedBusiness != null;
+    final isBusinessFiltered = controller.selectedBusinessId != null;
     final managedCount = up.currentUser?.managedBusinessIds.length ?? 1;
     final showDenominator = up.isSubAdmin || managedCount <= 1 || isBusinessFiltered;
     final displayLabel = isActiveTab && activeCount != null
@@ -402,27 +403,28 @@ class _WorkforceListViewState extends State<WorkforceListView> {
 
   void _showFilterDialog() {
     final controller = context.read<WorkforceController>();
-    final businessNames = controller.items
-        .map((g) => g.businessName)
-        .where((n) => n.isNotEmpty)
-        .toSet()
-        .toList()
-      ..sort();
+    // [PATCH-IDENTITY] key=businessId, value=businessName.
+    // id로 필터링하고 name을 chip label로 표시.
+    // 동명 사업장이 있어도 id가 다르면 별개 항목으로 유지됨.
+    final businessOptions = <String, String>{
+      for (final g in controller.items)
+        if (g.businessId.isNotEmpty) g.businessId: g.businessName,
+    };
 
     DialogHelper.showSheet(
       context,
       isScrollControlled: true,
       useRootNavigator: true,
       builder: (context) => FilterDialog(
-        selectedBusiness: controller.selectedBusiness,
+        selectedBusinessId: controller.selectedBusinessId,
         selectedDateRange: controller.selectedDateRange,
         selectedTOType: controller.selectedTOType,
         selectedPublishStatus: controller.selectedPublishStatus,
-        businessNames: businessNames,
+        businessOptions: businessOptions,
         isUserMode: false,
         showTOTypeFilter: true,
         showPublishStatusFilter: true,
-        onBusinessChanged: (v) { setState(() { _expandedGroups.clear(); _expandedTOs.clear(); _activeGroupKey = null; }); controller.setBusinessFilter(v); },
+        onBusinessChanged: (v) { setState(() { _expandedGroups.clear(); _expandedTOs.clear(); _activeGroupKey = null; }); controller.setBusinessIdFilter(v); },
         onDateRangeChanged: (v) { setState(() { _expandedGroups.clear(); _expandedTOs.clear(); _activeGroupKey = null; }); controller.setDateRangeFilter(v); },
         onTOTypeChanged: (v) { setState(() { _expandedGroups.clear(); _expandedTOs.clear(); _activeGroupKey = null; }); controller.setTOTypeFilter(v); },
         onPublishStatusChanged: (v) { setState(() { _expandedGroups.clear(); _expandedTOs.clear(); _activeGroupKey = null; }); controller.setPublishStatusFilter(v); },

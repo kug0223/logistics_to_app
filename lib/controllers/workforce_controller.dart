@@ -74,32 +74,35 @@ class WorkforceController extends ChangeNotifier {
 
   // ── 필터 상태 ─────────────────────────────────────────────────
   DateTimeRange? _selectedDateRange;
-  String? _selectedBusiness;
+  // [PATCH-IDENTITY] business filter semantic = businessId (not businessName).
+  // 동명 사업장 충돌 방지: businessId로 비교해야 canonical identity 보장.
+  String? _selectedBusinessId;
   String? _selectedTOType;
   String? _selectedPublishStatus;
 
   DateTimeRange? get selectedDateRange => _selectedDateRange;
-  String? get selectedBusiness => _selectedBusiness;
+  String? get selectedBusinessId => _selectedBusinessId;
   String? get selectedTOType => _selectedTOType;
   String? get selectedPublishStatus => _selectedPublishStatus;
 
   bool get hasActiveFilters =>
-      _selectedBusiness != null ||
+      _selectedBusinessId != null ||
       _selectedDateRange != null ||
       _selectedTOType != null ||
       _selectedPublishStatus != null;
 
   int get activeFilterCount {
     int count = 0;
-    if (_selectedBusiness != null) count++;
+    if (_selectedBusinessId != null) count++;
     if (_selectedDateRange != null) count++;
     if (_selectedTOType != null) count++;
     if (_selectedPublishStatus != null) count++;
     return count;
   }
 
-  void setBusinessFilter(String? value) {
-    _selectedBusiness = value;
+  /// business filter setter — value는 businessId (businessName 아님).
+  void setBusinessIdFilter(String? businessId) {
+    _selectedBusinessId = businessId;
     notifyListeners();
   }
 
