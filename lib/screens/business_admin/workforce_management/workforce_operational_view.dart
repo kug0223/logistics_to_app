@@ -167,6 +167,9 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
   List<AttendanceModel> _attendances = [];
   bool _isLoadingData = false;
   String? _loadError;
+  // [P2-WF-02] request generation counter — 최신 요청만 state 반영 (AdminStats 동일 패턴)
+  // 날짜 A 로드 중 날짜 B 선택 시 늦은 A 응답이 B 화면을 덮는 race 방지
+  int _loadDayDataRequestId = 0;
 
   // ── 필터 상태 (load 시 리셋 안 함 — 날짜 변경 시 all로 초기화) ──
   _SummaryFilter _activeFilter = _SummaryFilter.all;
@@ -276,9 +279,11 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
 
   Future<void> _loadDayData(DateTime day) async {
     if (!mounted) return;
+    // [P2-WF-02] 요청 번호 발급 — 이 함수가 반환하기 전 새 요청이 오면 현재 요청은 stale
+    final requestId = ++_loadDayDataRequestId;
 
     final businesses = await _ensureBusinesses();
-    if (!mounted) return;
+    if (!mounted || requestId != _loadDayDataRequestId) return;
     if (businesses.isEmpty) {
       setState(() {
         _applications = [];
@@ -313,7 +318,8 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
         Future.wait(attFutures),
       ]);
 
-      if (!mounted) return;
+      // [P2-WF-02] 1차 stale guard — application/attendance fetch 이후
+      if (!mounted || requestId != _loadDayDataRequestId) return;
 
       final apps = (results[0] as List<List<ApplicationModel>>)
           .expand((l) => l)
@@ -393,7 +399,8 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
         resolvedUsers.addAll(m);
       }
 
-      if (!mounted) return;
+      // [P2-WF-02] 2차 stale guard — getUsersBatch 이후, setState 직전
+      if (!mounted || requestId != _loadDayDataRequestId) return;
       setState(() {
         _applications = apps;
         _attendances = atts;
@@ -403,7 +410,8 @@ class _WorkforceOperationalViewState extends State<WorkforceOperationalView> {
       });
     } catch (e) {
       debugPrint('❌ [WorkforceOperationalView] 데이터 로드 실패: $e');
-      if (!mounted) return;
+      // [P2-WF-02] stale error가 최신 날짜 화면을 덮지 않도록 guard
+      if (!mounted || requestId != _loadDayDataRequestId) return;
       setState(() {
         _isLoadingData = false;
         _loadError = '데이터를 불러오지 못했습니다. 다시 시도해 주세요.';
