@@ -11149,6 +11149,102 @@ export const callableGetAdminAttendances = onCall(
   }
 );
 
+// ─── callableGetWorkerReviewSummary ──────────────────────────────────────────
+// canManageTo / canManageWorkers SubAdmin용 리뷰 작성 시 근무일 수 집계 (최소 DTO)
+// raw attendance 대신 wageStatus confirmed/transferred 건수만 반환
+// GPS, 체크인 시간, 급여 데이터 미포함 — canManageTo 허용 범위 최소화
+export const callableGetWorkerReviewSummary = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const callerUid = request.auth.uid;
+
+    const {businessId, workerId, yearMonth} = (request.data ?? {}) as {
+      businessId?: string;
+      workerId?: string;
+      yearMonth?: string;
+    };
+
+    if (!businessId || typeof businessId !== "string" || businessId.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "businessId가 필요합니다.");
+    }
+    if (!workerId || typeof workerId !== "string" || workerId.trim().length === 0) {
+      throw new HttpsError("invalid-argument", "workerId가 필요합니다.");
+    }
+    // [BUG-03] 패턴과 동일 — yearMonth 형식 + 월 범위 검증
+    const isValidYearMonthWRS = (ym: string): boolean => {
+      if (!/^\d{4}-\d{2}$/.test(ym)) return false;
+      const month = parseInt(ym.slice(5, 7), 10);
+      return month >= 1 && month <= 12;
+    };
+    if (typeof yearMonth !== "string" || !isValidYearMonthWRS(yearMonth)) {
+      throw new HttpsError("invalid-argument", "yearMonth는 YYYY-MM 형식이어야 합니다.");
+    }
+
+    // 호출자 역할 검증 (callableGetAdminAttendances와 동일 패턴)
+    const [callerSnap, bizSnap] = await Promise.all([
+      db.collection("users").doc(callerUid).get(),
+      db.collection("businesses").doc(businessId).get(),
+    ]);
+    const callerRole = callerSnap.data()?.role as string | undefined;
+    const isSuperAdmin = callerRole === "SUPER_ADMIN";
+
+    if (!isSuperAdmin) {
+      if (!bizSnap.exists) {
+        throw new HttpsError("not-found", "사업장을 찾을 수 없습니다.");
+      }
+      const adminIds = (bizSnap.data()?.adminIds as string[] | undefined) ?? [];
+      const ownerId = bizSnap.data()?.ownerId as string | undefined;
+      const isBusinessAdmin = adminIds.includes(callerUid) || ownerId === callerUid;
+
+      if (!isBusinessAdmin) {
+        const callerSubAdminBusinessIds = (callerSnap.data()?.subAdminBusinessIds ?? []) as string[];
+        if (!callerSubAdminBusinessIds.includes(businessId)) {
+          throw new HttpsError("permission-denied", "해당 사업장에 대한 권한이 없습니다.");
+        }
+        const memberSnap = await db
+          .collection("businesses").doc(businessId)
+          .collection("members").doc(callerUid).get();
+        if (!memberSnap.exists) {
+          throw new HttpsError("permission-denied", "해당 사업장에 대한 권한이 없습니다.");
+        }
+        const perms = memberSnap.data()?.permissions as Record<string, boolean> | undefined;
+        // 리뷰 업무: canManageTo(공고·지원자 운영 범위) 또는 canManageWorkers 허용
+        // raw attendance를 반환하지 않으므로 canManageTo-only caller에게 안전
+        if (perms?.canManageTo !== true && perms?.canManageWorkers !== true) {
+          throw new HttpsError("permission-denied", "리뷰 근무일 수 조회 권한이 없습니다.");
+        }
+      }
+    }
+
+    // worker-business 관계 검증 (applications canonical relation, status 무관)
+    // 타 사업장 workerId 주입 차단 (getUsersBatch P1-UB-01 패턴 동일)
+    const appSnap = await db.collection("applications")
+      .where("uid", "==", workerId)
+      .where("businessId", "==", businessId)
+      .limit(1)
+      .get();
+    if (appSnap.empty) {
+      // 해당 사업장과 관계 없는 worker → 0 반환 (permission-denied 대신 empty result)
+      return {confirmedWorkDayCount: 0};
+    }
+
+    // 집계: wageStatus confirmed/transferred 건수만 반환 (raw data 미포함)
+    const attSnap = await db.collection("attendance")
+      .where("businessId", "==", businessId)
+      .where("userId", "==", workerId)
+      .where("yearMonth", "==", yearMonth)
+      .get();
+
+    const confirmedWorkDayCount = attSnap.docs.filter((d) => {
+      const ws = d.data().wageStatus as string | undefined;
+      return ws === "confirmed" || ws === "transferred";
+    }).length;
+
+    return {confirmedWorkDayCount};
+  }
+);
+
 // ─── getMyContracts ──────────────────────────────────────────────────────────
 // USER 본인의 계약서 목록 조회 (커서 페이지네이션)
 // lastDocId: 이전 페이지 마지막 문서 ID, pageSize: 페이지 크기 (기본 20)

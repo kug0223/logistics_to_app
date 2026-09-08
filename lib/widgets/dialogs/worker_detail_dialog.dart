@@ -2455,26 +2455,25 @@ class _WorkerDetailDialogState extends State<WorkerDetailDialog> {
     }
 
     // 실제 근무일 수: wageStatus confirmed/transferred 출근기록 건수
+    // [P2-WF-ATT-01] canManageTo-only 경로: callableGetAdminAttendances → callableGetWorkerReviewSummary
+    // raw attendance 없이 count aggregate만 반환 (GPS/체크인 시간 등 미포함)
     int workDaysInMonth = 0;
     try {
       final yearMonthStr =
           '$reviewYear-${reviewMonth.toString().padLeft(2, '0')}';
-      final attendanceCallable =
+      final summaryCallable =
           FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-              .httpsCallable('callableGetAdminAttendances',
+              .httpsCallable('callableGetWorkerReviewSummary',
                   options: HttpsCallableOptions(
                       timeout: const Duration(seconds: 30)));
       final cfResult =
-          await attendanceCallable.call<Map<String, dynamic>>({
+          await summaryCallable.call<Map<String, dynamic>>({
         'businessId': widget.businessId!,
+        'workerId': widget.user.uid,
         'yearMonth': yearMonthStr,
-        'userId': widget.user.uid,
       });
-      final cfItems = (cfResult.data['items'] as List<dynamic>? ?? []);
-      workDaysInMonth = cfItems.where((e) {
-        final status = (e as Map)['wageStatus'] as String?;
-        return status == 'confirmed' || status == 'transferred';
-      }).length;
+      workDaysInMonth =
+          (cfResult.data['confirmedWorkDayCount'] as num? ?? 0).toInt();
     } catch (e) {
       debugPrint('❌ 근무일 조회 실패: $e');
     }
