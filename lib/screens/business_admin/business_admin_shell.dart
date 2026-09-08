@@ -6,9 +6,9 @@
 // 탭 구조:
 //   0: 홈     (BusinessAdminHomeScreen)  — 전체 운영 판단 + Action Queue
 //   1: 공고   (JobsRootScreen)           — TO 생성/조회/수정/마감
-//   2: 인력   (WorkforceRootScreen)      — 날짜/사람 중심 workforce 운영
-//   3: 정산   (PayrollOverviewScreen)    — 사업장별 급여 관리
-//   4: MY     (SettingsScreen)           — 계정·앱 설정
+//   2: 근무   (WorkforceRootScreen)      — 날짜/사람 중심 workforce 운영
+//   3: 급여   (PayrollOverviewScreen)    — 사업장별 급여 관리
+//   4: 관리   (SettingsScreen)           — 사업장·계약·분석·계정 설정
 //
 // [Controller 분리]
 //   JobsRootScreen.WorkforceController ≠ WorkforceRootScreen.WorkforceController
@@ -74,9 +74,9 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
   final List<GlobalKey<NavigatorState>> _navigatorKeys = [
     GlobalKey<NavigatorState>(), // 0: 홈
     GlobalKey<NavigatorState>(), // 1: 공고
-    GlobalKey<NavigatorState>(), // 2: 인력
-    GlobalKey<NavigatorState>(), // 3: 정산
-    GlobalKey<NavigatorState>(), // 4: MY
+    GlobalKey<NavigatorState>(), // 2: 근무
+    GlobalKey<NavigatorState>(), // 3: 급여
+    GlobalKey<NavigatorState>(), // 4: 관리
   ];
 
   /// 탭 전환 — 이미 선택된 탭을 다시 탭하면 해당 탭 루트로 복귀
@@ -152,17 +152,17 @@ class _BusinessAdminShellState extends State<BusinessAdminShell> {
         return const BottomNavigationBarItem(
             icon: Icon(Icons.people_outline_rounded),
             activeIcon: Icon(Icons.people_rounded),
-            label: '인력');
+            label: '근무');
       case 3:
         return const BottomNavigationBarItem(
             icon: Icon(Icons.payments_outlined),
             activeIcon: Icon(Icons.payments_rounded),
-            label: '정산');
+            label: '급여');
       case 4:
         return const BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline_rounded),
-            activeIcon: Icon(Icons.person_rounded),
-            label: 'MY');
+            icon: Icon(Icons.settings_outlined),
+            activeIcon: Icon(Icons.settings_rounded),
+            label: '관리');
       default: // 0: 홈
         return const BottomNavigationBarItem(
             icon: Icon(Icons.home_outlined),

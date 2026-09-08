@@ -30,6 +30,7 @@ import '../../widgets/common/badge_display_widget.dart';
 import '../business_admin/contract_template_list_screen.dart';
 import '../business_admin/member_management_screen.dart';
 import '../business_admin/admin_review_list_screen.dart';
+import '../business_admin/admin_stats_screen.dart';
 import '../business_admin/work_type_management_screen.dart';
 import 'document_management_screen.dart';
 import 'help_screen.dart';
@@ -276,7 +277,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             user?.role == UserRole.BUSINESS_ADMIN || isSubAdminInAdminMode;
 
         return GradientScaffold(
-          title: '설정',
+          title: showAdminSection ? '관리' : '설정',
           headerContent: _buildHeaderProfile(context, userProvider),
           body: ListView(
             padding: ResponsiveHelper.listPadding(context),
@@ -351,12 +352,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
               SizedBox(height: ResponsiveHelper.spacing(context, 20)),
 
-              // ── 사업장 설정 (관리자) ─────────────────────────────
+              // ── [사업장 관리] ─────────────────────────────────────
+              // BUSINESS_ADMIN 또는 SUB_ADMIN(관리자 모드)에게 표시.
+              // 권한별 개별 항목은 nullable로 처리해 _buildMenuGroup에서 자동 필터.
               if (showAdminSection) ...[
-                _buildSectionHeader(context, '사업장 설정', Icons.business_outlined),
+                _buildSectionHeader(
+                    context, '사업장 관리', Icons.business_outlined),
                 SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 // [5D.2A] BUSINESS_ADMIN: 사업장 서류 관리 → BusinessListScreen
-                // canonical 경로: businesses/{bizId}.businessLicenseImageUrl
                 // DocumentManagementScreen은 legacy users/{uid} 경로만 업데이트 — BUSINESS_ADMIN primary UX 부적합
                 if (user?.isBusinessAdmin == true) ...[
                   _buildMenuGroup(context, [
@@ -370,7 +373,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ]),
                   SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 ],
-                // 날인 카드: BUSINESS_ADMIN 항상 / SubAdmin은 계약서 관리 권한 있을 때만
+                // 날인 카드: BUSINESS_ADMIN 항상 / SubAdmin은 canManageContract일 때만
                 if (user?.isBusinessAdmin == true ||
                     userProvider.can((p) => p.canManageContract)) ...[
                   _buildSealCard(context, user),
@@ -404,27 +407,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           },
                         )
                       : null,
-                  user?.isBusinessAdmin == true ||
-                          userProvider.can((p) => p.canManageContract)
-                      ? _SettingsItem(
-                          icon: Icons.article_outlined,
-                          iconColor: AppColors.infoDark,
-                          title: '근로계약서 관리',
-                          onTap: () async {
-                            final nav = Navigator.of(context);
-                            final biz =
-                                await BusinessPickerHelper.pick(context);
-                            if (biz == null || !mounted) return;
-                            if (kDebugMode) {
-                              debugPrint(
-                                  '📋 [settings/contractTemplate] businessId=${biz.id}');
-                            }
-                            nav.push(MaterialPageRoute(
-                                builder: (_) => ContractTemplateListScreen(
-                                    businessId: biz.id)));
-                          },
-                        )
-                      : null,
                   user?.isBusinessAdmin == true
                       ? _SettingsItem(
                           icon: Icons.group_outlined,
@@ -435,6 +417,80 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               MaterialPageRoute(
                                   builder: (_) =>
                                       const MemberManagementScreen())),
+                        )
+                      : null,
+                ]),
+                SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+              ],
+
+              // ── [계약] ────────────────────────────────────────────
+              // BUSINESS_ADMIN 또는 canManageContract SUB_ADMIN에게 표시.
+              if (showAdminSection &&
+                  (user?.isBusinessAdmin == true ||
+                      userProvider.can((p) => p.canManageContract))) ...[
+                _buildSectionHeader(
+                    context, '계약', Icons.description_outlined),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                _buildMenuGroup(context, [
+                  _SettingsItem(
+                    icon: Icons.folder_open_outlined,
+                    iconColor: AppColors.infoDark,
+                    title: '계약 관리',
+                    onTap: () async {
+                      final nav = Navigator.of(context);
+                      final biz = await BusinessPickerHelper.pick(context);
+                      if (biz == null || !mounted) return;
+                      nav.push(MaterialPageRoute(
+                          builder: (_) => AdminContractManagementScreen(
+                              businessId: biz.id,
+                              businessName: biz.name)));
+                    },
+                  ),
+                  _SettingsItem(
+                    icon: Icons.article_outlined,
+                    iconColor: AppColors.infoDark,
+                    title: '계약서 템플릿',
+                    onTap: () async {
+                      final nav = Navigator.of(context);
+                      final biz = await BusinessPickerHelper.pick(context);
+                      if (biz == null || !mounted) return;
+                      if (kDebugMode) {
+                        debugPrint(
+                            '📋 [settings/contractTemplate] businessId=${biz.id}');
+                      }
+                      nav.push(MaterialPageRoute(
+                          builder: (_) =>
+                              ContractTemplateListScreen(businessId: biz.id)));
+                    },
+                  ),
+                ]),
+                SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+              ],
+
+              // ── [분석] ────────────────────────────────────────────
+              // BUSINESS_ADMIN 또는 canManageWage·canManageWorkers SUB_ADMIN에게 표시.
+              if (showAdminSection &&
+                  (user?.isBusinessAdmin == true ||
+                      userProvider.can((p) => p.canManageWage) ||
+                      userProvider.can((p) => p.canManageWorkers))) ...[
+                _buildSectionHeader(context, '분석', Icons.bar_chart_outlined),
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                _buildMenuGroup(context, [
+                  user?.isBusinessAdmin == true ||
+                          userProvider.can((p) => p.canManageWage)
+                      ? _SettingsItem(
+                          icon: Icons.insights_outlined,
+                          iconColor: AppColors.purpleDark,
+                          title: '통계',
+                          onTap: () async {
+                            final nav = Navigator.of(context);
+                            final biz =
+                                await BusinessPickerHelper.pick(context);
+                            if (biz == null || !mounted) return;
+                            nav.push(MaterialPageRoute(
+                                builder: (_) =>
+                                    AdminStatsScreen(businessIds: [biz.id])));
+                          },
                         )
                       : null,
                   user?.isBusinessAdmin == true ||
