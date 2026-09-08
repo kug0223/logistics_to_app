@@ -30,7 +30,7 @@ import '../../theme/app_colors.dart';
 import '../../models/core/business_model.dart';
 import 'support_review_queue_screen.dart';
 import 'unclosed_action_queue_screen.dart';
-import 'dialogs/attendance_status_dialog.dart';
+// attendance_status_dialog.dart — Phase 2C 이후 Home에서 직접 사용 없음 (Attendance 탭 경유)
 import 'Business_form_screen.dart';
 import 'work_type_management_screen.dart';
 import '../../services/admin_home_summary_service.dart';
@@ -41,6 +41,9 @@ import '../../widgets/common/business_selector_sheet.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/admin_tab_switcher.dart';
 import '../../controllers/workforce_controller.dart';
+import '../../services/staffing_readiness_service.dart';
+import '../../models/ui/staffing_readiness_model.dart';
+// attendance_model.dart — AttendanceModel은 FirestoreService 트랜지티브로 접근 가능;
 
 // [PERF-2026-07-16] Selector용 record — 필요한 필드만 추출해 불필요한 rebuild 방지
 typedef _AdminHomeData = ({
@@ -66,8 +69,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   Map<String, BusinessPostingReadiness> _bizReadiness = {};
   bool _readinessLoaded = false;
 
-  // 오늘 운영 카운트 — activeTO만 legacy 로더 유지, 나머지는 canonical
+  // [PHASE-3A] activeTO 카운트 (revision listener로 갱신됨)
+  // Phase 2C 이후 Home에서 직접 표시 없음 — Phase 2E에서 표시 또는 완전 제거 예정
+  // ignore: unused_field
   int _summaryActiveTO = 0;
+  // ignore: unused_field
   bool _summaryLoading = true;
 
   // [PATCH-R2] HOME-COUNT-FRESHNESS-01 — Posting global revision listener
@@ -82,11 +88,16 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   AdminHomeSummaryModel? _canonicalSummary;
   bool _canonicalSummaryLoading = true;
 
-  // 이번 주 근무 — Phase 2C(오늘 운영 Block)에서 _weeklyRosterCounts[today] 재사용 예정
-  Map<String, int> _weeklyRosterCounts = {};
-  // ignore: unused_field — Phase 2C에서 주간 합계 표시에 재사용 예정
-  int _weeklyTotal = 0;
-  bool _weeklyLoading = true;
+  // [PHASE-2C] 오늘 운영 — Staffing D0 (StaffingReadinessModel 전체를 보관, Phase 2D에서 D+1~D+7 재사용)
+  // null = 쿼리 실패 (ERROR≠ZERO 원칙), available:false = CF 부분 실패
+  StaffingReadinessModel? _staffingReadiness;
+  bool _staffingLoading = true;
+
+  // [PHASE-2C] 오늘 운영 — 출근/확인 필요
+  // null = 쿼리 실패 (ERROR≠ZERO 원칙, 0과 구분)
+  int? _todayCheckedIn;
+  int? _todayNeedsAttention;
+  bool _attendanceLoading = true;
 
   // 새로고침 동시 실행 방어 + 자동 쿨다운
   bool _isRefreshing = false;
@@ -126,9 +137,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         if (mounted) await TourHelper.markCompleted(TourHelper.adminHome);
       }
       if (mounted) {
-        unawaited(_loadSummaryCounts());      // activeTO only
+        unawaited(_loadSummaryCounts());       // activeTO only
         unawaited(_loadCanonicalSummary());   // [PHASE-2C] canonical actions
-        unawaited(_loadWeeklyRosterCounts());
+        unawaited(_loadStaffingReadiness()); // [PHASE-2C] D0~D+7 인력 현황
+        unawaited(_loadTodayAttendance());   // [PHASE-2C] 오늘 출근 현황
         unawaited(_loadPostingReadiness());   // [5D.2] compact setup checklist
       }
     });
@@ -174,7 +186,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     setState(() => _businesses = []);
     _loadApprovedBusinessStatus();
     unawaited(_loadSummaryCounts());
-    unawaited(_loadWeeklyRosterCounts());
+    unawaited(_loadStaffingReadiness());
+    unawaited(_loadTodayAttendance());
     unawaited(_loadPostingReadiness());
     unawaited(_loadCanonicalSummary());
   }
@@ -196,7 +209,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       await Future.wait([
         _loadSummaryCounts(),
         _loadCanonicalSummary(),
-        _loadWeeklyRosterCounts(),
+        _loadStaffingReadiness(),
+        _loadTodayAttendance(),
       ]);
     } finally {
       _isRefreshing = false;
@@ -346,51 +360,87 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     }
   }
 
-Future<void> _loadWeeklyRosterCounts() async {
-    final businesses = await _getBusinesses();
-    if (businesses.isEmpty || !mounted) {
-      if (mounted) setState(() => _weeklyLoading = false);
-      return;
-    }
-
-    final now = DateTime.now();
-    final today = FormatHelper.toKstDate(now);
-    // 일요일 기준 주 시작 (Dart weekday: 1=월~7=일) — KST 기준 요일 사용
-    final daysSinceSunday = today.weekday == 7 ? 0 : today.weekday;
-    final weekStart = today.subtract(Duration(days: daysSinceSunday));
-
+// [PHASE-2C] D0~D+7 인력 현황 로드
+  // D0는 오늘 운영 Block에서 사용, D+1~D+7은 Phase 2D(Future Staffing Block)에서 재사용.
+  // 실패 시 _staffingReadiness = null 유지 — false zero 방지 (ERROR≠ZERO)
+  Future<void> _loadStaffingReadiness() async {
+    if (!mounted) return;
+    setState(() => _staffingLoading = true);
     try {
-      final perBiz = await Future.wait(
-        businesses.map((b) => _firestoreService.getWeeklyConfirmedCounts(
-            businessId: b.id, weekStart: weekStart)),
+      final up = context.read<UserProvider>();
+      final selectedBizId = up.currentUser?.isSubAdmin == true
+          ? up.effectiveBusinessId
+          : null;
+      final result = await StaffingReadinessService.fetchReadiness(
+        selectedBusinessId: selectedBizId,
       );
-
-      // 사업장별 합산
-      final Map<String, int> merged = {};
-      for (int d = 0; d < 7; d++) {
-        merged[_dateKey(weekStart.add(Duration(days: d)))] = 0;
-      }
-      for (final bizCounts in perBiz) {
-        bizCounts.forEach((k, v) => merged[k] = (merged[k] ?? 0) + v);
-      }
-
       if (!mounted) return;
       setState(() {
-        _weeklyRosterCounts = merged;
-        _weeklyTotal = merged.values.fold(0, (a, b) => a + b);
-        _weeklyLoading = false;
+        _staffingReadiness = result;
+        _staffingLoading = false;
       });
     } catch (e) {
-      debugPrint('❌ 주간 근무 조회 실패: $e');
-      if (mounted) setState(() => _weeklyLoading = false);
+      debugPrint('❌ _loadStaffingReadiness 실패: $e');
+      if (!mounted) return;
+      setState(() {
+        _staffingReadiness = null; // 에러 상태 — 0 표시 금지
+        _staffingLoading = false;
+      });
     }
   }
 
-  /// DateTime → 'yyyy-MM-dd' (홈 화면 내부용)
-  String _dateKey(DateTime d) =>
-      '${d.year.toString().padLeft(4, '0')}-'
-      '${d.month.toString().padLeft(2, '0')}-'
-      '${d.day.toString().padLeft(2, '0')}';
+  // [PHASE-2C] 오늘 출근 현황 로드
+  // 출근(checkInAt != null) / 확인 필요(NO_SHOW | absent)
+  // "근무 시작 전" = status 없음 → attendance record 없으므로 자연스럽게 카운트 제외
+  // 실패 시 _todayCheckedIn = null 유지 — false zero 방지 (ERROR≠ZERO)
+  Future<void> _loadTodayAttendance() async {
+    if (!mounted) return;
+    setState(() => _attendanceLoading = true);
+    try {
+      final businesses = await _getBusinesses();
+      if (businesses.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _todayCheckedIn = 0;
+            _todayNeedsAttention = 0;
+            _attendanceLoading = false;
+          });
+        }
+        return;
+      }
+      final today = FormatHelper.toKstDate(DateTime.now());
+      final perBiz = await Future.wait(
+        businesses.map((b) => _firestoreService.getAttendanceByDate(
+          businessId: b.id, date: today,
+        )),
+      );
+      final allRecords = perBiz.expand((l) => l).toList();
+      final checkedIn      = allRecords.where((a) => a.hasCheckedIn).length;
+      final needsAttention = allRecords.where((a) => a.isNoShow || a.isAbsent).length;
+      if (!mounted) return;
+      setState(() {
+        _todayCheckedIn      = checkedIn;
+        _todayNeedsAttention = needsAttention;
+        _attendanceLoading   = false;
+      });
+    } catch (e) {
+      debugPrint('❌ _loadTodayAttendance 실패: $e');
+      if (!mounted) return;
+      setState(() {
+        _todayCheckedIn      = null; // 에러 상태 — 0 표시 금지
+        _todayNeedsAttention = null;
+        _attendanceLoading   = false;
+      });
+    }
+  }
+
+  /// D0 인력 현황 — _staffingReadiness.days[0] (오늘 날짜, CF가 D0부터 반환)
+  /// available: false 또는 days 비어있으면 null 반환
+  StaffingDayData? get _todayStaffingDay {
+    final sr = _staffingReadiness;
+    if (sr == null || !sr.available || sr.days.isEmpty) return null;
+    return sr.days.first;
+  }
 
   Future<List<BusinessModel>> _getBusinesses() async {
     if (_businesses.isNotEmpty) return _businesses;
@@ -716,7 +766,7 @@ Future<void> _loadWeeklyRosterCounts() async {
                     _buildStateBanner(context, s, theme, up),
                     // [PH1] 준비 미완료 시 운영 섹션보다 먼저 인지되어야 함 (완료 시 자동 숨김)
                     _buildPostingSetupCard(context, s, theme),
-                    _buildTodayOperation(context, s, theme),
+                    _buildTodayOps(context, s, theme, up),
                     SizedBox(height: 16 * s),
                     _buildActionDashboard(context, s, theme, up),
                     SizedBox(height: 32 * s), // Bottom Nav가 gesture bar padding 내부 처리
@@ -1175,10 +1225,18 @@ Future<void> _loadWeeklyRosterCounts() async {
     );
   }
 
-  // ── [PHASE-3A] 오늘 운영 compact card ─────────────────────────
-  Widget _buildTodayOperation(BuildContext context, double s, ThemeData theme) {
-    final todayStr = _dateKey(FormatHelper.toKstDate(DateTime.now()));
-    final todayCount = _weeklyLoading ? null : (_weeklyRosterCounts[todayStr] ?? 0);
+  // ── [PHASE-2C] 오늘 운영 Block ─────────────────────────────────
+  // Staffing D0(필요·확정·부족) + 출근 현황(출근·확인 필요)
+  // Non-interactive: 수치 표시만. 탭 내비게이션은 Phase 2D에서 추가.
+  // ERROR≠ZERO: 쿼리 실패 시 null 유지 (재시도 UI 표시)
+  Widget _buildTodayOps(BuildContext context, double s, ThemeData theme, UserProvider up) {
+    final isSub = up.currentUser?.isSubAdmin == true;
+    final canSeeStaffing = !isSub
+        || up.can((p) => p.canManageTo)
+        || up.can((p) => p.canManageWorkers);
+    final canSeeAttendance = !isSub || up.can((p) => p.canManageWorkers);
+
+    if (!canSeeStaffing && !canSeeAttendance) return const SizedBox.shrink();
 
     return Column(children: [
       _sectionHeader(context, s, '오늘 운영'),
@@ -1194,88 +1252,130 @@ Future<void> _loadWeeklyRosterCounts() async {
               blurRadius: 10, offset: const Offset(0, 3),
             )],
           ),
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: 8 * s, vertical: 14 * s),
-            child: Row(children: [
-              _operationStat(context, s, theme,
-                icon: Icons.campaign_outlined,
-                label: '진행 공고',
-                value: '$_summaryActiveTO건',
-                isLoading: _summaryLoading,
-                color: theme.primaryColor,
-                // [PATCH-R1] ADMIN.POSTING.ROUTE-INTEGRITY-01
-                // Home "진행 공고" → canonical 공고 탭 전환 (JobsRootScreen)
-                // Navigator.push(IntegratedWorkforceScreen) 제거 — bottom nav 불일치 해소
-                onTap: () => _safeNavigate(() => _requireApprovedBusiness(
-                  context, () async =>
-                    AdminTabSwitcher.instance.switchToTab(AdminTabSwitcher.jobsTab),
-                )),
+          child: Column(children: [
+            if (canSeeStaffing) _buildStaffingMetrics(s, theme),
+            if (canSeeStaffing && canSeeAttendance)
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12 * s),
+                child: Divider(height: 1, color: AppColors.border),
               ),
-              Container(width: 1, height: 36 * s, color: AppColors.divider),
-              _operationStat(context, s, theme,
-                icon: Icons.people_outlined,
-                label: '오늘 확정',
-                value: todayCount == null ? '-' : '$todayCount명',
-                isLoading: _weeklyLoading,
-                color: theme.primaryColor,
-                onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
-                  final businesses = await _getBusinesses();
-                  if (businesses.isEmpty || !context.mounted) return;
-                  await showDialog<void>(
-                    context: context,
-                    barrierDismissible: false,
-                    builder: (_) => AttendanceStatusDialog(
-                      date: FormatHelper.toKstDate(DateTime.now()),
-                      businessIds: businesses.map((b) => b.id).toList(),
-                      businesses: businesses,
-                    ),
-                  );
-                })),
-              ),
-            ]),
-          ),
+            if (canSeeAttendance) _buildAttendanceMetrics(s, theme),
+          ]),
         ),
       ),
     ]);
   }
 
-  Widget _operationStat(BuildContext context, double s, ThemeData theme, {
-    required IconData icon,
+  // Staffing 영역: 필요 / 확정 / 부족
+  Widget _buildStaffingMetrics(double s, ThemeData theme) {
+    if (_staffingLoading) {
+      return Padding(
+        padding: EdgeInsets.symmetric(vertical: 18 * s),
+        child: Center(child: SizedBox(width: 16 * s, height: 16 * s,
+          child: CircularProgressIndicator(strokeWidth: 1.5, color: theme.primaryColor))),
+      );
+    }
+
+    // 쿼리 실패 — null 또는 available:false
+    if (_staffingReadiness == null || !_staffingReadiness!.available) {
+      return _todayOpsErrorRow(s,
+        message: '인력 정보를 불러오지 못했습니다',
+        onRetry: () => unawaited(_loadStaffingReadiness()),
+      );
+    }
+
+    // 정상: day가 null이면 오늘 staffing 없음 → 0/0/0 (정상 상태)
+    final day = _todayStaffingDay;
+    final required  = day?.requiredCount  ?? 0;
+    final confirmed = day?.confirmedCount ?? 0;
+    final shortage  = day?.shortageCount  ?? 0;
+
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 8 * s, vertical: 14 * s),
+      child: Row(children: [
+        _opsMetric(s, label: '필요',  value: required,  unit: '명'),
+        _opsMetricDivider(s),
+        _opsMetric(s, label: '확정',  value: confirmed, unit: '명'),
+        _opsMetricDivider(s),
+        _opsMetric(s, label: '부족',  value: shortage,  unit: '명',
+          valueColor: shortage > 0 ? AppColors.error : null),
+      ]),
+    );
+  }
+
+  // 출근 현황 영역: 출근 / 확인 필요
+  Widget _buildAttendanceMetrics(double s, ThemeData theme) {
+    if (_attendanceLoading) {
+      return Padding(
+        padding: EdgeInsets.symmetric(vertical: 18 * s),
+        child: Center(child: SizedBox(width: 16 * s, height: 16 * s,
+          child: CircularProgressIndicator(strokeWidth: 1.5, color: theme.primaryColor))),
+      );
+    }
+
+    // 쿼리 실패 — _todayCheckedIn == null
+    if (_todayCheckedIn == null) {
+      return _todayOpsErrorRow(s,
+        message: '출근 현황을 불러오지 못했습니다',
+        onRetry: () => unawaited(_loadTodayAttendance()),
+      );
+    }
+
+    final needsAttention = _todayNeedsAttention ?? 0;
+
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 8 * s, vertical: 14 * s),
+      child: Row(children: [
+        _opsMetric(s, label: '출근', value: _todayCheckedIn!, unit: '명'),
+        _opsMetricDivider(s),
+        _opsMetric(s, label: '확인 필요', value: needsAttention, unit: '명',
+          valueColor: needsAttention > 0 ? AppColors.warning : null),
+      ]),
+    );
+  }
+
+  /// 오늘 운영 수치 셀 (Expanded — Row 내 균등 분배)
+  Widget _opsMetric(double s, {
     required String label,
-    required String value,
-    required bool isLoading,
-    required Color color,
-    VoidCallback? onTap,
+    required int value,
+    required String unit,
+    Color? valueColor,
   }) {
     return Expanded(
-      child: InkWell(
-        onTap: isLoading ? null : onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: Padding(
-          padding: EdgeInsets.symmetric(vertical: 2 * s),
-          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Container(
-              width: 32 * s, height: 32 * s,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(9),
-              ),
-              child: Icon(icon, size: 16 * s, color: color),
-            ),
-            SizedBox(width: 10 * s),
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(label, style: TextStyle(fontSize: 10 * s, color: AppColors.grey500)),
-              SizedBox(height: 2 * s),
-              isLoading
-                ? SizedBox(width: 14 * s, height: 14 * s,
-                    child: CircularProgressIndicator(strokeWidth: 1.5, color: color))
-                : Text(value, style: TextStyle(
-                    fontSize: 17 * s, fontWeight: FontWeight.w800,
-                    color: AppColors.textPrimary, letterSpacing: -0.3)),
-            ]),
-          ]),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text(label, style: TextStyle(fontSize: 10 * s, color: AppColors.grey500)),
+        SizedBox(height: 4 * s),
+        Text('$value$unit', style: TextStyle(
+          fontSize: 18 * s, fontWeight: FontWeight.w800, letterSpacing: -0.3,
+          color: valueColor ?? AppColors.textPrimary,
+        )),
+      ]),
+    );
+  }
+
+  Widget _opsMetricDivider(double s) =>
+      Container(width: 1, height: 32 * s, color: AppColors.border);
+
+  /// 오늘 운영 영역별 에러 행 — 재시도 버튼 포함
+  Widget _todayOpsErrorRow(double s, {
+    required String message,
+    required VoidCallback onRetry,
+  }) {
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 12 * s),
+      child: Row(children: [
+        Icon(Icons.info_outline, size: 14 * s, color: AppColors.grey400),
+        SizedBox(width: 6 * s),
+        Expanded(child: Text(message,
+          style: TextStyle(fontSize: 12 * s, color: AppColors.grey400))),
+        GestureDetector(
+          onTap: onRetry,
+          child: Text('재시도', style: TextStyle(
+            fontSize: 11 * s, color: AppColors.textSecondary,
+            decoration: TextDecoration.underline,
+          )),
         ),
-      ),
+      ]),
     );
   }
 
