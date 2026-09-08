@@ -75,6 +75,11 @@ class TOModel {
   final int totalConfirmed;
   final int totalPending;
 
+  // ── 낙관적 동시성 토큰 ─────────────────────────────
+  /// [STALE-EDIT] 설정 변경 버전 카운터 — callableUpdateTO에 전달하여 lost-update 방지
+  /// 운영 카운터(totalConfirmed/Pending)와 무관: 설정 편집 경로에서만 증분됨
+  final int editRevision;
+
   // ── 상태 ─────────────────────────────────────────
   final String status; // 'ACTIVE' | 'CLOSED' | 'FULL' | 'EXPIRED' | 'SCHEDULED'
   final DateTime? statusUpdatedAt;
@@ -129,6 +134,7 @@ class TOModel {
     this.totalRequired = 0,
     this.totalConfirmed = 0,
     this.totalPending = 0,
+    this.editRevision = 0,
     this.status = TOStatus.active,
     this.statusUpdatedAt,
     this.isManualClosed = false,
@@ -194,6 +200,7 @@ class TOModel {
       totalRequired: (data['totalRequired'] as num?)?.toInt() ?? 0,
       totalConfirmed: (data['totalConfirmed'] as num?)?.toInt() ?? 0,
       totalPending: (data['totalPending'] as num?)?.toInt() ?? 0,
+      editRevision: (data['editRevision'] as num?)?.toInt() ?? 0,
       status: data['status'] as String? ?? TOStatus.active,
       statusUpdatedAt: parseTimestampNullable(data['statusUpdatedAt']),
       isManualClosed: data['isManualClosed'] as bool? ?? false,
@@ -246,6 +253,7 @@ class TOModel {
       'totalRequired': totalRequired,
       'totalConfirmed': totalConfirmed,
       'totalPending': totalPending,
+      'editRevision': editRevision,
       'status': status,
       if (statusUpdatedAt != null)
         'statusUpdatedAt': Timestamp.fromDate(statusUpdatedAt!),
@@ -290,6 +298,7 @@ class TOModel {
     int? totalRequired,
     int? totalConfirmed,
     int? totalPending,
+    int? editRevision,
     String? status,
     DateTime? statusUpdatedAt,
     bool? isManualClosed,
@@ -341,6 +350,7 @@ class TOModel {
       totalRequired: totalRequired ?? this.totalRequired,
       totalConfirmed: totalConfirmed ?? this.totalConfirmed,
       totalPending: totalPending ?? this.totalPending,
+      editRevision: editRevision ?? this.editRevision,
       status: status ?? this.status,
       statusUpdatedAt: statusUpdatedAt ?? this.statusUpdatedAt,
       isManualClosed: isManualClosed ?? this.isManualClosed,

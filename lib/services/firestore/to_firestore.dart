@@ -588,13 +588,18 @@ extension TOFirestore on FirestoreService {
 
   // [CF-이전 2026-07-14] callableUpdateTO — assertBizAdmin 교차검증 + updatedBy 감사 로그 강제
   // null 값 = 필드 삭제, publishAt = ms epoch 정수로 전달 (Timestamp/FieldValue 직렬화 불가)
-  Future<void> updateTO(String toId, Map<String, dynamic> updates) async {
+  // [STALE-EDIT] expectedEditRevision: 클라이언트 로드 시점 TO.editRevision — CF에서 충돌 감지
+  Future<void> updateTO(String toId, Map<String, dynamic> updates, {required int expectedEditRevision}) async {
     GlobalLoadingController.show('공고 수정 중...');
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
           .httpsCallable('callableUpdateTO',
               options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
-      await callable.call<Map<String, dynamic>>({'toId': toId, 'updates': updates});
+      await callable.call<Map<String, dynamic>>({
+        'toId': toId,
+        'updates': updates,
+        'expectedEditRevision': expectedEditRevision,
+      });
       clearCache(toId: toId);
     } catch (e) {
       debugPrint('❌ [TO] 공고 수정 실패: $e');
@@ -1004,6 +1009,7 @@ extension TOFirestore on FirestoreService {
   Future<void> updateTOPublishSettings({
     required String toId,
     required String publishMode,
+    required int expectedEditRevision,
     int? publishDaysBefore,
     String? publishTime,
   }) async {
@@ -1011,7 +1017,7 @@ extension TOFirestore on FirestoreService {
       'publishMode': publishMode,
       'publishDaysBefore': publishDaysBefore,
       'publishTime': publishTime,
-    });
+    }, expectedEditRevision: expectedEditRevision);
     debugPrint('✅ [TO] 공개 설정 업데이트: $publishMode D-${publishDaysBefore ?? '-'} $publishTime');
   }
 

@@ -266,7 +266,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           'postingDurationDays': _postingDurationDays,
           'hoursBeforeStart': _hoursBeforeStart,
         };
-        await _firestoreService.updateTO(widget.to.id, draftUpdates);
+        await _firestoreService.updateTO(widget.to.id, draftUpdates,
+            expectedEditRevision: widget.to.editRevision);
         if (mounted) {
           ToastHelper.showSuccess('미공개로 저장되었습니다');
           NavigationHelper.popWithChange(context);
@@ -359,7 +360,8 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         updates['applicationDeadline'] = null;
       }
 
-      await _firestoreService.updateTO(widget.to.id, updates);
+      await _firestoreService.updateTO(widget.to.id, updates,
+          expectedEditRevision: widget.to.editRevision);
 
       // [PUB-CF] 첫 공개: CF callablePublishTO (maxActiveTOs 서버 강제)
       if (shouldPublish) {
@@ -432,6 +434,11 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     } catch (e) {
       debugPrint('❌ TO 수정 실패: $e');
       if (mounted) {
+        if (_isStaleEditConflict(e)) {
+          setState(() => _isSaving = false);
+          await _showStaleEditDialog();
+          return;
+        }
         final msg = _cfErrorMessage(e) ?? '수정에 실패했습니다';
         ToastHelper.showError(msg);
         setState(() => _hasChanges = true);
@@ -491,6 +498,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         'title': _slotTitleController.text.trim(),
         'visibleFromMs': visibleFrom?.millisecondsSinceEpoch,
         'clearVisibleFrom': clearVisibleFrom,
+        'expectedEditRevision': slot.editRevision, // [STALE-EDIT]
       });
 
       _firestoreService.clearCache(toId: widget.to.id);
@@ -499,7 +507,14 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       NavigationHelper.popWithChange(context);
     } catch (e) {
       debugPrint('❌ 슬롯 수정 실패: $e');
-      if (mounted) ToastHelper.showError(_cfErrorMessage(e) ?? '수정에 실패했습니다');
+      if (mounted) {
+        if (_isStaleEditConflict(e)) {
+          setState(() => _isSaving = false);
+          await _showStaleEditDialog();
+          return;
+        }
+        ToastHelper.showError(_cfErrorMessage(e) ?? '수정에 실패했습니다');
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -655,6 +670,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
           'applicationDeadlineMs': slotDeadline?.millisecondsSinceEpoch,
           'visibleFromMs': visibleFrom?.millisecondsSinceEpoch,
           'clearVisibleFrom': clearVisibleFrom,
+          'expectedEditRevision': slot.editRevision, // [STALE-EDIT]
         });
       }
 
@@ -672,7 +688,14 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       NavigationHelper.popWithChange(context);
     } catch (e) {
       debugPrint('❌ 일괄 슬롯 수정 실패: $e');
-      if (mounted) ToastHelper.showError(_cfErrorMessage(e) ?? '수정에 실패했습니다');
+      if (mounted) {
+        if (_isStaleEditConflict(e)) {
+          setState(() => _isSaving = false);
+          await _showStaleEditDialog();
+          return;
+        }
+        ToastHelper.showError(_cfErrorMessage(e) ?? '수정에 실패했습니다');
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -1085,6 +1108,42 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
     return null;
   }
 
+  /// [STALE-EDIT] failed-precondition + "다른 관리자" 메시지 → stale edit 충돌
+  bool _isStaleEditConflict(Object e) {
+    if (e is FirebaseFunctionsException && e.code == 'failed-precondition') {
+      final msg = e.message ?? '';
+      return msg.contains('다른 관리자');
+    }
+    return false;
+  }
+
+  /// [STALE-EDIT] 충돌 다이얼로그 — 이전 화면으로 돌아가서 새로고침 유도
+  Future<void> _showStaleEditDialog() async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StyledDialog(
+        title: '수정 내용 충돌',
+        subtitle: '다른 관리자가 이미 저장했습니다',
+        icon: Icons.sync_problem_rounded,
+        headerColor: AppColors.warning,
+        content: Text(
+          '저장하는 동안 다른 관리자가 먼저 공고를 수정했습니다.\n'
+          '화면을 다시 열어 최신 내용을 확인한 후 수정해 주세요.',
+          style: ResponsiveHelper.bodyStyle(ctx, color: AppColors.grey700),
+        ),
+        actions: [
+          StyledDialogButton.primary(
+            text: '확인 (뒤로가기)',
+            onPressed: () => Navigator.pop(ctx),
+          ),
+        ],
+      ),
+    );
+    if (mounted) NavigationHelper.popWithChange(context);
+  }
+
   Widget _buildBatchInfoBanner(BuildContext context) {
     final slots = widget.batchSlots!;
     final dateLabels = slots.map((s) => s.formattedDate).join(', ');
@@ -1178,7 +1237,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         'publishAt': visibleFrom.toUtc().millisecondsSinceEpoch,  // ms → CF가 Timestamp 변환
         'isPublished': false,
         'status': TOStatus.scheduled,
-      });
+      }, expectedEditRevision: widget.to.editRevision);
       if (mounted) ToastHelper.showInfo('미공개 → 예약공개 전환 ($m/$d $h:$min 공개 예정)');
     }
     return true;

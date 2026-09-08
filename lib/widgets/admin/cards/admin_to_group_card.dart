@@ -1974,7 +1974,7 @@ class _TOGroupCardState extends State<TOGroupCard> {
         try {
           await widget.firestoreService.updateTO(masterTO.id, {
             'groupTitle': newTitle.isNotEmpty ? newTitle : null,
-          });
+          }, expectedEditRevision: masterTO.editRevision);
           widget.onChanged();
           if (mounted) ToastHelper.showSuccess('카드 제목이 변경되었습니다');
         } catch (e) {

@@ -72,6 +72,9 @@ class SlotModel {
   final DateTime? reopenedAt;
   final String? reopenedBy;
 
+  /// [STALE-EDIT] 설정 변경 버전 카운터 — callableUpdateSlotWorkDetails에 전달하여 lost-update 방지
+  final int editRevision;
+
   final DateTime createdAt;
 
   const SlotModel({
@@ -91,6 +94,7 @@ class SlotModel {
     this.closedBy,
     this.reopenedAt,
     this.reopenedBy,
+    this.editRevision = 0,
     required this.createdAt,
   });
 
@@ -131,6 +135,7 @@ class SlotModel {
       closedBy: data['closedBy'] as String?,
       reopenedAt: (data['reopenedAt'] as Timestamp?)?.toDate().toLocal(),
       reopenedBy: data['reopenedBy'] as String?,
+      editRevision: (data['editRevision'] as num?)?.toInt() ?? 0,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate().toLocal() ??
           (throw ArgumentError('SlotModel: createdAt is required')),
     );
@@ -157,6 +162,7 @@ class SlotModel {
       'closedBy': closedBy,
       if (reopenedAt != null) 'reopenedAt': Timestamp.fromDate(reopenedAt!),
       'reopenedBy': reopenedBy,
+      'editRevision': editRevision,
       'createdAt': Timestamp.fromDate(createdAt),
     };
   }
@@ -180,6 +186,7 @@ class SlotModel {
     String? closedBy,
     DateTime? reopenedAt,
     String? reopenedBy,
+    int? editRevision,
     DateTime? createdAt,
   }) {
     return SlotModel(
@@ -199,6 +206,7 @@ class SlotModel {
       closedBy: closedBy ?? this.closedBy,
       reopenedAt: reopenedAt ?? this.reopenedAt,
       reopenedBy: reopenedBy ?? this.reopenedBy,
+      editRevision: editRevision ?? this.editRevision,
       createdAt: createdAt ?? this.createdAt,
     );
   }

@@ -8269,6 +8269,8 @@ export const callableCreateTO = onCall(
     // [S5-FIX] 서버 전용 집계 카운터 — 클라이언트 주입 값 무시하고 0으로 강제
     finalData.totalConfirmed = 0;
     finalData.totalPending = 0;
+    // [STALE-EDIT] 낙관적 동시성 버전 토큰 초기화
+    finalData.editRevision = 0;
     // [H-2-FIX] 보안 민감 필드 서버 강제 덮어쓰기 — toData spread로 status/isPublished 주입 차단
     switch (publishMode) {
       case "draft":
@@ -8779,6 +8781,7 @@ export const callableCreateFlexSlots = onCall(
         closedBy: null,
         reopenedBy: null,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        editRevision: 0, // [STALE-EDIT] 낙관적 동시성 버전 토큰
       };
       if (slotDeadline) slotData.applicationDeadline = slotDeadline;
       if (visibleFrom) slotData.visibleFrom = visibleFrom;
@@ -9001,13 +9004,21 @@ export const callableUpdateTO = onCall(
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
-    const {toId, updates} = request.data as {toId?: string; updates?: Record<string, unknown>};
+    const {toId, updates, expectedEditRevision} = request.data as {
+      toId?: string;
+      updates?: Record<string, unknown>;
+      expectedEditRevision?: number;
+    };
 
     if (!toId || typeof toId !== "string" || toId.trim() === "") {
       throw new HttpsError("invalid-argument", "toId가 필요합니다.");
     }
     if (!updates || typeof updates !== "object" || Array.isArray(updates)) {
       throw new HttpsError("invalid-argument", "updates 객체가 필요합니다.");
+    }
+    // [STALE-EDIT] fail-closed: expectedEditRevision 누락 시 즉시 거부
+    if (typeof expectedEditRevision !== "number") {
+      throw new HttpsError("invalid-argument", "expectedEditRevision이 필요합니다.");
     }
 
     const toRef = db.collection("tos").doc(toId);
@@ -9241,6 +9252,14 @@ export const callableUpdateTO = onCall(
         if (freshToData.isManualClosed !== true) {
           throw new HttpsError("failed-precondition", "이미 재개된 공고입니다.");
         }
+        // [STALE-EDIT] 낙관적 동시성 검증 (재개 경로)
+        const freshRevisionRT = (freshToData.editRevision as number | undefined) ?? 0;
+        if (expectedEditRevision !== freshRevisionRT) {
+          throw new HttpsError(
+            "failed-precondition",
+            "다른 관리자가 공고를 수정했습니다. 최신 내용을 다시 확인해 주세요."
+          );
+        }
 
         const nowMsRT = Date.now();
         const freshPublishAt = freshToData.publishAt as admin.firestore.Timestamp | undefined;
@@ -9310,6 +9329,8 @@ export const callableUpdateTO = onCall(
           );
         }
 
+        // [STALE-EDIT] 버전 토큰 증분
+        txReopenUpdates.editRevision = freshRevisionRT + 1;
         txReopen.update(toRef, txReopenUpdates);
       });
 
@@ -9361,13 +9382,23 @@ export const callableUpdateTO = onCall(
     finalUpdates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
     finalUpdates.updatedBy = callerUid;
 
-    // [CAPACITY-RACE-GUARD] totalRequired 변경 시 TX로 fresh totalConfirmed 재검증
-    // non-TX read 기반 stale totalConfirmed와 concurrent confirm 사이의 경쟁(occupied > required) 차단
-    if (!isSuperAdmin && "totalRequired" in finalUpdates) {
-      await db.runTransaction(async (txCap) => {
-        const freshSnap = await txCap.get(toRef);
-        if (!freshSnap.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
-        const freshConfirmed = (freshSnap.data()!.totalConfirmed as number | undefined) ?? 0;
+    // [STALE-EDIT+CAPACITY-RACE-GUARD] 통합 TX: editRevision 충돌 차단 + totalRequired 동시성 보호
+    // - editRevision 불일치: 다른 관리자가 먼저 저장 → failed-precondition
+    // - totalRequired < fresh totalConfirmed: 동시 confirm이 끼어든 경쟁 → failed-precondition
+    // - 두 조건 모두 TX 내 fresh read로 원자적 검증
+    await db.runTransaction(async (txEdit) => {
+      const freshSnap = await txEdit.get(toRef);
+      if (!freshSnap.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
+      const freshData = freshSnap.data()!;
+      const freshRevision = (freshData.editRevision as number | undefined) ?? 0;
+      if (expectedEditRevision !== freshRevision) {
+        throw new HttpsError(
+          "failed-precondition",
+          "다른 관리자가 공고를 수정했습니다. 최신 내용을 다시 확인해 주세요."
+        );
+      }
+      if (!isSuperAdmin && "totalRequired" in finalUpdates) {
+        const freshConfirmed = (freshData.totalConfirmed as number | undefined) ?? 0;
         const newReq = finalUpdates.totalRequired as number;
         if (newReq !== 0 && newReq < freshConfirmed) {
           throw new HttpsError(
@@ -9375,11 +9406,9 @@ export const callableUpdateTO = onCall(
             `totalRequired(${newReq})는 확정 인원(${freshConfirmed}) 이상이어야 합니다.`
           );
         }
-        txCap.update(toRef, finalUpdates);
-      });
-    } else {
-      await toRef.update(finalUpdates);
-    }
+      }
+      txEdit.update(toRef, {...finalUpdates, editRevision: freshRevision + 1});
+    });
     console.log(`✅ [callableUpdateTO] TO ${toId} 수정 완료 (by: ${callerUid})`);
     return {success: true};
   }
@@ -9405,6 +9434,7 @@ export const callableUpdateSlotWorkDetails = onCall(
       title?: string | null;
       visibleFromMs?: number | null;
       clearVisibleFrom?: boolean;
+      expectedEditRevision?: number; // [STALE-EDIT] SINGLE 슬롯 낙관적 동시성 토큰
       // BATCH
       batchUpdates?: {
         slotId: string;
@@ -9412,6 +9442,7 @@ export const callableUpdateSlotWorkDetails = onCall(
         applicationDeadlineMs?: number | null;
         visibleFromMs?: number | null;
         clearVisibleFrom?: boolean;
+        expectedEditRevision?: number; // [STALE-EDIT] BATCH 슬롯별 낙관적 동시성 토큰
       }[];
     };
 
@@ -9600,6 +9631,12 @@ export const callableUpdateSlotWorkDetails = onCall(
         applicationDeadlineMs, title, visibleFromMs, clearVisibleFrom,
       } = data;
 
+      // [STALE-EDIT] fail-closed: expectedEditRevision 누락 시 즉시 거부
+      if (typeof data.expectedEditRevision !== "number") {
+        throw new HttpsError("invalid-argument", "expectedEditRevision이 필요합니다.");
+      }
+      const singleExpectedRevision = data.expectedEditRevision;
+
       const newIds = checkDuplicateIds(newWDs!);
       const newIdSet = new Set(newIds);
 
@@ -9614,6 +9651,15 @@ export const callableUpdateSlotWorkDetails = onCall(
         const slotSnap = await tx.get(slotRef);
         if (!slotSnap.exists) throw new HttpsError("not-found", "슬롯을 찾을 수 없습니다.");
         const slotData = slotSnap.data()!;
+
+        // [STALE-EDIT] 낙관적 동시성 검증 (SINGLE 경로)
+        const freshSlotRevision = (slotData["editRevision"] as number | undefined) ?? 0;
+        if (singleExpectedRevision !== freshSlotRevision) {
+          throw new HttpsError(
+            "failed-precondition",
+            "다른 관리자가 슬롯을 수정했습니다. 최신 내용을 다시 확인해 주세요."
+          );
+        }
 
         // isClosed 검증
         if (slotData["status"] === "closed") {
@@ -9684,6 +9730,7 @@ export const callableUpdateSlotWorkDetails = onCall(
         const slotUpdate: Record<string, unknown> = {
           workDetails: toFirestoreWDs(newWDsWithIds),  // wdId 포함 + applicationDeadlineMs → Timestamp 변환
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          editRevision: freshSlotRevision + 1, // [STALE-EDIT] 버전 토큰 증분
         };
         // [8.1E.1] 신규 wdId에만 workDetailCounts 카운터 dot-notation 초기화 (기존 카운터 보존)
         for (const {wdId, isNew} of newWdMeta) {
@@ -9786,6 +9833,15 @@ export const callableUpdateSlotWorkDetails = onCall(
     for (const update of batchUpdates!) {
       const slotRef = toRef.collection("slots").doc(update.slotId);
 
+      // [STALE-EDIT] fail-closed: 슬롯별 expectedEditRevision 누락 시 즉시 거부
+      if (typeof update.expectedEditRevision !== "number") {
+        throw new HttpsError(
+          "invalid-argument",
+          `슬롯 ${update.slotId}의 expectedEditRevision이 필요합니다.`
+        );
+      }
+      const batchExpectedRevision = update.expectedEditRevision;
+
       // [Phase 8.1C] per-slot capture vars
       let capturedBatchOldWDs: Record<string, unknown>[] = [];
       let capturedBatchDateMs = 0;
@@ -9796,6 +9852,15 @@ export const callableUpdateSlotWorkDetails = onCall(
         if (!slotSnap.exists) return; // 슬롯 없으면 skip
 
         const slotData = slotSnap.data()!;
+
+        // [STALE-EDIT] 낙관적 동시성 검증 (BATCH 경로)
+        const freshBatchSlotRevision = (slotData["editRevision"] as number | undefined) ?? 0;
+        if (batchExpectedRevision !== freshBatchSlotRevision) {
+          throw new HttpsError(
+            "failed-precondition",
+            `슬롯 ${update.slotId}: 다른 관리자가 수정했습니다. 최신 내용을 다시 확인해 주세요.`
+          );
+        }
 
         // isClosed 검증
         if (slotData["status"] === "closed") {
@@ -9868,6 +9933,7 @@ export const callableUpdateSlotWorkDetails = onCall(
           workDetails: toFirestoreWDs(batchNewWDsWithIds),  // wdId 포함
           totalRequired: newTotalRequired,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          editRevision: freshBatchSlotRevision + 1, // [STALE-EDIT] 버전 토큰 증분
         };
         // [8.1E.1] 신규 wdId에만 workDetailCounts dot-notation 초기화 (기존 카운터 보존)
         for (const {wdId, isNew} of batchNewWdMeta) {
