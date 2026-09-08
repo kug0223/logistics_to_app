@@ -12570,8 +12570,36 @@ export const callableGetUsersBatch = onCall(
       callerCanManageWage = (wageMemberSnap.data()?.permissions as Record<string, boolean> | undefined)?.canManageWage === true;
     }
 
+    // [P1-UB-01] non-SUPER_ADMIN에 대해 요청 UID를 business-scoped application으로 검증
+    // members 컬렉션은 SubAdmin/Admin 전용 → 일반 근로자 커버 안 됨
+    // applications = worker-business canonical relation (status 필터 없음 — historical worker 포함)
+    // uid in [...] 단일 필드 auto-index 사용 → businessId+uid composite index 불필요
+    // in-memory businessId 필터로 cross-business 관계 제외 (Firestore 쿼리 실패 시 예외 전파 = fail-closed)
+    const uniqueUids = [...new Set(uids)];
+
+    let validUids: Set<string>;
+    if (isSuperAdmin) {
+      // SUPER_ADMIN은 arbitrary uid lookup 가능 — 기존 semantics 유지 (SupportReviewQueue 등)
+      validUids = new Set(uniqueUids);
+    } else {
+      const appSnap = await db.collection("applications")
+        .where("uid", "in", uniqueUids)
+        .get();
+      validUids = new Set(
+        appSnap.docs
+          .map((d) => {
+            const appData = d.data();
+            return appData.businessId === businessId
+              ? (appData.uid as string | undefined)
+              : undefined;
+          })
+          .filter((u): u is string => typeof u === "string")
+      );
+    }
+
     // Admin SDK 배치 조회 (Firestore 보안 규칙 우회 — 서버 검증으로 대체)
-    const refs = uids.map((uid) => db.collection("users").doc(uid));
+    // uniqueUids 사용 — 중복 uid 입력 시 불필요한 읽기 방지
+    const refs = uniqueUids.map((uid) => db.collection("users").doc(uid));
     const snaps = await db.getAll(...refs);
 
     // 반환 제외 민감 필드 (FCM 토큰은 서버 전송 전용 — 클라이언트 노출 금지)
@@ -12593,13 +12621,10 @@ export const callableGetUsersBatch = onCall(
     const users: Record<string, Record<string, unknown>> = {};
     for (const snap of snaps) {
       if (!snap.exists) continue;
+      // [P1-UB-01] cross-business / 무관 UID 차단 — application relation 없는 UID 응답 제외
+      // valid uid → 반환, outsider uid → 제외 (batch semantics 보존 — stale uid 1개로 전체 실패 없음)
+      if (!validUids.has(snap.id)) continue;
       const data = snap.data()!;
-
-      // 소속 검증: 관리자(isAdmin/isSubAdmin)는 businessId 체크 없이 반환 허용
-      // [BUG-FIX] 지원자(applicant)는 채용 확정 전 businessId가 null이거나 다른 사업장 → 기존 체크에서 제외됨
-      // 이미 위에서 관리자 권한 검증 완료 + SENSITIVE_FIELDS 제거로 보호됨
-      // [BUG-UB-01] 이 조건은 데드코드 — 위에서 !isSuperAdmin && !isAdmin && !isSubAdmin이면 이미 throw됨
-      if (!isSuperAdmin && !isAdmin && !isSubAdmin && data.businessId !== businessId) continue;
 
       // 민감 필드 제거 후 반환
       const safeData: Record<string, unknown> = {};
