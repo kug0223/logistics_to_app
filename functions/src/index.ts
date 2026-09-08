@@ -8221,6 +8221,15 @@ export const callableCreateTO = onCall(
       throw new HttpsError("failed-precondition", "공고에 최소 1개의 업무가 필요합니다.");
     }
 
+    // [WORKTYPE-SCOPE] submitted workType이 해당 business의 active workType인지 검증
+    // assertBusinessPostingReady는 active count >= 1만 확인 — 이름 교차검증은 별도 (SUPER_ADMIN 면제)
+    if (role !== "SUPER_ADMIN") {
+      const createWorkTypeNames = (toWorkDetailsCreate as Record<string, unknown>[])
+        .map((wd) => wd["workType"] as string)
+        .filter((n): n is string => typeof n === "string" && n.length > 0);
+      await assertWorkTypesInBusiness(businessId, createWorkTypeNames);
+    }
+
     // TO 문서 생성 — serverTimestamp 강제, 클라이언트 전달 timestamp 필드 사용
     const serverTime = admin.firestore.FieldValue.serverTimestamp();
     const finalData: Record<string, unknown> = {
@@ -8672,6 +8681,14 @@ export const callableCreateFlexSlots = onCall(
       throw new HttpsError("not-found", "공고를 찾을 수 없거나 소속 사업장이 아닙니다.");
     }
 
+    // [WORKTYPE-SCOPE] 슬롯 생성 시 submitted workType이 해당 business의 active workType인지 검증 (SUPER_ADMIN 면제)
+    if (role !== "SUPER_ADMIN") {
+      const flexSlotWorkTypeNames = (workDetails as Record<string, unknown>[])
+        .map((wd) => wd["workType"] as string)
+        .filter((n): n is string => typeof n === "string" && n.length > 0);
+      await assertWorkTypesInBusiness(businessId, flexSlotWorkTypeNames);
+    }
+
     // KST startTime("HH:MM") → UTC Timestamp 변환
     // Date.UTC의 hour에 h-9를 넣으면 음수도 자동으로 전날로 롤오버됨
     // ex) "09:00" KST, 1h 전 → Date.UTC(y,m,d, 9-9, 0) - 1h = 23:00 UTC 전날 = 08:00 KST
@@ -9065,6 +9082,24 @@ export const callableUpdateTO = onCall(
         );
       }
 
+      // ── (A-2) 신규/변경 workType scope 검증 ──
+      // 기존 unchanged compositeId의 workType은 면제 (나중에 inactive됐어도 regression 방지)
+      // 신규 compositeId는 현재 business active workType이어야 함
+      {
+        const oldCompositeIds = new Set(
+          (oldWDs as Record<string, unknown>[]).map(
+            (wd) => `${wd["workType"]}_${wd["startTime"]}_${wd["endTime"]}`
+          )
+        );
+        const newWorkTypeNames = (newWDs as Record<string, unknown>[])
+          .filter((wd) => !oldCompositeIds.has(`${wd["workType"]}_${wd["startTime"]}_${wd["endTime"]}`))
+          .map((wd) => wd["workType"] as string)
+          .filter((n): n is string => typeof n === "string" && n.length > 0);
+        if (newWorkTypeNames.length > 0) {
+          await assertWorkTypesInBusiness(businessId, newWorkTypeNames);
+        }
+      }
+
       // ── (B) identity 변경·삭제 시 활성 지원자 보호 ──
       // PENDING·INVITED·CONTRACT_PENDING 중 하나라도 참조 중이면 block
       // (totalConfirmed > 0 guard는 위에서 CONFIRMED+CONTRACT_PENDING를 막지만
@@ -9139,6 +9174,27 @@ export const callableUpdateTO = onCall(
         ?? (toData.rangeEnd as admin.firestore.Timestamp | undefined);
       if (newRs && newRe && newRs.toMillis() >= newRe.toMillis()) {
         throw new HttpsError("invalid-argument", "rangeEnd는 rangeStart보다 이후여야 합니다.");
+      }
+      // [CONTRACT-DATE-GUARD] active application 존재 시 날짜 변경 차단 (SUPER_ADMIN 면제)
+      // Application.workDate/workEndDate는 지원 시점 스냅샷 — TO 날짜 변경 시 diverge 발생
+      // Firestore: 신규 생성 application 감지는 구조적 한계(query-based TX conflict detection 미지원) — best-effort
+      if (!isSuperAdmin) {
+        const DATE_ACTIVE_STATUSES = ["PENDING", "INVITED", "CONTRACT_PENDING", "CONFIRMED"];
+        const dateActiveChecks = await Promise.all(
+          DATE_ACTIVE_STATUSES.map((st) =>
+            db.collection("applications")
+              .where("toId", "==", toId)
+              .where("status", "==", st)
+              .limit(1)
+              .get()
+          )
+        );
+        if (dateActiveChecks.some((s) => !s.empty)) {
+          throw new HttpsError(
+            "failed-precondition",
+            "활성 지원자가 있는 공고의 계약 기간을 변경할 수 없습니다. 지원자를 먼저 처리해주세요."
+          );
+        }
       }
     }
 
@@ -9305,7 +9361,25 @@ export const callableUpdateTO = onCall(
     finalUpdates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
     finalUpdates.updatedBy = callerUid;
 
-    await toRef.update(finalUpdates);
+    // [CAPACITY-RACE-GUARD] totalRequired 변경 시 TX로 fresh totalConfirmed 재검증
+    // non-TX read 기반 stale totalConfirmed와 concurrent confirm 사이의 경쟁(occupied > required) 차단
+    if (!isSuperAdmin && "totalRequired" in finalUpdates) {
+      await db.runTransaction(async (txCap) => {
+        const freshSnap = await txCap.get(toRef);
+        if (!freshSnap.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
+        const freshConfirmed = (freshSnap.data()!.totalConfirmed as number | undefined) ?? 0;
+        const newReq = finalUpdates.totalRequired as number;
+        if (newReq !== 0 && newReq < freshConfirmed) {
+          throw new HttpsError(
+            "failed-precondition",
+            `totalRequired(${newReq})는 확정 인원(${freshConfirmed}) 이상이어야 합니다.`
+          );
+        }
+        txCap.update(toRef, finalUpdates);
+      });
+    } else {
+      await toRef.update(finalUpdates);
+    }
     console.log(`✅ [callableUpdateTO] TO ${toId} 수정 완료 (by: ${callerUid})`);
     return {success: true};
   }
@@ -9555,6 +9629,21 @@ export const callableUpdateSlotWorkDetails = onCall(
         capturedSingleWDC = (slotData["workDetailCounts"] as Record<string, {confirmedCount?: number}> | undefined) ?? {}; // [Phase 8.1E.2A]
         await checkActiveApplications(toId, slotId!, newIdSet, oldWDs);
 
+        // [WORKTYPE-SCOPE] 신규 compositeId의 workType이 business active workType인지 검증 (SUPER_ADMIN 면제)
+        // 기존 unchanged compositeId는 면제 — inactive된 historical workType regression 방지
+        if (callerRole !== "SUPER_ADMIN") {
+          const singleOldCompositeIds = new Set(
+            oldWDs.map((wd) => `${wd["workType"]}_${wd["startTime"]}_${wd["endTime"]}`)
+          );
+          const newSlotWorkTypes = newWDs!
+            .filter((wd) => !singleOldCompositeIds.has(`${wd["workType"]}_${wd["startTime"]}_${wd["endTime"]}`))
+            .map((wd) => wd["workType"] as string)
+            .filter((n): n is string => typeof n === "string" && n.length > 0);
+          if (newSlotWorkTypes.length > 0) {
+            await assertWorkTypesInBusiness(businessId, newSlotWorkTypes);
+          }
+        }
+
         // [4H.0D-RC] requiredCount 하한 검증
         await checkRequiredCountLowerBound(toId, slotId!, newWDs!);
 
@@ -9724,6 +9813,21 @@ export const callableUpdateSlotWorkDetails = onCall(
         capturedBatchDateMs = (slotData["date"] as admin.firestore.Timestamp | undefined)?.toMillis() ?? 0;
         capturedBatchWDC = (slotData["workDetailCounts"] as Record<string, {confirmedCount?: number}> | undefined) ?? {}; // [Phase 8.1E.2A]
         await checkActiveApplications(toId, update.slotId, newIdSet, oldWDs);
+
+        // [WORKTYPE-SCOPE] 신규 compositeId의 workType이 business active workType인지 검증 (SUPER_ADMIN 면제)
+        // 기존 unchanged compositeId는 면제 — inactive된 historical workType regression 방지
+        if (callerRole !== "SUPER_ADMIN") {
+          const batchOldCompositeIds = new Set(
+            oldWDs.map((wd) => `${wd["workType"]}_${wd["startTime"]}_${wd["endTime"]}`)
+          );
+          const batchNewSlotWorkTypes = update.workDetails
+            .filter((wd) => !batchOldCompositeIds.has(`${wd["workType"]}_${wd["startTime"]}_${wd["endTime"]}`))
+            .map((wd) => wd["workType"] as string)
+            .filter((n): n is string => typeof n === "string" && n.length > 0);
+          if (batchNewSlotWorkTypes.length > 0) {
+            await assertWorkTypesInBusiness(businessId, batchNewSlotWorkTypes);
+          }
+        }
 
         // [4H.0D-RC] requiredCount 하한 검증 (slotRef conflict → retry 시 재검증)
         await checkRequiredCountLowerBound(toId, update.slotId, update.workDetails);
@@ -14796,6 +14900,31 @@ async function assertBusinessPostingReady(
     .get();
   if (wtSnap.empty) {
     throw new HttpsError("failed-precondition", "사업장 업무를 먼저 등록해 주세요.");
+  }
+}
+
+// [WORKTYPE-SCOPE] 제출된 workType 이름이 해당 business의 active workType에 속하는지 검증
+// - 신규/변경 workType만 전달할 것 (기존 unchanged historical workType regression 방지는 caller 책임)
+// - SUPER_ADMIN 면제는 caller 측에서 처리
+async function assertWorkTypesInBusiness(
+  businessId: string,
+  workTypeNames: string[],
+): Promise<void> {
+  if (workTypeNames.length === 0) return;
+  const uniqueNames = [...new Set(workTypeNames)];
+  const bizWorkTypesSnap = await db
+    .collection("businesses").doc(businessId)
+    .collection("workTypes")
+    .where("isActive", "==", true)
+    .get();
+  const validNames = new Set(bizWorkTypesSnap.docs.map((d) => d.data().name as string));
+  for (const name of uniqueNames) {
+    if (!validNames.has(name)) {
+      throw new HttpsError(
+        "invalid-argument",
+        `업무 유형 '${name}'은(는) 해당 사업장에 등록되지 않은 업무입니다.`
+      );
+    }
   }
 }
 
