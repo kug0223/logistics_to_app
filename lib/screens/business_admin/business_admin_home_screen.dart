@@ -21,19 +21,15 @@ import '../../utils/attendance_list_pdf.dart';
 
 // Screens
 import '../common/settings_screen.dart';
-import 'to_management/create_to_screen.dart';
 import '../common/notification_screen.dart';
 import '../../widgets/common/notification_badge.dart';
-import 'admin_stats_screen.dart';
 import 'admin_contract_management_screen.dart';
 import 'payroll/payroll_payment_dashboard_screen.dart';
 // payroll_payment_service.dart — home screen에서 직접 사용 없음 (canonical summary로 대체됨)
 import '../../theme/app_colors.dart';
-import '../../utils/business_picker_helper.dart';
 import '../../models/core/business_model.dart';
 import 'support_review_queue_screen.dart';
 import 'unclosed_action_queue_screen.dart';
-import 'expiring_contracts_screen.dart';
 import 'dialogs/attendance_status_dialog.dart';
 import 'Business_form_screen.dart';
 import 'work_type_management_screen.dart';
@@ -86,8 +82,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   AdminHomeSummaryModel? _canonicalSummary;
   bool _canonicalSummaryLoading = true;
 
-  // 이번 주 근무
+  // 이번 주 근무 — Phase 2C(오늘 운영 Block)에서 _weeklyRosterCounts[today] 재사용 예정
   Map<String, int> _weeklyRosterCounts = {};
+  // ignore: unused_field — Phase 2C에서 주간 합계 표시에 재사용 예정
   int _weeklyTotal = 0;
   bool _weeklyLoading = true;
 
@@ -722,11 +719,6 @@ Future<void> _loadWeeklyRosterCounts() async {
                     _buildTodayOperation(context, s, theme),
                     SizedBox(height: 16 * s),
                     _buildActionDashboard(context, s, theme, up),
-                    _buildUpcomingSection(context, s, theme),
-                    SizedBox(height: 16 * s),
-                    _buildWeeklyRoster(context, s, theme),
-                    SizedBox(height: 16 * s),
-                    _buildQuickMenu(context, s, theme, up),
                     SizedBox(height: 32 * s), // Bottom Nav가 gesture bar padding 내부 처리
                   ],
                 ),
@@ -1003,109 +995,6 @@ Future<void> _loadWeeklyRosterCounts() async {
           ),
       ]),
     );
-  }
-
-  // ── 빠른 메뉴 (compact) [PHASE-3A] ────────────────────────────
-  Widget _buildQuickMenu(BuildContext context, double s, ThemeData theme, UserProvider up) {
-    final isSub = up.currentUser?.isSubAdmin == true;
-    final items = [
-      if (!isSub || up.can((p) => p.canManageTo))
-        (
-          icon: Icons.post_add_outlined,
-          label: '공고등록',
-          tap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
-            // [HOTFIX HOME.POSTING.ENTRY.1-R1] SUB_ADMIN: Home effectiveBusinessId를
-            // CreateTO 최초 사업장으로 상속. OWNER: null → 기존 flow(ready-first) 유지.
-            final initBizId = up.currentUser?.isSubAdmin == true
-                ? up.effectiveBusinessId
-                : null;
-            await NavigationHelper.push<bool>(context,
-                destination: AdminCreateTOScreen(initialBusinessId: initBizId),
-                useRootNavigator: true,
-                onReturn: (r) {
-                  if (r != true) return;
-                  ToastHelper.showSuccess('공고가 등록되었습니다');
-                  // [PATCH-R2] Home quick-create → global revision bump.
-                  // Home listener(_onPostingRevisionChanged) + JobsRoot/WorkforceRoot listener가
-                  // 수신하여 각자 refresh — direct _loadSummaryCounts() 호출 없음.
-                  WorkforceController.notifyDataChanged();
-                });
-          })),
-        ),
-      if (!isSub || up.can((p) => p.canManageContract))
-        (
-          icon: Icons.folder_copy_outlined,
-          label: '계약서',
-          tap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
-            if (!up.can((p) => p.canManageContract)) {
-              ToastHelper.showWarning('계약서 관리 권한이 없습니다.');
-              return;
-            }
-            final bizId = isSub
-                ? up.effectiveBusinessId
-                : (await BusinessPickerHelper.pick(context))?.id;
-            if (bizId == null || !context.mounted) return;
-            await Navigator.push(context,
-                MaterialPageRoute(builder: (_) => AdminContractManagementScreen(businessId: bizId)));
-          })),
-        ),
-      if (!isSub || up.can((p) => p.canManageWage))
-        (
-          icon: Icons.bar_chart_outlined,
-          label: '통계',
-          tap: () => _safeNavigate(() =>
-              _requireApprovedBusiness(context, () async => pushAdminStatsScreen(context))),
-        ),
-    ];
-
-    return Column(children: [
-      _sectionHeader(context, s, '빠른 메뉴'),
-      SizedBox(height: 8 * s),
-      Padding(
-        padding: EdgeInsets.symmetric(horizontal: 16 * s),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2)),
-            ],
-          ),
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: 8 * s, vertical: 12 * s),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: items.map((item) => Expanded(
-                child: GestureDetector(
-                  onTap: item.tap,
-                  behavior: HitTestBehavior.opaque,
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    Container(
-                      width: 40 * s,
-                      height: 40 * s,
-                      decoration: BoxDecoration(
-                        color: AppColors.grey100,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(item.icon, size: 20 * s, color: AppColors.textSecondary),
-                    ),
-                    SizedBox(height: 6 * s),
-                    Text(item.label,
-                        style: TextStyle(
-                            fontSize: 10 * s,
-                            color: AppColors.textSecondary,
-                            fontWeight: FontWeight.w500),
-                        textAlign: TextAlign.center,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis),
-                  ]),
-                ),
-              )).toList(),
-            ),
-          ),
-        ),
-      ),
-    ]);
   }
 
   // ── [5D.2] 공고 등록 준비 checklist ──────────────────────────────
@@ -1473,45 +1362,35 @@ Future<void> _loadWeeklyRosterCounts() async {
       String? badge, required int count, required bool available, required String countStr,
       required VoidCallback onTap,
     }) {
-      if (available && count == 0) return; // valid 0 → 숨김
+      if (available && count == 0) return; // valid 0 → 숨김 (ZERO_COUNT_ACTION_VISIBILITY = HIDE)
       result.add((icon: icon, label: label, badge: badge, countStr: countStr,
           color: color, count: count, available: available, onTap: onTap));
     }
 
-    // 1. 급여 미이체 — canManageWage
-    if (!isSub || up.can((p) => p.canManageWage)) {
-      final wage = cs?.actions.unpaidWage;
-      final wageParts = <String>[];
-      if ((wage?.overdueCount ?? 0) > 0) wageParts.add('연체 ${wage!.overdueCount}건');
-      if ((wage?.missingDueDateCount ?? 0) > 0) wageParts.add('지급일 확인 필요 ${wage!.missingDueDateCount}명');
-      // [HOME-WAGE-01] 숨김 기준: count(지급일 있는 그룹) + missingDueDateCount(지급일 없는 유니크 유저) 합산.
-      // wage.hasData == available && (count > 0 || missingDueDateCount > 0).
-      // count만 보면 지급일 미설정 근로자가 있을 때 valid-0으로 오인해 숨겨짐.
-      final wageTotal = (wage?.count ?? 0) + (wage?.missingDueDateCount ?? 0);
+    // 1. 지원 검토 — canManageTo
+    if (!isSub || up.can((p) => p.canManageTo)) {
+      final approval = cs?.actions.approval;
       add(
-        icon: Icons.account_balance_wallet_outlined, label: '급여 미이체',
-        color: AppColors.error, badge: wageParts.isNotEmpty ? wageParts.join(' · ') : null,
-        count: wageTotal, countStr: '$wageTotal건',
-        available: wage?.available ?? false,
+        icon: Icons.assignment_late_outlined, label: '지원 검토',
+        color: AppColors.warning,
+        badge: (approval?.overdueCount ?? 0) > 0 ? '긴급 ${approval!.overdueCount}건' : null,
+        count: approval?.count ?? 0, countStr: '${approval?.count ?? 0}명',
+        available: approval?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
-          if (!_ensureCanonicalSummary(context)) return;
-          final w = _canonicalSummary!.actions.unpaidWage;
-          if (!w.available) { _showCanonicalError(context); return; }
-          if (w.count == 0 && w.missingDueDateCount == 0) return;
-          final affectedBiz = w.byBusiness.where((b) => b.count > 0 || b.missingDueDateCount > 0).toList();
-          final countMap = <String, int>{for (final b in w.byBusiness) b.businessId: b.count};
-          final missingMap = <String, int>{for (final b in w.byBusiness) b.businessId: b.missingDueDateCount};
-          await _toPayrollTabDrilldown(
-            context: context, tab: 0, sheetTitle: '급여 미이체',
-            bizIds: affectedBiz.map((b) => b.businessId).toList(),
-            countPerBiz: countMap, showAllOutstanding: true,
-            secondaryLabel: '지급일 확인 필요', secondaryCountPerBiz: missingMap,
+          final businesses = await _getBusinesses();
+          if (businesses.isEmpty || !context.mounted) return;
+          final changed = await Navigator.push<bool>(context,
+            SupportReviewQueueScreen.route(
+              businessIds: businesses.map((b) => b.id).toList(),
+              businesses: businesses,
+            ),
           );
+          if (changed == true && mounted) unawaited(_loadCanonicalSummary());
         })),
       );
     }
 
-    // 2. 마감 필요 — canManageWage (근무/정산 마감)
+    // 2. 마감 필요 — canManageWage
     if (!isSub || up.can((p) => p.canManageWage)) {
       final unclosed = cs?.actions.unclosed;
       add(
@@ -1562,70 +1441,32 @@ Future<void> _loadWeeklyRosterCounts() async {
       );
     }
 
-    // 4. 중간정산 요청 — canManageWage
+    // 4. 이체 대기 — canManageWage
     if (!isSub || up.can((p) => p.canManageWage)) {
-      final settle = cs?.actions.settlementRequest;
+      final wage = cs?.actions.unpaidWage;
+      final wageParts = <String>[];
+      if ((wage?.overdueCount ?? 0) > 0) wageParts.add('연체 ${wage!.overdueCount}건');
+      if ((wage?.missingDueDateCount ?? 0) > 0) wageParts.add('지급일 확인 필요 ${wage!.missingDueDateCount}명');
+      // count(지급일 있는 그룹) + missingDueDateCount(지급일 없는 유니크 유저) 합산
+      final wageTotal = (wage?.count ?? 0) + (wage?.missingDueDateCount ?? 0);
       add(
-        icon: Icons.account_balance_outlined, label: '중간정산 요청',
-        color: AppColors.info,
-        count: settle?.count ?? 0, countStr: '${settle?.count ?? 0}건',
-        available: settle?.available ?? false,
+        icon: Icons.account_balance_wallet_outlined, label: '이체 대기',
+        color: AppColors.error, badge: wageParts.isNotEmpty ? wageParts.join(' · ') : null,
+        count: wageTotal, countStr: '$wageTotal건',
+        available: wage?.available ?? false,
         onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
           if (!_ensureCanonicalSummary(context)) return;
-          final sec = _canonicalSummary!.actions.settlementRequest;
-          if (!sec.available) { _showCanonicalError(context); return; }
-          if (sec.count == 0) return;
-          final bizIds = sec.byBusiness.where((b) => b.count > 0).map((b) => b.businessId).toList();
-          final countMap = <String, int>{for (final b in sec.byBusiness) b.businessId: b.count};
+          final w = _canonicalSummary!.actions.unpaidWage;
+          if (!w.available) { _showCanonicalError(context); return; }
+          if (w.count == 0 && w.missingDueDateCount == 0) return;
+          final affectedBiz = w.byBusiness.where((b) => b.count > 0 || b.missingDueDateCount > 0).toList();
+          final countMap = <String, int>{for (final b in w.byBusiness) b.businessId: b.count};
+          final missingMap = <String, int>{for (final b in w.byBusiness) b.businessId: b.missingDueDateCount};
           await _toPayrollTabDrilldown(
-            context: context, tab: 3, sheetTitle: '중간정산 요청',
-            bizIds: bizIds, countPerBiz: countMap, showPendingSettlementOnly: true,
-          );
-        })),
-      );
-    }
-
-    // 5. 지원 검토 — canManageTo
-    if (!isSub || up.can((p) => p.canManageTo)) {
-      final approval = cs?.actions.approval;
-      add(
-        icon: Icons.assignment_late_outlined, label: '지원 검토',
-        color: AppColors.warning,
-        badge: (approval?.overdueCount ?? 0) > 0 ? '긴급 ${approval!.overdueCount}건' : null,
-        count: approval?.count ?? 0, countStr: '${approval?.count ?? 0}명',
-        available: approval?.available ?? false,
-        onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
-          final businesses = await _getBusinesses();
-          if (businesses.isEmpty || !context.mounted) return;
-          final changed = await Navigator.push<bool>(context,
-            SupportReviewQueueScreen.route(
-              businessIds: businesses.map((b) => b.id).toList(),
-              businesses: businesses,
-            ),
-          );
-          if (changed == true && mounted) unawaited(_loadCanonicalSummary());
-        })),
-      );
-    }
-
-    // 6. 급여 변경 요청 — canManageWage
-    if (!isSub || up.can((p) => p.canManageWage)) {
-      final wageChg = cs?.actions.wageChangeRequest;
-      add(
-        icon: Icons.compare_arrows, label: '급여 변경 요청',
-        color: AppColors.purple,
-        count: wageChg?.count ?? 0, countStr: '${wageChg?.count ?? 0}건',
-        available: wageChg?.available ?? false,
-        onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
-          if (!_ensureCanonicalSummary(context)) return;
-          final sec = _canonicalSummary!.actions.wageChangeRequest;
-          if (!sec.available) { _showCanonicalError(context); return; }
-          if (sec.count == 0) return;
-          final bizIds = sec.byBusiness.where((b) => b.count > 0).map((b) => b.businessId).toList();
-          final countMap = <String, int>{for (final b in sec.byBusiness) b.businessId: b.count};
-          await _toPayrollTabDrilldown(
-            context: context, tab: 2, sheetTitle: '급여 변경 요청',
-            bizIds: bizIds, countPerBiz: countMap,
+            context: context, tab: 0, sheetTitle: '이체 대기',
+            bizIds: affectedBiz.map((b) => b.businessId).toList(),
+            countPerBiz: countMap, showAllOutstanding: true,
+            secondaryLabel: '지급일 확인 필요', secondaryCountPerBiz: missingMap,
           );
         })),
       );
@@ -1699,347 +1540,6 @@ Future<void> _loadWeeklyRosterCounts() async {
           child: Divider(height: 1, color: AppColors.border),
         ),
     ]);
-  }
-
-  // ── [PHASE-3A] 곧 확인할 일 — 계약 종료 예정 ──────────────────
-  Widget _buildUpcomingSection(BuildContext context, double s, ThemeData theme) {
-    if (_canonicalSummaryLoading) return const SizedBox.shrink();
-    final section = _canonicalSummary?.upcoming.expiringContract;
-    // section == null → 섹션 자체 없음. available && count == 0 → 유효 0건 → 숨김.
-    // !available → 조회 실패 → 숨기지 않고 error row 표시 (false-zero 방지)
-    if (section == null) return const SizedBox.shrink();
-    if (section.available && section.count == 0) return const SizedBox.shrink();
-
-    return Column(children: [
-      SizedBox(height: 16 * s),
-      _sectionHeader(context, s, '곧 확인할 일'),
-      SizedBox(height: 8 * s),
-      Padding(
-        padding: EdgeInsets.symmetric(horizontal: 16 * s),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
-              blurRadius: 10, offset: const Offset(0, 3),
-            )],
-          ),
-          child: InkWell(
-            onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
-              if (!_ensureCanonicalSummary(context)) return;
-              final sec = _canonicalSummary!.upcoming.expiringContract;
-              if (!sec.available) { _showCanonicalError(context); return; }
-              if (sec.count == 0) return;
-              // [PH1D] SUB_ADMIN: CF가 effectiveBusinessId scope로 집계 →
-              // count/drill-through 모두 동일 scope (_getBusinesses = effectiveBusinessId)
-              final businesses = await _getBusinesses();
-              if (businesses.isEmpty || !context.mounted) return;
-              await Navigator.push(context, MaterialPageRoute(
-                builder: (_) => ExpiringContractsScreen(
-                  businessIds: businesses.map((b) => b.id).toList(),
-                  businesses: businesses,
-                ),
-              ));
-            })),
-            borderRadius: BorderRadius.circular(16),
-            child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 13 * s),
-              child: Row(children: [
-                Container(
-                  width: 36 * s, height: 36 * s,
-                  decoration: BoxDecoration(
-                    color: AppColors.warning.withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(Icons.calendar_month_outlined, size: 18 * s, color: AppColors.warning),
-                ),
-                SizedBox(width: 12 * s),
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('계약 종료 예정', style: TextStyle(
-                      fontSize: 13 * s, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
-                  SizedBox(height: 2 * s),
-                  Text('15일 이내 계약 종료 예정자', style: TextStyle(
-                      fontSize: 10 * s, color: AppColors.textSecondary)),
-                ])),
-                SizedBox(width: 8 * s),
-                // available==false: action row와 동일한 "조회 실패" chip
-                if (!section.available)
-                  Container(
-                    padding: EdgeInsets.symmetric(horizontal: 8 * s, vertical: 4 * s),
-                    decoration: BoxDecoration(
-                      color: AppColors.grey100, borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text('조회 실패', style: TextStyle(fontSize: 11 * s, color: AppColors.grey500)),
-                  )
-                else
-                  Container(
-                    padding: EdgeInsets.symmetric(horizontal: 10 * s, vertical: 5 * s),
-                    decoration: BoxDecoration(
-                      color: AppColors.warning.withValues(alpha: 0.10),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text('${section.count}명', style: TextStyle(
-                        fontSize: 13 * s, fontWeight: FontWeight.w800, color: AppColors.warning)),
-                  ),
-                SizedBox(width: 4 * s),
-                Icon(Icons.chevron_right, size: 18 * s, color: AppColors.grey400),
-              ]),
-            ),
-          ),
-        ),
-      ),
-    ]);
-  }
-  // ── 이번 주 근무 ────────────────────────────────────────────────
-  Widget _buildWeeklyRoster(BuildContext context, double s, ThemeData theme) {
-    final now = DateTime.now();
-    final today = FormatHelper.toKstDate(now);
-    // 일요일 기준 주 시작 (Dart weekday: 1=월~7=일) — KST 기준 요일 사용
-    final daysSinceSunday = today.weekday == 7 ? 0 : today.weekday;
-    final weekStart = today.subtract(Duration(days: daysSinceSunday));
-    const weekLabels = ['일', '월', '화', '수', '목', '금', '토'];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _sectionHeader(context, s, '이번 주 근무',
-            action: '전체 보기',
-            // [PATCH-R2A1] ADMIN.POSTING.ROUTE-INTEGRITY-01
-            // [PATCH-HOME-WF] ADMIN.HOME.WORKFORCE-FALLBACK-PERMISSION-01
-            // Home "이번 주 근무" → canonical 인력 탭 전환 only
-            // WorkforceRootScreen standalone fallback 제거 — permission gate 없는 standalone push 불가
-            onAction: () => _safeNavigate(() => _requireApprovedBusiness(
-                context,
-                () async {
-                  AdminTabSwitcher.instance.switchToTab(
-                    AdminTabSwitcher.workforceTab,
-                  );
-                }))),
-        SizedBox(height: 12 * s),
-        Padding(
-          padding: EdgeInsets.symmetric(horizontal: 20 * s),
-          child: Container(
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.06),
-                  blurRadius: 14,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Column(
-              children: [
-                // ── 요약 스트립 ──
-                Container(
-                  padding: EdgeInsets.symmetric(
-                      horizontal: 16 * s, vertical: 11 * s),
-                  decoration: BoxDecoration(
-                    color: theme.primaryColor.withValues(alpha: 0.07),
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(20),
-                      topRight: Radius.circular(20),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 28 * s,
-                        height: 28 * s,
-                        decoration: BoxDecoration(
-                          color: theme.primaryColor,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Icon(Icons.calendar_today_outlined,
-                            color: Colors.white, size: 14 * s),
-                      ),
-                      SizedBox(width: 10 * s),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('이번 주 확정',
-                                style: TextStyle(
-                                    fontSize: 11 * s,
-                                    fontWeight: FontWeight.w700,
-                                    color: theme.primaryColor)),
-                            Text('일별 확정 합계',
-                                style: TextStyle(
-                                    fontSize: 10 * s,
-                                    color: AppColors.grey500)),
-                          ],
-                        ),
-                      ),
-                      _weeklyLoading
-                          ? SizedBox(
-                              width: 16 * s,
-                              height: 16 * s,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 1.5,
-                                  color: theme.primaryColor),
-                            )
-                          : Text(
-                              '$_weeklyTotal명',
-                              style: TextStyle(
-                                  fontSize: 18 * s,
-                                  fontWeight: FontWeight.w800,
-                                  color: theme.primaryColor,
-                                  letterSpacing: -0.5),
-                            ),
-                    ],
-                  ),
-                ),
-                // ── 7칸 날짜 그리드 ──
-                Padding(
-                  padding: EdgeInsets.fromLTRB(
-                      6 * s, 12 * s, 6 * s, 14 * s),
-                  child: Row(
-                    children: List.generate(7, (i) {
-                      final date = weekStart.add(Duration(days: i));
-                      final isToday = date.year == today.year &&
-                          date.month == today.month &&
-                          date.day == today.day;
-                      final isWeekend = i == 0 || i == 6;
-                      final count = _weeklyLoading
-                          ? -1
-                          : (_weeklyRosterCounts[_dateKey(date)] ?? 0);
-                      return Expanded(
-                        child: _buildDayCell(
-                          context, s, theme,
-                          label: weekLabels[i],
-                          date: date,
-                          count: count,
-                          isToday: isToday,
-                          isWeekend: isWeekend,
-                        ),
-                      );
-                    }),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDayCell(
-    BuildContext context, double s, ThemeData theme, {
-    required String label,
-    required DateTime date,
-    required int count, // -1 = 로딩 중
-    required bool isToday,
-    required bool isWeekend,
-  }) {
-    final isEmpty = count == 0;
-    final isLoading = count < 0;
-
-    final Color accentColor;
-    if (isToday) {
-      accentColor = theme.primaryColor;
-    } else if (isWeekend && !isEmpty && !isLoading) {
-      accentColor = AppColors.error;
-    } else {
-      accentColor = theme.primaryColor;
-    }
-
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: isLoading
-          ? null
-          : () => _safeNavigate(() => _requireApprovedBusiness(
-              context, () async {
-            final businesses = await _getBusinesses();
-            if (businesses.isEmpty || !context.mounted) return;
-            await showDialog<void>(
-              context: context,
-              barrierDismissible: false,
-              builder: (_) => AttendanceStatusDialog(
-                date: date,
-                businessIds: businesses.map((b) => b.id).toList(),
-                businesses: businesses,
-              ),
-            );
-          })),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(label,
-              style: TextStyle(
-                  fontSize: 10 * s,
-                  fontWeight: FontWeight.w600,
-                  color: (!isLoading && !isEmpty && isWeekend)
-                      ? AppColors.error
-                      : AppColors.grey400)),
-          SizedBox(height: 5 * s),
-          Container(
-            width: 28 * s,
-            height: 28 * s,
-            decoration: BoxDecoration(
-              color: isToday ? theme.primaryColor : Colors.transparent,
-              shape: BoxShape.circle,
-            ),
-            child: Center(
-              child: Text(
-                '${date.day}',
-                style: TextStyle(
-                    fontSize: 13 * s,
-                    fontWeight: FontWeight.w800,
-                    color: isToday
-                        ? Colors.white
-                        : (!isLoading && !isEmpty && isWeekend)
-                            ? AppColors.error
-                            : (!isLoading && isEmpty)
-                                ? AppColors.grey300
-                                : AppColors.textPrimary),
-              ),
-            ),
-          ),
-          SizedBox(height: 5 * s),
-          // 인원 뱃지
-          isLoading
-              ? Container(
-                  width: 20 * s,
-                  height: 13 * s,
-                  decoration: BoxDecoration(
-                    color: AppColors.grey100,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                )
-              : Container(
-                  padding: EdgeInsets.symmetric(
-                      horizontal: 4 * s, vertical: 2 * s),
-                  decoration: BoxDecoration(
-                    color: isEmpty
-                        ? Colors.transparent
-                        : accentColor.withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    isEmpty ? '-' : '$count명',
-                    style: TextStyle(
-                        fontSize: 9.5 * s,
-                        fontWeight: FontWeight.w700,
-                        color: isEmpty ? AppColors.grey300 : accentColor),
-                  ),
-                ),
-          SizedBox(height: 4 * s),
-          // 점 인디케이터
-          Container(
-            width: 4 * s,
-            height: 4 * s,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: (isLoading || isEmpty) ? Colors.transparent : accentColor,
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
 }
