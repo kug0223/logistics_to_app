@@ -33,6 +33,10 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
   String? _filterBusinessId; // null = 전체
   bool _isLoading = true;
   bool _isFetching = false;
+  // [RACE-FIX] request generation counter.
+  // 비즈니스 필터 변경 중 이전 fetch가 진행 중이면
+  // 새 요청도 시작되고, 먼저 도착하는 stale response는 state 반영 금지.
+  int _statsRequestId = 0;
   final _touchedBarIndex = ValueNotifier<int>(-1);
 
   AnnualStatsData? _data;
@@ -66,19 +70,29 @@ class _AdminStatsScreenState extends State<AdminStatsScreen> {
   }
 
   Future<void> _loadStats() async {
-    if (_isFetching) return;  // 중복 실행만 차단 (_isLoading 초기값=true 문제 해결)
     if (!mounted) return;
+    // [RACE-FIX] request generation counter — latest request wins.
+    // 이전 if (_isFetching) return; 제거: 새 요청을 drop하지 않고 항상 시작.
+    // stale response가 현재 state를 덮어쓰는 것은 requestId 불일치로 방지.
+    // (async 중 _filterBusinessId / _selectedYear 변경에 무관하게 동작)
+    final requestId = ++_statsRequestId;
+    final requestedFilterId = _filterBusinessId; // request 시점 스냅샷
+    final requestedYear = _selectedYear;         // request 시점 스냅샷
     setState(() { _isLoading = true; _isFetching = true; });
     try {
       final data = await _service.getAnnualStats(
         businessIds: widget.businessIds,
-        filterBusinessId: _filterBusinessId,
-        year: _selectedYear,
+        filterBusinessId: requestedFilterId, // 스냅샷 사용 — live state 재참조 금지
+        year: requestedYear,                 // 스냅샷 사용
       );
-      if (mounted) setState(() { _data = data; _hasError = false; _isLoading = false; _isFetching = false; _buildNow = DateTime.now(); });
+      // stale response guard: 최신 request만 state 반영
+      if (!mounted || requestId != _statsRequestId) return;
+      setState(() { _data = data; _hasError = false; _isLoading = false; _isFetching = false; _buildNow = DateTime.now(); });
     } catch (e) {
       debugPrint('❌ 연간 통계 로드 실패: $e');
-      if (mounted) setState(() { _hasError = true; _isLoading = false; _isFetching = false; _buildNow = DateTime.now(); });
+      // stale error도 무시: 최신 request의 결과만 반영
+      if (!mounted || requestId != _statsRequestId) return;
+      setState(() { _hasError = true; _isLoading = false; _isFetching = false; _buildNow = DateTime.now(); });
     }
   }
 
