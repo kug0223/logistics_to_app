@@ -19080,7 +19080,13 @@ export const callableBatchCheckIn = onCall(
                   // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
                   if (snapData.businessId !== businessId) return;
                   const ws = snapData.wageStatus as string | undefined;
-                  if (ws === "confirmed" || ws === "transferred") return;
+                  // [P1-WF-01] calculated/confirmed/transferred 모두 차단
+                  // calculated: stale wage snapshot이 confirmFinalWage에 그대로 confirmed될 수 있음
+                  // correction은 AdjustAttendanceTime canonical path 사용
+                  if (ws === "confirmed" || ws === "transferred" || ws === "calculated") return;
+                  // [P1-WF-01] 기존 checkIn 존재 → BatchCheckIn 불허
+                  // JTBD: BatchCheckIn = 최초 출근 기록 전용. 기존 시간 수정은 AdjustAttendanceTime.
+                  if (snapData.checkIn != null) return;
                   // [5A.1-P1-WF-01] 미래 날짜 attendance checkIn 차단
                   const attWorkDateTs = snapData.workDate as admin.firestore.Timestamp | undefined;
                   if (attWorkDateTs) {
@@ -19266,6 +19272,7 @@ export const callableBatchCheckOut = onCall(
               // 단순 퇴근 기록 — TOCTOU 방지를 위해 runTransaction 사용
               await db.runTransaction(async (tx) => {
                 const snap = await tx.get(ref);
+                let coServerWs: string | undefined;
                 if (snap.exists) {
                   const snapData = snap.data()!;
                   // [SEC] businessId 교차검증 — 다른 사업장 근태 조작 차단
@@ -19281,14 +19288,26 @@ export const callableBatchCheckOut = onCall(
                     const todayKSTStartMs_co2 = (() => { const d = new Date(Date.now() + KST_OFFSET_MS_CO2); d.setUTCHours(0, 0, 0, 0); return d.getTime() - KST_OFFSET_MS_CO2; })();
                     if (coWorkDateTs2.toMillis() > todayKSTStartMs_co2) { addSkipped(attendanceId); return; }
                   }
+                  coServerWs = snapData.wageStatus as string | undefined;
                 }
-                tx.update(ref, {
+                // [P1-WF-01b] calculated 상태 서버 강제 초기화 — client resetWageDetail=false 우회 차단
+                // client flag를 신뢰하지 않고 서버 상태를 직접 확인
+                // callableBatchAdjustAttendanceTime effectiveResetWageDetail 패턴과 동일 적용
+                const coEffectiveReset = coServerWs === "calculated";
+                const coUpdateData: Record<string, unknown> = {
                   checkOut: admin.firestore.Timestamp.fromMillis(checkOutMs),
                   checkOutMethod: "manual",
                   workHours,
                   status,
                   updatedAt: now,
-                });
+                };
+                if (coEffectiveReset) {
+                  coUpdateData["wageStatus"] = "pending";
+                  coUpdateData["wageDetail"] = admin.firestore.FieldValue.delete();
+                  coUpdateData["finalWage"] = admin.firestore.FieldValue.delete();
+                  coUpdateData["yearMonth"] = admin.firestore.FieldValue.delete();
+                }
+                tx.update(ref, coUpdateData);
               });
             }
             if (!skippedSet.has(attendanceId)) successCount++;
@@ -20317,6 +20336,10 @@ export const callableBatchAdjustAttendanceTime = onCall(
                 updates["wageDetail"] = admin.firestore.FieldValue.delete();
                 // [M-1 수정 2026-07-15] finalWage도 함께 삭제 — wageDetail 리셋 시 확정 임금도 무효화
                 updates["finalWage"] = admin.firestore.FieldValue.delete();
+                // [P1-WF-03] yearMonth 삭제 — pending 복귀 시 stale yearMonth가 _getPrevGrossTotal 집계에
+                // 포함되어 daily_auto_8 소급 공제 과다 계산 차단
+                // callableBatchCheckOut(resetWageDetail=true) / callableWageCancel / callableBatchResetAttendance와 동일 패턴
+                updates["yearMonth"] = admin.firestore.FieldValue.delete();
               }
               tx.update(attRef, updates);
             });
