@@ -472,10 +472,13 @@ class AdminStatsService {
     final ids = filterBusinessId != null ? [filterBusinessId] : businessIds;
     if (ids.isEmpty) return _emptyAnnual(year, filterBusinessId);
 
-    final yearStart = DateTime(year, 1, 1);
-    final yearEnd = DateTime(year + 1, 1, 1);
-    final prevYearStart = DateTime(year - 1, 1, 1);
-    final prevYearEnd = DateTime(year, 1, 1);
+    // [TZ-FIX] device timezone 독립 — KST(UTC+9) 자정을 UTC boundary로 명시 계산.
+    // 기존 DateTime(year,1,1)은 device local timezone 기준이어서 비KST 기기에서
+    // 연도 경계 attendance가 잘못 포함/제외되는 P2를 유발했음.
+    final yearStart = _kstBoundary(year, 1, 1);
+    final yearEnd = _kstBoundary(year + 1, 1, 1);
+    final prevYearStart = _kstBoundary(year - 1, 1, 1);
+    final prevYearEnd = _kstBoundary(year, 1, 1);
 
     // [PERF] 출근 통계 — 병렬 조회 (리뷰 통계와 독립)
     // [SECURITY-ADMIN-STATS-ATTENDANCE-COMPLETENESS 2026-09-05]
@@ -495,8 +498,12 @@ class AdminStatsService {
     // 월별 집계
     final trendMap = <int, List<AttendanceModel>>{};
     for (int m = 1; m <= 12; m++) { trendMap[m] = []; }
-    // Dart DateTime.month는 항상 1~12 — 위 루프에서 전 키 초기화했으므로 !안전
-    for (final a in thisYearAtt) { trendMap[a.workDate.month]!.add(a); }
+    // [TZ-FIX] device-local workDate.month 대신 KST canonical month 사용.
+    // yearMonth("YYYY-MM") 우선, null이면 workDate UTC+9 명시 변환 fallback.
+    for (final a in thisYearAtt) {
+      final m = _kstMonthOf(a);
+      if (m >= 1 && m <= 12) trendMap[m]?.add(a);
+    }
 
     final monthlyTrends = List.generate(12, (i) {
       final m = i + 1; // 1~12, 위 trendMap 키 범위와 일치 — !안전
@@ -643,8 +650,9 @@ class AdminStatsService {
     final ids = filterBusinessId != null ? [filterBusinessId] : businessIds;
     if (ids.isEmpty) return _emptyDetail(year, month);
 
-    final start = DateTime(year, month, 1);
-    final end = DateTime(year, month + 1, 1);
+    // [TZ-FIX] device timezone 독립 — KST canonical boundary 사용.
+    final start = _kstBoundary(year, month, 1);
+    final end = _kstBoundary(year, month + 1, 1);
 
     // 출근 통계 (독립 경로 — review 실패 시에도 유지)
     // [SECURITY-ADMIN-STATS-ATTENDANCE-COMPLETENESS 2026-09-05]
@@ -1050,4 +1058,34 @@ class AdminStatsService {
         rawAttendance: [],
         userInfoMap: {},
       );
+
+  // ── KST Timezone 헬퍼 ───────────────────────────────────────────
+  // [TZ-FIX] attendance.workDate는 "KST 자정을 UTC Timestamp으로 저장".
+  // 클라이언트 DateTime(year,month,1)은 device local timezone 기준이어서
+  // 비KST 기기에서 월 경계 attendance가 잘못 포함/제외되는 P2가 발생함.
+  // 아래 두 헬퍼로 device timezone 의존성을 제거.
+
+  /// KST(UTC+9) 기준 [year-month-day] 자정을 UTC DateTime으로 반환.
+  /// device timezone 독립적.
+  /// 예: _kstBoundary(2026, 9, 1) → 2026-08-31T15:00:00.000Z
+  static DateTime _kstBoundary(int year, int month, int day) {
+    // DateTime.utc(year, month, day) = UTC midnight.
+    // KST midnight = UTC midnight - 9h.
+    // Dart DateTime.utc는 month overflow를 자동 정규화 (month=13 → 이듬해 1월).
+    return DateTime.utc(year, month, day)
+        .subtract(const Duration(hours: 9));
+  }
+
+  /// attendance의 KST 월(1~12)을 반환.
+  /// yearMonth("YYYY-MM") 우선 — KST canonical이므로 timezone 무관.
+  /// null이면 workDate.toUtc() + 9h 명시 변환 fallback.
+  /// device-local DateTime.month 미사용.
+  static int _kstMonthOf(AttendanceModel a) {
+    final ym = a.yearMonth; // "2026-09"
+    if (ym != null && ym.length >= 7) {
+      return int.tryParse(ym.substring(5, 7)) ?? 0;
+    }
+    // fallback: workDate UTC → +9h → KST month
+    return a.workDate.toUtc().add(const Duration(hours: 9)).month;
+  }
 }
