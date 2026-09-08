@@ -22572,6 +22572,49 @@ export const callableCheckIn = onCall(
       const rawRadius = bizSnap.data()?.gpsRadius;
       const bizGpsRadius = typeof rawRadius === "number" && rawRadius > 0 ? rawRadius : 100;
 
+      // 0. method 입력 strict validation — 알 수 없는 method는 gps fallback 금지
+      // [METHOD-BINDING] CHECKIN_METHOD_INPUT_STRICT = YES
+      // qr: 현재 미구현 (QR token CF/scanner 없음) — ATTENDANCE_L2_HARDENING_OPTION으로 deferred
+      const ALLOWED_CHECKIN_METHODS = ["gps", "beacon"];
+      if (!ALLOWED_CHECKIN_METHODS.includes(method as string)) {
+        throw new HttpsError(
+          "invalid-argument",
+          "유효하지 않은 출근 방식입니다. GPS 또는 비콘만 허용됩니다.",
+        );
+      }
+
+      // 0-b. attendanceType ↔ method 서버 바인딩
+      // [METHOD-BINDING] ATTENDANCE_METHOD_SERVER_BOUND = YES
+      // GPS_METHOD_BYPASS_ON_BEACON_BUSINESS = DENIED
+      // BEACON_METHOD_BYPASS_ON_GPS_BUSINESS = DENIED
+      if (serverAttendanceType === "gps" && method !== "gps") {
+        throw new HttpsError(
+          "failed-precondition",
+          "이 사업장은 GPS 출근만 허용됩니다.",
+        );
+      }
+      if (serverAttendanceType === "beacon" && method !== "beacon") {
+        throw new HttpsError(
+          "failed-precondition",
+          "이 사업장은 비콘 출근만 허용됩니다.",
+        );
+      }
+      if (serverAttendanceType === "both" && method !== "gps" && method !== "beacon") {
+        // both: gps 또는 beacon만 허용 (step 0에서 이미 unknown method 차단됨)
+        throw new HttpsError(
+          "failed-precondition",
+          "이 사업장은 GPS 또는 비콘 출근만 허용됩니다.",
+        );
+      }
+      // unknown attendanceType (null은 이미 "gps"로 처리됨): gps만 허용 (fail-safe)
+      const KNOWN_ATTENDANCE_TYPES = ["gps", "beacon", "both", "manual"];
+      if (!KNOWN_ATTENDANCE_TYPES.includes(serverAttendanceType) && method !== "gps") {
+        throw new HttpsError(
+          "failed-precondition",
+          "출근 방식이 사업장 설정과 일치하지 않습니다.",
+        );
+      }
+
       // 1. manual: 근로자 self check-in 불가 — 관리자 직접 처리 경로 유지
       if (serverAttendanceType === "manual") {
         throw new HttpsError(
@@ -22652,9 +22695,9 @@ export const callableCheckIn = onCall(
         workType,
         checkIn: admin.firestore.Timestamp.fromDate(effectiveCheckIn),
         originalCheckIn: admin.firestore.Timestamp.fromDate(now),
-        // [CHECK-METHOD-FIX] 화이트리스트 — "manual" 전달 시 onAttendanceCreated GPS 검증 우회 차단
-        // [BUG-L2 수정 2026-07-27] beacon 방식도 정확히 기록
-        checkInMethod: (method === "qr") ? "qr" : (method === "beacon") ? "beacon" : "gps",
+        // [METHOD-BINDING] method는 이 시점에서 "gps" | "beacon"만 가능 (strict validation + attendanceType binding 완료)
+        // qr 분기 제거 — QR 미구현 상태에서 dead code였음 (ATTENDANCE_L2_HARDENING_OPTION deferred)
+        checkInMethod: (method === "beacon") ? "beacon" : "gps",
         status: isLate ? "late" : "present",
         isModified: false,
         modifyRequested: false,
