@@ -205,6 +205,39 @@ class MonthlyReviewService {
         if (existing.exists) {
           throw FirebaseException(plugin: 'firestore', code: 'already-exists');
         }
+
+        // [REVIEW-BINDING 2026-09-08] defense-in-depth: TX 진입 시 review_requests fresh read로 binding 검증.
+        // canonical write boundary는 Firestore Rules(isAdminReviewRequestBound).
+        // 이 검증은 정상 경로에서 명확한 오류 메시지를 조기 제공하고 불필요한 TX write를 차단함.
+        if (requestId != null) {
+          final reqRef = _db.collection('review_requests').doc(requestId);
+          final reqSnap = await tx.get(reqRef);
+          if (!reqSnap.exists) {
+            throw FirebaseException(
+                plugin: 'firestore', code: 'not-found',
+                message: 'review_request_missing');
+          }
+          final reqData = reqSnap.data() as Map<String, dynamic>? ?? {};
+          if (reqData['workerId'] != targetUserId ||
+              reqData['businessId'] != businessId) {
+            throw FirebaseException(
+                plugin: 'firestore', code: 'invalid-argument',
+                message: 'review_request_binding_mismatch');
+          }
+          if (reqData['adminStatus'] != 'pending') {
+            throw FirebaseException(
+                plugin: 'firestore', code: 'already-exists',
+                message: 'review_request_already_submitted');
+          }
+          final deadline =
+              (reqData['deadline'] as Timestamp?)?.toDate();
+          if (deadline != null && DateTime.now().isAfter(deadline)) {
+            throw FirebaseException(
+                plugin: 'firestore', code: 'deadline-exceeded',
+                message: 'review_request_expired');
+          }
+        }
+
         // [TS-FIX 2026-07-16] createdAt 서버타임스탬프 강제 — 법적 감사 기록 시각 위조 차단
         tx.set(docRef, {
           ...review.toMap(),
@@ -223,7 +256,19 @@ class MonthlyReviewService {
       return (reviewId: reviewKey, error: null);
     } on FirebaseException catch (e) {
       if (e.code == 'already-exists') {
+        if (e.message == 'review_request_already_submitted') {
+          return (reviewId: null, error: '이미 작성된 리뷰 요청입니다.');
+        }
         return (reviewId: null, error: '이번 달 리뷰는 이미 작성되었습니다.');
+      }
+      if (e.code == 'not-found') {
+        return (reviewId: null, error: '리뷰 요청을 찾을 수 없습니다.');
+      }
+      if (e.code == 'invalid-argument') {
+        return (reviewId: null, error: '리뷰 대상이나 사업장 정보가 일치하지 않습니다.');
+      }
+      if (e.code == 'deadline-exceeded') {
+        return (reviewId: null, error: '리뷰 작성 기한이 지났습니다.');
       }
       debugPrint('❌ 리뷰 작성 실패: $e');
       return (reviewId: null, error: '리뷰 작성에 실패했습니다.');

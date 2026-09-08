@@ -197,6 +197,20 @@ service cloud.firestore {
       return rr != null && rr.get('workerId', '') == uid && rr.get('businessId', '') == bizId;
     }
 
+    // [REVIEW-BINDING 2026-09-08] ADMIN_TO_USER 리뷰 생성 시 review_requests binding 강제.
+    // P2 fix: wrong target / wrong business / expired / already-submitted request가
+    //   review_requests.adminStatus 를 소비하는 것을 write boundary에서 차단.
+    // 검증: workerId==targetUserId, businessId 일치, adminStatus==pending, deadline 미만료(서버시각 기준).
+    // canonical safety boundary — 클라이언트 TX 내 검증은 defense-in-depth 전용.
+    function isAdminReviewRequestBound(reqId, targetUserId, businessId) {
+      let rr = get(/databases/$(database)/documents/review_requests/$(reqId)).data;
+      return rr != null &&
+        rr.get('workerId', '') == targetUserId &&
+        rr.get('businessId', '') == businessId &&
+        rr.get('adminStatus', '') == 'pending' &&
+        rr.get('deadline', request.time) >= request.time;
+    }
+
     // 멤버 초대 유효성 검증: pending 상태 + 대상 일치 + 30일 이내
     // [MEDIUM-01] 클라이언트 만료 필터링(30일)을 Firestore 규칙 레벨에서 보강
     //   get() 1회로 4개 조건을 한 번에 검증 (기존 3회 반복 호출 통합)
@@ -1181,7 +1195,16 @@ service cloud.firestore {
                          request.resource.data.reviewerId == request.auth.uid &&
                          (isAdminOf(request.resource.data.businessId) ||
                           (isSubAdminOf(request.resource.data.businessId) &&
-                           subAdminCanManageWorkers(request.resource.data.businessId)))) ||
+                           subAdminCanManageWorkers(request.resource.data.businessId))) &&
+                         // [REVIEW-BINDING 2026-09-08] P2 fix: request↔review identity binding 강제.
+                         // requestId 필수 + review_requests.workerId/businessId/adminStatus/deadline 교차검증.
+                         // wrong target, wrong business, expired deadline, already-submitted 모두 write boundary 차단.
+                         'requestId' in request.resource.data &&
+                         'targetUserId' in request.resource.data &&
+                         isAdminReviewRequestBound(
+                           request.resource.data.requestId,
+                           request.resource.data.targetUserId,
+                           request.resource.data.businessId)) ||
                         (request.resource.data.reviewType == 'USER_TO_BUSINESS' &&
                          isUser() && isNotBlacklisted() &&
                          // [H-01] reviewerId는 익명 보장을 위해 저장하지 않으므로 필드 부재를 강제
@@ -1564,7 +1587,16 @@ service cloud.firestore {
                        request.resource.data.diff(resource.data).affectedKeys()
                          .hasOnly(['adminStatus', 'adminReviewId']) &&
                        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['adminStatus']) ||
-                        request.resource.data.adminStatus in ['pending', 'submitted'])) ||
+                        request.resource.data.adminStatus in ['pending', 'submitted']) &&
+                       // [REVIEW-BINDING 2026-09-08] adminStatus→submitted 전환 시 monthly_review 동시 생성 강제.
+                       // getAfter()로 동일 TX/batch 내 monthly_review가 존재함을 확인.
+                       // monthly_review 없이 review_requests.adminStatus만 submitted로 마킹하는 경로 차단.
+                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['adminStatus']) ||
+                        request.resource.data.adminStatus != 'submitted' ||
+                        ('adminReviewId' in request.resource.data &&
+                         getAfter(/databases/$(database)/documents/monthly_reviews/$(request.resource.data.adminReviewId)).data != null &&
+                         getAfter(/databases/$(database)/documents/monthly_reviews/$(request.resource.data.adminReviewId)).data.get('requestId', '') == requestId &&
+                         getAfter(/databases/$(database)/documents/monthly_reviews/$(request.resource.data.adminReviewId)).data.get('businessId', '') == resource.data.businessId))) ||
                       isSuperAdmin()
                     );
 
