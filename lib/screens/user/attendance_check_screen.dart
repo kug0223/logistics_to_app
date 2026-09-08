@@ -210,9 +210,10 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
 
       } else if (type == 'beacon') {
         // ── 비콘 전용 ─────────────────────────────────────────
+        // [LOCATION-GATE] 비콘 스캔 후 GPS도 획득 — server GPS 거리 검증에 사용
         final ok = await _verifyByBeacon(business);
-        if (!ok || !mounted) return;
-        // 비콘 성공 시 GPS 좌표는 null (위치 저장 불필요)
+        if (!ok.$1 || !mounted) return;
+        lat = ok.$2; lng = ok.$3;
         usedMethod = 'beacon';
 
       } else {
@@ -230,8 +231,10 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
           if (mounted) ToastHelper.showInfo('GPS 확인 불가 — 비콘으로 재시도합니다.');
           await Future.delayed(const Duration(milliseconds: 600));
           if (!mounted) return;
+          // [LOCATION-GATE] 비콘 폴백도 GPS 좌표 획득 필수
           final beaconOk = await _verifyByBeacon(business);
-          if (!beaconOk || !mounted) return;
+          if (!beaconOk.$1 || !mounted) return;
+          lat = beaconOk.$2; lng = beaconOk.$3;
           usedMethod = 'beacon';
         }
       }
@@ -421,8 +424,10 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
   }
 
   // ── 비콘 검증 헬퍼 ─────────────────────────────────────────────
-  /// 반환: true = 비콘 인식 성공, false = 실패
-  Future<bool> _verifyByBeacon(BusinessModel business) async {
+  /// 반환: (verified, lat, lng)
+  /// [LOCATION-GATE] 비콘 스캔 성공 후 GPS 좌표도 필수 획득 — server GPS radius 검증에 사용
+  /// bare beacon(GPS 좌표 없음) 원격 체크인 차단 목적
+  Future<(bool, double?, double?)> _verifyByBeacon(BusinessModel business) async {
     final uuid = business.beaconUUID;
     if (uuid == null || uuid.isEmpty) {
       if (mounted) {
@@ -432,11 +437,11 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
           message: '사업장에 비콘 UUID가 등록되어 있지 않습니다.\n관리자에게 문의하세요.',
         );
       }
-      return false;
+      return (false, null, null);
     }
 
     // [FIX-HIGH] getBusinessById 이후 unmount 가능 — mounted 체크 후 Navigator.of(context) 호출
-    if (!mounted) return false;
+    if (!mounted) return (false, null, null);
     final nav = Navigator.of(context, rootNavigator: true);
     // [FIX-HIGH] GPS와 동일하게 loadingShown 플래그 도입 — mounted=false 시 다이얼로그가
     //            표시되지 않았음에도 nav.pop()이 실행돼 다른 라우트를 팝하는 버그 방지
@@ -454,7 +459,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
     );
 
     if (loadingShown && nav.canPop()) nav.pop(); // 로딩 다이얼로그를 열었을 때만 닫기
-    if (!mounted) return false;
+    if (!mounted) return (false, null, null);
 
     if (result == null) {
       if (mounted) {
@@ -465,7 +470,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
               '블루투스가 켜져 있는지 확인해주세요.',
         );
       }
-      return false;
+      return (false, null, null);
     }
 
     if (!result) {
@@ -477,10 +482,32 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
               '사업장 내부에서 다시 시도해주세요.',
         );
       }
-      return false;
+      return (false, null, null);
     }
 
-    return true;
+    // [LOCATION-GATE] 비콘 근접 확인 후 GPS 좌표도 획득 — server-side GPS 검증에 필요
+    // GPS가 없으면 server에서 위치 검증 불가 → 체크인 차단
+    if (!mounted) return (false, null, null);
+    DialogHelper.showLoading(context, message: 'GPS 확인 중...');
+    final gpsPosition = await LocationHelper.getCurrentPosition();
+    if (mounted && Navigator.of(context, rootNavigator: true).canPop()) {
+      Navigator.of(context, rootNavigator: true).pop();
+    }
+    if (!mounted) return (false, null, null);
+
+    if (gpsPosition == null) {
+      if (mounted) {
+        await DialogHelper.showError(
+          context,
+          title: 'GPS 필요',
+          message: '비콘 출근 시 GPS 위치도 확인이 필요합니다.\n'
+              'GPS를 활성화하고 다시 시도해주세요.',
+        );
+      }
+      return (false, null, null);
+    }
+
+    return (true, gpsPosition.latitude, gpsPosition.longitude);
   }
 
   /// 퇴근 체크 — attendanceType에 따라 GPS/비콘 분기
@@ -518,9 +545,10 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
       }
 
       if (type == 'beacon') {
-        // 비콘 전용: 근접 확인 (GPS 좌표 불필요)
+        // 비콘 전용: [LOCATION-GATE] 비콘 스캔 후 GPS도 획득 — server GPS 거리 검증에 사용
         final ok = await _verifyByBeacon(business);
-        if (!ok || !mounted) return;
+        if (!ok.$1 || !mounted) return;
+        lat = ok.$2; lng = ok.$3;
         usedMethod = 'beacon';
       } else if (type == 'both') {
         // GPS + 비콘 병행: 출근과 동일하게 GPS 먼저, 실패 시 비콘 폴백
@@ -532,8 +560,10 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
           if (mounted) ToastHelper.showInfo('GPS 확인 불가 — 비콘으로 재시도합니다.');
           await Future.delayed(const Duration(milliseconds: 600));
           if (!mounted) return;
+          // [LOCATION-GATE] 비콘 폴백도 GPS 좌표 획득 필수
           final beaconOk = await _verifyByBeacon(business);
-          if (!beaconOk || !mounted) return;
+          if (!beaconOk.$1 || !mounted) return;
+          lat = beaconOk.$2; lng = beaconOk.$3;
           usedMethod = 'beacon';
         }
       } else {

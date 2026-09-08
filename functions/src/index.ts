@@ -22560,6 +22560,62 @@ export const callableCheckIn = onCall(
     // appData.startTime이 서버 권위 소스 — 없으면 클라이언트값 fallback (하위호환, HH:MM 이미 검증됨)
     const serverStartTime = (appData.startTime as string | undefined) || scheduledStartTime;
 
+    // [LOCATION-GATE] attendanceType ↔ method 서버 바인딩 + GPS 거리 검증
+    // callableCheckIn이 출근 생성 전에 server-side admission gate를 실행한다.
+    // onAttendanceCreated trigger는 post-commit 감사 로그 용도(suspicious 마킹)만 유지.
+    // 한계: GPS 좌표는 client-asserted이므로 targeted spoof(사업장 좌표 그대로 전달) 는 잔존.
+    // ATTENDANCE_TRIVIAL_REMOTE_SPOOF = CLOSED, TARGETED_GPS_SPOOF_REMAINS = YES
+    {
+      const serverAttendanceType = (bizSnap.data()?.attendanceType as string | undefined) ?? "gps";
+      const bizLat = bizSnap.data()?.latitude as number | undefined;
+      const bizLng = bizSnap.data()?.longitude as number | undefined;
+      const rawRadius = bizSnap.data()?.gpsRadius;
+      const bizGpsRadius = typeof rawRadius === "number" && rawRadius > 0 ? rawRadius : 100;
+
+      // 1. manual: 근로자 self check-in 불가 — 관리자 직접 처리 경로 유지
+      if (serverAttendanceType === "manual") {
+        throw new HttpsError(
+          "failed-precondition",
+          "이 사업장은 관리자가 출근을 직접 처리합니다. 관리자에게 문의하세요.",
+        );
+      }
+
+      // 2. GPS 좌표 필수 — bare beacon/qr 원격 체크인 차단
+      //    method="beacon"만 전송 + lat/lng=null → 즉시 거부 (BARE_BEACON_REMOTE_CHECKIN = DENIED)
+      if (latitude == null || longitude == null) {
+        throw new HttpsError(
+          "invalid-argument",
+          "출근 위치 정보(GPS)가 필요합니다. GPS를 활성화하고 다시 시도해주세요.",
+        );
+      }
+
+      // 3. 좌표 범위 검증 — 임의/비현실적 값 차단
+      if (!isFinite(latitude) || latitude < -90 || latitude > 90) {
+        throw new HttpsError("invalid-argument", "유효하지 않은 위도 값입니다.");
+      }
+      if (!isFinite(longitude) || longitude < -180 || longitude > 180) {
+        throw new HttpsError("invalid-argument", "유효하지 않은 경도 값입니다.");
+      }
+
+      // 4. 사업장 위치 설정 필수 — 미설정 사업장은 GPS 검증 불가이므로 차단
+      if (bizLat == null || bizLng == null) {
+        throw new HttpsError(
+          "failed-precondition",
+          "사업장 위치가 설정되지 않았습니다. 관리자에게 문의하세요.",
+        );
+      }
+
+      // 5. Haversine 거리 검증 — 반경 초과 시 출근 생성 전 차단
+      //    (GPS_OUTSIDE_RADIUS_CHECKIN = DENIED)
+      const distM = haversineDistanceMeters(latitude, longitude, bizLat, bizLng);
+      if (distM > bizGpsRadius) {
+        throw new HttpsError(
+          "permission-denied",
+          `사업장 반경을 벗어났습니다. 현재 거리: ${Math.round(distM)}m, 허용 반경: ${bizGpsRadius}m`,
+        );
+      }
+    }
+
     // 3. docId: {applicationId}_{yyyyMMdd}
     const dateStr = `${workDateKST.getUTCFullYear()}${String(workDateKST.getUTCMonth() + 1).padStart(2, "0")}${String(workDateKST.getUTCDate()).padStart(2, "0")}`;
     const docId = `${applicationId}_${dateStr}`;
