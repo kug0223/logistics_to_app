@@ -9186,28 +9186,14 @@ export const callableUpdateTO = onCall(
       if (newRs && newRe && newRs.toMillis() >= newRe.toMillis()) {
         throw new HttpsError("invalid-argument", "rangeEnd는 rangeStart보다 이후여야 합니다.");
       }
-      // [CONTRACT-DATE-GUARD] active application 존재 시 날짜 변경 차단 (SUPER_ADMIN 면제)
-      // Application.workDate/workEndDate는 지원 시점 스냅샷 — TO 날짜 변경 시 diverge 발생
-      // Firestore: 신규 생성 application 감지는 구조적 한계(query-based TX conflict detection 미지원) — best-effort
-      if (!isSuperAdmin) {
-        const DATE_ACTIVE_STATUSES = ["PENDING", "INVITED", "CONTRACT_PENDING", "CONFIRMED"];
-        const dateActiveChecks = await Promise.all(
-          DATE_ACTIVE_STATUSES.map((st) =>
-            db.collection("applications")
-              .where("toId", "==", toId)
-              .where("status", "==", st)
-              .limit(1)
-              .get()
-          )
-        );
-        if (dateActiveChecks.some((s) => !s.empty)) {
-          throw new HttpsError(
-            "failed-precondition",
-            "활성 지원자가 있는 공고의 계약 기간을 변경할 수 없습니다. 지원자를 먼저 처리해주세요."
-          );
-        }
-      }
+      // [CONTRACT-DATE-GUARD] 통합 TX 내부로 이전 — 직렬화 보장
+      // callableApplyToTO는 TX 안에서 toRef.totalPending을 증분하므로:
+      //   apply가 먼저 commit → toRef 수정 → 이 TX가 Firestore 충돌로 retry
+      //   → 재시도 시 아래 TX 내 dateActiveSnapshots가 PENDING Application을 포착 → REJECT
+      // tx.get(Query)는 @google-cloud/firestore 7.x에서 완전 지원 (3-overload 확인)
     }
+    // CONTRACT-DATE-GUARD를 통합 TX 내부에서 실행하기 위한 플래그 (TX 외부에서 미리 계산)
+    const isDateChange = "rangeStart" in updates || "rangeEnd" in updates;
 
     // isManualClosed 처리: false만 허용 (true → closeTOManually CF 전용)
     const wantsReopen = updates.isManualClosed === false && toData.isManualClosed === true;
@@ -9382,10 +9368,13 @@ export const callableUpdateTO = onCall(
     finalUpdates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
     finalUpdates.updatedBy = callerUid;
 
-    // [STALE-EDIT+CAPACITY-RACE-GUARD] 통합 TX: editRevision 충돌 차단 + totalRequired 동시성 보호
+    // [STALE-EDIT+CAPACITY-RACE-GUARD+CONTRACT-DATE-GUARD] 통합 TX
     // - editRevision 불일치: 다른 관리자가 먼저 저장 → failed-precondition
     // - totalRequired < fresh totalConfirmed: 동시 confirm이 끼어든 경쟁 → failed-precondition
-    // - 두 조건 모두 TX 내 fresh read로 원자적 검증
+    // - [CONTRACT-DATE-GUARD TX] 날짜 변경 시 active Application 존재 검증 (SUPER_ADMIN 면제)
+    //   callableApplyToTO가 toRef.totalPending을 TX 내 증분 → apply commit 시 이 TX retry
+    //   → 재시도에서 dateActiveSnapshots가 신규 Application 포착 → REJECT
+    // 모든 읽기(toRef + Query ×4)는 txEdit.update 이전에 완료 — Firestore read-before-write 준수
     await db.runTransaction(async (txEdit) => {
       const freshSnap = await txEdit.get(toRef);
       if (!freshSnap.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
@@ -9404,6 +9393,27 @@ export const callableUpdateTO = onCall(
           throw new HttpsError(
             "failed-precondition",
             `totalRequired(${newReq})는 확정 인원(${freshConfirmed}) 이상이어야 합니다.`
+          );
+        }
+      }
+      // [CONTRACT-DATE-GUARD TX] 날짜 변경 + 비SUPER_ADMIN 경우에만 실행
+      // tx.get(Query): 읽힌 문서들이 TX read-set에 포함 → apply의 toRef write로 retry 보장
+      if (isDateChange && !isSuperAdmin) {
+        const DATE_ACTIVE_STATUSES = ["PENDING", "INVITED", "CONTRACT_PENDING", "CONFIRMED"];
+        const dateActiveSnapshots = await Promise.all(
+          DATE_ACTIVE_STATUSES.map((st) =>
+            txEdit.get(
+              db.collection("applications")
+                .where("toId", "==", toId)
+                .where("status", "==", st)
+                .limit(1)
+            )
+          )
+        );
+        if (dateActiveSnapshots.some((s) => !s.empty)) {
+          throw new HttpsError(
+            "failed-precondition",
+            "활성 지원자가 있는 공고의 계약 기간을 변경할 수 없습니다. 지원자를 먼저 처리해주세요."
           );
         }
       }
@@ -23748,6 +23758,12 @@ export const callableApplyToTO = onCall(
       }
       isReactivation = txIsReactivation; // 트랜잭션 성공 후 반환값에 반영
 
+      // [CONTRACT-DATE-GUARD FIX] contract TO 지원 시 서버 fresh rangeStart/rangeEnd를 canonical workDate로 사용
+      // !slotRef(else) 분기에서 freshToData.rangeStart/rangeEnd로 재설정 — 클라이언트 stale 값 무시
+      // DATE_FIRST_APPLY_USES_FRESH_TO_RANGE = YES 보장
+      let effectiveContractWorkDate: admin.firestore.Timestamp = workDate;
+      let effectiveContractWorkEndDate: admin.firestore.Timestamp | null = workEndDate;
+
       // TOCTOU 방지: 트랜잭션 내 최종 마감·정원 재검증
       if (slotRef) {
         const latestSlot = await tx.get(slotRef);
@@ -23788,6 +23804,15 @@ export const callableApplyToTO = onCall(
         const latestTO = await tx.get(toRef);
         if (!latestTO.exists) throw new HttpsError("not-found", "공고를 찾을 수 없습니다.");
         const ld = latestTO.data()!;
+        // [CONTRACT-DATE-GUARD FIX] TX 내 fresh TO 날짜로 effectiveContractWorkDate 갱신
+        // 관리자가 TO 날짜를 변경한 후 클라이언트가 stale workDateMs를 전송해도
+        // Application에는 신선한 서버 rangeStart/rangeEnd가 저장됨
+        if (isContract) {
+          const freshRs = ld["rangeStart"] as admin.firestore.Timestamp | undefined;
+          const freshRe = ld["rangeEnd"] as admin.firestore.Timestamp | undefined;
+          if (freshRs) effectiveContractWorkDate = freshRs;
+          if (freshRe) effectiveContractWorkEndDate = freshRe;
+        }
         if (ld["isManualClosed"] === true || ld["status"] === "CLOSED") {
           throw new HttpsError("permission-denied", "방금 마감된 공고입니다.");
         }
@@ -23828,7 +23853,7 @@ export const callableApplyToTO = onCall(
           status: "PENDING",
           type: isContract ? "long_term" : "short",
           appliedAt: admin.firestore.FieldValue.serverTimestamp(),
-          workDate,
+          workDate: effectiveContractWorkDate,
           // [V5-FIX] 재지원 시 임금·시간 갱신 — TO 임금 변경 후 재지원 시 구버전 잔류 방지
           wage: effectiveWage, wageType: effectiveWageType,
           startTime, endTime,
@@ -23849,7 +23874,7 @@ export const callableApplyToTO = onCall(
         if (resolvedWdId) reactivateData["wdId"] = resolvedWdId; // [Phase 8.1E.2]
         if (desiredStartDate) reactivateData["desiredStartDate"] = desiredStartDate;
         else reactivateData["desiredStartDate"] = admin.firestore.FieldValue.delete();
-        if (workEndDate) reactivateData["workEndDate"] = workEndDate;
+        if (effectiveContractWorkEndDate) reactivateData["workEndDate"] = effectiveContractWorkEndDate;
         else reactivateData["workEndDate"] = admin.firestore.FieldValue.delete();
         // [F-01] 단기 재지원 시 스테일 workDays 필드 명시적 삭제 — 충돌 판정 오분류 방지
         if (validatedWorkDays) reactivateData["workDays"] = validatedWorkDays;
@@ -23878,7 +23903,7 @@ export const callableApplyToTO = onCall(
           status: "PENDING",
           type: isContract ? "long_term" : "short",
           appliedAt: admin.firestore.FieldValue.serverTimestamp(),
-          workDate,
+          workDate: effectiveContractWorkDate,
           statusHistory: [historyEntry],
           // [ID-CONSENT] 신분증 열람 사전동의 서버 기록 — legacy 호환 유지
           idCardConsentGiven: true,
@@ -23899,7 +23924,7 @@ export const callableApplyToTO = onCall(
         if (workTypeColor) setData["workTypeColor"] = workTypeColor;
         if (workTypeBackgroundColor) setData["workTypeBackgroundColor"] = workTypeBackgroundColor;
         if (isContract) {
-          if (workEndDate) setData["workEndDate"] = workEndDate;
+          if (effectiveContractWorkEndDate) setData["workEndDate"] = effectiveContractWorkEndDate;
           // [APP-02] 검증된 workDays 사용 — 재지원 경로와 통일 (원본 미검증값 저장 방지)
           if (validatedWorkDays) setData["workDays"] = validatedWorkDays;
           if (desiredStartDate) setData["desiredStartDate"] = desiredStartDate;
