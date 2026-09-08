@@ -578,16 +578,22 @@ service cloud.firestore {
                     !request.resource.data.diff(resource.data).affectedKeys()
                       .hasAny(['isApproved', 'approvedBy', 'deactivatedBy', 'reactivatedBy']) &&
                     (isSuperAdmin() ||
-                     (!request.resource.data.diff(resource.data).affectedKeys()
+                     ((!request.resource.data.diff(resource.data).affectedKeys()
                         // [SEC-108] rating/reviewCount: CF updateBusinessReviewStats Admin SDK 전용
                         //   관리자가 직접 평점 위조 시 USER들이 허위 평판 사업장을 신뢰하는 피해 발생
                         .hasAny(['ownerId', 'adminIds', 'approvedAt',
                                  'deactivatedAt', 'reactivatedAt', 'rating', 'reviewCount',
                                  // [M-4 수정 2026-07-17] businessNumber 불변 — 승인 후 사업자번호 변경 차단
                                  'businessNumber']) ||
-                      (request.resource.data.diff(resource.data).affectedKeys()
-                        .hasOnly(['deactivatedAt']) &&
-                       resource.data.get('adminIds', []).size() <= 1)));
+                       (request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['deactivatedAt']) &&
+                        resource.data.get('adminIds', []).size() <= 1)) &&
+                      // [LICENSE-GATE] 승인된 사업장의 사업자등록증 URL 클라이언트 직접 변경 차단
+                      // isApproved=true → callableUploadBusinessImage CF(Admin SDK)만 업데이트 가능
+                      // isApproved=false(신규/미승인) → 정상 upload-save workflow 유지
+                      (!resource.data.get('isApproved', false) ||
+                       !request.resource.data.diff(resource.data).affectedKeys()
+                         .hasAny(['businessLicenseImageUrl']))));
       // [SEC-100] 공동 관리자 탈퇴: 본인 uid만 adminIds에서 제거 허용 (별도 규칙)
       // 기존 update 규칙에서 adminIds 변경을 차단하므로 별도 경로 필요.
       // 조건: adminIds 필드만 변경 + 결과에서 본인이 제거됨 + 정확히 1명만 제거

@@ -734,7 +734,7 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
           // 사업자등록증 (신규 등록 필수 / 수정 시 선택)
           CommonWidgets.sectionHeader(
             context: context,
-            title: '사업자등록증${_isEditMode ? ' (선택)' : ' (필수)'}',
+            title: '사업자등록증${_isEditMode ? (widget.business?.isApproved == true ? ' (잠금)' : ' (선택)') : ' (필수)'}',
             icon: Icons.description_outlined,
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
@@ -849,11 +849,16 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
     final hasNewLocal = _businessLicenseImage != null;
     final hasExistingUrl = _businessLicenseImageUrl != null;
     final hasImage = hasNewLocal || hasExistingUrl;
+    // [LICENSE-GATE] 승인된 사업장은 클라이언트 직접 라이선스 교체 불가 (P1 fix 2026-09-08)
+    // isApproved=true 상태에서 서버(Firestore Rules)가 businessLicenseImageUrl 변경을 거부함.
+    final isApprovedBiz = _isEditMode && (widget.business?.isApproved == true);
 
     return Stack(
       children: [
         GestureDetector(
-          onTap: () async {
+          onTap: isApprovedBiz
+              ? null  // 승인된 사업장: 탭 비활성 (서버 차단과 UI 일치)
+              : () async {
             final image = await ImageHelper.pickAndCompressImage(
               context,
               type: ImageType.general,
@@ -905,10 +910,10 @@ class _BusinessFormScreenState extends State<BusinessFormScreen> {
                           ),
                           SizedBox(height: ResponsiveHelper.spacing(context, 4)),
                           Text(
-                            '탭하여 재업로드',
+                            isApprovedBiz ? '관리자를 통해서만 변경 가능' : '탭하여 재업로드',
                             style: ResponsiveHelper.tinyStyle(
                               context,
-                              color: AppColors.grey500,
+                              color: isApprovedBiz ? AppColors.warning : AppColors.grey500,
                             ),
                           ),
                         ],

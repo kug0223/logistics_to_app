@@ -13297,18 +13297,26 @@ export const onBusinessCreated = onDocumentCreated(
         : true;  // settings/system 문서 없으면 기본값 자동승인
 
       if (autoApprove) {
-        // [MEDIUM-02-FIX] at-least-once 재시도로 approvedAt 타임스탬프 중복 기록 방지
-        // 트랜잭션으로 isApproved 상태를 원자적으로 확인 후 갱신
-        await db.runTransaction(async (tx) => {
-          const fresh = await tx.get(event.data!.ref);
-          if (fresh.data()?.isApproved === true) return;  // 이미 승인됨 — 중복 실행 차단
-          tx.update(event.data!.ref, {
-            isApproved: true,
-            approvedAt: Timestamp.now(),
-            approvedBy: "system_auto",
+        // [LICENSE-GATE] fake license URL로 자동승인 우회 차단 (P1 fix 2026-09-08)
+        const bizId = event.params.businessId;
+        const licenseValid = await hasValidBusinessLicense(bizId, data);
+        if (!licenseValid) {
+          console.warn(`[onBusinessCreated] 유효한 사업자등록증 없음 — 자동 승인 보류: ${bizId}`);
+          // isApproved remains false; SUPER_ADMIN 수동 승인 + 실제 증빙 업로드 필요
+        } else {
+          // [MEDIUM-02-FIX] at-least-once 재시도로 approvedAt 타임스탬프 중복 기록 방지
+          // 트랜잭션으로 isApproved 상태를 원자적으로 확인 후 갱신
+          await db.runTransaction(async (tx) => {
+            const fresh = await tx.get(event.data!.ref);
+            if (fresh.data()?.isApproved === true) return;  // 이미 승인됨 — 중복 실행 차단
+            tx.update(event.data!.ref, {
+              isApproved: true,
+              approvedAt: Timestamp.now(),
+              approvedBy: "system_auto",
+            });
           });
-        });
-        console.log(`[onBusinessCreated] 자동 승인 완료: ${event.params.businessId}`);
+          console.log(`[onBusinessCreated] 자동 승인 완료: ${bizId}`);
+        }
       } else {
         console.log(`[onBusinessCreated] 수동 승인 대기: ${event.params.businessId}`);
       }
@@ -14939,6 +14947,88 @@ async function assertBizAdmin(
   return { callerData, bizData: bizSnap.data() };
 }
 
+// ── Business License Storage Provenance Validation ────────────────────────────
+// [LICENSE-GATE] P1 BUSINESS_POSTING_ELIGIBILITY_BYPASS fix (2026-09-08)
+// businessLicenseImageUrl truthy check 대신 실제 Storage object 존재를 검증.
+// URL parse → businessId-scoped prefix → bucket.file.exists() 순서. fail-closed.
+
+/**
+ * Firebase Storage download URL에서 Storage 경로를 추출한다.
+ * 경로가 businesses/{businessId}/license/ prefix와 일치하면 경로 반환, 아니면 null.
+ */
+function parseBusinessLicensePath(
+  rawUrl: string | undefined,
+  businessId: string,
+): string | null {
+  if (!rawUrl) return null;
+  const match = rawUrl.match(/\/o\/([^?]+)/);
+  if (!match || !match[1]) return null;
+  let storagePath: string;
+  try {
+    storagePath = decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+  if (!storagePath.startsWith(`businesses/${businessId}/license/`)) return null;
+  return storagePath;
+}
+
+/**
+ * [LICENSE-GATE] 사업자등록증이 실제 Storage object로 존재하는지 검증한다.
+ *
+ * 검증 순서:
+ *   1. businesses/{bizId}.businessLicenseImageUrl → URL parse → prefix → exists()
+ *   2. (레거시) users/{ownerId}.businessLicenseImageUrl → URL parse → exists()
+ *      (레거시 경로는 businessId prefix 강제 없음; URL parse + exists() 검증)
+ *
+ * false 반환 조건 (fail-closed):
+ *   - null/빈 문자열/임의 문자열
+ *   - Firebase Storage URL이 아닌 값 (parse 실패)
+ *   - businesses/{otherId}/license/ 등 잘못된 prefix
+ *   - Storage object 미존재
+ *   - Storage API 오류
+ */
+async function hasValidBusinessLicense(
+  businessId: string,
+  bizData: FirebaseFirestore.DocumentData | undefined,
+): Promise<boolean> {
+  const bucket = admin.storage().bucket();
+
+  // 1. canonical: businesses/{bizId}.businessLicenseImageUrl
+  const canonicalUrl = bizData?.businessLicenseImageUrl as string | undefined;
+  const canonicalPath = parseBusinessLicensePath(canonicalUrl, businessId);
+  if (canonicalPath) {
+    try {
+      const [exists] = await bucket.file(canonicalPath).exists();
+      if (exists) return true;
+    } catch {
+      // Storage API 오류 → fail-closed, 레거시 경로로 계속
+    }
+  }
+
+  // 2. legacy: users/{ownerId}.businessLicenseImageUrl
+  // [OWNER-LEGACY] 단순 truthy check 제거 — URL parse + exists() 강제
+  const ownerId = bizData?.ownerId as string | undefined;
+  if (ownerId) {
+    const ownerSnap = await db.collection("users").doc(ownerId).get();
+    const legacyUrl = ownerSnap.data()?.businessLicenseImageUrl as string | undefined;
+    if (legacyUrl) {
+      const legacyMatch = legacyUrl.match(/\/o\/([^?]+)/);
+      if (legacyMatch && legacyMatch[1]) {
+        try {
+          const legacyPath = decodeURIComponent(legacyMatch[1]);
+          const [legacyExists] = await bucket.file(legacyPath).exists();
+          if (legacyExists) return true;
+        } catch {
+          // Storage API 오류 → fail-closed
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
 // ── Business Posting Readiness 공통 helper ───────────────────
 // CREATE / PUBLISH / REOPEN / SCHEDULED ACTIVATION 전에 공통으로 호출.
 // 조건: D(isApproved) + E(license canonical/owner-legacy) + F(workTypes ≥ 1)
@@ -14953,18 +15043,12 @@ async function assertBusinessPostingReady(
     throw new HttpsError("failed-precondition", "사업장이 승인된 후 공고를 등록할 수 있습니다.");
   }
 
-  // E. 사업자등록증 — canonical(business) → owner legacy(users/{ownerId}) 순서
-  const hasCanonicalLicense = !!(bizData?.businessLicenseImageUrl as string | undefined);
-  if (!hasCanonicalLicense) {
-    const ownerId = bizData?.ownerId as string | undefined;
-    let hasOwnerLegacyLicense = false;
-    if (ownerId) {
-      const ownerSnap = await db.collection("users").doc(ownerId).get();
-      hasOwnerLegacyLicense = !!(ownerSnap.data()?.businessLicenseImageUrl as string | undefined);
-    }
-    if (!hasOwnerLegacyLicense) {
-      throw new HttpsError("failed-precondition", "사업자등록증을 먼저 등록해 주세요.");
-    }
+  // E. 사업자등록증 — [LICENSE-GATE] Storage provenance 검증 (truthy check 제거)
+  // URL parse → businessId-scoped prefix → bucket.exists() 순서. fail-closed.
+  // [OWNER-LEGACY] 레거시 owner 경로도 truthy check 대신 Storage exists() 검증.
+  const validLicense = await hasValidBusinessLicense(bizId, bizData);
+  if (!validLicense) {
+    throw new HttpsError("failed-precondition", "사업자등록증을 먼저 등록해 주세요.");
   }
 
   // F. 업무 유형 ≥ 1 (workTypes 서브컬렉션, isActive == true)
@@ -24037,6 +24121,14 @@ export const callableManageBusiness = onCall(
 
     let updateData: Record<string, unknown>;
     if (action === "approve") {
+      // [LICENSE-GATE] 실제 Storage 사업자등록증 존재 확인 후 승인 (P1 fix 2026-09-08)
+      const licenseValid = await hasValidBusinessLicense(businessId, bizSnap.data());
+      if (!licenseValid) {
+        throw new HttpsError(
+          "failed-precondition",
+          "사업자등록증이 등록되지 않았거나 유효하지 않습니다. 실제 파일이 업로드된 후 승인해 주세요.",
+        );
+      }
       updateData = {
         isApproved: true,
         approvedAt: admin.firestore.FieldValue.serverTimestamp(),
