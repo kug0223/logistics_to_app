@@ -33,6 +33,7 @@ import '../../controllers/workforce_controller.dart';
 import '../../providers/user_provider.dart';
 import '../../services/fcm_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/admin_tab_switcher.dart';
 import '../../utils/navigation_helper.dart';
 import 'to_management/create_to_screen.dart';
 import 'workforce_management/workforce_list_view.dart';
@@ -63,6 +64,18 @@ class _JobsRootScreenState extends State<JobsRootScreen>
       if (!mounted) return;
       _controller.load(context);
     });
+
+    // [PHASE-2A] Home 인력 블록 → Jobs 탭 intent 핸들러 등록
+    // businessId가 제공되면 business filter를 교체하고, 없으면 기존 filter를 유지.
+    // dateRange는 항상 intent로 덮어쓴다.
+    AdminTabSwitcher.instance.registerJobsNavHandler(
+      ({required DateTimeRange dateRange, String? businessId}) {
+        if (!mounted) return;
+        if (businessId != null) _controller.setBusinessIdFilter(businessId);
+        _controller.setDateRangeFilter(dateRange);
+      },
+    );
+
     _fcmRefreshCallback = () {
       if (mounted) _controller.reload(context);
     };
@@ -86,6 +99,8 @@ class _JobsRootScreenState extends State<JobsRootScreen>
 
   @override
   void dispose() {
+    // [PHASE-2A] Jobs 탭 intent 핸들러 해제 — Shell 해제와 별도로 관리
+    AdminTabSwitcher.instance.unregisterJobsNavHandler();
     WorkforceController.dataRevision.removeListener(_onDataRevisionChanged);
     FCMService().removeAdminRefreshListener(_fcmRefreshCallback);
     WidgetsBinding.instance.removeObserver(this);

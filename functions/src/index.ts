@@ -30347,4 +30347,404 @@ export const callableGetHistoricalContractById = onCall(
   }
 );
 
+// ─── Staffing Readiness (D0~D+7) ────────────────────────────────────────────
+/**
+ * callableGetStaffingReadiness — Home 인력 블록용 D0~D+7 staffing 현황
+ *
+ * scope:     서버 결정 (client-supplied businessIds 신뢰 금지)
+ * SubAdmin:  selectedBusinessId server-validated + canManageTo || canManageWorkers gate
+ * OWNER:     uid.managedBusinessIds 전체 집계 (selectedBusinessId 무시)
+ *
+ * Flex TO:   slot.workDetailCounts[wdId].confirmedCount — per-wdId 부족분 합산
+ *            shortage = Σ max(wd.requiredCount - confirmed, 0) per wdId
+ *            (초과확정 wdId의 surplus가 다른 wdId 부족분을 상쇄하지 않음)
+ * Contract TO: CONFIRMED + CONTRACT_PENDING application 날짜 전개
+ *            shortage = max(totalRequired - confirmedOnDay, 0) per TO per day
+ *
+ * PENDING:   secondary signal only — capacity 계산 미포함
+ * 거짓 0:    쿼리 실패 시 available:false 반환 — 0과 "데이터 없음" 구분
+ */
+export const callableGetStaffingReadiness = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const uid = request.auth.uid;
+
+    // ── 1. 사용자 문서 — role + businessIds 서버 결정 ──────────────────────
+    const userSnap = await db.collection("users").doc(uid).get();
+    if (!userSnap.exists) throw new HttpsError("not-found", "사용자를 찾을 수 없습니다.");
+    const userData = userSnap.data()!;
+    const role = (userData["role"] as string) ?? "";
+
+    let businessIds: string[];
+    let isSubAdmin = false;
+
+    if (role === "BUSINESS_ADMIN" || role === "SUPER_ADMIN") {
+      businessIds = (userData["managedBusinessIds"] as string[] | undefined) ?? [];
+    } else if (role === "USER") {
+      const subAdminIds = (userData["subAdminBusinessIds"] as string[] | undefined) ?? [];
+      if (subAdminIds.length === 0) {
+        throw new HttpsError("permission-denied", "관리자만 접근 가능합니다.");
+      }
+      isSubAdmin = true;
+      businessIds = subAdminIds;
+    } else {
+      throw new HttpsError("permission-denied", "관리자만 접근 가능합니다.");
+    }
+
+    // SubAdmin scope narrowing (OWNER scope는 argument 무시)
+    if (isSubAdmin) {
+      const {selectedBusinessId} = (request.data ?? {}) as {selectedBusinessId?: string};
+      if (typeof selectedBusinessId === "string" && selectedBusinessId.trim().length > 0) {
+        const trimmedId = selectedBusinessId.trim();
+        if (!businessIds.includes(trimmedId)) {
+          throw new HttpsError("permission-denied", "해당 사업장에 대한 접근 권한이 없습니다.");
+        }
+        businessIds = [trimmedId];
+      }
+    }
+
+    if (businessIds.length === 0) {
+      return {available: true, days: []};
+    }
+
+    // ── 2. SubAdmin 권한 맵 (canManageTo || canManageWorkers 필요) ──────────
+    const permMap: Record<string, Record<string, boolean>> = {};
+    if (isSubAdmin) {
+      const memberSnaps = await Promise.all(
+        businessIds.map((bizId) =>
+          db.collection("businesses").doc(bizId).collection("members").doc(uid).get()
+        )
+      );
+      memberSnaps.forEach((snap, i) => {
+        permMap[businessIds[i]] =
+          ((snap.data() ?? {})["permissions"] ?? {}) as Record<string, boolean>;
+      });
+      businessIds = businessIds.filter((bizId) => {
+        const p = permMap[bizId] ?? {};
+        return p["canManageTo"] === true || p["canManageWorkers"] === true;
+      });
+      if (businessIds.length === 0) return {available: true, days: []};
+    }
+
+    // ── 3. D0~D+7 날짜 배열 (KST) ─────────────────────────────────────────
+    const todayKSTMidnight = srvHomeKSTMidnight();
+    const todayMs = todayKSTMidnight.getTime();
+    const N_DAYS = 8; // D0~D+7 포함
+
+    const KST_MS = 9 * 3600 * 1000;
+    const KST_WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];
+
+    // KST 기준 날짜 번호 (YYYYMMDD integer, 대소 비교용)
+    const srfKstDateNum = (d: Date): number => {
+      const kst = new Date(d.getTime() + KST_MS);
+      return (
+        kst.getUTCFullYear() * 10000 +
+        (kst.getUTCMonth() + 1) * 100 +
+        kst.getUTCDate()
+      );
+    };
+    // KST 기준 요일 한글 (workDays 비교용)
+    const srfKstWeekdayKo = (d: Date): string => {
+      const kst = new Date(d.getTime() + KST_MS);
+      return KST_WEEKDAY_KO[kst.getUTCDay()];
+    };
+
+    const dateDates: Date[] = [];
+    const dateLabels: string[] = [];
+    const dateDateNums: number[] = [];
+    for (let i = 0; i < N_DAYS; i++) {
+      const d = new Date(todayMs + i * 24 * 3600 * 1000);
+      dateDates.push(d);
+      dateLabels.push(srvHomeDateLabel(d));
+      dateDateNums.push(srfKstDateNum(d));
+    }
+
+    const d0Ts  = admin.firestore.Timestamp.fromDate(todayKSTMidnight);
+    const d7EndTs = admin.firestore.Timestamp.fromMillis(todayMs + N_DAYS * 24 * 3600 * 1000);
+
+    // ── 4. 사업장명 일괄 조회 ─────────────────────────────────────────────
+    const bizNameMap: Record<string, string> = {};
+    const bizSnaps = await Promise.allSettled(
+      businessIds.map((bizId) => db.collection("businesses").doc(bizId).get())
+    );
+    bizSnaps.forEach((r, i) => {
+      if (r.status === "fulfilled" && r.value.exists) {
+        const bd = r.value.data()!;
+        bizNameMap[businessIds[i]] =
+          (bd["businessName"] as string | undefined) ??
+          (bd["name"] as string | undefined) ??
+          businessIds[i];
+      } else {
+        bizNameMap[businessIds[i]] = businessIds[i];
+      }
+    });
+
+    // ── 5. 사업장별 병렬 처리 ─────────────────────────────────────────────
+    interface SrfDayAcc {
+      required:  number;
+      confirmed: number;
+      shortage:  number;
+      pending:   number;
+    }
+    interface SrfBizResult {
+      bizId:   string;
+      success: boolean; // false → 쿼리 실패 → available:false 설정
+      days:    SrfDayAcc[];
+    }
+
+    const bizResults = await Promise.allSettled(
+      businessIds.map(async (bizId): Promise<SrfBizResult> => {
+        const dayAcc: SrfDayAcc[] = Array.from({length: N_DAYS}, () => ({
+          required: 0, confirmed: 0, shortage: 0, pending: 0,
+        }));
+        let success = true;
+
+        // ── 5a. TO 목록 조회 (ACTIVE | SCHEDULED, isDeleted != true) ─────
+        const tosSnap = await db.collection("tos")
+          .where("businessId", "==", bizId)
+          .where("status", "in", ["ACTIVE", "SCHEDULED"])
+          .get();
+
+        type WdEntry = {id: string; required: number};
+        interface FlexTO  { toId: string; wds: WdEntry[] }
+        interface ContractTO {
+          toId:        string;
+          wds:         WdEntry[];
+          totalRequired: number;
+          rangeStart?: admin.firestore.Timestamp;
+          rangeEnd?:   admin.firestore.Timestamp;
+          workDays?:   string[];
+        }
+
+        const flexTOs:     FlexTO[]     = [];
+        const contractTOs: ContractTO[] = [];
+
+        for (const toDoc of tosSnap.docs) {
+          const d = toDoc.data();
+          if (d["isDeleted"] === true) continue; // soft delete
+          const toType = (d["type"] as string | undefined) ?? "";
+          const rawWDs = (d["workDetails"] as unknown[] | undefined) ?? [];
+          const wds: WdEntry[] = rawWDs
+            .filter((w): w is Record<string, unknown> =>
+              typeof w === "object" && w !== null)
+            .map((w) => ({
+              id:       ((w["id"] as string | undefined) ?? "").trim(),
+              required: Math.max(0, (w["requiredCount"] as number | undefined) ?? 0),
+            }))
+            .filter((w) => w.id.length > 0);
+
+          if (toType === "flex") {
+            flexTOs.push({toId: toDoc.id, wds});
+          } else if (toType === "contract") {
+            contractTOs.push({
+              toId:          toDoc.id,
+              wds,
+              totalRequired: wds.reduce((s, w) => s + w.required, 0),
+              rangeStart:    d["rangeStart"]  as admin.firestore.Timestamp | undefined,
+              rangeEnd:      d["rangeEnd"]    as admin.firestore.Timestamp | undefined,
+              workDays:      d["workDays"]    as string[] | undefined,
+            });
+          }
+        }
+
+        // ── 5b. Flex TOs: 슬롯 기반 per-wdId 인원 집계 ──────────────────
+        const flexResults = await Promise.allSettled(
+          flexTOs.map(async (to) => {
+            const slotsSnap = await db
+              .collection("tos").doc(to.toId).collection("slots")
+              .where("date", ">=", d0Ts)
+              .where("date", "<", d7EndTs)
+              .get();
+
+            for (const slotDoc of slotsSnap.docs) {
+              const sd = slotDoc.data();
+              const slotTs = sd["date"] as admin.firestore.Timestamp | undefined;
+              if (!slotTs) continue;
+
+              // 슬롯 날짜 → day index (KST 자정 UTC 기반)
+              const dayIdx = Math.round(
+                (slotTs.toMillis() - todayMs) / (24 * 3600 * 1000)
+              );
+              if (dayIdx < 0 || dayIdx >= N_DAYS) continue;
+
+              const wdc = (sd["workDetailCounts"] as
+                Record<string, {confirmedCount?: number}> | undefined) ?? {};
+
+              // per-wdId shortage 합산 — 초과확정 wdId surplus는 다른 wdId 부족분 상쇄 금지
+              for (const wd of to.wds) {
+                if (!(wd.id in wdc)) {
+                  // LEGACY_WORKDETAIL: workDetailCounts에 wdId 없음 → 임의 fallback 없이 skip
+                  continue;
+                }
+                const confirmed = Math.max(0, wdc[wd.id]?.confirmedCount ?? 0);
+                const shortage  = Math.max(0, wd.required - confirmed);
+                dayAcc[dayIdx].required  += wd.required;
+                dayAcc[dayIdx].confirmed += confirmed;
+                dayAcc[dayIdx].shortage  += shortage;
+              }
+            }
+          })
+        );
+        flexResults.forEach((r, i) => {
+          if (r.status === "rejected") {
+            console.error(`[staffingReadiness] ${bizId} flex TO ${flexTOs[i].toId} slot 실패:`, r.reason);
+            success = false;
+          }
+        });
+
+        // ── 5c. Contract TOs: 날짜 전개 기반 인원 집계 ──────────────────
+        const contractResults = await Promise.allSettled(
+          contractTOs.map(async (to) => {
+            if (to.totalRequired === 0) return;
+
+            // 확정 지원서 조회
+            const appsSnap = await db.collection("applications")
+              .where("toId", "==", to.toId)
+              .where("status", "in", CONFIRMED_STATUSES)
+              .get();
+
+            const toRangeStartNum = to.rangeStart
+              ? srfKstDateNum(to.rangeStart.toDate()) : 0;
+            const toRangeEndNum = to.rangeEnd
+              ? srfKstDateNum(to.rangeEnd.toDate()) : 99991231;
+
+            for (let i = 0; i < N_DAYS; i++) {
+              const dayNum = dateDateNums[i];
+              const dayWkd = srfKstWeekdayKo(dateDates[i]);
+
+              // TO 활성 여부: rangeStart..rangeEnd + workDays
+              if (dayNum < toRangeStartNum || dayNum > toRangeEndNum) continue;
+              if (to.workDays && to.workDays.length > 0 &&
+                  !to.workDays.includes(dayWkd)) continue;
+
+              dayAcc[i].required += to.totalRequired;
+
+              // 해당 날짜에 활성인 확정 지원서 수
+              let confirmedOnDay = 0;
+              for (const appDoc of appsSnap.docs) {
+                const ad = appDoc.data();
+
+                // 지원서 날짜 범위
+                const appStartTs = ad["workDate"]    as admin.firestore.Timestamp | undefined;
+                const appEndTs   = ad["workEndDate"] as admin.firestore.Timestamp | undefined;
+                const appStartNum = appStartTs ? srfKstDateNum(appStartTs.toDate()) : 0;
+                const appEndNum   = appEndTs   ? srfKstDateNum(appEndTs.toDate())   : 99991231;
+                if (dayNum < appStartNum || dayNum > appEndNum) continue;
+
+                // extraWorkDates (workDays 무관 근무일)
+                const extras = ad["extraWorkDates"] as admin.firestore.Timestamp[] | undefined;
+                const isExtra = Array.isArray(extras) &&
+                  extras.some((ts) => srfKstDateNum(ts.toDate()) === dayNum);
+
+                if (!isExtra) {
+                  // 지원서 workDays 필터
+                  const appWorkDays = ad["workDays"] as string[] | undefined;
+                  if (appWorkDays && appWorkDays.length > 0 &&
+                      !appWorkDays.includes(dayWkd)) continue;
+
+                  // leaveDates 필터
+                  const leaves = ad["leaveDates"] as admin.firestore.Timestamp[] | undefined;
+                  if (Array.isArray(leaves) &&
+                      leaves.some((ts) => srfKstDateNum(ts.toDate()) === dayNum)) continue;
+                }
+
+                confirmedOnDay++;
+              }
+
+              dayAcc[i].confirmed += confirmedOnDay;
+              dayAcc[i].shortage  += Math.max(0, to.totalRequired - confirmedOnDay);
+            }
+          })
+        );
+        contractResults.forEach((r, i) => {
+          if (r.status === "rejected") {
+            console.error(`[staffingReadiness] ${bizId} contract TO ${contractTOs[i].toId} 실패:`, r.reason);
+            success = false;
+          }
+        });
+
+        // ── 5d. Pending 지원서 (secondary signal) — 실패 시 0 유지 ────────
+        try {
+          const pendingSnap = await db.collection("applications")
+            .where("businessId", "==", bizId)
+            .where("status",     "==", "PENDING")
+            .where("workDate",   ">=", d0Ts)
+            .where("workDate",   "<",  d7EndTs)
+            .get();
+
+          for (const pDoc of pendingSnap.docs) {
+            const pd = pDoc.data();
+            const wdTs = pd["workDate"] as admin.firestore.Timestamp | undefined;
+            if (!wdTs) continue;
+            const pendingDayNum = srfKstDateNum(wdTs.toDate());
+            const idx = dateDateNums.indexOf(pendingDayNum);
+            if (idx >= 0) dayAcc[idx].pending++;
+          }
+        } catch (e) {
+          console.warn(`[staffingReadiness] ${bizId} pending 쿼리 실패 (secondary signal — 무시):`, e);
+        }
+
+        return {bizId, success, days: dayAcc};
+      })
+    );
+
+    // ── 6. 전체 집계 ──────────────────────────────────────────────────────
+    interface SrfBizDayEntry {
+      businessId:    string;
+      businessName:  string;
+      requiredCount:  number;
+      confirmedCount: number;
+      shortageCount:  number;
+      pendingCount:   number;
+    }
+    interface SrfDayEntry {
+      date:           string;
+      requiredCount:  number;
+      confirmedCount: number;
+      shortageCount:  number;
+      pendingCount:   number;
+      byBusiness:     SrfBizDayEntry[];
+    }
+
+    const aggDays: SrfDayEntry[] = dateLabels.map((label) => ({
+      date: label, requiredCount: 0, confirmedCount: 0,
+      shortageCount: 0, pendingCount: 0, byBusiness: [],
+    }));
+
+    let overallAvailable = true;
+
+    for (const r of bizResults) {
+      if (r.status === "rejected") {
+        console.error("[staffingReadiness] 사업장 처리 실패:", r.reason);
+        overallAvailable = false;
+        continue;
+      }
+      const {bizId, success, days} = r.value;
+      if (!success) overallAvailable = false;
+
+      const bizName = bizNameMap[bizId] ?? bizId;
+      for (let i = 0; i < N_DAYS; i++) {
+        const {required, confirmed, shortage, pending} = days[i];
+        aggDays[i].requiredCount  += required;
+        aggDays[i].confirmedCount += confirmed;
+        aggDays[i].shortageCount  += shortage;
+        aggDays[i].pendingCount   += pending;
+        if (required > 0 || confirmed > 0 || shortage > 0 || pending > 0) {
+          aggDays[i].byBusiness.push({
+            businessId:    bizId,
+            businessName:  bizName,
+            requiredCount:  required,
+            confirmedCount: confirmed,
+            shortageCount:  shortage,
+            pendingCount:   pending,
+          });
+        }
+      }
+    }
+
+    return {available: overallAvailable, days: aggDays};
+  }
+);
+
 // [Phase 6 완료] callableGetLegacyBankCleanupStatus 삭제 — diagnostic CF, 역할 완료.

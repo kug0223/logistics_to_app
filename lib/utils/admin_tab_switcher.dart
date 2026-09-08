@@ -2,7 +2,7 @@
 //
 // 관리자 Shell 탭 전환 싱글턴 — FCMService ↔ BusinessAdminShell 연결
 //
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 // [설계 원칙]
 //   - Shell 없이도 안전하게 호출 가능 (isRegistered 체크 또는 무시)
 //   - Shell initState에서 register, dispose에서 unregister
@@ -40,6 +40,11 @@ class AdminTabSwitcher {
   // [NAV-POLICY-N1] Home Task deep-link — target tab root normalize + push
   bool Function(int, Route<dynamic>)? _switchAndPushFn;
 
+  // [PHASE-2A] Home 인력 블록 → Jobs 탭 날짜/사업장 intent 핸들러
+  // JobsRootScreen.initState에서 등록, dispose에서 해제
+  void Function({required DateTimeRange dateRange, String? businessId})?
+      _jobsNavFn;
+
   /// Shell이 활성화되어 탭 전환 가능한 상태인지 여부
   bool get isRegistered => _switchFn != null;
 
@@ -54,6 +59,33 @@ class AdminTabSwitcher {
   void unregister() {
     _switchFn = null;
     _switchAndPushFn = null;
+    _jobsNavFn = null;
+  }
+
+  /// [JobsRootScreen 전용] initState에서 호출 — Jobs 탭 날짜/사업장 intent 핸들러 등록.
+  /// Home 인력 블록이 Jobs 탭으로 이동할 때 필터를 전달하는 데 사용한다.
+  void registerJobsNavHandler(
+    void Function({required DateTimeRange dateRange, String? businessId}) fn,
+  ) =>
+      _jobsNavFn = fn;
+
+  /// [JobsRootScreen 전용] dispose에서 호출 — Jobs 탭 intent 핸들러 해제.
+  void unregisterJobsNavHandler() => _jobsNavFn = null;
+
+  /// Home 인력 블록 → Jobs 탭으로 전환하며 날짜/사업장 필터 intent를 전달.
+  ///
+  /// - [dateRange] : Jobs 탭에 적용할 날짜 범위 (Jobs 필터의 dateRange와 매핑)
+  /// - [businessId]: 명시적으로 사업장을 선택할 때만 전달 (null이면 기존 filter 유지)
+  ///
+  /// [return] true = intent 전달 + 탭 전환 성공; false = 핸들러/Shell 미등록
+  bool switchToJobsWithIntent({
+    required DateTimeRange dateRange,
+    String? businessId,
+  }) {
+    final fn = _jobsNavFn;
+    if (fn == null) return false;
+    fn(dateRange: dateRange, businessId: businessId);
+    return switchToTab(jobsTab);
   }
 
   /// Shell을 지정 탭으로 전환.
