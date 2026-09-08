@@ -62,8 +62,14 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
   Future<void> _loadRecords() async {
     if (mounted) setState(() { _isLoading = true; _loadError = null; });
     try {
-      final monthStart = DateTime(widget.year, widget.month, 1);
-      final monthEnd = DateTime(widget.year, widget.month + 1, 1);
+      // [TZ-FIX] KST 월 경계 정규화 — device-local timezone 독립적
+      // attendance.workDate는 KST 자정을 UTC로 저장하므로 query boundary도 동일 기준 필요.
+      // DateTime.utc(y,m,1).subtract(9h) = KST m월 1일 00:00:00의 UTC instant
+      // Dart: DateTime.utc(year, 13, 1) → 자동 연도 올림 처리
+      final monthStart = DateTime.utc(widget.year, widget.month, 1)
+          .subtract(const Duration(hours: 9));
+      final monthEnd = DateTime.utc(widget.year, widget.month + 1, 1)
+          .subtract(const Duration(hours: 9));
 
       // confirmed + transferred 모두 표시 (송금 완료된 레코드도 포함)
       // CF 경유: attendance allow list: if false 이후 서버사이드 권한 검증
@@ -491,35 +497,41 @@ class _PayrollWorkerDetailScreenState extends State<PayrollWorkerDetailScreen> {
   Future<void> _openWageDetail(BuildContext context, AttendanceModel record) async {
     if (record.wageDetail == null) return;
 
-    // ApplicationModel + UserModel 병렬 조회
+    // [RULES-FIX] users/{uid} GET은 isOwner || isSuperAdmin 전용 (SEC-FIX 2026-08-10).
+    // 관리자 경로에서 users 직접 get은 PERMISSION_DENIED → 두 read를 분리해 독립 처리.
+    //
+    // Step A: application read (필수) — isAdminOf / isSubAdminOf 허용
     ApplicationModel? app;
+    try {
+      final appDoc = await FirebaseFirestore.instance
+          .collection('applications')
+          .doc(record.applicationId)
+          .get();
+      if (!context.mounted) return;
+      if (appDoc.exists) app = ApplicationModel.tryFromFirestore(appDoc);
+    } catch (e) {
+      debugPrint('❌ 지원서 정보 로드 실패: $e');
+      if (context.mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
+      return;
+    }
+    if (app == null || !context.mounted) return;
+
+    // Step B: user read (선택) — 관리자는 PERMISSION_DENIED → null 허용(이름 미표시 fallback)
+    // WageDetailDialog: user?.name ?? '이름 없음'. wage 계산에는 user 불필요.
     UserModel? user;
     try {
-      final docs = await Future.wait([
-        FirebaseFirestore.instance
-            .collection('applications')
-            .doc(record.applicationId)
-            .get(),
-        FirebaseFirestore.instance
-            .collection('users')
-            .doc(record.userId)
-            .get(),
-      ]);
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(record.userId)
+          .get();
       if (!context.mounted) return;
-      final appDoc = docs[0];
-      final userDoc = docs[1];
-      if (appDoc.exists) app = ApplicationModel.tryFromFirestore(appDoc);
       final userData = userDoc.data();
       if (userDoc.exists && userData != null) {
         user = UserModel.fromMap(userData, userDoc.id);
       }
-    } catch (e) {
-      debugPrint('❌ 지원서/사용자 정보 로드 실패: $e');
-      if (context.mounted) ToastHelper.showError('데이터를 불러오는데 실패했습니다.');
-      return;
+    } catch (_) {
+      // users GET 권한 없음 — user=null로 계속 진행 (wage 상세는 attendance에서 표시)
     }
-
-    if (app == null || !context.mounted) return;
 
     await WageDetailDialog.show(
       context: context,
