@@ -30485,12 +30485,13 @@ export const callableGetStaffingReadiness = onCall(
       required:  number;
       confirmed: number;
       shortage:  number;
-      pending:   number;
+      pending:   number; // 합산 중간값 — pendingAvailable=false 시 최종 null
     }
     interface SrfBizResult {
-      bizId:   string;
-      success: boolean; // false → 쿼리 실패 → available:false 설정
-      days:    SrfDayAcc[];
+      bizId:            string;
+      success:          boolean; // false → 주요 staffing 쿼리 실패 → available:false
+      pendingAvailable: boolean; // false → pending 쿼리 실패 → pendingCount:null (ERROR≠ZERO)
+      days:             SrfDayAcc[];
     }
 
     const bizResults = await Promise.allSettled(
@@ -30498,7 +30499,8 @@ export const callableGetStaffingReadiness = onCall(
         const dayAcc: SrfDayAcc[] = Array.from({length: N_DAYS}, () => ({
           required: 0, confirmed: 0, shortage: 0, pending: 0,
         }));
-        let success = true;
+        let success          = true;
+        let pendingAvailable = true; // pending 쿼리 성공 여부 (secondary signal)
 
         // ── 5a. TO 목록 조회 (ACTIVE | SCHEDULED, isDeleted != true) ─────
         const tosSnap = await db.collection("tos")
@@ -30575,6 +30577,11 @@ export const callableGetStaffingReadiness = onCall(
               for (const wd of to.wds) {
                 if (!(wd.id in wdc)) {
                   // LEGACY_WORKDETAIL: workDetailCounts에 wdId 없음 → 임의 fallback 없이 skip
+                  // 슬롯 재생성 전까지 해당 wdId 집계 제외 — aggregate 왜곡 방지
+                  console.debug(
+                    `[staffingReadiness] LEGACY_WORKDETAIL: TO ${to.toId} slot ${slotDoc.id}` +
+                    ` wdId "${wd.id}" not in workDetailCounts — skip`
+                  );
                   continue;
                 }
                 const confirmed = Math.max(0, wdc[wd.id]?.confirmedCount ?? 0);
@@ -30664,7 +30671,9 @@ export const callableGetStaffingReadiness = onCall(
           }
         });
 
-        // ── 5d. Pending 지원서 (secondary signal) — 실패 시 0 유지 ────────
+        // ── 5d. Pending 지원서 (secondary signal) — 실패 시 pendingAvailable=false ──
+        // ERROR ≠ ZERO 원칙: 쿼리 실패를 0으로 표현하지 않음.
+        // main staffing(required/confirmed/shortage)은 영향 없음.
         try {
           const pendingSnap = await db.collection("applications")
             .where("businessId", "==", bizId)
@@ -30682,46 +30691,60 @@ export const callableGetStaffingReadiness = onCall(
             if (idx >= 0) dayAcc[idx].pending++;
           }
         } catch (e) {
-          console.warn(`[staffingReadiness] ${bizId} pending 쿼리 실패 (secondary signal — 무시):`, e);
+          console.warn(
+            `[staffingReadiness] ${bizId} pending 쿼리 실패 → pendingCount:null 처리:`, e
+          );
+          pendingAvailable = false;
         }
 
-        return {bizId, success, days: dayAcc};
+        return {bizId, success, pendingAvailable, days: dayAcc};
       })
     );
 
     // ── 6. 전체 집계 ──────────────────────────────────────────────────────
+    // pendingCount: number | null
+    //   0     = 실제 대기 없음 (actual zero)
+    //   N > 0 = 실제 대기 N건
+    //   null  = pending 쿼리 실패 (한 사업장이라도 실패 → 전체 날짜 null)
+    //           "데이터 없음"과 "0"을 구분 (ERROR≠ZERO 원칙)
     interface SrfBizDayEntry {
-      businessId:    string;
-      businessName:  string;
+      businessId:     string;
+      businessName:   string;
       requiredCount:  number;
       confirmedCount: number;
       shortageCount:  number;
-      pendingCount:   number;
+      pendingCount:   number | null; // null = 이 사업장 pending 쿼리 실패
     }
     interface SrfDayEntry {
       date:           string;
       requiredCount:  number;
       confirmedCount: number;
       shortageCount:  number;
-      pendingCount:   number;
+      pendingCount:   number | null; // null = 일부 사업장 pending 쿼리 실패
       byBusiness:     SrfBizDayEntry[];
     }
 
+    // pendingCount 중간 합산용 (overallPendingAvailable 확정 후 null 또는 값으로 최종 처리)
+    const aggPending: number[] = new Array(N_DAYS).fill(0);
+
     const aggDays: SrfDayEntry[] = dateLabels.map((label) => ({
       date: label, requiredCount: 0, confirmedCount: 0,
-      shortageCount: 0, pendingCount: 0, byBusiness: [],
+      shortageCount: 0, pendingCount: null, byBusiness: [],
     }));
 
-    let overallAvailable = true;
+    let overallAvailable        = true;
+    let overallPendingAvailable = true;
 
     for (const r of bizResults) {
       if (r.status === "rejected") {
         console.error("[staffingReadiness] 사업장 처리 실패:", r.reason);
-        overallAvailable = false;
+        overallAvailable        = false;
+        overallPendingAvailable = false; // rejected 사업장 pending 불명
         continue;
       }
-      const {bizId, success, days} = r.value;
-      if (!success) overallAvailable = false;
+      const {bizId, success, pendingAvailable, days} = r.value;
+      if (!success)         overallAvailable        = false;
+      if (!pendingAvailable) overallPendingAvailable = false;
 
       const bizName = bizNameMap[bizId] ?? bizId;
       for (let i = 0; i < N_DAYS; i++) {
@@ -30729,18 +30752,24 @@ export const callableGetStaffingReadiness = onCall(
         aggDays[i].requiredCount  += required;
         aggDays[i].confirmedCount += confirmed;
         aggDays[i].shortageCount  += shortage;
-        aggDays[i].pendingCount   += pending;
+        if (pendingAvailable) aggPending[i] += pending;
+
         if (required > 0 || confirmed > 0 || shortage > 0 || pending > 0) {
           aggDays[i].byBusiness.push({
-            businessId:    bizId,
-            businessName:  bizName,
+            businessId:     bizId,
+            businessName:   bizName,
             requiredCount:  required,
             confirmedCount: confirmed,
             shortageCount:  shortage,
-            pendingCount:   pending,
+            pendingCount:   pendingAvailable ? pending : null,
           });
         }
       }
+    }
+
+    // pending 최종 처리: 모든 사업장 성공 시 합산값, 실패 시 null 유지
+    if (overallPendingAvailable) {
+      for (let i = 0; i < N_DAYS; i++) aggDays[i].pendingCount = aggPending[i];
     }
 
     return {available: overallAvailable, days: aggDays};

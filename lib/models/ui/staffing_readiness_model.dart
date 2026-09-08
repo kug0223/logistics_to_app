@@ -18,7 +18,12 @@ class StaffingBizData {
   final int requiredCount;
   final int confirmedCount;
   final int shortageCount;
-  final int pendingCount;
+
+  /// 지원 대기 수 (secondary signal)
+  ///   null  = pending 쿼리 실패 ("데이터 없음", ERROR≠ZERO)
+  ///   0     = 실제 대기 없음
+  ///   N > 0 = 실제 대기 N건
+  final int? pendingCount;
 
   const StaffingBizData({
     required this.businessId,
@@ -36,7 +41,7 @@ class StaffingBizData {
       requiredCount:  (map['requiredCount']  as num?)?.toInt() ?? 0,
       confirmedCount: (map['confirmedCount'] as num?)?.toInt() ?? 0,
       shortageCount:  (map['shortageCount']  as num?)?.toInt() ?? 0,
-      pendingCount:   (map['pendingCount']   as num?)?.toInt() ?? 0,
+      pendingCount:   (map['pendingCount']   as num?)?.toInt(), // null = 쿼리 실패
     );
   }
 }
@@ -51,8 +56,12 @@ class StaffingDayData {
   /// 인력 부족 수 — requiredCount - confirmedCount와 다를 수 있음 (per-wdId 합산)
   final int shortageCount;
 
-  /// 대기 중인 지원서 수 (secondary signal)
-  final int pendingCount;
+  /// 지원 대기 수 (secondary signal)
+  ///   null  = pending 쿼리 실패 ("데이터 없음", ERROR≠ZERO)
+  ///           → UI: "지원 대기" 텍스트 숨김
+  ///   0     = 실제 대기 없음
+  ///   N > 0 = 실제 대기 N건 → "지원 대기 N명"
+  final int? pendingCount;
 
   /// 사업장별 상세 (단일 사업장이면 byBusiness.length == 1)
   final List<StaffingBizData> byBusiness;
@@ -73,7 +82,7 @@ class StaffingDayData {
       requiredCount:  (map['requiredCount']  as num?)?.toInt() ?? 0,
       confirmedCount: (map['confirmedCount'] as num?)?.toInt() ?? 0,
       shortageCount:  (map['shortageCount']  as num?)?.toInt() ?? 0,
-      pendingCount:   (map['pendingCount']   as num?)?.toInt() ?? 0,
+      pendingCount:   (map['pendingCount']   as num?)?.toInt(), // null = 쿼리 실패
       byBusiness:     rawBiz
           .whereType<Map<Object?, Object?>>()
           .map(StaffingBizData.fromMap)
