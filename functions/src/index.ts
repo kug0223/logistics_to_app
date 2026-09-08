@@ -11007,9 +11007,10 @@ export const callableGetAdminAttendances = onCall(
 
         subAdminPerms = memberSnap.data()?.permissions as Record<string, boolean> | undefined;
 
-        // [R3-ATT-CF-01] canManageTo / canManageWorkers / canManageWage 중 하나 이상 필수 (strict boolean)
+        // [P2-WF-ATT-01] canManageWorkers 또는 canManageWage 필수 — canManageTo 제거
+        // raw attendance (GPS, 체크인 시간 등)는 근태 운영 / 급여 권한 범위
+        // canManageTo-only SubAdmin의 리뷰 근무일 수 조회는 callableGetWorkerReviewSummary 사용
         if (
-          subAdminPerms?.canManageTo !== true &&
           subAdminPerms?.canManageWorkers !== true &&
           subAdminPerms?.canManageWage !== true
         ) {
