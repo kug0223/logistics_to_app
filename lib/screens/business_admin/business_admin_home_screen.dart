@@ -43,7 +43,7 @@ import '../../utils/admin_tab_switcher.dart';
 import '../../controllers/workforce_controller.dart';
 import '../../services/staffing_readiness_service.dart';
 import '../../models/ui/staffing_readiness_model.dart';
-// attendance_model.dart — AttendanceModel은 FirestoreService 트랜지티브로 접근 가능;
+import '../../models/core/attendance_model.dart'; // AttendanceModel 타입 어노테이션 직접 사용;
 
 // [PERF-2026-07-16] Selector용 record — 필요한 필드만 추출해 불필요한 rebuild 방지
 typedef _AdminHomeData = ({
@@ -389,9 +389,21 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     }
   }
 
-  // [PHASE-2C] 오늘 출근 현황 로드
-  // 출근(checkInAt != null) / 확인 필요(NO_SHOW | absent)
-  // "근무 시작 전" = status 없음 → attendance record 없으므로 자연스럽게 카운트 제외
+  // [PHASE-2C.1] 오늘 출근 현황 로드 — attendance + confirmed roster 결합
+  //
+  // 출근 (checkedIn):
+  //   - attendance record where checkInAt != null (Case C/D)
+  //
+  // 확인 필요 (needsAttention):
+  //   (1) attendance record where status == NO_SHOW || absent  [Case E]
+  //   (2) confirmed app where no att record + now >= scheduledStart  [Case B]
+  //
+  // 그레이스 피리어드: 없음 (코드베이스 전체에 미정의, isLate()도 0분 이상이 기준)
+  //
+  // [LIMITATION] getConfirmedWorkersByDateAndBusiness는 내부 try-catch로 실패 시 []
+  // 반환 → Case B를 집계 못하더라도 확인 필요가 false-zero가 되지 않으려면
+  // attendance 기반 (1)이 fallback. attendance 자체 실패 시 전체 null.
+  //
   // 실패 시 _todayCheckedIn = null 유지 — false zero 방지 (ERROR≠ZERO)
   Future<void> _loadTodayAttendance() async {
     if (!mounted) return;
@@ -401,22 +413,59 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       if (businesses.isEmpty) {
         if (mounted) {
           setState(() {
-            _todayCheckedIn = 0;
+            _todayCheckedIn      = 0;
             _todayNeedsAttention = 0;
-            _attendanceLoading = false;
+            _attendanceLoading   = false;
           });
         }
         return;
       }
-      final today = FormatHelper.toKstDate(DateTime.now());
-      final perBiz = await Future.wait(
+
+      final today    = FormatHelper.toKstDate(DateTime.now());
+      final nowLocal = DateTime.now(); // 한국 디바이스에서 local = KST
+
+      // 병렬 로드 — 두 Future를 미리 생성해 동시에 실행
+      final attFuture = Future.wait(
         businesses.map((b) => _firestoreService.getAttendanceByDate(
-          businessId: b.id, date: today,
-        )),
+          businessId: b.id, date: today)),
       );
-      final allRecords = perBiz.expand((l) => l).toList();
-      final checkedIn      = allRecords.where((a) => a.hasCheckedIn).length;
-      final needsAttention = allRecords.where((a) => a.isNoShow || a.isAbsent).length;
+      final rosterFuture = Future.wait(
+        businesses.map((b) => _firestoreService.getConfirmedWorkersByDateAndBusiness(
+          date: today, businessId: b.id)),
+      );
+
+      final allAttendance = (await attFuture).expand((l) => l).toList();
+      final allConfirmed  = (await rosterFuture).expand((l) => l).toList();
+
+      // applicationId → AttendanceModel (중복 집계 방지용)
+      final attMap = <String, AttendanceModel>{};
+      for (final a in allAttendance) {
+        if (a.applicationId.isNotEmpty) attMap[a.applicationId] = a;
+      }
+
+      // 출근: checkInAt != null
+      final checkedIn = allAttendance.where((a) => a.hasCheckedIn).length;
+
+      // 확인 필요 (1): attendance 기반 — NO_SHOW / absent
+      var needsAttention = allAttendance
+          .where((a) => a.isNoShow || a.isAbsent)
+          .length;
+
+      // 확인 필요 (2): attendance 없음 + 출근 예정 시간 경과 [Case B]
+      for (final app in allConfirmed) {
+        if (attMap.containsKey(app.id)) continue; // attendance 있음 → (1)에서 처리
+        // startTime: "HH:mm" 또는 "HH:mm:ss" (레거시) — 앞 5자리만 사용
+        final raw = app.startTime;
+        final timeStr = raw.length >= 5 ? raw.substring(0, 5) : raw;
+        final parts = timeStr.split(':');
+        if (parts.length < 2) continue;
+        final h = int.tryParse(parts[0]);
+        final m = int.tryParse(parts[1]);
+        if (h == null || m == null) continue;
+        final scheduledStart = DateTime(today.year, today.month, today.day, h, m);
+        if (!nowLocal.isBefore(scheduledStart)) needsAttention++; // now >= scheduledStart
+      }
+
       if (!mounted) return;
       setState(() {
         _todayCheckedIn      = checkedIn;
@@ -427,7 +476,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       debugPrint('❌ _loadTodayAttendance 실패: $e');
       if (!mounted) return;
       setState(() {
-        _todayCheckedIn      = null; // 에러 상태 — 0 표시 금지
+        _todayCheckedIn      = null; // 에러 상태 — 0 표시 금지 (ERROR≠ZERO)
         _todayNeedsAttention = null;
         _attendanceLoading   = false;
       });
