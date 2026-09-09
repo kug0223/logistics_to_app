@@ -19079,35 +19079,52 @@ export const callableBatchCancelNoShow = onCall(
         });
       }
 
-      // [R5.1 Case F] 좌석 반납된 Application 복구 — TO/slot 카운터 +1, staffingReleasedAt 삭제
+      // [R5.1.1 GAP-A+B FIX] staffingReleasedAt 마커 삭제 + 카운터 항상 +1 (predicate-counter parity 보장)
+      //
+      // GAP-A FIX: Case F/G 판단을 slot aggregate → 정확한 WD 레벨로 변경
+      //   (slot.confirmedCount/totalRequired 사용 금지 — Multi-WD 오판 방지)
+      //
+      // GAP-B FIX: Case G에서도 counter +1 필수 (Option 1 채택)
+      //   근거: staffingReleasedAt 삭제 후 A.countsAsCapacity=true → counter도 동일해야 함 (§21)
+      //   Case F: wdConfirmed<wdRequired → counter +1 → parity ✓ (restore to pre-release)
+      //   Case G: wdConfirmed>=wdRequired → counter +1 → over-capacity (§7: 허용, downstream safe)
+      //   두 경우 모두 동일한 writes — Case F/G 분기 제거
+      //
+      // 멱등: 재호출 시 pre-TX 단계에서 staffingReleasedAt==null이면 targets에 미포함 → double +1 없음
       for (const restore of restoreSnaps) {
         const appRef = db.collection("applications").doc(restore.appId);
-        // Case F vs G 최종 판단: slotConfirmedCount < slotTotalRequired → Case F (복구)
         const slotData = restore.slotSnap?.exists ? restore.slotSnap.data()! : null;
-        const slotConfirmed = slotData ? ((slotData.confirmedCount as number) ?? 0) : 0;
-        const slotRequired = slotData ? ((slotData.totalRequired as number) ?? 0) : 0;
-        const isReplacementAlreadyFilled = slotRequired > 0 && slotConfirmed >= slotRequired;
-        if (isReplacementAlreadyFilled) {
-          // Case G: 대체 인력이 이미 채워진 상태 → staffingReleasedAt만 제거 (카운터는 그대로)
-          tx.update(appRef, {
-            staffingReleasedAt: admin.firestore.FieldValue.delete(),
-            staffingReleaseReason: admin.firestore.FieldValue.delete(),
-            updatedAt: now,
-          });
-          continue;
-        }
-        // Case F: 아직 대체 인력 미확보 → 카운터 복구 + staffingReleasedAt 제거
+
+        // [GAP-A] WD 레벨 confirmed/required 계산 (진단 로그용 — 분기 판단에 미사용)
+        const wdcMap = slotData?.workDetailCounts as Record<string, Record<string, unknown>> | undefined;
+        const wdConfirmedCount = (restore.wdId && wdcMap)
+          ? ((wdcMap[restore.wdId]?.confirmedCount as number) ?? 0) : 0;
+        const workDetailsArr = slotData?.workDetails as Array<Record<string, unknown>> | undefined;
+        const wdEntry = restore.wdId && workDetailsArr
+          ? workDetailsArr.find(w => (w.wdId as string | undefined) === restore.wdId)
+          : undefined;
+        const wdRequiredCount = wdEntry ? ((wdEntry.requiredCount as number) ?? 0) : 0;
+        const caseLabel = (restore.wdId && wdRequiredCount > 0 && wdConfirmedCount >= wdRequiredCount)
+          ? "CaseG(over-cap)" : "CaseF(restore)";
+        console.log(
+          `[R5.1.1] correction appId=${restore.appId} wdId=${restore.wdId ?? "none"} ` +
+          `wdConfirmed=${wdConfirmedCount} wdRequired=${wdRequiredCount} → ${caseLabel} +1`
+        );
+
+        // 1. staffingReleasedAt 마커 삭제 (Case F/G 공통)
         tx.update(appRef, {
           staffingReleasedAt: admin.firestore.FieldValue.delete(),
           staffingReleaseReason: admin.firestore.FieldValue.delete(),
           updatedAt: now,
         });
+
+        // 2. TO/slot 카운터 +1 (Case F/G 공통 — predicate-counter parity §21)
         const toData = restore.toSnap?.exists ? restore.toSnap.data()! : null;
         if (restore.toRef && toData) {
           const toUpdate: Record<string, unknown> = {
             totalConfirmed: admin.firestore.FieldValue.increment(1),
           };
-          // FULL 판단: 복구 후 totalConfirmed+1 >= totalRequired → FULL
+          // FULL 재확인: +1 후 totalConfirmed >= totalRequired 이면 FULL
           const totalRequired = (toData.totalRequired as number) ?? 0;
           const totalConfirmed = (toData.totalConfirmed as number) ?? 0;
           if (totalRequired > 0 && totalConfirmed + 1 >= totalRequired) {
@@ -19119,6 +19136,7 @@ export const callableBatchCancelNoShow = onCall(
           const slotUpdate: Record<string, unknown> = {
             confirmedCount: admin.firestore.FieldValue.increment(1),
           };
+          // [Phase 8.1E.2D] new-schema guard — wdId + workDetailCounts 존재 시만 wdCount +1
           if (restore.wdId && slotData.workDetailCounts != null) {
             slotUpdate[`workDetailCounts.${restore.wdId}.confirmedCount`] = admin.firestore.FieldValue.increment(1);
           }
