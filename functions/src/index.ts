@@ -13393,6 +13393,41 @@ function _compute90dRestriction(
   return new Date(Date.now() + 24 * 60 * 60 * 1000); // 1일 고정
 }
 
+/**
+ * [R3-B.4] Request-time rolling 90d no-show count.
+ * `_compute90dRestriction`과 동일한 >= cutoff semantics 사용.
+ *
+ * noShowDates 필드 부재(legacy) → recentNoShowCount conservative fallback.
+ * malformed Timestamp entry → 해당 항목만 무시 (callable 전체 실패 방지).
+ * nowMs 주입 가능 → 90d boundary 단위 테스트 flaky 방지.
+ */
+function _countRecentNoShows90d(
+  uData: FirebaseFirestore.DocumentData,
+  nowMs: number = Date.now()
+): number {
+  const raw = uData.noShowDates;
+  if (raw === undefined || raw === null) {
+    // legacy: field missing → conservative fallback (정보 소거 방지)
+    return (uData.recentNoShowCount as number | undefined) ?? 0;
+  }
+  if (!Array.isArray(raw)) {
+    // malformed field → conservative fallback
+    return (uData.recentNoShowCount as number | undefined) ?? 0;
+  }
+  const cutoffMs = nowMs - 90 * 24 * 60 * 60 * 1000;
+  return (raw as unknown[]).reduce<number>((count, entry) => {
+    if (entry != null && typeof (entry as admin.firestore.Timestamp).toDate === "function") {
+      try {
+        return (entry as admin.firestore.Timestamp).toDate().getTime() >= cutoffMs
+          ? count + 1 : count;
+      } catch {
+        return count; // malformed Timestamp entry 무시
+      }
+    }
+    return count;
+  }, 0);
+}
+
 // ═══════════════════════════════════════════════════════════
 // 📛 당일 취소 노쇼 패널티 — 본인 확정 취소 시 클라이언트에서 호출
 //
@@ -25623,15 +25658,17 @@ export const callableDeclineTOInvitation = onCall(
  *  - noShow 3+: 이론상 R1 restrictedUntil gate 이전에 탈락, 실제 도달 시 rank last
  *  - targetWorkType undefined → Group A 불가 (workType context 없음)
  */
+// [R3-B.4] recentNoShowCount(stale write-time cache) → noShowDates request-time rolling 90d
+// C_PLUS 제거: rolling count >= 2 → C2 (restriction 해제 후 soft lower priority recovery)
 function _classifyCandidateGroup(
   uData: FirebaseFirestore.DocumentData,
-  targetWorkType: string | undefined
-): "A" | "B" | "C1" | "C2" | "C_PLUS" {
-  const noShow = (uData.recentNoShowCount as number | undefined) ?? 0;
-  if (noShow >= 3) return "C_PLUS"; // R1 gate edge case — hard block 아님, rank last
-  if (noShow === 2) return "C2";
-  if (noShow === 1) return "C1";
-  // noShow === 0: A or B
+  targetWorkType: string | undefined,
+  nowMs: number = Date.now()
+): "A" | "B" | "C1" | "C2" {
+  const rollingCount = _countRecentNoShows90d(uData, nowMs);
+  if (rollingCount >= 2) return "C2"; // 3+ 포함 — restriction 해제 후에도 soft lower priority
+  if (rollingCount === 1) return "C1";
+  // rollingCount === 0: A or B
   if (targetWorkType) {
     const workTypeStats = uData.workTypeStats as Record<string, number> | undefined;
     if ((workTypeStats?.[targetWorkType] ?? 0) > 0) return "A"; // same work 경험 있음
@@ -25639,12 +25676,11 @@ function _classifyCandidateGroup(
   return "B"; // 신규 포함 — NO_HISTORY != BAD_HISTORY
 }
 
-const _GROUP_PRIORITY: Record<"A" | "B" | "C1" | "C2" | "C_PLUS", number> = {
+const _GROUP_PRIORITY: Record<"A" | "B" | "C1" | "C2", number> = {
   A: 0,
   B: 1,
   C1: 2,
   C2: 3,
-  C_PLUS: 4, // noShow 3+ edge case — 최하위, hard block 아님
 };
 
 /** Deterministic shift rotation key = sha1(toId|slotId|wdId|uid).
@@ -25685,7 +25721,7 @@ function _rankCandidates(
     const gA = _classifyCandidateGroup(a._uData, targetWorkType);
     const gB = _classifyCandidateGroup(b._uData, targetWorkType);
 
-    // 1. Group priority (A=0 > B=1 > C1=2 > C2=3 > C_PLUS=4)
+    // 1. Group priority (A=0 > B=1 > C1=2 > C2=3)
     const groupDiff = _GROUP_PRIORITY[gA] - _GROUP_PRIORITY[gB];
     if (groupDiff !== 0) return groupDiff;
 
@@ -26005,7 +26041,7 @@ export const callableGetAvailableWorkers = onCall(
     // RANKING_APPLY_CONDITION = poolComplete == true
     // poolComplete==false → page order 그대로 (PARTIAL_POOL_SORT_APPLIED = NO)
     let rankingApplied = false;
-    const groupCounts = {a: 0, b: 0, c1: 0, c2: 0, cPlus: 0};
+    const groupCounts = {a: 0, b: 0, c1: 0, c2: 0}; // [R3-B.4] C_PLUS 제거
     let rankedWorking: _WorkingCandidate[];
 
     if (poolComplete) {
@@ -26022,7 +26058,6 @@ export const callableGetAvailableWorkers = onCall(
         else if (g === "B") groupCounts.b++;
         else if (g === "C1") groupCounts.c1++;
         else if (g === "C2") groupCounts.c2++;
-        else groupCounts.cPlus++;
       }
     } else {
       rankedWorking = workingCandidates; // page order 유지
