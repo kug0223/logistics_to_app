@@ -26063,10 +26063,18 @@ export const callableGetAvailableWorkers = onCall(
       rankedWorking = workingCandidates; // page order 유지
     }
 
-    // Client DTO projection — _uData 미포함
-    const candidates = rankedWorking.map(({uid, maskedName, city, district}) =>
-      ({uid, maskedName, city, district})
-    );
+    // [R3-C] Client DTO projection — rankGroup/noShow 메타데이터 미노출
+    // INTERNAL_RANK_METADATA_EXPOSED = NO / ADDITIONAL_FIRESTORE_READS = 0
+    const candidates = rankedWorking.map(({uid, maskedName, city, district, _uData}) => {
+      const workTypeStats = _uData.workTypeStats as Record<string, number> | undefined;
+      const workTypeCount: number = (targetWorkType != null && workTypeStats != null)
+        ? (workTypeStats[targetWorkType] ?? 0)
+        : 0;
+      const totalWorkDays: number = typeof _uData.totalWorkDays === "number"
+        ? _uData.totalWorkDays
+        : 0;
+      return {uid, maskedName, city, district, workTypeCount, totalWorkDays};
+    });
 
     // [R3-A1/R3-A2/R3-B] Structured observability log — PII 없음
     console.log(JSON.stringify({
