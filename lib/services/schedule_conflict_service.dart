@@ -345,9 +345,9 @@ class ScheduleConflictService {
     final hasPenalty = shouldApplyPenalty(workDate);
 
     if (hasPenalty) {
-      return (true, '당일 취소는 노쇼 1회로 기록됩니다.\n노쇼 3회 누적 시 1일 지원이 제한됩니다.');
+      return (true, '근무 시작 5분 전부터 취소하면 노쇼 1회로 기록됩니다.\n노쇼 3회 누적 시 1일 지원이 제한됩니다.');
     } else {
-      return (true, '근무 1일 전까지 취소는 패널티가 없습니다.');
+      return (true, '근무 시작 5분 전까지 취소하면 패널티가 없습니다.');
     }
   }
 }

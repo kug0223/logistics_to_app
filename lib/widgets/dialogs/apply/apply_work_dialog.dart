@@ -2519,6 +2519,7 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
       timeRange: work.timeRange,
       businessName: widget.businessName,
       currentNoShowCount: _userNoShowCount,
+      scheduledStartTime: work.startTime, // [GAP-1] 5분 전 cutoff 계산용
     );
 
     if (result != ConfirmCancelResult.proceed || !mounted) {
@@ -2535,14 +2536,30 @@ class _ApplyWorkDialogState extends State<ApplyWorkDialog> {
     });
 
     try {
-      // 패널티 적용 여부
-      final hasPenalty = _conflictService.shouldApplyPenalty(date ?? application.workDate);
-      
+      // [GAP-1] 5분 전 cutoff 기준 패널티 예측 (낙관적 UI 업데이트용)
+      // 서버가 canonical 판정을 독립적으로 수행하므로 이 값은 UI 미리보기용임
+      final workDateForPenalty = date ?? application.workDate;
+      final hasPenalty = () {
+        final parts = work.startTime.split(':');
+        if (parts.length == 2) {
+          final hh = int.tryParse(parts[0]);
+          final mm = int.tryParse(parts[1]);
+          if (hh != null && mm != null) {
+            final scheduledStart = FormatHelper.toKstDate(workDateForPenalty)
+                .add(Duration(hours: hh, minutes: mm));
+            final cutoff = scheduledStart.subtract(const Duration(minutes: 5));
+            return DateTime.now().isAfter(cutoff) ||
+                DateTime.now().isAtSameMomentAs(cutoff);
+          }
+        }
+        return _conflictService.shouldApplyPenalty(workDateForPenalty);
+      }();
+
       await _firestoreService.cancelConfirmedApplication(
         application.id,
-        applyNoShowPenalty: hasPenalty,
+        applyNoShowPenalty: hasPenalty, // [GAP-2] 서버가 무시하고 직접 판정 후 처리
       );
-      
+
       if (hasPenalty) {
         _userNoShowCount++;
       }

@@ -34,7 +34,7 @@ class ConfirmCancelDialog extends StatelessWidget {
   /// 현재 노쇼 횟수
   final int currentNoShowCount;
   
-  /// 패널티 적용 여부 (당일 취소)
+  /// 패널티 적용 여부 (근무 시작 5분 전 이후 취소)
   final bool hasPenalty;
 
   const ConfirmCancelDialog({
@@ -48,6 +48,8 @@ class ConfirmCancelDialog extends StatelessWidget {
   });
 
   /// 다이얼로그 표시
+  ///
+  /// [scheduledStartTime] 근무 시작 시각 (HH:mm 형식). null이면 당일 기준으로 fallback.
   static Future<ConfirmCancelResult?> show({
     required BuildContext context,
     required DateTime workDate,
@@ -55,12 +57,38 @@ class ConfirmCancelDialog extends StatelessWidget {
     required String timeRange,
     required String businessName,
     required int currentNoShowCount,
+    String? scheduledStartTime,
   }) async {
-    // 패널티 여부 계산
+    // [GAP-1] canonical 5-minute policy: 근무 시작 5분 전 이후 취소 → 패널티
+    // scheduledStartTime(HH:mm)이 있으면 정확한 cutoff 계산, 없으면 당일 기준 fallback
     final now = DateTime.now();
-    final workDay = FormatHelper.toKstDate(workDate);
-    final today = FormatHelper.toKstDate(now);
-    final hasPenalty = workDay.isAtSameMomentAs(today) || workDay.isBefore(today);
+    bool hasPenalty;
+    if (scheduledStartTime != null) {
+      final parts = scheduledStartTime.split(':');
+      if (parts.length == 2) {
+        final hh = int.tryParse(parts[0]);
+        final mm = int.tryParse(parts[1]);
+        if (hh != null && mm != null) {
+          final workDay = FormatHelper.toKstDate(workDate);
+          final scheduledStart = workDay.add(Duration(hours: hh, minutes: mm));
+          final cutoff = scheduledStart.subtract(const Duration(minutes: 5));
+          hasPenalty = now.isAfter(cutoff) || now.isAtSameMomentAs(cutoff);
+        } else {
+          // 파싱 실패 시 당일 fallback
+          final workDay = FormatHelper.toKstDate(workDate);
+          final today = FormatHelper.toKstDate(now);
+          hasPenalty = workDay.isAtSameMomentAs(today) || workDay.isBefore(today);
+        }
+      } else {
+        final workDay = FormatHelper.toKstDate(workDate);
+        final today = FormatHelper.toKstDate(now);
+        hasPenalty = workDay.isAtSameMomentAs(today) || workDay.isBefore(today);
+      }
+    } else {
+      final workDay = FormatHelper.toKstDate(workDate);
+      final today = FormatHelper.toKstDate(now);
+      hasPenalty = workDay.isAtSameMomentAs(today) || workDay.isBefore(today);
+    }
 
     return showDialog<ConfirmCancelResult>(
       context: context,
@@ -250,12 +278,12 @@ class ConfirmCancelDialog extends StatelessWidget {
           
           SizedBox(height: ResponsiveHelper.spacing(context, 10)),
           
-          // 당일 취소
+          // 근무 시작 5분 전부터 취소
           _buildPolicyItem(
             context,
             icon: Icons.warning,
             iconColor: AppColors.error,
-            title: '당일 취소',
+            title: '근무 시작 5분 전부터 취소',
             description: '노쇼 1회 기록\n→ 3회 누적 시 1일 지원 제한',
             isHighlighted: hasPenalty,
           ),
@@ -352,8 +380,8 @@ class ConfirmCancelDialog extends StatelessWidget {
               SizedBox(width: ResponsiveHelper.spacing(context, 8)),
               Expanded(
                 child: Text(
-                  hasPenalty 
-                      ? '현재 시점: 당일 취소에 해당'
+                  hasPenalty
+                      ? '현재 시점: 패널티 적용 구간'
                       : '현재 시점: 패널티 없이 취소 가능',
                   style: ResponsiveHelper.bodyStyle(context).copyWith(
                     fontWeight: FontWeight.bold,

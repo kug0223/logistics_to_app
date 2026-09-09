@@ -782,18 +782,9 @@ extension ApplicationFirestore on FirestoreService {
           }
         }());
       }
-      if (serverShouldPenalty) {
-        final penaltyCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-            .httpsCallable('callableApplyNoShowPenalty',
-                options: HttpsCallableOptions(timeout: const Duration(seconds: 10)));
-        step2and3.add(() async {
-          try {
-            await penaltyCallable.call({'applicationId': applicationId});
-          } catch (e) {
-            debugPrint('⚠️ 노쇼 패널티 CF 실패 ($uid): $e');
-          }
-        }());
-      }
+      // [GAP-2] 노쇼 패널티는 callableCancelConfirmedApplication 서버 인라인으로 이미 처리됨
+      // serverShouldPenalty=$serverShouldPenalty 참고용 — 별도 CF 호출 불필요
+      // (구 버전 호환: callableApplyNoShowPenalty에 noShowPenaltyAppliedAt idempotency 가드 존재)
       if (step2and3.isNotEmpty) await Future.wait(step2and3);
 
       // 4+5. [PERF-F1] 슬롯 재계산 + 관련 데이터 정리 동시 실행 (2 RTT → 1 RTT)

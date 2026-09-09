@@ -13556,22 +13556,59 @@ export const callableCancelConfirmedApplication = onCall(
     }
 
     // 4. 취소 유형 결정
-    // [SERVER-AUTH] client applyNoShowPenalty boolean 대신 서버가 직접 workDate 기준으로 판정
-    // 정책: 근로자 본인 취소 AND KST 기준 workDate가 당일이거나 이미 지난 날짜 → SAME_DAY_CANCEL
+    // [SERVER-AUTH] client applyNoShowPenalty boolean 대신 서버가 직접 scheduledStartAt 기준으로 판정
+    // [GAP-1] canonical 5-minute policy: 근무 시작 5분 전 이후 취소 → SAME_DAY_CANCEL (노쇼 패널티)
     // client boolean은 하위 호환성용 파라미터로만 수신하고 실제 결정에는 사용하지 않는다
     const isAdminCancel = !isOwner;
     const workDateTs = appData.workDate as admin.firestore.Timestamp | undefined;
     const KST_OFFSET_MS_CANCEL = 9 * 60 * 60 * 1000;
-    const serverShouldApplyPenalty: boolean = !isAdminCancel && workDateTs != null && (() => {
-      const workDayKST = new Date(workDateTs.toMillis() + KST_OFFSET_MS_CANCEL);
-      workDayKST.setUTCHours(0, 0, 0, 0);
-      const todayKST = new Date(Date.now() + KST_OFFSET_MS_CANCEL);
-      todayKST.setUTCHours(0, 0, 0, 0);
-      return workDayKST.getTime() <= todayKST.getTime(); // 당일 또는 이미 지난 workDate
-    })();
+
+    let noShowEquivalent = false;
+    if (!isAdminCancel && workDateTs != null) {
+      let resolved = false;
+      const cancelAppToId = appData.toId as string | undefined;
+      const cancelAppSlotId = appData.slotId as string | undefined;
+      const cancelAppWorkDetailId = appData.workDetailId as string | undefined;
+      if (cancelAppToId && cancelAppSlotId) {
+        try {
+          const cancelSlotSnap = await db.collection("tos").doc(cancelAppToId)
+            .collection("slots").doc(cancelAppSlotId).get();
+          if (cancelSlotSnap.exists) {
+            const cancelWds = cancelSlotSnap.data()?.workDetails as
+              Array<{startTime?: string; workType?: string; endTime?: string}> | undefined;
+            // workDetailId(workType_startTime_endTime)로 매칭, 없으면 첫 번째 workDetail 사용
+            let matchedWd: {startTime?: string} | undefined;
+            if (cancelAppWorkDetailId && cancelWds) {
+              matchedWd = cancelWds.find(
+                (wd) => `${wd["workType"]}_${wd["startTime"]}_${wd["endTime"]}` === cancelAppWorkDetailId
+              );
+            }
+            const cancelStartTimeStr = matchedWd?.startTime ?? cancelWds?.[0]?.startTime;
+            if (cancelStartTimeStr && /^\d{1,2}:\d{2}$/.test(cancelStartTimeStr)) {
+              const [hh, mm] = cancelStartTimeStr.split(":").map(Number);
+              // workDate.toMillis()은 KST 자정 기준 (onAttendanceCreated L13229 동일 공식)
+              const scheduledStartMs = workDateTs.toMillis() + (hh * 60 + mm) * 60000;
+              noShowEquivalent = Date.now() >= scheduledStartMs - 5 * 60 * 1000; // 5분 전 cutoff
+              resolved = true;
+            }
+          }
+        } catch (cancelWdErr) {
+          console.warn("[cancelConfirmed] workDetail 조회 실패, fallback 사용:", cancelWdErr);
+        }
+      }
+      if (!resolved) {
+        // Fallback: slot 정보 없거나 조회 실패 시 workDate 당일 이하 비교
+        const fallbackWorkDayKST = new Date(workDateTs.toMillis() + KST_OFFSET_MS_CANCEL);
+        fallbackWorkDayKST.setUTCHours(0, 0, 0, 0);
+        const fallbackTodayKST = new Date(Date.now() + KST_OFFSET_MS_CANCEL);
+        fallbackTodayKST.setUTCHours(0, 0, 0, 0);
+        noShowEquivalent = fallbackWorkDayKST.getTime() <= fallbackTodayKST.getTime();
+      }
+    }
+
     const cancelReasonCode = isAdminCancel
       ? "ADMIN_CANCELED"
-      : (serverShouldApplyPenalty ? "SAME_DAY_CANCEL" : "USER_CANCELED");
+      : (noShowEquivalent ? "SAME_DAY_CANCEL" : "USER_CANCELED");
     const action = isAdminCancel ? "ADMIN_CANCEL_CONFIRMED" : "CONFIRM_CANCEL";
 
     // 5. application 상태 업데이트 (Admin SDK — canceledBy 서버 강제)
@@ -13708,7 +13745,46 @@ export const callableCancelConfirmedApplication = onCall(
       }
     }
 
-    // 6. 클라이언트 후속 처리(slot decrement, 패널티, 알림)에 필요한 값 반환
+    // [GAP-2] 노쇼 패널티 인라인 적용 — 클라이언트 두 번째 호출 의존 제거
+    // 이미 취소 transaction 완료 후 별도 transaction으로 처리 (취소 원자성 보호)
+    // 실패해도 취소 자체를 롤백하지 않음 (이미 application CANCELED 확정)
+    if (noShowEquivalent && !(appData.noShowPenaltyAppliedAt)) {
+      try {
+        await db.runTransaction(async (penaltyTx) => {
+          const [freshAppForPenalty, userRefForPenalty] = [
+            await penaltyTx.get(appRef),
+            db.collection("users").doc(workerUid),
+          ];
+          if (freshAppForPenalty.data()?.noShowPenaltyAppliedAt) return; // idempotent
+          const userSnapForPenalty = await penaltyTx.get(userRefForPenalty);
+          if (!userSnapForPenalty.exists) return;
+          const userData = userSnapForPenalty.data()!;
+          const nowPenaltyTs = admin.firestore.Timestamp.now();
+          const cutoff90d = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+          const existingNoShowDates = (userData.noShowDates as admin.firestore.Timestamp[] | undefined) ?? [];
+          const restriction = _compute90dRestriction(existingNoShowDates, true);
+          const penaltyUpdates: Record<string, unknown> = {
+            noShowCount: admin.firestore.FieldValue.increment(1),
+            recentNoShowCount: existingNoShowDates.filter((t) => t.toDate() >= cutoff90d).length + 1,
+            noShowDates: admin.firestore.FieldValue.arrayUnion(nowPenaltyTs),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          };
+          if (restriction !== null) {
+            penaltyUpdates.restrictedUntil = admin.firestore.Timestamp.fromDate(restriction);
+          }
+          penaltyTx.update(userRefForPenalty, penaltyUpdates);
+          penaltyTx.update(appRef, {
+            noShowPenaltyAppliedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        });
+        console.info(`[cancelConfirmed] 노쇼 패널티 적용 완료 (uid=${workerUid}, app=${applicationId})`);
+      } catch (penaltyErr) {
+        console.error(`⚠️ [cancelPenalty] 실패, 수동 확인 필요 (uid=${workerUid}, app=${applicationId}): ${penaltyErr}`);
+      }
+    }
+
+    // 6. 클라이언트 후속 처리(slot decrement, 알림)에 필요한 값 반환
+    // [GAP-2] 노쇼 패널티는 위에서 서버 인라인 처리 완료 — 클라이언트 두 번째 호출 불필요
     // [FIX-4] ID-CONSENT Grant revoke는 위 transaction 내부에서 처리 완료 (atomic 보장)
 
     return {
@@ -13723,7 +13799,7 @@ export const callableCancelConfirmedApplication = onCall(
       workDetailId: (appData.workDetailId as string | undefined) ?? null,
       isAdminCancel,
       cancelReasonCode,
-      shouldApplyNoShowPenalty: serverShouldApplyPenalty, // [SERVER-AUTH] 서버 권위 판정값
+      shouldApplyNoShowPenalty: noShowEquivalent, // [SERVER-AUTH] 서버 권위 판정값 (이미 서버에서 처리됨)
     };
   },
 );
