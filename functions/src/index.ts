@@ -24825,9 +24825,12 @@ export const callableInviteWorker = onCall(
       }
     }
 
-    // ── 6. 중복 초대 방지 + 동일 슬롯 거절/만료 재초대 차단 ─────────────────
+    // ── 6. 중복 초대 방지 + 동일 recruiting unit 거절/만료 재초대 차단 ─────────
     // INVITED/CONFIRMED/CONTRACT_PENDING: TO 레벨 중복 차단 (totalConfirmed 이중 증가 위험)
-    // [R1-PATCH-5] REJECTED/EXPIRED: slotId 기준 동일 모집 단위 재초대 차단
+    // [R1.1-PATCH-2] REJECTED/EXPIRED: wdId 레벨 precision — 다른 wdId는 별도 unit, 통과
+    //   - EXPIRED: 항상 INVITED 흐름 → wdId 동일 시 차단
+    //   - REJECTED + invitedAt 존재: 근로자 스스로 거절 → wdId 동일 시 차단
+    //   - REJECTED + invitedAt 없음: 관리자가 PENDING 거절 → 재초대 허용
     const dupSnap = await db.collection("applications")
       .where("toId", "==", toId)
       .where("uid", "==", targetUid)
@@ -24843,15 +24846,25 @@ export const callableInviteWorker = onCall(
       if (dupStatus === "CONFIRMED" || dupStatus === "CONTRACT_PENDING") {
         throw new HttpsError("already-exists", "이미 이 공고에 확정된 근로자입니다.");
       }
-      // [R1-PATCH-5] REJECTED/EXPIRED: slotId 기준 동일 모집 단위만 차단
-      // 다른 슬롯의 REJECTED/EXPIRED는 별도 recruiting unit — 통과
+      // [R1.1-PATCH-2] REJECTED/EXPIRED: wdId 레벨 precision + REJECTED origin 구분
       if (dupStatus === "REJECTED" || dupStatus === "EXPIRED") {
         const dupSlotId = dupData.slotId as string | undefined;
         if (slotId && dupSlotId === slotId) {
-          if (dupStatus === "REJECTED") {
-            throw new HttpsError("already-exists", "해당 근로자가 동일 모집의 초대를 이미 거절했습니다.");
+          const dupWdId = dupData.wdId as string | undefined;
+          // wdId 양쪽 모두 있을 때 정밀 비교 — 어느 한쪽 없으면 슬롯 레벨 fallback
+          const isWdMatch = (!inviteResolvedWdId || !dupWdId) ? true : (inviteResolvedWdId === dupWdId);
+          if (isWdMatch) {
+            if (dupStatus === "EXPIRED") {
+              throw new HttpsError("already-exists", "해당 근로자의 동일 모집 초대가 이미 만료되었습니다.");
+            }
+            // REJECTED: 근로자 스스로 거절한 경우(invitedAt 존재)만 차단
+            // 관리자가 PENDING 거절한 경우(invitedAt 없음)는 재초대 허용
+            const dupInvitedAt = dupData.invitedAt;
+            if (dupInvitedAt !== undefined && dupInvitedAt !== null) {
+              throw new HttpsError("already-exists", "해당 근로자가 동일 모집의 초대를 이미 거절했습니다.");
+            }
+            // invitedAt 없음 → 관리자 PENDING 거절 → 재초대 허용 (이 문서 통과)
           }
-          throw new HttpsError("already-exists", "해당 근로자의 동일 모집 초대가 이미 만료되었습니다.");
         }
       }
     }
@@ -25138,6 +25151,21 @@ export const callableAcceptTOInvitation = onCall(
       const freshStatus = freshData.status as string;
       if (freshStatus === "CONFIRMED") return;
       if (freshStatus !== "INVITED") throw new HttpsError("failed-precondition", "수락 가능한 상태가 아닙니다.");
+
+      // [R1.1-PATCH-1] 수락 시점 fresh 근로자 자격 검증 — accountStatus + restrictedUntil
+      // invite 발송 후 상태 변경이 있을 수 있으므로 transaction 내부에서 fresh read
+      const freshUserSnap = await tx.get(db.collection("users").doc(callerUid));
+      if (!freshUserSnap.exists) {
+        throw new HttpsError("not-found", "사용자 정보를 찾을 수 없습니다.");
+      }
+      const freshUserData = freshUserSnap.data()!;
+      if ((freshUserData.accountStatus as string | undefined) !== "active") {
+        throw new HttpsError("failed-precondition", "비활성 계정으로는 초대를 수락할 수 없습니다.");
+      }
+      const freshRestrictedUntil = freshUserData.restrictedUntil as admin.firestore.Timestamp | undefined;
+      if (freshRestrictedUntil && freshRestrictedUntil.toDate() > new Date()) {
+        throw new HttpsError("failed-precondition", "현재 플랫폼 제재 중에는 초대를 수락할 수 없습니다.");
+      }
 
       // [6.1 INV-03] 트랜잭션 fresh read에서 selectedWorkType 추출 — 카운터 업데이트용
       const freshSelectedWorkType = freshData.selectedWorkType as string | undefined;
@@ -25517,6 +25545,7 @@ export const callableGetAvailableWorkers = onCall(
     const rawWDs = (slotData.workDetails as unknown[] | undefined) ?? [];
     let targetStartTime: string | undefined;
     let targetEndTime: string | undefined;
+    let targetWdId: string | undefined; // [R1.1-PATCH-2] wdId precision용 canonical identity
     if (workDetailId) {
       for (const wd of rawWDs) {
         const wdMap = wd as Record<string, unknown>;
@@ -25527,6 +25556,7 @@ export const callableGetAvailableWorkers = onCall(
         if (compositeId === workDetailId || wt === workDetailId) {
           targetStartTime = st;
           targetEndTime = et;
+          targetWdId = wdMap.wdId as string | undefined; // [R1.1-PATCH-2]
           break;
         }
       }
@@ -25535,12 +25565,14 @@ export const callableGetAvailableWorkers = onCall(
         const firstWD = rawWDs[0] as Record<string, unknown>;
         targetStartTime = firstWD.startTime as string | undefined;
         targetEndTime = firstWD.endTime as string | undefined;
+        targetWdId    = firstWD.wdId as string | undefined; // [R1.1-PATCH-2]
       }
     } else if (rawWDs.length === 1) {
       // [R1-PATCH-3] workDetailId 미전달 + 단일 workDetail → 시간 충돌 검사 수행 가능
       const singleWD = rawWDs[0] as Record<string, unknown>;
       targetStartTime = singleWD.startTime as string | undefined;
       targetEndTime   = singleWD.endTime   as string | undefined;
+      targetWdId      = singleWD.wdId as string | undefined; // [R1.1-PATCH-2]
     }
 
     // ── 5. worker_availability 쿼리 ──────────────────────────────────────────
@@ -25567,14 +25599,36 @@ export const callableGetAvailableWorkers = onCall(
     const userSnaps = await db.getAll(...userRefs);
 
     // ── 7. 기존 지원서 조회 (중복 후보 제거용) ───────────────────────────────
-    // 동일 TO+슬롯에 PENDING/INVITED/CONFIRMED/CONTRACT_PENDING인 uid 목록
-    // [R1-PATCH-2] REJECTED/EXPIRED 추가 — 동일 슬롯 거절/만료자 후보 재노출 차단
+    // PENDING/INVITED/CONFIRMED/CONTRACT_PENDING: 슬롯 레벨 exclusion
+    // [R1.1-PATCH-2] REJECTED/EXPIRED: wdId 레벨 precision
+    //   - EXPIRED: 항상 INVITED 흐름 → wdId 동일 시 suppression
+    //   - REJECTED + invitedAt 존재: 근로자 스스로 거절(INVITE_DECLINED) → wdId 동일 시 suppression
+    //   - REJECTED + invitedAt 없음: 관리자가 PENDING 거절 → 재초대 허용 (suppression 안 함)
     const existingAppsSnap = await db.collection("applications")
       .where("toId", "==", toId)
       .where("slotId", "==", slotId)
       .where("status", "in", ["PENDING", "INVITED", "CONFIRMED", "CONTRACT_PENDING", "REJECTED", "EXPIRED"])
       .get();
-    const existingUids = new Set(existingAppsSnap.docs.map((d) => d.data().uid as string));
+    const existingUids = new Set<string>();
+    const rejExpUids   = new Set<string>(); // [R1.1-PATCH-2] wdId-precision 거절/만료자
+    for (const d of existingAppsSnap.docs) {
+      const dData   = d.data();
+      const dStatus = dData.status as string;
+      const dUid    = dData.uid    as string;
+      if (dStatus === "REJECTED" || dStatus === "EXPIRED") {
+        // wdId precision: targetWdId와 문서 wdId 모두 있으면 비교, 하나라도 없으면 슬롯 레벨 fallback
+        const dWdId = dData.wdId as string | undefined;
+        if (targetWdId && dWdId && dWdId !== targetWdId) continue; // 다른 wdId → 다른 recruiting unit
+        if (dStatus === "REJECTED") {
+          // 관리자 PENDING 거절(invitedAt 없음)은 재초대 허용 — suppression 제외
+          const dInvitedAt = dData.invitedAt;
+          if (dInvitedAt === undefined || dInvitedAt === null) continue;
+        }
+        rejExpUids.add(dUid);
+      } else {
+        existingUids.add(dUid);
+      }
+    }
 
     // ── 8. 당일 CONFIRMED 조회 (시간 겹침 체크용, 전체 사업장 — USER-SCOPED) ─────
     // [Phase 8.1B.1] businessId 필터 제거 → 타 사업장 확정 근무도 포함
@@ -25616,8 +25670,8 @@ export const callableGetAvailableWorkers = onCall(
       const candidateRestrictedUntil = uData.restrictedUntil as admin.firestore.Timestamp | undefined;
       if (candidateRestrictedUntil && candidateRestrictedUntil.toDate() > new Date()) continue;
 
-      // 이미 지원/초대/확정된 근로자 제외
-      if (existingUids.has(uid)) continue;
+      // 이미 지원/초대/확정된 근로자 제외 + [R1.1-PATCH-2] 동일 wdId 근로자-거절/만료자 제외
+      if (existingUids.has(uid) || rejExpUids.has(uid)) continue;
 
       // city canonical 재검증 (homeRegion 기준)
       const homeRegion = uData.homeRegion as Record<string, unknown> | undefined;
