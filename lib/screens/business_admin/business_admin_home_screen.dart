@@ -817,6 +817,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                     _buildPostingSetupCard(context, s, theme),
                     _buildTodayOps(context, s, theme, up),
                     SizedBox(height: 16 * s),
+                    _buildFutureStaffing(context, s, theme, up), // [PHASE-2D]
+                    SizedBox(height: 16 * s),
                     _buildActionDashboard(context, s, theme, up),
                     SizedBox(height: 32 * s), // Bottom Nav가 gesture bar padding 내부 처리
                   ],
@@ -1426,6 +1428,274 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         ),
       ]),
     );
+  }
+
+  // ── [PHASE-2D] 다가오는 인력 부족 Block ─────────────────────────
+  // [SOURCE] _staffingReadiness.days[1..7] 재사용 — 추가 fetch 없음
+  // [RULE] SHOW_ONLY_SHORTAGE_DATES=YES · PENDING_ZERO_DISPLAY=HIDE
+  // [RULE] FUTURE_SHORTAGE_MAX_VISIBLE_ROWS=7 (CF: D+1~D+7)
+  // [RULE] FUTURE_STAFFING_ORDER=DATE_ASC (CF 이미 정렬, 재정렬 불필요)
+  Widget _buildFutureStaffing(
+      BuildContext context, double s, ThemeData theme, UserProvider up) {
+    final isSub = up.currentUser?.isSubAdmin == true;
+    final canSeeBlock = !isSub
+        || up.can((p) => p.canManageTo)
+        || up.can((p) => p.canManageWorkers);
+    if (!canSeeBlock) return const SizedBox.shrink();
+
+    // 로딩: Today Ops와 _staffingLoading 공유 (동일 fetch)
+    if (_staffingLoading) {
+      return Column(children: [
+        _sectionHeader(context, s, '다가오는 인력 부족'),
+        SizedBox(height: 8 * s),
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16 * s),
+          child: Container(
+            height: 50 * s,
+            decoration: BoxDecoration(
+              color: Colors.white, borderRadius: BorderRadius.circular(16)),
+            child: Center(
+              child: SizedBox(width: 16 * s, height: 16 * s,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5, color: theme.primaryColor))),
+          ),
+        ),
+      ]);
+    }
+
+    // 에러: null 또는 available:false (ERROR≠ZERO — 0 표시 금지)
+    if (_staffingReadiness == null || !_staffingReadiness!.available) {
+      return Column(children: [
+        _sectionHeader(context, s, '다가오는 인력 부족'),
+        SizedBox(height: 8 * s),
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16 * s),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white, borderRadius: BorderRadius.circular(16)),
+            child: _todayOpsErrorRow(s,
+              message: '향후 인력 현황을 불러오지 못했습니다',
+              onRetry: () => unawaited(_loadStaffingReadiness())),
+          ),
+        ),
+      ]);
+    }
+
+    // D+1~D+7: D0(첫 요소) skip → shortage > 0 필터 → DATE_ASC 유지
+    final futureDays = _staffingReadiness!.days
+        .skip(1)
+        .where((d) => d.shortageCount > 0)
+        .toList();
+
+    // 충원 완료 — 빈 상태 (green card 없음)
+    if (futureDays.isEmpty) {
+      return Column(children: [
+        _sectionHeader(context, s, '다가오는 인력 부족'),
+        SizedBox(height: 8 * s),
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16 * s),
+          child: Container(
+            padding:
+                EdgeInsets.symmetric(horizontal: 16 * s, vertical: 14 * s),
+            decoration: BoxDecoration(
+              color: Colors.white, borderRadius: BorderRadius.circular(16)),
+            child: Row(children: [
+              Icon(Icons.check_circle_outline,
+                  size: 16 * s, color: AppColors.grey300),
+              SizedBox(width: 8 * s),
+              Text('향후 7일 인원 충원 완료',
+                  style:
+                      TextStyle(fontSize: 13 * s, color: AppColors.grey400)),
+            ]),
+          ),
+        ),
+      ]);
+    }
+
+    // 부족 날짜 행 목록 (최대 7행)
+    return Column(children: [
+      _sectionHeader(context, s, '다가오는 인력 부족'),
+      SizedBox(height: 8 * s),
+      Padding(
+        padding: EdgeInsets.symmetric(horizontal: 16 * s),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              )
+            ],
+          ),
+          child: Column(
+            children: futureDays.asMap().entries.map((e) =>
+              _buildFutureShortageRow(
+                context, s, theme, up, e.value,
+                isFirst: e.key == 0,
+                isLast: e.key == futureDays.length - 1,
+              ),
+            ).toList(),
+          ),
+        ),
+      ),
+    ]);
+  }
+
+  /// 부족 날짜 단일 행 — 날짜 레이블 + N명 부족 + 지원 대기 N명(옵션)
+  Widget _buildFutureShortageRow(
+    BuildContext context,
+    double s,
+    ThemeData theme,
+    UserProvider up,
+    StaffingDayData day, {
+    required bool isFirst,
+    required bool isLast,
+  }) {
+    final isSub = up.currentUser?.isSubAdmin == true;
+    // OWNER 또는 SubAdmin canManageTo → 탭 가능
+    // SubAdmin canManageWorkers only → 표시는 되나 탭 불가, chevron 없음
+    final canNavigate = !isSub || up.can((p) => p.canManageTo);
+
+    final dateLabel  = _futureDateLabel(day.date);
+    final shortageStr = '${day.shortageCount}명 부족';
+
+    // PENDING_ZERO_DISPLAY=HIDE: null(실패)·0 → 숨김, >0 → '지원 대기 N명'
+    final pendingStr = (day.pendingCount != null && day.pendingCount! > 0)
+        ? '지원 대기 ${day.pendingCount}명'
+        : null;
+
+    final radius = BorderRadius.only(
+      topLeft:     Radius.circular(isFirst ? 16 : 0),
+      topRight:    Radius.circular(isFirst ? 16 : 0),
+      bottomLeft:  Radius.circular(isLast  ? 16 : 0),
+      bottomRight: Radius.circular(isLast  ? 16 : 0),
+    );
+
+    final rowContent = Padding(
+      padding: EdgeInsets.symmetric(horizontal: 16 * s, vertical: 13 * s),
+      child: Row(children: [
+        SizedBox(
+          width: 66 * s,
+          child: Text(dateLabel,
+              style: TextStyle(
+                  fontSize: 13 * s,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary)),
+        ),
+        SizedBox(width: 8 * s),
+        Expanded(
+          child: Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(shortageStr,
+                  style: TextStyle(
+                      fontSize: 13 * s,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.warning)),
+              if (pendingStr != null) ...[
+                Text(' · ',
+                    style: TextStyle(
+                        fontSize: 12 * s, color: AppColors.grey400)),
+                Text(pendingStr,
+                    style: TextStyle(
+                        fontSize: 12 * s, color: AppColors.grey500)),
+              ],
+            ],
+          ),
+        ),
+        if (canNavigate) ...[
+          SizedBox(width: 4 * s),
+          Icon(Icons.chevron_right,
+              size: 18 * s, color: AppColors.grey400),
+        ],
+      ]),
+    );
+
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      if (canNavigate)
+        InkWell(
+          borderRadius: radius,
+          onTap: () => unawaited(_safeNavigate(() =>
+              _requireApprovedBusiness(
+                  context, () => _navigateToJobsForDate(context, day)))),
+          child: rowContent,
+        )
+      else
+        rowContent,
+      if (!isLast)
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16 * s),
+          child: Container(height: 1, color: AppColors.border),
+        ),
+    ]);
+  }
+
+  /// 날짜 레이블 — 내일이면 '내일', 그 외 'M/D (요일)' 포맷
+  String _futureDateLabel(String dateStr) {
+    final parts = dateStr.split('-');
+    if (parts.length < 3) return dateStr;
+    final year  = int.tryParse(parts[0]);
+    final month = int.tryParse(parts[1]);
+    final day   = int.tryParse(parts[2]);
+    if (year == null || month == null || day == null) return dateStr;
+
+    final tomorrowKst =
+        FormatHelper.toKstDate(DateTime.now()).add(const Duration(days: 1));
+    if (year == tomorrowKst.year &&
+        month == tomorrowKst.month &&
+        day == tomorrowKst.day) {
+      return '내일';
+    }
+    return FormatHelper.formatDate(DateTime(year, month, day));
+  }
+
+  /// 인력 부족 날짜에서 공고 탭으로 이동 — 다중 사업장 시 드릴다운 포함
+  Future<void> _navigateToJobsForDate(
+      BuildContext context, StaffingDayData day) async {
+    final parts = day.date.split('-');
+    if (parts.length < 3) return;
+    final year   = int.tryParse(parts[0]);
+    final month  = int.tryParse(parts[1]);
+    final dayNum = int.tryParse(parts[2]);
+    if (year == null || month == null || dayNum == null) return;
+
+    final date      = DateTime(year, month, dayNum);
+    final dateRange = DateTimeRange(start: date, end: date);
+
+    // shortage > 0인 사업장만 대상
+    final shortBizs =
+        day.byBusiness.where((b) => b.shortageCount > 0).toList();
+
+    if (shortBizs.isEmpty) {
+      // byBusiness 미집계 — 날짜만으로 탭 이동
+      AdminTabSwitcher.instance.switchToJobsWithIntent(dateRange: dateRange);
+      return;
+    }
+
+    if (shortBizs.length == 1) {
+      AdminTabSwitcher.instance.switchToJobsWithIntent(
+        dateRange: dateRange, businessId: shortBizs.first.businessId);
+      return;
+    }
+
+    // 다중 사업장: 드릴다운 시트
+    if (!context.mounted) return;
+    final countMap = <String, int>{
+      for (final b in shortBizs) b.businessId: b.shortageCount
+    };
+    final bizId = await _pickBizFromSummary(
+      context:     context,
+      sheetTitle:  '인력 부족 사업장 선택',
+      totalCount:  day.shortageCount,
+      bizIds:      shortBizs.map((b) => b.businessId).toList(),
+      countPerBiz: countMap,
+    );
+    if (bizId == null || !context.mounted) return;
+    AdminTabSwitcher.instance.switchToJobsWithIntent(
+        dateRange: dateRange, businessId: bizId);
   }
 
   // ── [PHASE-3A] 처리할 일 — 우선순위 액션 리스트 ─────────────────
