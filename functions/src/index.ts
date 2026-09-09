@@ -25509,7 +25509,11 @@ export const callableGetAvailableWorkers = onCall(
     if (!slotId || typeof slotId !== "string" || slotId.trim() === "") {
       throw new HttpsError("invalid-argument", "slotId가 필요합니다.");
     }
-    const pageSize = Math.min(Math.max(1, Math.round((data.pageSize as number) ?? 20)), 30);
+    // [R3-A2] MAX_PAGE_SIZE: 기존 시스템 최대 page 크기 — full-pool 임시 bridge boundary로 재사용
+    // TEMP_FULL_POOL_BOUND_SOURCE = EXISTING_MAX_PAGE_SIZE
+    // NEW_ARBITRARY_RESOURCE_LIMIT_ADDED = NO
+    const MAX_PAGE_SIZE = 30;
+    const pageSize = Math.min(Math.max(1, Math.round((data.pageSize as number) ?? 20)), MAX_PAGE_SIZE);
 
     // ── 1. TO → businessId 조회 ──────────────────────────────────────────────
     const toSnap = await db.collection("tos").doc(toId).get();
@@ -25592,21 +25596,71 @@ export const callableGetAvailableWorkers = onCall(
     }
 
     // ── 5. worker_availability 쿼리 ──────────────────────────────────────────
-    let avQuery = db.collection("worker_availability")
-      .where("city", "==", businessCity)
-      .where("dates", "array-contains", dateKey)
-      .limit(pageSize + 1);
-    if (cursor) {
-      const cursorDoc = await db.collection("worker_availability").doc(cursor).get();
-      if (cursorDoc.exists) avQuery = avQuery.startAfter(cursorDoc);
+    // [R3-A2] Bounded retrieval: FULL_POOL vs LEGACY_PAGED
+    //
+    // FULL_POOL 조건: cursor==null AND count()성공 AND poolCount <= MAX_PAGE_SIZE
+    //   → 전체 pool eligibility 검사 가능 (R3-B global ranking 준비)
+    //   → race guard: .limit(MAX_PAGE_SIZE + 1) fetch 후 overflow 확인
+    //
+    // LEGACY_PAGED 조건: count실패 OR poolCount > MAX_PAGE_SIZE OR cursor!=null
+    //   → 기존 cursor-based pagination 그대로 (안전한 degraded path)
+    //
+    // RANKING_APPLIED = NO (이번 Phase — R3-B에서 적용)
+    let avDocs: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData>[];
+    let hasMore: boolean;
+    let nextCursor: string | null;
+    let poolComplete: boolean;
+    let retrievalMode: "full_pool" | "legacy_paged";
+
+    const useFullPool = !cursor && poolCount >= 0 && poolCount <= MAX_PAGE_SIZE;
+
+    if (useFullPool) {
+      // FULL_POOL: race safety를 위해 MAX_PAGE_SIZE + 1 fetch
+      const fullSnap = await db.collection("worker_availability")
+        .where("city", "==", businessCity)
+        .where("dates", "array-contains", dateKey)
+        .limit(MAX_PAGE_SIZE + 1)
+        .get();
+
+      if (fullSnap.docs.length <= MAX_PAGE_SIZE) {
+        // count-fetch race 없음 → 전체 pool 확보
+        avDocs = fullSnap.docs;
+        hasMore = false;
+        nextCursor = null;
+        poolComplete = true;
+        retrievalMode = "full_pool";
+      } else {
+        // [R3-A2] Race detected: count 이후 신규 doc 추가됨
+        // → LEGACY_PAGED fallback (extra query 없이 fetched docs 재사용)
+        const firstPageDocs = fullSnap.docs.slice(0, pageSize);
+        avDocs = firstPageDocs;
+        hasMore = true;
+        nextCursor = firstPageDocs[firstPageDocs.length - 1]?.id ?? null;
+        poolComplete = false;
+        retrievalMode = "legacy_paged";
+      }
+    } else {
+      // LEGACY_PAGED: 기존 cursor-based pagination 그대로
+      let legacyQuery = db.collection("worker_availability")
+        .where("city", "==", businessCity)
+        .where("dates", "array-contains", dateKey)
+        .limit(pageSize + 1);
+      if (cursor) {
+        const cursorDoc = await db.collection("worker_availability").doc(cursor).get();
+        if (cursorDoc.exists) legacyQuery = legacyQuery.startAfter(cursorDoc);
+      }
+      const legacySnap = await legacyQuery.get();
+      const legacyHasMore = legacySnap.docs.length > pageSize;
+      const legacyDocs = legacyHasMore ? legacySnap.docs.slice(0, pageSize) : legacySnap.docs;
+      avDocs = legacyDocs;
+      hasMore = legacyHasMore;
+      nextCursor = legacyHasMore ? legacyDocs[legacyDocs.length - 1].id : null;
+      poolComplete = false;
+      retrievalMode = "legacy_paged";
     }
-    const avSnap = await avQuery.get();
-    const hasMore = avSnap.docs.length > pageSize;
-    const avDocs = hasMore ? avSnap.docs.slice(0, pageSize) : avSnap.docs;
-    const nextCursor = hasMore ? avDocs[avDocs.length - 1].id : null;
 
     if (avDocs.length === 0) {
-      // [R3-A1] Early-exit 경로도 logging
+      // [R3-A1/R3-A2] Early-exit 경로도 logging
       console.log(JSON.stringify({
         event: "candidatePoolStats",
         poolCount,
@@ -25614,9 +25668,11 @@ export const callableGetAvailableWorkers = onCall(
         pageEligibleCount: 0,
         pageSize,
         hasMore: false,
+        retrievalMode,
+        poolComplete,
         elapsedMs: Date.now() - fnStartMs,
       }));
-      return {candidates: [], hasMore: false, nextCursor: null, totalFound: 0};
+      return {candidates: [], hasMore: false, nextCursor: null, totalFound: 0, poolComplete};
     }
 
     // ── 6. users batch read ──────────────────────────────────────────────────
@@ -25724,7 +25780,7 @@ export const callableGetAvailableWorkers = onCall(
       candidates.push({uid, maskedName, city: businessCity, district: userDistrict});
     }
 
-    // [R3-A1] Structured observability log — PII 없음
+    // [R3-A1/R3-A2] Structured observability log — PII 없음
     console.log(JSON.stringify({
       event: "candidatePoolStats",
       poolCount,
@@ -25732,6 +25788,8 @@ export const callableGetAvailableWorkers = onCall(
       pageEligibleCount: candidates.length,
       pageSize,
       hasMore,
+      retrievalMode,
+      poolComplete,
       elapsedMs: Date.now() - fnStartMs,
     }));
 
@@ -25740,6 +25798,7 @@ export const callableGetAvailableWorkers = onCall(
       hasMore,
       nextCursor,
       totalFound: candidates.length,
+      poolComplete,
     };
   }
 );
