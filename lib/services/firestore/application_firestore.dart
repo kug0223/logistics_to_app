@@ -893,6 +893,43 @@ extension ApplicationFirestore on FirestoreService {
     }
   }
 
+  /// [R5.1 NO_SHOW 대체충원] NO_SHOW된 확정 지원서의 모집 정원을 반납.
+  ///
+  /// - CF가 단기/Flex 여부, attendance.status==NO_SHOW, staffingReleasedAt 미설정 검증.
+  /// - 성공 시: staffingReleasedAt 마커 설정 + TO/slot/wdCount 감소 (단일 TX).
+  /// - 실패 시 false 반환 + Toast.
+  Future<bool> releaseNoshowSeat({required String applicationId}) async {
+    GlobalLoadingController.show('대체 인력 충원 처리 중...');
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
+          .httpsCallable('callableReleaseNoshowSeat',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 20)));
+      final cfResult = await callable.call<Map<String, dynamic>>({
+        'applicationId': applicationId,
+      });
+      final cfData = Map<String, dynamic>.from(cfResult.data as Map);
+      final toId = cfData['toId'] as String?;
+      if (toId != null) clearCache(toId: toId);
+      debugPrint('✅ [R5.1] 좌석 반납 완료 applicationId=$applicationId toId=$toId');
+      return true;
+    } on FirebaseFunctionsException catch (e) {
+      if (e.code == 'already-exists') {
+        // 이미 반납된 상태 — 멱등 성공 처리
+        debugPrint('[R5.1] releaseNoshowSeat: already released (멱등)');
+        return true;
+      }
+      debugPrint('❌ [R5.1] releaseNoshowSeat CF 실패: code=${e.code}, message=${e.message}');
+      ToastHelper.showError(e.message ?? '대체 충원 처리에 실패했습니다');
+      return false;
+    } catch (e) {
+      debugPrint('❌ [R5.1] releaseNoshowSeat 실패: $e');
+      ToastHelper.showError('대체 충원 처리에 실패했습니다');
+      return false;
+    } finally {
+      GlobalLoadingController.hide();
+    }
+  }
+
   /// 지원자 업무유형 변경 (관리자용)
   // [WORK-TYPE-CF] callableChangeApplicationWorkType CF 호출 — 카운터 증감·attendance wagePending 서버 강제.
   // assertBizAdmin + businessId 교차검증은 CF 내부에서 처리.

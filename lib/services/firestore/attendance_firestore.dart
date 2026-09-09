@@ -308,6 +308,25 @@ extension AttendanceFirestore on FirestoreService {
       endDate: dateEnd,
     );
   }
+  /// [R5.1 NO_SHOW 대체충원] 특정 날짜 NO_SHOW 상태인 출근 기록의 applicationId 집합 반환.
+  /// DayApplicantsDialog에서 "대체 인력 충원" 버튼 표시 판단에 사용.
+  /// 실패 시 빈 Set 반환 — false-positive 방지보다 버튼 미표시가 낫다.
+  Future<Set<String>> getNoShowApplicationIdsByDate({
+    required String businessId,
+    required DateTime date,
+  }) async {
+    try {
+      final records = await getAttendanceByDate(businessId: businessId, date: date);
+      return records
+          .where((a) => a.status == 'NO_SHOW' && a.applicationId.isNotEmpty)
+          .map((a) => a.applicationId)
+          .toSet();
+    } catch (e) {
+      debugPrint('[AttendanceFirestore] getNoShowApplicationIdsByDate 실패: $e');
+      return {};
+    }
+  }
+
   /// 사용자별 월별 출근 기록 조회 (CF 프록시, 2분 TTL 캐시)
   /// attendance list 규칙에서 isUser() 제거 → CF로 auth.uid 기반 서버 검증
   Future<List<AttendanceModel>> getMyMonthlyAttendances({

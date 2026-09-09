@@ -135,6 +135,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   // [BUG-CANCEL-01] 근무 이력 있는 확정자에게 확정취소 버튼 노출 방지용 맵
   // key = userId, value = 오늘 날짜에 checkIn 기록 존재 여부
   Map<String, bool> _hasWorkedMap = {};
+  // [R5.1 NO_SHOW 대체충원] 당일 NO_SHOW 상태인 출근 기록의 applicationId 집합
+  // "대체 인력 충원" 버튼 표시 조건에 사용
+  Set<String> _noShowApplicationIds = {};
   // 파트변경 다이얼로그용 TO 캐시 — 같은 TO 재탭 시 서버 읽기 생략
   final Map<String, TOModel> _toCache = {};
   bool _isBatchMode = false;
@@ -191,6 +194,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       _idCardStatusMap = {};
       _reviewWrittenMap.clear();
       _hasWorkedMap = {}; // [BUG-CANCEL-01] 로드 시작 시 초기화 — 이전 날짜 잔류 방지
+      _noShowApplicationIds = {}; // [R5.1] 초기화
       _toCache.clear();   // 파트변경 후 재로드 시 TO 캐시 무효화
       _isBatchMode = false;
       _idCardSelectGroupKey = null;
@@ -256,6 +260,10 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             ? _svc.loadHasWorkedMap(businessId: bizId, date: widget.date)
             : Future.value(<String, bool>{});
 
+        // [R5.1] NO_SHOW applicationId 집합 선제 시작 (Phase 2와 병렬)
+        final noShowFuture = _svc.getNoShowApplicationIdsByDate(
+          businessId: bizId, date: widget.date);
+
         // Phase 2: Phase 3 futures가 이미 실행 중인 상태에서 병렬로 처리됨
         Map<String, int> workDetailCapacityMap = {};
         final results = await Future.wait([
@@ -280,6 +288,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         // [BUG-CANCEL-01] 당일 근무 여부 맵 — 확정취소 버튼 가드용
         final hasWorkedMap = await hasWorkedFuture;
 
+        // [R5.1] NO_SHOW applicationId 집합 수집
+        final noShowApplicationIds = await noShowFuture;
+
         final starredFromFirestore =
             allApps.where((app) => app.isStarred).map((app) => app.id).toSet();
 
@@ -295,6 +306,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           _reviewWrittenMap.addAll(reviewMap);
           _starredIds.addAll(starredFromFirestore);
           _hasWorkedMap = hasWorkedMap; // [BUG-CANCEL-01]
+          _noShowApplicationIds = noShowApplicationIds; // [R5.1]
           _isLoading = false;
           _rebuildGroups();
         });
@@ -309,6 +321,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         _contractStatusMap = contractMap;
         _weeklyWorkCountMap = weeklyMap;
         _hasWorkedMap = {}; // [BUG-CANCEL-01] 확정자 없으면 초기화
+        _noShowApplicationIds = {}; // [R5.1]
         _isLoading = false;
         _rebuildGroups();
       });
@@ -326,6 +339,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
         _workDetailCapacityMap = {};
         _weeklyWorkCountMap = {};
         _hasWorkedMap = {}; // [BUG-CANCEL-01] 로드 실패 시도 초기화
+        _noShowApplicationIds = {}; // [R5.1]
       });
       ToastHelper.showError('데이터를 불러오지 못했습니다. 다시 시도해주세요.');
     }
@@ -534,9 +548,11 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   Widget _buildStatsStrip(BuildContext context) {
     // [UX-D-02] 총 부족 = workDetail별 max(required_i - confirmed_i, 0) 합산
     // aggregate 공식(Σrequired - Σconfirmed)은 과충원 그룹이 다른 그룹 부족을 상쇄하므로 사용 금지
+    // [R5.1] 좌석 반납된 (staffingReleasedAt != null) 확정자는 정원 계산에서 제외
     final totalShortage = _cachedGroups.fold<int>(
       0,
-      (acc, g) => acc + (g.requiredCount - g.confirmedApps.length).clamp(0, 99999),
+      (acc, g) => acc + (g.requiredCount -
+          g.confirmedApps.where((a) => !a.isStaffingReleased).length).clamp(0, 99999),
     );
     final shortageColor =
         totalShortage > 0 ? AppColors.errorDark : AppColors.grey500;
@@ -902,8 +918,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
         // ── [Phase 8.1B.3 / R4] 인력 초대 버튼 — pending 섹션 이후 표시 ──
         // pending 먼저 처리 후 여전히 부족할 때 outbound invite CTA 노출
+        // [R5.1] 좌석 반납된 확정자는 정원 계산에서 제외
         if (!g.isLongTerm && g.toId != null && g.requiredCount > 0 &&
-            g.requiredCount > g.confirmedApps.length)
+            g.requiredCount > g.confirmedApps.where((a) => !a.isStaffingReleased).length)
           Builder(builder: (ctx) {
             final slotId = g.confirmedApps.isNotEmpty
                 ? g.confirmedApps.first.slotId
@@ -1350,17 +1367,56 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
                 ],
               ),
             ] else if (!isPending) ...[
-              // [BUG-CANCEL-01] 계약서 작성·확정취소·파트변경 중 하나라도 표시할 때 Row 렌더링
+              // [R5.1] 대체 충원 진행 중 배지 — staffingReleasedAt 설정 시 표시
+              if (app.isStaffingReleased) ...[
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppColors.warning.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: AppColors.warning, width: 1),
+                    ),
+                    child: Text(
+                      '대체 충원 진행 중',
+                      style: ResponsiveHelper.captionStyle(context).copyWith(
+                        color: AppColors.warning,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+              // [BUG-CANCEL-01] 계약서 작성·확정취소·파트변경·대체충원 중 하나라도 표시할 때 Row 렌더링
               if ((((_contractStatusMap[app.id] == null ||
                           _contractStatusMap[app.id]!.isEmpty ||
                           _contractStatusMap[app.id] == 'voided') &&
                       canManageContract) ||
                   (_canCancelConfirmation(app) && canManageTo) ||
-                  (app.toId != null && hasMultipleParts && canManageTo))) ...[
+                  (app.toId != null && hasMultipleParts && canManageTo) ||
+                  // [R5.1] NO_SHOW + 미반납 + 단기 + 권한 있을 때 버튼 표시
+                  (_noShowApplicationIds.contains(app.id) && !app.isStaffingReleased &&
+                      !app.isLongTermApplication && canManageTo))) ...[
                 const SizedBox(height: 8),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
+                    // [R5.1] 대체 인력 충원 버튼 — NO_SHOW 확인 후 미반납 상태에서만 표시
+                    if (_noShowApplicationIds.contains(app.id) &&
+                        !app.isStaffingReleased &&
+                        !app.isLongTermApplication &&
+                        canManageTo) ...[
+                      _actionButton(
+                        context,
+                        label: '대체 인력 충원',
+                        color: AppColors.warning,
+                        filled: true,
+                        onTap: () => _releaseNoshowSeat(app),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
                     // 계약 미작성 시 개별 계약서 작성 버튼
                     if ((_contractStatusMap[app.id] == null ||
                         _contractStatusMap[app.id]!.isEmpty ||
@@ -2477,6 +2533,38 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       if (!mounted) return;
       ToastHelper.showSuccess('확정이 취소되었습니다');
       await _load();
+    } catch (e) {
+      if (mounted) ToastHelper.showError('처리 실패: $e');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
+  }
+
+  // ── [R5.1] 대체 인력 충원 ──────────────────────────────────────────────────
+
+  Future<void> _releaseNoshowSeat(ApplicationModel app) async {
+    if (_isProcessing) return;
+    final user = _userMap[app.uid];
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: '대체 인력 충원',
+      message:
+          '${user?.name ?? '해당 근무자'}의 NO_SHOW 자리를 반납하여 대체 인력 모집을 시작합니다.\n'
+          '기존 확정 이력은 유지되며, 모집 정원이 복구됩니다.',
+      confirmText: '충원 시작',
+      cancelText: '취소',
+      confirmColor: AppColors.warning,
+    );
+    if (!confirmed || !mounted) return;
+    setState(() => _isProcessing = true);
+    try {
+      final success = await _svc.releaseNoshowSeat(applicationId: app.id);
+      if (!mounted) return;
+      if (success) {
+        _hasChanges = true;
+        ToastHelper.showSuccess('대체 인력 모집이 시작되었습니다');
+        await _load();
+      }
     } catch (e) {
       if (mounted) ToastHelper.showError('처리 실패: $e');
     } finally {

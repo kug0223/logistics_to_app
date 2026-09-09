@@ -18837,6 +18837,146 @@ export const callableBatchSetNoShow = onCall(
   }
 );
 
+// ── callableReleaseNoshowSeat ───────────────────────────────────────────
+// [R5.1] NO_SHOW된 확정 지원서의 모집 정원을 반납하여 당일 대체충원을 허용.
+//
+// 설계 원칙:
+//  - status 변경 금지 (NO_SHOW 이력 보존) — application.status = CONFIRMED 유지
+//  - staffingReleasedAt 마커로 "정원 미소모" 표시
+//  - syncTOStats early-exit 조건: beforeStatus === afterStatus → staffingReleasedAt만
+//    기록하면 status가 바뀌지 않아 syncTOStats가 발동하지 않음 → 카운터 수동 감소 안전
+//  - 단기/Flex TO 전용 (applicationType != 'long_term' 검증)
+//  - TO.status: syncTOStats가 발동하지 않으므로 FULL → ACTIVE 전환을 명시적으로 처리
+export const callableReleaseNoshowSeat = onCall(
+  {region: "asia-northeast3", enforceAppCheck: true},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+    const {applicationId} = request.data as {applicationId: string};
+    if (!applicationId) throw new HttpsError("invalid-argument", "applicationId가 필요합니다.");
+
+    const callerUid = request.auth.uid;
+
+    // ── Step 1: Application 조회 ──────────────────────────────
+    const appRef = db.collection("applications").doc(applicationId);
+    const appSnap = await appRef.get();
+    if (!appSnap.exists) {
+      throw new HttpsError("not-found", "지원서를 찾을 수 없습니다.");
+    }
+    const appData = appSnap.data()!;
+    const appBusinessId = appData.businessId as string | undefined;
+    if (!appBusinessId) throw new HttpsError("internal", "지원서에 businessId가 없습니다.");
+
+    // ── Step 2: 권한 검증 (assertBizAdmin + canManageTo) ─────
+    const {callerData: releaseCallerData} = await assertBizAdmin(callerUid, appBusinessId);
+    const releaseCallerRole = releaseCallerData?.role as string | undefined;
+    if (releaseCallerRole !== "BUSINESS_ADMIN" && releaseCallerRole !== "SUPER_ADMIN") {
+      const releaseMemberSnap = await db.collection("businesses").doc(appBusinessId)
+        .collection("members").doc(callerUid).get();
+      const releaseMemberPerms = (releaseMemberSnap.data()?.permissions as Record<string, boolean>) ?? {};
+      if (!releaseMemberPerms.canManageTo) {
+        throw new HttpsError("permission-denied", "인력 관리 권한이 없습니다.");
+      }
+    }
+
+    // ── Step 3: 비즈니스 로직 검증 (TX 밖) ──────────────────
+    // 멱등: 이미 반납된 경우 already-exists 반환 (클라이언트는 성공 처리)
+    if (appData.staffingReleasedAt != null) {
+      return {alreadyReleased: true, toId: appData.toId};
+    }
+
+    // 단기 전용 (장기 지원서는 이 기능 대상 아님)
+    const appType = appData.type as string | undefined;
+    if (appType === "long_term") {
+      throw new HttpsError("failed-precondition", "장기 근무 지원서는 대체충원 좌석 반납 대상이 아닙니다.");
+    }
+
+    // CONFIRMED_STATUSES 검증
+    const appStatus = appData.status as string | undefined;
+    if (!appStatus || !CONFIRMED_STATUSES.includes(appStatus)) {
+      throw new HttpsError("failed-precondition", "확정된 지원서만 좌석 반납이 가능합니다.");
+    }
+
+    // NO_SHOW attendance 검증 — applicationId로 조회
+    const noShowAttSnap = await db.collection("attendance")
+      .where("applicationId", "==", applicationId)
+      .where("status", "==", "NO_SHOW")
+      .limit(1)
+      .get();
+    if (noShowAttSnap.empty) {
+      throw new HttpsError("failed-precondition", "NO_SHOW 출근 기록이 없는 지원서입니다.");
+    }
+
+    // ── Step 4: 참조 준비 ────────────────────────────────────
+    const releaseToId = appData.toId as string | undefined;
+    const releaseSlotId = (appData.slotId as string | undefined) ?? null;
+    const releaseWdId = appData.wdId as string | undefined;
+    const releaseToRef = releaseToId ? db.collection("tos").doc(releaseToId) : null;
+    const releaseSlotRef = (releaseToId && releaseSlotId)
+      ? db.collection("tos").doc(releaseToId).collection("slots").doc(releaseSlotId)
+      : null;
+
+    // ── Step 5: 단일 TX ──────────────────────────────────────
+    await db.runTransaction(async (tx) => {
+      // 동일 Promise.all reads-before-writes
+      const [releaseToSnap, releaseSlotSnap] = await Promise.all([
+        releaseToRef ? tx.get(releaseToRef) : Promise.resolve(null as admin.firestore.DocumentSnapshot | null),
+        releaseSlotRef ? tx.get(releaseSlotRef) : Promise.resolve(null as admin.firestore.DocumentSnapshot | null),
+      ]);
+
+      const now = admin.firestore.FieldValue.serverTimestamp();
+
+      // 5-a. Application에 좌석 반납 마커
+      tx.update(appRef, {
+        staffingReleasedAt: now,
+        staffingReleaseReason: "NO_SHOW",
+        updatedAt: now,
+      });
+
+      // 5-b. TO.totalConfirmed 감소 + FULL→ACTIVE 상태 전환
+      if (releaseToRef && releaseToSnap && releaseToSnap.exists) {
+        const toData = releaseToSnap.data()!;
+        const currentTotalConfirmed = (toData.totalConfirmed as number) ?? 0;
+        const totalRequired = (toData.totalRequired as number) ?? 0;
+        const toUpdate: Record<string, unknown> = {};
+        if (currentTotalConfirmed > 0) {
+          toUpdate.totalConfirmed = admin.firestore.FieldValue.increment(-1);
+        }
+        // syncTOStats가 발동하지 않으므로 FULL→ACTIVE 전환 명시적 처리
+        // 감소 후 totalConfirmed-1 < totalRequired 이면 더 이상 FULL 아님
+        const toStatus = toData.status as string | undefined;
+        if (toStatus === "FULL" && totalRequired > 0 && currentTotalConfirmed - 1 < totalRequired) {
+          toUpdate.status = "ACTIVE";
+        }
+        if (Object.keys(toUpdate).length > 0) {
+          tx.update(releaseToRef, toUpdate);
+        }
+      }
+
+      // 5-c. slot.confirmedCount + workDetailCounts.{wdId}.confirmedCount 감소
+      if (releaseSlotRef && releaseSlotSnap && releaseSlotSnap.exists) {
+        const slotData = releaseSlotSnap.data()!;
+        const slotConfirmedCount = (slotData.confirmedCount as number) ?? 0;
+        if (slotConfirmedCount > 0) {
+          const slotUpdate: Record<string, unknown> = {
+            confirmedCount: admin.firestore.FieldValue.increment(-1),
+          };
+          // [Phase 8.1E.2D] new-schema guard: workDetailCounts 존재 + wdId 있을 때만 감소
+          if (releaseWdId && slotData.workDetailCounts != null) {
+            const wdcEntry = (slotData.workDetailCounts as Record<string, unknown>)[releaseWdId] as Record<string, unknown> | undefined;
+            const wdcConfirmedCount = wdcEntry ? ((wdcEntry.confirmedCount as number) ?? 0) : 0;
+            if (wdcConfirmedCount > 0) {
+              slotUpdate[`workDetailCounts.${releaseWdId}.confirmedCount`] = admin.firestore.FieldValue.increment(-1);
+            }
+          }
+          tx.update(releaseSlotRef, slotUpdate);
+        }
+      }
+    });
+
+    return {success: true, toId: releaseToId};
+  }
+);
+
 // 노쇼 배치 취소 — wageTransferred 상태는 취소 불가
 export const callableBatchCancelNoShow = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
@@ -18864,13 +19004,60 @@ export const callableBatchCancelNoShow = onCall(
     const now = admin.firestore.FieldValue.serverTimestamp();
     const skipped: string[] = [];
 
+    // [R5.1 Case F/G] TX 전 준비: NO_SHOW 상태인 attendance의 applicationId를 수집해
+    // staffingReleasedAt이 설정된(좌석 반납된) application을 확인 → Case F 복구 대상 결정.
+    // TX 전 조회이므로 TOCTOU가 이론적으로 존재하나 관리자 정정 동작으로 허용.
+    const preSnaps = await Promise.all(
+      attendanceIds.map((id) => db.collection("attendance").doc(id).get())
+    );
+    // 좌석 반납된 애플리케이션 정보 수집 (applicationId → {toId, slotId, wdId})
+    type SeatRestoreInfo = {appId: string; toId: string; slotId: string | null; wdId: string | undefined};
+    const seatRestoreTargets: SeatRestoreInfo[] = [];
+    for (const presnap of preSnaps) {
+      if (!presnap.exists) continue;
+      const predata = presnap.data()!;
+      if (predata.businessId !== businessId) continue;
+      if (predata.status !== "NO_SHOW") continue;
+      if (predata.wageStatus === "transferred") continue;
+      const appId = predata.applicationId as string | undefined;
+      if (!appId) continue;
+      // application 조회하여 staffingReleasedAt 확인
+      const appSnap = await db.collection("applications").doc(appId).get();
+      if (!appSnap.exists) continue;
+      const appData = appSnap.data()!;
+      if (appData.staffingReleasedAt == null) continue; // Case G(대체 완료) 또는 미반납 — 복구 불필요
+      // Case F: 좌석 반납되었지만 아직 대체인력 미확보 → 복구 대상
+      // 복구 조건: slotConfirmedCount < slotTotalRequired는 TX 내에서 확인
+      seatRestoreTargets.push({
+        appId,
+        toId: appData.toId as string,
+        slotId: (appData.slotId as string | undefined) ?? null,
+        wdId: appData.wdId as string | undefined,
+      });
+    }
+
     // [BATCH-RACE-FIX] Promise.all(reads)+batch.commit() → 단일 트랜잭션으로 전환
     // 이유: Promise.all read와 batch.commit 사이 wageStatus가 "transferred"로 변경될 경우
     //       transferred 기록의 상태/임금 정보가 삭제되는 TOCTOU 레이스 차단
     await db.runTransaction(async (tx) => {
+      // attendance reads
       const snaps = await Promise.all(
         attendanceIds.map((id) => tx.get(db.collection("attendance").doc(id)))
       );
+      // [R5.1] Case F 복구 대상: TO/slot reads
+      const restoreRefs = seatRestoreTargets.map((t) => ({
+        ...t,
+        toRef: t.toId ? db.collection("tos").doc(t.toId) : null,
+        slotRef: (t.toId && t.slotId) ? db.collection("tos").doc(t.toId).collection("slots").doc(t.slotId) : null,
+      }));
+      const restoreSnaps = await Promise.all(
+        restoreRefs.map(async (r) => ({
+          ...r,
+          toSnap: r.toRef ? await tx.get(r.toRef) : null,
+          slotSnap: r.slotRef ? await tx.get(r.slotRef) : null,
+        }))
+      );
+
       for (const snap of snaps) {
         if (!snap.exists) continue;
         const data = snap.data()!;
@@ -18890,6 +19077,53 @@ export const callableBatchCancelNoShow = onCall(
           yearMonth: admin.firestore.FieldValue.delete(),
           updatedAt: now,
         });
+      }
+
+      // [R5.1 Case F] 좌석 반납된 Application 복구 — TO/slot 카운터 +1, staffingReleasedAt 삭제
+      for (const restore of restoreSnaps) {
+        const appRef = db.collection("applications").doc(restore.appId);
+        // Case F vs G 최종 판단: slotConfirmedCount < slotTotalRequired → Case F (복구)
+        const slotData = restore.slotSnap?.exists ? restore.slotSnap.data()! : null;
+        const slotConfirmed = slotData ? ((slotData.confirmedCount as number) ?? 0) : 0;
+        const slotRequired = slotData ? ((slotData.totalRequired as number) ?? 0) : 0;
+        const isReplacementAlreadyFilled = slotRequired > 0 && slotConfirmed >= slotRequired;
+        if (isReplacementAlreadyFilled) {
+          // Case G: 대체 인력이 이미 채워진 상태 → staffingReleasedAt만 제거 (카운터는 그대로)
+          tx.update(appRef, {
+            staffingReleasedAt: admin.firestore.FieldValue.delete(),
+            staffingReleaseReason: admin.firestore.FieldValue.delete(),
+            updatedAt: now,
+          });
+          continue;
+        }
+        // Case F: 아직 대체 인력 미확보 → 카운터 복구 + staffingReleasedAt 제거
+        tx.update(appRef, {
+          staffingReleasedAt: admin.firestore.FieldValue.delete(),
+          staffingReleaseReason: admin.firestore.FieldValue.delete(),
+          updatedAt: now,
+        });
+        const toData = restore.toSnap?.exists ? restore.toSnap.data()! : null;
+        if (restore.toRef && toData) {
+          const toUpdate: Record<string, unknown> = {
+            totalConfirmed: admin.firestore.FieldValue.increment(1),
+          };
+          // FULL 판단: 복구 후 totalConfirmed+1 >= totalRequired → FULL
+          const totalRequired = (toData.totalRequired as number) ?? 0;
+          const totalConfirmed = (toData.totalConfirmed as number) ?? 0;
+          if (totalRequired > 0 && totalConfirmed + 1 >= totalRequired) {
+            toUpdate.status = "FULL";
+          }
+          tx.update(restore.toRef, toUpdate);
+        }
+        if (restore.slotRef && slotData) {
+          const slotUpdate: Record<string, unknown> = {
+            confirmedCount: admin.firestore.FieldValue.increment(1),
+          };
+          if (restore.wdId && slotData.workDetailCounts != null) {
+            slotUpdate[`workDetailCounts.${restore.wdId}.confirmedCount`] = admin.firestore.FieldValue.increment(1);
+          }
+          tx.update(restore.slotRef, slotUpdate);
+        }
       }
     });
     return {success: true, processed: attendanceIds.length - skipped.length, skipped};

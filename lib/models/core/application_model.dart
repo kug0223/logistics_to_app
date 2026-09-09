@@ -126,6 +126,12 @@ class ApplicationModel {
   final DateTime? documentAccessConsentAt;  // 동의 시각 (serverTimestamp)
   final String? documentAccessConsentVersion; // 동의 버전 (예: "2026-08-v1")
 
+  // [R5.1 NO_SHOW 대체충원] 좌석 반납 마커
+  // 설정 시: 이 Application은 역사적으로 CONFIRMED이었지만 모집 정원을 소모하지 않음.
+  // status=CONFIRMED 유지 (NO_SHOW 이력 보존) + staffingReleasedAt != null → 정원 미소모.
+  final DateTime? staffingReleasedAt;    // 좌석 반납 시각 (CF 서버타임스탬프)
+  final String? staffingReleaseReason;  // 반납 사유 (현재 "NO_SHOW" 고정)
+
   ApplicationModel({
     required this.id,
     required this.businessId,
@@ -215,6 +221,9 @@ class ApplicationModel {
     this.documentAccessConsentGiven = false,
     this.documentAccessConsentAt,
     this.documentAccessConsentVersion,
+    // [R5.1 NO_SHOW 대체충원] 좌석 반납 마커
+    this.staffingReleasedAt,
+    this.staffingReleaseReason,
   });
 
   static ApplicationModel? tryFromMap(Map<String, dynamic> data, String documentId) {
@@ -338,6 +347,9 @@ class ApplicationModel {
       documentAccessConsentGiven: data['documentAccessConsentGiven'] as bool? ?? false,
       documentAccessConsentAt: parseTimestampNullable(data['documentAccessConsentAt']),
       documentAccessConsentVersion: data['documentAccessConsentVersion'] as String?,
+      // [R5.1 NO_SHOW 대체충원] 좌석 반납 마커
+      staffingReleasedAt: parseTimestampNullable(data['staffingReleasedAt']),
+      staffingReleaseReason: data['staffingReleaseReason'] as String?,
     );
   }
 
@@ -873,6 +885,11 @@ class ApplicationModel {
     final kb = FormatHelper.toKstDate(b);
     return ka.year == kb.year && ka.month == kb.month && ka.day == kb.day;
   }
+
+  // [R5.1 NO_SHOW 대체충원] 좌석 반납 여부
+  // true = 이 Application은 역사적으로 CONFIRMED이었지만 모집 정원을 소모하지 않음.
+  // status는 여전히 CONFIRMED (NO_SHOW 이력 보존용) — UI에서 반납 여부를 별도 표시.
+  bool get isStaffingReleased => staffingReleasedAt != null;
 }
 
 /// 지원서 Firestore 상태 상수 (대문자 — applications 컬렉션 convention)
