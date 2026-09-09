@@ -25494,6 +25494,7 @@ export const callableGetAvailableWorkers = onCall(
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
+    const fnStartMs = Date.now(); // [R3-A1] observability timing
     const data = request.data as {
       toId?: string;
       slotId?: string;
@@ -25540,6 +25541,21 @@ export const callableGetAvailableWorkers = onCall(
     const slotDateJST = slotDateTs.toDate();
     const kstDate = new Date(slotDateJST.getTime() + 9 * 60 * 60 * 1000);
     const dateKey = `${kstDate.getUTCFullYear()}-${String(kstDate.getUTCMonth() + 1).padStart(2, "0")}-${String(kstDate.getUTCDate()).padStart(2, "0")}`;
+
+    // ── [R3-A1] Pool observability: count preflight ────────────────────────────
+    // 동일 availability 조건으로 eligibility 이전 pool 크기를 관측
+    // count() 실패 시 candidate 조회에 영향 없음 (observability failure ≠ matching failure)
+    let poolCount = -1; // -1 = count 미획득(오류 또는 미실행)
+    try {
+      const countSnap = await db.collection("worker_availability")
+        .where("city", "==", businessCity)
+        .where("dates", "array-contains", dateKey)
+        .count()
+        .get();
+      poolCount = countSnap.data().count;
+    } catch (countErr) {
+      console.log(JSON.stringify({event: "candidatePoolCountError", error: String(countErr)}));
+    }
 
     // workDetail 시간 추출 (startTime/endTime 필터용)
     const rawWDs = (slotData.workDetails as unknown[] | undefined) ?? [];
@@ -25590,6 +25606,16 @@ export const callableGetAvailableWorkers = onCall(
     const nextCursor = hasMore ? avDocs[avDocs.length - 1].id : null;
 
     if (avDocs.length === 0) {
+      // [R3-A1] Early-exit 경로도 logging
+      console.log(JSON.stringify({
+        event: "candidatePoolStats",
+        poolCount,
+        pageFetchedCount: 0,
+        pageEligibleCount: 0,
+        pageSize,
+        hasMore: false,
+        elapsedMs: Date.now() - fnStartMs,
+      }));
       return {candidates: [], hasMore: false, nextCursor: null, totalFound: 0};
     }
 
@@ -25697,6 +25723,17 @@ export const callableGetAvailableWorkers = onCall(
 
       candidates.push({uid, maskedName, city: businessCity, district: userDistrict});
     }
+
+    // [R3-A1] Structured observability log — PII 없음
+    console.log(JSON.stringify({
+      event: "candidatePoolStats",
+      poolCount,
+      pageFetchedCount: avDocs.length,
+      pageEligibleCount: candidates.length,
+      pageSize,
+      hasMore,
+      elapsedMs: Date.now() - fnStartMs,
+    }));
 
     return {
       candidates,
