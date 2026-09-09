@@ -762,30 +762,9 @@ extension ApplicationFirestore on FirestoreService {
           ? DateTime.fromMillisecondsSinceEpoch(workDateMs).toLocal()
           : DateTime.now();
 
-      // 2+3. 슬롯 감소 + 노쇼 패널티 병렬 실행 (서로 다른 필드 조작 — 독립적)
+      // 2. 캐시 무효화 (Fix-A: capacity decrement는 서버 TX에서 atomic 처리 완료 — 별도 CF 호출 불필요)
+      // serverShouldPenalty=$serverShouldPenalty 참고용 — no-show penalty도 서버 인라인 처리됨
       if (toId != null) clearCache(toId: toId);
-      final step2and3 = <Future<void>>[];
-      if (toId != null) {
-        final decrementCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-            .httpsCallable('callableDecrementSlotConfirmed',
-                options: HttpsCallableOptions(timeout: const Duration(seconds: 10)));
-        step2and3.add(() async {
-          try {
-            await decrementCallable.call({
-              'applicationId': applicationId,
-              'toId': toId,
-              'slotId': slotId,
-              'workType': selectedWorkType,
-            });
-          } catch (e) {
-            debugPrint('⚠️ slot confirmedCount 감소 CF 실패 (syncTOStats 복구 예정): $e');
-          }
-        }());
-      }
-      // [GAP-2] 노쇼 패널티는 callableCancelConfirmedApplication 서버 인라인으로 이미 처리됨
-      // serverShouldPenalty=$serverShouldPenalty 참고용 — 별도 CF 호출 불필요
-      // (구 버전 호환: callableApplyNoShowPenalty에 noShowPenaltyAppliedAt idempotency 가드 존재)
-      if (step2and3.isNotEmpty) await Future.wait(step2and3);
 
       // 4+5. [PERF-F1] 슬롯 재계산 + 관련 데이터 정리 동시 실행 (2 RTT → 1 RTT)
       final cleanupBusinessId = isAdminCancel
@@ -893,27 +872,10 @@ extension ApplicationFirestore on FirestoreService {
       final cfData = Map<String, dynamic>.from(cfResult.data as Map);
 
       if (response == 'declined') {
+        // Fix-A: capacity decrement는 callableRespondToReconfirm TX에서 atomic 처리 완료
+        // callableDecrementSlotConfirmed 후속 호출 불필요 — 캐시 무효화만 수행
         final toId = cfData['toId'] as String?;
-        final slotId = cfData['slotId'] as String?;
-        final selectedWorkType = cfData['selectedWorkType'] as String?;
-
         if (toId != null) clearCache(toId: toId);
-
-        if (toId != null) {
-          try {
-            await FirebaseFunctions.instanceFor(region: 'asia-northeast3')
-                .httpsCallable('callableDecrementSlotConfirmed',
-                    options: HttpsCallableOptions(timeout: const Duration(seconds: 10)))
-                .call({
-              'applicationId': applicationId,
-              'toId': toId,
-              'slotId': slotId,
-              'workType': selectedWorkType,
-            });
-          } catch (e) {
-            debugPrint('⚠️ [리컨펌] slot confirmedCount 감소 실패 (syncTOStats 복구 예정): $e');
-          }
-        }
       }
 
       return true;

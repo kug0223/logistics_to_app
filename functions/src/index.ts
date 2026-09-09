@@ -13714,6 +13714,14 @@ export const callableCancelConfirmedApplication = onCall(
     const userRefForCancelTx = (noShowEquivalent && cancelPenaltyResolved)
       ? db.collection("users").doc(workerUid) : null;
 
+    // [Fix-A] capacity decrement refs — cancel TX 내에서 서버 원자적 감소 (client 후속 callableDecrementSlotConfirmed 불필요)
+    const cancelCapToId = appData.toId as string | undefined;
+    const cancelCapSlotId = (appData.slotId as string | undefined) ?? null;
+    const cancelCapWdId = appData.wdId as string | undefined;
+    const cancelCapToRef = cancelCapToId ? db.collection("tos").doc(cancelCapToId) : null;
+    const cancelCapSlotRef = (cancelCapToId && cancelCapSlotId)
+      ? db.collection("tos").doc(cancelCapToId).collection("slots").doc(cancelCapSlotId) : null;
+
     await db.runTransaction(async (tx) => {
       // reads 먼저 (Firestore tx 규칙) — 조건부 userRef 포함
       const baseReads: Promise<admin.firestore.DocumentSnapshot>[] = [
@@ -13722,7 +13730,11 @@ export const callableCancelConfirmedApplication = onCall(
         ...prePersonalGrantRefs.map((ref) => tx.get(ref)),
       ];
       if (userRefForCancelTx) baseReads.push(tx.get(userRefForCancelTx));
-      const allSnaps = await Promise.all(baseReads);
+      const [allSnaps, cancelCapToSnap, cancelCapSlotSnap] = await Promise.all([
+        Promise.all(baseReads),
+        cancelCapToRef ? tx.get(cancelCapToRef) : Promise.resolve(null as admin.firestore.DocumentSnapshot | null),
+        cancelCapSlotRef ? tx.get(cancelCapSlotRef) : Promise.resolve(null as admin.firestore.DocumentSnapshot | null),
+      ]);
       const freshSnap = allSnaps[0];
       const grantSnapForCancel = allSnaps[1];
       const freshPersonalGrants = allSnaps.slice(2, 2 + prePersonalGrantRefs.length);
@@ -13736,11 +13748,14 @@ export const callableCancelConfirmedApplication = onCall(
       const applyPenaltyInTx = noShowEquivalent && cancelPenaltyResolved && !alreadyPenalized
         && userSnapForPenalty != null && userSnapForPenalty.exists;
 
-      // application 취소 write — penalty marker 포함 (단일 appRef write)
+      // application 취소 write — penalty marker + confirmedDecrementedAt 포함 (단일 appRef write)
+      // confirmedDecrementedAt: 구 callableDecrementSlotConfirmed 멱등성 마커를 여기서 설정 →
+      //   구버전 클라이언트가 후속 CF를 호출해도 no-op 처리됨
       const appTxData: Record<string, unknown> = {...updateData};
       if (applyPenaltyInTx) {
         appTxData.noShowPenaltyAppliedAt = admin.firestore.FieldValue.serverTimestamp();
       }
+      appTxData.confirmedDecrementedAt = admin.firestore.FieldValue.serverTimestamp();
       tx.update(appRef, appTxData);
 
       // auto grant revoke (applicationId 전용 자동 grant)
@@ -13788,6 +13803,45 @@ export const callableCancelConfirmedApplication = onCall(
         }
         tx.update(userRefForCancelTx, penaltyUpdates);
         console.info(`[cancelConfirmed] no-show penalty SAME_TX 적용 (uid=${workerUid}, app=${applicationId})`);
+      }
+
+      // [Fix-A] 서버 인라인 용량 감소 — cancel TX와 동일 원자 커밋
+      // phase 8.1E 패턴 그대로: TO→slot→workDetailCounts 순서, 음수 방지 floor
+      if (cancelCapToRef && cancelCapToSnap && cancelCapToSnap.exists) {
+        const currentTotalConfirmed = (cancelCapToSnap.data()?.totalConfirmed as number) ?? 0;
+        if (currentTotalConfirmed > 0) {
+          tx.update(cancelCapToRef, {
+            totalConfirmed: admin.firestore.FieldValue.increment(-1),
+          });
+        }
+        if (cancelCapSlotRef && cancelCapSlotSnap && cancelCapSlotSnap.exists) {
+          const slotConfirmedCount = (cancelCapSlotSnap.data()?.confirmedCount as number) ?? 0;
+          if (slotConfirmedCount > 0) {
+            // [Phase 8.1E.2D] new-schema guard: wdId 없으면 aggregate-only mutation 금지
+            const decWds = (cancelCapSlotSnap.data()!.workDetails as Record<string, unknown>[] | undefined) ?? [];
+            const decIsNewSchema = decWds.some(
+              (wd) => typeof wd["wdId"] === "string" && (wd["wdId"] as string).length > 0
+            );
+            if (decIsNewSchema && !cancelCapWdId) {
+              throw new HttpsError(
+                "failed-precondition",
+                `[Fix-A] new-schema slot에서 wdId resolve 실패 — aggregate-only mutation 금지 (app=${applicationId})`
+              );
+            }
+            const slotUpdate: Record<string, admin.firestore.FieldValue> = {
+              confirmedCount: admin.firestore.FieldValue.increment(-1),
+            };
+            if (cancelCapWdId) {
+              const wdcEntry = (cancelCapSlotSnap.data()?.workDetailCounts as
+                Record<string, {confirmedCount?: number}> | undefined)?.[cancelCapWdId];
+              if ((wdcEntry?.confirmedCount ?? 0) > 0) {
+                slotUpdate[`workDetailCounts.${cancelCapWdId}.confirmedCount`] =
+                  admin.firestore.FieldValue.increment(-1);
+              }
+            }
+            tx.update(cancelCapSlotRef, slotUpdate);
+          }
+        }
       }
     });
     // [FIX-5] post-transaction 에러 삼킴 personal grant revoke 제거 완료 — 위 transaction에서 atomic 처리됨
@@ -13964,19 +14018,30 @@ export const callableRespondToReconfirm = onCall(
     }
 
     // ─── declined: 취소 처리 ───────────────────────
+    // [Fix-A] capacity decrement refs — reconfirm TX 내에서 서버 원자적 감소
+    const reconfCapWdId = appData.wdId as string | undefined;
+    const reconfCapToRef = toId ? db.collection("tos").doc(toId) : null;
+    const reconfCapSlotRef = (toId && slotId)
+      ? db.collection("tos").doc(toId).collection("slots").doc(slotId) : null;
+
     await db.runTransaction(async (tx) => {
-      // TOCTOU: 상태 재확인
-      const freshSnap = await tx.get(appRef);
+      // TOCTOU: 상태 재확인 + capacity reads (Fix-A: 동일 tx에서 atomic)
+      const [freshSnap, reconfCapToSnap, reconfCapSlotSnap] = await Promise.all([
+        tx.get(appRef),
+        reconfCapToRef ? tx.get(reconfCapToRef) : Promise.resolve(null as admin.firestore.DocumentSnapshot | null),
+        reconfCapSlotRef ? tx.get(reconfCapSlotRef) : Promise.resolve(null as admin.firestore.DocumentSnapshot | null),
+      ]);
       const freshStatus = freshSnap.data()?.status as string | undefined;
       if (!freshStatus || !["CONFIRMED", "CONTRACT_PENDING"].includes(freshStatus)) return;
 
-      // 취소 상태로 변경
+      // 취소 상태로 변경 (confirmedDecrementedAt 포함 — 구버전 client 후속 CF 멱등 처리)
       tx.update(appRef, {
         status: "CANCELED",
         reconfirmStatus: "declined",
         reconfirmRespondedAt: now,
         canceledAt: now,
         cancelReason: "RECONFIRM_CANCELED",
+        confirmedDecrementedAt: admin.firestore.FieldValue.serverTimestamp(),
         statusHistory: admin.firestore.FieldValue.arrayUnion({
           status: "CANCELED",
           reason: "RECONFIRM_CANCELED",
@@ -13984,6 +14049,43 @@ export const callableRespondToReconfirm = onCall(
           at: admin.firestore.Timestamp.now(),
         }),
       });
+
+      // [Fix-A] 서버 인라인 용량 감소 — reconfirm declined TX와 동일 원자 커밋
+      if (reconfCapToRef && reconfCapToSnap && reconfCapToSnap.exists) {
+        const currentTotalConfirmed = (reconfCapToSnap.data()?.totalConfirmed as number) ?? 0;
+        if (currentTotalConfirmed > 0) {
+          tx.update(reconfCapToRef, {
+            totalConfirmed: admin.firestore.FieldValue.increment(-1),
+          });
+        }
+        if (reconfCapSlotRef && reconfCapSlotSnap && reconfCapSlotSnap.exists) {
+          const slotConfirmedCount = (reconfCapSlotSnap.data()?.confirmedCount as number) ?? 0;
+          if (slotConfirmedCount > 0) {
+            const decWds = (reconfCapSlotSnap.data()!.workDetails as Record<string, unknown>[] | undefined) ?? [];
+            const decIsNewSchema = decWds.some(
+              (wd) => typeof wd["wdId"] === "string" && (wd["wdId"] as string).length > 0
+            );
+            if (decIsNewSchema && !reconfCapWdId) {
+              throw new HttpsError(
+                "failed-precondition",
+                `[Fix-A] new-schema slot에서 wdId resolve 실패 — aggregate-only mutation 금지 (app=${applicationId})`
+              );
+            }
+            const slotUpdate: Record<string, admin.firestore.FieldValue> = {
+              confirmedCount: admin.firestore.FieldValue.increment(-1),
+            };
+            if (reconfCapWdId) {
+              const wdcEntry = (reconfCapSlotSnap.data()?.workDetailCounts as
+                Record<string, {confirmedCount?: number}> | undefined)?.[reconfCapWdId];
+              if ((wdcEntry?.confirmedCount ?? 0) > 0) {
+                slotUpdate[`workDetailCounts.${reconfCapWdId}.confirmedCount`] =
+                  admin.firestore.FieldValue.increment(-1);
+              }
+            }
+            tx.update(reconfCapSlotRef, slotUpdate);
+          }
+        }
+      }
     });
 
     // 관리자 알림 (best-effort — 취소 처리에 영향 없음)
@@ -14034,14 +14136,21 @@ export const callableRespondToReconfirm = onCall(
 );
 
 // ═══════════════════════════════════════════════════════════
-// 🔒 슬롯 확정 인원 감소 — cancelConfirmedApplication 배치 이후 호출
+// 🔒 슬롯 확정 인원 감소 — [DEPRECATED: Fix-A 이후 클라이언트에서 호출하지 않음]
 //
-// 설계 원칙:
+// [Fix-A 2026-09-09] callableCancelConfirmedApplication / callableRespondToReconfirm TX에
+//   capacity decrement를 인라인 통합 → 클라이언트 2단계 후속 호출 불필요.
+//   confirmedDecrementedAt 마커가 cancel TX에서 함께 설정되므로
+//   구버전 클라이언트가 이 CF를 호출해도 멱등성 체크에서 no-op 처리됨.
+//
+// 잔류 목적:
+//   - 구버전 클라이언트 호환 (confirmedDecrementedAt 미설정 레거시 문서 수동 복구)
+//   - 관리자 수동 카운터 수리 도구
+//   - syncTOStats 미대상 workDetailCounts 단독 수리
+//
+// 설계 원칙(구):
 //   - USER가 클라이언트에서 직접 slots.confirmedCount를 write 불가
-//     (보안 취약점: 정원 초과 지원 허용 위험 — application 없이 slot만 단독 감소 가능)
-//   - 대신 application UPDATE(배치) 성공 후 이 CF를 Admin SDK로 호출
-//   - CF 실패 시 syncTOStats가 주기적으로 정합성 복구 → 치명적 오류 아님
-//   - cancelConfirmedApplication의 _decrementTOConfirmed 역할을 서버에서 담당
+//   - CF 실패 시 syncTOStats가 주기적으로 정합성 복구 (단, workDetailCounts는 미포함 — Fix-A 이유)
 //   - updateApplicationStatus(관리자 롤백)는 관리자 규칙으로 배치 처리 — 이 CF 미사용
 // ═══════════════════════════════════════════════════════════
 export const callableDecrementSlotConfirmed = onCall(
