@@ -276,7 +276,7 @@ class _AvailableWorkersBottomSheetState
                 size: 48, color: AppColors.grey400),
             const SizedBox(height: 12),
             Text(
-              '이 날 가능일을 등록한 인력이 없습니다',
+              '현재 초대 가능한 인력이 없습니다.',
               style: ResponsiveHelper.bodyStyle(
                   context, color: AppColors.grey500),
               textAlign: TextAlign.center,
@@ -323,28 +323,46 @@ class _AvailableWorkersBottomSheetState
         border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // ── 이름 + 지역 ──────────────────────────────────────────────
+          // ── 이름 + 지역 + 업무 경험 ──────────────────────────────────────
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
                   worker.maskedName,
                   style: ResponsiveHelper.bodyStyle(context)
                       .copyWith(fontWeight: FontWeight.w600),
                 ),
-                if (worker.district != null && worker.district!.isNotEmpty)
+                if (worker.locationLabel.isNotEmpty)
                   Text(
                     worker.locationLabel,
                     style: ResponsiveHelper.smallStyle(
                         context, color: AppColors.grey500),
-                  )
-                else if (worker.city.isNotEmpty)
-                  Text(
-                    worker.city,
-                    style: ResponsiveHelper.smallStyle(
-                        context, color: AppColors.grey500),
+                  ),
+                // [R3-D] 해당 업무 경험 있을 때만 표시 — exact count/totalWorkDays 비노출
+                // SAME_WORK_EXPERIENCE_VISIBLE = YES / NEW_WORKER_BADGE_VISIBLE = NO
+                if (worker.hasSameWorkExperience)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.check_rounded,
+                          size: 12,
+                          color: AppColors.info,
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          '이 업무 경험 있음',
+                          style: ResponsiveHelper.smallStyle(
+                              context, color: AppColors.info),
+                        ),
+                      ],
+                    ),
                   ),
               ],
             ),
