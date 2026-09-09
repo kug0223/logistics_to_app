@@ -13556,53 +13556,85 @@ export const callableCancelConfirmedApplication = onCall(
     }
 
     // 4. 취소 유형 결정
-    // [SERVER-AUTH] client applyNoShowPenalty boolean 대신 서버가 직접 scheduledStartAt 기준으로 판정
-    // [GAP-1] canonical 5-minute policy: 근무 시작 5분 전 이후 취소 → SAME_DAY_CANCEL (노쇼 패널티)
-    // client boolean은 하위 호환성용 파라미터로만 수신하고 실제 결정에는 사용하지 않는다
+    // [SERVER-AUTH] server-authoritative scheduledStartAt 기반 canonical 5-minute policy
+    // [R3-B.3.2] wdId/workDetailId exact match만 허용
+    //   ARBITRARY_FIRST_WD_FALLBACK = REMOVED
+    //   SAME_DAY_PENALTY_FALLBACK   = REMOVED
+    //   resolve 실패 시 penalty 미적용 (불확실한 근거의 false positive 방지)
     const isAdminCancel = !isOwner;
     const workDateTs = appData.workDate as admin.firestore.Timestamp | undefined;
-    const KST_OFFSET_MS_CANCEL = 9 * 60 * 60 * 1000;
 
+    // scheduled start resolution:
+    //   Priority 1: wdId exact match (Phase 8.1E canonical identity)
+    //   Priority 2: workDetailId composite exact match (workType_startTime_endTime)
+    //   Unresolved: penalty 미적용 + diagnostic log
     let noShowEquivalent = false;
+    let cancelPenaltyResolved = false;
     if (!isAdminCancel && workDateTs != null) {
-      let resolved = false;
       const cancelAppToId = appData.toId as string | undefined;
       const cancelAppSlotId = appData.slotId as string | undefined;
+      const cancelAppWdId = appData.wdId as string | undefined;
       const cancelAppWorkDetailId = appData.workDetailId as string | undefined;
+
       if (cancelAppToId && cancelAppSlotId) {
         try {
           const cancelSlotSnap = await db.collection("tos").doc(cancelAppToId)
             .collection("slots").doc(cancelAppSlotId).get();
           if (cancelSlotSnap.exists) {
             const cancelWds = cancelSlotSnap.data()?.workDetails as
-              Array<{startTime?: string; workType?: string; endTime?: string}> | undefined;
-            // workDetailId(workType_startTime_endTime)로 매칭, 없으면 첫 번째 workDetail 사용
-            let matchedWd: {startTime?: string} | undefined;
-            if (cancelAppWorkDetailId && cancelWds) {
-              matchedWd = cancelWds.find(
+              Array<{wdId?: string; startTime?: string; workType?: string; endTime?: string}> | undefined;
+            const cancelWdCount = cancelWds?.length ?? 0;
+            let matchedStartTime: string | undefined;
+
+            // Priority 1: wdId exact match
+            if (!matchedStartTime && cancelAppWdId && cancelWds) {
+              const byWdId = cancelWds.find((wd) => wd.wdId === cancelAppWdId);
+              matchedStartTime = byWdId?.startTime;
+            }
+            // Priority 2: workDetailId composite exact match
+            if (!matchedStartTime && cancelAppWorkDetailId && cancelWds) {
+              const byComposite = cancelWds.find(
                 (wd) => `${wd["workType"]}_${wd["startTime"]}_${wd["endTime"]}` === cancelAppWorkDetailId
               );
+              matchedStartTime = byComposite?.startTime;
             }
-            const cancelStartTimeStr = matchedWd?.startTime ?? cancelWds?.[0]?.startTime;
-            if (cancelStartTimeStr && /^\d{1,2}:\d{2}$/.test(cancelStartTimeStr)) {
-              const [hh, mm] = cancelStartTimeStr.split(":").map(Number);
-              // workDate.toMillis()은 KST 자정 기준 (onAttendanceCreated L13229 동일 공식)
+            // NO arbitrary first-WD fallback
+            // NO same-day KST fallback
+
+            if (matchedStartTime && /^\d{1,2}:\d{2}$/.test(matchedStartTime)) {
+              const [hh, mm] = matchedStartTime.split(":").map(Number);
+              // workDate.toMillis() = KST 자정 기준 (onAttendanceCreated L13229 동일 공식)
               const scheduledStartMs = workDateTs.toMillis() + (hh * 60 + mm) * 60000;
               noShowEquivalent = Date.now() >= scheduledStartMs - 5 * 60 * 1000; // 5분 전 cutoff
-              resolved = true;
+              cancelPenaltyResolved = true;
+            } else {
+              // WD identity 미매칭 → scheduledStart 미확정 → penalty 미적용
+              console.warn("[cancelPenalty] scheduledStart 미확정, penalty 미적용:", JSON.stringify({
+                event: "cancelPenaltyResolutionFailed",
+                hasWdId: !!cancelAppWdId,
+                hasWorkDetailId: !!cancelAppWorkDetailId,
+                slotWorkDetailCount: cancelWdCount,
+              }));
             }
+          } else {
+            console.warn("[cancelPenalty] slot 미존재, penalty 미적용:", JSON.stringify({
+              event: "cancelPenaltyResolutionFailed",
+              reason: "slot_not_found",
+              hasWdId: !!cancelAppWdId,
+              hasWorkDetailId: !!cancelAppWorkDetailId,
+            }));
           }
         } catch (cancelWdErr) {
-          console.warn("[cancelConfirmed] workDetail 조회 실패, fallback 사용:", cancelWdErr);
+          console.warn("[cancelPenalty] workDetail 조회 오류, penalty 미적용:", cancelWdErr);
         }
-      }
-      if (!resolved) {
-        // Fallback: slot 정보 없거나 조회 실패 시 workDate 당일 이하 비교
-        const fallbackWorkDayKST = new Date(workDateTs.toMillis() + KST_OFFSET_MS_CANCEL);
-        fallbackWorkDayKST.setUTCHours(0, 0, 0, 0);
-        const fallbackTodayKST = new Date(Date.now() + KST_OFFSET_MS_CANCEL);
-        fallbackTodayKST.setUTCHours(0, 0, 0, 0);
-        noShowEquivalent = fallbackWorkDayKST.getTime() <= fallbackTodayKST.getTime();
+      } else {
+        // toId/slotId 없음 — scheduledStart resolve 불가, penalty 미적용
+        console.warn("[cancelPenalty] slot ref 없음, penalty 미적용:", JSON.stringify({
+          event: "cancelPenaltyResolutionFailed",
+          reason: "no_slot_ref",
+          hasWdId: !!(appData.wdId),
+          hasWorkDetailId: !!(appData.workDetailId),
+        }));
       }
     }
 
@@ -13627,9 +13659,9 @@ export const callableCancelConfirmedApplication = onCall(
     if (isAdminCancel && cancelReason) updateData.cancelMessage = cancelReason;
     if (isAdminCancel) updateData.canceledBy = callerUid; // 서버 강제
 
-    // [TOCTOU-FIX + FIX-4 + FIX-5] Application 취소, auto grant, personal grant revoke를 단일 transaction에서 atomic 처리
+    // [TOCTOU-FIX + FIX-4 + FIX-5 + R3-B.3.2] Application 취소 + grant revoke + no-show penalty를
+    // 단일 transaction에서 atomic 처리 (CANCELLATION_AND_PENALTY_TRANSACTION = SAME_TX)
     // reads 먼저 → writes 순서 준수 (Firestore transaction 규칙)
-    // personal grant는 transaction 내부 쿼리 불가 제약 → 이전 pre-fetch 후 tx.get으로 fresh 재확인
     const grantRefForCancel = db.collection("idCardAccessRequests").doc(`auto_${applicationId}`);
 
     // [FIX-5] personal grant pre-fetch (transaction 이전) — tx 내에서 fresh 재확인 후 atomic revoke
@@ -13643,15 +13675,39 @@ export const callableCancelConfirmedApplication = onCall(
       .filter((doc) => doc.id !== `auto_${applicationId}`)
       .map((doc) => doc.ref);
 
+    // [R3-B.3.2 GAP-B] noShowEquivalent 이면 user read를 같은 tx에 포함 → SAME_TX atomic commit
+    const userRefForCancelTx = (noShowEquivalent && cancelPenaltyResolved)
+      ? db.collection("users").doc(workerUid) : null;
+
     await db.runTransaction(async (tx) => {
-      const [freshSnap, grantSnapForCancel, ...freshPersonalGrants] = await Promise.all([
+      // reads 먼저 (Firestore tx 규칙) — 조건부 userRef 포함
+      const baseReads: Promise<admin.firestore.DocumentSnapshot>[] = [
         tx.get(appRef),
         tx.get(grantRefForCancel),
         ...prePersonalGrantRefs.map((ref) => tx.get(ref)),
-      ]);
+      ];
+      if (userRefForCancelTx) baseReads.push(tx.get(userRefForCancelTx));
+      const allSnaps = await Promise.all(baseReads);
+      const freshSnap = allSnaps[0];
+      const grantSnapForCancel = allSnaps[1];
+      const freshPersonalGrants = allSnaps.slice(2, 2 + prePersonalGrantRefs.length);
+      const userSnapForPenalty = userRefForCancelTx ? allSnaps[allSnaps.length - 1] : null;
+
       const freshStatus = (freshSnap.data()?.status as string | undefined) ?? "";
       if (!CONFIRMED_STATUSES.includes(freshStatus)) return; // 이미 취소됨 — 멱등
-      tx.update(appRef, updateData);
+
+      // penalty 적용 여부 결정 (idempotency: noShowPenaltyAppliedAt fresh 재확인)
+      const alreadyPenalized = !!freshSnap.data()?.noShowPenaltyAppliedAt;
+      const applyPenaltyInTx = noShowEquivalent && cancelPenaltyResolved && !alreadyPenalized
+        && userSnapForPenalty != null && userSnapForPenalty.exists;
+
+      // application 취소 write — penalty marker 포함 (단일 appRef write)
+      const appTxData: Record<string, unknown> = {...updateData};
+      if (applyPenaltyInTx) {
+        appTxData.noShowPenaltyAppliedAt = admin.firestore.FieldValue.serverTimestamp();
+      }
+      tx.update(appRef, appTxData);
+
       // auto grant revoke (applicationId 전용 자동 grant)
       if (grantSnapForCancel.exists && grantSnapForCancel.data()?.status === "approved") {
         tx.update(grantRefForCancel, {
@@ -13675,6 +13731,28 @@ export const callableCancelConfirmedApplication = onCall(
       }
       if (personalRevokedCount > 0) {
         console.info(`[cancelConfirmedApplication] ID-CONSENT personal-grant ${personalRevokedCount}개 transaction-revoked: app=${applicationId}`);
+      }
+
+      // [R3-B.3.2 GAP-B] no-show penalty SAME_TX — cancellation과 atomic commit
+      // marker(noShowPenaltyAppliedAt) + history(noShowDates) 가 동일 tx에서 commit되어
+      // marker=YES/penalty=NO 또는 penalty=YES/marker=NO 상태 불가
+      if (applyPenaltyInTx && userSnapForPenalty && userRefForCancelTx) {
+        const userData = userSnapForPenalty.data()!;
+        const nowPenaltyTs = admin.firestore.Timestamp.now();
+        const cutoff90d = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+        const existingNoShowDates = (userData.noShowDates as admin.firestore.Timestamp[] | undefined) ?? [];
+        const restriction = _compute90dRestriction(existingNoShowDates, true);
+        const penaltyUpdates: Record<string, unknown> = {
+          noShowCount: admin.firestore.FieldValue.increment(1),
+          recentNoShowCount: existingNoShowDates.filter((t) => t.toDate() >= cutoff90d).length + 1,
+          noShowDates: admin.firestore.FieldValue.arrayUnion(nowPenaltyTs),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+        if (restriction !== null) {
+          penaltyUpdates.restrictedUntil = admin.firestore.Timestamp.fromDate(restriction);
+        }
+        tx.update(userRefForCancelTx, penaltyUpdates);
+        console.info(`[cancelConfirmed] no-show penalty SAME_TX 적용 (uid=${workerUid}, app=${applicationId})`);
       }
     });
     // [FIX-5] post-transaction 에러 삼킴 personal grant revoke 제거 완료 — 위 transaction에서 atomic 처리됨
@@ -13745,46 +13823,8 @@ export const callableCancelConfirmedApplication = onCall(
       }
     }
 
-    // [GAP-2] 노쇼 패널티 인라인 적용 — 클라이언트 두 번째 호출 의존 제거
-    // 이미 취소 transaction 완료 후 별도 transaction으로 처리 (취소 원자성 보호)
-    // 실패해도 취소 자체를 롤백하지 않음 (이미 application CANCELED 확정)
-    if (noShowEquivalent && !(appData.noShowPenaltyAppliedAt)) {
-      try {
-        await db.runTransaction(async (penaltyTx) => {
-          const [freshAppForPenalty, userRefForPenalty] = [
-            await penaltyTx.get(appRef),
-            db.collection("users").doc(workerUid),
-          ];
-          if (freshAppForPenalty.data()?.noShowPenaltyAppliedAt) return; // idempotent
-          const userSnapForPenalty = await penaltyTx.get(userRefForPenalty);
-          if (!userSnapForPenalty.exists) return;
-          const userData = userSnapForPenalty.data()!;
-          const nowPenaltyTs = admin.firestore.Timestamp.now();
-          const cutoff90d = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-          const existingNoShowDates = (userData.noShowDates as admin.firestore.Timestamp[] | undefined) ?? [];
-          const restriction = _compute90dRestriction(existingNoShowDates, true);
-          const penaltyUpdates: Record<string, unknown> = {
-            noShowCount: admin.firestore.FieldValue.increment(1),
-            recentNoShowCount: existingNoShowDates.filter((t) => t.toDate() >= cutoff90d).length + 1,
-            noShowDates: admin.firestore.FieldValue.arrayUnion(nowPenaltyTs),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          };
-          if (restriction !== null) {
-            penaltyUpdates.restrictedUntil = admin.firestore.Timestamp.fromDate(restriction);
-          }
-          penaltyTx.update(userRefForPenalty, penaltyUpdates);
-          penaltyTx.update(appRef, {
-            noShowPenaltyAppliedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-        });
-        console.info(`[cancelConfirmed] 노쇼 패널티 적용 완료 (uid=${workerUid}, app=${applicationId})`);
-      } catch (penaltyErr) {
-        console.error(`⚠️ [cancelPenalty] 실패, 수동 확인 필요 (uid=${workerUid}, app=${applicationId}): ${penaltyErr}`);
-      }
-    }
-
     // 6. 클라이언트 후속 처리(slot decrement, 알림)에 필요한 값 반환
-    // [GAP-2] 노쇼 패널티는 위에서 서버 인라인 처리 완료 — 클라이언트 두 번째 호출 불필요
+    // [R3-B.3.2] 노쇼 패널티는 위 cancellation tx와 SAME_TX — SERVER_AUTHORITATIVE_PERSISTENCE = YES
     // [FIX-4] ID-CONSENT Grant revoke는 위 transaction 내부에서 처리 완료 (atomic 보장)
 
     return {
