@@ -45,6 +45,7 @@ import '../../services/staffing_readiness_service.dart';
 import '../../models/ui/staffing_readiness_model.dart';
 import '../../models/core/attendance_model.dart'; // AttendanceModel 타입 어노테이션 직접 사용;
 import 'dialogs/day_applicants_dialog.dart'; // [PHASE-2D] 인력 부족 → 지원자 관리 다이얼로그
+import 'dialogs/attendance_status_dialog.dart'; // [PHASE-R5.2] 확인 필요 → 출근 현황 리뷰
 
 // [PERF-2026-07-16] Selector용 record — 필요한 필드만 추출해 불필요한 rebuild 방지
 typedef _AdminHomeData = ({
@@ -1311,7 +1312,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                 padding: EdgeInsets.symmetric(horizontal: 12 * s),
                 child: Divider(height: 1, color: AppColors.border),
               ),
-            if (canSeeAttendance) _buildAttendanceMetrics(s, theme),
+            if (canSeeAttendance) _buildAttendanceMetrics(s, theme, up),
           ]),
         ),
       ),
@@ -1356,7 +1357,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   }
 
   // 출근 현황 영역: 출근 / 확인 필요
-  Widget _buildAttendanceMetrics(double s, ThemeData theme) {
+  // [PHASE-R5.2] 확인 필요 N명 > → AttendanceStatusDialog (canManageWorkers 필수)
+  Widget _buildAttendanceMetrics(double s, ThemeData theme, UserProvider up) {
     if (_attendanceLoading) {
       return Padding(
         padding: EdgeInsets.symmetric(vertical: 18 * s),
@@ -1374,6 +1376,14 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     }
 
     final needsAttention = _todayNeedsAttention ?? 0;
+    final isSub = up.currentUser?.isSubAdmin == true;
+    final canManageWorkers = !isSub || up.can((p) => p.canManageWorkers);
+    // 탭 조건: 확인 필요 > 0 + canManageWorkers
+    final onAttentionTap = (needsAttention > 0 && canManageWorkers)
+        ? () => unawaited(_safeNavigate(
+              () => _requireApprovedBusiness(
+                  context, () => _openTodayAttendanceDialog(context))))
+        : null;
 
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 8 * s, vertical: 14 * s),
@@ -1381,27 +1391,40 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         _opsMetric(s, label: '출근', value: _todayCheckedIn!, unit: '명'),
         _opsMetricDivider(s),
         _opsMetric(s, label: '확인 필요', value: needsAttention, unit: '명',
-          valueColor: needsAttention > 0 ? AppColors.warning : null),
+          valueColor: needsAttention > 0 ? AppColors.warning : null,
+          onTap: onAttentionTap),
       ]),
     );
   }
 
   /// 오늘 운영 수치 셀 (Expanded — Row 내 균등 분배)
+  /// [PHASE-R5.2] onTap 옵션: 수치 > 0 + 권한 있을 때 탭 가능, subtle chevron 표시
   Widget _opsMetric(double s, {
     required String label,
     required int value,
     required String unit,
     Color? valueColor,
+    VoidCallback? onTap,
   }) {
-    return Expanded(
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Text(label, style: TextStyle(fontSize: 10 * s, color: AppColors.grey500)),
-        SizedBox(height: 4 * s),
+    final col = Column(mainAxisSize: MainAxisSize.min, children: [
+      Text(label, style: TextStyle(fontSize: 10 * s, color: AppColors.grey500)),
+      SizedBox(height: 4 * s),
+      Row(mainAxisSize: MainAxisSize.min, children: [
         Text('$value$unit', style: TextStyle(
           fontSize: 18 * s, fontWeight: FontWeight.w800, letterSpacing: -0.3,
           color: valueColor ?? AppColors.textPrimary,
         )),
+        if (onTap != null) ...[
+          SizedBox(width: 1 * s),
+          Icon(Icons.chevron_right, size: 14 * s,
+              color: valueColor ?? AppColors.grey400),
+        ],
       ]),
+    ]);
+    return Expanded(
+      child: onTap != null
+          ? GestureDetector(onTap: onTap, child: col)
+          : col,
     );
   }
 
@@ -1668,6 +1691,27 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
       return '내일';
     }
     return FormatHelper.formatDate(DateTime(year, month, day));
+  }
+
+  // ── [PHASE-R5.2] 오늘 확인 필요 → AttendanceStatusDialog ────────
+  // 탭 조건: _todayNeedsAttention > 0 && canManageWorkers (buildAttendanceMetrics에서 보장)
+  // 반환값: hasChanges → _loadTodayAttendance() 재실행
+  Future<void> _openTodayAttendanceDialog(BuildContext context) async {
+    final businesses = await _getBusinesses();
+    if (!context.mounted) return;
+    final today = FormatHelper.toKstDate(DateTime.now());
+    final changed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AttendanceStatusDialog(
+        date: today,
+        businessIds: businesses.map((b) => b.id).toList(),
+        businesses: businesses,
+      ),
+    );
+    if ((changed ?? false) && mounted) {
+      unawaited(_loadTodayAttendance());
+    }
   }
 
   // ── [PHASE-2D] 인력 부족 날짜 → DayApplicantsDialog 오픈 ────────

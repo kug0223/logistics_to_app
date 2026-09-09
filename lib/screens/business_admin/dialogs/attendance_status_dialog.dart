@@ -10,6 +10,7 @@
 // - 지각 자동 감지
 // - (추후) 명단 출력
 
+import 'dart:async' show unawaited;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -57,6 +58,8 @@ import '../../../utils/attendance_rounding_helper.dart';
 import 'wage_confirm_dialog.dart';
 import '../../../widgets/dialogs/styled_dialog.dart';
 import '../../../widgets/app_select_field.dart';
+// [R5.2] NO_SHOW 대체 인력 충원 recovery dialog
+import 'day_applicants_dialog.dart';
 
 /// 당일명단 다이얼로그 - 출퇴근 관리 기능 포함
 class AttendanceStatusDialog extends StatefulWidget {
@@ -126,6 +129,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
 
   // 파트별 정렬 모드: 0=상태순, 1=배지순, 2=이름순
   final Map<String, int> _groupSortMode = {};
+  // [R5.2] NO_SHOW 대체 인력 충원 진행 중 방어 (이중 탭 방지)
+  bool _isSeatReleasing = false;
 
   // ═══════════════════════════════════════════════════════════
   // 처리현황 계산
@@ -2042,6 +2047,10 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                           if (_attendanceMap[app.id]?.checkInSuspicious == true)
                             _buildCheckInSuspiciousBadge(_attendanceMap[app.id]!),
 
+                          // [R5.2] 대체 충원 진행 중 배지 — staffingReleasedAt 설정된 NO_SHOW
+                          if (statusInfo['status'] == 'noshow' && app.isStaffingReleased)
+                            _buildStaffingReleasedBadge(),
+
                           // 퇴근 미처리 경고 배지
                           if (overdueCheckout)
                             Container(
@@ -2073,6 +2082,11 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
                             ),
                         ],
                       ),
+
+                      // [R5.2] NO_SHOW 대체 인력 충원 버튼
+                      // 조건: status==noshow + !released + !longTerm + canManageTo
+                      if (statusInfo['status'] == 'noshow' && !app.isStaffingReleased)
+                        _buildNoshowRecoveryButton(app),
                     ],
                   ),
                 ),
@@ -2083,6 +2097,122 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  // [R5.2] NO_SHOW 대체 인력 충원 버튼 구성
+  // 조건: status==NO_SHOW + !isStaffingReleased + !isLongTerm + canManageTo
+  // 이미 released: Wrap에 _buildStaffingReleasedBadge() 표시 (위에서 처리)
+  Widget _buildNoshowRecoveryButton(ApplicationModel app) {
+    final up = Provider.of<UserProvider>(context, listen: false);
+    final isSub = up.currentUser?.isSubAdmin == true;
+    final canManageTo = !isSub || up.can((p) => p.canManageTo);
+    if (!canManageTo) return const SizedBox.shrink();
+    if (app.isLongTermApplication) return const SizedBox.shrink();
+    if (app.isStaffingReleased) return const SizedBox.shrink();
+
+    return Padding(
+      padding: EdgeInsets.only(
+        top: ResponsiveHelper.spacing(context, 8),
+        left: ResponsiveHelper.spacing(context, 32), // checkbox indent 보정
+      ),
+      child: SizedBox(
+        width: double.infinity,
+        child: OutlinedButton(
+          onPressed: _isSeatReleasing
+              ? null
+              : () => unawaited(_releaseNoshowSeat(app)),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.warning,
+            side: BorderSide(color: AppColors.warning.withValues(alpha: 0.7)),
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveHelper.spacing(context, 10),
+              vertical: ResponsiveHelper.spacing(context, 6),
+            ),
+            minimumSize: Size.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8)),
+            textStyle: ResponsiveHelper.smallStyle(context)
+                .copyWith(fontWeight: FontWeight.w600),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.group_add_outlined,
+                size: ResponsiveHelper.iconSize(context, 14),
+                color: AppColors.warning),
+            SizedBox(width: ResponsiveHelper.spacing(context, 4)),
+            const Text('대체 인력 충원'),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  /// [R5.2] 대체 충원 진행 중 배지 — Wrap 내 인라인 (staffingReleasedAt 설정된 상태)
+  Widget _buildStaffingReleasedBadge() {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveHelper.spacing(context, 6),
+        vertical: ResponsiveHelper.spacing(context, 2),
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.grey100,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: AppColors.grey300),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.people_outline,
+            size: ResponsiveHelper.iconSize(context, 11),
+            color: AppColors.grey500),
+        SizedBox(width: ResponsiveHelper.spacing(context, 3)),
+        Text('대체 충원 진행 중',
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500)
+                .copyWith(fontWeight: FontWeight.w500)),
+      ]),
+    );
+  }
+
+  /// [R5.2] NO_SHOW 좌석 반납 → seat release CF 호출 → 성공 시 DayApplicantsDialog(오늘)
+  Future<void> _releaseNoshowSeat(ApplicationModel app) async {
+    if (_isSeatReleasing) return;
+
+    final confirmed = await DialogHelper.showConfirm(
+      context,
+      title: '대체 인력 충원',
+      message: '이 근로자의 자리를 반납하고 대체 인력을 모집합니다.\n계속하시겠습니까?',
+      confirmText: '충원하기',
+      cancelText: '취소',
+    );
+    if (!confirmed || !mounted) return;
+
+    setState(() => _isSeatReleasing = true);
+
+    final success = await _firestoreService.releaseNoshowSeat(
+        applicationId: app.id);
+
+    if (!mounted) return;
+    setState(() => _isSeatReleasing = false);
+
+    // §17: 실패 시 dialog 미오픈, 현재 화면에 남음
+    if (!success) return;
+
+    // Reload to reflect staffingReleasedAt
+    _hasChanges = true;
+    unawaited(_loadData()); // non-blocking refresh
+
+    // §13: seat release 성공 → DayApplicantsDialog(오늘) 오픈
+    if (!mounted) return;
+    final bizId = _selectedBusinessId ??
+        (widget.businessIds.isEmpty ? null : widget.businessIds.first);
+    if (bizId == null) return;
+    await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => DayApplicantsDialog(
+        date: widget.date,
+        businessIds: [bizId],
+        businesses: widget.businesses ?? [],
       ),
     );
   }
