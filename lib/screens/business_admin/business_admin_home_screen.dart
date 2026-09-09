@@ -44,6 +44,7 @@ import '../../controllers/workforce_controller.dart';
 import '../../services/staffing_readiness_service.dart';
 import '../../models/ui/staffing_readiness_model.dart';
 import '../../models/core/attendance_model.dart'; // AttendanceModel 타입 어노테이션 직접 사용;
+import 'dialogs/day_applicants_dialog.dart'; // [PHASE-2D] 인력 부족 → 지원자 관리 다이얼로그
 
 // [PERF-2026-07-16] Selector용 record — 필요한 필드만 추출해 불필요한 rebuild 방지
 typedef _AdminHomeData = ({
@@ -1607,9 +1608,26 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           ),
         ),
         if (canNavigate) ...[
-          SizedBox(width: 4 * s),
-          Icon(Icons.chevron_right,
-              size: 18 * s, color: AppColors.grey400),
+          SizedBox(width: 8 * s),
+          OutlinedButton(
+            onPressed: () => unawaited(_safeNavigate(() =>
+                _requireApprovedBusiness(context,
+                    () => _navigateToDayApplicantsForDate(context, day)))),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: theme.primaryColor,
+              side: BorderSide(
+                  color: theme.primaryColor.withValues(alpha: 0.6)),
+              padding: EdgeInsets.symmetric(
+                  horizontal: 10 * s, vertical: 4 * s),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
+              textStyle: TextStyle(
+                  fontSize: 12 * s, fontWeight: FontWeight.w600),
+            ),
+            child: const Text('충원하기'),
+          ),
         ],
       ]),
     );
@@ -1619,8 +1637,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         InkWell(
           borderRadius: radius,
           onTap: () => unawaited(_safeNavigate(() =>
-              _requireApprovedBusiness(
-                  context, () => _navigateToJobsForDate(context, day)))),
+              _requireApprovedBusiness(context,
+                  () => _navigateToDayApplicantsForDate(context, day)))),
           child: rowContent,
         )
       else
@@ -1652,8 +1670,9 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     return FormatHelper.formatDate(DateTime(year, month, day));
   }
 
-  /// 인력 부족 날짜에서 공고 탭으로 이동 — 다중 사업장 시 드릴다운 포함
-  Future<void> _navigateToJobsForDate(
+  // ── [PHASE-2D] 인력 부족 날짜 → DayApplicantsDialog 오픈 ────────
+  // shortage > 0인 사업장만 대상, byBusiness 미집계 시 전체 사업장 폴백
+  Future<void> _navigateToDayApplicantsForDate(
       BuildContext context, StaffingDayData day) async {
     final parts = day.date.split('-');
     if (parts.length < 3) return;
@@ -1662,40 +1681,27 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final dayNum = int.tryParse(parts[2]);
     if (year == null || month == null || dayNum == null) return;
 
-    final date      = DateTime(year, month, dayNum);
-    final dateRange = DateTimeRange(start: date, end: date);
-
-    // shortage > 0인 사업장만 대상
-    final shortBizs =
-        day.byBusiness.where((b) => b.shortageCount > 0).toList();
-
-    if (shortBizs.isEmpty) {
-      // byBusiness 미집계 — 날짜만으로 탭 이동
-      AdminTabSwitcher.instance.switchToJobsWithIntent(dateRange: dateRange);
-      return;
-    }
-
-    if (shortBizs.length == 1) {
-      AdminTabSwitcher.instance.switchToJobsWithIntent(
-        dateRange: dateRange, businessId: shortBizs.first.businessId);
-      return;
-    }
-
-    // 다중 사업장: 드릴다운 시트
+    final date = DateTime(year, month, dayNum);
+    final businesses = await _getBusinesses();
     if (!context.mounted) return;
-    final countMap = <String, int>{
-      for (final b in shortBizs) b.businessId: b.shortageCount
-    };
-    final bizId = await _pickBizFromSummary(
-      context:     context,
-      sheetTitle:  '인력 부족 사업장 선택',
-      totalCount:  day.shortageCount,
-      bizIds:      shortBizs.map((b) => b.businessId).toList(),
-      countPerBiz: countMap,
+
+    final shortBizIds = day.byBusiness
+        .where((b) => b.shortageCount > 0)
+        .map((b) => b.businessId)
+        .toList();
+    final targetBizIds = shortBizIds.isNotEmpty
+        ? shortBizIds
+        : businesses.map((b) => b.id).toList();
+
+    await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => DayApplicantsDialog(
+        date: date,
+        businessIds: targetBizIds,
+        businesses: businesses,
+      ),
     );
-    if (bizId == null || !context.mounted) return;
-    AdminTabSwitcher.instance.switchToJobsWithIntent(
-        dateRange: dateRange, businessId: bizId);
   }
 
   // ── [PHASE-3A] 처리할 일 — 우선순위 액션 리스트 ─────────────────
