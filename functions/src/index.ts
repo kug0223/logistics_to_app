@@ -25484,6 +25484,93 @@ export const callableDeclineTOInvitation = onCall(
   }
 );
 
+// ─── V1 Group Ranking Helpers ─────────────────────────────────────────────────
+// [R3-B] callableGetAvailableWorkers 전용 — 운영 callable 내부에서 호출, client 미노출.
+// RANKING_QUALITY_SCORE = NONE  /  OPAQUE_SCORE = NO
+// WORKTYPE_COUNT_ORDERING = NO  /  TOTAL_WORK_DAYS_ORDERING = NO
+
+/** V1 그룹 분류: A > B > C1 > C2
+ *  - recentNoShowCount missing → 0 default (Firestore 미기록 = 노쇼 없음)
+ *  - noShow 3+: 이론상 R1 restrictedUntil gate 이전에 탈락, 실제 도달 시 rank last
+ *  - targetWorkType undefined → Group A 불가 (workType context 없음)
+ */
+function _classifyCandidateGroup(
+  uData: FirebaseFirestore.DocumentData,
+  targetWorkType: string | undefined
+): "A" | "B" | "C1" | "C2" | "C_PLUS" {
+  const noShow = (uData.recentNoShowCount as number | undefined) ?? 0;
+  if (noShow >= 3) return "C_PLUS"; // R1 gate edge case — hard block 아님, rank last
+  if (noShow === 2) return "C2";
+  if (noShow === 1) return "C1";
+  // noShow === 0: A or B
+  if (targetWorkType) {
+    const workTypeStats = uData.workTypeStats as Record<string, number> | undefined;
+    if ((workTypeStats?.[targetWorkType] ?? 0) > 0) return "A"; // same work 경험 있음
+  }
+  return "B"; // 신규 포함 — NO_HISTORY != BAD_HISTORY
+}
+
+const _GROUP_PRIORITY: Record<"A" | "B" | "C1" | "C2" | "C_PLUS", number> = {
+  A: 0,
+  B: 1,
+  C1: 2,
+  C2: 3,
+  C_PLUS: 4, // noShow 3+ edge case — 최하위, hard block 아님
+};
+
+/** Deterministic shift rotation key = sha1(toId|slotId|wdId|uid).
+ *  동일 input → 동일 output (process restart/scaling 무관).
+ *  delimiter '|': variable-length 필드 collision 감소.
+ *  ROTATION_HASH = sha1 (Node built-in crypto, new dependency 없음)
+ *  ROTATION_CONTEXT_IDENTITY = toId|slotId|wdId (recruiting unit canonical)
+ */
+function _rotationKey(
+  toId: string,
+  slotId: string,
+  wdId: string | undefined,
+  uid: string
+): string {
+  return crypto.createHash("sha1")
+    .update(`${toId}|${slotId}|${wdId ?? ""}|${uid}`)
+    .digest("hex");
+}
+
+type _WorkingCandidate = {
+  uid: string;
+  maskedName: string;
+  city: string;
+  district?: string;
+  _uData: FirebaseFirestore.DocumentData; // ranking 전용 — client DTO에 미포함
+};
+
+/** poolComplete==true일 때만 호출.
+ *  comparator: [1] group priority [2] deterministic rotation key [3] uid tie-break.
+ *  CANDIDATE_COUNT_CHANGED_BY_RANKING = NO (sort only, no filter/dedup)
+ */
+function _rankCandidates(
+  candidates: _WorkingCandidate[],
+  targetWorkType: string | undefined,
+  ctx: {toId: string; slotId: string; wdId: string | undefined}
+): _WorkingCandidate[] {
+  return candidates.slice().sort((a, b) => {
+    const gA = _classifyCandidateGroup(a._uData, targetWorkType);
+    const gB = _classifyCandidateGroup(b._uData, targetWorkType);
+
+    // 1. Group priority (A=0 > B=1 > C1=2 > C2=3 > C_PLUS=4)
+    const groupDiff = _GROUP_PRIORITY[gA] - _GROUP_PRIORITY[gB];
+    if (groupDiff !== 0) return groupDiff;
+
+    // 2. Deterministic shift rotation — 같은 shift 안정, 다른 shift variation 가능
+    const keyA = _rotationKey(ctx.toId, ctx.slotId, ctx.wdId, a.uid);
+    const keyB = _rotationKey(ctx.toId, ctx.slotId, ctx.wdId, b.uid);
+    if (keyA < keyB) return -1;
+    if (keyA > keyB) return 1;
+
+    // 3. Stable uid tie-break (sha1 collision 극소수 처리)
+    return a.uid < b.uid ? -1 : a.uid > b.uid ? 1 : 0;
+  });
+}
+
 // ─── callableGetAvailableWorkers ─────────────────────────────────────────────
 // 특정 TO/슬롯에 근무 가능일을 등록한 인력 후보 조회 (Phase 8.1B)
 // Input : { toId, slotId, workDetailId?, pageSize?, cursor? }
@@ -25566,6 +25653,7 @@ export const callableGetAvailableWorkers = onCall(
     let targetStartTime: string | undefined;
     let targetEndTime: string | undefined;
     let targetWdId: string | undefined; // [R1.1-PATCH-2] wdId precision용 canonical identity
+    let targetWorkType: string | undefined; // [R3-B] Group A 판단용 workType
     if (workDetailId) {
       for (const wd of rawWDs) {
         const wdMap = wd as Record<string, unknown>;
@@ -25577,6 +25665,7 @@ export const callableGetAvailableWorkers = onCall(
           targetStartTime = st;
           targetEndTime = et;
           targetWdId = wdMap.wdId as string | undefined; // [R1.1-PATCH-2]
+          targetWorkType = wt; // [R3-B]
           break;
         }
       }
@@ -25586,6 +25675,7 @@ export const callableGetAvailableWorkers = onCall(
         targetStartTime = firstWD.startTime as string | undefined;
         targetEndTime = firstWD.endTime as string | undefined;
         targetWdId    = firstWD.wdId as string | undefined; // [R1.1-PATCH-2]
+        targetWorkType = firstWD.workType as string | undefined; // [R3-B]
       }
     } else if (rawWDs.length === 1) {
       // [R1-PATCH-3] workDetailId 미전달 + 단일 workDetail → 시간 충돌 검사 수행 가능
@@ -25593,6 +25683,7 @@ export const callableGetAvailableWorkers = onCall(
       targetStartTime = singleWD.startTime as string | undefined;
       targetEndTime   = singleWD.endTime   as string | undefined;
       targetWdId      = singleWD.wdId as string | undefined; // [R1.1-PATCH-2]
+      targetWorkType  = singleWD.workType as string | undefined; // [R3-B]
     }
 
     // ── 5. worker_availability 쿼리 ──────────────────────────────────────────
@@ -25737,7 +25828,8 @@ export const callableGetAvailableWorkers = onCall(
     }
 
     // ── 9. 필터 + 마스킹 ─────────────────────────────────────────────────────
-    const candidates: Array<{uid: string; maskedName: string; city: string; district?: string}> = [];
+    // [R3-B] 내부 working list (_uData = ranking 전용, client DTO 미포함)
+    const workingCandidates: _WorkingCandidate[] = [];
 
     for (let i = 0; i < uidList.length; i++) {
       const uid = uidList[i];
@@ -25777,10 +25869,42 @@ export const callableGetAvailableWorkers = onCall(
         ? rawName[0] + "○".repeat(Math.max(0, rawName.length - 1))
         : "○○○";
 
-      candidates.push({uid, maskedName, city: businessCity, district: userDistrict});
+      workingCandidates.push({uid, maskedName, city: businessCity, district: userDistrict, _uData: uData});
     }
 
-    // [R3-A1/R3-A2] Structured observability log — PII 없음
+    // ── [R3-B] V1 Group Ranking ───────────────────────────────────────────────
+    // RANKING_APPLY_CONDITION = poolComplete == true
+    // poolComplete==false → page order 그대로 (PARTIAL_POOL_SORT_APPLIED = NO)
+    let rankingApplied = false;
+    const groupCounts = {a: 0, b: 0, c1: 0, c2: 0, cPlus: 0};
+    let rankedWorking: _WorkingCandidate[];
+
+    if (poolComplete) {
+      rankedWorking = _rankCandidates(
+        workingCandidates,
+        targetWorkType,
+        {toId, slotId, wdId: targetWdId}
+      );
+      rankingApplied = true;
+      // group distribution (PII 없음 — observability용)
+      for (const c of rankedWorking) {
+        const g = _classifyCandidateGroup(c._uData, targetWorkType);
+        if (g === "A") groupCounts.a++;
+        else if (g === "B") groupCounts.b++;
+        else if (g === "C1") groupCounts.c1++;
+        else if (g === "C2") groupCounts.c2++;
+        else groupCounts.cPlus++;
+      }
+    } else {
+      rankedWorking = workingCandidates; // page order 유지
+    }
+
+    // Client DTO projection — _uData 미포함
+    const candidates = rankedWorking.map(({uid, maskedName, city, district}) =>
+      ({uid, maskedName, city, district})
+    );
+
+    // [R3-A1/R3-A2/R3-B] Structured observability log — PII 없음
     console.log(JSON.stringify({
       event: "candidatePoolStats",
       poolCount,
@@ -25790,6 +25914,8 @@ export const callableGetAvailableWorkers = onCall(
       hasMore,
       retrievalMode,
       poolComplete,
+      rankingApplied,
+      ...(rankingApplied ? {groupCounts} : {}),
       elapsedMs: Date.now() - fnStartMs,
     }));
 
