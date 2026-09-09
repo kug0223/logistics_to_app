@@ -754,6 +754,8 @@ extension ApplicationFirestore on FirestoreService {
       final businessId = cfData['businessId'] as String?;
       final businessName = cfData['businessName'] as String? ?? '';
       final isAdminCancel = cfData['isAdminCancel'] as bool? ?? false;
+      // [SERVER-AUTH] 서버가 판정한 penalty 여부를 사용 (client boolean 무시)
+      final serverShouldPenalty = cfData['shouldApplyNoShowPenalty'] as bool? ?? false;
       final workDateMs = cfData['workDateMs'] as int?;
       final workDetailId = cfData['workDetailId'] as String? ?? '';
       final workDate = workDateMs != null
@@ -780,7 +782,7 @@ extension ApplicationFirestore on FirestoreService {
           }
         }());
       }
-      if (applyNoShowPenalty) {
+      if (serverShouldPenalty) {
         final penaltyCallable = FirebaseFunctions.instanceFor(region: 'asia-northeast3')
             .httpsCallable('callableApplyNoShowPenalty',
                 options: HttpsCallableOptions(timeout: const Duration(seconds: 10)));
@@ -856,7 +858,7 @@ extension ApplicationFirestore on FirestoreService {
         }
       }
 
-      debugPrint('✅ 확정 취소 완료 (관리자: $isAdminCancel, 패널티: $applyNoShowPenalty)');
+      debugPrint('✅ 확정 취소 완료 (관리자: $isAdminCancel, 패널티(서버판정): $serverShouldPenalty)');
       return true;
     } on FirebaseFunctionsException catch (e) {
       if (e.code == 'not-found') {

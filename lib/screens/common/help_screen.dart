@@ -297,7 +297,7 @@ class _HelpScreenState extends State<HelpScreen> {
       question: '지원이 제한됐어요. 원인이 뭔가요?',
       answer: '최근 90일 이내 노쇼 기록이 3회 이상이면 24시간 지원 제한이 적용됩니다. '
           '제한 기간이 지나면 자동으로 해제됩니다. '
-          '제재 해제 시점은 설정 화면에서 확인할 수 있습니다.',
+          '이의가 있으면 앱 내 "문의하기"로 고객센터에 문의하세요.',
     ),
     _FaqItem.header('👤 계정 & 서류'),
     _FaqItem(

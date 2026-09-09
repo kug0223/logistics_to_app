@@ -256,7 +256,7 @@ class ConfirmCancelDialog extends StatelessWidget {
             icon: Icons.warning,
             iconColor: AppColors.error,
             title: '당일 취소',
-            description: '노쇼 1회 기록\n→ 3회 누적 시 3일 이용 제한',
+            description: '노쇼 1회 기록\n→ 3회 누적 시 1일 지원 제한',
             isHighlighted: hasPenalty,
           ),
         ],

@@ -930,7 +930,7 @@ class _AttendanceCheckScreenState extends State<AttendanceCheckScreen> {
                           final confirmed = await DialogHelper.showDangerConfirm(
                             context,
                             title: '근무 취소',
-                            message: '취소하면 TrustScore가 소폭 감점됩니다.\n정말 취소하시겠습니까?',
+                            message: '출근이 어렵다면 지금 알려주세요.\n취소하면 관리자에게 바로 전달됩니다.\n정말 취소하시겠습니까?',
                             confirmText: '취소하기',
                           );
                           if (confirmed && mounted) {

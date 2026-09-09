@@ -13500,10 +13500,10 @@ export const callableCancelConfirmedApplication = onCall(
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
     const callerUid = request.auth.uid;
-    const {applicationId, cancelReason, applyNoShowPenalty = false} = request.data as {
+    const {applicationId, cancelReason} = request.data as {
       applicationId: string;
       cancelReason?: string;
-      applyNoShowPenalty?: boolean;
+      applyNoShowPenalty?: boolean; // [SERVER-AUTH] 클라이언트 호환성용 — 서버 결정에 사용하지 않음
     };
     if (!applicationId) throw new HttpsError("invalid-argument", "applicationId 필수");
     // [CANCEL-REASON-LEN-FIX] cancelReason 길이 제한 — Firestore 문서 오염 방지
@@ -13556,10 +13556,22 @@ export const callableCancelConfirmedApplication = onCall(
     }
 
     // 4. 취소 유형 결정
+    // [SERVER-AUTH] client applyNoShowPenalty boolean 대신 서버가 직접 workDate 기준으로 판정
+    // 정책: 근로자 본인 취소 AND KST 기준 workDate가 당일이거나 이미 지난 날짜 → SAME_DAY_CANCEL
+    // client boolean은 하위 호환성용 파라미터로만 수신하고 실제 결정에는 사용하지 않는다
     const isAdminCancel = !isOwner;
+    const workDateTs = appData.workDate as admin.firestore.Timestamp | undefined;
+    const KST_OFFSET_MS_CANCEL = 9 * 60 * 60 * 1000;
+    const serverShouldApplyPenalty: boolean = !isAdminCancel && workDateTs != null && (() => {
+      const workDayKST = new Date(workDateTs.toMillis() + KST_OFFSET_MS_CANCEL);
+      workDayKST.setUTCHours(0, 0, 0, 0);
+      const todayKST = new Date(Date.now() + KST_OFFSET_MS_CANCEL);
+      todayKST.setUTCHours(0, 0, 0, 0);
+      return workDayKST.getTime() <= todayKST.getTime(); // 당일 또는 이미 지난 workDate
+    })();
     const cancelReasonCode = isAdminCancel
       ? "ADMIN_CANCELED"
-      : (applyNoShowPenalty ? "SAME_DAY_CANCEL" : "USER_CANCELED");
+      : (serverShouldApplyPenalty ? "SAME_DAY_CANCEL" : "USER_CANCELED");
     const action = isAdminCancel ? "ADMIN_CANCEL_CONFIRMED" : "CONFIRM_CANCEL";
 
     // 5. application 상태 업데이트 (Admin SDK — canceledBy 서버 강제)
@@ -13711,6 +13723,7 @@ export const callableCancelConfirmedApplication = onCall(
       workDetailId: (appData.workDetailId as string | undefined) ?? null,
       isAdminCancel,
       cancelReasonCode,
+      shouldApplyNoShowPenalty: serverShouldApplyPenalty, // [SERVER-AUTH] 서버 권위 판정값
     };
   },
 );
@@ -13719,11 +13732,11 @@ export const callableCancelConfirmedApplication = onCall(
 // ✅ 리컨펌(재확인) 알림 응답 처리 — 단기 근무 전용
 //
 // confirmed: reconfirmStatus = 'confirmed' 저장 (출근 의사 확인)
-// declined:  취소 처리 + TrustScore -1 고정 (reconfirm_cancel, 누진 없음) + 관리자 알림
+// declined:  취소 처리 (cancelReason=RECONFIRM_CANCELED) + 관리자 알림
 //
-// 패널티 경감 근거: H-2 사전 통보이므로 무단취소(-5~-10 누진)보다 낮음.
-// 고정 -1로 근로자의 자발적 응답을 유도.
-// noShowCount는 건드리지 않음 — restrictedUntil 미적용.
+// H-2 사전 통보로 인한 조기 cancellation은 노쇼와 다름.
+// noShowCount/recentNoShowCount/restrictedUntil 미적용 — 의도적 설계.
+// noShowDates 기록 없음 — early disclosure를 장려하기 위함.
 // ═══════════════════════════════════════════════════════════
 export const callableRespondToReconfirm = onCall(
   {region: "asia-northeast3", enforceAppCheck: true},
