@@ -24723,6 +24723,16 @@ export const callableInviteWorker = onCall(
     if (targetRole !== "USER") {
       throw new HttpsError("invalid-argument", "근로자(USER) 역할의 사용자에게만 초대를 보낼 수 있습니다.");
     }
+    // [R1-PATCH-4] 비활성 계정 초대 차단 — accountStatus drift 방지
+    const targetAccountStatus = (targetData.accountStatus as string | undefined) ?? "active";
+    if (targetAccountStatus !== "active") {
+      throw new HttpsError("failed-precondition", "비활성 계정의 근로자에게는 초대를 보낼 수 없습니다.");
+    }
+    // [R1-PATCH-4] 플랫폼 제재 중 근로자 초대 차단 — restrictedUntil drift 방지
+    const targetRestrictedUntil = targetData.restrictedUntil as admin.firestore.Timestamp | undefined;
+    if (targetRestrictedUntil && targetRestrictedUntil.toDate() > new Date()) {
+      throw new HttpsError("failed-precondition", "현재 플랫폼 제재 중인 근로자에게는 초대를 보낼 수 없습니다.");
+    }
 
     // ── 4. TO 존재 및 상태 확인 ─────────────────────────────────────────────
     const toRef = db.collection("tos").doc(toId);
@@ -24815,21 +24825,62 @@ export const callableInviteWorker = onCall(
       }
     }
 
-    // ── 6. 중복 초대 방지 (동일 TO + targetUid에 이미 INVITED or CONFIRMED/CONTRACT_PENDING) ─
-    // INVITED: 이미 발송된 초대 중복 방지
-    // CONFIRMED/CONTRACT_PENDING: 이미 확정된 근로자에게 재초대 방지 (totalConfirmed 이중 증가 위험)
+    // ── 6. 중복 초대 방지 + 동일 슬롯 거절/만료 재초대 차단 ─────────────────
+    // INVITED/CONFIRMED/CONTRACT_PENDING: TO 레벨 중복 차단 (totalConfirmed 이중 증가 위험)
+    // [R1-PATCH-5] REJECTED/EXPIRED: slotId 기준 동일 모집 단위 재초대 차단
     const dupSnap = await db.collection("applications")
       .where("toId", "==", toId)
       .where("uid", "==", targetUid)
-      .where("status", "in", ["INVITED", "CONFIRMED", "CONTRACT_PENDING"])
-      .limit(1)
+      .where("status", "in", ["INVITED", "CONFIRMED", "CONTRACT_PENDING", "REJECTED", "EXPIRED"])
+      .limit(10)
       .get();
-    if (!dupSnap.empty) {
-      const dupStatus = dupSnap.docs[0].data().status as string;
+    for (const dupDoc of dupSnap.docs) {
+      const dupData = dupDoc.data();
+      const dupStatus = dupData.status as string;
       if (dupStatus === "INVITED") {
         throw new HttpsError("already-exists", "이미 이 공고에 초대가 발송된 근로자입니다.");
       }
-      throw new HttpsError("already-exists", "이미 이 공고에 확정된 근로자입니다.");
+      if (dupStatus === "CONFIRMED" || dupStatus === "CONTRACT_PENDING") {
+        throw new HttpsError("already-exists", "이미 이 공고에 확정된 근로자입니다.");
+      }
+      // [R1-PATCH-5] REJECTED/EXPIRED: slotId 기준 동일 모집 단위만 차단
+      // 다른 슬롯의 REJECTED/EXPIRED는 별도 recruiting unit — 통과
+      if (dupStatus === "REJECTED" || dupStatus === "EXPIRED") {
+        const dupSlotId = dupData.slotId as string | undefined;
+        if (slotId && dupSlotId === slotId) {
+          if (dupStatus === "REJECTED") {
+            throw new HttpsError("already-exists", "해당 근로자가 동일 모집의 초대를 이미 거절했습니다.");
+          }
+          throw new HttpsError("already-exists", "해당 근로자의 동일 모집 초대가 이미 만료되었습니다.");
+        }
+      }
+    }
+
+    // ── 6.5. [R1-PATCH-6] 스케줄 충돌 사전 검증 (early safety) ──────────────
+    // callableAcceptTOInvitation transaction에서도 재검증 (ACCEPT_REVALIDATION = final authority)
+    // 충돌 중 근로자에게 불필요한 초대 알림 발송 방지
+    if (startTime && endTime) {
+      const invWdObj     = new Date(workDate);
+      const invWdObjNext = new Date(invWdObj.getTime() + 24 * 60 * 60 * 1000);
+      const invConflictSnap = await db.collection("applications")
+        .where("uid", "==", targetUid)
+        .where("status", "in", ["CONFIRMED", "CONTRACT_PENDING"])
+        .where("workDate", ">=", admin.firestore.Timestamp.fromDate(invWdObj))
+        .where("workDate", "<",  admin.firestore.Timestamp.fromDate(invWdObjNext))
+        .limit(200)
+        .get();
+      for (const conflictDoc of invConflictSnap.docs) {
+        const cd     = conflictDoc.data();
+        const cStart = cd.startTime as string | undefined;
+        const cEnd   = cd.endTime   as string | undefined;
+        if (!cStart || !cEnd) continue;
+        if (_hasTimeOverlap(startTime, endTime, cStart, cEnd)) {
+          throw new HttpsError(
+            "failed-precondition",
+            "해당 근로자는 동일 시간대에 이미 확정된 일정이 있습니다."
+          );
+        }
+      }
     }
 
     // ── 7. INVITED 지원서 생성 ───────────────────────────────────────────────
@@ -25485,6 +25536,11 @@ export const callableGetAvailableWorkers = onCall(
         targetStartTime = firstWD.startTime as string | undefined;
         targetEndTime = firstWD.endTime as string | undefined;
       }
+    } else if (rawWDs.length === 1) {
+      // [R1-PATCH-3] workDetailId 미전달 + 단일 workDetail → 시간 충돌 검사 수행 가능
+      const singleWD = rawWDs[0] as Record<string, unknown>;
+      targetStartTime = singleWD.startTime as string | undefined;
+      targetEndTime   = singleWD.endTime   as string | undefined;
     }
 
     // ── 5. worker_availability 쿼리 ──────────────────────────────────────────
@@ -25512,10 +25568,11 @@ export const callableGetAvailableWorkers = onCall(
 
     // ── 7. 기존 지원서 조회 (중복 후보 제거용) ───────────────────────────────
     // 동일 TO+슬롯에 PENDING/INVITED/CONFIRMED/CONTRACT_PENDING인 uid 목록
+    // [R1-PATCH-2] REJECTED/EXPIRED 추가 — 동일 슬롯 거절/만료자 후보 재노출 차단
     const existingAppsSnap = await db.collection("applications")
       .where("toId", "==", toId)
       .where("slotId", "==", slotId)
-      .where("status", "in", ["PENDING", "INVITED", "CONFIRMED", "CONTRACT_PENDING"])
+      .where("status", "in", ["PENDING", "INVITED", "CONFIRMED", "CONTRACT_PENDING", "REJECTED", "EXPIRED"])
       .get();
     const existingUids = new Set(existingAppsSnap.docs.map((d) => d.data().uid as string));
 
@@ -25555,6 +25612,9 @@ export const callableGetAvailableWorkers = onCall(
       const uData = userSnap.data()!;
       if (uData.isBlacklisted === true) continue;
       if ((uData.accountStatus as string | undefined) !== "active") continue;
+      // [R1-PATCH-1] restrictedUntil — 플랫폼 제재 중 근로자 후보 제외
+      const candidateRestrictedUntil = uData.restrictedUntil as admin.firestore.Timestamp | undefined;
+      if (candidateRestrictedUntil && candidateRestrictedUntil.toDate() > new Date()) continue;
 
       // 이미 지원/초대/확정된 근로자 제외
       if (existingUids.has(uid)) continue;
