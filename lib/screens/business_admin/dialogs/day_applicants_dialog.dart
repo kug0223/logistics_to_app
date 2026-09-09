@@ -881,22 +881,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
           ),
         ),
 
-        // ── [Phase 8.1B.3] 인력 초대 버튼 (단기 + 부족 시에만 표시) ──
-        if (!g.isLongTerm && g.toId != null && g.requiredCount > 0 &&
-            g.requiredCount > g.confirmedApps.length)
-          Builder(builder: (ctx) {
-            final slotId = g.confirmedApps.isNotEmpty
-                ? g.confirmedApps.first.slotId
-                : (g.pendingApps.isNotEmpty
-                    ? g.pendingApps.first.slotId
-                    : null);
-            if (slotId == null) return const SizedBox.shrink();
-            final up = Provider.of<UserProvider>(ctx, listen: false);
-            if (!up.can((p) => p.canManageTo)) return const SizedBox.shrink();
-            return _buildInviteButton(g, slotId);
-          }),
-
         // ── 대기 중 섹션 ──
+        // [R4] Hierarchy: 이미 지원한 대기자를 먼저 검토 → outbound invite는 그 아래
         if (g.pendingApps.isNotEmpty) ...[
           _sectionDivider(
               context, '대기 중 (${g.pendingApps.length}명)', AppColors.warning),
@@ -913,6 +899,22 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
             ),
           ),
         ],
+
+        // ── [Phase 8.1B.3 / R4] 인력 초대 버튼 — pending 섹션 이후 표시 ──
+        // pending 먼저 처리 후 여전히 부족할 때 outbound invite CTA 노출
+        if (!g.isLongTerm && g.toId != null && g.requiredCount > 0 &&
+            g.requiredCount > g.confirmedApps.length)
+          Builder(builder: (ctx) {
+            final slotId = g.confirmedApps.isNotEmpty
+                ? g.confirmedApps.first.slotId
+                : (g.pendingApps.isNotEmpty
+                    ? g.pendingApps.first.slotId
+                    : null);
+            if (slotId == null) return const SizedBox.shrink();
+            final up = Provider.of<UserProvider>(ctx, listen: false);
+            if (!up.can((p) => p.canManageTo)) return const SizedBox.shrink();
+            return _buildInviteButton(g, slotId);
+          }),
 
         // ── 확정 섹션 ──
         if (g.confirmedApps.isNotEmpty) ...[
