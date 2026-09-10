@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -5,11 +6,13 @@ import 'package:provider/provider.dart';
 import '../../models/core/contract_template_model.dart';
 import '../../providers/user_provider.dart';
 import '../../services/contract_template_service.dart';
+import '../../services/firestore_service.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/format_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/toast_helper.dart';
+import 'contract_import_paste_screen.dart';
 import 'contract_template_edit_screen.dart';
 import 'contract_template_preview_screen.dart';
 import '../../utils/navigation_helper.dart';
@@ -71,20 +74,90 @@ class _ContractTemplateListScreenState
     }
   }
 
-  // ── 새 템플릿: 유형 선택 바텀시트 먼저 표시 ──
-  Future<void> _showTypeSelector() async {
-    final selectedType = await DialogHelper.showSheet<String>(
+  // ── 새 템플릿: 생성 방법 선택 ──────────────────────────────────
+  Future<void> _showCreationMethodChooser() async {
+    final method = await DialogHelper.showSheet<_CreationMethod>(
+      context,
+      isScrollControlled: true,
+      builder: (ctx) => const _CreationMethodSheet(),
+    );
+    if (method == null || !mounted) return;
+
+    switch (method) {
+      case _CreationMethod.importExisting:
+        // 기존 계약서로 시작: 유형 선택 → PasteScreen
+        final type = await _pickTemplateType();
+        if (type == null || !mounted) return;
+        await _startImportFlow(type);
+
+      case _CreationMethod.defaultTemplate:
+        // ALfit 기본 계약서: 유형 선택 → 기본 조항 채워진 EditScreen
+        final type = await _pickTemplateType();
+        if (type == null || !mounted) return;
+        await _openEditor(templateType: type);
+
+      case _CreationMethod.copyFromBusiness:
+        // 다른 사업장에서 가져오기
+        await _showCrossBusinessCopy();
+
+      case _CreationMethod.blank:
+        // 빈 템플릿으로 시작: 유형 선택 → 빈 EditScreen
+        final type = await _pickTemplateType();
+        if (type == null || !mounted) return;
+        await _openEditor(templateType: type, initialArticles: []);
+    }
+  }
+
+  /// 유형 선택 시트만 표시 — String(templateType) 반환
+  Future<String?> _pickTemplateType() {
+    return DialogHelper.showSheet<String>(
       context,
       isScrollControlled: true,
       builder: (ctx) => const _TypeSelectorSheet(),
     );
-    if (selectedType == null || !mounted) return;
-    _openEditor(templateType: selectedType);
+  }
+
+  /// 기존 계약서 Import Flow 시작
+  Future<void> _startImportFlow(String templateType) async {
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ContractImportPasteScreen(
+          businessId: widget.businessId,
+          templateType: templateType,
+        ),
+      ),
+    );
+    if (result == true && mounted) _load();
+  }
+
+  /// 다른 사업장 템플릿 복사
+  Future<void> _showCrossBusinessCopy() async {
+    final selected = await DialogHelper.showSheet<ContractTemplateModel>(
+      context,
+      isScrollControlled: true,
+      builder: (ctx) => _OtherBusinessTemplateSheet(
+        excludeBusinessId: widget.businessId,
+      ),
+    );
+    if (selected == null || !mounted) return;
+
+    try {
+      final copy = await _service.duplicateTemplateTo(
+          selected, widget.businessId);
+      if (!mounted) return;
+      ToastHelper.showSuccess('"${copy.name}" 템플릿이 복사되었습니다');
+      await _load();
+      if (mounted) await _openEditor(template: copy);
+    } catch (e) {
+      if (mounted) ToastHelper.showError('가져오기에 실패했습니다');
+    }
   }
 
   Future<void> _openEditor({
     ContractTemplateModel? template,
     String? templateType,
+    List<ContractArticle>? initialArticles,
   }) async {
     final result = await Navigator.push<bool>(
       context,
@@ -93,10 +166,11 @@ class _ContractTemplateListScreenState
           businessId: widget.businessId,
           template: template,
           initialTemplateType: templateType,
+          initialArticles: initialArticles,
         ),
       ),
     );
-    if (result == true && mounted) _load(); // [BUG-수정] W-M-1: async gap 후 mounted 체크 추가
+    if (result == true && mounted) _load(); // [BUG-수정] W-M-1: async gap 후 mounted 체크
   }
 
   void _openPreview(ContractTemplateModel t) {
@@ -213,7 +287,7 @@ class _ContractTemplateListScreenState
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: _showTypeSelector,
+          onTap: _showCreationMethodChooser,
           borderRadius: BorderRadius.circular(16),
           child: Container(
             padding: EdgeInsets.symmetric(
@@ -262,7 +336,7 @@ class _ContractTemplateListScreenState
         child: Material(
           color: Colors.transparent,
           child: InkWell(
-            onTap: _showTypeSelector,
+            onTap: _showCreationMethodChooser,
             borderRadius: BorderRadius.circular(16),
             child: Container(
               padding: EdgeInsets.symmetric(
@@ -295,6 +369,428 @@ class _ContractTemplateListScreenState
                 ],
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── 생성 방법 enum ────────────────────────────────────────────────
+
+enum _CreationMethod {
+  importExisting,   // 기존 계약서로 시작 (Paste → Parser)
+  defaultTemplate,  // ALfit 기본 계약서
+  copyFromBusiness, // 다른 사업장에서 가져오기
+  blank,            // 빈 템플릿으로 시작
+}
+
+// ─── 생성 방법 선택 시트 ──────────────────────────────────────────
+
+class _CreationMethodSheet extends StatelessWidget {
+  const _CreationMethodSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
+      ),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(
+              ResponsiveHelper.spacing(context, 20),
+              ResponsiveHelper.spacing(context, 8),
+              ResponsiveHelper.spacing(context, 20),
+              ResponsiveHelper.spacing(context, 16),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 드래그 핸들
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: EdgeInsets.only(
+                        bottom: ResponsiveHelper.spacing(context, 20)),
+                    decoration: BoxDecoration(
+                      color: AppColors.grey300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Text(
+                  '새 템플릿 만들기',
+                  style: ResponsiveHelper.titleStyle(context)
+                      .copyWith(fontWeight: FontWeight.bold),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+                Text(
+                  '시작 방법을 선택해 주세요.',
+                  style: ResponsiveHelper.smallStyle(context,
+                      color: AppColors.grey500),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 20)),
+
+                _MethodTile(
+                  icon: Icons.upload_file_outlined,
+                  iconColor: AppColors.info,
+                  bgColor: AppColors.infoBg,
+                  title: '기존 계약서로 시작',
+                  subtitle: '한글·Word·PDF에서 복사한 내용을 붙여넣어 조항으로 나눕니다',
+                  onTap: () => Navigator.pop(context, _CreationMethod.importExisting),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+
+                _MethodTile(
+                  icon: Icons.auto_awesome_outlined,
+                  iconColor: AppColors.success,
+                  bgColor: AppColors.successBg,
+                  title: 'ALfit 기본 계약서',
+                  subtitle: '계약 유형에 맞는 법령 기반 가이드 조항이 자동으로 채워집니다',
+                  onTap: () => Navigator.pop(context, _CreationMethod.defaultTemplate),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+
+                _MethodTile(
+                  icon: Icons.business_outlined,
+                  iconColor: AppColors.warning,
+                  bgColor: AppColors.warningBg,
+                  title: '다른 사업장에서 가져오기',
+                  subtitle: '내가 관리하는 다른 사업장의 템플릿을 복사합니다',
+                  onTap: () => Navigator.pop(context, _CreationMethod.copyFromBusiness),
+                ),
+                SizedBox(height: ResponsiveHelper.spacing(context, 10)),
+
+                _MethodTile(
+                  icon: Icons.note_add_outlined,
+                  iconColor: AppColors.grey500,
+                  bgColor: AppColors.grey100,
+                  title: '빈 템플릿으로 시작',
+                  subtitle: '조항을 처음부터 직접 작성합니다',
+                  onTap: () => Navigator.pop(context, _CreationMethod.blank),
+                ),
+
+                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+                Center(
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: Text('취소',
+                        style: ResponsiveHelper.bodyStyle(context,
+                            color: AppColors.grey500)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MethodTile extends StatelessWidget {
+  final IconData icon;
+  final Color iconColor;
+  final Color bgColor;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  const _MethodTile({
+    required this.icon,
+    required this.iconColor,
+    required this.bgColor,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 14)),
+          decoration: BoxDecoration(
+            border: Border.all(color: AppColors.grey200),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: bgColor,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon,
+                    color: iconColor,
+                    size: ResponsiveHelper.iconSize(context, 22)),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 14)),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: ResponsiveHelper.bodyStyle(context)
+                          .copyWith(fontWeight: FontWeight.w600),
+                    ),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 2)),
+                    Text(
+                      subtitle,
+                      style: ResponsiveHelper.tinyStyle(context,
+                          color: AppColors.grey500),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right,
+                  color: AppColors.grey400,
+                  size: ResponsiveHelper.iconSize(context, 20)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── 다른 사업장 템플릿 선택 시트 ─────────────────────────────────
+
+class _OtherBusinessTemplateSheet extends StatefulWidget {
+  final String excludeBusinessId;
+
+  const _OtherBusinessTemplateSheet({required this.excludeBusinessId});
+
+  @override
+  State<_OtherBusinessTemplateSheet> createState() =>
+      _OtherBusinessTemplateSheetState();
+}
+
+class _OtherBusinessTemplateSheetState
+    extends State<_OtherBusinessTemplateSheet> {
+  final _service = ContractTemplateService();
+  List<ContractTemplateModel> _templates = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOtherBusinessTemplates();
+  }
+
+  Future<void> _loadOtherBusinessTemplates() async {
+    try {
+      // 현재 사용자의 모든 사업장 목록 조회
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) {
+        if (mounted) setState(() => _loading = false);
+        return;
+      }
+      final firestoreService = FirestoreService();
+      final businesses = await firestoreService.getMyBusiness(uid);
+
+      // 현재 사업장 제외한 다른 사업장들의 템플릿 수집
+      final others = businesses.where((b) => b.id != widget.excludeBusinessId).toList();
+      if (others.isEmpty) {
+        if (mounted) setState(() => _loading = false);
+        return;
+      }
+
+      final allTemplates = <ContractTemplateModel>[];
+      for (final biz in others) {
+        try {
+          final tpls = await _service.getTemplates(biz.id);
+          allTemplates.addAll(tpls);
+        } catch (_) {}
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _templates = allTemplates;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('❌ 다른 사업장 템플릿 조회 실패: $e');
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
+      ),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 핸들 + 타이틀
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  ResponsiveHelper.spacing(context, 20),
+                  ResponsiveHelper.spacing(context, 8),
+                  ResponsiveHelper.spacing(context, 20),
+                  ResponsiveHelper.spacing(context, 12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        margin: EdgeInsets.only(
+                            bottom: ResponsiveHelper.spacing(context, 20)),
+                        decoration: BoxDecoration(
+                          color: AppColors.grey300,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    Text(
+                      '다른 사업장 템플릿 가져오기',
+                      style: ResponsiveHelper.titleStyle(context)
+                          .copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+                    Text(
+                      '선택한 템플릿이 이 사업장으로 복사됩니다.',
+                      style: ResponsiveHelper.smallStyle(context,
+                          color: AppColors.grey500),
+                    ),
+                  ],
+                ),
+              ),
+
+              const Divider(height: 1, color: AppColors.grey100),
+
+              // 목록
+              Flexible(
+                child: _loading
+                    ? const Padding(
+                        padding: EdgeInsets.all(32),
+                        child: Center(child: CircularProgressIndicator()),
+                      )
+                    : _templates.isEmpty
+                        ? Padding(
+                            padding: EdgeInsets.all(
+                                ResponsiveHelper.spacing(context, 32)),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.business_outlined,
+                                    size: 48, color: AppColors.grey300),
+                                SizedBox(
+                                    height: ResponsiveHelper.spacing(
+                                        context, 12)),
+                                Text(
+                                  '가져올 수 있는 템플릿이 없습니다',
+                                  style: ResponsiveHelper.bodyStyle(context,
+                                      color: AppColors.grey500),
+                                  textAlign: TextAlign.center,
+                                ),
+                                SizedBox(
+                                    height: ResponsiveHelper.spacing(
+                                        context, 4)),
+                                Text(
+                                  '다른 사업장에 등록된 템플릿이 없거나\n관리 중인 사업장이 이 사업장 하나뿐입니다.',
+                                  style: ResponsiveHelper.smallStyle(context,
+                                      color: AppColors.grey400),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ],
+                            ),
+                          )
+                        : ListView.separated(
+                            shrinkWrap: true,
+                            padding: EdgeInsets.symmetric(
+                              horizontal:
+                                  ResponsiveHelper.spacing(context, 16),
+                              vertical: ResponsiveHelper.spacing(context, 8),
+                            ),
+                            itemCount: _templates.length,
+                            separatorBuilder: (_, __) => const Divider(
+                                height: 1, color: AppColors.grey100),
+                            itemBuilder: (ctx, i) {
+                              final t = _templates[i];
+                              return ListTile(
+                                contentPadding: EdgeInsets.symmetric(
+                                  horizontal:
+                                      ResponsiveHelper.spacing(context, 4),
+                                  vertical:
+                                      ResponsiveHelper.spacing(context, 4),
+                                ),
+                                leading: Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: AppColors.grey100,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Icon(Icons.description_outlined,
+                                      color: AppColors.grey500,
+                                      size: ResponsiveHelper.iconSize(
+                                          context, 20)),
+                                ),
+                                title: Text(
+                                  t.name,
+                                  style: ResponsiveHelper.bodyStyle(context)
+                                      .copyWith(fontWeight: FontWeight.w600),
+                                ),
+                                subtitle: Text(
+                                  '${ContractTemplateType.label(t.templateType)} · 조항 ${t.articles.length}개',
+                                  style: ResponsiveHelper.tinyStyle(context,
+                                      color: AppColors.grey500),
+                                ),
+                                trailing: Icon(Icons.chevron_right,
+                                    color: AppColors.grey400,
+                                    size: ResponsiveHelper.iconSize(
+                                        context, 20)),
+                                onTap: () => Navigator.pop(context, t),
+                              );
+                            },
+                          ),
+              ),
+
+              // 취소
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  0,
+                  ResponsiveHelper.spacing(context, 4),
+                  0,
+                  ResponsiveHelper.spacing(context, 8),
+                ),
+                child: TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text('취소',
+                      style: ResponsiveHelper.bodyStyle(context,
+                          color: AppColors.grey500)),
+                ),
+              ),
+            ],
           ),
         ),
       ),

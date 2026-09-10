@@ -14,12 +14,19 @@ class ContractTemplateEditScreen extends StatefulWidget {
   final String businessId;
   final ContractTemplateModel? template;          // null이면 신규
   final String? initialTemplateType;              // 신규 시 선택된 유형
+  /// Import flow: 기존 계약서에서 추출한 초기 조항 목록.
+  /// template == null 이고 이 값이 있으면 defaultArticlesFor() 대신 사용.
+  final List<ContractArticle>? initialArticles;
+  /// Import flow: 편집 화면 진입 시 미리 채울 템플릿 이름.
+  final String? initialTemplateName;
 
   const ContractTemplateEditScreen({
     super.key,
     required this.businessId,
     this.template,
     this.initialTemplateType,
+    this.initialArticles,
+    this.initialTemplateName,
   });
 
   @override
@@ -46,12 +53,14 @@ class _ContractTemplateEditScreenState
         ?? widget.initialTemplateType
         ?? ContractTemplateType.daily;
 
-    _nameCtrl = TextEditingController(text: widget.template?.name ?? '');
+    _nameCtrl = TextEditingController(
+        text: widget.template?.name ?? widget.initialTemplateName ?? '');
     _nameCtrl.addListener(_onChanged);
 
-    final sourceArticles = widget.template != null
-        ? widget.template!.articles
-        : ContractTemplateModel.defaultArticlesFor(_templateType);
+    // 우선순위: 기존 template > import initialArticles > type 기본 조항
+    final sourceArticles = widget.template?.articles
+        ?? widget.initialArticles
+        ?? ContractTemplateModel.defaultArticlesFor(_templateType);
 
     _entries = sourceArticles
         .map((a) => _ArticleEntry(

@@ -82,4 +82,30 @@ class ContractTemplateService {
   }) async {
     await _col(businessId).doc(templateId).delete();
   }
+
+  /// 다른 사업장 템플릿 → [targetBusinessId] 사업장으로 독립 복사
+  ///
+  /// Firestore rule: create 시 request.resource.data.businessId == URL businessId 강제.
+  /// targetBusinessId 를 문서 businessId 에 그대로 넣으므로 규칙 통과.
+  Future<ContractTemplateModel> duplicateTemplateTo(
+    ContractTemplateModel source,
+    String targetBusinessId,
+  ) async {
+    debugPrint(
+        '📋 [duplicateTemplateTo] from=${source.businessId} to=$targetBusinessId');
+    final ref = _col(targetBusinessId).doc();
+    final copy = ContractTemplateModel(
+      id: ref.id,
+      businessId: targetBusinessId,
+      name: '${source.name} (복사)',
+      templateType: source.templateType,
+      articles: source.articles
+          .map((a) => ContractArticle(title: a.title, content: a.content))
+          .toList(),
+      createdAt: DateTime.now(),
+      // updatedAt: 복사 금지 (source 날짜 미전달)
+    );
+    await ref.set(copy.toMap()..['createdAt'] = FieldValue.serverTimestamp());
+    return copy;
+  }
 }
