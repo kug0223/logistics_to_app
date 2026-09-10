@@ -4672,6 +4672,7 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         await db.runTransaction(async (tx) => {
           const snap = await tx.get(doc.ref);
           if (snap.data()?.terminationStatus !== "PENDING") return;
+          const freshD3 = snap.data()!;
           // [D3-CANCELREASON-FIX] cancelReason 명시 — 퇴사와 구분 가능하도록
           tx.update(doc.ref, {
             terminationStatus: "AUTO_APPROVED",
@@ -4680,7 +4681,33 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
             status: "CANCELED",
             cancelReason: "TERMINATION_APPROVED",
             canceledAt: admin.firestore.FieldValue.serverTimestamp(),
+            confirmedDecrementedAt: now, // [GAP-TERMINATION-CAPACITY-ATOMICITY-01 FIX]
           });
+          // [GAP-TERMINATION-CAPACITY-ATOMICITY-01 FIX]
+          // capacity decrement을 main TX에 통합 — terminationStatus guard(≠PENDING 시 return)로 멱등 보장
+          // freshD3.status = TX write 이전의 확정 상태 (CONFIRMED / CONTRACT_PENDING)
+          const termD3ConfirmedStatuses = ["CONFIRMED", "CONTRACT_PENDING"];
+          if (app.toId && termD3ConfirmedStatuses.includes(freshD3.status as string)) {
+            const termD3ToRef = db.collection("tos").doc(app.toId as string);
+            const termD3ToUpdate: {[key: string]: admin.firestore.FieldValue} = {
+              totalConfirmed: admin.firestore.FieldValue.increment(-1),
+            };
+            if (!app.slotId && app.selectedWorkType) {
+              termD3ToUpdate[`workTypeConfirmedCounts.${app.selectedWorkType}`] =
+                admin.firestore.FieldValue.increment(-1);
+            }
+            tx.update(termD3ToRef, termD3ToUpdate);
+            if (app.slotId) {
+              const termD3SlotUpdate: {[key: string]: admin.firestore.FieldValue} = {
+                confirmedCount: admin.firestore.FieldValue.increment(-1),
+              };
+              if (app.wdId) {
+                termD3SlotUpdate[`workDetailCounts.${app.wdId}.confirmedCount`] =
+                  admin.firestore.FieldValue.increment(-1);
+              }
+              tx.update(termD3ToRef.collection("slots").doc(app.slotId as string), termD3SlotUpdate);
+            }
+          }
         });
 
         // 퇴직 확정 → Auth 토큰 즉시 무효화 (로그아웃 없이도 접근 차단)
@@ -4701,34 +4728,10 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
         //                 → scheduled attendance 정리는 불필요 (퇴사와 다름)
         try {
           const termPendingStatuses = ["pending_employer", "pending_worker"];
-          const termConfirmedStatuses = ["CONFIRMED", "CONTRACT_PENDING"];
           const termCleanupBatch = db.batch();
 
-          // [R-H6] TO totalConfirmed 카운터 감소 — 이전 status가 확정 상태였던 경우만
-          if (app.toId && termConfirmedStatuses.includes(app.status as string)) {
-            const toRef = db.collection("tos").doc(app.toId as string);
-            const toCounterUpdate: {[key: string]: admin.firestore.FieldValue} = {
-              totalConfirmed: admin.firestore.FieldValue.increment(-1),
-            };
-            if (!app.slotId && app.selectedWorkType) {
-              toCounterUpdate[`workTypeConfirmedCounts.${app.selectedWorkType}`] =
-                admin.firestore.FieldValue.increment(-1);
-            }
-            termCleanupBatch.update(toRef, toCounterUpdate);
-            if (app.slotId) {
-              const slotRef = toRef.collection("slots").doc(app.slotId as string);
-              // [Phase 8.1E.5] workTypeCounts.confirmedCount 제거 — workDetailCounts canonical
-              // [GAP-TERMINATION-WDID-01 FIX] wdId-level workDetailCounts 감소 — 카운터 드리프트 방지
-              const slotUpdate: {[key: string]: admin.firestore.FieldValue} = {
-                confirmedCount: admin.firestore.FieldValue.increment(-1),
-              };
-              if (app.wdId) {
-                slotUpdate[`workDetailCounts.${app.wdId}.confirmedCount`] =
-                  admin.firestore.FieldValue.increment(-1);
-              }
-              termCleanupBatch.update(slotRef, slotUpdate);
-            }
-          }
+          // [GAP-TERMINATION-CAPACITY-ATOMICITY-01 FIX] capacity decrement 이전됨 → main TX 내 원자 처리 완료
+          // TO/slot/workDetailCounts 감소는 위 runTransaction 내부에서 처리됨
 
           // [R-H5] 서명 대기 계약서 voided 전환
           const termContractQ1 = await db.collection("employment_contracts")
@@ -16850,41 +16853,36 @@ export const callableApproveTermination = onCall(
           voidReason: "TERMINATION",
         });
       }
+      // [GAP-TERMINATION-CAPACITY-ATOMICITY-01 FIX]
+      // capacity decrement을 main TX에 통합 — confirmedDecrementedAt marker와 원자적 커밋
+      // TX 재시도 시 Firestore가 fresh counter에 FieldValue.increment 재적용 (자동 idempotent)
+      if (d.toId && CONFIRMED_STATUSES.includes(d.status as string)) {
+        const termToRef = db.collection("tos").doc(d.toId as string);
+        const termToUpdate: {[key: string]: admin.firestore.FieldValue} = {
+          totalConfirmed: admin.firestore.FieldValue.increment(-1),
+        };
+        if (!d.slotId && d.selectedWorkType) {
+          termToUpdate[`workTypeConfirmedCounts.${d.selectedWorkType as string}`] =
+            admin.firestore.FieldValue.increment(-1);
+        }
+        tx.update(termToRef, termToUpdate);
+        if (d.slotId) {
+          const termSlotUpdate: {[key: string]: admin.firestore.FieldValue} = {
+            confirmedCount: admin.firestore.FieldValue.increment(-1),
+          };
+          if (d.wdId) {
+            termSlotUpdate[`workDetailCounts.${d.wdId as string}.confirmedCount`] =
+              admin.firestore.FieldValue.increment(-1);
+          }
+          tx.update(termToRef.collection("slots").doc(d.slotId as string), termSlotUpdate);
+        }
+      }
     });
 
     if (!resolvedData) throw new HttpsError("internal", "트랜잭션 결과 없음");
     const app = resolvedData as TerminationResolved;
 
-    // TO 카운터 감소 (best-effort: 실패해도 트랜잭션은 이미 커밋됨 — CF syncTOStats 교정)
-    if (app.toId && CONFIRMED_STATUSES.includes(app.originalStatus)) {
-      try {
-        const toRef = db.collection("tos").doc(app.toId);
-        const batch = db.batch();
-        const toUpdate: {[key: string]: admin.firestore.FieldValue} = {
-          totalConfirmed: admin.firestore.FieldValue.increment(-1),
-        };
-        // [GAP-TERMINATION-WDID-01 FIX] 장기 TO workTypeConfirmedCounts 감소 (D+3 자동 경로와 대칭)
-        if (!app.slotId && app.selectedWorkType) {
-          toUpdate[`workTypeConfirmedCounts.${app.selectedWorkType}`] =
-            admin.firestore.FieldValue.increment(-1);
-        }
-        batch.update(toRef, toUpdate);
-        if (app.slotId) {
-          const slotUpdate: {[key: string]: admin.firestore.FieldValue} = {
-            confirmedCount: admin.firestore.FieldValue.increment(-1),
-          };
-          // [GAP-TERMINATION-WDID-01 FIX] wdId-level workDetailCounts 감소 — 카운터 드리프트 방지
-          if (app.wdId) {
-            slotUpdate[`workDetailCounts.${app.wdId}.confirmedCount`] =
-              admin.firestore.FieldValue.increment(-1);
-          }
-          batch.update(toRef.collection("slots").doc(app.slotId), slotUpdate);
-        }
-        await batch.commit();
-      } catch (e) {
-        console.warn(`[callableApproveTermination] TO 카운터 감소 실패 (best-effort) toId=${app.toId}:`, e);
-      }
-    }
+    // [GAP-TERMINATION-CAPACITY-ATOMICITY-01 FIX] capacity decrement 이전됨 → main TX 내 원자 처리 완료
 
     // 퇴직 확정 → Auth 토큰 즉시 무효화 (수동 해지 경로 — D+3 자동 승인과 동일 패턴)
     try {
