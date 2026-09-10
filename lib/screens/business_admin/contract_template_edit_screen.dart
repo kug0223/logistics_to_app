@@ -72,6 +72,14 @@ class _ContractTemplateEditScreenState
       e.titleCtrl.addListener(_onChanged);
       e.contentCtrl.addListener(_onChanged);
     }
+
+    // [FIX-IMPORT-DIRTY] import flow에서 initialArticles를 전달받아 열린 경우
+    // 사용자가 아무 수정을 하지 않아도 _hasChanges=true로 시작해
+    // 저장 없이 back 시 discard 확인이 표시되도록 한다.
+    // initialArticles == null인 일반 신규/편집 케이스는 영향 없음.
+    if (widget.initialArticles != null) {
+      _hasChanges = true;
+    }
   }
 
   void _onChanged() {
