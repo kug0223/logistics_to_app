@@ -51,6 +51,9 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
   bool _loading = false;
   bool _isProcessing = false;
   bool _isSubAdmin = false;
+  // [ERROR-AS-EMPTY] fetch 실패 여부 — false=초기/성공, true=오류
+  // _sections == [] 와 조합해 "멤버 없음" vs "로드 실패" 구분 (UNKNOWN != ZERO)
+  bool _hasError = false;
 
   @override
   void initState() {
@@ -116,11 +119,11 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
 
       // M2: 이전 setState(() => _sections) + finally setState(() => _loading=false) 병합
       if (!mounted) return;
-      setState(() { _sections = sectionResults; _loading = false; });
+      setState(() { _sections = sectionResults; _loading = false; _hasError = false; });
     } catch (e) {
       if (mounted) {
         ToastHelper.showError('멤버 목록을 불러오지 못했습니다');
-        setState(() => _loading = false);
+        setState(() { _loading = false; _hasError = true; });
       }
     }
   }
@@ -540,14 +543,22 @@ class _MemberManagementScreenState extends State<MemberManagementScreen> {
       );
     }
 
+    // [ERROR-AS-EMPTY] 오류 시 "멤버 없음"이 아닌 "로드 실패" 표시 (UNKNOWN != ZERO)
+    final bool isError = _hasError && _sections.isEmpty;
     return AppEmptyState(
-      icon: Icons.group_outlined,
-      title: '등록된 멤버가 없습니다',
-      subtitle: _isSubAdmin
-          ? '관리자에게 문의하여 멤버를 초대받으세요'
-          : bizList.length > 1
-              ? '초대할 사업장을 선택하세요'
-              : '멤버를 초대하고 사업장을 함께 관리해보세요',
+      icon: isError ? Icons.cloud_off_rounded : Icons.group_outlined,
+      title: isError
+          ? '멤버 목록을 불러오지 못했습니다'
+          : '등록된 멤버가 없습니다',
+      subtitle: isError
+          ? (bizList.isNotEmpty
+              ? '아래에서 새 멤버를 초대하거나 새로고침을 시도해 보세요'
+              : '네트워크 상태를 확인한 후 새로고침해 보세요')
+          : _isSubAdmin
+              ? '관리자에게 문의하여 멤버를 초대받으세요'
+              : bizList.length > 1
+                  ? '초대할 사업장을 선택하세요'
+                  : '멤버를 초대하고 사업장을 함께 관리해보세요',
       action: action,
     );
   }
