@@ -27,7 +27,7 @@ import '../../../utils/payroll_excel_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../widgets/calendar/carrot_style_calendar.dart';
 import '../../../utils/payment_due_date_calculator.dart';
-import '../../../widgets/dialogs/styled_dialog.dart' show DialogFocusSafeArea;
+import '../../../widgets/dialogs/styled_dialog.dart' show DialogFocusSafeArea, StyledDialog;
 import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/common/app_page_scaffold.dart';
 import '../../../utils/navigation_helper.dart';
@@ -3378,28 +3378,46 @@ class _RejectReasonDialogState extends State<_RejectReasonDialog> {
     super.dispose();
   }
 
+  // PATCH-7 (ADMIN-DESIGN-10): raw AlertDialog → StyledDialog
+  // - AlertDialog 기본 스타일 → canonical modal surface (white bg, radius 24)
+  // - DialogFocusSafeArea 자동 적용 (StyledDialog 내부)
+  // - result contract (String?), autofocus, caller mutation 100% 보존
+  // - showCloseButton: false — 기존 AlertDialog에 X 버튼 없었으므로 미추가
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.title),
+    return StyledDialog(
+      title: widget.title,
+      icon: Icons.cancel_outlined,
+      headerColor: AppColors.error,
+      showCloseButton: false,
       content: TextField(
         controller: _ctrl,
         decoration: InputDecoration(hintText: widget.hintText),
         autofocus: true,
       ),
       actions: [
-        TextButton(
+        OutlinedButton(
           onPressed: () {
             FocusManager.instance.primaryFocus?.unfocus();
             Navigator.pop(context);
           },
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.grey600,
+            side: BorderSide(color: AppColors.grey300),
+            padding: const EdgeInsets.symmetric(vertical: 12),
+          ),
           child: const Text('취소'),
         ),
-        TextButton(
+        ElevatedButton(
           onPressed: () {
             FocusManager.instance.primaryFocus?.unfocus();
             Navigator.pop(context, _ctrl.text.trim());
           },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.error,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 12),
+          ),
           child: const Text('거절'),
         ),
       ],
