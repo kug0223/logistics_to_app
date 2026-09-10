@@ -1050,7 +1050,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
   Future<void> _openInviteMethod(_GroupData g, String slotId) async {
     if (!mounted) return;
-    final shortage = (g.requiredCount - g.confirmedApps.length).clamp(0, 99);
+    // [GAP-DAD-STAFFING-RELEASED-01 FIX] staffingReleased 좌석 반납 앱 제외 — stats strip과 동일 기준
+    final shortage = (g.requiredCount - g.confirmedApps.where((a) => !a.isStaffingReleased).length).clamp(0, 99);
 
     // 1. 인력 초대 방식 선택 시트 — State.context 사용 (mounted 보장)
     final choice = await DialogHelper.showSheet<String>(
@@ -1687,7 +1688,8 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   }
 
   Widget _buildGroupStats(BuildContext context, _GroupData g) {
-    final confirmed = g.confirmedApps.length;
+    // [GAP-DAD-STAFFING-RELEASED-01 FIX] staffingReleased 좌석 반납 앱 제외 — NO_SHOW 반납 후 FULL 오판정 방지
+    final confirmed = g.confirmedApps.where((a) => !a.isStaffingReleased).length;
     final pending = g.pendingApps.length;
     final required = g.requiredCount;
     final isFull = required > 0 && confirmed >= required;

@@ -4718,9 +4718,15 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
             if (app.slotId) {
               const slotRef = toRef.collection("slots").doc(app.slotId as string);
               // [Phase 8.1E.5] workTypeCounts.confirmedCount 제거 — workDetailCounts canonical
-              termCleanupBatch.update(slotRef, {
+              // [GAP-TERMINATION-WDID-01 FIX] wdId-level workDetailCounts 감소 — 카운터 드리프트 방지
+              const slotUpdate: {[key: string]: admin.firestore.FieldValue} = {
                 confirmedCount: admin.firestore.FieldValue.increment(-1),
-              });
+              };
+              if (app.wdId) {
+                slotUpdate[`workDetailCounts.${app.wdId}.confirmedCount`] =
+                  admin.firestore.FieldValue.increment(-1);
+              }
+              termCleanupBatch.update(slotRef, slotUpdate);
             }
           }
 
@@ -16774,6 +16780,8 @@ export const callableApproveTermination = onCall(
       terminationEffectiveDate: admin.firestore.Timestamp | null;
       terminationRequestedByUid: string | null;
       originalStatus: string;
+      wdId: string | null; // [GAP-TERMINATION-WDID-01 FIX]
+      selectedWorkType: string | null; // [GAP-TERMINATION-WDID-01 FIX]
     };
     let resolvedData: TerminationResolved | null = null;
 
@@ -16822,6 +16830,8 @@ export const callableApproveTermination = onCall(
         terminationRequestedByUid:
           (d.terminationRequestedByUid as string | null) ?? null,
         originalStatus: d.status as string,
+        wdId: (d.wdId as string | null) ?? null, // [GAP-TERMINATION-WDID-01 FIX]
+        selectedWorkType: (d.selectedWorkType as string | null) ?? null, // [GAP-TERMINATION-WDID-01 FIX]
       };
       tx.update(appRef, {
         terminationStatus: "APPROVED",
@@ -16830,6 +16840,7 @@ export const callableApproveTermination = onCall(
           terminationEffectiveDate ?? admin.firestore.FieldValue.serverTimestamp(),
         status: "CANCELED",
         canceledAt: admin.firestore.FieldValue.serverTimestamp(),
+        confirmedDecrementedAt: admin.firestore.FieldValue.serverTimestamp(), // [GAP-TERMINATION-WDID-01 FIX] double-decrement 방지
       });
       // [VOID-01] pending 상태일 때만 voiding — completed 계약서는 법적 증거 보전
       if (contractRef && freshContractStatus && pendingContractStatuses.includes(freshContractStatus)) {
@@ -16844,18 +16855,30 @@ export const callableApproveTermination = onCall(
     if (!resolvedData) throw new HttpsError("internal", "트랜잭션 결과 없음");
     const app = resolvedData as TerminationResolved;
 
-    // TO totalConfirmed 감소 (best-effort: 실패해도 트랜잭션은 이미 커밋됨 — CF syncTOStats 교정)
+    // TO 카운터 감소 (best-effort: 실패해도 트랜잭션은 이미 커밋됨 — CF syncTOStats 교정)
     if (app.toId && CONFIRMED_STATUSES.includes(app.originalStatus)) {
       try {
+        const toRef = db.collection("tos").doc(app.toId);
         const batch = db.batch();
-        batch.update(db.collection("tos").doc(app.toId), {
+        const toUpdate: {[key: string]: admin.firestore.FieldValue} = {
           totalConfirmed: admin.firestore.FieldValue.increment(-1),
-        });
+        };
+        // [GAP-TERMINATION-WDID-01 FIX] 장기 TO workTypeConfirmedCounts 감소 (D+3 자동 경로와 대칭)
+        if (!app.slotId && app.selectedWorkType) {
+          toUpdate[`workTypeConfirmedCounts.${app.selectedWorkType}`] =
+            admin.firestore.FieldValue.increment(-1);
+        }
+        batch.update(toRef, toUpdate);
         if (app.slotId) {
-          batch.update(
-            db.collection("tos").doc(app.toId).collection("slots").doc(app.slotId),
-            {confirmedCount: admin.firestore.FieldValue.increment(-1)}
-          );
+          const slotUpdate: {[key: string]: admin.firestore.FieldValue} = {
+            confirmedCount: admin.firestore.FieldValue.increment(-1),
+          };
+          // [GAP-TERMINATION-WDID-01 FIX] wdId-level workDetailCounts 감소 — 카운터 드리프트 방지
+          if (app.wdId) {
+            slotUpdate[`workDetailCounts.${app.wdId}.confirmedCount`] =
+              admin.firestore.FieldValue.increment(-1);
+          }
+          batch.update(toRef.collection("slots").doc(app.slotId), slotUpdate);
         }
         await batch.commit();
       } catch (e) {
