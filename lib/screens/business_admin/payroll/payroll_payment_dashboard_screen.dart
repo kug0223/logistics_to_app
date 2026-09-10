@@ -759,8 +759,9 @@ class _PayrollPaymentDashboardScreenState
       );
       if (confirmed != true || !mounted) return;
 
-      final note = await _showTransferNoteDialog();
-      if (!mounted) return;
+      final tnResult = await _showTransferNoteDialog();
+      if (tnResult.cancelled || !mounted) return; // back = cancel, finally resets _isTransferring
+      final note = tnResult.note;
 
       // [PAY-09-FIX] skippedCount 추적 후 실제 처리 건수만 성공으로 표시
       // [PAY-08-FIX] skip 원인별 메시지 구분 (계좌 미확인 vs 중간정산 lock)
@@ -830,8 +831,9 @@ class _PayrollPaymentDashboardScreenState
       final uid = context.read<UserProvider>().currentUser?.uid ?? '';
       if (uid.isEmpty) { ToastHelper.showError('로그인 정보를 확인해주세요'); return; }
 
-      final note = await _showTransferNoteDialog();
-      if (!mounted) return;
+      final tnResult = await _showTransferNoteDialog();
+      if (tnResult.cancelled || !mounted) return; // back = cancel, finally resets _isTransferring
+      final note = tnResult.note;
 
       final selectedRecords = _allRecords.where((r) => _selectedIds.contains(r.id)).toList();
       if (selectedRecords.isEmpty) {
@@ -874,18 +876,27 @@ class _PayrollPaymentDashboardScreenState
     }
   }
 
-  Future<String?> _showTransferNoteDialog() async {
+  // PATCH-8.1 (ADMIN-DESIGN-11.1): GAP-TRANSFER-NOTE-BACK-01 closure
+  // 기존 String? 반환은 null(back)과 ''(skip)을 동일하게 collapse →
+  // system back이 implicit skip처럼 금융 mutation을 진행시키는 문제 해소.
+  // Dart record 사용: file-private, 서비스/모델 확장 없음.
+  //   cancelled=true  → system back → financial mutation 차단
+  //   cancelled=false → 건너뛰기(note:null) 또는 입력(note:text) → mutation 진행
+  Future<({bool cancelled, String? note})> _showTransferNoteDialog() async {
     // [FC-PAY-03 OWNERSHIP FIX] _TransferNoteDialog(StatefulWidget)이 ctrl을
     // 직접 소유하고 State.dispose()에서 해제한다.
     // addPostFrameCallback dispose 패턴 제거.
-    final note = await showDialog<String>(
+    final raw = await showDialog<String>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => _TransferNoteDialog(initialNote: _lastTransferNote),
     );
-    final result = (note == null || note.isEmpty) ? null : note;
-    if (result != null) _lastTransferNote = result;
-    return result;
+    // null = system back = 취소 → caller에서 financial mutation 차단
+    if (raw == null) return (cancelled: true, note: null);
+    // '' / whitespace = 건너뛰기 or empty 확인 = explicit proceed without note
+    final trimmed = raw.trim().isEmpty ? null : raw.trim();
+    if (trimmed != null) _lastTransferNote = trimmed;
+    return (cancelled: false, note: trimmed);
   }
 
   // ── 엑셀 내보내기 ─────────────────────────────────────────
@@ -1045,9 +1056,9 @@ class _PayrollPaymentDashboardScreenState
         cancelText: '취소',
       );
       if (ok != true || !mounted) return;
-      final note = await _showTransferNoteDialog();
-      if (!mounted) return;
-      await _payService.processInterimSettlement(req: req, transferNote: note);
+      final tnResult = await _showTransferNoteDialog();
+      if (tnResult.cancelled || !mounted) return; // back = cancel, finally resets _isTransferring
+      await _payService.processInterimSettlement(req: req, transferNote: tnResult.note);
       if (mounted) { ToastHelper.showSuccess('이체 처리 완료'); _load(); }
     } catch (e) {
       if (mounted) ToastHelper.showError('처리에 실패했습니다\n$e');
