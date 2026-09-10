@@ -3372,6 +3372,10 @@ class _RejectReasonDialog extends StatefulWidget {
 class _RejectReasonDialogState extends State<_RejectReasonDialog> {
   final _ctrl = TextEditingController();
 
+  // PATCH-7.1 (ADMIN-DESIGN-10.1): GAP-REJECT-VALIDATION-01 closure
+  // caller의 reason.isEmpty guard는 defensive correctness 계층으로 그대로 유지.
+  bool get _isValid => _ctrl.text.trim().isNotEmpty;
+
   @override
   void dispose() {
     _ctrl.dispose();
@@ -3394,6 +3398,7 @@ class _RejectReasonDialogState extends State<_RejectReasonDialog> {
         controller: _ctrl,
         decoration: InputDecoration(hintText: widget.hintText),
         autofocus: true,
+        onChanged: (_) => setState(() {}),
       ),
       actions: [
         OutlinedButton(
@@ -3409,10 +3414,12 @@ class _RejectReasonDialogState extends State<_RejectReasonDialog> {
           child: const Text('취소'),
         ),
         ElevatedButton(
-          onPressed: () {
-            FocusManager.instance.primaryFocus?.unfocus();
-            Navigator.pop(context, _ctrl.text.trim());
-          },
+          onPressed: _isValid
+              ? () {
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  Navigator.pop(context, _ctrl.text.trim());
+                }
+              : null,
           style: ElevatedButton.styleFrom(
             backgroundColor: AppColors.error,
             foregroundColor: Colors.white,
