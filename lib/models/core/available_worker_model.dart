@@ -4,14 +4,16 @@
 /// 개인정보 보호: 이름 마스킹, 연락처/계좌/생년월일/주소 비포함.
 ///
 /// [R3-C] Explainability facts (ranking 미영향):
-/// - `workTypeCount` : 해당 업무 근무 완료 횟수 (0 = 경험 없음 또는 신규)
-/// - `totalWorkDays` : ALfit 전체 근무 완료 일수 (0 = 신규 근로자)
+/// - `workTypeCount`         : 해당 업무 근무 완료 횟수 (0 = 경험 없음 또는 신규)
+/// - `totalWorkDays`         : ALfit 전체 근무 완료 일수 (0 = 신규 근로자)
+/// - `weeklyBusinessCount`   : 이번 주 이 사업장 실제 근무 횟수 [R7.2A]
 ///
 /// Derived:
-/// - `isNewWorker`         : totalWorkDays == 0
-/// - `hasSameWorkExperience`: workTypeCount > 0
+/// - `isNewWorker`           : totalWorkDays == 0
+/// - `hasSameWorkExperience` : workTypeCount > 0
 ///
 /// 노출 금지: rankGroup / noShowCount / restrictedUntil / trustScore
+/// RANKING_USES_WEEKLY_COUNT = NO
 class AvailableWorkerModel {
   final String uid;
 
@@ -27,6 +29,12 @@ class AvailableWorkerModel {
   /// [R3-C] ALfit 전체 근무 완료 일수. 서버 구버전 응답 시 0 default.
   final int totalWorkDays;
 
+  /// [R7.2A] 이번 주 이 사업장 실제 근무 횟수.
+  /// COUNT: present / late / early_leave status 기준 attendance document 단위.
+  /// EXCLUDE: absent / NO_SHOW / 미래 confirmed.
+  /// TARGET_BUSINESS_ONLY = YES. 서버 구버전 응답 시 0 default.
+  final int weeklyBusinessCount;
+
   const AvailableWorkerModel({
     required this.uid,
     required this.maskedName,
@@ -34,6 +42,7 @@ class AvailableWorkerModel {
     this.district,
     this.workTypeCount = 0,
     this.totalWorkDays = 0,
+    this.weeklyBusinessCount = 0,
   });
 
   /// [R3-C] 신규 근로자 여부 — totalWorkDays == 0 으로 derive (별도 필드 불필요)
@@ -56,6 +65,8 @@ class AvailableWorkerModel {
         // [R3-C] backward-compatible: 구버전 서버 응답에 필드 없으면 0 default
         workTypeCount: (m['workTypeCount'] as num?)?.toInt() ?? 0,
         totalWorkDays: (m['totalWorkDays'] as num?)?.toInt() ?? 0,
+        // [R7.2A] backward-compatible: 구버전 서버 응답에 필드 없으면 0 default
+        weeklyBusinessCount: (m['weeklyBusinessCount'] as num?)?.toInt() ?? 0,
       );
     } catch (_) {
       return null;

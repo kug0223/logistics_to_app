@@ -11,10 +11,17 @@ class AvailableWorkersResult {
   final bool hasMore;
   final String? nextCursor;
 
+  /// [R7.2A] CF poolComplete: 전체 eligible pool을 가져왔는지 여부.
+  /// true == FULL_POOL (client-side filter/sort 가능)
+  /// false == PAGED (partial pool — filter/sort UI 비활성화)
+  /// default false: 응답 누락 시 complete로 추정하지 않음 (보수적)
+  final bool poolComplete;
+
   const AvailableWorkersResult({
     required this.candidates,
     required this.hasMore,
     this.nextCursor,
+    this.poolComplete = false,
   });
 }
 
@@ -48,6 +55,8 @@ class AvailableWorkersService {
           data['candidates'] as List<dynamic>?),
       hasMore: data['hasMore'] as bool? ?? false,
       nextCursor: data['nextCursor'] as String?,
+      // [R7.2A] poolComplete: 응답 누락 시 false (보수적 default — complete 추정 금지)
+      poolComplete: data['poolComplete'] as bool? ?? false,
     );
   }
 

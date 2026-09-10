@@ -26424,8 +26424,50 @@ export const callableGetAvailableWorkers = onCall(
       rankedWorking = workingCandidates; // page order 유지
     }
 
-    // [R3-C] Client DTO projection — rankGroup/noShow 메타데이터 미노출
-    // INTERNAL_RANK_METADATA_EXPOSED = NO / ADDITIONAL_FIRESTORE_READS = 0
+    // ── [R7.2A] 이번 주 이 사업장 실제 근무 횟수 집계 ────────────────────────
+    // N+1 금지: 1회 batch query (businessId + workDate range) → uid별 메모리 집계
+    // COUNT: status in [present, late, early_leave]
+    // EXCLUDE: absent, NO_SHOW, attendance 없음, 미래 confirmed
+    // WEEKLY_READ_AMPLIFICATION = FULL_POOL:LOW (1회 only) / PAGED:MEDIUM (per CF call)
+    // TARGET_BUSINESS_ONLY = YES (TO에서 resolve된 businessId만 사용)
+    const weeklyCountMap = new Map<string, number>();
+    if (rankedWorking.length > 0) {
+      try {
+        const nowForWeekly = new Date(fnStartMs); // request 시점까지만 (미래 confirmed 제외)
+        // KST 이번 주 월요일 00:00 (UTC+9 고정, 한국 DST 없음)
+        const nowKstMs = fnStartMs + 9 * 60 * 60 * 1000;
+        const nowKstDate = new Date(nowKstMs);
+        const kstDow = nowKstDate.getUTCDay(); // 0=일, 1=월, ..., 6=토
+        const daysFromMon = kstDow === 0 ? 6 : kstDow - 1;
+        const monKstMidnight = new Date(nowKstMs);
+        monKstMidnight.setUTCDate(monKstMidnight.getUTCDate() - daysFromMon);
+        monKstMidnight.setUTCHours(0, 0, 0, 0); // 월요일 00:00 KST
+        // UTC 변환: KST -9h = UTC
+        const weekStartUtc = new Date(monKstMidnight.getTime() - 9 * 60 * 60 * 1000);
+
+        const weeklySnap = await db.collection("attendance")
+          .where("businessId", "==", businessId)
+          .where("workDate", ">=", admin.firestore.Timestamp.fromDate(weekStartUtc))
+          .where("workDate", "<=", admin.firestore.Timestamp.fromDate(nowForWeekly))
+          .get();
+
+        const countedStatuses = new Set(["present", "late", "early_leave"]);
+        for (const aDoc of weeklySnap.docs) {
+          const aData = aDoc.data();
+          const aUid    = aData.userId as string | undefined; // AttendanceModel.userId (uid 아님)
+          const aStatus = aData.status as string | undefined;
+          if (aUid && aStatus && countedStatuses.has(aStatus)) {
+            weeklyCountMap.set(aUid, (weeklyCountMap.get(aUid) ?? 0) + 1);
+          }
+        }
+      } catch (weeklyErr) {
+        // 비파괴적 degradation: 조회 실패 시 weeklyBusinessCount = 0 default (candiddate 조회는 유지)
+        console.log(JSON.stringify({event: "weeklyCountQueryError", businessId, error: String(weeklyErr)}));
+      }
+    }
+
+    // [R3-C / R7.2A] Client DTO projection — rankGroup/noShow 메타데이터 미노출
+    // INTERNAL_RANK_METADATA_EXPOSED = NO / RANKING_USES_WEEKLY_COUNT = NO
     const candidates = rankedWorking.map(({uid, maskedName, city, district, _uData}) => {
       const workTypeStats = _uData.workTypeStats as Record<string, number> | undefined;
       const workTypeCount: number = (targetWorkType != null && workTypeStats != null)
@@ -26434,7 +26476,9 @@ export const callableGetAvailableWorkers = onCall(
       const totalWorkDays: number = typeof _uData.totalWorkDays === "number"
         ? _uData.totalWorkDays
         : 0;
-      return {uid, maskedName, city, district, workTypeCount, totalWorkDays};
+      // [R7.2A] 이번 주 이 사업장 실제 근무 횟수 (TARGET_BUSINESS_ONLY)
+      const weeklyBusinessCount: number = weeklyCountMap.get(uid) ?? 0;
+      return {uid, maskedName, city, district, workTypeCount, totalWorkDays, weeklyBusinessCount};
     });
 
     // [R3-A1/R3-A2/R3-B] Structured observability log — PII 없음
