@@ -296,20 +296,26 @@ class _AvailableWorkersBottomSheetState
                                 .copyWith(fontWeight: FontWeight.w600),
                           ),
                         ),
-                        for (final opt in _WeeklyRange.values)
-                          RadioListTile<_WeeklyRange>(
-                            value: opt,
-                            groupValue: tmpRange,
-                            onChanged: (v) =>
-                                setSt(() => tmpRange = v ?? _WeeklyRange.all),
-                            title: Text(
-                              _weeklyRangeLabel(opt),
-                              style: ResponsiveHelper.bodyStyle(ctx),
-                            ),
-                            dense: true,
-                            contentPadding:
-                                const EdgeInsets.symmetric(horizontal: 16),
+                        RadioGroup<_WeeklyRange>(
+                          groupValue: tmpRange,
+                          onChanged: (v) =>
+                              setSt(() => tmpRange = v ?? _WeeklyRange.all),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: _WeeklyRange.values.map((opt) =>
+                              RadioListTile<_WeeklyRange>(
+                                value: opt,
+                                title: Text(
+                                  _weeklyRangeLabel(opt),
+                                  style: ResponsiveHelper.bodyStyle(ctx),
+                                ),
+                                dense: true,
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16),
+                              ),
+                            ).toList(),
                           ),
+                        ),
                         // ─ 지역 (FULL_POOL + district 있을 때만) ─────────
                         if (districts.isNotEmpty) ...[
                           Padding(
