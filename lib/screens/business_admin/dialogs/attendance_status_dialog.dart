@@ -1147,7 +1147,9 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
         }
         if (s == 'checkin' || s == 'late' || s == 'missed_checkout') checkOutCount++;
       }
-      if (att?.checkIn != null) resetCount++;
+      // [GAP-ATT-RESET-ABSENT-01] statusAbsent(결근) 근로자는 checkIn이 없어도 리셋 대상
+      // _showBatchResetDialog H-3 설계와 일치: att.checkIn != null || att.status == statusAbsent
+      if (att?.checkIn != null || att?.status == AttendanceModel.statusAbsent) resetCount++;
     }
 
     // 탭별 조건부 칩
@@ -2203,6 +2205,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     unawaited(_loadData()); // non-blocking refresh
 
     // §13: seat release 성공 → DayApplicantsDialog(오늘) 오픈
+    // [GAP-ATT-NOSHOW-RECOVERY-DATE-01] widget.date(선택된 날짜)가 아닌 오늘 날짜로 고정.
+    // 대체 인력 충원은 실시간 운영 맥락 — 과거 날짜 다이얼로그는 의미 없음.
     if (!mounted) return;
     final bizId = _selectedBusinessId ??
         (widget.businessIds.isEmpty ? null : widget.businessIds.first);
@@ -2211,7 +2215,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       context: context,
       barrierDismissible: false,
       builder: (_) => DayApplicantsDialog(
-        date: widget.date,
+        date: DateTime.now(),
         businessIds: [bizId],
         businesses: widget.businesses ?? [],
       ),
