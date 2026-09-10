@@ -31,6 +31,7 @@ import '../../../theme/app_colors.dart';
 
 // Widgets
 import '../../../widgets/pickers/create_edit_work_detail_dialog.dart';
+import '../../../widgets/common/app_page_scaffold.dart';
 // 공통 위젯
 import 'widgets/to_widgets.dart';
 import '../../../widgets/app_select_field.dart';
@@ -1246,35 +1247,31 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   // UI 빌드
   // ============================================================
 
-  @override
-  Widget build(BuildContext context) {
-    if (_isLoading) {
-      return Scaffold(
-        backgroundColor: AppColors.background,
-        appBar: AppBar(
-          backgroundColor: Colors.white,
-          elevation: 0,
-          surfaceTintColor: Colors.transparent,
-          centerTitle: false,
-          title: Text(
-            '공고 등록',
-            style: ResponsiveHelper.subtitleStyle(context)
-                .copyWith(fontWeight: FontWeight.w700, color: AppColors.textPrimary),
-          ),
-          actions: [
-            NotificationBadge(
-              child: IconButton(
-                icon: const Icon(Icons.notifications_outlined),
-                color: AppColors.textSecondary,
-                onPressed: () => Navigator.push(
+  /// 알림 action 위젯 — 3가지 상태(loading·prerequisite·form) 공통.
+  /// [M1-FIX] disabled=true 시 탭 차단 (form에서 _isCreating 중 이동 금지).
+  Widget _buildNotificationAction({bool disabled = false}) {
+    return NotificationBadge(
+      child: IconButton(
+        icon: const Icon(Icons.notifications_outlined),
+        color: AppColors.textSecondary,
+        onPressed: disabled
+            ? null
+            : () => Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const NotificationScreen()),
                 ),
-                tooltip: '알림',
-              ),
-            ),
-          ],
-        ),
+        tooltip: '알림',
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // [SCAFFOLD_MIGRATION] Scaffold → AppPageScaffold (loading state)
+    if (_isLoading) {
+      return AppPageScaffold(
+        title: '공고 등록',
+        actions: [_buildNotificationAction()],
         body: const LoadingWidget(),
       );
     }
@@ -1297,48 +1294,25 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
         );
         if (leave && context.mounted) Navigator.pop(context);
       },
-      child: Scaffold(
-        backgroundColor: AppColors.background,
-        appBar: AppBar(
-          backgroundColor: Colors.white,
-          elevation: 0,
-          surfaceTintColor: Colors.transparent,
-          centerTitle: false,
-          title: Text(
-            '공고 등록',
-            style: ResponsiveHelper.subtitleStyle(context)
-                .copyWith(fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+      // [SCAFFOLD_MIGRATION] Scaffold → AppPageScaffold (main form state)
+      child: AppPageScaffold(
+        title: '공고 등록',
+        // B: 아이콘 전용 → TextButton.icon "불러오기" + 알림
+        actions: [
+          Padding(
+            padding: EdgeInsets.only(
+                right: ResponsiveHelper.spacing(context, 8)),
+            child: TextButton.icon(
+              onPressed: _selectedBusiness != null
+                  ? _showLoadFromExistingDialog
+                  : null,
+              icon: const Icon(Icons.file_copy_outlined),
+              label: const Text('불러오기'),
+            ),
           ),
-          // B: 아이콘 전용 → TextButton.icon "불러오기"
-          actions: [
-            Padding(
-              padding: EdgeInsets.only(
-                  right: ResponsiveHelper.spacing(context, 8)),
-              child: TextButton.icon(
-                onPressed: _selectedBusiness != null
-                    ? _showLoadFromExistingDialog
-                    : null,
-                icon: const Icon(Icons.file_copy_outlined),
-                label: const Text('불러오기'),
-              ),
-            ),
-            NotificationBadge(
-              child: IconButton(
-                icon: const Icon(Icons.notifications_outlined),
-                color: AppColors.textSecondary,
-                // [M1-FIX] 등록 진행 중에는 다른 화면 이동 차단
-                onPressed: _isCreating
-                    ? null
-                    : () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => const NotificationScreen()),
-                        ),
-                tooltip: '알림',
-              ),
-            ),
-          ],
-        ),
+          // [M1-FIX] 등록 진행 중에는 다른 화면 이동 차단
+          _buildNotificationAction(disabled: _isCreating),
+        ],
         body: Form(
           key: _formKey,
           child: ListView(
@@ -1410,7 +1384,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             ],
           ),
         ),
-        // G: CTA → Scaffold.bottomNavigationBar (SafeArea(top: false) 필수)
+        // G: CTA → bottomNavigationBar (SafeArea(top: false) 필수)
         bottomNavigationBar: SafeArea(
           top: false,
           child: Padding(
@@ -1431,6 +1405,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   }
 
   /// 공고 등록 사전조건 체크 화면 — 3가지를 한 번에 보여줌
+  // [SCAFFOLD_MIGRATION] Scaffold → AppPageScaffold (prerequisite state)
   Widget _buildPrerequisiteScreen() {
     final theme = Theme.of(context);
     final isSubAdmin =
@@ -1439,32 +1414,9 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
     final canManageContract =
         !isSubAdmin || context.read<UserProvider>().can((p) => p.canManageContract);
     final cardCount = isSubAdmin ? 4 : 5;
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
-        centerTitle: false,
-        title: Text(
-          '공고 등록',
-          style: ResponsiveHelper.subtitleStyle(context)
-              .copyWith(fontWeight: FontWeight.w700, color: AppColors.textPrimary),
-        ),
-        actions: [
-          NotificationBadge(
-            child: IconButton(
-              icon: const Icon(Icons.notifications_outlined),
-              color: AppColors.textSecondary,
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const NotificationScreen()),
-              ),
-              tooltip: '알림',
-            ),
-          ),
-        ],
-      ),
+    return AppPageScaffold(
+      title: '공고 등록',
+      actions: [_buildNotificationAction()],
       body: SingleChildScrollView(
         padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 20)),
         child: Column(

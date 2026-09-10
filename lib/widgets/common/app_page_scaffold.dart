@@ -22,6 +22,7 @@ class AppPageScaffold extends StatelessWidget {
     this.floatingActionButton,
     this.floatingActionButtonLocation,
     this.resizeToAvoidBottomInset = true,
+    this.bottomNavigationBar,
   });
 
   final String title;
@@ -41,6 +42,10 @@ class AppPageScaffold extends StatelessWidget {
   final Widget? floatingActionButton;
   final FloatingActionButtonLocation? floatingActionButtonLocation;
   final bool resizeToAvoidBottomInset;
+
+  /// 하단 고정 버튼 영역 — SafeArea(top: false)로 감싸서 전달.
+  /// Scaffold.bottomNavigationBar에 그대로 전달됨.
+  final Widget? bottomNavigationBar;
 
   static const _titleStyle = TextStyle(
     fontSize: 20,
@@ -63,6 +68,7 @@ class AppPageScaffold extends StatelessWidget {
       resizeToAvoidBottomInset: resizeToAvoidBottomInset,
       floatingActionButton: floatingActionButton,
       floatingActionButtonLocation: floatingActionButtonLocation,
+      bottomNavigationBar: bottomNavigationBar,
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
