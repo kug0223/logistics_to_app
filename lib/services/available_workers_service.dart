@@ -17,11 +17,19 @@ class AvailableWorkersResult {
   /// default false: 응답 누락 시 complete로 추정하지 않음 (보수적)
   final bool poolComplete;
 
+  /// [R7.2A.2] UNKNOWN != ZERO: weekly attendance query 성공 여부.
+  /// true  = query 성공 → weeklyBusinessCount 값을 사실로 사용 가능
+  /// false = query 실패/미실행 → weeklyBusinessCount 불신뢰
+  ///         → 카드 weekly 메타 숨김, weekly filter/sort 비활성화
+  /// default false: 응답 누락 시 unknown으로 처리 (success로 추정 금지)
+  final bool weeklyContextAvailable;
+
   const AvailableWorkersResult({
     required this.candidates,
     required this.hasMore,
     this.nextCursor,
     this.poolComplete = false,
+    this.weeklyContextAvailable = false,
   });
 }
 
@@ -57,6 +65,8 @@ class AvailableWorkersService {
       nextCursor: data['nextCursor'] as String?,
       // [R7.2A] poolComplete: 응답 누락 시 false (보수적 default — complete 추정 금지)
       poolComplete: data['poolComplete'] as bool? ?? false,
+      // [R7.2A.2] weeklyContextAvailable: 응답 누락 시 false (unknown != zero)
+      weeklyContextAvailable: data['weeklyContextAvailable'] as bool? ?? false,
     );
   }
 

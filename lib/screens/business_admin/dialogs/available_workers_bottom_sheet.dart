@@ -65,6 +65,9 @@ class _AvailableWorkersBottomSheetState
   /// [R7.2A] CF poolComplete 파싱값 — 응답 누락 시 false (보수적 default)
   bool _poolComplete = false;
   bool _hasMore = false;
+  /// [R7.2A.2] weekly attendance query 성공 여부 — UNKNOWN != ZERO
+  /// false: weekly 메타/filter/sort 비활성화 (0으로 오표시/오정렬 방지)
+  bool _weeklyContextAvailable = false;
   String? _nextCursor;
   bool _isLoading = true;
   bool _isLoadingMore = false;
@@ -145,6 +148,18 @@ class _AvailableWorkersBottomSheetState
         _poolComplete = result.poolComplete;
         _hasMore = result.hasMore;
         _nextCursor = result.nextCursor;
+        // [R7.2A.2] weekly context 갱신 — failure 전환 처리
+        _weeklyContextAvailable = result.weeklyContextAvailable;
+        if (!result.weeklyContextAvailable) {
+          // weekly sort → 추천순 복원 (fake zero sort 방지)
+          if (_sortMode == _SortMode.weeklyAsc || _sortMode == _SortMode.weeklyDesc) {
+            _sortMode = _SortMode.recommended;
+          }
+          // weekly filter → 해제 (fake zero filter 방지)
+          if (_filterWeeklyRange != _WeeklyRange.all) {
+            _filterWeeklyRange = _WeeklyRange.all;
+          }
+        }
         _isLoading = false;
         _isLoadingMore = false;
       });
@@ -169,7 +184,8 @@ class _AvailableWorkersBottomSheetState
     if (_filterWorkExperience) {
       list = list.where((w) => w.hasSameWorkExperience).toList();
     }
-    if (_filterWeeklyRange != _WeeklyRange.all) {
+    // [R7.2A.2] weekly filter: context 가용 시에만 적용 (UNKNOWN != ZERO)
+    if (_weeklyContextAvailable && _filterWeeklyRange != _WeeklyRange.all) {
       list = list.where((w) {
         final c = w.weeklyBusinessCount;
         switch (_filterWeeklyRange) {
@@ -188,7 +204,8 @@ class _AvailableWorkersBottomSheetState
     // ── Sort ─────────────────────────────────────────────────────────────────
     // Dart List.sort() stable 가정 금지 (§16).
     // tie-break: 명시적 추천 index map 사용 (§17-19).
-    if (_sortMode != _SortMode.recommended) {
+    // [R7.2A.2] weekly sort: context 가용 시에만 적용 (UNKNOWN != ZERO)
+    if (_sortMode != _SortMode.recommended && _weeklyContextAvailable) {
       final indexMap = <String, int>{
         for (var i = 0; i < _recommendedOrder.length; i++)
           _recommendedOrder[i].uid: i,
@@ -287,35 +304,38 @@ class _AvailableWorkersBottomSheetState
                           contentPadding:
                               const EdgeInsets.symmetric(horizontal: 16),
                         ),
-                        // ─ 이번 주 이 사업장 근무 ──────────────────────────
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                          child: Text(
-                            '이번 주 이 사업장 근무',
-                            style: ResponsiveHelper.bodyStyle(ctx)
-                                .copyWith(fontWeight: FontWeight.w600),
+                        // ─ 이번 주 이 사업장 근무 (weekly context 가용 시만) ──
+                        // [R7.2A.2] unavailable이면 섹션 숨김 (UNKNOWN != ZERO)
+                        if (_weeklyContextAvailable) ...[
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                            child: Text(
+                              '이번 주 이 사업장 근무',
+                              style: ResponsiveHelper.bodyStyle(ctx)
+                                  .copyWith(fontWeight: FontWeight.w600),
+                            ),
                           ),
-                        ),
-                        RadioGroup<_WeeklyRange>(
-                          groupValue: tmpRange,
-                          onChanged: (v) =>
-                              setSt(() => tmpRange = v ?? _WeeklyRange.all),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: _WeeklyRange.values.map((opt) =>
-                              RadioListTile<_WeeklyRange>(
-                                value: opt,
-                                title: Text(
-                                  _weeklyRangeLabel(opt),
-                                  style: ResponsiveHelper.bodyStyle(ctx),
+                          RadioGroup<_WeeklyRange>(
+                            groupValue: tmpRange,
+                            onChanged: (v) =>
+                                setSt(() => tmpRange = v ?? _WeeklyRange.all),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: _WeeklyRange.values.map((opt) =>
+                                RadioListTile<_WeeklyRange>(
+                                  value: opt,
+                                  title: Text(
+                                    _weeklyRangeLabel(opt),
+                                    style: ResponsiveHelper.bodyStyle(ctx),
+                                  ),
+                                  dense: true,
+                                  contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 16),
                                 ),
-                                dense: true,
-                                contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 16),
-                              ),
-                            ).toList(),
+                              ).toList(),
+                            ),
                           ),
-                        ),
+                        ],
                         // ─ 지역 (FULL_POOL + district 있을 때만) ─────────
                         if (districts.isNotEmpty) ...[
                           Padding(
@@ -373,6 +393,7 @@ class _AvailableWorkersBottomSheetState
                           filterExp: tmpExp,
                           filterRange: tmpRange,
                           filterDistricts: tmpDistricts,
+                          weeklyContextAvailable: _weeklyContextAvailable,
                         ),
                         const SizedBox(width: 8),
                         ElevatedButton(
@@ -561,7 +582,8 @@ class _AvailableWorkersBottomSheetState
                     ),
                   ),
                   const Spacer(),
-                  // 정렬 팝업
+                  // [R7.2A.2] 정렬 팝업: weekly context 가용 시만 (unavailable 시 추천순만 의미 있음)
+                  if (_weeklyContextAvailable)
                   PopupMenuButton<_SortMode>(
                     initialValue: _sortMode,
                     onSelected: (mode) {
@@ -737,13 +759,17 @@ class _AvailableWorkersBottomSheetState
     final isInvited = _invitedUids.contains(worker.uid);
 
     // [R7.2A] 통합 메타데이터 줄 (§38-40)
-    // "이 업무 경험 있음 · 이번 주 이 사업장 N회" or "이번 주 이 사업장 N회"
     // exact workType count / totalWorkDays / 신규 badge 미노출 (R3-D / §41-43)
-    // 0회도 표시, neutral color — 강조/평가 표현 금지 (§39)
-    final weeklyText = '이번 주 이 사업장 ${worker.weeklyBusinessCount}회';
-    final metaText = worker.hasSameWorkExperience
-        ? '이 업무 경험 있음 · $weeklyText'
-        : weeklyText;
+    // [R7.2A.2] UNKNOWN != ZERO: weekly context unavailable 시 weekly 메타 숨김
+    // → 0회로 오표시하지 않음; experience 메타는 별도 정상 데이터이므로 유지
+    final weeklyText = _weeklyContextAvailable
+        ? '이번 주 이 사업장 ${worker.weeklyBusinessCount}회'
+        : null; // 0회 표시 금지 (unavailable)
+    final metaParts = <String>[
+      if (worker.hasSameWorkExperience) '이 업무 경험 있음',
+      if (weeklyText != null) weeklyText,
+    ];
+    final metaText = metaParts.isEmpty ? null : metaParts.join(' · ');
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -770,14 +796,15 @@ class _AvailableWorkersBottomSheetState
                     style: ResponsiveHelper.smallStyle(
                         context, color: AppColors.grey500),
                   ),
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(
-                    metaText,
-                    style: ResponsiveHelper.smallStyle(
-                        context, color: AppColors.grey500),
+                if (metaText != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      metaText,
+                      style: ResponsiveHelper.smallStyle(
+                          context, color: AppColors.grey500),
+                    ),
                   ),
-                ),
               ],
             ),
           ),
@@ -863,19 +890,23 @@ class _FilterPreviewCount extends StatelessWidget {
   final bool filterExp;
   final _WeeklyRange filterRange;
   final Set<String> filterDistricts;
+  /// [R7.2A.2] weekly context 가용 여부 — false 시 weeklyRange 적용 안 함
+  final bool weeklyContextAvailable;
 
   const _FilterPreviewCount({
     required this.recommendedOrder,
     required this.filterExp,
     required this.filterRange,
     required this.filterDistricts,
+    required this.weeklyContextAvailable,
   });
 
   @override
   Widget build(BuildContext context) {
     var list = List.of(recommendedOrder);
     if (filterExp) list = list.where((w) => w.hasSameWorkExperience).toList();
-    if (filterRange != _WeeklyRange.all) {
+    // [R7.2A.2] weekly context 가용 시만 적용 (UNKNOWN != ZERO)
+    if (weeklyContextAvailable && filterRange != _WeeklyRange.all) {
       list = list.where((w) {
         final c = w.weeklyBusinessCount;
         switch (filterRange) {

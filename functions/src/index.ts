@@ -26430,6 +26430,9 @@ export const callableGetAvailableWorkers = onCall(
     // EXCLUDE: absent, NO_SHOW, attendance 없음, 미래 confirmed
     // WEEKLY_READ_AMPLIFICATION = FULL_POOL:LOW (1회 only) / PAGED:MEDIUM (per CF call)
     // TARGET_BUSINESS_ONLY = YES (TO에서 resolve된 businessId만 사용)
+    // [R7.2A.2] UNKNOWN != ZERO: query 성공 여부를 별도 플래그로 전달
+    // weeklyContextAvailable=false → 클라이언트는 weeklyBusinessCount 값을 사실로 사용하지 않음
+    let weeklyContextAvailable = false;
     const weeklyCountMap = new Map<string, number>();
     if (rankedWorking.length > 0) {
       try {
@@ -26460,9 +26463,11 @@ export const callableGetAvailableWorkers = onCall(
             weeklyCountMap.set(aUid, (weeklyCountMap.get(aUid) ?? 0) + 1);
           }
         }
+        weeklyContextAvailable = true; // [R7.2A.2] query 성공 시만 true (UNKNOWN != ZERO)
       } catch (weeklyErr) {
-        // 비파괴적 degradation: 조회 실패 시 weeklyBusinessCount = 0 default (candiddate 조회는 유지)
-        console.log(JSON.stringify({event: "weeklyCountQueryError", businessId, error: String(weeklyErr)}));
+        // 비파괴적 degradation: 후보 조회는 유지, weekly context는 unavailable 처리
+        // weeklyContextAvailable은 false 유지 → 클라이언트가 0회로 오표시하지 않음
+        console.log(JSON.stringify({event: "weeklyCountQueryError", businessId, weeklyContextAvailable: false, error: String(weeklyErr)}));
       }
     }
 
@@ -26502,6 +26507,7 @@ export const callableGetAvailableWorkers = onCall(
       nextCursor,
       totalFound: candidates.length,
       poolComplete,
+      weeklyContextAvailable, // [R7.2A.2] true=query 성공 / false=실패or미실행
     };
   }
 );
