@@ -763,10 +763,10 @@ class _AvailableWorkersBottomSheetState
     // [R7.2A.2] UNKNOWN != ZERO: weekly context unavailable 시 weekly 메타 숨김
     // → 0회로 오표시하지 않음; experience 메타는 별도 정상 데이터이므로 유지
     final weeklyText = _weeklyContextAvailable
-        ? '이번 주 이 사업장 ${worker.weeklyBusinessCount}회'
+        ? '이번 주 ${worker.weeklyBusinessCount}회' // [R7.3.1-B] "이 사업장" 제거
         : null; // 0회 표시 금지 (unavailable)
     final metaParts = <String>[
-      if (worker.hasSameWorkExperience) '이 업무 경험 있음',
+      if (worker.hasSameWorkExperience) '업무 경험 있음', // [R7.3.1-B] "이" 제거
       if (weeklyText != null) weeklyText,
     ];
     final metaText = metaParts.isEmpty ? null : metaParts.join(' · ');
@@ -849,7 +849,8 @@ class _AvailableWorkersBottomSheetState
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                // [R7.3.1-A] visual compact 유지 + tappable 영역 >= 48dp 확보
+                tapTargetSize: MaterialTapTargetSize.padded,
               ),
               child: Text(
                 '근무 제안',
