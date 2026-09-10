@@ -27,6 +27,7 @@ import '../../../widgets/dialogs/styled_dialog.dart';
 import 'widgets/to_widgets.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/common/loading_widget.dart';
+import '../../../widgets/common/app_page_scaffold.dart'; // PATCH-1 (ADMIN-DESIGN-5)
 import '../../common/notification_screen.dart';
 import '../../../widgets/common/notification_badge.dart';
 
@@ -810,6 +811,23 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
   // UI 빌드
   // ============================================================
 
+  // PATCH-2 (ADMIN-DESIGN-5): 알림 버튼 헬퍼 — 로딩·저장 상태별 disabled 분리
+  Widget _buildNotificationAction({bool disabled = false}) {
+    return NotificationBadge(
+      child: IconButton(
+        icon: const Icon(Icons.notifications_outlined),
+        color: AppColors.textSecondary,
+        onPressed: disabled
+            ? null
+            : () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const NotificationScreen()),
+                ),
+        tooltip: '알림',
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final appBarTitle = widget.isBatchMode
@@ -819,30 +837,10 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
             : '공고 수정';
 
     if (_isLoading) {
-      return Scaffold(
-        backgroundColor: AppColors.background,
-        appBar: AppBar(
-          backgroundColor: Colors.white,
-          elevation: 0,
-          surfaceTintColor: Colors.transparent,
-          centerTitle: false,
-          title: Text(appBarTitle,
-              style: ResponsiveHelper.subtitleStyle(context,
-                  fontWeight: FontWeight.bold)),
-          actions: [
-            NotificationBadge(
-              child: IconButton(
-                icon: const Icon(Icons.notifications_outlined),
-                color: AppColors.textSecondary,
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const NotificationScreen()),
-                ),
-                tooltip: '알림',
-              ),
-            ),
-          ],
-        ),
+      // PATCH-3 (ADMIN-DESIGN-5): Scaffold → AppPageScaffold (로딩 상태)
+      return AppPageScaffold(
+        title: appBarTitle,
+        actions: [_buildNotificationAction()],
         body: const LoadingWidget(),
       );
     }
@@ -866,34 +864,13 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
         );
         if (leave && mounted) nav.pop();
       },
-      child: Scaffold(
-        backgroundColor: AppColors.background,
-        appBar: AppBar(
-          backgroundColor: Colors.white,
-          elevation: 0,
-          surfaceTintColor: Colors.transparent,
-          centerTitle: false,
-          title: Text(appBarTitle,
-              style: ResponsiveHelper.subtitleStyle(context,
-                  fontWeight: FontWeight.bold)),
-          actions: [
-            NotificationBadge(
-              child: IconButton(
-                icon: const Icon(Icons.notifications_outlined),
-                color: AppColors.textSecondary,
-                // [M1-FIX] 저장 진행 중에는 다른 화면 이동 차단
-                onPressed: _isSaving
-                    ? null
-                    : () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => const NotificationScreen()),
-                        ),
-                tooltip: '알림',
-              ),
-            ),
-          ],
-        ),
+      // PATCH-4 (ADMIN-DESIGN-5): Scaffold → AppPageScaffold (메인 폼)
+      child: AppPageScaffold(
+        title: appBarTitle,
+        actions: [
+          // [M1-FIX] 저장 진행 중에는 알림 화면 이동 차단
+          _buildNotificationAction(disabled: _isSaving),
+        ],
         bottomNavigationBar: SafeArea(
           top: false,
           child: Padding(
