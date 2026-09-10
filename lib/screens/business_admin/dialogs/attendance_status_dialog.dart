@@ -2131,7 +2131,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
               vertical: ResponsiveHelper.spacing(context, 6),
             ),
             minimumSize: Size.zero,
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            // [R7.4-C] visual compact 유지 + touch target >= 48dp
+            tapTargetSize: MaterialTapTargetSize.padded,
             shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8)),
             textStyle: ResponsiveHelper.smallStyle(context)

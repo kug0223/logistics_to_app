@@ -30,7 +30,6 @@ import '../../theme/app_colors.dart';
 import '../../models/core/business_model.dart';
 import 'support_review_queue_screen.dart';
 import 'unclosed_action_queue_screen.dart';
-// attendance_status_dialog.dart — Phase 2C 이후 Home에서 직접 사용 없음 (Attendance 탭 경유)
 import 'Business_form_screen.dart';
 import 'work_type_management_screen.dart';
 import '../../services/admin_home_summary_service.dart';
@@ -1654,7 +1653,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
               padding: EdgeInsets.symmetric(
                   horizontal: 10 * s, vertical: 4 * s),
               minimumSize: Size.zero,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              // [R7.4-B] visual compact 유지 + touch target >= 48dp
+              tapTargetSize: MaterialTapTargetSize.padded,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8)),
               textStyle: TextStyle(
