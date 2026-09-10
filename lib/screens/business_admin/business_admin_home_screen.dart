@@ -1278,9 +1278,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     );
   }
 
-  // ── [PHASE-2C] 오늘 운영 Block ─────────────────────────────────
+  // ── [PHASE-2C/R6.1] 오늘 운영 Block ────────────────────────────
   // Staffing D0(필요·확정·부족) + 출근 현황(출근·확인 필요)
-  // Non-interactive: 수치 표시만. 탭 내비게이션은 Phase 2D에서 추가.
+  // 부족: canManageTo → DayApplicantsDialog(오늘) [R6.1]
+  // 확인 필요: canManageWorkers → AttendanceStatusDialog(오늘) [R5.2]
   // ERROR≠ZERO: 쿼리 실패 시 null 유지 (재시도 UI 표시)
   Widget _buildTodayOps(BuildContext context, double s, ThemeData theme, UserProvider up) {
     final isSub = up.currentUser?.isSubAdmin == true;
@@ -1306,7 +1307,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
             )],
           ),
           child: Column(children: [
-            if (canSeeStaffing) _buildStaffingMetrics(s, theme),
+            if (canSeeStaffing) _buildStaffingMetrics(s, theme, up),
             if (canSeeStaffing && canSeeAttendance)
               Padding(
                 padding: EdgeInsets.symmetric(horizontal: 12 * s),
@@ -1320,7 +1321,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   }
 
   // Staffing 영역: 필요 / 확정 / 부족
-  Widget _buildStaffingMetrics(double s, ThemeData theme) {
+  // [R6.1] 부족 tap: canManageTo → DayApplicantsDialog(오늘)
+  Widget _buildStaffingMetrics(double s, ThemeData theme, UserProvider up) {
     if (_staffingLoading) {
       return Padding(
         padding: EdgeInsets.symmetric(vertical: 18 * s),
@@ -1343,6 +1345,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     final confirmed = day?.confirmedCount ?? 0;
     final shortage  = day?.shortageCount  ?? 0;
 
+    // [R6.1] 부족 탭 — canManageTo + shortage > 0 + day 존재 시 DayApplicantsDialog(오늘)
+    final isSub = up.currentUser?.isSubAdmin == true;
+    final canManageTo = !isSub || up.can((p) => p.canManageTo);
+    final onShortageDay = (shortage > 0 && canManageTo) ? day : null;
+
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 8 * s, vertical: 14 * s),
       child: Row(children: [
@@ -1351,7 +1358,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         _opsMetric(s, label: '확정',  value: confirmed, unit: '명'),
         _opsMetricDivider(s),
         _opsMetric(s, label: '부족',  value: shortage,  unit: '명',
-          valueColor: shortage > 0 ? AppColors.error : null),
+          valueColor: shortage > 0 ? AppColors.error : null,
+          onTap: onShortageDay != null
+              ? () => unawaited(_safeNavigate(() => _requireApprovedBusiness(
+                    context, () => _navigateToDayApplicantsForDate(context, onShortageDay))))
+              : null),
       ]),
     );
   }

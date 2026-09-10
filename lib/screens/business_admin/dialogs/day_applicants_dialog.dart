@@ -1012,7 +1012,9 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
   // ── [Phase 8.1B.3] 인력 초대 버튼 + InviteMethodSheet 라우팅 ─────────────
 
   Widget _buildInviteButton(_GroupData g, String slotId) {
-    final shortage = g.requiredCount - g.confirmedApps.length;
+    // [R6.1] staffingReleasedAt 좌석 제외 — invite button label/CTA strength 정합성
+    final shortage = g.requiredCount -
+        g.confirmedApps.where((a) => !a.isStaffingReleased).length;
     // [UX-D-03] pendingCount >= shortage: 현재 대기자 풀로 이론적 부족 충족 가능
     // → 기존 지원자 처리가 운영 우선순위이므로 CTA를 tertiary 약화로 신호.
     // PENDING을 공식 shortage/capacity에서 차감하지 않음 — 시각 강도만 조정.
