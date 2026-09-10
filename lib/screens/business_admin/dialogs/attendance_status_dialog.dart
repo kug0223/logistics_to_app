@@ -2104,7 +2104,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
   }
 
   // [R5.2] NO_SHOW 대체 인력 충원 버튼 구성
-  // 조건: status==NO_SHOW + !isStaffingReleased + !isLongTerm + canManageTo
+  // 조건: today + !isLongTerm + !isStaffingReleased + canManageTo
+  // [GAP-ATT-NOSHOW-RECOVERY-DATE-01] 당일 운영 복구 전용 — 과거 날짜 미노출
   // 이미 released: Wrap에 _buildStaffingReleasedBadge() 표시 (위에서 처리)
   Widget _buildNoshowRecoveryButton(ApplicationModel app) {
     final up = Provider.of<UserProvider>(context, listen: false);
@@ -2113,6 +2114,14 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     if (!canManageTo) return const SizedBox.shrink();
     if (app.isLongTermApplication) return const SizedBox.shrink();
     if (app.isStaffingReleased) return const SizedBox.shrink();
+    // 당일 날짜 게이트 (연/월/일 비교 — 시간값 비교 금지)
+    final todayKst = FormatHelper.toKstDate(DateTime.now());
+    final dialogDateKst = FormatHelper.toKstDate(widget.date);
+    if (dialogDateKst.year != todayKst.year ||
+        dialogDateKst.month != todayKst.month ||
+        dialogDateKst.day != todayKst.day) {
+      return const SizedBox.shrink(); // 과거/미래 날짜 → CTA 숨김
+    }
 
     return Padding(
       padding: EdgeInsets.only(
@@ -2205,8 +2214,8 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
     unawaited(_loadData()); // non-blocking refresh
 
     // §13: seat release 성공 → DayApplicantsDialog(오늘) 오픈
-    // [GAP-ATT-NOSHOW-RECOVERY-DATE-01] widget.date(선택된 날짜)가 아닌 오늘 날짜로 고정.
-    // 대체 인력 충원은 실시간 운영 맥락 — 과거 날짜 다이얼로그는 의미 없음.
+    // [GAP-ATT-NOSHOW-RECOVERY-DATE-01] _buildNoshowRecoveryButton isToday gate 통과 후
+    // 이 경로에 도달하므로 widget.date == today 보장. DateTime.now() ambient clock 불필요.
     if (!mounted) return;
     final bizId = _selectedBusinessId ??
         (widget.businessIds.isEmpty ? null : widget.businessIds.first);
@@ -2215,7 +2224,7 @@ class _AttendanceStatusDialogState extends State<AttendanceStatusDialog>
       context: context,
       barrierDismissible: false,
       builder: (_) => DayApplicantsDialog(
-        date: DateTime.now(),
+        date: widget.date,
         businessIds: [bizId],
         businesses: widget.businesses ?? [],
       ),
