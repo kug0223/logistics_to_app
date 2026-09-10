@@ -1748,7 +1748,7 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         ? shortBizIds
         : businesses.map((b) => b.id).toList();
 
-    await showDialog<bool>(
+    final changed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (_) => DayApplicantsDialog(
@@ -1757,6 +1757,8 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         businesses: businesses,
       ),
     );
+    // [R7.4-A] DAD 내 확정/거절 → shortageCount 변동 시 Home 인력 현황 최신화
+    if ((changed ?? false) && mounted) unawaited(_loadStaffingReadiness());
   }
 
   // ── [PHASE-3A] 처리할 일 — 우선순위 액션 리스트 ─────────────────
