@@ -795,6 +795,8 @@ class _AvailableWorkersBottomSheetState
                     worker.locationLabel,
                     style: ResponsiveHelper.smallStyle(
                         context, color: AppColors.grey500),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 if (metaText != null)
                   Padding(
@@ -803,6 +805,8 @@ class _AvailableWorkersBottomSheetState
                       metaText,
                       style: ResponsiveHelper.smallStyle(
                           context, color: AppColors.grey500),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
               ],
