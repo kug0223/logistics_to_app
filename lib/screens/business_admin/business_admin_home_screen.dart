@@ -29,6 +29,7 @@ import 'payroll/payroll_payment_dashboard_screen.dart';
 import '../../theme/app_colors.dart';
 import '../../models/core/business_model.dart';
 import 'support_review_queue_screen.dart';
+import 'expiring_contracts_screen.dart';
 import 'unclosed_action_queue_screen.dart';
 import 'Business_form_screen.dart';
 import 'work_type_management_screen.dart';
@@ -1917,6 +1918,48 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           await Navigator.push(context, MaterialPageRoute(
             builder: (_) => AdminContractManagementScreen(
                 businessId: bizId, businessName: bizName, initialTab: 1),
+          ));
+          if (mounted) unawaited(_loadCanonicalSummary());
+        })),
+      );
+    }
+
+    // 3.5 계약 종료 예정 — canManageContract
+    // [GAP-CONTRACT-EXPIRING-UI-01 FIX] ExpiringContractsScreen 진입점 추가
+    // 홈 upcoming.expiringContract 데이터가 계산되지만 UI 진입 경로가 없었던 P2 갭 수정
+    if (!isSub || up.can((p) => p.canManageContract)) {
+      final expiring = cs?.upcoming.expiringContract;
+      add(
+        icon: Icons.event_busy_outlined, label: '계약 종료 예정',
+        color: AppColors.warning,
+        count: expiring?.count ?? 0, countStr: '${expiring?.count ?? 0}명',
+        available: expiring?.available ?? false,
+        onTap: () => _safeNavigate(() => _requireApprovedBusiness(context, () async {
+          if (!up.can((p) => p.canManageContract)) {
+            ToastHelper.showWarning('계약서 관리 권한이 없습니다.'); return;
+          }
+          if (!_ensureCanonicalSummary(context)) return;
+          final sec = _canonicalSummary!.upcoming.expiringContract;
+          if (!sec.available) { _showCanonicalError(context); return; }
+          if (sec.count == 0) return;
+          final businesses = await _getBusinesses();
+          if (!context.mounted) return;
+          // byBusiness에서 count > 0인 사업장만 전달 (없으면 전체 전달)
+          final expiringBizIds = sec.byBusiness
+              .where((b) => b.count > 0)
+              .map((b) => b.businessId)
+              .toList();
+          final relevantBiz = businesses
+              .where((b) =>
+                  expiringBizIds.isEmpty || expiringBizIds.contains(b.id))
+              .toList();
+          await Navigator.push(context, MaterialPageRoute(
+            builder: (_) => ExpiringContractsScreen(
+              businessIds: expiringBizIds.isEmpty
+                  ? businesses.map((b) => b.id).toList()
+                  : expiringBizIds,
+              businesses: relevantBiz,
+            ),
           ));
           if (mounted) unawaited(_loadCanonicalSummary());
         })),
