@@ -138,6 +138,9 @@ class PayrollPaymentService {
     final List<String> chunkErrors = [];
     final List<String> allSkipped = [];             // 전체 skip attendanceId
     final List<String> allLockedBySettlement = [];  // [PAY-08] ISR lock으로 skip된 ID
+    // [GAP-PAYROLL-BATCH-PARTIAL-FEEDBACK-01] 서버 성공 응답을 받은 청크의 처리 건수 누적
+    // 실패 청크는 0건으로 처리 (클라이언트에서 추정 불가)
+    int confirmedCount = 0;
     for (int i = 0; i < attendanceIds.length; i += 200) {
       final chunk = attendanceIds.skip(i).take(200).toList();
       // [FIX] 알림 포함 여부를 await 이전에 결정·잠금:
@@ -161,6 +164,9 @@ class PayrollPaymentService {
         final locked = (data['lockedBySettlement'] as List?)?.cast<String>() ?? [];
         allSkipped.addAll(skipped);
         allLockedBySettlement.addAll(locked);
+        // [GAP-PAYROLL-BATCH-PARTIAL-FEEDBACK-01] 서버 확인 완료 건수 누적
+        // processed = chunk 크기 - 이 청크에서 skip된 건수 (bank + ISR 합산)
+        confirmedCount += chunk.length - (skipped.length);
       } catch (e) {
         final msg = e is FirebaseFunctionsException
             ? (e.message ?? e.code)
@@ -170,7 +176,12 @@ class PayrollPaymentService {
       }
     }
     if (chunkErrors.isNotEmpty) {
-      throw Exception('이체 일괄처리 실패 (${chunkErrors.length}개 청크):\n${chunkErrors.join('\n')}');
+      // [GAP-PAYROLL-BATCH-PARTIAL-FEEDBACK-01] 부분 성공 정보를 포함한 예외로 throw
+      // confirmedCount > 0이면 이전 청크가 성공 완료됨 — caller가 구분하여 표시
+      throw PartialBatchException(
+        confirmedProcessedCount: confirmedCount,
+        chunkErrors: chunkErrors,
+      );
     }
     // [PAY-08] bank skip = allSkipped에서 locked 제외
     final bankSkipped = allSkipped.where((id) => !allLockedBySettlement.contains(id)).toList();
@@ -648,6 +659,25 @@ class PayrollPaymentService {
 }
 
 // ─── 이체 처리 결과 ───────────────────────────────────────────────
+
+/// [GAP-PAYROLL-BATCH-PARTIAL-FEEDBACK-01] 일괄 이체 부분 실패 예외
+/// 일부 청크가 성공한 뒤 후속 청크가 실패할 때 throw.
+/// [confirmedProcessedCount] = 서버 성공 응답을 받은 청크에서 실제 처리된 건수 합계
+///   (실패 청크 내부 결과는 클라이언트에서 알 수 없으므로 0으로 처리)
+/// [chunkErrors] = 실패한 청크 에러 메시지 목록
+class PartialBatchException implements Exception {
+  final int confirmedProcessedCount;
+  final List<String> chunkErrors;
+
+  const PartialBatchException({
+    required this.confirmedProcessedCount,
+    required this.chunkErrors,
+  });
+
+  @override
+  String toString() =>
+      '이체 일괄처리 실패 (${chunkErrors.length}개 청크):\n${chunkErrors.join('\n')}';
+}
 
 /// [PAY-08] markTransferredBatch 처리 결과 — skip 원인 구분
 class MarkTransferResult {

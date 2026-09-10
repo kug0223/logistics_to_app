@@ -869,8 +869,20 @@ class _PayrollPaymentDashboardScreenState
       }
     } catch (e) {
       debugPrint('❌ 일괄 이체 실패: $e');
-      if (mounted) ToastHelper.showError('일괄 처리에 실패했습니다\n$e');
-      if (mounted) _load();
+      if (mounted) {
+        // [GAP-PAYROLL-BATCH-PARTIAL-FEEDBACK-01] 부분 성공 구분:
+        // 이전 청크가 서버에서 확인 완료된 경우 → 확인된 건수와 함께 안내
+        // 첫 청크부터 실패(confirmedProcessedCount == 0) → 기존 에러 표시
+        if (e is PartialBatchException && e.confirmedProcessedCount > 0) {
+          ToastHelper.showWarning(
+            '일부 이체 처리가 완료되었습니다.\n'
+            '확인된 완료 ${e.confirmedProcessedCount}건 · 나머지 항목은 새로고침된 목록에서 확인해 주세요.',
+          );
+        } else {
+          ToastHelper.showError('일괄 처리에 실패했습니다\n$e');
+        }
+        _load();
+      }
     } finally {
       if (mounted) setState(() => _isTransferring = false);
     }
