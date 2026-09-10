@@ -3062,21 +3062,9 @@ class _WorkerPayDetailScreenState extends State<_WorkerPayDetailScreen> {
       items = [...records];
     }
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          color: AppColors.textPrimary,
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Text('$workerName · $titleSuffix',
-            style: ResponsiveHelper.subtitleStyle(context,
-                fontWeight: FontWeight.bold)),
-        backgroundColor: AppColors.surface,
-        foregroundColor: AppColors.textPrimary,
-        elevation: 0,
-      ),
+    // PATCH-5 (ADMIN-DESIGN-7): Scaffold → AppPageScaffold (수동 AppBar/back 제거)
+    return AppPageScaffold(
+      title: '$workerName · $titleSuffix',
       body: Column(children: [
         // ── 요약 헤더
         Container(
