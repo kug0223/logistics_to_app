@@ -4397,28 +4397,39 @@ async function processContractRenewalChecks(now: Timestamp): Promise<void> {
       try { // [CF-TRY-02 수정] per-document 오류 격리 — 한 건 실패해도 나머지 계속 처리
       const app = doc.data();
       if (!app.workDays || app.workDays.length === 0) continue;
-      // 이미 종료 알림 보낸 경우 스킵 (terminationNotifiedAt 필드로 중복 방지)
-      // [특이사항] 중복 방지 체크가 트랜잭션 없이 read-then-write — 스케줄 함수 동시 실행 시
-      // 이론적으로 중복 발송 가능. 그러나 Cloud Scheduler는 동일 잡을 겹쳐 실행하지 않으므로 저위험.
+      // 이미 종료 알림 보낸 경우 스킵 (stale pre-check — 성능 최적화, TX 내 fresh check로 재확인)
       if (app.terminationCompletionNotifiedAt) continue;
 
-      // [CF-NOTIF-01 수정] 알림+플래그를 배치로 원자 처리 — 알림 성공 후 update 실패 시 다음 실행에서 중복 발송 방지
-      const termBatch = db.batch();
-      termBatch.set(
-        db.collection("users").doc(app.uid as string).collection("notifications").doc(),
-        {
-          userId: app.uid,
+      // [GAP-CONTRACT-TERMINATING-NOTIFICATION-IDEMPOTENCY-01 FIX]
+      // notifRef TX 외부 사전 생성 — TX retry 시 동일 document ID 재사용 → set() 멱등
+      // db.runTransaction 내 fresh read + marker 재확인 → concurrent invocation 중복 방지
+      // D-15 contractExpiringReminder 패턴과 일관된 방식
+      const notifRef = db
+        .collection("users")
+        .doc(app.uid as string)
+        .collection("notifications")
+        .doc();
+
+      const txResult = await db.runTransaction(async (tx) => {
+        const freshSnap = await tx.get(doc.ref);
+        if (!freshSnap.exists) return "SKIP";
+        const freshData = freshSnap.data()!;
+        if (freshData.terminationCompletionNotifiedAt) return "ALREADY_NOTIFIED";
+
+        tx.set(notifRef, {
+          userId: freshData.uid,
           type: "contractTerminating",
           title: "계약 종료 완료",
-          body: `${app.businessName} 계약이 종료되었습니다. 이용해 주셔서 감사합니다.`,
-          data: {applicationId: doc.id, businessId: app.businessId, screen: "mySchedule"},
+          body: `${freshData.businessName} 계약이 종료되었습니다. 이용해 주셔서 감사합니다.`,
+          data: {applicationId: doc.id, businessId: freshData.businessId, screen: "mySchedule"},
           isRead: false,
           createdAt: now,
-        }
-      );
-      termBatch.update(doc.ref, {terminationCompletionNotifiedAt: now});
-      await termBatch.commit();
-      terminateD0Count++;
+        });
+        tx.update(doc.ref, {terminationCompletionNotifiedAt: now});
+        return "CREATED";
+      });
+
+      if (txResult === "CREATED") terminateD0Count++;
       } catch (err) {
         console.error(`[D-0 종료알림] 문서 ${doc.id} 처리 실패 — 나머지 계속:`, err);
       }
