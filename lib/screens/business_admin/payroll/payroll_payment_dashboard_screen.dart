@@ -27,7 +27,7 @@ import '../../../utils/payroll_excel_helper.dart';
 import '../../../utils/dialog_helper.dart';
 import '../../../widgets/calendar/carrot_style_calendar.dart';
 import '../../../utils/payment_due_date_calculator.dart';
-import '../../../widgets/dialogs/styled_dialog.dart' show DialogFocusSafeArea, StyledDialog;
+import '../../../widgets/dialogs/styled_dialog.dart' show StyledDialog;
 import '../../../widgets/common/loading_widget.dart';
 import '../../../widgets/common/app_page_scaffold.dart';
 import '../../../utils/navigation_helper.dart';
@@ -3459,134 +3459,80 @@ class _TransferNoteDialogState extends State<_TransferNoteDialog> {
     super.dispose();
   }
 
+  // PATCH-8 (ADMIN-DESIGN-11): raw Dialog + LinearGradient header → StyledDialog
+  // - gradient header 제거 → canonical neutral modal surface
+  // - DialogFocusSafeArea StyledDialog 내부로 이동 (동일 보호)
+  // - result contract 보존: '' = 건너뛰기(wrapper→null), trim = 확인, null = system back
+  // - NOTE_REQUIRED_POLICY = OPTIONAL (선택 입력), 'barrierDismissible = false' 유지
+  // - showCloseButton: false — 기존 Dialog에 X 없었으므로 미추가
   @override
   Widget build(BuildContext context) {
     final primaryColor = Theme.of(context).primaryColor;
-    return DialogFocusSafeArea(
-      child: Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // 그라디언트 헤더
-              Container(
-                padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [primaryColor, primaryColor.withValues(alpha: 0.85)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius:
-                      const BorderRadius.vertical(top: Radius.circular(20)),
-                ),
-                child: Row(children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(Icons.edit_note_rounded,
-                        color: Colors.white, size: 20),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('이체 메모',
-                            style: ResponsiveHelper.subtitleStyle(context)
-                                .copyWith(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold)),
-                        Text('선택 입력',
-                            style: ResponsiveHelper.tinyStyle(context,
-                                color: Colors.white.withValues(alpha: 0.75))),
-                      ],
-                    ),
-                  ),
-                ]),
-              ),
-              // 바디
-              Container(
-                color: AppColors.grey50,
-                padding: const EdgeInsets.all(20),
-                child: Column(children: [
-                  Container(
-                    decoration: BoxDecoration(
-                      color: AppColors.surface,
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.05),
-                          blurRadius: 6,
-                          offset: const Offset(0, 2),
-                        )
-                      ],
-                    ),
-                    child: TextField(
-                      controller: _ctrl,
-                      autofocus: true,
-                      maxLines: 3,
-                      textInputAction: TextInputAction.done,
-                      onSubmitted: (v) {
-                        FocusManager.instance.primaryFocus?.unfocus();
-                        Navigator.pop(context, v.trim());
-                      },
-                      style: ResponsiveHelper.bodyStyle(context),
-                      decoration: InputDecoration(
-                        hintText: widget.initialNote.isNotEmpty
-                            ? '이전: ${widget.initialNote}'
-                            : '이체 번호, 참고사항 등 자유롭게 입력',
-                        hintStyle: ResponsiveHelper.smallStyle(context,
-                            color: AppColors.grey400),
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.all(14),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        FocusManager.instance.primaryFocus?.unfocus();
-                        Navigator.pop(context, _ctrl.text.trim());
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: primaryColor,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
-                      child: Text('확인',
-                          style: ResponsiveHelper.bodyStyle(context).copyWith(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: () {
-                      FocusManager.instance.primaryFocus?.unfocus();
-                      Navigator.pop(context, '');
-                    },
-                    child: Text('건너뛰기',
-                        style: ResponsiveHelper.smallStyle(context,
-                            color: AppColors.grey400)),
-                  ),
-                ]),
-              ),
-            ],
+    return StyledDialog(
+      title: '이체 메모',
+      subtitle: '선택 입력',
+      icon: Icons.edit_note_rounded,
+      showCloseButton: false,
+      content: Container(
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: TextField(
+          controller: _ctrl,
+          autofocus: true,
+          maxLines: 3,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (v) {
+            FocusManager.instance.primaryFocus?.unfocus();
+            Navigator.pop(context, v.trim());
+          },
+          style: ResponsiveHelper.bodyStyle(context),
+          decoration: InputDecoration(
+            hintText: widget.initialNote.isNotEmpty
+                ? '이전: ${widget.initialNote}'
+                : '이체 번호, 참고사항 등 자유롭게 입력',
+            hintStyle: ResponsiveHelper.smallStyle(context,
+                color: AppColors.grey400),
+            border: InputBorder.none,
+            contentPadding: const EdgeInsets.all(14),
           ),
         ),
       ),
+      actions: [
+        OutlinedButton(
+          onPressed: () {
+            FocusManager.instance.primaryFocus?.unfocus();
+            Navigator.pop(context, '');
+          },
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.grey600,
+            side: BorderSide(color: AppColors.grey300),
+            padding: const EdgeInsets.symmetric(vertical: 12),
+          ),
+          child: const Text('건너뛰기'),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            FocusManager.instance.primaryFocus?.unfocus();
+            Navigator.pop(context, _ctrl.text.trim());
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: primaryColor,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            padding: const EdgeInsets.symmetric(vertical: 12),
+          ),
+          child: const Text('확인'),
+        ),
+      ],
     );
   }
 }
