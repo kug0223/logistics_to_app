@@ -2546,227 +2546,154 @@ class _TerminationRequestDialogState
     super.dispose();
   }
 
+  // PATCH-6 (ADMIN-DESIGN-9): raw Dialog + error-colored header → StyledDialog
+  // - Error-filled header 제거: AppColors.error는 icon accent + confirm button에만 유지
+  // - DialogFocusSafeArea 자동 적용 (StyledDialog 내부)
+  // - result contract (String?), caller mutation, dismiss semantics 100% 보존
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        width: double.maxFinite,
-        constraints: const BoxConstraints(maxWidth: 400),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 헤더
-            Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-              decoration: const BoxDecoration(
-                color: AppColors.error,
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(16),
-                  topRight: Radius.circular(16),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.cancel_outlined,
-                    color: Colors.white,
-                    size: ResponsiveHelper.iconSize(context, 24),
+    return StyledDialog(
+      title: '계약해지 요청',
+      subtitle: '${widget.workerName}님',
+      icon: Icons.cancel_outlined,
+      headerColor: AppColors.error,
+      showCloseButton: true,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 안내
+          Container(
+            margin: EdgeInsets.only(bottom: ResponsiveHelper.spacing(context, 16)),
+            padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
+            decoration: BoxDecoration(
+              color: AppColors.infoBg,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline,
+                    size: ResponsiveHelper.iconSize(context, 20),
+                    color: AppColors.infoDark),
+                SizedBox(width: ResponsiveHelper.spacing(context, 8)),
+                Expanded(
+                  child: Text(
+                    '근무자가 3일 이내 승인/거절하지 않으면\n자동으로 계약이 해지됩니다.',
+                    style: ResponsiveHelper.smallStyle(context,
+                        color: AppColors.infoDark),
                   ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                ),
+              ],
+            ),
+          ),
+
+          // 사유 선택
+          Text(
+            '해지 사유를 선택해주세요',
+            style: ResponsiveHelper.bodyStyle(context)
+                .copyWith(fontWeight: FontWeight.w600),
+          ),
+          SizedBox(height: ResponsiveHelper.spacing(context, 12)),
+
+          ..._reasons.map((reason) => Padding(
+                padding: EdgeInsets.only(
+                    bottom: ResponsiveHelper.spacing(context, 8)),
+                child: InkWell(
+                  onTap: () => setState(() => _selectedReason = reason),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: ResponsiveHelper.spacing(context, 12),
+                      vertical: ResponsiveHelper.spacing(context, 12),
+                    ),
+                    decoration: BoxDecoration(
+                      color: _selectedReason == reason
+                          ? AppColors.errorBg
+                          : AppColors.grey100,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: _selectedReason == reason
+                            ? AppColors.error
+                            : AppColors.grey300,
+                      ),
+                    ),
+                    child: Row(
                       children: [
-                        Text(
-                          '계약해지 요청',
-                          style: ResponsiveHelper.subtitleStyle(context).copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
+                        Icon(
+                          _selectedReason == reason
+                              ? Icons.radio_button_checked
+                              : Icons.radio_button_off,
+                          color: _selectedReason == reason
+                              ? AppColors.error
+                              : AppColors.grey400,
+                          size: ResponsiveHelper.iconSize(context, 20),
                         ),
-                        Text(
-                          '${widget.workerName}님',
-                          style: ResponsiveHelper.smallStyle(context,
-                              color: Colors.white.withValues(alpha: 0.7)),
-                        ),
+                        SizedBox(
+                            width: ResponsiveHelper.spacing(context, 12)),
+                        Text(reason,
+                            style: ResponsiveHelper.bodyStyle(context)),
                       ],
                     ),
                   ),
-                  IconButton(
-                    icon: Icon(Icons.close,
-                        color: Colors.white,
-                        size: ResponsiveHelper.iconSize(context, 24)),
-                    onPressed: () {
-                      FocusManager.instance.primaryFocus?.unfocus();
-                      Navigator.pop(context);
-                    },
-                  ),
-                ],
-              ),
-            ),
+                ),
+              )),
 
-            // 안내
-            Container(
-              margin: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 12)),
-              decoration: BoxDecoration(
-                color: AppColors.infoBg,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.info_outline,
-                      size: ResponsiveHelper.iconSize(context, 20),
-                      color: AppColors.infoDark),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 8)),
-                  Expanded(
-                    child: Text(
-                      '근무자가 3일 이내 승인/거절하지 않으면\n자동으로 계약이 해지됩니다.',
-                      style: ResponsiveHelper.smallStyle(context,
-                          color: AppColors.infoDark),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // 사유 선택
-            Padding(
-              padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveHelper.spacing(context, 16)),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '해지 사유를 선택해주세요',
-                    style: ResponsiveHelper.bodyStyle(context)
-                        .copyWith(fontWeight: FontWeight.w600),
-                  ),
-                  SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-
-                  ..._reasons.map((reason) => Padding(
-                        padding: EdgeInsets.only(
-                            bottom: ResponsiveHelper.spacing(context, 8)),
-                        child: InkWell(
-                          onTap: () =>
-                              setState(() => _selectedReason = reason),
-                          borderRadius: BorderRadius.circular(8),
-                          child: Container(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: ResponsiveHelper.spacing(context, 12),
-                              vertical: ResponsiveHelper.spacing(context, 12),
-                            ),
-                            decoration: BoxDecoration(
-                              color: _selectedReason == reason
-                                  ? AppColors.errorBg
-                                  : AppColors.grey100,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: _selectedReason == reason
-                                    ? AppColors.error
-                                    : AppColors.grey300,
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  _selectedReason == reason
-                                      ? Icons.radio_button_checked
-                                      : Icons.radio_button_off,
-                                  color: _selectedReason == reason
-                                      ? AppColors.error
-                                      : AppColors.grey400,
-                                  size: ResponsiveHelper.iconSize(context, 20),
-                                ),
-                                SizedBox(
-                                    width:
-                                        ResponsiveHelper.spacing(context, 12)),
-                                Text(reason,
-                                    style: ResponsiveHelper.bodyStyle(context)),
-                              ],
-                            ),
-                          ),
-                        ),
-                      )),
-
-                  // 기타 사유 직접 입력
-                  if (_selectedReason == '기타') ...[
-                    SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                    TextField(
-                      controller: _customReasonCtrl,
-                      maxLength: 200,
-                      decoration: InputDecoration(
-                        hintText: '상세 사유를 입력하세요',
-                        border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8)),
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: ResponsiveHelper.spacing(context, 12),
-                          vertical: ResponsiveHelper.spacing(context, 12),
-                        ),
-                        counterText: '',
-                      ),
-                      style: ResponsiveHelper.bodyStyle(context),
-                      maxLines: 2,
-                    ),
-                  ],
-                ],
-              ),
-            ),
-
+          // 기타 사유 직접 입력
+          if (_selectedReason == '기타') ...[
             SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-
-            // 하단 버튼
-            Container(
-              padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-              decoration: BoxDecoration(
-                border: Border(top: BorderSide(color: AppColors.border)),
+            TextField(
+              controller: _customReasonCtrl,
+              maxLength: 200,
+              decoration: InputDecoration(
+                hintText: '상세 사유를 입력하세요',
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8)),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveHelper.spacing(context, 12),
+                  vertical: ResponsiveHelper.spacing(context, 12),
+                ),
+                counterText: '',
               ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () {
-                        FocusManager.instance.primaryFocus?.unfocus();
-                        Navigator.pop(context);
-                      },
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.grey600,
-                        side: BorderSide(color: AppColors.grey300),
-                        padding: EdgeInsets.symmetric(
-                            vertical: ResponsiveHelper.spacing(context, 12)),
-                      ),
-                      child: const Text('취소'),
-                    ),
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: _selectedReason != null
-                          ? () {
-                              final reason = _selectedReason == '기타' &&
-                                      _customReasonCtrl.text.trim().isNotEmpty
-                                  ? _customReasonCtrl.text.trim()
-                                  : _selectedReason;
-                              FocusManager.instance.primaryFocus?.unfocus();
-                              Navigator.pop(context, reason);
-                            }
-                          : null,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.error,
-                        foregroundColor: Colors.white,
-                        padding: EdgeInsets.symmetric(
-                            vertical: ResponsiveHelper.spacing(context, 12)),
-                      ),
-                      child: const Text('해지 요청'),
-                    ),
-                  ),
-                ],
-              ),
+              style: ResponsiveHelper.bodyStyle(context),
+              maxLines: 2,
             ),
           ],
-        ),
+        ],
       ),
+      actions: [
+        OutlinedButton(
+          onPressed: () {
+            FocusManager.instance.primaryFocus?.unfocus();
+            Navigator.pop(context);
+          },
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.grey600,
+            side: BorderSide(color: AppColors.grey300),
+            padding: EdgeInsets.symmetric(
+                vertical: ResponsiveHelper.spacing(context, 12)),
+          ),
+          child: const Text('취소'),
+        ),
+        ElevatedButton(
+          onPressed: _selectedReason != null
+              ? () {
+                  final reason = _selectedReason == '기타' &&
+                          _customReasonCtrl.text.trim().isNotEmpty
+                      ? _customReasonCtrl.text.trim()
+                      : _selectedReason;
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  Navigator.pop(context, reason);
+                }
+              : null,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.error,
+            foregroundColor: Colors.white,
+            padding: EdgeInsets.symmetric(
+                vertical: ResponsiveHelper.spacing(context, 12)),
+          ),
+          child: const Text('해지 요청'),
+        ),
+      ],
     );
   }
 }
