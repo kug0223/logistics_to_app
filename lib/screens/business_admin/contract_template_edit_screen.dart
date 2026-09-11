@@ -266,6 +266,30 @@ class _ContractTemplateEditScreenState
             ),
           ),
 
+          // [F-04] 템플릿 재사용 가치 고지 — 편집기에서 한 번만, 신규 작성 시에만.
+          //   기존 템플릿을 편집 중인 관리자는 이미 재사용을 경험한 상태다.
+          //   "다음 계약에 자동 적용된다"고 말하지 않는다 — 실제 동작은
+          //   계약서를 보낼 때 관리자가 템플릿을 직접 고르는 것이다.
+          if (_isNew) ...[
+            SizedBox(height: ResponsiveHelper.spacing(context, 8)),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.autorenew,
+                    size: ResponsiveHelper.iconSize(context, 14),
+                    color: AppColors.grey400),
+                SizedBox(width: ResponsiveHelper.spacing(context, 6)),
+                Expanded(
+                  child: Text(
+                    '저장한 템플릿은 이후 계약서를 만들 때 다시 불러와 사용할 수 있어요.',
+                    style: ResponsiveHelper.tinyStyle(context,
+                        color: AppColors.grey500),
+                  ),
+                ),
+              ],
+            ),
+          ],
+
           SizedBox(height: ResponsiveHelper.spacing(context, 24)),
 
           // 고정 상단 안내
@@ -306,6 +330,14 @@ class _ContractTemplateEditScreenState
                     color: AppColors.grey400),
               ),
             ],
+          ),
+          // [§19] 조항 추가 발견성 — 무엇을 넣어야 하는지 ALfit이 지정하지 않는다.
+          //   구체 법률 항목(주휴·보험·연차·퇴직·해고 등)을 나열하면 사실상
+          //   법률 체크리스트가 되므로, 추가·수정이 가능하다는 사실만 알린다.
+          SizedBox(height: ResponsiveHelper.spacing(context, 4)),
+          Text(
+            '사업장에 필요한 내용이 있다면 조항을 추가하거나 수정할 수 있어요.',
+            style: ResponsiveHelper.tinyStyle(context, color: AppColors.grey500),
           ),
           SizedBox(height: ResponsiveHelper.spacing(context, 8)),
 

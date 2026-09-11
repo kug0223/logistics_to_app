@@ -10,6 +10,7 @@ import '../../theme/app_colors.dart';
 import '../../utils/dialog_helper.dart';
 import '../../utils/responsive_helper.dart';
 import '../common/loading_widget.dart';
+import 'contract_template_type_selector_sheet.dart';
 import 'styled_dialog.dart';
 
 /// 계약서 작성 시 템플릿 선택 바텀시트
@@ -341,10 +342,13 @@ class _SelectorSheetState extends State<_SelectorSheet> {
   // ── 유형 선택 후 Import Flow 진입 ─────────────────────────────
   Future<void> _startImportFromEmpty() async {
     // 1. 유형 선택
+    // [F-02] 붙여넣은 조항이 기본 조항을 대체하므로 유형은 분류 역할만 한다.
     final type = await DialogHelper.showSheet<String>(
       context,
       isScrollControlled: true,
-      builder: (ctx) => _TypeSelectorSheetInline(),
+      builder: (ctx) => const ContractTemplateTypeSelectorSheet(
+        purpose: ContractTemplateTypePurpose.importClassification,
+      ),
     );
     if (type == null || !mounted) return;
 
@@ -371,11 +375,17 @@ class _SelectorSheetState extends State<_SelectorSheet> {
   // 그 자리에서 끝나는데 이것만 맥락이 끊겼다.
   // _startImportFromEmpty와 동일한 패턴으로 유형 선택 → 편집기 직행.
   Future<void> _startDefaultFromEmpty() async {
-    // 1. 유형 선택 (Import 경로와 동일 시트 재사용)
+    // 1. 유형 선택
+    // [F-02] Import 경로와 같은 시트를 쓰지만 목적이 다르다 —
+    //   여기서는 선택한 유형이 실제로 로드될 기본 조항을 결정한다.
+    //   이전에는 Import 기준 문구("나중에 목록에서 구분할 용도")를 공유해
+    //   이 경로의 실제 효과를 잘못 안내했다.
     final type = await DialogHelper.showSheet<String>(
       context,
       isScrollControlled: true,
-      builder: (ctx) => _TypeSelectorSheetInline(),
+      builder: (ctx) => const ContractTemplateTypeSelectorSheet(
+        purpose: ContractTemplateTypePurpose.defaultCreation,
+      ),
     );
     if (type == null || !mounted) return;
 
@@ -509,151 +519,6 @@ class _SelectorSheetState extends State<_SelectorSheet> {
             ),
           ],
         ],
-      ),
-    );
-  }
-}
-
-// ─── 유형 선택 시트 (SelectorDialog 내부 전용) ────────────────────
-
-class _TypeSelectorSheetInline extends StatelessWidget {
-  const _TypeSelectorSheetInline();
-
-  @override
-  Widget build(BuildContext context) {
-    return ConstrainedBox(
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
-      ),
-      child: Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        child: SafeArea(
-          top: false,
-          child: SingleChildScrollView(
-            padding: EdgeInsets.fromLTRB(
-              ResponsiveHelper.spacing(context, 20),
-              ResponsiveHelper.spacing(context, 8),
-              ResponsiveHelper.spacing(context, 20),
-              ResponsiveHelper.spacing(context, 16),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 36, height: 4,
-                    margin: EdgeInsets.only(
-                        bottom: ResponsiveHelper.spacing(context, 20)),
-                    decoration: BoxDecoration(
-                      color: AppColors.grey300,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-                Text(
-                  '어떤 근무 형태에 쓸 템플릿인가요?',
-                  style: ResponsiveHelper.titleStyle(context)
-                      .copyWith(fontWeight: FontWeight.bold),
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-                Text(
-                  // Import 경로에서는 붙여넣은 조항이 기본 조항을 대체하므로
-                  // 이 선택은 목록에서 구분하기 위한 분류로만 쓰인다.
-                  '나중에 목록에서 구분할 용도를 선택해 주세요.',
-                  style: ResponsiveHelper.smallStyle(context,
-                      color: AppColors.grey500),
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-
-                _InlineTypeRow(
-                  icon: Icons.calendar_today_outlined,
-                  color: AppColors.info,
-                  bg: AppColors.infoBg,
-                  label: '단기 근무용',
-                  onTap: () =>
-                      Navigator.pop(context, ContractTemplateType.daily),
-                ),
-                SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-                _InlineTypeRow(
-                  icon: Icons.date_range_outlined,
-                  color: AppColors.success,
-                  bg: AppColors.successBg,
-                  label: '기간제 근무용',
-                  onTap: () =>
-                      Navigator.pop(context, ContractTemplateType.period),
-                ),
-                // [V1 SCOPE] 업무위탁(도급) 제거 — List 화면과 동일 기준.
-
-                SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-                Center(
-                  child: TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: Text('취소',
-                        style: ResponsiveHelper.bodyStyle(context,
-                            color: AppColors.grey500)),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _InlineTypeRow extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-  final Color bg;
-  final String label;
-  final VoidCallback onTap;
-
-  const _InlineTypeRow({
-    required this.icon,
-    required this.color,
-    required this.bg,
-    required this.label,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 14)),
-          decoration: BoxDecoration(
-            border: Border.all(color: AppColors.grey200),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 40, height: 40,
-                decoration: BoxDecoration(
-                  color: bg, borderRadius: BorderRadius.circular(10)),
-                child: Icon(icon, color: color,
-                    size: ResponsiveHelper.iconSize(context, 20)),
-              ),
-              SizedBox(width: ResponsiveHelper.spacing(context, 14)),
-              Expanded(
-                child: Text(label,
-                    style: ResponsiveHelper.bodyStyle(context)
-                        .copyWith(fontWeight: FontWeight.w600)),
-              ),
-              Icon(Icons.chevron_right, color: AppColors.grey400,
-                  size: ResponsiveHelper.iconSize(context, 20)),
-            ],
-          ),
-        ),
       ),
     );
   }

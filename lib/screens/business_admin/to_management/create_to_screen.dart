@@ -1523,14 +1523,21 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
               index: 3,
               title: '근로계약서 템플릿',
               isReady: _contractTemplatesReady,
-              readyDescription: '계약서 템플릿이 등록되어 있습니다',
+              // [F-03] 사업자등록증·인감과 나란히 놓여 "제출 서류"처럼 읽히던
+              //   항목이다. 실제로는 앞으로 이 사업장의 계약에 반복해서 쓸
+              //   양식을 미리 한 번 만들어 두는 단계이므로 그 성격과
+              //   재사용 가치를 문구에 담는다. 법령·필수 조항·자동 완성 같은
+              //   표현은 쓰지 않는다 — ALfit은 계약 내용을 대신 확정하지 않는다.
+              readyDescription: '계약서 템플릿이 등록되어 있습니다.\n'
+                  '계약서를 보낼 때 불러와 사용할 수 있어요.',
               notReadyDescription: !canManageContract
-                  ? '근로계약서 템플릿 등록이 필요합니다.\n사업장 관리자에게 준비 완료를 요청해주세요.'
+                  ? '근로계약에 사용할 기본 양식이 필요합니다.\n사업장 관리자에게 준비를 요청해주세요.'
                   : (_businessApproved
-                      ? '등록된 계약서 템플릿이 없습니다.'
+                      ? '근로계약에 사용할 기본 양식을 만들어 주세요.\n'
+                          '한 번 저장하면 이후 계약에도 계속 사용할 수 있어요.'
                       : '사업장 승인 후 확인 가능합니다.'),
               actionLabel:
-                  canManageContract && _businessApproved ? '계약서 관리' : null,
+                  canManageContract && _businessApproved ? '템플릿 만들기' : null,
               onAction: canManageContract &&
                       _businessApproved &&
                       _selectedBusiness != null

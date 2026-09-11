@@ -21,6 +21,7 @@ import '../../widgets/common/app_empty_state.dart';
 import '../../widgets/common/notification_badge.dart';
 import '../common/notification_screen.dart';
 import '../../widgets/common/loading_widget.dart';
+import '../../widgets/dialogs/contract_template_type_selector_sheet.dart';
 import '../../widgets/dialogs/styled_dialog.dart';
 
 class ContractTemplateListScreen extends StatefulWidget {
@@ -122,13 +123,17 @@ class _ContractTemplateListScreenState
     switch (method) {
       case _CreationMethod.importExisting:
         // 기존 계약서로 시작: 유형 선택 → PasteScreen
-        final type = await _pickTemplateType();
+        // [F-02] 붙여넣은 조항이 그대로 쓰이므로 유형은 분류 역할만 한다.
+        final type = await _pickTemplateType(
+            ContractTemplateTypePurpose.importClassification);
         if (type == null || !mounted) return;
         await _startImportFlow(type);
 
       case _CreationMethod.defaultTemplate:
         // ALfit 기본 조항: 유형 선택 → 참고용 기본 조항이 채워진 EditScreen
-        final type = await _pickTemplateType();
+        // [F-02] 이 경로에서만 유형이 실제로 로드될 조항을 결정한다.
+        final type = await _pickTemplateType(
+            ContractTemplateTypePurpose.defaultCreation);
         if (type == null || !mounted) return;
         await _openEditor(templateType: type);
 
@@ -138,18 +143,23 @@ class _ContractTemplateListScreenState
 
       case _CreationMethod.blank:
         // 빈 템플릿으로 시작: 유형 선택 → 빈 EditScreen
-        final type = await _pickTemplateType();
+        // [F-02] initialArticles: [] 를 넘기므로 기본 조항이 로드되지 않는다 —
+        //   Import와 마찬가지로 유형은 분류 역할만 한다.
+        final type = await _pickTemplateType(
+            ContractTemplateTypePurpose.blankClassification);
         if (type == null || !mounted) return;
         await _openEditor(templateType: type, initialArticles: []);
     }
   }
 
-  /// 유형 선택 시트만 표시 — String(templateType) 반환
-  Future<String?> _pickTemplateType() {
+  /// 유형 선택 시트만 표시 — String(templateType) 반환.
+  /// [purpose]는 같은 선택이 경로마다 다른 효과를 갖는다는 사실을
+  /// 시트 문구에 반영하기 위한 것이다.
+  Future<String?> _pickTemplateType(ContractTemplateTypePurpose purpose) {
     return DialogHelper.showSheet<String>(
       context,
       isScrollControlled: true,
-      builder: (ctx) => const _TypeSelectorSheet(),
+      builder: (ctx) => ContractTemplateTypeSelectorSheet(purpose: purpose),
     );
   }
 
@@ -838,225 +848,6 @@ class _OtherBusinessTemplateSheetState
                           color: AppColors.grey500)),
                 ),
               ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ─── 유형 선택 바텀시트 ────────────────────────────────────────────
-
-class _TypeSelectorSheet extends StatelessWidget {
-  const _TypeSelectorSheet();
-
-  @override
-  Widget build(BuildContext context) {
-    return ConstrainedBox(
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.sizeOf(context).height * AppDialogSize.maxHeightRatio,
-      ),
-      child: Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: SingleChildScrollView(
-          padding: EdgeInsets.fromLTRB(
-            ResponsiveHelper.spacing(context, 20),
-            ResponsiveHelper.spacing(context, 8),
-            ResponsiveHelper.spacing(context, 20),
-            ResponsiveHelper.spacing(context, 16),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 드래그 핸들
-              Center(
-                child: Container(
-                  width: 36,
-                  height: 4,
-                  margin: EdgeInsets.only(
-                      bottom: ResponsiveHelper.spacing(context, 20)),
-                  decoration: BoxDecoration(
-                    color: AppColors.grey300,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-
-              Text(
-                '어떤 근무 형태에 쓸 템플릿인가요?',
-                style: ResponsiveHelper.titleStyle(context)
-                    .copyWith(fontWeight: FontWeight.bold),
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 6)),
-              Text(
-                '선택한 근무 형태에 맞는 참고용 기본 조항을 불러옵니다.\n'
-                '이후 사업장 상황에 맞게 자유롭게 수정하세요.',
-                style: ResponsiveHelper.smallStyle(context,
-                    color: AppColors.grey500),
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 20)),
-
-              // ── 단기·일용 근무용 ──
-              _TypeCard(
-                type: ContractTemplateType.daily,
-                icon: Icons.calendar_today_outlined,
-                iconColor: AppColors.info,
-                bgColor: AppColors.infoBg,
-                title: '단기 근무용',
-                subtitle: '하루~수주 단기 알바에 적합',
-                points: const [
-                  '일급·시급 기준 임금 조항',
-                  '산재보험 필수 + 4대보험 조건 안내',
-                  '주휴수당 적용 조건 포함',
-                  '해고예고·임금명세서 의무 조항',
-                  '5인 이상/미만 분기 가이드 포함',
-                ],
-                onTap: () =>
-                    Navigator.pop(context, ContractTemplateType.daily),
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 12)),
-
-              // ── 기간제 ──
-              _TypeCard(
-                type: ContractTemplateType.period,
-                icon: Icons.date_range_outlined,
-                iconColor: AppColors.success,
-                bgColor: AppColors.successBg,
-                title: '기간제 근무용',
-                subtitle: '1개월~2년 장기 계약에 적합',
-                points: const [
-                  '4대보험 전부 적용 조항',
-                  '연차유급휴가·퇴직급여 조항',
-                  '2년 초과 시 무기계약 전환 명시',
-                  '수습기간 감액 조항 포함',
-                  '기간제법 차별금지 조항',
-                ],
-                onTap: () =>
-                    Navigator.pop(context, ContractTemplateType.period),
-              ),
-              // [V1 SCOPE] 업무위탁(도급) 유형 제거 —
-              //   UI는 "업무위탁계약서"를 약속했으나 실제 산출물은
-              //   제1조 근로계약 당사자 / 제2조 근무 조건 / 제3조 임금 구조의
-              //   근로계약서였다. renderer가 templateType을 받지 않으므로
-              //   약속을 지킬 수 없어 신규 생성 대상에서 제외한다.
-              //   기존 outsource 템플릿의 조회·편집·발송은 그대로 유지된다.
-
-              SizedBox(height: ResponsiveHelper.spacing(context, 8)),
-              Center(
-                child: TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: Text('취소',
-                      style: ResponsiveHelper.bodyStyle(context,
-                          color: AppColors.grey500)),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-      ),  // Container
-    );  // ConstrainedBox
-  }
-}
-
-class _TypeCard extends StatelessWidget {
-  final String type;
-  final IconData icon;
-  final Color iconColor;
-  final Color bgColor;
-  final String title;
-  final String subtitle;
-  final List<String> points;
-  final VoidCallback onTap;
-
-  const _TypeCard({
-    required this.type,
-    required this.icon,
-    required this.iconColor,
-    required this.bgColor,
-    required this.title,
-    required this.subtitle,
-    required this.points,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Container(
-          padding: EdgeInsets.all(ResponsiveHelper.spacing(context, 16)),
-          decoration: BoxDecoration(
-            border: Border.all(color: AppColors.grey200),
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: bgColor,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Icon(icon,
-                        color: iconColor,
-                        size: ResponsiveHelper.iconSize(context, 22)),
-                  ),
-                  SizedBox(width: ResponsiveHelper.spacing(context, 12)),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(title,
-                            style: ResponsiveHelper.bodyStyle(context)
-                                .copyWith(fontWeight: FontWeight.w700)),
-                        SizedBox(
-                            height: ResponsiveHelper.spacing(context, 2)),
-                        Text(subtitle,
-                            style: ResponsiveHelper.tinyStyle(context,
-                                color: AppColors.grey500)),
-                      ],
-                    ),
-                  ),
-                  Icon(Icons.chevron_right,
-                      color: AppColors.grey400,
-                      size: ResponsiveHelper.iconSize(context, 20)),
-                ],
-              ),
-              SizedBox(height: ResponsiveHelper.spacing(context, 10)),
-              ...points.map((p) => Padding(
-                    padding: EdgeInsets.only(
-                        bottom: ResponsiveHelper.spacing(context, 3)),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(Icons.check,
-                            size: ResponsiveHelper.iconSize(context, 13),
-                            color: iconColor),
-                        SizedBox(
-                            width: ResponsiveHelper.spacing(context, 5)),
-                        Expanded(
-                          child: Text(p,
-                              style: ResponsiveHelper.tinyStyle(context,
-                                  color: AppColors.grey600)),
-                        ),
-                      ],
-                    ),
-                  )),
             ],
           ),
         ),
