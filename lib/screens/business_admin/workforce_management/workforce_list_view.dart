@@ -509,8 +509,8 @@ class _WorkforceListViewState extends State<WorkforceListView> {
   Widget _buildEmptyState() {
     return const AppEmptyState(
       icon: Icons.inbox_outlined,
-      title: '조건에 맞는 TO가 없습니다',
-      subtitle: '필터를 변경하거나 새로운 TO를 생성하세요',
+      title: '조건에 맞는 공고가 없습니다',
+      subtitle: '필터를 변경하거나 새로운 공고를 등록하세요',
     );
   }
 

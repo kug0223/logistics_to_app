@@ -100,7 +100,7 @@ class _BusinessListScreenState extends State<BusinessListScreen> {
     final confirmed = await DialogHelper.showDangerConfirm(
       context,
       title: '사업장 삭제',
-      message: '${business.name}을(를) 삭제하시겠습니까?\n모든 TO와 데이터가 함께 삭제됩니다.',
+      message: '${business.name}을(를) 삭제하시겠습니까?\n모든 공고와 데이터가 함께 삭제됩니다.',
       confirmText: '삭제',
     );
 

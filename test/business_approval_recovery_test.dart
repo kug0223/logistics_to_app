@@ -351,11 +351,16 @@ void main() {
       expect(createTo.contains('cardCount = isSubAdmin ? 4 : 5'), true);
     });
 
-    test('BAR-71 홈 readiness 카드 범위 무변경 (FP-01은 후속 Phase)', () {
+    test('BAR-71 홈이 승인 복구를 자동 호출하지 않는다', () {
+      // 원래 이 테스트는 "FP-01 미변경"을 지켰으나, FP-01은 후속
+      // READINESS-ALIGNMENT Phase에서 의도적으로 닫혔다(홈 준비 카드가
+      // CreateTO와 같은 4개 task를 셈). 여기서 지켜야 할 불변식은
+      // 승인 복구 쪽 — 홈 readiness가 recheck callable을 자동으로 부르면
+      // 화면 진입마다 무제한 재시도가 된다(§13 금지).
       final home = _source(
           'lib/screens/business_admin/business_admin_home_screen.dart');
-      expect(home.contains('seal/template 는 서버가 강제하지 않으므로 체크리스트에서 제외'),
-          true, reason: 'FP-01을 이번 Phase에서 건드렸다');
+      expect(home.contains('recheckApproval'), false,
+          reason: '홈 readiness가 승인 복구를 자동 호출함');
     });
   });
 }

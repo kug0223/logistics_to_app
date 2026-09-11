@@ -316,7 +316,7 @@ class _HelpScreenState extends State<HelpScreen> {
   // 관리자(BUSINESS_ADMIN / SubAdmin 관리자 모드) FAQ — 로컬 폴백
   // ────────────────────────────────────────────────────────────
   static final _adminFaqs = [
-    _FaqItem.header('📢 공고(TO) 등록 & 관리'),
+    _FaqItem.header('📢 공고 등록 & 관리'),
     _FaqItem(
       question: '공고는 어떻게 등록하나요?',
       answer: '홈 화면 우측 상단 "+" 버튼 → 필요 정보(업종, 날짜, 시간, 인원, 시급)를 입력 → '

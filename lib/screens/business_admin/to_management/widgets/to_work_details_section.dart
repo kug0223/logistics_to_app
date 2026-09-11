@@ -173,7 +173,7 @@ class TOWorkDetailsSection extends StatelessWidget {
           SizedBox(width: ResponsiveHelper.spacing(context, 12)),
           Expanded(
             child: Text(
-              '업무 유형을 먼저 등록해주세요',
+              '업무를 먼저 등록해주세요',
               style: ResponsiveHelper.bodyStyle(context).copyWith(
                 color: AppColors.warningDarkest,
               ),

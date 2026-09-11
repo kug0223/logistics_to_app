@@ -246,7 +246,7 @@ class TOListDialogs {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '근무 시작 시간이 지난 TO는 재오픈할 수 없습니다.',
+              '근무 시작 시간이 지난 공고는 다시 열 수 없습니다.',
               style: ResponsiveHelper.bodyStyle(context).copyWith(  // ⭐ 변경
                 fontWeight: FontWeight.bold,
               ),
@@ -257,7 +257,7 @@ class TOListDialogs {
             ),
             SizedBox(height: ResponsiveHelper.spacing(context, 16)),  // ⭐ 변경
             Text(
-              '새로운 날짜로 TO를 생성하세요.',
+              '새로운 날짜로 공고를 등록하세요.',
               style: ResponsiveHelper.bodyStyle(  // ⭐ 변경
                 context,
                 color: Theme.of(context).textTheme.bodySmall?.color,

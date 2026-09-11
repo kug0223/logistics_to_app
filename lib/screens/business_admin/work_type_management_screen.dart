@@ -73,7 +73,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
       if (!mounted) return;
       _fetchInProgress = false;
       setState(() => _isLoading = false);
-      ToastHelper.showError('업무 유형을 불러올 수 없습니다');
+      ToastHelper.showError('업무를 불러올 수 없습니다');
     }
   }
 
@@ -116,7 +116,7 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
         barrierDismissible: false,
         builder: (ctx) => StyledDialog(
           title: '등록 완료!',
-          subtitle: '업무유형이 성공적으로 등록되었습니다',
+          subtitle: '업무가 성공적으로 등록되었습니다',
           icon: Icons.check_circle,
           headerColor: AppColors.success,
           content: Column(
@@ -201,8 +201,8 @@ class _WorkTypeManagementScreenState extends State<WorkTypeManagementScreen> {
           builder: (ctx) => AlertDialog(
             title: const Text('활성 공고 있음'),
             content: Text(
-              '이 업무 유형을 사용하는 활성 공고가 $affectedCount개 있습니다.\n'
-              '삭제하면 해당 공고의 업무 유형 표시에 영향을 줄 수 있습니다.\n계속하시겠습니까?',
+              '이 업무를 사용하는 활성 공고가 $affectedCount개 있습니다.\n'
+              '삭제하면 해당 공고의 업무 표시에 영향을 줄 수 있습니다.\n계속하시겠습니까?',
             ),
             actions: [
               TextButton(

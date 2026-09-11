@@ -716,7 +716,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       final candidateId =
           '${result.workType!}_${result.startTime!}_${result.endTime!}';
       if (_workDetails.any((w) => w.id == candidateId)) {
-        ToastHelper.showError('같은 업무 유형과 근무 시간의 업무가 이미 있습니다.');
+        ToastHelper.showError('같은 업무와 근무 시간이 이미 있습니다.');
         return;
       }
       setState(() {
@@ -760,7 +760,7 @@ class _AdminEditTOScreenState extends State<AdminEditTOScreen> {
       final candidateEnd = (result['endTime'] as String?) ?? work.endTime;
       final candidateId = '${candidateWorkType}_${candidateStart}_$candidateEnd';
       if (_workDetails.where((w) => w != work).any((w) => w.id == candidateId)) {
-        ToastHelper.showError('같은 업무 유형과 근무 시간의 업무가 이미 있습니다.');
+        ToastHelper.showError('같은 업무와 근무 시간이 이미 있습니다.');
         return;
       }
       final index = _workDetails.indexOf(work);

@@ -68,15 +68,28 @@ import '../../utils/business_picker_helper.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/common/gradient_scaffold.dart';
 
+/// 설정 화면 진입 시 바로 보여줄 항목.
+///
+/// [FP-07] 다른 화면의 CTA가 "설정으로 이동"만 하면 사용자가 긴 목록에서
+/// 항목을 직접 찾아야 한다. 지금은 인감/서명 하나만 필요하므로
+/// navigation framework를 만들지 않고 최소 진입점만 둔다.
+enum SettingsTarget { seal }
+
 /// ✨ 통합 설정 화면 (역할별 메뉴 자동 표시)
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  /// 지정하면 해당 섹션이 보이도록 스크롤한다. null이면 기존대로 최상단.
+  final SettingsTarget? initialTarget;
+
+  const SettingsScreen({super.key, this.initialTarget});
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  /// [FP-07] initialTarget 스크롤용 — 지정되지 않으면 쓰이지 않는다.
+  final _scrollCtrl = ScrollController();
+  final _sealKey = GlobalKey();
   bool _isPushEnabled = true;
   bool _isLoading = true;
   Map<String, bool> _notifPrefs = Map.of(UserModel.defaultNotifPrefs);
@@ -99,6 +112,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _loadNotificationStatus();
     _loadAppVersion();
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadBusinessSeal());
+    // [FP-07] 지정된 섹션으로 이동 — ListView(children:)이라 전 항목이
+    //   빌드되므로 ensureVisible이 동작한다. 실패해도 최상단일 뿐이다.
+    if (widget.initialTarget != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToTarget());
+    }
+  }
+
+  void _scrollToTarget() {
+    if (!mounted) return;
+    final ctx = switch (widget.initialTarget) {
+      SettingsTarget.seal => _sealKey.currentContext,
+      null => null,
+    };
+    if (ctx == null) return;
+    Scrollable.ensureVisible(
+      ctx,
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOut,
+      alignment: 0.1,
+    );
+  }
+
+  @override
+  void dispose() {
+    _scrollCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _loadBusinessSeal() async {
@@ -280,6 +319,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           title: showAdminSection ? '관리' : '설정',
           headerContent: _buildHeaderProfile(context, userProvider),
           body: ListView(
+            controller: _scrollCtrl,
             padding: ResponsiveHelper.listPadding(context),
             children: [
               SizedBox(height: ResponsiveHelper.spacing(context, 8)),
@@ -376,7 +416,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 // 날인 카드: BUSINESS_ADMIN 항상 / SubAdmin은 canManageContract일 때만
                 if (user?.isBusinessAdmin == true ||
                     userProvider.can((p) => p.canManageContract)) ...[
-                  _buildSealCard(context, user),
+                  KeyedSubtree(key: _sealKey, child: _buildSealCard(context, user)),
                   SizedBox(height: ResponsiveHelper.spacing(context, 8)),
                 ],
                 _buildMenuGroup(context, [
@@ -394,7 +434,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ? _SettingsItem(
                           icon: Icons.work_outline,
                           iconColor: AppColors.warningDark,
-                          title: '업무 유형 관리',
+                          title: '업무 관리',
                           onTap: () async {
                             final nav = Navigator.of(context);
                             final biz =

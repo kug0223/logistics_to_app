@@ -168,6 +168,102 @@ class BusinessPostingReadiness {
   }
 }
 
+/// 첫 공고까지 필요한 준비 — **사용자 mental model 기준** 4개.
+///
+/// CreateTO의 correctness predicate는 canonical fact 5개
+/// (승인 / 업무 / 계약서 템플릿 / 사업자등록증 / 인감)를 그대로 쓴다.
+/// 사업자등록증은 사업장 등록 폼에서 필수로 받으므로 사용자에게는
+/// "사업장 준비" 안에 포함된 것으로 보이는 편이 실제 경험과 맞다.
+enum FirstPostingTask {
+  /// 사업장 등록 + 승인 + 사업자등록증
+  business,
+
+  /// 업무 등록
+  workType,
+
+  /// 계약서 템플릿 (신규 계약에 쓸 수 있는 분류)
+  contractTemplate,
+
+  /// 인감/서명
+  seal,
+}
+
+/// 첫 공고 준비 상태 — 기존 canonical fact에서만 derive한다.
+///
+/// 저장되는 onboarding 플래그가 없다. 사업장 승인/등록증, 업무, 템플릿,
+/// 인감이 각각 canonical이며 이 클래스는 그것을 읽어 조합할 뿐이다.
+///
+/// 홈과 CreateTO가 **같은 의미**를 쓰도록 하는 것이 이 클래스의 목적이다.
+/// 이전에는 홈이 서버 강제 항목(등록증·업무) 2개만 세고 CreateTO가 5개를
+/// 요구해, 홈에서 준비 카드가 사라진 뒤에도 공고 등록에서 다시 막혔다.
+class FirstPostingReadiness {
+  /// 사업장이 하나라도 있는가 (승인 여부 무관)
+  final bool hasAnyBusiness;
+
+  /// 승인 + 사업자등록증을 모두 갖춘 사업장이 있는가
+  final bool businessReady;
+
+  /// 승인된 사업장 중 활성 업무가 있는 곳이 있는가
+  final bool workTypesReady;
+
+  /// 신규 계약에 쓸 수 있는 템플릿이 있는가 (관리자 보유 전 사업장 합산)
+  final bool contractTemplateReady;
+
+  /// 인감/서명이 등록되어 있는가
+  final bool sealReady;
+
+  const FirstPostingReadiness({
+    required this.hasAnyBusiness,
+    required this.businessReady,
+    required this.workTypesReady,
+    required this.contractTemplateReady,
+    required this.sealReady,
+  });
+
+  static const int totalTasks = 4;
+
+  bool isDone(FirstPostingTask task) {
+    switch (task) {
+      case FirstPostingTask.business:
+        return businessReady;
+      case FirstPostingTask.workType:
+        return workTypesReady;
+      case FirstPostingTask.contractTemplate:
+        return contractTemplateReady;
+      case FirstPostingTask.seal:
+        return sealReady;
+    }
+  }
+
+  /// 지금 바로 수행할 수 있는가.
+  ///
+  /// 강제 순서를 만들지 않는다 — 실제 의존성이 있는 항목만 잠근다.
+  ///   · 사업장     : 언제나 가능
+  ///   · 업무       : 사업장이 있어야 businessId로 이동할 수 있다
+  ///   · 계약 템플릿 : 사업장이 있어야 저장 위치가 생긴다.
+  ///                  **승인은 필요 없다** — Rules도 isAdminOf만 요구한다.
+  ///   · 인감       : users/{uid} 값이라 사업장과 무관, 가입 직후부터 가능
+  bool isActionable(FirstPostingTask task) {
+    switch (task) {
+      case FirstPostingTask.business:
+      case FirstPostingTask.seal:
+        return true;
+      case FirstPostingTask.workType:
+      case FirstPostingTask.contractTemplate:
+        return hasAnyBusiness;
+    }
+  }
+
+  int get completedCount =>
+      FirstPostingTask.values.where(isDone).length;
+
+  bool get allReady => completedCount == totalTasks;
+
+  /// 아직 남은 준비 (표시 순서 유지)
+  List<FirstPostingTask> get remaining =>
+      FirstPostingTask.values.where((t) => !isDone(t)).toList();
+}
+
 /// 승인 재확인 결과.
 ///
 /// [wireName]은 서버 result contract와 1:1로 대응한다.

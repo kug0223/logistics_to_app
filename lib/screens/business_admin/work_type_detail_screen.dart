@@ -130,7 +130,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
         }
       },
       child: AppPageScaffold(
-        title: _isEditing ? '업무유형 수정' : '업무유형 상세',
+        title: _isEditing ? '업무 수정' : '업무 상세',
         actions: [
           IconButton(
             icon: const Icon(Icons.home_outlined),
@@ -1049,7 +1049,7 @@ class _WorkTypeDetailScreenState extends State<WorkTypeDetailScreen> {
         _imagesToDelete.clear();
       });
 
-      if (mounted) ToastHelper.showSuccess('업무유형이 수정되었습니다');
+      if (mounted) ToastHelper.showSuccess('업무가 수정되었습니다');
     } catch (e) {
       // Firestore 실패 시 이미 업로드된 신규 파일 롤백
       await Future.wait(newlyUploadedUrls.map((url) async {

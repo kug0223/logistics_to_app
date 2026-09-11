@@ -125,6 +125,12 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
   /// 재판정을 요청하기 위해 대상 사업장을 들고 있는다.
   List<BusinessModel> _unapprovedBusinesses = [];
   bool _isRecheckingApproval = false;
+
+  /// [FP-03] 계약서 템플릿을 저장할 사업장.
+  /// 템플릿 작성은 사업장 승인과 무관하므로 미승인 사업장도 대상이 된다.
+  /// 저장 위치는 필요하므로 사업장이 하나도 없으면 null.
+  String? get _templateTargetBusinessId =>
+      _selectedBusiness?.id ?? _unapprovedBusinesses.firstOrNull?.id;
   bool get _allPrerequisitesMet =>
       _businessApproved && _workTypesReady && _contractTemplatesReady &&
       _hasLicense && _hasSeal;
@@ -471,7 +477,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       });
       if (workTypes.isEmpty) {
         ToastHelper.showWarning(
-            '이 사업장에 등록된 업무목록이 없습니다.\n업무목록을 먼저 추가해주세요.');
+            '이 사업장에 등록된 업무가 없습니다.\n업무를 먼저 추가해주세요.');
       }
     } catch (e) {
       debugPrint('❌ 사업장 정보 로드 실패: $e');
@@ -806,7 +812,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
       return;
     }
     if (_businessWorkTypes.isEmpty) {
-      ToastHelper.showWarning('업무 유형을 먼저 등록해주세요');
+      ToastHelper.showWarning('업무를 먼저 등록해주세요');
       return;
     }
 
@@ -1026,7 +1032,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
 
     if (_businessWorkTypes.isEmpty) {
       _scrollToSection(_businessSectionKey);
-      ToastHelper.showError('업무목록을 먼저 등록해주세요.\n사업장 설정에서 업무목록을 추가할 수 있습니다.');
+      ToastHelper.showError('업무를 먼저 등록해주세요.\n사업장 설정에서 업무를 추가할 수 있습니다.');
       return;
     }
 
@@ -1552,13 +1558,13 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
             // ② 업무목록
             _buildPrerequisiteCard(
               index: 2,
-              title: '업무목록 등록',
+              title: '업무 등록',
               isReady: _workTypesReady,
-              readyDescription: '업무목록이 등록되어 있습니다',
+              readyDescription: '업무가 등록되어 있습니다',
               notReadyDescription: _businessApproved
-                  ? '등록된 업무목록이 없습니다.'
+                  ? '등록된 업무가 없습니다.'
                   : '사업장 승인 후 확인 가능합니다.',
-              actionLabel: _businessApproved ? '업무목록 관리' : null,
+              actionLabel: _businessApproved ? '업무 관리' : null,
               onAction: _businessApproved
                   ? () async {
                       await NavigationHelper.push<void>(context,
@@ -1593,16 +1599,19 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                       ? '근로계약에 사용할 기본 양식을 만들어 주세요.\n'
                           '한 번 저장하면 이후 계약에도 계속 사용할 수 있어요.'
                       : '사업장 승인 후 확인 가능합니다.'),
+              // [FP-03] 사업장 승인 종속 제거 — 계약서 템플릿은 승인과 무관하다.
+              //   Rules도 contract_templates write에 isAdminOf만 요구한다.
+              //   저장 위치가 필요하므로 사업장 존재(미승인 포함)만 조건으로 둔다.
               actionLabel:
-                  canManageContract && _businessApproved ? '템플릿 만들기' : null,
-              onAction: canManageContract &&
-                      _businessApproved &&
-                      _selectedBusiness != null
+                  canManageContract && _templateTargetBusinessId != null
+                      ? '템플릿 만들기'
+                      : null,
+              onAction: canManageContract && _templateTargetBusinessId != null
                   ? () async {
                       await NavigationHelper.push<void>(
                         context,
                         destination: ContractTemplateListScreen(
-                            businessId: _selectedBusiness!.id),
+                            businessId: _templateTargetBusinessId!),
                       );
                       if (!mounted) return;
                       await _reCheckPrerequisites();
@@ -1754,7 +1763,7 @@ class _AdminCreateTOScreenState extends State<AdminCreateTOScreen> {
                     SizedBox(width: ResponsiveHelper.spacing(context, 8)),
                     _readinessChip(r.licenseReady, '사업자등록증'),
                     SizedBox(width: ResponsiveHelper.spacing(context, 4)),
-                    _readinessChip(r.workTypesReady, '업무유형'),
+                    _readinessChip(r.workTypesReady, '업무'),
                   ],
                 ),
               )),

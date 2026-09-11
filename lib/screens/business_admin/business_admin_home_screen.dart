@@ -10,7 +10,6 @@ import '../../providers/user_provider.dart';
 
 // Utils
 import '../../utils/format_helper.dart';
-import '../../utils/navigation_helper.dart';
 import '../../utils/toast_helper.dart';
 import '../../utils/tour_helper.dart';
 import '../common/tour_screen.dart';
@@ -35,6 +34,9 @@ import 'Business_form_screen.dart';
 import 'work_type_management_screen.dart';
 import '../../services/admin_home_summary_service.dart';
 import '../../services/business_posting_readiness.dart';
+import '../../services/contract_template_service.dart';
+import '../../models/core/contract_template_model.dart';
+import 'contract_template_list_screen.dart';
 import '../../models/ui/admin_home_summary_model.dart';
 import 'widgets/business_action_drill_down_sheet.dart';
 import '../../widgets/common/business_selector_sheet.dart';
@@ -68,8 +70,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
 
   // [5D.2A] 공고 등록 준비 — 사업장별 readiness (서버 5D.1A 정책과 동일)
   // isApproved + (canonical license OR owner legacy) + active workTypes >= 1
-  Map<String, BusinessPostingReadiness> _bizReadiness = {};
   bool _readinessLoaded = false;
+
+  /// [FP-01] 첫 공고까지 남은 준비 — CreateTO와 같은 canonical fact에서 derive.
+  final _contractTemplateService = ContractTemplateService();
+  FirstPostingReadiness? _firstPosting;
 
   // [PHASE-3A] activeTO 카운트 (revision listener로 갱신됨)
   // Phase 2C 이후 Home에서 직접 표시 없음 — Phase 2E에서 표시 또는 완전 제거 예정
@@ -301,19 +306,51 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
   // [5D.2A] 승인 사업장별 readiness 로드 — 서버 5D.1A와 동일 정책
   // isApproved + (canonical license OR ownerId legacy) + active workTypes >= 1
   // 호출자(SubAdmin/co-admin) license는 fallback으로 사용하지 않음
+  //
+  // [FP-01] 사업장이 0개이거나 전부 미승인이어도 중단하지 않는다.
+  //   신규 관리자에게야말로 "첫 공고까지 무엇이 남았는지"가 필요하다.
+  //   이전에는 여기서 early return 해 _readinessLoaded가 false로 남았고,
+  //   그 결과 준비 카드가 아예 렌더되지 않았다.
   Future<void> _loadPostingReadiness() async {
     final approvedBizs = _businesses.where((b) => b.isApproved).toList();
-    if (approvedBizs.isEmpty) return;
-    final readinessMap = await BusinessPostingReadiness.forBusinesses(
-      approvedBizs,
-      _firestoreService,
-    );
-    if (mounted) {
-      setState(() {
-        _bizReadiness = readinessMap;
-        _readinessLoaded = true;
-      });
+    final readinessMap = approvedBizs.isEmpty
+        ? <String, BusinessPostingReadiness>{}
+        : await BusinessPostingReadiness.forBusinesses(
+            approvedBizs,
+            _firestoreService,
+          );
+
+    // [FP-01] 계약서 템플릿은 관리자 보유분 전체 합산 — CreateTO와 동일 semantics.
+    //   (템플릿 소유 모델은 이번에 바꾸지 않는다)
+    var hasTemplate = false;
+    if (_businesses.isNotEmpty) {
+      try {
+        final lists = await Future.wait(
+          _businesses.map((b) => _contractTemplateService.getTemplates(b.id)),
+        );
+        hasTemplate = ContractTemplateModel.selectableForNewContract(
+          lists.expand((l) => l),
+        ).isNotEmpty;
+      } catch (e) {
+        // 조회 실패 시 "준비됨"으로 올리지 않는다 — CreateTO가 최종 gate다.
+        debugPrint('⚠️ [readiness] 계약서 템플릿 조회 실패: $e');
+      }
     }
+
+    if (!mounted) return;
+    final sealReady =
+        context.read<UserProvider>().currentUser?.sealBase64?.isNotEmpty ?? false;
+
+    setState(() {
+      _firstPosting = FirstPostingReadiness(
+        hasAnyBusiness: _businesses.isNotEmpty,
+        businessReady: readinessMap.values.any((r) => r.isApproved && r.hasLicense),
+        workTypesReady: readinessMap.values.any((r) => r.hasActiveWorkTypes),
+        contractTemplateReady: hasTemplate,
+        sealReady: sealReady,
+      );
+      _readinessLoaded = true;
+    });
   }
 
   Future<void> _safeNavigate(Future<void> Function() action) async {
@@ -1100,36 +1137,28 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
     );
   }
 
-  // ── [5D.2] 공고 등록 준비 checklist ──────────────────────────────
-  // 표시 조건: STATE C + readiness 로드 완료 + 미충족 사업장 ≥ 1
-  // 서버 정책(5D.1A)과 동일: isApproved + license + workTypes
-  // seal/template 는 서버가 강제하지 않으므로 체크리스트에서 제외
+  // ── [FP-01] 공고 등록 준비 checklist ─────────────────────────────
+  //
+  // 이전에는 서버가 강제하는 2개(사업자등록증·업무)만 셌다. CreateTO는 5개를
+  // 요구하므로, 홈에서 카드가 사라진 뒤에도 공고 등록에서 계약서 템플릿과
+  // 인감 때문에 다시 막혔다 — 준비의 끝이 두 번 오는 구조였다.
+  // 이제 CreateTO와 같은 canonical fact를 쓰되, 표시는 사용자 mental model
+  // 기준 4개 task로 묶는다(사업자등록증은 사업장 등록 폼에서 함께 받는다).
+  //
+  // 표시 조건: BUSINESS_ADMIN + readiness 로드 완료 + 미완료 ≥ 1
+  //   사업장이 0개여도 보여준다 — 신규 관리자에게 가장 필요한 정보다.
   Widget _buildPostingSetupCard(BuildContext context, double s, ThemeData theme) {
-    // SUB_ADMIN은 사업장 소유 설정(사업자등록증·업무등록) 불필요
+    // SUB_ADMIN은 사업장 소유 설정(등록증·인감)을 수행할 수 없다 — 기존 정책 유지
     if (context.read<UserProvider>().currentUser?.isSubAdmin == true) {
       return const SizedBox.shrink();
     }
-    if (_hasApprovedBusiness != true) return const SizedBox.shrink();
     if (!_readinessLoaded) return const SizedBox.shrink();
+    final r = _firstPosting;
+    if (r == null || r.allReady) return const SizedBox.shrink();
 
-    final approvedBizs = _businesses.where((b) => b.isApproved).toList();
-
-    // 사업장별 gap 계산
-    final gapBizs = <({BusinessModel biz, bool licenseMissing, bool workTypesMissing})>[];
-    for (final biz in approvedBizs) {
-      final r = _bizReadiness[biz.id];
-      // r == null이면 로드 미완료 — _readinessLoaded 가드가 이미 처리함
-      final licenseMissing = !(r?.hasLicense ?? false);
-      final workTypesMissing = !(r?.hasActiveWorkTypes ?? false);
-      if (licenseMissing || workTypesMissing) {
-        gapBizs.add((biz: biz, licenseMissing: licenseMissing, workTypesMissing: workTypesMissing));
-      }
-    }
-
-    if (gapBizs.isEmpty) return const SizedBox.shrink();
-
-    final totalGaps = gapBizs.fold(0, (sum, r) => sum + (r.licenseMissing ? 1 : 0) + (r.workTypesMissing ? 1 : 0));
-    final multipleApproved = approvedBizs.length > 1;
+    final done = r.completedCount;
+    final navBizId = _businesses.isNotEmpty ? _businesses.first.id : null;
+    final navBiz = _businesses.isNotEmpty ? _businesses.first : null;
 
     return Padding(
       padding: EdgeInsets.fromLTRB(20 * s, 0, 20 * s, 16 * s),
@@ -1138,26 +1167,23 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
           color: Colors.white,
           borderRadius: BorderRadius.circular(12 * s),
           border: Border.all(color: AppColors.border, width: 0.8),
-          boxShadow: [BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 8, offset: const Offset(0, 2),
-          )],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 헤더 — USER readiness card 문법 준용 (neutral + subtle warning badge)
             Padding(
               padding: EdgeInsets.fromLTRB(14 * s, 12 * s, 14 * s, 10 * s),
               child: Row(
                 children: [
                   Container(
-                    width: 24 * s, height: 24 * s,
+                    width: 22 * s,
+                    height: 22 * s,
                     decoration: BoxDecoration(
-                      color: theme.primaryColor.withValues(alpha: 0.08),
+                      color: theme.primaryColor.withValues(alpha: 0.10),
                       shape: BoxShape.circle,
                     ),
-                    child: Icon(Icons.checklist_rounded, size: 14 * s, color: theme.primaryColor),
+                    child: Icon(Icons.checklist_rounded,
+                        size: 14 * s, color: theme.primaryColor),
                   ),
                   SizedBox(width: 8 * s),
                   Text(
@@ -1169,114 +1195,175 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                       letterSpacing: -0.2,
                     ),
                   ),
-                  SizedBox(width: 6 * s),
-                  Container(
-                    padding: EdgeInsets.symmetric(horizontal: 7 * s, vertical: 2 * s),
-                    decoration: BoxDecoration(
-                      color: AppColors.warning.withValues(alpha: 0.10),
-                      borderRadius: BorderRadius.circular(8 * s),
-                    ),
-                    child: Text(
-                      '미완료 $totalGaps개',
-                      style: TextStyle(
-                        fontSize: 10.5 * s,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.warning,
-                      ),
+                  const Spacer(),
+                  // 완료/전체 — 남은 개수가 아니라 진척을 보여준다
+                  Text(
+                    '$done / ${FirstPostingReadiness.totalTasks} 완료',
+                    style: TextStyle(
+                      fontSize: 11.5 * s,
+                      fontWeight: FontWeight.w600,
+                      color: theme.primaryColor,
                     ),
                   ),
                 ],
               ),
             ),
             Divider(height: 1, thickness: 0.5, color: AppColors.grey100),
-            // 사업장별 gap 항목
-            for (int bi = 0; bi < gapBizs.length; bi++) ...[
-              if (bi > 0) Divider(height: 1, thickness: 0.5, color: AppColors.grey100),
-              if (multipleApproved)
-                Padding(
-                  padding: EdgeInsets.fromLTRB(14 * s, 8 * s, 14 * s, 2 * s),
-                  child: Text(
-                    gapBizs[bi].biz.name,
-                    style: TextStyle(
-                      fontSize: 11 * s,
-                      fontWeight: FontWeight.w500,
-                      color: AppColors.textSecondary,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+
+            // 4개 task — 강제 순서를 만들지 않는다.
+            // 실제 의존성이 있는 항목만 잠그고 나머지는 바로 실행 가능.
+            _setupTaskTile(
+              context, s, r,
+              task: FirstPostingTask.business,
+              icon: Icons.store_outlined,
+              label: '사업장 등록',
+              // 등록됐지만 아직 승인 전이면 완료로 세지 않는다
+              pendingHint: r.hasAnyBusiness && !r.businessReady ? '승인 진행 중' : null,
+              onTap: () => _safeNavigate(() async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => navBiz == null
+                        ? const BusinessFormScreen()
+                        : BusinessFormScreen(business: navBiz),
                   ),
-                ),
-              if (gapBizs[bi].licenseMissing)
-                _readinessItemTile(
-                  context, s,
-                  icon: Icons.article_outlined,
-                  label: '사업자등록증 등록',
-                  onTap: () async {
-                    await NavigationHelper.push<void>(
-                      context,
-                      destination: BusinessFormScreen(business: gapBizs[bi].biz),
-                    );
-                    if (!mounted) return;
-                    await _loadPostingReadiness();
-                  },
-                ),
-              if (gapBizs[bi].workTypesMissing)
-                _readinessItemTile(
-                  context, s,
-                  icon: Icons.work_outline_rounded,
-                  label: '업무 등록',
-                  onTap: () async {
-                    await NavigationHelper.push<void>(
-                      context,
-                      destination: WorkTypeManagementScreen(
-                        businessId: gapBizs[bi].biz.id,
-                        businessName: gapBizs[bi].biz.name,
-                      ),
-                    );
-                    if (!mounted) return;
-                    await _loadPostingReadiness();
-                  },
-                ),
-            ],
-            SizedBox(height: 4 * s),
+                );
+                await _reloadReadiness();
+              }),
+            ),
+            Divider(height: 1, thickness: 0.5, color: AppColors.grey100),
+            _setupTaskTile(
+              context, s, r,
+              task: FirstPostingTask.workType,
+              icon: Icons.work_outline,
+              label: '업무 등록',
+              lockedHint: '사업장 등록 후 가능',
+              onTap: navBizId == null
+                  ? null
+                  : () => _safeNavigate(() async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => WorkTypeManagementScreen(
+                              businessId: navBizId,
+                              businessName: navBiz!.name,
+                            ),
+                          ),
+                        );
+                        await _reloadReadiness();
+                      }),
+            ),
+            Divider(height: 1, thickness: 0.5, color: AppColors.grey100),
+            // [FP-03] 사업장 승인과 무관하다 — Rules도 isAdminOf만 요구한다.
+            _setupTaskTile(
+              context, s, r,
+              task: FirstPostingTask.contractTemplate,
+              icon: Icons.description_outlined,
+              label: '계약서 템플릿',
+              lockedHint: '사업장 등록 후 가능',
+              onTap: navBizId == null
+                  ? null
+                  : () => _safeNavigate(() async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                ContractTemplateListScreen(businessId: navBizId),
+                          ),
+                        );
+                        await _reloadReadiness();
+                      }),
+            ),
+            Divider(height: 1, thickness: 0.5, color: AppColors.grey100),
+            // [FP-03] users/{uid} 값이라 사업장과 무관 — 가입 직후부터 가능
+            _setupTaskTile(
+              context, s, r,
+              task: FirstPostingTask.seal,
+              icon: Icons.verified_outlined,
+              label: '인감/서명',
+              onTap: () => _safeNavigate(() async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const SettingsScreen(
+                      initialTarget: SettingsTarget.seal,
+                    ),
+                  ),
+                );
+                await _reloadReadiness();
+              }),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _readinessItemTile(
+  /// 준비 CTA에서 돌아온 뒤 상태 재조회 — 수동 새로고침을 요구하지 않는다.
+  Future<void> _reloadReadiness() async {
+    if (!mounted) return;
+    await _loadApprovedBusinessStatus();
+    if (!mounted) return;
+    await _loadPostingReadiness();
+  }
+
+  /// 준비 항목 한 줄.
+  /// 완료 / 지금 가능 / 선행 필요 세 상태만 구분한다 — STEP 번호를 붙이지 않는다.
+  Widget _setupTaskTile(
     BuildContext context,
-    double s, {
+    double s,
+    FirstPostingReadiness r, {
+    required FirstPostingTask task,
     required IconData icon,
     required String label,
-    required VoidCallback onTap,
+    String? lockedHint,
+    String? pendingHint,
+    VoidCallback? onTap,
   }) {
+    final done = r.isDone(task);
+    final actionable = r.isActionable(task);
+    final hint = done ? null : (actionable ? pendingHint : lockedHint);
+
     return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.zero,
+      onTap: done || !actionable ? null : onTap,
       child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: 14 * s, vertical: 9 * s),
+        padding: EdgeInsets.symmetric(horizontal: 14 * s, vertical: 10 * s),
         child: Row(
           children: [
-            Icon(icon, size: 14 * s, color: AppColors.textSecondary),
-            SizedBox(width: 8 * s),
+            Icon(
+              done ? Icons.check_circle : icon,
+              size: 15 * s,
+              color: done
+                  ? AppColors.success
+                  : (actionable ? AppColors.textSecondary : AppColors.grey300),
+            ),
+            SizedBox(width: 9 * s),
             Expanded(
               child: Text(
                 label,
                 style: TextStyle(
                   fontSize: 12.5 * s,
                   fontWeight: FontWeight.w500,
-                  color: AppColors.textPrimary,
+                  color: done
+                      ? AppColors.textSecondary
+                      : (actionable ? AppColors.textPrimary : AppColors.grey400),
                 ),
               ),
             ),
-            Icon(Icons.chevron_right, size: 16 * s, color: AppColors.grey400),
+            if (hint != null)
+              Text(
+                hint,
+                style: TextStyle(fontSize: 11 * s, color: AppColors.grey400),
+              )
+            else if (!done && actionable)
+              Icon(Icons.chevron_right,
+                  size: 16 * s, color: AppColors.grey400),
           ],
         ),
       ),
     );
   }
+
 
   // ── [PHASE-2C/R6.1] 오늘 운영 Block ────────────────────────────
   // Staffing D0(필요·확정·부족) + 출근 현황(출근·확인 필요)

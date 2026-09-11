@@ -2054,7 +2054,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
       if (!mounted) return;
 
       if (workDetail == null) {
-        ToastHelper.showError('근무 유형 정보를 찾을 수 없습니다. TO를 확인해 주세요.');
+        ToastHelper.showError('근무 정보를 찾을 수 없습니다. 공고를 확인해 주세요.');
         return;
       }
 
@@ -2933,7 +2933,7 @@ class _DayApplicantsDialogState extends State<DayApplicantsDialog> {
 
     // M3: toId 없는 지원서 사전 차단
     if (selectedApps.any((a) => a.toId == null)) {
-      ToastHelper.showWarning('TO 정보가 없는 지원서가 포함되어 있습니다. 개별 처리해주세요.');
+      ToastHelper.showWarning('공고 정보가 없는 지원서가 포함되어 있습니다. 개별 처리해주세요.');
       return;
     }
 
