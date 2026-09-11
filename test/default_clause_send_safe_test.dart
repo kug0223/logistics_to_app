@@ -106,12 +106,12 @@ void main() {
       expect(
           ContractTemplateModel.defaultArticlesFor(ContractTemplateType.daily)
               .length,
-          7);
+          4);
       // [RB-01·RB-05] 4대보험 가입·근태 및 복무가 reference default에서 제외됨
       expect(
           ContractTemplateModel.defaultArticlesFor(ContractTemplateType.period)
               .length,
-          8);
+          4);
     });
 
     test('DSS-11 제목 조 번호가 제4조부터 끊김 없이 이어진다', () {
@@ -138,78 +138,90 @@ void main() {
     });
   });
 
-  group('사업장 정책 경계 (RB-01 / RB-05)', () {
+  group('reference core 경계 — ALfit이 대신 판단하지 않는다', () {
     // ALfit은 사업장 정책이나 법적 적용 여부를 대신 확정하지 않는다.
-    // 아래 두 조항은 그 경계를 넘어 reference default에서 제외됐다.
-    test('DSS-30 period default에 4대보험 가입 조항이 없다', () {
-      final titles =
-          ContractTemplateModel.defaultArticlesFor(ContractTemplateType.period)
-              .map((a) => a.title)
-              .toList();
-      expect(titles.any((t) => t.contains('4대보험')), false,
-          reason: '보험 부담·공제 방식은 사업장 정책이며 시스템 제3조 공제 방식과 충돌할 수 있다');
+    // 아래 주제들은 적용 조건을 ALfit이 추적·판정하지 않거나 사업장 정책이라
+    // reference default에서 제외됐다. 제거는 "법적으로 불필요하다"가 아니라
+    // "ALfit이 기본 템플릿에서 적용 여부를 대신 제시하지 않는다"는 뜻이다.
+    const removedTopics = <String>[
+      '4대보험',      // 가입 요건·부담률 — ALfit이 집계·판정하지 않음
+      '주휴',         // ALfit이 자격 판정·수당 가산을 하지 않음
+      '공휴일',       // 사업장 규모 조건 의존
+      '연차',         // 발생 요건 미추적
+      '퇴직급여',     // 발생 요건 미추적
+      '차별금지',     // 사업주 대상 법정 금지의 낭독
+      '근태',         // 사업장 취업규칙 영역
+      '복무',
+      '임금명세서',   // 실제 payroll/payslip 기능과 중복
+      '수습',         // 관리자 입력 없이는 불완전
+    ];
+
+    test('DSS-30 제거된 주제가 어떤 default 제목에도 없다', () {
+      for (final t in _activeTypes) {
+        final titles = ContractTemplateModel.defaultArticlesFor(t)
+            .map((a) => a.title)
+            .toList();
+        for (final topic in removedTopics) {
+          expect(titles.any((x) => x.contains(topic)), false,
+              reason: '$t default에 "$topic" 조항이 남아 있음');
+        }
+      }
     });
 
-    test('DSS-31 period default에 근태 및 복무 조항이 없다', () {
-      final titles =
-          ContractTemplateModel.defaultArticlesFor(ContractTemplateType.period)
-              .map((a) => a.title)
-              .toList();
-      expect(titles.any((t) => t.contains('근태') || t.contains('복무')), false,
-          reason: '징계·복무수칙은 사업장 취업규칙 영역이다');
-    });
-
-    test('DSS-32 period default 본문에 징계·공제 확정 문구가 없다', () {
-      final all =
-          ContractTemplateModel.defaultArticlesFor(ContractTemplateType.period)
-              .map((a) => a.content)
-              .join('\n');
+    test('DSS-31 ALfit이 대신 확정하던 문구가 본문에 없다', () {
+      final all = _allActiveDefaults().map((a) => a.content).join('\n');
       expect(all.contains('징계'), false);
       expect(all.contains('급여에서 공제'), false);
+      expect(all.contains('유급휴일'), false, reason: '주휴 부여 확정 문구');
+      expect(all.contains('유급 공휴일'), false);
+      expect(all.contains('유급휴가'), false, reason: '연차 발생 확정 문구');
     });
 
-    test('DSS-33 대체 문구를 새로 창작하지 않았다 (제거만)', () {
-      // 제외한 자리에 "관계 법령에 따른다" 류의 새 보험/복무 문장을 넣지 않았다.
-      final titles =
-          ContractTemplateModel.defaultArticlesFor(ContractTemplateType.period)
-              .map((a) => a.title)
-              .toList();
-      expect(titles, [
-        '제4조 (주휴일 및 공휴일)',
-        '제5조 (연차유급휴가)',
-        '제6조 (퇴직급여)',
-        '제7조 (기간제 차별금지)',
-        '제8조 (직장 내 괴롭힘 금지)',
-        '제9조 (계약 해지 및 해고예고)',
-        '제10조 (개인정보 보호 및 비밀유지)',
-        '제11조 (기타)',
-      ]);
-    });
-
-    test('DSS-34 daily default는 이번 변경에서 불변', () {
+    test('DSS-32 daily reference core (제거만, 새 문장 창작 없음)', () {
       final titles =
           ContractTemplateModel.defaultArticlesFor(ContractTemplateType.daily)
               .map((a) => a.title)
               .toList();
       expect(titles, [
-        '제4조 (4대보험 적용)',
-        '제5조 (근태 및 휴일)',
-        '제6조 (계약 해지 및 해고예고)',
-        '제7조 (임금명세서 교부)',
-        '제8조 (안전·보건 및 산업재해)',
-        '제9조 (개인정보 보호)',
-        '제10조 (기타)',
+        '제4조 (계약 해지 및 해고예고)',
+        '제5조 (안전·보건 및 산업재해)',
+        '제6조 (개인정보 보호)',
+        '제7조 (기타)',
+      ]);
+    });
+
+    test('DSS-33 period reference core (제거만, 새 문장 창작 없음)', () {
+      final titles =
+          ContractTemplateModel.defaultArticlesFor(ContractTemplateType.period)
+              .map((a) => a.title)
+              .toList();
+      expect(titles, [
+        '제4조 (직장 내 괴롭힘 금지)',
+        '제5조 (계약 해지 및 해고예고)',
+        '제6조 (개인정보 보호 및 비밀유지)',
+        '제7조 (기타)',
       ]);
     });
   });
 
-  group('보류된 substance 항목은 이번 범위 밖', () {
-    test('DSS-20 주휴/4대보험 본문은 유지된다 (C-P1-02·C-P1-03 별도 Phase)', () {
+  group('남은 core는 훼손되지 않았다', () {
+    test('DSS-20 core 주제가 그대로 유지된다', () {
       final all = _allActiveDefaults().map((a) => a.content).join('\n');
-      // send-safe 정리 과정에서 근로자용 실질 조건까지 지우지 않았는지 확인
-      expect(all.contains('주휴일'), true);
-      expect(all.contains('4대보험') || all.contains('산업재해보상보험'), true);
       expect(all.contains('개인정보'), true);
+      expect(all.contains('산업안전보건법'), true);
+      expect(all.contains('해고예고수당'), true);
+      expect(all.contains('관계 법령'), true);
+    });
+
+    test('DSS-21 남은 조항 본문은 이번 축소에서 재작성되지 않았다', () {
+      // 제거만 했으므로 남은 조항의 첫 문장이 원문 그대로여야 한다.
+      final daily =
+          ContractTemplateModel.defaultArticlesFor(ContractTemplateType.daily);
+      expect(daily.first.content.startsWith('① 계약 기간 만료 시 본 계약은 자동 종료된다.'),
+          true);
+      final period =
+          ContractTemplateModel.defaultArticlesFor(ContractTemplateType.period);
+      expect(period.first.content.startsWith('사업주 및 근로자는 직장에서의'), true);
     });
   });
 }

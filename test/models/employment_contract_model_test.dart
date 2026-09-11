@@ -705,14 +705,14 @@ void main() {
     // [C-P1-01] send-safe 정리로 연장·야간·휴일근로 수당 조항(구 제6조)이
     //   default에서 제외됨 — 상시근로자 5인 기준 판단을 관리자에게 요구하는
     //   조건부 조항이라 시스템이 문구를 고를 수 없다. 나머지는 제4~10조로 재정렬.
-    test('I-01 daily → 7개 조항', () {
-      expect(ContractTemplateModel.defaultArticlesFor('daily').length, 7);
+    test('I-01 daily → 4개 조항 (reference core 축소 후)', () {
+      expect(ContractTemplateModel.defaultArticlesFor('daily').length, 4);
     });
-    test('I-02 daily 첫 조항 제목: 제4조 (4대보험 적용)', () {
-      expect(ContractTemplateModel.defaultArticlesFor('daily').first.title, '제4조 (4대보험 적용)');
+    test('I-02 daily 첫 조항 제목: 제4조 (계약 해지 및 해고예고)', () {
+      expect(ContractTemplateModel.defaultArticlesFor('daily').first.title, '제4조 (계약 해지 및 해고예고)');
     });
-    test('I-03 daily 마지막 조항 제목: 제10조 (기타)', () {
-      expect(ContractTemplateModel.defaultArticlesFor('daily').last.title, '제10조 (기타)');
+    test('I-03 daily 마지막 조항 제목: 제7조 (기타)', () {
+      expect(ContractTemplateModel.defaultArticlesFor('daily').last.title, '제7조 (기타)');
     });
     test('I-04 daily 조항들 모두 title 비어있지 않음', () {
       for (final a in ContractTemplateModel.defaultArticlesFor('daily')) {
@@ -724,48 +724,48 @@ void main() {
         expect(a.content.isNotEmpty, true, reason: '${a.title} content should not be empty');
       }
     });
-    test('I-06 daily 제5조 포함: 근태 및 휴일', () {
+    test('I-06 daily 근태·휴일 조항 미포함 — 주휴·해지정책 혼합으로 제외', () {
       final titles = ContractTemplateModel.defaultArticlesFor('daily').map((a) => a.title).toList();
-      expect(titles.any((t) => t.contains('근태')), true);
+      expect(titles.any((t) => t.contains('근태')), false);
     });
     test('I-07 daily 산재보험 언급 포함', () {
       final all = ContractTemplateModel.defaultArticlesFor('daily')
           .map((a) => a.content).join();
       expect(all.contains('산재보험'), true);
     });
-    test('I-08 daily 제목에 제4조~제10조 연속 번호', () {
+    test('I-08 daily 제목에 제4조~제7조 연속 번호', () {
       final titles = ContractTemplateModel.defaultArticlesFor('daily').map((a) => a.title).toList();
-      for (int i = 4; i <= 10; i++) {
+      for (int i = 4; i <= 7; i++) {
         expect(titles.any((t) => t.contains('제${i}조')), true, reason: '제${i}조 not found');
       }
     });
 
     // ── I-2. period (12개 조항) ────────────────────────────────────────────────
     // [C-P1-01] 수습기간('__개월' 미완성)과 연장·야간·휴일 수당(5인 조건부)이 제외됨
-    test('I-10 period → 8개 조항 (RB-01·RB-05 제외 후)', () {
-      expect(ContractTemplateModel.defaultArticlesFor('period').length, 8);
+    test('I-10 period → 4개 조항 (reference core 축소 후)', () {
+      expect(ContractTemplateModel.defaultArticlesFor('period').length, 4);
     });
-    test('I-11 period 첫 조항: 제4조 (주휴일 및 공휴일)', () {
-      expect(ContractTemplateModel.defaultArticlesFor('period').first.title, '제4조 (주휴일 및 공휴일)');
+    test('I-11 period 첫 조항: 제4조 (직장 내 괴롭힘 금지)', () {
+      expect(ContractTemplateModel.defaultArticlesFor('period').first.title, '제4조 (직장 내 괴롭힘 금지)');
     });
-    test('I-12 period 마지막 조항: 제11조 (기타)', () {
-      expect(ContractTemplateModel.defaultArticlesFor('period').last.title, '제11조 (기타)');
+    test('I-12 period 마지막 조항: 제7조 (기타)', () {
+      expect(ContractTemplateModel.defaultArticlesFor('period').last.title, '제7조 (기타)');
     });
     test('I-13 period 4대보험 조항 미포함 — 사업장 정책 영역', () {
       final titles = ContractTemplateModel.defaultArticlesFor('period').map((a) => a.title).toList();
       expect(titles.any((t) => t.contains('4대보험')), false);
     });
-    test('I-14 period 연차유급휴가 조항 포함', () {
+    test('I-14 period 연차 조항 미포함 — 발생 요건을 ALfit이 추적하지 않음', () {
       final titles = ContractTemplateModel.defaultArticlesFor('period').map((a) => a.title).toList();
-      expect(titles.any((t) => t.contains('연차')), true);
+      expect(titles.any((t) => t.contains('연차')), false);
     });
-    test('I-15 period 퇴직급여 조항 포함', () {
+    test('I-15 period 퇴직급여 조항 미포함 — 동일 사유', () {
       final titles = ContractTemplateModel.defaultArticlesFor('period').map((a) => a.title).toList();
-      expect(titles.any((t) => t.contains('퇴직')), true);
+      expect(titles.any((t) => t.contains('퇴직')), false);
     });
-    test('I-16 period 제목에 제4조~제11조 연속 번호', () {
+    test('I-16 period 제목에 제4조~제7조 연속 번호', () {
       final titles = ContractTemplateModel.defaultArticlesFor('period').map((a) => a.title).toList();
-      for (int i = 4; i <= 11; i++) {
+      for (int i = 4; i <= 7; i++) {
         expect(titles.any((t) => t.contains('제${i}조')), true, reason: '제${i}조 not found');
       }
     });
@@ -814,11 +814,11 @@ void main() {
     });
 
     // ── I-4. unknown → daily (default) ────────────────────────────────────────
-    test('I-30 unknown → daily 조항 7개', () {
-      expect(ContractTemplateModel.defaultArticlesFor('unknown').length, 7);
+    test('I-30 unknown → daily 조항 4개', () {
+      expect(ContractTemplateModel.defaultArticlesFor('unknown').length, 4);
     });
-    test('I-31 빈 문자열 → daily 조항 7개', () {
-      expect(ContractTemplateModel.defaultArticlesFor('').length, 7);
+    test('I-31 빈 문자열 → daily 조항 4개', () {
+      expect(ContractTemplateModel.defaultArticlesFor('').length, 4);
     });
     test('I-32 daily 가 default → unknown 과 daily 동일', () {
       final dailyArticles = ContractTemplateModel.defaultArticlesFor('daily');
@@ -1252,15 +1252,15 @@ void main() {
     });
 
     // ── N-5. 템플릿 + 계약서 조합 ────────────────────────────────────────────
-    test('N-40 daily 템플릿 조항 7개 → 계약서에 추가', () {
+    test('N-40 daily 템플릿 조항 4개 → 계약서에 추가', () {
       final articles = ContractTemplateModel.defaultArticlesFor('daily');
       final c = _contract(articles: articles);
-      expect(c.articles.length, 7);
+      expect(c.articles.length, 4);
     });
     test('N-41 period 템플릿 적용 + 계약서 확인', () {
       final articles = ContractTemplateModel.defaultArticlesFor('period');
       final c = _contract(articles: articles, templateId: 'template_period_1');
-      expect(c.articles.length, 8);
+      expect(c.articles.length, 4);
       expect(c.templateId, 'template_period_1');
     });
     test('N-42 outsource 템플릿 3.3% 조항 포함', () {
@@ -1279,7 +1279,7 @@ void main() {
       ];
       final c2 = c.copyWith(articles: modifiedArticles);
       expect(c2.articles[3].content, '수정된 내용');
-      expect(c2.articles.length, 7);
+      expect(c2.articles.length, 4);
     });
 
     // ── N-6. 4대보험 요율 계산 시나리오 ──────────────────────────────────────
@@ -1345,7 +1345,7 @@ void main() {
       );
       final copied = original.copyWith(articles: []);
       expect(copied.articles.isEmpty, true);
-      expect(original.articles.length, 8);
+      expect(original.articles.length, 4);
     });
 
     // ── N-8. ContractSnapshot toMap → fromMap 왕복 ────────────────────────────
