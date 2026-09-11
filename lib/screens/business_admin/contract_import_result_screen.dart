@@ -37,6 +37,13 @@ class _ContractImportResultScreenState
     extends State<ContractImportResultScreen> {
   late final List<ParsedArticle> _articles;
 
+  /// [UX-P2-06] 전문이 펼쳐진 조항 index.
+  ///
+  /// 화면 세션에만 존재하는 순수 UI 상태다 — ParsedArticle/Firestore/parser
+  /// 어디에도 저장하지 않으며 included 여부와 완전히 독립이다.
+  /// 여러 조항을 동시에 펼쳐 서로 비교할 수 있도록 Set으로 둔다(아코디언 아님).
+  final Set<int> _expanded = {};
+
   @override
   void initState() {
     super.initState();
@@ -152,11 +159,16 @@ class _ContractImportResultScreenState
           SizedBox(height: ResponsiveHelper.spacing(context, 12)),
 
           // ─── 조항 목록 ──────────────────────────────────────────
-          ..._articles.asMap().entries.map((e) => _ArticleCard(
+          ..._articles.asMap().entries.map((e) => ImportArticleCard(
                 article: e.value,
                 index: e.key,
+                expanded: _expanded.contains(e.key),
                 onToggle: () => setState(() {
                   e.value.included = !e.value.included;
+                }),
+                onToggleExpand: () => setState(() {
+                  // include 상태는 건드리지 않는다 — 표시 전용 토글
+                  if (!_expanded.remove(e.key)) _expanded.add(e.key);
                 }),
               )),
 
@@ -296,16 +308,87 @@ class _PiiBanner extends StatelessWidget {
 
 // ─── 조항 카드 ────────────────────────────────────────────────────
 
-class _ArticleCard extends StatelessWidget {
+/// 검수용 조항 카드.
+///
+/// 기본은 compact scan(본문 2줄) 상태를 유지하고, 넘치는 조항만
+/// `전문 보기`로 그 자리에서 펼친다. 이 화면은 문서 reader가 아니라
+/// "가져올 조항을 선별하는 검수 화면"이므로 전체 펼침을 기본으로 두지 않는다.
+///
+/// 테스트에서 화면 전체(Provider 의존)를 띄우지 않고 카드만 검증할 수 있도록
+/// public으로 노출한다.
+class ImportArticleCard extends StatelessWidget {
   final ParsedArticle article;
   final int index;
+
+  /// 전문 펼침 여부 — 표시 전용. include 여부와 독립.
+  final bool expanded;
+
+  /// 포함/제외 토글 (카드 본체 탭)
   final VoidCallback onToggle;
 
-  const _ArticleCard({
+  /// 전문 보기/접기 토글 — include 상태를 바꾸지 않는다.
+  final VoidCallback onToggleExpand;
+
+  const ImportArticleCard({
+    super.key,
     required this.article,
     required this.index,
+    required this.expanded,
     required this.onToggle,
+    required this.onToggleExpand,
   });
+
+  /// 제외된 조항도 펼쳤을 때는 본문이 읽혀야 한다 —
+  /// 카드/칩은 muted로 두되 본문 텍스트는 가독 수준을 유지한다.
+  Color _contentColor() =>
+      (article.included || expanded) ? AppColors.grey500 : AppColors.grey400;
+
+  Widget _buildContent(BuildContext context) {
+    final style = ResponsiveHelper.tinyStyle(context, color: _contentColor());
+
+    // 펼친 상태: 전문 + [접기]. overflow 계산 불필요.
+    if (expanded) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(article.content, style: style),
+          SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+          _ExpandControl(expanded: true, onTap: onToggleExpand),
+        ],
+      );
+    }
+
+    // 접힌 상태: 실제 레이아웃 기준으로 2줄을 넘치는지 판정한다.
+    // 문자 수 같은 임의 기준을 쓰지 않는다.
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final painter = TextPainter(
+          text: TextSpan(text: article.content, style: style),
+          maxLines: 2,
+          textDirection: Directionality.of(ctx),
+          textScaler: MediaQuery.textScalerOf(ctx),
+        )..layout(maxWidth: constraints.maxWidth);
+        final overflows = painter.didExceedMaxLines;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              article.content,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: style,
+            ),
+            // 2줄 안에 다 보이면 컨트롤을 띄우지 않는다.
+            if (overflows) ...[
+              SizedBox(height: ResponsiveHelper.spacing(context, 6)),
+              _ExpandControl(expanded: false, onTap: onToggleExpand),
+            ],
+          ],
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -372,18 +455,10 @@ class _ArticleCard extends StatelessWidget {
                       ),
                     ),
 
-                    // 내용 미리보기
+                    // 내용 — 기본 2줄, 넘칠 때만 [전문 보기] 제공
                     if (article.content.isNotEmpty) ...[
                       SizedBox(height: ResponsiveHelper.spacing(context, 4)),
-                      Text(
-                        article.content,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: ResponsiveHelper.tinyStyle(context,
-                            color: article.included
-                                ? AppColors.grey500
-                                : AppColors.grey400),
-                      ),
+                      _buildContent(context),
                     ],
 
                     // 경고 뱃지
@@ -422,6 +497,54 @@ class _ArticleCard extends StatelessWidget {
                     ],
                   ],
                 ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── 전문 보기 / 접기 컨트롤 ──────────────────────────────────────
+
+/// 카드 본체 탭(포함/제외)과 분리된 펼침 컨트롤.
+///
+/// 중첩 GestureDetector에서는 안쪽이 탭 arena를 가져가므로
+/// 이 영역을 눌러도 include/exclude가 바뀌지 않는다.
+class _ExpandControl extends StatelessWidget {
+  final bool expanded;
+  final VoidCallback onTap;
+
+  const _ExpandControl({required this.expanded, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).primaryColor;
+    return Semantics(
+      button: true,
+      expanded: expanded,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Padding(
+          // 탭 영역 확보 — 본문과 붙어 오탭되지 않도록 세로 여백을 둔다.
+          padding: EdgeInsets.symmetric(
+            vertical: ResponsiveHelper.spacing(context, 4),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                expanded ? '접기' : '전문 보기',
+                style: ResponsiveHelper.tinyStyle(context, color: color)
+                    .copyWith(fontWeight: FontWeight.w600),
+              ),
+              SizedBox(width: ResponsiveHelper.spacing(context, 2)),
+              Icon(
+                expanded ? Icons.expand_less : Icons.expand_more,
+                size: ResponsiveHelper.iconSize(context, 14),
+                color: color,
               ),
             ],
           ),
