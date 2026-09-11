@@ -6417,105 +6417,85 @@ async function _cleanupContractFiles(contractId: string): Promise<void> {
   }
 }
 
-// ── [GAP-CONTRACT-SIGNATURE-STORAGE-CONCURRENCY-01] 서명 artifact 동시성 프리미티브 ──
-// 계약 서명 Storage 경로는 결정적(contracts/{id}/...)이라, 정상 권한 요청 둘이
-// 동시에 precheck를 통과하면 나중 업로드가 앞선 업로드를 덮어써
-// "Firestore hash/url ≠ 실제 object bytes/token" drift가 발생한다.
+// ── [GAP-CONTRACT-SIGNATURE-CREATOR-CLEANUP-RACE-01] 서명 artifact 격리 프리미티브 ──
 //
-// 안전 속성: 하나의 논리적 서명 확정 = 하나의 소유된 Storage generation.
-//   · create-only write(ifGenerationMatch: 0) — 먼저 쓴 요청만 성공, 패자는 바이트를 쓰지 못함
-//   · generation-scoped delete — 패자/실패자가 승자의 generation을 삭제할 수 없음
+// 이력:
+//   3.5 create-only(ifGenerationMatch:0) — 패자가 승자를 덮어쓰지 못하게 함
+//   3.6 createdByThisRequest — 회수(adopt)한 generation을 패자가 삭제하지 못하게 함
+//   3.7 그러나 "내가 만든 generation"조차 안전한 삭제 근거가 되지 못한다:
+//       A가 gen1을 만들고 B가 gen1을 회수해 TX를 커밋하면, A의 인프라 실패 cleanup이
+//       B가 참조하는 승자 object를 삭제한다. 역순(A cleanup → B commit)이면
+//       Firestore는 존재하지 않는 object의 URL/hash를 커밋한다.
+//       Firestore와 Storage 사이에는 cross-service 트랜잭션이 없으므로
+//       "참조 여부 확인 후 삭제"도 check-then-commit-then-delete race로 동일하게 깨진다.
+//
+// 해법: **결정적 공유 경로를 없앤다.** 요청마다 고유한 attempt 경로에 쓰면
+//   artifact가 구조적으로 그 요청에만 속한다 — 공유가 없으므로 회수도, 경합도 없다.
+//     contracts/{contractId}/attempts/{attemptId}/{filename}
+//   · 승자 object는 다른 요청이 경로를 알 수 없어 덮어쓰거나 삭제할 수 없다
+//   · 패자는 자기 attempt만 지우므로 소유권이 증명된다
+//   · 바이트가 달라진 재시도도 새 attempt에 쓰므로 영구 잠금이 없다
+//   · Firestore에 기록되는 URL/hash는 언제나 그 요청이 만든 바로 그 object를 가리킨다
+//
+// storage.rules 영향 없음: match /contracts/{contractId}/{allPaths=**} 가 이미 하위
+//   전 경로에 read/update/delete = false를 적용하고 create는 어디서도 허용하지 않는다.
+//   (CF는 Admin SDK라 rules 우회) 클라이언트는 Firestore의 URL 필드만 읽는다.
 
-/** Storage 412(precondition failed) 판별 — create-only write 충돌 */
-function _isPreconditionFailed(e: unknown): boolean {
-  const code = (e as {code?: unknown} | null)?.code;
-  return code === 412 || code === "412";
+/** 요청 1회분 artifact 경로 prefix — 다른 요청과 절대 겹치지 않는다 */
+function _newContractAttemptPrefix(contractId: string): string {
+  return `contracts/${contractId}/attempts/${crypto.randomBytes(16).toString("hex")}`;
 }
 
-/**
- * 서명 artifact 확보 결과 — 실제로 유효한 generation과 download token.
- *
- * [ADOPTED != OWNED] `createdByThisRequest`는 cleanup 자격을 가른다.
- *   MD5 일치만으로는 "내 재시도"와 "같은 바이트를 보낸 다른 동시 요청"을 구분할 수 없다.
- *   따라서 회수(adopt)한 generation은 **다른 요청이 만든 승자일 수 있으므로 삭제 금지**다.
- *   generation precondition은 "지금 object가 gen1인가"만 보장할 뿐
- *   "이 요청이 gen1을 만들었는가"는 보장하지 못한다.
- */
+/** 서명 artifact 업로드 결과 — 이 요청 전용 object의 generation과 download token */
 interface ContractArtifactUpload {
+  path: string;
   generation: string;
   token: string;
-  createdByThisRequest: boolean;
 }
 
 /**
- * 존재하지 않을 때만 업로드한다(create-only). 이미 object가 있으면 바이트를 전혀 쓰지 않는다.
+ * 이 요청 전용 attempt 경로에 artifact를 기록한다.
  *
- * 412 발생 시 예외적으로 한 가지만 회수(adopt)한다:
- *   기존 object의 MD5가 지금 쓰려는 바이트와 완전히 동일한 경우.
- *   = 업로드는 성공했으나 응답이 유실돼 재시도된 "자기 자신"의 결과물.
- *   바이트가 다르면 다른 요청의 승자이므로 절대 건드리지 않고 412를 그대로 올린다.
- *   (회수하지 않으면 잔존 object가 해당 계약의 서명을 영구히 막는다)
+ * 경로가 요청마다 고유하므로 덮어쓸 대상이 존재하지 않는다.
+ * create-only precondition은 방어적으로 유지한다(경로 재사용 버그 조기 검출용).
  */
-async function _saveContractArtifactIfAbsent(
+async function _saveContractArtifact(
   path: string,
   data: Buffer,
   contentType: string,
   downloadToken: string,
 ): Promise<ContractArtifactUpload> {
   const file = admin.storage().bucket().file(path);
-  try {
-    await file.save(data, {
-      contentType,
-      metadata: {metadata: {firebaseStorageDownloadTokens: downloadToken}},
-      preconditionOpts: {ifGenerationMatch: 0},
-    });
-    return {
-      generation: String(file.metadata.generation ?? ""),
-      token: downloadToken,
-      createdByThisRequest: true,
-    };
-  } catch (e) {
-    if (!_isPreconditionFailed(e)) throw e;
-
-    const [meta] = await file.getMetadata();
-    const ourMd5 = crypto.createHash("md5").update(data).digest("base64");
-    const existingToken =
-      (meta.metadata?.firebaseStorageDownloadTokens as string | undefined) ?? "";
-    if (meta.md5Hash !== ourMd5 || !existingToken) {
-      throw e; // 다른 요청의 object — 덮어쓰지도, 삭제하지도 않는다
-    }
-    console.warn(`♻️ [SIG-GEN-ADOPT] 동일 바이트 기존 object 사용 — ${path} (cleanup 비대상)`);
-    return {
-      generation: String(meta.generation ?? ""),
-      token: existingToken,
-      // 내 재시도 결과일 수도, 같은 바이트를 보낸 다른 동시 요청의 승자일 수도 있다.
-      // 구분 불가하므로 소유권을 주장하지 않는다.
-      createdByThisRequest: false,
-    };
-  }
+  await file.save(data, {
+    contentType,
+    metadata: {metadata: {firebaseStorageDownloadTokens: downloadToken}},
+    preconditionOpts: {ifGenerationMatch: 0},
+  });
+  return {
+    path,
+    generation: String(file.metadata.generation ?? ""),
+    token: downloadToken,
+  };
 }
 
 /**
- * 이 요청이 **직접 생성한** artifact일 때만 삭제한다.
+ * 이 요청이 만든 attempt artifact를 정리한다.
  *
- * 두 조건을 모두 요구한다:
- *   1. createdByThisRequest — 회수(adopt)한 generation은 타 요청의 승자일 수 있어 제외
- *   2. ifGenerationMatch    — 그 사이 다른 generation으로 교체됐으면 삭제하지 않음
- *
- * upload가 null이면(=업로드 단계에 도달하지 못함) 아무것도 하지 않는다.
+ * 경로 자체가 이 요청 전용이므로 다른 요청이 참조하는 object를 건드릴 수 없다.
+ * generation precondition은 이중 방어로 유지한다.
+ * upload가 null이면(=업로드 미도달) 아무것도 하지 않는다.
  */
-async function _deleteArtifactIfCreatedHere(
-  path: string,
+async function _deleteOwnAttemptArtifact(
   upload: ContractArtifactUpload | null,
 ): Promise<void> {
-  if (!upload || !upload.createdByThisRequest || !upload.generation) return;
+  if (!upload || !upload.generation) return;
   try {
-    await admin.storage().bucket().file(path)
+    await admin.storage().bucket().file(upload.path)
       .delete({ifGenerationMatch: upload.generation});
   } catch (err) {
-    // 이미 다른 generation으로 교체됐거나 삭제된 경우 — 승자 보호가 목적이므로 무시
     console.warn(
-      `⚠️ [SIG-GEN-CLEANUP] 자기 generation 정리 실패 — ${path}#${upload.generation}:`, err);
+      `⚠️ [SIG-ATTEMPT-CLEANUP] attempt artifact 정리 실패 — ${upload.path}#${upload.generation}:`,
+      err);
   }
 }
 
@@ -6582,16 +6562,16 @@ export const callableFinalizeWorkerSignature = onCall(
     }
 
     // ── 서명 이미지 업로드 (Admin SDK — storage rules: if false)
-    // [CONCURRENCY-01] create-only — 동시 서명 요청 중 하나만 바이트를 기록한다.
-    const sigStoragePath = `contracts/${contractId}/signature_worker.png`;
-    const pdfStoragePath = `contracts/${contractId}/contract.pdf`;
-    // [ADOPTED != OWNED] 두 artifact의 소유권을 각각 추적한다 —
-    //   서명은 회수(adopt)하고 PDF만 새로 만드는 혼합 상태가 실제로 발생한다.
+    // [CREATOR-CLEANUP-RACE-01] 이 요청 전용 attempt 경로 — 두 artifact가 한 attempt에 속한다.
+    //   경로가 고유하므로 동시 요청끼리 덮어쓰거나 서로의 object를 삭제할 수 없다.
+    const attemptPrefix = _newContractAttemptPrefix(contractId);
+    const sigStoragePath = `${attemptPrefix}/signature_worker.png`;
+    const pdfStoragePath = `${attemptPrefix}/contract.pdf`;
     let sigUpload: ContractArtifactUpload | null = null;
     let pdfUpload: ContractArtifactUpload | null = null;
     let sigUrl: string;
     try {
-      sigUpload = await _saveContractArtifactIfAbsent(
+      sigUpload = await _saveContractArtifact(
         sigStoragePath, signatureBytes, "image/png",
         crypto.randomBytes(16).toString("hex"));
       const encodedSigPath = encodeURIComponent(sigStoragePath);
@@ -6599,17 +6579,13 @@ export const callableFinalizeWorkerSignature = onCall(
         `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/` +
         `${encodedSigPath}?alt=media&token=${sigUpload.token}`;
     } catch (e) {
-      if (_isPreconditionFailed(e)) {
-        // 다른 서명 요청이 먼저 기록했다 — 덮어쓰지 않는다.
-        throw new HttpsError("aborted", "다른 서명 요청이 처리 중입니다. 잠시 후 다시 시도해주세요.");
-      }
       throw new HttpsError("internal", "서명 이미지 업로드에 실패했습니다.");
     }
 
     // ── PDF 업로드 (Admin SDK) + URL 생성
     let computedPdfUrl: string;
     try {
-      pdfUpload = await _saveContractArtifactIfAbsent(
+      pdfUpload = await _saveContractArtifact(
         pdfStoragePath, pdfBytes, "application/pdf",
         crypto.randomBytes(16).toString("hex"));
       const encodedPdfPath = encodeURIComponent(pdfStoragePath);
@@ -6617,11 +6593,8 @@ export const callableFinalizeWorkerSignature = onCall(
         `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/` +
         `${encodedPdfPath}?alt=media&token=${pdfUpload.token}`;
     } catch (e) {
-      // PDF 업로드 실패 → 이 요청이 직접 만든 서명만 정리 (회수한 것은 보존)
-      await _deleteArtifactIfCreatedHere(sigStoragePath, sigUpload);
-      if (_isPreconditionFailed(e)) {
-        throw new HttpsError("aborted", "다른 서명 요청이 처리 중입니다. 잠시 후 다시 시도해주세요.");
-      }
+      // PDF 업로드 실패 → 이 attempt의 서명만 정리 (다른 요청 artifact와 무관)
+      await _deleteOwnAttemptArtifact(sigUpload);
       throw new HttpsError("internal", "PDF 업로드에 실패했습니다.");
     }
 
@@ -6703,12 +6676,12 @@ export const callableFinalizeWorkerSignature = onCall(
     } catch (e) {
       // 이미 완료된 계약서(failed-precondition)는 기존 파일 보존 — cleanup 불필요
       // 그 외 Firestore/내부 오류에서만 업로드된 파일을 정리한다.
-      // [CONCURRENCY-01] 경로 단위 일괄 삭제 → 이 요청이 직접 만든 artifact만 삭제.
-      //   [ADOPTED != OWNED] 회수한 generation은 타 요청의 승자일 수 있어 보존한다.
-      //   두 artifact의 소유권은 서로 독립이다 (서명 회수 + PDF 생성 등 혼합 가능).
+      // [CREATOR-CLEANUP-RACE-01] 이 attempt 전용 경로만 정리한다.
+      //   승자는 자기 attempt 경로를 Firestore에 기록했고 그 경로는 이 요청이 알 수 없으므로
+      //   어떤 오류 분류에서도 타 요청의 artifact를 삭제할 수 없다.
       if (!(e instanceof HttpsError) || e.code !== "failed-precondition") {
-        await _deleteArtifactIfCreatedHere(pdfStoragePath, pdfUpload);
-        await _deleteArtifactIfCreatedHere(sigStoragePath, sigUpload);
+        await _deleteOwnAttemptArtifact(pdfUpload);
+        await _deleteOwnAttemptArtifact(sigUpload);
       }
       throw e;
     }
@@ -6742,7 +6715,9 @@ export const callableFinalizeEmployerSignature = onCall(
     const bucket = admin.storage().bucket();
     const signatureBytes = Buffer.from(signatureBase64, "base64");
     const employerHash = crypto.createHash("sha256").update(signatureBytes).digest("hex");
-    const storagePath = `contracts/${contractId}/signature_employer.png`;
+    // [CREATOR-CLEANUP-RACE-01] 이 요청 전용 attempt 경로 — 공유 경로 경합을 구조적으로 제거
+    const storagePath =
+      `${_newContractAttemptPrefix(contractId)}/signature_employer.png`;
     const contractRef = db.collection("employment_contracts").doc(contractId);
 
     // ═══════════════════════════════════════════════════════════
@@ -6829,20 +6804,17 @@ export const callableFinalizeEmployerSignature = onCall(
 
     // ── Storage 업로드 (Admin SDK) — 인가·상태 검증 통과 후에만 실행
     //    다운로드 토큰 수동 생성
-    // [CONCURRENCY-01] create-only — precheck를 동시에 통과한 두 요청 중
-    //   하나만 바이트를 기록한다. 패자는 승자 object를 덮어쓰지 못한다.
+    // [CREATOR-CLEANUP-RACE-01] attempt 경로가 고유하므로 동시 요청이 서로를
+    //   덮어쓰거나 삭제할 수 없다. 승자 판정은 아래 Firestore 트랜잭션이 담당한다.
     let sigUpload: ContractArtifactUpload | null = null;
     let url: string;
     try {
-      sigUpload = await _saveContractArtifactIfAbsent(
+      sigUpload = await _saveContractArtifact(
         storagePath, signatureBytes, "image/png",
         crypto.randomBytes(16).toString("hex"));
       const encodedPath = encodeURIComponent(storagePath);
       url = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${sigUpload.token}`;
     } catch (e) {
-      if (_isPreconditionFailed(e)) {
-        throw new HttpsError("aborted", "다른 서명 요청이 처리 중입니다. 잠시 후 다시 시도해주세요.");
-      }
       throw new HttpsError("internal", "서명 이미지 업로드에 실패했습니다.");
     }
 
@@ -6902,9 +6874,9 @@ export const callableFinalizeEmployerSignature = onCall(
         e instanceof HttpsError &&
         (e.code === "failed-precondition" || e.code === "already-exists");
       if (!isAlreadyDone) {
-        // [CONCURRENCY-01] 무조건 delete → 이 요청이 직접 만든 artifact 한정으로 축소.
-        // [ADOPTED != OWNED] 회수한 generation은 타 요청의 승자일 수 있어 보존한다.
-        await _deleteArtifactIfCreatedHere(storagePath, sigUpload);
+        // [CREATOR-CLEANUP-RACE-01] 이 attempt 전용 경로만 정리 —
+        //   승자가 참조하는 artifact는 다른 attempt 경로에 있어 건드릴 수 없다.
+        await _deleteOwnAttemptArtifact(sigUpload);
       }
       throw e;
     }
