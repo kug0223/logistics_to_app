@@ -6417,6 +6417,85 @@ async function _cleanupContractFiles(contractId: string): Promise<void> {
   }
 }
 
+// ── [GAP-CONTRACT-SIGNATURE-STORAGE-CONCURRENCY-01] 서명 artifact 동시성 프리미티브 ──
+// 계약 서명 Storage 경로는 결정적(contracts/{id}/...)이라, 정상 권한 요청 둘이
+// 동시에 precheck를 통과하면 나중 업로드가 앞선 업로드를 덮어써
+// "Firestore hash/url ≠ 실제 object bytes/token" drift가 발생한다.
+//
+// 안전 속성: 하나의 논리적 서명 확정 = 하나의 소유된 Storage generation.
+//   · create-only write(ifGenerationMatch: 0) — 먼저 쓴 요청만 성공, 패자는 바이트를 쓰지 못함
+//   · generation-scoped delete — 패자/실패자가 승자의 generation을 삭제할 수 없음
+
+/** Storage 412(precondition failed) 판별 — create-only write 충돌 */
+function _isPreconditionFailed(e: unknown): boolean {
+  const code = (e as {code?: unknown} | null)?.code;
+  return code === 412 || code === "412";
+}
+
+/** 서명 artifact 업로드 결과 — 실제로 유효한 generation과 download token */
+interface ContractArtifactUpload {
+  generation: string;
+  token: string;
+}
+
+/**
+ * 존재하지 않을 때만 업로드한다(create-only). 이미 object가 있으면 바이트를 전혀 쓰지 않는다.
+ *
+ * 412 발생 시 예외적으로 한 가지만 회수(adopt)한다:
+ *   기존 object의 MD5가 지금 쓰려는 바이트와 완전히 동일한 경우.
+ *   = 업로드는 성공했으나 응답이 유실돼 재시도된 "자기 자신"의 결과물.
+ *   바이트가 다르면 다른 요청의 승자이므로 절대 건드리지 않고 412를 그대로 올린다.
+ *   (회수하지 않으면 잔존 object가 해당 계약의 서명을 영구히 막는다)
+ */
+async function _saveContractArtifactIfAbsent(
+  path: string,
+  data: Buffer,
+  contentType: string,
+  downloadToken: string,
+): Promise<ContractArtifactUpload> {
+  const file = admin.storage().bucket().file(path);
+  try {
+    await file.save(data, {
+      contentType,
+      metadata: {metadata: {firebaseStorageDownloadTokens: downloadToken}},
+      preconditionOpts: {ifGenerationMatch: 0},
+    });
+    return {
+      generation: String(file.metadata.generation ?? ""),
+      token: downloadToken,
+    };
+  } catch (e) {
+    if (!_isPreconditionFailed(e)) throw e;
+
+    const [meta] = await file.getMetadata();
+    const ourMd5 = crypto.createHash("md5").update(data).digest("base64");
+    const existingToken =
+      (meta.metadata?.firebaseStorageDownloadTokens as string | undefined) ?? "";
+    if (meta.md5Hash !== ourMd5 || !existingToken) {
+      throw e; // 다른 요청의 object — 덮어쓰지도, 삭제하지도 않는다
+    }
+    console.warn(`♻️ [SIG-GEN-ADOPT] 동일 바이트 재시도 object 회수 — ${path}`);
+    return {
+      generation: String(meta.generation ?? ""),
+      token: existingToken,
+    };
+  }
+}
+
+/**
+ * 이 요청이 만든 generation일 때만 삭제한다.
+ * generation이 비어 있으면(=업로드하지 않음) 아무것도 하지 않는다 — 승자 object 보호.
+ */
+async function _deleteOwnGeneration(path: string, generation: string): Promise<void> {
+  if (!generation) return;
+  try {
+    await admin.storage().bucket().file(path).delete({ifGenerationMatch: generation});
+  } catch (err) {
+    // 이미 다른 generation으로 교체됐거나 삭제된 경우 — 승자 보호가 목적이므로 무시
+    console.warn(`⚠️ [SIG-GEN-CLEANUP] 자기 generation 정리 실패 — ${path}#${generation}:`, err);
+  }
+}
+
 // ── callableFinalizeWorkerSignature ─────────────────────
 // 근무자 서명 완료 + application CONTRACT_PENDING→CONFIRMED 원자 처리
 // [SEC-CONTRACT-H1] firestore.rules에서 클라이언트 직접 전이 차단 — CF Admin SDK 전용 경로.
@@ -6480,37 +6559,46 @@ export const callableFinalizeWorkerSignature = onCall(
     }
 
     // ── 서명 이미지 업로드 (Admin SDK — storage rules: if false)
+    // [CONCURRENCY-01] create-only — 동시 서명 요청 중 하나만 바이트를 기록한다.
     const sigStoragePath = `contracts/${contractId}/signature_worker.png`;
-    const sigToken = crypto.randomBytes(16).toString("hex");
+    const pdfStoragePath = `contracts/${contractId}/contract.pdf`;
+    let sigGeneration = "";
+    let pdfGeneration = "";
+    let sigUrl: string;
     try {
-      await bucket.file(sigStoragePath).save(signatureBytes, {
-        contentType: "image/png",
-        metadata: {metadata: {firebaseStorageDownloadTokens: sigToken}},
-      });
+      const sigUp = await _saveContractArtifactIfAbsent(
+        sigStoragePath, signatureBytes, "image/png",
+        crypto.randomBytes(16).toString("hex"));
+      sigGeneration = sigUp.generation;
+      const encodedSigPath = encodeURIComponent(sigStoragePath);
+      sigUrl =
+        `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/` +
+        `${encodedSigPath}?alt=media&token=${sigUp.token}`;
     } catch (e) {
+      if (_isPreconditionFailed(e)) {
+        // 다른 서명 요청이 먼저 기록했다 — 덮어쓰지 않는다.
+        throw new HttpsError("aborted", "다른 서명 요청이 처리 중입니다. 잠시 후 다시 시도해주세요.");
+      }
       throw new HttpsError("internal", "서명 이미지 업로드에 실패했습니다.");
     }
-    const encodedSigPath = encodeURIComponent(sigStoragePath);
-    const sigUrl =
-      `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/` +
-      `${encodedSigPath}?alt=media&token=${sigToken}`;
 
     // ── PDF 업로드 (Admin SDK) + URL 생성
     let computedPdfUrl: string;
     try {
-      const pdfFile = bucket.file(`contracts/${contractId}/contract.pdf`);
-      const pdfToken = crypto.randomBytes(16).toString("hex");
-      await pdfFile.save(pdfBytes, {
-        contentType: "application/pdf",
-        metadata: {metadata: {firebaseStorageDownloadTokens: pdfToken}},
-      });
-      const encodedPdfPath = encodeURIComponent(`contracts/${contractId}/contract.pdf`);
+      const pdfUp = await _saveContractArtifactIfAbsent(
+        pdfStoragePath, pdfBytes, "application/pdf",
+        crypto.randomBytes(16).toString("hex"));
+      pdfGeneration = pdfUp.generation;
+      const encodedPdfPath = encodeURIComponent(pdfStoragePath);
       computedPdfUrl =
         `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/` +
-        `${encodedPdfPath}?alt=media&token=${pdfToken}`;
+        `${encodedPdfPath}?alt=media&token=${pdfUp.token}`;
     } catch (e) {
-      // PDF 업로드 실패 → 이미 업로드된 서명 이미지도 Admin SDK로 정리
-      await _cleanupContractFiles(contractId);
+      // PDF 업로드 실패 → 이 요청이 만든 서명 generation만 정리 (승자 object 보호)
+      await _deleteOwnGeneration(sigStoragePath, sigGeneration);
+      if (_isPreconditionFailed(e)) {
+        throw new HttpsError("aborted", "다른 서명 요청이 처리 중입니다. 잠시 후 다시 시도해주세요.");
+      }
       throw new HttpsError("internal", "PDF 업로드에 실패했습니다.");
     }
 
@@ -6591,9 +6679,12 @@ export const callableFinalizeWorkerSignature = onCall(
       });
     } catch (e) {
       // 이미 완료된 계약서(failed-precondition)는 기존 파일 보존 — cleanup 불필요
-      // 그 외 Firestore/내부 오류에서만 업로드된 파일을 Admin SDK로 정리
+      // 그 외 Firestore/내부 오류에서만 업로드된 파일을 정리한다.
+      // [CONCURRENCY-01] 경로 단위 일괄 삭제 → 이 요청이 만든 generation만 삭제로 축소.
+      //   동시 요청의 승자 object를 패자가 지우지 못하게 한다.
       if (!(e instanceof HttpsError) || e.code !== "failed-precondition") {
-        await _cleanupContractFiles(contractId);
+        await _deleteOwnGeneration(pdfStoragePath, pdfGeneration);
+        await _deleteOwnGeneration(sigStoragePath, sigGeneration);
       }
       throw e;
     }
@@ -6628,7 +6719,6 @@ export const callableFinalizeEmployerSignature = onCall(
     const signatureBytes = Buffer.from(signatureBase64, "base64");
     const employerHash = crypto.createHash("sha256").update(signatureBytes).digest("hex");
     const storagePath = `contracts/${contractId}/signature_employer.png`;
-    const sigFile = bucket.file(storagePath);
     const contractRef = db.collection("employment_contracts").doc(contractId);
 
     // ═══════════════════════════════════════════════════════════
@@ -6715,17 +6805,23 @@ export const callableFinalizeEmployerSignature = onCall(
 
     // ── Storage 업로드 (Admin SDK) — 인가·상태 검증 통과 후에만 실행
     //    다운로드 토큰 수동 생성
-    const downloadToken = crypto.randomBytes(16).toString("hex");
+    // [CONCURRENCY-01] create-only — precheck를 동시에 통과한 두 요청 중
+    //   하나만 바이트를 기록한다. 패자는 승자 object를 덮어쓰지 못한다.
+    let sigGeneration = "";
+    let url: string;
     try {
-      await sigFile.save(signatureBytes, {
-        contentType: "image/png",
-        metadata: {metadata: {firebaseStorageDownloadTokens: downloadToken}},
-      });
+      const sigUp = await _saveContractArtifactIfAbsent(
+        storagePath, signatureBytes, "image/png",
+        crypto.randomBytes(16).toString("hex"));
+      sigGeneration = sigUp.generation;
+      const encodedPath = encodeURIComponent(storagePath);
+      url = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${sigUp.token}`;
     } catch (e) {
+      if (_isPreconditionFailed(e)) {
+        throw new HttpsError("aborted", "다른 서명 요청이 처리 중입니다. 잠시 후 다시 시도해주세요.");
+      }
       throw new HttpsError("internal", "서명 이미지 업로드에 실패했습니다.");
     }
-    const encodedPath = encodeURIComponent(storagePath);
-    const url = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${downloadToken}`;
 
     try {
       if (isNewUnsaved === true) {
@@ -6783,7 +6879,8 @@ export const callableFinalizeEmployerSignature = onCall(
         e instanceof HttpsError &&
         (e.code === "failed-precondition" || e.code === "already-exists");
       if (!isAlreadyDone) {
-        try { await sigFile.delete(); } catch (_) {}
+        // [CONCURRENCY-01] 무조건 delete → 이 요청이 만든 generation 한정으로 축소.
+        await _deleteOwnGeneration(storagePath, sigGeneration);
       }
       throw e;
     }
