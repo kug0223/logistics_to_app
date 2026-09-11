@@ -218,6 +218,10 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
         _loadCanonicalSummary(),
         _loadStaffingReadiness(),
         _loadTodayAttendance(),
+        // [P2-01] 당겨서 새로고침으로도 첫 공고 준비 상태가 갱신돼야 한다.
+        //   _reloadReadiness()는 내부에서 사업장 조회를 먼저 await하므로
+        //   이 목록에 넣어도 순서가 보장된다.
+        _reloadReadiness(),
       ]);
     } finally {
       _isRefreshing = false;
@@ -677,7 +681,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                 onPressed: () => _safeNavigate(() async {
                   await Navigator.push(context,
                       MaterialPageRoute(builder: (_) => const BusinessFormScreen()));
-                  if (mounted) _loadApprovedBusinessStatus();
+                  // [P2-01] 사업장/사용자 canonical 상태가 바뀌었으면
+                  //   _firstPosting도 같은 복귀 안에서 다시 계산한다.
+                  //   _reloadReadiness()가 _loadApprovedBusinessStatus()를
+                  //   먼저 await하므로 중복 호출이 아니고 순서도 보장된다.
+                  if (mounted) unawaited(_reloadReadiness());
                 }),
               ),
             ),
@@ -908,7 +916,11 @@ class _BusinessAdminHomeScreenState extends State<BusinessAdminHomeScreen>
                 onTap: () => _safeNavigate(() async {
                   await Navigator.push(context,
                       MaterialPageRoute(builder: (_) => const SettingsScreen()));
-                  if (mounted) _loadApprovedBusinessStatus();
+                  // [P2-01] 사업장/사용자 canonical 상태가 바뀌었으면
+                  //   _firstPosting도 같은 복귀 안에서 다시 계산한다.
+                  //   _reloadReadiness()가 _loadApprovedBusinessStatus()를
+                  //   먼저 await하므로 중복 호출이 아니고 순서도 보장된다.
+                  if (mounted) unawaited(_reloadReadiness());
                 })),
           ]),
           SizedBox(height: 10 * s),
