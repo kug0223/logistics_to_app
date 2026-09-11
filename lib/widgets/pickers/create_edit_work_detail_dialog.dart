@@ -1966,6 +1966,18 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
   final _keyDeduction   = GlobalKey();
   final _keyPaySchedule = GlobalKey();
   final _keyCount       = GlobalKey();
+  final _keySettlement  = GlobalKey();
+
+  /// [CTF-01] ③ 급여·정산 설정 펼침 여부.
+  ///
+  /// 기본 접힘인 이유는 "선택이라 덜 중요해서"가 아니라,
+  /// 핵심 모집·근무조건보다 **급여 처리/정산 운영 성격이 강해서** 정보
+  /// 우선순위를 낮춘 것이다. 값 자체는 계약·급여에 그대로 반영된다.
+  ///
+  /// 편집 모드에서도 기본 접힘이다 — 공제 없음/지급 일정 미설정처럼
+  /// default도 값으로 존재하므로 `값이 있다 != 사용자가 설정했다`이다.
+  /// 기존 값은 자동 펼침 대신 헤더 요약으로 인지시킨다.
+  bool _settlementExpanded = false;
 
   @override
   void initState() {
@@ -2086,6 +2098,22 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
   }
 
   void _scrollToFirstError(GlobalKey key) {
+    // [CTF-01] ③이 접혀 있으면 그 안의 섹션은 빌드되지 않아 currentContext가
+    //   null이다. 그대로 두면 "급여 지급 일정을 선택해주세요"가 떠도 어디를
+    //   고쳐야 하는지 화면에 보이지 않는다(급여 지급 일정은 저장 필수).
+    //   먼저 펼치고 다음 프레임에 스크롤한다.
+    if ((key == _keyDeduction || key == _keyPaySchedule) &&
+        !_settlementExpanded) {
+      setState(() => _settlementExpanded = true);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _ensureVisible(key);
+      });
+      return;
+    }
+    _ensureVisible(key);
+  }
+
+  void _ensureVisible(GlobalKey key) {
     final ctx = key.currentContext;
     if (ctx == null) return;
     Scrollable.ensureVisible(
@@ -2138,7 +2166,10 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
         children: [
-          // ① 업무 유형
+          // ═══ ① 핵심 모집조건 ═══
+          _groupHeader(context, '핵심 모집조건'),
+
+          // 업무 유형
           // [4H.0B-IDENTITY-LOCK] isEdit=true 시 workType picker 비활성 — 변경 시 workDetailId 파괴
           // businessWorkTypes.isEmpty fallback은 기존 그대로 유지
           KeyedSubtree(
@@ -2190,6 +2221,27 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
           ),
           const SizedBox(height: 20),
 
+          // 기초 시급 — 일급 선택 시 급여의 종속값이므로 급여 바로 뒤에 둔다
+          if (_selectedWageType == 'daily') ...[
+            KeyedSubtree(
+              key: _keyBaseHourly,
+              child: ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _wageController,
+                builder: (ctx, __, ___) =>
+                    WorkDetailDialog._buildBaseHourlyWageSection(
+                  ctx,
+                  theme,
+                  _wageController,
+                  _baseHourlyWageController,
+                  _startTime,
+                  _endTime,
+                  _breakMinutes,
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+          ],
+
           // ④ 필요 인원
           KeyedSubtree(
             key: _keyCount,
@@ -2236,7 +2288,12 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
           ),
           const SizedBox(height: 20),
 
-          // ⑥ 휴게시간
+          // ═══ ② 추가 근무조건 ═══
+          // 저장 필수 여부와 무관하게 근무가 실제로 어떻게 이뤄지는지를
+          // 정하는 값이므로 접지 않는다.
+          _groupHeader(context, '추가 근무조건'),
+
+          // 휴게시간
           KeyedSubtree(
             key: _keyBreak,
             child: WorkDetailDialog._buildBreakMinutesSection(
@@ -2252,27 +2309,6 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
             ),
           ),
           const SizedBox(height: 20),
-
-          // ⑦ 통상시급 (일급제)
-          if (_selectedWageType == 'daily') ...[
-            KeyedSubtree(
-              key: _keyBaseHourly,
-              child: ValueListenableBuilder<TextEditingValue>(
-                valueListenable: _wageController,
-                builder: (ctx, __, ___) =>
-                    WorkDetailDialog._buildBaseHourlyWageSection(
-                  ctx,
-                  theme,
-                  _wageController,
-                  _baseHourlyWageController,
-                  _startTime,
-                  _endTime,
-                  _breakMinutes,
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-          ],
 
           // ⑧ 야간수당
           KeyedSubtree(
@@ -2296,40 +2332,165 @@ class _WorkDetailEditorScreenState extends State<_WorkDetailEditorScreen> {
           ),
           const SizedBox(height: 20),
 
-          // ⑨ 공제 방식
-          KeyedSubtree(
-            key: _keyDeduction,
-            child: WorkDetailDialog._buildTaxDeductionSection(
-              context,
-              theme,
-              _taxDeductionType,
-              setState,
-              (v) { _taxDeductionType = v; _isDirty = true; },
-            ),
-          ),
+          // ═══ ③ 급여·정산 설정 ═══
+          // 기본 접힘. 선택이라서가 아니라 핵심 모집·근무조건보다
+          // 급여 처리/정산 운영 성격이 강해 정보 우선순위를 낮춘 것이다.
+          // 접힌 상태에서도 헤더 요약으로 현재 값을 알 수 있고,
+          // 이 안에서 검증이 실패하면 _scrollToFirstError가 먼저 펼친다.
+          _settlementGroup(context, theme, children: [
+              // 공제 방식
+              KeyedSubtree(
+                key: _keyDeduction,
+                child: WorkDetailDialog._buildTaxDeductionSection(
+                  context,
+                  theme,
+                  _taxDeductionType,
+                  setState,
+                  (v) { _taxDeductionType = v; _isDirty = true; },
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // 급여 지급 일정 — 저장 필수 항목
+              KeyedSubtree(
+                key: _keyPaySchedule,
+                child: WorkDetailDialog._buildPayScheduleSection(
+                  context,
+                  theme,
+                  _payScheduleType,
+                  _payScheduleDay,
+                  _payScheduleTime,
+                  setState,
+                  (t) { _payScheduleType = t; _payScheduleDay = null; _isDirty = true; },
+                  (d) { _payScheduleDay = d; _isDirty = true; },
+                  (t) { _payScheduleTime = t; _isDirty = true; },
+                ),
+              ),
+          ]),
           const SizedBox(height: 20),
 
-          // ⑩ 급여 지급 일정
-          KeyedSubtree(
-            key: _keyPaySchedule,
-            child: WorkDetailDialog._buildPayScheduleSection(
-              context,
-              theme,
-              _payScheduleType,
-              _payScheduleDay,
-              _payScheduleTime,
-              setState,
-              (t) { _payScheduleType = t; _payScheduleDay = null; _isDirty = true; },
-              (d) { _payScheduleDay = d; _isDirty = true; },
-              (t) { _payScheduleTime = t; _isDirty = true; },
-            ),
-          ),
           // ⑪ 업무 설명 — V1 비노출 (schema/data 유지, 입력 UI hidden)
           // TODO(v2): WorkDetailData.description 사용자 노출 경로 추가 시 복원
         ],
       ),
     ),   // Scaffold
     );   // PopScope
+  }
+
+  // ── [CTF-01] 정보 위계 ──────────────────────────────────────
+  //
+  // 11개 섹션을 평면 나열하던 구조를 세 묶음으로 나눈다.
+  // 필수/선택 이분법이 아니라 **의미 단위**다 —
+  //   ① 핵심 모집조건   무엇을·얼마에·몇 명·언제 (기초 시급은 급여 종속값)
+  //   ② 추가 근무조건   근무가 실제로 어떻게 이뤄지는가
+  //   ③ 급여·정산 설정  돈이 어떻게 처리·지급되는가 (우선순위만 낮춤)
+  // 업무 설명은 자유 서술이라 ②의 구조화된 설정과 묶지 않는다.
+
+  /// 위계 제목 — ①②용. 접히지 않는다.
+  Widget _groupHeader(BuildContext context, String title) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Text(
+        title,
+        style: ResponsiveHelper.smallStyle(context, color: AppColors.grey500)
+            .copyWith(fontWeight: FontWeight.w700, letterSpacing: -0.2),
+      ),
+    );
+  }
+
+  /// ③ 헤더 요약 — 접힌 상태에서도 현재 값을 알 수 있게 한다.
+  ///
+  /// `값 존재 != 사용자 설정`이므로 자동 펼침 대신 이 요약으로 인지시킨다.
+  /// 새 상태를 만들지 않고 현재 컨트롤러/필드 값만 읽어 문자열로 만든다.
+  String _settlementSummary() {
+    final deduction = InsuranceRateModel.typeLabel(_taxDeductionType);
+    final String schedule;
+    switch (_payScheduleType) {
+      case 'same_day':
+        schedule = '당일 지급';
+      case 'next_day':
+        schedule = '익일 지급';
+      case 'weekly':
+        schedule = _payScheduleDay == null
+            ? '매주 지급'
+            : '매주 ${_weekdayLabel(_payScheduleDay!)} 지급';
+      case 'monthly':
+        schedule = _payScheduleDay == null
+            ? '매월 지급'
+            : (_payScheduleDay == 31 ? '매월 말일 지급' : '매월 $_payScheduleDay일 지급');
+      default:
+        schedule = '지급 일정 미설정';
+    }
+    return '$deduction · $schedule';
+  }
+
+  String _weekdayLabel(int day) =>
+      const ['월', '화', '수', '목', '금', '토', '일'][(day - 1).clamp(0, 6)];
+
+  /// ③ 묶음 — 기본 접힘 + 헤더 요약 + 펼침 토글.
+  Widget _settlementGroup(BuildContext context, ThemeData theme,
+      {required List<Widget> children}) {
+    return Container(
+      key: _keySettlement,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.grey200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap: () => setState(
+                () => _settlementExpanded = !_settlementExpanded),
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 14, vertical: 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '급여·정산 설정',
+                          style: ResponsiveHelper.bodyStyle(context)
+                              .copyWith(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _settlementSummary(),
+                          style: ResponsiveHelper.tinyStyle(context,
+                              color: AppColors.grey500),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    _settlementExpanded
+                        ? Icons.keyboard_arrow_up
+                        : Icons.keyboard_arrow_down,
+                    color: AppColors.grey500,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_settlementExpanded) ...[
+            Divider(height: 1, thickness: 0.5, color: AppColors.grey100),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 16, 14, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: children,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   // ── Sticky CTA ──────────────────────────────────────────────
